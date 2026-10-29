@@ -14,7 +14,6 @@
 import { isRecord } from "../../core/common";
 import { warnOnce } from "../../core/warn";
 import type { Database, SqlValue } from "../database";
-import { escapeLikePattern } from "../like-pattern";
 
 export type TaskHistoryDetail = {
   runId?: string;
@@ -28,15 +27,6 @@ export interface TaskHistoryMetadata {
   durationMs: number;
   detail: TaskHistoryDetail | null;
   engine?: string | null;
-  /**
-   * D8 result-vocabulary marker (spec docs/plans/specs/p1b-model-extraction.md
-   * §5.3): present (always `2`) on every row written by the new
-   * result-vocabulary code, absent on legacy rows written before it. The read
-   * boundary (src/tasks/run/task-history.ts's taskHistoryRowToResult) uses its
-   * presence to choose between the new `target_kind` strings and the legacy
-   * read-mapping table.
-   */
-  targetVocab?: 2;
 }
 
 function metadataError(message: string): never {
@@ -95,13 +85,6 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
   // A malformed `engine` (wrong type) is dropped like any other unrecognized
   // field rather than rejecting the whole row over a non-essential value.
   const engine = parsed.engine === null || typeof parsed.engine === "string" ? parsed.engine : undefined;
-  if (parsed.targetVocab !== undefined && parsed.targetVocab !== 2) {
-    warnOnce(
-      `task-history-target-vocab:${String(parsed.targetVocab)}`,
-      `task_history row has targetVocab ${String(parsed.targetVocab)}, newer than this akm's 2 — falling back to ` +
-        "the legacy target_kind mapping rather than rejecting the row.",
-    );
-  }
   validateDetail(detail);
   const cleanDetail: TaskHistoryDetail | null = detail
     ? {
@@ -116,7 +99,6 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
     durationMs: parsed.durationMs,
     detail: cleanDetail,
     ...(engine !== undefined ? { engine } : {}),
-    ...(parsed.targetVocab === 2 ? { targetVocab: 2 as const } : {}),
   };
 }
 
@@ -325,9 +307,11 @@ export function queryCompletedTaskIntervals(db: Database, since: string, until?:
  * rename --dry-run`: the same `WHERE` predicate, read-only.
  */
 export function countTaskHistoryTargetRefs(db: Database, oldBundleId: string): number {
-  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  const prefix = `${oldBundleId}//`;
   return (
-    db.prepare(`SELECT COUNT(*) AS n FROM task_history WHERE target_ref LIKE ? ESCAPE '\\'`).get(`${prefix}%`) as {
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM task_history WHERE substr(target_ref, 1, length(?)) = ?`)
+      .get(prefix, prefix) as {
       n: number;
     }
   ).n;
@@ -337,14 +321,16 @@ export function countTaskHistoryTargetRefs(db: Database, oldBundleId: string): n
  * Rewrite every `task_history.target_ref` naming `oldBundleId` (a workflow
  * run's fully-qualified `<bundle>//conceptId` target) to `newBundleId`
  * (`akm bundle rename`, D6). A row whose `target_ref` is unset or not
- * bundle-qualified is not matched by the `LIKE` prefix and is left alone.
+ * bundle-qualified is not matched by the `<old>//` prefix and is left alone.
  * Returns the number of rows rewritten.
  */
 export function renameTaskHistoryTargetRefs(db: Database, oldBundleId: string, newBundleId: string): number {
-  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  const prefix = `${oldBundleId}//`;
   return Number(
     db
-      .prepare(`UPDATE task_history SET target_ref = ? || substr(target_ref, ?) WHERE target_ref LIKE ? ESCAPE '\\'`)
-      .run(newBundleId, oldBundleId.length + 1, `${prefix}%`).changes,
+      .prepare(
+        `UPDATE task_history SET target_ref = ? || substr(target_ref, length(?) + 1) WHERE substr(target_ref, 1, length(?)) = ?`,
+      )
+      .run(newBundleId, oldBundleId, prefix, prefix).changes,
   );
 }

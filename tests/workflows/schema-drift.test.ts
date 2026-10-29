@@ -7,7 +7,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { EXTRA_PARAMS_CREDENTIAL_KEYS, EXTRA_PARAMS_PROTECTED_TOP_LEVEL_KEYS } from "../../src/core/extra-params";
 import {
-  PROGRAM_ISOLATION_KINDS,
   PROGRAM_ON_ERROR,
   PROGRAM_PARAM_NAME_PATTERN,
   PROGRAM_REDUCERS,
@@ -42,7 +41,6 @@ describe("schemas/akm-workflow.json stays in sync with the TS vocabulary", () =>
   test("enum vocabularies match the exported constants", () => {
     expect(schema.definitions.onError!.enum).toEqual([...PROGRAM_ON_ERROR]);
     expect(schema.definitions.reducer!.enum).toEqual([...PROGRAM_REDUCERS]);
-    expect(schema.definitions.isolation!.enum).toEqual([...PROGRAM_ISOLATION_KINDS]);
     expect(schema.definitions.failureReason!.enum).toEqual([...PROGRAM_RETRY_REASONS]);
   });
 

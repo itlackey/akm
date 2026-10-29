@@ -130,17 +130,15 @@ describe("source commands and resolution", () => {
 
     saveConfig({ semanticSearchMode: "auto" });
 
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+    // The deterministic embedder keeps the vector list offline and always present: the default local
+    // model would be downloaded from Hugging Face into the test's empty cache on every run.
+    await withEnv({ AKM_BUNDLE_DIR: stashDir, AKM_EMBED_DETERMINISTIC: "1" }, async () => {
       await akmIndex({ stashDir, full: true });
       const result = await akmSearch({ query: "summarize diff", type: "script" });
 
-      expect(result.hits.length).toBeGreaterThan(0);
-      // The hit's rank in each candidate list that returned it; the vector
-      // list is present only when embeddings are available.
-      expect(result.hits[0]!.whyMatched?.[0]).toBe("lexical rank 1");
-      for (const reason of result.hits[0]!.whyMatched ?? []) {
-        expect(reason).toMatch(/^(lexical|vector) rank \d+$/);
-      }
+      // The hit's rank in each candidate list that returned it.
+      expect(result.hits.length).toBe(1);
+      expect(result.hits[0]!.whyMatched).toEqual(["lexical rank 1", "vector rank 1"]);
     });
   });
 
@@ -253,7 +251,7 @@ describe("source commands and resolution", () => {
     });
   });
 
-  test("akmShow blocks symlink escapes outside stash type root", async () => {
+  test("akmShow reads a script that is a symlink outside the stash type root (#1237)", async () => {
     const stashDir = createTmpDir("akm-stash-");
     const outsideDir = createTmpDir("akm-outside-");
     const outsideFile = path.join(outsideDir, "outside.sh");
@@ -269,8 +267,9 @@ describe("source commands and resolution", () => {
     }
 
     await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
-      // Symlinks are skipped by the indexer, so the asset won't be found
-      await expect(akmShow({ ref: "scripts/link.sh" })).rejects.toThrow(/not found for ref/);
+      // Installing a bundle is the trust decision: the symlinked script is indexed and shown.
+      const shown = await akmShow({ ref: "scripts/link.sh" });
+      expect(shown).toMatchObject({ type: "script", ref: "scripts/link.sh", path: symlinkFile, run: "bash link.sh" });
     });
   });
 

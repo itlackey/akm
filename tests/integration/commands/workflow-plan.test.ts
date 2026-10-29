@@ -39,6 +39,7 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import { runCliCapture } from "../../_helpers/cli";
 import {
   type IsolatedAkmStorage,
+  makeSandboxDir,
   withIsolatedAkmStorage,
   writeSandboxConfig,
   writeWorkflowTestConfig,
@@ -63,18 +64,23 @@ function write(relative: string, content: string): void {
   fs.writeFileSync(file, content, "utf8");
 }
 
-function writeParent(name: string, stepLines: readonly string[]): void {
+/** A markdown parent whose one step runs `childRef` as a child workflow (Experimental `unit.workflow`). */
+function writeChildParent(name: string, childRef: string, withLines: readonly string[] = []): void {
   write(
-    `workflows/${name}.yml`,
+    `workflows/${name}.md`,
     [
-      `name: ${name}`,
-      "on:",
-      "  workflow_dispatch:",
-      "jobs:",
-      "  main:",
-      "    runs-on: [self-hosted]",
-      "    steps:",
-      ...stepLines,
+      "---",
+      "type: workflow",
+      "steps:",
+      "  - id: dispatch",
+      "    unit:",
+      `      workflow: ${childRef}`,
+      ...withLines,
+      "---",
+      "",
+      "## dispatch",
+      "",
+      "Run the child.",
       "",
     ].join("\n"),
   );
@@ -405,16 +411,14 @@ describe("akm workflow plan <ref> — compile warnings surface in warnings[] (B-
 });
 
 describe("akm workflow plan <ref> — lowering notices from freeze surface in notices[] (B-57)", () => {
-  // The unit opts its `test-llm` engine out of json_schema
-  // (`supports_json_schema: false`), so the direct-LLM builder
-  // (src/integrations/agent/execution.ts's buildLlm) cannot carry this step's
-  // declared unit output: schema and emits a real "untranslated-field"
-  // notice. That notice is computed at freeze time
-  // (freeze/targets/command.ts's commandResult builds the execution) and was
-  // once silently discarded — it is exactly the
-  // freeze-time notice row B-57 requires `akm workflow plan` to surface,
-  // through the same {code, severity, adapter, field, message} projection
-  // `akm workflow run` already renders (tests/output-workflow-lowering-notices.test.ts).
+  // The unit runs on the `pi` harness, whose CLI has no flag for a sampling
+  // temperature, so the lowering cannot carry this step's `llm.temperature` and
+  // emits a real "untranslated-field" notice. That notice is computed at freeze
+  // time (freeze/targets/command.ts's commandResult builds the execution) and was
+  // once silently discarded — it is exactly the freeze-time notice row B-57
+  // requires `akm workflow plan` to surface, through the same
+  // {code, severity, adapter, field, message} projection `akm workflow run`
+  // already renders (tests/output-workflow-lowering-notices.test.ts).
   function writeLoweringNoticeWorkflow(): void {
     write(
       "workflows/plan-lowering-notice.md",
@@ -424,14 +428,9 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
         "steps:",
         "  - id: notify",
         "    unit:",
-        "      engine: test-llm",
+        "      harness: pi",
         "      llm:",
-        "        supports_json_schema: false",
-        "      output:",
-        "        type: object",
-        "        properties:",
-        "          ok:",
-        "            type: boolean",
+        "        temperature: 0.2",
         "---",
         "",
         "## notify",
@@ -443,6 +442,7 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
   }
 
   test("the notice's code/adapter/message reach notices[] in JSON mode and render as a lowering[] line in text mode", async () => {
+    writeSandboxConfig({ harnesses: { pi: {} } });
     writeLoweringNoticeWorkflow();
     await index();
 
@@ -452,8 +452,8 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
     expect(envelope.notices.length).toBeGreaterThan(0);
     const notice = envelope.notices.find((n) => n.code === "untranslated-field");
     expect(notice).toBeDefined();
-    expect(notice?.adapter).toBe("llm");
-    expect(String(notice?.message)).toContain("outputSchema");
+    expect(notice?.adapter).toBe("pi");
+    expect(notice?.field).toBe("inference.temperature");
 
     const text = await runCliCapture(["workflow", "plan", "workflows/plan-lowering-notice", "--format", "text"]);
     expect(text.code).toBe(0);
@@ -461,8 +461,8 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
     // §4.6's exact line shape: `! lowering[<severity>] <code> (<adapter>): <message>`.
     expect(text.stdout).toContain("! lowering[");
     expect(text.stdout).toContain("untranslated-field");
-    expect(text.stdout).toContain("llm");
-    expect(text.stdout).toContain("does not translate resolved field outputSchema");
+    expect(text.stdout).toContain("(pi; inference.temperature)");
+    expect(text.stdout).toContain("does not translate resolved field inference.temperature");
   });
 });
 
@@ -470,27 +470,13 @@ describe("akm workflow plan <ref> — a workflow composing a child (B-49)", () =
   function writeChild(): void {
     write(
       "workflows/plan-child.md",
-      [
-        "---",
-        "type: workflow",
-        "outputs:",
-        "  report:",
-        "    from: steps.work.output",
-        "steps:",
-        "  - id: work",
-        "---",
-        "",
-        "## work",
-        "",
-        "Do the work.",
-        "",
-      ].join("\n"),
+      ["---", "type: workflow", "steps:", "  - id: work", "---", "", "## work", "", "Do the work.", ""].join("\n"),
     );
   }
 
-  test("a per-step expansion names via: child, the child ref, its planHash, and its declared output names", async () => {
+  test("a per-step expansion names via: child, the child ref, and its planHash", async () => {
     writeChild();
-    writeParent("plan-composes-child", ["      - id: dispatch", "        uses: workflows/plan-child"]);
+    writeChildParent("plan-composes-child", "workflows/plan-child");
     await index();
 
     const result = await runCliCapture(["workflow", "plan", "workflows/plan-composes-child", "--format", "json"]);
@@ -502,14 +488,13 @@ describe("akm workflow plan <ref> — a workflow composing a child (B-49)", () =
     expect(expansion.via).toBe("child");
     expect(String(expansion.childRef)).toContain("plan-child");
     expect(typeof expansion.childPlanHash).toBe("string");
-    expect(expansion.childOutputs).toEqual(["report"]);
     expect(Array.isArray(expansion.steps)).toBe(true);
   });
 
   // Code review finding B: text mode must carry the same child plan hash,
   // `with:` input bindings, and `exports:` line the spec's §4.6 worked
   // example prescribes — not just --format json.
-  test("text mode: the step line carries the child's plan hash, a with: line for its bindings, and an exports: line", async () => {
+  test("text mode: the step line carries the child's plan hash and a with: line for its bindings", async () => {
     write(
       "workflows/plan-child-params.md",
       [
@@ -517,9 +502,6 @@ describe("akm workflow plan <ref> — a workflow composing a child (B-49)", () =
         "type: workflow",
         "params:",
         "  scope: { type: string }",
-        "outputs:",
-        "  report:",
-        "    from: steps.work.output",
         "steps:",
         "  - id: work",
         "---",
@@ -530,11 +512,9 @@ describe("akm workflow plan <ref> — a workflow composing a child (B-49)", () =
         "",
       ].join("\n"),
     );
-    writeParent("plan-composes-child-text", [
-      "      - id: dispatch",
-      "        uses: workflows/plan-child-params",
-      "        with:",
-      "          scope: urgent",
+    writeChildParent("plan-composes-child-text", "workflows/plan-child-params", [
+      "      with:",
+      "        scope: urgent",
     ]);
     await index();
 
@@ -561,45 +541,54 @@ describe("akm workflow plan <ref> — a workflow composing a child (B-49)", () =
     expect(textResult.code).toBe(0);
     expect(textResult.stdout).toContain(`(plan ${childPlanHash})`);
     expect(textResult.stdout).toContain('with: scope="urgent" (literal)');
-    expect(textResult.stdout).toContain("exports: report");
-  });
-});
-
-describe("akm workflow plan <ref> — a task-wrapped step (B-50)", () => {
-  test("a per-step expansion names via: task and the taskRef", async () => {
-    write("commands/plan-noop.md", "Do nothing.\n");
-    write("tasks/plan-wrapper.yml", ["version: 4", "run: echo wrapped", "shell: sh", ""].join("\n"));
-    writeParent("plan-task-wrapped", ["      - id: dispatch", "        uses: tasks/plan-wrapper"]);
-    await index();
-
-    const result = await runCliCapture(["workflow", "plan", "workflows/plan-task-wrapped", "--format", "json"]);
-    expect(result.code).toBe(0);
-    const envelope = JSON.parse(result.stdout) as { steps: Array<Record<string, unknown>> };
-    const dispatch = envelope.steps.find((s) => s.stepId === "dispatch");
-    const expansion = (dispatch as Record<string, unknown>).expansion as Record<string, unknown>;
-    expect(expansion.via).toBe("task");
-    expect(String(expansion.taskRef)).toContain("plan-wrapper");
   });
 });
 
 describe("akm workflow plan <ref> — inputBindings: literal shown, reference shown unresolved (B-51)", () => {
   test("a literal with: value is shown; a reference with: {from:...} shows its from, never a resolved value", async () => {
-    write("commands/plan-consume.md", "Consume a note.\n");
     write(
-      "tasks/plan-consume-task.yml",
-      ["version: 4", "inputs:", "  note:", "    type: string", "uses: commands/plan-consume", ""].join("\n"),
+      "workflows/plan-consume-child.md",
+      [
+        "---",
+        "type: workflow",
+        "params:",
+        "  note: { type: string }",
+        "steps:",
+        "  - id: work",
+        "---",
+        "",
+        "## work",
+        "",
+        "Consume a note.",
+        "",
+      ].join("\n"),
     );
-    writeParent("plan-input-bindings", [
-      "      - id: produce",
-      "        uses: tasks/plan-consume-task",
-      "        with:",
-      "          note: literal-value-shown",
-      "      - id: consume",
-      "        uses: tasks/plan-consume-task",
-      "        with:",
-      "          note:",
-      "            from: steps.produce.output",
-    ]);
+    write(
+      "workflows/plan-input-bindings.md",
+      [
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: produce",
+        "    unit:",
+        "      workflow: workflows/plan-consume-child",
+        "      with: { note: literal-value-shown }",
+        "  - id: consume",
+        "    unit:",
+        "      workflow: workflows/plan-consume-child",
+        "      with: { note: { from: steps.produce.output } }",
+        "---",
+        "",
+        "## produce",
+        "",
+        "Produce.",
+        "",
+        "## consume",
+        "",
+        "Consume.",
+        "",
+      ].join("\n"),
+    );
     await index();
 
     const result = await runCliCapture(["workflow", "plan", "workflows/plan-input-bindings", "--format", "json"]);
@@ -622,7 +611,6 @@ describe("akm workflow plan <ref> — inputBindings: literal shown, reference sh
 
 describe("akm workflow plan <ref> — SECRET-FREE, sentinel proof (B-52, B-53)", () => {
   const COMMAND_SENTINEL = "PLAN-COMMAND-BODY-SENTINEL-7f2a9c";
-  const ENV_SENTINEL = "plan-env-sentinel-1";
 
   function writeSentinelFixture(): void {
     write(
@@ -640,52 +628,22 @@ describe("akm workflow plan <ref> — SECRET-FREE, sentinel proof (B-52, B-53)",
         "",
       ].join("\n"),
     );
-    writeParent("plan-sentinel-env", [
-      "      - id: run-it",
-      "        run: echo hi",
-      "        shell: sh",
-      "        env:",
-      `          NOTE: ${ENV_SENTINEL}`,
-    ]);
   }
 
   test("no sentinel appears in stdout or JSON envelope bytes, in either mode", async () => {
     writeSentinelFixture();
     await index();
 
-    for (const ref of ["workflows/plan-sentinel-command", "workflows/plan-sentinel-env"]) {
+    for (const ref of ["workflows/plan-sentinel-command"]) {
       const text = await runCliCapture(["workflow", "plan", ref]);
       expect(text.code).toBe(0);
       expect(text.stdout).not.toContain(COMMAND_SENTINEL);
-      expect(text.stdout).not.toContain(ENV_SENTINEL);
       expect(text.stderr).not.toContain(COMMAND_SENTINEL);
-      expect(text.stderr).not.toContain(ENV_SENTINEL);
 
       const json = await runCliCapture(["workflow", "plan", ref, "--format", "json"]);
       expect(json.code).toBe(0);
       expect(json.stdout).not.toContain(COMMAND_SENTINEL);
-      expect(json.stdout).not.toContain(ENV_SENTINEL);
     }
-  });
-
-  test("environment[] carries only kind/name for a literal binding — never its value", async () => {
-    writeParent("plan-env-literal-shape", [
-      "      - id: run-it",
-      "        run: echo hi",
-      "        shell: sh",
-      "        env:",
-      `          NOTE: ${ENV_SENTINEL}`,
-    ]);
-    await index();
-    const result = await runCliCapture(["workflow", "plan", "workflows/plan-env-literal-shape", "--format", "json"]);
-    expect(result.code).toBe(0);
-    const envelope = JSON.parse(result.stdout) as { steps: Array<Record<string, unknown>> };
-    const step = envelope.steps.find((s) => s.stepId === "run-it") as Record<string, unknown>;
-    const environment = step.environment as Array<Record<string, unknown>>;
-    const literal = environment.find((e) => e.name === "NOTE");
-    expect(literal).toBeDefined();
-    expect(literal).not.toHaveProperty("value");
-    expect(JSON.stringify(environment)).not.toContain(ENV_SENTINEL);
   });
 });
 
@@ -745,5 +703,133 @@ describe("akm workflow plan — no ref / an unknown ref (B-58)", () => {
     expect(result.code).toBe(1);
     const envelope = JSON.parse(result.stderr.trim()) as { ok: boolean };
     expect(envelope.ok).toBe(false);
+  });
+});
+
+describe("akm workflow plan <ref> — resolved refs (#1238)", () => {
+  let teamDir = "";
+  let teamCleanup: () => void = () => {};
+
+  beforeEach(() => {
+    const team = makeSandboxDir("akm-plan-team");
+    teamDir = team.dir;
+    teamCleanup = team.cleanup;
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      bundles: { stash: { path: storage.stashDir }, team: { path: teamDir } },
+      defaultBundle: "stash",
+    });
+    fs.mkdirSync(path.join(storage.stashDir, "sub"), { recursive: true });
+    fs.mkdirSync(path.join(teamDir, "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(teamDir, "scripts", "x.ts"), "// x\n", "utf8");
+    fs.mkdirSync(path.join(teamDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(teamDir, "env", "prod.env"), "MODE=prod\n", "utf8");
+    fs.mkdirSync(path.join(teamDir, "workflows"), { recursive: true });
+    fs.writeFileSync(
+      path.join(teamDir, "workflows", "child.md"),
+      ["---", "type: workflow", "steps:", "  - id: only", "---", "", "## only", "", "Do it.", ""].join("\n"),
+      "utf8",
+    );
+    resetConfigCache();
+  });
+
+  afterEach(() => teamCleanup());
+
+  function writeExecWorkflow(argvRef: string): void {
+    write(
+      "workflows/two-bundle.md",
+      [
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: build",
+        "    unit:",
+        `      env: [team//env/prod]`,
+        "      exec:",
+        `        command: ["bun", "${argvRef}"]`,
+        "        cwd: sub",
+        "  - id: delegate",
+        "    unit:",
+        "      workflow: team//workflows/child",
+        "---",
+        "",
+        "## build",
+        "",
+        "Build.",
+        "",
+        "## delegate",
+        "",
+        "Delegate.",
+        "",
+      ].join("\n"),
+    );
+  }
+
+  test("text mode shows each step's argv, cwd and the bundle-qualified ref every token resolves to", async () => {
+    writeExecWorkflow("${team//scripts/x.ts}");
+
+    const result = await runCliCapture(["workflow", "plan", "workflows/two-bundle", "--format", "text"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('argv: ["bun","${team//scripts/x.ts}"]');
+    expect(result.stdout).toContain("cwd: sub");
+    expect(result.stdout).toContain("${team//scripts/x.ts} -> team//scripts/x.ts (argv)");
+    expect(result.stdout).toContain("team//env/prod -> team//env/prod (env)");
+    expect(result.stdout).toContain("team//workflows/child -> team//workflows/child (workflow)");
+  });
+
+  test("a ${ref} in argv that no bundle owns fails the plan and names it", async () => {
+    writeExecWorkflow("${team//scripts/missing.ts}");
+
+    const result = await runCliCapture(["workflow", "plan", "workflows/two-bundle", "--format", "text"]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("team//scripts/missing.ts");
+  });
+
+  test("a ${ref} in a child workflow's argv or cwd that no bundle owns fails the plan and names it", async () => {
+    for (const [name, line] of [
+      ["argv", 'command: ["bun", "${team//scripts/missing.ts}"]'],
+      ["cwd", 'command: ["bun", "x.ts"]\n        cwd: "${team//scripts/missing-dir}"'],
+    ] as const) {
+      fs.writeFileSync(
+        path.join(teamDir, "workflows", "child.md"),
+        [
+          "---",
+          "type: workflow",
+          "steps:",
+          "  - id: only",
+          "    unit:",
+          "      exec:",
+          `        ${line}`,
+          "---",
+          "",
+          "## only",
+          "",
+          "Do it.",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      write(
+        "workflows/parent.md",
+        [
+          "---",
+          "type: workflow",
+          "steps:",
+          "  - id: delegate",
+          "    unit:",
+          "      workflow: team//workflows/child",
+          "---",
+          "",
+          "## delegate",
+          "",
+          "Delegate.",
+          "",
+        ].join("\n"),
+      );
+
+      const result = await runCliCapture(["workflow", "plan", "workflows/parent", "--format", "text"]);
+      expect(result.code, name).not.toBe(0);
+      expect(result.stderr, name).toContain("team//scripts/missing");
+    }
   });
 });

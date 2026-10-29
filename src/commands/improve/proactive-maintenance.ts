@@ -3,11 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Proactive maintenance: a fallback lane that picks stale, useful assets with
- * no fresh feedback. Whole-stash/type scope only; the winners are scored with
- * the signal-delta set and never planned: only negative feedback plans a
- * reflect. Pure: the caller supplies the ledger timestamps, retrieval counts
- * and clock.
+ * Proactive maintenance: a lane that picks stale, useful assets with no fresh
+ * feedback. Whole-stash/type scope only; the winners are planned with the
+ * signal-delta set. Pure: the caller supplies the ledger timestamps,
+ * retrieval counts and clock.
+ *
+ * The cap against a proposal flood: `maxPerRun` bounds the picks per run;
+ * `dueDays` admits only an asset not reflected or distilled for that long, so
+ * each comes up at most once per `dueDays`; reflect's `limit` bounds the run.
  */
 
 import type { ImproveEligibleRef } from "../../core/improve-types";
@@ -19,8 +22,8 @@ const DAY_MS = 86_400_000;
 /** An asset is due when last reflected/distilled more than this many days ago (or never). */
 export const DEFAULT_DUE_DAYS = 30;
 
-/** Default bound on how many assets the selector surfaces per run. */
-export const DEFAULT_MAX_PER_RUN = 25;
+/** Fallback for `maxPerRun`; the same as the shipped `default` strategy. */
+export const DEFAULT_MAX_PER_RUN = 15;
 
 /** Size floor for the cost term, so tiny files don't divide by ~0. */
 const SIZE_FLOOR_BYTES = 200;

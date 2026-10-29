@@ -3,16 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Per-directory document drain — akm 0.9.0 Chunk 5, milestone F4a M-core-2 (the
- * engine swap). Replaces the live indexer's per-dir flat-walk matcher-pass
- * `IndexDocument` stream with the `akm` adapter's `recognize` `IndexDocument`
- * stream, reconstructing the durable `IndexDocument` via {@link
- * indexDocumentToStashEntry} (proven lossless by the shadow-parity gate).
+ * Per-directory document drain: turns the `akm` adapter's `recognize`
+ * `IndexDocument` stream into durable entries, reconstructing the durable
+ * `IndexDocument` via {@link indexDocumentToStashEntry}.
  *
  * Two behaviors the adapter fold does NOT carry, restored here at the drain
- * layer (spec §14.2 "drain the full document stream"):
+ * layer:
  *
- *  - **Broken-workflow drop (item 3).** The live path dropped a broken workflow
+ *  - **Broken-workflow drop.** The live path dropped a broken workflow
  *    via the renderer contributor's throw → metadata-pass skip-with-warning; the
  *    `akm` adapter's synchronous `foldRecognizedMetadata` SWALLOWS the parse
  *    error, so a broken workflow would otherwise silently index. We run the
@@ -21,7 +19,7 @@
  *    ({@link buildMetadataSkipWarning}), so the workflow-skip summary counts it.
  *
  * `doc.hash` (= sha256 of the file content) is surfaced per recognized file so
- * the persist layer can populate the `content_hash` column (item 2). It is keyed
+ * the persist layer can populate the `content_hash` column. It is keyed
  * by the file's absolute path rather than by the entry object.
  *
  * Pure of DB/global state; a new leaf (nothing imports it back), so it joins no
@@ -139,7 +137,7 @@ export function drainDirDocuments(
     const entry = indexDocumentToStashEntry(doc);
     // Workflow docs: drop-with-warning if broken; otherwise cache a lossless
     // runtime projection when the current executor can represent the source.
-    const dropWarning = handleWorkflowDoc(doc, file, component.root);
+    const dropWarning = handleWorkflowDoc(doc, file);
     if (dropWarning !== null) {
       warnings.push(dropWarning);
       if (workflowName !== undefined) invalidWorkflowOwnerNames.add(canonicalizeWorkflowName(workflowName));
@@ -181,7 +179,7 @@ export function recognizeStashEntries(stashRoot: string, files: string[]): Stash
  * `Skipped workflow …` drop warning when it is broken, or return `null` when
  * it compiles. Non-workflow docs return `null` immediately.
  */
-function handleWorkflowDoc(doc: IndexDocument, file: FileContext, workspaceRoot: string): string | null {
+function handleWorkflowDoc(doc: IndexDocument, file: FileContext): string | null {
   if (
     doc.type !== "workflow" ||
     (doc.adapterId !== "akm" && doc.adapterId !== "akm-workflow") ||
@@ -190,7 +188,7 @@ function handleWorkflowDoc(doc: IndexDocument, file: FileContext, workspaceRoot:
     return null;
   }
 
-  const result = compileWorkflowSource(file.content(), { path: file.relPath, workspaceRoot });
+  const result = compileWorkflowSource(file.content(), { path: file.relPath });
   if (!result.ok) return workflowDropWarning(file, result.errors);
   return null;
 }

@@ -111,30 +111,6 @@ describe("dotenv adapter — recognition golden (env keys only / secret name onl
   });
 });
 
-describe("dotenv adapter — placement golden", () => {
-  const golden = loadGolden("placement");
-  const byType = golden.byType as Record<string, { conceptId: string; assetPath: string }>;
-  const edge = golden.edgeCases as Record<string, { conceptId: string; assetPath: string }>;
-
-  function relFromRoot(abs: string): string {
-    return path.relative(FIXTURE_ROOT, abs).split(path.sep).join("/");
-  }
-
-  for (const [typeKey, expected] of Object.entries(byType)) {
-    test(`placeNew(${typeKey}) → ${expected.assetPath}`, () => {
-      const abs = dotenvAdapter.placeNew?.(component(), expected.conceptId);
-      expect(relFromRoot(abs as string)).toBe(expected.assetPath);
-    });
-  }
-
-  for (const [name, expected] of Object.entries(edge)) {
-    test(`edge: ${name} → ${expected.assetPath}`, () => {
-      const abs = dotenvAdapter.placeNew?.(component(), expected.conceptId);
-      expect(relFromRoot(abs as string)).toBe(expected.assetPath);
-    });
-  }
-});
-
 describe("dotenv adapter — renderer golden (field-omission redaction)", () => {
   const byRelPath = loadGolden("renderer").byRelPath as Record<string, Record<string, unknown>>;
 

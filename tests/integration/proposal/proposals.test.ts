@@ -1055,7 +1055,7 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     expect(listProposals(stash, { status: "pending" }).length).toBe(1);
   });
 
-  test("never expires a pending retire proposal, however old (second review round, should-fix 8)", () => {
+  test("expires a pending retire proposal by age like any other (reopen can bring it back)", () => {
     const stash = makeStashDir();
     const config: AkmConfig = { ...makeConfig(stash), archiveRetentionDays: 30 } as AkmConfig;
     const NOW = Date.UTC(2026, 5, 1);
@@ -1088,11 +1088,8 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
 
     const result = expireStaleProposals(stash, config, { now: () => NOW });
     expect(result.checked).toBe(2); // both pending proposals were examined
-    expect(result.expired).toBe(1); // only the reflect proposal — the retire proposal is exempt
-    const stillPending = listProposals(stash, { status: "pending" })
-      .map((p) => p.ref)
-      .sort();
-    expect(stillPending).toEqual([durableRef(stash, "lesson", "retire-target")]);
+    expect(result.expired).toBe(2); // the reflect proposal and the retire proposal
+    expect(listProposals(stash, { status: "pending" })).toEqual([]);
   });
 });
 

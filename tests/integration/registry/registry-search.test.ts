@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { searchRegistry } from "../../../src/commands/read/registry-search";
+import { akmSearch } from "../../../src/commands/read/search";
+import { saveConfig } from "../../../src/core/config/config";
 import type { RegistryIndex } from "../../../src/registry/providers/static-index";
-import { type Cleanup, sandboxXdgCacheHome, sandboxXdgDataHome } from "../../_helpers/sandbox";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgDataHome, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
@@ -65,11 +67,13 @@ const FIXTURE_INDEX: RegistryIndex = {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Start a minimal HTTP server that serves the fixture index. */
-function serveIndex(index: RegistryIndex): { url: string; close: () => void } {
+function serveIndex(index: RegistryIndex): { url: string; close: () => void; calls: () => number } {
   const body = JSON.stringify(index);
+  let calls = 0;
   const server = Bun.serve({
     port: 0,
     fetch() {
+      calls += 1;
       return new Response(body, {
         headers: { "Content-Type": "application/json" },
       });
@@ -78,6 +82,7 @@ function serveIndex(index: RegistryIndex): { url: string; close: () => void } {
   return {
     url: `http://localhost:${server.port}/index.json`,
     close: () => server.stop(true),
+    calls: () => calls,
   };
 }
 
@@ -586,6 +591,65 @@ describe("AKM_REGISTRY_URL env var", () => {
     } finally {
       staticSrv.close();
       skillsSrv.stop(true);
+    }
+  });
+});
+
+// The block above calls searchRegistry() without a list, which never reaches the
+// path `akm search` takes: it passes `config.registries`. These cover that path.
+describe("AKM_REGISTRY_URL outranks the registry list the caller passes", () => {
+  /** An index with one stash whose only tag is "mirror", so the query "mirror" finds it. */
+  function mirrorIndex(name: string): RegistryIndex {
+    return {
+      version: 3,
+      updatedAt: "2026-01-01T00:00:00Z",
+      stashes: [{ id: `npm:${name}`, name, ref: name, source: "npm", tags: ["mirror"] }],
+    };
+  }
+
+  test("searchRegistry searches the override and never the explicit list", async () => {
+    const configured = serveIndex(mirrorIndex("configured-stash"));
+    const override = serveIndex(mirrorIndex("override-stash"));
+    process.env.AKM_REGISTRY_URL = override.url;
+    try {
+      const result = await searchRegistry("mirror", { registries: [{ url: configured.url, name: "configured" }] });
+      expect(result.hits.map((h) => h.id)).toEqual(["npm:override-stash"]);
+      expect(override.calls()).toBe(1);
+      expect(configured.calls()).toBe(0);
+    } finally {
+      configured.close();
+      override.close();
+    }
+  });
+
+  test("akmSearch --from registry searches the override, not config.registries", async () => {
+    const configured = serveIndex(mirrorIndex("configured-stash"));
+    const override = serveIndex(mirrorIndex("override-stash"));
+    const storage = withIsolatedAkmStorage({ AKM_REGISTRY_URL: override.url });
+    try {
+      saveConfig({ semanticSearchMode: "off", registries: [{ url: configured.url, name: "configured" }] });
+      const result = await akmSearch({ query: "mirror", source: "registry" });
+      expect((result.registryHits ?? []).map((h) => h.id)).toEqual(["npm:override-stash"]);
+      expect(override.calls()).toBe(1);
+      expect(configured.calls()).toBe(0);
+    } finally {
+      storage.cleanup();
+      configured.close();
+      override.close();
+    }
+  });
+
+  test("without the override, akmSearch --from registry searches config.registries", async () => {
+    const configured = serveIndex(mirrorIndex("configured-stash"));
+    const storage = withIsolatedAkmStorage({ AKM_REGISTRY_URL: undefined });
+    try {
+      saveConfig({ semanticSearchMode: "off", registries: [{ url: configured.url, name: "configured" }] });
+      const result = await akmSearch({ query: "mirror", source: "registry" });
+      expect((result.registryHits ?? []).map((h) => h.id)).toEqual(["npm:configured-stash"]);
+      expect(configured.calls()).toBe(1);
+    } finally {
+      storage.cleanup();
+      configured.close();
     }
   });
 });

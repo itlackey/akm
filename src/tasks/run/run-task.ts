@@ -7,22 +7,21 @@
  * scheduled moment.
  *
  * The durable boundary is intentional: id/bundle resolution, source read,
- * strict task source parsing, target resolution, command
- * authorization/lowering, workflow projectability, and frozen script-byte
+ * strict task source parsing, target resolution, command lowering, workflow
+ * projectability, and frozen script-byte
  * capture (load-task.ts) all finish before an attempt is reserved or a log is
  * created (attempt-lifecycle.ts). Once prepared, the runner dispatches the
  * immutable command, workflow, shell, or script projection to its own arm
  * module (run-command-task.ts, run-workflow-task.ts, run-native-task.ts) and
  * records that actual attempt. Task source v4 has no document-level disabled
- * state to skip at fire time (P4-N6) — a schedule binding that should not
+ * state to skip at fire time — a schedule binding that should not
  * fire is never installed with the OS scheduler in the first place
  * (scheduler-sync.ts), so every invocation that reaches `runTask` dispatches.
  *
  * Orchestration only.
  *
- * D5 (spec §1.2/§5.2, "Threading"): resolves `options.provenance` against the
- * default context (run/provenance.ts) ONCE per call, and threads the result
- * into every dispatch arm.
+ * Resolves `options.provenance` against the default context (run/provenance.ts)
+ * ONCE per call, and threads the result into every dispatch arm.
  */
 
 import { runWorkflowSteps } from "../../workflows/exec/run-workflow";
@@ -73,8 +72,6 @@ export async function runTask(id: string, options: RunTaskOptions): Promise<Task
         historyReserved: attempt.historyReserved,
         provenance,
         runAgentImpl: options.runAgentImpl,
-        agentOptions: options.agentOptions,
-        chatCompletionImpl: options.chatCompletionImpl,
       });
     }
     options.beforeNativeDispatch?.(task);

@@ -12,26 +12,32 @@ see [Scheduling](scheduling.md).
 
 ## Start or continue a run
 
-`akm workflow run <run-id|workflows/ref>` starts or continues a persisted run
-and executes it until completion, failure, verification rejection,
-interruption, or an explicit invocation limit. Run state is scoped to the
-current project directory (nearest `.akm/config.json`, git root, bundle root,
-or current directory), so the same workflow can run independently in separate
-projects.
+`akm workflow run <workflows/ref>` always starts a new persisted run, and
+`akm workflow run <run-id>` continues that exact run. Either way it executes
+until completion, failure, verification rejection, interruption, or an
+explicit invocation limit. A run is identified by its run id and a workflow by
+its ref; the directory you run from never matters, so `akm workflow list` and
+`akm workflow status` show the same runs from anywhere.
 
-Every new run compiles its source and freezes the plan (`irVersion: 6`) before
-publishing the run. Markdown `.md` and GitHub-shaped `.yml` refs use the same
-freeze path. Steps run as your user, with your user's file and network access,
-and a step that fans out runs N agents at once. Read a workflow before you run
-it (`akm show workflows/<name>`). An `exec` step starts with an allowlisted
-environment plus its declared `env:` bindings; see
-[Author's Guide](author-workflows.md#what-the-command-can-see).
+If other runs of the same ref are still active, a start says so in one
+warning that names their ids and the `akm workflow run <id>` /
+`akm workflow abandon <id>` commands. Starting is never refused.
+`akm workflow resume <id>` is only for a blocked or failed run: it re-activates
+the run so `akm workflow run <id>` can continue it.
+`--new` is a deprecated no-op (a ref always starts a new run), kept through
+0.10 so existing scripts keep working.
+
+Every new run compiles its source and freezes the plan (`irVersion: 8`) before
+publishing the run. A workflow ref is a Markdown `.md` source.
 
 ```sh
 akm workflow run workflows/ship-release --version 1.2.3
 akm workflow run workflows/review --changed_files a.ts --changed_files b.ts
 akm workflow run <run-id> --max-retries 2 --timeout 10m
 ```
+
+Parameters are accepted on every ref start. They cannot be combined with a run
+id, which already has its parameters.
 
 Parameter flags must come after the target and exactly match declared
 `params` keys. Values are coerced through each parameter's JSON Schema:
@@ -62,7 +68,7 @@ and evidence — for a given run ID or workflow ref.
 ```sh
 akm workflow status <run-id>
 akm workflow status workflows/ship-release
-# When given a ref, resolves to the most-recently-updated run in the current scope
+# When given a ref, shows the most recently updated run of that ref
 ```
 
 Use this to inspect where a run is after a context window break, or to verify
@@ -155,12 +161,13 @@ A child run id always works directly, listed or not — `akm workflow status
 <childRunId>`, `resume`, `abandon`, and `run` all operate on it exactly like
 any other run.
 
-## List runs in scope
+## List runs
 
-`akm workflow list` shows workflow runs in the current scope.
+`akm workflow list` shows every workflow run on this host, most recently
+updated first. `--all-scopes` is a deprecated no-op, kept through 0.10.
 
 ```sh
-akm workflow list              # All runs in this scope (any status)
+akm workflow list              # All runs (any status)
 akm workflow list --active     # Only status=active (executable) runs
 akm workflow list --ref workflows/ship-release  # Runs for a specific workflow
 ```
@@ -194,9 +201,10 @@ completed are skipped, not re-run (see
 A resume consumes the frozen plan and journaled attempts; it does not re-read
 configuration or the index, and reads the authored workflow only to warn once
 when it changed since the run was frozen (the run continues on the frozen
-plan; `akm workflow run <ref> --new` picks up the edit). A plan frozen by an
-earlier release still runs, with a warning. A stored plan this akm cannot decode
-stops with an error that names how to abandon the run and start a new one.
+plan; `akm workflow run <ref>` starts a new run that picks up the edit). A plan
+frozen by an earlier release that this akm can decode runs with a warning. A
+stored plan this akm cannot decode is abandoned with a message naming how to
+start a new run.
 
 ## Abandon a run
 
@@ -221,6 +229,49 @@ akm log --run <run-id> --since '@offset:<nextOffset>'        # poll for more, fr
 ```
 
 Event metadata carries ids, statuses and counts, not step text.
+
+## Security: workflow sources are executed code
+
+Workflow steps that include shell commands run with **the full filesystem and
+network access of the user invoking `akm workflow run`** — same as if the user
+had typed those commands in their shell. There is no sandbox and no separation
+between trusted and untrusted workflows. An `exec` unit's *environment* is
+yours
+([Workflow Schema](../reference/workflow-schema.md#the-childs-environment)):
+every variable of the process that ran `akm workflow run` reaches the command,
+credentials included. AKM
+directly orchestrates workflows as a defined execution surface — it does not
+blindly execute arbitrary indexed content — but that orchestration still runs
+the workflow's own declared shell commands with your full access once you
+choose to run it.
+
+This is by design: a workflow is a runbook authored by you or by a bundle
+maintainer you trust. The flexibility of "run any shell command, read any
+file, hit any network" is what makes workflows useful as automation.
+
+The consequence is that **you should treat workflow sources the same way you
+treat package dependencies**:
+
+- **Only add workflow sources you trust.** `akm bundle add github:<some-user>/<bundle-repo>`
+  followed by `akm workflow run workflows/<their-thing>` is functionally
+  equivalent to piping a stranger's bash script into your shell. Read the
+  workflow file first (`akm show workflows/<name>`) before running it.
+- **Audit before run** for any workflow that touches secrets, deploys to
+  production, or writes outside the project tree. Read the `env:` bindings a
+  workflow declares.
+- **Pin known-good versions** when adding workflow sources from a registry
+  or git remote (`akm bundle add github:owner/repo#v1.2.3`), and update
+  deliberately rather than via `akm bundle update --all`. A trusted workflow
+  source can become hostile if its upstream is compromised.
+- **Workflow steps cannot escape this trust model** by being labeled
+  `dryRun` or `interactive` — those flags affect bookkeeping, not execution.
+  `akm workflow status` is read-only; `akm workflow run` executes configured
+  units with your process's access.
+
+If you operate a CI runner or shared host where untrusted workflows might be
+executed, scope the process: a dedicated user account with no secrets in its
+environment, ephemeral working directory, and a network/filesystem allowlist
+enforced outside akm.
 
 ## See also
 

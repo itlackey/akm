@@ -6,7 +6,6 @@ import { describe, expect, test } from "bun:test";
 import { main } from "../../src/cli";
 import { commandCommand } from "../../src/commands/command/command-cli";
 import { configCommand } from "../../src/commands/config-cli";
-import { modelsCommand } from "../../src/commands/models-cli";
 import { indexCommand } from "../../src/commands/sources/stash-cli";
 import { taskCommand } from "../../src/commands/tasks/tasks-cli";
 import { workflowCommand } from "../../src/commands/workflow-cli";
@@ -69,17 +68,6 @@ describe("canonical task CLI surface", () => {
     expect(explain?.args?.ref).toMatchObject({ type: "positional", required: true });
     expect(explain?.args?.format).toMatchObject({ type: "string" });
   });
-
-  // #951: `task list` is a pure delegating alias for `akm search --type task`
-  // (0.9.0 removed it as redundant LOGIC — a zero-logic alias re-adds the
-  // spelling operators reach for without reintroducing a second
-  // implementation). It shares `search`'s own positional/limit/from args.
-  test("registers task list with search's query/limit/from args", () => {
-    const list = (taskCommand as unknown as DynamicCommand).subCommands?.list;
-    expect(list?.args?.query).toMatchObject({ type: "positional", required: false });
-    expect(list?.args?.limit).toMatchObject({ type: "string" });
-    expect(list?.args?.from).toMatchObject({ type: "string" });
-  });
 });
 
 // P3b Lane B (spec docs/plans/specs/p3b-child-executor.md §1.2 binding, §6
@@ -112,9 +100,9 @@ describe("canonical workflow CLI surface", () => {
     expect(run?.args?.["skip-if-locked"]).toMatchObject({ type: "boolean", default: false });
   });
 
-  // #942: `--all-scopes` on `list` and `status` (the ref fallthrough path) —
-  // the contract must be extended in the same commit that registers a flag.
-  test("registers workflow list/status --all-scopes as a boolean flag defaulting to false", () => {
+  // #1239: `--all-scopes` and `--new` stay registered as deprecated no-ops
+  // through 0.10 so existing scripts do not fail with UNKNOWN_FLAG.
+  test("registers workflow list/status --all-scopes and run --new as boolean flags defaulting to false", () => {
     const top = main.subCommands as unknown as Record<string, DynamicCommand>;
     expect(top.workflow).toBe(workflowCommand as unknown as DynamicCommand);
 
@@ -124,6 +112,9 @@ describe("canonical workflow CLI surface", () => {
     const status = (workflowCommand as unknown as DynamicCommand).subCommands?.status;
     expect(status?.args?.target).toMatchObject({ type: "positional", required: true });
     expect(status?.args?.["all-scopes"]).toMatchObject({ type: "boolean", default: false });
+
+    const run = (workflowCommand as unknown as DynamicCommand).subCommands?.run;
+    expect(run?.args?.new).toMatchObject({ type: "boolean", default: false });
   });
 });
 
@@ -141,20 +132,5 @@ describe("canonical config CLI surface", () => {
     const get = (configCommand as unknown as DynamicCommand).subCommands?.get;
     expect(get?.args?.key).toMatchObject({ type: "positional", required: true });
     expect(get?.args?.["show-source"]).toMatchObject({ type: "boolean", default: false });
-  });
-});
-
-// #946: `akm models list` (new verb) — contract extended in the same commit
-// that registers it, per this file's own header comment. Read-only, no
-// arguments beyond the global `format`/`detail`/`shape` flags every
-// defineJsonCommand leaf already carries.
-describe("canonical models CLI surface", () => {
-  test("registers models list alongside copy-defaults", () => {
-    const top = main.subCommands as unknown as Record<string, DynamicCommand>;
-    expect(top.models).toBe(modelsCommand as unknown as DynamicCommand);
-
-    const list = (modelsCommand as unknown as DynamicCommand).subCommands?.list;
-    expect(list?.args?.format).toMatchObject({ type: "string" });
-    expect((modelsCommand as unknown as DynamicCommand).subCommands?.["copy-defaults"]).toBeDefined();
   });
 });

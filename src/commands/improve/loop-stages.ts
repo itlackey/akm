@@ -17,7 +17,7 @@ import { withStateDb } from "../../core/state-db";
 import { info } from "../../core/warn";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import {
-  collectPendingMemories,
+  countPendingMemoriesNeedingDecision,
   type MemoryInferenceResult,
   runMemoryInferencePass,
 } from "../../indexer/passes/memory-inference";
@@ -46,7 +46,7 @@ import {
   stampAssetSalienceMissing,
 } from "../../storage/repositories/salience-repository";
 import { readFreelistInfo, STATE_DB_VACUUMED_EVENT, vacuumIfReclaimable } from "../../storage/state-db-integrity";
-import { purgeOldTaskLogFiles } from "../../tasks/run/task-log";
+import { purgeOldRunLogFiles, purgeOldTaskLogFiles } from "../../tasks/run/task-log";
 import { expireStaleProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl, type DeadUrlCoverage } from "../url-checker";
 import { isDistillCandidateRef } from "./eligibility";
@@ -225,7 +225,6 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
     ...(options.sourceName && primaryStashDir ? { target: { source: options.sourceName, root: primaryStashDir } } : {}),
     ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
     eventSource: "improve" as const,
-    lowValueFilter: improveProfile.processes?.reflect?.lowValueFilter?.enabled === true,
     ...(improveProfile.processes?.reflect?.defectFilter
       ? { defectFilter: improveProfile.processes.reflect.defectFilter }
       : {}),
@@ -233,6 +232,8 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
     signal: env.budgetSignal,
     eventsCtx: env.eventsCtx,
     ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
+    llmRunner: resolvedPlan.processes.reflect.runner,
+    ...(resolvedPlan.run ? { run: resolvedPlan.run } : {}),
   } satisfies AkmReflectOptions;
   const result = await attributeStage(resolvedPlan, "reflect", () => env.reflectFn(reflectArgs));
   const reason = result.ok ? undefined : result.reason;
@@ -251,10 +252,16 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
     result,
   });
   // A quality rejection recorded itself, and the judge's text is no lesson for
-  // the next prompt; skips revisit on the `unchanged` cadence.
+  // the next prompt; skips revisit on the `unchanged` cadence. A transient
+  // failure (transport, parse, timeout, budget abort, crash) is not a verdict
+  // on the asset and writes no row, like distill: a `failed` row would advance
+  // the ledger cursor and consume the feedback that planned the ref. Only a
+  // guard rejection records `failed`.
   if (!result.ok && reason !== "quality_rejected") {
-    recordLoopAttempt(planned, env, "reflect", skipped ? "unchanged" : "failed", reason);
-    if (!skipped) {
+    if (skipped) recordLoopAttempt(planned, env, "reflect", "unchanged", reason);
+    else if (reason === "content_policy_reject") recordLoopAttempt(planned, env, "reflect", "failed", reason);
+    // A budget abort is no lesson for the next prompt either.
+    if (!skipped && reason !== "aborted") {
       tally.recentErrorPushes.push({
         originator: "reflect",
         message: result.error ?? reason ?? "unknown reflect error",
@@ -335,6 +342,7 @@ async function runLoopDistillPass(
       ...(improveProfile ? { improveProfile } : {}),
       config: options.config,
       llmRunner: resolvedPlan.processes.distill.runner,
+      ...(resolvedPlan.run ? { run: resolvedPlan.run } : {}),
       signal: env.budgetSignal,
       eventsCtx: env.eventsCtx,
       ...(planned.eligibilitySource ? { eligibilitySource: planned.eligibilitySource } : {}),
@@ -605,7 +613,7 @@ export async function runMemoryInferenceMaintenancePass(
   }
   const minPendingCount = settings?.minPendingCount;
   if (primaryStashDir && minPendingCount !== undefined && minPendingCount > 0) {
-    const pending = collectPendingMemories(primaryStashDir).length;
+    const pending = countPendingMemoriesNeedingDecision(primaryStashDir, dbCell.current);
     if (pending < minPendingCount) {
       info(`[improve] memory inference skipped (${pending} pending < minPendingCount ${minPendingCount})`);
       return { durationMs: 0, warnings: [] };
@@ -629,7 +637,7 @@ export async function runMemoryInferenceMaintenancePass(
         onProgress: (event) => {
           const current = event.currentRef ? ` ${event.currentRef}` : "";
           info(
-            `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, skipped ${event.skippedNoFacts})`,
+            `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, no change ${event.noChange}, skipped ${event.skippedNoFacts})`,
           );
         },
       }),
@@ -638,7 +646,7 @@ export async function runMemoryInferenceMaintenancePass(
   const memoryInference = pass.result;
   if (!memoryInference) return { durationMs: pass.durationMs, warnings: pass.warnings };
   info(
-    `[improve] memory inference complete (${memoryInference.writtenFacts} facts written from ${memoryInference.splitParents} parents)`,
+    `[improve] memory inference complete (${memoryInference.writtenFacts} facts written from ${memoryInference.splitParents} parents, ${memoryInference.noChange} no change)`,
   );
   return {
     memoryInference,
@@ -779,6 +787,17 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
     );
   } catch (err) {
     warnings.push(`task log files purge failed: ${errMessage(err)}`);
+  }
+
+  try {
+    report(
+      "run_log_files_purged",
+      "run_log_files/_purge",
+      purgeOldRunLogFiles(retentionDays),
+      "improve/index run log file(s)",
+    );
+  } catch (err) {
+    warnings.push(`run log files purge failed: ${errMessage(err)}`);
   }
   return { warnings };
 }

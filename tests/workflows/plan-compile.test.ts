@@ -73,7 +73,7 @@ Deploy the artifact.
 describe("compiled plan — structural golden", () => {
   test("compiles to the golden plan", () => {
     expect(compileOk(LINEAR_MD, "Ship it")).toEqual({
-      irVersion: 6,
+      irVersion: 8,
       title: "Ship it",
       steps: [
         {
@@ -83,7 +83,6 @@ describe("compiled plan — structural golden", () => {
           sequenceIndex: 0,
           spec: {
             uses: "akm/command",
-            commandMode: "literal",
             with: { content: "Build the artifact." },
             source: { path: "workflows/test.md", start: 4, end: 4 },
           },
@@ -102,7 +101,6 @@ describe("compiled plan — structural golden", () => {
           sequenceIndex: 1,
           spec: {
             uses: "akm/command",
-            commandMode: "literal",
             with: { content: "Deploy the artifact." },
             source: { path: "workflows/test.md", start: 5, end: 5 },
           },
@@ -123,12 +121,12 @@ describe("compiled plan — structural golden", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Full-vocabulary golden (defaults merging, map/vote, route shape, typed artifacts)
+// Full-vocabulary golden (defaults merging, map/vote, typed artifacts)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const FULL_WF = `---
 type: workflow
-description: Review changed files and route the outcome
+description: Review changed files and triage the outcome
 params:
   changed_files: { type: array, items: { type: string } }
 defaults: { engine: default-agent, model: balanced, timeout: 10m, on_error: continue }
@@ -145,10 +143,6 @@ steps:
     output: { type: object, properties: { verdict: { type: string } } }
     gate: { max_loops: 2 }
   - id: triage
-    route:
-      input: steps.review.output.verdict
-      when: [{ match: pass, step: ship }, { match: fail, step: rework }]
-      default: rework
   - id: ship
   - id: rework
 ---
@@ -188,10 +182,10 @@ describe("compiled and frozen plan — full-vocabulary golden", () => {
     const doc = fs.readFileSync(docPath, "utf8");
     const example = doc.match(/## Richer example\n[\s\S]*?\n```markdown\n([\s\S]*?)\n```\n/);
     if (!example?.[1]) throw new Error("richer workflow example not found");
-    expect(compileOk(example[1], "review-changes", docPath).steps).toHaveLength(7);
+    expect(compileOk(example[1], "review-changes", docPath).steps).toHaveLength(3);
   });
 
-  test("defaults, unit overrides, map, route, and schemas land where freeze reads them", () => {
+  test("defaults, unit overrides, map, and schemas land where freeze reads them", () => {
     const plan = compileOk(FULL_WF, "review-changes", "workflows/test.md");
     expect(plan.title).toBe("review-changes");
     expect(plan.params).toEqual(["changed_files"]);
@@ -219,13 +213,10 @@ describe("compiled and frozen plan — full-vocabulary golden", () => {
       outputSchema: { type: "object", properties: { verdict: { type: "string" } } },
       gate: { criteria: ["every changed file has a verdict"], maxLoops: 2 },
     });
-    expect(plan.steps[2]).toMatchObject({
-      route: { input: "steps.review.output.verdict", when: { pass: "ship", fail: "rework" }, defaultStepId: "rework" },
-    });
   });
 
   test("freeze turns each step into its frozen node: unit ids, map template, defaults applied", () => {
-    const executable = FULL_WF.replace("default-agent", "test-agent").replace("engine: reviewer", "engine: test-agent");
+    const executable = FULL_WF.replace("default-agent", "test-llm").replace("engine: reviewer", "engine: test-llm");
     const plan = freezeWorkflow(executable, "workflows/test.md");
     const [discover, review, triage, ship] = plan.steps;
     expect(discover?.root).toMatchObject({
@@ -248,7 +239,7 @@ describe("compiled and frozen plan — full-vocabulary golden", () => {
         onError: "fail",
       },
     });
-    expect(triage?.root).toBeUndefined();
+    expect(triage?.root).toMatchObject({ kind: "unit", id: "triage" });
     expect(ship?.root).toMatchObject({ kind: "unit", onError: "continue" });
     const ids = plan.steps.flatMap((step) => [
       step.gate.id,
@@ -299,13 +290,13 @@ Do the thing.
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Reference validation (map.over / route.input / inputs[])
+// Reference validation (map.over / inputs[])
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// The closed reference grammar lives in exactly three frontmatter positions
-// (`map.over`, `route.input`, `inputs[]`) — prose is NEVER scanned for it.
+// The closed reference grammar lives in exactly two frontmatter positions
+// (`map.over`, `inputs[]`) — prose is NEVER scanned for it.
 // `inputs:` is the declared-input surface by which a step names an upstream
-// artifact (a step-level, non-map/route reference to a prior step's output).
+// artifact (a step-level, non-map reference to a prior step's output).
 // `item` / `item_index` do not exist in the language at all (they are not
 // merely restricted to map units).
 
@@ -366,27 +357,19 @@ Use it.
 
   // Presence of `params.<name>` outside the declared block is a run-scope
   // concern, not a compile concern. Prose is never scanned for references, so
-  // that property is pinned for the two whole-value positions
-  // (`map.over`/`route.input`) by the next test.
+  // that property is pinned for the whole-value position (`map.over`) by the
+  // next test.
 
-  test("undeclared params.<name> in map.over and route.input compiles too (run-scope concern)", () => {
+  test("undeclared params.<name> in map.over compiles too (run-scope concern)", () => {
     const plan = compileOk(`---
 type: workflow
 params:
   files: { type: array }
 steps:
-  - id: route
-    route:
-      input: params.mode
-      when: [{ match: a, step: fan }]
   - id: fan
     map:
       over: params.filez
 ---
-
-## route
-
-r
 
 ## fan
 
@@ -420,19 +403,13 @@ Review the assigned item.
 type: workflow
 steps:
   - id: a
-    route:
-      input: params.anything
-      when: [{ match: x, step: b }]
-  - id: b
+    map:
+      over: params.anything
 ---
 
 ## a
 
 r
-
-## b
-
-d
 `);
     expect(plan.params).toBeUndefined();
   });
@@ -499,7 +476,7 @@ z
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Whole-value reference enforcement (map.over, route.input)
+// Whole-value reference enforcement (map.over)
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // There is no `${{ … }}` delimiter, so "surrounded by literal text" is
@@ -545,58 +522,6 @@ Do the assigned item.
     expect(errors).toHaveLength(1);
     expect(errors[0]!.message).toContain("Unknown root");
   });
-
-  test("route.input with surrounding literal text is rejected", () => {
-    const errors = errorsFrom(`---
-type: workflow
-steps:
-  - id: a
-  - id: r
-    route:
-      input: "verdict is steps.a.output.verdict"
-      when: [{ match: pass, step: done }]
-  - id: done
----
-
-## a
-
-Classify.
-
-## r
-
-Route.
-
-## done
-
-Done.
-`);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]!.message).toContain("route.input");
-    expect(errors[0]!.message).toContain("Unknown root");
-  });
-
-  test("route.input referencing a later step is rejected", () => {
-    const errors = compileErrors(`---
-type: workflow
-steps:
-  - id: r
-    route:
-      input: steps.done.output.verdict
-      when: [{ match: pass, step: done }]
-  - id: done
----
-
-## r
-
-Route.
-
-## done
-
-Done.
-`);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]!.message).toContain("does not come before this step");
-  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -604,7 +529,7 @@ Done.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("computePlanHash", () => {
-  const executableWf = FULL_WF.replace("default-agent", "test-agent").replace("engine: reviewer", "engine: test-agent");
+  const executableWf = FULL_WF.replace("default-agent", "test-llm").replace("engine: reviewer", "engine: test-llm");
 
   test("same workflow → same hash (deterministic across compiles)", () => {
     const a = freezeWorkflow(executableWf, "workflows/test.md");

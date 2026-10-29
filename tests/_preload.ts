@@ -40,16 +40,18 @@
  * mutate inside the per-test window and restore before the tripwire fires.
  */
 
-import { afterAll, afterEach, beforeEach, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { registerTestRoot } from "../scripts/sweep-test-tmp";
 
 import { _resetParsedInvocationForTests } from "../src/cli/invocation";
 import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-writer-lock";
-import { closeServer } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { agentRuntime } from "../src/integrations/agent/runtime";
+import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { resetAllSeams } from "./_helpers/seams";
 
@@ -74,8 +76,10 @@ const HARNESSED: readonly string[] = [
   "XDG_STATE_HOME",
   // Home directory itself.
   "HOME",
-  // Codex session-log root (pointed into the sandbox at preload).
+  // Codex and Claude Code session-log roots (pointed into the sandbox at preload).
   "CODEX_HOME",
+  "CLAUDE_CONFIG_DIR",
+  "OPENCODE_TEST_HOME",
   // Diagnostic / secret env vars production code reads.
   "AKM_VERBOSE",
   "AKM_LLM_API_KEY",
@@ -106,6 +110,7 @@ function removeSuiteRoot(): void {
 
 function installSuiteWideSandbox(): void {
   suiteSandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-test-suite-"));
+  registerTestRoot(suiteSandboxRoot);
   const home = path.join(suiteSandboxRoot, "home");
   fs.mkdirSync(home, { recursive: true });
   // Set the bottom layer ONLY. Test files that have their own `beforeAll`
@@ -137,12 +142,17 @@ function installSuiteWideSandbox(): void {
   // `extract --auto` and `improve` would read the developer's real rollouts.
   // Codex's own `CODEX_HOME` overrides that default (and a developer's export).
   process.env.CODEX_HOME = path.join(suiteSandboxRoot, "codex-home");
+  // Likewise Claude Code's config directory, which holds the `projects` transcripts the Claude reader scans.
+  process.env.CLAUDE_CONFIG_DIR = path.join(suiteSandboxRoot, "claude-home");
+  // And OpenCode's home, which is `OPENCODE_TEST_HOME ?? os.homedir()`: without it the real-SDK suites load the
+  // developer's `~/.agents`.
+  process.env.OPENCODE_TEST_HOME = home;
   // Teardown must fire on signal-kills too, not just clean exit. A worker that
   // is SIGTERM/SIGINT/SIGHUP'd (e.g. an orphaned/hung `bun test` worker being
   // reaped) otherwise leaks its entire `akm-test-suite-*` root under /tmp — the
   // accumulation that filled tmpfs with tens of thousands of husks. SIGKILL is
-  // uncatchable, so the stale-husk sweep in scripts/sweep-test-tmp.ts is the
-  // backstop for that case.
+  // uncatchable, so the sweep in scripts/sweep-test-tmp.ts is the backstop for
+  // that case: it removes a registered root once its process is gone.
   //
   // Under `bun test` `exit` fires only on an explicit `process.exit()` (which
   // also skips the `afterAll` below); a normal end of run is the `afterAll`'s job.
@@ -157,6 +167,28 @@ function installSuiteWideSandbox(): void {
 }
 
 installSuiteWideSandbox();
+
+/**
+ * akm's own runtime with no fake would fetch a 114 MB OpenCode binary and run it
+ * against whatever endpoint the test configured. Refuse it, always: a test installs
+ * `installFakeOpencodeRuntime` (tests/_helpers/fake-opencode-runtime.ts) or, to run
+ * the real binary, `useRealOpencodeRuntime()`, and the refusal is back as soon as the
+ * test's mocks are restored, so no hook or `afterAll` between tests can start a real one.
+ */
+function refuseRealOpencode(): void {
+  spyOn(agentRuntime, "run").mockImplementation(async () => {
+    throw new Error(
+      "[harness-safety] this test reached akm's real OpenCode runtime; install installFakeOpencodeRuntime (tests/_helpers/fake-opencode-runtime.ts) or call useRealOpencodeRuntime()",
+    );
+  });
+  // `akm setup` offers to fetch the binary ahead of the first run; a test that says yes spies this itself.
+  spyOn(agentRuntime, "fetch").mockImplementation(async () => {
+    throw new Error(
+      "[harness-safety] this test reached the fetch of akm's real OpenCode runtime; spy agentRuntime.fetch",
+    );
+  });
+}
+refuseRealOpencode();
 
 /**
  * Baseline env keys captured immediately after the suite-wide sandbox is
@@ -316,6 +348,8 @@ function resetSingletons(): void {
   clearEmbeddingCache();
   resetLocalEmbedder();
   _setAssetMutationLeaseSyncTimingForTests(undefined);
+  _setOpencodeVersionProbeForTests(undefined);
+  refuseRealOpencode();
   // A test that ran `src/cli.ts`'s entry in-process minted the argv singleton; the in-process harness
   // (tests/_helpers/cli.ts) and every leaf-command test read process.argv through its fallback instead.
   _resetParsedInvocationForTests();
@@ -401,6 +435,7 @@ afterEach(() => {
   // Restore every src-module seam a test installed via overrideSeam/withSeam
   // (tests/_helpers/seams.ts), so a fake never survives past its test.
   resetAllSeams();
+  refuseRealOpencode();
 
   snapshot = undefined;
 
@@ -410,13 +445,8 @@ afterEach(() => {
 });
 
 // `bun test` does not emit `process.on("exit")` when a run ends normally (bun
-// 1.4.1), so the SDK runner's own exit backstop never closes the `opencode
-// serve` children it caches: a test that dispatched through the real runner
-// leaves its server running, reparented to init, long after the run. Close them
-// once the whole run is done, then remove the suite sandbox they use as HOME —
-// for the same reason the `exit` listener above never removes it at the end of a
-// normal run, so every run left its `akm-test-suite-*` root behind.
-afterAll(async () => {
-  await closeServer();
+// 1.4.1). Remove the suite sandbox the tests use as HOME: the `exit` listener
+// above never removes it at the end of a normal run.
+afterAll(() => {
   removeSuiteRoot();
 });

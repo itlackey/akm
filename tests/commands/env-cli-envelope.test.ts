@@ -38,7 +38,7 @@ afterEach(() => {
 
 describe("akm env — JSON envelope snapshot (WS6)", () => {
   test("env create: success envelope carries the env ref", async () => {
-    const { stdout, status } = await runCli(["env", "create", "prod"]);
+    const { stdout, status } = await runCli(["env", "create", "env/prod"]);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
     expect(env.ref).toBe(durableItemRef(stashDir, "env", "prod"));

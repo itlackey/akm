@@ -3,10 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Per-`type` validate checks for the `akm` adapter — akm 0.9.0 chunk-2, WI-C,
- * implementing spec §6 (the per-`type` validation column) as a
- * behavior-preserving port of `src/commands/lint/*`'s type linters. The `akm`
- * adapter's `validate` = shared base checks (WI-A `shared.ts`) + these per-type
+ * Per-`type` validate checks for the `akm` adapter: a behavior-preserving
+ * port of `src/commands/lint/*`'s type linters. The `akm`
+ * adapter's `validate` = shared base checks (`shared.ts`) + these per-type
  * extra checks, keyed on the winning `type`, reproducing today's
  * `getLinterForType(subdir).lint(ctx)` dispatch. The FROZEN lint golden
  * (`tests/fixtures/goldens/lint/all-types.json`, `perType`) is the conformance
@@ -31,7 +30,7 @@
  * `ValidateContext` (the run snapshot + pending overlay) — the live linters'
  * `fs.existsSync` sibling/SKILL.md probes become `ctx.readFile` lookups.
  *
- * ── env/secret dangerous-key narrowness (PRESERVED, spec §6) ──
+ * ── env/secret dangerous-key narrowness (PRESERVED) ──
  *
  * Today's scan (`collectEnvFiles`) only visits `.env`-SUFFIXED files under
  * `env/` and `secrets/`, so `secrets/<bare-name>` is NOT scanned. This port
@@ -54,6 +53,8 @@
 
 import path from "node:path";
 import { isDangerousEnvKey } from "../../../commands/lint/env-key-rules";
+import { backendNameForPlatform } from "../../../tasks/backends";
+import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } from "../../../tasks/schedule-gates";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
 import { taskSourceErrorDetail } from "../../../tasks/source-v3";
 import { checkWorkflowPlan, compileWorkflowSource } from "../../../workflows/compile";
@@ -230,8 +231,6 @@ export interface PerTypeCheckArgs {
   /** File extension incl. dot, lower-cased (`.md`, `.yaml`, …). */
   ext: string;
   ctx: ValidateContext;
-  /** Materialized component root used for physical working-directory containment. */
-  workspaceRoot?: string;
 }
 
 /**
@@ -240,7 +239,7 @@ export interface PerTypeCheckArgs {
  * routes through `ctx`.
  */
 export async function perTypeValidateChecks(args: PerTypeCheckArgs): Promise<Diagnostic[]> {
-  const { type, relPath, raw, data, frontmatter, body, ext, ctx, workspaceRoot } = args;
+  const { type, relPath, raw, data, frontmatter, body, ext, ctx } = args;
   switch (type) {
     case "command":
       return nameOrTypeDiagnostics(relPath, data, frontmatter, ["command"]);
@@ -249,9 +248,8 @@ export async function perTypeValidateChecks(args: PerTypeCheckArgs): Promise<Dia
     case "fact":
       return factDiagnostics(relPath, data);
     case "task":
-      return taskDiagnostics(relPath, raw, workspaceRoot);
+      return taskDiagnostics(relPath, raw);
     case "workflow":
-      // Markdown lint handles `.md`; peer GitHub-shaped `.yml` sources enter through the workflow source adapter.
       return ext === ".md" ? workflowDiagnostics(relPath, raw, body) : [];
     case "memory":
       return memoryDiagnostics(relPath, data, body, ctx);
@@ -291,19 +289,25 @@ export function factDiagnostics(relPath: string, data: Record<string, unknown>):
 }
 
 /**
- * Task validation has one semantic owner: the version-routed task source
- * parser (spec docs/plans/specs/p2a-task-source-v4.md §3.6) — `version: 3`
- * through the strict task-v3 grammar, `version: 4` through task source v4.
+ * Task validation has one semantic owner: the task source parser, which reads
+ * task source v4 and refuses an older `version` with
+ * `TASK_SCHEMA_VERSION_UNSUPPORTED`.
  * Keeping raw YAML at this boundary preserves duplicate-key, alias/tag,
  * source-location, descriptor, resource-bound, and migration-hint behavior.
+ *
+ * A file that parses must also pass the two per-source gates `akm task sync`
+ * runs before it installs a schedule (the schedule inputs satisfy the declared
+ * contract; the cron suits the local scheduler backend), so `akm lint --type
+ * tasks` never reports clean a task that sync would refuse.
  */
-export function taskDiagnostics(relPath: string, raw: string, workspaceRoot?: string): Diagnostic[] {
+export function taskDiagnostics(relPath: string, raw: string): Diagnostic[] {
   try {
-    parseTaskSource({
+    const parsed = parseTaskSource({
       filePath: relPath,
       yaml: raw,
-      ...(workspaceRoot ? { workspaceRoot } : {}),
     });
+    assertTaskScheduleInputsSatisfyContract(parsed.v4, relPath);
+    assertTaskScheduleCronValid(parsed.v4, backendNameForPlatform());
     return [];
   } catch (cause) {
     return [
@@ -367,34 +371,6 @@ export type WorkflowFrontendDiagnostic = Diagnostic & {
 export interface WorkflowFrontendDiagnostics {
   errors: WorkflowFrontendDiagnostic[];
   warnings: WorkflowFrontendDiagnostic[];
-}
-
-/**
- * Compile one peer GitHub-shaped `.yml` source through the shared source-IR
- * frontend. YAML has no Markdown frontmatter/base/stub pass and currently
- * emits fatal source diagnostics only; keeping the same two-channel result
- * shape lets the ordinary sweep and both workflow adapters route it exactly
- * like the established Markdown frontend without inventing another parser.
- */
-export function workflowYamlSourceDiagnostics(
-  relPath: string,
-  raw: string,
-  parsePath: string,
-  workspaceRoot: string,
-): WorkflowFrontendDiagnostics {
-  if (isAkmRegistryCachePath(parsePath)) return { errors: [], warnings: [] };
-  const compiled = compileWorkflowSource(raw, { path: parsePath, workspaceRoot });
-  if (compiled.ok) return { errors: [], warnings: [] };
-  return {
-    errors: compiled.errors.map((error) => ({
-      file: relPath,
-      issue: "invalid-workflow-structure",
-      detail: error.message,
-      fixed: false,
-      ...lineOf(error),
-    })),
-    warnings: [],
-  };
 }
 
 /**

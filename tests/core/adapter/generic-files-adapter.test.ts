@@ -79,21 +79,6 @@ describe("generic-files adapter — recognition golden (script/document/file)", 
   }
 });
 
-describe("generic-files adapter — placement golden (identity)", () => {
-  const byType = loadGolden("placement").byType as Record<string, { conceptId: string; assetPath: string }>;
-
-  function relFromRoot(abs: string): string {
-    return path.relative(FIXTURE_ROOT, abs).split(path.sep).join("/");
-  }
-
-  for (const [typeKey, expected] of Object.entries(byType)) {
-    test(`placeNew(${typeKey}) → ${expected.assetPath}`, () => {
-      const abs = genericFilesAdapter.placeNew?.(component(), expected.conceptId);
-      expect(relFromRoot(abs as string)).toBe(expected.assetPath);
-    });
-  }
-});
-
 describe("generic-files adapter — renderer golden (script known; document/file generic)", () => {
   const byRelPath = loadGolden("renderer").byRelPath as Record<string, Record<string, unknown>>;
 

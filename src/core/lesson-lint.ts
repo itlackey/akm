@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Deterministic frontmatter lint for `lesson` assets (v1 spec §13).
+ * Deterministic frontmatter lint for `lesson` assets.
  *
  * The contract is fixed:
  *

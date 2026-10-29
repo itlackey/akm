@@ -5,7 +5,7 @@
 /**
  * The `dotenv` adapter — akm 0.9.0 format-family work item (#46).
  *
- * A metadata-only env/secret bundle (spec §6/§7, normative §21.2). REDACTION IS
+ * A metadata-only env/secret bundle. REDACTION IS
  * A HARD CONTRACT keyed on the ADAPTER, never on the open `type` value (a
  * frontmatter `type:` cannot opt out):
  *   - `env/*.env` → `type: env` — only the KEY NAMES are surfaced (on `hints`);
@@ -17,7 +17,7 @@
  * conceptId: env strips `.env`; secret keeps its natural path (including any
  * extension). Neither branch ever writes a value onto the emitted document.
  *
- * ── validate (spec §6 env/secret validation column) ──
+ * ── validate ──
  *
  * The dangerous-key scan (`dangerous-env-key`), reusing the akm adapter's
  * `dangerousEnvKeyDiagnostics` — which preserves the code-grounded narrowness:
@@ -26,15 +26,16 @@
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/dotenv/` + goldens
- * `tests/fixtures/format-family-goldens/dotenv/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/dotenv/{recognition,lint,renderer}.json`.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
-import { assetPathCandidatesForName, assetPathForName, typeForStashDir } from "../../asset/asset-placement";
+import { assetPathCandidatesForName, typeForStashDir } from "../../asset/asset-placement";
 import { scanEnvKeyNames, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
+import { sensitiveMarkerPath } from "../../sensitive-marker-path";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { dangerousEnvKeyDiagnostics } from "./akm-lint";
@@ -46,7 +47,7 @@ const COMPONENT_ID = "main";
 const ENV_DIR = "env";
 /** The `secrets/` content subdir (whole-file secrets). */
 const SECRETS_DIR = "secrets";
-/** Non-secret marker suffixes under `secrets/` (spec §6 secret row). */
+/** Non-secret marker suffixes under `secrets/`. */
 const SECRET_SKIP_SUFFIXES = [".lock", ".sensitive"];
 
 type DotenvType = "env" | "secret";
@@ -83,7 +84,7 @@ function classify(relPath: string): DotenvType | null {
  * disagreed about a documented promise.
  */
 function hasSensitiveMarker(absPath: string, type: DotenvType): boolean {
-  const marker = type === "env" ? absPath.replace(/\.env$/i, ".sensitive") : `${absPath}.sensitive`;
+  const marker = sensitiveMarkerPath(absPath, type === "env" ? "env" : "secret");
   return marker !== absPath && fs.existsSync(marker);
 }
 
@@ -177,30 +178,10 @@ export const dotenvAdapter: BundleAdapter = {
     const primaries = assetPathCandidatesForName(type, path.join(c.root, head), rest);
     const expanded = primaries.flatMap((primary) =>
       type === "env"
-        ? [primary, primary.replace(/\.env$/i, ".sensitive")]
-        : [primary, `${primary}.sensitive`, `${primary}.lock`],
+        ? [primary, sensitiveMarkerPath(primary, "env")]
+        : [primary, sensitiveMarkerPath(primary, "secret"), `${primary}.lock`],
     );
     return expanded.map((candidatePath) => ({ path: candidatePath, conceptId: posix }));
-  },
-
-  /**
-   * env places to `env/<name>.env`, secret to `secrets/<name>` (identity join,
-   * no extension logic) — reusing the shared `assetPathForName` so the env
-   * default-alias / already-suffixed / nested-secret edge cases match the akm
-   * placement convention exactly.
-   */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    const posix = toPosix(conceptId);
-    const slash = posix.indexOf("/");
-    if (slash > 0) {
-      const head = posix.slice(0, slash);
-      const rest = posix.slice(slash + 1);
-      const type = typeForStashDir(head);
-      if ((type === "env" || type === "secret") && rest.length > 0) {
-        return assetPathForName(type, path.join(c.root, head), rest);
-      }
-    }
-    return path.join(c.root, posix);
   },
 
   /** The dotenv bundle owns its `env/` + `secrets/` dirs. */

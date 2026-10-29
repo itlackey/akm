@@ -6,7 +6,7 @@
  * `akm proposal new <type> <name> --task ...` — proposal-producing command
  * (#226).
  *
- * Mirrors {@link akmReflect} but for fresh authoring. The engine, of any kind,
+ * Mirrors {@link akmReflect} but for fresh authoring. The connection or harness
  * receives a task description plus per-asset-type schema hints and returns a
  * brand-new asset payload as JSON on stdout. The output lands ONLY in the
  * proposal queue.
@@ -15,34 +15,30 @@
  * `akm reflect`. `propose_invoked` is emitted at command entry.
  */
 
+import type { SelectionFlags } from "../../cli/selection";
 import { placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { generatedContentRejection } from "../../core/content-safety";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
-import { type RunStructuredResult, runStructured } from "../../core/structured";
-import { warn } from "../../core/warn";
+import { resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveEntryProvenance } from "../../indexer/installations";
-import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
-import { fallbackAnnouncement } from "../../integrations/agent/engine-fallback";
-import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
+import type { AgentFailureReason, AgentRunResult } from "../../integrations/agent";
+import { buildExecution, currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
 import {
   type AgentProposalPayload,
   buildProposePrompt,
   PROPOSAL_JSON_SCHEMA,
   validateProposalPayload,
 } from "../../integrations/agent/prompts";
-import {
-  assertRunnerCredentials,
-  collectDispatchSensitiveValues,
-  runExecution,
-  unwrapHarnessReply,
-} from "../../integrations/agent/runner-dispatch";
+import { runExecution } from "../../integrations/agent/runner-dispatch";
+import { isRefused, jsonParser, type StructuredLoopResult, structuredLoop } from "../../llm/structured";
+import { outcomeOf } from "../../llm/structured-call";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type CreateProposalInput,
@@ -56,10 +52,12 @@ export interface AkmProposeOptions {
   type: string;
   name: string;
   task: string;
-  engine?: string;
+  /** Where to run and on which model (`--connection`, `--harness`, `--model`); omitted means the default. */
+  selection?: SelectionFlags;
   timeoutMs?: number;
+  /** Configured bundle to queue the proposal for (`--bundle`); default: the working bundle. */
+  bundle?: string;
   stashDir?: string;
-  runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn" | "envSource">;
   agentConfig?: AkmConfig;
   ctx?: ProposalsContext;
   /** Test seam invoked after credential acquisition and before provider dispatch. */
@@ -117,18 +115,14 @@ function noticeFields(notices: readonly Readonly<LoweringNotice>[]): { notices?:
 interface ProposalDispatchResult {
   /** The last dispatch. */
   result: AgentRunResult;
-  /** The proposal the engine returned, or why its last reply was not one; absent when a dispatch failed. */
-  reply?: RunStructuredResult<AgentProposalPayload>;
+  /** The proposal the model returned, or why its last reply was not one, or the dispatch's failure. */
+  reply: StructuredLoopResult<AgentProposalPayload>;
   /** Every dispatch's duration. */
   durationMs: number;
   engineName: string;
   engineBin?: string;
   notices: readonly Readonly<LoweringNotice>[];
-  /** Every secret this dispatch could expose; generated content echoing one is not persisted. */
-  sensitiveValues: string[];
 }
-
-const DISPATCH_FAILED = Symbol("proposal-dispatch-failed");
 
 /**
  * Resolve, lower, and dispatch the already-rendered proposal prompt with the
@@ -142,52 +136,45 @@ async function dispatchProposalPrompt(
   onDispatchReady: () => void,
 ): Promise<ProposalDispatchResult> {
   const current = {
-    ...(options.engine !== undefined ? { engine: options.engine } : {}),
+    ...options.selection,
     ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
     outputSchema: PROPOSAL_JSON_SCHEMA,
   };
-  const lower = (content: string) => {
-    const prepared = resolveExecution({ content, config, current });
-    return { prepared, lowered: buildExecution(prepared.request, prepared.runner) };
-  };
-  const { prepared, lowered } = lower(prompt);
-  const engineName = prepared.request.engine.name;
-  const announcement = fallbackAnnouncement(prepared.fallbackEngineName, engineName);
-  if (announcement) warn(announcement);
-
-  // Validate every required symbolic credential before the entry event opens
-  // durable state. Provider/runtime failures still occur after the event,
-  // preserving the command-attempt observability contract. The dispatch reads
-  // the same caller environment.
-  const envSource = options.runAgentOptions?.envSource;
-  assertRunnerCredentials(lowered.runner, envSource);
+  // The target is resolved once; a corrective attempt rebuilds only the request, for the same runner.
+  const prepared = resolveExecution({
+    content: prompt,
+    config,
+    layers: [shippedAlias(SHIPPED_ALIAS.agent), currentLayer(current)],
+  });
+  const lowered = buildExecution(prepared.request, prepared.runner);
+  const corrected = (content: string) =>
+    buildExecution(
+      resolveExecution({ content, runner: prepared.runner, layers: [currentLayer(current)] }).request,
+      prepared.runner,
+    );
+  // Resolution and lowering come before the entry event opens durable state; provider and
+  // runtime failures occur after it, preserving the command-attempt observability contract.
+  const engineName = prepared.request.target.name;
   onDispatchReady();
   options.onDispatchReady?.();
-  // runStructured dispatches at least once, so a returned or DISPATCH_FAILED exchange has a result.
+  // The loop dispatches at least once, so there is a result.
   const results: AgentRunResult[] = [];
-  let reply: RunStructuredResult<AgentProposalPayload> | undefined;
-  try {
-    reply = await runStructured({
-      dispatch: async (feedback) => {
-        const execution = feedback ? lower(`${prompt}\n\n${feedback}`).lowered : lowered;
-        const result = await runExecution(execution, { runOptions: options.runAgentOptions ?? {} });
-        results.push(result);
-        if (!result.ok) throw DISPATCH_FAILED;
-        return unwrapHarnessReply(execution.runner, result).text;
-      },
-      validate: validateProposalPayload,
-    });
-  } catch (err) {
-    if (err !== DISPATCH_FAILED) throw err;
-  }
+  const reply = await structuredLoop({
+    dispatch: async (correction) => {
+      const execution = correction ? corrected(`${prompt}\n\n${correction.text}`) : lowered;
+      const result = await runExecution(execution);
+      results.push(result);
+      return outcomeOf(result);
+    },
+    parse: jsonParser(validateProposalPayload),
+  });
   return {
     result: results.at(-1) as AgentRunResult,
-    ...(reply ? { reply } : {}),
+    reply,
     durationMs: results.reduce((total, result) => total + result.durationMs, 0),
     engineName,
-    ...(lowered.runner.kind === "llm" ? {} : { engineBin: lowered.runner.profile.bin }),
+    ...(lowered.runner.kind === "harness" ? { engineBin: lowered.runner.bin } : {}),
     notices: lowered.notices,
-    sensitiveValues: collectDispatchSensitiveValues(lowered.runner, {}, envSource),
   };
 }
 
@@ -210,6 +197,7 @@ function proposeItemRef(bundleId: string, type: string, name: string): string {
  * (`proposeItemRef`), so the entry event and the stored proposal agree.
  */
 function emitProposeInvoked(bundleId: string, options: AkmProposeOptions): void {
+  const named = options.selection?.connection ?? options.selection?.harness ?? options.selection?.engine;
   appendEvent({
     eventType: "propose_invoked",
     ref: proposeItemRef(bundleId, options.type, options.name),
@@ -217,7 +205,7 @@ function emitProposeInvoked(bundleId: string, options: AkmProposeOptions): void 
       type: options.type,
       name: options.name,
       task: options.task,
-      ...(options.engine ? { engine: options.engine } : {}),
+      ...(named ? { engine: named } : {}),
     },
   });
 }
@@ -239,11 +227,14 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     );
   }
 
-  const stash = options.stashDir ?? resolveStashDir();
-
-  // 1. Resolve the write target. Engine/model/inference resolution happens
-  // exactly once below through the shared execution cascade.
+  // 1. Resolve the write target. Connection, harness, model and inference resolution happens
+  // exactly once below through the shared execution cascade. `--bundle` names a
+  // configured, writable bundle (same resolver and errors as `akm remember
+  // --bundle`); its root becomes the stash the proposal is queued for and the
+  // prompt's standards are read from.
   const config = options.agentConfig ?? (await import("../../core/config/config.js")).loadConfig();
+  const stash =
+    options.stashDir ?? (options.bundle ? resolveWriteTarget(config, options.bundle).source.path : resolveStashDir());
   const target = resolveProposalQueueTarget(stash, config);
 
   // 2. Build terminal user content.
@@ -265,9 +256,9 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   const dispatch = await dispatchProposalPrompt(prompt, config, options, () =>
     emitProposeInvoked(target.source, options),
   );
-  const { result, reply, engineName, notices, sensitiveValues } = dispatch;
-  if (!reply) {
-    // B3: ENOENT / not-found gives an actionable hint.
+  const { result, reply, engineName, notices } = dispatch;
+  if (!reply.ok && !isRefused(reply)) {
+    // The dispatch failed. B3: ENOENT / not-found gives an actionable hint.
     if (isEnoentFailure(result)) {
       return {
         ...failureEnvelope(result, options.type, options.name, engineName, notices),
@@ -277,7 +268,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     return failureEnvelope(result, options.type, options.name, engineName, notices);
   }
 
-  // 5. The proposal the engine returned on stdout, validated.
+  // 5. The proposal the model returned on stdout, validated.
   if (!reply.ok) {
     return {
       schemaVersion: 2,
@@ -295,10 +286,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   }
   const payload = reply.value;
 
-  const unsafeContent = generatedContentRejection(
-    payload.content,
-    redactSensitiveText(payload.content, sensitiveValues),
-  );
+  const unsafeContent = generatedContentRejection(payload.content);
   if (unsafeContent) {
     return {
       schemaVersion: 2,

@@ -25,9 +25,10 @@ import {
 } from "../../../../src/commands/improve/reflect-noise";
 import { listProposals } from "../../../../src/commands/proposal/repository";
 import { readEvents } from "../../../../src/core/events";
-import type { SpawnedSubprocess, SpawnFn } from "../../../../src/core/subprocess";
+import { writeFakeHarness } from "../../../_helpers/engine-stubs";
 import { quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
 import {
+  makeSandboxDir,
   makeStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -112,6 +113,15 @@ describe("classifyReflectChange — substantive changes pass through", () => {
     expect(classifyReflectChange("# Doc\n\nUse the old flag.\n", "# Doc\n\nUse the new flag.\n")).toBe("substantive");
   });
 
+  test("a small prose rewrite is substantive (the low-value tier is gone, #1131)", () => {
+    expect(
+      classifyReflectChange(
+        "---\ndescription: d\n---\n\nIt is faster and respects .gitignore by default.\n",
+        "---\ndescription: d\n---\n\nIt runs faster and respects .gitignore by defaults.\n",
+      ),
+    ).toBe("substantive");
+  });
+
   test("prose merged INTO a heading line → substantive (rendering changes)", () => {
     expect(classifyReflectChange("# Title\nprose after\n", "# Title prose after\n")).toBe("substantive");
   });
@@ -181,28 +191,11 @@ function makeSandboxedStash(): string {
   return dir;
 }
 
-function asReadableStream(text: string): ReadableStream<Uint8Array> {
-  const bytes = new TextEncoder().encode(text);
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(bytes);
-      controller.close();
-    },
-  });
-}
-
-function fakeSpawn(stdout: string): SpawnFn {
-  return () => {
-    const proc: SpawnedSubprocess = {
-      exitCode: 0,
-      exited: Promise.resolve(0),
-      stdout: asReadableStream(stdout),
-      stderr: asReadableStream(""),
-      stdin: null,
-      kill: () => undefined,
-    };
-    return proc;
-  };
+/** A fake harness binary that answers with `stdout`. */
+function fakeAgent(stdout: string): string {
+  const bins = makeSandboxDir("akm-noise-gate-bin");
+  stashCleanups.push(bins.cleanup);
+  return writeFakeHarness(bins.dir, "fake-agent", [stdout]);
 }
 
 beforeEach(() => {
@@ -239,8 +232,7 @@ async function runReflect(stash: string, agentStdout: string, assetContent: stri
     stashDir: stash,
     target: { source: "local", root: stash },
     ...(assetContent !== null ? { assetContent } : {}),
-    config: quietQualityGateConfig(),
-    runAgentOptions: { spawn: fakeSpawn(agentStdout) },
+    config: quietQualityGateConfig(fakeAgent(agentStdout)),
   });
 }
 

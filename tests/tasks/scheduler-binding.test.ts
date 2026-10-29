@@ -3,11 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import {
-  compileTaskSchedulerBindings,
-  compileWorkflowSchedulerBindings,
-  schedulerNativeBindingId,
-} from "../../src/tasks/scheduler-binding";
+import { compileTaskSchedulerBindings, schedulerNativeBindingId } from "../../src/tasks/scheduler-binding";
 
 describe("secret-free scheduler binding compiler", () => {
   test("preserves the legacy task id at ordinal zero and emits only the public task invocation", () => {
@@ -77,31 +73,10 @@ describe("secret-free scheduler binding compiler", () => {
     expect(schedulerNativeBindingId("other/deep/nightly")).not.toBe(schedulerNativeBindingId("sub/deep/nightly"));
   });
 
-  test("workflow schedule ids include the qualified ref and ordinal while manual dispatch creates no artifact", () => {
-    const input = {
-      qualifiedRef: "team//workflows/release",
-      schedules: [
-        { cron: "0 8 * * 1", source: "workflows/release.yml:4", ordinal: 0 },
-        { cron: "0 9 * * 2", source: "workflows/release.yml:5", ordinal: 1 },
-      ],
-    } as const;
-    const first = compileWorkflowSchedulerBindings(input);
-    const second = compileWorkflowSchedulerBindings(input);
-
-    expect(first).toEqual(second);
-    expect(first.map(({ id }) => id)).toEqual([
-      expect.stringMatching(/^wf-[a-f0-9]{32}$/),
-      expect.stringMatching(/^wf-[a-f0-9]{32}$/),
-    ]);
-    expect(first[0]?.id).not.toBe(first[1]?.id);
-    expect(first.map(({ nativeId }) => nativeId)).toEqual(first.map(({ id }) => id));
-    expect(first[0]?.invocation).toEqual(["workflow", "run", "team//workflows/release"]);
-    expect(compileWorkflowSchedulerBindings({ qualifiedRef: "team//workflows/manual", schedules: [] })).toEqual([]);
-  });
-
   test("bindings cannot carry execution values or source content", () => {
-    const [binding] = compileWorkflowSchedulerBindings({
-      qualifiedRef: "team//workflows/release",
+    const [binding] = compileTaskSchedulerBindings({
+      id: "release",
+      qualifiedRef: "team//tasks/release",
       schedules: [{ cron: "@daily", source: "release.yml:2", ordinal: 0 }],
     });
     const bytes = JSON.stringify(binding);

@@ -5,7 +5,7 @@
 import type { Database } from "../database";
 import { resolveStorageLocations } from "../locations";
 import { withManagedDb } from "../managed-db";
-import { openExistingDatabase } from "./index-connection";
+import { openExistingDatabase, openReadonlyExistingDatabase } from "./index-connection";
 
 /**
  * Busy-timeout (ms) for read-path telemetry writers. Small on purpose: a
@@ -15,6 +15,11 @@ import { openExistingDatabase } from "./index-connection";
 export const TELEMETRY_BUSY_TIMEOUT_MS = 250;
 
 export interface WithIndexDbOptions {
+  /**
+   * Open the index read-only (`akm ui`): a read-write connection can checkpoint the WAL into the main file on
+   * close, which changes the file even when nothing was written.
+   */
+  readOnly?: boolean;
   /**
    * Override the connection's `busy_timeout` (the standard pragmas set 30s).
    * Read-path TELEMETRY writers pass a small value (e.g. 250) so a usage-event
@@ -57,7 +62,13 @@ export interface WithIndexDbOptions {
  */
 export function withIndexDb<T>(fn: (db: Database) => T, opts?: WithIndexDbOptions): T {
   return withManagedDb(
-    () => openExistingDatabase(resolveStorageLocations().indexDb),
+    () => {
+      const dbPath = resolveStorageLocations().indexDb;
+      if (!opts?.readOnly) return openExistingDatabase(dbPath);
+      const db = openReadonlyExistingDatabase(dbPath);
+      if (!db) throw new Error(`Index database not found at ${dbPath}. Run 'akm index' to build it.`);
+      return db;
+    },
     (db) => {
       if (opts?.busyTimeoutMs !== undefined) {
         db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(opts.busyTimeoutMs))}`);

@@ -34,10 +34,16 @@ export function attachSearchHitAttribution(target: object, attribution: SearchHi
 export function copySearchHitAttribution(from: object, to: object, outputDescription?: string): void {
   const memoryInference = (from as AttributionHost)[ATTRIBUTION]?.memoryInference;
   if (!memoryInference) return;
-  const memorySurvives =
-    memoryInference.exposure !== "surface" ||
-    (memoryInference.surfaceDescription !== undefined && memoryInference.surfaceDescription === outputDescription);
-  if (memorySurvives) attachSearchHitAttribution(to, { memoryInference });
+  if (memoryInference.exposure !== "surface") {
+    attachSearchHitAttribution(to, { memoryInference });
+  } else if (
+    memoryInference.surfaceFields?.includes("description") &&
+    memoryInference.surfaceDescription !== undefined &&
+    memoryInference.surfaceDescription === outputDescription
+  ) {
+    // Curate emits descriptions, not tags. Carry only the field it retained.
+    attachSearchHitAttribution(to, { memoryInference: { ...memoryInference, surfaceFields: ["description"] } });
+  }
 }
 
 export function getSearchHitAttribution(target: object): SearchHitAttribution | undefined {

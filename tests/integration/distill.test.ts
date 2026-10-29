@@ -24,13 +24,13 @@ import {
 } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { type AkmConfig, saveConfig } from "../../src/core/config/config";
-import { ConfigError } from "../../src/core/errors";
 import { readEvents } from "../../src/core/events";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
-import { LlmFeatureTimeoutError } from "../../src/llm/feature-gate";
+import { LlmCallError } from "../../src/llm/client";
 import { listImproveLedgerRows } from "../../src/storage/repositories/improve-ledger-repository";
+import { testLlmRunner } from "../_helpers/llm-runner";
 import {
   type Cleanup,
   mutateScopedEnv,
@@ -66,15 +66,13 @@ function distillConfig(stashDir: string, distill: Record<string, unknown>): AkmC
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
     defaultWriteTarget: "stash",
-    engines: {
+    connections: {
       default: {
-        kind: "llm",
         endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
+        models: { fast: "test-model" },
       },
     },
-    improve: { strategies: { test: { processes: { distill } } } },
-    defaults: { llmEngine: "default", improveStrategy: "test" },
+    improve: { strategy: "test", strategies: { test: { processes: { distill } } } },
   } as AkmConfig;
 }
 
@@ -136,11 +134,10 @@ Connect the VPN before production deploys.
 `;
 
 /** A judgment-tier runner; the drain's injected `chat` seam ignores its connection. */
-const JUDGMENT_RUNNER: RunnerSpec = {
-  kind: "llm",
-  engine: "judgment",
-  connection: { endpoint: "http://fake.invalid/v1/chat/completions", model: "judgment-model" },
-};
+const JUDGMENT_RUNNER: RunnerSpec = testLlmRunner(
+  { endpoint: "http://fake.invalid/v1/chat/completions", model: "judgment-model" },
+  "judgment",
+);
 
 const noopLookup = async () => null;
 const emptyEvents = (() => ({ events: [], nextOffset: 0 })) as unknown as typeof readEvents;
@@ -516,40 +513,6 @@ describe("akmDistill — feature gate", () => {
 // ── Acceptance: LLM throws ──────────────────────────────────────────────────
 
 describe("akmDistill — LLM error paths", () => {
-  test("missing required credential leaves source salience, proposals, and state untouched", async () => {
-    const stash = makeStashDir();
-    const inputPath = path.join(stash, "skills", "credential-boundary.md");
-    const original = "---\ndescription: Deploy safely\n---\n\nUse the checklist.\n";
-    fs.writeFileSync(inputPath, original, "utf8");
-    const config = configEnabled(stash);
-    config.engines = {
-      ...config.engines,
-      default: {
-        kind: "llm",
-        endpoint: "http://127.0.0.1:1/v1/chat/completions",
-        model: "never-dispatched",
-        apiKey: "$AKM_DISTILL_REQUIRED_KEY",
-      },
-    };
-    const stateDbPath = getStateDbPath();
-
-    await withEnv({ AKM_DISTILL_REQUIRED_KEY: undefined }, async () => {
-      await expect(
-        akmDistill({
-          ref: "skills/credential-boundary",
-          config,
-          stashDir: stash,
-          lookupFn: async () => inputPath,
-          readEventsFn: emptyEvents,
-          fetchRelatedFn: async () => [],
-        }),
-      ).rejects.toBeInstanceOf(ConfigError);
-    });
-
-    expect(fs.readFileSync(inputPath, "utf8")).toBe(original);
-    expect(fs.existsSync(stateDbPath)).toBe(false);
-  });
-
   test("chat throws → llm_failed outcome, no proposal, event emitted", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
@@ -592,9 +555,7 @@ describe("akmDistill — LLM error paths", () => {
       config: configEnabled(stash),
       stashDir: stash,
       chat: async () => {
-        // The wrapper only wraps tryLlmFeature's own timer, but the chat seam
-        // throwing a timeout-shaped error is observably the same path.
-        throw new LlmFeatureTimeoutError("distill", 30_000);
+        throw new LlmCallError("Request timed out after 30000ms", "timeout");
       },
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
@@ -610,8 +571,7 @@ describe("akmDistill — LLM error paths", () => {
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
       // 0.8.0: the distill gate defaults to true; with no llm profile wired,
-      // the inner call throws ConfigError(LLM_NOT_CONFIGURED) which the
-      // tryLlmFeature wrapper folds into llm_failed.
+      // the inner call throws ConfigError(LLM_NOT_CONFIGURED) which folds into llm_failed.
     } as unknown as AkmConfig;
     const result = await akmDistill({
       ref: "skills/deploy",
@@ -669,9 +629,8 @@ describe("akmDistill — Item 1: precise gate-off vs LLM-failed outcomes", () =>
   test("gate enabled + LLM returns null → outcome 'llm_failed', event IS emitted", async () => {
     const stash = makeStashDir();
     // configEnabled flips distill: true. The chat seam throws
-    // (simulating a transport failure); tryLlmFeature catches it with
-    // reason "error" → outcome resolves to llm_failed AND the event fires
-    // so the failure is observable on the events stream.
+    // (simulating a transport failure); the failed call resolves to llm_failed
+    // AND the event fires so the failure is observable on the events stream.
     const result = await akmDistill({
       ref: "skills/deploy",
       config: configEnabled(stash),
@@ -991,9 +950,9 @@ describe("akmDistill — queued proposal", () => {
       "utf8",
     );
     const config = configAbsentFeature(stash);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("expected LLM fixture engine");
-    engine.apiKey = "$AKM_UNUSED_DISTILL_PROMOTION_KEY";
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("expected the default connection fixture");
+    connection.apiKey = "$AKM_UNUSED_DISTILL_PROMOTION_KEY";
     let chatCalls = 0;
 
     const result = await withEnv({ AKM_UNUSED_DISTILL_PROMOTION_KEY: undefined }, () =>
@@ -1036,18 +995,17 @@ describe("akmDistill — queued proposal", () => {
       ].join("\n"),
       "utf8",
     );
-    const config = distillConfig(stash, { qualityGate: { enabled: true, engine: "judge" } });
-    config.engines = {
+    const config = distillConfig(stash, { qualityGate: { enabled: true } });
+    config.improve = { ...config.improve, qualityGate: { connection: "judge" } };
+    config.connections = {
       default: {
-        kind: "llm",
         endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
+        models: { fast: "test-model" },
         apiKey: "$AKM_UNUSED_PROMOTION_GENERATOR_KEY",
       },
       judge: {
-        kind: "llm",
         endpoint: "http://localhost:11435/v1/chat/completions",
-        model: "judge-model",
+        models: { fast: "judge-model" },
         apiKey: "$AKM_PROMOTION_JUDGE_KEY",
       },
     };
@@ -1499,8 +1457,7 @@ describe("akmDistill — feature ON + llm.client missing (#284 HIGH 7)", () => {
     // Validation in parseLlmFeatures requires `llm`; we bypass that by
     // assembling the shape directly (this mimics a partial / racy config).
     // The gate is OPEN (distill: true) but the inner LLM call
-    // throws ConfigError("LLM_NOT_CONFIGURED") → tryLlmFeature catches it
-    // with reason "error" → outcome resolves to `llm_failed`.
+    // throws ConfigError("LLM_NOT_CONFIGURED") → outcome resolves to `llm_failed`.
     // Gate is open (distill enabled) but no llm profile is wired.
     const config: AkmConfig = {
       semanticSearchMode: "auto",
@@ -2038,9 +1995,9 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     const sourcePath = path.join(stash, "skills", "deploy.md");
     fs.writeFileSync(sourcePath, "---\ndescription: Deploy safely\n---\n\nCheck deployment prerequisites.\n");
     const config = configJudgeEnabled(stash);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = "$AKM_DISTILL_ROTATING_KEY";
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    connection.apiKey = "$AKM_DISTILL_ROTATING_KEY";
     const secret = "distill-original-092";
     const rotated = "distill-rotated-092";
     const observed: Array<string | undefined> = [];
@@ -2072,12 +2029,13 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     expect(persisted).not.toContain(rotated);
   });
 
-  test("qualityGate.engine judges the lesson on its own engine; generation stays on the default", async () => {
+  test("improve.qualityGate.connection judges the lesson on its own connection; generation stays on the default", async () => {
     const stash = makeStashDir();
-    const config = distillConfig(stash, { enabled: true, qualityGate: { enabled: true, engine: "judge" } });
-    config.engines = {
-      ...config.engines,
-      judge: { kind: "llm", endpoint: "http://localhost:11435/v1/chat/completions", model: "judge-model" },
+    const config = distillConfig(stash, { enabled: true, qualityGate: { enabled: true } });
+    config.improve = { ...config.improve, qualityGate: { connection: "judge" } };
+    config.connections = {
+      ...config.connections,
+      judge: { endpoint: "http://localhost:11435/v1/chat/completions", models: { fast: "judge-model" } },
     };
     const calls: string[] = [];
 
@@ -2274,6 +2232,58 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
       const row = listImproveLedgerRows(db, stash, ["distill"]).find((entry) => entry.ref === "skills/deploy");
       expect(row).toMatchObject({ outcome: "quality_rejected", detail: "adds nothing new" });
       expect(Date.parse(row?.nextEligibleAt ?? "") - Date.parse(row?.lastAttemptAt ?? "")).toBe(30 * 86_400_000);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a promotion whose judge is missing at judge time waits for a person: no rejection window", async () => {
+    const stash = makeStashDir();
+    const memoryFile = path.join(stash, "memories", "no-judge-promotion.md");
+    fs.writeFileSync(
+      memoryFile,
+      [
+        "---",
+        "description: A promotion nothing can judge",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+        "tags: [deploy, ops]",
+        "---",
+        "",
+        "Always validate the deployment manifest before release.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    // The gate is on and no connection exists to judge with; a reinforced memory needs none to be promoted.
+    const config = configJudgeEnabled(stash);
+    delete config.connections;
+
+    const result = await akmDistill({
+      ref: "memories/no-judge-promotion",
+      proposalKind: "auto",
+      config,
+      stashDir: stash,
+      lookupFn: async (ref) => (ref === "memories/no-judge-promotion" ? memoryFile : null),
+      readEventsFn: eventsFor("memories/no-judge-promotion", ["positive", "positive"]),
+    });
+
+    expect(result.outcome).toBe("review_needed");
+    const proposals = listProposals(stash);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]).toMatchObject({
+      status: "pending",
+      source: "distill",
+      gateDecision: { outcome: "deferred", reason: "quality-review", gate: "quality-gate" },
+    });
+    expect(proposals[0]?.gateDecision?.judgeReason).toContain("no connection or harness configured");
+    const db = openStateDatabase();
+    try {
+      const row = listImproveLedgerRows(db, stash, ["distill"]).find(
+        (entry) => entry.ref === "memories/no-judge-promotion",
+      );
+      expect(row).toMatchObject({ outcome: "review_needed" });
     } finally {
       db.close();
     }
@@ -2537,41 +2547,6 @@ Bind the gateway to port 8081. Port 8080 conflicts with another service on the h
 
       expect(judgePrompt).toContain("LATE_BODY_MARKER");
       expect(judgePrompt).not.toContain("FFFFFFFFFF");
-    });
-
-    test("a lesson that contradicts its source is left to the fidelity check, which sends it to a human", async () => {
-      const fixture = setup(
-        "gateway-restart",
-        "Never restart the gateway while a deploy is running.",
-        "The gateway kept serving stale routes after the last deploy.",
-      );
-      const lesson = `---
-description: Restart the gateway once a deploy has finished so it serves the new routes.
-when_to_use: When a deploy has finished and the gateway still serves routes from before it.
----
-
-Always restart the gateway once the deploy finishes. A running gateway keeps serving the old routes.
-`;
-      const { result } = await distillWithJudge(
-        fixture,
-        { reusable: 4, nonRedundancy: 4, grounding: 3 },
-        "Same subject, and it goes beyond the source.",
-        {
-          lesson,
-          config: distillConfig(fixture.stash, {
-            enabled: true,
-            qualityGate: { enabled: true },
-            fidelityCheck: { enabled: true },
-          }),
-        },
-      );
-
-      expect(result.outcome).toBe("review_needed");
-      const proposals = listProposals(fixture.stash);
-      expect(proposals).toHaveLength(1);
-      expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", gate: "quality-gate" });
-      const { events } = readEvents({ type: "distill_invoked" });
-      expect(events.at(-1)?.metadata).toMatchObject({ outcome: "review_needed", fidelityContradiction: true });
     });
   });
 });
@@ -2854,5 +2829,356 @@ describe("akmDistill — the writer sees what the library already holds", () => 
     const { user } = await promptFor(makeStashDir(), {}, []);
 
     expect(user).not.toContain("Related assets already in the library");
+  });
+});
+
+// ── Update an existing lesson instead of rejecting a repeat (#1090) ──────────
+
+describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090)", () => {
+  const EXISTING_BODY = "Retry a failed deploy at most three times.\n\n- Wait twice as long after each failed try.";
+  const EXISTING = `---\ndescription: Bound the retries of a deploy\nwhen_to_use: A deploy fails and a retry is next\nxrefs:\n  - memories/older-deploy\n---\n\n${EXISTING_BODY}\n`;
+  const NEW_FACT = "- Stop retrying at once when the error is a 4xx: the request is wrong, not the network.";
+  const MEMORY_REF = "memories/deploy-retries";
+
+  interface Fixture {
+    stash: string;
+    lessonPath: string;
+    related: Array<{ ref: string; content: string; path?: string }>;
+  }
+
+  function setup(): Fixture {
+    const stash = makeStashDir();
+    const lessonPath = path.join(stash, "lessons", "deploy-retries.md");
+    fs.mkdirSync(path.dirname(lessonPath), { recursive: true });
+    fs.writeFileSync(lessonPath, EXISTING);
+    const memory = path.join(stash, "memories", "deploy-retries.md");
+    fs.mkdirSync(path.dirname(memory), { recursive: true });
+    fs.writeFileSync(
+      memory,
+      `---\ndescription: deploy retries\n---\n\nRetry a deploy at most three times with doubling waits. Never retry a 4xx: the request is wrong.\n`,
+    );
+    return { stash, lessonPath, related: [{ ref: "lessons/deploy-retries", content: EXISTING, path: lessonPath }] };
+  }
+
+  /**
+   * Distill the memory. The writer answers `writer`; the update call answers `update`; the judge answers each
+   * call from `judge`, in order (the writer's own lesson first, then the added lines).
+   */
+  async function run(
+    fixture: Fixture,
+    replies: { writer: string; update?: Record<string, unknown>; judge?: Array<Record<string, number>> },
+  ) {
+    const prompts: string[] = [];
+    let judged = 0;
+    const result = await akmDistill({
+      ref: MEMORY_REF,
+      config: configJudgeEnabled(fixture.stash),
+      stashDir: fixture.stash,
+      fetchRelatedFn: async () => fixture.related,
+      lookupFn: async () => path.join(fixture.stash, "memories", "deploy-retries.md"),
+      readEventsFn: emptyEvents,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        prompts.push(joined);
+        if (joined.includes("Score this lesson")) {
+          const scores = replies.judge?.[judged++] ?? { reusable: 5, nonRedundancy: 5, grounding: 5 };
+          return JSON.stringify({ scores, reason: "lessons/deploy-retries already states this rule." });
+        }
+        if (joined.includes("Extend the existing one")) return JSON.stringify(replies.update ?? { decision: "none" });
+        return replies.writer;
+      },
+    });
+    return { result, prompts };
+  }
+
+  const noneNaming = (text: string) =>
+    JSON.stringify({
+      reason: `${text} already states the rule.`,
+      decision: "none",
+      description: "",
+      when_to_use: "",
+      body: "",
+      tags: [],
+    });
+  const REPEAT = { reusable: 4, nonRedundancy: 2, grounding: 5 };
+  const ADDITION_OK = { reusable: 4, nonRedundancy: 5, grounding: 5 };
+  const updateWith = (body: string) => ({
+    reason: "adds the 4xx stop",
+    new_facts: ["stop at a 4xx"],
+    decision: "update",
+    ref: "lessons/deploy-retries",
+    body,
+  });
+
+  test("a repeat with a new fact becomes a pending update of the existing lesson: old lines kept, new line added", async () => {
+    const fixture = setup();
+    const { result, prompts } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [REPEAT, ADDITION_OK],
+    });
+
+    expect(result).toMatchObject({ outcome: "queued", proposalRef: "lessons/deploy-retries", updatesExisting: true });
+    const proposals = listProposals(fixture.stash);
+    expect(proposals).toHaveLength(1);
+    const [proposal] = proposals;
+    expect(proposal).toMatchObject({
+      status: "pending",
+      source: "distill",
+      ref: durableRef(fixture.stash, "lesson", "deploy-retries"),
+    });
+    const content = proposal!.payload.content;
+    expect(content).toContain("Retry a failed deploy at most three times.");
+    expect(content).toContain("- Wait twice as long after each failed try.");
+    expect(content).toContain(NEW_FACT);
+    const merged = parseFrontmatter(content);
+    expect(merged.data.description).toBe("Bound the retries of a deploy");
+    expect(merged.data.when_to_use).toBe("A deploy fails and a retry is next");
+    expect(merged.data.xrefs).toEqual(["memories/older-deploy", MEMORY_REF]);
+    // Reviewed like any distill pass, never staged for the drain, and tied to the lesson it was read from.
+    expect(proposal?.gateDecision).toMatchObject({
+      outcome: "deferred",
+      reason: "distill-update",
+      gate: "quality-gate",
+    });
+    expect(proposal?.beforeHash).toBeDefined();
+    expect(fs.readFileSync(fixture.lessonPath, "utf8")).toBe(EXISTING);
+    // One judge call read the extended lesson as one lesson, and was given the lesson it extends to hold each added
+    // line against, in place of a list of assets the new lesson might repeat.
+    const updateJudge = prompts.filter((p) => p.includes("Score this lesson"))[1] ?? "";
+    expect(updateJudge).not.toContain("Existing assets nearest the new lesson (they may");
+    expect(updateJudge).toContain("Existing lesson that the proposed lesson extends");
+    expect(updateJudge).toContain("Compare each added line");
+    const proposed = updateJudge.slice(updateJudge.indexOf("Proposed lesson:"));
+    expect(proposed).toContain("Retry a failed deploy at most three times.");
+    expect(proposed).toContain("Stop retrying at once");
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.at(-1)).toMatchObject({
+      ref: MEMORY_REF,
+      metadata: { outcome: "queued", proposalRef: "lessons/deploy-retries", updatesExisting: true },
+    });
+  });
+
+  test("the triage drain leaves the update for a person", async () => {
+    const fixture = setup();
+    await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [REPEAT, ADDITION_OK],
+    });
+    const accept = mock(async () => {
+      throw new Error("the drain accepted a distill update unattended");
+    });
+    const judgment = mock(async () => {
+      throw new Error("a distill update reached the judgment tier");
+    });
+    await drainProposals(
+      { stashDir: fixture.stash, applyMode: "promote", maxAccepts: 5, dryRun: false, judgment: JUDGMENT_RUNNER },
+      accept as unknown as typeof akmProposalAccept,
+      undefined,
+      { chat: judgment },
+    );
+
+    expect(accept).not.toHaveBeenCalled();
+    expect(judgment).not.toHaveBeenCalled();
+    expect(listProposals(fixture.stash)).toHaveLength(1);
+  });
+
+  test("a repeat that adds nothing proposes nothing: today's rejection stands", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: { reason: "nothing new", decision: "none", ref: "", body: "" },
+      judge: [REPEAT],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(result.updatesExisting).toBeUndefined();
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("an update that lists no new fact is not proposed", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: { ...updateWith(`${EXISTING_BODY}\n${NEW_FACT}`), new_facts: [] },
+      judge: [REPEAT, ADDITION_OK],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("an update that only rewords the lesson adds no line and proposes nothing", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY.toUpperCase()}\n`),
+      judge: [REPEAT],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("an update that drops an existing claim is rejected, whatever it adds", async () => {
+    const fixture = setup();
+    const { result, prompts } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`Retry a failed deploy at most three times.\n${NEW_FACT}`),
+      judge: [REPEAT, ADDITION_OK],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+    // Rejected before the judge: only the writer's own lesson was judged.
+    expect(prompts.filter((p) => p.includes("Score this lesson"))).toHaveLength(1);
+  });
+
+  test("an addition the judge does not pass is rejected", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [REPEAT, { reusable: 4, nonRedundancy: 5, grounding: 1 }],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("added lines that only restate the lesson (non-redundancy 2) are not proposed", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [REPEAT, { reusable: 5, nonRedundancy: 2, grounding: 5 }],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("a lesson of another bundle, or none related, is not extended", async () => {
+    const fixture = setup();
+    const other = makeStashDir();
+    const foreign = path.join(other, "lessons", "deploy-retries.md");
+    fs.mkdirSync(path.dirname(foreign), { recursive: true });
+    fs.writeFileSync(foreign, EXISTING);
+    fixture.related = [{ ref: "lessons/deploy-retries", content: EXISTING, path: foreign }];
+    const { result, prompts } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [REPEAT],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("a lesson edited while the update was written is not overwritten", async () => {
+    const fixture = setup();
+    const edited = `${EXISTING}\nAn edit made meanwhile.\n`;
+    const result = await akmDistill({
+      ref: MEMORY_REF,
+      config: configJudgeEnabled(fixture.stash),
+      stashDir: fixture.stash,
+      fetchRelatedFn: async () => fixture.related,
+      lookupFn: async () => path.join(fixture.stash, "memories", "deploy-retries.md"),
+      readEventsFn: emptyEvents,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        if (joined.includes("Score this lesson")) {
+          return JSON.stringify({
+            scores: joined.includes("Stop retrying") ? ADDITION_OK : REPEAT,
+            reason: "lessons/deploy-retries already states this rule.",
+          });
+        }
+        if (joined.includes("Extend the existing one")) {
+          fs.writeFileSync(fixture.lessonPath, edited);
+          return JSON.stringify(updateWith(`${EXISTING_BODY}\n${NEW_FACT}`));
+        }
+        return VALID_LESSON;
+      },
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+    expect(fs.readFileSync(fixture.lessonPath, "utf8")).toBe(edited);
+  });
+
+  test("a writer that answers NONE because the lesson exists still yields the update", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: noneNaming("lessons/deploy-retries"),
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [ADDITION_OK],
+    });
+
+    expect(result).toMatchObject({ outcome: "queued", proposalRef: "lessons/deploy-retries", updatesExisting: true });
+    expect(listProposals(fixture.stash)).toHaveLength(1);
+  });
+
+  test("a NONE with no related lesson stays a skip and makes no update call", async () => {
+    const fixture = setup();
+    fixture.related = [];
+    const { result, prompts } = await run(fixture, { writer: "NONE" });
+
+    expect(result).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable" });
+    expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
+  });
+  /** A second, unrelated lesson near the memory, so that no lesson is the only one. */
+  function addSecondLesson(fixture: Fixture): void {
+    const other = path.join(fixture.stash, "lessons", "other-lesson.md");
+    fs.writeFileSync(other, "---\ndescription: Another rule\nwhen_to_use: Another trigger\n---\n\nSomething else.\n");
+    fixture.related.push({ ref: "lessons/other-lesson", content: "Something else.", path: other });
+  }
+
+  test("a NONE whose reason names no lesson, with several lessons near, makes no update call", async () => {
+    const fixture = setup();
+    addSecondLesson(fixture);
+    const { result, prompts } = await run(fixture, {
+      writer: noneNaming("a skill"),
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+    });
+
+    expect(result).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable" });
+    expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
+  });
+
+  test("a NONE whose reason names no lesson still updates the only lesson near the memory", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: noneNaming("an existing note"),
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [ADDITION_OK],
+    });
+
+    expect(result).toMatchObject({ outcome: "queued", proposalRef: "lessons/deploy-retries", updatesExisting: true });
+  });
+
+  test("a judge that rejects a repeat without naming a lesson, with several lessons near, makes no update call", async () => {
+    const fixture = setup();
+    addSecondLesson(fixture);
+    const prompts: string[] = [];
+    const result = await akmDistill({
+      ref: MEMORY_REF,
+      config: configJudgeEnabled(fixture.stash),
+      stashDir: fixture.stash,
+      fetchRelatedFn: async () => fixture.related,
+      lookupFn: async () => path.join(fixture.stash, "memories", "deploy-retries.md"),
+      readEventsFn: emptyEvents,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        prompts.push(joined);
+        if (joined.includes("Score this lesson"))
+          return JSON.stringify({ scores: REPEAT, reason: "An existing asset states it." });
+        return VALID_LESSON;
+      },
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
   });
 });

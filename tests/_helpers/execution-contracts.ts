@@ -67,24 +67,19 @@ export interface TestResolvedRequestInput {
     content: string;
     source?: TestSourceIdentity | null;
   } | null;
-  engine: {
+  target: {
     name: string;
-    kind: "agent" | "sdk" | "llm";
+    kind: "connection" | "harness";
     platform?: string | null;
   };
   model?: string | null;
   effort?: string | null;
   schema?: Readonly<Record<string, unknown>> | null;
   inference?: Readonly<Record<string, unknown>>;
-  tools?: unknown;
-  authorization?: {
-    status: "allowed" | "denied" | "not-observed" | "not-required";
-    reason?: string | null;
-  };
+  modelWork?: boolean;
   timeoutMs: number | null;
   workspace?: string | null;
   environment?: Readonly<Record<string, string>>;
-  notices?: readonly unknown[];
 }
 
 export interface TestNormalizedResolvedRequest {
@@ -99,24 +94,19 @@ export interface TestNormalizedResolvedRequest {
     content: string;
     source: TestSourceIdentity | null;
   } | null;
-  engine: {
+  target: {
     name: string;
-    kind: "agent" | "sdk" | "llm";
+    kind: "connection" | "harness";
     platform: string | null;
   };
   model: string | null;
   effort: string | null;
   schema: Record<string, unknown> | null;
   inference: Record<string, unknown>;
-  tools: unknown | null;
-  authorization: {
-    status: "allowed" | "denied" | "not-observed" | "not-required";
-    reason: string | null;
-  };
+  modelWork: boolean;
   timeoutMs: number | null;
   workspace: string | null;
   environment: Record<string, string>;
-  notices: unknown[];
 }
 
 function sortJson(value: unknown): unknown {
@@ -148,24 +138,19 @@ export function normalizeResolvedRequestForTest(input: TestResolvedRequestInput)
           source: input.persona.source ? (sortJson(input.persona.source) as unknown as TestSourceIdentity) : null,
         }
       : null,
-    engine: {
-      name: input.engine.name,
-      kind: input.engine.kind,
-      platform: input.engine.platform ?? null,
+    target: {
+      name: input.target.name,
+      kind: input.target.kind,
+      platform: input.target.platform ?? null,
     },
     model: input.model ?? null,
     effort: input.effort ?? null,
     schema: input.schema ? (sortJson(input.schema) as Record<string, unknown>) : null,
     inference: sortJson(input.inference ?? {}) as Record<string, unknown>,
-    tools: input.tools === undefined ? null : sortJson(input.tools),
-    authorization: {
-      status: input.authorization?.status ?? "not-observed",
-      reason: input.authorization?.reason ?? null,
-    },
+    modelWork: input.modelWork ?? false,
     timeoutMs: input.timeoutMs,
     workspace: input.workspace ?? null,
     environment: sortJson(input.environment ?? {}) as Record<string, string>,
-    notices: sortJson(input.notices ?? []) as unknown[],
   };
 }
 
@@ -174,7 +159,7 @@ export function canonicalResolvedRequestForTest(input: TestResolvedRequestInput)
   return `${JSON.stringify(normalizeResolvedRequestForTest(input))}\n`;
 }
 
-/** Project the production WP1 request without branching on its engine kind. */
+/** Project the production WP1 request without branching on its target kind. */
 export function projectResolvedExecutionRequestForTest(request: ResolvedExecutionRequestV1): TestResolvedRequestInput {
   const effort = request.inference?.reasoningEffort;
   return {
@@ -185,20 +170,18 @@ export function projectResolvedExecutionRequestForTest(request: ResolvedExecutio
     },
     ...(Object.hasOwn(request, "agent") ? { agent: request.agent } : {}),
     persona: request.persona ? { content: request.persona.content, source: { ...request.persona.source } } : null,
-    engine: {
-      name: request.engine.name,
-      kind: request.engine.kind,
-      ...(Object.hasOwn(request.engine, "platform") ? { platform: request.engine.platform } : {}),
+    target: {
+      name: request.target.name,
+      kind: request.target.kind,
+      ...(Object.hasOwn(request.target, "platform") ? { platform: request.target.platform } : {}),
     },
-    model: request.model?.resolved ?? null,
+    model: request.model?.model ?? null,
     effort: typeof effort === "string" ? effort : null,
     schema: request.outputSchema as Readonly<Record<string, unknown>> | null | undefined,
     inference: request.inference as Readonly<Record<string, unknown>> | undefined,
-    ...(Object.hasOwn(request, "tools") ? { tools: request.tools } : {}),
-    authorization: request.authorization,
+    modelWork: request.modelWork,
     timeoutMs: request.runtime.timeoutMs ?? null,
     workspace: request.runtime.workspace,
     environment: request.runtime.environment ?? undefined,
-    notices: request.notices,
   };
 }

@@ -8,18 +8,12 @@
  * (`DEFAULT_WORKFLOW_TASK_TIMEOUT_MS`, `DEFAULT_SCHEDULED_TASK_TIMEOUT_MS`)
  * every arm reads.
  *
- * Moved from src/tasks/runner.ts (spec docs/plans/specs/p1b-model-extraction.md
- * §5.1, §9, runner.ts:456-675).
- *
- * F-1 (spec §5.2 point 2): the global `process.env.AKM_EVENT_SOURCE` stamp
- * and its `finally` restore are DELETED outright — `process.env` is never
- * written by this arm any more. The resolved event source is instead passed
- * into `runWorkflowStepsImpl` via a new optional `eventSource` option,
- * `process.env.AKM_EVENT_SOURCE ?? provenance.eventSource` (ambient still
- * wins, matching the native arm's own precedence — D5 clause d). Threading
- * that option to an exec-unit child's env is owned by
- * src/workflows/exec/run-workflow.ts / step-work.ts / exec-unit.ts, not this
- * file.
+ * `process.env` is never written by this arm. The resolved event source is
+ * passed into `runWorkflowStepsImpl` via the optional `eventSource` option,
+ * `process.env.AKM_EVENT_SOURCE ?? provenance.eventSource` (ambient wins,
+ * matching the native arm's own precedence). Threading that option to an
+ * exec-unit child's env is owned by src/workflows/exec/run-workflow.ts /
+ * step-work.ts / exec-unit.ts, not this file.
  */
 
 import { armAbortDeadline } from "../../core/abort-deadline";
@@ -60,11 +54,12 @@ import type { TaskRunResult, TaskRunStatus } from "./task-result";
 export const DEFAULT_WORKFLOW_TASK_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 /**
- * The same unattended default for command and prompt tasks.
+ * The same unattended default for the other scheduled task kinds: `uses: commands/…`
+ * command tasks and native shell/script tasks.
  *
  * The reasoning above is about SCHEDULED runs, not about workflows: nobody is
- * watching, and one wedged run silently stops the schedule. Command tasks
- * defaulted to `null` (no kill timer) and prompt tasks inherited
+ * watching, and one wedged run silently stops the schedule. Native shell/script
+ * tasks defaulted to `null` (no kill timer) and command tasks inherited
  * DEFAULT_AGENT_TIMEOUT_MS, also null — so a hung `curl`, a prompting agent
  * waiting on stdin, or a stuck engine wedged the task forever while the
  * workflow arm was protected. Same value, same opt-out: an explicit
@@ -92,7 +87,7 @@ export async function runWorkflowTask(input: {
   // aborted by a timer. The engine reads `options.signal` at every step
   // boundary and breaks GRACEFULLY — in-flight units are cancelled, the journal
   // and the run lease are retained, and the run is left `active`, i.e.
-  // resumable with `akm workflow resume`.
+  // continuable with `akm workflow run <run-id>`.
   const controller = new AbortController();
   const deadline = armAbortDeadline(controller, {
     timeoutMs,
@@ -107,13 +102,12 @@ export async function runWorkflowTask(input: {
   // The prompt path logs the engine-fallback announcement; a workflow-backed
   // task must leave the same trace rather than silently using a chosen engine.
   let runWarnings: string[] = [];
-  // F-1 (D5, spec §5.2 point 2): thread the resolved event source through
-  // explicitly instead of stamping process.env — this arm executes IN-PROCESS,
-  // so a global stamp used to be how child akm invocations made by workflow
-  // steps inherited it; the explicit eventSource option (threaded to
-  // src/workflows/exec/run-workflow.ts -> step-work.ts -> exec-unit.ts's
-  // childEnv) now does that job without ever mutating process.env. A more
-  // specific ambient stamp already present still wins, matching the native arm.
+  // Thread the resolved event source through explicitly instead of stamping
+  // process.env — this arm executes IN-PROCESS, so the explicit eventSource option
+  // (threaded to src/workflows/exec/run-workflow.ts -> step-work.ts -> exec-unit.ts's
+  // childEnv) is how child akm invocations made by workflow steps inherit it,
+  // without ever mutating process.env. A more specific ambient stamp already
+  // present still wins, matching the native arm.
   const eventSource = process.env.AKM_EVENT_SOURCE ?? provenance.eventSource;
   try {
     const execution = await runWorkflowStepsImpl({
@@ -152,7 +146,7 @@ export async function runWorkflowTask(input: {
       ? undefined
       : new Error(
           `Workflow run timed out after ${timedOutAfterMs}ms and was aborted at a step boundary` +
-            (detail?.id ? ` — resume it with \`akm workflow resume ${detail.id}\`.` : "."),
+            (detail?.id ? ` — continue it with \`akm workflow run ${detail.id}\`.` : "."),
         );
 
   // One failure value for the three sinks below (status, log line, history

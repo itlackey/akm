@@ -21,6 +21,14 @@ Files:
   Refused at runtime naming `akm migrate apply`, whose v4->v4 pass strips
   the key without reading its value.
 
+- `config-v09-engines.json` and `models-v09.json` — a `config.json` in the
+  `engines` / `defaults` form 0.9.x wrote (an LLM engine with an `apiKeyFile`,
+  one with a `${secrets/...}` key, one with a literal key, one with a `$VAR`
+  key, an agent engine, an `opencode-sdk` runtime, per-process `engine`,
+  `workflow.judgeEngine`) and the user `models.json` overlay beside it
+  (`__KEY_FILE__` is replaced by the test). Read in memory as `connections` /
+  `harnesses`, and converted end to end by `akm migrate apply`.
+
 The proposals-state.db fixture (a pre-#858 legacy `metadata_json` row) is
 built programmatically inside the test — it is DB state, not a file, so
 there is nothing to check in here for it.

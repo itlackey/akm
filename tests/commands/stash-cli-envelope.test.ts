@@ -62,22 +62,12 @@ describe("akm stash-lifecycle cluster — JSON envelope snapshot (WS6)", () => {
     expect(typeof env.schemaVersion).toBe("number");
   });
 
-  test("index --enrich (removed flag): {ok:false} usage envelope on stderr (exit 2)", async () => {
-    const { stderr, status } = await runCli(["index", "--enrich"]);
-    expect(status).toBe(2);
-    const env = JSON.parse(stderr);
-    expect(env.ok).toBe(false);
-    expect(env.code).toBe("INVALID_FLAG_VALUE");
-    expect(env.error).toMatch(/--enrich` has been removed/);
-  });
-
-  test("index --re-enrich (removed flag): {ok:false} usage envelope on stderr (exit 2)", async () => {
-    const { stderr, status } = await runCli(["index", "--re-enrich"]);
-    expect(status).toBe(2);
-    const env = JSON.parse(stderr);
-    expect(env.ok).toBe(false);
-    expect(env.code).toBe("INVALID_FLAG_VALUE");
-    expect(env.error).toMatch(/--re-enrich` has been removed/);
+  test("index --enrich / --re-enrich (removed flags): an unknown-flag usage error (exit 2)", async () => {
+    for (const flag of ["--enrich", "--re-enrich"]) {
+      const { stderr, status } = await runCli(["index", flag]);
+      expect(status, flag).toBe(2);
+      expect(stderr, flag).toContain(`Unknown flag "${flag}"`);
+    }
   });
 
   test("import --name with '/': assertFlatAssetName → {ok:false} usage envelope on stderr (exit 2)", async () => {

@@ -3,8 +3,9 @@
 AKM learns from outcomes, but changes remain reviewable. When an agent reports
 whether a capability helped, akm records the report; when the report says the
 content was wrong, a later `akm improve` run drafts a concrete edit as a
-proposal. A proposal changes your bundle when you accept it, or when a policy
-you opted into does (see [Review-first](#review-first-and-the-autonomy-opt-in)).
+proposal. A proposal changes your bundle when you accept it, or when the
+improve run's triage pass accepts it (see
+[Review-first](#review-first-and-the-autonomy-opt-in)).
 
 ```text
 agent selects capability -> agent records outcome -> AKM updates utility and analyzes evidence ->
@@ -14,21 +15,24 @@ AKM creates a proposal -> human or policy reviews the diff -> accept / reject / 
 ## akm feedback
 
 `akm feedback` records a positive or negative signal for any indexed asset.
-The signal is written to the event log and moves the asset's utility score,
-which `akm improve` uses to decide which assets to look at first. Feedback
-does not change `akm search` ranking, which is relevance alone. See
+The signal changes the asset's search ranking immediately, so highly-rated
+assets rank higher and assets flagged wrong or stale surface less often right
+away, and it updates the asset's utility score, which improve and `akm metrics`
+read. See
 [Architecture: The Improvement Loop](../architecture/improvement.md#utility-scoring)
 for how the score is computed.
 
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
-flags the asset, and the next improve run may repair its description, title or
-`when_to_use` from your reason. Improve does not rewrite an asset's text. Once
-you have verified the correct fact, attach the exact fix: `--replace "<exact
-current text>" --with "<corrected text>" --source "<URL, command or file that
-shows it>"` (repeat `--replace`/`--with` for several edits). akm checks that
-each `--replace` text appears exactly once, records nothing if one does not,
-and queues the edit as a `feedback` proposal for review. `--positive` records
-that an asset helped and does not trigger a rewrite.
+flags the asset: it ranks lower right away, and the next improve run may repair
+its description, title or `when_to_use` from your reason. Improve does not
+rewrite an asset's text. Once you have verified the correct fact, attach the
+exact fix: `--replace "<exact current text>" --with "<corrected text>"
+--source "<URL, command or file that shows it>"` (repeat `--replace`/`--with`
+for several edits). akm checks that each `--replace` text appears exactly once,
+records nothing if one does not, and applies the edit at once: no review, no
+gate (the `feedback` proposal it files is accepted on the spot, so
+`akm proposal revert` undoes it). `--positive` records that an asset helped (it raises its ranking)
+and does not trigger a rewrite.
 
 ```sh
 akm feedback skills/code-review --positive
@@ -78,7 +82,12 @@ and cursor format.
 ## akm improve
 
 `akm improve` is the main entry point for the self-improvement pass. It reads
-feedback and usage, then generates proposals for you to review.
+feedback and usage, then generates proposals for you to review. Its model calls
+run on your default connection, else your default harness (`--connection`,
+`--harness` and `--model` choose another for a run; see
+[Configuration](../reference/configuration.md#where-each-process-runs)). With
+neither, `akm improve` stops at planning (exit 78) and points at `akm setup`; a
+single process with nowhere to run is skipped and reported in `skippedProcesses`.
 
 ```sh
 akm improve                           # Full bundle pass
@@ -98,20 +107,24 @@ one `akm improve --bundle <name>` run per other bundle you want improved.
 A rewrite (reflect) is planned for assets with negative feedback from the last
 30 days that is newer than the last time improve tried them, or for an explicit
 ref (`akm improve skills/code-review` always reworks that ref). A positive or
-note-only signal never plans one. Unless `--require-feedback-signal` is set, two
-fallback lanes pick assets with no such feedback: high-salience assets that were
-never reflected and, in a strategy that enables proactive maintenance, assets
-due for a revisit. A fallback lane only picks an asset that `search`, `curate`
-or `show` returned (or feedback named) in the last 90 days, or new material no
-improve stage has processed yet. The planned assets are ranked by salience and
-cut to `--limit`. The full selection rules are in
+note-only signal never plans one, and neither does a negative whose exact fix
+(`--replace`, `--outdated`, `--superseded-by`) has since been accepted. Unless
+`--require-feedback-signal` is set, the proactive-maintenance lane (on in
+`default`) also plans assets with no such feedback that are due for a revisit:
+at most 15 per run (`processes.proactiveMaintenance.maxPerRun`), and only assets
+not reflected or distilled for 30 days (`dueDays`), so each comes up at most
+once a month. The lane only picks an asset that `search`, `curate` or `show`
+returned (or feedback named) in the last 90 days, or new material no improve
+stage has processed yet. The planned assets are ranked by salience and cut to
+`--limit`. The full selection rules are in
 [Improve Workflow](../architecture/internals/improve-workflow.md) and
 [CLI Reference — improve](../reference/cli.md#improve).
 
 `--dry-run` previews a run without calling an LLM or writing anything. The
 result's `plannedRefs` are the refs left after every gate, and `plan` carries
-the per-gate removal counts, the effective limit, and the engine each process
-would use. A live run re-inspects its inputs, so it can plan differently.
+the per-gate removal counts, the effective limit, and the connection or harness
+and model each process would use. A live run re-inspects its inputs, so it can
+plan differently.
 
 **Example: auto-generate lessons from usage patterns**
 
@@ -123,8 +136,13 @@ akm proposal list            # review what was generated
 
 ### Review-first, and the autonomy opt-in
 
-`akm improve` queues proposals; it does not edit your assets. Three lanes that
-would write without review stay off until you set `experimental.improveAutonomy`:
+`akm improve` writes its changes as proposals. With the `default` strategy, the
+triage pass at the start of each run (`applyMode: "promote"`) accepts pending
+proposals whose quality judge passed (not those the proactive-maintenance lane
+planned), plus retire proposals the consolidate pair pass staged with no
+continuity risk, at most 200 a run. A strategy whose `triage.applyMode` is
+`"queue"` leaves every proposal for you. Three lanes stay off until you set
+`experimental.improveAutonomy`:
 
 ```sh
 akm config set experimental.improveAutonomy true
@@ -133,12 +151,13 @@ akm config set experimental.improveAutonomy true
 - **Memory inference** writes `.derived.md` children next to memories.
 - **Memory cleanup** rewrites belief-state frontmatter and moves retired
   memories to an archive.
-- **Triage with `applyMode: "promote"`** (set in a strategy's `triage` block)
-  accepts queued proposals whose quality judge passed, plus retire proposals
-  the consolidate pair pass staged with no continuity risk.
+- **Triage promote with its judgment tier on** (`processes.triage.judgment`):
+  the judgment tier accepts consolidate promotions. A promote with judgment off,
+  as in `default`, is not gated.
 
-With the key off (the default), each lane is downgraded and the downgrade is
-reported on stderr and in `akm health`. `akm proposal drain --promote` is a
+With the key off (the default), memory inference is skipped, memory cleanup is
+analyzed but not applied, and a judged promote is downgraded to `queue`; each downgrade is reported on
+stderr and by `akm task doctor`. `akm proposal drain --promote` is a
 separate, explicit way to accept judged proposals and does not need the key.
 
 Some writes happen either way: session summaries under `sessions/**`, the purge
@@ -165,7 +184,7 @@ akm proposal diff <id>                          # Preview the change vs. the liv
 
 # Apply or discard
 akm proposal accept <uuid-or-prefix>
-akm proposal accept skills/akm-dream --target team-bundle
+akm proposal accept skills/akm-dream --bundle team-bundle
 akm proposal reject <uuid-or-prefix> --reason "duplicates existing workflow"
 ```
 
@@ -188,10 +207,14 @@ akm proposal accept abc12345           # write it to the bundle
 ### akm proposal drain
 
 `akm proposal drain` works through the pending backlog in one pass: it rejects
-empty diffs, accepts proposals whose quality judge passed on their exact content
-when you pass `--promote` (add `--yes` outside a terminal), and leaves the rest
-for you to review. Without `--promote` it stages and writes nothing to your
-assets.
+empty diffs, accepts proposals whose quality judge passed on their exact content,
+and leaves the rest for you to review. A bare `akm proposal drain` follows the
+apply mode of your improve strategy (`improve.strategy`, `default` unless set).
+`default`'s is promote, so it accepts those proposals after asking for
+confirmation (add `--yes` outside a terminal). A strategy whose
+apply mode is `queue` stages and writes nothing to your assets instead.
+Whether a bare drain should promote is open
+([#1274](https://github.com/itlackey/akm/issues/1274)).
 
 ```sh
 akm proposal drain --dry-run                    # List what would be accepted, rejected or deferred
@@ -200,10 +223,11 @@ akm proposal drain --promote --yes --max-accepts 10
 
 ## akm proposal new
 
-`akm proposal new` asks an engine to author a brand-new asset, useful when you
+`akm proposal new` asks an agent to author a brand-new asset, useful when you
 want to create something from scratch rather than improving an existing asset.
-Any engine kind works (an LLM engine, an agent CLI or `opencode-sdk`): the
-engine returns the asset as JSON, which akm validates. The result goes to the
+It runs on your default harness, or on akm's own runtime over your connection
+when you have no harness (`--harness` and `--connection` choose another): the
+agent returns the asset as JSON, which akm validates. The result goes to the
 proposal queue, not directly to the bundle.
 
 ```sh

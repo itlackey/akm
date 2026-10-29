@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The pure task v3 -> task source v4 planner (`src/tasks/source/task-to-v4.ts`):
+ * The pure task v3 -> task source v4 planner (`scripts/akm-migrate/migrate/task-to-v4.ts`):
  * the translation table, the blocked catalog, and classification/generation
  * determinism, driven off the fixture corpus at
  * tests/fixtures/execution-contracts/tasks/v3-to-v4/ (deterministic|blocked
@@ -18,8 +18,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { planTaskFilesMigration } from "../../scripts/akm-migrate/migrate/task-files";
+import { planTaskToV4File } from "../../scripts/akm-migrate/migrate/task-to-v4";
 import { parseTaskSourceV4 } from "../../src/tasks/source/task-source-v4";
-import { planTaskToV4File } from "../../src/tasks/source/task-to-v4";
 import {
   assertFixtureBytesUnchanged,
   captureFixtureBytes,
@@ -126,7 +126,7 @@ describe("pure task v3 to v4 migration planner", () => {
     });
   });
 
-  test("hoists description/when_to_use/tags/agent/inference/tools and outputSchema -> output, preserving a duration-string timeout", () => {
+  test("hoists description/when_to_use/tags/agent/inference and outputSchema -> output, preserving a duration-string timeout", () => {
     const metadata = fixtureOutcome("metadata-hoist");
     const output = fixtureOutcome("output-schema-hoist");
     for (const outcome of [metadata, output]) {
@@ -143,7 +143,6 @@ describe("pure task v3 to v4 migration planner", () => {
       tags: ["reporting", "nightly"],
       agent: "fixture-agent",
       inference: { temperature: 0.2 },
-      tools: ["filesystem"],
       timeout: "5m",
     });
     expect(parseYaml((output as { after: Buffer }).after.toString("utf8"))).toEqual({
@@ -153,6 +152,13 @@ describe("pure task v3 to v4 migration planner", () => {
       schedule: "@daily",
       output: { type: "object", properties: { summary: { type: "string" } }, required: ["summary"] },
     });
+  });
+
+  test("drops akm.tools instead of hoisting it", () => {
+    const outcome = fixtureOutcome("metadata-hoist");
+    if (outcome.status !== "changed") throw new Error(`expected changed: ${outcome.filePath}`);
+
+    expect(parseYaml(outcome.after.toString("utf8"))).not.toHaveProperty("tools");
   });
 
   // F3: the frozen v3 reader accepts `akm.outputSchema: null` verbatim as

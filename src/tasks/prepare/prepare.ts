@@ -6,7 +6,7 @@
  * Pure task runtime projection.
  *
  * This is the only bridge from an already-parsed, already-projected task
- * source document (the `PreparableTaskDocument` seam, P4-N4) into executable
+ * source document (the `PreparableTaskDocument` seam) into executable
  * work. It performs all source/config/asset reads before the task runner
  * reserves a durable attempt and returns immutable snapshots. In particular,
  * script work contains frozen bytes and their digest, never a path that can
@@ -15,12 +15,13 @@
  * `prepareTaskV3Execution`'s three production callers are
  * `src/tasks/run/load-task.ts`, `src/tasks/scheduler-sync.ts`, and
  * `src/workflows/freeze/targets/task.ts`'s `taskDispatch`. The name and the
- * `TaskV3*` type family it takes stay (spec docs/plans/specs/p4-deletions-closeout.md
- * §0, R-R1) — only task source v4 ever reaches this function now, always via
- * `src/tasks/source/project-v4.ts`'s `projectTaskSourceV4()`.
+ * `TaskV3*` type family it takes stay; only task source v4 ever reaches this
+ * function now, always via `src/tasks/source/project-v4.ts`'s
+ * `projectTaskSourceV4()`.
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import { prepareCommandInvocation } from "../../commands/command/command-execution";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
@@ -37,7 +38,7 @@ import {
   validateWorkflowRuntimeSource,
 } from "./prepare-support";
 import type { PreparedTaskV3Execution, PrepareTaskV3ExecutionContext } from "./prepared-execution";
-import { captureDirectoryIdentity, captureScriptTarget } from "./script-capture";
+import { captureScriptTarget } from "./script-capture";
 
 /** Project one canonical task-v3 source into immutable executable work. */
 export async function prepareTaskV3Execution(
@@ -48,14 +49,12 @@ export async function prepareTaskV3Execution(
   const commandEnvironment = commandEnvironmentSnapshot(environment, context.schedulerContext);
   const common = base(document, context, environment);
   if (document.target.kind === "run") {
-    const cwdIdentity = captureDirectoryIdentity(context.bundleRoot, document.target.workingDirectory);
     return Object.freeze({
       ...common,
       kind: "shell" as const,
       command: document.target.run,
       shell: document.target.shell ?? defaultTaskShell(context.platform ?? process.platform),
-      cwd: cwdIdentity.realCwd,
-      cwdIdentity,
+      cwd: path.resolve(context.bundleRoot, document.target.workingDirectory ?? "."),
     });
   }
 
@@ -134,7 +133,7 @@ export async function prepareTaskV3Execution(
     throw new UsageError("Script refs do not accept with.", "COMPOSITION_INVALID");
   }
   const resolved = await resolvedOwnedAsset(qualified, "script", context);
-  // Shared with prepare-script-target.ts's prepareScriptTarget() (spec §4.3):
+  // Shared with prepare-script-target.ts's prepareScriptTarget():
   // one implementation of the byte/interpreter capture, not two.
   const captured = captureScriptTarget(
     qualified,

@@ -276,19 +276,6 @@ describe("recognizeMatch", () => {
     expect(result?.specificity).toBe(8);
   });
 
-  test("smartMdMatcher matches .md with 'tools' frontmatter as 'agent'", () => {
-    const root = tmpDir();
-    const filePath = path.join(root, "misc", "builder.md");
-    writeFile(filePath, ["---", "tools:", "  read: allow", "---", "You are a builder."].join("\n"));
-
-    const ctx = buildFileContext(root, filePath);
-    const result = smartMdMatcher(ctx);
-
-    expect(result).not.toBeNull();
-    expect(result?.type).toBe("agent");
-    expect(result?.specificity).toBe(20);
-  });
-
   test("smartMdMatcher classifies .md without agent/command signals as knowledge", () => {
     const root = tmpDir();
     const filePath = path.join(root, "misc", "deploy.md");
@@ -333,30 +320,6 @@ describe("recognizeMatch", () => {
     expect(result?.specificity).toBe(18);
   });
 
-  test("smartMdMatcher: a toolPolicy-only file is not an agent", () => {
-    const root = tmpDir();
-    const filePath = path.join(root, "misc", "legacy-policy.md");
-    writeFile(filePath, ["---", "toolPolicy:", "  read: allow", "---", "You are an agent."].join("\n"));
-
-    const ctx = buildFileContext(root, filePath);
-    const result = smartMdMatcher(ctx);
-
-    expect(result?.type).toBe("knowledge");
-  });
-
-  test("smartMdMatcher: tools (20) beats agent frontmatter command signal (18)", () => {
-    const root = tmpDir();
-    const filePath = path.join(root, "misc", "hybrid.md");
-    writeFile(filePath, ["---", "tools:", "  read: allow", "agent: build", "---", "You are a hybrid."].join("\n"));
-
-    const ctx = buildFileContext(root, filePath);
-    const result = smartMdMatcher(ctx);
-
-    // tools is agent-exclusive at 20, wins over agent dispatch at 18
-    expect(result?.type).toBe("agent");
-    expect(result?.specificity).toBe(20);
-  });
-
   test("smartMdMatcher: agent frontmatter (18) beats model-only (8)", () => {
     const root = tmpDir();
     const filePath = path.join(root, "misc", "deploy.md");
@@ -377,30 +340,6 @@ describe("recognizeMatch", () => {
 
     const ctx = buildFileContext(root, filePath);
     expect(smartMdMatcher(ctx)).toBeNull();
-  });
-
-  test("specificity ordering: strong agent signal (tools) beats directoryMatcher", async () => {
-    const root = tmpDir();
-    const filePath = path.join(root, "commands", "hybrid.md");
-    writeFile(filePath, ["---", "tools:", "  read: allow", "---", "Agent in commands dir."].join("\n"));
-
-    const ctx = buildFileContext(root, filePath);
-
-    // directoryMatcher says "command" at specificity 10
-    const dirResult = directoryMatcher(ctx);
-    expect(dirResult?.type).toBe("command");
-    expect(dirResult?.specificity).toBe(10);
-
-    // smartMdMatcher says "agent" at specificity 20 (tools is a strong signal)
-    const smartResult = smartMdMatcher(ctx);
-    expect(smartResult?.type).toBe("agent");
-    expect(smartResult?.specificity).toBe(20);
-
-    // recognizeMatch should pick the higher specificity
-    const best = recognizeMatch(ctx);
-    expect(best).not.toBeNull();
-    expect(best?.type).toBe("agent");
-    expect(best?.specificity).toBe(20);
   });
 
   test("specificity ordering: directoryMatcher(10) beats smartMdMatcher(5) for plain .md", async () => {
@@ -541,36 +480,45 @@ describe("task-yaml metadata fold", () => {
 
 // ── 2c. workflow metadata fold: step targets (#935) ─────────────────────────
 describe("workflow-md metadata fold", () => {
-  test("records each step's target asset as `uses`, in step order, once each", () => {
+  test("records each child workflow step's ref as `uses`, in step order, once each", () => {
     const root = tmpDir();
-    const filePath = path.join(root, "workflows", "release.yml");
+    const filePath = path.join(root, "workflows", "release.md");
     writeFile(
       filePath,
       [
-        "name: release",
-        "on:",
-        "  workflow_dispatch: {}",
-        "jobs:",
-        "  release:",
-        "    runs-on: [self-hosted]",
-        "    steps:",
-        "      - id: cut",
-        "        uses: commands/cut-release",
-        "      - id: review",
-        "        uses: akm/command",
-        "        with:",
-        "          ref: commands/review",
-        "      - id: notify",
-        "        uses: other//scripts/notify",
-        "      - id: cut-again",
-        "        uses: commands/cut-release",
-        "      - id: shell",
-        "        run: echo done",
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: cut",
+        "    unit: { workflow: workflows/cut-release }",
+        "  - id: notify",
+        "    unit: { workflow: other//workflows/notify }",
+        "  - id: cut-again",
+        "    unit: { workflow: workflows/cut-release }",
+        "  - id: shell",
+        "    unit: { exec: { command: [echo, done] } }",
+        "---",
+        "",
+        "## cut",
+        "",
+        "Cut.",
+        "",
+        "## notify",
+        "",
+        "Notify.",
+        "",
+        "## cut-again",
+        "",
+        "Cut again.",
+        "",
+        "## shell",
+        "",
+        "Done.",
       ].join("\n"),
     );
     const entry: IndexDocument = { name: "release", type: "workflow" };
     applyFoldedMetadata(entry, foldRecognizedMetadata("workflow-md", buildFileContext(root, filePath)));
-    expect(entry.uses).toEqual(["commands/cut-release", "commands/review", "other//scripts/notify"]);
+    expect(entry.uses).toEqual(["workflows/cut-release", "other//workflows/notify"]);
   });
 
   test("a Markdown workflow's prose steps target no asset", () => {
@@ -630,6 +578,28 @@ describe("Renderer", () => {
     expect(response.modelHint).toBe("gpt-4");
   });
 
+  test("getRenderer('session-md') shows started/ended, and still reads the legacy started_at/ended_at", async () => {
+    const root = tmpDir();
+    const show = async (name: string, dates: string[]) => {
+      const filePath = path.join(root, "sessions", "claude", `${name}.md`);
+      writeFile(filePath, ["---", "harness: claude", ...dates, "---", "## Summary"].join("\n"));
+      const renderer = expectDefined(await getRenderer("session-md"));
+      const ctx = buildFileContext(root, filePath);
+      const match = { type: "session", specificity: 10, renderer: "session-md", meta: { name: `${name}.md` } };
+      return renderer.buildShowResponse(buildRenderContext(ctx, match, [root])).action as string;
+    };
+
+    expect(await show("new", ["started: 2026-10-01T10:00:00.000Z", "ended: 2026-10-01T11:00:00.000Z"])).toContain(
+      "2026-10-01T10:00:00.000Z – 2026-10-01T11:00:00.000Z",
+    );
+    expect(await show("old", ["started_at: 2026-09-01T10:00:00.000Z", "ended_at: 2026-09-01T11:00:00.000Z"])).toContain(
+      "2026-09-01T10:00:00.000Z – 2026-09-01T11:00:00.000Z",
+    );
+    expect(await show("both", ["started: 2026-10-01T10:00:00.000Z", "started_at: 2026-09-01T10:00:00.000Z"])).toContain(
+      "2026-10-01T10:00:00.000Z",
+    );
+  });
+
   test("getRenderer('command-md') extracts template from body", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "commands", "deploy.md");
@@ -669,7 +639,7 @@ describe("Renderer", () => {
     // Section selection is the ref's `#fragment`, applied by showLocal — the
     // renderer itself has no view modes to branch on.
     expect(response.content).toBe(content);
-    expect(response.action).toContain("#fragment");
+    expect(response.action).toContain("akm show <ref>#<slug>");
   });
 
   test("getAllRenderers() returns all 13 built-in renderers", async () => {

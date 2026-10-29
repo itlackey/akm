@@ -34,6 +34,8 @@ import {
   T_PAIR,
 } from "../../../../src/commands/improve/consolidate/pair-pass";
 import { contentHash } from "../../../../src/commands/improve/content-hash";
+import { drainProposals } from "../../../../src/commands/proposal/drain";
+import { akmProposalAccept, akmProposalRevert } from "../../../../src/commands/proposal/proposal";
 import { getProposal, listProposals } from "../../../../src/commands/proposal/repository";
 import { getDbPath } from "../../../../src/core/paths";
 import { openStateDatabase } from "../../../../src/core/state-db";
@@ -46,6 +48,8 @@ import {
 import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../../src/storage/repositories/index-entries-repository";
 import { upsertEmbedding } from "../../../../src/storage/repositories/index-vec-repository";
+import { upsertProposal } from "../../../../src/storage/repositories/proposals-repository";
+import { makeConfig } from "../../../_helpers/factories";
 import { testLlmRunner } from "../../../_helpers/llm-runner";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
@@ -109,20 +113,18 @@ function baseOpts(): AkmConsolidateOptions {
       source: { kind: "filesystem", name: "stash", path: storage.stashDir, adapterId: "akm" },
       config: { type: "filesystem", name: "stash", path: storage.stashDir, writable: true },
     },
-    llmRunner: testLlmRunner({ endpoint: "http://localhost/v1/chat/completions", model: "test", concurrency: 1 }),
+    llmRunner: testLlmRunner({ endpoint: "http://localhost/v1/chat/completions", model: "test" }),
     sourceRun: "consolidate-pair-test",
   } as AkmConsolidateOptions;
 }
 
 /** True for the pair judge's own call, false for the second look a duplicate gets before it is staged. */
 function isJudgeCall(messages: ReadonlyArray<{ content: string }>): boolean {
-  return messages[0]?.content.startsWith("You compare two assets") ?? false;
+  return messages.at(-1)?.content.startsWith("Asset A ") ?? false;
 }
 
 /** A canned judge: returns a fixed verdict for every call, regardless of the prompt, and an empty second look. */
 function fixedChat(verdict: {
-  relation: string;
-  redundant: "A" | "B" | null;
   onlyInA?: string[];
   onlyInB?: string[];
   /** The second look's answer, for a duplicate about to be staged. */
@@ -136,13 +138,196 @@ function fixedChat(verdict: {
       : JSON.stringify({
           onlyInA: verdict.onlyInA ?? [],
           onlyInB: verdict.onlyInB ?? [],
-          relation: verdict.relation,
-          redundant: verdict.redundant,
-          stale: null,
           confidence: verdict.confidence ?? 0.9,
           reason: verdict.reason ?? "test reason",
         });
 }
+
+describe("complete retirement evidence (#1195)", () => {
+  const claim = "Recovery requires offline vault key K-1195 from the custodian.";
+  const padding = "备份 recovery 🙂\n".repeat(1_500);
+
+  function plant(bodies: [string, string], ages: [number, number] = [3, 1]): [string, string] {
+    const paths = bodies.map((body, i) => {
+      const file = writeAsset(`memories/${i === 0 ? "a" : "b"}.md`, "description: backup recovery", body);
+      dateAsset(file, ages[i]!);
+      return file;
+    }) as [string, string];
+    // Exact equal ages, independent of the two write/utimes calls' wall clocks.
+    if (ages[0] === ages[1]) {
+      const at = fs.statSync(paths[0]).mtime;
+      fs.utimesSync(paths[1], at, at);
+    }
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "a", paths[0], 0);
+      indexAsset(db, "memory", "b", paths[1], angleForCosine(0.98));
+    } finally {
+      closeDatabase(db);
+    }
+    return paths;
+  }
+
+  for (const offset of [11_900, 11_990, 12_100]) {
+    for (const uniqueSide of [0, 1]) {
+      for (const ages of [
+        [3, 1],
+        [1, 3],
+        [2, 2],
+      ] as [number, number][]) {
+        test(`unique side ${uniqueSide}, offset ${offset}, ages ${ages}: no unsafe proposal`, async () => {
+          const unique = `${padding.slice(0, offset)}${claim}${padding.slice(offset)}`;
+          const bodies: [string, string] = uniqueSide === 0 ? [unique, padding] : [padding, unique];
+          const paths = plant(bodies, ages);
+          const raw = paths.map((file) => fs.readFileSync(file, "utf8"));
+          const prompts: string[] = [];
+          const chat: PairJudgeChat = async (_connection, messages) => {
+            const prompt = messages.at(-1)!.content;
+            prompts.push(prompt);
+            if (!isJudgeCall(messages)) {
+              const [x = "", y = ""] = prompt.split("Note Y (kept):");
+              return JSON.stringify({ missing: x.includes(claim) && !y.includes(claim) ? [claim] : [] });
+            }
+            const firstRef = uniqueSide === 0 ? "Ref: memories/a" : "Ref: memories/b";
+            const uniqueIsA = prompt.indexOf(firstRef) < prompt.indexOf("Asset B");
+            return JSON.stringify({
+              onlyInA: uniqueIsA && prompt.includes(claim) ? [claim] : [],
+              onlyInB: !uniqueIsA && prompt.includes(claim) ? [claim] : [],
+              confidence: 1,
+              reason: "probe",
+            });
+          };
+          const config = makeConfig(storage.stashDir);
+          const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], { chat });
+          expect(result.pairsJudged).toBe(1);
+          expect(prompts).toHaveLength(2);
+          for (const prompt of prompts) for (const body of bodies) expect(prompt).toContain(body);
+          expect(result.retired).toHaveLength(1);
+          const proposal = getProposal(storage.stashDir, result.retired[0]!);
+          expect(proposal.retirement?.retiredRef).toBe(`memories/${uniqueSide === 0 ? "b" : "a"}`);
+          expect(proposal.retirement?.successorRef).toBe(`memories/${uniqueSide === 0 ? "a" : "b"}`);
+          expect(proposal.gateDecision?.outcome).toBe("staged");
+          const drain = await drainProposals({
+            stashDir: storage.stashDir,
+            config,
+            applyMode: "promote",
+            maxAccepts: 25,
+            dryRun: false,
+          });
+          expect(drain.promoted).toEqual(result.retired);
+          expect(fs.readFileSync(paths[uniqueSide]!, "utf8")).toBe(raw[uniqueSide]!);
+          expect(fs.existsSync(paths[1 - uniqueSide]!)).toBe(false);
+        });
+      }
+    }
+  }
+
+  for (const failure of [
+    "missing-claim",
+    "context",
+    "malformed",
+    "string-list",
+    "other-shape",
+    "interrupted",
+    "initial-context",
+  ] as const) {
+    test(`${failure}: complete second input, no unattended acceptance, bytes retained`, async () => {
+      const bodies: [string, string] = [`${padding}${claim}`, padding];
+      const paths = plant(bodies);
+      const raw = paths.map((file) => fs.readFileSync(file, "utf8"));
+      const checks: string[] = [];
+      const chat: PairJudgeChat = async (connection, messages) => {
+        if (isJudgeCall(messages)) {
+          if (failure === "initial-context") throw new Error("context window exceeded");
+          // An erroneous first judgment must still get an independent complete second look.
+          return fixedChat({})(connection, messages);
+        }
+        checks.push(messages.at(-1)!.content);
+        if (failure === "context") throw new Error("context window exceeded");
+        if (failure === "interrupted") throw new DOMException("interrupted", "AbortError");
+        if (failure === "malformed") return '{"missing":null}';
+        if (failure === "string-list") return '{"missing":"[]"}';
+        if (failure === "other-shape") return '{"allClaimsPreserved":true}';
+        return JSON.stringify({ missing: messages.at(-1)!.content.includes(claim) ? [claim] : [] });
+      };
+      const config = makeConfig(storage.stashDir);
+      const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], { chat });
+      if (failure === "initial-context") {
+        expect(result.retired).toEqual([]);
+        expect(result.failedJudgments).toBe(1);
+      } else {
+        expect(result.retired).toHaveLength(1);
+        expect(checks.length).toBeGreaterThan(0);
+        for (const prompt of checks) {
+          for (const body of bodies) expect(prompt).toContain(body);
+          expect(prompt.match(/^Description: backup recovery$/gm)).toHaveLength(2);
+        }
+        const proposal = getProposal(storage.stashDir, result.retired[0]!);
+        expect(proposal.status).toBe("pending");
+        expect(proposal.gateDecision).toBeUndefined();
+      }
+      const drain = await drainProposals({
+        stashDir: storage.stashDir,
+        config,
+        applyMode: "promote",
+        maxAccepts: 25,
+        dryRun: false,
+      });
+      expect(drain.promoted).toEqual([]);
+      expect(paths.map((file) => fs.readFileSync(file, "utf8"))).toEqual(raw);
+    });
+  }
+
+  test("a true long duplicate stages, drains, archives, and reverts byte for byte", async () => {
+    const body = `${padding}${claim}`;
+    const paths = plant([body, body]);
+    const raw = paths.map((file) => fs.readFileSync(file, "utf8"));
+    const prompts: string[] = [];
+    const chat: PairJudgeChat = async (connection, messages) => {
+      prompts.push(messages.at(-1)!.content);
+      return fixedChat({})(connection, messages);
+    };
+    const config = makeConfig(storage.stashDir);
+    const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], { chat });
+    expect(prompts).toHaveLength(2);
+    for (const prompt of prompts) expect(prompt.split(body)).toHaveLength(3);
+    const id = result.retired[0]!;
+    expect(getProposal(storage.stashDir, id).gateDecision?.outcome).toBe("staged");
+    const drain = await drainProposals({
+      stashDir: storage.stashDir,
+      config,
+      applyMode: "promote",
+      maxAccepts: 25,
+      dryRun: false,
+    });
+    expect(drain.promoted).toEqual([id]);
+    const accepted = getProposal(storage.stashDir, id);
+    expect(accepted.status).toBe("accepted");
+    expect(accepted.backupContent).toBe(raw[0]);
+    expect(accepted.retiredArchive?.dirs).toHaveLength(1);
+    expect(fs.existsSync(paths[0])).toBe(false);
+    expect(fs.readFileSync(paths[1], "utf8")).toBe(raw[1]!);
+    // Repeated acceptance resumes the already-complete operation without another deletion.
+    expect((await akmProposalAccept({ stashDir: storage.stashDir, id, config })).proposal.status).toBe("accepted");
+    await akmProposalRevert({ stashDir: storage.stashDir, id, config });
+    expect(paths.map((file) => fs.readFileSync(file, "utf8"))).toEqual(raw);
+  });
+
+  test("a tail edit after judging stales a staged retirement at acceptance", async () => {
+    const paths = plant([padding, padding]);
+    const config = makeConfig(storage.stashDir);
+    const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], {
+      chat: fixedChat({}),
+    });
+    const id = result.retired[0]!;
+    expect(getProposal(storage.stashDir, id).gateDecision?.outcome).toBe("staged");
+    fs.appendFileSync(paths[1], claim);
+    const raw = paths.map((file) => fs.readFileSync(file, "utf8"));
+    await expect(akmProposalAccept({ stashDir: storage.stashDir, id, config })).rejects.toThrow();
+    expect(getProposal(storage.stashDir, id).status).toBe("pending");
+    expect(paths.map((file) => fs.readFileSync(file, "utf8"))).toEqual(raw);
+  });
+});
 
 describe("selectInitiators / selectCandidates — threshold math against a real index", () => {
   test("a backlog initiator (never attempted, not new material) needs >= BACKFILL_FLOOR (0.95); T_PAIR (0.93) alone is not enough", () => {
@@ -397,7 +582,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
     const warnings: string[] = [];
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      chat: fixedChat({ relation: "duplicate", redundant: null }),
+      chat: fixedChat({}),
     });
 
     expect(result.initiators).toBe(2); // both old-note and new-note qualify as initiators
@@ -465,7 +650,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
     const warnings: string[] = [];
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      chat: fixedChat({ relation: "duplicate", redundant: null }),
+      chat: fixedChat({}),
       // old-note ranks #1 for its own past query; new-note never shows up —
       // a real continuity failure.
       continuitySearch: async () => ({ hits: [{ ref: "stash//memories/old-note" }], mode: "semantic" }),
@@ -502,7 +687,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
     const warnings: string[] = [];
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      chat: fixedChat({ relation: "duplicate", redundant: null }),
+      chat: fixedChat({}),
     });
 
     expect(result.labelCounts.duplicate).toBe(3); // all three pairs were judged
@@ -544,7 +729,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const result2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
       chat: async (...args) => {
         if (isJudgeCall(args[1])) chatCalls2++;
-        return fixedChat({ relation: "duplicate", redundant: null })(...args);
+        return fixedChat({})(...args);
       },
     });
     expect(chatCalls2).toBe(1); // the {B,C} pair, judged for the first time
@@ -553,7 +738,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(retiredRefs2).toEqual(["stash//memories/b-note"]); // b (older of the two survivors) retires into c
   });
 
-  test("contradicts: counted, no proposal, no belief write", async () => {
+  test("distinct claims on both sides: counted as overlap, no proposal or belief write", async () => {
     const oldPath = writeAsset("memories/claim-a.md", "description: claim a");
     dateAsset(oldPath, 60);
     const newPath = writeAsset("memories/claim-b.md", "description: claim b");
@@ -568,10 +753,10 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
     const warnings: string[] = [];
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      chat: fixedChat({ relation: "contradicts", redundant: null }),
+      chat: fixedChat({ onlyInA: ["value a"], onlyInB: ["value b"] }),
     });
 
-    expect(result.labelCounts.contradicts).toBeGreaterThanOrEqual(1);
+    expect(result.labelCounts.overlap).toBeGreaterThanOrEqual(1);
     expect(result.retired).toHaveLength(0);
     expect(listProposals(storage.stashDir)).toHaveLength(0);
     const claimAContent = fs.readFileSync(oldPath, "utf8");
@@ -579,7 +764,69 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(claimAContent).not.toContain("beliefState");
   });
 
-  test("subsumed: retires the side the judge names redundant", async () => {
+  test("#1134: the judge is told a different value is a replacement only when B says so or is newer, and a tie in dates is not called newer", async () => {
+    const aPath = writeAsset("memories/lease-a.md", "description: lease a");
+    const bPath = writeAsset("memories/lease-b.md", "description: lease b");
+    // One shared instant: two dateAsset(…, 2) calls read Date.now() separately and can land 1 ms apart.
+    const sameInstant = new Date(Date.now() - 2 * MS_PER_DAY);
+    fs.utimesSync(aPath, sameInstant, sameInstant);
+    fs.utimesSync(bPath, sameInstant, sameInstant);
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "lease-a", aPath, 0);
+      indexAsset(db, "memory", "lease-b", bPath, angleForCosine(0.96));
+    } finally {
+      closeDatabase(db);
+    }
+
+    const judgeCalls: Array<{ system: string; user: string }> = [];
+    const chat: PairJudgeChat = async (_connection, messages) => {
+      if (isJudgeCall(messages)) judgeCalls.push({ system: messages[0]!.content, user: messages[1]!.content });
+      return fixedChat({ onlyInA: ["value a"], onlyInB: ["value b"] })(_connection, messages);
+    };
+    await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], { chat });
+
+    expect(judgeCalls.length).toBeGreaterThanOrEqual(1);
+    const { system, user } = judgeCalls[0]!;
+    expect(system).toContain("B replaces a claim of A only when");
+    expect(system).toContain("is a conflict, not a replacement");
+    // A later date alone never makes notes about different named things replace each other.
+    expect(system).toContain("both are about the same named thing");
+    expect(system).toContain("Notes about different named things never replace each other, whatever their dates");
+    expect(system).toContain("when both dates are equal, neither note is newer");
+    expect(user.match(/^Created: /gm)).toHaveLength(2);
+    // Both notes carry one date: neither is "older" or "newer", so the prompt must not say so.
+    expect(user).toContain("Asset A (same age as B):");
+    expect(user).toContain("Asset B (same age as A):");
+    expect(user).not.toContain("(newer)");
+  });
+
+  test("#1134: notes with different dates are still labelled A (older) and B (newer)", async () => {
+    const aPath = writeAsset("memories/ttl-a.md", "description: ttl a");
+    dateAsset(aPath, 60);
+    const bPath = writeAsset("memories/ttl-b.md", "description: ttl b");
+    dateAsset(bPath, 1);
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "ttl-a", aPath, 0);
+      indexAsset(db, "memory", "ttl-b", bPath, angleForCosine(0.96));
+    } finally {
+      closeDatabase(db);
+    }
+
+    const users: string[] = [];
+    const chat: PairJudgeChat = async (_connection, messages) => {
+      if (isJudgeCall(messages)) users.push(messages[1]!.content);
+      return fixedChat({ onlyInA: ["value a"], onlyInB: ["value b"] })(_connection, messages);
+    };
+    await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], { chat });
+
+    expect(users.length).toBeGreaterThanOrEqual(1);
+    expect(users[0]).toContain("Asset A (older):");
+    expect(users[0]).toContain("Asset B (newer):");
+  });
+
+  test("subsumed: retires the side with no distinct claims", async () => {
     const smallPath = writeAsset("memories/small-note.md", "description: small");
     dateAsset(smallPath, 60);
     const bigPath = writeAsset("memories/big-note.md", "description: big, contains everything small has plus more");
@@ -593,9 +840,9 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     }
 
     const warnings: string[] = [];
-    // redundant: "A" — A is the older side by created date (small-note).
+    // A is older and has no distinct claim; the larger B retains the extra rule.
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      chat: fixedChat({ relation: "subsumed", redundant: "A" }),
+      chat: fixedChat({ onlyInB: ["extra rule"] }),
     });
     expect(result.retired).toHaveLength(1);
     const proposal = getProposal(storage.stashDir, result.retired[0]!);
@@ -608,7 +855,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
   test("subsumed: staged although the kept side holds a claim the retired one lacks", async () => {
     indexOldAndNew();
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
-      chat: fixedChat({ relation: "subsumed", redundant: "A", onlyInB: ["port 8080"] }),
+      chat: fixedChat({ onlyInB: ["port 8080"] }),
     });
     expect(result.retired).toHaveLength(1);
     expect(getProposal(storage.stashDir, result.retired[0]!).gateDecision).toMatchObject({
@@ -617,24 +864,24 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     });
   });
 
-  test("supersedes: staged like a duplicate when nothing is lost", async () => {
+  test("a replacement with no lost claim is staged as subsumed", async () => {
     indexOldAndNew();
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
-      chat: fixedChat({ relation: "supersedes", redundant: "A" }),
+      chat: fixedChat({ onlyInB: ["updated value"] }),
     });
     expect(result.retired).toHaveLength(1);
     expect(getProposal(storage.stashDir, result.retired[0]!).gateDecision).toMatchObject({
       outcome: "staged",
-      reason: "supersedes",
+      reason: "subsumed",
       gate: "consolidate-pair",
     });
   });
 
   test("the retirement records the judge's claim lists by role, whichever of A/B was retired", async () => {
     indexOldAndNew();
-    // redundant "A": the older side is retired, so B's claims are the successor's.
+    // A has no distinct claims, so B's claims are the successor's.
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
-      chat: fixedChat({ relation: "subsumed", redundant: "A", onlyInB: ["port 8080"] }),
+      chat: fixedChat({ onlyInB: ["port 8080"] }),
     });
     expect(getProposal(storage.stashDir, result.retired[0]!).retirement).toMatchObject({
       retiredRef: "memories/old-note",
@@ -643,10 +890,10 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     });
   });
 
-  test("redundant B retires the newer side: A's claims are the successor's", async () => {
+  test("an empty B retires the newer side: A's claims are the successor's", async () => {
     indexOldAndNew();
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
-      chat: fixedChat({ relation: "subsumed", redundant: "B", onlyInA: ["`--force` flag"] }),
+      chat: fixedChat({ onlyInA: ["`--force` flag"] }),
     });
     expect(getProposal(storage.stashDir, result.retired[0]!).retirement).toMatchObject({
       retiredRef: "memories/new-note",
@@ -658,7 +905,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
   test("a subsumed retirement the second look finds a missing claim in still mints, but is not staged", async () => {
     indexOldAndNew();
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
-      chat: fixedChat({ relation: "subsumed", redundant: "A", missing: ["port 8080"] }),
+      chat: fixedChat({ onlyInB: ["extra rule"], missing: ["port 8080"] }),
     });
     expect(result.retired).toHaveLength(1);
     expect(getProposal(storage.stashDir, result.retired[0]!).gateDecision).toBeUndefined();
@@ -678,33 +925,30 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     }
   }
 
-  test("a side the judge lists a claim for is never retired, whatever the label", async () => {
+  test("a side with a distinct claim is kept while its empty counterpart retires", async () => {
     indexOldAndNew();
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
-      chat: fixedChat({ relation: "duplicate", redundant: "A", onlyInA: ["`--force` flag"] }),
-    });
-    expect(result.retired).toHaveLength(0);
-  });
-
-  test("a duplicate with a claim listed on the kept side still mints, but is not staged", async () => {
-    indexOldAndNew();
-    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
-      chat: fixedChat({ relation: "duplicate", redundant: "A", onlyInB: ["port 8080"] }),
+      chat: fixedChat({ onlyInA: ["`--force` flag"] }),
     });
     expect(result.retired).toHaveLength(1);
-    expect(getProposal(storage.stashDir, result.retired[0]!).gateDecision).toBeUndefined();
+    expect(getProposal(storage.stashDir, result.retired[0]!).retirement).toMatchObject({
+      retiredRef: "memories/new-note",
+      successorRef: "memories/old-note",
+      onlyInRetired: [],
+      onlyInSuccessor: ["`--force` flag"],
+    });
   });
 
   test("a duplicate the second look finds a missing claim in still mints, but is not staged", async () => {
     indexOldAndNew();
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
-      chat: fixedChat({ relation: "duplicate", redundant: "A", missing: ["example value `timeoutMs: 1800000`"] }),
+      chat: fixedChat({ missing: ["example value `timeoutMs: 1800000`"] }),
     });
     expect(result.retired).toHaveLength(1);
     expect(getProposal(storage.stashDir, result.retired[0]!).gateDecision).toBeUndefined();
   });
 
-  test("never retires a captureMode: hot memory — the pair is left alone", async () => {
+  test("retires a captureMode: hot memory like any other — hot memories can be archived", async () => {
     const hotPath = writeAsset("memories/hot-note.md", "description: hot\ncaptureMode: hot");
     dateAsset(hotPath, 60);
     const plainPath = writeAsset("memories/plain-note.md", "description: plain");
@@ -719,11 +963,13 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
     const warnings: string[] = [];
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      // duplicate would normally retire the older (hot) side.
-      chat: fixedChat({ relation: "duplicate", redundant: null }),
+      // duplicate retires the older (hot) side.
+      chat: fixedChat({}),
     });
-    expect(result.retired).toHaveLength(0);
-    expect(listProposals(storage.stashDir)).toHaveLength(0);
+    expect(result.retired).toHaveLength(1);
+    const proposal = getProposal(storage.stashDir, result.retired[0]!);
+    expect(proposal.ref).toBe("stash//memories/hot-note");
+    expect(proposal.retirement).toMatchObject({ retiredRef: "memories/hot-note", successorRef: "memories/plain-note" });
   });
 
   test("never retires a .derived memory whose parent still exists", async () => {
@@ -745,7 +991,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
     const warnings: string[] = [];
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      chat: fixedChat({ relation: "duplicate", redundant: null }),
+      chat: fixedChat({}),
     });
     expect(result.retired).toHaveLength(0);
   });
@@ -769,7 +1015,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
     const warnings: string[] = [];
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      chat: fixedChat({ relation: "duplicate", redundant: null }),
+      chat: fixedChat({}),
     });
     expect(result.retired).toHaveLength(0);
   });
@@ -813,9 +1059,6 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         return JSON.stringify({
           onlyInA: [],
           onlyInB: [],
-          relation: "duplicate",
-          redundant: null,
-          stale: null,
           confidence: 0.9,
           reason: "x",
         });
@@ -858,7 +1101,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const opts = { ...baseOpts(), dryRun: true };
     const warnings: string[] = [];
     const result = await runConsolidatePairPass(opts, {} as never, storage.stashDir, "stash", warnings, {
-      chat: fixedChat({ relation: "duplicate", redundant: null }),
+      chat: fixedChat({}),
     });
     expect(result.retired).toEqual(["memories/old-note -> memories/new-note"]);
     expect(listProposals(storage.stashDir)).toHaveLength(0);
@@ -888,9 +1131,6 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         return JSON.stringify({
           onlyInA: [],
           onlyInB: [],
-          relation: "unrelated",
-          redundant: null,
-          stale: null,
           confidence: 0.9,
           reason: "x",
         });
@@ -923,9 +1163,6 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         return JSON.stringify({
           onlyInA: [],
           onlyInB: [],
-          relation: "unrelated",
-          redundant: null,
-          stale: null,
           confidence: 0.9,
           reason: "x",
         });
@@ -933,6 +1170,77 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     });
     expect(result2.initiators).toBe(0); // unchanged content: not eligible again
     expect(chatCalls).toBe(0);
+  });
+
+  test("an initiator with no stored vector gets no ledger row and one warning per run, so enabling embeddings later reconsiders it", async () => {
+    const aPath = writeAsset("memories/no-vec-a.md", "description: a");
+    const bPath = writeAsset("memories/no-vec-b.md", "description: b");
+    const db = openIndexDatabase(getDbPath());
+    try {
+      for (const [name, filePath] of [
+        ["no-vec-a", aPath],
+        ["no-vec-b", bPath],
+      ] as const) {
+        // Indexed but never embedded (semanticSearchMode: off, or the embedding pass has not run).
+        upsertEntry(
+          db,
+          filePath,
+          { type: "memory", name, description: `desc for ${name}` },
+          {
+            bundleId: "stash",
+            componentId: "stash",
+            adapterId: "akm",
+            conceptId: `memories/${name}`,
+            itemRef: `stash//memories/${name}`,
+          },
+        );
+      }
+    } finally {
+      closeDatabase(db);
+    }
+    const warnings: string[] = [];
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async () => "{}",
+    });
+    expect(result.initiators).toBe(2);
+    expect(warnings.filter((w) => w.includes("stored embedding"))).toHaveLength(1);
+    const stateDb = openStateDatabase();
+    try {
+      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/no-vec-a", "consolidate-pair")).toBeUndefined();
+      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/no-vec-b", "consolidate-pair")).toBeUndefined();
+    } finally {
+      stateDb.close();
+    }
+  });
+
+  test("an expired retire proposal does not settle its pair the way a person's rejection does", async () => {
+    const { createRetireProposal, expireStaleProposals } = await import("../../../../src/commands/proposal/repository");
+    const { loadRejectedPairKeys } = await import("../../../../src/commands/improve/consolidate/pair-pass");
+    const { makeConfig } = await import("../../../_helpers/factories");
+    const oldPath = writeAsset("memories/exp-old.md", "description: old");
+    const newPath = writeAsset("memories/exp-new.md", "description: new");
+    const now = Date.now();
+    createRetireProposal(
+      storage.stashDir,
+      {
+        ref: "memories/exp-old",
+        source: "consolidate-pair",
+        retirement: {
+          retiredRef: "memories/exp-old",
+          successorRef: "memories/exp-new",
+          cosine: 0.99,
+          judgeLabel: "duplicate",
+          judgeReason: "x",
+          retiredContentHash: contentHash(fs.readFileSync(oldPath, "utf8"), "body"),
+          successorContentHash: contentHash(fs.readFileSync(newPath, "utf8"), "body"),
+          reason: "duplicate",
+        },
+      },
+      { now: () => now - 120 * MS_PER_DAY },
+    );
+    const config = { ...makeConfig(storage.stashDir), archiveRetentionDays: 90 };
+    expect(expireStaleProposals(storage.stashDir, config as never).expired).toBe(1);
+    expect(loadRejectedPairKeys(storage.stashDir, undefined).size).toBe(0);
   });
 
   test("a rejected retire proposal is not re-proposed once the initiator's content is unchanged (S1: no timer)", async () => {
@@ -949,7 +1257,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     }
     const warnings: string[] = [];
     const r1 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      chat: fixedChat({ relation: "duplicate", redundant: null }),
+      chat: fixedChat({}),
     });
     expect(r1.retired).toHaveLength(1);
     const { akmProposalReject } = await import("../../../../src/commands/proposal/proposal");
@@ -983,9 +1291,6 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         return JSON.stringify({
           onlyInA: [],
           onlyInB: [],
-          relation: "duplicate",
-          redundant: null,
-          stale: null,
           confidence: 0.9,
           reason: "x",
         });
@@ -999,7 +1304,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     // and the pair becomes eligible again.
     writeAsset("memories/old-note.md", "description: old", "Body text, edited.\n");
     const r3 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      chat: fixedChat({ relation: "duplicate", redundant: null }),
+      chat: fixedChat({}),
     });
     expect(r3.retired).toHaveLength(1); // content changed since the last attempt: judged again, and re-proposed
   });
@@ -1039,9 +1344,6 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         return JSON.stringify({
           onlyInA: [],
           onlyInB: [],
-          relation: "duplicate",
-          redundant: null,
-          stale: null,
           confidence: 0.9,
           reason: "x",
         });
@@ -1095,9 +1397,6 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         return JSON.stringify({
           onlyInA: [],
           onlyInB: [],
-          relation: "duplicate",
-          redundant: null,
-          stale: null,
           confidence: 0.9,
           reason: "x",
         });
@@ -1159,9 +1458,6 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         return JSON.stringify({
           onlyInA: [],
           onlyInB: [],
-          relation: "duplicate",
-          redundant: null,
-          stale: null,
           confidence: 0.9,
           reason: "x",
         });
@@ -1220,9 +1516,6 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         return JSON.stringify({
           onlyInA: [],
           onlyInB: [],
-          relation: "duplicate",
-          redundant: null,
-          stale: null,
           confidence: 0.9,
           reason: "x",
         });
@@ -1264,9 +1557,6 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         return JSON.stringify({
           onlyInA: [],
           onlyInB: [],
-          relation: "duplicate",
-          redundant: null,
-          stale: null,
           confidence: 0.9,
           reason: "x",
         });
@@ -1311,9 +1601,6 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         return JSON.stringify({
           onlyInA: [],
           onlyInB: [],
-          relation: "duplicate",
-          redundant: null,
-          stale: null,
           confidence: 0.9,
           reason: "x",
         });
@@ -1365,7 +1652,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     }
     const warnings: string[] = [];
     await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      chat: fixedChat({ relation: "unrelated", redundant: null }),
+      chat: fixedChat({ onlyInA: ["first subject"], onlyInB: ["second subject"] }),
     });
     const stateDb = openStateDatabase();
     try {
@@ -1411,7 +1698,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
     // The next run retries the same pair instead of skipping it as judged.
     const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      chat: fixedChat({ relation: "duplicate", redundant: null }),
+      chat: fixedChat({}),
     });
     expect(r2.retired).toHaveLength(1);
   });
@@ -1444,7 +1731,7 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
   }
 
   test("duplicate, knowledge older, memory holds nothing of its own: the memory is retired, the note kept, staged", async () => {
-    const result = await runPair("knowledge", { relation: "duplicate", redundant: null });
+    const result = await runPair("knowledge", {});
     expect(result.retired).toHaveLength(1);
     const proposal = getProposal(storage.stashDir, result.retired[0]!);
     expect(proposal.ref).toBe("stash//memories/topic-memory");
@@ -1459,14 +1746,12 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
     expect(proposal.gateDecision).toMatchObject({ outcome: "staged", reason: "duplicate", gate: "consolidate-pair" });
   });
 
-  test("duplicate, knowledge older, memory lists a claim the note lacks: nothing minted, counted as no action", async () => {
+  test("knowledge older, memory lists a distinct claim the note lacks: nothing minted, counted as no action", async () => {
     const result = await runPair("knowledge", {
-      relation: "duplicate",
-      redundant: null,
       onlyInB: ["a claim only the memory holds"],
     });
     expect(result.retired).toHaveLength(0);
-    expect(result.labelCounts.duplicate).toBeGreaterThanOrEqual(1);
+    expect(result.labelCounts.subsumed).toBeGreaterThanOrEqual(1);
     expect(listProposals(storage.stashDir)).toHaveLength(0);
     const stateDb = openStateDatabase();
     try {
@@ -1477,9 +1762,9 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
     }
   });
 
-  test("subsumed, knowledge called redundant, memory list empty: the memory is retired, the note kept", async () => {
-    // Knowledge is older (A); redundant "A" would retire it for the newer memory; the memory (B) lists nothing.
-    const result = await runPair("knowledge", { relation: "subsumed", redundant: "A" });
+  test("knowledge holds an extra claim and the memory does not: the memory is retired, the note kept", async () => {
+    // Knowledge is older (A) and retains the extra claim; memory B is empty.
+    const result = await runPair("knowledge", { onlyInA: ["knowledge-only claim"] });
     expect(result.retired).toHaveLength(1);
     const proposal = getProposal(storage.stashDir, result.retired[0]!);
     expect(proposal.ref).toBe("stash//memories/topic-memory");
@@ -1490,26 +1775,22 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
     });
   });
 
-  test("subsumed, knowledge called redundant, memory lists a claim: nothing minted", async () => {
-    const result = await runPair("knowledge", { relation: "subsumed", redundant: "A", onlyInB: ["memory-only claim"] });
+  test("knowledge cannot retire into a memory with a distinct claim: nothing minted", async () => {
+    const result = await runPair("knowledge", { onlyInB: ["memory-only claim"] });
     expect(result.retired).toHaveLength(0);
   });
 
-  test("a flipped retirement of a hot-captured memory is still refused by the hot guard", async () => {
-    const result = await runPair(
-      "knowledge",
-      { relation: "duplicate", redundant: null },
-      { memoryFrontmatter: "description: hot capture\ncaptureMode: hot" },
-    );
-    expect(result.retired).toHaveLength(0);
-    expect(listProposals(storage.stashDir)).toHaveLength(0);
+  test("a flipped retirement of a hot-captured memory is minted like any memory's", async () => {
+    const result = await runPair("knowledge", {}, { memoryFrontmatter: "description: hot capture\ncaptureMode: hot" });
+    expect(result.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, result.retired[0]!).ref).toBe("stash//memories/topic-memory");
   });
 
   test("a flipped retirement of a .derived memory whose parent exists is still refused", async () => {
     writeAsset("memories/topic-memory.md", "description: parent memory");
     const result = await runPair(
       "knowledge",
-      { relation: "duplicate", redundant: null },
+      {},
       { memoryName: "topic-memory.derived", memoryFrontmatter: "inferred: true\nsource: memories/topic-memory" },
     );
     expect(result.retired).toHaveLength(0);
@@ -1518,14 +1799,14 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
   test("a .derived memory with a claim of its own counts as a memory: the note is not retired for it", async () => {
     const result = await runPair(
       "knowledge",
-      { relation: "duplicate", redundant: null, onlyInB: ["derived-only claim"] },
+      { onlyInB: ["derived-only claim"] },
       { memoryName: "topic-memory.derived", memoryFrontmatter: "inferred: true\nsource: memories/topic-memory" },
     );
     expect(result.retired).toHaveLength(0);
   });
 
   test("duplicate, memory older and knowledge newer: the memory is retired in favour of the knowledge note, as before", async () => {
-    const result = await runPair("memory", { relation: "duplicate", redundant: null });
+    const result = await runPair("memory", {});
     expect(result.retired).toHaveLength(1);
     const proposal = getProposal(storage.stashDir, result.retired[0]!);
     expect(proposal.ref).toBe("stash//memories/topic-memory");
@@ -1535,8 +1816,8 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
     });
   });
 
-  test("subsumed with the memory side called redundant: the memory is retired in favour of the knowledge note", async () => {
-    const result = await runPair("knowledge", { relation: "subsumed", redundant: "B" });
+  test("an equivalent memory is retired in favour of the knowledge note", async () => {
+    const result = await runPair("knowledge", {});
     expect(result.retired).toHaveLength(1);
     expect(getProposal(storage.stashDir, result.retired[0]!).ref).toBe("stash//memories/topic-memory");
   });
@@ -1554,7 +1835,7 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
       closeDatabase(db);
     }
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
-      chat: fixedChat({ relation: "duplicate", redundant: null }),
+      chat: fixedChat({}),
     });
     expect(result.retired).toHaveLength(1);
     expect(getProposal(storage.stashDir, result.retired[0]!).ref).toBe("stash//knowledge/old-note");
@@ -1633,4 +1914,263 @@ describe("loadGitFirstAddedMap — real git, large output (B1 regression)", () =
       fs.rmSync(repo, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+describe("memory scope integrity (#1197)", () => {
+  test("incompatible neighbors do not consume the five eligible slots", () => {
+    const initiatorFile = writeAsset("memories/initiator.md", "scope_user: alice");
+    const db = openIndexDatabase(getDbPath());
+    try {
+      const entryId = indexAsset(db, "memory", "initiator", initiatorFile, 0);
+      for (let i = 0; i < 5; i++) {
+        const file = writeAsset(`memories/other-${i}.md`, "scope_user: bob");
+        indexAsset(db, "memory", `other-${i}`, file, 0);
+      }
+      const safe = writeAsset("memories/safe.md", "scope_user: alice");
+      indexAsset(db, "memory", "safe", safe, angleForCosine(0.98));
+      const result = selectCandidates(
+        db,
+        [
+          {
+            ref: "memories/initiator",
+            name: "initiator",
+            type: "memory",
+            filePath: initiatorFile,
+            entryId,
+            backlog: false,
+            newMaterial: true,
+            bodyHash: "",
+          },
+        ],
+        "stash",
+      );
+      expect(result.map((c) => c.other.ref)).toEqual(["memories/safe"]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  const keys = ["user", "agent", "run", "channel"] as const;
+  const fullScope = keys.map((k) => `scope_${k}: original-${k}`).join("\n");
+
+  function plant(scopes: [string, string]): [string, string] {
+    const files = scopes.map((scope, i) => {
+      const file = writeAsset(
+        `memories/${i === 0 ? "scope-a" : "scope-b"}.md`,
+        `description: scoped recovery\n${scope}`,
+        "Recovery requires the offline key from the custodian.\n",
+      );
+      dateAsset(file, i === 0 ? 3 : 1);
+      return file;
+    }) as [string, string];
+    const db = openIndexDatabase(getDbPath());
+    try {
+      files.forEach((file, i) => {
+        indexAsset(db, "memory", i === 0 ? "scope-a" : "scope-b", file, 0);
+      });
+    } finally {
+      closeDatabase(db);
+    }
+    return files;
+  }
+
+  const mismatches: [string, string, string][] = [
+    ...keys.map((key): [string, string, string] => [
+      key,
+      fullScope,
+      fullScope.replace(`original-${key}`, `different-${key}`),
+    ]),
+    ["scoped/unscoped", "scope_user: alice", ""],
+    ["partial tuple", "scope_user: alice", "scope_user: alice\nscope_channel: chat"],
+  ];
+  for (const [name, a, b] of mismatches) {
+    test(`${name}: no cross-scope proposal, stage, or acceptance`, async () => {
+      const files = plant([a, b]);
+      const before = files.map((f) => fs.readFileSync(f, "utf8"));
+      let calls = 0;
+      const result = await runConsolidatePairPass(
+        baseOpts(),
+        makeConfig(storage.stashDir),
+        storage.stashDir,
+        "stash",
+        [],
+        {
+          chat: async (...args) => {
+            calls++;
+            return fixedChat({})(...args);
+          },
+        },
+      );
+      expect(result.pairsConsidered).toBe(0);
+      expect(result.pairsJudged).toBe(0);
+      expect(calls).toBe(0);
+      expect(listProposals(storage.stashDir, { status: "pending" })).toHaveLength(0);
+      expect(files.map((f) => fs.readFileSync(f, "utf8"))).toEqual(before);
+    });
+  }
+
+  for (const [name, scopes] of [
+    ["full", [fullScope, fullScope]],
+    ["partial", ["scope_user: alice", "scope_user: alice"]],
+    ["unscoped", ["", ""]],
+    ["normalized", ['scope_user: " alice "\nscope_run: 42\nscope_agent: false', 'scope_user: alice\nscope_run: "42"']],
+    ["malformed empty values", ["scope_user: false\nscope_agent: []", ""]],
+  ] as [string, [string, string]][]) {
+    test(`${name}: useful retirement, scoped survivor, archive and exact revert`, async () => {
+      const files = plant(scopes);
+      const before = files.map((f) => fs.readFileSync(f, "utf8"));
+      const config = makeConfig(storage.stashDir);
+      const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], {
+        chat: fixedChat({}),
+      });
+      expect(result.pairsJudged).toBe(1);
+      expect(result.retired).toHaveLength(1);
+      const id = result.retired[0]!;
+      expect(getProposal(storage.stashDir, id).gateDecision?.outcome).toBe("staged");
+      await akmProposalAccept({ stashDir: storage.stashDir, id, config });
+      expect(fs.readFileSync(files[1], "utf8")).toBe(before[1]!);
+      expect(fs.existsSync(files[0])).toBe(false);
+      await akmProposalRevert({ stashDir: storage.stashDir, id, config });
+      expect(files.map((f) => fs.readFileSync(f, "utf8"))).toEqual(before);
+    });
+  }
+
+  for (const key of keys)
+    for (const side of [0, 1])
+      for (const mode of ["manual", "staged", "resumed"] as const) {
+        test(`${key} edit to side ${side}: ${mode} acceptance refuses unchanged body`, async () => {
+          const files = plant([fullScope, fullScope]);
+          const config = makeConfig(storage.stashDir);
+          const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], {
+            chat: fixedChat(mode === "manual" ? { missing: ["manual review"] } : {}),
+          });
+          const id = result.retired[0]!;
+          const proposal = getProposal(storage.stashDir, id);
+          if (mode === "resumed") {
+            const db = openStateDatabase();
+            try {
+              upsertProposal(
+                db,
+                {
+                  ...proposal,
+                  retireAcceptIntent: { assetPath: files[0], backupContent: fs.readFileSync(files[0], "utf8") },
+                },
+                storage.stashDir,
+              );
+            } finally {
+              db.close();
+            }
+          }
+          fs.writeFileSync(
+            files[side]!,
+            fs.readFileSync(files[side]!, "utf8").replace(`original-${key}`, `changed-${key}`),
+          );
+          if (mode === "staged") {
+            const drain = await drainProposals({
+              stashDir: storage.stashDir,
+              config,
+              applyMode: "promote",
+              maxAccepts: 25,
+              dryRun: false,
+            });
+            expect(drain.promoted).toHaveLength(0);
+          } else {
+            await expect(akmProposalAccept({ stashDir: storage.stashDir, id, config })).rejects.toThrow(/scope/i);
+          }
+          expect(files.every((f) => fs.existsSync(f))).toBe(true);
+          expect(getProposal(storage.stashDir, id).status).not.toBe("accepted");
+        });
+      }
+
+  test("changing both tuples equally still invalidates judged scope", async () => {
+    const files = plant([fullScope, fullScope]);
+    const config = makeConfig(storage.stashDir);
+    const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], {
+      chat: fixedChat({}),
+    });
+    for (const file of files)
+      fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("original-user", "new-user"));
+    await expect(akmProposalAccept({ stashDir: storage.stashDir, id: result.retired[0]!, config })).rejects.toThrow(
+      /scope/i,
+    );
+  });
+
+  for (const mutateAt of [1, 2]) {
+    test(`scope changes during model call ${mutateAt} never stage`, async () => {
+      const files = plant([fullScope, fullScope]);
+      let calls = 0;
+      const result = await runConsolidatePairPass(
+        baseOpts(),
+        makeConfig(storage.stashDir),
+        storage.stashDir,
+        "stash",
+        [],
+        {
+          chat: async (...args) => {
+            if (++calls === mutateAt)
+              fs.writeFileSync(
+                files[1],
+                fs.readFileSync(files[1], "utf8").replace("original-channel", "changed-channel"),
+              );
+            return fixedChat({})(...args);
+          },
+        },
+      );
+      for (const id of result.retired)
+        expect(getProposal(storage.stashDir, id).gateDecision?.outcome).not.toBe("staged");
+      expect(files.every((file) => fs.existsSync(file))).toBe(true);
+    });
+  }
+
+  test("a differently scoped derived twin survives retirement and revert", async () => {
+    const files = plant([fullScope, fullScope]);
+    const twin = files[0].replace(/\.md$/, ".derived.md");
+    const twinBytes = fs.readFileSync(files[0], "utf8").replace("original-user", "other-user");
+    fs.writeFileSync(twin, twinBytes);
+    const config = makeConfig(storage.stashDir);
+    const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], {
+      chat: fixedChat({}),
+    });
+    const id = result.retired[0]!;
+    await akmProposalAccept({ stashDir: storage.stashDir, id, config });
+    expect(fs.readFileSync(twin, "utf8")).toBe(twinBytes);
+    await akmProposalRevert({ stashDir: storage.stashDir, id, config });
+    expect(fs.readFileSync(twin, "utf8")).toBe(twinBytes);
+    expect(fs.existsSync(files[0])).toBe(true);
+  });
+
+  test("legacy judged scope absent requires reassessment, even for currently unscoped notes", async () => {
+    const files = plant(["", ""]);
+    const config = makeConfig(storage.stashDir);
+    const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], {
+      chat: fixedChat({}),
+    });
+    const proposal = getProposal(storage.stashDir, result.retired[0]!);
+    const retirement = { ...proposal.retirement! };
+    delete (retirement as unknown as Record<string, unknown>).judgedScope;
+    const db = openStateDatabase();
+    try {
+      upsertProposal(db, { ...proposal, retirement }, storage.stashDir);
+    } finally {
+      db.close();
+    }
+    await expect(akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
+      /reassess|review/i,
+    );
+    expect(files.every((f) => fs.existsSync(f))).toBe(true);
+    const drained = await drainProposals({
+      stashDir: storage.stashDir,
+      config,
+      applyMode: "promote",
+      maxAccepts: 25,
+      dryRun: false,
+    });
+    expect(drained.promoted).toHaveLength(0);
+    expect(getProposal(storage.stashDir, proposal.id).gateDecision?.reason).toBe("stale-target");
+    const reassessed = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], {
+      chat: fixedChat({}),
+    });
+    expect(reassessed.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, reassessed.retired[0]!).retirement?.judgedScope).toEqual({});
+  });
 });

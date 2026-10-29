@@ -9,9 +9,7 @@
  * group, hard break, no alias kept at the top level:
  *   - `create` (= old top-level `init`, src/commands/sources/init.ts)
  *   - `add`    (= old top-level `add`, src/commands/sources/add-cli.ts — the
- *     command definition moved here; `add-cli.ts` keeps its exported helpers,
- *     including `auditInstalledStashForDangerousKeys`, which a test imports
- *     directly)
+ *     command definition moved here; `add-cli.ts` keeps its exported helpers)
  *   - `list`   (= old top-level `list`)
  *   - `remove` (= old top-level `remove`)
  *   - `update` (= old top-level `update`)
@@ -145,21 +143,23 @@ const updateCommand = defineJsonCommand({
       description: "Exit successfully when index/state database contention shows another akm operation is active",
       default: false,
     },
+    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
+    // fail with UNKNOWN_FLAG. Installing a bundle is the trust decision: an
+    // update no longer scans env files for process-hijacking keys.
     "allow-dangerous-env-keys": {
       type: "boolean",
       description:
-        "Allow an update containing dangerous env keys (e.g. LD_PRELOAD, PATH). Use only after explicitly reviewing the staged bundle.",
+        "Deprecated, no effect: update no longer scans env files for process-hijacking keys. Accepted through 0.10 for existing scripts.",
       default: false,
     },
-    // F1/R-058: gates ONLY the rare branch where the resolved content
-    // directory moves and the previous `localRoot` is deleted — a normal
-    // refresh (the overwhelming majority of updates) deletes nothing and
-    // never consults this flag. Mirrors `remove`'s `-y/--yes`.
+    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
+    // fail with UNKNOWN_FLAG. Pruning old install directories of a read-only
+    // bundle no longer asks: they are a re-fetchable cache.
     yes: {
       type: "boolean",
       alias: "y",
       description:
-        "Skip the confirmation prompt when an update needs to delete a previous install directory (because the resolved content location moved). No effect on a normal refresh, which deletes nothing.",
+        "Deprecated, no effect: update no longer asks before pruning old install directories of a read-only bundle. Accepted through 0.10 for existing scripts.",
       default: false,
     },
   },
@@ -170,8 +170,6 @@ const updateCommand = defineJsonCommand({
         target: args.target,
         all: args.all,
         force: args.force,
-        yes: args.yes,
-        allowDangerousEnvKeys: args["allow-dangerous-env-keys"],
       });
     } catch (error) {
       const skippable = isSkippableBundleUpdateLock(error);
@@ -186,7 +184,6 @@ const updateCommand = defineJsonCommand({
         target: args.target ?? null,
         all: args.all === true,
         force: args.force === true,
-        allowDangerousEnvKeys: args["allow-dangerous-env-keys"] === true,
         processed: Array.isArray((result as { processed?: unknown[] }).processed)
           ? (result as { processed: unknown[] }).processed.length
           : 0,

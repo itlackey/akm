@@ -176,7 +176,7 @@ akm config
 # Full config in the new shape
 ```
 
-The complete old-to-new key mapping is in [the migration guides](https://github.com/itlackey/akm/blob/main/docs/migration/README.md).
+The complete old-to-new key mapping is in [docs/migration/v0.7-to-v0.8.md](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.7-to-v0.8.md).
 
 ## What Adding a Field Looks Like Now
 

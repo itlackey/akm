@@ -16,9 +16,7 @@
  *
  *  1. recognition parity — `recognize().type` (and the carried renderer) for
  *     every fixture file equals `goldens/recognition/all-types.json`;
- *  2. placement parity — `placeNew()` for every akm type equals
- *     `goldens/placement/all-types.json`;
- *  3. sync-arbitration FIDELITY — `recognizeMatch()` (the sync `runMatchers`
+ *  2. sync-arbitration FIDELITY — `recognizeMatch()` (the sync `runMatchers`
  *     reproduction) agrees with the async `runMatchers` on the real fixture
  *     contexts AND on hand-built contexts that make each matcher the winner.
  *
@@ -40,16 +38,10 @@ const BUNDLE_ID = "all-types";
 interface RecognitionGolden {
   byRelPath: Record<string, { type: string; specificity: number; renderer: string }>;
 }
-interface PlacementGolden {
-  byType: Record<string, { stashDir: string; name: string; assetPath: string }>;
-}
 
 const RECOGNITION_GOLDEN = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, "../../fixtures/goldens/recognition/all-types.json"), "utf8"),
 ) as RecognitionGolden;
-const PLACEMENT_GOLDEN = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, "../../fixtures/goldens/placement/all-types.json"), "utf8"),
-) as PlacementGolden;
 
 /** Temp dirs created by fidelity/probe tests; cleaned in afterAll. */
 const tmpDirs: string[] = [];
@@ -59,10 +51,6 @@ afterAll(() => {
 
 function component(overrides: Partial<BundleComponent> = {}): BundleComponent {
   return { id: BUNDLE_ID, adapter: "akm", root: ALL_TYPES_ROOT, writable: true, ...overrides };
-}
-
-function relFromRoot(absPath: string): string {
-  return path.relative(ALL_TYPES_ROOT, absPath).split(path.sep).join("/");
 }
 
 /** Every asset FileContext in the all-types stash, MANIFEST.json excluded — exactly the golden capture's walk. */
@@ -161,7 +149,7 @@ describe("akm adapter — recognizeMatch classifies content/extension winners (�
     const cases: Array<[rel: string, content: string, type: string]> = [
       ["note.md", "# Just knowledge\n\nplain body\n", "knowledge"], // smartMd knowledge @5
       ["cmd.md", "# Command\n\nUse $ARGUMENTS to pass input\n", "command"], // smartMd command @18 (body probe)
-      ["agent.md", "---\ntools:\n  - read\n---\n\n# Agent\n", "agent"], // smartMd agent @20 (frontmatter probe)
+      ["agent.md", "---\nmodel: local\n---\n\n# Agent\n", "agent"], // smartMd agent @8 (frontmatter probe)
       ["run.sh", "#!/bin/sh\necho hi\n", "script"], // extension script @3
     ];
     for (const [rel, content, type] of cases) {
@@ -170,35 +158,6 @@ describe("akm adapter — recognizeMatch classifies content/extension winners (�
       expect(recognizeMatch(buildFileContext(tmp, abs))?.type, `winner for ${rel}`).toBe(type);
     }
   });
-});
-
-// ── 3. placement parity (byte-for-byte vs the Chunk-0b golden) ───────────────
-
-describe("akm adapter — placeNew reproduces resolveAssetPathFromName placement (§5.1)", () => {
-  test("every akm type's qualified conceptId places at exactly the golden path", () => {
-    for (const [type, entry] of Object.entries(PLACEMENT_GOLDEN.byType)) {
-      // The §1.3 qualified path-form conceptId: <stash-subdir>/<canonical-name>.
-      const conceptId = `${entry.stashDir}/${entry.name}`;
-      const abs = akmAdapter.placeNew?.(component(), conceptId);
-      expect(abs, `placeNew undefined for ${type}`).toBeDefined();
-      expect(relFromRoot(abs as string), `placement for ${type}`).toBe(entry.assetPath);
-    }
-  });
-
-  test("the env `default` alias maps to the bare .env file", () => {
-    expect(relFromRoot(akmAdapter.placeNew?.(component(), "env/default") as string)).toBe("env/.env");
-  });
-
-  test("an unqualified conceptId (no leading stash-subdir) falls back to <root>/<id>.md", () => {
-    expect(relFromRoot(akmAdapter.placeNew?.(component(), "loose-note") as string)).toBe("loose-note.md");
-  });
-
-  // NOTE (workflow-format-unification): the old "workflow placement probes
-  // .md/.yaml/.yml and finds the real .yaml-only fixture" test is gone —
-  // `WORKFLOW_EXTENSIONS` collapsed to `[".md"]` only (spec §3: "the
-  // extension-collapse logic beyond .md" is deleted) and its fixture
-  // (`all-types-workflow-program.yaml`) was deleted with it, so there is no
-  // remaining multi-extension probe branch to exercise.
 });
 
 // ── 3b. recognize folds the 11 metadata contributors (§2) ────────────────────
@@ -210,7 +169,7 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
   // (name+type) seed, which the fold reproduces by construction — captured here
   // as literals now that the oracle is gone. Absence is pinned too (an empty
   // ExpectedFold asserts recognize adds NO fold surface for that file). The
-  // memory fold's `observed_at` hint is mtime-derived, so it is pinned by shape.
+  // fixture memory states no observation date, so its fold is empty (no mtime hint).
   interface ExpectedFold {
     searchHints?: string[];
     toc?: Array<{ level: number; text: string; line: number }>;
@@ -221,6 +180,7 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
     "commands/all-types-command.md": {},
     "env/all-types-env.env": { searchHints: ["FIXTURE_GREETING", "FIXTURE_LOG_LEVEL"] },
     "facts/all-types-fact.md": { searchHints: ["category:meta"] },
+    "memories/all-types-memory.md": {},
     "knowledge/all-types-knowledge.md": {
       toc: [
         { level: 1, text: "All Types Knowledge", line: 5 },
@@ -248,9 +208,6 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
       searchHints: ["# All Types Fixture", "announce", "Print a single fixture line and stop."],
     },
   };
-  // mtime-derived observed_at hint — pinned by shape below, not in EXPECTED_FOLDS.
-  const MEMORY_REL = "memories/all-types-memory.md";
-
   // Chunk 5 M-b: recognize carries the FULL metadata surface (P1/P2/P4 + the
   // contributor fold). The contributor-EXCLUSIVE fields (searchHints/toc/
   // parameters) are what this test pins verbatim; the full-surface parity
@@ -263,15 +220,6 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
       expect(doc, `recognize null for ${ctx.relPath}`).not.toBeNull();
       if (!doc) continue;
       const extras = (doc.documentJson ?? {}) as Record<string, unknown>;
-
-      if (ctx.relPath === MEMORY_REL) {
-        expect(doc.searchHints, "memory searchHints").toHaveLength(1);
-        expect(doc.searchHints?.[0]).toMatch(/^observed_at:\d{4}-\d{2}-\d{2}$/);
-        expect(extras.toc, "memory toc").toBeUndefined();
-        expect(extras.parameters, "memory parameters").toBeUndefined();
-        asserted += 1;
-        continue;
-      }
 
       const expected = EXPECTED_FOLDS[ctx.relPath];
       expect(expected, `no expected fold pinned for ${ctx.relPath}`).toBeDefined();

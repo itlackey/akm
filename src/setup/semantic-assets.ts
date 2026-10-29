@@ -3,18 +3,21 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Semantic-search asset preparation for the setup wizard. Transformers.js is
- * a normal external package dependency; setup never mutates the installed CLI.
- * This module only prepares the model.
+ * Semantic-search asset preparation for setup. For the built-in local embedder
+ * that is its runtime (onnxruntime-node's binding and library) and its model,
+ * both fetched into akm's cache; for an embedding endpoint, a check that it
+ * answers.
  */
 
 import * as p from "../cli/clack";
 import { isHttpUrl } from "../core/common";
 import type { AkmConfig, EmbeddingConnectionConfig } from "../core/config/config";
-import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL, isTransformersAvailable } from "../llm/embedder";
+import { checkEmbeddingAvailability, DEFAULT_LOCAL_MODEL } from "../llm/embedder";
+import { effectiveEmbedding } from "../llm/embedders/connection";
+import { ONNXRUNTIME_VERSION } from "../llm/embedders/onnx-runtime";
 
 // Approximate first-download size of the default local model (DEFAULT_LOCAL_MODEL), used in the setup note.
-const LOCAL_MODEL_APPROX_SIZE_MB = 130;
+const LOCAL_MODEL_APPROX_SIZE_MB = 127;
 
 export function isRemoteEmbeddingConfig(embedding?: EmbeddingConnectionConfig): boolean {
   return isHttpUrl(embedding?.endpoint);
@@ -29,33 +32,25 @@ export function describeSemanticSearchAssets(embedding?: EmbeddingConnectionConf
   }
 
   return [
-    `• Local embedding model: ${embedding?.localModel ?? DEFAULT_LOCAL_MODEL} (~${LOCAL_MODEL_APPROX_SIZE_MB} MB download on first use)`,
+    `• ONNX Runtime ${ONNXRUNTIME_VERSION}, the local embedder's runtime (~86 MB download, once)`,
+    `• Local embedding model: ${embedding?.localModel ?? DEFAULT_LOCAL_MODEL} (~${LOCAL_MODEL_APPROX_SIZE_MB} MB download, once)`,
   ];
 }
 
 export async function prepareSemanticSearchAssets(
   config: AkmConfig,
 ): Promise<{ ok: true } | { ok: false; message: string; reason: string }> {
-  const remote = isRemoteEmbeddingConfig(config.embedding);
-
-  // Local embeddings require the declared Transformers dependency.
-  if (!remote) {
-    if (!isTransformersAvailable()) {
-      const message =
-        "The @huggingface/transformers dependency is unavailable. Reinstall akm-cli, then re-run `akm setup` or `akm index --full --verbose`.";
-      p.log.warn(message);
-      return { ok: false, reason: "missing-package", message };
-    }
-  }
+  const embedding = effectiveEmbedding(config);
+  const remote = isRemoteEmbeddingConfig(embedding);
 
   const spin = p.spinner();
   spin.start(
     remote
       ? "Checking remote embedding endpoint..."
-      : `Downloading local embedding model (${config.embedding?.localModel ?? DEFAULT_LOCAL_MODEL})...`,
+      : `Downloading the local embedder's runtime and model (${embedding?.localModel ?? DEFAULT_LOCAL_MODEL})...`,
   );
 
-  const result = await checkEmbeddingAvailability(config.embedding);
+  const result = await checkEmbeddingAvailability(embedding);
   if (!result.available) {
     spin.stop("Semantic-search assets could not be prepared.");
     if (result.reason === "remote-unreachable") {
@@ -63,11 +58,9 @@ export async function prepareSemanticSearchAssets(
         "The remote embedding endpoint is not reachable. Check your endpoint and credentials, then retry `akm index --full --verbose`.",
       );
       return { ok: false, reason: "remote-network", message: "The remote embedding endpoint is not reachable." };
-    } else if (result.reason === "missing-package") {
-      p.log.warn(
-        "The @huggingface/transformers dependency is unavailable. Reinstall akm-cli, then re-run `akm setup` or `akm index --full --verbose`.",
-      );
-      return { ok: false, reason: "missing-package", message: "The local embedding runtime is unavailable." };
+    } else if (result.reason === "runtime-unavailable") {
+      p.log.warn(`${result.message}\nSet \`embedding.endpoint\` to use a remote embedding service instead.`);
+      return { ok: false, reason: "runtime-unavailable", message: result.message };
     } else {
       p.log.warn(
         `The local embedding model could not be downloaded: ${result.message}\n` +
@@ -77,7 +70,9 @@ export async function prepareSemanticSearchAssets(
     }
   }
 
-  spin.stop(remote ? "Remote embedding endpoint is ready." : "Local embedding model downloaded and ready.");
+  spin.stop(
+    remote ? "Remote embedding endpoint is ready." : "Local embedder's runtime and model downloaded and ready.",
+  );
 
   return { ok: true };
 }

@@ -14,25 +14,34 @@
  * refactors cannot reintroduce the regressions silently.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveImprovePlan } from "../../../../src/commands/improve/improve-strategies";
 import { akmReflect } from "../../../../src/commands/improve/reflect";
 import { splitFrontmatter } from "../../../../src/commands/improve/reflect-noise";
+import { drainProposals } from "../../../../src/commands/proposal/drain";
 import { akmProposalAccept } from "../../../../src/commands/proposal/proposal";
 import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
-import { ConfigError } from "../../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../../src/core/events";
 import { openStateDatabase } from "../../../../src/core/state-db";
-import type { SpawnedSubprocess, SpawnFn } from "../../../../src/core/subprocess";
-import { _setWarnSinkForTests } from "../../../../src/core/warn";
 import { REFLECT_TRUNCATION_MARKER } from "../../../../src/integrations/agent/prompts";
 import { LlmCallError } from "../../../../src/llm/client";
+import { formatGateDecisionSummary } from "../../../../src/output/text/proposal-format";
 import { listImproveLedgerRows } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { durableItemRef } from "../../../_helpers/durable-ref";
+import { type FakeHarnessOptions, harnessCalls, promptOf, writeFakeHarness } from "../../../_helpers/engine-stubs";
 import { makeConfig, quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
-import { type IsolatedAkmStorage, mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import { testLlmRunner } from "../../../_helpers/llm-runner";
+import {
+  type IsolatedAkmStorage,
+  makeSandboxDir,
+  mutateScopedEnv,
+  type SandboxedDir,
+  withEnv,
+  withIsolatedAkmStorage,
+} from "../../../_helpers/sandbox";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -42,35 +51,22 @@ function makeStashDir(): string {
   return storage.stashDir;
 }
 
-function asReadableStream(text: string): ReadableStream<Uint8Array> {
-  const bytes = new TextEncoder().encode(text);
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(bytes);
-      controller.close();
-    },
-  });
-}
+let binDir: SandboxedDir;
+let agents = 0;
 
-function fakeSpawn(stdout: string, stderr: string, exitCode: number): SpawnFn {
-  return () => {
-    const proc: SpawnedSubprocess = {
-      exitCode,
-      exited: Promise.resolve(exitCode),
-      stdout: asReadableStream(stdout),
-      stderr: asReadableStream(stderr),
-      stdin: null,
-      kill: () => undefined,
-    };
-    return proc;
-  };
+/** A fake agent binary that answers `replies` in turn; its path, for `quietQualityGateConfig(bin)`. */
+function agent(replies: readonly string[], options?: FakeHarnessOptions): string {
+  agents += 1;
+  return writeFakeHarness(binDir.dir, `fake-agent-${agents}`, replies, options);
 }
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  binDir = makeSandboxDir("akm-reflect-pipeline-bin");
 });
 
 afterEach(() => {
+  binDir.cleanup();
   storage.cleanup();
 });
 
@@ -111,17 +107,12 @@ function reflectLedgerRows() {
 describe("Reflect type guard — refuses non-markdown asset types", () => {
   test("script:* ref is rejected up-front with a clear error", async () => {
     const stash = makeStashDir();
-    let spawned = false;
-    const spy: SpawnFn = (cmd) => {
-      spawned = true;
-      return fakeSpawn("", "", 0)(cmd, {});
-    };
+    const bin = agent([""]);
 
     const result = await akmReflect({
       ref: "scripts/deploy.ts",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: spy },
+      config: quietQualityGateConfig(bin),
     });
 
     expect(result.ok).toBe(false);
@@ -134,7 +125,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     expect(result.error).toContain("not supported by reflect");
     expect(result.error).toContain("script");
     // Spawning the agent must NOT happen — the guard fires before the agent invocation.
-    expect(spawned).toBe(false);
+    expect(harnessCalls(bin)).toHaveLength(0);
     expect(listProposals(stash).length).toBe(0);
   });
 
@@ -143,8 +134,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     const result = await akmReflect({
       ref: "env/default",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn("", "", 0) },
+      config: quietQualityGateConfig(agent([""])),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -154,16 +144,11 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
 
   test("secret:* ref is rejected (08-F2: secret material must never reach reflect's LLM)", async () => {
     const stash = makeStashDir();
-    let spawned = false;
-    const spy: SpawnFn = (cmd) => {
-      spawned = true;
-      return fakeSpawn("", "", 0)(cmd, {});
-    };
+    const bin = agent([""]);
     const result = await akmReflect({
       ref: "secrets/signing-key",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: spy },
+      config: quietQualityGateConfig(bin),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -171,7 +156,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     // spawned, so secret bytes are never read or sent.
     expect(result.reason).toBe("unsupported_type");
     expect(result.error).toContain("secret");
-    expect(spawned).toBe(false);
+    expect(harnessCalls(bin)).toHaveLength(0);
   });
 
   test("task:* ref is rejected (YAML tasks are not markdown-shaped)", async () => {
@@ -179,8 +164,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     const result = await akmReflect({
       ref: "tasks/nightly-backup",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn("", "", 0) },
+      config: quietQualityGateConfig(agent([""])),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -194,8 +178,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     const result = await akmReflect({
       ref: "knowledge/foo",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
+      config: quietQualityGateConfig(agent([payload])),
     });
     // Allowed by the type guard — should at least pass that stage without
     // returning the "not supported" error.
@@ -213,9 +196,8 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
     const result = await akmReflect({
       ref: "instructions/onboarding",
       stashDir: stash,
-      config: quietQualityGateConfig(),
+      config: quietQualityGateConfig(agent([payload])),
       assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
     if (!result.ok) throw new Error(`expected success, got: ${result.error}`);
     expect(result.proposal.ref).toContain("instructions/onboarding");
@@ -223,22 +205,16 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
 
   test("an unregistered/custom type with no existing content is still refused, not minted fresh", async () => {
     const stash = makeStashDir();
-    let spawned = false;
+    const bin = agent([""]);
     const result = await akmReflect({
       ref: "widgets/new-thing",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: {
-        spawn: (cmd) => {
-          spawned = true;
-          return fakeSpawn("", "", 0)(cmd, {});
-        },
-      },
+      config: quietQualityGateConfig(bin),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
     expect(result.reason).toBe("unsupported_type");
-    expect(spawned).toBe(false);
+    expect(harnessCalls(bin)).toHaveLength(0);
   });
 });
 
@@ -258,20 +234,14 @@ describe("Reflect file guard — refuses an asset whose file a proposal would no
     const stash = makeStashDir();
     writeInStash(stash, "skills/demo/SKILL.md", "---\nname: demo\ndescription: Demo skill.\n---\n# Demo\n");
     const file = writeInStash(stash, "skills/demo/references/a.md", NOTE);
-    let spawned = false;
+    const bin = agent([reflectReply({ description: "Reference A, revised." })]);
 
     // The index names this file `knowledge/skills/demo/references/a`; a proposal for that ref writes
     // `knowledge/skills/demo/references/a.md`, where nothing is.
     const result = await akmReflect({
       ref: "knowledge/skills/demo/references/a",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: {
-        spawn: (cmd) => {
-          spawned = true;
-          return fakeSpawn(reflectReply({ description: "Reference A, revised." }), "", 0)(cmd, {});
-        },
-      },
+      config: quietQualityGateConfig(bin),
     });
 
     expect(result.ok).toBe(false);
@@ -281,7 +251,7 @@ describe("Reflect file guard — refuses an asset whose file a proposal would no
     expect(result.error).toBe(
       `Reflect refused: the file for knowledge/skills/demo/references/a is ${fs.realpathSync(file)}, but a proposal would write ${path.join(stash, "knowledge", "skills", "demo", "references", "a.md")}. Edit the file directly.`,
     );
-    expect(spawned).toBe(false);
+    expect(harnessCalls(bin)).toHaveLength(0);
     expect(listProposals(stash)).toHaveLength(0);
     expect(fs.existsSync(path.join(stash, "knowledge", "skills"))).toBe(false);
     const completed = readEvents({ type: "reflect_completed" }).events;
@@ -296,24 +266,18 @@ describe("Reflect file guard — refuses an asset whose file a proposal would no
   test("a note outside every type directory is refused the same way", async () => {
     const stash = makeStashDir();
     writeInStash(stash, "docs/guide.md", NOTE);
-    let spawned = false;
+    const bin = agent([reflectReply({ description: "Guide, revised." })]);
 
     const result = await akmReflect({
       ref: "knowledge/docs/guide",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: {
-        spawn: (cmd) => {
-          spawned = true;
-          return fakeSpawn(reflectReply({ description: "Guide, revised." }), "", 0)(cmd, {});
-        },
-      },
+      config: quietQualityGateConfig(bin),
     });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
     expect(result.reason).toBe("unsupported_type");
-    expect(spawned).toBe(false);
+    expect(harnessCalls(bin)).toHaveLength(0);
     expect(listProposals(stash)).toHaveLength(0);
   });
 
@@ -329,8 +293,7 @@ describe("Reflect file guard — refuses an asset whose file a proposal would no
       const result = await akmReflect({
         ref,
         stashDir: stash,
-        config: quietQualityGateConfig(),
-        runAgentOptions: { spawn: fakeSpawn(reflectReply({ description: `${ref}, revised.` }), "", 0) },
+        config: quietQualityGateConfig(agent([reflectReply({ description: `${ref}, revised.` })])),
       });
       if (!result.ok) throw new Error(`expected ${ref} to be reflected, got: ${result.error}`);
       expect(result.proposal.changes).toMatchObject([{ path: file, op: "update" }]);
@@ -361,11 +324,10 @@ describe("Reflect frontmatter preservation — a patch keeps the source's other 
     const result = await akmReflect({
       ref: "knowledge/policies/release",
       stashDir: stash,
-      config: quietQualityGateConfig(),
+      config: quietQualityGateConfig(
+        agent([reflectReply({ description: "Release policy for production deploys and hotfixes" })]),
+      ),
       assetContent: sourceContent,
-      runAgentOptions: {
-        spawn: fakeSpawn(reflectReply({ description: "Release policy for production deploys and hotfixes" }), "", 0),
-      },
     });
 
     expect(result.ok).toBe(true);
@@ -386,109 +348,34 @@ describe("Reflect frontmatter preservation — a patch keeps the source's other 
 });
 
 describe("Reflect quality gate — source context", () => {
-  test("validates the separately resolved judge credential before agent generation or reflect events", async () => {
-    const stash = makeStashDir();
-    const sourceContent = `---\ndescription: Judge preflight boundary\n---\n\n${LONG_SOURCE_BODY}\n`;
-    const config = {
-      ...quietQualityGateConfig(),
-      engines: {
-        "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
-        judge: {
-          kind: "llm",
-          endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "judge-model",
-          apiKey: "$AKM_REFLECT_JUDGE_REQUIRED_KEY",
-        },
-      },
-      defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
-      improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
-    } as AkmConfig;
-    let spawned = 0;
-
-    await withEnv({ AKM_REFLECT_JUDGE_REQUIRED_KEY: undefined }, async () => {
-      await expect(
-        akmReflect({
-          ref: "knowledge/judge-preflight",
-          stashDir: stash,
-          config,
-          assetContent: sourceContent,
-          runAgentOptions: {
-            spawn: (...args) => {
-              spawned += 1;
-              return fakeSpawn(reflectReply(PATCH), "", 0)(...args);
-            },
-          },
-          chat: async () => JSON.stringify({ score: 5, reason: "pass" }),
-        }),
-      ).rejects.toBeInstanceOf(ConfigError);
-    });
-
-    expect(spawned).toBe(0);
-    expect(listProposals(stash)).toEqual([]);
-    expect(readEvents({ type: "reflect_invoked" }).events).toEqual([]);
-  });
-
-  test("skips the gate and flags the proposal for review when frozen judge selection has no LLM runner", async () => {
-    const stash = makeStashDir();
-    let spawned = 0;
-    const config = quietQualityGateConfig();
-    const processes = config.improve?.strategies?.default?.processes;
-    if (!processes) throw new Error("quiet quality-gate fixture is missing the default process config");
-    processes.reflect = { qualityGate: { enabled: true } };
-
-    const warnings: string[] = [];
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-
-    let result: Awaited<ReturnType<typeof akmReflect>>;
-    try {
-      result = await akmReflect({
-        ref: "knowledge/no-judge-runner",
-        stashDir: stash,
-        config,
-        assetContent: `---\ndescription: No judge runner\n---\n\n${LONG_SOURCE_BODY}\n`,
-        runAgentOptions: {
-          spawn: (...args) => {
-            spawned += 1;
-            return fakeSpawn(reflectReply(PATCH), "", 0)(...args);
-          },
-        },
-      });
-    } finally {
-      _setWarnSinkForTests(undefined);
-    }
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected reflect to succeed with the gate skipped");
-    expect(spawned).toBe(1);
-    expect(warnings.some((line) => line.includes("no engine configured"))).toBe(true);
-    const proposals = listProposals(stash);
-    expect(proposals).toHaveLength(1);
-    expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", reason: "no-judge-configured" });
-  });
-
   test("a separately resolved judge reads its credential at dispatch, after agent generation", async () => {
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: Judge credential boundary\n---\n\n${LONG_SOURCE_BODY}\n`;
+    // Slow enough that the key rotates while the agent runs.
+    const bin = agent([reflectReply(PATCH)], { delayMs: 400 });
     const config = {
-      ...quietQualityGateConfig(),
-      engines: {
-        "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+      ...quietQualityGateConfig(bin),
+      connections: {
         judge: {
-          kind: "llm",
           endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "judge-model",
+          models: { fast: "judge-model" },
           apiKey: "$AKM_REFLECT_JUDGE_ROTATING_KEY",
         },
       },
-      defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
-      improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
+      improve: {
+        strategy: "default",
+        processes: { reflect: { harness: "fake-agent" } },
+        strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
+      },
     } as AkmConfig;
     const original = "reflect-judge-original-secret";
     const rotated = "reflect-judge-rotated-secret";
     const observed: Array<string | undefined> = [];
-    const spawn = fakeSpawn(reflectReply(PATCH), "", 0);
+    // The key rotates once the agent has started, which is before the judge reads it.
+    const rotation = (async () => {
+      while (!fs.existsSync(`${bin}.count`)) await Bun.sleep(5);
+      mutateScopedEnv("AKM_REFLECT_JUDGE_ROTATING_KEY", rotated);
+    })();
 
     const result = await withEnv({ AKM_REFLECT_JUDGE_ROTATING_KEY: original }, () =>
       akmReflect({
@@ -496,12 +383,6 @@ describe("Reflect quality gate — source context", () => {
         stashDir: stash,
         config,
         assetContent: sourceContent,
-        runAgentOptions: {
-          spawn: (...args) => {
-            mutateScopedEnv("AKM_REFLECT_JUDGE_ROTATING_KEY", rotated);
-            return spawn(...args);
-          },
-        },
         chat: async (connection) => {
           observed.push(connection.apiKey);
           return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "pass" });
@@ -509,89 +390,26 @@ describe("Reflect quality gate — source context", () => {
       }),
     );
 
+    await rotation;
     expect(result.ok).toBe(true);
     expect(observed).toEqual([rotated]);
     expect(listProposals(stash)).toHaveLength(1);
-  });
-
-  test("SDK fallback generation and a separate judge each read their credential at dispatch", async () => {
-    const stash = makeStashDir();
-    const sourceContent = `---\ndescription: SDK and judge credential boundary\n---\n\n${LONG_SOURCE_BODY}\n`;
-    const config = {
-      ...quietQualityGateConfig(),
-      engines: {
-        "sdk-generator": { kind: "agent", platform: "opencode-sdk", llmEngine: "sdk-fallback" },
-        "sdk-fallback": {
-          kind: "llm",
-          endpoint: "https://fallback.example.test/v1/chat/completions",
-          model: "fallback",
-          apiKey: "$AKM_REFLECT_SDK_FALLBACK_KEY",
-        },
-        judge: {
-          kind: "llm",
-          endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "judge-model",
-          apiKey: "$AKM_REFLECT_SDK_JUDGE_KEY",
-        },
-      },
-      defaults: { engine: "sdk-generator", llmEngine: "judge", improveStrategy: "default" },
-      improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
-    } as AkmConfig;
-    const sdkSecret = "reflect-sdk-original-secret";
-    const judgeSecret = "reflect-sdk-judge-original-secret";
-    const judgeRotated = "reflect-sdk-judge-rotated-secret";
-    const observedSdk: Array<string | undefined> = [];
-    const observedJudge: Array<string | undefined> = [];
-
-    const result = await withEnv(
-      { AKM_REFLECT_SDK_FALLBACK_KEY: sdkSecret, AKM_REFLECT_SDK_JUDGE_KEY: judgeSecret },
-      () =>
-        akmReflect({
-          ref: "knowledge/sdk-judge-rotation",
-          stashDir: stash,
-          config,
-          assetContent: sourceContent,
-          runSdk: async (_profile, _prompt, _options, fallbackConnection) => {
-            observedSdk.push(fallbackConnection?.apiKey);
-            mutateScopedEnv("AKM_REFLECT_SDK_JUDGE_KEY", judgeRotated);
-            return {
-              ok: true,
-              exitCode: 0,
-              stdout: reflectReply(PATCH),
-              stderr: "",
-              durationMs: 1,
-            };
-          },
-          chat: async (connection) => {
-            observedJudge.push(connection.apiKey);
-            return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "pass" });
-          },
-        }),
-    );
-
-    expect(result.ok).toBe(true);
-    expect(observedSdk).toEqual([sdkSecret]);
-    expect(observedJudge).toEqual([judgeRotated]);
-    expect(listProposals(stash)).toHaveLength(1);
-    const persisted = JSON.stringify(listProposals(stash));
-    for (const secret of [sdkSecret, judgeSecret, judgeRotated]) expect(persisted).not.toContain(secret);
   });
 
   test("judges the proposal against the source content already loaded by reflect", async () => {
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: SOURCE_ONLY_MARKER Source context regression guard\n---\n\n${LONG_SOURCE_BODY}\n`;
     const config = {
-      ...quietQualityGateConfig(),
-      engines: {
-        "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+      ...quietQualityGateConfig(agent([reflectReply(PATCH)])),
+      connections: {
         judge: {
-          kind: "llm",
           endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "test-model",
+          models: { fast: "test-model" },
         },
       },
-      defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
       improve: {
+        strategy: "default",
+        processes: { reflect: { harness: "fake-agent" } },
         strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
       },
     } as AkmConfig;
@@ -602,9 +420,6 @@ describe("Reflect quality gate — source context", () => {
       stashDir: stash,
       config,
       assetContent: sourceContent,
-      runAgentOptions: {
-        spawn: fakeSpawn(reflectReply(PATCH), "", 0),
-      },
       chat: async (_connection, messages) => {
         judgePrompt = messages[1]?.content ?? "";
         return JSON.stringify({ scores: { need: 5, preservation: 4, quality: 4 }, reason: "adds useful detail" });
@@ -639,21 +454,23 @@ describe("Reflect quality gate — source context", () => {
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: Own switch\n---\n\n${LONG_SOURCE_BODY}\n`;
     let judged = 0;
+    const bin = agent([reflectReply(PATCH)]);
     const reflectWith = (ref: string, processes: Record<string, unknown>) =>
       akmReflect({
         ref,
         stashDir: stash,
         config: {
-          ...quietQualityGateConfig(),
-          engines: {
-            "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
-            judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
+          ...quietQualityGateConfig(bin),
+          connections: {
+            judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test-model" } },
           },
-          defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
-          improve: { strategies: { default: { processes } } },
+          improve: {
+            strategy: "default",
+            processes: { reflect: { harness: "fake-agent" } },
+            strategies: { default: { processes } },
+          },
         } as AkmConfig,
         assetContent: sourceContent,
-        runAgentOptions: { spawn: fakeSpawn(reflectReply(PATCH), "", 0) },
         chat: async () => {
           judged += 1;
           return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "pass" });
@@ -666,18 +483,21 @@ describe("Reflect quality gate — source context", () => {
     expect(judged).toBe(1);
   });
 
-  test("qualityGate.engine judges with its own engine instead of the default LLM", async () => {
+  test("improve.qualityGate.connection judges with its own connection instead of the default one", async () => {
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: Separate judge\n---\n\n${LONG_SOURCE_BODY}\n`;
     const config = {
-      ...quietQualityGateConfig(),
-      engines: {
-        "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
-        general: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "general-model" },
-        judge: { kind: "llm", endpoint: "http://localhost:11435/v1/chat/completions", model: "judge-model" },
+      ...quietQualityGateConfig(agent([reflectReply(PATCH)])),
+      connections: {
+        general: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "general-model" } },
+        judge: { endpoint: "http://localhost:11435/v1/chat/completions", models: { fast: "judge-model" } },
       },
-      defaults: { engine: "fake-agent", llmEngine: "general", improveStrategy: "default" },
-      improve: { strategies: { default: { processes: { reflect: { qualityGate: { engine: "judge" } } } } } },
+      improve: {
+        strategy: "default",
+        processes: { reflect: { harness: "fake-agent" } },
+        qualityGate: { connection: "judge" },
+        strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
+      },
     } as AkmConfig;
     const models: string[] = [];
 
@@ -686,9 +506,6 @@ describe("Reflect quality gate — source context", () => {
       stashDir: stash,
       config,
       assetContent: sourceContent,
-      runAgentOptions: {
-        spawn: fakeSpawn(reflectReply(PATCH), "", 0),
-      },
       chat: async (connection) => {
         models.push(connection.model);
         return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "pass" });
@@ -699,27 +516,66 @@ describe("Reflect quality gate — source context", () => {
     expect(models).toEqual(["judge-model"]);
   });
 
-  test("a gate whose settings resolve to an agent judges with that agent, under the model-work tool policy", async () => {
+  test("a run-level --harness moves reflect and its judge to that harness: two harness calls, no LLM call", async () => {
     const stash = makeStashDir();
-    // The judge's dispatch runs this binary for real: it records its argv and passes the revision.
-    const judgeBin = path.join(stash, "judge-agent.sh");
-    const argvLog = path.join(stash, "judge-argv.log");
-    fs.writeFileSync(
-      judgeBin,
-      `#!/bin/sh\necho "$@" >> "${argvLog}"\necho '${JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "ok" })}'\n`,
-      { mode: 0o755 },
-    );
+    // The config's only default is a connection, so without the run's selection both calls would go there.
+    const bin = agent([
+      reflectReply(PATCH),
+      JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "ok" }),
+    ]);
     const config = {
       ...quietQualityGateConfig(),
-      engines: {
-        "fake-agent": { kind: "agent", platform: "opencode", bin: judgeBin },
-        general: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "general-model" },
+      connections: {
+        general: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "general-model" } },
       },
-      defaults: { engine: "fake-agent", llmEngine: "general", improveStrategy: "default" },
+      harnesses: { "fake-agent": { platform: "claude", bin } },
       improve: {
-        strategies: {
-          default: { processes: { reflect: { engine: "fake-agent", qualityGate: { llm: { temperature: 0 } } } } },
-        },
+        strategy: "default",
+        strategies: { default: { processes: { reflect: { enabled: true, qualityGate: { enabled: true } } } } },
+      },
+    } as AkmConfig;
+    // What `akm improve --harness fake-agent` builds, and what the improve loop hands reflect from it.
+    const plan = resolveImprovePlan("default", config, { run: { harness: "fake-agent" } });
+    let llmCalls = 0;
+
+    const result = await akmReflect({
+      ref: "knowledge/run-selection",
+      stashDir: stash,
+      config,
+      improveProfile: plan.strategy.config,
+      llmRunner: plan.processes.reflect.runner,
+      ...(plan.run ? { run: plan.run } : {}),
+      assetContent: `---\ndescription: Run selection\n---\n\n${LONG_SOURCE_BODY}\n`,
+      chat: async () => {
+        llmCalls += 1;
+        return "must not run";
+      },
+    });
+
+    if (!result.ok) throw new Error(`expected a proposal, got ${result.reason}: ${result.error}`);
+    expect(llmCalls).toBe(0);
+    expect(harnessCalls(bin)).toHaveLength(2);
+    expect(result.proposal.gateDecision).toMatchObject({ outcome: "staged", scores: { need: 5 } });
+  });
+
+  test("a gate whose settings resolve to an agent judges with that agent, under the model-work tool policy", async () => {
+    const stash = makeStashDir();
+    // The one program writes the revision on its first call and judges it on its second.
+    const bin = agent([
+      reflectReply(PATCH),
+      JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "ok" }),
+    ]);
+    const config = {
+      ...quietQualityGateConfig(),
+      connections: {
+        general: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "general-model" } },
+      },
+      harnesses: { "fake-agent": { platform: "claude", bin } },
+      improve: {
+        strategy: "default",
+        processes: { reflect: { harness: "fake-agent" } },
+        qualityGate: { harness: "fake-agent", llm: { temperature: 0 } },
+        strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
       },
     } as AkmConfig;
     let chatRan = false;
@@ -730,9 +586,6 @@ describe("Reflect quality gate — source context", () => {
       config,
       improveProfile: config.improve?.strategies?.default,
       assetContent: `---\ndescription: Agent judge\n---\n\n${LONG_SOURCE_BODY}\n`,
-      runAgentOptions: {
-        spawn: fakeSpawn(reflectReply(PATCH), "", 0),
-      },
       chat: async () => {
         chatRan = true;
         return "must not run";
@@ -743,7 +596,9 @@ describe("Reflect quality gate — source context", () => {
     if (!result.ok) throw new Error("expected a proposal");
     expect(chatRan).toBe(false);
     // The agent judged it, under the model-work policy, and its scores reach the stamp.
-    expect(fs.readFileSync(argvLog, "utf8")).toStartWith("run --agent akm-model-work");
+    const calls = harnessCalls(bin);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.argv.slice(0, 2)).toEqual(["--restricted", "--strict-mcp-config"]);
     expect(result.proposal.gateDecision).toMatchObject({
       outcome: "staged",
       scores: { need: 5, preservation: 5, quality: 5 },
@@ -760,16 +615,17 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
       ref,
       stashDir: makeStashDir(),
       config: {
-        ...quietQualityGateConfig(),
-        engines: {
-          "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
-          judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
+        ...quietQualityGateConfig(agent([reflectReply(PATCH)])),
+        connections: {
+          judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test-model" } },
         },
-        defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
-        improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
+        improve: {
+          strategy: "default",
+          processes: { reflect: { harness: "fake-agent" } },
+          strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
+        },
       } as AkmConfig,
       assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(reflectReply(PATCH), "", 0) },
       chat,
     });
   }
@@ -821,8 +677,64 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
     expect(judgeCalls).toBe(1);
   });
 
-  test("a real low score is still refused", async () => {
-    // NEED 2 leaves the mean (3.33) in the review band: a real score that also carries reviewNeeded.
+  test("a score in the uncertain band is queued for a person with its scores, and no window is recorded", async () => {
+    // NEED 2 with the rest at 5: a mean of 4.0, short of a pass but nowhere near bad.
+    const scores = { need: 2, preservation: 5, quality: 5 };
+    const result = await reflectJudgedBy(async () =>
+      JSON.stringify({ scores, reason: "the description was fine as it was" }),
+    );
+    if (!result.ok) throw new Error(`expected the revision to wait for a person, got: ${result.error}`);
+    expect(result.proposal).toMatchObject({
+      status: "pending",
+      gateDecision: {
+        outcome: "deferred",
+        reason: "judge-uncertain",
+        gate: "quality-gate",
+        scores,
+        judgeReason: "the description was fine as it was",
+      },
+    });
+    expect(listProposals(makeStashDir()).map((p) => p.id)).toEqual([result.proposal.id]);
+    // `akm proposal list` shows the reason beside the proposal.
+    expect(formatGateDecisionSummary(result.proposal.gateDecision)).toBe("gate=deferred:judge-uncertain");
+    // `review_needed` is a revisit cadence a fresh signal lifts; the hard `quality_rejected` window is not recorded.
+    expect(reflectLedgerRows()).toMatchObject([{ outcome: "review_needed", detail: "judge-uncertain" }]);
+    const completed = readEvents({ type: "reflect_completed" }).events.at(-1)?.metadata;
+    expect(completed).toMatchObject({ proposalId: result.proposal.id, qualityScore: 4 });
+    expect(completed?.qualityRejected).toBeUndefined();
+  });
+
+  test("triage never accepts a revision in the uncertain band: it waits for a person", async () => {
+    const result = await reflectJudgedBy(async () =>
+      JSON.stringify({ scores: { need: 2, preservation: 5, quality: 4 }, reason: "borderline" }),
+    );
+    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
+    const promote = mock(async () => {
+      throw new Error("triage accepted a revision awaiting a person");
+    });
+    const chat = mock(async () => {
+      throw new Error("the judgment tier saw a revision awaiting a person");
+    });
+    const drained = await drainProposals(
+      {
+        stashDir: makeStashDir(),
+        applyMode: "promote",
+        maxAccepts: 25,
+        dryRun: false,
+        judgment: testLlmRunner({ endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" }),
+      },
+      promote as never,
+      undefined,
+      { chat },
+    );
+    expect(promote).not.toHaveBeenCalled();
+    expect(chat).not.toHaveBeenCalled();
+    expect(drained).toMatchObject({ promoted: [], rejected: [], deferred: [] });
+    expect(listProposals(makeStashDir(), { status: "pending" }).map((p) => p.id)).toEqual([result.proposal.id]);
+  });
+
+  test("a score just below the uncertain band is still refused", async () => {
+    // A mean of 3.33 (one criterion at 2, two at 4) is the judge's own review label, but short of the band.
     const result = await reflectJudgedBy(async () =>
       JSON.stringify({ scores: { need: 2, preservation: 4, quality: 4 }, reason: "rewords a correct asset" }),
     );
@@ -852,18 +764,17 @@ describe("Reflect routing — a judged patch is staged for the drain", () => {
       ref,
       stashDir: makeStashDir(),
       config: {
-        ...quietQualityGateConfig(),
-        engines: {
-          "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
-          judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
+        ...quietQualityGateConfig(agent([reflectReply(patch)])),
+        connections: {
+          judge: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test-model" } },
         },
-        defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
         improve: {
+          strategy: "default",
+          processes: { reflect: { harness: "fake-agent" } },
           strategies: { default: { processes: { reflect: { qualityGate: { enabled: judge !== undefined } } } } },
         },
       } as AkmConfig,
       assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(reflectReply(patch), "", 0) },
       chat:
         judge ??
         (async () => {
@@ -911,23 +822,19 @@ describe("Reflect avoid-patterns — run-only guidance reaches the prompt, never
   test("the proposal is the source with the patch, whatever guidance the prompt carried", async () => {
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: Control\n---\n\n${LONG_SOURCE_BODY}\n`;
-    let prompt = "";
-    const spawn: SpawnFn = (cmd, opts) => {
-      prompt = cmd.at(-1) ?? "";
-      return fakeSpawn(reflectReply({ description: "Control doc, with a fuller description" }), "", 0)(cmd, opts);
-    };
+    const bin = agent([reflectReply({ description: "Control doc, with a fuller description" })]);
 
     const result = await akmReflect({
       ref: "knowledge/scaffolding",
       stashDir: stash,
-      config: quietQualityGateConfig(),
+      config: quietQualityGateConfig(bin),
       assetContent: sourceContent,
       avoidPatterns: ["Reflect rejected: unrelated run diagnostic."],
-      runAgentOptions: { spawn },
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
+    const prompt = promptOf(harnessCalls(bin)[0]);
     expect(prompt).toContain("Run-only guidance: do not copy this heading");
     expect(prompt).toContain("Reflect rejected: unrelated run diagnostic.");
     const content = result.proposal.payload.content;
@@ -959,22 +866,18 @@ describe("Reflect feedback-framing guard — feedback is a signal to investigate
       },
     });
     const payload = reflectReply({ description: "Storage guide, with its layout caveats" });
-    let prompt = "";
-    const spawn: SpawnFn = (cmd, opts) => {
-      prompt = cmd.at(-1) ?? "";
-      return fakeSpawn(payload, "", 0)(cmd, opts);
-    };
+    const bin = agent([payload]);
 
     const result = await akmReflect({
       ref: "knowledge/storage-guide",
       itemRef,
       stashDir: stash,
-      config: quietQualityGateConfig(),
+      config: quietQualityGateConfig(bin),
       assetContent: "---\ndescription: Storage guide\n---\n\nExisting body about storage.",
-      runAgentOptions: { spawn },
     });
 
     expect(result.ok).toBe(true);
+    const prompt = promptOf(harnessCalls(bin)[0]);
     const caveatIndex = prompt.indexOf("It is a signal, not a fact to insert.");
     const feedbackIndex = prompt.indexOf("the storage section does not say which physical disk backs /data");
     expect(caveatIndex).toBeGreaterThan(-1);

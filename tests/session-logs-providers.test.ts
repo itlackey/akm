@@ -635,7 +635,7 @@ function writeOpenCodeDb(base: string, sessions: OpenCodeDbSession[]): string {
 }
 
 describe("OpenCodeProvider.listSessions (opencode.db)", () => {
-  test("is unavailable when only the parent directory exists", () => {
+  test("is unavailable when only the parent directory exists", async () => {
     const base = makeTempDir("akm-opencode-availability-");
     const dbPath = path.join(base, "opencode.db");
     class TempOpenCodeProvider extends OpenCodeProvider {
@@ -643,15 +643,18 @@ describe("OpenCodeProvider.listSessions (opencode.db)", () => {
         return dbPath;
       }
     }
-    const provider = new TempOpenCodeProvider();
+    // akm's own OpenCode database also makes the provider available; this test has none.
+    withEnvSync({ AKM_DATA_DIR: makeTempDir("akm-opencode-availability-data-") }, () => {
+      const provider = new TempOpenCodeProvider();
 
-    fs.mkdirSync(base, { recursive: true });
-    expect(provider.isAvailable()).toBe(false);
-    fs.writeFileSync(dbPath, "");
-    expect(provider.isAvailable()).toBe(true);
+      fs.mkdirSync(base, { recursive: true });
+      expect(provider.isAvailable()).toBe(false);
+      fs.writeFileSync(dbPath, "");
+      expect(provider.isAvailable()).toBe(true);
+    });
   });
 
-  test("lists sessions from the SQLite store, newest first", () => {
+  test("lists sessions from the SQLite store, newest first", async () => {
     const base = makeTempDir("akm-opencode-db-list-");
     writeOpenCodeDb(base, [
       {
@@ -672,7 +675,7 @@ describe("OpenCodeProvider.listSessions (opencode.db)", () => {
       },
     ]);
 
-    const sessions = new OpenCodeProvider().listSessions({ location: base });
+    const sessions = await new OpenCodeProvider().listSessions({ location: base });
     expect(sessions.map((s) => s.sessionId)).toEqual(["ses_two", "ses_one"]);
     expect(sessions.find((s) => s.sessionId === "ses_one")).toMatchObject({
       harness: "opencode",
@@ -684,17 +687,17 @@ describe("OpenCodeProvider.listSessions (opencode.db)", () => {
     });
   });
 
-  test("uses the sole opencode.db session store", () => {
+  test("uses the sole opencode.db session store", async () => {
     const base = makeTempDir("akm-opencode-db-only-");
     writeOpenCodeDb(base, [
       { id: "ses_db", title: "db", directory: "/d", created: 1700000000000, updated: 1700001000000, messages: [] },
     ]);
 
-    const sessions = new OpenCodeProvider().listSessions({ location: base });
+    const sessions = await new OpenCodeProvider().listSessions({ location: base });
     expect(sessions.map((s) => s.sessionId)).toEqual(["ses_db"]);
   });
 
-  test("filters by sinceMs using session.time_updated", () => {
+  test("filters by sinceMs using session.time_updated", async () => {
     const base = makeTempDir("akm-opencode-db-since-");
     writeOpenCodeDb(base, [
       {
@@ -715,21 +718,38 @@ describe("OpenCodeProvider.listSessions (opencode.db)", () => {
       },
     ]);
 
-    const sessions = new OpenCodeProvider().listSessions({ location: base, sinceMs: new Date("2026-05-01").getTime() });
+    const sessions = await new OpenCodeProvider().listSessions({
+      location: base,
+      sinceMs: new Date("2026-05-01").getTime(),
+    });
     expect(sessions.map((s) => s.sessionId)).toEqual(["ses_recent"]);
   });
 
-  test("returns [] when the DB lacks the expected schema", () => {
+  test("returns [] when the DB lacks the expected schema", async () => {
     const base = makeTempDir("akm-opencode-db-badschema-");
     const db = openDatabase(path.join(base, "opencode.db"), { create: true });
     db.exec("CREATE TABLE unrelated (x TEXT);");
     db.close();
-    expect(new OpenCodeProvider().listSessions({ location: base })).toEqual([]);
+    expect(await new OpenCodeProvider().listSessions({ location: base })).toEqual([]);
   });
 });
 
 describe("OpenCodeProvider.readSession (opencode.db)", () => {
-  test("reads messages, joins text parts, and extracts inline refs", () => {
+  test("fails for a session that is not in the file, so extract records read_failed, not an empty session", async () => {
+    const base = makeTempDir("akm-opencode-db-missing-");
+    writeOpenCodeDb(base, [
+      { id: "ses_here", title: "here", directory: "/d", created: 1700000000000, updated: 1700001000000, messages: [] },
+    ]);
+    await expect(
+      new OpenCodeProvider().readSession({
+        harness: "opencode",
+        sessionId: "ses_gone",
+        filePath: path.join(base, "opencode.db"),
+      }),
+    ).rejects.toThrow("session ses_gone is not in the file");
+  });
+
+  test("reads messages, joins text parts, and extracts inline refs", async () => {
     const base = makeTempDir("akm-opencode-db-read-");
     writeOpenCodeDb(base, [
       {
@@ -746,9 +766,9 @@ describe("OpenCodeProvider.readSession (opencode.db)", () => {
     ]);
 
     const provider = new OpenCodeProvider();
-    const summary = provider.listSessions({ location: base })[0];
+    const summary = (await provider.listSessions({ location: base }))[0];
     if (!summary) throw new Error("test fixture missing session summary");
-    const data = provider.readSession(summary);
+    const data = await provider.readSession(summary);
 
     expect(data.ref.harness).toBe("opencode");
     expect(data.ref.title).toBe("Real session");
@@ -760,7 +780,7 @@ describe("OpenCodeProvider.readSession (opencode.db)", () => {
     expect(data.inlineRefs[0]).toMatchObject({ kind: "remember", text: "auth uses JWT now" });
   });
 
-  test("skips messages with no text parts", () => {
+  test("skips messages with no text parts", async () => {
     const base = makeTempDir("akm-opencode-db-notext-");
     writeOpenCodeDb(base, [
       {
@@ -774,9 +794,9 @@ describe("OpenCodeProvider.readSession (opencode.db)", () => {
     ]);
 
     const provider = new OpenCodeProvider();
-    const summary = provider.listSessions({ location: base })[0];
+    const summary = (await provider.listSessions({ location: base }))[0];
     if (!summary) throw new Error("test fixture missing session summary");
-    const data = provider.readSession(summary);
+    const data = await provider.readSession(summary);
     expect(data.events).toEqual([]);
     expect(data.inlineRefs).toEqual([]);
   });

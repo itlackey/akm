@@ -2,9 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { formatModelsListPlain } from "./helpers";
+import { formatModelsPlain, formatModelsSetPlain } from "./helpers";
 import type { TextFormatterEntry } from "./registry";
 
 export const modelsFormatters: TextFormatterEntry[] = [
-  { command: "models-list", handler: (r) => formatModelsListPlain(r) },
+  { command: "models", handler: (r) => formatModelsPlain(r) },
+  { command: "models-set", handler: (r) => formatModelsSetPlain(r) },
 ];

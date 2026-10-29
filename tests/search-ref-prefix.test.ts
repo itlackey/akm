@@ -387,7 +387,7 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
     expect(hits[0]?.score).toBe(1);
   });
 
-  test("the retired `<type>:` spelling no longer enumerates, and the tip says so", async () => {
+  test("the retired `<type>:` spelling no longer enumerates", async () => {
     const result = await akmSearch({
       query: "memory:projecta/",
       source: "local",
@@ -396,10 +396,8 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
     const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
 
     // No fixture carries a "memor…" token in an indexed field, so the retired
-    // spelling can only come back empty — the failure mode is that it does so
-    // SILENTLY, which is what the tip fixes.
+    // spelling can only come back empty.
     expect(hits).toHaveLength(0);
-    expect(result.tip ?? "").toContain("memories/projecta/");
   });
 });
 

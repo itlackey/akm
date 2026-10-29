@@ -10,9 +10,18 @@
  *     gate decision carrying its content hash) is accepted, unless its target
  *     changed since mint — then it is auto-rejected as `stale-target`, never
  *     overwritten;
+ *   - a proposal planned by the proactive lane (`eligibilitySource: "proactive"`,
+ *     no feedback behind it) is never accepted, by a gate or by the judgment tier,
+ *     and a staged accept does not carry it: it is left for a person with reason
+ *     `proactive-needs-review` (#1147);
  *   - everything else needs a judge: the judgment tier decides it when a runner
  *     is configured, and whatever stays undecided is left for review
  *     (`review_needed` in the improve ledger).
+ * The judgment tier may accept only a consolidate promotion (a memory proposed
+ * as a new knowledge note). Judged over every kind, it accepted unsafe
+ * retirements, applied exact fixes unreviewed and changed notes no one had
+ * touched (6 to 14 harmed items a night on two models, #1132); a promotion it
+ * judges well. Any other kind it would accept is left for a person.
  * `maxAccepts` caps promotions across both tiers; `applyMode: "queue"` never
  * promotes; `excludeIds` keeps this run's fresh proposals out; a proposal that
  * a generating stage routed to a person is left for that person.
@@ -24,19 +33,15 @@ import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement"
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
-import { ConfigError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { escapeJsonStringControls, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 import { info, warn } from "../../core/warn";
+import { type Notice, noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import {
-  assertRunnerCredentials,
-  type RunExecutionOptions,
-  runExecution,
-} from "../../integrations/agent/runner-dispatch";
+import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
+import { callStructured } from "../../llm/structured-call";
 import {
   NEIGHBOUR_EXCERPT_CHARS,
   NEIGHBOUR_NOTE_COUNT,
@@ -44,10 +49,12 @@ import {
   shingleContainment,
   wordShingles,
 } from "../improve/consolidate/coverage";
-import { errMessage, noticeSet } from "../improve/stage";
+import { errMessage } from "../improve/stage";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
 import { isRetireProposal, PAIR_PASS_GATE, STALE_TARGET_GATE_REASON } from "./proposal-types";
 import {
+  type AcceptCommitCollector,
+  commitCollectedAccepts,
   listProposals,
   listProposalsReadOnly,
   type Proposal,
@@ -58,7 +65,7 @@ import {
   recordGateDecision,
 } from "./repository";
 
-export type DrainDeferReason = "needs-judgment";
+export type DrainDeferReason = "needs-judgment" | "proactive-needs-review";
 
 /** The gate label on every decision the drain records. */
 const DRAIN_GATE = "triage";
@@ -79,7 +86,15 @@ export interface DrainOptions {
   excludeIds?: Set<string>;
   /** The judgment tier's runner; absent leaves undecided proposals for review. */
   judgment?: RunnerSpec | null;
+  /** The caller's deadline (an improve run's budget): no judgment starts after it, and one in flight stops. */
+  signal?: AbortSignal;
   eventsCtx?: EventsContext;
+  /**
+   * Where this run's accepts wait for their commit. A caller that commits them
+   * itself (`akm improve`'s end-of-run batch) passes one; without it the drain
+   * commits them once when it ends (#1185).
+   */
+  commitCollector?: AcceptCommitCollector;
 }
 
 export interface DrainResult {
@@ -106,14 +121,14 @@ export interface JudgmentVerdict {
   reason: string;
 }
 
-/** Test seams for the judgment dispatch (LLM, agent and SDK transports). */
+/** Test seam for the judgment dispatch's chat transport. */
 export interface JudgmentSeams {
-  chat?: (
-    config: Extract<RunnerSpec, { kind: "llm" }>,
-    messages: Parameters<NonNullable<RunExecutionOptions["chat"]>>[1],
-  ) => Promise<string>;
-  runAgentFn?: NonNullable<RunExecutionOptions["runAgent"]>;
-  runSdkFn?: NonNullable<RunExecutionOptions["runSdk"]>;
+  chat?: RunExecutionOptions["chat"];
+}
+
+/** A consolidate promotion: a memory proposed as a new knowledge note. The only kind the judgment tier may accept. */
+export function isPromotionProposal(proposal: Proposal): boolean {
+  return proposal.source === "consolidate" && proposal.promotionSource !== undefined;
 }
 
 /** An empty diff: no non-blank body line outside the frontmatter. */
@@ -127,6 +142,10 @@ export function isEmptyDiff(proposal: Proposal): boolean {
 
 function categorizeDrainFailure(message: string, fallback: string): string {
   if (/target (?:changed after|was created after) proposal/.test(message)) return STALE_TARGET_GATE_REASON;
+  // A retire proposal whose target or successor is gone or changed since judging can never be accepted.
+  if (/^Retire proposal \S+ (?:target \(.*\) no longer exists|is stale )/.test(message)) {
+    return STALE_TARGET_GATE_REASON;
+  }
   if (/failed validation:/.test(message)) return "validation";
   return fallback;
 }
@@ -162,6 +181,7 @@ async function acceptProposal(
         id,
         ...(opts.target ? { target: opts.target } : {}),
         ...(opts.config ? { config: opts.config } : {}),
+        ...(opts.commitCollector ? { commitCollector: opts.commitCollector } : {}),
         gateDecision,
       });
     } else if (opts.config) {
@@ -306,43 +326,28 @@ export function parseJudgmentVerdict(raw: string): JudgmentVerdict | null {
 
 /** Why a judged item is still deferred: a stable token and, for a model defer, its words. */
 interface DeferNote {
-  reason: "judgment-deferred" | "judgment-parse-failure" | "judgment-error";
+  reason: "judgment-deferred" | "judgment-parse-failure" | "judgment-error" | "judgment-not-promotion";
   judgeReason?: string;
 }
 
-/** Lower the judgment prompt through the frozen runner and dispatch it. */
+/** Dispatch the judgment prompt on the frozen runner: one model call, under the model-work tool policy. */
 async function dispatchJudgment(
   runner: RunnerSpec,
   prompt: string,
   seams: JudgmentSeams,
-): Promise<{ verdict: JudgmentVerdict | null; notices: readonly Readonly<LoweringNotice>[]; error?: string }> {
-  let notices: readonly Readonly<LoweringNotice>[] = [];
-  try {
-    // Model work is bounded on every runner kind: one with no timeout of its own gets the default.
-    // The judgment runs under the model-work tool policy.
-    const prepared = resolveExecution({
-      content: prompt,
-      runner,
-      current: Object.hasOwn(runner, "timeoutMs") ? {} : { timeout: DEFAULT_LLM_TIMEOUT_MS },
-      modelWork: true,
-    });
-    const lowered = buildExecution(prepared.request, prepared.runner);
-    notices = lowered.notices;
-    const chat = seams.chat;
-    const llmRunner = lowered.runner.kind === "llm" ? lowered.runner : undefined;
-    const result = await runExecution(lowered, {
-      ...(seams.runAgentFn ? { runAgent: seams.runAgentFn } : {}),
-      ...(seams.runSdkFn ? { runSdk: seams.runSdkFn } : {}),
-      ...(chat && llmRunner
-        ? { chat: async (connection, messages) => chat({ ...llmRunner, connection }, messages) }
-        : {}),
-    });
-    if (!result.ok) return { verdict: null, notices, error: result.error ?? result.reason ?? "unknown error" };
-    return { verdict: parseJudgmentVerdict(result.stdout), notices };
-  } catch (error) {
-    if (error instanceof ConfigError) throw error;
-    return { verdict: null, notices, error: errMessage(error) };
-  }
+  signal: AbortSignal | undefined,
+): Promise<{ verdict: JudgmentVerdict | null; notices: readonly Notice[]; error?: string }> {
+  let notices: readonly Notice[] = [];
+  const outcome = await callStructured({
+    runner,
+    messages: [{ role: "user", content: prompt }],
+    request: { ...(seams.chat ? { chat: seams.chat } : {}), ...(signal ? { signal } : {}) },
+    onNotices: (value) => {
+      notices = value;
+    },
+  });
+  if (!outcome.ok) return { verdict: null, notices, error: outcome.error };
+  return { verdict: parseJudgmentVerdict(outcome.raw), notices };
 }
 
 /**
@@ -367,7 +372,13 @@ async function runJudgmentTier(
   const cappedBefore = result.skippedByCap.length;
   for (const item of result.deferred) {
     const proposal = byId.get(item.id);
-    if (!proposal) {
+    if (!proposal || item.reason === "proactive-needs-review") {
+      stillDeferred.push(item);
+      continue;
+    }
+    // Past the deadline nothing is dispatched: the item stays undecided, as an error would leave it.
+    if (opts.signal?.aborted) {
+      deferNotes.set(item.id, { reason: "judgment-error" });
       stillDeferred.push(item);
       continue;
     }
@@ -380,7 +391,7 @@ async function runJudgmentTier(
         ? { neighbours: promotionNeighbours(opts.stashDir, proposal, acceptedPromotions) }
         : {}),
     });
-    const dispatch = await dispatchJudgment(opts.judgment, prompt, seams);
+    const dispatch = await dispatchJudgment(opts.judgment, prompt, seams, opts.signal);
     notices.add(dispatch.notices);
     if (dispatch.error) warn(`[triage] judgment dispatch failed for ${item.id}: ${dispatch.error}`);
     const verdict = dispatch.error ? null : dispatch.verdict;
@@ -412,6 +423,15 @@ async function runJudgmentTier(
         warn(`[triage] judgment reject failed for ${item.id}: ${failure}`);
         stillDeferred.push(item);
       }
+      continue;
+    }
+    // Only a promotion may be accepted on a judgment (#1132): anything else waits for a person.
+    if (!isPromotionProposal(proposal)) {
+      deferNotes.set(item.id, {
+        reason: "judgment-not-promotion",
+        ...(verdict.reason ? { judgeReason: verdict.reason } : {}),
+      });
+      stillDeferred.push(item);
       continue;
     }
     // Queue mode never writes the asset: the verdict is staged for a later promote run.
@@ -450,8 +470,7 @@ async function runJudgmentTier(
     );
     if (outcome === "promoted") {
       result.promoted.push(item.id);
-      if (proposal.source === "consolidate" && proposal.promotionSource !== undefined)
-        acceptedPromotions.push(proposal);
+      acceptedPromotions.push(proposal);
       acceptBudget -= 1;
     } else if (outcome === "rejected") {
       result.rejected.push(item.id);
@@ -476,7 +495,7 @@ function promotionNeighbours(
   proposal: Proposal,
   acceptedPromotions: readonly Proposal[],
 ): ReturnType<typeof nearestKnowledgeNotes> {
-  if (proposal.source !== "consolidate" || proposal.promotionSource === undefined) return [];
+  if (!isPromotionProposal(proposal) || proposal.promotionSource === undefined) return [];
   try {
     const parsed = parseRefInput(proposal.promotionSource);
     const typeDir = stashDirFor(parsed.type);
@@ -530,6 +549,21 @@ export async function drainProposals(
   rejectFn: RejectFn = akmProposalReject,
   judgmentSeams: JudgmentSeams = {},
 ): Promise<DrainResult> {
+  if (opts.commitCollector) return drainPending(opts, promoteFn, rejectFn, judgmentSeams);
+  const commitCollector: AcceptCommitCollector = [];
+  try {
+    return await drainPending({ ...opts, commitCollector }, promoteFn, rejectFn, judgmentSeams);
+  } finally {
+    commitCollectedAccepts(commitCollector, "akm proposal drain");
+  }
+}
+
+async function drainPending(
+  opts: DrainOptions,
+  promoteFn: PromoteFn,
+  rejectFn: RejectFn,
+  judgmentSeams: JudgmentSeams,
+): Promise<DrainResult> {
   const exclude = opts.excludeIds ?? new Set<string>();
   // A judgment runner's credentials are validated before any live state
   // connection, so its classification reads an isolated snapshot.
@@ -543,7 +577,7 @@ export async function drainProposals(
     // A consolidate pair-pass `retire` proposal is auto-accepted only when the
     // pair pass staged it: nothing unique on either side, confirmed by a
     // second look, no continuity risk; every other one waits for a direct
-    // `akm proposal accept` (spec §25.6). Checked before isEmptyDiff, which
+    // `akm proposal accept`. Checked before isEmptyDiff, which
     // has nothing meaningful to read on a delete-primary change.
     if (isRetireProposal(proposal)) {
       const staged = proposal.gateDecision;
@@ -564,21 +598,30 @@ export async function drainProposals(
     if (decision?.outcome === "deferred" && !decision.gate?.startsWith(DRAIN_GATE)) continue;
     if (isEmptyDiff(proposal)) {
       empties.push(proposal.id);
+    } else if (proposal.eligibilitySource === "proactive") {
+      // Planned by the proactive lane (no feedback behind it): never accepted
+      // here, whatever a judge or an earlier drain staged. A person decides (#1147).
+      result.deferred.push({ id: proposal.id, reason: "proactive-needs-review" });
     } else if (decision?.outcome === "staged" && decision.contentHash === proposalContentHash(proposal)) {
+      // A judgment accept staged by an earlier drain obeys the same rule: only a promotion.
+      if (decision.gate === DRAIN_GATE && !isPromotionProposal(proposal)) {
+        result.deferred.push({ id: proposal.id, reason: "needs-judgment" });
+        continue;
+      }
       accepts.push({ id: proposal.id, reason: decision.gate === "quality-gate" ? "judge-passed" : "judgment-accept" });
     } else {
       result.deferred.push({ id: proposal.id, reason: "needs-judgment" });
     }
   }
 
-  if (opts.judgment && result.deferred.length > 0) {
-    // Symbolic credentials, and the runner's model-work tool policy, are checked before any gate, reject or promote.
+  if (opts.judgment && result.deferred.some((d) => d.reason === "needs-judgment")) {
+    // Build the judgment runner's request before any gate, reject or promote: a transport that cannot run at all fails here, not after a mutation.
     const prepared = resolveExecution({
       content: "Validate the selected proposal judgment runner before mutation.",
       runner: opts.judgment,
       modelWork: true,
     });
-    assertRunnerCredentials(buildExecution(prepared.request, prepared.runner).runner);
+    buildExecution(prepared.request, prepared.runner);
   }
 
   for (const id of empties) {
@@ -638,7 +681,10 @@ export async function drainProposals(
   if (!opts.dryRun) {
     for (const item of result.deferred) {
       const note = deferNotes.get(item.id);
-      const reviewReason = note?.reason ?? (opts.judgment ? "judgment-deferred" : "no-judge-configured");
+      const reviewReason =
+        item.reason === "proactive-needs-review"
+          ? item.reason
+          : (note?.reason ?? (opts.judgment ? "judgment-deferred" : "no-judge-configured"));
       try {
         recordGateDecision(opts.stashDir, item.id, {
           outcome: "deferred",

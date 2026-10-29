@@ -3,95 +3,190 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * OpenCode agent command builder (migrated from `agent/builders.ts`, #564).
+ * OpenCode command builder: the `opencode run` CLI of the opencode harness
+ * (#1244), for both majors, treated like the Claude and Codex CLIs. The user's
+ * OpenCode owns its config, logins and sessions; akm hands it a prompt and reads
+ * the reply from stdout.
  *
- * Translates a platform-agnostic {@link AgentDispatchRequest} into the exact
- * argv the `opencode` CLI expects. This is the OpenCode-specific slice of the
- * builder strategy; the shared infrastructure (`AgentCommandBuilder`,
- * `getCommandBuilder`, the default builder, flag/tool helpers) stays in
- * `agent/builders.ts`, which imports this builder back into `BUILTIN_BUILDERS`.
+ * The prompt goes on stdin: `opencode run` alters an argv message (quotes change,
+ * inner quotes are escaped) and a prompt that starts with `-` could be taken for
+ * a flag; stdin is read verbatim. akm closes it after the write, which the CLI
+ * needs: with stdin open it waits for more input.
  *
- * Behaviour-preserving relocation: the produced argv is byte-identical to the
- * pre-migration `opencodeBuilder`. The builder's `platform` stays `'opencode'`
- * (the canonical harness id).
+ * Agent work adds nothing: `opencode run`, the authored args as written, `--model` when akm
+ * names one, `--agent` when the asset names one, and the prompt on stdin. The run is the
+ * user's own, on their OpenCode as they have it set up.
+ *
+ * Model work is akm's own process. It sets `OPENCODE_DISABLE_FREE_MODELS` (OpenCode 2.1.2 and
+ * later, where the variable first appears): with no usable provider, OpenCode 2 would
+ * otherwise send akm's data to its hosted free model. The variable deletes every zero-cost
+ * model of the `opencode` and `opencode-go` providers, so it has no place on agent work,
+ * where it would override a model the user chose. On OpenCode 2 model work also gets
+ * `--standalone`, which keeps the run to one process that ends with it (the default attaches
+ * to a background service that outlives the CLI, is shared across users on one port, ignores
+ * inline config and replays killed sessions at every start), and `--title`, which names the
+ * session and spares the second model request that would otherwise generate a title.
+ *
+ * A binary whose version cannot be read runs model work as OpenCode 1, with one warning that says so.
+ *
+ * Model work drops the config's `args`, keeping the model they name, as the
+ * Claude and Codex shells do. On OpenCode 2 it runs as {@link MODEL_WORK_AGENT},
+ * an agent defined inline for the run whose tools are limited to reading and
+ * searching, added to the user's own inline config; OpenCode 1 cannot be
+ * restricted and runs it unrestricted, with a one-line warning.
  */
 
-import { type AgentCommandBuilder, modelFromArgs, resolveDispatchModel } from "../../agent/builder-shared";
-import { createAgentRequestLowerer } from "../../agent/request-lowering";
-import { MODEL_WORK_AGENT_INFERENCE, opencodeInferenceConfig } from "./model-config";
-import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig, modelWorkPluginEnv } from "./model-work-agent";
+import { asRecord, parseJsonc } from "../../../core/common";
+import { warnOnce } from "../../../core/warn";
+import {
+  type AgentDispatchRequest,
+  type BuiltCommand,
+  type HarnessBuilder,
+  type HarnessSpawn,
+  modelFromArgs,
+  withoutLeading,
+  withoutModelFlag,
+} from "../harness";
+import { detectOpencodeMajor, isOpencode2 } from "./version";
+
+/** The agent OpenCode 2 runs akm's model work as, limited to reading and searching; the name also marks those sessions in the user's history (`./session-log-v2.ts`). */
+export const MODEL_WORK_AGENT = "akm-model-work";
 
 /**
- * OpenCode builder.
- * Command shape: opencode run [--agent <name>] [--model <m>] -- "<prompt>"
- *
- * `opencode run` has no system-prompt option (1.18.25 prints its usage and
- * exits 1 on `--system-prompt`), so the shared lowerer composes a persona
- * into the prompt.
- *
- * Tool policy is omitted — opencode manages tool access through its own agent
- * config files, not via CLI flags. The one exception is the model-work tool
- * policy: the builder injects its confined agent through
- * `OPENCODE_CONFIG_CONTENT` and selects it with `--agent`. That command is
- * akm's own (`opencode run --agent akm-model-work`): the engine's `args` are
- * left out, because one such as `--attach` or `--dir` would move the run out
- * of the injected config or the scratch working directory. Only the model they
- * name is kept.
- *
- * Model work's agent carries the request's inference options
- * (`./model-config.ts`). Any other dispatch injects nothing and carries none, so
- * the model's own opencode config applies: set inference there.
+ * The agent's definition, in OpenCode 2's native shape, passed inline so it merges over the user's config and is
+ * never written anywhere. Its permission rules are default-deny with the reading tools allowed after it (the last
+ * matching rule wins; measured on OpenCode 2.1.2): `*` denied removes every tool, one a plugin registers that akm has
+ * never heard of included, and the allows give back `read`, `glob` and `grep` and, when the akm plugin is installed,
+ * `akm_search`, `akm_show` and `akm_curate`. Nothing else is allowed. This limits the tools; a plugin's own `setup`
+ * and hooks still run.
  */
-export const opencodeBuilder: AgentCommandBuilder = {
-  platform: "opencode",
-  personaChannel: "prompt",
-  lower: createAgentRequestLowerer({
-    adapter: "opencode",
-    personaChannel: "prompt",
-    tools: "none",
-    inference: MODEL_WORK_AGENT_INFERENCE,
-  }),
-  build(profile, req) {
-    if (req.modelWork) {
-      const model = req.model ?? modelFromArgs(profile.args);
-      const { agentOptions } = opencodeInferenceConfig(req.inference, true);
-      return {
-        argv: [
-          profile.bin,
-          "run",
-          "--agent",
-          MODEL_WORK_OPENCODE_AGENT,
-          ...(model ? ["--model", model] : []),
-          "--",
-          req.prompt,
-        ],
-        env: {
-          ...modelWorkPluginEnv(),
-          OPENCODE_CONFIG_CONTENT: JSON.stringify(modelWorkOpencodeConfig(agentOptions)),
-        },
-      };
+const MODEL_WORK_AGENT_DEFINITION = {
+  mode: "primary",
+  permissions: [
+    { action: "*", resource: "*", effect: "deny" },
+    ...["read", "glob", "grep", "akm_search", "akm_show", "akm_curate"].map((action) => ({
+      action,
+      resource: "*",
+      effect: "allow",
+    })),
+  ],
+};
+
+const CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
+
+/**
+ * OpenCode's built-in browser plugin, removed from model work (a `-` entry in `plugins` removes a plugin, OpenCode 2.0.0
+ * and later). From 2.2.0 it appends a deny of its own skill after every agent's rules, and a rule on one skill keeps
+ * the `skill` tool listed for an agent that denies every tool; without the plugin, the `*` deny removes the tool again.
+ * Model work denies the browser anyway.
+ */
+const WITHOUT_BROWSER_PLUGIN = "-opencode.browser";
+
+/**
+ * The inline config model work runs with: the user's own `OPENCODE_CONFIG_CONTENT` as it is, with akm's agent set on
+ * `agents.akm-model-work`, the one key akm's definition wins, and {@link WITHOUT_BROWSER_PLUGIN} after the user's
+ * `plugins`. OpenCode 2 reads that native `agents` map over the
+ * legacy `agent` one, so a same-named entry the user keeps in `agent` is left out rather than left to conflict. The
+ * child's value is built from the parent's, so a provider, model or key the user keeps only there stays. It is read as
+ * OpenCode reads it, as JSONC (comments and trailing commas), and written back as JSON; content that reads only once
+ * its `{env:NAME}` references are replaced (one written outside a string) is read the way OpenCode replaces them
+ * ({@link withEnvReferences}). Content that is not valid JSONC holding an object either way is left out, with one
+ * warning.
+ */
+function modelWorkConfig(): string {
+  const content = process.env[CONFIG_CONTENT_ENV]?.trim();
+  const user = content ? userConfig(content) : undefined;
+  if (content && !user) {
+    warnOnce(
+      "opencode-config-content",
+      `${CONFIG_CONTENT_ENV} is not valid JSONC holding an object, so OpenCode model work runs without it.`,
+    );
+  }
+  const config: Record<string, unknown> = {
+    ...user,
+    plugins: [...(Array.isArray(user?.plugins) ? user.plugins : []), WITHOUT_BROWSER_PLUGIN],
+    agents: { ...asRecord(user?.agents), [MODEL_WORK_AGENT]: MODEL_WORK_AGENT_DEFINITION },
+  };
+  const legacy = asRecord(user?.agent);
+  if (legacy && Object.hasOwn(legacy, MODEL_WORK_AGENT)) {
+    const { [MODEL_WORK_AGENT]: _replaced, ...others } = legacy;
+    config.agent = others;
+  }
+  return JSON.stringify(config);
+}
+
+function userConfig(content: string): Record<string, unknown> | undefined {
+  return jsoncObject(content) ?? jsoncObject(withEnvReferences(content));
+}
+
+function jsoncObject(content: string): Record<string, unknown> | undefined {
+  try {
+    return asRecord(parseJsonc(content));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `{env:NAME}` replaced as OpenCode replaces it in this variable before it parses it (`ConfigVariable.substitute`):
+ * by the variable's value, or nothing when it is unset or empty, as written where the result reads as JSONC, else
+ * escaped as the inside of a JSON string. A `{file:path}` is left for the OpenCode akm runs, which replaces it against
+ * its own directory, as it would in-process.
+ */
+function withEnvReferences(content: string): string {
+  const replaced = (escaped: boolean): string =>
+    content.replace(/\{env:([^}]+)\}/g, (_, name: string) => {
+      const value = process.env[name] || "";
+      return escaped ? JSON.stringify(value).slice(1, -1) : value;
+    });
+  const raw = replaced(false);
+  try {
+    parseJsonc(raw);
+    return raw;
+  } catch {
+    return replaced(true);
+  }
+}
+
+const NO_FREE_MODELS = { OPENCODE_DISABLE_FREE_MODELS: "1" };
+
+export const opencodeBuilder: HarnessBuilder = {
+  build({ bin, args }: HarnessSpawn, req: AgentDispatchRequest): BuiltCommand {
+    const agent = req.agent ? ["--agent", req.agent] : [];
+    const model = req.model ? ["--model", req.model] : [];
+    if (req.prompt === undefined) {
+      // An interactive launch is the TUI, which `run` (headless) is not.
+      const authored = withoutLeading(args, "run");
+      return { argv: [bin, ...(req.model ? withoutModelFlag(authored) : authored), ...agent, ...model] };
     }
-    const args: string[] = req.model ? [] : [...profile.args];
-    if (req.model) {
-      for (let index = 0; index < profile.args.length; index += 1) {
-        const arg = profile.args[index];
-        if (arg === undefined) continue;
-        if (arg === "--model") {
-          index += 1;
-        } else if (!arg.startsWith("--model=")) {
-          args.push(arg);
-        }
-      }
+
+    if (!req.modelWork) {
+      return { argv: [bin, ...(req.model ? withoutModelFlag(args) : args), ...agent, ...model], stdin: req.prompt };
     }
-    if (req.agent) {
-      args.push("--agent", req.agent);
+
+    const oc2 = isOpencode2(bin);
+    if (!oc2 && detectOpencodeMajor(bin).reportedMajor === undefined) {
+      warnOnce(
+        `opencode-version-unreadable:${bin}`,
+        `Could not read the version of ${bin}, so akm runs its model work as OpenCode 1: no --standalone (an OpenCode 2 would attach to its shared background service) and unrestricted. Check \`${bin} --version\`.`,
+      );
     }
-    if (req.model) {
-      const resolved = resolveDispatchModel(req, profile, "opencode") as string;
-      args.push("--model", resolved);
+    if (!oc2) {
+      warnOnce(
+        "opencode-1-model-work",
+        "OpenCode 1 cannot restrict its tools, so model work on it runs unrestricted, in a scratch directory. OpenCode 2 limits its tools to reading and searching.",
+      );
     }
-    args.push("--");
-    args.push(req.prompt);
-    return { argv: [profile.bin, ...args] };
+    const named = req.model ?? modelFromArgs(args);
+    return {
+      argv: [
+        bin,
+        "run",
+        ...(oc2 ? ["--standalone", "--title", "akm", "--agent", MODEL_WORK_AGENT] : []),
+        ...(named ? ["--model", named] : []),
+      ],
+      env: { ...NO_FREE_MODELS, ...(oc2 ? { [CONFIG_CONTENT_ENV]: modelWorkConfig() } : {}) },
+      stdin: req.prompt,
+    };
   },
 };

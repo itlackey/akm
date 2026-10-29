@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import os from "node:os";
 import path from "node:path";
 import {
+  akmLocations,
   getCacheDir,
   getConfigDir,
   getConfigPath,
@@ -535,5 +536,34 @@ describe("getDefaultStashDir", () => {
     const result = getDefaultStashDir({ HOME: "/injected/home" });
     expect(result).toBe(path.join("/injected/home", "akm"));
     expect(JSON.stringify(process.env)).toBe(before);
+  });
+});
+
+describe("akmLocations", () => {
+  test("names the directories akm resolved, whichever way they were found", () => {
+    delete process.env.AKM_BUNDLE_DIR;
+    process.env.XDG_CONFIG_HOME = "/xdg/config";
+    process.env.XDG_DATA_HOME = "/xdg/data";
+    process.env.XDG_CACHE_HOME = "/xdg/cache";
+    process.env.XDG_STATE_HOME = "/xdg/state";
+    delete process.env.AKM_CONFIG_DIR;
+    delete process.env.AKM_DATA_DIR;
+    delete process.env.AKM_CACHE_DIR;
+    delete process.env.AKM_STATE_DIR;
+
+    expect(akmLocations()).toEqual({
+      AKM_CONFIG_DIR: getConfigDir(),
+      AKM_DATA_DIR: getDataDir(),
+      AKM_CACHE_DIR: getCacheDir(),
+      AKM_STATE_DIR: getStateDir(),
+    });
+    expect(getDataDir()).toContain(path.join("/xdg/data"));
+  });
+
+  test("passes AKM_BUNDLE_DIR only when the parent set one", () => {
+    process.env.AKM_BUNDLE_DIR = "  /my/bundle  ";
+    expect(akmLocations().AKM_BUNDLE_DIR).toBe("/my/bundle");
+    process.env.AKM_BUNDLE_DIR = "  ";
+    expect(akmLocations()).not.toHaveProperty("AKM_BUNDLE_DIR");
   });
 });

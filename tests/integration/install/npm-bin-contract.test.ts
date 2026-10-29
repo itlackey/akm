@@ -13,12 +13,6 @@ function npmShimInterpreter(source: string): string | undefined {
   return source.trim().split(/\r*\n/, 1)[0]?.match(NPM_SHEBANG)?.[2];
 }
 
-function preinstallProgram(script: string): string {
-  const match = /^node -e "([\s\S]*)"$/.exec(script);
-  if (!match?.[1]) throw new Error("package preinstall must be a single node -e program");
-  return match[1];
-}
-
 function runAsNodeVersion(version: string, program: string): ReturnType<typeof spawnSync> {
   return spawnSync(
     realNodeExecutable(),
@@ -62,12 +56,10 @@ describe("npm bin contract", () => {
     };
 
     expect(pkg.engines).toEqual({ node: ">=22" });
-    expect(pkg.scripts?.preinstall).toContain("Node.js >= 22");
-    expect(pkg.scripts?.preinstall).toContain("working Bun >= 1.0");
-    expect(pkg.scripts?.preinstall).toContain("optional and preferred for akm and akm-migrate");
-    expect(pkg.scripts?.preinstall).toContain("runtime-free standalone binary");
-    expect(pkg.scripts?.preinstall).not.toContain("process.versions.bun");
-    expect(pkg.scripts?.preinstall).not.toContain("bun install -g");
+    // npm 12 blocks install scripts by default, so the floor is checked where akm starts (the launchers, the CLI).
+    expect(pkg.scripts?.preinstall).toBeUndefined();
+    expect(pkg.scripts?.install).toBeUndefined();
+    expect(pkg.scripts?.postinstall).toBeUndefined();
   });
 
   test("published bins select their supported runtime paths after the Node bootstrap", () => {
@@ -119,19 +111,5 @@ describe("npm bin contract", () => {
         fixture.cleanup();
       }
     }
-  });
-
-  test("preinstall rejects Node 20 and admits Node 22", () => {
-    const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as {
-      scripts?: Record<string, string>;
-    };
-    const program = preinstallProgram(pkg.scripts?.preinstall ?? "");
-
-    const rejected = runAsNodeVersion("20.0.0", program);
-    expect(rejected.status).toBe(1);
-    expect(rejected.stderr).toContain("requires Node.js >= 22");
-
-    const accepted = runAsNodeVersion("22.0.0", program);
-    expect(accepted.status).toBe(0);
   });
 });

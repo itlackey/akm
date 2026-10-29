@@ -137,10 +137,10 @@ export function addStash(
 }
 
 /**
- * Build the 0.9.0 bundle descriptor for a declarative (non-filesystem) source
- * (spec §10.1). `locator` is a URL for git/website; for npm it is a bare
- * package spec (e.g. "lodash", "@scope/pkg@^2") — never a URL (R-013,
- * rejected earlier in {@link addStash}).
+ * Build the 0.9.0 bundle descriptor for a declarative (non-filesystem) source.
+ * `locator` is a URL for git/website; for npm it is a bare
+ * package spec (e.g. "lodash", "@scope/pkg@^2") — never a URL (rejected
+ * earlier in {@link addStash}).
  */
 function urlBundleDescriptor(
   providerType: string,

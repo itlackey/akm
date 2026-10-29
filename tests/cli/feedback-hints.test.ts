@@ -61,20 +61,6 @@ describe("shipped hints on recording feedback (#999)", () => {
     ["brief", EMBEDDED_HINTS],
     ["full", EMBEDDED_HINTS_FULL],
   ] as const) {
-    test(`${name} hints say feedback moves the utility score that improve reads and does not change search order`, () => {
-      const prose = hints.replace(/\s+/g, " ");
-      expect(prose).toContain("utility score, which `akm improve` uses to choose what to work on");
-      expect(prose).toContain("it does not change search order");
-      expect(prose).not.toMatch(
-        /ranks? (it )?(higher|lower)|raises its ranking|lowers its ranking|search ranking can learn/i,
-      );
-    });
-  }
-
-  for (const [name, hints] of [
-    ["brief", EMBEDDED_HINTS],
-    ["full", EMBEDDED_HINTS_FULL],
-  ] as const) {
     test(`${name} hints say improve repairs only the frontmatter, name the exact-fix flags and how to mark an outdated note, and positive triggers no rewrite`, () => {
       const prose = hints.replace(/\s+/g, " ");
       expect(prose).toContain('--negative --reason "<what is wrong and what should change>"');
@@ -102,18 +88,13 @@ describe("shipped hints on recording feedback (#999)", () => {
         "but it does not rewrite the text.",
     );
     expect(prose).toContain("akm checks that each --replace text appears exactly once");
-    expect(prose).toContain("`--positive` records that an asset helped and does not trigger a rewrite.");
     expect(prose).toContain(
-      "moves its utility score right away, in the same process: positive feedback raises it, negative lowers it",
+      "`--positive` records that an asset helped (it raises its ranking) and does not trigger a rewrite.",
     );
-    expect(prose).toContain("`akm improve` uses the score to choose what to work on; it does not change search order.");
-    expect(prose).not.toMatch(/ranking/i);
     expect(args.negative?.description).toContain("may repair its frontmatter from --reason");
     expect(args.replace?.description).toContain("must appear exactly once");
     expect(args.source?.description).toContain("Required with --replace");
     expect(args.positive?.description).toContain("does not trigger a rewrite");
-    expect(args.positive?.description).not.toMatch(/ranking/i);
-    expect(args.negative?.description).not.toMatch(/ranking/i);
     expect(args.reason?.description).toContain("what should change");
   });
 

@@ -35,13 +35,13 @@ describe("resolveAgentIdentity", () => {
     const identity = resolveAgentIdentity({
       AKM_AGENT_HARNESS: "custom-harness",
       AKM_SESSION_ID: "sess-123",
-      CLAUDE_SESSION_ID: "ignored",
+      CLAUDE_CODE_SESSION_ID: "ignored",
     });
     expect(identity).toEqual({ harness: "custom-harness", sessionId: "sess-123" });
   });
 
-  test("infers claude from CLAUDE_SESSION_ID", () => {
-    const identity = resolveAgentIdentity({ CLAUDE_SESSION_ID: "abc-def" });
+  test("infers claude from CLAUDE_CODE_SESSION_ID", () => {
+    const identity = resolveAgentIdentity({ CLAUDE_CODE_SESSION_ID: "abc-def" });
     expect(identity).toEqual({ harness: "claude", sessionId: "abc-def" });
   });
 
@@ -51,7 +51,7 @@ describe("resolveAgentIdentity", () => {
   });
 
   test("ignores blank/whitespace-only env values", () => {
-    const identity = resolveAgentIdentity({ AKM_AGENT_HARNESS: "   ", CLAUDE_SESSION_ID: "  cs  " });
+    const identity = resolveAgentIdentity({ AKM_AGENT_HARNESS: "   ", CLAUDE_CODE_SESSION_ID: "  cs  " });
     // blank harness override falls through to inference; session id is trimmed.
     expect(identity).toEqual({ harness: "claude", sessionId: "cs" });
   });
@@ -107,21 +107,11 @@ describe("resolveAgentIdentity", () => {
     expect(identity).toEqual({ harness: "opencode", sessionId: "oc-1" });
   });
 
-  test("infers copilot from COPILOT_SESSION_ID (with the session id captured)", () => {
-    const identity = resolveAgentIdentity({ COPILOT_SESSION_ID: "cop-42" });
-    expect(identity).toEqual({ harness: "copilot", sessionId: "cop-42" });
-  });
-
-  test("infers pi from PI_SESSION_ID (with the session id captured)", () => {
-    const identity = resolveAgentIdentity({ PI_SESSION_ID: "pi-7" });
-    expect(identity).toEqual({ harness: "pi", sessionId: "pi-7" });
-  });
-
   test("multiple markers present: claude wins over opencode (legacy precedence preserved)", () => {
-    // The pre-derivation if/else chain checked CLAUDE_SESSION_ID first; the
+    // The pre-derivation if/else chain checked the Claude marker first; the
     // registry-derived table sorts by canonical id ('claude' < 'opencode'),
     // which keeps this byte-identical — including the paired session id.
-    const identity = resolveAgentIdentity({ OPENCODE_SESSION_ID: "oc-1", CLAUDE_SESSION_ID: "cc-1" });
+    const identity = resolveAgentIdentity({ OPENCODE_SESSION_ID: "oc-1", CLAUDE_CODE_SESSION_ID: "cc-1" });
     expect(identity).toEqual({ harness: "claude", sessionId: "cc-1" });
   });
 });
@@ -202,7 +192,7 @@ describe("workflow run agent identity persistence", () => {
   test("environment-detected identity is captured when no explicit value is given", async () => {
     writeWorkflow("env-flow");
 
-    const started = await withEnv({ CLAUDE_SESSION_ID: "env-session-42" }, () =>
+    const started = await withEnv({ CLAUDE_CODE_SESSION_ID: "env-session-42" }, () =>
       startWorkflowRun("workflows/env-flow", {}),
     );
     expect(started.run.agentHarness).toBe("claude");
@@ -216,7 +206,7 @@ describe("workflow run agent identity persistence", () => {
   test("runs started with no harness persist null identity", async () => {
     writeWorkflow("anon-flow");
     const started = await withEnv(
-      { CLAUDE_SESSION_ID: undefined, OPENCODE_SESSION_ID: undefined, AKM_AGENT_HARNESS: undefined },
+      { CLAUDE_CODE_SESSION_ID: undefined, OPENCODE_SESSION_ID: undefined, AKM_AGENT_HARNESS: undefined },
       () => startWorkflowRun("workflows/anon-flow", {}),
     );
     expect(started.run.agentHarness).toBeNull();

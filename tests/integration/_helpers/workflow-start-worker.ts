@@ -41,7 +41,7 @@ WorkflowRunsRepository.prototype.immediateTransaction = function <T>(fn: (db: Da
 };
 
 try {
-  const started = await startWorkflowRun(target, {}, { force: process.env.WORKFLOW_START_FORCE === "1" });
+  const started = await startWorkflowRun(target, {});
   fs.writeFileSync(resultPath, JSON.stringify({ ok: true, runId: started.run.id }));
 } catch (error) {
   fs.writeFileSync(

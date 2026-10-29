@@ -1,9 +1,0 @@
-name: Child workflow task-wrapped composition
-on:
-  workflow_dispatch:
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: dispatch
-        uses: tasks/wrap-leaf

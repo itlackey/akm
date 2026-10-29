@@ -12,7 +12,6 @@ import {
   ORPHANED_STUB_DETAIL,
   taskDiagnostics,
   workflowFrontendDiagnostics,
-  workflowYamlSourceDiagnostics,
 } from "../../core/adapter/adapters/akm-lint";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
@@ -125,7 +124,7 @@ function collectMarkdownFiles(dir: string, caseInsensitive = false): string[] {
   return results;
 }
 
-/** Peer workflow sources accepted by the source-IR compiler; `.yaml` remains unsupported. */
+/** Workflow sources: Markdown only. */
 function collectWorkflowFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   const results: string[] = [];
@@ -141,7 +140,7 @@ function collectWorkflowFiles(dir: string): string[] {
     }
     if (!entry.isFile() && !entry.isSymbolicLink()) continue;
     const extension = path.extname(entry.name).toLowerCase();
-    if (extension === ".md" || extension === ".yml") results.push(full);
+    if (extension === ".md") results.push(full);
   }
   return results.sort(compareCodePoints);
 }
@@ -283,7 +282,7 @@ export function diagnosticToLintIssue(diag: Diagnostic): LintIssue {
 }
 
 /**
- * Lint a bundle through its OWN adapter's `validate()` (spec §12.1): the
+ * Lint a bundle through its OWN adapter's `validate()`: the
  * adapter never writes, so every finding lands in `flagged` — `fixed` is
  * always `false`/`"failed"` for a non-akm bundle regardless of `--fix`
  * (the CLI option is silently a no-op here, exactly as it already was for
@@ -565,7 +564,7 @@ export function lintAssetFile(ctx: LintContext, subdir: string): LintIssue[] {
       issues.push(...(factDiagnostics(ctx.relPath, ctx.data) as LintIssue[]));
       break;
     case "tasks":
-      issues.push(...(taskDiagnostics(ctx.relPath, ctx.raw, ctx.stashRoot) as LintIssue[]));
+      issues.push(...(taskDiagnostics(ctx.relPath, ctx.raw) as LintIssue[]));
       break;
     case "memories":
       appendMemoryStubIssue(ctx, issues);
@@ -609,8 +608,8 @@ function lintAkmSweep(
 
   for (const subdir of dirsToScan) {
     const dirPath = path.join(stashRoot, subdir);
-    // Tasks have their own `.yml` plus near-miss collector. Workflows accept
-    // peer `.md`/`.yml` sources; every remaining AKM subdir is Markdown.
+    // Tasks have their own `.yml` plus near-miss collector; every other AKM
+    // subdir is Markdown.
     const files =
       subdir === "tasks"
         ? collectTaskFiles(dirPath)
@@ -655,21 +654,6 @@ function lintAkmSweep(
       try {
         raw = fs.readFileSync(filePath, "utf8");
       } catch {
-        continue;
-      }
-
-      // GitHub-shaped YAML is a peer workflow source, not a Markdown document:
-      // no frontmatter/base/stub checks and no `--fix` mutation apply. Compile
-      // once through the shared source-IR frontend and route its findings.
-      if (subdir === "workflows" && path.extname(filePath).toLowerCase() === ".yml") {
-        const frontend = workflowYamlSourceDiagnostics(relPath, raw, filePath, stashRoot);
-        for (const finding of [...frontend.errors, ...frontend.warnings]) {
-          if (isAdvisoryLintIssue(finding)) {
-            warnings.push(finding);
-          } else {
-            flagged.push(finding);
-          }
-        }
         continue;
       }
 
@@ -822,7 +806,7 @@ export async function akmLint(options: AkmLintOptions = {}): Promise<AkmLintResu
   // cross-stash refs (e.g. referencing assets in dimm-city/agent-stash) are
   // not falsely flagged as missing-ref.
   const cfg = options.config ?? loadConfig();
-  // 0.9.0 (spec §10.1): the primary stash is the defaultBundle's path.
+  // The primary stash is the defaultBundle's path.
   const stashRoot = options.dir ?? primaryBundlePath(cfg) ?? resolveStashDir();
   const sources = resolveSourceEntries(stashRoot, cfg);
   const configuredAdapter = sources.find((source) => path.resolve(source.path) === path.resolve(stashRoot))?.adapterId;

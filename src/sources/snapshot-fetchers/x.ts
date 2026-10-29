@@ -104,7 +104,7 @@ export function resolveXBearerToken(context?: Pick<FetcherContext, "resolveSecre
   const fromEnv = process.env.X_BEARER_TOKEN?.trim();
   if (fromEnv) return fromEnv;
   try {
-    return context?.resolveSecret?.(X_BEARER_TOKEN_SECRET_REF)?.trim() || null;
+    return context?.resolveSecret?.(X_BEARER_TOKEN_SECRET_REF) || null;
   } catch {
     return null;
   }

@@ -129,9 +129,12 @@ What `bundle add` does:
 
 1. Fetches the package or repo into `$CACHE/registry/` (git refs prefer a
    shallow clone; GitHub tarballs are the fallback).
-2. Stops if a `.env` file in the bundle sets a process-hijacking variable such
-   as `LD_PRELOAD` or `PATH`. On a terminal it asks for confirmation; without
-   one it fails unless you pass `--allow-dangerous-env-keys`.
+2. Does not audit the content. Installing a bundle is the trust decision: akm
+   does not scan the extracted source files, prompts, metadata, env files or
+   install scripts (beyond rejecting path traversal while extracting), and
+   `akm bundle add` never blocks or prompts over the keys an env file sets.
+   `akm lint` reports env keys that can hijack a process (`dangerous-env-key`)
+   for authors who want to review their own bundle.
 3. Finds the bundle root: the package root when it looks like a bundle in any
    layout akm recognizes (see [Bundle types](bundle-types.md)), otherwise the
    shallowest nested directory that does. If the package's `package.json` has

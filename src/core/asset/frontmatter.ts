@@ -13,7 +13,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
-import { existingFileMode, writeFileAtomic } from "../common";
+import { asNonEmptyString, existingFileMode, writeFileAtomic } from "../common";
 import { recordWrittenPath } from "../write-provenance";
 import { assembleAsset, assembleAssetFromString, serializeFrontmatter } from "./asset-serialize";
 
@@ -72,6 +72,19 @@ export function parseFrontmatter(raw: string): {
     frontmatter: parsedBlock.frontmatter,
     bodyStartLine: parsedBlock.bodyStartLine,
   };
+}
+
+/** Date-valued frontmatter keys: bare names, like `created`, `updated` and `expires`. */
+export type FrontmatterDateKey = "observed" | "started" | "ended";
+
+/**
+ * Read a date-valued frontmatter key by its bare name (`observed`), falling
+ * back to the legacy `<name>_at` spelling (`observed_at`) that older stashes
+ * still carry. The new name wins when both are present. Writers write only the
+ * bare name.
+ */
+export function readFrontmatterDate(fm: Record<string, unknown>, key: FrontmatterDateKey): string | undefined {
+  return asNonEmptyString(fm[key]) ?? asNonEmptyString(fm[`${key}_at`]);
 }
 
 /**

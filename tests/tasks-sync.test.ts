@@ -550,6 +550,113 @@ describe("akmTasksSync — rows written before 0.9.17-alpha.7 (`--scheduler-cont
   });
 });
 
+// #1236: the working stash named only by AKM_BUNDLE_DIR is one of the active
+// bundles whether or not another bundle is configured, so every sync shape
+// installs the same rows for it.
+describe("akmTasksSync — env-only working stash beside a configured bundle", () => {
+  const backendFor = (exec: CronExec) =>
+    CRON_BACKEND({
+      exec,
+      fs: { ensureDir() {} },
+      logDir: "/var/log/akm",
+      akmArgv: ["/usr/local/bin/akm"],
+      envPath: false,
+    });
+
+  test("unscoped, --rebind and --bundle sync install the same rows for it", async () => {
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), "akm-sync-other-"));
+    try {
+      writeSandboxConfig({ bundles: { other: { path: other, writable: true } }, defaultBundle: "other" });
+      resetConfigCache();
+      const bundle = path.basename(stashDir).toLowerCase();
+      for (const [id, cron] of [
+        ["alpha", "*/15 * * * *"],
+        ["beta", "0 2 * * *"],
+      ] as const) {
+        fs.writeFileSync(path.join(tasksDir, `${id}.yml`), `version: 4\nrun: echo ${id}\nschedule: "${cron}"\n`);
+        setSchedulerRefEnabled(`${bundle}//tasks/${id}`, true);
+      }
+
+      const rowsAfter = async (sync: (deps: { backend: SchedulerBackend }) => Promise<unknown>) => {
+        const exec = memoryExec();
+        await sync({ backend: backendFor(exec) });
+        return listBlocks(exec.current());
+      };
+      const unscoped = await rowsAfter((deps) => akmTasksSync(deps));
+      const rebind = await rowsAfter((deps) => akmTasksSync(deps, undefined, { rebind: true }));
+      const scoped = await rowsAfter((deps) => akmTasksSync(deps, bundle));
+
+      expect(unscoped.map((block) => block.id).sort()).toEqual(["alpha", "beta"]);
+      expect(rebind).toEqual(unscoped);
+      expect(scoped).toEqual(unscoped);
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
+    }
+  });
+});
+
+// #1236: when AKM_BUNDLE_DIR names a configured bundle that is disabled, an
+// unscoped sync does not throw: it removes that bundle's rows and still
+// installs the other bundles' enabled tasks.
+describe("akmTasksSync — working stash is a disabled configured bundle", () => {
+  test("unscoped sync removes the disabled bundle's rows and installs the other bundles' tasks", async () => {
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), "akm-sync-other-"));
+    const tools = fs.mkdtempSync(path.join(os.tmpdir(), "akm-sync-tools-"));
+    try {
+      fs.mkdirSync(path.join(other, "tasks"), { recursive: true });
+      fs.mkdirSync(path.join(tools, "scripts"), { recursive: true });
+      fs.writeFileSync(path.join(tools, "scripts", "ok.sh"), "#!/bin/sh\necho ok\n", { mode: 0o755 });
+      // gamma names an asset in a third bundle, so syncing it reads across bundles.
+      fs.writeFileSync(
+        path.join(other, "tasks", "gamma.yml"),
+        'version: 4\nuses: tools//scripts/ok.sh\nschedule: "0 6 * * *"\n',
+      );
+      const exec = memoryExec();
+      const backend = CRON_BACKEND({
+        exec,
+        fs: { ensureDir() {} },
+        logDir: "/var/log/akm",
+        akmArgv: ["/usr/local/bin/akm"],
+        envPath: false,
+      });
+      writeSandboxConfig({
+        bundles: {
+          mine: { path: stashDir, writable: true },
+          other: { path: other, writable: true },
+          tools: { path: tools, writable: false },
+        },
+        defaultBundle: "other",
+      });
+      resetConfigCache();
+      fs.writeFileSync(path.join(tasksDir, "alpha.yml"), 'version: 4\nrun: echo alpha\nschedule: "*/15 * * * *"\n');
+      setSchedulerRefEnabled("mine//tasks/alpha", true);
+      setSchedulerRefEnabled("other//tasks/gamma", true);
+      await akmTasksSync({ backend });
+      expect(
+        listBlocks(exec.current())
+          .map((block) => block.id)
+          .sort(),
+      ).toEqual(["alpha", "gamma"]);
+
+      writeSandboxConfig({
+        bundles: {
+          mine: { path: stashDir, enabled: false },
+          other: { path: other, writable: true },
+          tools: { path: tools, writable: false },
+        },
+        defaultBundle: "other",
+      });
+      resetConfigCache();
+      const result = await akmTasksSync({ backend });
+      expect(result.failures).toEqual([]);
+      expect(listBlocks(exec.current()).map((block) => block.id)).toEqual(["gamma"]);
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
+      fs.rmSync(tools, { recursive: true, force: true });
+    }
+  });
+});
+
 // Another installation sharing this crontab (another config dir, HOME or
 // XDG_CONFIG_HOME) writes rows naming a bundle of the same name. Every row
 // carries its installation's working stash as AKM_BUNDLE_DIR, so they are its

@@ -7,17 +7,18 @@
  * and the validators can share `Proposal` without importing each other.
  */
 
+import type { StashEntryScope } from "../../core/adapter/types";
 import type { AssetRef } from "../../core/asset/resolve-ref";
 import type { FileChange } from "../../core/file-change";
 
 /**
  * The eligibility lane that selected an asset for an improve run, carried on
  * the invoked/promoted events and the proposal so outcomes can be sliced by
- * lane. When several lanes qualify, the most specific reactive one wins:
- * `scope` > `signal-delta`. `unknown` is only for a lane that genuinely cannot
- * be attributed; `proactive` and `high-salience` (those lanes only score now),
- * `forgetting-safety` and `replay` are retired — none is assigned by anything
- * any more, all appear on rows older releases wrote.
+ * lane. When several lanes qualify, the most specific one wins:
+ * `scope` > `signal-delta` > `proactive`. `unknown` is only for a lane that
+ * genuinely cannot be attributed; `high-salience`, `forgetting-safety` and
+ * `replay` are retired — none is assigned by anything any more, all appear on
+ * rows older releases wrote.
  */
 export type EligibilitySource =
   | "signal-delta"
@@ -121,17 +122,20 @@ export interface ProposalGateDecision {
   /**
    * Stable reason token. The drain (`triage` gate): `empty-diff`,
    * `judge-passed`, `judgment-accept`, `judgment-reject`,
-   * `no-judge-configured`, `judgment-deferred`, `judgment-parse-failure`
+   * `no-judge-configured`, `judgment-deferred`, `judgment-not-promotion` (the judge
+   * would accept, but only a consolidate promotion may be accepted on a
+   * judgment), `judgment-parse-failure`
    * (the judge answered, but not with a verdict), `judgment-error` (the runner
    * failed), `stale-target`. The stage
    * quality judge (`quality-gate`): `quality-judge` on a staged pass,
    * `quality-review` for a human, `distill-review` for a human on a distill
-   * pass, `judge-error` for a human when reflect's
-   * judge gave no verdict. Reflect (`reflect`), for a human:
+   * pass, `distill-update` for a human on a distill update of an existing lesson, `judge-error` for a human when reflect's
+   * judge gave no verdict, `judge-uncertain` when its mean is in reflect's review band. Reflect (`reflect`), for a human:
    * `no-judge-configured`. Also `expired` and `asset-missing`; older
    * releases wrote `body-edit`, `reflect-size-ratio`, `reflect-truncation-leak`,
    * `max-diff-lines`, `min-content-lines`, `policy-accept`, `mid-band` and
-   * `possible-dup`.
+   * `possible-dup`. `akm feedback` (`feedback`) stamps `manual-fix` on the
+   * exact fix a person typed, which it accepts at once.
    */
   reason: string;
   /** What an older threshold gate measured (e.g. the line count in "210 > 200"). */
@@ -157,6 +161,8 @@ export interface ProposalGateDecision {
 export type RetireReason = "duplicate" | "subsumed" | "superseded" | "promoted";
 
 export interface RetirementMetadata {
+  /** Shared normalized tuple at judgment; {} is known unscoped, absent requires reassessment. */
+  judgedScope?: StashEntryScope;
   /** The ref being retired — redundant with `Proposal.ref`, kept explicit for metadata-only readers. */
   retiredRef: string;
   /** The ref that survives this pair. */
@@ -224,11 +230,11 @@ export interface RetiredArchiveRecord {
 }
 
 /**
- * A retire accept's durable intent (should-fix 5), recorded on the still-
+ * A retire accept's durable intent, recorded on the still-
  * "pending" proposal BEFORE any file is moved: the exact bytes to preserve
  * as `backupContent`. A crashed accept resumes from this record instead of
- * re-deriving it from whatever the archive happens to contain. No `twinPath`
- * (4d, third review round, dropped as redundant): the twin, if any, is a
+ * re-deriving it from whatever the archive happens to contain. No `twinPath`:
+ * the twin, if any, is a
  * pure function of `assetPath` and the ref's type (`derivedTwinPath`), and
  * whether it was already archived by an earlier, crashed attempt is exactly
  * what the tombstone scan (`alreadyArchivedOriginalPaths`) independently
@@ -301,7 +307,7 @@ export interface Proposal {
    */
   promotionSourceHash?: string;
   /**
-   * A pending retire proposal's recorded accept intent (should-fix 5), set
+   * A pending retire proposal's recorded accept intent, set
    * right before the first file move and cleared once accept finishes.
    * Still present means a prior accept attempt crashed after recording it
    * but before finishing — the next accept resumes from it idempotently

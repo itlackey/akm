@@ -65,6 +65,12 @@ export interface AkmMetricsOptions {
   /** Attach the raw window rows (`--format html` and `--detail full`). */
   includeRows?: boolean;
   now?: () => number;
+  /**
+   * Resolve refs through a disposable copy of index.db (default) or, when false, a plain read-only open of it.
+   * `akm ui` passes false: the copy retries for seconds while another process writes the index, and a plain
+   * read-only open is enough for a page that only reads.
+   */
+  indexSnapshot?: boolean;
 }
 
 /**
@@ -84,6 +90,7 @@ export function metricsIncludeRows(mode: Pick<OutputMode, "format" | "detail">):
  */
 async function durableSelects(
   selects: Array<{ ts: string; ref: string }>,
+  indexSnapshot = true,
 ): Promise<Array<{ ts: string; ref: string }>> {
   const unqualified: Array<{ ref: string; parsed: ReturnType<typeof parseBundleRef> }> = [];
   for (const ref of new Set(selects.map((select) => select.ref))) {
@@ -94,7 +101,10 @@ async function durableSelects(
       // Not a local bundle ref: keep the ref as recorded.
     }
   }
-  const entries = await lookupBundleRefsReadonly(unqualified.map(({ parsed }) => parsed));
+  const entries = await lookupBundleRefsReadonly(
+    unqualified.map(({ parsed }) => parsed),
+    { isolatedSnapshot: indexSnapshot },
+  );
   const resolved = new Map(unqualified.map(({ ref }, i) => [ref, entries[i]?.itemRef ?? ref]));
   return selects.map((select) => ({ ts: select.ts, ref: resolved.get(select.ref) ?? select.ref }));
 }
@@ -222,7 +232,7 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
   } finally {
     stateDb.close();
   }
-  input.selects = await durableSelects(selects);
+  input.selects = await durableSelects(selects, options.indexSnapshot ?? true);
   return buildMetricsResult(input);
 }
 

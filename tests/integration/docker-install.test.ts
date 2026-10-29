@@ -54,14 +54,7 @@ function buildBinary(): boolean {
   spawnSync("mkdir", ["-p", BUILD_DIR]);
   const r = spawnSync(
     "bun",
-    [
-      "build",
-      "./scripts/akm-standalone.ts",
-      "--compile",
-      "--target=bun-linux-x64",
-      "--outfile",
-      path.join(BUILD_DIR, "akm"),
-    ],
+    ["scripts/build-standalone.ts", "--target", "bun-linux-x64", "--outfile", path.join(BUILD_DIR, "akm")],
     {
       cwd: PROJECT_ROOT,
       encoding: "utf8",
@@ -134,6 +127,9 @@ const bunVariants = ["ubuntu-bun", "debian-bun", "alpine-bun", "fedora-bun"] as 
 
 const binaryVariants = ["ubuntu-binary", "debian-binary", "fedora-binary"] as const;
 
+// The packed package installed with `npm install -g` on Node 24 with no compiler.
+const npmVariants = ["debian-npm"] as const;
+
 // Cleanup build artifacts after all tests
 afterAll(() => {
   cleanBuildDir();
@@ -145,6 +141,28 @@ describe.skipIf(!HAS_DOCKER || !HAS_BUN || !DOCKER_TESTS_ENABLED)("Docker instal
       const os = variant.replace("-bun", "");
       test(
         `${os}: bun install → init → index → search`,
+        () => {
+          const build = dockerBuild(variant);
+          if (!build.ok) {
+            throw new Error(`Docker build failed:\n${build.output}`);
+          }
+
+          const run = dockerRun(variant);
+          if (!run.ok) {
+            throw new Error(`Smoke test failed:\n${run.output}`);
+          }
+          expect(run.output).toContain("All tests passed");
+        },
+        timeoutForVariant(variant),
+      );
+    }
+  });
+
+  describe("npm install method", () => {
+    for (const variant of npmVariants) {
+      const os = variant.replace("-npm", "");
+      test(
+        `${os}: npm install -g without a compiler → init → index → search`,
         () => {
           const build = dockerBuild(variant);
           if (!build.ok) {

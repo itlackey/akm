@@ -92,6 +92,7 @@ function retirement(
     cosine: 0.94,
     judgeLabel: "duplicate",
     judgeReason: "Same durable facts, B adds nothing new.",
+    judgedScope: {},
     retiredContentHash: contentHash(fs.readFileSync(retiredPath, "utf8"), "body"),
     successorContentHash: contentHash(fs.readFileSync(successorPath, "utf8"), "body"),
     reason: "duplicate",
@@ -317,9 +318,10 @@ describe("akm proposal accept on a retire proposal", () => {
   });
 
   describe("S5 crash recovery (second review round: intent-based, resume-safe)", () => {
-    test("intent recorded but no file moved yet — accept resumes from it and finishes", async () => {
-      const oldPath = writeAsset("memories/old-note.md", "description: an old note");
-      const newPath = writeAsset("memories/new-note.md", "description: a new note");
+    test("intent recorded but no file moved yet — accept resumes with complete long bodies and finishes", async () => {
+      const body = `${"Backup recovery instructions.\n".repeat(600)}Offline recovery needs key K-1195.\n`;
+      const oldPath = writeAsset("memories/old-note.md", "description: an old note", body);
+      const newPath = writeAsset("memories/new-note.md", "description: a new note", body);
       const config = makeConfig(storage.stashDir);
       const proposal = createRetireProposal(storage.stashDir, {
         ref: "memories/old-note",
@@ -518,6 +520,48 @@ describe("akm proposal accept on a retire proposal", () => {
       expect(getProposal(storage.stashDir, pAB.id).status).toBe("pending");
       expect(fs.existsSync(aPath)).toBe(true); // a survives — never archived
     });
+  });
+
+  test("partial archive resume revalidates the live successor scope", async () => {
+    const oldPath = writeAsset("memories/old.md", "description: old");
+    const newPath = writeAsset("memories/new.md", "description: new");
+    const twinPath = writeAsset("memories/old.derived.md", "description: twin");
+    const config = makeConfig(storage.stashDir);
+    const proposal = createRetireProposal(storage.stashDir, {
+      ref: "memories/old",
+      source: "consolidate-pair",
+      retirement: retirement({
+        retiredPath: oldPath,
+        successorPath: newPath,
+        retiredRef: "memories/old",
+        successorRef: "memories/new",
+      }),
+    });
+    const backupContent = fs.readFileSync(oldPath, "utf8");
+    const db = openStateDatabase();
+    try {
+      upsertProposal(db, { ...proposal, retireAcceptIntent: { assetPath: oldPath, backupContent } }, storage.stashDir);
+    } finally {
+      db.close();
+    }
+    archiveCleanupCandidate(
+      storage.stashDir,
+      { ref: "memories/old", reason: "duplicate", proposalId: proposal.id, successorRefs: ["memories/new"] },
+      oldPath,
+    );
+    fs.writeFileSync(
+      newPath,
+      fs.readFileSync(newPath, "utf8").replace("description: new", "description: new\nscope_channel: changed"),
+    );
+    await expect(akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(/scope/);
+    expect(fs.existsSync(twinPath)).toBe(true);
+    expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+    // Existing recorded archive and backup remain intact; restoring successor scope allows idempotent completion/revert.
+    fs.writeFileSync(newPath, fs.readFileSync(newPath, "utf8").replace("\nscope_channel: changed", ""));
+    await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+    await akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config });
+    expect(fs.readFileSync(oldPath, "utf8")).toBe(backupContent);
+    expect(fs.existsSync(twinPath)).toBe(true);
   });
 
   describe("B2: accept-time freshness — both sides, not just the retired one", () => {
@@ -842,8 +886,9 @@ describe("akm proposal revert on a retire proposal", () => {
       expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted");
     });
 
-    test("a REAL purge sweep past grace deletes the archived bytes — revert then refuses with 'archived copy ... is missing', status stays accepted, the tombstone survives, and a second sweep is a no-op (S5)", async () => {
+    test("a REAL purge sweep past grace deletes the archived bytes — revert still restores the primary byte for byte from the proposal's backupContent, and a second sweep is a no-op (S5)", async () => {
       const parentPath = writeAsset("memories/parent.md", "description: parent");
+      const original = fs.readFileSync(parentPath, "utf8");
       const newPath = writeAsset("memories/new-note.md", "description: a new note");
       const config = makeConfig(storage.stashDir);
       const proposal = createRetireProposal(storage.stashDir, {
@@ -881,15 +926,14 @@ describe("akm proposal revert on a retire proposal", () => {
       expect(fs.existsSync(entry.archivedAbs)).toBe(false);
       expect(fs.existsSync(tombstonePath)).toBe(true); // the tombstone is never purged
 
-      await expect(akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
-        /archived copy .* is missing/,
-      );
-      expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted"); // the failed revert changed nothing
-      expect(fs.existsSync(tombstonePath)).toBe(true); // still kept after the failed revert attempt
-
       // A second sweep finds nothing left under this retirement to purge.
       const sweep2 = purgeGracedArchive(storage.stashDir, pastGrace);
       expect(sweep2).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+
+      const result = await akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config });
+      expect(result.proposal.status).toBe("reverted");
+      expect(fs.readFileSync(parentPath, "utf8")).toBe(original);
+      expect(fs.existsSync(tombstonePath)).toBe(false); // removed once the revert is recorded
     });
   });
 });
@@ -996,6 +1040,41 @@ describe("triage auto-accepts only a retire proposal the pair pass staged", () =
     await drainProposals({ stashDir: storage.stashDir, config, applyMode: "queue", maxAccepts: 25, dryRun: false });
     expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
     expect(fs.existsSync(oldPath)).toBe(true);
+  });
+
+  test("a staged retire proposal whose file is gone is auto-rejected once as stale-target, not failed every run", async () => {
+    const { proposal, oldPath } = stagedDuplicate();
+    fs.rmSync(oldPath);
+    const run = () =>
+      drainProposals({
+        stashDir: storage.stashDir,
+        config: makeConfig(storage.stashDir),
+        applyMode: "promote",
+        maxAccepts: 25,
+        dryRun: false,
+      });
+    const first = await run();
+    expect(first.failed).toEqual([]);
+    expect(first.rejected).toContain(proposal.id);
+    const archived = getProposal(storage.stashDir, proposal.id);
+    expect(archived.status).toBe("rejected");
+    expect(archived.gateDecision?.reason).toBe("stale-target");
+    expect((await run()).failed).toEqual([]);
+  });
+
+  test("a staged retire proposal whose successor is gone is auto-rejected as stale-target", async () => {
+    const { proposal } = stagedDuplicate();
+    fs.rmSync(path.join(storage.stashDir, "memories", "new-note.md"));
+    const result = await drainProposals({
+      stashDir: storage.stashDir,
+      config: makeConfig(storage.stashDir),
+      applyMode: "promote",
+      maxAccepts: 25,
+      dryRun: false,
+    });
+    expect(result.failed).toEqual([]);
+    expect(result.rejected).toContain(proposal.id);
+    expect(getProposal(storage.stashDir, proposal.id).gateDecision?.reason).toBe("stale-target");
   });
 
   test("a staged duplicate with a continuity risk waits for a person", async () => {

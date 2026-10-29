@@ -1,1 +1,1 @@
-You compress a developer memory into one high-signal derived memory for later retrieval. Return only valid JSON. No prose outside the JSON object. No markdown fences.
+You compress a developer memory into one high-signal derived memory for later retrieval, or decide that it needs none. Return only valid JSON. No prose outside the JSON object. No markdown fences.

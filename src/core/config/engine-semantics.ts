@@ -4,19 +4,24 @@
 
 export const ENGINE_NAME_PATTERN_SOURCE = "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$";
 
-export const BUILTIN_IMPROVE_STRATEGY_NAMES = [
-  "default",
+export const BUILTIN_IMPROVE_STRATEGY_NAMES = ["default", "consolidate"] as const;
+
+/**
+ * Built-in strategies removed in 0.10 (#1130, #1129). A user-defined strategy of the
+ * same name still resolves (it inherits `default`); naming one with no such
+ * block fails at resolution, not at config load.
+ */
+export const REMOVED_IMPROVE_STRATEGY_NAMES = [
   "quick",
   "thorough",
-  "consolidate",
   "catchup",
   "reflect-distill",
   "proactive-maintenance",
 ] as const;
 
 /**
- * The improve processes that use an engine. Triage's engine is its judgment's;
- * each of the others makes the process's own model calls.
+ * The improve processes that make model calls, so each runs on a connection or
+ * harness. Triage's is its judgment's; each of the others makes the process's own calls.
  */
 export const IMPROVE_ENGINE_PROCESSES = [
   "reflect",
@@ -28,5 +33,5 @@ export const IMPROVE_ENGINE_PROCESSES = [
   "triage",
 ] as const;
 
-/** Every improve process, in plan order: the engine processes and `proactiveMaintenance`, which uses none. */
+/** Every improve process, in plan order: the model-calling processes and `proactiveMaintenance`, which makes no model call. */
 export const IMPROVE_PROCESS_NAMES = [...IMPROVE_ENGINE_PROCESSES, "proactiveMaintenance"] as const;

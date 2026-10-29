@@ -3,68 +3,41 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The amended `BundleAdapter` interface — akm 0.9.0 chunk-1, WI-1.1.
+ * The `BundleAdapter` interface — one interface, optional capability methods.
  *
- * Transcribed VERBATIM from `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md`
- * §2 (lines 133-179) — "one interface, optional capability methods," per
- * History §8.3's reconciliation. This is THE authoritative shape (chunk-1
- * anchors.md §A.1/§A.2 census): two other documents show incomplete or
- * stale restatements of the same interface and were deliberately NOT used
- * as the source here —
- *
- *   - `akm-format-neutral-bundle-workspace-spec.md` §12.1 (lines ~530-560)
- *     restates the same contract but its own code block OMITS
- *     `affectedItems` entirely (it only appears in §14.2 prose, not the
- *     §12.1 TS snippet), and splits placeNew/directoryList/looksLikeRoot
- *     into a separate "§12.2 Authoring methods" heading rather than the
- *     adapter spec's single inline block.
- *   - `akm-architecture-decision-history.md` §8.3 (lines 805-823) is a
- *     STALE pre-amendment shape: `index()` REQUIRED (no `recognize` at
- *     all), no `ValidateContext` parameter on `validate`, no
- *     `affectedItems`.
- *
- * `ValidateContext` is not restated in the adapter spec's own §2 code block
- * — it is defined only in the normative spec (lines 562-569) and is
- * transcribed there into `./types.ts`.
- *
- * Member-by-member required/optional status (adapter spec §2, verified
- * against the transcription table in chunk-1 anchors.md §A.1):
+ * Member-by-member required/optional status:
  *
  *   id, version, extensions .......... REQUIRED (readonly fields)
  *   recognize ......................... REQUIRED
  *   index .............................. optional
  *   affectedItems ....................... optional
  *   validate .......................... REQUIRED
- *   readCandidates / placeNew / directoryList / looksLikeRoot ... optional
+ *   readCandidates / directoryList / looksLikeRoot ... optional
  *
- * 0.9.2 adds two independent optional read/runtime facets:
- * `renderExecutionSource`, for the approved agent/command design, and
- * `readCandidates`, which makes an adapter's closed-form set of physical
+ * `renderExecutionSource` and `readCandidates` are two independent optional
+ * read/runtime facets: `renderExecutionSource` serves the agent/command design,
+ * and `readCandidates` makes an adapter's closed-form set of physical
  * spellings for one concept id explicit without changing write placement
- * (#857: this is now the ONLY read-candidate surface — the walking
- * `recognizePathCandidates` sibling this comment used to describe was
- * removed with the full-tree owner scan it existed for; `readCandidates`
- * alone is inverted from the concept id, so it needs no bundle walk).
- * This does not change the 0.9.0 indexing or validation contract.
+ * (#857: this is the ONLY read-candidate surface — it is inverted from the
+ * concept id, so it needs no bundle walk). This does not change the indexing or
+ * validation contract.
  *
- * The spec's optional authoring (§12.2) / export (§12.3) / memory (§12.4)
- * facet methods are Tier-B ("no 0.9.0 adapter implements these") and their
- * parameter types are shapeless in every doc — they are DEFERRED to their
- * owning chunks (which will add the method + a real type), NOT declared here
- * as meaningless placeholders. Refines D1-1; flagged for the maintainer.
+ * The optional authoring, export and memory facet methods are not declared
+ * here: no adapter implements them, and their parameter types would be
+ * shapeless placeholders. Each facet adds its method + a real type when it is
+ * built.
  *
  * `recognize` takes `FileContext` (`src/indexer/walk/file-context.ts`)
- * as-is, per decision D1-3 — a core->indexer layering import, taken
+ * as-is — a core->indexer layering import, taken
  * `import type` so it is erased at build time and adds no runtime edge.
- * This is flagged for the maintainer: FileContext arguably belongs in core
- * long-term; moving it is out of chunk 1's netLoc-0 scope.
+ * FileContext arguably belongs in core long-term.
  *
- * `FileChange` is reused as-is from `../file-change.ts` (Chunk 6's
+ * `FileChange` is reused as-is from `../file-change.ts` (a
  * deliberately dependency-free type) — not re-minted here.
  *
- * No concrete adapter is implemented here — this is the additive contract
- * only (Chunk 2 mints the first real adapters; the live indexer's per-dir
- * `drainDirDocuments` × `adapter.recognize` is the core scan engine).
+ * No concrete adapter is implemented here — this is the contract only; the
+ * live indexer's per-dir `drainDirDocuments` × `adapter.recognize` is the core
+ * scan engine.
  */
 
 import type { AdapterRenderedExecutionSource } from "../../execution/source";
@@ -124,28 +97,22 @@ export interface BundleAdapter {
   renderExecutionSource?(c: BundleComponent, file: FileContext): AdapterRenderedExecutionSource | null;
 
   // OPTIONAL — authoritative read placement. Unlike `extensions` (a walk
-  // collection hint) and `placeNew` (a write-normalization policy), this lists
-  // the existing path spellings that may own one canonical concept. Every
+  // collection hint), this lists the existing path spellings that may own one canonical concept. Every
   // candidate carries that canonical identity, so core can arbitrate without
   // reading authored bytes or inferring identity from the query.
   readCandidates?(c: BundleComponent, conceptId: string): AdapterReadCandidate[];
 
   // OPTIONAL — placement / discovery
-  /** Replaces the per-type stash-subdir + name-to-path placement primitives. */
-  placeNew?(c: BundleComponent, conceptId: string): string;
   /** Owned dirs; feeds git exact-path staging (git-stash.ts:241). */
   directoryList?(c: BundleComponent): string[];
   /** Install-time probe; ordered per §1.2. */
   looksLikeRoot?(root: string): boolean;
 
-  // NOTE — the spec's OPTIONAL authoring (§12.2), export (§12.3), and memory
-  // (§12.4/§25) facet methods are DEFERRED, not declared here. They are Tier-B
-  // ("no 0.9.0 adapter implements these" — adapter spec §2; the bind/authoring
-  // family is deferred Tier-B per the manifest's Chunk-10 note), and every type
-  // they reference (AuthoringContext/CreateRequest/BundleExport/BindingRequest/
-  // BindingPlan/MemoryRecord/MemorySemanticPlan) is shapeless in every spec doc.
+  // NOTE — the OPTIONAL authoring, export, and memory facet methods are
+  // DEFERRED, not declared here: no adapter implements them, and every type they
+  // reference (AuthoringContext/CreateRequest/BundleExport/BindingRequest/
+  // BindingPlan/MemoryRecord/MemorySemanticPlan) is shapeless.
   // Committing them now would mean 7 meaningless `Record<string, unknown>`
-  // placeholder types on the foundational contract. Refines D1-1: chunk 1
-  // implements the 0.9.0 CORE contract; the owning chunk of each facet adds its
-  // method + a REAL type shape when that facet is built. FLAGGED for maintainer.
+  // placeholder types on the foundational contract. The owning facet adds its
+  // method + a REAL type shape when it is built.
 }

@@ -1,24 +1,30 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { setConfigValue } from "../src/commands/config-cli";
+import { resolveImproveExecution } from "../src/commands/improve/execution";
 import {
   DEFAULT_CONFIG,
+  defaultConnection,
+  defaultHarness,
   getConfigValueSource,
   getImproveProcessConfig,
   type ImproveProfileConfig,
   loadConfig,
   loadUserConfig,
+  mutateConfig,
   primaryBundlePath,
   resetConfigCache,
   saveConfig,
   updateConfig,
 } from "../src/core/config/config";
-import { backupExistingConfig } from "../src/core/config/config-io";
+import { backupExistingConfig, copyToConfigBackups } from "../src/core/config/config-io";
 import { EmbeddingConnectionConfigSchema } from "../src/core/config/config-schema";
 import { ConfigError } from "../src/core/errors";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+import { resolveIndexPassExecution } from "../src/llm/index-passes";
 import { schedulerEnabledRefs } from "../src/tasks/activation-config";
 import {
   type Cleanup,
@@ -85,6 +91,8 @@ afterEach(() => {
 
 // ── getConfigPath ───────────────────────────────────────────────────────────
 
+const LAB = { endpoint: "http://lab:1/v1", models: { fast: "m" } };
+
 describe("getConfigPath", () => {
   test("returns config.json under XDG_CONFIG_HOME", () => {
     expect(getConfigPath()).toBe(path.join(testConfigHome, "akm", "config.json"));
@@ -145,6 +153,24 @@ describe("loadConfig", () => {
     expect(loadConfig().semanticSearchMode).toBe("off");
   });
 
+  test("an embedding block with no semanticSearchMode reads as 'auto': writing it says semantic search is wanted", () => {
+    writeCurrentConfig({
+      connections: { default: { endpoint: "http://localhost:11434/v1", models: { fast: "qwen3-8b" } } },
+      embedding: { model: "nomic-embed-text" },
+    });
+    expect(loadConfig().semanticSearchMode).toBe("auto");
+  });
+
+  test("an embedding block does not override a semanticSearchMode the config sets", () => {
+    writeCurrentConfig({ semanticSearchMode: "off", embedding: { model: "nomic-embed-text" } });
+    expect(loadConfig().semanticSearchMode).toBe("off");
+  });
+
+  test("without an embedding block the mode stays 'off'", () => {
+    writeCurrentConfig({ connections: { default: { endpoint: "http://localhost:11434/v1", models: { fast: "m" } } } });
+    expect(loadConfig().semanticSearchMode).toBe("off");
+  });
+
   test("loads config without requiring AKM_BUNDLE_DIR", () => {
     delete process.env.AKM_BUNDLE_DIR;
     writeCurrentConfig({ semanticSearchMode: "off" });
@@ -188,6 +214,12 @@ describe("loadConfig", () => {
     writeCurrentConfig({ defualtBundle: "typo" });
     const warnings = captureWarnings(() => loadConfig());
     expect(warnings.join("\n")).toMatch(/unknown config key.*defualtBundle/i);
+  });
+
+  test("warns that an execution section is an unknown key", () => {
+    writeCurrentConfig({ execution: { allowedTools: ["Read"] } });
+    const warnings = captureWarnings(() => loadConfig());
+    expect(warnings.join("\n")).toMatch(/unknown config key.*execution/i);
   });
 
   test("ignores stash-root config.json files", () => {
@@ -239,72 +271,18 @@ describe("loadConfig", () => {
     expect(warnings.some((w) => w.includes("stashes") && w.includes("retired"))).toBe(true);
   });
 
-  test("folds the retired `sources[]` key into bundles, dropping entries this shim does not recognize", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        sources: [
-          { type: "openviking", url: "https://ov.example.com", name: "my-ov" },
-          { type: "filesystem", path: "/keep", name: "keep" },
-        ],
-      }),
+  // Older than the 0.9.15 floor: 0.10 does not convert these, it refuses them
+  // with one message naming `akm migrate apply` under akm 0.9.x (#1091).
+  test.each([
+    ["sources", [{ type: "filesystem", path: "/keep", name: "keep" }]],
+    ["installed", [{ id: "npm:left-pad", source: "npm", ref: "npm:left-pad" }]],
+    ["stashDir", "/legacy-stash"],
+  ])("refuses the pre-0.9 `%s` key, naming akm migrate apply under akm 0.9.x", (key, value) => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", [key]: value }));
+
+    expect(() => loadConfig()).toThrow(
+      new RegExp(`${key}: .*predates akm 0\\.9\\.15.*akm migrate apply.* with akm 0\\.9\\.x`),
     );
-
-    const warnings = captureWarnings(() => {
-      const config = loadConfig();
-      expect(config.bundles).not.toHaveProperty("my-ov");
-      expect(config.bundles?.keep).toMatchObject({ path: "/keep", writable: true });
-      expect(config.defaultBundle).toBe("keep");
-      expect((config as unknown as Record<string, unknown>).sources).toBeUndefined();
-    });
-    expect(warnings.some((w) => w.includes("sources") && w.includes("akm migrate apply"))).toBe(true);
-  });
-
-  test("drops the retired `installed[]` key (no 0.9 equivalent) instead of failing config load", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        installed: [
-          {
-            id: "npm:left-pad",
-            source: "npm",
-            ref: "npm:left-pad",
-            artifactUrl: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
-            stashRoot: "/tmp/left-pad",
-            cacheDir: "/tmp/cache",
-            installedAt: "2026-05-01T00:00:00.000Z",
-            writable: true,
-          },
-        ],
-      }),
-    );
-
-    const warnings = captureWarnings(() => {
-      const config = loadConfig();
-      expect((config as unknown as Record<string, unknown>).installed).toBeUndefined();
-    });
-    expect(warnings.some((w) => w.includes("installed") && w.includes("akm migrate apply"))).toBe(true);
-  });
-
-  // `stashDir` becomes the `stash` bundle and the default write target.
-  test("folds the retired `stashDir` key into a `stash` bundle instead of failing config load", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        stashDir: "/legacy-stash",
-      }),
-    );
-
-    const warnings = captureWarnings(() => {
-      const config = loadConfig();
-      expect(config.bundles?.stash).toMatchObject({ path: "/legacy-stash", writable: true });
-      expect(config.defaultBundle).toBe("stash");
-      expect((config as unknown as Record<string, unknown>).stashDir).toBeUndefined();
-    });
-    expect(warnings.some((w) => w.includes("stashDir") && w.includes("akm migrate apply"))).toBe(true);
   });
 });
 
@@ -377,6 +355,24 @@ describe("saveConfig", () => {
     expect(fs.readFileSync(second?.timestamped as string, "utf8")).toContain('"version":2');
   });
 
+  test("any file copied to the config backups is named by its caller and de-collides the same way", () => {
+    const source = path.join(getConfigDir(), "credentials.json");
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    fs.writeFileSync(source, "{}\n");
+    const instant = new Date("2026-07-11T12:34:56.789Z");
+    const name = (stamp: string) => `credentials.json.${stamp}`;
+
+    const first = copyToConfigBackups(source, name, instant);
+    const second = copyToConfigBackups(source, name, instant);
+
+    expect([first, second].map((copy) => path.basename(copy))).toEqual([
+      "credentials.json.2026-07-11T12-34-56-789Z",
+      "credentials.json.2026-07-11T12-34-56-789Z-1",
+    ]);
+    expect(path.dirname(first)).toBe(path.join(getCacheDir(), "config-backups"));
+    expect(fs.statSync(second).mode & 0o777).toBe(0o600);
+  });
+
   test("config backups are written owner-only (0600) — they can carry secrets (08-F4)", () => {
     saveConfig({ semanticSearchMode: "off" });
     // A second save backs up the first config file.
@@ -397,6 +393,20 @@ describe("saveConfig", () => {
     for (const name of timestamped) {
       expect(fs.statSync(path.join(backupDir, name)).mode & 0o777).toBe(0o600);
     }
+  });
+
+  test("config saves still work on a filesystem that refuses chmod (CIFS / Azure Files)", () => {
+    const refuse = () => {
+      throw Object.assign(new Error("EPERM: operation not permitted, chmod"), { code: "EPERM" });
+    };
+    spyOn(fs, "chmodSync").mockImplementation(refuse);
+    spyOn(fs, "fchmodSync").mockImplementation(refuse);
+
+    saveConfig({ semanticSearchMode: "off" });
+    saveConfig({ semanticSearchMode: "auto" });
+
+    expect(loadConfig().semanticSearchMode).toBe("auto");
+    expect(fs.existsSync(path.join(getCacheDir(), "config-backups", "config.latest.json"))).toBe(true);
   });
 
   test("prunes config backups to the 5 most-recent (#459)", () => {
@@ -554,101 +564,163 @@ describe("embedding config", () => {
   });
 });
 
-// ── LLM engine config ───────────────────────────────────────────────────────
+// ── Connections ──────────────────────────────────────────────────────────────
 
-describe("LLM engine config", () => {
-  test("loads a symbolic LLM engine apiKey", () => {
+describe("connections", () => {
+  test("loads a $VAR apiKey", () => {
     writeCurrentConfig({
-      engines: {
-        cloud: {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4",
-          apiKey: "$OPENAI_API_KEY",
-        },
+      connections: {
+        cloud: { endpoint: "https://api.openai.com/v1", models: { fast: "gpt-4" }, apiKey: "$OPENAI_API_KEY" },
       },
     });
-    expect(loadConfig().engines?.cloud?.apiKey).toBe("$OPENAI_API_KEY");
+    expect(loadConfig().connections?.cloud?.apiKey).toBe("$OPENAI_API_KEY");
   });
 
-  test("loads a file-backed LLM engine apiKeyFile (#905)", () => {
+  test("a literal apiKey is warned about once, kept as written and never read, never a load error", () => {
     writeCurrentConfig({
-      engines: {
-        cloud: {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4",
-          apiKeyFile: "/run/secrets/cloud-api-key",
-        },
-      },
+      connections: { cloud: { endpoint: "https://api.openai.com/v1", models: { fast: "gpt-4" }, apiKey: "sk-secret" } },
     });
-    expect(loadConfig().engines?.cloud?.apiKeyFile).toBe("/run/secrets/cloud-api-key");
-    expect(loadConfig().engines?.cloud?.apiKey).toBeUndefined();
+    const warnings = captureWarnings(() => {
+      expect(loadConfig().connections?.cloud?.apiKey).toBe("sk-secret");
+      resetConfigCache();
+      loadConfig();
+    });
+    const literal = warnings.filter((w) => w.includes("literal apiKey") && w.includes("credentials.json"));
+    expect(literal).toHaveLength(1);
+    expect(literal.join("\n")).not.toContain("sk-secret");
   });
 
-  // Neither field is required at the schema level: an engine that sets
-  // neither still resolves its credential through the pre-existing implicit
-  // `AKM_ENGINE_<NAME>_API_KEY` convention (see engine-resolution.test.ts).
-  // apiKeyFile is an alternative to apiKey, not a narrowing of what was
-  // already valid.
-  test("allows an LLM engine with neither apiKey nor apiKeyFile set (#905)", () => {
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal secret reference syntax under test
+  test("a ${secrets/...} reference is not a key akm reads: kept, with a notice that names akm migrate apply", () => {
     writeCurrentConfig({
-      engines: {
-        cloud: { kind: "llm", endpoint: "https://api.openai.com/v1/chat/completions", model: "gpt-4" },
-      },
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal secret reference under test
+      connections: { cloud: { endpoint: "https://x.test/v1", models: { fast: "m" }, apiKey: "${secrets/openai}" } },
+    });
+    const warnings = captureWarnings(() => {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal secret reference under test
+      expect(loadConfig().connections?.cloud?.apiKey).toBe("${secrets/openai}");
+    });
+    const notices = warnings.filter((w) => w.includes("secret-store reference"));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("akm migrate apply");
+    expect(warnings.some((w) => w.includes("literal apiKey"))).toBe(false);
+  });
+
+  test("allows a connection with no apiKey (the key may live in credentials.json)", () => {
+    writeCurrentConfig({
+      connections: { cloud: { endpoint: "https://api.openai.com/v1", models: { fast: "gpt-4" } } },
     });
     expect(() => loadConfig()).not.toThrow();
-    expect(loadConfig().engines?.cloud?.apiKey).toBeUndefined();
-    expect(loadConfig().engines?.cloud?.apiKeyFile).toBeUndefined();
+    expect(loadConfig().connections?.cloud?.apiKey).toBeUndefined();
   });
 
-  test("rejects an LLM engine with both apiKey and apiKeyFile set (#905)", () => {
+  test("a connection with no endpoint is dropped with one warning; the connections beside it load", () => {
     writeCurrentConfig({
-      engines: {
-        cloud: {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4",
-          apiKey: "$OPENAI_API_KEY",
-          apiKeyFile: "/run/secrets/cloud-api-key",
+      connections: {
+        cloud: { models: { fast: "gpt-4" } },
+        lab: LAB,
+      },
+    });
+    const warnings = captureWarnings(() => {
+      expect(Object.keys(loadConfig().connections ?? {})).toEqual(["lab"]);
+      resetConfigCache();
+      loadConfig();
+    });
+    const dropped = warnings.filter((w) => w.includes('connection "cloud"'));
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]).toContain("endpoint");
+  });
+
+  test("setting a field on a connection the reader dropped adds to what the file has, never replaces it", () => {
+    const dropped = { models: { fast: "gpt-4" }, top_p: 0.9 };
+    writeCurrentConfig({ connections: { lab: dropped, other: LAB } });
+    captureWarnings(() => {
+      mutateConfig((current) => setConfigValue(current, "connections.lab.endpoint", "http://lab:8080/v1"));
+    });
+    const written = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as { connections: Record<string, unknown> };
+    expect(written.connections.lab).toEqual({ ...dropped, endpoint: "http://lab:8080/v1" });
+    expect(written.connections.other).toEqual(LAB);
+    resetConfigCache();
+    expect(loadConfig().connections?.lab).toMatchObject({ endpoint: "http://lab:8080/v1", models: { fast: "gpt-4" } });
+  });
+
+  test("setting the platform on a harness the reader dropped keeps its bin and args", () => {
+    writeCurrentConfig({ harnesses: { work: { bin: "/opt/claude", args: ["--print"] } } });
+    captureWarnings(() => {
+      mutateConfig((current) => setConfigValue(current, "harnesses.work.platform", "claude"));
+    });
+    const written = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as { harnesses: Record<string, unknown> };
+    expect(written.harnesses.work).toEqual({ bin: "/opt/claude", args: ["--print"], platform: "claude" });
+    resetConfigCache();
+    expect(loadConfig().harnesses?.work).toMatchObject({ platform: "claude", bin: "/opt/claude", args: ["--print"] });
+  });
+
+  test.each([
+    ["an endpoint without a scheme", { connections: { typo: { endpoint: "localhost:11434/v1" }, lab: LAB } }, "typo"],
+    [
+      "a model that is not a name",
+      { connections: { typo: { endpoint: "http://x/v1", models: { fast: 3 } }, lab: LAB } },
+      "typo",
+    ],
+    [
+      "a harness entry that is not an object",
+      { connections: { lab: LAB }, harnesses: { claude: true, codex: {} } },
+      "claude",
+    ],
+    [
+      "harness args that are not a list",
+      { connections: { lab: LAB }, harnesses: { claude: { args: "--x" }, codex: {} } },
+      "claude",
+    ],
+    ["a connection name outside the naming rule", { connections: { "My Lab": LAB, lab: LAB } }, "My Lab"],
+    ["a connection name with a reserved prefix", { connections: { "akm-lab": LAB, lab: LAB } }, "akm-lab"],
+    [
+      "a harness name outside the naming rule",
+      { connections: { lab: LAB }, harnesses: { Claude_Work: { platform: "claude" }, codex: {} } },
+      "Claude_Work",
+    ],
+  ])("%s is dropped with one warning naming it; the rest loads", (_name, config, dropped) => {
+    writeCurrentConfig(config);
+    let loaded!: ReturnType<typeof loadConfig>;
+    const warnings = captureWarnings(() => {
+      loaded = loadConfig();
+      resetConfigCache();
+      loadConfig();
+    });
+    expect(warnings.filter((w) => w.includes(`"${dropped}"`) && w.startsWith("Ignoring"))).toHaveLength(1);
+    expect(Object.keys(loaded.connections ?? {})).not.toContain(dropped);
+    expect(Object.keys(loaded.harnesses ?? {})).not.toContain(dropped);
+    expect(Object.keys(loaded.connections ?? {})).toContain("lab");
+  });
+
+  test("keeps request fields on the connection and on a model entry as written, without warning", () => {
+    writeCurrentConfig({
+      connections: {
+        lab: {
+          endpoint: "http://lab:8080/v1",
+          timeoutMs: 900000,
+          chat_template_kwargs: { enable_thinking: false },
+          models: {
+            fast: "qwen3-8b",
+            reasoning: { model: "glm-5", reasoning_effort: "high", chat_template_kwargs: { thinking_budget: 8192 } },
+          },
         },
       },
     });
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/apiKey and apiKeyFile cannot both be set/);
+    const warnings = captureWarnings(() => {
+      expect(loadConfig().connections?.lab).toMatchObject({
+        timeoutMs: 900000,
+        chat_template_kwargs: { enable_thinking: false },
+        models: { reasoning: { model: "glm-5", reasoning_effort: "high" } },
+      });
+    });
+    expect(warnings).toEqual([]);
   });
 
-  test("loads an LLM engine with provider, temperature, and maxTokens", () => {
-    writeCurrentConfig({
-      engines: {
-        cloud: {
-          kind: "llm",
-          provider: "openai",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4o-mini",
-          temperature: 0.6,
-          maxTokens: 256,
-        },
-      },
-    });
-    expect(loadConfig().engines?.cloud).toMatchObject({
-      kind: "llm",
-      provider: "openai",
-      endpoint: "https://api.openai.com/v1/chat/completions",
-      model: "gpt-4o-mini",
-      temperature: 0.6,
-      maxTokens: 256,
-    });
-  });
-
-  test("roundtrips an LLM engine via updateConfig", () => {
-    const engine = {
-      kind: "llm" as const,
-      endpoint: "http://localhost:11434/v1/chat/completions",
-      model: "llama3.2",
-    };
-    updateConfig({ engines: { local: engine }, defaults: { llmEngine: "local" } });
-    expect(loadConfig().engines?.local).toMatchObject(engine);
+  test("roundtrips a connection via updateConfig", () => {
+    const connection = { endpoint: "http://localhost:11434/v1", models: { fast: "llama3.2" } };
+    updateConfig({ connections: { local: connection } });
+    expect(loadConfig().connections?.local).toMatchObject(connection);
   });
 });
 
@@ -658,10 +730,10 @@ describe("LLM engine config", () => {
 // not re-resolve defaults or fall back to another strategy.
 describe("getImproveProcessConfig", () => {
   test("returns the named process section from the selected improve strategy", () => {
-    const selected = { processes: { consolidate: { enabled: true, minPoolSize: 42 } } };
+    const selected = { processes: { consolidate: { enabled: true, limit: 42 } } };
     expect(getImproveProcessConfig("consolidate", selected)).toEqual({
       enabled: true,
-      minPoolSize: 42,
+      limit: 42,
     });
   });
 
@@ -848,74 +920,175 @@ describe("0.9 config shape parsing", () => {
     expect(loaded.configVersion).toBe("0.9.0");
   });
 
-  test("parses an LLM engine with supportsJsonSchema", () => {
+  test("parses harnesses by platform name, with platform for a second install", () => {
     writeCurrentConfig({
-      engines: {
-        "openai-mini": {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4o-mini",
-          temperature: 0.3,
-          supportsJsonSchema: true,
+      harnesses: {
+        opencode: { bin: "opencode", args: ["run"] },
+        "claude-work": {
+          platform: "claude",
+          bin: "/opt/claude-work/bin/claude",
+          workspace: "/tmp",
+          models: { fast: "m" },
         },
       },
     });
     const loaded = loadConfig();
-    expect(loaded.engines?.["openai-mini"]?.model).toBe("gpt-4o-mini");
-    expect(loaded.engines?.["openai-mini"]?.supportsJsonSchema).toBe(true);
+    expect(loaded.harnesses?.opencode?.args).toEqual(["run"]);
+    expect(loaded.harnesses?.["claude-work"]?.platform).toBe("claude");
+    expect(loaded.harnesses?.["claude-work"]?.models).toEqual({ fast: "m" });
   });
 
-  test("parses agent engines with platform fields", () => {
+  test("a harness with an unknown platform, or named for none, is dropped with one warning; the rest loads", () => {
+    writeCurrentConfig({ harnesses: { bad: { platform: "invalid-platform" }, claude: {} } });
+    const unknownPlatform = captureWarnings(() => {
+      expect(Object.keys(loadConfig().harnesses ?? {})).toEqual(["claude"]);
+    });
+    expect(unknownPlatform.filter((w) => w.includes('harness "bad"') && w.includes("invalid-platform"))).toHaveLength(
+      1,
+    );
+
+    writeCurrentConfig({ harnesses: { cursor: {}, codex: {} }, connections: { lab: LAB } });
+    const unnamed = captureWarnings(() => {
+      const loaded = loadConfig();
+      expect(Object.keys(loaded.harnesses ?? {})).toEqual(["codex"]);
+      expect(Object.keys(loaded.connections ?? {})).toEqual(["lab"]);
+    });
+    expect(unnamed.filter((w) => w.includes('harness "cursor"') && w.includes("is not a platform name"))).toHaveLength(
+      1,
+    );
+  });
+
+  test("opencode-sdk is akm's own runtime, not a platform a harness can name: dropped, with a warning", () => {
+    writeCurrentConfig({ harnesses: { runtime: { platform: "opencode-sdk" } } });
+    const warnings = captureWarnings(() => {
+      expect(loadConfig().harnesses).toEqual({});
+    });
+    expect(warnings.some((w) => w.includes('harness "runtime"') && w.includes("opencode-sdk"))).toBe(true);
+  });
+
+  test("an entry that is dropped stays in the file through a write", () => {
+    writeCurrentConfig({ harnesses: { cursor: {}, claude: {} }, connections: { cloud: { models: { fast: "m" } } } });
+    captureWarnings(() => {
+      mutateConfig((current) => ({ ...current, output: { format: "text" } }));
+    });
+    const after = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(after.harnesses).toEqual({ cursor: {}, claude: {} });
+    expect(after.connections).toEqual({ cloud: { models: { fast: "m" } } });
+  });
+
+  test("a harness alias written as a model object, as on a connection, keeps the harness usable", () => {
+    writeCurrentConfig({ harnesses: { claude: { models: { reasoning: { model: "opus", effort: "high" } } } } });
+    const warnings = captureWarnings(() => {
+      expect(loadConfig().harnesses?.claude?.models).toEqual({ reasoning: { model: "opus", effort: "high" } });
+    });
+    expect(warnings).toEqual([]);
+  });
+
+  test("a key a harness does not read warns once and is ignored", () => {
+    writeCurrentConfig({ harnesses: { claude: { colour: "blue" } } });
+    const warnings = captureWarnings(() => {
+      expect(() => loadConfig()).not.toThrow();
+    });
+    expect(warnings.some((w) => w.includes("harnesses.claude.colour") && w.includes("ignored"))).toBe(true);
+  });
+
+  test("parses the default connection, default harness and improve strategy by name", () => {
     writeCurrentConfig({
-      engines: {
-        "opencode-default": { kind: "agent", platform: "opencode", bin: "opencode", args: ["run"] },
-        "opencode-sdk": { kind: "agent", platform: "opencode-sdk", workspace: "/tmp", model: "claude-3" },
+      connections: {
+        default: { endpoint: "https://api.openai.com/v1", models: { fast: "gpt-4o-mini" } },
+        other: { endpoint: "https://other.test/v1", models: { fast: "m" } },
       },
+      harnesses: { opencode: {}, claude: {} },
+      improve: { strategy: "my-custom-strategy", strategies: { "my-custom-strategy": {} } },
     });
     const loaded = loadConfig();
-    expect(loaded.engines?.["opencode-default"]?.platform).toBe("opencode");
-    expect(loaded.engines?.["opencode-sdk"]?.platform).toBe("opencode-sdk");
-    expect(loaded.engines?.["opencode-sdk"]?.model).toBe("claude-3");
+    expect(defaultConnection(loaded)?.name).toBe("default");
+    expect(defaultHarness(loaded)).toBeUndefined();
+    expect(loaded.improve?.strategy).toBe("my-custom-strategy");
   });
 
-  test("rejects an agent engine with invalid platform (no silent drop)", () => {
-    writeCurrentConfig({ engines: { bad: { kind: "agent", platform: "invalid-platform" } } });
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/engines\.bad/);
-  });
-
-  test("parses canonical engine and improve strategy defaults", () => {
+  // A pointer to a connection or harness is a plain string, so the config loads with a miscased or unknown name in
+  // it. Where it is resolved it is an error that names it, never the default. Only the entry's own name is held to
+  // the naming rule.
+  test.each([
+    ["improve.connection", { improve: { connection: "Anthropic" } }, "improve"],
+    ["improve.harness", { improve: { harness: "Anthropic" } }, "improve"],
+    [
+      "improve.processes.<process>.connection",
+      { improve: { processes: { triage: { connection: "Anthropic" } } } },
+      "improve",
+    ],
+    [
+      "improve.processes.<process>.harness",
+      { improve: { processes: { triage: { harness: "Anthropic" } } } },
+      "improve",
+    ],
+    ["improve.qualityGate.connection", { improve: { qualityGate: { connection: "Anthropic" } } }, "gate"],
+    ["index.connection", { index: { connection: "Anthropic" } }, "index"],
+    ["index.<pass>.connection", { index: { graph: { connection: "Anthropic" } } }, "index"],
+  ])("a miscased name at %s loads, and is an error at resolution naming it", (_where, pointer, resolves) => {
     writeCurrentConfig({
-      engines: {
-        "openai-mini": {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4o-mini",
-        },
-        "opencode-default": { kind: "agent", platform: "opencode" },
-      },
-      defaults: {
-        llmEngine: "openai-mini",
-        engine: "opencode-default",
-        improveStrategy: "my-custom-strategy",
-      },
-      improve: { strategies: { "my-custom-strategy": {} } },
+      connections: { default: { endpoint: "http://lab:1/v1", models: { fast: "m" } } },
+      ...pointer,
     });
     const loaded = loadConfig();
-    expect(loaded.defaults?.llmEngine).toBe("openai-mini");
-    expect(loaded.defaults?.engine).toBe("opencode-default");
-    expect(loaded.defaults?.improveStrategy).toBe("my-custom-strategy");
+    const resolution = {
+      improve: () => resolveImproveExecution({ config: loaded, processName: "triage", alias: "fast" }),
+      gate: () =>
+        resolveImproveExecution({
+          config: loaded,
+          processName: "reflect-quality-judge",
+          alias: "fast",
+          ...(loaded.improve?.qualityGate ? { current: loaded.improve.qualityGate } : {}),
+        }),
+      index: () => resolveIndexPassExecution("graph", loaded),
+    }[resolves as "improve" | "gate" | "index"];
+    expect(resolution).toThrow(/"Anthropic" is not configured/);
   });
 
-  test("defaults.improveStrategy: graph-refresh loads (retirement is refused lazily by resolveImproveStrategy, not eagerly at config load)", () => {
+  test("the lone connection, and the lone harness, are the defaults whatever they are called", () => {
+    writeCurrentConfig({
+      connections: { lab: { endpoint: "http://lab/v1", models: { fast: "m" } } },
+      harnesses: { claude: {} },
+    });
+    const loaded = loadConfig();
+    expect(defaultConnection(loaded)?.name).toBe("lab");
+    expect(defaultHarness(loaded)?.name).toBe("claude");
+  });
+
+  test("improve.strategy: graph-refresh loads (retirement is refused lazily by resolveImproveStrategy, not eagerly at config load)", () => {
     // Eagerly refusing this here would fail every command's config load,
     // including `akm migrate apply` — the one command that would let an
     // owner fix a stale default. resolveImproveStrategy
     // (src/commands/improve/improve-strategies.ts) is the one place that
     // refuses "graph-refresh", at improve-invocation time.
-    writeCurrentConfig({ defaults: { improveStrategy: "graph-refresh" } });
+    writeCurrentConfig({ improve: { strategy: "graph-refresh" } });
+    expect(loadConfig().improve?.strategy).toBe("graph-refresh");
+  });
+
+  test("improve.strategy: proactive-maintenance (a built-in until 0.10) still loads, with or without a strategy block (#1129)", () => {
+    writeCurrentConfig({ improve: { strategy: "proactive-maintenance" } });
+    expect(loadConfig().improve?.strategy).toBe("proactive-maintenance");
+    writeCurrentConfig({
+      improve: {
+        strategy: "proactive-maintenance",
+        strategies: {
+          "proactive-maintenance": { processes: { proactiveMaintenance: { enabled: true, maxPerRun: 100 } } },
+        },
+      },
+    });
     const loaded = loadConfig();
-    expect(loaded.defaults?.improveStrategy).toBe("graph-refresh");
+    expect(loaded.improve?.strategies?.["proactive-maintenance"]?.processes?.proactiveMaintenance?.maxPerRun).toBe(100);
+  });
+
+  test("improve.strategy must name a built-in or configured strategy", () => {
+    writeCurrentConfig({ improve: { strategy: "nonexistent" } });
+    expect(() => loadConfig()).toThrow(/improve\.strategy/);
+  });
+
+  test("a leftover improve.salience.salienceThreshold (the removed high-salience lane's key) still loads (#1129)", () => {
+    writeCurrentConfig({ improve: { salience: { salienceThreshold: 0.5 } } });
+    expect(() => loadConfig()).not.toThrow();
   });
 
   test("ignores legacy features.improve instead of failing config load", () => {
@@ -933,24 +1106,6 @@ describe("0.9 config shape parsing", () => {
     });
     expect(warnings.some((w) => w.includes("features") && w.includes("retired"))).toBe(true);
   });
-
-  test("loads a literal engine apiKey, warning instead of failing", () => {
-    writeCurrentConfig({
-      engines: {
-        cloud: {
-          kind: "llm",
-          endpoint: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4o",
-          apiKey: "sk-secret",
-        },
-      },
-    });
-    const warnings = captureWarnings(() => {
-      const config = loadConfig();
-      expect(config.engines?.cloud?.apiKey).toBe("sk-secret");
-    });
-    expect(warnings.some((w) => w.includes("engines.<name>.apiKey"))).toBe(true);
-  });
 });
 
 // ── `extends` inheritance (#945) ────────────────────────────────────────────
@@ -963,8 +1118,8 @@ describe("extends inheritance (#945)", () => {
       path.join(dir, "shared", "shared.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: {
-          fast: { kind: "llm", endpoint: "https://api.example.test/v1/chat/completions", model: "base-model" },
+        connections: {
+          fast: { endpoint: "https://api.example.test/v1", models: { fast: "base-model" } },
         },
         output: { format: "text", detail: "full" },
       }),
@@ -979,7 +1134,7 @@ describe("extends inheritance (#945)", () => {
     );
 
     const config = loadConfig();
-    expect(config.engines?.fast?.model).toBe("base-model");
+    expect(config.connections?.fast?.models).toEqual({ fast: "base-model" });
     // Local wins: output.detail overridden, output.format inherited.
     expect(config.output).toEqual({ format: "text", detail: "brief" });
   });
@@ -1042,7 +1197,8 @@ describe("extends inheritance (#945)", () => {
 
   test("a base config declaring a foreign configVersion is still merged underneath", () => {
     // The base gets the same per-file pipeline as the local file: its
-    // `configVersion` is read as current rather than gating the merge.
+    // `configVersion` is read as current rather than gating the merge, and the retired
+    // engines/defaults form it is written in is read as connections.
     const dir = path.dirname(getConfigPath());
     writeRawConfig(
       path.join(dir, "old-base.json"),
@@ -1056,7 +1212,7 @@ describe("extends inheritance (#945)", () => {
 
     const config = loadConfig();
     expect(config.configVersion).toBe("0.9.0");
-    expect(config.defaults?.llmEngine).toBe("legacy");
+    expect(config.connections?.default).toMatchObject({ endpoint: "https://api.example.test/v1/chat/completions" });
   });
 
   test("extends by a filesystem bundle asset ref (bundle//<path>), no index involved", () => {
@@ -1157,38 +1313,43 @@ describe("extends inheritance (#945)", () => {
     }
   });
 
-  test("strips inherited host authority while retaining portable engine settings", () => {
+  test("strips inherited host authority while retaining portable connection and harness settings", () => {
     const dir = path.dirname(getConfigPath());
     writeRawConfig(
       path.join(dir, "base.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: {
+        connections: {
+          cloud: {
+            endpoint: "https://api.example.test/v1",
+            apiKey: "$INHERITED_KEY",
+            models: { fast: "portable-model" },
+          },
+        },
+        harnesses: {
           inherited: {
-            kind: "agent",
             platform: "claude",
-            model: "portable-model",
+            models: { fast: "portable-model" },
             bin: "/untrusted/bin",
             args: ["--dangerous"],
             workspace: "/untrusted/workspace",
           },
         },
-        execution: { allowedTools: ["*"] },
         experimental: { improveAutonomy: true },
       }),
     );
     writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
 
     const config = loadConfig();
-    expect(config.engines?.inherited).toMatchObject({ kind: "agent", platform: "claude", model: "portable-model" });
-    expect(config.engines?.inherited).not.toHaveProperty("bin");
-    expect(config.engines?.inherited).not.toHaveProperty("args");
-    expect(config.engines?.inherited).not.toHaveProperty("workspace");
-    expect(config.execution).toBeUndefined();
+    expect(config.harnesses?.inherited).toMatchObject({ platform: "claude", models: { fast: "portable-model" } });
+    expect(config.harnesses?.inherited).not.toHaveProperty("bin");
+    expect(config.harnesses?.inherited).not.toHaveProperty("args");
+    expect(config.harnesses?.inherited).not.toHaveProperty("workspace");
+    expect(config.connections?.cloud).toMatchObject({ endpoint: "https://api.example.test/v1" });
+    expect(config.connections?.cloud).not.toHaveProperty("apiKey");
     expect(config.experimental).toBeUndefined();
-    expect(getConfigValueSource("engines.inherited.model")).toBe("extends:./base.json");
-    expect(getConfigValueSource("engines.inherited.bin")).toBe("default");
-    expect(getConfigValueSource("execution.allowedTools")).toBe("default");
+    expect(getConfigValueSource("harnesses.inherited.models")).toBe("extends:./base.json");
+    expect(getConfigValueSource("harnesses.inherited.bin")).toBe("default");
   });
 
   test("config get extends returns the locally configured ref (not silently dropped)", () => {
@@ -1254,7 +1415,7 @@ describe("extends inheritance (#945)", () => {
   test("config set on an unrelated key after adopting extends does not duplicate the base's fields into the local file", () => {
     // Round-1 review finding: mutateConfig used to write the entire
     // extends-merged EFFECTIVE config back to the local file on any
-    // `config set`/`unset`, baking every inherited field (engines,
+    // `config set`/`unset`, baking every inherited field (connections,
     // improve.strategies, ...) into the local file on the very next
     // ordinary write — defeating the whole point of `extends`.
     const dir = path.dirname(getConfigPath());
@@ -1262,10 +1423,10 @@ describe("extends inheritance (#945)", () => {
       path.join(dir, "base.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: {
-          fast: { kind: "llm", endpoint: "https://api.example.test/v1/chat/completions", model: "base-model" },
+        connections: {
+          fast: { endpoint: "https://api.example.test/v1", models: { fast: "base-model" } },
         },
-        improve: { strategies: { nightly: { engine: "fast" } } },
+        improve: { connection: "fast" },
         archiveRetentionDays: 30,
       }),
     );
@@ -1279,13 +1440,13 @@ describe("extends inheritance (#945)", () => {
     expect(raw.extends).toBe("./base.json");
     expect(raw.output).toEqual({ detail: "full" });
     // The base's fields must NOT have been duplicated into the local file.
-    expect(raw.engines).toBeUndefined();
+    expect(raw.connections).toBeUndefined();
     expect(raw.improve).toBeUndefined();
     expect(raw.archiveRetentionDays).toBeUndefined();
 
     // The effective (loaded) config is unaffected: still inherited.
     const config = loadConfig();
-    expect(config.engines?.fast?.model).toBe("base-model");
+    expect(config.connections?.fast?.models).toEqual({ fast: "base-model" });
     expect(config.archiveRetentionDays).toBe(30);
     expect(config.output).toEqual({ format: "json", detail: "full" });
   });

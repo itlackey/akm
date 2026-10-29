@@ -71,7 +71,7 @@ akm import - --name scratch-notes < notes.md
 akm import https://example.com/docs/auth
 
 # Route to a named writable bundle:
-akm import ./docs/auth-flow.md --target team-bundle
+akm import ./docs/auth-flow.md --bundle team-bundle
 ```
 
 Both commands accept `--xref <ref>` to cross-reference related assets and

@@ -139,8 +139,9 @@ export function warnOnBundleRenameDrift(config: AkmConfig = loadConfig()): void 
       `Configured bundle(s) with no indexed content: ${renamedConfiguredIds.map((id) => `"${id}"`).join(", ")}; ` +
       `indexed content under unconfigured bundle id(s): ${renamedOldIds.map((id) => `"${id}"`).join(", ")}. ` +
       "This is the signature of a hand-renamed bundle id. AKM will NOT silently re-mint fresh state " +
-      "under the new id. There is no rekey command in 0.9.0: either restore the previous bundle id in config.json " +
-      "to reattach the existing rows, or keep the new id and run `akm index --full` to re-mint under it, accepting " +
-      "that learned state (utility, salience, outcomes, usage history) keyed to the old id is left behind.",
+      "under the new id. To keep the learned state, restore the previous bundle id in config.json and rename it with " +
+      "`akm bundle rename <old> <new>`, which rekeys the config, the index and akm's state together; or keep the new " +
+      "id and run `akm index --full` to re-mint under it, accepting that learned state (utility, salience, outcomes, " +
+      "usage history) keyed to the old id is left behind.",
   );
 }

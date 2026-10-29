@@ -360,12 +360,7 @@ export function getStateDir(env: NodeJS.ProcessEnv = process.env, platform = pro
  * its `stash_dir` column — so two stashes on one machine never collide.
  *
  * Reuses {@link shortHash} (bundle-id.ts) rather than growing a second
- * sha256-truncated-hex helper. (The other existing option,
- * `getCurrentWorkflowScopeKey`'s `dir:v1:<sha256>` in
- * `src/workflows/authoring/scope-key.ts`, is a state.db column value for a
- * different subsystem — full untruncated hex plus a `dir:v1:` prefix, which
- * is neither filesystem-safe as a directory segment on Windows (`:`) nor
- * short, so it is not a fit here.) `shortHash` trims to 8 hex chars (32
+ * sha256-truncated-hex helper. `shortHash` trims to 8 hex chars (32
  * bits) — fine at its original call site because a collision only ever
  * shortens a batch-unique slug suffix that a retry loop immediately
  * re-disambiguates. Here there is no such retry loop, but a machine
@@ -401,10 +396,46 @@ export function getStashLocksDir(stashDir: string): string {
   return stashScopedDir(path.join(getStateDir(), "locks"), stashDir);
 }
 
+/**
+ * The directories this akm resolved, as the `AKM_*` variables that name them, so a
+ * child that runs `akm` (an exec unit, an agent CLI) uses the same installation even
+ * when the parent found them through `XDG_*_HOME`. `AKM_BUNDLE_DIR` is passed only
+ * when the parent set one.
+ */
+export function akmLocations(): Record<string, string> {
+  const locations: Record<string, string> = {
+    AKM_CONFIG_DIR: getConfigDir(),
+    AKM_DATA_DIR: getDataDir(),
+    AKM_CACHE_DIR: getCacheDir(),
+    AKM_STATE_DIR: getStateDir(),
+  };
+  const bundleDir = process.env.AKM_BUNDLE_DIR?.trim();
+  if (bundleDir) locations.AKM_BUNDLE_DIR = bundleDir;
+  return locations;
+}
+
+/**
+ * The environment of a process akm starts for the user: akm's own, as the program
+ * has it when the user runs it from their shell, with {@link akmLocations} set over
+ * it. akm filters nothing.
+ */
+export function childProcessEnv(): Record<string, string> {
+  const inherited: Record<string, string> = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined) inherited[name] = value;
+  }
+  return { ...inherited, ...akmLocations() };
+}
+
 // ── Scheduled-task runtime directory (logs; run history lives in state.db) ───
 
 export function getTaskLogDir(): string {
   return path.join(getCacheDir(), "tasks", "logs");
+}
+
+/** Per-run `akm improve` / `akm index` log files: flat `<ISO>.log` files under `$CACHE/logs/<kind>`. */
+export function getRunLogDir(kind: "improve" | "index"): string {
+  return path.join(getCacheDir(), "logs", kind);
 }
 
 // ── Default stash directory ──────────────────────────────────────────────────

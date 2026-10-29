@@ -7,7 +7,7 @@
  * `config-schema.ts` monolith — no behavior change.
  */
 import { z } from "zod";
-import { positiveInt, symbolicOrWarnApiKey } from "./primitives";
+import { envReferenceApiKey, positiveInt } from "./primitives";
 
 const EmbeddingOllamaOptionsSchema = z
   .object({
@@ -29,7 +29,7 @@ export const EmbeddingConnectionConfigSchema = z
     provider: z.string().optional(),
     endpoint: z.string().optional(),
     model: z.string().optional(),
-    apiKey: symbolicOrWarnApiKey("embedding.apiKey").optional(),
+    apiKey: envReferenceApiKey.optional(),
     dimension: positiveInt.optional(),
     localModel: z.string().min(1).optional(),
     /**

@@ -30,6 +30,7 @@ import type { AkmReflectResult, ImproveEligibleRef } from "../../../src/core/imp
 import { openStateDatabase } from "../../../src/core/state-db";
 import type { RunnerSpec } from "../../../src/integrations/agent/runner";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
+import { testLlmRunner } from "../../_helpers/llm-runner";
 import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
 const disposers: Array<{ cleanup: () => void }> = [];
@@ -230,11 +231,15 @@ describe("processImproveLoopRef — reflect outcomes land in the improve ledger"
     expect(ledgerRow(stashDir, "knowledge/guide.md", "reflect")).toMatchObject({ outcome: "unchanged" });
   });
 
-  test("a failed reflect records `failed`; a quality rejection is left to reflect itself", async () => {
+  test("a transient reflect failure records nothing; a guard rejection records `failed`; a quality rejection is left to reflect itself", async () => {
     const { stashDir } = freshSandbox();
     const failing = makeEnv({ stashDir, reflectFn: () => Promise.resolve(reflectFail("parse_error")) });
     await processImproveLoopRef(eligibleRef("knowledge/failing.md"), failing);
-    expect(ledgerRow(stashDir, "knowledge/failing.md", "reflect")).toMatchObject({
+    expect(ledgerRow(stashDir, "knowledge/failing.md", "reflect")).toBeUndefined();
+
+    const guarded = makeEnv({ stashDir, reflectFn: () => Promise.resolve(reflectFail("content_policy_reject")) });
+    await processImproveLoopRef(eligibleRef("knowledge/guarded.md"), guarded);
+    expect(ledgerRow(stashDir, "knowledge/guarded.md", "reflect")).toMatchObject({
       outcome: "failed",
       nextEligibleAt: null,
     });
@@ -347,11 +352,10 @@ describe("processImproveLoopRef — distill half", () => {
       path.join(stashDir, "lessons", "memory-finding-1-lesson.md"),
       "---\ndescription: Prefer ripgrep over grep on large repos\nwhen_to_use: Searching a large repo\n---\n\nUse rg.\n",
     );
-    const runner: RunnerSpec = {
-      kind: "llm",
-      engine: "default",
-      connection: { endpoint: "http://fake.invalid/v1/chat/completions", model: "test-model" },
-    };
+    const runner: RunnerSpec = testLlmRunner(
+      { endpoint: "http://fake.invalid/v1/chat/completions", model: "test-model" },
+      "default",
+    );
     const env = distillOnlyEnv({
       stashDir,
       improveProfile: { processes: { distill: { enabled: true } } } as ImproveLoopEnv["improveProfile"],

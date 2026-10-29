@@ -26,9 +26,9 @@ import { isRecord } from "../common";
 import { UsageError } from "../errors";
 import { hasRegistryUrlCredentials, REGISTRY_CREDENTIALS_UNSUPPORTED } from "../registry-url";
 import { warnOnce } from "../warn";
-import { AkmConfigBaseSchema, type AkmConfigShape, EngineConfigSchema, listTopLevelConfigKeys } from "./config-schema";
+import { AkmConfigBaseSchema, type AkmConfigShape, listTopLevelConfigKeys } from "./config-schema";
 import { deepMergeConfig } from "./deep-merge";
-import { isApiKeyReference } from "./schema/primitives";
+import { isEnvReference, OpaqueFieldSchema } from "./schema/primitives";
 
 type Path = string[];
 
@@ -38,14 +38,14 @@ type Path = string[];
  */
 function parsePath(dotted: string): Path {
   if (!dotted) {
-    throw new UsageError("Config key is required.", "INVALID_FLAG_VALUE", unknownKeyHint(""));
+    throw new UsageError("Config key is required.", "INVALID_FLAG_VALUE", unknownKeyHint());
   }
   const segments = dotted.split(".");
   if (segments.some((s) => !s)) {
     throw new UsageError(
       `Invalid config key "${dotted}": empty segment between dots.`,
       "INVALID_FLAG_VALUE",
-      unknownKeyHint(dotted),
+      unknownKeyHint(),
     );
   }
   return segments;
@@ -55,26 +55,42 @@ function parsePath(dotted: string): Path {
 function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
   let current = schema;
   while (true) {
-    if (current instanceof z.ZodOptional) {
-      current = current._def.innerType;
-    } else if (current instanceof z.ZodDefault) {
-      current = current._def.innerType;
-    } else if (current instanceof z.ZodNullable) {
-      current = current._def.innerType;
-    } else if (current instanceof z.ZodCatch) {
+    if (
+      current instanceof z.ZodOptional ||
+      current instanceof z.ZodDefault ||
+      current instanceof z.ZodNullable ||
       // `.catch(...)` wraps an inner schema with a fallback value.
-      current = current._def.innerType;
-    } else if (current instanceof z.ZodEffects) {
-      // `.refine()` / `.superRefine()` / `.transform()` / `.preprocess()` —
-      // descend into the inner schema (`schema` for refine/transform, `out`
-      // for preprocess — both are exposed at `_def.schema`).
-      current = current._def.schema;
-    } else if (current instanceof z.ZodReadonly) {
-      current = current._def.innerType;
+      current instanceof z.ZodCatch ||
+      current instanceof z.ZodReadonly
+    ) {
+      current = current.def.innerType as z.ZodTypeAny;
+    } else if (current instanceof z.ZodPipe) {
+      // `.transform()` pipes the schema into a transform and `z.preprocess()` pipes a transform into it:
+      // descend into the side that is a schema. (`.refine()` and `.superRefine()` wrap nothing.)
+      const { in: input, out } = current.def;
+      current = (input instanceof z.ZodTransform ? out : input) as z.ZodTypeAny;
     } else {
       return current;
     }
   }
+}
+
+/**
+ * The schema of the keys an object takes without naming them (`index.<passName>`,
+ * a connection's request fields), or `undefined` when its extra keys are not
+ * ones akm defines. `.passthrough()` gives an object an `unknown` catchall, so
+ * only `OpaqueFieldSchema` itself says "any key, contents left to the endpoint".
+ */
+function namedCatchall(object: z.ZodObject): z.ZodTypeAny | undefined {
+  const catchall = object.def.catchall as z.ZodTypeAny | undefined;
+  if (catchall === undefined || catchall instanceof z.ZodNever) return undefined;
+  if (catchall instanceof z.ZodUnknown && catchall !== OpaqueFieldSchema) return undefined;
+  return catchall;
+}
+
+/** True for a schema that accepts any value (`z.unknown()`): its contents are not keys akm defines. */
+export function isOpaqueSchema(schema: z.ZodTypeAny): boolean {
+  return unwrap(schema) instanceof z.ZodUnknown;
 }
 
 /**
@@ -91,28 +107,25 @@ export function resolveSchemaAt(path: Path, config?: Record<string, unknown>, ra
       const next = (schema.shape as Record<string, z.ZodTypeAny>)[segment];
       if (!next) {
         // Catchall (e.g. index.<passName>) — descend into the catchall schema.
-        const catchall = (schema._def as { catchall?: z.ZodTypeAny }).catchall;
-        if (catchall && !(catchall instanceof z.ZodNever)) {
-          schema = catchall;
-        } else {
-          return undefined;
-        }
+        const catchall = namedCatchall(schema);
+        if (!catchall) return undefined;
+        schema = catchall;
       } else {
         schema = next;
       }
     } else if (schema instanceof z.ZodRecord) {
-      // Named records (engines, improve.strategies, sources, etc.)
+      // Named records (connections, harnesses, improve.strategies, sources, etc.)
       // accept any string key — descend into the value schema.
-      schema = schema._def.valueType;
+      schema = schema.def.valueType as z.ZodTypeAny;
     } else if (schema instanceof z.ZodUnion) {
       const option = selectUnionObjectOption(
-        schema._def.options as z.ZodTypeAny[],
+        schema.options as z.ZodTypeAny[],
         segment,
         existing,
         index === path.length - 1 ? raw : undefined,
       );
       if (!option) return undefined;
-      schema = option.shape[segment] as z.ZodTypeAny;
+      schema = (option.shape[segment] ?? namedCatchall(option)) as z.ZodTypeAny;
     } else {
       // Cannot descend into a non-object schema.
       return undefined;
@@ -129,10 +142,10 @@ function selectUnionObjectOption(
   segment: string,
   existing: unknown,
   raw?: string,
-): z.ZodObject<z.ZodRawShape> | undefined {
+): z.ZodObject<Record<string, z.ZodTypeAny>> | undefined {
   const options = candidates
     .map((candidate) => unwrap(candidate))
-    .filter((candidate): candidate is z.ZodObject<z.ZodRawShape> => candidate instanceof z.ZodObject);
+    .filter((candidate): candidate is z.ZodObject<Record<string, z.ZodTypeAny>> => candidate instanceof z.ZodObject);
 
   if (raw !== undefined) {
     const requested = options.find((option) => {
@@ -153,7 +166,11 @@ function selectUnionObjectOption(
     if (selected) return segment in selected.shape ? selected : undefined;
   }
 
-  return options.find((option) => segment in option.shape);
+  return (
+    options.find((option) => segment in option.shape) ??
+    // A model entry such as `{ model, reasoning_effort }` holds request fields the object does not name.
+    options.find((option) => namedCatchall(option) !== undefined)
+  );
 }
 
 /**
@@ -165,7 +182,7 @@ export function configGet(config: Record<string, unknown>, dotted: string): unkn
   const path = parsePath(dotted);
   const schema = resolveSchemaAt(path, config);
   if (!schema) {
-    throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint(dotted));
+    throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint());
   }
   let cursor: unknown = config;
   for (const segment of path) {
@@ -191,15 +208,12 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
     throw new UsageError("configVersion cannot be changed through config set.", "INVALID_FLAG_VALUE");
   }
 
-  // #454: apiKey paths are not persistable. Throw at set time.
-  rejectApiKeyPath(path, dotted);
+  // #454: a literal apiKey is not persistable. Throw at set time.
+  rejectApiKeyPath(path, raw, dotted);
   rejectLiteralApiKeyInWholeObjectSet(path, raw, dotted);
 
   const schema = resolveSchemaAt(path, config, raw);
-  const symbolicApiKey =
-    (path[0] === "engines" && path[2] === "apiKey") ||
-    (path[0] === "embedding" && path.length === 2 && path[1] === "apiKey");
-  const isUnknownKey = !schema && !symbolicApiKey;
+  const isUnknownKey = !schema;
   if (isUnknownKey) {
     warnOnce(
       `config-set:unknown-key:${dotted}`,
@@ -211,13 +225,9 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
   const value =
     judgmentObjectPath && raw === "null"
       ? undefined
-      : path[0] === "engines" && path.length === 2
-        ? parseObjectPatch(raw, dotted)
-        : symbolicApiKey
-          ? raw
-          : isUnknownKey
-            ? bestEffortJsonValue(raw)
-            : coerceForSchema(schema as z.ZodTypeAny, raw, dotted);
+      : isUnknownKey
+        ? bestEffortJsonValue(raw)
+        : coerceForSchema(schema as z.ZodTypeAny, raw, dotted);
 
   if (path[0] === "registries") rejectRegistryCredentialValue(value, dotted);
 
@@ -236,19 +246,7 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
   // mismatches, out-of-range numbers, schema-level shape errors (writable
   // npm/website sources via .superRefine, strict-mode unknown keys in nested
   // objects, etc.) BEFORE we apply the patch.
-  const parsed =
-    path[0] === "engines" && path.length === 2
-      ? EngineConfigSchema.safeParse(value)
-      : symbolicApiKey
-        ? isApiKeyReference(raw)
-          ? { success: true as const, data: value }
-          : {
-              success: false as const,
-              error: { issues: [{ path: [], message: "apiKey must be $VAR, ${VAR}, or secret://<name>" }] },
-            }
-        : isUnknownKey
-          ? { success: true as const, data: value }
-          : (schema as z.ZodTypeAny).safeParse(candidate);
+  const parsed = isUnknownKey ? { success: true as const, data: value } : (schema as z.ZodTypeAny).safeParse(candidate);
   if (!parsed.success) {
     const lines = parsed.error.issues
       .map((i) => {
@@ -294,8 +292,10 @@ function isTriageJudgmentPath(path: Path): boolean {
 }
 
 /**
- * Unset the value at the dotted path. Removes the leaf key (and prunes empty
- * parent objects if they become empty). Returns a new config object.
+ * Unset the value at the dotted path. Removes the leaf key and leaves its
+ * parent objects in place, even when they become empty: `{}` is a value here
+ * (`harnesses.opencode: {}` is how a harness is enabled). Returns a new config
+ * object.
  */
 export function configUnset(config: Record<string, unknown>, dotted: string): Record<string, unknown> {
   const path = parsePath(dotted);
@@ -305,48 +305,65 @@ export function configUnset(config: Record<string, unknown>, dotted: string): Re
   // Validate the path resolves to a real schema field (so typos don't no-op).
   const schema = resolveSchemaAt(path, config);
   if (!schema) {
-    throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint(dotted));
+    throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint());
   }
   return unsetPath(config, path);
 }
 
 // ── apiKey rejection (#454) ─────────────────────────────────────────────────
 
+const LITERAL_API_KEY_RECIPE =
+  "use a $VAR reference (and set that variable), or put the key in credentials.json under the block's name";
+const LITERAL_API_KEY_HINT =
+  "Storing API keys in config.json leaks them through backups, logs, and version control. " +
+  "akm keeps keys in the environment or in credentials.json.";
+
+/** The three config blocks that carry an `apiKey` akm resolves at request time. */
+function isCredentialPath(path: Path): boolean {
+  return (
+    (path[0] === "connections" && path.length === 3) ||
+    (path[0] === "embedding" && path.length === 2) ||
+    (path[0] === "search" && path[1] === "curateRerank" && path.length === 3)
+  );
+}
+
 /**
- * Embedding credentials are never persisted. Engine credentials are symbolic
- * configuration and are validated by the engine schema below.
+ * A literal `apiKey` is never persisted: on the three credential blocks only a
+ * `$VAR` reference is accepted, and an `apiKey` anywhere else is not a key akm
+ * defines.
  */
-function rejectApiKeyPath(path: Path, dotted: string): void {
-  if (path[0] === "engines" && path[2] === "apiKey") return;
-  if (path[0] === "embedding" && path.length === 2 && path[1] === "apiKey") return;
-  const last = path[path.length - 1];
-  if (last !== "apiKey") return;
-  const recipe = recipeForApiKey(path, dotted);
+function rejectApiKeyPath(path: Path, raw: string, dotted: string): void {
+  if (path[path.length - 1] !== "apiKey") return;
+  if (isCredentialPath(path) && isEnvReference(raw)) return;
   throw new UsageError(
-    `apiKey cannot be persisted in config; export ${recipe} instead. (key: ${dotted})`,
+    `apiKey cannot be a literal in config; ${LITERAL_API_KEY_RECIPE}. (key: ${dotted})`,
     "INVALID_FLAG_VALUE",
-    "Storing API keys in config.json leaks them through backups, logs, and version control. " +
-      "Use the corresponding environment variable. AKM reads it at request time.",
+    LITERAL_API_KEY_HINT,
+  );
+}
+
+/** Whether `value` holds a string `apiKey` that is not a `$VAR` reference, at any depth. */
+function holdsLiteralApiKey(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, child]) =>
+    key === "apiKey" ? typeof child === "string" && !isEnvReference(child) : holdsLiteralApiKey(child),
   );
 }
 
 function rejectLiteralApiKeyInWholeObjectSet(path: Path, raw: string, dotted: string): void {
-  const isWholeEngineSet = path[0] === "engines" && path.length === 2;
-  const isWholeEmbeddingSet = path.length === 1 && path[0] === "embedding";
-  if (!isWholeEngineSet && !isWholeEmbeddingSet) return;
+  const wholeObject = ["connections", "embedding", "search"].includes(path[0] as string) && !isCredentialPath(path);
+  if (!wholeObject) return;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
     return; // Malformed JSON — the caller's own parse/coercion reports this.
   }
-  if (!isRecord(parsed) || typeof parsed.apiKey !== "string") return;
-  if (isApiKeyReference(parsed.apiKey)) return;
+  if (!holdsLiteralApiKey(parsed)) return;
   throw new UsageError(
-    `apiKey cannot be persisted in config; export ${recipeForApiKey([...path, "apiKey"], `${dotted}.apiKey`)} instead. (key: ${dotted}.apiKey)`,
+    `apiKey cannot be a literal in config; ${LITERAL_API_KEY_RECIPE}. (key: ${dotted})`,
     "INVALID_FLAG_VALUE",
-    "Storing API keys in config.json leaks them through backups, logs, and version control. " +
-      "Use the corresponding environment variable. AKM reads it at request time.",
+    LITERAL_API_KEY_HINT,
   );
 }
 
@@ -370,27 +387,6 @@ function bestEffortJsonValue(raw: string): unknown {
   } catch {
     return raw;
   }
-}
-
-function parseObjectPatch(raw: string, key: string): Record<string, unknown> {
-  try {
-    const value = JSON.parse(raw);
-    if (!isRecord(value)) throw new Error("expected an object");
-    return value;
-  } catch (err) {
-    throw new UsageError(
-      `Invalid JSON object for ${key}: ${err instanceof Error ? err.message : String(err)}`,
-      "INVALID_JSON_CONFIG_VALUE",
-    );
-  }
-}
-
-function recipeForApiKey(path: Path, _dotted: string): string {
-  if (path[0] === "embedding") return "AKM_EMBED_API_KEY";
-  if (path[0] === "engines" && typeof path[1] === "string") {
-    return `AKM_ENGINE_${path[1].toUpperCase().replaceAll("-", "_")}_API_KEY`;
-  }
-  return "AKM_LLM_API_KEY / AKM_EMBED_API_KEY";
 }
 
 // ── Coercion ────────────────────────────────────────────────────────────────
@@ -422,7 +418,7 @@ function coerceForSchema(schema: z.ZodTypeAny, raw: string, key: string): unknow
     return raw;
   }
   if (target instanceof z.ZodLiteral) {
-    return typeof target._def.value === "string" ? raw : target._def.value;
+    return typeof target.value === "string" ? raw : target.value;
   }
   if (target instanceof z.ZodArray || target instanceof z.ZodObject || target instanceof z.ZodRecord) {
     if (raw === "" || raw === "null") return undefined;
@@ -436,7 +432,7 @@ function coerceForSchema(schema: z.ZodTypeAny, raw: string, key: string): unknow
   if (target instanceof z.ZodUnion) {
     // Try each option in order. Use the first that the schema accepts after
     // coercion. Falls through to JSON parsing if all fail.
-    const options = target._def.options as z.ZodTypeAny[];
+    const options = target.options as z.ZodTypeAny[];
     let lastErr: unknown;
     for (const opt of options) {
       try {
@@ -501,38 +497,15 @@ function unsetPath(config: Record<string, unknown>, path: Path): Record<string, 
   if (typeof existing !== "object" || existing === null || Array.isArray(existing)) {
     return next; // nothing to unset
   }
-  const updated = unsetPath(existing as Record<string, unknown>, rest);
-  if (Object.keys(updated).length === 0) {
-    delete next[head];
-  } else {
-    next[head] = updated;
-  }
+  next[head] = unsetPath(existing as Record<string, unknown>, rest);
   return next;
 }
 
 // ── Hint generation (#460) ──────────────────────────────────────────────────
 
-/**
- * Per-key "use X instead" guidance for config keys retired before the 0.9
- * cutover, keyed on the first dotted-path segment. Mitigation item 3: the
- * generic "valid top-level keys" hint doesn't tell a pre-0.9 user what
- * replaced the key they typed — this does.
- */
-const RETIRED_KEY_HINTS: Record<string, string> = {
-  stashDir: "stashDir was removed in 0.9; get the stash path from `akm config path --all` or `akm info`.",
-  sources: "sources is not supported; configure `bundles` instead.",
-  installed: "installed is not supported; configure `bundles` instead.",
-  wikiName: "the wiki subsystem was removed in 0.9; wikis are ordinary knowledge assets now — see `akm import`.",
-  wiki: "the wiki subsystem was removed in 0.9; wikis are ordinary knowledge assets now — see `akm import`.",
-  llm: "llm was replaced by named engines configuration in 0.9; configure `engines` instead.",
-};
-
-export function unknownKeyHint(attempted: string): string {
+export function unknownKeyHint(): string {
   const keys = listTopLevelConfigKeys();
-  const generic = `Valid top-level keys: ${keys.join(", ")}. Use dotted paths for nested values (e.g. embedding.endpoint, engines.<name>.model).`;
-  const firstSegment = attempted.split(".")[0] ?? "";
-  const retiredHint = RETIRED_KEY_HINTS[firstSegment];
-  return retiredHint ? `${retiredHint} ${generic}` : generic;
+  return `Valid top-level keys: ${keys.join(", ")}. Use dotted paths for nested values (e.g. embedding.endpoint, connections.<name>.endpoint).`;
 }
 
 // ── Re-exports for the CLI ──────────────────────────────────────────────────

@@ -187,13 +187,13 @@ describe("akm workflow create — --path", () => {
 
 describe("akm env create — --path", () => {
   test("places the env file under --path", async () => {
-    const result = await runCli(["env", "create", "prod", "--path", "staging"]);
+    const result = await runCli(["env", "create", "env/prod", "--path", "staging"]);
     expect(result.status).toBe(0);
     expect(fs.existsSync(path.join(currentStashDir, "env", "staging", "prod.env"))).toBe(true);
   });
 
   test("rejects a '/' in the env name and points at --path", async () => {
-    const result = await runCli(["env", "create", "staging/prod"]);
+    const result = await runCli(["env", "create", "env/staging/prod"]);
     expect(result.status).toBe(2);
     expect(JSON.parse(result.stderr).error).toMatch(/--path/);
     expect(fs.existsSync(path.join(currentStashDir, "env", "staging"))).toBe(false);
@@ -202,7 +202,7 @@ describe("akm env create — --path", () => {
 
 describe("akm secret set / akm proposal new — flat-name enforcement", () => {
   test("secret set rejects a '/' in the ref name and points at --path", async () => {
-    const result = await runCli(["secret", "set", "team/deploy-key"]);
+    const result = await runCli(["secret", "set", "secrets/team/deploy-key"]);
     expect(result.status).toBe(2);
     expect(JSON.parse(result.stderr).error).toMatch(/--path/);
     expect(fs.existsSync(path.join(currentStashDir, "secrets", "team"))).toBe(false);

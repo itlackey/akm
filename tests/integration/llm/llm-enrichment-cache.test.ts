@@ -22,7 +22,7 @@ import { type Cleanup, makeSandboxDir, sandboxXdgDataHome, sandboxXdgStateHome }
 
 // ── Local LLM server (stub endpoint) ──────────────────────────────────────────
 // A real HTTP server on a random port stands in for the LLM endpoint so
-// `configWithLlm()` can point a real engine at it. This avoids
+// `configWithLlm()` can point a real connection at it. This avoids
 // mock.module("../src/llm/client") which leaks into other test files (e.g.
 // tests/llm.test.ts) when Bun shares workers across files. The memory-inference
 // tests below never actually reach it — they inject `compressMemoryToDerivedMemory`
@@ -58,7 +58,7 @@ let memoryCompressor: (body: string) =>
     }
   | undefined = () => undefined;
 
-const { runMemoryInferencePass: runMemoryInferencePassImpl } = await import(
+const { runMemoryInferencePass: runMemoryInferencePassImpl, collectPendingMemories } = await import(
   "../../../src/indexer/passes/memory-inference"
 );
 const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry, clearStaleCacheEntries } = await import(
@@ -98,27 +98,24 @@ function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
   const base: AkmConfig = {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
-    engines: {
+    connections: {
       test: {
-        kind: "llm",
         endpoint: `http://localhost:${llmServer.port}/v1/chat/completions`,
-        model: "test-model",
+        models: { fast: "test-model" },
       },
     },
-    defaults: { engine: "test", llmEngine: "test" },
-    index: { defaults: { engine: "test" } },
+    index: { connection: "test" },
   };
   return {
     ...base,
     ...overrides,
-    engines: { ...base.engines, ...overrides?.engines },
-    defaults: { ...base.defaults, ...overrides?.defaults },
+    connections: { ...base.connections, ...overrides?.connections },
     index: { ...base.index, ...overrides?.index },
   };
 }
 
 function sources(): SearchSource[] {
-  return [{ path: tmpStash }];
+  return [{ path: tmpStash, isDefault: true }];
 }
 
 function writeFile(rel: string, frontmatter: Record<string, unknown>, body: string): string {
@@ -251,13 +248,13 @@ describe("ensureSchema — retired metadata-enhance cache rows", () => {
     // cache_variant at its default empty string; graph and memory inference
     // always pass a named variant.
     upsertLlmCacheEntry(db, "some-bundle//knowledge/thing", "h1", "{}", "");
-    upsertLlmCacheEntry(db, "/stash/memories/parent.md", "h2", "{}", "memory-inference-v2");
+    upsertLlmCacheEntry(db, "/stash/memories/parent.md", "h2", "{}", "memory-inference-v3");
     closeDatabase(db);
 
     db = openIndexDatabase(tmpDbPath);
 
     const rows = db.prepare("SELECT asset_ref, cache_variant FROM llm_enrichment_cache").all();
-    expect(rows).toEqual([{ asset_ref: "/stash/memories/parent.md", cache_variant: "memory-inference-v2" }]);
+    expect(rows).toEqual([{ asset_ref: "/stash/memories/parent.md", cache_variant: "memory-inference-v3" }]);
   });
 });
 
@@ -303,28 +300,20 @@ describe("clearStaleCacheEntries", () => {
 // ── Memory inference cache ─────────────────────────────────────────────────────
 
 describe("runMemoryInferencePass — cache hit skips LLM call", () => {
-  test("(a) cache hit: unchanged body does not call the LLM compressor", async () => {
+  test("(a) cache hit: unchanged effective input does not call the LLM compressor", async () => {
     // Write a fresh memory file that hasn't been processed yet.
     const freshPath = writeFile("memories/fresh.md", {}, "A brand new memory body.");
     memoryCompressor = () => sampleDraft("Should Not Be Called");
 
-    // Pre-populate the cache with the exact body that parseFrontmatter will
-    // return for this file. parseFrontmatter returns content WITH leading "\n\n"
-    // stripped (the actual body after the frontmatter block). The body the pass
-    // hashes is `parseFrontmatter(raw).content` which equals
-    // "\n\nA brand new memory body.\n" for our writeFile helper.
-    // We read the actual file and parse it to get the exact string the pass sees.
-    const { parseFrontmatter } = await import("../../../src/core/asset/frontmatter");
-    const raw = fs.readFileSync(freshPath, "utf8");
-    const parsed = parseFrontmatter(raw);
-    const exactBody = parsed.content; // exactly what the pass hashes
+    // Seed the same canonical input used for request construction and cache lookup.
+    const exactInput = collectPendingMemories(tmpStash)[0]?.effectiveInput ?? "";
 
     upsertLlmCacheEntry(
       db,
       freshPath,
-      computeBodyHash(exactBody),
+      computeBodyHash(exactInput),
       JSON.stringify(sampleDraft("Cached Result")),
-      "memory-inference-v2",
+      "memory-inference-v5",
     );
 
     // Run the pass — cache hit → LLM must NOT be called.
@@ -345,7 +334,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
       filePath,
       computeBodyHash("completely different old body"),
       JSON.stringify(sampleDraft("Stale")),
-      "memory-inference-v2",
+      "memory-inference-v5",
     );
 
     // Run — body hash mismatch → cache miss → LLM called.
@@ -358,16 +347,14 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
     const filePath = writeFile("memories/parent.md", {}, "Body text.");
     memoryCompressor = () => sampleDraft("Fresh");
 
-    // Pre-populate a valid cache entry with the exact parsed body hash.
-    const { parseFrontmatter } = await import("../../../src/core/asset/frontmatter");
-    const raw = fs.readFileSync(filePath, "utf8");
-    const exactBody = parseFrontmatter(raw).content;
+    // Pre-populate a valid cache entry with the exact effective input hash.
+    const exactInput = collectPendingMemories(tmpStash)[0]?.effectiveInput ?? "";
     upsertLlmCacheEntry(
       db,
       filePath,
-      computeBodyHash(exactBody),
+      computeBodyHash(exactInput),
       JSON.stringify(sampleDraft("Cached")),
-      "memory-inference-v2",
+      "memory-inference-v5",
     );
 
     // Run with reEnrich=true — must call LLM despite cache hit.

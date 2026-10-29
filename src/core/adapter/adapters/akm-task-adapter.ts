@@ -5,7 +5,7 @@
 /**
  * The `akm-task` adapter for task `.yml` sources.
  *
- * A native akm task-YAML bundle (spec §6/§7). A `.yml` file derives
+ * A native akm task-YAML bundle. A `.yml` file derives
  * `type: task`; conceptId strips the `.yml` extension. Tasks are AKM-native
  * YAML, NOT OKF markdown concepts. Recognition does NOT gate on validity — an
  * invalid task (e.g. `uses` plus `run`) is still RECOGNIZED; the `invalid-task-yaml`
@@ -15,20 +15,19 @@
  * is not a task spelling (nothing indexes or schedules it), so it is reported
  * as `invalid-task-yaml` rather than silently skipped (issue #760).
  *
- * ── validate (spec §6 task validation column) ──
+ * ── validate ──
  *
  * Validation enters the canonical task source parser (`parseTaskSource`,
  * which reads only task source v4 — a `version: 2` or `version: 3`
  * document fails closed with `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming
  * `akm migrate apply`, which converts it). That parser owns the closed key sets,
  * the executable-selector XOR, hostile YAML policy, the `akm/command`
- * builtin, bounds, and physical `working-directory` containment. The
- * adapter only translates a parser failure into the format-family
- * diagnostic shape.
+ * builtin, and bounds. The adapter only translates a parser failure into
+ * the format-family diagnostic shape.
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/akm-task/` + goldens
- * `tests/fixtures/format-family-goldens/akm-task/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/akm-task/{recognition,lint,renderer}.json`.
  */
 
 import fs from "node:fs";
@@ -50,7 +49,7 @@ import { hashContent } from "./shared";
 
 /** A native task bundle is single-component; its one component is `main`. */
 const COMPONENT_ID = "main";
-/** The task YAML extension (spec §6 task row). */
+/** The task YAML extension. */
 const TASK_EXT = TASK_EXTENSION;
 
 function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
@@ -73,7 +72,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   };
 }
 
-async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+async function validate(_c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -95,7 +94,7 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
       continue;
     }
     try {
-      parseTaskSource({ yaml: raw, filePath: relPath, workspaceRoot: c.root });
+      parseTaskSource({ yaml: raw, filePath: relPath });
     } catch (cause) {
       diagnostics.push({
         file: relPath,
@@ -128,12 +127,6 @@ export const akmTaskAdapter: BundleAdapter = {
     ];
   },
 
-  /** A task places to `<conceptId>.yml`; an already-suffixed conceptId is idempotent. */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    const posix = toPosix(conceptId);
-    return path.join(c.root, /\.yml$/i.test(posix) ? posix : `${posix}.yml`);
-  },
-
   /** Tasks live anywhere under the component root. */
   directoryList(): string[] {
     return ["."];
@@ -163,7 +156,7 @@ export const akmTaskAdapter: BundleAdapter = {
         continue;
       }
       try {
-        parseTaskSource({ yaml: raw, filePath: entry.name, workspaceRoot: root });
+        parseTaskSource({ yaml: raw, filePath: entry.name });
         return true;
       } catch {
         if (isLegacyTaskDocument(raw, entry.name)) return true;

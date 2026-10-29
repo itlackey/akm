@@ -6,18 +6,17 @@ You have access to a searchable library of scripts, skills, commands, agents, kn
 
 For any task, follow this loop:
 1. `akm curate "<task>"` — find the best matching asset
-2. `akm show <ref>` — read the schema (field names and structure)
+2. `akm show <ref>` — read the schema (field names and structure). For a large document, `akm show <ref> --detail brief` returns its outline (`toc`, no body); then `akm show <ref>#<slug>` reads only the sections you need.
 3. Edit the workspace file using schema field names + task-specific values from your README
-4. `akm feedback <ref> --positive` — record that the asset helped (it raises its utility score for improve and does not trigger a rewrite). Record negative feedback only when the asset's content is wrong or stale, and say what is wrong and what it should say. `akm feedback <ref> --negative --reason "<what is wrong and what should change>"` flags it: the next improve run may repair its description, title or `when_to_use` from your reason, but not its text. A note that simply did not fit your task is not negative feedback: record nothing for it. Once you have verified the correct fact, add the exact fix: `--replace "<exact current text>" --with "<corrected text>" --source "<URL, command or file>"`. A note that is outdated can be marked with `--outdated`, or `--superseded-by <ref>` when another note replaces it. A failed akm command (e.g. `akm show` erroring) is not feedback on the asset — don't record it.
+4. `akm feedback <ref> --positive` — record that the asset helped (it raises its ranking and does not trigger a rewrite). Record negative feedback only when the asset's content is wrong or stale, and say what is wrong and what it should say. `akm feedback <ref> --negative --reason "<what is wrong and what should change>"` flags it: the next improve run may repair its description, title or `when_to_use` from your reason, but not its text. A note that simply did not fit your task is not negative feedback: record nothing for it. Once you have verified the correct fact, add the exact fix: `--replace "<exact current text>" --with "<corrected text>" --source "<URL, command or file>"`. A note that is outdated can be marked with `--outdated`, or `--superseded-by <ref>` when another note replaces it. A failed akm command (e.g. `akm show` erroring) is not feedback on the asset — don't record it.
 
 For workflow tasks:
 1. `akm show workflows/<name>` — inspect the procedure before executing it
 2. `akm workflow run workflows/<name> --param_name=value` — execute every step and verification gate
 3. `akm workflow status <run-id> --units` — inspect a stopped or failed run
 
-Workflow runs are scoped to your current project/worktree/directory. Ref-based
-commands like `workflow run workflows/<name>`, `workflow status workflows/<name>`,
-and `workflow list` operate within the current scope only.
+A workflow ref (`workflows/<name>`) starts a new run; a run id drives that exact
+run. `workflow list` and `workflow status` see every run on this host.
 
 ## Quick Reference
 
@@ -28,20 +27,22 @@ akm search "<query>" --type workflow          # Filter to workflow assets
 akm search "memories/projectA/"               # List a subtree (conceptId prefix; trailing slash required)
 akm search "<query>" --from all               # Also search registries
 akm show <ref>                                # View asset details
+akm show <ref> --detail brief                 # Outline only: a document's `toc` (each heading's slug), no body
+akm show <ref>#<slug>                         # One section of a document
 akm help <command>                            # Show a command's options and subcommands
-akm workflow run <ref>                        # Start or resume and execute a workflow
+akm workflow run <ref>                        # Start a new run and execute it
 akm remember "Deployment needs VPN access"    # Record a memory in your bundle
 akm remember "note" --bundle my-bundle         # Route write to a named writable bundle source
 akm remember "note" --xref knowledge/auth-flow # Cite provenance in frontmatter xrefs (repeatable)
 akm remember "fix" --supersedes memories/old-note # Write a correction AND demote the superseded asset
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your bundle
-akm import ./doc.md --target my-bundle         # Route import to a named writable bundle source
+akm import ./doc.md --bundle my-bundle         # Route import to a named writable bundle source
 akm proposal diff skills/akm-dream            # Diff proposal by ref, UUID, or 8-char prefix
 akm proposal accept 7c115132                  # Accept by UUID prefix
 akm proposal reject skills/my-skill --reason "..."  # Reject by ref
-akm feedback <ref> --positive                 # Record that an asset helped (moves its utility score for improve; no rewrite)
-akm feedback <ref> --negative --reason "..."  # Content wrong or stale: lowers its utility score; improve may repair its frontmatter
-akm feedback <ref> --negative --reason "..." --replace "<exact text>" --with "<fix>" --source "<url|cmd|file>"  # Queue an exact fix of its text
+akm feedback <ref> --positive                 # Record that an asset helped (ranks it higher; no rewrite)
+akm feedback <ref> --negative --reason "..."  # Content wrong or stale: lowers its ranking; improve may repair its frontmatter
+akm feedback <ref> --negative --reason "..." --replace "<exact text>" --with "<fix>" --source "<url|cmd|file>"  # Apply an exact fix to its text
 akm bundle add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working bundle (optional --dest arg to clone to specific location)
 akm sync                                      # Commit (and push if writable remote) changes in the primary bundle (--no-push to commit only)
@@ -59,7 +60,7 @@ akm search "<query>" --from registry          # Search all registries (registry 
 | skill | Instructions to follow (read the full content) |
 | command | A prompt template with placeholders to fill in |
 | agent | A system prompt with model and tool hints |
-| knowledge | A reference doc (append `#<heading-slug>` to the ref to read one section) |
+| knowledge | A reference doc; `toc` lists its sections and `<ref>#<slug>` reads one |
 | workflow | Parsed steps plus workflow-specific execution commands |
 | memory | Recalled context (read the content for background information) |
 | env | A `.env` file of configuration an app loads together (many vars; sensitive or not — all protected); key names only. Inject with `akm env run <ref> -- <cmd>` (the agent-safe path — values stay on disk). |
@@ -67,8 +68,7 @@ akm search "<query>" --from registry          # Search all registries (registry 
 | lesson | A distilled feedback lesson: `content` plus `action` (rendered from the `when_to_use` frontmatter). Read both before applying a related skill. Generated by the improve pipeline and promoted through the proposal queue. |
 
 When an asset's content meaningfully helps, or proves wrong or stale, record
-that with `akm feedback`. It moves the asset's utility score, which `akm improve`
-uses to choose what to work on; it does not change search order.
+that with `akm feedback` so future search ranking can learn from real usage.
 Only negative feedback with a specific reason gets the asset reviewed and
 fixed: improve no longer rewrites assets from positive signals or on a
 proactive cadence. An akm command that fails says nothing about the asset;

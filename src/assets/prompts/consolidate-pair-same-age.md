@@ -1,0 +1,1 @@
+The two notes have the same creation date: neither is newer, so the chronological replacement rule does not apply. Different values for the same named thing conflict unless the text explicitly says one replaces the other. Treat an unresolved conflicting value as a distinct claim. A note's position in this prompt does not establish which value is current.

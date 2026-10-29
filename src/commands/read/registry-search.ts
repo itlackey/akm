@@ -22,7 +22,11 @@ import "../../registry/providers/index";
 
 export interface RegistrySearchOptions {
   limit?: number;
-  /** Override registries. Accepts an array of RegistryConfigEntry objects. */
+  /**
+   * Registries to search instead of the defaults (`akm search` passes the
+   * config's). Accepts an array of RegistryConfigEntry objects. A set
+   * `AKM_REGISTRY_URL` still takes precedence over this list.
+   */
   registries?: RegistryConfigEntry[];
 }
 
@@ -35,8 +39,11 @@ export async function searchRegistry(query: string, options?: RegistrySearchOpti
   }
 
   const limit = clampLimit(options?.limit);
+  // AKM_REGISTRY_URL outranks the caller's list: `akm search` passes
+  // `config.registries`, which would otherwise shadow the override.
+  const envOverride = process.env.AKM_REGISTRY_URL?.trim() ? resolveRegistries() : undefined;
   // resolveRegistries() already filters by enabled; explicit registries are filtered here
-  const raw = options?.registries ?? resolveRegistries();
+  const raw = envOverride ?? options?.registries ?? resolveRegistries();
   const warnings: string[] = [];
   const entries = (options?.registries ? raw.filter((r) => r.enabled !== false) : raw).filter((entry) => {
     if (!hasRegistryUrlCredentials(entry.url)) return true;

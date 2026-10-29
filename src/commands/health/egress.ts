@@ -10,6 +10,7 @@
  * advisories' pattern.
  */
 
+import { redactCredentialPatterns } from "../../core/redaction";
 import { formatRegistryUrl } from "../../core/registry-url";
 import type { HealthCheckResult } from "./types";
 
@@ -20,10 +21,10 @@ import type { HealthCheckResult } from "./types";
  */
 export interface EgressConfigView {
   registries?: Array<{ url?: string; name?: string; enabled?: boolean }>;
-  // 0.9.0 (spec §10.1): remote source URLs come from the `bundles` map's git /
+  // Remote source URLs come from the `bundles` map's git /
   // website descriptors, not the retired `sources[]`.
   bundles?: Record<string, { path?: string; git?: string; website?: { url?: string }; npm?: string } | undefined>;
-  engines?: Record<string, { kind?: string; endpoint?: string } | undefined>;
+  connections?: Record<string, { endpoint?: string } | undefined>;
   embedding?: { endpoint?: string };
 }
 
@@ -48,13 +49,16 @@ export function collectEgressAdvisory(config: EgressConfigView | undefined): Hea
     if (!url) continue;
     endpoints.push(`source ${key} (${bundle.git ? "git" : "website"}): ${url}`);
   }
-  for (const [name, engine] of Object.entries(config.engines ?? {})) {
-    if (engine?.kind !== "llm" || !engine.endpoint) continue;
-    endpoints.push(`llm ${name}: ${engine.endpoint}`);
+  for (const [name, connection] of Object.entries(config.connections ?? {})) {
+    if (!connection?.endpoint) continue;
+    endpoints.push(`connection ${name}: ${connection.endpoint}`);
   }
   if (config.embedding?.endpoint) endpoints.push(`embedding: ${config.embedding.endpoint}`);
 
   if (endpoints.length === 0) return undefined;
+  // A configured URL can carry a credential (`?token=…`, `user:pass@`); the list is for eyeballing destinations, so
+  // print the host and path and never the secret.
+  const safe = endpoints.map(redactCredentialPatterns);
   return {
     name: "egress-endpoints",
     kind: "deterministic",
@@ -63,6 +67,6 @@ export function collectEgressAdvisory(config: EgressConfigView | undefined): Hea
     message:
       `${endpoints.length} remote endpoint(s) in the effective config (registries/sources/LLM/embedding) — ` +
       "review the evidence list for unexpected destinations.",
-    evidence: { endpoints },
+    evidence: { endpoints: safe },
   };
 }

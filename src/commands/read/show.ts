@@ -5,8 +5,6 @@
 /**
  * `akm show` — entry point.
  *
- * Spec §6.2:
- *
  *   show(ref) → indexer.lookup(ref) → readFile(entry.filePath)
  *
  * The richer presentation logic (matchers, renderers, edit-hints,
@@ -24,7 +22,7 @@ import { recognizeMatch } from "../../core/adapter/recognize-match";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { extractSection, markdownFragmentSlugs } from "../../core/asset/markdown";
+import { extractSection, markdownFragmentSlugs, markdownToc } from "../../core/asset/markdown";
 import {
   buildMarkdownLeadContext,
   fragmentForSelector,
@@ -32,17 +30,27 @@ import {
 } from "../../core/asset/markdown-fragments";
 import { displayRef, displayRefForConceptId, typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
-import { asNonEmptyString, isWithin } from "../../core/common";
+import { asNonEmptyString, isContainedResolvedPath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfDataDirUnreadable, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
 import { presentationFor } from "../../core/type-presentation";
 import { warn, warnOnce } from "../../core/warn";
-import { lookupBundleRef, lookupBundleRefWithResolution } from "../../indexer/indexer";
-import type { StashEntryScope } from "../../indexer/passes/metadata";
-import { projectMarkdownFragmentContent } from "../../indexer/passes/metadata";
+import {
+  lookupBundleRef,
+  lookupBundleRefWithResolution,
+  lookupBundleRefWithResolutionReadonly,
+} from "../../indexer/indexer";
+import {
+  applyCuratedFrontmatter,
+  applyProvenanceFrontmatter,
+  type IndexDocument,
+  projectMarkdownFragmentContent,
+  type StashEntryScope,
+} from "../../indexer/passes/metadata";
 import { ensurePrimaryIndexForRead, resolveReadSources } from "../../indexer/read-preflight";
+import { applyEntryFilters } from "../../indexer/search/db-search";
 import {
   buildEditHint,
   findSourceForPath,
@@ -60,18 +68,23 @@ import {
   type MatchResult,
 } from "../../indexer/walk/file-context";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
-import type { FragmentContextMode, ShowDetailLevel, ShowLinkGroup, ShowResponse } from "../../sources/types";
+import type {
+  FragmentContextMode,
+  RecallOptions,
+  ShowDetailLevel,
+  ShowLinkGroup,
+  ShowResponse,
+} from "../../sources/types";
 import { withIndexDb } from "../../storage/repositories/index-db";
+import { getEntryById, getEntryIdByFilePath } from "../../storage/repositories/index-entries-repository";
 import { getIndexedMarkdownFragment } from "../../storage/repositories/index-fts-repository";
 import { readEntryLinks } from "../../storage/repositories/index-links-repository";
-import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import { buildWorkflowAction } from "../../workflows/renderer";
-import { getActiveWorkflowRun } from "../../workflows/runtime/runs";
 
 /**
  * Unified show: queries the local FTS5 index, then reads that row's file path.
  * A physical owner can arbitrate collisions during lookup, but show never
- * renders an asset without an indexed row. Spec §6.2; no provider or disk
+ * renders an asset without an indexed row; no provider or disk
  * fallback.
  *
  * When `detail` is `"brief"` or `"summary"`, the response omits
@@ -92,6 +105,8 @@ export async function akmShowUnified(input: {
    * out of scope" from "asset truly absent" via the standard error envelope.
    */
   scope?: StashEntryScope;
+  /** Internal task-evidence eligibility; direct show has no belief default. */
+  recall?: RecallOptions;
   /**
    * Event source for usage logging. Defaults to `"user"`. Set to
    * `"improve"` when called from improve's reflect/distill agents
@@ -100,6 +115,12 @@ export async function akmShowUnified(input: {
   eventSource?: UsageEventSource;
   /** Internal nested reads can render without recording a second user consumption row. */
   skipLogging?: boolean;
+  /**
+   * Read without side effects (`akm ui`): no usage events, no index refresh and
+   * no workflow-run lookup, so the show never counts as demand and never writes
+   * `index.db` or `state.db`. Implies `skipLogging`.
+   */
+  readOnly?: boolean;
 }): Promise<ShowResponse> {
   const ref = input.ref.trim();
   validateFragmentContextRequest(input);
@@ -110,15 +131,7 @@ export async function akmShowUnified(input: {
   //     resolved here before the index lookup; meta docs are not asset refs.
   {
     const metaRef = parseMetaRef(ref);
-    if (metaRef) return showStashMeta(metaRef);
-  }
-
-  const legacyReplacement = legacyColonRefReplacement(ref);
-  if (legacyReplacement) {
-    throw new NotFoundError(
-      `The legacy colon ref "${ref}" was removed in 0.9.0. Use the slash form instead: ` +
-        `akm show ${legacyReplacement}`,
-    );
+    if (metaRef) return showStashMeta(metaRef, input.readOnly === true);
   }
 
   // Env/secret bodies have no safe fragment surface, and a fragment cannot
@@ -132,7 +145,7 @@ export async function akmShowUnified(input: {
   // safe substrate below is its source of truth. Friendly heading selectors
   // intentionally retain the normal source-live read behavior.
   const parsedRef = parseBundleRef(ref);
-  if (!parsedRef.fragment?.startsWith("akm-fragment-")) {
+  if (!input.readOnly && !parsedRef.fragment?.startsWith("akm-fragment-")) {
     const { primarySource } = resolveReadSources();
     await ensurePrimaryIndexForRead(primarySource);
   }
@@ -147,7 +160,7 @@ export async function akmShowUnified(input: {
     enforceScopeOrThrow(result.path, ref, input.scope);
   }
   // Count prior shows of this ref before logging the current one.
-  if (!input.skipLogging) {
+  if (!input.skipLogging && !input.readOnly) {
     const consumedRef = result.ref ?? makeBundleRef(undefined, parseBundleRef(ref).conceptId);
     const priorShowCount = recentShowCount(consumedRef);
     recordShowUsage(consumedRef, result.type, result.name, input.eventSource, result.path);
@@ -159,19 +172,6 @@ export async function akmShowUnified(input: {
   return result;
 }
 
-/** Actionable migration guidance for the retired `[bundle//]type:name` spelling. */
-function legacyColonRefReplacement(ref: string): string | undefined {
-  const match = /^(?:(?<bundle>[^/#]+)\/\/)?(?<type>[a-z][a-z0-9-]*):(?<name>[^#]+)(?<fragment>#.*)?$/i.exec(ref);
-  const type = match?.groups?.type?.toLowerCase();
-  const name = match?.groups?.name;
-  if (!type || !name) return undefined;
-  const stashDir = stashDirFor(type);
-  if (!stashDir) return undefined;
-  const bundle = match?.groups?.bundle;
-  const fragment = match?.groups?.fragment ?? "";
-  return `${bundle ? `${bundle}//` : ""}${stashDir}/${name}${fragment}`;
-}
-
 /**
  * Resolve a stash `.meta/` doc and return it as a lightweight ShowResponse.
  *
@@ -180,7 +180,7 @@ function legacyColonRefReplacement(ref: string): string | undefined {
  * to that stash; an uninstalled origin yields an actionable "not installed"
  * error. The file is read directly from disk — `.meta/` is never indexed.
  */
-async function showStashMeta(metaRef: MetaRef): Promise<ShowResponse> {
+async function showStashMeta(metaRef: MetaRef, readOnly = false): Promise<ShowResponse> {
   const allSources = resolveSourceEntries();
   const sources = resolveSourcesForOrigin(metaRef.origin, allSources);
 
@@ -196,7 +196,9 @@ async function showStashMeta(metaRef: MetaRef): Promise<ShowResponse> {
     const metaFile = readMetaFile(source.path, metaRef.name);
     if (!metaFile) continue;
     const editable = isEditable(metaFile.path, config, allSources);
-    appendEvent({ eventType: "show", ref: `meta:${metaRef.name}`, metadata: { type: "meta", name: metaRef.name } });
+    if (!readOnly) {
+      appendEvent({ eventType: "show", ref: `meta:${metaRef.name}`, metadata: { type: "meta", name: metaRef.name } });
+    }
     return {
       type: "meta",
       name: metaRef.name,
@@ -289,8 +291,10 @@ export async function showLocal(input: {
   ref: string;
   detail?: ShowDetailLevel;
   stashDir?: string;
+  recall?: RecallOptions;
   contextMode?: FragmentContextMode;
   maxContextChars?: number;
+  readOnly?: boolean;
 }): Promise<ShowResponse> {
   validateFragmentContextRequest(input);
   const parsed = parseBundleRef(input.ref);
@@ -302,7 +306,9 @@ export async function showLocal(input: {
 
   const allSourceDirs = searchSources.map((s) => s.path);
 
-  const resolution = await lookupBundleRefWithResolution(parsed);
+  const resolution = input.readOnly
+    ? await lookupBundleRefWithResolutionReadonly(parsed)
+    : await lookupBundleRefWithResolution(parsed);
   if (resolution.indexError !== undefined) throw resolution.indexError;
   const indexedEntry = resolution.entry;
   const assetPath = indexedEntry?.filePath;
@@ -358,6 +364,36 @@ export async function showLocal(input: {
   }
 
   const fileCtx = buildFileContext(sourceStashDir, assetPath);
+  let beliefState: string | undefined;
+  if (input.recall) {
+    const policy = input.recall;
+    const sources =
+      policy.source && !["local", "all"].includes(policy.source)
+        ? resolveSourcesForOrigin(policy.source, allSources)
+        : allSources;
+    const eligible = withIndexDb(
+      (db) => {
+        const id = getEntryIdByFilePath(db, assetPath);
+        const row = id === undefined ? undefined : getEntryById(db, id);
+        if (!row || id === undefined) return false;
+        // Source-live show must not restore a belief/scope changed after indexing.
+        const entry = { ...row.entry, scope: undefined };
+        applyCuratedFrontmatter(entry, parseFrontmatter(fileCtx.content()).data);
+        const allowed = applyEntryFilters([{ ...row, id, entry }], {
+          db,
+          sources,
+          restrictToSources: true,
+          filters: policy.filters,
+          includeProposed: false,
+          beliefFilter: policy.belief ?? "current",
+        });
+        beliefState = entry.beliefState;
+        return allowed.length > 0 && (!policy.type || policy.type === "any" || entry.type === policy.type);
+      },
+      { readOnly: input.readOnly === true },
+    );
+    if (!eligible) throw new NotFoundError(`Asset not found for recall filters: ${input.ref}`);
+  }
   const presentedName = indexedEntry.name;
   const opaqueFragmentSelector = parsed.fragment?.startsWith("akm-fragment-") === true;
   // Friendly heading selectors retain the source-live exact response contract.
@@ -365,13 +401,17 @@ export async function showLocal(input: {
   // or when the caller explicitly opts into indexed-safe contextual output.
   const indexedFragment =
     parsed.fragment && (opaqueFragmentSelector || input.contextMode === "lead")
-      ? withIndexDb((db) => getIndexedMarkdownFragment(db, indexedEntry.itemRef, parsed.fragment!))
+      ? withIndexDb((db) => getIndexedMarkdownFragment(db, indexedEntry.itemRef, parsed.fragment!), {
+          readOnly: input.readOnly === true,
+        })
       : undefined;
   const indexedFragmentContent = opaqueFragmentSelector ? indexedFragment?.content : undefined;
   const indexedRenderer = rendererForIndexedEntry(indexedEntry, fileCtx);
   let response: ShowResponse;
+  let markdown = false;
   try {
     if (indexedRenderer === null) {
+      markdown = path.extname(assetPath).toLowerCase() === ".md";
       response = buildIndexedProjectionResponse(indexedEntry, assetPath, parsed.fragment, indexedFragmentContent);
     } else {
       const match =
@@ -394,8 +434,9 @@ export async function showLocal(input: {
       const renderDefaultBundle = config.defaultBundle ?? (source?.isDefault === true ? renderBundle : undefined);
       const renderCtx = buildRenderContext(fileCtx, match, allSourceDirs, renderBundle, renderDefaultBundle);
       response = renderer.buildShowResponse(renderCtx);
+      markdown = match.renderer.endsWith("-md");
       if (parsed.fragment !== undefined) {
-        if (!match.renderer.endsWith("-md")) {
+        if (!markdown) {
           warn(
             `Fragment "#${parsed.fragment}" was ignored: ${makeBundleRef(parsed.bundle, parsed.conceptId)} is not a Markdown document, so heading fragments do not apply. Showing the whole asset.`,
           );
@@ -404,9 +445,16 @@ export async function showLocal(input: {
         }
       }
     }
+    // The outline is read from the bytes `#<slug>` resolves against, so every
+    // listed slug selects its section even when the index is stale.
+    if (markdown && parsed.fragment === undefined) {
+      const toc = markdownToc(fileCtx.content());
+      if (toc.length > 0) response.toc = toc;
+    }
   } catch (error) {
     throwIndexedPathNotFound(error, input.ref);
   }
+  if (beliefState) response.beliefState = beliefState;
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
   const isPrimaryStash = source?.isDefault === true;
@@ -457,34 +505,32 @@ export async function showLocal(input: {
     throw new NotFoundError(`Indexed-safe fragment context is unavailable for ${input.ref}.`);
   }
   if (response.type === "workflow") response.action = buildWorkflowAction(canonicalRef);
-  // 07 P1-D: provenance-aware toolPolicy CEILING. An agent's self-declared
-  // `tools` frontmatter is honoured ONLY for the operator's own PRIMARY stash —
-  // the assets they authored. Every other source is content pulled from
-  // elsewhere and must not name its own tool grant: registry-installed packs, a
-  // configured secondary source, and even a git source the operator marked
-  // `--writable` to contribute edits upstream (writability is "can I push", not
-  // "do I trust this content to grant itself tools"). Drop the policy so dispatch
-  // falls back to the parent/default grant. Keys off primary-stash identity —
-  // `allSources[0]` is always the primary (search-source.ts) — not a
-  // name-derived registryId or the orthogonal `writable` bit. `source` undefined
-  // (unresolved path) also fails closed.
-  if (response.toolPolicy !== undefined && !isPrimaryStash) {
-    delete (response as { toolPolicy?: unknown }).toolPolicy;
-  }
   const editable = isEditable(assetPath, config, allSources);
+  // Evidence must describe the same revision as the rendered claim: ordinary
+  // Markdown show is source-live, while indexed fragment show is a snapshot.
+  let evidenceMetadata: IndexDocument | undefined;
+  if (["memory", "lesson", "knowledge"].includes(response.type)) {
+    evidenceMetadata = indexedFragment ? indexedEntry.document : { name: presentedName, type: response.type };
+    if (!indexedFragment && evidenceMetadata) {
+      const frontmatter = parseFrontmatter(fileCtx.content()).data;
+      applyCuratedFrontmatter(evidenceMetadata, frontmatter);
+      applyProvenanceFrontmatter(evidenceMetadata, frontmatter);
+    }
+  }
   const fullResponse: ShowResponse = {
     ...response,
+    ...(evidenceMetadata?.evidence ? { evidence: evidenceMetadata.evidence } : {}),
+    ...(evidenceMetadata?.evidenceSources ? { evidenceSources: evidenceMetadata.evidenceSources } : {}),
+    ...(evidenceMetadata?.provenance &&
+    (evidenceMetadata.evidence || evidenceMetadata.provenance.generatedAt || evidenceMetadata.provenance.sources)
+      ? { provenance: evidenceMetadata.provenance }
+      : {}),
     ref: canonicalRef,
     origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(canonicalRef) } : {}),
-    ...showLinks(indexedEntry.itemRef, displayDefaultBundle),
+    ...showLinks(indexedEntry.itemRef, displayDefaultBundle, input.readOnly === true),
   };
-
-  const activeRun = await getActiveWorkflowRun(getCurrentWorkflowScopeKey());
-  if (activeRun) {
-    (fullResponse as unknown as Record<string, unknown>).activeRun = activeRun;
-  }
 
   if (input.detail === "brief") {
     return buildBriefResponse(fullResponse, assetPath);
@@ -505,10 +551,10 @@ const LINKS_PER_KIND = 10;
  * authored order, incoming by ref, and unresolved tokens as authored. Empty
  * parts are omitted, and the field when nothing links either way.
  */
-function showLinks(itemRef: string, defaultBundle: string | undefined): Pick<ShowResponse, "links"> {
+function showLinks(itemRef: string, defaultBundle: string | undefined, readOnly = false): Pick<ShowResponse, "links"> {
   let rows: ReturnType<typeof readEntryLinks>;
   try {
-    rows = withIndexDb((db) => readEntryLinks(db, itemRef));
+    rows = withIndexDb((db) => readEntryLinks(db, itemRef), { readOnly });
   } catch (err) {
     rethrowIfTestIsolationError(err);
     rethrowIfDataDirUnreadable(err);
@@ -591,13 +637,12 @@ function findUnrecognizedScriptSource(
       if ((source.adapterId ?? detectAdapterId(source.path)) !== "akm") continue;
       const sourceRoot = path.resolve(source.path);
       const candidate = path.resolve(assetPathForName("script", path.join(sourceRoot, scriptDir), assetParts.name));
-      if (!isWithin(candidate, sourceRoot)) continue;
+      if (!isContainedResolvedPath(candidate, sourceRoot)) continue;
       const authoredStat = fs.lstatSync(candidate);
       if (!authoredStat.isFile() && !authoredStat.isSymbolicLink()) continue;
-      const realRoot = fs.realpathSync(sourceRoot);
       const realCandidate = fs.realpathSync(candidate);
-      if (!isWithin(realCandidate, realRoot) || !fs.statSync(realCandidate).isFile()) continue;
-      return { extension, path: realCandidate, sourceRoot: realRoot };
+      if (!fs.statSync(realCandidate).isFile()) continue;
+      return { extension, path: realCandidate, sourceRoot: fs.realpathSync(sourceRoot) };
     } catch {
       // Missing, unreadable, dangling, or otherwise unsafe paths remain normal
       // not-found misses; this diagnostic never widens physical ownership.
@@ -609,7 +654,7 @@ function findUnrecognizedScriptSource(
 /**
  * Minimal `show`: ref → indexer lookup → file contents. Used by callers that
  * just need the raw file (e.g. clone, write-source) and don't want the full
- * renderer graph. Spec §6.2's literal flow.
+ * renderer graph.
  */
 export async function showByRef(ref: string): Promise<{ filePath: string; body: string }> {
   const parsed = parseBundleRef(ref);
@@ -716,6 +761,9 @@ function applyMarkdownResponsePayload(response: ShowResponse, content: string): 
   else response.content = content;
 }
 
+const SHOW_OUTLINE_HINT =
+  "Run `akm show <ref> --detail brief` for the document's outline (`toc`, no body), then `akm show <ref>#<slug>` for one section.";
+
 function requireMarkdownSection(
   content: string,
   fragment: string,
@@ -732,6 +780,8 @@ function requireMarkdownSection(
   throw new NotFoundError(
     `Fragment "#${fragment}" not found in ${name}.` +
       (available.length > 0 ? ` Available fragments: ${available.map((slug) => `#${slug}`).join(", ")}.` : ""),
+    "ASSET_NOT_FOUND",
+    SHOW_OUTLINE_HINT,
   );
 }
 
@@ -749,6 +799,7 @@ function buildBriefResponse(full: ShowResponse, assetPath?: string): ShowRespons
     ...(summary.ref ? { ref: summary.ref } : {}),
     ...(summary.description ? { description: summary.description } : {}),
     ...(summary.action ? { action: summary.action } : {}),
+    ...(full.toc ? { toc: full.toc } : {}),
     ...(summary.run ? { run: summary.run } : {}),
     ...(summary.origin !== undefined ? { origin: summary.origin } : {}),
     ...(full.editable !== undefined ? { editable: full.editable } : {}),

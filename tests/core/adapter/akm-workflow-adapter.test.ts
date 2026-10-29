@@ -51,7 +51,7 @@ describe("akm-workflow adapter — metadata", () => {
   test("id / version / extensions", () => {
     expect(akmWorkflowAdapter.id).toBe("akm-workflow");
     expect(akmWorkflowAdapter.version).toBe("0.9.2");
-    expect(akmWorkflowAdapter.extensions).toEqual([".md", ".yml"]);
+    expect(akmWorkflowAdapter.extensions).toEqual([".md"]);
   });
 
   test("a non-workflow markdown (README) abstains", () => {
@@ -74,30 +74,6 @@ describe("akm-workflow adapter — recognition golden", () => {
       expect(doc.ref).toBe(expected.ref as string);
       expect(doc.name).toBe(expected.name as string);
       if (expected.description !== undefined) expect(doc.description).toBe(expected.description as string);
-    });
-  }
-});
-
-describe("akm-workflow adapter — placement golden", () => {
-  const golden = loadGolden("placement");
-  const byType = golden.byType as Record<string, { conceptId: string; assetPath: string }>;
-  const edge = golden.edgeCases as Record<string, { conceptId: string; assetPath: string }>;
-
-  function relFromRoot(abs: string): string {
-    return path.relative(FIXTURE_ROOT, abs).split(path.sep).join("/");
-  }
-
-  for (const [typeKey, expected] of Object.entries(byType)) {
-    test(`placeNew(${typeKey}) → ${expected.assetPath}`, () => {
-      const abs = akmWorkflowAdapter.placeNew?.(component(), expected.conceptId);
-      expect(relFromRoot(abs as string)).toBe(expected.assetPath);
-    });
-  }
-
-  for (const [name, expected] of Object.entries(edge)) {
-    test(`edge: ${name} → ${expected.assetPath}`, () => {
-      const abs = akmWorkflowAdapter.placeNew?.(component(), expected.conceptId);
-      expect(relFromRoot(abs as string)).toBe(expected.assetPath);
     });
   }
 });

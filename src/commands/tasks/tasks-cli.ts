@@ -27,6 +27,7 @@
 import { defineCommand } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
+import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import {
   defineGroupCommand,
   defineJsonCommand,
@@ -38,11 +39,7 @@ import {
 } from "../../cli/shared";
 import { UsageError } from "../../core/errors";
 import type { InputFlag } from "../../execution/input-contract";
-import { resolveUsageEventSource } from "../../indexer/usage/usage-events";
-import { getOutputMode } from "../../output/context";
 import { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS } from "../../tasks/task-run-reserved-flags";
-import { akmSearch, parseSearchSource } from "../read/search";
-import { rejectRetiredSourceFlag } from "../read/search-cli";
 import { akmTaskExplain } from "./explain";
 import {
   akmTasksAdd,
@@ -55,7 +52,6 @@ import {
   akmTasksSync,
   akmTasksSyncPlan,
 } from "./tasks";
-import { akmTaskValidate } from "./validate";
 
 /** Shared `--bundle <bundle>` arg wired onto every task subcommand. */
 const bundleArg = {
@@ -75,7 +71,7 @@ const bundleArg = {
  * other value spelling (`--<name>=false`, `--<name>=1`, `--<name>=`) walks
  * straight past it and is then absorbed downstream — by citty's non-strict
  * parser, or by `parseTaskInputFlags`' reserved-name skip — exactly the
- * silent-discard defect these rejecters exist to close (review round 1). The
+ * silent-discard defect these rejecters exist to close. The
  * name is taken as everything before the FIRST `=`, which is
  * `parseTaskInputFlags`' own split (see its `body.indexOf("=")` below), so the
  * rejecter and the scanner can never disagree about what a token names.
@@ -89,34 +85,6 @@ function hasFlagNamed(name: string): boolean {
     if ((equalsAt === -1 ? body : body.slice(0, equalsAt)) === name) return true;
   }
   return false;
-}
-
-/**
- * `--target` was renamed to `--bundle` on `task` in 0.9 (S8.4). citty is
- * non-strict, so the retired spelling is silently absorbed rather than
- * rejected — reject it explicitly instead (mirrors improve-cli.ts /
- * remember-cli.ts). The generic pre-dispatch gate cannot catch it either: it
- * exempts `target` on every `task` subcommand precisely so this handler can
- * answer with the rename (`../../cli/unknown-flags`'s `SELF_DIAGNOSED_FLAGS`),
- * and that exemption is keyed on the flag NAME — so `--target=team` must be
- * rejected here by name too, or nothing rejects it at all.
- *
- * Rejecting by NAME means `--target=<value>` can no longer carry a declared
- * task input named `target` either (0.9.2 review round 2). That is settled on
- * the DECLARATION side, not by narrowing this rejecter back to whole-token
- * matching: `target` is listed in `TASK_RUN_SELF_DIAGNOSED_FLAGS`
- * (`../../tasks/task-run-reserved-flags.ts`), so `parseInputDeclarations`
- * refuses `inputs: {target: …}` with TASK_SOURCE_INVALID at authoring time and
- * no task can reach `akm task run` needing the flag this throws on. Do not
- * re-narrow the match here — the silently-ignored `--target=team` that round 1
- * closed would come straight back.
- */
-function rejectRetiredTaskTargetFlag(): void {
-  if (!hasFlagNamed("target")) return;
-  throw new UsageError(
-    "`akm task --target` was renamed to `--bundle` in 0.9. Use `--bundle <name>` instead.",
-    "INVALID_FLAG_VALUE",
-  );
 }
 
 /**
@@ -148,24 +116,21 @@ function rejectExplainScheduledFlag(): void {
   throw new UsageError('Unknown flag "--scheduled".', "UNKNOWN_FLAG");
 }
 
-// ── `akm task run` input flags — Stage 1: capture (spec §5.1) ──────────────
+// ── `akm task run` input flags — Stage 1: capture ───────────────────────────
 //
 // Mirrors `parseWorkflowParameterFlags` (src/commands/workflow-cli.ts:232-289)
 // exactly: the CLI carries RAW string/boolean flag values to the boundary
 // that knows the task's declared contract (Stage 2, src/tasks/run/load-task.ts)
 // — coercion happens once, there. `akm task run`'s own declared flags
 // (GLOBAL_OUTPUT_ARGS, --bundle, --scheduled) are excluded so they are never
-// mistaken for inputs (B-33); `--target` is excluded too, but only because
-// `rejectRetiredTaskTargetFlag()` above always runs first and throws before
-// this is ever reached (B-32) — it is not itself special-cased below.
+// mistaken for inputs.
 
 // `TASK_RUN_VALUE_FLAGS` / `TASK_RUN_BOOLEAN_FLAGS` are re-exported here
 // (unchanged in name, location, and value) from a dependency-free leaf module
 // so `src/tasks/source/task-source-v4.ts` can reject a declared `inputs:`
 // name that collides with one of them without importing this CLI file —
 // which would cycle back through `./tasks` -> `../../tasks/source/*` into the
-// parser (code-review finding, docs/plans/specs/p2b-input-bindings.md review
-// round 2; see `../../tasks/task-run-reserved-flags.ts`'s own header).
+// parser (see `../../tasks/task-run-reserved-flags.ts`'s own header).
 export { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS };
 
 const TASK_RUN_VALUE_FLAG_SET = new Set<string>(TASK_RUN_VALUE_FLAGS);
@@ -239,10 +204,10 @@ const tasksAddCommand = defineJsonCommand({
     command: {
       type: "string",
       description:
-        'Exact shell string to run on the schedule (no AI agent), e.g. "akm improve --strategy reflect-distill".',
+        'Exact shell string to run on the schedule (no AI agent), e.g. "akm improve --strategy consolidate".',
     },
-    engine: { type: "string", description: "Engine to use for prompt targets (default: defaults.engine)" },
-    model: { type: "string", description: "Model override for prompt targets" },
+    ...SELECTION_ARGS,
+    ...RETIRED_ENGINE_ARG,
     "timeout-ms": { type: "string", description: "Positive timeout in milliseconds for prompt or command targets" },
     params: { type: "string", description: "Workflow params as a JSON object" },
     name: { type: "string", description: "Human-readable name for the task" },
@@ -258,7 +223,6 @@ const tasksAddCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     const result = await akmTasksAdd({
       id: args.id,
       schedule: args.schedule,
@@ -266,8 +230,7 @@ const tasksAddCommand = defineJsonCommand({
       workflow: args.workflow,
       prompt: args.prompt,
       command: args.command,
-      engine: args.engine,
-      model: args.model,
+      ...selectionFromArgs(args),
       timeoutMs: args["timeout-ms"] === undefined ? undefined : parsePositiveIntFlag(args["timeout-ms"]),
       params: args.params,
       name: args.name,
@@ -302,7 +265,6 @@ const tasksRunCommand = defineCommand({
   },
   async run({ args, rawArgs }) {
     await runWithJsonErrors(async () => {
-      rejectRetiredTaskTargetFlag();
       const inputFlags = parseTaskInputFlags(rawArgs, args.id);
       const envelope = await akmTasksRun(args.id, {
         scheduled: args.scheduled === true,
@@ -327,7 +289,6 @@ const tasksEnableCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     output("task-enable", await akmTasksEnable(args.ref, { target: args.bundle }));
   },
 });
@@ -339,7 +300,6 @@ const tasksDisableCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     output("task-disable", await akmTasksDisable(args.ref, { target: args.bundle }));
   },
 });
@@ -370,7 +330,6 @@ const tasksHistoryCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     const limit = parsePositiveIntFlag(args.limit ?? undefined);
     const id = resolveTaskHistoryId(args.task, args.id);
     const result = await akmTasksHistory({ id, limit, target: args.bundle });
@@ -416,7 +375,6 @@ const tasksSyncCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     const rebind = args.rebind === true;
     if (args["dry-run"] === true) {
       const preview = await akmTasksSyncPlan({}, args.bundle, { rebind });
@@ -433,8 +391,7 @@ const tasksSyncCommand = defineJsonCommand({
   },
 });
 
-// ── `akm task explain` — read-only introspection (P2b Lane B, spec
-// docs/plans/specs/p2b-input-bindings.md §4.5, §1.7 B-N4) ──────────────────
+// ── `akm task explain` — read-only introspection ────────────────────────────
 
 const tasksExplainCommand = defineJsonCommand({
   meta: {
@@ -448,7 +405,6 @@ const tasksExplainCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args, rawArgs }) {
-    rejectRetiredTaskTargetFlag();
     // `--scheduled` must be rejected BEFORE the shared scanner below ever
     // sees it — the scanner treats it as `task run`'s own reserved flag
     // (silently skipped, never surfaced as unknown) rather than explain's,
@@ -476,37 +432,6 @@ const tasksDoctorCommand = defineJsonCommand({
   async run() {
     const result = await akmTasksDoctor();
     output("task-doctor", result);
-  },
-});
-
-/**
- * #907: `akm task validate`'s exit-code contract — `valid` succeeds (exit
- * 0); `blocked`/`invalid`/`not-a-task` are diagnosed defects the caller must
- * act on (exit 1, mirroring `task sync`'s own `failures.length > 0 ->
- * EXIT_CODES.GENERAL`). A missing path or an unreadable file never reaches
- * this function at all — `akmTaskValidate` throws a `UsageError` for those,
- * which `defineJsonCommand`'s wrapping already maps to exit 2.
- */
-export function taskValidateExitCode(result: { outcome: string }): number | undefined {
-  return result.outcome === "valid" ? undefined : EXIT_CODES.GENERAL;
-}
-
-const tasksValidateCommand = defineJsonCommand({
-  meta: {
-    name: "validate",
-    description:
-      "Parse a single task file by filesystem path — not a concept ref, and the file need not live in a " +
-      "configured bundle — and report the same diagnostic `akm task sync` would produce for it. Read-only; " +
-      "never touches the scheduler.",
-  },
-  args: {
-    path: { type: "positional", description: "Filesystem path to a task source YAML file", required: true },
-  },
-  async run({ args }) {
-    const result = await akmTaskValidate(args.path);
-    output("task-validate", result);
-    const exitCode = taskValidateExitCode(result);
-    if (exitCode !== undefined) process.exitCode = exitCode;
   },
 });
 
@@ -553,48 +478,6 @@ const tasksPruneCommand = defineJsonCommand({
   },
 });
 
-/**
- * #951: `akm task list` — a pure, zero-logic delegating alias for
- * `akm search --type task`. 0.9.0 removed `task list` because it was a
- * second, redundant IMPLEMENTATION of task listing, not because the
- * spelling itself was off-limits; this reuses `search`'s exact envelope
- * (its `results` alias comes along for free) instead of adding a second one.
- * `query`/`--limit`/`--from` are handled identically to `searchCommand.run()`
- * for the same inputs, including the retired `--source` guard (`../read/
- * search-cli.ts`'s `rejectRetiredSourceFlag`, reused rather than copied) so
- * `akm task list --source x` fails with the same actionable rename message
- * as `akm search --type task --source x` instead of citty's silent absorb.
- */
-const tasksListCommand = defineJsonCommand({
-  meta: { name: "list", description: "List task assets (alias for `akm search --type task`)" },
-  args: {
-    query: {
-      type: "positional",
-      description: "Search query (omit to list all tasks)",
-      required: false,
-      default: "",
-    },
-    limit: { type: "string", description: "Maximum number of results" },
-    from: { type: "string", description: "Search source (local|registry|all)", default: "local" },
-  },
-  async run({ args }) {
-    rejectRetiredSourceFlag();
-    const query = (args.query ?? "").trim();
-    const limit = parsePositiveIntFlag(args.limit ?? undefined);
-    const source = parseSearchSource(args.from);
-    const outputMode = getOutputMode();
-    const result = await akmSearch({
-      query,
-      type: "task",
-      limit,
-      source,
-      eventSource: resolveUsageEventSource(),
-      attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
-    });
-    output("search", result);
-  },
-});
-
 export const taskCommand = defineGroupCommand({
   meta: {
     name: "task",
@@ -607,16 +490,14 @@ export const taskCommand = defineGroupCommand({
     disable: tasksDisableCommand,
     run: tasksRunCommand,
     explain: tasksExplainCommand,
-    validate: tasksValidateCommand,
     history: tasksHistoryCommand,
-    list: tasksListCommand,
     sync: tasksSyncCommand,
     prune: tasksPruneCommand,
     doctor: tasksDoctorCommand,
   },
   // Bare `akm task` reports scheduler diagnostics. Deeper inspection of
-  // individual tasks is the generic `akm show <bundle//tasks/id>`; `list`
-  // above is a delegating alias for `akm search --type task` (#951).
+  // individual tasks is the generic `akm show <bundle//tasks/id>`; listing is
+  // `akm search --type task`.
   // No `defaultRun`: bare `akm task` is a usage error (exit 2), the canonical
   // bare-group behavior — owner ruling 12. Run `akm task doctor` for what the
   // bare form used to run.

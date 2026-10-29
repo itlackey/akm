@@ -3,11 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { LlmUsageCrossTabRow } from "../commands/health/types";
-import type {
-  EngineProbeOutcome,
-  EngineUnavailableProcess,
-  ProcessRoutingRow,
-} from "../commands/improve/improve-strategies";
+import type { EngineUnavailableProcess, ProcessRoutingRow } from "../commands/improve/improve-strategies";
 import type { EligibilitySource, Proposal } from "../commands/proposal/proposal-types";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { MemoryInferenceResult } from "../indexer/passes/memory-inference";
@@ -198,17 +194,17 @@ export interface ImproveExecutionPlan {
   gates: ImprovePlanGate[];
   effectiveRefs: Array<{ ref: string; lane: ImprovePlanLane; reason: ImproveEligibleRef["reason"] }>;
   /**
-   * Resolved process -> engine -> model routing table (#947), one row per
+   * Resolved process -> connection or harness -> model routing table (#947), one row per
    * `IMPROVE_PROCESS_NAMES` name plus a `"triage.judgment"` row
    * when configured. Present on dry AND live results — this is a preflight
    * projection, not a dispatch report; #944's post-run cost/routing report is
    * a separate, additional field. Sourced from `ResolvedImprovePlan`, which
    * is resolved before any side effect on every invocation (dry or live), so
-   * `--dry-run`/`--plan` shows a `--strategy` override for free.
+   * `--dry-run` shows a `--strategy` override for free.
    */
   processes: ProcessRoutingRow[];
   proactive?: {
-    configured: { dueDays?: number; maxPerRun?: number; limit?: number };
+    configured: { dueDays?: number; maxPerRun?: number };
     effective: { dueDays: number; maxPerRun: number };
     candidatePool: number;
     dueTotal: number;
@@ -219,16 +215,14 @@ export interface ImproveExecutionPlan {
   consolidation: {
     configured: {
       enabled?: boolean;
-      minPoolSize?: number;
       limit?: number;
       maxChunkSize?: number;
     };
-    effective: { enabled: boolean; minPoolSize: number; limit?: number; chunkSize: number };
+    effective: { enabled: boolean; limit?: number; chunkSize: number };
     poolSize: number;
     candidatePoolSize: number;
     gates: {
       profile: { passed: boolean; reason: string };
-      minimumPool: { passed: boolean; reason: string };
       delta: { passed: boolean; reason: string };
     };
     wouldRun: boolean;
@@ -247,7 +241,6 @@ export interface ImproveExecutionPlan {
     /** Effective mode the live pre-pass will execute. */
     mode: "queue" | "promote";
     maxAcceptsPerRun: number;
-    maxDiffLines?: number;
   };
 }
 
@@ -554,6 +547,8 @@ export interface AkmDistillResult {
    * was minted for `outcome === "quality_rejected"` / `"review_needed"`.
    */
   proposalId?: string;
+  /** True when `outcome === "queued"` and the proposal extends an existing lesson (`proposalRef`) instead of adding one. */
+  updatesExisting?: true;
   /** Human-readable hint surfaced when the call was skipped. */
   message?: string;
   /** Machine-readable reason when `outcome === "skipped"`. */
@@ -613,7 +608,16 @@ export interface ExtractedSessionResult {
   sessionId: string;
   harness: string;
   candidateCount: number;
+  /** IDs of successfully persisted proposals only; previews never appear here. */
   proposalIds: string[];
+  /** Eligible candidate refs inspected by a dry run, without creating proposals. */
+  previewRefs?: string[];
+  /** Candidates held by the improve ledger. Absent on older results. */
+  blockedCount?: number;
+  /** Proposal writes that failed. Absent on older results. */
+  failedCount?: number;
+  /** Of `failedCount`, writes the proposal validator refused (`INVALID_PROPOSAL`). Absent on older results. */
+  failedRejectedCount?: number;
   /** When candidates was empty, the LLM's explanation. */
   rationaleIfEmpty?: string;
   /** Pre-filter stats for the session. */
@@ -643,7 +647,7 @@ export interface ExtractedSessionResult {
   /** Stable, secret-free execution-lowering diagnostics for this session. */
   notices?: readonly Readonly<LoweringNotice>[];
   /**
-   * #913 — resolved engine name for the run that produced this session
+   * #913 — name of the connection or harness (`engine`) for the run that produced this session
    * result, stamped from the run's `llmRunner` at the point each result is
    * accounted into the run (`accountExtractSessionResult`). Always present:
    * every session result — success or any skip reason — is produced inside a
@@ -682,7 +686,7 @@ export interface AkmExtractResult {
    * was skipped (including for an infrastructure reason like
    * `llm_unavailable`), because the exit code follows `ok` and a
    * SessionEnd/SessionStart hook must not start exiting non-zero because a
-   * LAN engine is temporarily down. Consumers that need "did this run
+   * LAN endpoint is temporarily down. Consumers that need "did this run
    * actually harvest" branch on `skipReasons`, `warnings`, or the
    * `sessionsProcessed`/`sessionsSkipped` counts instead.
    */
@@ -692,7 +696,9 @@ export interface AkmExtractResult {
   type: string;
   sessionsProcessed: number;
   sessionsSkipped: number;
+  /** Successfully persisted proposals (including in dry runs, where this is zero). */
   candidatesCreated: number;
+  /** Successfully persisted proposal IDs only. */
   proposals: string[];
   sessions: ExtractedSessionResult[];
   warnings: string[];
@@ -709,7 +715,7 @@ export interface AkmExtractResult {
    */
   skipReasons?: Partial<Record<NonNullable<ExtractedSessionResult["skipReason"]>, number>>;
   /**
-   * #913 — resolved engine name / kind for this run, sourced from the same
+   * #913 — name and kind of the connection or harness this run resolved, sourced from the same
    * `llmRunner` stamped onto each `sessions[].engine`. Optional because the
    * feature-disabled early return (`extract is disabled by the selected
    * improve strategy`) returns before any engine is resolved; every other
@@ -881,35 +887,20 @@ export interface AkmImproveResult {
    */
   strategyFilteredRefs?: ImproveEligibleRef[];
   /**
-   * #957 — processes the active strategy enabled but whose engine could not
-   * be resolved (no engine selected) or whose credential could not be
-   * resolved in this process's own environment (the scheduler-vs-shell
-   * mismatch #957 exists for). Sourced verbatim from
+   * #957 — processes the active strategy enabled but that have no connection
+   * or harness to run on. Sourced verbatim from
    * `ResolvedImprovePlan.engineUnavailable`; omitted entirely when nothing
    * was skipped this way.
    *
    * Like `AkmExtractResult.skipReasons` (#912, see that field's doc comment):
    * `ok` still means the run completed, not that it did work, and the exit
-   * code follows `ok` — a scheduler must not start failing because one LLM
-   * process's credential is temporarily missing while others still run.
-   * Consumers that need to know branch on this field's presence/length
-   * (or `akm improve --require-engines`, which aborts up front instead of
-   * degrading). A credential-unavailable `reason` names the engine and WHICH
-   * env var / apiKeyFile path / secret reference is missing — never its
-   * value — so an operator whose own shell passes config validation can see
-   * why the scheduler's stripped-down environment does not.
+   * code follows `ok` — a scheduler must not start failing because one
+   * process has nothing to run on while others still run. Consumers that need
+   * to know branch on this field's presence/length. A run in which no model-calling
+   * process can run at all stops at planning (exit 78) instead. Each
+   * `reason` names the setting that would give the process a connection or harness.
    */
   skippedProcesses?: readonly Readonly<EngineUnavailableProcess>[];
-  /**
-   * R17 — `--require-engines`'s reachability probe outcomes (one row per
-   * probed target: process, engine, endpoint, reachable, latencyMs).
-   * A failing probe already aborts the run (exit 78) before this result is
-   * ever built, so every row present here is `reachable: true` — this
-   * exists so a slow or flapping gateway that still passed leaves a trace.
-   * Sourced verbatim from `AkmImproveOptions.engineProbe`. Omitted entirely
-   * when `--require-engines` was not passed.
-   */
-  engineProbe?: readonly Readonly<EngineProbeOutcome>[];
   actions?: ImproveActionResult[];
   /**
    * C1 (13-bus-factor) — bounded aggregate of the per-ref `distill-skipped`
@@ -1019,6 +1010,13 @@ export interface AkmImproveResult {
    */
   sync?: { committed: boolean; pushed: boolean; skipped: boolean; reason?: string };
   /**
+   * The same outcome shape for the sync that ran before the index and plan
+   * stages (#1091), when the bundle is git-backed and sync is not disabled.
+   * A `reason` here means the upstream could not be brought in (conflict or
+   * fetch failure); the run continued on the local state.
+   */
+  preRunSync?: { committed: boolean; pushed: boolean; skipped: boolean; reason?: string };
+  /**
    * #652 — run-scoped write provenance: every path this run actually wrote,
    * created, or removed, as recorded by the write-provenance journal (NOT
    * inferred from a Git dirty-path diff). This is the exact set the end-of-run
@@ -1034,7 +1032,7 @@ export interface AkmImproveResult {
   terminated?: { reason: string; at: string; errorMessage?: string };
   /**
    * #944 — this run's LLM call/token/failure accounting, split by process x
-   * engine x model, plus which strategy-enabled processes made zero calls and
+   * connection or harness x model, plus which strategy-enabled processes made zero calls and
    * why. `byProcessEngineModel` is `summarizeLlmUsageRecordsCrossTab` over the
    * LLM call records this run's own usage sink collected in memory, so it
    * holds this run's own calls only — never those of another akm process

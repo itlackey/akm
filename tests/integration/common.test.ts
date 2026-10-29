@@ -9,6 +9,7 @@ import {
   hasErrnoCode,
   isWithin,
   jsonWithByteCap,
+  parseJsonc,
   ResponseTooLargeError,
   readBodyWithByteCap,
   resolveStashDir,
@@ -104,25 +105,6 @@ describe("resolveStashDir", () => {
     }
   });
 
-  test("resolves a retired stashDir-only config shape via the in-memory bundles shim", () => {
-    // A retired top-level `stashDir` used to hard-refuse here — no migrator
-    // ever existed for it, so this took down every command. It now folds
-    // into an in-memory `stash` bundle (legacy-source-shape-shim.ts, same
-    // shim `loadConfig` uses) rather than requiring the config be hand-
-    // authored into the current bundles shape first.
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-common-test-stash-"));
-    try {
-      const configDir = path.join(testConfigHome, "akm");
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ stashDir: tmpDir }));
-      withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => {
-        expect(resolveStashDir()).toBe(path.resolve(tmpDir));
-      });
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
   test("reads the primary stash from the migrated bundles/defaultBundle shape", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-common-test-bundle-"));
     try {
@@ -167,6 +149,43 @@ describe("resolveStashDir", () => {
       fs.rmSync(envDir, { recursive: true, force: true });
       fs.rmSync(configDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ── parseJsonc ───────────────────────────────────────────────────────────────
+
+describe("parseJsonc", () => {
+  test("plain JSON parses as JSON does", () => {
+    const text = '{"a": [1, 2, {"b": "c,}"}], "d": null}';
+    expect(parseJsonc(text)).toEqual(JSON.parse(text));
+  });
+
+  test("a line comment and a block comment are dropped", () => {
+    expect(parseJsonc('// head\n{"a": 1, /* mid */ "b": 2 // tail\n}')).toEqual({ a: 1, b: 2 });
+  });
+
+  test("a line comment ends at a carriage return as at a line feed, so a file with either line ending keeps what follows it", () => {
+    const lines = ["// head", "{", '  "a": 1, // first', '  "b": 2 // last', "}"];
+    for (const ending of ["\r", "\r\n"]) {
+      expect(parseJsonc(lines.join(ending))).toEqual({ a: 1, b: 2 });
+    }
+  });
+
+  test("a trailing comma before } and before ] is dropped, past whitespace and comments", () => {
+    expect(parseJsonc('{"a": [1, 2,\n  ],\n "b": {"c": 3, /* last */ },\n}')).toEqual({ a: [1, 2], b: { c: 3 } });
+  });
+
+  test("a string value keeps a comma-then-brace or comma-then-bracket as written", () => {
+    expect(parseJsonc('{"a": "x,}", "b": "y,]", "c": "z , \\" ,]",}')).toEqual({ a: "x,}", b: "y,]", c: 'z , " ,]' });
+  });
+
+  test("a string value keeps // and /* as written", () => {
+    expect(parseJsonc('{"url": "http://x/*y*/", "list": [1,],}')).toEqual({ url: "http://x/*y*/", list: [1] });
+  });
+
+  test("an unterminated block comment fails instead of closing the document or hanging", () => {
+    expect(() => parseJsonc('{"a": 1, /* never closed }')).toThrow();
+    expect(() => parseJsonc('{"a": [1,], /*')).toThrow();
   });
 });
 
@@ -461,5 +480,51 @@ describe("writeResponseToFileCapped", () => {
     await expect(
       writeResponseToFileCapped(dest, new Response(stream), { maxBytes: 1024 * 1024, bodyTimeoutMs: 60 }),
     ).rejects.toBeInstanceOf(BodyReadTimeoutError);
+  });
+
+  /** A server sending `chunks` pieces `gapMs` apart, then closing, or (with `stop`) holding the body open. */
+  function startDribblingServer(chunks: number, gapMs: number, stop = false): { url: string; stop: () => void } {
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        const stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            for (let i = 0; i < chunks; i++) {
+              if (i > 0) await new Promise((resolve) => setTimeout(resolve, gapMs));
+              controller.enqueue(new TextEncoder().encode(`chunk-${i};`));
+            }
+            if (!stop) controller.close();
+          },
+        });
+        return new Response(stream);
+      },
+    });
+    return { url: `http://127.0.0.1:${server.port}/`, stop: () => server.stop(true) };
+  }
+
+  test("with stallTimeoutMs, a server that stops sending fails once no bytes arrive for that long", async () => {
+    const server = startDribblingServer(2, 10, true);
+    try {
+      const dest = path.join(dir, "stopped.bin");
+      const response = await fetch(server.url);
+      await expect(writeResponseToFileCapped(dest, response, { stallTimeoutMs: 100 })).rejects.toBeInstanceOf(
+        BodyReadTimeoutError,
+      );
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("with stallTimeoutMs, a slow body that keeps sending finishes past the overall budget", async () => {
+    const server = startDribblingServer(6, 50);
+    try {
+      const dest = path.join(dir, "slow.bin");
+      const response = await fetch(server.url);
+      // About 250 ms in all, against an overall budget of 100 ms that the stall rule replaces.
+      await writeResponseToFileCapped(dest, response, { bodyTimeoutMs: 100, stallTimeoutMs: 1000 });
+      expect(fs.readFileSync(dest, "utf8")).toBe("chunk-0;chunk-1;chunk-2;chunk-3;chunk-4;chunk-5;");
+    } finally {
+      server.stop();
+    }
   });
 });

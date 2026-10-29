@@ -48,6 +48,7 @@ import {
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { deriveInstallations } from "../../indexer/installations";
+import { sameScope, scopeFromFrontmatter } from "../../indexer/passes/metadata";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { Database } from "../../storage/database";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
@@ -55,6 +56,7 @@ import {
   CONSOLIDATE_LEDGER_SOURCE,
   forgetImproveLedgerDecision,
   type ImproveLedgerOutcome,
+  PAIR_PASS_LEDGER_SOURCE,
   recordImproveLedger,
   recordImproveLedgerDecision,
   reopenImproveLedgerDecision,
@@ -676,35 +678,35 @@ function requireProposal(db: Database, stashDir: string, id: string): Proposal {
  * proposal (then most recent archived); else by a unique pending id prefix.
  */
 export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: ProposalsContext): Proposal {
-  return withProposalsDb(ctx, (db) => {
-    const exact = getStateProposal(db, idOrRef, stashDir);
-    if (exact) return exact;
-    if (idOrRef.includes(":") || idOrRef.includes("/")) {
-      const wantRef = filterRefIdentity(idOrRef);
-      // Should-fix 7: by-ref resolution never picks a retire proposal — the
-      // newest pending proposal for a ref could be a `consolidate-pair`
-      // retirement rather than the reflect/distill edit a person typed the
-      // ref to accept, and accepting it archives the asset instead. A retire
-      // is reached by its own proposal id, or by the explicit generator
-      // `consolidate-pair` (bulk accept/reject).
-      const newest = (status?: string): Proposal | undefined =>
-        listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) })
-          .filter((p) => proposalMatchesRef(p.ref, wantRef) && !isRetireProposal(p))
-          .sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
-      const found = newest("pending") ?? newest();
-      if (found) return found;
-      throw new NotFoundError(`No proposal found for ref "${idOrRef}".`, "PROPOSAL_NOT_FOUND");
-    }
-    const prefixMatches = listStateProposalIdsByPrefix(db, stashDir, idOrRef);
-    if (prefixMatches.length === 1) return requireProposal(db, stashDir, prefixMatches[0]!);
-    if (prefixMatches.length > 1) {
-      throw new UsageError(
-        `Ambiguous prefix "${idOrRef}" — matches: ${prefixMatches.join(", ")}`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    throw new NotFoundError(`Proposal "${idOrRef}" not found.`, "PROPOSAL_NOT_FOUND");
-  });
+  return withProposalsDb(ctx, (db) => resolveProposalIdIn(db, stashDir, idOrRef));
+}
+
+/** {@link resolveProposalId} over a connection the caller holds (`akm ui` reads state.db read-only). */
+export function resolveProposalIdIn(db: Database, stashDir: string, idOrRef: string): Proposal {
+  const exact = getStateProposal(db, idOrRef, stashDir);
+  if (exact) return exact;
+  if (idOrRef.includes(":") || idOrRef.includes("/")) {
+    const wantRef = filterRefIdentity(idOrRef);
+    // By-ref resolution never picks a retire proposal — the
+    // newest pending proposal for a ref could be a `consolidate-pair`
+    // retirement rather than the reflect/distill edit a person typed the
+    // ref to accept, and accepting it archives the asset instead. A retire
+    // is reached by its own proposal id, or by the explicit generator
+    // `consolidate-pair` (bulk accept/reject).
+    const newest = (status?: string): Proposal | undefined =>
+      listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) })
+        .filter((p) => proposalMatchesRef(p.ref, wantRef) && !isRetireProposal(p))
+        .sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
+    const found = newest("pending") ?? newest();
+    if (found) return found;
+    throw new NotFoundError(`No proposal found for ref "${idOrRef}".`, "PROPOSAL_NOT_FOUND");
+  }
+  const prefixMatches = listStateProposalIdsByPrefix(db, stashDir, idOrRef);
+  if (prefixMatches.length === 1) return requireProposal(db, stashDir, prefixMatches[0]!);
+  if (prefixMatches.length > 1) {
+    throw new UsageError(`Ambiguous prefix "${idOrRef}" — matches: ${prefixMatches.join(", ")}`, "INVALID_FLAG_VALUE");
+  }
+  throw new NotFoundError(`Proposal "${idOrRef}" not found.`, "PROPOSAL_NOT_FOUND");
 }
 
 /**
@@ -784,6 +786,14 @@ export function archiveProposal(
         at: decidedAt,
         ...(reason !== undefined ? { detail: reason } : {}),
       });
+      // The pair pass settles initiators under bare refs, independently of the
+      // proposal's durable ref. A stale decision must release both inputs for
+      // reassessment through that same ledger, rather than hold an old body forever.
+      if (isRetireProposal(updated) && gateDecision?.reason === STALE_TARGET_GATE_REASON) {
+        for (const ref of retireHeldRefs(updated)) {
+          recordImproveLedger(db, { stashDir, ref, source: PAIR_PASS_LEDGER_SOURCE, outcome: "failed", at: decidedAt });
+        }
+      }
       return updated;
     }),
   );
@@ -884,13 +894,10 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
   const nowMs = (ctx?.now ?? Date.now)();
   const pending = listProposals(stashDir, { status: "pending" }, ctx);
   for (const p of pending) {
-    // Should-fix 8: a retire proposal never expires by age. B2's accept-time
-    // hash check already refuses it once it goes stale, and the
-    // one-pending-retire-per-asset rule (pair-pass.ts's pendingRetireRefs)
-    // bounds how many can queue up — retention expiry would instead
-    // permanently drop a still-fresh pair nobody has reviewed yet, with no
-    // way back short of the pair pass finding it again from scratch.
-    if (isRetireProposal(p)) continue;
+    // A retire proposal expires like any other: `akm proposal reopen` (#997)
+    // brings an expired one back while its files and hashes are still fresh,
+    // and an unexpired one would hold its pair (pair-pass.ts's
+    // pendingRetireRefs) for good.
     // A reopened proposal's wait starts over at the reopen (#997): expiring it
     // on its original age would undo the reopen at the next sweep.
     const createdMs = new Date(proposalWaitingSince(p)).getTime();
@@ -1148,7 +1155,7 @@ function resolveRecordedProposalTarget(
   if (targetBundleId !== binding.source || path.resolve(target.source.path) !== path.resolve(binding.root)) {
     throw new UsageError(
       `Proposal ${proposalId} is bound to target "${binding.source}" at ${binding.root}; ` +
-        `--target "${explicitTarget}" resolves to "${targetBundleId}" at ${target.source.path}.`,
+        `--bundle "${explicitTarget}" resolves to "${targetBundleId}" at ${target.source.path}.`,
       "INVALID_FLAG_VALUE",
     );
   }
@@ -1175,7 +1182,7 @@ function resolveProposalWriteTarget(
         canonicalBundleIdForTarget(config, resolveWriteTarget(config, explicitTarget)) !== identity.bundle
       ) {
         throw new UsageError(
-          `Proposal ${proposal.id} ref is bound to bundle "${identity.bundle}", which conflicts with --target "${explicitTarget}".`,
+          `Proposal ${proposal.id} ref is bound to bundle "${identity.bundle}", which conflicts with --bundle "${explicitTarget}".`,
           "INVALID_FLAG_VALUE",
         );
       }
@@ -1187,7 +1194,7 @@ function resolveProposalWriteTarget(
     const target = explicitTarget ? resolveWriteTarget(config, explicitTarget) : queueTarget;
     if (!target) {
       throw new UsageError(
-        `Unbound short proposal ${proposal.id} requires an explicit --target or authenticated --queue context.`,
+        `Unbound short proposal ${proposal.id} requires an explicit --bundle or authenticated --queue context.`,
         "INVALID_PROPOSAL",
       );
     }
@@ -1299,6 +1306,8 @@ export async function promoteProposal(
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
     gateDecision?: GateDecisionInput;
+    /** Defer the commit to the caller (see {@link AcceptCommitCollector}). */
+    commitCollector?: AcceptCommitCollector;
   } = {},
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
@@ -1391,6 +1400,22 @@ export function preflightProposalPromotion(
       // best-effort; the freshness check is the real staleness gate
     }
   }
+  if (prepared.promotionSource) {
+    const sourcePath = resolveAssetFilePathSafe(target.source, parseRefInput(prepared.promotionSource));
+    if (
+      sourcePath &&
+      fs.existsSync(sourcePath) &&
+      !sameScope(
+        scopeFromFrontmatter(parseFrontmatter(fs.readFileSync(sourcePath, "utf8")).data),
+        scopeFromFrontmatter(parseFrontmatter(stampedContent).data),
+      )
+    ) {
+      throw new UsageError(
+        `Promotion ${proposal.id} has incompatible source/output scope — reject and reassess.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+  }
   const lintBlockers = promotionLintBlockers(stampedContent, assetPath, target.source.path, ref.type, config);
   if (lintBlockers.length > 0) {
     const summary = lintBlockers.map((finding) => `[${finding.issue}] ${finding.detail}`).join("; ");
@@ -1465,6 +1490,54 @@ function acceptCommitMessage(proposal: Proposal): string {
 }
 
 /**
+ * Accepts whose commit waits for the end of the process (#1185). A loop of
+ * accepts (a drain, a bulk accept, `accept <id> <id>`) passes one collector to
+ * every accept, then commits the lot once with {@link commitCollectedAccepts};
+ * without a collector an accept commits as it happens.
+ */
+export type AcceptCommitCollector = Array<{ target: ResolvedWriteTarget; proposal: Proposal; paths: string[] }>;
+
+function commitAccept(
+  collector: AcceptCommitCollector | undefined,
+  target: ResolvedWriteTarget,
+  proposal: Proposal,
+  paths: string[],
+): void {
+  if (collector) collector.push({ target, proposal, paths });
+  else commitAcceptedPaths(target, acceptCommitMessage(proposal), paths);
+}
+
+/**
+ * Commit everything `collector` holds, one commit per target repository: a lone
+ * accept keeps its own subject; several get `<label>: N accepted (source count,
+ * ...)` with one `<id8> <source> <ref>` body line per proposal. Empties the
+ * collector. A failed commit only warns, as for a single accept.
+ */
+export function commitCollectedAccepts(collector: AcceptCommitCollector, label: string): void {
+  const byRepo = new Map<string, AcceptCommitCollector>();
+  for (const entry of collector.splice(0)) {
+    const key = path.resolve(entry.target.source.repoPath ?? entry.target.source.path);
+    byRepo.set(key, [...(byRepo.get(key) ?? []), entry]);
+  }
+  for (const entries of byRepo.values()) {
+    const first = entries[0] as AcceptCommitCollector[number];
+    if (entries.length === 1) {
+      commitAcceptedPaths(first.target, acceptCommitMessage(first.proposal), first.paths);
+      continue;
+    }
+    const counts = new Map<string, number>();
+    for (const { proposal } of entries) counts.set(proposal.source, (counts.get(proposal.source) ?? 0) + 1);
+    const bySource = [...counts].sort((a, b) => b[1] - a[1]).map(([source, count]) => `${source} ${count}`);
+    commitAcceptedPaths(
+      first.target,
+      `${label}: ${entries.length} accepted (${bySource.join(", ")})`,
+      entries.flatMap((entry) => entry.paths),
+      entries.map(({ proposal }) => `${proposal.id.slice(0, 8)} ${proposal.source} ${proposal.ref}`),
+    );
+  }
+}
+
+/**
  * O1 (alpha.9): an accepted consolidate PROMOTION retires its source memory
  * (and its `.derived` twin), so promotion no longer leaves a memory/
  * knowledge duplicate behind. Runs whether a person accepted the promotion
@@ -1497,7 +1570,17 @@ function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Pr
       );
       return;
     }
-    const currentHash = contentHash(fs.readFileSync(sourcePath, "utf8"), "body");
+    const sourceContent = fs.readFileSync(sourcePath, "utf8");
+    if (
+      !sameScope(
+        scopeFromFrontmatter(parseFrontmatter(sourceContent).data),
+        scopeFromFrontmatter(parseFrontmatter(proposalContent(accepted)).data),
+      )
+    ) {
+      warn(`[proposal] source scope changed for ${accepted.id} — leaving ${accepted.promotionSource} unarchived.`);
+      return;
+    }
+    const currentHash = contentHash(sourceContent, "body");
     if (currentHash !== accepted.promotionSourceHash) {
       warn(
         `[proposal] O1: source ${accepted.promotionSource} for ${accepted.id} changed since the promotion was queued — leaving it unarchived.`,
@@ -1517,7 +1600,13 @@ function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Pr
       path.join(mutationTarget.source.path, record.auditPath),
     );
     const twin = derivedTwinPath(sourcePath, sourceRef.type);
-    if (twin) {
+    if (
+      twin &&
+      sameScope(
+        scopeFromFrontmatter(parseFrontmatter(fs.readFileSync(twin, "utf8")).data),
+        scopeFromFrontmatter(parseFrontmatter(sourceContent).data),
+      )
+    ) {
       const twinRecord = archiveCleanupCandidate(mutationTarget.source.path, candidate, twin);
       paths.push(
         twin,
@@ -1541,6 +1630,8 @@ async function promoteProposalWithLease(
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
     gateDecision?: GateDecisionInput;
+    /** Defer the commit to the caller (see {@link AcceptCommitCollector}). */
+    commitCollector?: AcceptCommitCollector;
   },
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
@@ -1596,7 +1687,7 @@ async function promoteProposalWithLease(
   const paths = [assetPath];
   if (accepted.status === "accepted" && accepted.source === "consolidate")
     retirePromotionSource(mutationTarget, accepted, paths);
-  commitAcceptedPaths(mutationTarget, acceptCommitMessage(accepted), paths);
+  commitAccept(options.commitCollector, mutationTarget, accepted, paths);
   return { proposal: accepted, assetPath, ref: accepted.ref };
 }
 
@@ -1604,7 +1695,7 @@ async function promoteProposalWithLease(
  * Every archive dir a tombstone under `.akm/memory-cleanup/archive/` claims
  * for `proposalId` — the primary asset's, and its `.derived` twin's if one
  * was archived alongside it. Used to detect what a resumed retire accept
- * (should-fix 5) has already moved.
+ * has already moved.
  */
 function findRetireArchiveDirsByProposalId(stashRoot: string, proposalId: string): string[] | undefined {
   const archiveRoot = path.join(stashRoot, ".akm", "memory-cleanup", "archive");
@@ -1642,7 +1733,7 @@ function alreadyArchivedOriginalPaths(stashRoot: string, dirs: string[]): Set<st
 }
 
 /**
- * Should-fix 5: record a retire accept's intent — `backupContent` and which
+ * Record a retire accept's intent — `backupContent` and which
  * files (asset, `.derived` twin) are about to move — on the still-pending
  * proposal BEFORE any file is moved. A crash after this point resumes from
  * exactly this record instead of re-deriving `backupContent` from whatever
@@ -1669,7 +1760,7 @@ function recordRetireAcceptIntent(
 /**
  * Persist a retire's "accepted" decision — the row, its ledger decision and
  * its event — the one finalize step a fresh accept and one resumed after a
- * crash (should-fix 5) share: by the time either calls it, every file move
+ * crash share: by the time either calls it, every file move
  * is already confirmed done. Mirrors the accept branch of
  * {@link persistProposalDecision}, kept separate since a retire's
  * accepted-shape fields (`retiredArchive`, no published `content`) do not
@@ -1745,10 +1836,10 @@ function persistRetireAcceptance(
 }
 
 /**
- * B2: throws a stale-retire `UsageError` unless the successor still exists
- * and both sides' recorded body hashes still match their current files — the
- * durable half of the chain guard. Used for a fresh accept, and (4b, third
- * review round) to re-check a resumed accept whose intent was recorded but
+ * Throws a stale-retire `UsageError` unless the successor still exists
+ * and both sides' recorded body hashes and judged scopes still match — the
+ * durable half of the chain guard. Used for a fresh accept, and to
+ * re-check a resumed accept whose intent was recorded but
  * nothing has moved yet: a separate proposal accepted in between (e.g. this
  * one's successor itself retired by a B->C accept) can make the decision
  * stale even though nothing about the retired side's own file changed.
@@ -1762,6 +1853,23 @@ function assertRetirementStillFresh(
 ): void {
   const successorPath = resolveAssetFilePathSafe(targetSource, parseRefInput(retirement.successorRef));
   const successorBytes = successorPath && fs.existsSync(successorPath) ? fs.readFileSync(successorPath) : undefined;
+  const judgedScope = retirement.judgedScope;
+  if (!judgedScope || typeof judgedScope !== "object" || Array.isArray(judgedScope)) {
+    throw new UsageError(
+      `Retire proposal ${proposalId} is stale — judged scope cannot be established; reject it and reassess the pair before acceptance.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  if (
+    !sameScope(scopeFromFrontmatter(parseFrontmatter(retiredCurrentBytes.toString("utf8")).data), judgedScope) ||
+    (successorBytes &&
+      !sameScope(scopeFromFrontmatter(parseFrontmatter(successorBytes.toString("utf8")).data), judgedScope))
+  ) {
+    throw new UsageError(
+      `Retire proposal ${proposalId} is stale — scope changed since judging; reject and reassess.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
   const retiredFresh = contentHash(retiredCurrentBytes, "body") === retirement.retiredContentHash;
   const successorFresh =
     successorBytes !== undefined && contentHash(successorBytes, "body") === retirement.successorContentHash;
@@ -1777,15 +1885,15 @@ function assertRetirementStillFresh(
 
 /**
  * Accept a `retire` proposal (0.9.17-alpha.9, the consolidate pair pass): no
- * new content is written. Should-fix 5 (second review round) makes this a
+ * new content is written. It is a
  * three-phase, resume-safe sequence: (1) record intent — `backupContent`
  * and the exact files about to move — on the still-pending proposal; (2)
  * move each file into the recoverable cleanup archive
  * (`archiveCleanupCandidate`), skipping any the tombstone scan shows a prior,
  * crashed attempt already moved; (3) finalize via
  * {@link persistRetireAcceptance}. A `supersedes` judgement writes the
- * supersede edge on the retired (older) side AFTER intent is recorded (4a,
- * third review round — recording it first means a crash before the edge
+ * supersede edge on the retired (older) side AFTER intent is recorded —
+ * recording it first means a crash before the edge
  * write can never cause a resume to re-read the file and capture its own
  * edge into `backupContent`), so the archived copy still preserves it. A
  * target already gone with no recorded intent (raced with something else)
@@ -1801,6 +1909,8 @@ async function retireProposalWithLease(
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
     gateDecision?: GateDecisionInput;
+    /** Defer the commit to the caller (see {@link AcceptCommitCollector}). */
+    commitCollector?: AcceptCommitCollector;
   },
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
@@ -1849,8 +1959,8 @@ async function retireProposalWithLease(
     // `retiredThisRun` in pair-pass.ts):
     assertRetirementStillFresh(proposal.id, proposal.ref, retirement, target.source, currentBytes);
     assertAkmAssetWrite(target.source);
-    // Phase 1: record intent BEFORE any move, and BEFORE the supersede edge
-    // (4a, third review round) — `backupContent` is `currentBytes`, read
+    // Phase 1: record intent BEFORE any move, and BEFORE the supersede edge:
+    // `backupContent` is `currentBytes`, read
     // above, before any mutation of this file. Recording first means a crash
     // between here and the edge write below can never cause a resume to
     // re-read the file and capture the edge INTO backupContent as if it were
@@ -1868,19 +1978,15 @@ async function retireProposalWithLease(
     }
   } else {
     assertAkmAssetWrite(target.source);
-    // 4b (third review round): intent was recorded but Phase 2 never moved
-    // anything yet — re-run the B2 freshness check before resuming. A
-    // separate proposal accepted in the meantime (this one's successor
-    // itself retired by a B->C accept) can make the decision stale even
-    // though nothing here changed. Once something has moved, it is too late
-    // to cleanly refuse — Phase 2 below already tolerates a partial move.
-    if (working.retirement && fs.existsSync(intent.assetPath)) {
+    // Revalidate the survivor even after a partial archive. The recorded original
+    // is the judged retired side when its file has already moved.
+    if (working.retirement) {
       assertRetirementStillFresh(
         proposal.id,
         proposal.ref,
         working.retirement,
         target.source,
-        fs.readFileSync(intent.assetPath),
+        fs.existsSync(intent.assetPath) ? fs.readFileSync(intent.assetPath) : Buffer.from(intent.backupContent),
       );
     }
   }
@@ -1907,12 +2013,20 @@ async function retireProposalWithLease(
       path.join(mutationTarget.source.path, record.auditPath),
     );
   }
-  // 4d (third review round): the twin path is re-derived, not carried on the
+  // The twin path is re-derived, not carried on the
   // intent — it is a pure function of assetPath and the ref's type, and the
   // tombstone scan above (`alreadyDone`) already finds one archived earlier,
   // so storing it was redundant persisted state.
   const twinPath = derivedTwinPath(intent.assetPath, ref.type);
-  if (twinPath && !alreadyDone.has(path.resolve(twinPath)) && fs.existsSync(twinPath)) {
+  if (
+    twinPath &&
+    !alreadyDone.has(path.resolve(twinPath)) &&
+    fs.existsSync(twinPath) &&
+    sameScope(
+      scopeFromFrontmatter(parseFrontmatter(fs.readFileSync(twinPath, "utf8")).data),
+      scopeFromFrontmatter(parseFrontmatter(intent.backupContent).data),
+    )
+  ) {
     const twinRecord = archiveCleanupCandidate(mutationTarget.source.path, candidate, twinPath);
     archiveDirs.push(path.dirname(twinRecord.auditPath));
     paths.push(
@@ -1921,7 +2035,7 @@ async function retireProposalWithLease(
       path.join(mutationTarget.source.path, twinRecord.auditPath),
     );
   }
-  if (paths.length > 0) commitAcceptedPaths(mutationTarget, acceptCommitMessage(proposal), paths);
+  if (paths.length > 0) commitAccept(options.commitCollector, mutationTarget, proposal, paths);
 
   if (archiveDirs.length === 0) {
     // Recorded intent, but neither file is at its original location NOR
@@ -1987,7 +2101,7 @@ export async function revertProposal(
  * tombstone names the exact paths to restore — no re-scan of every
  * tombstone in the archive.
  *
- * Should-fix 5 (second review round): every archive dir is resolved and
+ * Every archive dir is resolved and
  * validated before any of them are moved, AND that validation tells "not
  * yet moved" apart from "already moved by an earlier, crashed attempt of
  * our own" (original present, archived copy gone) rather than treating the
@@ -2037,6 +2151,8 @@ async function unretireProposalWithLease(
     archivedAbs: string;
     /** Already moved back by an earlier, crashed attempt of our own — resume, do not re-move or error. */
     alreadyDone: boolean;
+    /** The archived copy was purged: nothing to move, the primary is rewritten from `backupContent`. */
+    fromBackup: boolean;
   }
   const pending: PendingRestore[] = [];
   for (const dirRel of archive.dirs) {
@@ -2069,13 +2185,21 @@ async function unretireProposalWithLease(
         "INVALID_FLAG_VALUE",
       );
     }
-    if (!originalExists && !archivedExists) {
+    // The graced purge deletes the archived bytes once git holds them, but the
+    // proposal keeps the primary's exact pre-retire bytes (`backupContent`),
+    // so the primary can still be restored from those.
+    const fromBackup =
+      !originalExists &&
+      !archivedExists &&
+      proposal.backupContent !== undefined &&
+      path.resolve(originalAbs) === path.resolve(assetPath);
+    if (!originalExists && !archivedExists && !fromBackup) {
       throw new UsageError(
         `Cannot revert proposal ${proposal.id}: archived copy ${archivedRel} is missing.`,
         "INVALID_FLAG_VALUE",
       );
     }
-    // Must-fix 2 (third review round): "original present, archived copy
+    // "original present, archived copy
     // missing" is not necessarily our own earlier, crashed revert — once a
     // purge can delete an archived copy on its own, a LATER, unrelated file
     // can occupy this same path (a new memory reusing a retired one's name),
@@ -2099,12 +2223,14 @@ async function unretireProposalWithLease(
         );
       }
     }
-    pending.push({ dirAbs, auditPath, originalAbs, archivedAbs, alreadyDone: originalExists });
+    pending.push({ dirAbs, auditPath, originalAbs, archivedAbs, alreadyDone: originalExists, fromBackup });
   }
   const restoredPaths: string[] = [];
   let primaryOriginalAbs: string | undefined;
   for (const p of pending) {
-    if (!p.alreadyDone) {
+    if (p.fromBackup) {
+      fs.mkdirSync(path.dirname(p.originalAbs), { recursive: true });
+    } else if (!p.alreadyDone) {
       fs.mkdirSync(path.dirname(p.originalAbs), { recursive: true });
       fs.renameSync(p.archivedAbs, p.originalAbs);
       recordWrittenPath(p.archivedAbs);
@@ -2211,8 +2337,8 @@ async function revertProposalWithLease(
   }
   const target = prepareWriteTargetForMutation(boundTarget);
   if (!fs.existsSync(assetPath) || contentHash(fs.readFileSync(assetPath)) !== recorded.contentHash) {
-    // Nit (third review round): by-ref resolution skips retire proposals
-    // (should-fix 7), so reverting by ref when a SEPARATE retire proposal
+    // By-ref resolution skips retire proposals, so reverting by ref when a
+    // SEPARATE retire proposal
     // for the same ref exists (pending or already accepted) lands here with
     // no clue that proposal is the real story — name it when one does.
     const siblingRetire = listProposalsReadOnly(stashDir, { ref: proposal.ref, includeArchive: true }, ctx).find(
@@ -2440,7 +2566,15 @@ export function diffProposal(
   options: { target?: string; queueTarget?: ResolvedWriteTarget } = {},
   ctx?: ProposalsContext,
 ): ProposalDiff {
-  const proposal = getProposal(stashDir, id, ctx);
+  return diffLoadedProposal(config, getProposal(stashDir, id, ctx), options);
+}
+
+/** {@link diffProposal} for a proposal the caller already read (`akm ui` reads state.db read-only). */
+export function diffLoadedProposal(
+  config: AkmConfig,
+  proposal: Proposal,
+  options: { target?: string; queueTarget?: ResolvedWriteTarget } = {},
+): ProposalDiff {
   const target = resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
   const targetPath = resolveAssetFilePathSafe(target.source, parseRefInput(proposal.ref));
   const existing = targetPath && fs.existsSync(targetPath) ? fs.readFileSync(targetPath, "utf8") : null;

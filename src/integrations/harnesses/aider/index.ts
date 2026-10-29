@@ -3,44 +3,33 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Aider CLI harness (P2 integration, plan §"The adapter contract").
- *
- * Per-harness barrel gathering the Aider integration surfaces:
- *   - agent command builder → ./agent-builder.ts    (aiderBuilder)
- *   - result extractor      → ./result-extractor.ts (aiderResultExtractor)
- *
- * It also defines {@link AiderHarness}, the {@link AkmHarness} descriptor that
- * `HARNESS_REGISTRY` registers. Dispatch-only: no native session-log reader or
- * config importer yet.
+ * Aider (`aider`). `--message` is its one-shot mode, `--yes-always` confirms every
+ * prompt so an unattended run does not stop, and `--no-pretty` keeps ANSI
+ * rendering out of the captured reply. The message is a flag value, with no
+ * positional prompt and no `--` to hide behind, so it is glued on with `=`: a
+ * prompt that starts with `-` then binds to the flag and is never read as an option.
  */
 
-import { caps } from "../shared";
-import { BaseHarness } from "../types";
-import { aiderBuilder } from "./agent-builder";
-import { aiderResultExtractor } from "./result-extractor";
+import {
+  type AgentDispatchRequest,
+  type AkmHarness,
+  type BuiltCommand,
+  type HarnessSpawn,
+  withoutModelFlag,
+} from "../harness";
 
-export { AIDER_PLATFORM, aiderBuilder } from "./agent-builder";
-export { aiderResultExtractor } from "./result-extractor";
-
-/**
- * Aider.
- *
- * Canonical id is `'aider'`; no alias or distinct runtime identity.
- */
-export class AiderHarness extends BaseHarness {
+export class AiderHarness implements AkmHarness {
   readonly id = "aider" as const;
   readonly displayName = "Aider";
-  readonly agentBuilder = aiderBuilder;
-  readonly resultExtractor = aiderResultExtractor;
-  // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // No flag-shaped resume: Aider persists context in chat-history files
-  // (`.aider.chat.history.md`), not session ids — the plan's named example of
-  // a harness with no session model. akm's `workflow_run_units` remains the
-  // durable resume source of truth.
-  // No `identityEnv`: the matrix lists Aider's identity markers as uncertain,
-  // and Aider stamps no session var onto child processes.
-  readonly capabilities = caps({
-    agentDispatch: true,
-    detection: true,
-  });
+  readonly profile = { bin: "aider", args: [] };
+  readonly systemPrompt = false;
+  readonly nativeAgent = false;
+  readonly confinable = false;
+
+  build({ bin, args }: HarnessSpawn, req: AgentDispatchRequest): BuiltCommand {
+    const argv = [bin, ...(req.model ? withoutModelFlag(args) : args)];
+    if (req.model) argv.push("--model", req.model);
+    if (req.prompt !== undefined) argv.push("--yes-always", "--no-pretty", `--message=${req.prompt}`);
+    return { argv };
+  }
 }

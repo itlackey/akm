@@ -28,7 +28,8 @@ import { parseTaskSource } from "./source/parse-task-source";
 
 /** Directory holding the bundled task template categories. */
 const TASKS_ASSETS_DIR = path.join(getDirname(import.meta.url), "../assets/tasks");
-const DEFAULT_DISABLED_TASKS = new Set(["improve/akm-improve-catchup"]);
+/** Templates setup offers but ships disabled (`category/id`). None ship disabled since catchup was removed (#1130). */
+const DEFAULT_DISABLED_TASKS = new Set<string>();
 
 export interface EmbeddedTask {
   /**
@@ -90,7 +91,7 @@ export function listEmbeddedTasks(): EmbeddedTask[] {
       }
       let parsed: ReturnType<typeof parseTaskSource>;
       try {
-        parsed = parseTaskSource({ yaml, filePath, workspaceRoot: TASKS_ASSETS_DIR });
+        parsed = parseTaskSource({ yaml, filePath });
       } catch {
         continue;
       }

@@ -26,13 +26,13 @@ import {
   DEFAULT_ENCODING_SALIENCE,
   DEFAULT_TYPE_ENCODING_WEIGHTS,
   isContentEncodingRow,
-  upsertAssetSalience,
 } from "../../../../src/commands/improve/salience";
 import { saveConfig } from "../../../../src/core/config/config";
 import type { ConfigError } from "../../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../../src/core/improve-types";
 import { openStateDatabase } from "../../../../src/core/state-db";
+import { _setWarnSinkForTests } from "../../../../src/core/warn";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import {
   type ImproveLedgerOutcome,
@@ -107,18 +107,6 @@ function durableRef(ref: string): string {
   return `stash//${ref}`;
 }
 
-/** The refs a run scored: only a ref in the scored pool gets an `asset_outcome` row. */
-function scoredRefs(): string[] {
-  const db = openStateDatabase();
-  try {
-    return (db.prepare("SELECT asset_ref FROM asset_outcome").all() as Array<{ asset_ref: string }>).map(
-      (row) => row.asset_ref,
-    );
-  } finally {
-    db.close();
-  }
-}
-
 /** Seed an improve-ledger attempt on `ref` (keyed by its item_ref) at `atMs`. */
 function recordAttempt(
   stashDir: string,
@@ -136,18 +124,12 @@ function recordAttempt(
   }
 }
 
-// #553: these pool-delta / #551-gate tests use single-memory sandboxed pools.
-// The default consolidate minPoolSize guard (500) would otherwise short-circuit
-// the consolidation pass before the mtime-delta gate runs. Disable the pool-size
-// guard (minPoolSize: 0) so these tests exercise the gate they pin, not the new
-// guard. (A dedicated suite covers the minPoolSize guard itself.)
-//
-// proactiveMaintenance is ALSO disabled explicitly because these tests pin the
-// signal-delta / high-salience SELECTION gates in isolation. The opt-in lane
+// proactiveMaintenance is disabled explicitly because these tests pin the
+// signal-delta SELECTION gate in isolation. The opt-in lane
 // deliberately selects never-reflected refs regardless of signal. That separate
 // behaviour is covered by proactive-maintenance-flow.test.ts; leaving it on here
 // would mask the gate each test is asserting.
-function configWithoutPoolGuard(stashDir: string): import("../../../../src/core/config/config").AkmConfig {
+function configWithoutProactiveLane(stashDir: string): import("../../../../src/core/config/config").AkmConfig {
   return withImproveAutonomy(
     withTestImproveLlm({
       semanticSearchMode: "off",
@@ -156,7 +138,7 @@ function configWithoutPoolGuard(stashDir: string): import("../../../../src/core/
       defaultWriteTarget: "stash",
       improve: {
         strategies: {
-          default: { processes: { consolidate: { minPoolSize: 0 }, proactiveMaintenance: { enabled: false } } },
+          default: { processes: { proactiveMaintenance: { enabled: false } } },
         },
       },
     } as import("../../../../src/core/config/config").AkmConfig),
@@ -216,6 +198,77 @@ test("skips a malformed indexed ref without discarding valid candidates", async 
   expect(result.plannedRefs[0]?.itemRef).toBe("stash//memories/valid");
   expect(result.memorySummary).toEqual({ eligible: 1, derived: 0 });
   expect(result.strategyFilteredRefs).toEqual([]);
+});
+
+describe("a scope that matches no asset warns on stderr", () => {
+  async function scopeWarnings(scope: { mode: "all" } | { mode: "type" | "ref"; value: string }, stash: string) {
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      const result = await collectEligibleRefs(scope, stash, {});
+      return { warnings, result };
+    } finally {
+      _setWarnSinkForTests();
+    }
+  }
+
+  test("a misspelt type warns with the likely intended type and plans nothing", async () => {
+    const stash = makeTempDir("akm-elig-scope-typo-");
+    writeMemory(stash, "valid", "Valid memory.");
+    await buildIndex(stash);
+
+    for (const [typed, intended] of [
+      ["memorys", "memory"],
+      ["memry", "memory"],
+    ] as const) {
+      const { warnings, result } = await scopeWarnings({ mode: "type", value: typed }, stash);
+      expect(warnings).toEqual([`Scope "${typed}" matches no asset in the stash. Did you mean \`${intended}\`?`]);
+      expect(result.plannedRefs).toEqual([]);
+    }
+  });
+
+  test("an unknown type with no near miss warns without a suggestion", async () => {
+    const stash = makeTempDir("akm-elig-scope-canary-");
+    writeMemory(stash, "valid", "Valid memory.");
+    await buildIndex(stash);
+
+    const { warnings } = await scopeWarnings({ mode: "type", value: "canary" }, stash);
+    expect(warnings).toEqual(['Scope "canary" matches no asset in the stash.']);
+  });
+
+  test("a nonexistent ref still fails as not found", async () => {
+    const stash = makeTempDir("akm-elig-scope-ref-");
+    writeMemory(stash, "valid", "Valid memory.");
+    await buildIndex(stash);
+
+    const { warnings, result } = await scopeWarnings({ mode: "ref", value: "memories/nope" }, stash).catch(
+      (error: unknown) => ({ warnings: [] as string[], result: error }),
+    );
+    expect(result).toMatchObject({ code: "ASSET_NOT_FOUND" });
+    expect(warnings).toEqual([]);
+  });
+
+  test("a valid type with nothing eligible does not warn", async () => {
+    const stash = makeTempDir("akm-elig-scope-valid-");
+    // Derived memories skip reflect, so the type exists but nothing is planned.
+    writeMemory(stash, "only.derived", "Derived memory.");
+    await buildIndex(stash);
+
+    const { warnings, result } = await scopeWarnings({ mode: "type", value: "memory" }, stash);
+    expect(result.plannedRefs).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  test("no scope does not warn", async () => {
+    const stash = makeTempDir("akm-elig-scope-none-");
+    writeMemory(stash, "valid", "Valid memory.");
+    await buildIndex(stash);
+
+    const { warnings } = await scopeWarnings({ mode: "all" }, stash);
+    expect(warnings).toEqual([]);
+  });
 });
 
 test("a read-only nested bundle is never eligible through its writable ancestor", async () => {
@@ -389,7 +442,7 @@ describe("reflect signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configWithoutPoolGuard(stash),
+      config: configWithoutProactiveLane(stash),
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -461,7 +514,7 @@ describe("reflect signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configWithoutPoolGuard(stash), // isolate the signal-delta gate from proactive selection
+      config: configWithoutProactiveLane(stash), // isolate the signal-delta gate from proactive selection
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -769,7 +822,7 @@ describe("consolidate ledger eligibility", () => {
 
     const result = await akmImprove({
       scope: "memory",
-      config: configWithoutPoolGuard(stash),
+      config: configWithoutProactiveLane(stash),
       stashDir: stash,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -806,7 +859,7 @@ describe("consolidate ledger eligibility", () => {
 
     const result = await akmImprove({
       scope: "memory",
-      config: configWithoutPoolGuard(stash),
+      config: configWithoutProactiveLane(stash),
       stashDir: stash,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -833,7 +886,7 @@ describe("consolidate ledger eligibility", () => {
 
     await akmImprove({
       scope: "memory",
-      config: configWithoutPoolGuard(stash),
+      config: configWithoutProactiveLane(stash),
       stashDir: stash,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -855,188 +908,9 @@ describe("consolidate ledger eligibility", () => {
   });
 });
 
-// ── Layer 3: high-salience admission gate (#608) ──────────────────────────────
+// ── Content-provenance of a stored encoding score ────────────────────────────
 
-describe("high-salience admission gate (#608)", () => {
-  // #644 follow-up: the high-salience lane requires a CONTENT-derived encoding
-  // score (`encoding_source = 'content'`), not the per-type weight stub. Default
-  // to "content" here so existing #608 cases model genuinely distilled assets
-  // (the lane's real targets); the type-stub exclusion is asserted separately.
-  function seedSalience(
-    ref: string,
-    encoding: number,
-    encodingSource: "content" | "type-stub" | null = "content",
-  ): void {
-    const db = openStateDatabase();
-    try {
-      if (encodingSource === null) {
-        // Rows without explicit content provenance must never enter the lane.
-        db.prepare(
-          `INSERT INTO asset_salience
-             (asset_ref, encoding_salience, outcome_salience, retrieval_salience, rank_score, consecutive_no_ops, updated_at, encoding_source)
-           VALUES (?, ?, 0, 0, 0.2, 0, ?, NULL)
-           ON CONFLICT(asset_ref) DO UPDATE SET
-             encoding_salience = excluded.encoding_salience,
-             encoding_source = NULL,
-             updated_at = excluded.updated_at`,
-        ).run(ref, encoding, Date.now());
-      } else {
-        upsertAssetSalience(db, ref, {
-          encoding,
-          outcome: 0,
-          retrieval: 0,
-          rankScore: 0.2,
-          encodingSource,
-        });
-      }
-    } finally {
-      db.close();
-    }
-  }
-
-  test("zero-feedback ref with content encoding_salience ≥ threshold and no prior reflect → scored, never reflected", async () => {
-    const stash = makeTempDir("akm-hs-rescue-");
-    writeMemory(stash, "salient", "Newly distilled, never surfaced to a user.");
-    await buildIndex(stash);
-    // High CONTENT-derived encoding_salience, no retrieval, no feedback — only the
-    // high-salience lane can rescue it (memory type-weight fallback is 0.5, below
-    // threshold). This is #608's real target: a distilled, content-scored asset.
-    seedSalience(durableRef("memories/salient"), 0.9, "content");
-
-    const reflected: string[] = [];
-    await akmImprove({
-      scope: "memory",
-      stashDir: stash,
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref }) => {
-        if (ref) reflected.push(ref);
-        return okReflect(ref ?? "");
-      },
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    // The lane admits it into scoring; only negative feedback (or an explicit scope) plans a reflect.
-    expect(scoredRefs()).toContain(durableRef("memories/salient"));
-    expect(reflected).toEqual([]);
-  });
-
-  test("high-salience fires at most once per asset (a prior reflect attempt blocks re-rescue)", async () => {
-    const stash = makeTempDir("akm-hs-once-");
-    writeMemory(stash, "salient", "High salience but already reflected once.");
-    await buildIndex(stash);
-    seedSalience(durableRef("memories/salient"), 0.9, "content");
-    // A reflect attempt already exists for this ref (its revisit window has
-    // elapsed). Without the once-per-asset rule the high-salience lane
-    // re-selected it every run (auto-accept emits a `promoted` event, not
-    // `feedback`, so it never leaves noFeedbackCandidates), burning LLM calls
-    // and churning the asset. The rule must block re-rescue.
-    recordAttempt(stash, "memories/salient", "reflect", "accepted", OLDER_MS);
-
-    const reflected: string[] = [];
-    await akmImprove({
-      scope: "memory",
-      stashDir: stash,
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref }) => {
-        if (ref) reflected.push(ref);
-        return okReflect(ref ?? "");
-      },
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    expect(scoredRefs()).not.toContain(durableRef("memories/salient"));
-    expect(reflected).toEqual([]);
-  });
-
-  // The lane cap must take the TOP-N candidates BY SCORE, not the first N found
-  // in scan order — previously a higher-salience candidate found later in the
-  // scan lost its slot to an earlier lower-scoring one.
-  test("cap selects the highest-scoring qualifier, not the first in scan order", async () => {
-    const stash = makeTempDir("akm-hs-order-");
-    // "aaa" sorts before "zzz" in scan order but carries the LOWER score.
-    writeMemory(stash, "aaa", "Scan-order-first, lower salience.");
-    writeMemory(stash, "zzz", "Scan-order-last, higher salience.");
-    await buildIndex(stash);
-    seedSalience(durableRef("memories/aaa"), 0.8, "content");
-    seedSalience(durableRef("memories/zzz"), 0.95, "content");
-
-    const reflected: string[] = [];
-    await akmImprove({
-      scope: "memory",
-      stashDir: stash,
-      config: configWithoutPoolGuard(stash), // isolate the high-salience gate from proactive selection
-      limit: 10, // cap = floor(10 × 0.1) = 1 → exactly one high-salience slot
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref }) => {
-        if (ref) reflected.push(ref);
-        return okReflect(ref ?? "");
-      },
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    expect(scoredRefs()).toContain(durableRef("memories/zzz"));
-    expect(scoredRefs()).not.toContain(durableRef("memories/aaa"));
-    expect(reflected).toEqual([]);
-  });
-
-  // #644 follow-up — the lore-writer case. A type-stub row (encoding_salience set
-  // to the per-type WEIGHT STUB, e.g. agent 0.9) must NOT be admitted: before this
-  // fix "high-salience" degenerated into "is a skill/agent/command/lesson", and a
-  // type-stub agent (lore-writer) was selected by the lane on every run. The gate
-  // now requires content-derived provenance, so a `type-stub` row is excluded even
-  // though its `encoding_salience` (0.9) is well above the 0.75 threshold.
-  test("type-stub row (encoding_source='type-stub', 0.9) is NOT admitted — the lore-writer case", async () => {
-    const stash = makeTempDir("akm-hs-typestub-");
-    writeMemory(stash, "stub", "Type-stub asset; never content-scored.");
-    await buildIndex(stash);
-    // Explicit type-stub provenance: isContentEncodingRow returns false outright,
-    // regardless of the value differing from the (memory) stub.
-    seedSalience(durableRef("memories/stub"), 0.9, "type-stub");
-
-    const reflected: string[] = [];
-    await akmImprove({
-      scope: "memory",
-      stashDir: stash,
-      config: configWithoutPoolGuard(stash), // isolate the high-salience gate from proactive selection
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref }) => {
-        if (ref) reflected.push(ref);
-        return okReflect(ref ?? "");
-      },
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    expect(scoredRefs()).not.toContain(durableRef("memories/stub"));
-    expect(reflected).toEqual([]);
-  });
-
-  test("NULL-provenance rows are not admitted", async () => {
-    const stash = makeTempDir("akm-hs-null-diff-");
-    writeMemory(stash, "legacy", "Legacy row, value differs from stub.");
-    await buildIndex(stash);
-    seedSalience(durableRef("memories/legacy"), 0.9, null);
-
-    const reflected: string[] = [];
-    await akmImprove({
-      scope: "memory",
-      stashDir: stash,
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-      reflectFn: async ({ ref }) => {
-        if (ref) reflected.push(ref);
-        return okReflect(ref ?? "");
-      },
-      distillFn: async ({ ref }) => okDistill(ref ?? ""),
-    });
-
-    expect(scoredRefs()).not.toContain(durableRef("memories/legacy"));
-    expect(reflected).toEqual([]);
-  });
-
+describe("isContentEncodingRow", () => {
   test("NULL provenance is never content regardless of score", () => {
     const equalsStub: AssetSalienceRow = {
       asset_ref: "lessons/atstub",

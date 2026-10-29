@@ -124,8 +124,8 @@ describe("budget.max_units", () => {
       code: "untranslated-field",
       severity: "warning" as const,
       adapter: "codex",
-      field: "tools",
-      message: "tool selection was not translated",
+      field: "inference.vendorKnob",
+      message: "inference knob was not translated",
     };
     let dispatches = 0;
     const result = await runWorkflowSteps({

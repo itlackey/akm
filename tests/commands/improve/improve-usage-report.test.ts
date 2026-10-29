@@ -22,8 +22,8 @@ import type { ImproveActionResult, ImproveEligibleRef } from "../../../src/core/
 
 const ALL_PROCESS_NAMES: readonly ImproveProcessName[] = IMPROVE_PROCESS_NAMES;
 
-function llmRunner(engine: string, model: string) {
-  return { kind: "llm" as const, engine, connection: { endpoint: "https://x.test", model } };
+function llmRunner(name: string, model: string) {
+  return { kind: "connection" as const, name, endpoint: "https://x.test", model, request: {}, timeoutMs: null };
 }
 
 /** Minimal ResolvedImprovePlan fixture. Every process defaults to disabled/no-runner; pass `overrides` to change specific ones. */
@@ -88,7 +88,10 @@ describe("deriveNoCallReason (#944, single decision point per #953/#957/#947/#94
       row: {
         process: "memoryInference",
         enabled: false,
-        unavailable: { configKey: "improve.strategies.default.processes.memoryInference.engine", reason: "no engine" },
+        unavailable: {
+          configKey: "improve.strategies.default.processes.memoryInference.connection",
+          reason: "no engine",
+        },
       },
       autonomyGated: [{ lane: "memoryInference", configKey: "experimental.improveAutonomy", reason: "writes memory" }],
       strategyFilteredRefsCount: 5,
@@ -177,7 +180,7 @@ describe("buildImproveUsageReport (#944)", () => {
       engineUnavailable: [
         {
           process: "validation",
-          configKey: "improve.strategies.test.processes.validation.engine",
+          configKey: "improve.strategies.test.processes.validation.connection",
           reason: "no engine",
         },
       ],

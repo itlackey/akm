@@ -29,11 +29,17 @@ akm migrate apply
 
 In order, every run applies (or, under `status`/`--dry-run`, plans):
 
-1. **config.json in its current shape** (`configFile`): retired and unknown
-   keys dropped, legacy `extraParams` lifted onto first-class fields, the
-   legacy `stashDir`/`sources[]`/`installed` layout converted to
-   `bundles`/`defaultBundle`. Config loading already does all of this in
-   memory; this persists it under a backup.
+1. **config.json in its current shape** (`configFile`): unknown keys dropped,
+   `configVersion` set, and the `engines` / `defaults` form converted to
+   `connections` / `harnesses`. Config loading already does this in memory;
+   this persists it under a backup. The API keys a config still holds in any
+   form akm no longer reads move to `credentials.json` (`configFile.credentials`
+   lists the entry names, never a value), and a leftover `models.json` is folded
+   into the `models` of the connections and harnesses it names. A config older
+   than 0.9.15 (the legacy `stashDir`/`sources[]`/`installed` layout) is not
+   converted by 0.10: it blocks with a message to run `akm migrate apply` under
+   akm 0.9.x first. What each retired key becomes is the table in
+   [Configuration](../reference/configuration.md#the-engines-form).
 2. **Pending `state.db` migrations** (`stateMigrations`). Any command that opens
    `state.db` applies them; this step does it up front and reports what ran. A
    migration that drops schema first copies the file to
@@ -44,7 +50,11 @@ In order, every run applies (or, under `status`/`--dry-run`, plans):
    task source v4 (`taskFiles`) under one backup directory per run. A file
    the planner cannot convert unambiguously is reported `blocked` and left
    alone; the rest still convert.
-4. **Residue sweep**: superseded pre-0.9.0 `.akm` files in the stash and the
+4. **Asset `engine:` keys** (`assetEngineKeys`): the retired `engine:` key on
+   commands, agents, workflows and task sources rewritten to `connection:` or
+   `harness:` by what the name is now, under one backup directory per run. A
+   bundle akm may not change is skipped.
+5. **Residue sweep**: superseded pre-0.9.0 `.akm` files in the stash and the
    transaction-journal, maintenance-barrier, lock-mutex and version-stamp
    files older releases kept under `$DATA`/`$STATE`/`$CONFIG` (`deadResidue`).
 
@@ -63,8 +73,8 @@ same step names):
   "configFile": { "keys": [], "changed": false, "applied": false },
   "stateMigrations": { "pending": [] },
   "taskFiles": { "schemaVersion": 1, "changed": 0, "skipped": 0, "blocked": 0, "files": [] },
-  "deadResidue": { "pending": [] },
-  "ok": true
+  "assetEngineKeys": { "schemaVersion": 1, "changed": 0, "skipped": 0, "files": [] },
+  "deadResidue": { "pending": [] }
 }
 ```
 
@@ -96,13 +106,12 @@ same step names):
 `status` is one of:
 
 - **`current`** — no task-source file needs converting, and no config
-  extraParams lift is pending. A no-op boot.
+  rewrite is pending. A no-op boot.
 - **`ready`** — task sources have eligible changes and no config-lift
   conflict; a real `apply` will clear them.
 - **`blocked`** — at least one item cannot be applied automatically (a
   genuine authoring problem, e.g. a task file the migrator can't rewrite
-  unambiguously, or a config `extraParams` value that conflicts with its
-  first-class field). `blockers` names each one. `apply` still applies
+  unambiguously, or a config that fails validation). `blockers` names each one. `apply` still applies
   everything it *can*, then reports `blocked` and exits non-zero.
 
 A pending `state.db` migration needs no human decision, so it is never
@@ -116,6 +125,7 @@ Key fields:
 | --- | --- |
 | `stateMigrations` | `{ pending: string[] }` under `status`/`--dry-run`; `{ applied: string[], safetyCopyPath?: string }` after a real `apply`. `safetyCopyPath` is present only when a historical-destructive migration ran — see below. |
 | `taskFiles` | `changed`/`skipped`/`blocked` counts and a `files[]` array with each file's `status` and `reason`. |
+| `assetEngineKeys` | `changed`/`skipped` counts and a `files[]` array with each rewritten file's `rewrites` (`at`, `from`, `to`). |
 | `backupPath` / `applied` | Present after a real apply that rewrote at least one task file: the run's backup directory and how many files it rewrote. |
 | `deadResidue` | `{ pending: [...] }` under a read-only run, `{ removed: [...] }` after apply. Each entry carries `relativePath` and `sizeBytes`; a removal entry adds `removed` (a boolean) and an `error` when the delete failed. A failed delete does not set `status` to `blocked`. |
 
@@ -185,7 +195,8 @@ already-current install with nothing pending it is a fast no-op that exits 0.
 
 After the install step it also updates the akm plugin of each agent harness
 present in the image (Claude Code, Codex, OpenCode), reported under `plugins`;
-see [`akm upgrade`](../reference/cli.md#upgrade) for the flags.
+see [`akm upgrade`](../reference/cli.md#upgrade) for the rules, the OpenCode
+version lockstep and the Codex hook-trust entries a headless image needs.
 
 **`--check`** skips the migration step entirely — it only compares versions
 and reports `updateAvailable` (plus the pending per-harness plugin updates). Use it for a version-drift alert, not as your
@@ -240,7 +251,7 @@ akm-migrate apply
 
 `akm migrate status`/`apply` (under the `akm` CLI) are a thin wrapper over
 this same executable — same plan, same exit codes. Reach for `akm-migrate`
-directly when you don't want `akm`'s `--format`/`--shape`/`--detail` output
+directly when you don't want `akm`'s `--format`/`--detail` output
 handling in the way, e.g. a shell script that just wants the raw JSON line
 on stdout and a plain exit code.
 
@@ -266,7 +277,7 @@ rather than rely on `$HOME`-derived defaults:
 | `AKM_CONFIG_DIR` | `config.json`'s directory. |
 | `AKM_DATA_DIR` | Durable, non-regenerable data: **`index.db` and `state.db` live here.** This is the directory a migration snapshot's safety copy sits beside. |
 | `AKM_CACHE_DIR` | Regenerable cache: installed git, npm and website bundles, config backups, task logs. If it is discarded, `akm bundle update --all` restores the bundles. |
-| `AKM_STATE_DIR` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds the scheduler lock, per bundle `akm improve`'s whole-run lock (`locks/`), and a scratch directory for OpenCode model work — see [Storage locations](../architecture/internals/storage-locations.md). Set it too, so those locks sit on the same persistent volume as the rest of akm's state rather than under `$HOME/.local/state/akm`. |
+| `AKM_STATE_DIR` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds the scheduler lock and, per bundle, `akm improve`'s whole-run lock (`locks/`) — see [Storage locations](../architecture/internals/storage-locations.md). Set it too, so those locks sit on the same persistent volume as the rest of akm's state rather than under `$HOME/.local/state/akm`. |
 
 Set all five to paths that persist across container restarts (a mounted
 volume), or `akm migrate apply` will see an empty `state.db` on every boot

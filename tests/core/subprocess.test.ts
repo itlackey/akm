@@ -9,8 +9,9 @@
  * subprocess caller. Here we drive it with a fake {@link SpawnFn} and injected
  * timers so the kill ladder is fully deterministic:
  *
- *   • Timeout escalation: a child that IGNORES SIGTERM is force-killed via
- *     SIGKILL after the grace timer, and the result carries `timedOut`.
+ *   • Timeout escalation: SIGINT first; a child that IGNORES it is sent
+ *     SIGTERM after the grace timer, and one that ignores that is force-killed
+ *     via SIGKILL after another, and the result carries `timedOut`.
  *   • Group-kill fallback: a pid-less fake receives signals through
  *     `proc.kill()` directly (the negative-pid `process.kill` path is skipped).
  *   • Abort: aborting mid-run runs the same ladder and flags `aborted`.
@@ -65,11 +66,11 @@ function fakeTimers() {
 }
 
 /**
- * A fake subprocess that records the signals it receives. When `ignoreSigterm`
- * is set, only SIGKILL resolves `exited` — SIGTERM is swallowed, mimicking a
- * child that refuses graceful shutdown.
+ * A fake subprocess that records the signals it receives. A signal named in
+ * `ignore` is swallowed, mimicking a child that refuses to stop; any other ends
+ * it, as a real child's exit does (`exitCode` set, `exited` resolved).
  */
-function killTrackingSpawn(config: { pid?: number; ignoreSigterm?: boolean; exitOnKill?: number }): {
+function killTrackingSpawn(config: { pid?: number; ignore?: readonly string[]; exitOnKill?: number }): {
   spawn: SpawnFn;
   signals: string[];
 } {
@@ -89,8 +90,9 @@ function killTrackingSpawn(config: { pid?: number; ignoreSigterm?: boolean; exit
       kill(signal?: number | string) {
         const name = String(signal);
         signals.push(name);
-        if (config.ignoreSigterm && name === "SIGTERM") return;
-        resolveExit(config.exitOnKill ?? 137);
+        if (config.ignore?.includes(name)) return;
+        proc.exitCode = config.exitOnKill ?? 137;
+        resolveExit(proc.exitCode);
       },
     };
     return proc;
@@ -142,11 +144,11 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 5));
 }
 
-describe("runManagedSubprocess — timeout escalation (SIGKILL ladder)", () => {
-  test("a child that ignores SIGTERM is SIGKILLed after the grace timer", async () => {
+describe("runManagedSubprocess — timeout escalation (SIGINT, SIGTERM, SIGKILL ladder)", () => {
+  test("a child that ignores SIGINT and SIGTERM is SIGKILLed after two grace timers", async () => {
     const { timers, setTimeoutFn, clearTimeoutFn } = fakeTimers();
     // pid-less fake → killGroup falls back to proc.kill() directly.
-    const { spawn, signals } = killTrackingSpawn({ ignoreSigterm: true, exitOnKill: 137 });
+    const { spawn, signals } = killTrackingSpawn({ ignore: ["SIGINT", "SIGTERM"], exitOnKill: 137 });
 
     const promise = runManagedSubprocess(["hang"], {
       capture: true,
@@ -157,18 +159,24 @@ describe("runManagedSubprocess — timeout escalation (SIGKILL ladder)", () => {
     });
 
     // Timer 0 is the main deadline; timer 1 is the stdout drain, timer 2 the
-    // stderr drain. Fire the deadline → SIGTERM (ignored) + a scheduled SIGKILL.
+    // stderr drain. Fire the deadline → SIGINT (ignored) + a scheduled SIGTERM.
     const deadline = timers.find((t) => t.ms === 100);
     expect(deadline).toBeDefined();
     deadline?.cb();
-    expect(signals).toEqual(["SIGTERM"]);
+    expect(signals).toEqual(["SIGINT"]);
 
-    // The follow-up SIGKILL timer is the 5000 ms grace, and it is unref'ed.
-    const graceTimer = timers.find((t) => t.ms === 5000);
-    expect(graceTimer).toBeDefined();
-    expect(graceTimer?.unrefCalled).toBe(true);
-    graceTimer?.cb();
-    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    // The follow-up timers are 5000 ms graces, and they are unref'ed: the first
+    // sends SIGTERM (ignored) and schedules the second, which sends SIGKILL.
+    const firstGrace = timers.find((t) => t.ms === 5000);
+    expect(firstGrace).toBeDefined();
+    expect(firstGrace?.unrefCalled).toBe(true);
+    firstGrace?.cb();
+    expect(signals).toEqual(["SIGINT", "SIGTERM"]);
+    const secondGrace = timers.filter((t) => t.ms === 5000)[1];
+    expect(secondGrace).toBeDefined();
+    expect(secondGrace?.unrefCalled).toBe(true);
+    secondGrace?.cb();
+    expect(signals).toEqual(["SIGINT", "SIGTERM", "SIGKILL"]);
 
     const result = await promise;
     expect(result.timedOut).toBe(true);
@@ -177,9 +185,29 @@ describe("runManagedSubprocess — timeout escalation (SIGKILL ladder)", () => {
     expect(result.spawnError).toBeUndefined();
   });
 
-  test("honours a custom graceMs for the SIGKILL follow-up", async () => {
+  test("a child that stops on SIGINT is sent nothing more, and the grace timers find it gone", async () => {
     const { timers, setTimeoutFn, clearTimeoutFn } = fakeTimers();
-    const { spawn, signals } = killTrackingSpawn({ ignoreSigterm: true });
+    const { spawn, signals } = killTrackingSpawn({ exitOnKill: 130 });
+
+    const promise = runManagedSubprocess(["hang"], {
+      capture: true,
+      timeoutMs: 100,
+      spawnFn: spawn,
+      setTimeoutFn,
+      clearTimeoutFn,
+    });
+
+    timers.find((t) => t.ms === 100)?.cb();
+    const result = await promise;
+    expect(result.timedOut).toBe(true);
+    expect(result.exitCode).toBe(130);
+    for (const grace of timers.filter((t) => t.ms === 5000)) grace.cb();
+    expect(signals).toEqual(["SIGINT"]);
+  });
+
+  test("honours a custom graceMs for each follow-up", async () => {
+    const { timers, setTimeoutFn, clearTimeoutFn } = fakeTimers();
+    const { spawn, signals } = killTrackingSpawn({ ignore: ["SIGINT", "SIGTERM"] });
 
     const promise = runManagedSubprocess(["hang"], {
       capture: true,
@@ -191,10 +219,9 @@ describe("runManagedSubprocess — timeout escalation (SIGKILL ladder)", () => {
     });
 
     timers.find((t) => t.ms === 50)?.cb();
-    const graceTimer = timers.find((t) => t.ms === 250);
-    expect(graceTimer).toBeDefined();
-    graceTimer?.cb();
-    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    timers.find((t) => t.ms === 250)?.cb();
+    timers.filter((t) => t.ms === 250)[1]?.cb();
+    expect(signals).toEqual(["SIGINT", "SIGTERM", "SIGKILL"]);
     await promise;
   });
 });
@@ -215,14 +242,14 @@ describe("runManagedSubprocess — abort", () => {
     });
 
     // Let the primitive register the abort listener, then abort. The fake dies
-    // on the first (SIGTERM) signal, so the ladder completes immediately.
+    // on the first (SIGINT) signal, so the ladder completes immediately.
     await new Promise((r) => setTimeout(r, 5));
     controller.abort();
 
     const result = await promise;
     expect(result.aborted).toBe(true);
     expect(result.timedOut).toBe(false);
-    expect(signals[0]).toBe("SIGTERM");
+    expect(signals).toEqual(["SIGINT"]);
     expect(result.exitCode).toBe(143);
   });
 
@@ -473,4 +500,34 @@ describe("runManagedSubprocess — capture and failure surfacing", () => {
     expect(capturedStdout).toBe("inherit");
     expect(result.stdout).toBe("");
   });
+});
+
+describe("runManagedSubprocess — termination-signal guard", () => {
+  // #1230: the guard used to go in only after the spawn returned, so a SIGTERM or SIGINT that landed in between met
+  // the default disposition: akm died and the new process group was left running.
+  test.skipIf(!spawnsOwnProcessGroup())(
+    "is in force before a captured child is spawned and gone once it exits",
+    async () => {
+      // The guard stands aside when anything else handles the signals, and the test preload does; lift its listeners.
+      const signals = ["SIGTERM", "SIGINT"] as const;
+      const saved = signals.map((signal) => [signal, process.listeners(signal)] as const);
+      for (const signal of signals) process.removeAllListeners(signal);
+      try {
+        const atSpawn: number[] = [];
+        const { spawn: exitingSpawn, ...ctl } = controllableSpawn();
+        const spawn: SpawnFn = (cmd, options) => {
+          atSpawn.push(...signals.map((signal) => process.listenerCount(signal)));
+          return exitingSpawn(cmd, options);
+        };
+        const run = runManagedSubprocess(["harness"], { capture: true, timeoutMs: null, spawnFn: spawn });
+        ctl.closeStdout();
+        ctl.exit(0);
+        await run;
+        expect(atSpawn).toEqual([1, 1]);
+        expect(signals.map((signal) => process.listenerCount(signal))).toEqual([0, 0]);
+      } finally {
+        for (const [signal, listeners] of saved) for (const listener of listeners) process.on(signal, listener);
+      }
+    },
+  );
 });

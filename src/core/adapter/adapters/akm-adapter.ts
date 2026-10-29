@@ -3,19 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The AKM workspace's own `akm` adapter — akm 0.9.0 chunk-2, WI-B.
+ * The AKM workspace's own `akm` adapter.
  *
- * Implements `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §5.1 (BINDING) +
- * §6 + §7 (the `akm` row) EXACTLY: a BEHAVIOR-PRESERVING PORT that reproduces
+ * A BEHAVIOR-PRESERVING PORT that reproduces
  * TODAY'S classification and placement VERBATIM by REUSING the existing matcher
  * stack. It is NOT re-derived onto frontmatter `type` (that is the sibling
- * `okf` adapter's job, §5), NOT split per-`type` (the 14 AKM formats are `type`
- * VALUES the single `akm` adapter emits, §6/§0.2), and introduces NO new
+ * `okf` adapter's job), NOT split per-`type` (the 14 AKM formats are `type`
+ * VALUES the single `akm` adapter emits), and introduces NO new
  * positional/directory heuristics of its own.
  *
- * ── recognize (§5.1): the sync `runMatchers` reproduction ──
+ * ── recognize: the sync `runMatchers` reproduction ──
  *
- * `file-context.ts#runMatchers` (`:242-265`) is async ONLY because of its lazy
+ * `file-context.ts#runMatchers` is async ONLY because of its lazy
  * `ensureBuiltinsRegistered()` dynamic import; its ARBITRATION is pure and
  * synchronous. We reproduce it here by importing the SAME four builtin matcher
  * functions (`matchers.ts` `extensionMatcher` / `directoryMatcher` /
@@ -32,39 +31,38 @@
  * same arbitration.
  *
  * The winning `MatchResult.renderer` is carried on `documentJson.renderer` so
- * WI-C can wire presentation via `TYPE_PRESENTATION` without a new
- * `IndexDocument` field (WI-C owns presentation).
+ * presentation can be wired via `TYPE_PRESENTATION` without a new
+ * `IndexDocument` field.
  *
- * ── conceptId (§5.1 + ref-grammar decision D-R2): the QUALIFIED spelling ──
+ * ── conceptId: the QUALIFIED spelling ──
  *
  * conceptId = `<stash-subdir>/<canonical-name>` — the placement stash-subdir
  * (`stashDirFor(type)`) followed by the winning type's canonical name
  * (`deriveCanonicalAssetNameFromStashRoot`: skill = its dir, script keeps its
- * extension, Markdown strips `.md`, workflow strips its peer `.md`/`.yml`
+ * extension, Markdown strips `.md`, workflow strips its `.md`
  * extension, env/task strip their ext, and secret/session keep the natural
  * path). For Markdown types this IS the OKF concept ID (path − `.md`); it is
- * the same spelling {@link placeNew} consumes, so
- * recognize/place share one identity (D-R2 resolved the earlier split). The
- * `type` is carried separately on `IndexDocument.type`, per §0.2 (type ≠
+ * the same spelling `readCandidates` consumes, so
+ * recognize/read share one identity. The
+ * `type` is carried separately on `IndexDocument.type` (type ≠
  * identity), and `entry.name` keeps the BARE canonical name for FTS parity.
  *
- * ── placeNew / directoryList / looksLikeRoot: type-driven placement ──
+ * ── readCandidates / directoryList / looksLikeRoot: type-driven placement ──
  *
  * Placement is type-driven (`path-resolver.ts#buildDiskCandidates`: the primary
  * candidate is `assetPathForName(ref.type, join(root, stashDirFor(ref.type)),
- * ref.name)`). §5.1 removes `type` from the ref, so {@link placeNew} recovers
+ * ref.name)`). A ref carries no `type`, so `readCandidates` recovers
  * it from the conceptId's LEADING path segment — the qualified `<stash-subdir>/
- * <name>` form of §1.3 — reverse-mapping that segment against the placement
- * stash-subdir map and then delegating to `assetPathForName`. See the method
- * doc for the recognize/place conceptId-spelling note.
+ * <name>` form — reverse-mapping that segment against the placement
+ * stash-subdir map and then delegating to `assetPathCandidatesForName`.
  *
- * ── validate: base checks only (WI-B) ──
+ * ── validate ──
  *
- * Base validate checks only for this WI (shared `validateChangesWithBaseChecks`
- * — the ported unquoted-colon / missing-updated / stale-path / missing-ref).
- * The per-type linters (SkillLinter/WorkflowLinter/TaskLinter/…) are WI-C.
+ * Shared base checks (`validateChangesWithBaseChecks` — the ported
+ * unquoted-colon / missing-updated / stale-path / missing-ref), then the
+ * per-type linters (SkillLinter/WorkflowLinter/TaskLinter/…) in `akm-lint.ts`.
  *
- * ── Cycle-safety (chunk-3 cutover, baseline 18) ──
+ * ── Cycle-safety ──
  *
  * This module VALUE-imports `matchers.ts` (indexer/walk) for classification and
  * `asset-placement.ts` (core/asset) for placement — delegating to the existing
@@ -76,9 +74,7 @@
  * in production for the frozen `BUILTIN_ADAPTERS` list
  * (`installations.ts#detectAdapterId`, `provider-utils.ts#detectStashRoot`).
  * The adapter is still itself a leaf, since neither the barrel nor the
- * registry import anything that imports back into this file — verified: `bun
- * scripts/lint-import-cycles.ts` reports 0 cycle participants and this module
- * is NOT one.
+ * registry import anything that imports back into this file.
  */
 
 import fs from "node:fs";
@@ -95,7 +91,6 @@ import {
 import type { FileContext } from "../../../indexer/walk/file-context";
 import {
   assetPathCandidatesForName,
-  assetPathForName,
   deriveCanonicalAssetNameFromStashRoot,
   placementTypes,
   stashDirFor,
@@ -103,11 +98,12 @@ import {
 } from "../../asset/asset-placement";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import type { FileChange } from "../../file-change";
+import { sensitiveMarkerPath } from "../../sensitive-marker-path";
 import type { BundleAdapter } from "../bundle-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import { recognizeMatch } from "../recognize-match";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { perTypeValidateChecks, skillDirectoryDiagnostics, workflowYamlSourceDiagnostics } from "./akm-lint";
+import { perTypeValidateChecks, skillDirectoryDiagnostics } from "./akm-lint";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
 import { hashContent, type ParsedForValidate, RESERVED_FILES, runBaseValidateChecks } from "./shared";
 
@@ -119,15 +115,14 @@ import { hashContent, type ParsedForValidate, RESERVED_FILES, runBaseValidateChe
 export { recognizeMatch } from "../recognize-match";
 
 /**
- * OKF reserved structural files (ref-grammar decision D-R6, spec §5.1 /
- * adapter-spec §5.1/§6): `index.md` (directory listing) and `log.md` (update
+ * OKF reserved structural files: `index.md` (directory listing) and `log.md` (update
  * history) are bundle structure at EVERY depth — never a concept document. The
  * `okf` / `llm-wiki` adapters already exclude them (`shared.ts`'s
  * `RESERVED_FILES`); this brings the `akm` adapter into conformance so a
  * `knowledge/index.md` never classifies as a `knowledge` item. Case-insensitive,
  * matched on the bare filename so the exclusion holds at any depth.
  */
-/** True when `name` (a bare file name) is an OKF reserved file, case-insensitively (D-R6). */
+/** True when `name` (a bare file name) is an OKF reserved file, case-insensitively. */
 function isReservedFileName(name: string): boolean {
   return RESERVED_FILES.has(name.toLowerCase());
 }
@@ -162,7 +157,7 @@ function akmStashAbstains(root: string, absPath: string): boolean {
 
   // Skip env `.env` files that have a sibling `.sensitive` marker file.
   if (segments[0] === "env" && (absPath.endsWith(".env") || path.basename(absPath) === ".env")) {
-    if (fs.existsSync(absPath.replace(/\.env$/, ".sensitive"))) return true;
+    if (fs.existsSync(sensitiveMarkerPath(absPath, "env"))) return true;
   }
 
   // Skip secret files that are themselves a `.sensitive` marker, or that have a
@@ -170,7 +165,7 @@ function akmStashAbstains(root: string, absPath: string): boolean {
   // only (their bytes are never read for classification here).
   if (segments[0] === "secrets") {
     if (absPath.endsWith(".sensitive") || absPath.endsWith(".lock")) return true;
-    if (fs.existsSync(`${absPath}.sensitive`)) return true;
+    if (fs.existsSync(sensitiveMarkerPath(absPath, "secret"))) return true;
   }
 
   // Inside a `wikis/<name>/` directory, the root-level infrastructure files
@@ -191,11 +186,11 @@ function stashDirToType(stashDir: string): string | undefined {
 
 /**
  * The search-surface `IndexDocument` fields that have NO first-class `IndexDocument`
- * home (spec §3) and therefore ride `documentJson` so the persist-time fold
- * (`search-fields.ts:28-33`) can still reach them — the exact set
+ * home and therefore ride `documentJson` so the persist-time fold
+ * (`search-fields.ts`) can still reach them — the exact set
  * `buildSearchFields` folds into the `hints`/`content` FTS columns beyond the
  * first-class name/description/tags/aliases/searchHints, plus the provenance the
- * WI-C tests read (renderer/source). Kept as a named list so the fold surface and
+ * tests read (renderer/source). Kept as a named list so the fold surface and
  * the mapping stay in lockstep.
  */
 const DOCUMENT_JSON_CARRIED_FIELDS = [
@@ -217,6 +212,7 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
   "wikiRole",
   "sources",
   "evidenceSources",
+  "evidence",
   // #935: a workflow's step targets and a task's target, read as declared links.
   "uses",
   // D2 (#730): the OKF v0.2 provenance `promoteProposal` stamps onto AKM-native
@@ -228,11 +224,11 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
 
 /**
  * Map the fully-assembled `IndexDocument` (produced by the shared metadata
- * pipeline) onto an `IndexDocument` (spec §3). First-class ranking/embedding
+ * pipeline) onto an `IndexDocument`. First-class ranking/embedding
  * fields land on named IndexDocument fields; every other search-surface or
  * signal field rides `documentJson` (opaque adapter extras) so nothing the
- * ranking/embedding/filter inputs read is lost — the M-b shadow-parity gate.
- * The winning renderer name is carried on `documentJson.renderer` (WI-C contract).
+ * ranking/embedding/filter inputs read is lost.
+ * The winning renderer name is carried on `documentJson.renderer`.
  */
 function indexDocumentFromEntry(
   entry: IndexDocument,
@@ -279,7 +275,7 @@ function conceptIdForRecognizedType(root: string, filePath: string, type: string
 }
 
 function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
-  // D-R6 (spec §5.1): `index.md` / `log.md` are OKF reserved structural files at
+  // `index.md` / `log.md` are OKF reserved structural files at
   // every depth — never items. Excluded BEFORE classification so a directory
   // listing or update log never becomes a `knowledge` (or other) concept.
   if (isReservedFileName(file.fileName)) return null;
@@ -296,7 +292,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   const stashDir = stashDirFor(match.type);
   const canonicalName = stashDir !== undefined ? conceptId.slice(stashDir.length + 1) : conceptId;
   // conceptId = the QUALIFIED `<stash-subdir>/<canonical-name>` spelling
-  // (ref-grammar decision D-R2): the same form `placeNew` consumes; Markdown
+  // (ref-grammar decision D-R2): the same form `readCandidates` consumes; Markdown
   // types use the OKF concept ID (path − .md), while workflows strip either
   // peer source extension. Both branches feed a
   // BARE canonicalName (the abstain fallback is the basename, above), so the
@@ -306,12 +302,12 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   // identity ≠ search text.
   const dirPath = path.dirname(file.absPath);
 
-  // Chunk 5 M-b: recognize now carries the FULL index-time metadata surface
-  // (spec §2/§3), reproducing `buildEntryFromFile`'s flat-walk metadata
+  // recognize carries the FULL index-time metadata surface,
+  // reproducing `buildEntryFromFile`'s flat-walk metadata
   // output by SHARING its P1/P2/P4 assembly and substituting the synchronous
   // `foldRecognizedMetadata` (+ `applyFoldedMetadata`, which replicates the
   // in-place contributor precedence) for the async P3 renderer contributors.
-  // `entry.name` = the BARE canonical name (conceptId minus the D-R2 stash-subdir
+  // `entry.name` = the BARE canonical name (conceptId minus the stash-subdir
   // prefix) so the FTS `name` column
   // matches the pre-0.9.0 indexer (search-behavior parity), NOT the frontmatter
   // title. Parity is by construction — the two paths differ only in the P3 step,
@@ -364,7 +360,6 @@ function renderExecutionSource(c: BundleComponent, file: FileContext): AdapterRe
       executionDefaultsFromFrontmatter(data, {
         kind: document.type === "command" ? "command" : "persona",
         allowTopLevelEngine: true,
-        toolsKeys: ["tools"],
       }),
   });
 }
@@ -372,7 +367,7 @@ function renderExecutionSource(c: BundleComponent, file: FileContext): AdapterRe
 /**
  * A read-only {@link FileContext} backed by an OVERLAY string (a pending
  * change's content) instead of the live filesystem — the `validate` contract
- * ({@link BundleAdapter.validate} doc comment / adapter-spec §12.1) forbids
+ * ({@link BundleAdapter.validate} doc comment) forbids
  * reading the live FS. It mirrors `buildFileContext`'s eager path-field
  * derivation exactly (so the matchers classify identically) and serves the
  * overlay bytes from `content()`/`frontmatter()`. `stat()` throws: no matcher
@@ -416,7 +411,7 @@ function buildOverlayContext(root: string, relPathInput: string, raw: string): F
 }
 
 /**
- * `validate` (spec §6) = shared base checks + the winning `type`'s per-type
+ * `validate` = shared base checks + the winning `type`'s per-type
  * extra checks, reproducing today's `akmLint`/`getLinterForType` dispatch
  * byte-for-byte (the FROZEN `lint/all-types.json` `perType` golden is the gate).
  *
@@ -441,13 +436,6 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
     const match = recognizeMatch(overlay);
     const type = match?.type;
 
-    // A complete GitHub-shaped `on` + `jobs` document is workflow-owned. It
-    // never flows through task-v3 parsing or Markdown base/frontmatter checks.
-    if (type === "workflow" && overlay.ext === ".yml") {
-      diagnostics.push(...workflowYamlSourceDiagnostics(change.path, raw, change.path, c.root).errors);
-      continue;
-    }
-
     // Task parsing belongs to perTypeValidateChecks' canonical v3 parser. Base
     // checks need only a frontmatter-free placeholder here.
     let parsed: ParsedForValidate;
@@ -469,7 +457,6 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
         body: parsed.content,
         ext: overlay.ext,
         ctx,
-        workspaceRoot: c.root,
       })),
     );
     diagnostics.push(...(await skillDirectoryDiagnostics(change.path, seenSkillDirs, ctx)));
@@ -545,39 +532,6 @@ export const akmAdapter: BundleAdapter = {
       path: candidatePath,
       conceptId: posix,
     }));
-  },
-
-  /**
-   * Type-driven placement (§5.1), reproducing `path-resolver.ts#buildDiskCandidates`:
-   * the primary candidate is
-   * `assetPathForName(type, join(root, stashDirFor(type)), name)`.
-   *
-   * §5.1 removes `type` from the ref, so the winning type is recovered from the
-   * conceptId's LEADING path segment — the §1.3 qualified `<stash-subdir>/<name>`
-   * form (e.g. `knowledge/http-caching`, `workflows/release`, `skills/<dir>`).
-   * The leading segment is reverse-mapped against the placement stash-subdir map;
-   * the remainder is the per-type name handed to `assetPathForName`. An
-   * unqualified conceptId (no recognized leading stash-subdir) falls back to a
-   * direct `<root>/<conceptId>.md` — the same `${name}.md` fallback
-   * `buildDiskCandidates` carries (`preserveDirectNameFallback`).
-   *
-   * `recognize()` emits the SAME qualified spelling (ref-grammar decision
-   * D-R2), so recognize/place share one canonical identity — the earlier
-   * bare-vs-qualified split is resolved.
-   */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    const posix = conceptId.replace(/\\/g, "/");
-    const slash = posix.indexOf("/");
-    if (slash > 0) {
-      const head = posix.slice(0, slash);
-      const rest = posix.slice(slash + 1);
-      const type = stashDirToType(head);
-      if (type !== undefined && rest.length > 0) {
-        const typeDir = path.join(c.root, head);
-        return assetPathForName(type, typeDir, rest);
-      }
-    }
-    return path.join(c.root, `${posix}.md`);
   },
 
   /** The AKM workspace's owned stash subdirs (§7): the placement stash-subdir names, feeding git exact-path staging. */

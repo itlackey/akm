@@ -85,22 +85,3 @@ export function parseRefPrefixQuery(query: string): { bundle?: string; conceptId
   if (rest.endsWith("/") && !rest.includes("//")) return { bundle, conceptIdPrefix: rest };
   return null;
 }
-
-/**
- * Recognize the retired `<type>:` / `<type>:<prefix>/` browse grammar so the
- * caller can name the replacement spelling rather than letting the query
- * degrade silently into a keyword search — the exact silent failure D4 removes.
- * Shape recognition only; mapping the type to its conceptId root belongs to the
- * caller, which keeps this module dependency-free.
- */
-export function parseRetiredTypePrefixQuery(query: string): { type: string; rest: string } | null {
-  const trimmed = query.trim();
-  if (trimmed.length === 0 || /\s/.test(trimmed) || trimmed.includes("//")) return null;
-
-  const colon = trimmed.indexOf(":");
-  if (colon <= 0) return null;
-
-  const rest = trimmed.slice(colon + 1);
-  if (rest !== "" && !rest.endsWith("/")) return null;
-  return { type: trimmed.slice(0, colon), rest };
-}

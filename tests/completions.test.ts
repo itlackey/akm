@@ -133,7 +133,7 @@ describe("completions command", () => {
 
   test("offers command names as help topics", () => {
     expect(script).toContain('"akm help"');
-    for (const topic of ["bundle", "env", "task", "agents", "migrate"]) {
+    for (const topic of ["bundle", "env", "task", "migrate"]) {
       expect(script).toContain(`"akm help ${topic}"`);
     }
   });
@@ -145,14 +145,7 @@ describe("completions command", () => {
 
   test("contains flag value completions for --detail", () => {
     expect(script).toContain("--detail)");
-    expect(script).toContain("brief normal full");
-    // `summary` is a --shape value, not a detail level.
-    expect(script).not.toContain("brief normal full summary");
-  });
-
-  test("contains flag value completions for --shape", () => {
-    expect(script).toContain("--shape)");
-    expect(script).toContain("human agent summary");
+    expect(script).toContain("brief normal full agent");
   });
 
   test("contains flag value completions for --type", () => {

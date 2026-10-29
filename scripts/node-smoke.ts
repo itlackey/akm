@@ -23,7 +23,7 @@
 // deterministic, and exits non-zero on the first failed step so CI fails loudly.
 //
 // Prereqs (the build + CI matrix wire these up): `bun run build` has produced
-// dist/, and `better-sqlite3` is installed & compiled for the active Node.
+// dist/, and `better-sqlite3` is installed (ci.yml installs it with npm).
 //
 // Usage:  node — NOT bun — runs this indirectly via the spawned CLI; the script
 // itself is launched with bun (`bun scripts/node-smoke.ts`) but every assertion
@@ -46,25 +46,13 @@ if (!existsSync(cliEntry)) {
 }
 
 /**
- * Preflight the native SQLite binding before running a single step (#790).
+ * Preflight the native SQLite binding before running a single step.
  *
- * Two ways this suite can end up exercising the wrong binding, both of which
- * used to surface only as a downstream mystery — an opaque `Unable to acquire
- * config lock: … was compiled against a different Node.js version` from some
- * unrelated command, or a teardown crash reported as a missing substring:
- *
- *   1. WRONG VERSION. `better-sqlite3` compiles from source whenever there is
- *      no prebuilt binary for the running Node's ABI, and a from-source build
- *      against Node 24.19+ headers aborts at teardown. The version under test
- *      must therefore be the one package.json declares, not whatever happened
- *      to be resolved.
- *   2. WRONG ABI. `npm install <pkg>@<version>` is a NO-OP when that exact
- *      version is already present — it does not re-run the install script. So
- *      a binding built for a different Node (e.g. by `bun install`, whose
- *      `prebuild-install` runs under whichever `node` is on PATH) survives
- *      unrebuilt into a run against a different `AKM_SMOKE_NODE`.
- *
- * Loading the module under the smoke's own `node` catches both.
+ * The version under test must be the one package.json declares, not whatever
+ * happened to be resolved: this job exists to prove the binding npm users get
+ * works. Loading the module under the smoke's own `node` checks both that it is
+ * the declared version and that its prebuilt binding loads here, instead of the
+ * failure surfacing later as a downstream mystery in some unrelated step.
  */
 {
   const declared = (
@@ -83,7 +71,7 @@ if (!existsSync(cliEntry)) {
     );
     process.exit(1);
   }
-  const remedy = `rm -rf node_modules/better-sqlite3 && npm install --no-save better-sqlite3@${declared}`;
+  const remedy = `npm install --no-save better-sqlite3@${declared}`;
   const probe = spawnSync(
     nodeBin,
     [
@@ -113,8 +101,7 @@ if (!existsSync(cliEntry)) {
     console.error(
       `node-smoke: better-sqlite3@${installed} is installed but package.json declares ${declared}.\n` +
         "  This job exists to prove the binding npm users actually get works, so it must test\n" +
-        "  the declared spec exactly. Reinstall it (npm skips its install script when the\n" +
-        `  version already matches): ${remedy}`,
+        `  the declared spec exactly. Install it: ${remedy}`,
     );
     process.exit(1);
   }

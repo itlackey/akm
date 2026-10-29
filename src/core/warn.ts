@@ -18,6 +18,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 let quiet = false;
+/** Calls inside {@link withQuiet}; counted so overlapping calls cannot leave the flag flipped. */
+let quietScopes = 0;
 let verbose = false;
 let logFilePath: string | undefined;
 
@@ -48,7 +50,22 @@ export function resetQuiet(): void {
 }
 
 export function isQuiet(): boolean {
-  return quiet;
+  return quiet || quietScopes > 0;
+}
+
+/**
+ * Run `fn` with stderr diagnostics suppressed (the log file sink still
+ * receives them), then restore. For in-process callers (`src/api.ts`) that
+ * must stay silent without touching the host's `--quiet` state: a depth count
+ * rather than save/restore of the flag keeps overlapping async calls correct.
+ */
+export async function withQuiet<T>(fn: () => Promise<T>): Promise<T> {
+  quietScopes++;
+  try {
+    return await fn();
+  } finally {
+    quietScopes--;
+  }
 }
 
 /**
@@ -121,7 +138,7 @@ export function info(...args: unknown[]): void {
     return;
   }
   appendToLogFile("INFO", args);
-  if (!quiet) {
+  if (!isQuiet()) {
     console.warn(...args);
   }
 }
@@ -137,7 +154,7 @@ export function warn(...args: unknown[]): void {
     return;
   }
   appendToLogFile("WARN", args);
-  if (!quiet) {
+  if (!isQuiet()) {
     console.warn(...args);
   }
 }
@@ -170,7 +187,7 @@ export function error(...args: unknown[]): void {
     return;
   }
   appendToLogFile("ERROR", args);
-  if (!quiet) {
+  if (!isQuiet()) {
     console.error(...args);
   }
 }

@@ -2,9 +2,9 @@
  * 07 P0-2 — the LLM-as-judge quality gate must fail CLOSED.
  *
  * When the judge cannot render a verdict (no LLM configured, parse failure, or
- * timeout/error), minted content must be REJECTED, not passed through. An
- * unverifiable judge waving content into the stash is exactly the injection
- * surface this flip removes.
+ * timeout/error), minted content must not pass: it is routed to review (score -1,
+ * `reviewNeeded`), so a person decides. An unverifiable judge waving content
+ * into the stash is exactly the injection surface this flip removes.
  */
 
 import { describe, expect, mock, test } from "bun:test";
@@ -16,8 +16,6 @@ import {
   runReflectQualityJudge,
 } from "../../../src/commands/improve/stage";
 import type { AkmConfig } from "../../../src/core/config/config";
-import { ConfigError } from "../../../src/core/errors";
-import { withEnv } from "../../_helpers/sandbox";
 
 function configWithLlm(): AkmConfig {
   return {
@@ -25,14 +23,12 @@ function configWithLlm(): AkmConfig {
     stashDir: "/tmp/does-not-matter",
     sources: [],
     defaultWriteTarget: "stash",
-    engines: {
+    connections: {
       default: {
-        kind: "llm",
         endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
+        models: { fast: "test-model" },
       },
     },
-    defaults: { llmEngine: "default" },
   } as unknown as AkmConfig;
 }
 
@@ -42,8 +38,6 @@ function configWithoutLlm(): AkmConfig {
     stashDir: "/tmp/does-not-matter",
     sources: [],
     defaultWriteTarget: "stash",
-    engines: {},
-    defaults: {},
   } as unknown as AkmConfig;
 }
 
@@ -61,13 +55,13 @@ describe("runLessonQualityJudge — fail-CLOSED (07 P0-2)", () => {
     expect(result.reviewNeeded).toBe(true);
   });
 
-  test("no LLM configured → pass:false (score -1), not routed to review (nothing was generated yet)", async () => {
+  test("no LLM configured → pass:false, routed to review (score -1, reviewNeeded): a person judges it", async () => {
     const result = await runLessonQualityJudge(configWithoutLlm(), "some lesson body", "some source body", async () => {
       throw new Error("chat must not be called when no LLM is configured");
     });
     expect(result.pass).toBe(false);
     expect(result.score).toBe(-1);
-    expect(result.reviewNeeded).toBeUndefined();
+    expect(result.reviewNeeded).toBe(true);
   });
 
   test("judge throws (timeout/error) → pass:false, routed to review (score -1, reviewNeeded)", async () => {
@@ -77,31 +71,6 @@ describe("runLessonQualityJudge — fail-CLOSED (07 P0-2)", () => {
     expect(result.pass).toBe(false);
     expect(result.score).toBe(-1);
     expect(result.reviewNeeded).toBe(true);
-  });
-
-  test("missing required symbolic credential remains a hard config failure", async () => {
-    const config = configWithLlm();
-    config.engines = {
-      default: {
-        ...config.engines?.default,
-        kind: "llm",
-        endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
-        apiKey: "$AKM_QUALITY_REQUIRED_KEY",
-      },
-    };
-    let chatCalls = 0;
-
-    const failure = withEnv({ AKM_QUALITY_REQUIRED_KEY: undefined }, () =>
-      runLessonQualityJudge(config, "some lesson body", "some source body", async () => {
-        chatCalls += 1;
-        return JSON.stringify({ score: 4, reason: "wrong" });
-      }),
-    );
-
-    await expect(failure).rejects.toBeInstanceOf(ConfigError);
-    await expect(failure).rejects.toMatchObject({ code: "INVALID_CONFIG_FILE" });
-    expect(chatCalls).toBe(0);
   });
 
   test("real passing verdict still passes (score >= 3.5)", async () => {
@@ -121,7 +90,7 @@ describe("runLessonQualityJudge — fail-CLOSED (07 P0-2)", () => {
       async (connection, _messages, options) => {
         // Resolved execution canonicalizes inference onto the lowered
         // connection; assert the same effective provider value.
-        enableThinking = options?.enableThinking ?? connection.enableThinking;
+        enableThinking = options?.enableThinking ?? connection.inference?.enableThinking;
         return JSON.stringify({ score: 4.5, reason: "adds new info" });
       },
     );
@@ -205,7 +174,7 @@ describe("buildReflectJudgePrompt", () => {
 });
 
 describe("runLessonQualityJudge — pinned temperature (R13)", () => {
-  test("the request carries temperature: 0 regardless of the runner's configured temperature", async () => {
+  test("the request carries temperature: 0 regardless of the connection's configured temperature", async () => {
     let receivedTemperature: number | undefined;
     // Simulate a runner resolved at a non-zero generation temperature (0.3):
     // the judge request must still pin 0, not inherit this.
@@ -214,22 +183,20 @@ describe("runLessonQualityJudge — pinned temperature (R13)", () => {
       stashDir: "/tmp/does-not-matter",
       sources: [],
       defaultWriteTarget: "stash",
-      engines: {
+      connections: {
         default: {
-          kind: "llm",
           endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "test-model",
+          models: { fast: "test-model" },
           temperature: 0.3,
         },
       },
-      defaults: { llmEngine: "default" },
     } as unknown as AkmConfig;
     const result = await runLessonQualityJudge(
       config,
       "some lesson body",
       "some source body",
       async (connection, _messages, options) => {
-        receivedTemperature = options?.temperature ?? (connection as unknown as { temperature?: number }).temperature;
+        receivedTemperature = options?.temperature ?? connection.inference?.temperature;
         return JSON.stringify({ score: 4.5, reason: "adds new info" });
       },
     );
@@ -491,6 +458,15 @@ describe("runLessonQualityJudge — a criterion at 2 or below rejects, grounding
     expect(prompt).not.toContain("BEYOND_WINDOW");
   });
 
+  test("a lesson update is judged as an edit: its added lines against the lesson it extends, which is not a listed asset", () => {
+    const prompt = buildJudgePrompt("merged body", "source body", undefined, undefined, "existing body");
+    expect(prompt).toContain("Compare each added line");
+    expect(prompt).toContain("Existing lesson that the proposed lesson extends");
+    expect(prompt).toContain("existing body");
+    expect(prompt).not.toContain("Existing assets nearest the new lesson (they may");
+    expect(buildJudgePrompt("merged body", "source body")).not.toContain("Compare each added line");
+  });
+
   test("the existing assets shown to the judge are lessons, knowledge notes or skills near the lesson", () => {
     const prompt = buildJudgePrompt("lesson body", "source body", [{ ref: "skills/deploy", content: "Deploy steps." }]);
 
@@ -542,28 +518,10 @@ describe("runReflectQualityJudge — per-criterion scores (R16)", () => {
 });
 
 describe("runLessonQualityJudge / runReflectQualityJudge — responseSchema (JUDGE2)", () => {
-  function configWithSchemaSupport(supportsJsonSchema: boolean): AkmConfig {
-    return {
-      semanticSearchMode: "auto",
-      stashDir: "/tmp/does-not-matter",
-      sources: [],
-      defaultWriteTarget: "stash",
-      engines: {
-        default: {
-          kind: "llm",
-          endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "test-model",
-          supportsJsonSchema,
-        },
-      },
-      defaults: { llmEngine: "default" },
-    } as unknown as AkmConfig;
-  }
-
-  test("lesson judge sends a responseSchema with exactly its three expected keys when supportsJsonSchema: true", async () => {
+  test("lesson judge sends a responseSchema with exactly its three expected keys", async () => {
     let receivedSchema: Record<string, unknown> | undefined;
     const result = await runLessonQualityJudge(
-      configWithSchemaSupport(true),
+      configWithLlm(),
       "some lesson body",
       "some source body",
       async (_connection, _messages, options) => {
@@ -581,29 +539,10 @@ describe("runLessonQualityJudge / runReflectQualityJudge — responseSchema (JUD
     expect(Object.keys(scoresSchema.properties)).toEqual(["reusable", "nonRedundancy", "grounding"]);
   });
 
-  test("lesson judge sends no responseSchema when the runner does not opt into supportsJsonSchema", async () => {
-    let receivedSchema: Record<string, unknown> | undefined;
-    let schemaKeyPresent = true;
-    const result = await runLessonQualityJudge(
-      configWithSchemaSupport(false),
-      "some lesson body",
-      "some source body",
-      async (_connection, _messages, options) => {
-        schemaKeyPresent = Boolean(options && Object.hasOwn(options, "responseSchema"));
-        receivedSchema = options?.responseSchema;
-        return JSON.stringify({ scores: { reusable: 4, nonRedundancy: 4, grounding: 4 }, reason: "ok" });
-      },
-    );
-
-    expect(result.pass).toBe(true);
-    expect(schemaKeyPresent).toBe(false);
-    expect(receivedSchema).toBeUndefined();
-  });
-
   test("reflect judge's responseSchema uses the reflect judge's own criteria keys", async () => {
     let receivedSchema: Record<string, unknown> | undefined;
     const result = await runReflectQualityJudge(
-      configWithSchemaSupport(true),
+      configWithLlm(),
       "candidate content",
       "source content",
       [],

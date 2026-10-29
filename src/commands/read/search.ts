@@ -66,6 +66,7 @@ function duplicateConceptWarnings(hits: SourceSearchHit[], defaultBundle?: strin
 
 interface SearchEventLoggingInput {
   skipLogging?: boolean;
+  readOnly?: boolean;
   eventSource?: UsageEventSource;
   attributionProjection?: AttributionProjection;
 }
@@ -80,7 +81,7 @@ export async function akmSearch(input: {
    * whose `entry.scope.<key>` exactly equals the supplied value. Unfiltered
    * queries match entries with or without scope metadata.
    *
-   * Filtering narrows the result set; ranking is unchanged.
+   * Eligibility is applied before each channel's candidate budget.
    */
   filters?: StashEntryScope;
   /**
@@ -92,8 +93,8 @@ export async function akmSearch(input: {
   /**
    * Belief-state filter. Applies to ANY entry carrying a `beliefState`
    * (memory OR knowledge — 03), so flagged knowledge is filtered too:
-   * - `all` keeps current + historical hits (default)
-   * - `current` keeps active/asserted/unspecified beliefs (and unflagged entries)
+   * - `all` keeps current + historical hits
+   * - `current` keeps active/asserted/unspecified beliefs (and unflagged entries; default)
    * - `historical` keeps deprecated/contradicted/superseded/archived beliefs
    */
   belief?: BeliefFilterMode;
@@ -109,6 +110,12 @@ export async function akmSearch(input: {
    * search history with programmatic lookups.
    */
   skipLogging?: boolean;
+  /**
+   * Read without side effects (`akm ui`): no usage events and no inline index
+   * build, so the search never counts as demand and never writes `index.db`
+   * or `state.db`. Implies `skipLogging`.
+   */
+  readOnly?: boolean;
   /**
    * Event source for usage logging. Defaults to `"user"`. Set to
    * `"improve"` when called from improve's reflect/distill agents
@@ -182,7 +189,7 @@ export async function akmSearch(input: {
 
   const filters = normalizeScopeFilters(input.filters);
   const includeProposed = input.includeProposed === true;
-  const belief = input.belief ?? "all";
+  const belief = parseBeliefFilterMode(input.belief ?? "current");
   const localResult =
     source === "registry"
       ? undefined
@@ -198,11 +205,12 @@ export async function akmSearch(input: {
           beliefFilter: belief,
           // When `--from <name>` narrowed the source list above, propagate
           // that intent down to the database layer so FTS/vector hits from
-          // sources outside the narrowed set are filtered out post-ranking.
+          // sources outside the narrowed set cannot consume candidate budgets.
           // Without this, the index (which spans every configured source)
           // would leak hits from sources the caller did not request.
           restrictToSources: namedSourceName !== undefined,
           includeExcludedTypes: input.includeSessions === true,
+          readOnly: input.readOnly,
         });
 
   const registryResult =
@@ -294,7 +302,7 @@ function maybeLogSearchEvent(
   response: SearchResponse,
   mode?: "semantic" | "keyword",
 ): void {
-  if (input.skipLogging) return;
+  if (input.skipLogging || input.readOnly) return;
   logSearchEvent(query, response, mode, input.eventSource, input.attributionProjection);
 }
 
@@ -423,8 +431,8 @@ function logSearchEvent(
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Validate a named `--from` against the bundle-derived source list (a
- * named source is a `bundles` key, matched via its derived
+ * Validate a named `--from` against the bundle-derived source list (a named
+ * source is a `bundles` key, matched via its derived
  * source entry's `name`, or an exact path). Throws INVALID_SOURCE_VALUE with
  * the known names before any stash access can fail differently.
  */
@@ -476,17 +484,6 @@ function normalizeLimit(limit?: number): number {
 export function parseSearchSource(source: SearchSource | string | undefined): SearchSource | string {
   if (source === "local" || source === "registry" || source === "all") return source;
   if (typeof source === "undefined") return "local";
-  // `--source stash`/`--source both` were renamed to `--from local`/`--from
-  // all`. Reject the retired values explicitly — otherwise
-  // they fall through to the named-source lookup below and surface as a
-  // misleading "no source named stash/both" error instead of naming the
-  // rename.
-  if (source === "stash") {
-    throw new UsageError('"stash" was renamed to "local" in 0.9. Use `--from local` instead.', "INVALID_FLAG_VALUE");
-  }
-  if (source === "both") {
-    throw new UsageError('"both" was renamed to "all" in 0.9. Use `--from all` instead.', "INVALID_FLAG_VALUE");
-  }
   // Pass through unknown strings — they may be valid named sources.
   // `akmSearch` will validate against config.sources and throw a UsageError
   // with a helpful message if the name isn't found.
@@ -507,7 +504,7 @@ export function parseBeliefFilterMode(value: string | undefined): BeliefFilterMo
  * `undefined` when nothing meaningful remains, so callers don't pay for an
  * empty-filter post-walk in `searchLocal`.
  */
-function normalizeScopeFilters(raw: StashEntryScope | undefined): StashEntryScope | undefined {
+export function normalizeScopeFilters(raw: StashEntryScope | undefined): StashEntryScope | undefined {
   if (!raw) return undefined;
   const out: StashEntryScope = {};
   for (const key of ["user", "agent", "run", "channel"] as const) {

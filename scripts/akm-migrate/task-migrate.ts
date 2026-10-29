@@ -6,18 +6,14 @@
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
-import { deriveBundleId } from "../../src/core/bundle-id";
 import { type AkmConfig, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
-import { bundleComponentConfig, bundlesToSourceEntries } from "../../src/core/config/config-sources";
 import { ConfigError } from "../../src/core/errors";
 import { getDataDir } from "../../src/core/paths";
-import { resolveWritable } from "../../src/core/write-source";
-import { lockContentRootFor } from "../../src/integrations/lockfile";
-import type { TaskToV4MigrationPlan } from "../../src/tasks/source/task-to-v4";
+import { type BundleRoot, bundleRoots } from "./bundle-roots";
+import type { TaskToV4MigrationPlan } from "./migrate/task-to-v4";
 import { applyTaskFilesPlan, inspectTaskFiles, planTaskFilesMigration, type TaskFileRoot } from "./migrate/task-files";
 
 export interface TaskFileSummary {
@@ -45,107 +41,25 @@ export interface TaskFilesMigrationStatus {
   taskFiles: TaskFilesSummary;
   backupPath?: string;
   applied?: number;
+  /** Files that changed after they were planned and were left as they are: a run again plans them afresh. */
+  conflicts?: string[];
 }
 
-function expandTilde(value: string): string {
-  if (value === "~") return os.homedir();
-  if (value.startsWith("~/") || value.startsWith("~\\")) return path.join(os.homedir(), value.slice(2));
-  return value;
-}
-
-function existingDirectory(target: string): boolean {
-  try {
-    return fs.statSync(target).isDirectory();
-  } catch (cause) {
-    if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw cause;
-  }
-}
-
-/**
- * Reconcile two bundle roots that resolve to the same directory on disk
- * (issue #870 — e.g. `AKM_BUNDLE_DIR` pointed at a directory already
- * configured under a different bundle id). When the two roots agree on
- * everything that matters for migration (writability, layout) the
- * duplicate is silently dropped so each task file is enumerated once,
- * rather than surfacing as the opaque `duplicate task migration file path`
- * error further down the pipeline. When they disagree, name both bundle
- * ids and the shared path so the operator knows exactly what to fix.
- */
-function reconcileDuplicateRoot(existing: TaskFileRoot, candidate: TaskFileRoot, sharedPath: string): void {
-  if (existing.writable === candidate.writable && existing.layout === candidate.layout) return;
-  throw new ConfigError(
-    `Bundles "${existing.bundleId}" and "${candidate.bundleId}" both resolve to the same directory ` +
-      `(${sharedPath}) but disagree on writable/adapter settings. Two bundle ids configured for one ` +
-      "directory must have matching settings, or one of them removed — run `akm bundle list` to see both.",
-    "INVALID_CONFIG_FILE",
-  );
-}
-
-function taskRoots(config: AkmConfig, resolutionBase = process.cwd()): TaskFileRoot[] {
-  const sources = new Map((bundlesToSourceEntries(config) ?? []).map((source) => [source.name, source]));
-  const rootsByPath = new Map<string, TaskFileRoot>();
-  for (const [bundleId, bundle] of Object.entries(config.bundles ?? {})) {
-    if (bundle.enabled === false) continue;
-    const source = sources.get(bundleId);
-    if (!source) continue;
-    const configuredRoot =
-      source.type === "filesystem" && source.path
-        ? path.resolve(resolutionBase, expandTilde(source.path))
-        : lockContentRootFor(bundleId, source.type);
-    if (!configuredRoot || !existingDirectory(configuredRoot)) continue;
-
-    const bundleRoot = path.resolve(configuredRoot);
-    const component = bundleComponentConfig(bundle);
-    const componentRoot = path.resolve(bundleRoot, component?.root ?? ".");
-    const relative = path.relative(bundleRoot, componentRoot);
-    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      throw new ConfigError(
-        `Task migration component root ${componentRoot} escapes bundle ${bundleId} at ${bundleRoot}.`,
-        "INVALID_CONFIG_FILE",
-      );
-    }
-    if (!existingDirectory(componentRoot)) continue;
-
-    const candidate = taskRoot(bundleId, bundleRoot, componentRoot, component?.adapter, () =>
-      component?.writable ?? resolveWritable(source),
-    );
-    if (!candidate) continue;
-    const existing = rootsByPath.get(componentRoot);
-    if (existing) {
-      reconcileDuplicateRoot(existing, candidate, componentRoot);
-      continue;
-    }
-    rootsByPath.set(componentRoot, candidate);
-  }
-
-  // The working stash `AKM_BUNDLE_DIR` selects when no bundle names it: the
-  // runtime reads its tasks too, so its v2/v3 files must convert here.
-  const envStash = process.env.AKM_BUNDLE_DIR?.trim();
-  if (envStash && existingDirectory(envStash)) {
-    const stashRoot = path.resolve(envStash);
-    if (!rootsByPath.has(stashRoot)) {
-      const bundleId = deriveBundleId(undefined, stashRoot, new Set(Object.keys(config.bundles ?? {})));
-      // The runtime reads this stash with the adapter it detects, or `akm`.
-      const candidate = taskRoot(bundleId, stashRoot, stashRoot, detectAdapterId(stashRoot), () => true);
-      if (candidate) rootsByPath.set(stashRoot, candidate);
-    }
-  }
-  return [...rootsByPath.values()];
+/** Every enabled bundle's task directory, and the working stash's: the roots whose adapter holds task sources. */
+function taskRoots(config: AkmConfig): TaskFileRoot[] {
+  return bundleRoots(config).flatMap((root) => {
+    const tasks = taskRoot(root);
+    return tasks ? [tasks] : [];
+  });
 }
 
 /** One task root, or none when its adapter holds no tasks. */
-function taskRoot(
-  bundleId: string,
-  bundleRoot: string,
-  componentRoot: string,
-  configuredAdapter: string | undefined,
-  writable: () => boolean,
-): TaskFileRoot | undefined {
-  const adapter = configuredAdapter ?? detectAdapterId(componentRoot, "");
-  if (!configuredAdapter && adapter === "") {
+function taskRoot(candidate: BundleRoot): TaskFileRoot | undefined {
+  const { bundleId, bundleRoot, root, writable } = candidate;
+  const adapter = candidate.adapter ?? detectAdapterId(root, "");
+  if (!candidate.adapter && adapter === "") {
     const flatTasks = fs
-      .readdirSync(componentRoot, { withFileTypes: true })
+      .readdirSync(root, { withFileTypes: true })
       .filter((entry) => entry.isFile() && entry.name.endsWith(".yml"))
       .map((entry) => entry.name)
       .sort();
@@ -157,13 +71,7 @@ function taskRoot(
     }
   }
   if (adapter !== "akm" && adapter !== "akm-task") return undefined;
-  return {
-    bundleId,
-    root: componentRoot,
-    bundleRoot,
-    writable: writable(),
-    layout: adapter === "akm-task" ? "akm-task" : "akm-stash",
-  };
+  return { bundleId, root, bundleRoot, writable, layout: adapter === "akm-task" ? "akm-task" : "akm-stash" };
 }
 
 function summarize(plan: TaskToV4MigrationPlan): TaskFilesSummary {
@@ -221,6 +129,11 @@ export function applyTaskFilesMigration(): TaskFilesMigrationStatus {
     if (before.result.taskFiles.changed === 0) return before.result;
     const backupPath = path.join(getDataDir(), "backups", "tasks", `${Date.now()}-${randomUUID()}`);
     const applied = applyTaskFilesPlan(before.plan, { backupRoot: backupPath });
-    return { ...inspectCurrent().result, backupPath, applied: applied.changed.length };
+    return {
+      ...inspectCurrent().result,
+      backupPath,
+      applied: applied.changed.length,
+      ...(applied.conflicts.length > 0 ? { conflicts: [...applied.conflicts] } : {}),
+    };
   });
 }

@@ -56,10 +56,7 @@ function makeEnv(stashDir: string): TestEnv {
     JSON.stringify({
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      engines: {
-        test: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "test" },
-      },
-      defaults: { llmEngine: "test" },
+      connections: { test: { endpoint: "https://example.test/v1/chat/completions", models: { fast: "test" } } },
     }),
   );
   return {

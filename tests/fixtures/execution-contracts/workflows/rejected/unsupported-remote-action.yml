@@ -1,9 +1,0 @@
-name: Unsupported remote action
-on:
-  workflow_dispatch:
-jobs:
-  contract:
-    runs-on: [self-hosted]
-    steps:
-      - id: checkout
-        uses: actions/checkout@v4

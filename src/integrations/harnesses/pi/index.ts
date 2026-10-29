@@ -3,41 +3,34 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Pi coding-agent CLI harness (P2 integration, plan §"The adapter contract").
- *
- * Per-harness barrel gathering the Pi integration surfaces:
- *   - agent command builder → ./agent-builder.ts    (piBuilder)
- *   - result extractor      → ./result-extractor.ts (piResultExtractor)
- *
- * It also defines {@link PiHarness}, the {@link AkmHarness} descriptor that
- * `HARNESS_REGISTRY` registers. Dispatch-only: no native session-log reader or
- * config importer yet.
+ * Pi coding-agent CLI (`pi`). `-p` is its print mode, and it reads the message from
+ * piped stdin: as an argument a prompt that starts with `-`, `--` or `@` is taken as an
+ * option or a file include. The persona is appended to pi's own system prompt, which
+ * is the one that explains pi's tools.
  */
 
-import { caps } from "../shared";
-import { BaseHarness } from "../types";
-import { piBuilder } from "./agent-builder";
-import { piResultExtractor } from "./result-extractor";
+import {
+  type AgentDispatchRequest,
+  type AkmHarness,
+  type BuiltCommand,
+  type HarnessSpawn,
+  withoutModelFlag,
+} from "../harness";
 
-export { PI_PLATFORM, piBuilder } from "./agent-builder";
-export { piResultExtractor } from "./result-extractor";
-
-/**
- * Pi coding-agent CLI.
- *
- * Canonical id is `'pi'`; no alias or distinct runtime identity.
- */
-export class PiHarness extends BaseHarness {
+export class PiHarness implements AkmHarness {
   readonly id = "pi" as const;
   readonly displayName = "Pi";
-  readonly agentBuilder = piBuilder;
-  readonly resultExtractor = piResultExtractor;
-  // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // Session-id env marker only — the matrix's bare PI_* presence vars must
-  // not stamp identity onto manual runs (see `AkmHarness.identityEnv`).
-  readonly identityEnv = ["PI_SESSION_ID"] as const;
-  readonly capabilities = caps({
-    agentDispatch: true,
-    detection: true,
-  });
+  readonly profile = { bin: "pi", args: [] };
+  readonly systemPrompt = true;
+  readonly nativeAgent = false;
+  readonly confinable = false;
+
+  build({ bin, args }: HarnessSpawn, req: AgentDispatchRequest): BuiltCommand {
+    const argv = [bin, ...(req.model ? withoutModelFlag(args) : args)];
+    if (req.systemPrompt) argv.push("--append-system-prompt", req.systemPrompt);
+    if (req.model) argv.push("--model", req.model);
+    if (req.prompt === undefined) return { argv };
+    argv.push("-p");
+    return { argv, stdin: req.prompt };
+  }
 }

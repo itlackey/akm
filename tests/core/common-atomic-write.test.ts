@@ -164,6 +164,28 @@ describe("writeFileAtomic", () => {
     },
   );
 
+  test.skipIf(process.platform === "win32")("writes on a filesystem that refuses chmod (CIFS)", () => {
+    const { dir, target } = useFixture();
+    spyOn(fs, "fchmodSync").mockImplementation(() => {
+      throw errno("EPERM", "operation not permitted");
+    });
+
+    expect(() => writeFileAtomic(target, "replacement", 0o644)).not.toThrow();
+    expect(fs.readFileSync(target, "utf8")).toBe("replacement");
+    expect(tempFiles(dir)).toEqual([]);
+  });
+
+  test.skipIf(process.platform === "win32")("propagates unexpected chmod errors and removes the temp file", () => {
+    const { dir, target } = useFixture();
+    spyOn(fs, "fchmodSync").mockImplementation(() => {
+      throw errno("EIO", "injected chmod failure");
+    });
+
+    expect(() => writeFileAtomic(target, "replacement")).toThrow("injected chmod failure");
+    expect(fs.existsSync(target)).toBe(false);
+    expect(tempFiles(dir)).toEqual([]);
+  });
+
   test.skipIf(process.platform === "win32")("ignores an explicitly unsupported directory sync error", () => {
     const { target } = useFixture();
     spyOn(fs, "fsyncSync").mockImplementation(() => {

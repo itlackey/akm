@@ -9,28 +9,25 @@
  *
  * Surface:
  *   • Types: AgentProfile, AgentRunResult, AgentFailureReason.
- *   • Profiles: getBuiltinAgentProfile, listBuiltinAgentProfiles, BUILTIN_AGENT_PROFILE_NAMES.
- *   • Engine lowering lives in engine-resolution.ts; public config has no profile aliases.
- *   • Builder contract types: AgentCommandBuilder, AgentDispatchRequest.
- *     The concrete builder lookup stays private to the spawn authority.
- *   • Detection: detectAgentCliProfiles, pickDefaultAgentProfile, defaultWhich.
+ *   • Profiles: getBuiltinAgentProfile, listBuiltinAgentProfiles.
+ *   • Which connection or harness a call runs on is resolved in resolution.ts; public config has no profile aliases.
+ *   • Builder contract types: AgentDispatchRequest, BuiltCommand (harnesses/harness.ts).
+ *   • Detection: detectAgentCliProfiles, defaultWhich.
  */
 
 export type { SpawnedSubprocess, SpawnFn } from "../../core/subprocess";
-export type { AgentCommandBuilder, AgentDispatchRequest, BuiltCommand } from "./builder-shared";
+export type { AgentDispatchRequest, BuiltCommand } from "../harnesses/harness";
 export { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 export type {
   AgentDetectionResult,
   WhichFn,
 } from "./detect";
-export { _setAgentDetectForTests, defaultWhich, detectAgentCliProfiles, pickDefaultAgentProfile } from "./detect";
+export { _setAgentDetectForTests, defaultWhich, detectAgentCliProfiles } from "./detect";
 export type {
-  AgentParseMode,
   AgentProfile,
   AgentStdioMode,
 } from "./profiles";
 export {
-  BUILTIN_AGENT_PROFILE_NAMES,
   getBuiltinAgentProfile,
   listBuiltinAgentProfiles,
 } from "./profiles";

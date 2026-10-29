@@ -100,18 +100,6 @@ function complain(...names: string[]): void {
   }
 }
 
-/** The refs a run scored: only a ref in the scored pool gets an `asset_outcome` row. */
-function scoredRefs(): string[] {
-  const db = openStateDatabase();
-  try {
-    return (db.prepare("SELECT asset_ref FROM asset_outcome").all() as Array<{ asset_ref: string }>).map(
-      (row) => row.asset_ref,
-    );
-  } finally {
-    db.close();
-  }
-}
-
 function seedReplayRank(ref: string, rankScore: number, encodingSource?: "content" | "type-stub"): void {
   const db = openStateDatabase();
   try {
@@ -284,9 +272,9 @@ describe("#800 effective dry-run planner", () => {
 
       expect(result.plan?.snapshot.status).toBe("ready");
       expect(result.plan?.candidates.rawInScope).toBe(2);
-      // The lane selects one ref from the held index; it plans nothing: only negative feedback plans a reflect.
+      // The lane selects one ref from the held index and plans it.
       expect(result.proactiveMaintenance?.selected).toBe(1);
-      expect(result.plannedRefs).toEqual([]);
+      expect(result.plannedRefs).toHaveLength(1);
       expect(snapshotTree(storage.root)).toEqual(before);
     } finally {
       writer.close();
@@ -368,30 +356,25 @@ describe("#800 effective dry-run planner", () => {
     expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual(result.plannedRefs);
   });
 
-  test("plan.processes reports resolved engine/model per process, honors a --strategy override, and counts eligibleRefs (#947)", async () => {
+  test("plan.processes reports resolved engine/model per process, a --strategy override changes which processes run and not where, and counts eligibleRefs (#947)", async () => {
     const { stashDir } = isolatedStorage();
     const config = withImproveAutonomy(
       withTestImproveLlm({
         semanticSearchMode: "off",
-        engines: {
+        connections: {
           "consolidate-engine-a": {
-            kind: "llm",
             endpoint: "http://127.0.0.1:1/v1/chat/completions",
-            model: "model-a",
-          },
-          "consolidate-engine-b": {
-            kind: "llm",
-            endpoint: "http://127.0.0.1:1/v1/chat/completions",
-            model: "model-b",
+            models: { fast: "model-a" },
           },
         },
         improve: {
+          processes: { consolidate: { connection: "consolidate-engine-a" } },
           strategies: {
             default: {
               processes: {
                 reflect: { enabled: true, limit: 4 },
                 distill: { enabled: false },
-                consolidate: { enabled: true, engine: "consolidate-engine-a" },
+                consolidate: { enabled: true },
                 memoryInference: { enabled: false },
                 extract: { enabled: false },
                 validation: { enabled: false },
@@ -399,7 +382,7 @@ describe("#800 effective dry-run planner", () => {
                 proactiveMaintenance: { enabled: false },
               },
             },
-            alt: { processes: { consolidate: { engine: "consolidate-engine-b" } } },
+            alt: { processes: { consolidate: { enabled: false } } },
           },
         },
       } as AkmConfig),
@@ -409,18 +392,19 @@ describe("#800 effective dry-run planner", () => {
     const defaultRun = await akmImprove({ scope: "skill", stashDir, config, dryRun: true });
     const altRun = await akmImprove({ scope: "skill", stashDir, config, dryRun: true, strategy: "alt" });
 
-    // Acceptance criterion (#947): changing processes.consolidate.engine and
-    // re-planning shows the new engine, and neither plan dispatches anything.
+    // Acceptance criterion (#947): changing improve.processes.consolidate.connection and
+    // re-planning shows the new connection, and neither plan dispatches anything.
+    // A strategy picks which processes run, never where.
     const consolidateDefault = defaultRun.plan?.processes.find((row) => row.process === "consolidate");
     const consolidateAlt = altRun.plan?.processes.find((row) => row.process === "consolidate");
     expect(consolidateDefault).toMatchObject({ enabled: true, engine: "consolidate-engine-a", model: "model-a" });
-    expect(consolidateAlt).toMatchObject({ enabled: true, engine: "consolidate-engine-b", model: "model-b" });
+    expect(consolidateAlt).toMatchObject({ enabled: false });
     expect(defaultRun.plan?.dispatch).toBe(false);
     expect(altRun.plan?.dispatch).toBe(false);
     expect(defaultRun.plan?.mode).toBe("estimate");
 
     const reflectRow = defaultRun.plan?.processes.find((row) => row.process === "reflect");
-    expect(reflectRow).toMatchObject({ enabled: true, engine: "test-improve-llm", model: "test-model" });
+    expect(reflectRow).toMatchObject({ enabled: true, engine: "default", model: "test-model" });
     expect(Array.isArray(reflectRow?.notices)).toBe(true);
     expect(reflectRow?.eligibleRefs).toBe(defaultRun.plan?.effectiveRefs.length);
 
@@ -442,7 +426,7 @@ describe("#800 effective dry-run planner", () => {
     expect(defaultRun.plan?.processes.map((row) => row.process).sort()).toEqual(expectedProcesses.sort());
   });
 
-  test("proactive dry-run reports due population and selected refs, and plans nothing", async () => {
+  test("proactive dry-run reports due population and selected refs, and plans them as the proactive lane", async () => {
     const { stashDir } = isolatedStorage();
     const proactiveConfig = plannerConfig({ proactive: { enabled: true, dueDays: 0, maxPerRun: 2 } });
     await indexSkills(stashDir, 4, proactiveConfig);
@@ -459,9 +443,12 @@ describe("#800 effective dry-run planner", () => {
     expect(baseline.plannedRefs).toEqual([]);
     expect(baseline.proactiveMaintenance).toBeUndefined();
     expect(proactive.plan?.candidates.rawInScope).toBe(4);
-    // The lane selects two due refs for scoring; with no negative feedback nothing is planned for reflect.
-    expect(proactive.plannedRefs).toEqual([]);
-    expect(proactive.plan?.effectiveRefs).toEqual([]);
+    // The lane selects two due refs, capped by maxPerRun, and plans them.
+    expect(proactive.plannedRefs.map((entry) => entry.eligibilitySource)).toEqual(["proactive", "proactive"]);
+    expect(proactive.plan?.effectiveRefs.map((entry) => entry.lane)).toEqual(["proactive", "proactive"]);
+    expect(proactive.plan?.effectiveRefs.map((entry) => entry.ref).sort()).toEqual(
+      [...(proactive.proactiveMaintenance?.selectedRefs ?? [])].sort(),
+    );
     expect(proactive.proactiveMaintenance).toMatchObject({ dueTotal: 4, neverReflected: 4, selected: 2 });
     expect(proactive.proactiveMaintenance?.selectedRefs).toHaveLength(2);
     expect(proactive.plan?.proactive).toMatchObject({
@@ -510,46 +497,12 @@ describe("#800 effective dry-run planner", () => {
     expect(noSignalEvents[0]?.metadata?.count).toBe(terminalSignalSkips);
   });
 
-  test("a live high-salience pick is scored, planned nowhere, and reported once as an ordinary no-signal skip", async () => {
-    const { stashDir } = isolatedStorage();
-    const config = plannerConfig();
-    config.improve = {
-      ...config.improve,
-      salience: { salienceThreshold: 0.1 },
-    };
-    await indexSkills(stashDir, 1, config);
-    seedReplayRank("skills/skill-0", 0.99, "content");
-
-    const result = await akmImprove({
-      scope: "skill",
-      stashDir,
-      config,
-      ensureIndexFn: async () => false,
-      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
-    });
-
-    expect(scoredRefs()).toContain("stash//skills/skill-0");
-    expect(result.plannedRefs).toEqual([]);
-    expect(result.plan?.gates.find((gate) => gate.name === "signal")?.removed).toBe(1);
-    expect(result.distillSkipped?.byReason["no new signal since last proposal"]).toBe(1);
-    const noSignalEvents = readEvents({ type: "improve_skipped" }).events.filter(
-      (event) => event.metadata?.reason === "no_new_signal",
-    );
-    expect(noSignalEvents).toHaveLength(1);
-    expect(noSignalEvents[0]?.metadata?.count).toBe(1);
-  });
-
-  test("feedback-only mode suppresses the proactive and high-salience selectors in dry and live plans", async () => {
+  test("feedback-only mode suppresses the proactive selector in dry and live plans", async () => {
     const { stashDir } = isolatedStorage();
     const config = plannerConfig({ proactive: { enabled: true, dueDays: 0, maxPerRun: 1 } });
-    config.improve = {
-      ...config.improve,
-      salience: { salienceThreshold: 0.1 },
-    };
     await indexSkills(stashDir, 1, config);
-    // This one quiet ref qualifies for proactive and high-salience;
-    // feedback-only must suppress the selector family rather than merely
-    // deleting its winners from the final array.
+    // This one quiet ref qualifies for proactive; feedback-only must suppress
+    // the selector rather than merely deleting its winners from the final array.
     seedReplayRank("skills/skill-0", 0.99, "content");
     const reflectFn = mock(async ({ ref }: { ref?: string }) => okReflect(ref ?? ""));
     const commonOptions = {
@@ -647,7 +600,7 @@ describe("#800 effective dry-run planner", () => {
   test("consolidation preview reports the real pool, gates, and chunk estimate without dispatch", async () => {
     const { stashDir } = isolatedStorage();
     const config = plannerConfig({
-      consolidate: { enabled: true, minPoolSize: 3, limit: 4, maxChunkSize: 2 },
+      consolidate: { enabled: true, limit: 4, maxChunkSize: 2 },
     });
     for (let i = 0; i < 5; i++) writeMemory(stashDir, `memory-${i}`);
     saveConfig(config);
@@ -664,13 +617,12 @@ describe("#800 effective dry-run planner", () => {
 
     expect(modelCalls).toBe(0);
     expect(result.plan?.consolidation).toMatchObject({
-      configured: { enabled: true, minPoolSize: 3, limit: 4, maxChunkSize: 2 },
-      effective: { enabled: true, minPoolSize: 3, limit: 4, chunkSize: 2 },
+      configured: { enabled: true, limit: 4, maxChunkSize: 2 },
+      effective: { enabled: true, limit: 4, chunkSize: 2 },
       poolSize: 5,
       candidatePoolSize: 4,
       gates: {
         profile: { passed: true },
-        minimumPool: { passed: true },
         delta: { passed: true },
       },
       wouldRun: true,
@@ -701,7 +653,7 @@ describe("#800 effective dry-run planner", () => {
 
     test("nothing judged recently → the pool is open", async () => {
       const { stashDir } = isolatedStorage();
-      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
+      const config = plannerConfig({ consolidate: { enabled: true } });
       writeMemory(stashDir, "memory-0");
       saveConfig(config);
       await akmIndex({ stashDir, full: true });
@@ -713,7 +665,7 @@ describe("#800 effective dry-run planner", () => {
 
     test("some memories judged recently and unchanged → they are skipped, the rest are judged", async () => {
       const { stashDir } = isolatedStorage();
-      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
+      const config = plannerConfig({ consolidate: { enabled: true } });
       writeMemory(stashDir, "memory-0");
       writeMemory(stashDir, "memory-1");
       saveConfig(config);
@@ -731,7 +683,7 @@ describe("#800 effective dry-run planner", () => {
 
     test("every memory judged recently and unchanged → the delta gate holds", async () => {
       const { stashDir } = isolatedStorage();
-      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
+      const config = plannerConfig({ consolidate: { enabled: true } });
       writeMemory(stashDir, "memory-0");
       saveConfig(config);
       await akmIndex({ stashDir, full: true });
@@ -747,33 +699,24 @@ describe("#800 effective dry-run planner", () => {
     });
   });
 
-  // #800/#957 — once the shared "planner" engine's credential is unavailable,
-  // the enabled "consolidate" override loses its runner (folded into
-  // `engineUnavailable`), which used to trip the "no improve process can run"
-  // guard even on a dry run that never dispatches (#958). `--dry-run`/`--plan`
-  // now passes `allowAllDisabled` so the guard returns the plan instead of
-  // throwing, and the credential-unavailable process carries its structurally
-  // resolved engine/model/contextLength on its `engineUnavailable` entry so
-  // this preview can still show them without ever materializing the
-  // credential. "reflect" is disabled here so exactly one process
-  // (consolidate) is unavailable.
-  test("consolidation preview reads frozen context length without materializing a required credential", async () => {
+  // #800 — a dry run never dispatches, so it never reads the connection's key: the preview
+  // reads the frozen context length from the connection and plans consolidation without a
+  // network call, whether or not the key variable is set.
+  test("consolidation preview reads frozen context length without dispatching or reading a key", async () => {
     const { stashDir } = isolatedStorage();
     const credentialName = "AKM_800_CONSOLIDATION_PLAN_KEY";
     const config = plannerConfig({
       reflect: { enabled: false },
-      consolidate: { enabled: true, minPoolSize: 2, maxChunkSize: 50 },
+      consolidate: { enabled: true, maxChunkSize: 50 },
     });
-    config.engines = {
+    config.connections = {
       planner: {
-        kind: "llm",
         endpoint: "https://example.test/v1/chat/completions",
-        model: "planner",
+        models: { fast: "planner" },
         contextLength: 8_000,
         apiKey: `$${credentialName}`,
       },
     };
-    config.defaults = { ...config.defaults, llmEngine: "planner" };
     config.index = { enrichment: { enabled: false } };
     for (let i = 0; i < 3; i++) writeMemory(stashDir, `credential-free-${i}`);
     saveConfig(config);
@@ -791,23 +734,17 @@ describe("#800 effective dry-run planner", () => {
     );
 
     expect(networkCalls).toBe(0);
-    // The credential is unavailable, so this dry run now reports consolidate
-    // as skipped rather than reporting it as runnable.
-    expect(result.plan?.consolidation.wouldRun).toBe(false);
-    expect(result.skippedProcesses).toHaveLength(1);
-    expect(result.skippedProcesses?.[0]?.process).toBe("consolidate");
-    expect(result.skippedProcesses?.[0]?.reason).toContain(`$${credentialName}`);
-    // The preview still reads the resolved context length without
-    // materializing the credential.
+    expect(result.plan?.consolidation.wouldRun).toBe(true);
+    expect(result.skippedProcesses ?? []).toEqual([]);
     expect(result.plan?.consolidation.effective.chunkSize).toBe(computeSafeChunkSize(8_000, 500, 50));
     const consolidateRow = result.plan?.processes.find((row) => row.process === "consolidate");
     expect(consolidateRow).toMatchObject({
       process: "consolidate",
-      enabled: false,
+      enabled: true,
       engine: "planner",
       model: "planner",
     });
-    expect(consolidateRow?.unavailable).toBeDefined();
+    expect(consolidateRow?.unavailable).toBeUndefined();
     expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual(result.plannedRefs);
   });
 
@@ -919,7 +856,7 @@ describe("#800 effective dry-run planner", () => {
     const { stashDir } = storage;
     const config = plannerConfig({
       proactive: { enabled: true, dueDays: 0, maxPerRun: 2 },
-      triage: { enabled: true, applyMode: "promote", maxAcceptsPerRun: 7 },
+      triage: { enabled: true, applyMode: "promote", maxAcceptsPerRun: 7, judgment: { enabled: true } },
     });
     await indexSkills(stashDir, 3, config);
     appendEvent({ eventType: "feedback", ref: "skills/skill-0", metadata: { signal: "positive" } });

@@ -83,8 +83,8 @@ describe("akm proposal drain strategy selector", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      defaults: { improveStrategy: "queue-only" },
       improve: {
+        strategy: "queue-only",
         strategies: {
           "queue-only": {
             processes: {
@@ -118,12 +118,12 @@ describe("akm proposal drain strategy selector", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: { reviewer: { kind: "agent", platform: "claude" } },
-      defaults: { improveStrategy: "enabled-judgment" },
+      harnesses: { reviewer: { platform: "claude" } },
       improve: {
+        strategy: "enabled-judgment",
         strategies: {
           "enabled-judgment": {
-            processes: { triage: { enabled: true, judgment: { enabled: true, engine: "reviewer" } } },
+            processes: { triage: { enabled: true, judgment: { enabled: true, harness: "reviewer" } } },
           },
         },
       },
@@ -140,7 +140,7 @@ describe("akm proposal drain strategy selector", () => {
       },
     );
     expect(selected.status).toBe(0);
-    expect(JSON.parse(selected.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "agent" });
+    expect(JSON.parse(selected.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "harness" });
   });
 
   test("--judgment overrides a disabled selected strategy", async () => {
@@ -150,11 +150,11 @@ describe("akm proposal drain strategy selector", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: { reviewer: { kind: "agent", platform: "claude" } },
+      harnesses: { reviewer: { platform: "claude" } },
       improve: {
         strategies: {
           "disabled-judgment": {
-            processes: { triage: { enabled: true, judgment: { enabled: false, engine: "reviewer" } } },
+            processes: { triage: { enabled: true, judgment: { enabled: false, harness: "reviewer" } } },
           },
         },
       },
@@ -174,7 +174,17 @@ describe("akm proposal drain strategy selector", () => {
       { stashDir },
     );
     expect(forced.status).toBe(0);
-    expect(JSON.parse(forced.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "agent" });
+    expect(JSON.parse(forced.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "harness" });
+  });
+
+  test("--judgment with nothing to judge with is an error, not a drain without judgment", async () => {
+    const stashDir = makeStashDir();
+
+    const forced = await runCli(["proposal", "drain", "--judgment", "--dry-run", "--format=json"], { stashDir });
+
+    expect(forced.status).not.toBe(0);
+    expect(forced.stderr).toContain("LLM_NOT_CONFIGURED");
+    expect(forced.stdout).toBe("");
   });
 
   test("a stale-target refusal is auto-rejected, not left as a generic failure (STALE, R20)", async () => {
@@ -269,7 +279,7 @@ describe("akm proposal list (CLI)", () => {
     const envelope = JSON.parse(result.stderr);
     expect(envelope.code).toBe("INVALID_FLAG_VALUE");
     expect(envelope.error).toContain('--queue must reference a source name from your config. No source named "ghost"');
-    expect(envelope.error).not.toContain("--target");
+    expect(envelope.error).not.toContain("--bundle");
   });
 
   test("accepts --status=reverted (parser allows reverted status)", async () => {
@@ -305,6 +315,28 @@ describe("akm proposal accept/reject/diff (CLI)", () => {
     const parsed = JSON.parse(result.stdout);
     expect(parsed.ok).toBe(true);
   });
+
+  test("several ids: one batch envelope; a failing id is reported, exits 1 and the others are still accepted", async () => {
+    const stash = makeStashDir();
+    const first = seedProposal(stash, "lessons/rg-over-grep");
+    const second = seedProposal(stash, "lessons/docker-cleanup");
+    const missing = "00000000-0000-4000-8000-000000000000";
+
+    const result = await runCli(["proposal", "accept", first.id, missing, second.id, "--format=json"], {
+      stashDir: stash,
+    });
+
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toMatchObject({ accepted: 2, failed: 1, shape: "proposal-accept-batch" });
+    expect(parsed.results.map((r: { id: string; ok: boolean }) => [r.id, r.ok])).toEqual([
+      [first.id, true],
+      [missing, false],
+      [second.id, true],
+    ]);
+    expect(getProposal(stash, first.id).status).toBe("accepted");
+    expect(getProposal(stash, second.id).status).toBe("accepted");
+  });
 });
 
 /** A `consolidate-pair` retire proposal over two real memories in `stash` (real body hashes: accept refuses a stale pair). */
@@ -325,6 +357,7 @@ function seedRetireProposal(stash: string, flags: Pick<RetirementMetadata, "cont
       cosine: 0.986,
       judgeLabel: "duplicate",
       judgeReason: "Same durable facts, B adds nothing new.",
+      judgedScope: {},
       retiredContentHash: contentHash(fs.readFileSync(oldPath, "utf8"), "body"),
       successorContentHash: contentHash(fs.readFileSync(newPath, "utf8"), "body"),
       reason: "duplicate",
@@ -463,6 +496,7 @@ function seedSecondRetireProposal(stash: string) {
       cosine: 0.97,
       judgeLabel: "subsumed",
       judgeReason: "Newer covers it.",
+      judgedScope: {},
       retiredContentHash: contentHash(fs.readFileSync(oldPath, "utf8"), "body"),
       successorContentHash: contentHash(fs.readFileSync(newPath, "utf8"), "body"),
       reason: "subsumed",
@@ -684,17 +718,17 @@ describe("accept/reject --generator flag (WS3)", () => {
     expect(result.stderr).not.toContain("deprecated");
   });
 
-  test("proposal accept rejects the retired --source flag (renamed to --generator in 0.9)", async () => {
+  test("proposal accept rejects the retired --source flag as unknown", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
     const result = await runCli(["proposal", "accept", "--source", "reflect", "--yes", "--format=json"], {
       stashDir: stash,
     });
     expect(result.status).toBe(2);
-    expect(JSON.parse(result.stderr).code).toBe("INVALID_FLAG_VALUE");
+    expect(result.stderr).toContain('Unknown flag "--source"');
   });
 
-  test("proposal reject rejects the retired --source flag (renamed to --generator in 0.9)", async () => {
+  test("proposal reject rejects the retired --source flag as unknown", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
     const result = await runCli(
@@ -702,7 +736,7 @@ describe("accept/reject --generator flag (WS3)", () => {
       { stashDir: stash },
     );
     expect(result.status).toBe(2);
-    expect(JSON.parse(result.stderr).code).toBe("INVALID_FLAG_VALUE");
+    expect(result.stderr).toContain('Unknown flag "--source"');
   });
 });
 
@@ -974,7 +1008,7 @@ describe("akm proposal multi-bundle queues", () => {
       akmProposalAccept({ stashDir: secondary, id: conflicting.id, target: "primary", config }),
     ).rejects.toThrow(/bound.*target.*primary/i);
     const cliConflict = await runCli(
-      ["proposal", "accept", conflicting.id, "--queue", "secondary", "--target", "primary", "--format=json"],
+      ["proposal", "accept", conflicting.id, "--queue", "secondary", "--bundle", "primary", "--format=json"],
       { stashDir: primary },
     );
     expect(cliConflict.status).toBe(2);

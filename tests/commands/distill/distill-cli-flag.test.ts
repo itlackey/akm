@@ -128,17 +128,16 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: {
+      connections: {
         default: {
-          kind: "llm",
           endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "test-model",
+          models: { fast: "test-model" },
         },
       },
       improve: {
+        strategy: "test",
         strategies: { test: { processes: { distill: { enabled: true, qualityGate: { enabled: false } } } } },
       },
-      defaults: { llmEngine: "default", improveStrategy: "test" },
     } as unknown as AkmConfig;
     const result = await akmDistill({
       ref: "skills/deploy",
@@ -160,17 +159,16 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: {
+      connections: {
         default: {
-          kind: "llm",
           endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "test-model",
+          models: { fast: "test-model" },
         },
       },
       improve: {
+        strategy: "test",
         strategies: { test: { processes: { distill: { enabled: true, qualityGate: { enabled: false } } } } },
       },
-      defaults: { llmEngine: "default", improveStrategy: "test" },
     } as unknown as AkmConfig;
     const result = await akmDistill({
       ref: "skills/deploy",

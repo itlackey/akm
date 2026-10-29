@@ -60,8 +60,8 @@ Two derived items came out of the fixes themselves rather than the original
 findings, and belong with the clusters above:
 
 - The `ISOLATION-08` widening of `AKM_ENV_VARS` grandfathered **22**
-  pre-existing files into the isolation allowlist; draining them is recorded
-  as follow-up debt in `scripts/lint-tests-isolation.ts:327-339`.
+  pre-existing files into the isolation allowlist; the linter and its
+  allowlist have since been deleted.
 - Deleting the false vector-only test (`VALUE-02`) left **no ungated test
   driving `akmSearch` on a vector-only match path** — recorded in `8cf96889`'s
   own commit body as "NOT closed by this work".
@@ -72,7 +72,7 @@ findings, and belong with the clusters above:
 
 | Finding | Disposition | Evidence at HEAD |
 | --- | --- | --- |
-| ORG-01 | fixed | `AGENTS.md:23` now states `tests/commands/`+`tests/workflows/` run under the unit target, matching `scripts/test-unit.sh:43`; `026cfb91` |
+| ORG-01 | fixed | The testing workflow's "Test Targets" section states that `tests/commands/` and `tests/workflows/` run under the unit target, matching `scripts/test-unit.sh`; `026cfb91` |
 | ORG-02 | fixed | `tests/integrations/` (plural) no longer exists; the three files moved to `tests/agent/`; `e511ff6d` |
 | ORG-03 | **still open** (reduced) | The cited mismatch is gone — the real `npm pack`/`install --global` test moved to `tests/integration/package-install.test.ts:5-17` (`6c92d96a`) — but the root bucket itself grew from 78 to **94** unclassified `tests/*.test.ts` files |
 | ORG-04 | **still open** (reduced) | Four migration tests moved out of `tests/_fixtures/` to `tests/migrate/legacy/` (`6c92d96a`); `tests/fixtures/stashes/load.test.ts` is still an executable test inside a fixture namespace |
@@ -80,7 +80,7 @@ findings, and belong with the clusters above:
 | ORG-06 | **still open** | Layout still mixes flat and per-command nesting; the root/nested split under `tests/integration/` widened from 237/134 to **256/131** |
 | ORG-07 | superseded | Naming unified on `.characterization.test.ts` (`63aa59f5`); the single `.bench.` file stays in the unit target by explicit decision recorded at `tests/commands/distill/distill-promotion-policy.bench.test.ts:2` |
 | ORG-08 | fixed | `tests/fixtures/stashes/curate-golden/MANIFEST.json` added, so `listFixtures()` reports all five; `tests/fixtures/stashes/load.test.ts:72` now pins the five-item list; `d37f6b5c` |
-| ORG-09 | fixed | `AGENTS.md:25` and `tests/integration/semantic-search-e2e.test.ts:9` name the real path; `docs/architecture/testing/testing-workflow.md:35-39` presents `bun run check`, not bare `bun test`; `026cfb91` |
+| ORG-09 | fixed | The testing workflow ("Test Layers", "1. Fast local correctness") and `tests/integration/semantic-search-e2e.test.ts` name the real path, and the workflow presents `bun run check`, not bare `bun test`; `026cfb91` |
 | ORG-10 | fixed | Titles disambiguated at `tests/config-cli.test.ts:253,258` (`… value 'true'` / `… value 'false'`); `a1262a68` |
 
 ### Duplicate and redundant coverage
@@ -148,9 +148,9 @@ findings, and belong with the clusters above:
 | ISOLATION-03 | fixed | `tests/integration/semantic-search-e2e.test.ts:249-269` tracks `hfHomeMutated`/`savedHfHome` and `restoreEnv()` at `:257` restores exactly; `026cfb91` |
 | ISOLATION-04 | **still open** | `src/registry/create-provider-registry.ts:13-26` still exposes only `register`/`resolve`/`list`. Call sites now save-and-restore in `finally` (`tests/provider-registry.test.ts:15-29`, `tests/integration/registry-search.test.ts:881-891`), but they do so by re-registering `undefined` — a workaround for the missing seam, not the seam |
 | ISOLATION-05 | **still open** | `tests/integration/graph-boost-ranking.test.ts:86` still builds the database once in `beforeAll`; `beforeEach` at `:105-119` clears only the graph cache; `:304` and `:738` still mutate the stored graph |
-| ISOLATION-06 | fixed | The single helper-side spawn moved to integration scope and its allowlist entry retired with no replacement; `scripts/lint-tests-isolation.ts:131`, `d37f6b5c` |
+| ISOLATION-06 | fixed | The single helper-side spawn moved to integration scope and its allowlist entry in the isolation linter (since deleted) retired with no replacement; `d37f6b5c` |
 | ISOLATION-07 | fixed | `tests/lint-isolation-ratchet.test.ts:52` asserts every allowlisted path resolves to a real file; the two dead entries were removed; `d37f6b5c` |
-| ISOLATION-08 | fixed (residual) | `scripts/lint-tests-isolation.ts:94-110` widens `AKM_ENV_VARS` from 5 names to the full 15-name `HARNESSED` contract. Residual: 22 pre-existing files grandfathered in, recorded at `:327-339` |
+| ISOLATION-08 | fixed (residual) | The isolation linter (since deleted) widened `AKM_ENV_VARS` from 5 names to the full 15-name `HARNESSED` contract. Residual: 22 pre-existing files grandfathered in |
 
 ### Test harness, release, and CI
 

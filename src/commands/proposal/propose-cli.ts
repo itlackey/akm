@@ -20,6 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineCommand } from "citty";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
+import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { UsageError } from "../../core/errors";
@@ -52,7 +53,13 @@ export const proposeCommand = defineCommand({
     },
     task: { type: "string", description: "Task description for the agent (what should the asset do?)" },
     file: { type: "string", description: "Read the task or prompt text from a UTF-8 file" },
-    engine: { type: "string", description: "Engine to use (defaults to defaults.engine)" },
+    bundle: {
+      type: "string",
+      description:
+        "Configured writable bundle to queue the proposal for and draw convention facts from (default: the working bundle)",
+    },
+    ...SELECTION_ARGS,
+    ...RETIRED_ENGINE_ARG,
     "timeout-ms": { type: "string", description: "Override the engine timeout in milliseconds" },
   },
   async run({ args }) {
@@ -81,7 +88,8 @@ export const proposeCommand = defineCommand({
         type: String(args.type),
         name: proposedName,
         task: taskText,
-        engine: getStringArg(args, "engine"),
+        selection: selectionFromArgs(args),
+        bundle: getStringArg(args, "bundle"),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
       output("proposal-new", result);

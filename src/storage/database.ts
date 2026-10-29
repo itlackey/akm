@@ -227,48 +227,18 @@ interface BetterSqliteDatabase {
 
 let betterSqlite3Ctor: BetterSqlite3Ctor | undefined;
 /**
- * The binding is absent or unbuildable — a toolchain/install problem.
+ * The package is missing, or it carries no binding for this platform. Its N-API
+ * bindings ship prebuilt in the package (see package.json → pinNotes), so neither
+ * a build toolchain nor the Node version decides whether it loads.
  */
-const MISSING_BINDING_REMEDY =
-  "akm could not load 'better-sqlite3', the SQLite driver it needs on Node.js.\n" +
-  "  • Reinstall akm with a working C/C++ build toolchain so its optional\n" +
-  "    'better-sqlite3' native binding builds (a global `npm i -g better-sqlite3`\n" +
-  "    will NOT be resolved — Node loads it from akm's own node_modules).\n" +
-  "  • Or run akm under Bun, which has a built-in SQLite driver and needs no native build.";
-
-/**
- * Recognize a binding built for a DIFFERENT Node ABI than the one now running,
- * and answer with the one command that fixes it.
- *
- * This is the most likely failure a real user hits, and it is not a broken
- * install: a native addon is compiled (or a prebuilt binary is selected) for
- * the Node major present at `npm install` time. Upgrade Node afterwards and the
- * same file no longer loads.
- *
- * It is matched rather than described because the symptom text varies and the
- * previous wording only named ONE of them. The prebuilt-binary path — which is
- * now the normal path, since better-sqlite3 is pinned to a version publishing a
- * prebuild for every supported Node (see package.json → pinNotes) — reports
- * `Module did not self-register`, saying nothing about versions at all. A
- * from-source build reports the explicit `NODE_MODULE_VERSION` mismatch. Asking
- * the user to decide which bullet applies is the step worth deleting.
- */
-export function abiMismatchRemedy(message: string): string | undefined {
-  const ABI_MISMATCH_SHAPES = [
-    "did not self-register", // prebuilt binary for another ABI
-    "NODE_MODULE_VERSION", // explicit mismatch, from-source build
-    "was compiled against a different", // same, older phrasing
-    "invalid ELF header", // binary for another platform/arch entirely
-  ];
-  if (!ABI_MISMATCH_SHAPES.some((shape) => message.includes(shape))) return undefined;
+function missingBindingRemedy(): string {
   return (
-    "akm could not load 'better-sqlite3': its native binding was built for a different\n" +
-    `Node.js version than the one now running (this Node is ABI ${process.versions.modules}).\n` +
-    "This is what happens when Node is upgraded after akm is installed. It is NOT a\n" +
-    "broken install, and reinstalling akm is not required.\n" +
-    "  Fix: npm rebuild better-sqlite3        # in akm's install directory\n" +
-    "  Or:  npm install -g akm-cli            # reinstall, rebuilding against this Node\n" +
-    "  Or:  run akm under Bun, whose built-in SQLite driver needs no native binding."
+    "akm could not load 'better-sqlite3', the SQLite driver it needs on Node.js.\n" +
+    "  • Its package carries prebuilt bindings for Linux and macOS on x64 and arm64 and for\n" +
+    `    Windows on x64 and arm64; this machine is ${process.platform} ${process.arch}.\n` +
+    "  • Reinstall akm (`npm install -g akm-cli`) if the package is missing (a global\n" +
+    "    `npm i -g better-sqlite3` will NOT be resolved — Node loads it from akm's own node_modules).\n" +
+    "  • Or run akm under Bun, which has a built-in SQLite driver and needs no native binding."
   );
 }
 
@@ -277,19 +247,14 @@ function loadBetterSqlite3(): BetterSqlite3Ctor {
     // Runtime-gated dynamic require: only reached when NOT on Bun, so Bun never
     // resolves or loads the optional `better-sqlite3` native dependency.
     // `better-sqlite3` is an optionalDependency, so `npm i` can succeed without
-    // it (or with a native build that failed). Convert the raw MODULE_NOT_FOUND
-    // into an actionable message instead of a cryptic onboarding crash.
+    // it. Convert the raw MODULE_NOT_FOUND into an actionable message instead of
+    // a cryptic onboarding crash.
     let mod: BetterSqlite3Ctor | { default: BetterSqlite3Ctor };
     try {
       mod = nodeRequire("better-sqlite3") as BetterSqlite3Ctor | { default: BetterSqlite3Ctor };
     } catch (err) {
-      // An ABI mismatch does NOT arrive here — `require` succeeds and the
-      // failure lands at construction (see openNodeDatabase). This path is a
-      // genuinely absent or unresolvable module. `abiMismatchRemedy` is still
-      // consulted because a from-source build CAN fail at load with the
-      // explicit NODE_MODULE_VERSION message.
       const raw = err instanceof Error ? err.message : String(err);
-      throw new Error(`${abiMismatchRemedy(raw) ?? MISSING_BINDING_REMEDY}\n  Underlying load error: ${raw}`);
+      throw new Error(`${missingBindingRemedy()}\n  Underlying load error: ${raw}`);
     }
     betterSqlite3Ctor = (mod as { default?: BetterSqlite3Ctor }).default ?? (mod as BetterSqlite3Ctor);
   }
@@ -305,21 +270,15 @@ function openNodeDatabase(path: string, opts?: OpenDatabaseOptions): Database {
   const options: { readonly?: boolean; fileMustExist?: boolean } = {};
   if (opts?.readonly !== undefined) options.readonly = opts.readonly;
   if (opts?.create === false) options.fileMustExist = true;
-  // Construction, not `require`, is where an ABI mismatch surfaces.
-  // `require("better-sqlite3")` SUCCEEDS against a binding built for another
-  // Node ABI — the package resolves its `.node` file lazily — so the loader's
-  // catch never sees this error and cannot explain it. Verified against a real
-  // ABI-127 binding under Node 24 (ABI 137): `require()` returned a function
-  // and `new Database(...)` threw. Wrapping the require alone left the most
-  // likely real-world failure reported as a bare Node internals message.
   let db: BetterSqliteDatabase;
   try {
     db = opts ? new BetterSqlite3(path, options) : new BetterSqlite3(path);
   } catch (err) {
+    // The package loads its binding at the first construction, not at `require`, so a platform it carries no
+    // binding for fails here.
     const raw = err instanceof Error ? err.message : String(err);
-    const remedy = abiMismatchRemedy(raw);
-    if (!remedy) throw err;
-    throw new Error(`${remedy}\n  Underlying error: ${raw}`);
+    if (!raw.includes("better_sqlite3.node")) throw err;
+    throw new Error(`${missingBindingRemedy()}\n  Underlying error: ${raw}`);
   }
   return {
     prepare: db.prepare.bind(db),

@@ -17,7 +17,6 @@ command, are in [STABILITY.md](../STABILITY.md).
 ## Find and load
 
 - [Search, curate, show](guides/discover-and-load.md): find assets and load one by ref. *Stable*
-- Agent and summary output shapes (`--shape agent`, `--shape summary`). *Experimental*
 
 ## Capture
 
@@ -29,9 +28,9 @@ command, are in [STABILITY.md](../STABILITY.md).
 
 - [`akm improve` and proposals](guides/improve-the-library.md): reviewable changes from feedback and usage. *Evolving*
 - Improve settings and strategies other than `default` and `consolidate`. *Experimental*
-- Automatic acceptance (opt-in): `experimental.improveAutonomy` together with a triage `applyMode: "promote"` strategy. *Experimental*
+- Automatic acceptance by the triage judgment tier (opt-in): `experimental.improveAutonomy` with `processes.triage.judgment` on. The `default` strategy's triage accepts proposals a quality judge passed without it. *Experimental*
 - `akm proposal drain --promote`: accept the proposals a quality judge passed. *Evolving*
-- Session extraction. *Experimental*
+- Session extraction. *Evolving*
 
 ## Monitor
 

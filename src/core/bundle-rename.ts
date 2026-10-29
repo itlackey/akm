@@ -7,7 +7,9 @@
  * bundle's key. A bundle id is a mass identity prefix: every durable ref this
  * tool minted (`entries.item_ref`/`bundle_id`, `proposals.ref`, a pending
  * proposal's `proposedTarget.source`, a workflow task_history row's
- * `target_ref`, `scheduler.enabled[].ref`) carries it, and a hand-edited
+ * `target_ref`, a `workflow_runs.workflow_ref`, a `usage_events.entry_ref`, an
+ * `events.ref`, an `asset_salience`/`asset_outcome` `asset_ref`, an
+ * `improve_ledger.ref`, `scheduler.enabled[].ref`) carries it, and a hand-edited
  * `bundles` key strands all of it (see `src/indexer/bundle-identity-guard.ts`
  * §11.5). This module is the rekey transaction that guard's docstring points
  * to.
@@ -21,27 +23,28 @@
  * `akm mv`/editing territory, not a config-identity rename. `--dry-run`
  * (and every real run) lists the indexed files that still spell the old
  * `<old>//` prefix so the operator can follow up.
- *
- * Left behind on purpose: `usage_events`/`asset_salience`/`asset_outcome`
- * keyed by the old bundle prefix (learned utility/outcome history) — outside
- * this item's scope; `warnOnBundleRenameDrift` already documents this class
- * of gap and `akm index --full` re-mints under the new id.
  */
 
 import fs from "node:fs";
 import type { TasksSyncResult } from "../commands/tasks/tasks";
+import { renameUsageEventRefs } from "../indexer/usage/usage-events";
 import { readLockfile, renameLockEntry } from "../integrations/lockfile";
+import { renameEventRefs } from "../storage/repositories/events-repository";
+import { renameImproveLedgerRefs } from "../storage/repositories/improve-ledger-repository";
 import {
   closeDatabase,
   openIndexDatabase,
   openReadonlyExistingDatabase,
 } from "../storage/repositories/index-connection";
 import { getFilePathsByBundle, renameEntriesBundleId } from "../storage/repositories/index-entries-repository";
+import { renameAssetOutcomeRefs } from "../storage/repositories/outcome-repository";
 import { countProposalsForBundleRename, renameProposalsBundleRef } from "../storage/repositories/proposals-repository";
+import { renameAssetSalienceRefs } from "../storage/repositories/salience-repository";
 import {
   countTaskHistoryTargetRefs,
   renameTaskHistoryTargetRefs,
 } from "../storage/repositories/task-history-repository";
+import { countWorkflowRunRefsForRename, renameWorkflowRunRefs } from "../storage/repositories/workflow-runs-repository";
 import { selectBackend } from "../tasks/backends";
 import type { InstalledSchedulerBinding, SchedulerBackend } from "../tasks/backends/types";
 import { bundleRefToString, parseBundleRef } from "./asset/asset-ref";
@@ -63,7 +66,13 @@ export interface BundleRenamePlan {
   };
   lock: { present: boolean };
   index: { entries: number };
-  state: { proposalRefs: number; proposalTargets: number; taskHistoryRefs: number };
+  state: { proposalRefs: number; proposalTargets: number; taskHistoryRefs: number; workflowRunRefs: number };
+  /**
+   * Active and blocked workflow runs of the renamed bundle. Their `workflow_ref` is
+   * rewritten, but each run's frozen plan keeps the old qualified refs, so the
+   * operator finishes or abandons them.
+   */
+  activeWorkflowRuns: Array<{ id: string; workflowRef: string; status: string }>;
   /** Indexed files under the bundle whose content still spells `<old>//` — reported, not rewritten. */
   contentRefs: string[];
   /**
@@ -215,12 +224,17 @@ async function buildPlan(
   let proposalRefs = 0;
   let proposalTargets = 0;
   let taskHistoryRefs = 0;
+  let workflowRunRefs = 0;
+  let activeWorkflowRuns: BundleRenamePlan["activeWorkflowRuns"] = [];
   if (fs.existsSync(getStateDbPath())) {
     withStateDb((db) => {
       const counts = countProposalsForBundleRename(db, oldId);
       proposalRefs = counts.refs;
       proposalTargets = counts.targets;
       taskHistoryRefs = countTaskHistoryTargetRefs(db, oldId);
+      const runs = countWorkflowRunRefsForRename(db, oldId);
+      workflowRunRefs = runs.refs;
+      activeWorkflowRuns = runs.active;
     });
   }
 
@@ -234,7 +248,8 @@ async function buildPlan(
     },
     lock: { present: lockPresent },
     index: { entries: indexEntries },
-    state: { proposalRefs, proposalTargets, taskHistoryRefs },
+    state: { proposalRefs, proposalTargets, taskHistoryRefs, workflowRunRefs },
+    activeWorkflowRuns,
     contentRefs,
     nativeSchedulerRows,
   };
@@ -328,12 +343,21 @@ export async function renameBundle(
     }
   }
 
-  // State: proposals.ref, a pending proposal's proposedTarget.source, and
-  // workflow task_history.target_ref.
+  // State: proposals.ref, a pending proposal's proposedTarget.source,
+  // workflow task_history.target_ref, workflow_runs.workflow_ref, and the
+  // learned history keyed by item ref: usage_events.entry_ref (search ranking
+  // counts feedback by it), events.ref and improve_ledger.ref (improve reads
+  // feedback and its own attempts by them), and asset_salience/asset_outcome.asset_ref.
   if (fs.existsSync(getStateDbPath())) {
     withStateDb((db) => {
       renameProposalsBundleRef(db, oldId, newId);
       renameTaskHistoryTargetRefs(db, oldId, newId);
+      renameWorkflowRunRefs(db, oldId, newId);
+      renameUsageEventRefs(db, oldId, newId);
+      renameEventRefs(db, oldId, newId);
+      renameImproveLedgerRefs(db, oldId, newId);
+      renameAssetSalienceRefs(db, oldId, newId);
+      renameAssetOutcomeRefs(db, oldId, newId);
     });
   }
 

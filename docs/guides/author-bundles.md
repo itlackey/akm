@@ -107,7 +107,7 @@ renaming the file to match the query.
 
 Run `akm lint` before you publish. It catches structural problems (missing
 `name`/`type` on commands and agents, broken refs, malformed workflow
-structure, invalid task YAML) as well as the dangerous-env-key scan described
+structure, invalid task YAML) as well as the dangerous-env-key findings described
 in [Env files](#env-files) below.
 
 ```sh
@@ -229,18 +229,20 @@ push happens.
 
 ## Env files
 
-If your bundle includes env files under `env/`, `akm bundle add`, `akm bundle
-update` and `akm lint` scan them for variable names that change how a process
-starts when the file is loaded with `akm env run`: 41 names, including
-`LD_PRELOAD`, `PATH`, `DYLD_INSERT_LIBRARIES` and `NODE_OPTIONS`, plus the
-`BASH_FUNC_*` and `GIT_CONFIG_*` prefixes. A flagged key makes `akm bundle add`
-ask for confirmation in a terminal and stop in a non-interactive run unless
-`--allow-dangerous-env-keys` is passed; `akm lint` reports it as
-`dangerous-env-key`. `akm env run` makes the same check when it loads a file
-from an installed bundle (it stops unless you pass that flag) and only warns for
-a file in your own bundle. If your bundle needs one of these keys, say why in your
-`README.md`, or leave its value out of the shipped file. Suppress a single key
-with a `# akm-lint-ok: dangerous-env-key` comment on the preceding line.
+If your bundle includes env files under `env/`, `akm lint` reports any that set
+a variable name that changes how a process starts when the file is loaded with
+`akm env run`: 41 names, including `LD_PRELOAD`, `PATH`,
+`DYLD_INSERT_LIBRARIES` and `NODE_OPTIONS`, plus the `BASH_FUNC_*` and
+`GIT_CONFIG_*` prefixes. The finding is `dangerous-env-key`, a non-blocking
+warning. It is advice for you as the author, not a gate: installing a bundle is
+the user's trust decision, so `akm bundle add`, `akm bundle update`,
+`akm env run`, `akm secret run` and workflow `env:` bindings never scan, prompt
+for or block these keys, whichever bundle the file comes from. If your bundle
+needs one of these keys (for example, a `PATH` override for a hermetic
+toolchain), say why in your `README.md`, or leave its value out of the shipped
+file; a file with only key names and comments produces no findings. Suppress a
+single key with a `# akm-lint-ok: dangerous-env-key` comment on the preceding
+line.
 
 Key names are listed by `akm env list` and appear in search results. The
 `--sensitive` flag on `akm env create` leaves a file out of `env list` and the

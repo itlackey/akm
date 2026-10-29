@@ -117,15 +117,13 @@ describe("deriveInstallations — id / trust / component shape", () => {
     expect(installed!.id).toBe("team-catalog");
   });
 
-  test("trusted mirrors writable; component carries root/writable and id == bundle id", () => {
+  test("component carries root/writable and id == bundle id", () => {
     const [writable, readonly] = deriveInstallations([
       { path: AKM_ROOT, writable: true },
       { path: OKF_ROOT, registryId: "ro", writable: false },
     ]);
-    expect(writable!.trusted).toBe(true);
     expect(writable!.components).toHaveLength(1);
     expect(writable!.components[0]).toMatchObject({ id: "all-types", root: AKM_ROOT, writable: true });
-    expect(readonly!.trusted).toBe(false);
     expect(readonly!.components[0]!.writable).toBe(false);
   });
 

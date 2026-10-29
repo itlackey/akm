@@ -12,6 +12,70 @@ out in the CHANGELOG with a migration note. The 0.10.x series returns to bug
 fixes and tuning, and aims to restore the normal discipline of breaking
 changes only in major and minor releases.
 
+**Version floor (0.10, #1091).** 0.10 reads what 0.9.15 and later wrote: config,
+`state.db`, task sources, frozen workflow plans and scheduler rows. It does not
+convert anything older. An install on an earlier release runs `akm migrate
+apply` under akm 0.9.x first, then upgrades; a 0.10 reader that meets an older
+shape refuses with one message saying so. See
+[`docs/architecture/persisted-data-compat.md`](docs/architecture/persisted-data-compat.md).
+
+**CLI spellings merged in 0.10 (#1091).** Each of these is an unknown flag or
+command (exit 2) from 0.10, with no alias and no deprecation period; the new
+spelling is in the CHANGELOG entry and the CLI reference.
+
+| Gone | Use |
+| --- | --- |
+| `akm help agents` | `akm hints` (`--detail brief` for the short guide) |
+| `--shape agent` | `--detail agent` |
+| `--shape summary` | `--detail brief` (it only had a projection on `akm show`) |
+| `--target` on `import`, `env create`, `env remove`, `secret set`, `proposal accept`, `proposal diff`, `proposal revert` | `--bundle` |
+| `akm task validate <path>` | `akm lint --type tasks` |
+| `akm config path --all` | `akm info` |
+| `--run` / `--since` on `akm improve` | `akm improve report --run` / `--since` |
+
+**Connections and harnesses (0.10, #1244).** `engines` and `defaults` are
+replaced by `connections` and `harnesses`. A config in the old form still loads
+(converted in memory, with a warning that names `akm migrate apply`), and `akm
+migrate apply` converts it.
+
+`--engine <name>` (on `agent`, `command run`, `task add`, `proposal new` and
+`proposal extract`) and `--require-engines` (on `improve`) are hidden from
+`--help` and still run, with one warning, through 0.10. `--require-engines`
+does nothing. Change a script to `--connection <name>` or `--harness <name>`,
+and `--model <alias|name>`; how an old engine name resolves is under
+[The `engines` form](docs/reference/configuration.md#the-engines-form).
+
+`AKM_ENGINE_<NAME>_API_KEY`, `AKM_LLM_API_KEY` and `AKM_EMBED_API_KEY` are no
+longer read implicitly: put `"apiKey": "$VAR"` on the connection, or the key in
+`credentials.json`.
+
+These are unknown flags or commands (exit 2) from 0.10, with no alias:
+
+| Gone | Use |
+| --- | --- |
+| `akm setup --config <json>` and `--probe` | `akm setup --endpoint <url> --yes` and the other answer flags; `--no-probe` for an offline run (probing is the default) |
+| `akm models list`, `akm models copy-defaults` | `akm models`, `akm models set <alias> <model>` |
+
+**Version numbers (0.10 onward, #1089).** A 0.10 release is numbered
+`0.10.YYMMNN`: `YY` the UTC year, `MM` the month (`01` to `12`) and `NN` the
+release within that month (`01` to `99`), each two digits. Every release takes
+the next `NN`, whatever its stage: the first release of 2026-10 is `0.10.261001`
+(or `0.10.261001-alpha`), the next `0.10.261002`. A prerelease carries its stage
+only: `-alpha`, `-beta` or `-rc`, with no `.N`. A build is not promoted through
+stages under one number: each stage is its own release. Prereleases publish to
+the npm `next` tag and stable releases to `latest`; `akm upgrade --next` follows
+`next`. Versions sort by month and then `NN`, so semver ranges and `akm upgrade`
+order them correctly across months and years. The patch number no longer says
+how big a change is: read the CHANGELOG, which still marks breaking changes. The
+0.9 line keeps `0.9.N`, and `0.11` restarts on the same scheme.
+
+The 0.10 daily alphas (`0.10.26101001-alpha` through `0.10.26101202-alpha`) used
+an 8-digit patch, `YYMMDDNN`. Semver compares the patch numerically, so every
+`0.10.YYMMNN` sorts below them and `akm upgrade` does not offer it from a daily
+alpha: install the first monthly release explicitly once (for example
+`npm install -g akm-cli@0.10.261001-beta`). This is a known, accepted break and
+`tests/semver-order.test.ts` pins it.
+
 This document classifies **every** user-facing surface by stability so you can
 decide which parts of `akm` are safe to script against today and which to
 treat as still-evolving. If a surface is not listed here, that is a bug —
@@ -35,10 +99,11 @@ covers beyond the table.
 
 | Command | Tier | Notes |
 | --- | --- | --- |
-| `akm setup` | Stable | |
+| `akm setup` | Stable | The answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10; `--config` and `--probe` are gone (see the table above). |
 | `akm index` | Stable | |
-| `akm health` | Evolving | Exit codes (0 pass, 4 warn, 1 fail) are Evolving; report *content* and rendered `md`/`html` layout are Experimental — do not script against report layout. |
-| `akm metrics` | Experimental | Report content, JSON shape and the `html` dashboard may change. |
+| `akm health` | Evolving | Exit codes are Evolving; report *content* and rendered `md`/`html` layout are Experimental — do not script against report layout. |
+| `akm metrics` | Experimental | New in 0.9.28. Report content, JSON shape and the `html` dashboard may change. |
+| `akm ui` | Experimental | New in 0.10. The command, its flags, the page and the `/api/` JSON it reads may change in any release. Browsing is read-only; explicit actions support proposals, feedback, bundle configuration and Markdown authoring. |
 | `akm info` | Stable | |
 | `akm bundle create` | Stable | |
 | `akm bundle add` | Stable | |
@@ -47,13 +112,13 @@ covers beyond the table.
 | `akm bundle rename` | Stable | |
 | `akm bundle remove` | Stable | |
 | `akm bundle update` | Stable | |
-| `akm upgrade` | Stable | Including the plugin step and `--next`. |
+| `akm upgrade` | Stable | Including the plugin step and `--next`. Checksum verification is not optional; the recovery hatch is the `AKM_UPGRADE_SKIP_CHECKSUM` environment variable (Internal), not a flag. |
 | `akm search` | Stable | |
 | `akm curate` | Stable | |
 | `akm show` | Stable | |
-| `akm workflow status` | Experimental | `--all-scopes` is additive. |
-| `akm workflow plan` | Experimental | Zero-write introspection of a workflow's frozen plan; envelope shape may change. |
-| `akm workflow list` | Experimental | `--all-scopes` and a top-level `scopeKey` envelope field are additive. |
+| `akm workflow status` | Experimental | `--all-scopes` added in 0.9.15 (#942); a deprecated no-op since 0.10 (#1239), accepted through 0.10. |
+| `akm workflow plan` | Experimental | New in 0.9.2; secret-free provenance output; envelope shape may change. |
+| `akm workflow list` | Experimental | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942); since 0.10 (#1239) `--all-scopes` is a deprecated no-op, accepted through 0.10, and the `scopeKey` field is removed from the list result. |
 | `akm workflow create` | Experimental | |
 | `akm workflow resume` | Experimental | |
 | `akm workflow abandon` | Experimental | |
@@ -77,10 +142,11 @@ covers beyond the table.
 | `akm log` | Evolving | |
 | `akm agent` | Evolving | |
 | `akm command run` | Evolving | Runs stored command templates through the same agent dispatch as `akm agent`. |
-| `akm models list` | Evolving | Model intent aliases and their defaults. |
-| `akm models copy-defaults` | Evolving | Copies the installed `models.json` into the user configuration directory. |
+| `akm models` | Evolving | The alias picks of a connection, then the models its endpoint lists, and `set` to change one. |
 | `akm lint` | Evolving | |
 | `akm improve` | Evolving | Review-first by default; mutating lanes require `experimental.improveAutonomy` — see below. |
+| `akm improve report` | Evolving | Subcommand since 0.10 (was a magic `scope` value); owns `--run` and `--since`. |
+| `akm improve judge` | Evolving | Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. |
 | `akm proposal list` | Stable | |
 | `akm proposal show` | Evolving | |
 | `akm proposal diff` | Evolving | |
@@ -89,10 +155,9 @@ covers beyond the table.
 | `akm proposal reopen` | Evolving | Undoes a rejection. |
 | `akm proposal revert` | Evolving | |
 | `akm proposal drain` | Evolving | |
-| `akm proposal extract` | Experimental | Session extraction quality is still being measured. |
-| `akm proposal new` | Evolving | |
+| `akm proposal extract` | Evolving | Former top-level `akm extract`. Promoted from Experimental in 0.10 (#1133): the extract eval measures it. Evolving, not Stable, because 0.10 is still settling the improve defaults. |
+| `akm proposal new` | Evolving | Former top-level `akm propose`. |
 | `akm help` | Stable | |
-| `akm help agents` | Stable | |
 | `akm help migrate` | Stable | Only renders release notes. |
 | `akm hints` | Stable | Format-exempt agent guide; `--detail brief` selects the compact version. |
 | `akm completions` | Stable | Format-exempt (emits shell script source). |
@@ -113,9 +178,7 @@ covers beyond the table.
 | `akm task sync` | Evolving | |
 | `akm task prune` | Evolving | |
 | `akm task doctor` | Evolving | |
-| `akm task explain` | Evolving | Zero-write: shows what a task would do without starting a run. |
-| `akm task validate` | Evolving | Zero-write, and the only `task` subcommand that takes a bare filesystem path instead of a ref — the file need not belong to any configured bundle. |
-| `akm task list` | Evolving | A delegating alias for `akm search --type task` — same envelope, no separate implementation. |
+| `akm task explain` | Evolving | New in 0.9.2; secret-shaped values in provenance output are redacted on a best-effort heuristic basis (not a guarantee). |
 
 ## Stable
 
@@ -128,14 +191,15 @@ covers beyond the table.
   installed bundle; omit it and the ref resolves against the workspace
   `defaultBundle`, then the remaining bundles in installation-priority order.
   Durable state always stores the fully-qualified `bundle//conceptId`; the
-  short form is accepted as input only. The `<type>:<name>` grammar is not
-  accepted.
-  - `#fragment` is **input-only** and never stored, and only `akm show`
-    accepts it. On markdown-document items the core resolves it as a section
-    selector — `akm show <ref>#<heading-slug>` returns that one section, no
-    fragment returns the whole item, and an unmatched fragment lists the
-    available slugs. On any other item `akm show` ignores the fragment, warns,
-    and shows the whole item. See
+  short form is accepted input only, at the CLI, the programmatic surface, and
+  inside bundle content (where it resolves against the containing bundle). The
+  older `<type>:<name>` grammar is no longer accepted.
+  - `#fragment` is **input-only** and never stored. On markdown-document items
+    the core resolves it as a section selector — `akm show <ref>#<heading-slug>`
+    returns that one section, no fragment returns the whole item, and an
+    unmatched fragment lists the available slugs. A whole document's `show`
+    carries `toc`, every heading with the slug that selects it. On any other item
+    `akm show` ignores the fragment with a warning and shows the whole item. See
     [`docs/architecture/specs/ref.md`](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/ref.md).
   - **Refs in prose** must be fully qualified (`bundle//conceptId`) or a native
     adapter link form. A bare conceptId in prose is ordinary text, not a ref.
@@ -145,9 +209,19 @@ covers beyond the table.
   `ref` carries — so a ref copied out of search output can be truncated to a
   prefix and pasted back in. Enumeration is not tied to any adapter's type set,
   so every adapter's items browse the same way, and `bundle//` lists a whole
-  bundle. A prefix is explicit intent, so `search.defaultExcludeTypes` does not
-  apply to it. A `"<type>:"` query is an ordinary keyword search whose
-  empty-result tip names the conceptId spelling that replaces it.
+  bundle (this replaced `akm bundle items`). A prefix is explicit intent, so
+  `search.defaultExcludeTypes` does not apply to it. The pre-0.9.0
+  `"<type>:"` / `"<type>:<prefix>/"` spelling was removed; a query in that
+  shape is now an ordinary keyword search whose empty-result tip names the
+  conceptId spelling that replaces it.
+- **Read commands** — `akm search`, `akm show`, `akm bundle list`, `akm curate`,
+  `akm info`, `akm config get`, `akm config list`, `akm config path`,
+  `akm env list`, `akm secret list`, `akm proposal list` (list filters),
+  `akm help`, `akm hints`, `akm completions`.
+- **Write commands core surface** — `akm bundle add`, `akm bundle update`,
+  `akm bundle remove`, `akm clone`, `akm import`, `akm sync`, `akm index`,
+  `akm bundle create`, `akm setup`, `akm remember`, `akm feedback`,
+  `akm config set`, `akm config unset`.
 - **Renames are delete + create** — moving or renaming an item gives it a new
   identity; learned state (feedback, usage, salience) does not follow it.
   Cross-bundle movement is copy/import plus delete. Move the file, then run
@@ -155,36 +229,47 @@ covers beyond the table.
   There is no `akm mv`; `scripts/rekey-asset-ref.ts` re-keys earned signal from
   an old ref to a new one and is Internal tooling.
 - **Asset `type` is a free-form, open string** — `--type` filtering is an
-  exact match against an open set and is not validated: an unrecognized type
-  returns zero hits, not an error. Adapters emit types outside the built-in
-  set, so `--type website` or `--type wiki-source` are ordinary, valid filters.
-- **Output contracts** — JSON output shape (the top-level keys), the error
-  envelope, and the exit codes below.
-  - Failures print `{ok: false, error, code?, hint?}` to stderr. `ok` and
-    `error` are always present; `code` is a stable machine-readable identifier
-    on every classified failure (exit 1, 2, 75 and 78) and absent on
-    unexpected internal errors (exit 70); `hint` is best-effort. Prefer `code`
-    over matching `error` prose. Success envelopes from the passthrough stamp
-    (`config`, `clone`, `models`, `task-*`, `workflow-*`, `registry-*`, …) also
-    carry `ok: true`; a command that computes its own `ok` keeps it.
-  - All six `--format` values (`json|jsonl|yaml|text|md|html`) are available on
-    every non-exempt command. `json`, `jsonl` and `yaml` serialize the
-    envelope; `text`, `md` and `html` render it. A command may register a
-    bespoke renderer for a document format (`akm health` does); anything
-    unregistered falls back to a generic rendering derived from the envelope's
-    shape. No command reads `--format` to decide what data to fetch.
-  - `--detail` is verbosity only (`brief|normal|full`); `--shape`
-    (`human|agent|summary`) is the output-projection axis (see Experimental).
-  - **Format-exempt** commands do not emit a result envelope: `completions`
-    (shell script source), `help` (bare, `help agents`, `help migrate`),
-    `hints`, `env run` / `secret run` (child-process passthrough) and
-    `env path` (a bare path). The set is declared in
-    `src/output/format-exempt.ts`, and passing `--format` to one of them warns.
-    Scripted `setup` modes emit a normal format-aware result; interactive
-    `setup` is a terminal UI. `migrate status` and `migrate apply` are not
-    exempt: they render the child tool's result through the normal pipeline,
-    and any progress lines the child prints during `apply` appear verbatim
-    ahead of it.
+  exact match against an open set and is deliberately **not validated**: an
+  unrecognized type returns zero hits, not an error. Adapters emit types
+  outside the built-in set, so there is no closed list to validate against —
+  `--type website` or `--type wiki-source` are ordinary, valid filters.
+- **Output contracts** — JSON output shape (the top-level keys) and the error
+  envelope `{ok: false, error, code?, hint?}` on envelope surfaces: `ok` and
+  `error` are always present; `code` is a stable machine-readable identifier
+  present on every classified failure (exit 1 / 2 / 78) and absent only on
+  unexpected internal errors (exit 70); `hint` is best-effort and may be absent. Prefer
+  `code` over matching on `error` prose. Plus the exit-code table below.
+  **All six** `--format` values (`json|jsonl|yaml|text|md|html`) are available
+  on every non-exempt command. `json`, `jsonl`, and `yaml` serialize the
+  envelope; `text`, `md`, and `html` render it. A command may register a bespoke
+  renderer for a document format — `akm health` does, for its per-run and
+  window-compare tables and its full HTML report — and anything unregistered
+  falls back to a generic rendering derived from the envelope's own shape. No
+  command emits one format's bytes when another was asked for, none rejects a
+  format outright, and **no command reads `--format` to decide what data to
+  fetch**: a registered renderer fires on the shape of the result (`akm health
+  --report` carries the report dataset in the envelope, so the same data is
+  available as JSON), never on the format alone.
+  `--detail` is `brief|normal|full` (verbosity) or `agent` (the projection of
+  `search`, `curate` and `show`; see Experimental). A small set of commands is **format-exempt** because their
+  output is not a result envelope at all: `completions` (shell script source),
+  child-process passthrough in `env run` / `secret run`, a bare-path payload
+  from `env path`, and document payloads from `help` (bare and
+  `help migrate`). The set is declared in
+  `src/output/format-exempt.ts`, and
+  passing `--format` to one of them warns rather than silently doing something
+  else. Scripted `setup` modes emit a normal format-aware result; interactive
+  `setup` is a terminal UI and emits no result document. `agent` leaves
+  inherited child streams raw and formats its final result envelope.
+  `migrate status`/`apply` both spawn the standalone `akm-migrate` tool but are
+  NOT in the exempt set: `src/commands/migrate-cli.ts` parses the child's
+  final JSON result line and renders it through the same `output()` pipeline
+  (registered shape `src/output/shapes/migrate.ts`, text renderer
+  `src/output/text/migrate.ts`), so all six `--format` values work on them
+  like any other command. Any progress-event lines the child prints during a
+  real `apply` (content migration, proposal-ref repair) still print verbatim,
+  ahead of the formatted result — those are operational logging, not part of
+  the result envelope.
 
   | Exit code | Meaning |
   | --- | --- |
@@ -216,59 +301,94 @@ remain available across minor releases, but flag names, prompts, and
 proposal-queue shape may shift. Breaking changes will be flagged in the
 CHANGELOG with a migration note.
 
-- **Improvement loop** — `akm improve` and the `akm proposal` group. Output
-  JSON keys are stable; CLI flags (for example `--strategy`, `--task`) may add
-  options or tighten validation across releases. `akm improve` is on by
-  default and **review-first**: the lanes that change assets without review
+- **Programmatic API** — `akm-cli/api` (`curate()`, for in-process recall by the akm plugins; see [`docs/reference/api.md`](docs/reference/api.md)). The export list only grows and `curate()`'s parameters and result keep their documented contract; the text it returns is `akm curate`'s agent-shaped output and changes with it. Everything else in the package remains CLI-only.
+- **Improvement loop** — `akm improve` and the proposal noun group
+  `akm proposal {extract,new,list,show,diff,accept,reject,reopen,revert,drain}`
+  (`extract` and `new` are the former top-level `akm extract`/`akm propose`,
+  moved under `proposal` in 0.9.0). Output JSON keys
+  are stable; CLI flags (`--strategy`, `--task`, `--generator`) may add
+  options or tighten validation across releases. `akm improve` stays on by
+  default and is **review-first**: the lanes that mutate assets without review
   require `experimental.improveAutonomy` — see
-  [`akm improve` autonomy](#akm-improve-autonomy). `--auto-accept` is accepted,
-  warned about and ignored (a following value such as `--auto-accept 90` is
-  discarded with a second warning); it becomes a hard error in 0.10. The
-  replacement is `akm improve && akm proposal drain --promote --yes`, or a
-  `triage` block with `applyMode: "promote"` in your strategy.
-- **Tasks** — `akm task` subcommands and flags may shift. Task source v4 YAML
-  (typed `inputs:`, optional `schedule:`) is the only accepted version; task v2
-  and v3 sources are converted by `akm migrate apply`. Command tasks use named
-  engines and task history metadata is versioned. Schema additions arrive in
+  [`akm improve` autonomy](#akm-improve-autonomy).
+  `--auto-accept` was removed in 0.9.0 and is an unknown flag (a usage error,
+  exit 2) since 0.10. The replacement is
+  `akm improve && akm proposal drain --promote --yes`, or a `triage` block
+  with `applyMode: "promote"` in your strategy.
+  **Session extraction** (`akm proposal extract` and the improve `extract`
+  process) is Evolving as of 0.10 (#1133): the extract eval (insights saved,
+  routine sessions left empty, planted instructions refused) is its gate. It
+  is Evolving, not Stable, because 0.10 is still settling the improve
+  defaults; what it extracts and its output may still be tuned.
+- **Tasks** — `akm task` subcommand surface (`add | enable | disable | run |
+  explain | history | sync | prune | doctor`; no alias, no
+  `list`/`remove`/`init`/`validate`); task source v4 YAML (typed
+  `inputs:`, optional `schedule:`) is the only accepted version — task v3 and
+  task v2 sources are converted by `akm migrate apply`. Command tasks use
+  a named connection or harness, and task history metadata is versioned. Schema additions in
   patch releases; removals only at minor. Bare `akm task` is a usage error
-  naming the subcommands, and `akm task doctor` reports scheduler diagnostics.
-  `akm task explain <ref>`, `akm task validate <path>` and
-  `akm workflow plan <ref>` are zero-write: they show what a task or workflow
-  would do — resolved target, input bindings, child expansion — or whether a
-  file would parse, without starting or publishing a run. `akm task validate`
-  reports `valid`, `blocked` (needs `akm migrate apply` first: task v2/v3, or
-  a retired `schedule[].enabled`), `invalid`, or `not-a-task`.
+  naming the subcommands (`akm task doctor` reports scheduler diagnostics).
+  `akm task explain <ref>` (new in 0.9.2) and `akm workflow plan <ref>` are
+  both zero-write provenance surfaces: they show what a task or workflow
+  would do — resolved target, input bindings, child expansion — without
+  starting or publishing a run. `akm workflow plan` is secret-free **by
+  construction** (the excluded data never reaches the command). `akm task
+  explain` instead **redacts** secret-shaped input values on a best-effort
+  heuristic basis — a value that doesn't match the heuristic can still
+  print unredacted.
+- **Workflow plan** — `akm workflow plan <ref>`, new in 0.9.2: zero-write
+  compile+freeze introspection (the canonical step graph, task/child
+  expansion, input bindings, and lowering notices for a workflow, without
+  starting or publishing a run). The envelope shape may still change. Like every
+  `workflow` verb it is Experimental from 0.9.28 (see Experimental below).
+- **Events / log** — `akm log` is the event-stream surface (0.9.0: the
+  asset-scoped `akm history` surface, and `log`'s own `tail` subcommand, were
+  both removed; `log` is now a leaf command — the former `list` surface).
 - **Bundles & the workspace model** — installed sources are *bundles*; each is
   recognized by a built-in *adapter* (native Agent Skills, Claude and OpenCode
-  commands/agents, knowledge, YAML workflows, tasks, env/secret files, scripts,
+  commands/agents, knowledge, workflows, tasks, env/secret files, scripts,
   OKF and LLM-wiki knowledge bases). Config is keyed by `bundles` and
   `defaultBundle`. The adapter set, bundle-recognition rules, and the
   `bundles` config shape may still shift; the `okf`, `llm-wiki` and
-  `generic-files` adapters in particular are Evolving. Bundles are inspected
-  through `akm bundle list` / `akm bundle show <name>` and enumerated through
-  `akm search "bundle//"`. OKF is the baseline for Markdown concept identity
-  and generic reads; AKM-authored Markdown is an OKF-compatible superset whose
-  adapter adds native behavior progressively.
-- **LLM Wiki bundles** — the `llm-wiki` adapter owns `schema.md` / `index.md` /
-  `log.md` / `raw/` / `pages/` and its ingest flow; wiki pages are addressed as
-  ordinary concepts inside their bundle. Adapter behavior and page conventions
-  are still iterating.
-- **Agent dispatch** — `akm agent` and `akm command run`. Supported harnesses:
-  `claude`, `opencode-sdk` (the primary OpenCode interface), `opencode` (the
-  CLI path, a deprecation candidate once `opencode-sdk` covers it), `codex`,
-  `copilot`, `pi`, `gemini`, `aider`, `amazonq` and `openhands`. Every harness
-  is Evolving: the harness implementation is being reworked so harnesses are
-  easy to add, remove and update (0.10).
-- **Proposal queue** — proposal statuses (`pending`, `accepted`, `rejected`,
-  `reverted`) are stable; the JSON shape of a proposal record may add fields.
-- **Registries** — registries are searched with `akm search --from registry`.
-  Building a registry index is maintainer tooling (Internal) and lives outside
-  the CLI, in `scripts/build-registry-index.ts`.
-- **Upgrade** — `akm upgrade` is Stable (see the table). The recovery hatch for
-  a broken upgrade checksum is the `AKM_UPGRADE_SKIP_CHECKSUM` environment
-  variable (Internal), not a flag.
-- **Lint** — the rule set and finding shapes iterate; the `--fail-on-flagged`
-  CI contract and the exit codes are stable.
+  `generic-files` adapters in particular are Evolving. Bundles are inspected through
+  `akm bundle list` / `akm bundle show <name>` and enumerated through
+  `akm search "bundle//"`. (An earlier `akm bundle items` noun group was
+  removed in 0.9.0 as duplicative of `akm search`; the current `akm bundle`
+  group — `create | add | list | show | rename | remove | update` — is the
+  lifecycle-management surface consolidated from the former top-level
+  `init`/`add`/`list`/`remove`/`update` commands, not a revival of that one.)
+  OKF is the
+  first-class baseline for Markdown concept identity and generic reads; every
+  applicable OKF conformance case is required to pass. AKM-authored Markdown is
+  an OKF-compatible superset whose adapter adds native behavior progressively.
+- **LLM Wiki bundles** — the Karpathy-style LLM wiki is a first-class built-in
+  bundle format (the `llm-wiki` adapter owns `schema.md` / `index.md` /
+  `log.md` / `raw/` / `pages/` and its ingest flow); wiki pages are addressed
+  as ordinary concepts inside their bundle. Adapter behavior and page
+  conventions are still iterating.
+- **Agent dispatch** — `akm agent` and `akm command run`. Supported
+  harnesses: `claude`, `codex`, `opencode` (through `opencode run`, for OpenCode 2
+  and for the legacy OpenCode 1, which keeps working with no removal date),
+  `copilot`, `pi`, `gemini`, `aider`, `amazonq` and `openhands`. Every harness is Evolving: a harness is a thin shell that turns a
+  request into a command, and the set is easy to add to, remove from and update.
+  The set will grow. A harness runs with your environment as it is
+  ([Configuration](docs/reference/configuration.md#how-akm-runs-a-harness)). With
+  no harness configured, agent work runs on akm's own runtime over a connection,
+  which is Evolving too.
+- **Model aliases** — `akm models` and `akm models set`, and the intent-alias
+  picks a connection holds.
+- **Proposal queue** — quality classifications (`accepted`, `pending`,
+  `proposed`, `rejected`, `archived`) are stable; the JSON shape of a
+  proposal record may add fields.
+- **Registries** — `akm registry {list,add,remove}`. Searching registries is
+  `akm search --from registry` (0.9.0: `registry search` was folded into
+  `search`). Building a registry index is maintainer tooling (Internal) and
+  lives outside the CLI, in `scripts/build-registry-index.ts`.
+- **Lint** — `akm lint`. The rule set and finding shapes iterate; the
+  `--fail-on-flagged` CI contract and the exit codes are stable.
+- **Health** — `akm health` and its exit codes (0 pass / 4 warn / 1 fail) are
+  Evolving; the *content* of the report (metrics, advisories) and the rendered
+  `md` / `html` layouts are Experimental — do not script against report layout.
 
 ## Experimental
 
@@ -277,36 +397,60 @@ for scripted use.
 
 - **Workflows** — the whole `akm workflow` surface (`run`, `status`, `list`,
   `create`, `resume`, `abandon`, `plan`), the workflow asset format and the
-  workflow engine are Experimental through 0.10. The 0.10 series
-  stabilizes the feature and trims what is not useful, then either promotes it
-  out of Experimental or removes it if stabilization does not produce a quality
-  feature.
-- **`lesson` asset type** — the schema (`when_to_use`, `description`) is
+  workflow engine are Experimental from 0.9.28 and throughout 0.10. The 0.10
+  series stabilizes the feature and trims what is not useful, then either
+  promotes it out of Experimental or removes it if stabilization does not
+  produce a quality feature. **Child workflows** (`unit: { workflow: … }`, a
+  step that runs another workflow and returns its last step's output) are the
+  least settled part and are kept only in that simple form; `akm workflow list
+  --children` goes with them.
+
+  Per-key status today. It stands until the promote-or-remove
+  decision in [#1096](https://github.com/itlackey/akm/issues/1096); every key
+  is still Experimental until then.
+
+  | Key | Status |
+  | --- | --- |
+  | `params`, `steps`, `inputs`, `output` / `unit.output`, `defaults.connection` / `defaults.harness`, `### gate` | Core: the feature set pinned by `core-feature-set.test.ts` |
+  | exec units (`unit.exec`), `budget`, `unit.retry`, `map`, `gate.max_loops` | Kept in the 0.10 trim |
+  | child workflows (`unit.workflow`, `unit.with`) | Experimental: least settled |
+- **`akm metrics`** — new in 0.9.28. What it reports, its JSON shape and the
+  `--format html` dashboard may change in any release; do not script against
+  them.
+- **`akm ui`** — new in 0.10. A local web UI over the same data
+  `akm health`, `akm metrics`, `akm config`, `akm proposal`, `akm search` and
+  `akm show` report. Browsing is read-only. Explicit feedback, bundle/configuration,
+  knowledge-creation, revision-checked knowledge/memory editing and proposal-decision actions reuse existing AKM operations.
+  Historical restore remains unavailable. The command's flags, the page, and the `/api/` JSON the
+  page reads (documented in `docs/reference/ui-api.md`) may change in any
+  release; do not script against the API. The CLI's JSON output remains the
+  scriptable surface.
+- **`lesson` asset type** — schema (`when_to_use`, `description`) is
   stable, but lesson-distillation triggers and ranking are tuning targets.
-- **`--shape agent` and `--shape summary`** — the output-projection axis.
-  `summary` is implemented only on `akm show`; `agent` is implemented on
-  `search`, `show` and `curate`.
-- **Env and secret write verbs** — `env create`, `env remove` and
-  `secret set`. The read-and-inject commands are Stable: `akm env list`,
-  `akm secret list` and `akm show` print names only, and
-  `akm env run <name> -- <command>` and `akm secret run <name> <VAR> -- <command>`
-  pass values to the child process.
+- **`--detail agent`** — the agent projection, implemented on `search`, `show`,
+  and `curate` (other commands ignore it). Coverage will expand. It replaces
+  `--shape agent`; `--shape` (and `--shape summary`, which only `show` had) is
+  gone in 0.10 and is an unknown flag.
+- **Protected env & secret values** — `env` (a whole `.env` group; key names
+  are surfaced for discoverability, values never are) and `secret` (a single
+  sensitive value). Values are never written to stdout, the index, or
+  structured output; the safe injection path is `akm env run <name> --
+  <command>` (or `akm secret run <name> <VAR> -- …`). The `env` / `secret`
+  **write** verbs (`create`, `set`, `unset`, `remove`) are Experimental; the
+  `list` / `path` / `run` / `export` read-and-inject surface is Stable.
 - **Memory belief-state transitions** — `captureMode`, `beliefState`,
   contradiction edges, and the consolidate journal are observable, but the
   algorithm that writes them is tuning across patch releases.
 - **Improve built-in strategies and lanes** — the built-in strategies other
-  than `default` and `consolidate` (`quick`, `reflect-distill`, `thorough`,
-  `catchup`) and the proactive-maintenance and high-salience lanes. 0.10
-  measures each and keeps, folds or removes it.
-- **Session extraction** — `akm proposal extract` and the `extract` process:
-  what it extracts, its quality gates and its output may change while 0.10
-  measures it.
-- **Improve tuning config** — `improve.strategies.*.processes.*` (per-process
-  engines, limits, gates, and the anti-collapse / CLS / fidelity knobs) and
-  the `index.*` per-pass config. The 0.9.x series is still settling the design
-  of the improve processes, so **keys in these two families may be added,
-  renamed, or dropped in any 0.9.x or 0.10.x release**. The `akm improve`
-  *command* surface is Evolving; its tuning config is not.
+  than `default` and `consolidate` and the proactive-maintenance lane. 0.10 measures each and keeps, folds or removes it
+  (#1094). `quick`, `reflect-distill`, `thorough` and `catchup` were removed
+  in 0.10 (#1130), as were `proactive-maintenance` and the high-salience lane (#1129); a user-defined strategy of the same name keeps working.
+- **Improve tuning config** — `improve.strategies.*.processes.*` (limits,
+  gates, and the CLS knobs), `improve.processes.*` and `improve.qualityGate`
+  (where each process runs) and the `index.*` per-pass config. The 0.9.x series is explicitly still settling
+  the design of the improve processes, so **keys in these two families may be
+  added, renamed, or dropped in any 0.9.x or 0.10.x release**. The `akm
+  improve` *command* surface is Evolving (above); its tuning config is not.
 
 ### `akm improve` autonomy
 
@@ -319,31 +463,42 @@ akm config set experimental.improveAutonomy true
 ```
 
 An absent `experimental` section, an absent key and an explicit `false` all
-read as off. Without the opt-in, these three lanes are downgraded, and each
-downgrade is reported: a warning on stderr names the lane and the key, an
-`improve_skipped` event with `reason: "autonomy_gated"` is appended, `akm
-health` counts it in its improve skip-reason summary, and `akm task doctor`
-lists it under `improveAutonomy.gatedLanes` — which is where to look when a
-*scheduled* run stops doing something it used to. `akm task doctor` also
-reports the **effective** `improveTriage.applyMode`, so a `promote` strategy
-under a review-first config shows `queue`.
+read as off. Without the opt-in, these three lanes are downgraded (the triage lane only when its
+judgment tier is on), and each downgrade is **reported,
+not silent**: it warns on stderr naming the lane and the key, appends an
+`improve_skipped` event with `reason: "autonomy_gated"`, is counted in
+`akm health`'s improve skip-reason summary, and is listed by `akm task doctor`
+under `improveAutonomy.gatedLanes` — which is where to look when a *scheduled*
+run stops doing something it used to. `akm task doctor` also reports the
+**effective** `improveTriage.applyMode`, so a `promote` strategy under a
+review-first config correctly shows `queue`.
 
 | Lane | What it does when enabled | With autonomy off |
 | --- | --- | --- |
 | `memoryInference` | Writes `.derived.md` children and rewrites parent frontmatter | disabled |
 | memory cleanup | Belief-state frontmatter rewrites, archive moves | analyzed but not applied |
-| `triage` `applyMode: "promote"` | Auto-accepts queued proposals into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
+| `triage` `applyMode: "promote"` **with judgment on** | The judgment tier auto-accepts consolidate promotions into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
 
-Consolidation stays enabled with autonomy off: both of its passes (promotion,
-and the pair pass's duplicate/subsumed/supersedes judging) only emit
-reviewable proposals. With autonomy on and `triage` `applyMode: "promote"`, the
-drain accepts the proposals the judge passed, and accepts a pair-pass `retire`
-proposal only when the pair pass itself staged it with no continuity risk;
-every other `retire` proposal waits for `akm proposal accept`.
+A deterministic-only `promote` (triage with judgment off) is **not** a gated
+lane (#1143): the `default` strategy runs it without the opt-in, bounded by
+`maxAcceptsPerRun` (200), through the same deterministic gates as
+`akm proposal drain --promote`. Only a promote that turns the judgment tier on
+needs `experimental.improveAutonomy`.
+
+Consolidation remains enabled with autonomy off. Both passes emit proposals;
+the pair pass stages a retirement when its claim checks pass and there is no
+continuity risk. `triage` with `applyMode: "promote"` can accept that staged
+retirement unattended; an unstaged retirement stays pending. Both retirement
+checks receive complete note bodies with lexical attention hints, so the selected
+model must accommodate them. The pair judge supplies distinct-claim lists; AKM
+derives duplicate/subsumed/overlap outcomes and retirement direction from those
+lists. Historical queued retirement labels remain readable. Before unattended drain after an upgrade, review pending/staged
+retirements produced by older builds from notes over 12,000 body characters:
+upgrading does not revalidate their evidence (#1195).
 
 Because the gate is applied before the LLM preflight, a review-first workspace
-also needs fewer engines configured: a strategy whose only model-backed process
-is a gated lane resolves without an engine at all.
+also needs fewer connections or harnesses configured: a strategy whose only
+model-backed process is a gated lane resolves without one at all.
 
 Reflect, distill, extract candidates, validation and proactive-maintenance
 selection only stage proposals. These writes are not gated by the opt-in:
@@ -376,10 +531,8 @@ on them.
 | Variable | Purpose |
 | --- | --- |
 | `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` | Filesystem layout overrides |
-| `AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY`, `AKM_ENGINE_<NAME>_API_KEY` | Credential provision for `$VAR` config references |
-| `AKM_LLM_ENDPOINT`, `AKM_LLM_BASE_URL` | Setup provider inference |
 | `AKM_VERBOSE`, `AKM_DEBUG` | Diagnostics |
-| `AKM_REGISTRY_URL` | Comma-separated registry URL override; replaces the configured registries |
+| `AKM_REGISTRY_URL` | Comma-separated registry URL override; replaces the configured registries in every registry search akm performs (`akm registry list` and `akm info` still show the configured list) |
 | `AKM_NPM_REGISTRY` | npm mirror base URL; replaces `registry.npmjs.org` for package lookups |
 | `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode (network filesystems) |
 | `AKM_INSTALL_DIR` | Install-script prefix |
@@ -398,10 +551,18 @@ around them.
 
 - **0.10 — `config set`/`config unset` may drop the config dump** in favor of
   a compact `{ok, shape, key}` result; `akm config list` remains the full read.
-- **0.10 — migration extraction.** The migration machinery leaves the CLI for
-  a separately published `akm-migrate` package (see Internal above).
-- **0.10 — `--auto-accept` hard error.** It is currently accepted-and-warned;
-  see the Improvement loop entry.
+- **0.10 — migration extraction.** The migration machinery lives in its own
+  `akm-migrate` executable, which ships inside the `akm-cli` package next to
+  `akm` (no separate npm package). The task-source migrator (`task-to-v4.ts`,
+  `task-source-v3-frozen.ts`) lives with it under `scripts/akm-migrate/migrate/`,
+  out of `src/`.
+- **0.10 — `BundleAdapter.placeNew()` is removed.** Nothing called it; writes use AKM's fixed type→directory table.
+  Writable bundles in a non-akm layout would need per-adapter placement back
+  ([#1163](https://github.com/itlackey/akm/issues/1163)).
+- **1.0 contract freeze** — the `[bundle//]conceptId[#fragment]` ref grammar,
+  the supported source model, search behavior, and write-target rules are
+  frozen at 1.0. The SDK and in-process plugin story ship on top of that
+  frozen core.
 
 ## Reporting stability regressions
 

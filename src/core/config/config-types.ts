@@ -23,45 +23,39 @@
  * have no schema counterpart.
  */
 import type { z } from "zod";
-// VALID_HARNESS_IDS / HARNESS_AGENT_DISPATCH_IDS derive from the dependency-free
-// harnesses/ids.ts leaf (WI-9.8 KILL 3), NOT the full HARNESS_REGISTRY barrel
-// (`../../integrations/harnesses`) — that barrel transitively pulls in every
-// harness's agent-builder and the agent runtime, which is what fused config
-// into the same import-cycle SCC as `integrations/agent/*`. `harnesses/index.ts`
-// asserts at construction time that its registry matches this leaf, so the two
-// cannot silently drift (see `tests/harnesses-registry.test.ts` for the
-// value-level pin). config ← harnesses/ids is the only import direction (the
-// leaf imports nothing), so there is no cycle.
-import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "../../integrations/harnesses/ids";
+// Harness ids derive from the harness registry; nothing the registry imports
+// reaches `core/config` at runtime, so there is no cycle.
+import { VALID_HARNESS_IDS } from "../../integrations/harnesses";
 
 /**
- * Canonical list of valid agent harness / platform ids. Derived from the
- * dependency-free harness-id leaf (#562/WI-9.8) so the Zod `AgentPlatformSchema`
- * enum, the agent-engine platform union, and setup's `DetectedHarness` union
- * all derive from one place and cannot drift. Add a harness in
- * `src/integrations/harnesses/index.ts` (and its `ids.ts` mirror entry).
+ * Canonical list of valid agent harness / platform ids, derived from the harness
+ * registry so the harness `platform` check and setup's `DetectedHarness` union
+ * cannot drift.
  */
-export { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS };
+export { VALID_HARNESS_IDS };
 
 /** Union of valid harness ids, derived from {@link VALID_HARNESS_IDS}. */
 export type HarnessId = (typeof VALID_HARNESS_IDS)[number];
 
-/** OpenAI-compatible embedding connection config. */
-export type EmbeddingConnectionConfig = z.infer<typeof import("./config-schema").EmbeddingConnectionConfigSchema>;
+/**
+ * OpenAI-compatible embedding connection config. `credentialName` is never
+ * configured: it is set on an embedding that runs on the default connection
+ * (see `effectiveEmbedding`) to the name that connection's key is filed under.
+ */
+export type EmbeddingConnectionConfig = z.infer<typeof import("./config-schema").EmbeddingConnectionConfigSchema> & {
+  readonly credentialName?: string;
+};
 
-/** OpenAI-compatible LLM connection materialized from a named engine. */
-export type LlmConnectionConfig = z.infer<typeof import("./config-schema").LlmConnectionConfigSchema>;
+/** A `connections.<name>` entry: an OpenAI-compatible endpoint and the models it serves. */
+export type ConnectionConfig = z.infer<typeof import("./config-schema").ConnectionSchema>;
 
-/** Internal LLM call shape including structured-output capability metadata. */
-export type LlmProfileConfig = z.infer<typeof import("./config-schema").LlmProfileConfigSchema>;
-
-/** A named 0.9 engine (LLM connection or agent platform). */
-export type EngineConfig = z.infer<typeof import("./config-schema").EngineConfigSchema>;
+/** A `harnesses.<name>` entry: an agent program the user already has. */
+export type HarnessConfig = NonNullable<z.infer<typeof import("./config-schema").HarnessesSchema>[string]>;
 
 /**
  * Per-process config (`improve.strategies.<strategy>.processes.<process>`). Most
  * fields are process-specific — see the field comments in config-schema.ts for
- * which process each knob applies to and its default (e.g. `minPoolSize` =
+ * which process each knob applies to and its default (e.g. `maxChunkSize` =
  * consolidate; `minNewSessions`/`indexSessions`/`triage` = extract).
  */
 export type ImproveProcessConfig = z.infer<typeof import("./config-schema").ImproveProcessConfigSchema>;
@@ -134,19 +128,22 @@ export type SourceConfigEntry = z.infer<typeof import("./config-schema").SourceC
 export type OutputConfig = z.infer<typeof import("./config-schema").OutputConfigSchema>;
 
 /**
- * Per-pass index configuration. Each named pass can select an engine and apply
+ * Per-pass index configuration. Each named pass can select a connection and apply
  * bounded invocation overrides; `enabled: false` opts a pass out.
  */
 export type IndexPassConfig = z.infer<typeof import("./config-schema").IndexPassConfigSchema>;
 
 /**
- * Index-time configuration. Combines the reserved `defaults` block with
+ * Index-time configuration. Combines the index-wide model-work settings with
  * per-pass overrides keyed by pass name.
  */
 export type IndexConfig = z.infer<typeof import("./config-schema").IndexConfigSchema>;
 
 /** `akm improve` pipeline tuning (`improve`). See config-schema.ts for docs. */
 export type ImproveConfig = z.infer<typeof import("./config-schema").ImproveConfigSchema>;
+
+/** Where one improve call runs: `improve.processes.<name>` and `improve.qualityGate`. */
+export type ImproveWhere = z.infer<typeof import("./config-schema").ImproveWhereSchema>;
 
 /** Host-local scheduler activation configuration. */
 export type SchedulerConfig = z.infer<typeof import("./config-schema").SchedulerConfigSchema>;

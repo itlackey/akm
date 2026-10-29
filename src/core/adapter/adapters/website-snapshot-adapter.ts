@@ -6,24 +6,24 @@
  * The `website-snapshot` adapter — akm 0.9.0 format-family work item (#46).
  *
  * A READ-ONLY (Mode A) view over a materialized crawl snapshot written by
- * `src/sources/snapshot-fetchers/website-ingest.ts` (spec §6/§7). The on-disk
+ * `src/sources/snapshot-fetchers/website-ingest.ts`. The on-disk
  * pages are KNOWLEDGE-shaped markdown under `stash/knowledge/**` with no `type:`
- * field; this adapter RE-TYPES them to the open `type: website`. Per
- * open-question-3 (RESOLVED, maintainer 2026-07) the re-type is GATED — it
+ * field; this adapter RE-TYPES them to the open `type: website`. The re-type
+ * is GATED — it
  * applies only to a page carrying the `website` tag / a `sourceUrl` (a page
  * lacking both is not re-typed); the document KEEPS its `sourceUrl` (surfaced as
  * `sourceRef` on `documentJson`); and the conceptId STRIPS the
  * `stash/knowledge/` prefix. `manifest.json` is snapshot PROVENANCE
  * (`{url, fetchedAt}`), read by the probe but never indexed as a concept.
  *
- * Read-only ⇒ NO `placeNew` (Mode B export routes content through the
- * DESTINATION adapter, which owns placement). `validate` runs base checks only
+ * Read-only (Mode B export routes content through the DESTINATION adapter,
+ * which owns placement). `validate` runs base checks only
  * (a mirror the adapter does not author has no native validators); `updated`
  * never appears on a snapshot page, so `missing-updated` is filtered out.
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/website-snapshot/` + goldens
- * `tests/fixtures/format-family-goldens/website-snapshot/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/website-snapshot/{recognition,lint,renderer}.json`.
  */
 
 import fs from "node:fs";
@@ -146,8 +146,8 @@ export const websiteSnapshotAdapter: BundleAdapter = {
     return [{ path: path.join(c.root, PAGES_PREFIX, `${canonical}.md`), conceptId: canonical }];
   },
 
-  // No placeNew: the snapshot is READ-ONLY (Mode A). Export (Mode B) routes
-  // content through the DESTINATION adapter, which owns placement.
+  // The snapshot is READ-ONLY (Mode A). Export (Mode B) routes content through
+  // the DESTINATION adapter, which owns placement.
 
   /**
    * Install-time probe (§1.2): a root carrying the snapshot provenance

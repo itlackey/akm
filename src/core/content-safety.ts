@@ -20,15 +20,12 @@ export function containsReflectPromptScaffolding(content: string): boolean {
 
 /**
  * Return a secret-free rejection reason when generated content is unsafe to
- * persist. `redactedContent` is the same body after applying the dispatch
- * lease's sensitive-value inventory; comparing it avoids exposing the value.
+ * persist. A dispatch redacts its reply before anything reads it, so content
+ * that echoed a credential reaches here carrying the marker.
  */
-export function generatedContentRejection(content: string, redactedContent: string): string | undefined {
+export function generatedContentRejection(content: string): string | undefined {
   if (containsRedactedContent(content)) {
     return `Agent proposal content contains ${REDACTED_CONTENT_MARKER}; refusing to persist already-redacted text.`;
-  }
-  if (redactedContent !== content) {
-    return "Agent proposal content echoed a configured credential; refusing to persist either the secret or a redacted replacement.";
   }
   return undefined;
 }

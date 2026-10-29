@@ -5,7 +5,7 @@ updated: 2026-08-19
 steps:
   - id: review
     unit:
-      engine: fixture-agent
+      harness: fixture-agent
       model: fixture-exact-model
       timeout: 45s
       output:

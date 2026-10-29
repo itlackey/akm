@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { _setDetectForTests } from "../src/setup/detect";
 import { type Cleanup, sandboxHome } from "./_helpers/sandbox";
-import { overrideSeam } from "./_helpers/seams";
 
 // ── detect.ts tests ─────────────────────────────────────────────────────────
 
@@ -134,97 +132,5 @@ describe("detectAgentPlatforms", () => {
       if (originalUserProfile === undefined) delete process.env.USERPROFILE;
       else process.env.USERPROFILE = originalUserProfile;
     }
-  });
-});
-
-describe("detectOllama", () => {
-  let originalFetch: typeof globalThis.fetch;
-
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  test("returns available=true with models from API", async () => {
-    globalThis.fetch = (async (input: string | URL | Request) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes("/api/tags")) {
-        return new Response(
-          JSON.stringify({
-            models: [{ name: "llama3.2:latest" }, { name: "nomic-embed-text:latest" }, { name: "codellama:latest" }],
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response("", { status: 404 });
-    }) as unknown as typeof fetch;
-
-    const { detectOllama } = await import("../src/setup/detect");
-    const result = await detectOllama();
-    expect(result.available).toBe(true);
-    expect(result.models).toContain("llama3.2");
-    expect(result.models).toContain("nomic-embed-text");
-    expect(result.models).toContain("codellama");
-  });
-
-  test("strips :latest suffix from model names", async () => {
-    globalThis.fetch = (async () => {
-      return new Response(
-        JSON.stringify({
-          models: [{ name: "llama3.2:latest" }, { name: "phi3:v2" }],
-        }),
-        { status: 200 },
-      );
-    }) as unknown as typeof fetch;
-
-    const { detectOllama } = await import("../src/setup/detect");
-    const result = await detectOllama();
-    expect(result.models).toContain("llama3.2");
-    expect(result.models).toContain("phi3:v2");
-    expect(result.models).not.toContain("llama3.2:latest");
-  });
-
-  // VALUE-05 + RUNTIME-06: this used to make `globalThis.fetch` throw, which
-  // drives detectOllama's REAL implementation into its CLI fallback (`ollama
-  // list` via a subprocess with a 10s timeout, src/setup/detect.ts:84-104) —
-  // a genuine host/process dependency with no injectable seam at that layer
-  // (`runManagedSubprocess` accepts a `spawnFn` override, but detectOllama
-  // never threads one through, and that file is outside this package). Worse,
-  // the old assertion (`typeof result.available === "boolean"`) couldn't have
-  // caught a regression either way. On a host with no `ollama` binary this
-  // silently degrades to a fast ENOENT-driven false; on a host that DOES have
-  // `ollama` installed (increasingly common on dev machines) it can block for
-  // up to 10s and its outcome depends on that host's local Ollama state —
-  // exactly the kind of ambient host dependency this package removes.
-  //
-  // Fixed by driving detectOllama through the test seam it exposes for
-  // exactly this purpose (src/setup/detect.ts:38-48,61 — `_setDetectForTests`,
-  // the same seam tests/integration/setup-run.test.ts:199 uses), and by
-  // asserting the concrete injected result instead of just its type. This
-  // never touches the network or spawns a subprocess.
-  test("resolves to the injected detection result via the test seam (no network, no subprocess)", async () => {
-    const injected = { available: false, models: [] as string[], endpoint: "http://localhost:11434" };
-    overrideSeam(_setDetectForTests, { detectOllama: async () => injected });
-    const { detectOllama } = await import("../src/setup/detect");
-    const result = await detectOllama();
-    expect(result).toEqual(injected);
-  });
-
-  test("returns sorted model names", async () => {
-    globalThis.fetch = (async () => {
-      return new Response(
-        JSON.stringify({
-          models: [{ name: "zephyr:latest" }, { name: "alpaca:latest" }, { name: "mistral:latest" }],
-        }),
-        { status: 200 },
-      );
-    }) as unknown as typeof fetch;
-
-    const { detectOllama } = await import("../src/setup/detect");
-    const result = await detectOllama();
-    expect(result.models).toEqual(["alpaca", "mistral", "zephyr"]);
   });
 });

@@ -7,10 +7,10 @@
  * adopt the canonical write-target selection every other write command shares).
  *
  * Locks in:
- *  - explicit `--target <source>` routes the write to the named source (not the
+ *  - explicit `--bundle <source>` routes the write to the named source (not the
  *    working stash) and spells the qualified `bundle//…` ref;
- *  - `defaultWriteTarget` is the fallback when no `--target` is given;
- *  - a non-writable `--target` fails fast with the shared ConfigError shape
+ *  - `defaultWriteTarget` is the fallback when no `--bundle` is given;
+ *  - a non-writable `--bundle` fails fast with the shared ConfigError shape
  *    (exit 78) and writes nothing;
  *  - a git-backed writable target lands the mutation through a single boundary
  *    commit (working tree clean afterwards);
@@ -69,7 +69,7 @@ afterEach(() => {
 });
 
 describe("env/secret write-target routing", () => {
-  test("explicit --target routes an env write to the named source and never leaks the value", async () => {
+  test("explicit --bundle routes an env write to the named source and never leaks the value", async () => {
     const team = bundleDir();
     writeSandboxConfig({
       bundles: { stash: { path: storage.stashDir }, team: { path: team } },
@@ -79,10 +79,10 @@ describe("env/secret write-target routing", () => {
     const res = await runCliCapture([
       "env",
       "create",
-      "prod",
+      "env/prod",
       "--from-file",
       valueFile(),
-      "--target",
+      "--bundle",
       "team",
       "--format",
       "json",
@@ -102,7 +102,7 @@ describe("env/secret write-target routing", () => {
     expect(res.stderr).not.toContain(SECRET_VALUE);
   });
 
-  test("defaultWriteTarget is the fallback destination for a secret write without --target", async () => {
+  test("defaultWriteTarget is the fallback destination for a secret write without --bundle", async () => {
     const team = bundleDir();
     writeSandboxConfig({
       bundles: { stash: { path: storage.stashDir }, team: { path: team } },
@@ -110,7 +110,15 @@ describe("env/secret write-target routing", () => {
       defaultWriteTarget: "team",
     });
 
-    const res = await runCliCapture(["secret", "set", "deploy-key", "--from-file", valueFile(), "--format", "json"]);
+    const res = await runCliCapture([
+      "secret",
+      "set",
+      "secrets/deploy-key",
+      "--from-file",
+      valueFile(),
+      "--format",
+      "json",
+    ]);
 
     expect(res.code).toBe(0);
     const teamSecret = path.join(team, "secrets", "deploy-key");
@@ -122,10 +130,10 @@ describe("env/secret write-target routing", () => {
     expect(res.stderr).not.toContain(SECRET_VALUE);
   });
 
-  test("no --target and no defaultWriteTarget writes to the working stash (unchanged default)", async () => {
+  test("no --bundle and no defaultWriteTarget writes to the working stash (unchanged default)", async () => {
     writeSandboxConfig({ bundles: { stash: { path: storage.stashDir } }, defaultBundle: "stash" });
 
-    const res = await runCliCapture(["env", "create", "prod", "--from-file", valueFile(), "--format", "json"]);
+    const res = await runCliCapture(["env", "create", "env/prod", "--from-file", valueFile(), "--format", "json"]);
 
     expect(res.code).toBe(0);
     expect(fs.existsSync(path.join(storage.stashDir, "env", "prod.env"))).toBe(true);
@@ -139,10 +147,10 @@ describe("env/secret write-target routing", () => {
     const res = await runCliCapture([
       "env",
       "create",
-      "prod",
+      "env/prod",
       "--from-file",
       valueFile(),
-      "--target",
+      "--bundle",
       "primary",
       "--format",
       "json",
@@ -152,7 +160,7 @@ describe("env/secret write-target routing", () => {
     expect(JSON.parse(res.stdout).ref).toBe("primary//env/prod");
   });
 
-  test("a non-writable --target fails fast with the shared ConfigError and writes nothing", async () => {
+  test("a non-writable --bundle fails fast with the shared ConfigError and writes nothing", async () => {
     const ro = bundleDir();
     writeSandboxConfig({
       bundles: { stash: { path: storage.stashDir }, ro: { path: ro, writable: false } },
@@ -162,10 +170,10 @@ describe("env/secret write-target routing", () => {
     const res = await runCliCapture([
       "env",
       "create",
-      "prod",
+      "env/prod",
       "--from-file",
       valueFile(),
-      "--target",
+      "--bundle",
       "ro",
       "--format",
       "json",
@@ -192,10 +200,10 @@ describe("env/secret write-target routing", () => {
     const res = await runCliCapture([
       "env",
       "create",
-      "prod",
+      "env/prod",
       "--from-file",
       valueFile(),
-      "--target",
+      "--bundle",
       "vendor",
       "--format",
       "json",
@@ -224,7 +232,7 @@ describe("env/secret write-target routing", () => {
       defaultWriteTarget: "team",
     });
 
-    const res = await runCliCapture(["env", "create", "prod", "--from-file", valueFile(), "--format", "json"]);
+    const res = await runCliCapture(["env", "create", "env/prod", "--from-file", valueFile(), "--format", "json"]);
 
     expect(res.code).toBe(0);
     // Exactly one boundary commit was added and the tree is clean.
@@ -260,7 +268,7 @@ describe("env/secret write-target routing", () => {
     const res = await runCliCapture([
       "env",
       "create",
-      "prod",
+      "env/prod",
       "--from-file",
       valueFile(),
       "--sensitive",
@@ -273,7 +281,15 @@ describe("env/secret write-target routing", () => {
     expect(fs.existsSync(path.join(content, "env", "prod.sensitive"))).toBe(true);
     expect(git(repo, ["rev-list", "--count", "HEAD"])).toBe("1");
 
-    const secret = await runCliCapture(["secret", "set", "deploy-key", "--from-file", valueFile(), "--format", "json"]);
+    const secret = await runCliCapture([
+      "secret",
+      "set",
+      "secrets/deploy-key",
+      "--from-file",
+      valueFile(),
+      "--format",
+      "json",
+    ]);
     expect(secret.code).toBe(0);
     expect(fs.readFileSync(path.join(content, "secrets", "deploy-key"), "utf8")).toBe(SECRET_VALUE);
     expect(git(repo, ["rev-list", "--count", "HEAD"])).toBe("1");

@@ -26,9 +26,10 @@ for one tool become discoverable, and usable, from any other.
 
 ## akm bundle add
 
-`akm bundle add` connects a new bundle and indexes it. The source kind is
-inferred from the input: known git hosts and URLs ending in `.git` are git
-bundles, while other HTTP(S) URLs are website bundles.
+`akm bundle add` connects a new bundle and indexes it (a `--provider npm` or
+`--provider website` add is only recorded; `akm bundle update` fetches it). The
+source kind is inferred from the input: known git hosts and URLs ending in
+`.git` are git bundles, while other HTTP(S) URLs are website bundles.
 
 ```sh
 akm bundle add ~/.claude/skills                          # Local directory (filesystem)
@@ -70,19 +71,14 @@ key; use [`akm bundle rename`](#akm-bundle-rename) to relabel it. Every
 akm derives one (the directory name, the package or repo name, or the
 hostname), adding a `-<hash>` suffix only on a collision.
 
-Git credentials are given as a reference, `$VAR`, `${VAR}`, or
-`secret://name`, never as a literal token; akm resolves it when it runs git and
-does not write it to the remote URL or `config.json`. A plain `http://` source
-URL (other than localhost) needs `--allow-insecure-transport`.
+Git credentials are given as a reference, `$VAR`, `${VAR}`, or an akm ref such
+as `${secrets/gitea_token}`, never as a literal token; akm resolves it when it
+runs git and does not write it to the remote URL or `config.json`. A plain
+`http://` source URL (other than localhost) needs `--allow-insecure-transport`.
 
-If a bundle's `env/` files set variable names such as `LD_PRELOAD`, `PATH` or
-`NODE_OPTIONS` (41 names plus the `BASH_FUNC_*` and `GIT_CONFIG_*` prefixes;
-`akm lint` reports the same ones), `akm bundle add` and `akm bundle update` ask
-before continuing in a terminal and stop in a non-interactive run unless you
-pass `--allow-dangerous-env-keys`.
-
-Installing a bundle makes its scripts, prompts and workflows available to your
-agent. A website sync (and `akm import <url>`) also imports and runs every
+Installing a bundle is the trust decision: it makes its scripts, prompts and
+workflows available to your agent, and `akm bundle add` does not inspect its
+`env/` files. A website sync (and `akm import <url>`) also imports and runs every
 `.ts`, `.js` or `.mjs` module in your working bundle's
 `scripts/wiki-fetchers/` directory as a custom fetcher.
 
@@ -95,6 +91,20 @@ is configurable. See the
 reference, X credential setup, and crawl-option details. Low-level knobs like
 `crawlTimeoutMs` and `respectRobots` live in the bundle's `website`
 descriptor; see [Configuration](../reference/configuration.md).
+
+**Index only a subdirectory of a git bundle.** Add the repo, point the
+bundle's component `root` at the subdirectory, then update:
+
+```sh
+akm bundle add <url> --name <name>
+akm config set bundles.<name>.components.main.root <subdir>
+akm bundle update <name>
+```
+
+`root` is relative to the stash root akm detected in the checkout (the repo
+root, or the shallowest directory it recognized as a bundle), not always the
+repo root. A path that escapes it is skipped with a warning. The change takes
+effect on the next `akm bundle update` or `akm index`.
 
 **Example: add a team bundle from GitHub**
 
@@ -122,8 +132,10 @@ Valid `--kind` values are the four bundle providers: `filesystem`, `git`,
 ## akm bundle update / akm bundle remove
 
 `akm bundle update` re-fetches git, npm, and website bundles into a staging
-directory, then publishes and indexes the result. `akm bundle remove`
-disconnects a bundle and re-indexes without it.
+directory, then publishes and indexes the result. Installing a bundle is the
+trust decision: neither `add` nor `update` inspects its `env/` files, so a
+bundle that sets `PATH` in an env file installs and refreshes unattended with no
+flag. `akm bundle remove` disconnects a bundle and re-indexes without it.
 
 Nothing refreshes on a timer. A bundle is fetched when you add it and when you
 run `akm bundle update`. `akm index` fetches a bundle only if it has never been
@@ -143,7 +155,6 @@ akm bundle update @scope/bundle          # One managed bundle
 akm bundle update --all                 # All managed bundles
 akm bundle update --all --force         # Force fresh download even if version unchanged
 akm bundle update --all --skip-if-locked # Scheduled refresh: exit 0 on DB contention
-akm bundle update @scope/bundle --allow-dangerous-env-keys  # Proceed past dangerous env keys
 
 # Remove
 akm bundle remove @scope/bundle          # By npm id
@@ -152,10 +163,18 @@ akm bundle remove ~/.claude/skills      # By path
 akm bundle remove my-provider           # By name
 ```
 
-With `--all`, a bundle that fails or is blocked is reported and the rest
-continue; a failed bundle keeps its previous contents and index. If an update
-is interrupted, rerun `akm bundle update <name>`, then `akm health`, and
-`akm index --full` if health reports an index or state mismatch.
+A read-only git or npm bundle whose upstream revision is unchanged is not
+fetched or replaced again (`--force` fetches it anyway), so a task or workflow
+running from it keeps its directory. When the revision does change, the
+previous revision directory is kept and older ones are removed.
+
+`--allow-dangerous-env-keys` and `--yes` are deprecated no-ops on update,
+accepted through 0.10 so existing scripts keep working.
+
+With `--all`, a bundle that fails is reported and the rest continue; a failed
+bundle keeps its previous contents and index. If an update is interrupted, rerun
+`akm bundle update <name>`, then `akm health`, and `akm index --full` if health
+reports an index or state mismatch.
 
 New bundles get a `.gitignore` that keeps `env/` and `secrets/` out of git. A
 private bundle that versions them on purpose can put
@@ -192,9 +211,9 @@ that still spell the old `<old>//` prefix so you can fix them by hand.
 
 ## akm clone
 
-`akm clone` copies a single asset from any bundle into your working bundle (or
-the bundle named by `--bundle`) for local editing. The copy is a separate asset
-with its own ref; `akm show` with a short ref prefers the copy in your default
+`akm clone` copies a single asset from any bundle into the write target
+(`--bundle`, else `defaultWriteTarget`, else your working bundle) for local
+editing. The copy is a separate asset with its own ref; `akm show` with a short ref prefers the copy in your default
 bundle, while the original stays where it was.
 
 ```sh
@@ -229,7 +248,9 @@ akm sync my-skills -m "Update"   # Named writable git bundle
 ```
 
 Push behavior depends on configuration: if the bundle is a git repo with a
-remote and `writable: true`, sync also pushes. Otherwise it commits only.
+remote and `writable: true`, sync first fetches and merges what another host
+pushed, then pushes. A conflicting merge is aborted and the push skipped (your
+commit stays). Otherwise it commits only.
 
 Writes akm makes to a writable git bundle (for example
 `akm remember --bundle my-skills`, `akm proposal accept`, or an improve run)

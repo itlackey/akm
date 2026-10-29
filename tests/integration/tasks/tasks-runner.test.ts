@@ -415,7 +415,7 @@ describe("runTask — workflow target", () => {
     expect(exitCodeForStatus(result.status)).toBe(1);
     // The aborted run is left resumable, and its id is surfaced for that.
     expect(result.detail?.runId).toBe("run-wedged");
-    expect(result.detail?.error).toContain("akm workflow resume run-wedged");
+    expect(result.detail?.error).toContain("akm workflow run run-wedged");
     const log = fs.readFileSync(result.log, "utf8");
     expect(log).toContain("timed_out=true timeout_ms=100");
     expect(log).toContain("run_id=run-wedged status=active");
@@ -580,7 +580,7 @@ describe("runTask — workflow target", () => {
 
 describe("runTask — command target", () => {
   test("resolves a bare akm run task to the current installation when PATH omits it", async () => {
-    const command = ["akm", "improve", "--strategy", "quick"];
+    const command = ["akm", "improve", "--strategy", "consolidate"];
     writeTask("literal-command", shellTask(command));
     let spawned: string[] | undefined;
     const spawnFn: SpawnFn = (cmd) => {
@@ -773,13 +773,31 @@ describe("runTask — command target", () => {
     expect(fs.readFileSync(result.log, "utf8")).toContain(`cwd=${bundleDir}`);
   });
 
-  test("a command that ignores SIGTERM is SIGKILLed on timeout, logging timed_out + exit 143", async () => {
+  test("the command sees akm's own environment and the directories this akm resolved", async () => {
+    writeTask(
+      "env-probe",
+      shellTask([
+        process.execPath,
+        "-e",
+        "console.log('probe=' + JSON.stringify([process.env.TASK_ENV_PROBE, process.env.AKM_STATE_DIR, process.env.AKM_EVENT_SOURCE]))",
+      ]),
+    );
+
+    const result = await withEnv({ TASK_ENV_PROBE: "bar", AKM_EVENT_SOURCE: undefined }, () =>
+      runTask("env-probe", { bundleDir, logDir }),
+    );
+
+    expect(result.status).toBe("completed");
+    expect(fs.readFileSync(result.log, "utf8")).toContain(`probe=${JSON.stringify(["bar", stateDir, "task"])}`);
+  });
+
+  test("a command that ignores SIGINT and SIGTERM is SIGKILLed on timeout, logging timed_out + exit 143", async () => {
     writeTask("stubborn", shellTask("hang-forever", { timeout: 100 }));
 
     const { timers, setTimeoutFn, clearTimeoutFn } = collectTimers();
     const signals: string[] = [];
-    // A child that swallows SIGTERM: only SIGKILL resolves its exit. Proves the
-    // runner now escalates (old inline path signalled SIGTERM once and hung).
+    // A child that swallows SIGINT and SIGTERM: only SIGKILL resolves its exit. Proves the
+    // runner escalates through the whole ladder (old inline path signalled SIGTERM once and hung).
     const spawnFn: SpawnFn = () => {
       let resolveExit: (code: number) => void = () => {};
       const exited = new Promise<number>((resolve) => {
@@ -794,7 +812,7 @@ describe("runTask — command target", () => {
         kill(signal?: number | string) {
           const name = String(signal);
           signals.push(name);
-          if (name === "SIGTERM") return; // ignored — force the SIGKILL rung
+          if (name !== "SIGKILL") return; // ignored — force the SIGKILL rung
           resolveExit(143);
         },
       };
@@ -802,11 +820,12 @@ describe("runTask — command target", () => {
     };
 
     const promise = runTask("stubborn", { bundleDir, logDir, spawnFn, setTimeoutFn, clearTimeoutFn });
-    await fireWhenRegistered(timers, 100); // deadline → SIGTERM (ignored)
+    await fireWhenRegistered(timers, 100); // deadline → SIGINT (ignored)
+    await fireWhenRegistered(timers, 5000); // grace → SIGTERM (ignored)
     await fireWhenRegistered(timers, 5000); // grace → SIGKILL → child exits 143
     const result = await promise;
 
-    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(signals).toEqual(["SIGINT", "SIGTERM", "SIGKILL"]);
     expect(result.status).toBe("failed");
     expect(result.detail?.exitCode).toBe(143);
     const log = fs.readFileSync(result.log, "utf8");
@@ -839,8 +858,8 @@ describe("runTask — command target", () => {
         stdin: null,
         kill(signal?: number | string) {
           signals.push(String(signal));
-          // Mirrors a real child's exit: stops scheduleKillLadder's SIGKILL
-          // follow-up timer (it no-ops once exitCode is set) rather than
+          // Mirrors a real child's exit: stops scheduleKillLadder's SIGTERM and
+          // SIGKILL follow-ups (they no-op once exitCode is set) rather than
           // leaving a dangling real 5s timer behind this test.
           proc.exitCode = 143;
           resolveExit(143);
@@ -867,7 +886,7 @@ describe("runTask — command target", () => {
 
     const result = await promise;
 
-    expect(signals).toEqual(["SIGTERM"]);
+    expect(signals).toEqual(["SIGINT"]);
     expect(result.status).toBe("failed");
     expect(result.detail?.exitCode).toBe(143);
   });
@@ -920,11 +939,10 @@ describe("runTask — command target", () => {
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: {
+        connections: {
           main: {
-            kind: "llm",
             endpoint: "https://api.example.com/v1/chat/completions",
-            model: "fixture",
+            models: { fast: "fixture" },
             credential: { names: ["ACME_LLM_KEY"], required: true },
           },
         },
@@ -984,8 +1002,8 @@ describe("runTask — command target", () => {
   });
 
   test("ordinary command output is left intact", async () => {
-    // The over-redaction guard. Treating every non-allowlisted env value as a
-    // secret — the fix #755 literally proposed — turns this log into confetti:
+    // The over-redaction guard. Treating every env value as a secret — the fix
+    // #755 literally proposed — turns this log into confetti:
     // `SHLVL=1` alone rewrites every "1" in the output.
     echoTask("clean-output", "Build finished in 12.4s | 3 tests passed, 0 failed | wrote dist/index.js (48 KB)");
 
@@ -1044,8 +1062,7 @@ describe("runTask — prompt target", () => {
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: { opencode: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "opencode" },
+        harnesses: { opencode: { platform: "opencode" } },
       }),
     );
     const schedulerContext = {
@@ -1063,10 +1080,7 @@ describe("runTask — prompt target", () => {
         bundleDir,
         logDir,
         scheduled: true,
-        // Operational overrides must not be able to replace frozen request
-        // data, including the scheduler context below.
-        agentOptions: { env: { AKM_STATE_DIR: "/caller-override" } },
-        runAgentImpl: async (_profile, _prompt, options) => {
+        runAgentImpl: async (_profile, options) => {
           childEnv = options.env;
           return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
         },
@@ -1079,56 +1093,41 @@ describe("runTask — prompt target", () => {
     expect(childEnv?.AKM_STATE_DIR).toBe(schedulerContext.AKM_STATE_DIR);
   });
 
-  test("dispatches an LLM prompt task through its selected engine", async () => {
-    writeTask("llm", promptTask("answer briefly", { engine: "fast", model: "qwen3-small" }));
+  test("a command task gets the 6-hour scheduled default timeout unless the task sets one", async () => {
     process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: {
-          fast: {
-            kind: "llm",
-            endpoint: "http://localhost:11434/v1/chat/completions",
-            model: "qwen3",
-          },
-        },
-        defaults: { engine: "fast", llmEngine: "fast" },
+        harnesses: { opencode: { platform: "opencode" } },
       }),
     );
-    const seen: { model?: string; prompt?: string } = {};
-
-    const result = await runTask("llm", {
-      bundleDir,
-      logDir,
-      chatCompletionImpl: async (connection, messages) => {
-        seen.model = connection.model;
-        seen.prompt = messages[0]?.content;
-        return "complete";
-      },
-      now: () => new Date("2025-01-01T00:00:00Z"),
-    });
-
-    expect(result.status).toBe("completed");
-    // D8 (spec docs/plans/specs/p1b-model-extraction.md §5.3, §6 F-2)
-    // corollary: a prepared command (agent/LLM) run now reports "command",
-    // not the former inverted "prompt" string.
-    expect(result.target).toEqual({ kind: "command", engine: "fast" });
-    expect(seen).toEqual({ model: "qwen3-small", prompt: "answer briefly" });
-    expect(result.notices?.map((notice) => [notice.code, notice.field])).toEqual([
-      ["untranslated-field", "runtime.workspace"],
-    ]);
-    const log = fs.readFileSync(result.log, "utf8");
-    expect(log).toContain("lowering_notice=untranslated-field adapter=llm field=runtime.workspace");
-    expect(log).not.toContain("lowering_notice=untranslated-field adapter=llm field=runtime.environment");
+    const timeouts: Record<string, number | null | undefined> = {};
+    for (const [id, overrides] of [
+      ["unset", {}],
+      ["explicit", { timeout: 1000 }],
+      ["optout", { timeout: null }],
+    ] as const) {
+      writeTask(id, promptTask("say hello", { harness: "opencode", ...overrides }));
+      const result = await runTask(id, {
+        bundleDir,
+        logDir,
+        runAgentImpl: async (_profile, options) => {
+          timeouts[id] = options.timeoutMs;
+          return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
+        },
+      });
+      expect(result.status).toBe("completed");
+    }
+    expect(timeouts).toEqual({ unset: 6 * 60 * 60 * 1000, explicit: 1000, optout: null });
   });
 
   test("dispatches to runAgent (mocked) and writes captured stdout to the log", async () => {
-    writeTask("prompt", promptTask("say hello", { engine: "opencode" }));
+    writeTask("prompt", promptTask("say hello", { harness: "opencode" }));
 
     const fakeRunAgent: FakeRunAgent = async (...args) => {
-      const prompt = args[1] as string;
+      const prompt = (args[1] as { dispatch?: { prompt?: string } }).dispatch?.prompt;
       return {
         ok: true,
         exitCode: 0,
@@ -1138,15 +1137,14 @@ describe("runTask — prompt target", () => {
       };
     };
 
-    // The prompt task resolves this named agent engine before dispatch.
+    // The prompt task resolves this named harness before dispatch.
     process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: { opencode: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "opencode" },
+        harnesses: { opencode: { platform: "opencode" } },
       }),
     );
 
@@ -1188,19 +1186,17 @@ describe("runTask — prompt target", () => {
   });
 
   test("passes a prompt-task model through the selected agent engine exactly", async () => {
-    writeTask("agent-model", promptTask("review this", { engine: "reviewer", model: "provider/exact-model" }));
+    writeTask("agent-model", promptTask("review this", { harness: "reviewer", model: "provider/exact-model" }));
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: {
+        harnesses: {
           reviewer: {
-            kind: "agent",
             platform: "opencode",
           },
         },
-        defaults: { engine: "reviewer" },
       }),
     );
     let captured: { model?: string } = {};
@@ -1221,14 +1217,13 @@ describe("runTask — prompt target", () => {
 
   test("redacts echoed agent credentials before task logs are persisted", async () => {
     const sentinel = "TASK-ECHO-SENTINEL";
-    writeTask("redacted", promptTask("say hello", { engine: "opencode" }));
+    writeTask("redacted", promptTask("say hello", { harness: "opencode" }));
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: { opencode: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "opencode" },
+        harnesses: { opencode: { platform: "opencode" } },
       }),
     );
 
@@ -1253,7 +1248,7 @@ describe("runTask — prompt target", () => {
   });
 
   test("agent failure surfaces as failed status with reason", async () => {
-    writeTask("fail", promptTask("boom", { engine: "opencode" }));
+    writeTask("fail", promptTask("boom", { harness: "opencode" }));
 
     process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
@@ -1261,8 +1256,7 @@ describe("runTask — prompt target", () => {
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: { opencode: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "opencode" },
+        harnesses: { opencode: { platform: "opencode" } },
       }),
     );
 
@@ -1299,12 +1293,12 @@ describe("runTask — prompt target", () => {
   // #943: reproduces the issue's report verbatim — a command task authored
   // with its own `timeout:` field whose dispatched agent times out. Static
   // reading found every ok:false branch (including reason:"timeout" from
-  // sdk-runner.ts/spawn.ts) already unconditionally mapped to status:"failed"
+  // spawn.ts) already unconditionally mapped to status:"failed"
   // with detail.reason preserved; this pins that so the mapping can't regress
   // silently, and reproduces the exact scenario (timeout: 50) rather than only
   // the pre-existing non_zero_exit case above.
   test("agent timeout surfaces as failed status with reason timeout", async () => {
-    writeTask("timed-out", promptTask("content", { engine: "opencode", timeout: 50 }));
+    writeTask("timed-out", promptTask("content", { harness: "opencode", timeout: 50 }));
 
     process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
@@ -1312,8 +1306,7 @@ describe("runTask — prompt target", () => {
       path.join(configDir, "config.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        engines: { opencode: { kind: "agent", platform: "opencode" } },
-        defaults: { engine: "opencode" },
+        harnesses: { opencode: { platform: "opencode" } },
       }),
     );
 

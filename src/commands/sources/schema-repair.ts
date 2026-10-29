@@ -29,7 +29,6 @@ import { info } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import type { ChatMessage, chatCompletion } from "../../llm/client";
 import { callStructured } from "../../llm/structured-call";
 import { isLedgerBlocked, ledgerKey, loadLedgerSnapshot } from "../improve/ledger";
@@ -215,7 +214,6 @@ export async function runSchemaRepairPass(
     return { repairs, repairedRefs };
   }
 
-  assertRunnerCredentials(llmRunner);
   for (const repair of pendingErrors) {
     appendEvent({
       eventType: "schema_repair_invoked",
@@ -231,20 +229,17 @@ export async function runSchemaRepairPass(
       loweringNotices.length > 0 ? { notices: loweringNotices } : {};
     try {
       info(`[improve] schema-repair ${failure.ref} (${fieldList})`);
-      const llmResponse = await callStructured<string>({
-        feature: "schema_repair",
+      const outcome = await callStructured({
         runner: llmRunner,
         messages,
         ...(chatFn ? { request: { chat: chatFn } } : {}),
         onNotices: (value) => {
           loweringNotices = value;
         },
-        parse: (rawResponse) => rawResponse ?? "",
-        onError: () => "",
-        fallback: "",
       });
+      if (!outcome.ok) throw new Error(outcome.error);
 
-      const parsed = parseEmbeddedJsonResponse<Record<string, string>>(llmResponse.trim());
+      const parsed = parseEmbeddedJsonResponse<Record<string, string>>(outcome.raw.trim());
       if (!parsed) {
         repairs.push({
           ref: failure.ref,
@@ -332,7 +327,5 @@ async function defaultFindFilePath(ref: string, stashDir?: string): Promise<stri
   return resolveAssetPath(ref, {
     stashDir,
     mode: "index-first",
-    directoryIndexNames: ["SKILL.md", "index.md", "README.md"],
-    preserveDirectNameFallback: true,
   });
 }

@@ -13,7 +13,8 @@ also has its own README indexing everything inside it: [Guides](guides/README.md
 - [Getting Started](guides/getting-started.md) -- Install akm, connect a source, and pull a curated shortlist
 - [Concepts](guides/concepts.md) -- Capabilities, bundles, adapters, and refs: the mental model in one page
 - [Agent Install Guide](agents/agent-install.md) -- Automated, non-interactive install for agents
-- `akm help agents` -- The short CLI guide agents load (`akm help agents --full` for the complete one)
+- [Upgrade from 0.9 to 0.10](migration/v0.9-to-v0.10.md) -- The current upgrade path: the order to follow, every removed CLI spelling, config key and workflow feature with its replacement, and what a scheduled `akm improve` now does
+- `akm hints` -- The CLI guide agents load (complete by default; `akm hints --detail brief` for the short one)
 
 ## Use
 
@@ -38,12 +39,12 @@ also has its own README indexing everything inside it: [Guides](guides/README.md
 ## Look up details
 
 - [CLI](reference/cli.md) -- All `akm` commands and flags
-- [Configuration](reference/configuration.md) -- Engines, strategies, bundles, and settings
+- [Configuration](reference/configuration.md) -- Connections, harnesses, strategies, bundles, and settings
 - [Supported Formats](reference/supported-formats.md) -- Every bundle format akm recognizes, its detection marker, and current read/write support
 - [Asset Types](reference/asset-types.md) -- The capability taxonomy, directory conventions, and per-type examples
 - [Refs](reference/refs.md) -- The ref grammar `akm search` emits and `akm show` consumes
 - [Memory](reference/memory.md) -- The `memory` asset type: capture, belief states, and derived memories
-- [Tasks](reference/tasks.md) -- Task source v4 files, targets, triggers, and scheduling
+- [Tasks](reference/tasks.md) -- Task source v4 files, targets, triggers, scheduling, and the explicit `akm migrate apply` conversion of v2 and v3 files
 - [Workflow Schema](reference/workflow-schema.md) -- Frontmatter and body syntax for a workflow asset
 - [Registry](reference/registry.md) -- Registries, search, hosting, and managing sources
 - [Website Sources](reference/website-sources.md) -- The fetcher API for crawling and importing URLs
@@ -52,7 +53,7 @@ also has its own README indexing everything inside it: [Guides](guides/README.md
 
 ## Migration
 
-- [Migration](migration/README.md) -- Upgrade guides and per-release migration notes
+- [Migration](migration/README.md) -- The current 0.9 to 0.10 upgrade guide, then the historical guides and per-release notes of earlier releases
 
 ## Official Ecosystem Repositories
 

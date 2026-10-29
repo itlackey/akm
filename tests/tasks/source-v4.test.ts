@@ -83,7 +83,6 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { UsageError } from "../../src/core/errors";
 import {
@@ -100,7 +99,6 @@ import { TASK_V3_MAX_SCHEDULES } from "../../src/tasks/source-v3";
 import {
   TASK_RUN_BOOLEAN_FLAGS,
   TASK_RUN_RESERVED_FLAG_NAMES,
-  TASK_RUN_SELF_DIAGNOSED_FLAGS,
   TASK_RUN_VALUE_FLAGS,
 } from "../../src/tasks/task-run-reserved-flags";
 import { detectSecretShapedParams } from "../../src/workflows/exec/param-secrets";
@@ -213,6 +211,8 @@ describe("task source v4 — closed key-set constants (D2-N3, D2-N7)", () => {
         "working-directory",
         "schedule",
         "agent",
+        "connection",
+        "harness",
         "engine",
         "model",
         "inference",
@@ -427,32 +427,35 @@ describe("parseTaskSourceV4Document — target union (uses/run exactly one, D2-N
     expect(doc.target).toEqual({ kind: "run", run: "echo 'runs-on: ${{ matrix.os }}' >> ci.yml" });
   });
 
-  test("accepts the closed run/shell/working-directory contract with real physical containment (mirrors v3)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-task-source-v4-root-"));
-    fs.mkdirSync(path.join(root, "packages", "core"), { recursive: true });
-    try {
-      const doc = parseTaskSourceV4Document(
-        v4Doc({ run: "printf '%s\\n' exact", shell: "bash", "working-directory": "packages/core" }),
-        { filePath: path.join(root, "tasks", "run.yml"), workspaceRoot: root },
-      );
-      expect(doc.target).toEqual({
-        kind: "run",
-        run: "printf '%s\\n' exact",
-        shell: "bash",
-        workingDirectory: "packages/core",
-      });
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
+  test("accepts the closed run/shell/working-directory contract (mirrors v3)", () => {
+    const doc = parseTaskSourceV4Document(
+      v4Doc({ run: "printf '%s\\n' exact", shell: "bash", "working-directory": "packages/core" }),
+      { filePath: "/bundle/tasks/run.yml" },
+    );
+    expect(doc.target).toEqual({
+      kind: "run",
+      run: "printf '%s\\n' exact",
+      shell: "bash",
+      workingDirectory: "packages/core",
+    });
   });
 
-  test("requires a workspace root whenever working-directory needs physical containment (mirrors v3)", () => {
+  test.each([
+    "/srv/work",
+    "../elsewhere",
+    "packages/../core",
+    "C:\\work",
+  ])("working-directory %p is accepted as authored: it needs no workspace root and is not contained", (workingDirectory) => {
+    const doc = parseTaskSourceV4Document(v4Doc({ run: "echo hi", "working-directory": workingDirectory }), {
+      filePath: "/bundle/tasks/run.yml",
+    });
+    expect(doc.target).toMatchObject({ kind: "run", workingDirectory });
+  });
+
+  test("working-directory must still be a non-empty string", () => {
     expectTaskSourceInvalid(
-      () =>
-        parseTaskSourceV4Document(v4Doc({ run: "echo hi", "working-directory": "packages/core" }), {
-          filePath: "/bundle/tasks/run.yml",
-        }),
-      /workspace root|physically|contain/i,
+      () => parseTaskSourceV4Document(v4Doc({ run: "echo hi", "working-directory": "" }), { filePath: "/x.yml" }),
+      /working-directory/i,
     );
   });
 });
@@ -820,35 +823,6 @@ describe("task source v4 — inputs: names that collide with akm task's own flag
     }
   });
 
-  // 0.9.2 review round 2. `target` is reserved from the DIAGNOSTIC side, not
-  // the declared-arg side: it is in neither scanner set, so
-  // `parseTaskInputFlags` (src/commands/tasks/tasks-cli.ts) happily captured
-  // `--target=<value>` as an input flag — but
-  // `rejectRetiredTaskTargetFlag` throws the 0.9 `--target` -> `--bundle`
-  // rename hint for EVERY spelling of the name before that scanner ever runs,
-  // so a task declaring an input named `target` had no reachable way to be
-  // given one. Reserving the NAME here makes the unusable declaration
-  // impossible to author instead of narrowing the rejecter (which would
-  // reopen the silently-ignored `--target=team` that round 1 closed).
-  test("`target` is reserved even though it is in neither scanner set, and its message names the retired spelling", () => {
-    expect(TASK_RUN_SELF_DIAGNOSED_FLAGS).toEqual(["target"]);
-    expect(TASK_RUN_VALUE_FLAGS).not.toContain("target");
-    expect(TASK_RUN_BOOLEAN_FLAGS).not.toContain("target");
-    expect(TASK_RUN_RESERVED_FLAG_NAMES.has("target")).toBe(true);
-
-    const error = expectTaskSourceInvalid(
-      () =>
-        parseTaskSourceV4Document(
-          v4Doc({ run: "echo hi", inputs: { target: { type: "string", default: "staging" } } }),
-          {
-            filePath: "/x.yml",
-          },
-        ),
-      /inputs\.target/,
-    );
-    expect(error.message).toContain("collides with the retired `akm task --target` spelling");
-  });
-
   test("a name that is merely SIMILAR to a reserved flag still parses — the check is exact-name, not fuzzy", () => {
     const doc = parseTaskSourceV4Document(
       v4Doc({ run: "echo hi", inputs: { target_env: { type: "string" }, bundles: { type: "string" } } }),
@@ -1136,23 +1110,27 @@ describe("task source v4 — top-level execution controls", () => {
     expectTopLevelFieldPath(error.message, "timeout");
   });
 
-  test("engine/model/agent accept null and reject an empty string, each at its OWN top-level field path (not akm.<key>)", () => {
-    const ok = parseTaskSourceV4Document(v4Doc({ uses: "commands/review", engine: null, model: null, agent: null }), {
-      filePath: "/x.yml",
-    });
+  test("connection/harness/engine/model/agent accept null and reject an empty string, each at its OWN top-level field path (not akm.<key>)", () => {
+    const ok = parseTaskSourceV4Document(
+      v4Doc({ uses: "commands/review", connection: null, harness: null, engine: null, model: null, agent: null }),
+      { filePath: "/x.yml" },
+    );
+    expect(ok.execution.connection).toBeNull();
+    expect(ok.execution.harness).toBeNull();
     expect(ok.execution.engine).toBeNull();
     expect(ok.execution.model).toBeNull();
     expect(ok.execution.agent).toBeNull();
 
     // v3's nullableSelector hardcodes ["akm", key] (source-v3.ts:375) for
-    // every one of engine/model/agent — pin all three field paths
-    // individually, not just "engine" (test-review finding,
-    // tests/tasks/source-v4.test.ts:130).
-    const engineError = expectTaskSourceInvalid(
-      () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", engine: "" }), { filePath: "/x.yml" }),
-      /engine/i,
-    );
-    expectTopLevelFieldPath(engineError.message, "engine");
+    // every one of these selectors — pin each field path individually
+    // (test-review finding, tests/tasks/source-v4.test.ts:130).
+    for (const key of ["connection", "harness", "engine"]) {
+      const targetError = expectTaskSourceInvalid(
+        () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", [key]: "" }), { filePath: "/x.yml" }),
+        new RegExp(key, "i"),
+      );
+      expectTopLevelFieldPath(targetError.message, key);
+    }
 
     const modelError = expectTaskSourceInvalid(
       () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", model: "" }), { filePath: "/x.yml" }),
@@ -1214,21 +1192,37 @@ describe("task source v4 — top-level execution controls", () => {
     expectTopLevelFieldPath(error.message, "maxSteps");
   });
 
-  test("when_to_use, tags, inference, and tools survive as top-level v4 keys with identical validation (D2-N7)", () => {
+  test("when_to_use, tags, and inference survive as top-level v4 keys with identical validation (D2-N7)", () => {
     const doc = parseTaskSourceV4Document(
       v4Doc({
         uses: "commands/review",
         when_to_use: "Run during release review",
         tags: ["contract", "review"],
         inference: { seed: 7 },
-        tools: ["read", "grep"],
       }),
       { filePath: "/x.yml" },
     );
     expect(doc.when_to_use).toBe("Run during release review");
     expect(doc.tags).toEqual(["contract", "review"]);
     expect(doc.execution.inference).toEqual({ seed: 7 });
-    expect(doc.execution.tools).toEqual(["read", "grep"]);
+  });
+
+  test("a top-level tools: is ignored, with a one-time retired warning", () => {
+    const warnCalls: string[] = [];
+    _resetWarnOnceForTests();
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level === "warn") warnCalls.push(args.map(String).join(" "));
+    });
+
+    const parse = () =>
+      parseTaskSourceV4Document(v4Doc({ uses: "commands/review", tools: ["read", "grep"] }), {
+        filePath: "/x.yml",
+      });
+    const doc = parse();
+    parse();
+
+    expect(doc.execution).not.toHaveProperty("tools");
+    expect(warnCalls).toEqual(["/x.yml: `tools` is retired and ignored."]);
   });
 
   test("an invalid tags: value is TASK_SOURCE_INVALID at the TOP-LEVEL field path 'tags' (not akm.tags, D2-N7)", () => {

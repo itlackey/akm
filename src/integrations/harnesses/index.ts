@@ -2,17 +2,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import type { SessionLogHarness } from "../session-logs/types";
 /**
- * Single registration point for every akm agent harness (#562).
+ * Single registration point for every akm agent harness (#562, #1095).
  *
- * `HARNESS_REGISTRY` is the ONE source of truth that replaces the three
- * previously-disconnected registries (session-logs index, agent profiles,
- * config/setup platform strings). All derived exports below are computed from
- * it, so adding a harness is a single entry here instead of ~16 scattered edits.
+ * `HARNESS_REGISTRY` is the ONE source of truth. Each harness is a
+ * self-contained folder (`./<id>/index.ts`) exporting its descriptor; the
+ * config schema's platform enum, the built-in agent profiles, command
+ * builders, setup choices and the docs table all derive from the array below.
  *
- * This module is a dependency-graph LEAF: it imports nothing from
- * `core/config`. `core/config/config-types.ts` derives `VALID_HARNESS_IDS`
- * from here, which keeps the import direction acyclic (config ← harnesses).
+ * Adding a harness: create `./<id>/index.ts`, add its class here. Removing:
+ * delete both. This module must stay free of runtime `core/config` imports
+ * (config derives `VALID_HARNESS_IDS` from here).
  */
 import { AiderHarness } from "./aider";
 import { AmazonqHarness } from "./amazonq";
@@ -20,46 +21,26 @@ import { ClaudeHarness } from "./claude";
 import { CodexHarness } from "./codex";
 import { CopilotHarness } from "./copilot";
 import { GeminiHarness } from "./gemini";
-import { HARNESS_ID_TABLE } from "./ids";
+import type { AkmHarness } from "./harness";
 import { OpencodeHarness } from "./opencode";
-// Import the descriptor from its LEAF module, not the per-harness barrel: the
-// barrel re-exports `./sdk-runner` (which imports `core/config`, and
-// `core/config/config-types` derives `VALID_HARNESS_IDS` back from this file).
-// Importing the class through the barrel would form an initialization cycle
-// that throws a TDZ error when the barrel is the first module loaded in a fresh
-// graph (see ./opencode-sdk/harness.ts). This keeps the registry a config-leaf.
-import { OpencodeSdkHarness } from "./opencode-sdk/harness";
 import { OpenhandsHarness } from "./openhands";
 import { PiHarness } from "./pi";
-import type { AkmHarness } from "./types";
-import { isSessionLogHarness } from "./types";
 
-export type { AkmHarness, HarnessCapabilities, NonSessionLogHarness, SessionLogCapableHarness } from "./types";
-export { isSessionLogHarness } from "./types";
-
-// Each harness descriptor (ClaudeHarness, OpencodeHarness, OpencodeSdkHarness)
-// lives in its own per-harness directory alongside that harness's session-log
-// reader, agent builder, config importer, and/or SDK runner (#563/#564). They
-// are imported above and registered in HARNESS_REGISTRY below.
+export type { AkmHarness } from "./harness";
 
 /**
- * The single registration point. Add a harness here (and nothing else) to make
- * every derived registry pick it up.
- *
- * Typed `as const` (not `AkmHarness[]`) so each entry keeps its literal `id`,
- * which lets `VALID_HARNESS_IDS` stay a literal tuple — `HarnessId`,
- * `z.enum(...)`, and the `platform` union all need the literal types.
+ * The registered harnesses, with each entry keeping its literal `id` so that
+ * `VALID_HARNESS_IDS` can stay a literal tuple (`HarnessId`, `z.enum(...)` and
+ * the `platform` union all need the literal types).
  */
 // Order is significant: VALID_HARNESS_IDS derives from this array and feeds the
-// committed JSON-schema enum order. The original [opencode, claude,
-// opencode-sdk] prefix is preserved so the pre-unification portion of the
-// generated schema enum does not reorder; the seven P2 harness adapters are
-// appended after it, which extends the enum additively (schemas/akm-config.json
-// is regenerated in lockstep).
-export const HARNESS_REGISTRY = Object.freeze([
+// committed JSON-schema enum order. The original [opencode, claude] prefix is
+// preserved so the pre-unification portion of the generated schema enum does not
+// reorder; the seven P2 harness adapters are appended after it, which extends the
+// enum additively (schemas/akm-config.json is regenerated in lockstep).
+const REGISTERED = [
   new OpencodeHarness(),
   new ClaudeHarness(),
-  new OpencodeSdkHarness(),
   new CodexHarness(),
   new CopilotHarness(),
   new PiHarness(),
@@ -67,71 +48,42 @@ export const HARNESS_REGISTRY = Object.freeze([
   new AiderHarness(),
   new AmazonqHarness(),
   new OpenhandsHarness(),
-] as const) satisfies readonly AkmHarness[];
+] as const;
 
-// Construction-time drift guard (WI-9.8 KILL 3, D.3 edge B): ./ids.ts's
-// HARNESS_ID_TABLE is config's dependency-free mirror of (id, agentDispatch)
-// for every registered harness, kept out of core/config's import graph so
-// config doesn't have to import this (heavier) barrel. Assert they match so
-// the mirror can never silently drift — a new/reordered/recapability'd
-// harness that forgets to update ./ids.ts fails loudly here instead of
-// quietly breaking config's platform validation.
-if (HARNESS_REGISTRY.length !== HARNESS_ID_TABLE.length) {
-  throw new Error(
-    `harnesses/ids.ts HARNESS_ID_TABLE has ${HARNESS_ID_TABLE.length} entries but HARNESS_REGISTRY has ${HARNESS_REGISTRY.length} — update ids.ts to match.`,
-  );
-}
-HARNESS_REGISTRY.forEach((h, i) => {
-  const expected = HARNESS_ID_TABLE[i];
-  if (!expected || expected.id !== h.id || expected.agentDispatch !== h.capabilities.agentDispatch) {
-    throw new Error(
-      `harnesses/ids.ts HARNESS_ID_TABLE[${i}] (${expected?.id ?? "<missing>"}, agentDispatch=${expected?.agentDispatch}) ` +
-        `does not match HARNESS_REGISTRY[${i}] (${h.id}, agentDispatch=${h.capabilities.agentDispatch}) — update ids.ts to match.`,
-    );
-  }
-});
+/** The single registration point. */
+export const HARNESS_REGISTRY: readonly AkmHarness[] = Object.freeze([...REGISTERED]);
 
 /** Lookup by the one supported harness id. */
 export const HARNESS_BY_ID: ReadonlyMap<string, AkmHarness> = new Map(HARNESS_REGISTRY.map((h) => [h.id, h]));
 
 /**
  * Canonical, ordered list of valid harness / platform ids. The Zod
- * `AgentPlatformSchema` enum, the agent-engine platform union, and
+ * `AgentPlatformSchema` enum, the harness platform union, and
  * setup's `DetectedHarness` union all derive from this so they cannot drift.
  */
-export const VALID_HARNESS_IDS = Object.freeze(HARNESS_REGISTRY.map((h) => h.id)) as unknown as readonly [
-  (typeof HARNESS_REGISTRY)[number]["id"],
-  ...(typeof HARNESS_REGISTRY)[number]["id"][],
+export const VALID_HARNESS_IDS = Object.freeze(REGISTERED.map((h) => h.id)) as unknown as readonly [
+  (typeof REGISTERED)[number]["id"],
+  ...(typeof REGISTERED)[number]["id"][],
 ];
 
-/**
- * Harnesses that expose readable native session logs. Narrowed via the
- * {@link isSessionLogHarness} type-predicate (rather than a plain boolean
- * callback) so `sessionLogProvider` is known-present on every element — see
- * that function's doc comment for why a plain predicate doesn't narrow here.
- */
-export const SESSION_LOG_HARNESSES = HARNESS_REGISTRY.filter(isSessionLogHarness);
-/** Harnesses that can be dispatched as an agent CLI / SDK. */
-export const AGENT_DISPATCH_HARNESSES = HARNESS_REGISTRY.filter((h) => h.capabilities.agentDispatch);
+/** The platforms a `harnesses` entry may name: every harness in the registry. */
+export const HARNESS_CONFIG_PLATFORMS = VALID_HARNESS_IDS;
+
+type SessionLogCapable = AkmHarness & { readonly sessionLogProvider: () => SessionLogHarness };
+
+/** Harnesses that expose readable native session logs. */
+export const SESSION_LOG_HARNESSES: readonly SessionLogCapable[] = HARNESS_REGISTRY.filter(
+  (h): h is SessionLogCapable => h.sessionLogProvider !== undefined,
+);
+
+/** Harness ids that can run a named native agent, so a harness may name a default `agent`. */
+export const HARNESS_NATIVE_AGENT_IDS: ReadonlySet<string> = new Set(
+  HARNESS_REGISTRY.filter((h) => h.nativeAgent).map((h) => h.id),
+);
 
 /**
  * Resolve an exact harness id to its descriptor, or `undefined` if unknown.
  */
 export function getHarness(id: string): AkmHarness | undefined {
   return HARNESS_BY_ID.get(id);
-}
-
-/**
- * Default agent-profile name for a detected harness id (#566).
- *
- * Used by `akm setup`'s headless/recommended-config path so a newly added
- * dispatch-capable harness gets a usable default profile name (its canonical
- * id) instead of falling through a hardcoded if-chain with no default. Returns
- * `undefined` for `"none"` or any id that is unknown / not agent-dispatch
- * capable.
- */
-export function defaultProfileName(detected: string): string | undefined {
-  const h = HARNESS_BY_ID.get(detected);
-  if (!h?.capabilities.agentDispatch) return undefined;
-  return h.id;
 }

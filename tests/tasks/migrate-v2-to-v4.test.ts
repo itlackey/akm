@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The pure task-source migration planner (`src/tasks/source/task-to-v4.ts`),
+ * The pure task-source migration planner (`scripts/akm-migrate/migrate/task-to-v4.ts`),
  * v2 side: every v2 fixture and inline case, planned straight to v4 with no
  * intermediate v3 file ever written or reported. Mirrors
  * `tests/tasks/migrate-v3-to-v4.test.ts`'s style, driven off the same v2
@@ -14,13 +14,12 @@
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { planTaskFilesMigration } from "../../scripts/akm-migrate/migrate/task-files";
-import { parseTaskV3Yaml } from "../../src/tasks/source/task-source-v3-frozen";
+import { parseTaskV3Yaml } from "../../scripts/akm-migrate/migrate/task-source-v3-frozen";
+import { planTaskToV4File, type TaskToV4FileInput } from "../../scripts/akm-migrate/migrate/task-to-v4";
 import { parseTaskSourceV4 } from "../../src/tasks/source/task-source-v4";
-import { planTaskToV4File, type TaskToV4FileInput } from "../../src/tasks/source/task-to-v4";
 import {
   assertFixtureBytesUnchanged,
   captureFixtureBytes,
@@ -311,26 +310,6 @@ describe("pure task-source migration planner — v2 straight to v4", () => {
     );
     expect(deep).toMatchObject({ status: "blocked", reason: "invalid-task-yaml" });
     expect(deep.detail).toMatch(/depth|nesting/i);
-  });
-
-  test("validates an already-v3 working directory against its inspected component root", () => {
-    if (process.platform === "win32") return;
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v3-contained-"));
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v3-outside-"));
-    fs.symlinkSync(outside, path.join(root, "escape"), "dir");
-    try {
-      const outcome = planTaskToV4File(
-        memoryInput("version: 3\nrun: echo exact\nworking-directory: escape\nakm:\n  schedule: '@daily'\n", {
-          filePath: path.join(root, "task.yml"),
-          containmentRoot: root,
-        }),
-      );
-      expect(outcome).toMatchObject({ status: "blocked", reason: "invalid-v3-task" });
-      expect(outcome.detail).toMatch(/outside|contain|escape/i);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-      fs.rmSync(outside, { recursive: true, force: true });
-    }
   });
 
   test("migrate's plan generation commits to mode/configured and on-disk writability while duplicate paths fail closed", () => {

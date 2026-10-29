@@ -8,7 +8,7 @@
  */
 import { z } from "zod";
 import { IMPROVE_PROCESS_NAMES } from "../engine-semantics";
-import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt } from "./primitives";
+import { nonEmptyString, positiveInt } from "./primitives";
 
 // ── Improve profile / process ──────────────────────────────────────────────
 //
@@ -16,7 +16,7 @@ import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt }
 // consolidate, memoryInference, extract, validation, triage,
 // proactiveMaintenance — graphExtraction had one too, until the LLM
 // entity-graph it ran was retired in 0.9.17-alpha.9) gets its OWN schema
-// below — a shared base (engine, model, llm, enabled, timeoutMs) extended
+// below — a shared base (`enabled`) extended
 // with only the fields meaningful on that process — replacing the prior
 // single ImproveProcessConfigSchema reused via `.optional()` for all of them
 // (which accepted, and silently ignored, any field on any process). Field→process assignment is derived from each
@@ -37,12 +37,10 @@ import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt }
 // {@link ImproveProfileProcessesSchema} below — setting a field on the wrong
 // process there is now rejected (the intended §4.2 improvement).
 
+// A strategy says which processes run and how; where a process runs (connection,
+// harness, model, inference, timeout) is `improve.processes.<name>`, never here.
 const IMPROVE_PROCESS_BASE_FIELDS = {
-  engine: engineName.optional(),
-  model: nonEmptyString.optional(),
-  llm: LlmInvocationOverridesSchema.optional(),
   enabled: z.boolean().optional(),
-  timeoutMs: z.union([positiveInt, z.null()]).optional(),
 };
 
 /** Reflect/distill/consolidate: process-level asset-type filter (see improve-strategies.ts shouldSkipRef/DEFAULT_ALLOWED_TYPES). */
@@ -60,26 +58,19 @@ const excludeRefPrefixesField = z.array(z.string().min(1)).optional();
 
 /**
  * Consolidate process: hard cap on memories processed per pass.
- * Reflect/distill: max refs processed (same as profile-level `limit`).
- * proactiveMaintenance: fallback when `maxPerRun` is absent.
+ * Reflect: max refs processed (same as profile-level `limit`).
  */
 const processLimitField = positiveInt.optional();
 
 /**
  * The distill and reflect LLM-as-judge quality gates. Default ON; set
  * `enabled: false` on the process to opt out. A judge error, timeout or
- * unparsable reply never passes: distill sends the lesson to review and
- * reflect refuses the edit. `engine`, `model`, `timeoutMs` and `llm` give the
- * gate a judge of its own (#1011), resolved over the process's own settings;
- * with none set, the gate judges with the generator's runner.
+ * unparsable reply never passes: distill and reflect both send the content
+ * to a person. Where the judge runs is `improve.qualityGate`.
  */
 const qualityGateField = z
   .object({
     enabled: z.boolean().optional(),
-    engine: engineName.optional(),
-    model: nonEmptyString.optional(),
-    timeoutMs: z.union([positiveInt, z.null()]).optional(),
-    llm: LlmInvocationOverridesSchema.passthrough().optional(),
   })
   .passthrough()
   .optional();
@@ -98,21 +89,6 @@ const clsField = z
   })
   .passthrough()
   .optional();
-
-/**
- * WS-3b: Distill→source fidelity check (step 10). After a distill proposal,
- * check it against its cited source memories; a contradiction flag forces
- * human review. Default OFF. Distill process only.
- */
-const fidelityCheckField = z.object({ enabled: z.boolean().optional() }).passthrough().optional();
-
-/**
- * #639 — semantic value-floor filter for the `reflect` process. When
- * enabled, proposals classified as "low-value" by the deterministic noise
- * gate are deferred. DEFAULT OFF (absent / { enabled: false } = pre-#639
- * byte-identical behaviour). Reflect process only.
- */
-const lowValueFilterField = z.object({ enabled: z.boolean().optional() }).passthrough().optional();
 
 /**
  * The wording lists of reflect's pre-judge defect filter (`findReflectDefect`).
@@ -147,22 +123,14 @@ const extractTriageGateField = z
   .passthrough()
   .optional();
 
-// Unknown keys pass through here like every other nested surface (the loader
-// names them once); `extraParams` remains the arbitrary provider-parameter
-// escape hatch.
-const triageJudgmentLlmOverridesField = LlmInvocationOverridesSchema.passthrough();
-
+// Unknown keys pass through here like every other nested surface (the loader names them once).
 const triageJudgmentObjectField = z
   .object({
     enabled: z.boolean().optional(),
-    engine: engineName.optional(),
-    model: nonEmptyString.optional(),
-    timeoutMs: z.union([positiveInt, z.null()]).optional(),
-    llm: triageJudgmentLlmOverridesField.optional(),
   })
   .passthrough();
 
-/** Triage process: explicit LLM-as-judge enablement and execution overrides. */
+/** Triage process: whether the LLM-as-judge runs; it runs where `improve.processes.triage` says. */
 const triageJudgmentField = z
   .union([z.boolean(), triageJudgmentObjectField])
   .transform(
@@ -171,61 +139,31 @@ const triageJudgmentField = z
   )
   .optional();
 
-/**
- * WS-3b: Anti-collapse guard (step 8), consolidate process only: a small
- * random (non-similarity-driven) fraction of the pool is mixed into the
- * clustered order so consolidation is not purely rich-get-richer. Default ON
- * (opt out via `enabled: false`); `randomClusterFraction` defaults to 0.05.
- * The retired merge guards (`maxGeneration`, `lexicalDiversityCheck`,
- * `mergeInformationFloor`, `minSpecificityRetention`) never refused a merge
- * and are tolerated as unknown keys.
- */
-const antiCollapseField = z
-  .object({
-    enabled: z.boolean().optional(),
-    randomClusterFraction: z.number().min(0).max(1).optional(),
-  })
-  .passthrough()
-  .optional();
-
 const REFLECT_PROCESS_FIELDS = {
   allowedTypes: allowedTypesField,
   excludeRefPrefixes: excludeRefPrefixesField,
   limit: processLimitField,
   qualityGate: qualityGateField,
-  lowValueFilter: lowValueFilterField,
   defectFilter: defectFilterField,
 };
 
 const DISTILL_PROCESS_FIELDS = {
   allowedTypes: allowedTypesField,
-  limit: processLimitField,
   qualityGate: qualityGateField,
   // Skip distill entirely when reflect produced zero planned refs.
   requirePlannedRefs: z.boolean().optional(),
   cls: clsField,
-  fidelityCheck: fidelityCheckField,
 };
 
 const CONSOLIDATE_PROCESS_FIELDS = {
   allowedTypes: allowedTypesField,
   limit: processLimitField,
-  // Minimum eligible-memory pool size below which the consolidation pass skips
-  // entirely (emits `pool_below_min_size`). 0 disables the guard. Default 500.
-  minPoolSize: z.number().int().min(0).optional(),
   maxChunkSize: z.number().int().min(1).max(50).optional(),
-  // Fallback p90 wall-clock time per consolidation chunk in seconds, used for
-  // cold-start budget estimation when no telemetry history exists. The actual
-  // p90 is derived from observed run durations once sufficient history
-  // accumulates; this value is only used on the very first run. Default 30s.
-  p90ChunkSecondsDefault: z.number().finite().positive().optional(),
-  antiCollapse: antiCollapseField,
 };
 
 const MEMORY_INFERENCE_PROCESS_FIELDS = {
   // Minimum pending memory count to run the pass.
   minPendingCount: z.number().int().min(0).optional(),
-  cls: clsField,
 };
 
 const EXTRACT_PROCESS_FIELDS = {
@@ -267,10 +205,8 @@ const TRIAGE_PROCESS_FIELDS = {
 const PROACTIVE_MAINTENANCE_PROCESS_FIELDS = {
   // Staleness gate + rotation cooldown in days (default 30).
   dueDays: z.number().int().min(0).optional(),
-  // Top-N bound per run (default 25). Alias for `limit`; `maxPerRun` wins
-  // when both are set.
+  // Top-N bound per run (default 15).
   maxPerRun: positiveInt.optional(),
-  limit: processLimitField,
 };
 
 /** distill/consolidate are memory-only and never read `excludeRefPrefixes` (reflect only, R12). */
@@ -340,11 +276,13 @@ export const ProactiveMaintenanceProcessConfigSchema = z
 /**
  * Process names that once had a dedicated schema and are now gone. Setting
  * one, even with `enabled: true`, is tolerated rather than rejected by the
- * "unknown enabled process" check below — an old config must keep loading
- * (AGENTS.md "Reading persisted data"). `graphExtraction`: the LLM
+ * "unknown enabled process" check below — an old config must keep loading.
+ * `graphExtraction`: the LLM
  * entity-graph extraction it ran was retired in 0.9.17-alpha.9.
+ * `feedbackDistillation`: a wrapper of `processes.distill.enabled`, removed in
+ * 0.8.0.
  */
-const RETIRED_PROCESS_NAMES = new Set(["graphExtraction"]);
+const RETIRED_PROCESS_NAMES = new Set(["graphExtraction", "feedbackDistillation"]);
 
 const ImproveProfileProcessesSchema = z
   .object({
@@ -359,20 +297,9 @@ const ImproveProfileProcessesSchema = z
   })
   .passthrough()
   .superRefine((val, ctx) => {
-    // 0.8.0 removed the duplicated `feedbackDistillation` process key — it was
-    // a thin wrapper around `processes.distill.enabled`. Keep the migration
-    // hint so a stale config gets an actionable message rather than silently
-    // doing nothing. Other unknown process keys remain preserved for
-    // cross-version compatibility, but an enabled one is rejected below because
-    // this version cannot execute it.
-    if ("feedbackDistillation" in (val as Record<string, unknown>)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "feedbackDistillation was removed in 0.8.0 — use processes.distill.enabled instead. " +
-          "It now controls both the orchestration gate and the LLM-call gate.",
-      });
-    }
+    // Unknown process keys remain preserved for cross-version compatibility,
+    // but an enabled one is rejected below because this version cannot
+    // execute it.
     for (const [name, process] of Object.entries(val as Record<string, unknown>)) {
       if (
         !(IMPROVE_PROCESS_NAMES as readonly string[]).includes(name) &&
@@ -392,10 +319,6 @@ const ImproveProfileProcessesSchema = z
 
 export const ImproveProfileConfigSchema = z
   .object({
-    engine: engineName.optional(),
-    model: nonEmptyString.optional(),
-    timeoutMs: z.union([positiveInt, z.null()]).optional(),
-    llm: LlmInvocationOverridesSchema.optional(),
     description: z.string().min(1).optional(),
     processes: ImproveProfileProcessesSchema.optional(),
     limit: positiveInt.optional(),

@@ -8,7 +8,7 @@
  * `finalizeImproveResult` persists on a live run (`improve-usage-report.ts`),
  * so the command and the end-of-run stderr table stay byte-identical in
  * structure. A row with no persisted `usageReport` degrades rather than
- * errors, per AGENTS.md's "reader must tolerate data older releases wrote":
+ * errors (a reader must tolerate data older releases wrote):
  * its cross-tab is recomputed from the run's own `llm_usage` events and a
  * `notes` entry explains why — either the row predates #944, or (per
  * `recordTerminatedImproveRun` in improve-result-file.ts) the run was

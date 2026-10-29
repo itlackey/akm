@@ -14,7 +14,7 @@
 export function formatWorkflowListPlain(result: Record<string, unknown>): string {
   const runs = Array.isArray(result.runs) ? (result.runs as Array<Record<string, unknown>>) : [];
   if (runs.length === 0) {
-    return "No workflow runs in the current working scope. Start one with `akm workflow run workflows/<name>` or author one with `akm workflow create <name>`.";
+    return "No workflow runs. Start one with `akm workflow run workflows/<name>` or author one with `akm workflow create <name>`.";
   }
 
   return runs
@@ -40,7 +40,7 @@ const CHILD_STATUS_GLYPHS: Readonly<Record<string, string>> = {
 };
 
 /**
- * Render one `children:` tree node (P3b, spec §4.5) plus its own children,
+ * Render one `children:` tree node plus its own children,
  * recursively, indenting two spaces per level. Order is SPAWN order (the
  * envelope's own array order) — the tree is structural, never severity-sorted.
  */
@@ -60,6 +60,38 @@ function renderChildNode(child: Record<string, unknown>, depth: number, lines: s
   }
   const nested = Array.isArray(child.children) ? (child.children as Array<Record<string, unknown>>) : [];
   for (const grandchild of nested) renderChildNode(grandchild, depth + 1, lines);
+}
+
+/**
+ * The `show` orchestration projection as text lines: the exec argv (JSON, so
+ * word boundaries survive), cwd, env refs and the bundle-qualified ref each
+ * token resolved to. Shared by `workflow plan` steps and `status --units`.
+ */
+function renderOrchestrationLines(value: unknown, prefix: string): string[] {
+  if (typeof value !== "object" || value === null) return [];
+  const orchestration = value as Record<string, unknown>;
+  const lines: string[] = [];
+  const exec =
+    typeof orchestration.exec === "object" && orchestration.exec !== null
+      ? (orchestration.exec as Record<string, unknown>)
+      : undefined;
+  if (exec) {
+    if (Array.isArray(exec.command)) lines.push(`${prefix}argv: ${JSON.stringify(exec.command)}`);
+    if (typeof exec.cwd === "string") lines.push(`${prefix}cwd: ${exec.cwd}`);
+  }
+  if (Array.isArray(orchestration.env) && orchestration.env.length > 0) {
+    lines.push(`${prefix}env: ${orchestration.env.join(", ")}`);
+  }
+  const refs = Array.isArray(orchestration.refs) ? (orchestration.refs as Array<Record<string, unknown>>) : [];
+  for (const ref of refs) {
+    const written = ref.in === "argv" || ref.in === "cwd" ? `\${${String(ref.ref)}}` : String(ref.ref);
+    lines.push(`${prefix}ref: ${written} -> ${String(ref.resolved)} (${String(ref.in)})`);
+  }
+  const unresolved = Array.isArray(orchestration.unresolved)
+    ? (orchestration.unresolved as Array<Record<string, unknown>>)
+    : [];
+  for (const ref of unresolved) lines.push(`${prefix}ref: ${String(ref.ref)} -> not found (${String(ref.in)})`);
+  return lines;
 }
 
 export function formatWorkflowStatusPlain(result: Record<string, unknown>): string | null {
@@ -93,10 +125,9 @@ export function formatWorkflowStatusPlain(result: Record<string, unknown>): stri
     }
   }
 
-  // The parent-child status tree (P3b, spec §4.5): renders ONLY when
+  // The parent-child status tree: renders ONLY when
   // `children` is a non-empty array, immediately after `steps:` and before
-  // `units:`. Absent for a childless run — byte-identical to pre-P3b text
-  // (row B-33, PRESERVE).
+  // `units:`. Absent for a childless run, whose text is unchanged.
   const children = Array.isArray(result.children) ? (result.children as Array<Record<string, unknown>>) : undefined;
   if (children && children.length > 0) {
     lines.push("children:");
@@ -120,6 +151,7 @@ export function formatWorkflowStatusPlain(result: Record<string, unknown>): stri
       if (typeof unit.failureReason === "string" && unit.failureReason.trim()) {
         lines.push(`    failure_reason: ${unit.failureReason}`);
       }
+      lines.push(...renderOrchestrationLines(unit.orchestration, "    "));
       if (typeof unit.diagnostic === "string" && unit.diagnostic.trim()) {
         const diagLines = unit.diagnostic.split("\n");
         lines.push(`    diagnostic: ${diagLines[0]}`);
@@ -159,14 +191,6 @@ export function formatWorkflowRunPlain(result: Record<string, unknown>): string 
   if (!run) return null;
 
   const lines: string[] = [];
-  // #919: `workflow run <ref>` silently resuming an existing active run (the
-  // #485 concurrency guard) is now announced up front, with the escape hatch.
-  if (result.resumed === true) {
-    lines.push(
-      `resuming existing run ${String(run.id ?? "unknown")} for ${String(run.workflowRef ?? "this ref")}; ` +
-        `pass --new to start a fresh run`,
-    );
-  }
   lines.push(`run: ${String(run.id ?? "unknown")}`, `status: ${String(run.status ?? "unknown")}`);
   // Creation-time notices (e.g. the implicit engine fallback) must survive the
   // text renderer: JSON/YAML pass them through, and dropping them here would
@@ -248,12 +272,11 @@ function formatInputBindingsList(bindings: readonly Record<string, unknown>[]): 
 }
 
 /**
- * One `akm workflow plan` step line (P3b, spec §4.6), plus its child-workflow
+ * One `akm workflow plan` step line, plus its child-workflow
  * expansion's own steps, recursively, indented one level per composition
  * boundary. A child step also carries the child's `planHash` on the step
  * line itself, and (when present) a `with:` line for the step's own
- * `inputBindings[]` and an `exports:` line for the child's declared output
- * names — §4.6's worked example.
+ * `inputBindings[]`.
  */
 function renderPlanStepLines(step: Record<string, unknown>, ordinal: number, lines: string[], prefix = "  "): void {
   const stepId = typeof step.stepId === "string" ? step.stepId : "unknown";
@@ -263,11 +286,9 @@ function renderPlanStepLines(step: Record<string, unknown>, ordinal: number, lin
   const via = typeof expansion.via === "string" ? expansion.via : "direct";
   const childPlanHash = typeof expansion.childPlanHash === "string" ? expansion.childPlanHash : undefined;
   const viaText =
-    via === "task"
-      ? `via ${String(expansion.taskRef ?? "")}`
-      : via === "child"
-        ? `-> ${String(expansion.childRef ?? "")}${childPlanHash ? ` (plan ${childPlanHash})` : ""}`
-        : "direct";
+    via === "child"
+      ? `-> ${String(expansion.childRef ?? "")}${childPlanHash ? ` (plan ${childPlanHash})` : ""}`
+      : "direct";
   lines.push(`${prefix}${ordinal}. ${stepId} ${targetKind} ${viaText}`.replace(/ +/g, " ").trimEnd());
 
   const detailPrefix = `${prefix}  `;
@@ -275,11 +296,8 @@ function renderPlanStepLines(step: Record<string, unknown>, ordinal: number, lin
   if (inputBindings.length > 0) {
     lines.push(`${detailPrefix}with: ${formatInputBindingsList(inputBindings)}`);
   }
+  lines.push(...renderOrchestrationLines(step.orchestration, detailPrefix));
   if (via === "child") {
-    const childOutputs = Array.isArray(expansion.childOutputs) ? expansion.childOutputs : [];
-    if (childOutputs.length > 0) {
-      lines.push(`${detailPrefix}exports: ${childOutputs.map(String).join(", ")}`);
-    }
     const childSteps = Array.isArray(expansion.steps) ? (expansion.steps as Array<Record<string, unknown>>) : [];
     for (const [index, childStep] of childSteps.entries()) {
       renderPlanStepLines(childStep, index + 1, lines, `${prefix}  ${ordinal}.`);
@@ -288,9 +306,9 @@ function renderPlanStepLines(step: Record<string, unknown>, ordinal: number, lin
 }
 
 /**
- * `akm workflow plan <ref>` text mode (P3b, spec §4.6): a human summary of
+ * `akm workflow plan <ref>` text mode: a human summary of
  * the same compile+freeze data `--format json` returns — never a resolved
- * env/secret value (B-52, B-53).
+ * env/secret value.
  */
 export function formatWorkflowPlanPlain(result: Record<string, unknown>): string | null {
   if (typeof result.ref !== "string") return null;
@@ -326,20 +344,6 @@ export function formatWorkflowPlanPlain(result: Record<string, unknown>): string
 
   const params = Array.isArray(result.params) ? (result.params as unknown[]) : undefined;
   if (params && params.length > 0) lines.push(`params:   ${params.join(", ")}`);
-
-  const outputs =
-    typeof result.outputs === "object" && result.outputs !== null
-      ? (result.outputs as Record<string, unknown>)
-      : undefined;
-  if (outputs) {
-    for (const [name, declaration] of Object.entries(outputs)) {
-      const from =
-        typeof declaration === "object" && declaration !== null
-          ? String((declaration as Record<string, unknown>).from ?? "")
-          : "";
-      lines.push(`outputs:  ${name} <- ${from}`);
-    }
-  }
 
   const steps = Array.isArray(result.steps) ? (result.steps as Array<Record<string, unknown>>) : [];
   lines.push("steps:");

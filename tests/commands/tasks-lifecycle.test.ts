@@ -172,23 +172,14 @@ describe("task lifecycle failure handling", () => {
 
   // Issue 11: a workflow task's `timeoutMs` is its whole-run bound (the task
   // runner turns it into the abort signal `akm workflow run --timeout` uses),
-  // so `--timeout-ms` is no longer refused alongside `--workflow`. Engine and
-  // model stay prompt-only — a workflow's engines come from its frozen plan.
+  // so `--timeout-ms` is no longer refused alongside `--workflow`. Connection,
+  // harness and model stay prompt-only — a workflow's come from its frozen plan.
   test("add accepts --timeout-ms on a workflow task and records it in the YAML", async () => {
     const workflowsDir = path.join(storage.stashDir, "workflows");
     fs.mkdirSync(workflowsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(workflowsDir, "nightly.yml"),
-      [
-        "name: nightly",
-        "on: { workflow_dispatch: null }",
-        "jobs:",
-        "  main:",
-        "    runs-on: [self-hosted]",
-        "    steps:",
-        "      - id: run",
-        "        run: echo nightly",
-      ].join("\n"),
+      path.join(workflowsDir, "nightly.md"),
+      "---\ntype: workflow\nsteps:\n  - id: run\n---\n\n## run\n\nRun nightly.\n",
       "utf8",
     );
 
@@ -201,14 +192,14 @@ describe("task lifecycle failure handling", () => {
     expect(fs.readFileSync(result.path, "utf8")).toContain("timeout: 900000");
   });
 
-  test("add still refuses --engine on a workflow task", async () => {
+  test("add still refuses --harness on a workflow task", async () => {
     const workflowsDir = path.join(storage.stashDir, "workflows");
     fs.mkdirSync(workflowsDir, { recursive: true });
     fs.writeFileSync(path.join(workflowsDir, "nightly.md"), "# Nightly\n", "utf8");
 
     await expect(
       akmTasksAdd(
-        { id: "nightly-engine", schedule: "@daily", workflow: "workflows/nightly", engine: "reviewer" },
+        { id: "nightly-engine", schedule: "@daily", workflow: "workflows/nightly", harness: "reviewer" },
         { backend },
       ),
     ).rejects.toMatchObject({ code: "INVALID_FLAG_VALUE" });
@@ -363,8 +354,7 @@ describe("task lifecycle failure handling", () => {
       bundles: { stash: { path: storage.stashDir, writable: true } },
       defaultBundle: "stash",
       semanticSearchMode: "off",
-      engines: { reviewer: { kind: "agent", platform: "opencode", bin: "fake-agent" } },
-      defaults: { engine: "reviewer" },
+      harnesses: { reviewer: { platform: "opencode", bin: "fake-agent" } },
     });
 
     const warnings: unknown[][] = [];
@@ -397,8 +387,7 @@ describe("task lifecycle failure handling", () => {
       bundles: { stash: { path: storage.stashDir, writable: true } },
       defaultBundle: "stash",
       semanticSearchMode: "off",
-      engines: { reviewer: { kind: "agent", platform: "opencode", bin: "fake-agent" } },
-      defaults: { engine: "reviewer" },
+      harnesses: { reviewer: { platform: "opencode", bin: "fake-agent" } },
     });
 
     const result = await akmTasksAdd(
@@ -411,6 +400,57 @@ describe("task lifecycle failure handling", () => {
       uses: { kind: "builtin-command", ref: "akm/command" },
       command: { kind: "inline", content: "Review the latest changes carefully." },
     });
+  });
+
+  test.each([
+    ["reviewer", "harness"],
+    ["lab", "connection"],
+  ])("add writes the retired --engine %s as a %s, never as the retired key", async (name, key) => {
+    writeSandboxConfig({
+      bundles: { stash: { path: storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      semanticSearchMode: "off",
+      harnesses: { reviewer: { platform: "opencode", bin: "fake-agent" } },
+      connections: { lab: { endpoint: "http://lab.invalid/v1", models: { fast: "m" } } },
+    });
+
+    const result = await akmTasksAdd(
+      { id: `engine-${name}`, schedule: "@daily", prompt: "Review the latest changes carefully.", engine: name },
+      { backend },
+    );
+
+    const written = fs.readFileSync(result.path, "utf8");
+    expect(written).toContain(`${key}: ${name}`);
+    expect(written).not.toMatch(/\bengine\s*:/);
+  });
+
+  test.each([
+    ["harness", { harness: "reviewer" }],
+    ["connection", { connection: "lab" }],
+  ])("add writes a prompt task's --%s into the task, with --model", async (key, where) => {
+    writeSandboxConfig({
+      bundles: { stash: { path: storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      semanticSearchMode: "off",
+      harnesses: { reviewer: { platform: "opencode", bin: "fake-agent" } },
+      connections: { lab: { endpoint: "http://lab.invalid/v1", models: { fast: "m" } } },
+    });
+
+    const result = await akmTasksAdd(
+      {
+        id: `where-${key}`,
+        schedule: "@daily",
+        prompt: "Review the latest changes carefully.",
+        model: "fast",
+        ...where,
+      },
+      { backend },
+    );
+
+    const written = fs.readFileSync(result.path, "utf8");
+    expect(written).toContain(`${key}: ${Object.values(where)[0]}`);
+    expect(written).toContain("model: fast");
+    expect(written).not.toMatch(/\bengine\s*:/);
   });
 });
 
@@ -469,9 +509,7 @@ describe("task commands name the flag they take when a bundle does not resolve",
       akmTasksAdd({ id: "y", schedule: "0 3 * * *", workflow: "ghost//workflows/deploy" }, { backend }),
     );
     expect(add).toBeInstanceOf(UsageError);
-    expect((add as UsageError).message).toContain(
-      `The asset ref's bundle must reference a source name from your config. No source named "ghost" is configured`,
-    );
+    expect((add as UsageError).message).toContain(`Bundle "ghost" is not configured`);
     for (const error of [run, add]) {
       expect((error as UsageError).message).not.toContain("--target");
       expect((error as UsageError).message).not.toContain("--bundle");

@@ -27,7 +27,13 @@ export interface ExtractedSessionRow {
   /** ISO-8601 — session.endedAt at processing time. Null when unknown. */
   session_ended_at: string | null;
   /** Outcome of the extract pass. */
-  outcome: "candidates_queued" | "no_candidates" | "skipped" | "failed";
+  outcome:
+    | "candidates_queued"
+    | "candidates_blocked"
+    | "proposal_write_failed"
+    | "no_candidates"
+    | "skipped"
+    | "failed";
   candidate_count: number;
   proposal_count: number;
   /** For "no_candidates", the LLM's explanation. */

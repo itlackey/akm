@@ -205,9 +205,9 @@ describe("curate command", () => {
     expect(briefStash).not.toHaveProperty("description");
   });
 
-  test("--shape agent trims items to the agent field set", async () => {
+  test("--detail agent trims items to the agent field set", async () => {
     const stashDir = makeStash();
-    const output = await runCli(stashDir, ["curate", "release", "--format=json", "--shape=agent"]);
+    const output = await runCli(stashDir, ["curate", "release", "--format=json", "--detail=agent"]);
     const json = JSON.parse(output) as { items: Array<Record<string, unknown>> };
     const stashItem = json.items.find((i) => i.source === "local");
     expect(stashItem).toBeDefined();
@@ -219,31 +219,6 @@ describe("curate command", () => {
     expect(stashItem).not.toHaveProperty("editHint");
     // but keeps the actionable followUp.
     expect(String(stashItem?.followUp)).toContain("akm show");
-  });
-
-  test("--shape summary on curate warns and falls back to the agent shape (only 'show' has a summary projection)", async () => {
-    const stashDir = makeStash();
-    const xdgConfig = makeTempDir("akm-curate-config-");
-    const res = await withEnv(
-      {
-        AKM_BUNDLE_DIR: stashDir,
-        XDG_CACHE_HOME: makeTempDir("akm-curate-cache-"),
-        XDG_CONFIG_HOME: xdgConfig,
-        XDG_DATA_HOME: makeTempDir("akm-curate-data-"),
-      },
-      async () => {
-        writeSandboxConfig({ semanticSearchMode: "off" });
-        resetConfigCache();
-        return runCliCapture(["curate", "release", "--format=json", "--shape=summary"]);
-      },
-    );
-    expect(res.code).toBe(0);
-    expect(res.stderr).toContain("not supported for 'akm curate'");
-    const json = JSON.parse(res.stdout) as { items: Array<Record<string, unknown>> };
-    const stashItem = json.items.find((i) => i.source === "local");
-    // Same shape as an explicit --shape=agent (agent shape never carries the
-    // heavyweight `preview` field).
-    expect(stashItem).not.toHaveProperty("preview");
   });
 
   test("a stopword-padded prompt still finds docker results", async () => {

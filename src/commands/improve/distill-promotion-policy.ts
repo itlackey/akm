@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { assembleAsset } from "../../core/asset/asset-serialize";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { parseFrontmatter, readFrontmatterDate } from "../../core/asset/frontmatter";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 
 export interface PromotionFeedbackEvent {
@@ -165,7 +165,7 @@ function collectPromotionFeatures(input: PromotionPolicyInput): {
   const description = typeof fm.description === "string" ? fm.description.trim() : undefined;
   const tags = Array.isArray(fm.tags) ? fm.tags : undefined;
   const source = typeof fm.source === "string" && fm.source.trim() ? fm.source.trim() : undefined;
-  const observedAt = typeof fm.observed_at === "string" && fm.observed_at.trim() ? fm.observed_at.trim() : undefined;
+  const observedAt = readFrontmatterDate(fm, "observed");
   const features: PromotionFeatures = {
     positiveFeedback,
     negativeFeedback,
@@ -188,12 +188,13 @@ function buildKnowledgeContent(input: PromotionPolicyInput): string {
   const body = parsedContent.content.trim();
   const description = typeof fm.description === "string" ? fm.description.trim() : undefined;
   const normalizedDescription = deriveDescription(body, description);
+  const observed = readFrontmatterDate(fm, "observed");
   const xrefs = [input.inputRef];
   if (typeof fm.source === "string" && fm.source.trim()) xrefs.push(fm.source.trim());
   const knowledgeFrontmatter: Record<string, unknown> = {
     ...(normalizedDescription ? { description: normalizedDescription } : {}),
     ...(Array.isArray(fm.tags) ? { tags: fm.tags } : {}),
-    ...(typeof fm.observed_at === "string" && fm.observed_at.trim() ? { observed_at: fm.observed_at.trim() } : {}),
+    ...(observed ? { observed } : {}),
     xrefs,
   };
   return assembleAsset(knowledgeFrontmatter, body);
@@ -265,7 +266,7 @@ function assessWithWeightedModel(
   }
   if (features.hasObservedAt) {
     score += model.observedAtWeight;
-    positiveSignals.push("observed_at present");
+    positiveSignals.push("observed present");
   }
   if (features.hasDescription) {
     score += model.descriptionWeight;

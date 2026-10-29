@@ -82,10 +82,11 @@ import type { UnitDispatchResult } from "../../../src/workflows/exec/native-exec
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { computeStepWorkList } from "../../../src/workflows/exec/step-work";
 import { canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
+import { WORKFLOW_PLAN_VERSION } from "../../../src/workflows/plan";
 import { decodeWorkflowPlan, frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { getWorkflowStatus, resumeWorkflowRun, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
-import { plantRunLock } from "../../_helpers/workflow";
+import { childParentDoc, plantRunLock } from "../../_helpers/workflow";
 import {
   bunAvailable,
   dispatchCount,
@@ -117,7 +118,7 @@ afterEach(() => storage.cleanup());
 const CHILD_LEAF_WF = [
   "---",
   "type: workflow",
-  "defaults: { engine: test-agent }",
+  "defaults: { connection: test-llm }",
   "steps:",
   "  - id: work",
   "---",
@@ -128,26 +129,11 @@ const CHILD_LEAF_WF = [
   "",
 ].join("\n");
 
-/** A GitHub-shaped parent (composition requires it — B-N4) with one composing step. */
+/** A markdown parent with one composing step. */
 function writeComposingParent(stashDir: string, name: string, childRef: string): void {
-  const file = path.join(stashDir, "workflows", `${name}.yml`);
+  const file = path.join(stashDir, "workflows", `${name}.md`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(
-    file,
-    [
-      `name: ${name}`,
-      "on:",
-      "  workflow_dispatch:",
-      "jobs:",
-      "  main:",
-      "    runs-on: [self-hosted]",
-      "    steps:",
-      "      - id: dispatch",
-      `        uses: ${childRef}`,
-      "",
-    ].join("\n"),
-    "utf8",
-  );
+  fs.writeFileSync(file, childParentDoc([{ id: "dispatch", workflow: childRef }]), "utf8");
 }
 
 async function firstChildOf(parentRunId: string): Promise<string | undefined> {
@@ -185,7 +171,7 @@ describe.skipIf(!BUN)("multi-process crash windows around a composing child (C-0
     writeProgram(storage.stashDir, "cw1-leaf", CHILD_LEAF_WF);
     writeComposingParent(storage.stashDir, "cw1-parent", "workflows/cw1-leaf");
     const started = await startWorkflowRun("workflows/cw1-parent", {});
-    expect(started.run.planIrVersion).toBe(6);
+    expect(started.run.planIrVersion).toBe(WORKFLOW_PLAN_VERSION);
     const parentRunId = started.run.id;
 
     // Held on the child's own unit so the crasher can never race past this
@@ -358,6 +344,7 @@ function buildConcurrentPublisherWorkerScript(options: {
 import { openDatabase } from ${JSON.stringify(options.databaseModulePath)};
 import { WorkflowRunsRepository } from ${JSON.stringify(options.repositoryModulePath)};
 import { writeFileSync } from "node:fs";
+import { WORKFLOW_PLAN_VERSION } from "../../../src/workflows/plan";
 
 const db = openDatabase(${JSON.stringify(options.dbPath)});
 try {
@@ -417,8 +404,6 @@ describe("two-parent-process contention on one child (C-04)", () => {
       run: {
         id: childRunId,
         workflowRef: target.ref,
-        scopeKey: parentRow?.scope_key ?? null,
-        workflowEntryId: null,
         workflowTitle: target.frozenPlan.title,
         paramsJson: "{}",
         currentStepId: target.frozenPlan.steps[0]?.stepId ?? null,
@@ -568,8 +553,6 @@ describe("two-parent-process contention on one child (C-04)", () => {
         run: {
           id: childRunId,
           workflowRef: target.ref,
-          scopeKey: parentRow?.scope_key ?? null,
-          workflowEntryId: null,
           workflowTitle: target.frozenPlan.title,
           paramsJson: "{}",
           currentStepId: target.frozenPlan.steps[0]?.stepId ?? null,

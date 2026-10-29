@@ -2,11 +2,12 @@
 // filesystem, but harness + LLM chat are injected so no network / no
 // platform install needed.
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { akmHealth } from "../../src/commands/health";
 import {
   akmExtract,
   countNewExtractCandidates,
@@ -15,13 +16,16 @@ import {
   resolveStandaloneExtractPlan,
 } from "../../src/commands/improve/extract";
 import { EXTRACT_JSON_SCHEMA } from "../../src/commands/improve/extract-prompt";
+import { akmMetrics } from "../../src/commands/metrics/metrics-cli";
+import { akmProposalAccept } from "../../src/commands/proposal/proposal";
+import * as proposalRepository from "../../src/commands/proposal/repository";
 import { listProposals } from "../../src/commands/proposal/repository";
 import { isValidDescription } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
-import { ConfigError, UsageError } from "../../src/core/errors";
-import { readEvents } from "../../src/core/events";
+import { TransientError, UsageError } from "../../src/core/errors";
+import { appendEvent, readEvents } from "../../src/core/events";
 import { createLockPayload } from "../../src/core/file-lock";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { detectTruncatedDescription } from "../../src/core/text-truncation";
@@ -35,13 +39,22 @@ import type {
   SessionSummary,
 } from "../../src/integrations/session-logs/types";
 import {
+  getExtractedSession,
   getExtractedSessionsMap,
   upsertExtractedSession,
 } from "../../src/storage/repositories/extract-sessions-repository";
+import { recordImproveLedger } from "../../src/storage/repositories/improve-ledger-repository";
 import { codexMessage, writeCodexRollout } from "../_helpers/codex-rollout";
 import { durableItemRef } from "../_helpers/durable-ref";
+import { rejectJsonSchemaOn } from "../_helpers/json-schema-endpoint";
 import { asLlmRunner } from "../_helpers/llm-runner";
-import { type IsolatedAkmStorage, mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  mutateScopedEnv,
+  withEnv,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+} from "../_helpers/sandbox";
 import { snapshotTree } from "../_helpers/snapshot-tree";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
@@ -77,15 +90,14 @@ function configEnabled(stashDir: string): AkmConfig {
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
     defaultWriteTarget: "stash",
-    engines: {
+    connections: {
       default: {
-        kind: "llm",
         endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
-        supportsJsonSchema: true,
+        models: { fast: "test-model" },
       },
     },
     improve: {
+      strategy: "extract",
       strategies: {
         // #561 — these tests assert the distillation chat-call count / schema.
         // Session indexing (default-on) would add a second chat call per session,
@@ -96,7 +108,6 @@ function configEnabled(stashDir: string): AkmConfig {
         },
       },
     },
-    defaults: { llmEngine: "default", improveStrategy: "extract" },
   } as AkmConfig;
 }
 function configDisabled(stashDir: string): AkmConfig {
@@ -106,11 +117,10 @@ function configDisabled(stashDir: string): AkmConfig {
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
     defaultWriteTarget: "stash",
-    engines: {
-      default: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
+    connections: {
+      default: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test-model" } },
     },
-    improve: { strategies: { disabled: { processes: { extract: { enabled: false } } } } },
-    defaults: { llmEngine: "default", improveStrategy: "disabled" },
+    improve: { strategy: "disabled", strategies: { disabled: { processes: { extract: { enabled: false } } } } },
   } as AkmConfig;
 }
 
@@ -217,7 +227,7 @@ describe("akmExtract — explicit command is not gated by the improve-stage togg
   // has `processes.extract.enabled: false`. The toggle gates extract as a STAGE
   // of `akm improve` (the active-profile path), NOT the dedicated command —
   // previously dropping extract from the daily improve profile silently disabled
-  // the standalone command (and its LLM calls via the shared feature gate).
+  // the standalone command (and its LLM calls).
   test("standalone extract runs even when default.processes.extract.enabled is false", async () => {
     const stash = makeStashDir();
     let chatCalls = 0;
@@ -234,7 +244,7 @@ describe("akmExtract — explicit command is not gated by the improve-stage togg
     expect(result.ok).toBe(true);
     // The session is actually processed (not short-circuited as "disabled")...
     expect(result.sessionsProcessed).toBe(1);
-    // ...the extract LLM call fires (feature gate no longer blocks it)...
+    // ...the extract LLM call fires...
     expect(chatCalls).toBeGreaterThan(0);
     // ...and there is no "disabled" warning.
     expect(result.warnings.join(" ")).not.toMatch(/disabled/);
@@ -348,7 +358,7 @@ describe("akmExtract — discovery mode", () => {
   });
 });
 
-// ── #912/#913: skip-reason aggregation + resolved engine on the envelope ────
+// ── #912/#913: skip-reason aggregation + resolved connection or harness on the envelope ────
 describe("akmExtract — skip aggregation + resolved engine (#912, #913)", () => {
   function fakeSessionWithText(id: string, endedAt: number, text: string): SessionData {
     return {
@@ -397,7 +407,7 @@ describe("akmExtract — skip aggregation + resolved engine (#912, #913)", () =>
     expect(result.warnings).toContain('3 of 3 sessions skipped: llm_unavailable (engine "default")');
     expect(result.skipReasons).toEqual({ llm_unavailable: 3 });
     expect(result.engine).toBe("default");
-    expect(result.engineKind).toBe("llm");
+    expect(result.engineKind).toBe("connection");
     expect(result.sessions.every((s) => s.engine === "default")).toBe(true);
   });
 
@@ -452,7 +462,7 @@ describe("akmExtract — skip aggregation + resolved engine (#912, #913)", () =>
     expect(result.sessionsSkipped).toBe(0);
     expect(result.skipReasons).toBeUndefined();
     expect(result.engine).toBe("default");
-    expect(result.engineKind).toBe("llm");
+    expect(result.engineKind).toBe("connection");
   });
 });
 
@@ -569,6 +579,45 @@ describe("akmExtract — subagent transcripts are never extracted as their own s
     expect(capturedPrompt).not.toContain("[subagent:");
   });
 
+  test("a real session file flows through the real provider and prompt into a pending proposal (#1133)", async () => {
+    const stash = makeStashDir();
+    const { parentId } = seedParentAndSubagent(storage.sessionLogsDir);
+
+    const result = await akmExtract({
+      type: "claude",
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [new ClaudeCodeProvider()],
+      since: "24h",
+      chat: async (_cfg, msgs) => {
+        // The model sees the session read from disk, then answers with one candidate.
+        expect(msgs[0]?.content).toContain("release-branch audit");
+        return JSON.stringify({
+          candidates: [
+            {
+              type: "lesson",
+              name: "audit-release-branches-via-subagent",
+              description:
+                "Delegate the release-branch audit to a subagent; it reports back when every branch is clean.",
+              when_to_use: "When a release needs every branch audited before cutting.",
+              body: "The release-branch audit runs well as a delegated subagent task and reports back on completion.",
+              confidence: 0.9,
+              evidence: "parent session: delegated, subagent reported, audit done",
+            },
+          ],
+        });
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.sessions.map((s) => s.sessionId)).toEqual([parentId]);
+    expect(result.candidatesCreated).toBe(1);
+    const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "extract");
+    // The session's project scope places the lesson under its project slug.
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.ref).toMatch(/lessons\/.*audit-release-branches-via-subagent$/);
+  });
+
   test("--session-id agent-<hash> returns the not-found result, not an extraction", async () => {
     const stash = makeStashDir();
     const { subagentId } = seedParentAndSubagent(storage.sessionLogsDir);
@@ -654,7 +703,7 @@ describe("akmExtract — Codex sessions", () => {
       countNewExtractCandidates(config, { harnesses: [new CodexProvider()], since: "24h", stateDb: db });
 
     // Improve's session count sees one candidate: the guardian rollout is not a session.
-    expect(newSessions()).toBe(1);
+    expect(await newSessions()).toBe(1);
 
     const first = await run();
     expect(first.ok).toBe(true);
@@ -675,7 +724,7 @@ describe("akmExtract — Codex sessions", () => {
     expect(getExtractedSessionsMap(db, "codex", [PERSON]).get(PERSON)?.content_hash).toBe(
       first.sessions[0]?.contentHash,
     );
-    expect(newSessions()).toBe(0);
+    expect(await newSessions()).toBe(0);
     const second = await run();
     expect(second.sessionsSkipped).toBe(1);
     expect(second.sessions[0]?.skipReason).toBe("already_extracted");
@@ -710,6 +759,475 @@ describe("akmExtract — Codex sessions", () => {
     expect(available()).not.toContain("codex");
     seedRollouts();
     expect(available()).toContain("codex");
+  });
+});
+
+describe("akmExtract — accounting matches persisted effects (#1212)", () => {
+  const candidate = (name: string) => ({
+    type: "memory",
+    name,
+    description: "Deployment requires a working VPN connection before starting.",
+    body: "Connect the corporate VPN before running deploy.sh, which otherwise stalls while pushing to stage.",
+    confidence: 0.9,
+    evidence: "The session demonstrated the deployment failure without VPN.",
+  });
+
+  for (const mode of ["preview", "blocked", "mixed", "failed"] as const) {
+    test(`${mode}: event, session result, tracking and proposal rows reconcile`, async () => {
+      const stash = makeStashDir();
+      const session = fakeSession(`accounting-${mode}`, Date.now() - 60_000);
+      const config = configEnabled(stash);
+      // Exercise dry-run's asset suppression even when indexing is enabled.
+      const extractProcess = config.improve?.strategies?.extract?.processes?.extract;
+      if (mode === "preview" && extractProcess) extractProcess.indexSessions = true;
+      const db = openStateDatabase();
+      try {
+        recordImproveLedger(db, {
+          stashDir: stash,
+          ref: "memories/held",
+          source: "extract",
+          outcome: "rejected",
+          at: new Date().toISOString(),
+        });
+        // A real failed database write, rather than a mocked mint function.
+        db.exec(`CREATE TRIGGER fail_extract_proposal BEFORE INSERT ON proposals
+          WHEN NEW.ref LIKE '%/broken' BEGIN SELECT RAISE(ABORT, 'scripted write failure'); END`);
+        const snapshot = () => ({
+          ledger: db.prepare("SELECT * FROM improve_ledger ORDER BY ref").all(),
+          seen: db.prepare("SELECT * FROM extract_sessions_seen").all(),
+          proposals: db.prepare("SELECT * FROM proposals").all(),
+          assets: fs.readdirSync(stash, { recursive: true }).sort(),
+        });
+        const before = snapshot();
+        const names = mode === "blocked" ? ["held"] : mode === "failed" ? ["broken"] : ["held", "broken", "saved"];
+        const result = await akmExtract({
+          type: "claude",
+          stashDir: stash,
+          config,
+          sessionId: session.ref.sessionId,
+          harnesses: [makeFakeHarness([session])],
+          stateDb: db,
+          eventsCtx: { db },
+          dryRun: mode === "preview",
+          chat: async () => JSON.stringify({ candidates: names.map(candidate) }),
+          generateSessionSummary: async () => {
+            throw new Error("preview must never summarize/write assets");
+          },
+        });
+        const persisted = mode === "mixed" ? 1 : 0;
+        const previews = mode === "preview" ? 2 : 0;
+        const blocked = mode === "failed" ? 0 : 1;
+        const failed = mode === "mixed" || mode === "failed" ? 1 : 0;
+        const outcome =
+          mode === "preview"
+            ? "candidates_previewed"
+            : mode === "blocked"
+              ? "candidates_blocked"
+              : mode === "mixed"
+                ? "candidates_queued"
+                : "proposal_write_failed";
+        const rows = listProposals(stash, {}, { dbPath: getStateDbPath() });
+        const event = readEvents({ type: "extract_invoked" }, { db }).events.at(-1);
+        expect(rows).toHaveLength(persisted);
+        expect(result.candidatesCreated).toBe(persisted);
+        expect(result.proposals).toEqual(rows.map((row) => row.id));
+        expect(result.sessions[0]).toMatchObject({
+          candidateCount: names.length,
+          proposalIds: result.proposals,
+          previewRefs: mode === "preview" ? ["memories/broken", "memories/saved"] : [],
+          blockedCount: blocked,
+          failedCount: failed,
+        });
+        expect(event?.metadata).toMatchObject({
+          dryRun: mode === "preview",
+          outcome,
+          candidateCount: names.length,
+          proposalCount: persisted,
+          previewCount: previews,
+          blockedCount: blocked,
+          failedCount: failed,
+        });
+        if (failed) expect(result.sessions[0]?.warnings.join(" ")).toContain("scripted write failure");
+        const seen = getExtractedSession(db, "claude", session.ref.sessionId);
+        if (mode === "preview") {
+          expect(snapshot()).toEqual(before);
+          expect(seen).toBeUndefined();
+          expect(readEvents({}, { db }).events.map((e) => e.eventType)).toEqual(["extract_invoked"]);
+        } else {
+          expect(seen).toMatchObject({ outcome, candidate_count: names.length, proposal_count: persisted });
+          expect(JSON.parse(seen?.metadata_json ?? "{}")).toMatchObject({
+            blockedCount: blocked,
+            failedCount: failed,
+          });
+          // A failed write leaves the hash null so the session is retried; a clean run records it.
+          expect(seen?.content_hash).toBe(failed ? null : (result.sessions[0]?.contentHash ?? "missing"));
+        }
+        const health = await akmHealth({ since: "7d" });
+        const advisory = health.advisories.find((check) => check.name === "session-extraction");
+        expect(advisory?.status).toBe(mode === "preview" ? "unknown" : mode === "failed" ? "warn" : "pass");
+        if (mode !== "preview") expect(JSON.stringify(advisory?.evidence)).toContain(outcome);
+        const metrics = await akmMetrics();
+        expect(metrics.proposals.byStatus.pending ?? 0).toBe(persisted);
+
+        if (failed) {
+          // The write failure clears; the next run re-extracts the session rather than
+          // skipping it as already extracted, writes the failed candidate, and the
+          // candidate that already persisted is held by its ledger window, not duplicated.
+          db.exec("DROP TRIGGER fail_extract_proposal");
+          const retry = await akmExtract({
+            type: "claude",
+            stashDir: stash,
+            config,
+            sessionId: session.ref.sessionId,
+            harnesses: [makeFakeHarness([session])],
+            stateDb: db,
+            eventsCtx: { db },
+            chat: async () => JSON.stringify({ candidates: names.map(candidate) }),
+          });
+          expect(retry.sessions[0]?.skipReason).toBeUndefined();
+          expect(retry.sessionsProcessed).toBe(1);
+          expect(retry.sessions[0]).toMatchObject({ blockedCount: blocked + persisted, failedCount: 0 });
+          expect(retry.candidatesCreated).toBe(1);
+          const after = listProposals(stash, {}, { dbPath: getStateDbPath() });
+          expect(after.map((row) => row.ref.split("//").pop()).sort()).toEqual(
+            mode === "mixed" ? ["memories/broken", "memories/saved"] : ["memories/broken"],
+          );
+          const retried = getExtractedSession(db, "claude", session.ref.sessionId);
+          expect(retried).toMatchObject({ outcome: "candidates_queued", proposal_count: 1 });
+          expect(retried?.content_hash).toBe(retry.sessions[0]?.contentHash ?? "missing");
+        }
+      } finally {
+        db.close();
+      }
+    });
+  }
+
+  for (const dryRun of [false, true]) {
+    for (const mode of ["empty", "malformed", "unavailable"] as const) {
+      test(`final: ${mode}, dryRun=${dryRun} stays distinct from preview/queue success`, async () => {
+        const stash = makeStashDir();
+        const session = fakeSession(`final-${mode}`, Date.now() - 60_000);
+        const db = openStateDatabase();
+        try {
+          const result = await akmExtract({
+            type: "claude",
+            stashDir: stash,
+            config: configEnabled(stash),
+            harnesses: [makeFakeHarness([session])],
+            stateDb: db,
+            eventsCtx: { db },
+            dryRun,
+            chat: async () => {
+              if (mode === "unavailable") throw new Error("llm endpoint unreachable");
+              return mode === "empty"
+                ? JSON.stringify({ candidates: [], rationale_if_empty: "Nothing durable." })
+                : "not JSON";
+            },
+          });
+          expect(result.proposals).toEqual([]);
+          expect(result.candidatesCreated).toBe(0);
+          expect(listProposals(stash, {})).toEqual([]);
+          expect(db.prepare("SELECT * FROM improve_ledger").all()).toEqual([]);
+          expect(fs.readdirSync(stash, { recursive: true }).sort()).toEqual(["knowledge", "lessons", "memories"]);
+          const events = readEvents({ type: "extract_invoked" }, { db }).events;
+          if (mode === "empty") {
+            expect(result.sessions[0]?.previewRefs).toEqual([]);
+            expect(events).toHaveLength(1);
+            expect(events[0]?.metadata).toMatchObject({
+              dryRun,
+              outcome: "no_candidates",
+              candidateCount: 0,
+              proposalCount: 0,
+              previewCount: 0,
+              blockedCount: 0,
+              failedCount: 0,
+              rationale: "Nothing durable.",
+            });
+          } else {
+            expect(result.sessions[0]?.skipReason).toBe(
+              mode === "malformed" ? "malformed_model_output" : "llm_unavailable",
+            );
+            expect(events).toEqual([]);
+          }
+          const seen = getExtractedSession(db, "claude", session.ref.sessionId);
+          if (dryRun) expect(seen).toBeUndefined();
+          else {
+            expect(seen?.outcome).toBe(
+              mode === "empty" ? "no_candidates" : mode === "malformed" ? "failed" : "skipped",
+            );
+            expect(seen?.proposal_count).toBe(0);
+            if (mode !== "empty") expect(seen?.content_hash).toBeNull();
+          }
+        } finally {
+          db.close();
+        }
+      });
+    }
+  }
+
+  test("final: multi-session previews preserve legacy records and never enter proposal totals", async () => {
+    const stash = makeStashDir();
+    const sessions = [fakeSession("legacy", Date.now() - 60_000), fakeSession("fresh", Date.now() - 30_000)];
+    const db = openStateDatabase();
+    try {
+      appendEvent(
+        {
+          eventType: "extract_invoked",
+          metadata: {
+            sessionId: "legacy",
+            outcome: "candidates_queued",
+            candidateCount: 2,
+            proposalCount: 2,
+          },
+        },
+        { db },
+      );
+      upsertExtractedSession(db, {
+        harness: "claude",
+        sessionId: "legacy",
+        processedAt: new Date().toISOString(),
+        outcome: "candidates_queued",
+        candidateCount: 2,
+        proposalCount: 2,
+        contentHash: null,
+      });
+      const prior = getExtractedSession(db, "claude", "legacy");
+      recordImproveLedger(db, {
+        stashDir: stash,
+        ref: "memories/held",
+        source: "extract",
+        outcome: "rejected",
+        at: new Date().toISOString(),
+      });
+      const ledgerBefore = db.prepare("SELECT * FROM improve_ledger").all();
+      const result = await akmExtract({
+        type: "claude",
+        stashDir: stash,
+        config: configEnabled(stash),
+        harnesses: [makeFakeHarness(sessions)],
+        stateDb: db,
+        eventsCtx: { db },
+        dryRun: true,
+        chat: async (_config, messages) =>
+          JSON.stringify({
+            candidates: messages[0]?.content.includes("legacy")
+              ? [candidate("held")]
+              : [candidate("fresh-a"), candidate("fresh-b")],
+          }),
+      });
+      expect(result.sessionsProcessed).toBe(2);
+      expect(result.proposals).toEqual([]);
+      expect(result.candidatesCreated).toBe(0);
+      expect(result.sessions.map((row) => row.proposalIds)).toEqual([[], []]);
+      expect(result.sessions.map((row) => row.previewRefs)).toEqual([[], ["memories/fresh-a", "memories/fresh-b"]]);
+      const events = readEvents({ type: "extract_invoked" }, { db }).events;
+      expect(events[0]?.metadata).toEqual({
+        sessionId: "legacy",
+        outcome: "candidates_queued",
+        candidateCount: 2,
+        proposalCount: 2,
+      });
+      expect(events[0]?.metadata?.dryRun).toBeUndefined();
+      expect(
+        events
+          .slice(1)
+          .map((event) => [event.metadata?.outcome, event.metadata?.proposalCount, event.metadata?.previewCount]),
+      ).toEqual([
+        ["candidates_blocked", 0, 0],
+        ["candidates_previewed", 0, 2],
+      ]);
+      expect(getExtractedSession(db, "claude", "legacy")).toEqual(prior);
+      expect(getExtractedSession(db, "claude", "fresh")).toBeUndefined();
+      expect(db.prepare("SELECT * FROM improve_ledger").all()).toEqual(ledgerBefore);
+      expect((await akmMetrics()).proposals.byStatus.pending ?? 0).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("akmExtract — what a retried session writes again (#1224)", () => {
+  const candidate = (name: string) => ({
+    type: "memory",
+    name,
+    description: "Deployment requires a working VPN connection before starting.",
+    body: `Connect the corporate VPN before running deploy.sh (${name}), which otherwise stalls while pushing to stage.`,
+    confidence: 0.9,
+    evidence: "The session demonstrated the deployment failure without VPN.",
+  });
+  const realCreateProposal = proposalRepository.createProposal;
+
+  async function run(
+    db: ReturnType<typeof openStateDatabase>,
+    stash: string,
+    config: AkmConfig,
+    session: SessionData,
+    names: string[],
+    calls?: { count: number },
+  ) {
+    // The mint binds its proposal to this bundle, which the real accept resolves again.
+    writeSandboxConfig(config as unknown as Record<string, unknown>);
+    return akmExtract({
+      type: "claude",
+      stashDir: stash,
+      config,
+      sessionId: session.ref.sessionId,
+      harnesses: [makeFakeHarness([session])],
+      stateDb: db,
+      eventsCtx: { db },
+      chat: async () => {
+        if (calls) calls.count += 1;
+        return JSON.stringify({ candidates: names.map(candidate) });
+      },
+      generateSessionSummary: async () => ({ summary: "A VPN deployment session.", keyTopics: ["deploy"] }),
+    });
+  }
+  const pendingRefs = (stash: string) =>
+    listProposals(stash, { status: "pending" }, { dbPath: getStateDbPath() })
+      .map((row) => row.ref.split("//").pop())
+      .sort();
+
+  // Both ways a proposal names its session: the session asset (indexing on) or the native identity.
+  for (const mark of ["provenance", "session asset"] as const) {
+    test(`a candidate accepted between the failed run and its retry is not proposed again (${mark})`, async () => {
+      const stash = makeStashDir();
+      const config = configEnabled(stash);
+      const extractProcess = config.improve?.strategies?.extract?.processes?.extract;
+      if (mark === "session asset" && extractProcess) extractProcess.indexSessions = true;
+      const session = fakeSession(`accepted-${mark.replace(" ", "-")}`, Date.now() - 60_000);
+      const db = openStateDatabase();
+      try {
+        db.exec(`CREATE TRIGGER fail_extract_proposal BEFORE INSERT ON proposals
+          WHEN NEW.ref LIKE '%/broken' BEGIN SELECT RAISE(ABORT, 'scripted write failure'); END`);
+        const first = await run(db, stash, config, session, ["saved", "broken"]);
+        expect(first.sessions[0]).toMatchObject({ failedCount: 1, failedRejectedCount: 0 });
+        expect(getExtractedSession(db, "claude", session.ref.sessionId)?.content_hash).toBeNull();
+        const saved = listProposals(stash, { status: "pending" }, { dbPath: getStateDbPath() });
+        expect(saved).toHaveLength(1);
+        const fm = saved[0]?.payload.frontmatter ?? {};
+        if (mark === "session asset") expect(fm.xrefs).toEqual([`sessions/claude/${session.ref.sessionId}`]);
+        else expect(fm.provenance).toEqual({ sources: [{ resource: `claude:${session.ref.sessionId}` }] });
+
+        // Accepted (drain, triage or a person) before the retry: its ledger row now has no window.
+        await akmProposalAccept({ stashDir: stash, config, id: saved[0]?.id ?? "missing" });
+        db.exec("DROP TRIGGER fail_extract_proposal");
+
+        const retry = await run(db, stash, config, session, ["saved", "broken"]);
+        expect(retry.sessions[0]).toMatchObject({ blockedCount: 1, failedCount: 0, failedRejectedCount: 0 });
+        expect(retry.sessions[0]?.warnings).toContain(
+          `candidate memory:saved skipped: accepted from this session as proposal ${saved[0]?.id}`,
+        );
+        expect(retry.candidatesCreated).toBe(1);
+        expect(pendingRefs(stash)).toEqual(["memories/broken"]);
+        const event = readEvents({ type: "extract_invoked" }, { db }).events.at(-1);
+        expect(event?.metadata).toMatchObject({ outcome: "candidates_queued", blockedCount: 1, proposalCount: 1 });
+      } finally {
+        db.close();
+      }
+    });
+  }
+
+  test("a ref accepted from another session is still proposed as an update", async () => {
+    const stash = makeStashDir();
+    const config = configEnabled(stash);
+    const db = openStateDatabase();
+    try {
+      await run(db, stash, config, fakeSession("earlier", Date.now() - 120_000), ["saved"]);
+      const earlier = listProposals(stash, { status: "pending" }, { dbPath: getStateDbPath() });
+      expect(earlier).toHaveLength(1);
+      await akmProposalAccept({ stashDir: stash, config, id: earlier[0]?.id ?? "missing" });
+
+      const later = await run(db, stash, config, fakeSession("later", Date.now() - 60_000), ["saved"]);
+      expect(later.sessions[0]).toMatchObject({ blockedCount: 0, failedCount: 0 });
+      const pending = listProposals(stash, { status: "pending" }, { dbPath: getStateDbPath() });
+      expect(pending.map((row) => row.ref.split("//").pop())).toEqual(["memories/saved"]);
+      expect(pending[0]?.changes?.[0]?.op).toBe("update");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a write the validator refuses records the hash, so the session is not extracted again", async () => {
+    const stash = makeStashDir();
+    const config = configEnabled(stash);
+    const session = fakeSession("refused", Date.now() - 60_000);
+    // The real validator refuses it: the candidate reaches createProposal with empty content.
+    spyOn(proposalRepository, "createProposal").mockImplementation((stashDir, input, ctx) =>
+      realCreateProposal(
+        stashDir,
+        input.ref.endsWith("/refused") ? { ...input, payload: { ...input.payload, content: " " } } : input,
+        ctx,
+      ),
+    );
+    const db = openStateDatabase();
+    try {
+      const calls = { count: 0 };
+      const first = await run(db, stash, config, session, ["refused"], calls);
+      expect(first.sessions[0]).toMatchObject({ failedCount: 1, failedRejectedCount: 1, proposalIds: [] });
+      expect(first.sessions[0]?.warnings.join(" ")).toContain("has empty content");
+      expect(readEvents({ type: "proposal_creation_rejected" }, { db }).events.at(-1)?.metadata).toMatchObject({
+        source: "extract",
+        reason: "empty_content",
+      });
+      const seen = getExtractedSession(db, "claude", session.ref.sessionId);
+      expect(seen?.outcome).toBe("proposal_write_failed");
+      expect(seen?.content_hash).toBe(first.sessions[0]?.contentHash ?? "missing");
+      expect(JSON.parse(seen?.metadata_json ?? "{}")).toMatchObject({ failedCount: 1, failedRejectedCount: 1 });
+      // An all-failed window still warns.
+      const advisory = (await akmHealth({ since: "7d" })).advisories.find((c) => c.name === "session-extraction");
+      expect(advisory?.status).toBe("warn");
+
+      const again = await run(db, stash, config, session, ["refused"], calls);
+      expect(again.sessions[0]?.skipReason).toBe("already_extracted");
+      expect(calls.count).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a transient write failure keeps the hash null and is retried, even beside a refusal", async () => {
+    const stash = makeStashDir();
+    const config = configEnabled(stash);
+    const session = fakeSession("contended", Date.now() - 60_000);
+    let contended = true;
+    // `withImmediateTransaction`'s own exhaustion error: another akm process holds state.db.
+    spyOn(proposalRepository, "createProposal").mockImplementation((stashDir, input, ctx) => {
+      if (input.ref.endsWith("/busy") && contended) {
+        throw new TransientError(
+          "akm's state database is busy (another akm process is writing it); retry shortly.",
+          "STATE_DB_CONTENDED",
+        );
+      }
+      return realCreateProposal(
+        stashDir,
+        input.ref.endsWith("/refused") ? { ...input, payload: { ...input.payload, content: " " } } : input,
+        ctx,
+      );
+    });
+    const db = openStateDatabase();
+    try {
+      const calls = { count: 0 };
+      const first = await run(db, stash, config, session, ["busy", "refused"], calls);
+      expect(first.sessions[0]).toMatchObject({ failedCount: 2, failedRejectedCount: 1 });
+      const seen = getExtractedSession(db, "claude", session.ref.sessionId);
+      expect(seen?.content_hash).toBeNull();
+      expect(JSON.parse(seen?.metadata_json ?? "{}")).toMatchObject({ failedCount: 2, failedRejectedCount: 1 });
+
+      contended = false;
+      const retry = await run(db, stash, config, session, ["busy", "refused"], calls);
+      expect(retry.sessions[0]?.skipReason).toBeUndefined();
+      expect(retry.sessions[0]).toMatchObject({ failedCount: 1, failedRejectedCount: 1 });
+      expect(pendingRefs(stash)).toEqual(["memories/busy"]);
+      // Only the refusal is left, so this run records the hash and the next one skips.
+      expect(getExtractedSession(db, "claude", session.ref.sessionId)?.content_hash).toBe(
+        retry.sessions[0]?.contentHash ?? "missing",
+      );
+      const last = await run(db, stash, config, session, ["busy", "refused"], calls);
+      expect(last.sessions[0]?.skipReason).toBe("already_extracted");
+      expect(calls.count).toBe(2);
+    } finally {
+      db.close();
+    }
   });
 });
 
@@ -918,8 +1436,17 @@ describe("akmExtract — candidate → proposal routing", () => {
     });
 
     expect(result.dryRun).toBe(true);
-    expect(result.candidatesCreated).toBe(1);
-    expect(result.proposals[0]).toMatch(/^dry-run:memories\/fact-1$/);
+    expect(result.candidatesCreated).toBe(0);
+    expect(result.proposals).toEqual([]);
+    expect(result.sessions[0]?.proposalIds).toEqual([]);
+    expect(result.sessions[0]?.previewRefs).toEqual(["memories/fact-1"]);
+    expect(readEvents({ type: "extract_invoked" }).events.at(-1)?.metadata).toMatchObject({
+      dryRun: true,
+      outcome: "candidates_previewed",
+      candidateCount: 1,
+      previewCount: 1,
+      proposalCount: 0,
+    });
     // No actual proposal queued
     expect(listProposals(stash, { status: "pending" }).filter((p) => p.source === "extract")).toEqual([]);
   });
@@ -947,14 +1474,14 @@ describe("akmExtract — candidate → proposal routing", () => {
 });
 
 describe("akmExtract — LLM call wiring", () => {
-  // The one corrective retry no longer depends on the engine's JSON Schema support.
-  test.each([false, true])("repairs malformed output once (supportsJsonSchema: %p)", async (supportsJsonSchema) => {
+  // The one corrective retry no longer depends on the endpoint's JSON Schema support.
+  test.each([false, true])("repairs malformed output once (endpoint accepts a schema: %p)", async (schemaAccepted) => {
     const stash = makeStashDir();
     const session = fakeSession("ses_repair", Date.now() - 60_000);
     const config = configEnabled(stash);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.supportsJsonSchema = supportsJsonSchema;
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    if (!schemaAccepted) await rejectJsonSchemaOn({ endpoint: connection.endpoint, model: "test-model" });
     const responses = [
       "I found nothing worth keeping.",
       JSON.stringify({ candidates: [], rationale_if_empty: "No durable candidates were identified." }),
@@ -1100,16 +1627,16 @@ describe("minContentChars improve-process config schema", () => {
   });
 });
 
-// ── per-process engine + strategy config support ────────────────────────────
+// ── per-process connection/harness + strategy config support ────────────────────────────
 
-describe("akmExtract — engine + strategy config resolution", () => {
+describe("akmExtract — connection, harness + strategy config resolution", () => {
   test("a live lock created while classification reads the session suppresses credential materialization", async () => {
     const stash = storage.stashDir;
     const session = fakeSession("credential-lock-race", Date.now());
     const config = configEnabled(stash);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = "$AKM_EXTRACT_LOCK_RACE_REQUIRED_KEY";
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    connection.apiKey = "$AKM_EXTRACT_LOCK_RACE_REQUIRED_KEY";
     const stateDbPath = getStateDbPath();
     const lockPath = path.join(
       path.dirname(stateDbPath),
@@ -1338,52 +1865,14 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(result.warnings.join(" ")).not.toContain("deferred");
   });
 
-  test("missing required symbolic credential aborts without proposals, session assets, or session-state rows", async () => {
-    const stash = makeStashDir();
-    const session = fakeSession("credential", Date.now());
-    const config = configEnabled(stash);
-    const defaultEngine = config.engines?.default;
-    if (!defaultEngine || defaultEngine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    defaultEngine.apiKey = "$AKM_EXTRACT_REQUIRED_KEY";
-    let chatCalls = 0;
-    const stateDb = openStateDatabase();
-    try {
-      const failure = withEnv({ AKM_EXTRACT_REQUIRED_KEY: undefined }, () =>
-        akmExtract({
-          type: "claude",
-          sessionId: session.ref.sessionId,
-          stashDir: stash,
-          config,
-          harnesses: [makeFakeHarness([session])],
-          stateDb,
-          chat: async () => {
-            chatCalls += 1;
-            return JSON.stringify({ candidates: [] });
-          },
-        }),
-      );
-
-      await expect(failure).rejects.toBeInstanceOf(ConfigError);
-      await expect(failure).rejects.toMatchObject({ code: "INVALID_CONFIG_FILE" });
-      expect(chatCalls).toBe(0);
-      expect(listProposals(stash)).toEqual([]);
-      expect(fs.existsSync(path.join(stash, "sessions")) ? fs.readdirSync(path.join(stash, "sessions")) : []).toEqual(
-        [],
-      );
-      expect(getExtractedSessionsMap(stateDb, "claude", [session.ref.sessionId]).size).toBe(0);
-    } finally {
-      stateDb.close();
-    }
-  });
-
   test("each session dispatch in one extract run reads the credential current at that call", async () => {
     const stash = makeStashDir();
     const first = fakeSession("rotation-first", Date.now());
     const second = fakeSession("rotation-second", Date.now() - 1);
     const config = configEnabled(stash);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = "$AKM_EXTRACT_ROTATING_KEY";
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    connection.apiKey = "$AKM_EXTRACT_ROTATING_KEY";
     const secret = "extract-original-092";
     const rotated = "extract-rotated-092";
     const observed: Array<string | undefined> = [];
@@ -1411,75 +1900,6 @@ describe("akmExtract — engine + strategy config resolution", () => {
     } finally {
       stateDb.close();
     }
-  });
-
-  test("missing required symbolic credential does not create state.db, tracking, session, or proposal assets", async () => {
-    const stash = makeStashDir();
-    const session = fakeSession("credential-no-state", Date.now());
-    const config = configEnabled(stash);
-    const defaultEngine = config.engines?.default;
-    if (!defaultEngine || defaultEngine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    defaultEngine.apiKey = "$AKM_EXTRACT_NO_STATE_REQUIRED_KEY";
-    const stateDbPath = getStateDbPath();
-    const beforeTree = fs.readdirSync(stash, { recursive: true }).map(String).sort();
-    let chatCalls = 0;
-
-    const failure = withEnv({ AKM_EXTRACT_NO_STATE_REQUIRED_KEY: undefined }, () =>
-      akmExtract({
-        type: "claude",
-        sessionId: session.ref.sessionId,
-        stashDir: stash,
-        config,
-        harnesses: [makeFakeHarness([session])],
-        chat: async () => {
-          chatCalls += 1;
-          return JSON.stringify({ candidates: [] });
-        },
-      }),
-    );
-
-    await expect(failure).rejects.toBeInstanceOf(ConfigError);
-    expect(chatCalls).toBe(0);
-    expect(fs.existsSync(stateDbPath)).toBe(false);
-    expect(fs.readdirSync(stash, { recursive: true }).map(String).sort()).toEqual(beforeTree);
-  });
-
-  test("default discovery validates a required credential before creating any durable state", async () => {
-    const stash = storage.stashDir;
-    const session = fakeSession("credential-discovery-no-state", Date.now());
-    const config = configEnabled(stash);
-    const defaultEngine = config.engines?.default;
-    if (!defaultEngine || defaultEngine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    defaultEngine.apiKey = "$AKM_EXTRACT_DISCOVERY_REQUIRED_KEY";
-    const stateDbPath = getStateDbPath();
-    const dataTreeBefore = snapshotTree(storage.dataDir);
-    const storageTreeBefore = snapshotTree(storage.root);
-    let chatCalls = 0;
-
-    const failure = withEnv({ AKM_EXTRACT_DISCOVERY_REQUIRED_KEY: undefined }, () =>
-      akmExtract({
-        type: "claude",
-        stashDir: stash,
-        config,
-        harnesses: [makeFakeHarness([session])],
-        chat: async () => {
-          chatCalls += 1;
-          return JSON.stringify({ candidates: [] });
-        },
-      }),
-    );
-
-    await expect(failure).rejects.toBeInstanceOf(ConfigError);
-    await expect(failure).rejects.toMatchObject({
-      code: "INVALID_CONFIG_FILE",
-      message: "Required engine credential AKM_EXTRACT_DISCOVERY_REQUIRED_KEY is not set.",
-    });
-    expect(chatCalls).toBe(0);
-    expect(fs.existsSync(stateDbPath)).toBe(false);
-    expect(fs.existsSync(`${stateDbPath}-wal`)).toBe(false);
-    expect(fs.existsSync(`${stateDbPath}-shm`)).toBe(false);
-    expect(snapshotTree(storage.dataDir)).toEqual(dataTreeBefore);
-    expect(snapshotTree(storage.root)).toEqual(storageTreeBefore);
   });
 
   test.each([
@@ -1517,9 +1937,9 @@ describe("akmExtract — engine + strategy config resolution", () => {
     const session = fakeSession(`credential-${reason}`, Date.now());
     const config = configEnabled(stash);
     configure(config);
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = `$${key}`;
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    connection.apiKey = `$${key}`;
     const before = snapshotTree(storage.root);
     let chatCalls = 0;
 
@@ -1556,9 +1976,9 @@ describe("akmExtract — engine + strategy config resolution", () => {
       chat: async () => JSON.stringify({ candidates: [] }),
     });
 
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = "$AKM_EXTRACT_ALREADY_REQUIRED_KEY";
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    connection.apiKey = "$AKM_EXTRACT_ALREADY_REQUIRED_KEY";
     const before = snapshotTree(storage.root);
     let chatCalls = 0;
 
@@ -1581,41 +2001,6 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(snapshotTree(storage.root)).toEqual(before);
   });
 
-  test("a deterministic skip plus eligible session fails before any partial tracking, lock, or proposal mutation", async () => {
-    const stash = storage.stashDir;
-    const short = fakeSession("credential-mixed-short", Date.now());
-    const firstEvent = short.events[0];
-    if (!firstEvent) throw new Error("test fixture requires one session event");
-    short.events = [{ ...firstEvent, text: "tiny" }];
-    const eligible = fakeSession("credential-mixed-eligible", Date.now() - 1);
-    const config = configEnabled(stash);
-    const process = config.improve?.strategies?.extract?.processes?.extract;
-    if (process) process.minContentChars = 20;
-    const engine = config.engines?.default;
-    if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = "$AKM_EXTRACT_MIXED_REQUIRED_KEY";
-    const before = snapshotTree(storage.root);
-    let chatCalls = 0;
-
-    const failure = withEnv({ AKM_EXTRACT_MIXED_REQUIRED_KEY: undefined }, () =>
-      akmExtract({
-        type: "claude",
-        since: "24h",
-        stashDir: stash,
-        config,
-        harnesses: [makeFakeHarness([short, eligible])],
-        chat: async () => {
-          chatCalls += 1;
-          return JSON.stringify({ candidates: [] });
-        },
-      }),
-    );
-
-    await expect(failure).rejects.toBeInstanceOf(ConfigError);
-    expect(chatCalls).toBe(0);
-    expect(snapshotTree(storage.root)).toEqual(before);
-  });
-
   test("default discovery reads a held-WAL watermark without mutating state or materializing a no-work credential", async () => {
     const stash = storage.stashDir;
     const stateDbPath = getStateDbPath();
@@ -1634,9 +2019,9 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(fs.existsSync(`${stateDbPath}-wal`)).toBe(true);
     expect(fs.existsSync(`${stateDbPath}-shm`)).toBe(true);
     const config = configEnabled(stash);
-    const defaultEngine = config.engines?.default;
-    if (!defaultEngine || defaultEngine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    defaultEngine.apiKey = "$AKM_EXTRACT_NO_WORK_REQUIRED_KEY";
+    const connection = config.connections?.default;
+    if (!connection) throw new Error("test fixture requires the default connection");
+    connection.apiKey = "$AKM_EXTRACT_NO_WORK_REQUIRED_KEY";
     const baseHarness = makeFakeHarness([]);
     let observedSinceMs: number | undefined;
     let chatCalls = 0;
@@ -1674,58 +2059,63 @@ describe("akmExtract — engine + strategy config resolution", () => {
     }
   });
 
+  /**
+   * `processOverride` is the extract process's settings. Where it runs (connection, harness, model, llm,
+   * timeoutMs) is `improve.processes.extract`, whichever strategy is selected; the rest is the strategy's.
+   */
   function configWithStrategy(stashDir: string, processOverride: Record<string, unknown>): AkmConfig {
+    const where = ["connection", "harness", "model", "llm", "timeoutMs"];
+    const placed = Object.fromEntries(Object.entries(processOverride).filter(([key]) => where.includes(key)));
+    const strategyProcess = Object.fromEntries(Object.entries(processOverride).filter(([key]) => !where.includes(key)));
     return {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: {
+      connections: {
         default: {
-          kind: "llm",
           endpoint: "http://localhost:11434/v1/chat/completions",
-          model: "default-model",
-          supportsJsonSchema: true,
+          models: { fast: "default-model" },
         },
         "extract-special": {
-          kind: "llm",
           endpoint: "http://192.168.0.205:1234/v1/chat/completions",
-          model: "extract-special-model",
-          supportsJsonSchema: true,
+          models: { fast: "extract-special-model" },
           timeoutMs: 90_000,
           contextLength: 131_072,
         },
       },
       improve: {
+        strategy: "extract",
+        processes: { extract: placed },
         strategies: {
           // #561 — default-off session indexing here so these resolution tests
           // keep asserting the single distillation chat call. Overridable via
           // processOverride for any test that wants to exercise it.
           extract: {
             processes: {
-              extract: { enabled: true, indexSessions: false, triage: { enabled: false }, ...processOverride },
+              extract: { enabled: true, indexSessions: false, triage: { enabled: false }, ...strategyProcess },
             },
           },
         },
       },
-      defaults: { llmEngine: "default", improveStrategy: "extract" },
     } as AkmConfig;
   }
 
-  test("standalone selection rejects simultaneous --engine and --strategy", () => {
+  test("a connection and a strategy are chosen apart: the strategy never says where the model runs", () => {
     const stash = makeStashDir();
-    const config = configWithStrategy(stash, {});
-    expect(() => resolveStandaloneExtractPlan(config, { engine: "extract-special", strategy: "extract" })).toThrow(
-      "--engine and --strategy are mutually exclusive",
-    );
+    const config = configWithStrategy(stash, { maxTotalChars: 4321 });
+    const plan = resolveStandaloneExtractPlan(config, { connection: "extract-special", strategy: "extract" });
+    expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special" });
+    expect(plan.process.maxTotalChars).toBe(4321);
   });
 
   test("an explicitly selected strategy supplies settings but cannot disable standalone extract", () => {
     const stash = makeStashDir();
     const config = configWithStrategy(stash, { enabled: false, maxTotalChars: 4321 });
     const plan = resolveStandaloneExtractPlan(config, { strategy: "extract" });
-    expect(plan).toMatchObject({ strategy: "extract", enabled: true, timeoutMs: 600_000 });
+    expect(plan).toMatchObject({ strategy: "extract", enabled: true });
+    expect(plan.runner?.timeoutMs).toBe(600_000);
     expect(plan.process.enabled).toBe(false);
     expect(plan.process.maxTotalChars).toBe(4321);
   });
@@ -1735,24 +2125,22 @@ describe("akmExtract — engine + strategy config resolution", () => {
     const config = configWithStrategy(stash, { timeoutMs: null });
     const plan = resolveStandaloneExtractPlan(config, { strategy: "extract" });
 
-    expect(plan.timeoutMs).toBeNull();
     expect(plan.runner?.timeoutMs).toBeNull();
   });
 
   test("an unset symbolic credential does not block default-discovery dry-run planning with no dispatch or writes", async () => {
     const stash = storage.stashDir;
     const config = configWithStrategy(stash, {});
-    const engine = config.engines?.["extract-special"];
-    if (engine?.kind !== "llm") throw new Error("fixture must use an LLM engine");
-    engine.apiKey = "$EXTRACT_REQUIRED_API_KEY";
+    const connection = config.connections?.["extract-special"];
+    if (!connection) throw new Error("fixture must use a connection");
+    connection.apiKey = "$EXTRACT_REQUIRED_API_KEY";
     const stateDbPath = getStateDbPath();
     const storageTreeBefore = snapshotTree(storage.root);
     let chatCalls = 0;
 
     await withEnv({ EXTRACT_REQUIRED_API_KEY: undefined }, async () => {
-      const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special" });
-      expect(asLlmRunner(plan.runner).credential).toEqual({ names: ["EXTRACT_REQUIRED_API_KEY"], required: true });
-      expect(asLlmRunner(plan.runner).connection.apiKey).toBeUndefined();
+      const plan = resolveStandaloneExtractPlan(config, { connection: "extract-special" });
+      expect(asLlmRunner(plan.runner).apiKey).toBe("$EXTRACT_REQUIRED_API_KEY");
 
       const result = await akmExtract({
         type: "claude",
@@ -1779,7 +2167,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
   test("a standalone plan freezes named-engine and process settings for repeated triggers", async () => {
     const stash = makeStashDir();
     const config = configWithStrategy(stash, {
-      engine: "default",
+      connection: "default",
       model: "process-model",
       timeoutMs: 55_000,
       llm: { temperature: 0.2, maxTokens: 321 },
@@ -1793,35 +2181,30 @@ describe("akmExtract — engine + strategy config resolution", () => {
     });
     const strategy = config.improve?.strategies?.extract;
     if (strategy) {
-      strategy.engine = "default";
-      strategy.model = "strategy-model";
-      strategy.timeoutMs = 70_000;
-      strategy.llm = { temperature: 0.1, supportsJsonSchema: false };
     }
-    const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special" });
+    const plan = resolveStandaloneExtractPlan(config, { connection: "extract-special" });
     expect(Object.isFrozen(plan)).toBe(true);
     expect(Object.isFrozen(plan.process)).toBe(true);
     expect(Object.isFrozen(plan.process.triage)).toBe(true);
-    expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special", timeoutMs: 55_000 });
-    expect(asLlmRunner(plan.runner).connection).toMatchObject({
+    expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special" });
+    expect(plan.runner?.timeoutMs).toBe(55_000);
+    expect(asLlmRunner(plan.runner)).toMatchObject({
       endpoint: "http://192.168.0.205:1234/v1/chat/completions",
       model: "process-model",
-      temperature: 0.2,
-      maxTokens: 321,
-      supportsJsonSchema: false,
+      request: {},
+      inference: { temperature: 0.2, maxTokens: 321 },
     });
     expect(plan.process.maxTotalChars).toBe(1234);
 
     const timeoutOverridePlan = resolveStandaloneExtractPlan(config, {
-      engine: "extract-special",
+      connection: "extract-special",
       timeoutMs: 45_000,
     });
-    expect(timeoutOverridePlan.timeoutMs).toBe(45_000);
     expect(timeoutOverridePlan.runner?.timeoutMs).toBe(45_000);
-    expect(asLlmRunner(timeoutOverridePlan.runner).connection.model).toBe("process-model");
+    expect(asLlmRunner(timeoutOverridePlan.runner).model).toBe("process-model");
 
-    const engine = config.engines?.["extract-special"];
-    if (engine?.kind === "llm") engine.model = "changed-after-watch-start";
+    const live = config.connections?.["extract-special"];
+    if (live) live.models = { fast: "changed-after-watch-start" };
     const process = config.improve?.strategies?.extract?.processes?.extract;
     if (process) {
       process.maxTotalChars = 9999;
@@ -1880,10 +2263,10 @@ describe("akmExtract — engine + strategy config resolution", () => {
         }),
         harnesses: [makeFakeHarness([fakeSession("no-fallback", Date.now())])],
       }),
-    ).rejects.toThrow("No engine configured for extract");
+    ).rejects.toThrow("No connection or harness is configured for extract");
   });
 
-  test("honors processes.extract.engine to pick a non-default LLM", async () => {
+  test("honors improve.processes.extract.connection to pick a non-default connection", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_profile", Date.now() - 60_000);
     let receivedEndpoint = "";
@@ -1891,7 +2274,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
       type: "claude",
       sessionId: "ses_profile",
       stashDir: stash,
-      config: configWithStrategy(stash, { engine: "extract-special" }),
+      config: configWithStrategy(stash, { connection: "extract-special" }),
       harnesses: [makeFakeHarness([session])],
       chat: async (cfg) => {
         receivedEndpoint = cfg.endpoint;
@@ -1901,7 +2284,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(receivedEndpoint).toBe("http://192.168.0.205:1234/v1/chat/completions");
   });
 
-  test("falls back to defaults.llmEngine when the process has no engine override", async () => {
+  test("falls back to the default connection when the process names no target", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_default", Date.now() - 60_000);
     let receivedModel = "";
@@ -1919,24 +2302,13 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(receivedModel).toBe("default-model");
   });
 
-  test("refuses a process engine that cannot confine the model-work tool policy, before any dispatch", async () => {
+  test("a process harness that cannot confine the model-work tool policy still resolves, with a notice", () => {
     const stash = makeStashDir();
-    const session = fakeSession("ses_bad_mode", Date.now() - 60_000);
-    const config = configWithStrategy(stash, { engine: "fake-agent" });
-    config.engines = {
-      ...config.engines,
-      "fake-agent": { kind: "agent", platform: "pi", bin: "pi-must-not-run" },
-    };
-    await expect(
-      akmExtract({
-        type: "claude",
-        sessionId: "ses_bad_mode",
-        stashDir: stash,
-        config,
-        harnesses: [makeFakeHarness([session])],
-        chat: async () => JSON.stringify({ candidates: [] }),
-      }),
-    ).rejects.toThrow(/cannot enforce the model-work tool policy/);
+    const config = configWithStrategy(stash, { harness: "fake-agent" });
+    config.harnesses = { "fake-agent": { platform: "pi", bin: "pi-must-not-run" } };
+    const plan = resolveStandaloneExtractPlan(config, {});
+    expect(plan.runner).toMatchObject({ kind: "harness", name: "fake-agent" });
+    expect(plan.notices?.map((notice) => notice.code)).toContain("model-work-unrestricted");
   });
 
   test("honors process timeoutMs override", async () => {
@@ -1947,7 +2319,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
       type: "claude",
       sessionId: "ses_to",
       stashDir: stash,
-      config: configWithStrategy(stash, { engine: "extract-special", timeoutMs: 45_000 }),
+      config: configWithStrategy(stash, { connection: "extract-special", timeoutMs: 45_000 }),
       harnesses: [makeFakeHarness([session])],
       chat: async (_cfg, _msgs, opts) => {
         receivedTimeout = opts?.timeoutMs ?? 0;
@@ -1957,17 +2329,18 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(receivedTimeout).toBe(45_000);
   });
 
-  test("explicit options.timeoutMs overrides the process config", async () => {
+  test("an explicit --timeout-ms overrides the process config", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_to2", Date.now() - 60_000);
+    const config = configWithStrategy(stash, { connection: "extract-special", timeoutMs: 45_000 });
     let receivedTimeout = 0;
     await akmExtract({
       type: "claude",
       sessionId: "ses_to2",
       stashDir: stash,
-      config: configWithStrategy(stash, { engine: "extract-special", timeoutMs: 45_000 }),
+      config,
+      resolvedPlan: resolveStandaloneExtractPlan(config, { timeoutMs: 30_000 }),
       harnesses: [makeFakeHarness([session])],
-      timeoutMs: 30_000,
       chat: async (_cfg, _msgs, opts) => {
         receivedTimeout = opts?.timeoutMs ?? 0;
         return JSON.stringify({ candidates: [] });

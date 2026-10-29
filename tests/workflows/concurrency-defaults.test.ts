@@ -21,11 +21,9 @@ import { freezeWorkflow } from "../_helpers/workflow";
 const BASE_CONFIG = {
   configVersion: "0.9.0",
   semanticSearchMode: "off",
-  engines: {
-    remote: { kind: "llm", endpoint: "https://api.example.test/v1/chat/completions", model: "test-model" },
+  connections: {
+    remote: { endpoint: "https://api.example.test/v1/chat/completions", models: { fast: "test-model" } },
   },
-  defaults: { engine: "remote" },
-  workflow: { judgeEngine: "remote" },
 } as const satisfies AkmConfig;
 
 function mapWorkflow(concurrency?: number): string {
@@ -84,7 +82,7 @@ describe("current workflow concurrency policy", () => {
     expect(defaultMapConcurrency(Number.NaN)).toBe(DEFAULT_MAP_CONCURRENCY);
     expect(defaultMapConcurrency(10_000)).toBe(WORKFLOW_MAX_CONCURRENCY);
 
-    const serial = { ...BASE_CONFIG, workflow: { judgeEngine: "remote", defaultMapConcurrency: 1 } } as AkmConfig;
+    const serial = { ...BASE_CONFIG, workflow: { defaultMapConcurrency: 1 } } as AkmConfig;
     expect(mapNode(freezeWorkflow(mapWorkflow(), undefined, serial)).concurrency).toBe(1);
     expect(mapNode(freezeWorkflow(mapWorkflow(6), undefined, serial)).concurrency).toBe(6);
   });

@@ -17,7 +17,6 @@ import os from "node:os";
 import path from "node:path";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "../src/core/adapter/adapters/akm-metadata";
 import { parseFrontmatter } from "../src/core/asset/frontmatter";
-import { saveConfig } from "../src/core/config/config";
 import type { IndexDocument } from "../src/indexer/passes/metadata";
 import { buildFileContext } from "../src/indexer/walk/file-context";
 import { runCliCapture } from "./_helpers/cli";
@@ -298,7 +297,7 @@ describe("remember --auto", () => {
     expect(parsed.data.tags as string[]).toContain("ops");
   });
 
-  test("body with ISO date gets observed_at set", async () => {
+  test("body with ISO date gets observed set", async () => {
     const body = "The outage happened on 2026-01-15 and we fixed it quickly";
     const { result } = await runCli(["remember", body, "--auto"]);
     // Will fail required-field check if no tags derived from the body
@@ -309,7 +308,8 @@ describe("remember --auto", () => {
     const json = JSON.parse(r2.stdout) as { path: string };
     const content = fs.readFileSync(json.path, "utf8");
     const parsed = parseFrontmatter(content);
-    expect(parsed.data.observed_at).toBe("2026-01-15");
+    expect(parsed.data.observed).toBe("2026-01-15");
+    expect(parsed.data.observed_at).toBeUndefined();
     void result; // suppress unused variable warning
   });
 
@@ -396,7 +396,7 @@ describe("memory metadata fold", () => {
     expect(entry.description).toBe("VPN required for staging deploys");
   });
 
-  test("populates searchHints with source, observed_at, expires, subjective", async () => {
+  test("populates searchHints with source, observed, expires, subjective", async () => {
     const { filePath, stashRoot } = writeTmpMemory(
       "---\ntags: [ops]\nsource: skill:deploy\nobserved_at: 2026-01-15\nexpires: 2026-04-15\nsubjective: true\n---\nVPN needed\n",
     );
@@ -406,23 +406,35 @@ describe("memory metadata fold", () => {
 
     expect(entry.searchHints).toBeDefined();
     expect(entry.searchHints).toContain("skill:deploy");
-    expect(entry.searchHints).toContain("observed_at:2026-01-15");
+    expect(entry.searchHints).toContain("observed:2026-01-15");
     expect(entry.searchHints).toContain("expires:2026-04-15");
     expect(entry.searchHints).toContain("subjective");
   });
 
-  test("observed_at falls back to file mtime when not in frontmatter", async () => {
-    const { filePath, stashRoot } = writeTmpMemory("---\ntags: [ops]\n---\nSome memory without observed_at\n");
+  test("an old observed_at still produces the observed hint, and the new name wins over it", async () => {
+    const legacy = writeTmpMemory("---\ntags: [ops]\nobserved_at: 2026-01-15\n---\nOld stash\n");
+    const legacyEntry: IndexDocument = { name: "test-memory", type: "memory" };
+    await applyMemoryMetadata(legacyEntry, legacy.stashRoot, legacy.filePath);
+    expect(legacyEntry.searchHints).toContain("observed:2026-01-15");
+    expect((legacyEntry.searchHints ?? []).some((h) => h.startsWith("observed_at:"))).toBe(false);
 
-    const entry: IndexDocument = { name: "test-memory", type: "memory" };
-    await applyMemoryMetadata(entry, stashRoot, filePath);
+    const both = writeTmpMemory("---\ntags: [ops]\nobserved: 2026-02-01\nobserved_at: 2026-01-15\n---\nBoth\n");
+    const bothEntry: IndexDocument = { name: "test-memory", type: "memory" };
+    await applyMemoryMetadata(bothEntry, both.stashRoot, both.filePath);
+    expect(bothEntry.searchHints).toContain("observed:2026-02-01");
+    expect(bothEntry.searchHints).not.toContain("observed:2026-01-15");
+  });
 
-    // Should have an observed_at hint derived from mtime
-    const mtimeHint = (entry.searchHints ?? []).find((h) => h.startsWith("observed_at:"));
-    expect(mtimeHint).toBeDefined();
-    // The mtime-based date should be a valid ISO date
-    const dateStr = mtimeHint?.slice("observed_at:".length);
-    expect(dateStr).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  test("a memory without a date gets no observed hint from the file mtime, derived or not", async () => {
+    for (const content of [
+      "---\ntags: [ops]\n---\nPlain\n",
+      "---\ninferred: true\nsource: memories/x\n---\nDerived\n",
+    ]) {
+      const { filePath, stashRoot } = writeTmpMemory(content);
+      const entry: IndexDocument = { name: "test-memory", type: "memory" };
+      await applyMemoryMetadata(entry, stashRoot, filePath);
+      expect((entry.searchHints ?? []).some((h) => h.startsWith("observed"))).toBe(false);
+    }
   });
 
   test("works for bare memory with no frontmatter (no crash)", async () => {
@@ -433,9 +445,8 @@ describe("memory metadata fold", () => {
     // Should not throw
     await expect(applyMemoryMetadata(entry, stashRoot, filePath)).resolves.toBeUndefined();
 
-    // mtime fallback should still fire
-    const mtimeHint = (entry.searchHints ?? []).find((h) => h.startsWith("observed_at:"));
-    expect(mtimeHint).toBeDefined();
+    // No date, no hint: a file's mtime is not an observation date.
+    expect((entry.searchHints ?? []).some((h) => h.startsWith("observed"))).toBe(false);
   });
 
   test("block-sequence tags in frontmatter are parsed correctly", async () => {
@@ -457,32 +468,6 @@ describe("memory metadata fold", () => {
 // against a non-existent endpoint and verify the graceful-degradation behaviour.
 
 describe("remember --enrich graceful degradation", () => {
-  test("missing required symbolic credential exits as invalid config before writing a memory", async () => {
-    const { stashDir, env } = freshDirs();
-    const result = await withEnv({ ...env, AKM_REMEMBER_REQUIRED_KEY: undefined }, async () => {
-      saveConfig({
-        semanticSearchMode: "off",
-        bundles: { stash: { path: stashDir, writable: true } },
-        defaultBundle: "stash",
-        engines: {
-          remember: {
-            kind: "llm",
-            endpoint: "http://127.0.0.1:1/v1/chat/completions",
-            model: "never-dispatched",
-            apiKey: "$AKM_REMEMBER_REQUIRED_KEY",
-          },
-        },
-        defaults: { llmEngine: "remember" },
-      });
-      return runCliCapture(["remember", "Must not be written", "--enrich"]);
-    });
-
-    expect(result.code).toBe(78);
-    expect(JSON.parse(result.stderr)).toMatchObject({ ok: false, code: "INVALID_CONFIG_FILE" });
-    const memoryDir = path.join(stashDir, "memories");
-    expect(fs.existsSync(memoryDir) ? fs.readdirSync(memoryDir) : []).toEqual([]);
-  });
-
   test("when no LLM is configured, --enrich emits warning and still writes the memory", async () => {
     const { result } = await runCli(["remember", "Some note about ops", "--enrich"]);
     expect(result.status).toBe(0);
@@ -492,7 +477,7 @@ describe("remember --enrich graceful degradation", () => {
     // `hasStructuredArgs` omitted `args.enrich`, so this invocation silently
     // took the zero-flag raw-write hot path and never attempted enrichment
     // (§24.2 "Agent/LLM" release gate).
-    expect(result.stderr).toContain("--enrich requires an engine to be configured");
+    expect(result.stderr).toContain("--enrich requires a connection or harness to be configured");
 
     const json = JSON.parse(result.stdout) as { path: string };
     const content = fs.readFileSync(json.path, "utf8");

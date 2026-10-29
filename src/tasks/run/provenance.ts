@@ -3,21 +3,20 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * D5's ExecutionProvenanceContext factory + resolution helper (spec
- * docs/plans/specs/p1b-model-extraction.md §1.2 D5, §5.2).
+ * The ExecutionProvenanceContext factory + resolution helper.
  *
- * `createExecutionProvenanceContext` builds the SAME literal both of D5's
- * clauses build: "Construction" at the `akm task run` CLI boundary
- * (src/commands/tasks/tasks.ts's `akmTasksRun`) and "Threading" as
- * run-task.ts's own default for an absent `RunTaskOptions.provenance`.
- * `eventSource` is `"task"` UNCONDITIONALLY — spec §1.6 (D5-N1) is explicit
- * that it is NOT conditioned on `scheduled`; `scheduled` stays a separate
+ * `createExecutionProvenanceContext` builds the context at the `akm task run`
+ * CLI boundary (src/commands/tasks/tasks.ts's `akmTasksRun`) and as
+ * run-task.ts's own default for an absent `RunTaskOptions.provenance`; both
+ * build the SAME literal.
+ * `eventSource` is `"task"` UNCONDITIONALLY — it is NOT conditioned on
+ * `scheduled`; `scheduled` stays a separate
  * field carrying today's `RunTaskOptions.scheduled` meaning (activation
  * policy, scheduler env), never selecting the event source.
  *
  * Pure type module's runtime counterpart: `ExecutionProvenanceContext` itself
- * is declared in ../model/invocation.ts (Lane A, kept pure/IO-free per the
- * model purity ratchet); this file is where the runtime factory lives.
+ * is declared in ../model/invocation.ts (kept pure/IO-free); this file is where
+ * the runtime factory lives.
  */
 
 import type { ExecutionProvenanceContext } from "../model/invocation";

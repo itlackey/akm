@@ -157,7 +157,6 @@ export function buildImproveExecutionPlan(input: ImprovePlanProjectionInput): Im
       effective: { ...input.consolidation.effective },
       gates: {
         profile: { ...input.consolidation.gates.profile },
-        minimumPool: { ...input.consolidation.gates.minimumPool },
         delta: { ...input.consolidation.gates.delta },
       },
     },

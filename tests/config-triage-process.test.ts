@@ -19,7 +19,7 @@ describe("triage improve-process config schema", () => {
           enabled: true,
           applyMode: "queue",
           maxAcceptsPerRun: 25,
-          judgment: { engine: "fast", timeoutMs: 600000 },
+          judgment: { connection: "fast", timeoutMs: 600000 },
         },
       },
     });
@@ -32,7 +32,7 @@ describe("triage improve-process config schema", () => {
         enabled: false,
         applyMode: "promote",
         maxAcceptsPerRun: 10,
-        judgment: { engine: "agent" },
+        judgment: { harness: "agent" },
       }).success,
     ).toBe(true);
 
@@ -45,9 +45,9 @@ describe("triage improve-process config schema", () => {
       ImproveProcessConfigSchema.safeParse({ policy: "personal-stash", maxDiffLines: -1, rejectEmpty: true }).success,
     ).toBe(true);
     // An unknown judgment key is not fatal: the loader warns about it and it changes nothing.
-    const withUnknown = ImproveProcessConfigSchema.safeParse({ judgment: { engine: "fast", bogus: 1 } });
+    const withUnknown = ImproveProcessConfigSchema.safeParse({ judgment: { connection: "fast", bogus: 1 } });
     expect(withUnknown.success).toBe(true);
-    // judgment.mode is retired in favor of a named engine; like any unknown key it is tolerated, not fatal.
+    // judgment.mode is retired in favor of a named connection or harness; like any unknown key it is tolerated, not fatal.
     expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "llm" } }).success).toBe(true);
     // judgment.timeoutMs accepts null
     expect(ImproveProcessConfigSchema.safeParse({ judgment: { timeoutMs: null } }).success).toBe(true);
@@ -57,7 +57,7 @@ describe("triage improve-process config schema", () => {
     const enabled = ImproveProfileConfigSchema.safeParse({
       processes: {
         triage: { enabled: true },
-        reflecct: { enabled: true, engine: "missing" },
+        reflecct: { enabled: true, connection: "missing" },
       },
     });
     expect(enabled.success).toBe(false);
@@ -89,30 +89,18 @@ describe("triage improve-process config schema", () => {
     });
   });
 
-  test("triage may select an agent engine that confines the model-work tool policy; missing engines are rejected", () => {
+  test("triage may select any connection or harness by name; whether it is configured is resolved when it is used", () => {
     const base = {
       configVersion: "0.9.0",
-      engines: { reviewer: { kind: "agent", platform: "claude" } },
+      harnesses: { reviewer: { platform: "claude" } },
     } as const;
-    expect(
-      validateConfigShape({
-        ...base,
-        improve: {
-          strategies: {
-            custom: { processes: { triage: { enabled: true, engine: "reviewer", judgment: {} } } },
-          },
-        },
-      }).ok,
-    ).toBe(true);
-    expect(
-      validateConfigShape({
-        ...base,
-        improve: {
-          strategies: {
-            custom: { processes: { triage: { enabled: true, engine: "missing", judgment: {} } } },
-          },
-        },
-      }).ok,
-    ).toBe(false);
+    for (const selection of [{ harness: "reviewer" }, { connection: "missing" }, { harness: "missing" }]) {
+      expect(
+        validateConfigShape({
+          ...base,
+          improve: { strategies: { custom: { processes: { triage: { enabled: true, ...selection, judgment: {} } } } } },
+        }).ok,
+      ).toBe(true);
+    }
   });
 });

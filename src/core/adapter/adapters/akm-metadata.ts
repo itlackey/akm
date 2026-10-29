@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Index-time metadata fold for the `akm` adapter's `recognize` — akm 0.9.0
- * chunk-2, WI-C, implementing spec §2 ("the nine index-time metadata
- * contributors move into recognize") + the workflow contributor.
+ * Index-time metadata fold for the `akm` adapter's `recognize`: the nine
+ * index-time metadata contributors plus the workflow contributor.
  *
  * This leaf reproduces the 11 `registerMetadataContributor` sites keyed on the
  * winning RENDERER name (exactly how each contributor's `appliesTo({ rendererName })`
@@ -56,14 +55,13 @@
  * distinction never triggers.
  */
 
-import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../../commands/command/builtin-action";
+import type { ParsedBuiltinCommandAction } from "../../../commands/command/builtin-action";
 import { scanEnvKeyNames } from "../../../commands/env/env";
 import type { IndexDocument } from "../../../indexer/passes/metadata";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
 import { compileWorkflowSource, workflowStepInstructions } from "../../../workflows/compile";
-import type { WorkflowStepSpec } from "../../../workflows/plan";
-import { parseFrontmatter } from "../../asset/frontmatter";
+import { parseFrontmatter, readFrontmatterDate } from "../../asset/frontmatter";
 import type { TocHeading } from "../../asset/markdown";
 import { parseMarkdownToc } from "../../asset/markdown";
 import { nonEmptyString } from "./shared";
@@ -149,18 +147,6 @@ function storedCommandRef(action: ParsedBuiltinCommandAction | undefined): strin
   return action?.kind === "stored" ? action.ref : undefined;
 }
 
-/** The asset a workflow step targets: its `uses:` ref, or the ref of a stored `akm/command`. Prose and `run:` steps target none. */
-function workflowStepTarget(spec: WorkflowStepSpec | undefined): string | undefined {
-  if (!spec?.uses) return undefined;
-  if (spec.uses !== "akm/command") return spec.uses;
-  if (spec.commandMode !== "stored-ref") return undefined;
-  try {
-    return storedCommandRef(parseBuiltinCommandAction(spec.with));
-  } catch {
-    return undefined;
-  }
-}
-
 /** Collect + finalize a searchHints set the way every contributor does (`Array.from(hints).filter(Boolean)`, assigned only when non-empty). */
 function finalizeHints(out: FoldedMetadata, hints: Set<string>): void {
   if (hints.size > 0) out.searchHints = Array.from(hints).filter(Boolean);
@@ -208,17 +194,9 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
         const hints = new Set<string>();
         const source = nonEmptyString(fm.source);
         if (source) hints.add(source);
-        const fmObservedAt = nonEmptyString(fm.observed_at);
-        if (fmObservedAt) {
-          hints.add(`observed_at:${fmObservedAt}`);
-        } else {
-          try {
-            const isoDate = file.stat().mtime.toISOString().slice(0, 10);
-            hints.add(`observed_at:${isoDate}`);
-          } catch {
-            // Non-fatal: skip mtime fallback on stat error
-          }
-        }
+        // Only a stated observation date is a hint: a file's write time is not one.
+        const observed = readFrontmatterDate(fm, "observed");
+        if (observed) hints.add(`observed:${observed}`);
         const expires = nonEmptyString(fm.expires);
         if (expires) hints.add(`expires:${expires}`);
         if (fm.subjective === true) hints.add("subjective");
@@ -259,7 +237,7 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
     case "task-yaml": {
       out.tags = Array.from(new Set([...(out.tags ?? []), "task", "scheduled"]));
       try {
-        const parsed = parseTaskSource({ yaml: file.content(), filePath: file.absPath, workspaceRoot: file.stashRoot });
+        const parsed = parseTaskSource({ yaml: file.content(), filePath: file.absPath });
         const v4 = parsed.v4;
         const target = v4.target;
         const hints = new Set<string>();
@@ -338,7 +316,7 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
     // ── workflow-document-metadata (historical renderer id `workflow-md`, peer sources) ──
     case "workflow-md": {
       try {
-        const result = compileWorkflowSource(file.content(), { path: file.relPath, workspaceRoot: file.stashRoot });
+        const result = compileWorkflowSource(file.content(), { path: file.relPath });
         if (!result.ok) return out;
         const plan = result.plan;
         const hints = new Set<string>();
@@ -348,8 +326,7 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
           hints.add(step.stepId);
           hints.add(workflowStepInstructions(step));
           if (step.gate.criteria[0]) hints.add(step.gate.criteria[0]);
-          const used = workflowStepTarget(step.spec);
-          if (used) uses.add(used);
+          if (step.spec?.workflow) uses.add(step.spec.workflow);
         }
         out.searchHints = Array.from(hints).filter(Boolean);
         if (uses.size > 0) out.uses = [...uses];

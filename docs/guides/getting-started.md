@@ -34,6 +34,47 @@ Or download a standalone binary directly from the
 Hitting a PowerShell execution-policy error on Windows? See
 [Troubleshooting](#troubleshooting) at the end of this guide.
 
+### Local semantic search
+
+Local semantic search runs its embedding model on ONNX Runtime, and akm offers
+it on Linux x64 (glibc) and Apple-silicon macOS; on every other
+platform search is keyword-only or uses an embedding endpoint you configure. Choosing the built-in embedder in
+`akm setup` (or `akm setup --yes --embedding local`) downloads what it needs once
+into akm's cache directory (`akm info` prints it): ONNX Runtime for your platform,
+under `onnxruntime/<version>-<platform>-<arch>/` (about 86 MB downloaded,
+about 36 MB kept), and the model (about 127 MB). Nothing is installed with the npm
+package or carried in a standalone binary, and the first `akm index` downloads
+what setup did not. Two notes:
+
+- The cache directory must be on a mount that allows executing files: the
+  runtime is loaded from there, and on a `noexec` mount `akm index` reports
+  semantic search `blocked` (keyword search works).
+- On a platform without local embeddings, `akm setup` offers an embedding
+  endpoint or keyword search only, and `akm setup --embedding local` warns and
+  keeps keyword search.
+
+### akm's own agent runtime
+
+With a connection and no harness, `akm agent` and the other agent work run on
+akm's own runtime, a pinned OpenCode 2 binary that akm runs as a process. This
+is the same for the npm package and the standalone binary: nothing of OpenCode
+is installed with akm, and the first time the runtime runs, akm downloads the
+OpenCode binary for your platform from the npm registry (one package, about
+114 MB, 240 MB on disk), checks it against the registry's integrity hash and
+keeps it in the cache directory under `opencode/<version>/`. It is fetched once;
+the `akm setup` wizard offers to fetch it then, when agent work runs there.
+Three limits follow:
+
+- That step needs the npm registry. Without network access for it, enable the
+  `opencode` harness with an OpenCode 2 you have installed instead; no setting
+  points akm's runtime at a binary of your own.
+- Alpine/musl runs the musl build of that binary, which needs `libstdc++` and
+  `libgcc`. The Alpine Node image already has them; on a bare Alpine install them
+  with `apk add libstdc++ libgcc`.
+- The binary runs from the cache directory and unpacks its own native pieces
+  into `opencode-runtime/tmp/` in the data directory, so neither may be mounted
+  `noexec`.
+
 **Success check:**
 
 ```sh
@@ -48,17 +89,24 @@ Guided, interactive setup is the default:
 akm setup
 ```
 
-`akm setup` walks through bundle location, model connections, semantic
-search, registries, sources, and agent detection. It then reviews your
-scheduled task definitions and asks whether to activate them in the OS
-scheduler; that part of the flow, plus how to migrate or repair scheduler
-bindings later, is covered in [Scheduling](scheduling.md).
+`akm setup` walks through the bundle location, the agent programs akm may use
+(Claude Code, Codex, OpenCode, ...), a model connection (an OpenAI-compatible
+endpoint, and which of its models answers each of `fast`, `balanced` and
+`reasoning`), embeddings, semantic search asset preparation, registries,
+sources, and task definitions. The model steps are optional: with no connection
+and no agent program, everything that needs no model still works. Setup also
+reviews your scheduled task definitions and asks whether to activate them in
+the OS scheduler — that part of the flow, plus how to migrate or repair
+scheduler bindings later, is covered in [Scheduling](scheduling.md).
 
 For non-interactive use — scripting, CI, or when you just want a working
-bundle fast — use `--yes`:
+bundle fast — use `--yes`. A flag answers one question, so
+`--endpoint` adds a model connection without prompting (see the
+[CLI reference](../reference/cli.md#setup) for the rest):
 
 ```sh
 akm setup --yes
+akm setup --endpoint http://localhost:11434/v1 --yes   # also add a model endpoint
 akm setup --dir ~/custom-bundle   # optional: a non-default bundle location
 ```
 
@@ -140,7 +188,8 @@ usual starting point for an agent.
 
 **Success check:** the response includes a small shortlist; each entry
 carries a `ref` and a `followUp` command such as `akm show <ref>` (registry
-hits, with `--from registry`, carry `akm bundle add <id>` instead).
+entries, with `--from registry`, carry an `id` and a `followUp` that starts
+`akm bundle add <installRef>` instead).
 
 ## 6. Show one of the results
 
@@ -152,8 +201,9 @@ akm show <ref>            # e.g. akm show akm-stash//skills/install-akm-stash
 
 **Success check:** structured JSON with everything an agent needs to use the
 asset — a `run` command plus optional `cwd` and `setup` for scripts, a
-`prompt` payload for agents, or the document `content` for knowledge (append
-`#<heading-slug>` to a ref for one section).
+`prompt` payload for agents, or the document `content` for knowledge (with
+`--detail brief`, just its outline `toc`; append `#<slug>` to a ref for one
+section).
 
 `show` hands your agent the payload; running it is a separate step. See
 the invariants in [Architecture](../architecture/architecture.md#invariants).
@@ -161,7 +211,7 @@ the invariants in [Architecture](../architecture/architecture.md#invariants).
 ## 7. Tell your agent about akm
 
 ```sh
-akm help agents >> AGENTS.md
+akm hints --detail brief >> AGENTS.md
 ```
 
 **Success check:** `AGENTS.md` now has a block of agent-facing usage

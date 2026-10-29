@@ -6,8 +6,7 @@
  * `akm secret` command family. Extracted verbatim from src/cli.ts (WS6) so the
  * God Module shrinks; the `main.subCommands.secret` key and every subcommand's
  * args/output shape are byte-identical. The ref-resolution helpers
- * (parseSecretRef / makeSecretRef / resolveSecretPath, plus the shared
- * findEnvSource) live in src/core/env-secret-ref.ts so env + secret share one
+ * (parseSecretRef / makeSecretRef / resolveSecretPath) live in src/core/env-secret-ref.ts so env + secret share one
  * copy.
  *
  * `akm secret` manages whole-file secrets under each stash's secrets/ directory.
@@ -34,7 +33,6 @@ import path from "node:path";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
-import { decideDangerousEnvInjection } from "../../core/activation-policy";
 import { deriveCanonicalAssetName } from "../../core/asset/asset-placement";
 import { loadConfig } from "../../core/config/config";
 import {
@@ -46,8 +44,8 @@ import {
 } from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { warn } from "../../core/warn";
-import { isThirdPartySource, resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { isFileOrFileSymlink } from "../../indexer/walk/walker";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
 
@@ -73,7 +71,7 @@ function listSecretsRecursive(): Array<{ ref: string; path: string }> {
           walk(full);
           continue;
         }
-        if (!entry.isFile()) continue;
+        if (!entry.isFile() && !(entry.isSymbolicLink() && isFileOrFileSymlink(full))) continue;
         if (entry.name.endsWith(".lock") || entry.name.endsWith(".sensitive")) continue;
         // A sibling `<name>.sensitive` marker suppresses listing.
         if (fs.existsSync(sensitiveMarkerPath(full, "secret"))) continue;
@@ -106,7 +104,7 @@ const secretSetCommand = defineJsonCommand({
   args: {
     ref: {
       type: "positional",
-      description: "Secret ref (flat name, e.g. secrets/deploy-key or just deploy-key; use --path for a subdirectory)",
+      description: "Secret ref (flat name, e.g. secrets/deploy-key; use --path for a subdirectory)",
       required: true,
     },
     path: {
@@ -116,7 +114,7 @@ const secretSetCommand = defineJsonCommand({
     },
     "from-file": { type: "string", description: "Read the value from this file (stored byte-exact)" },
     "from-env": { type: "string", description: "Read the value from the named environment variable" },
-    target: {
+    bundle: {
       type: "string",
       description:
         "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working bundle.",
@@ -124,7 +122,7 @@ const secretSetCommand = defineJsonCommand({
   },
   async run({ args }) {
     const { setSecret } = await import("./secret.js");
-    const { name, absPath, target, ref } = resolveSecretWriteTarget(args.ref, args.target, {
+    const { name, absPath, target, ref } = resolveSecretWriteTarget(args.ref, args.bundle, {
       subPath: getStringArg(args, "path"),
     });
 
@@ -182,17 +180,11 @@ const secretRunCommand = defineJsonCommand({
       description:
         "When used with --clean, also inherit these parent env vars (comma-separated). Ignored without --clean.",
     },
-    "allow-dangerous-env-keys": {
-      type: "boolean",
-      description:
-        "Allow injecting a secret into a process-hijacking variable (e.g. LD_PRELOAD, PATH) from a third-party stash, which otherwise blocks. Use only after explicitly reviewing the secret.",
-      default: false,
-    },
   },
   async run({ args }) {
-    // Validate the target env var name FIRST (before the command split) so a
-    // dangerous/invalid name is rejected regardless of how the command is
-    // supplied — and so the failure does not depend on argv parsing.
+    // Validate the target env var name FIRST (before the command split) so an
+    // invalid name is rejected regardless of how the command is supplied — and
+    // so the failure does not depend on argv parsing.
     const varName = args.var;
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(varName)) {
       throw new UsageError(`"${varName}" is not a valid environment variable name.`, "INVALID_FLAG_VALUE");
@@ -204,43 +196,14 @@ const secretRunCommand = defineJsonCommand({
     }
 
     const { name, absPath, source } = resolveSecretPath(args.ref);
-    if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Secret not found: ${makeSecretRef(name, source)}`);
-    }
 
-    const { isDangerousEnvKey } = await import("../lint/env-key-rules.js");
-    if (isDangerousEnvKey(varName)) {
-      const detail = `"${varName}" is a known process-hijacking variable (e.g. LD_PRELOAD, PATH).`;
-      const allowDangerousEnvKeys = args["allow-dangerous-env-keys"] === true;
-      const thirdParty = isThirdPartySource(source);
-      const decision = decideDangerousEnvInjection({
-        dangerousKeys: [varName],
-        thirdParty,
-        allowDangerousEnvKeys,
-      });
-      if (decision === "block") {
-        throw new UsageError(
-          `Refusing to inject a secret from a third-party stash into ${detail}\n` +
-            "       Review the secret, then copy it into a first-party secret if you trust it, " +
-            "or pass --allow-dangerous-env-keys once you have.",
-          "INVALID_FLAG_VALUE",
-        );
-      }
-      warn(
-        `Injecting a secret into ${detail} ` +
-          (allowDangerousEnvKeys && thirdParty
-            ? "Injecting anyway (--allow-dangerous-env-keys)."
-            : "Injecting anyway (first-party stash)."),
-      );
-    }
-
-    const { readValue } = await import("./secret.js");
+    const { readValue } = await import("../../core/secret-value.js");
 
     const mergedEnv = buildChildEnv(process.env, {
       clean: args.clean === true,
       inherit: parseKeyListFlag(args.inherit) ?? [],
     });
-    mergedEnv[varName] = readValue(absPath).toString("utf8");
+    mergedEnv[varName] = readValue(absPath);
 
     // Audit trail: record access by ref + var name only — never the value.
     appendEvent({
@@ -272,8 +235,8 @@ const secretRunCommand = defineJsonCommand({
       throw err;
     }
     // R-067: was `process.exit(result.status ?? 0)`, unconditional even on
-    // the success path — it skipped the `finally { await
-    // disposeDispatchResources(); }` cleanup in src/cli.ts's `runCommand`.
+    // the success path — it skipped the `finally { disposeLlmUsageSink(); }`
+    // cleanup in src/cli.ts's `runCommand`.
     // Setting `process.exitCode` and returning still exits with the child's
     // exact status once the event loop drains, but lets cleanup run first —
     // same pattern `emitJsonError` (src/cli/shared.ts) already established.

@@ -31,10 +31,9 @@ import { directoryMatcher, extensionMatcher, parentDirHintMatcher, smartMdMatche
  * registration index `runMatchers` uses for tie-breaking. (The `wiki` matcher
  * was removed in chunk 4 — the wiki asset-type is retired; LLM Wiki content is
  * served by the first-class `llm-wiki` adapter, not the akm adapter. The old
- * YAML workflow-program matcher is also gone: peer Markdown and GitHub-shaped
- * `.yml` workflow sources are both path-owned by residence under `workflows/`
- * (with Markdown frontmatter as an additional signal), while source IR owns
- * their distinct parse/compile semantics.)
+ * YAML workflow-program matcher is also gone: Markdown workflow sources are
+ * path-owned by residence under `workflows/`, with Markdown frontmatter as an
+ * additional signal.)
  */
 const AKM_MATCHERS: readonly AssetMatcher[] = [
   extensionMatcher,

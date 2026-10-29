@@ -56,7 +56,8 @@ describe("buildMemoryFrontmatter — YAML injection guard", () => {
     expect(parsed.description).toBe("VPN required for staging deploys");
     expect(parsed.tags).toEqual(["ops", "networking"]);
     expect(parsed.source).toBe("skills/deploy");
-    expect(parsed.observed_at).toBe("2026-04-24");
+    expect(parsed.observed).toBe("2026-04-24");
+    expect(parsed.observed_at).toBeUndefined();
     expect(parsed.expires).toBe("2026-07-23");
     expect(parsed.subjective).toBeUndefined();
   });

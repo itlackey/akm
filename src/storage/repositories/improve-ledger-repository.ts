@@ -373,7 +373,7 @@ export function forgetImproveLedgerDecision(db: Database, stashDir: string, prop
 }
 
 /**
- * Should-fix 6 (second review round): a read-only or dry-run open never
+ * A read-only or dry-run open never
  * migrates, so it can land on a state.db from before migration 029 added
  * `content_hash` — reading it there threw "no such column", which
  * `loadRetrievalScope`'s own catch then reported as "usage history
@@ -420,4 +420,22 @@ export function listImproveLedgerRows(db: Database, stashDir: string, sources?: 
     )
     .all(stashDir, ...(sources && sources.length > 0 ? sources : [])) as LedgerSqlRow[];
   return rows.map((row) => toRow(withHash ? row : { ...row, content_hash: null }));
+}
+
+/**
+ * Rewrite every `improve_ledger.ref` naming `oldBundleId` to `newBundleId`
+ * (`akm bundle rename`), so improve keeps the renamed bundle's attempts and
+ * back-off windows next to its feedback events. A row already at the new key
+ * can only be an orphan of a removed bundle by that name; the renamed bundle's
+ * row replaces it. Returns the number of rows rewritten.
+ */
+export function renameImproveLedgerRefs(db: Database, oldBundleId: string, newBundleId: string): number {
+  const prefix = `${oldBundleId}//`;
+  return Number(
+    db
+      .prepare(
+        `UPDATE OR REPLACE improve_ledger SET ref = ? || substr(ref, length(?) + 1) WHERE substr(ref, 1, length(?)) = ?`,
+      )
+      .run(newBundleId, oldBundleId, prefix, prefix).changes,
+  );
 }

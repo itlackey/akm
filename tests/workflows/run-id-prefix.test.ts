@@ -55,8 +55,6 @@ function insertRunWithId(id: string): void {
     repo.insertRun({
       id,
       workflowRef: "workflows/fixture",
-      scopeKey: null,
-      workflowEntryId: null,
       workflowTitle: "fixture",
       paramsJson: "{}",
       currentStepId: null,

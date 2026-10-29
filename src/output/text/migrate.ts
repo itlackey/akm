@@ -3,8 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Plain-text rendering of the combined migration plan's task-file section
- * (spec docs/plans/specs/p4-deletions-closeout.md §3.2.5, rows B-31/B-32).
+ * Plain-text rendering of the combined migration plan: the config file's moved
+ * keys and notes, the task-file section and the
+ * assets' `engine:` keys.
  */
 
 import type { TextFormatterEntry } from "./registry";
@@ -12,7 +13,9 @@ import type { TextFormatterEntry } from "./registry";
 interface MigrationPlanResult {
   status: string;
   blockers?: string[];
+  configFile?: { credentials?: string[]; notes?: string[] };
   taskFiles?: { changed: number; skipped: number; blocked: number };
+  assetEngineKeys?: { changed: number; skipped: number; notes?: string[] };
   backupPath?: string;
   applied?: number;
 }
@@ -34,13 +37,30 @@ export function formatMigratePlain(result: unknown): string | null {
   if (typeof plan.status !== "string") return null;
 
   const lines: string[] = [`${planGlyph(plan.status)} ${plan.status}`];
+  if (plan.configFile?.credentials?.length) {
+    lines.push(
+      `    credentials.json: ${plan.configFile.credentials.length} key(s) (${plan.configFile.credentials.join(", ")})`,
+    );
+  }
   if (plan.taskFiles) {
     const tasks = plan.taskFiles;
     lines.push(`    task files: ${tasks.changed} change, ${tasks.skipped} current, ${tasks.blocked} blocked`);
   }
+  if (plan.assetEngineKeys) {
+    lines.push(
+      `    asset engine keys: ${plan.assetEngineKeys.changed} change, ${plan.assetEngineKeys.skipped} skipped`,
+    );
+  }
 
   if (plan.blockers?.length) {
     lines.push("", "blockers:", ...plan.blockers.map((blocker) => `  - ${blocker}`));
+  }
+  if (plan.configFile?.notes?.length) {
+    lines.push("", "config notes:", ...plan.configFile.notes.map((note) => `  - ${note}`));
+  }
+
+  if (plan.assetEngineKeys?.notes?.length) {
+    lines.push("", "engine name notes:", ...plan.assetEngineKeys.notes.map((note) => `  - ${note}`));
   }
 
   if (plan.backupPath) {

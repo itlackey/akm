@@ -55,8 +55,7 @@ beforeEach(() => {
     bundles: { fixture: { path: storage.stashDir, writable: true } },
     defaultBundle: "fixture",
     semanticSearchMode: "off",
-    engines: { opencode: { kind: "agent", platform: "opencode" } },
-    defaults: { engine: "opencode" },
+    harnesses: { opencode: { platform: "opencode" } },
   });
 });
 
@@ -207,7 +206,7 @@ describe("command/prompt arm threads an explicit provenance.eventSource end to e
 
     let observedChildEnv: Record<string, string> | undefined;
     const fakeRunAgent: FakeRunAgent = async (...args) => {
-      const options = args[2] as { env?: Record<string, string> } | undefined;
+      const options = args[1] as { env?: Record<string, string> } | undefined;
       observedChildEnv = options?.env;
       return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
     };
@@ -243,7 +242,7 @@ describe("command/prompt arm threads an explicit provenance.eventSource end to e
 
     let observedChildEnv: Record<string, string> | undefined;
     const fakeRunAgent: FakeRunAgent = async (...args) => {
-      const options = args[2] as { env?: Record<string, string> } | undefined;
+      const options = args[1] as { env?: Record<string, string> } | undefined;
       observedChildEnv = options?.env;
       return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
     };
@@ -283,7 +282,7 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
   // eventSource is "task" in BOTH cases — the R-07 fix is not conditioned on
   // the flag. A fake no-op agent binary (mirroring
   // tests/integration/usage-provenance-cli.test.ts) makes dispatch succeed
-  // without a real engine.
+  // without a real agent.
   test.each([
     [],
     ["--scheduled"],
@@ -299,8 +298,7 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
     } as AkmConfig;
     writeSandboxConfig({
       ...base,
-      engines: { "cli-audit": { kind: "agent", platform: "aider", bin: "/bin/true" } },
-      defaults: { engine: "cli-audit" },
+      harnesses: { "cli-audit": { platform: "aider", bin: "/bin/true" } },
       scheduler: {
         enabled: [{ kind: "task", ref: `fixture//tasks/${id}`, sourceId: bundleSourceId(base, "fixture") }],
       },

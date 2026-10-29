@@ -5,6 +5,11 @@ Metadata is derived from the files themselves (`src/indexer/passes/metadata.ts`)
 no LLM runs during indexing. The entry point is `akmIndex` in
 `src/indexer/indexer.ts`.
 
+There is no top-level `llm` config key: it is an unknown key, named once and
+ignored. Per-call tuning lives on a named connection under
+`connections.<name>.*` (see
+[Configuration](../../reference/configuration.md#connections)).
+
 ## Pipeline
 
 1. **Preflight.** Open `state.db` (this applies pending migrations), materialize sources not yet on this host (`ensureSourceCaches`: a `git` or `website` source is fetched into `$CACHE` only if it has never been materialized here; an `npm` bundle with no lock entry is skipped with a warning naming `akm bundle update`; nothing refreshes on a timer), resolve the source list, and detect each bundle's adapter. Detected adapter ids are persisted to the config (reported as `configUpdated.detectedAdapters`).
@@ -12,9 +17,9 @@ no LLM runs during indexing. The entry point is `akmIndex` in
 3. **Persist.** `persistDirRecords` writes every drained directory in one transaction: the `entries` row, its `entries_fts` row, its `entry_fragments` row, and its `asset_links` rows. A changed embedding input deletes the entry's vector. Rows for files that left a directory are deleted in the same transaction.
 4. **Reconcile.** When every source was scanned completely, rows belonging to removed sources are dropped. With `--clean`, rows whose file is gone are deleted (`--dry-run` previews them; unreadable files keep their rows).
 5. **Embed.** `runEmbeddingPass` generates vectors for entries without one under the configured model, then verifies semantic search state.
-6. **Finalize.** Rebuild `entries_fts` if its totals are stale, re-link `state.db` usage events to the new entry ids, recompute `utility_scores`, clear orphaned `llm_enrichment_cache` rows, and (after a complete scan) record `builtAt`, `stashDir`, `stashDirs`, and `sourceOwners` in `index_meta`. Then `VACUUM` if due, and append an `index_completed` event with the phase timings.
+6. **Finalize.** Rebuild `entries_fts` if its totals are stale, re-link `state.db` usage events to the new entry ids, recompute `utility_scores` (improve and `akm metrics` read utility; search ranking does not), clear orphaned `llm_enrichment_cache` rows, and (after a complete scan) record `builtAt`, `stashDir`, `stashDirs`, and `sourceOwners` in `index_meta`. Then `VACUUM` if due, and append an `index_completed` event with the phase timings.
 
-The command returns the entry count, per-phase timings, warnings, the `--clean` result, and a `verification` block with `semanticStatus` (`disabled`, `pending`, `ready-js`, or `blocked`). Semantic status is computed during the run (`verifyIndexState`); it is not stored in a file.
+The command returns the entry count, per-phase timings, warnings, the `--clean` result, and a `verification` block with `semanticStatus` (`disabled`, `pending`, `ready-js`, or `blocked`). The run computes it (`verifyIndexState`) and records it in `index_meta` under `semanticSearch` (`unavailable` when the local runtime could not be downloaded or loaded), which `akm health`'s `semantic-search` check reads.
 
 ## Modes
 
@@ -25,7 +30,7 @@ The command returns the entry count, per-phase timings, warnings, the `--clean` 
 
 ## Walking
 
-`walkStashFlat` lists files with `git ls-files --cached --others --exclude-standard` when the source sits inside a git repository (so `.gitignore` applies), plus a second `git ls-files --others --ignored` listing for `env/` and `secrets/` so git-ignored env and secret assets are still indexed, and with a directory walk otherwise. Both skip `.git`, `node_modules`, `bin`, `.cache`, and dot-directories, unless the adapter asks to see every directory (OKF does). Symlinks are not followed; the one exception is a file symlink under a workflow directory.
+`walkStashFlat` lists files with `git ls-files --cached --others --exclude-standard` when the source sits inside a git repository (so `.gitignore` applies), plus a second `git ls-files --others --ignored` listing for `env/` and `secrets/` so git-ignored env and secret assets are still indexed, and with a directory walk otherwise. Both skip `.git`, `node_modules`, `bin`, `.cache`, and dot-directories, unless the adapter asks to see every directory (OKF does). A symlink to a file is indexed like any other file; a symlinked directory is never descended.
 
 ## Search fields
 
@@ -39,7 +44,7 @@ The command returns the entry count, per-phase timings, warnings, the `--clean` 
 | `hints` | hints, `searchHints`, `examples`, `usage`, intent text, `xrefs`, `pageKind`, `whenToUse` |
 | `content` | table-of-contents headings, parameter names and descriptions, and the body projection |
 
-The body projection is the body text the adapter provides; for native Markdown it is bounded by `MARKDOWN_CONTENT_MAX_CHARS` (1,000,000 characters) and truncation is reported as a warning. `env`, `session`, and `secret` entries get no native body projection. `buildSearchText` joins the same fields into the text each entry's vector is made from.
+The body projection is the body text the adapter provides; for native Markdown it is bounded by `MARKDOWN_CONTENT_MAX_CHARS` (1,000,000 characters) and truncation is reported as a warning. Fenced code contributes only its identifiers, never its literal values (`fencedCodeIdentifiers`, akm#1260). The projection's version, `CONTENT_PROJECTION_VERSION`, is part of every directory's index fingerprint, so changing what the projection returns re-projects every directory once on the next `akm index`. `env`, `session`, and `secret` entries get no native body projection. `buildSearchText` joins the same fields into the text each entry's vector is made from.
 
 Lexical retrieval is one `OR` query over the query's tokens (Unicode letters and numbers, NFKC-normalized, lowercased, English stopwords removed; a query of only stopwords keeps them), ranked by BM25 with equal column weights. A query that is a ref prefix (`skills/`, `bundle//`) enumerates a subtree and skips FTS. Ranking fuses the lexical and vector lists with reciprocal rank fusion; see the Search Pipeline in [Architecture](../architecture.md).
 
@@ -47,7 +52,7 @@ Lexical retrieval is one `OR` query over the query's tokens (Unicode letters and
 
 Per file, in priority order: `package.json` description and keywords from the file's directory; Markdown frontmatter (including `params`, and `$ARGUMENTS`, `$1`-`$9`, `{{named}}` placeholders in commands); script `@param` and header-comment metadata; renderer-specific metadata (workflow parameters, table of contents, wiki fields); then filename-derived description, tags, and aliases as fallbacks. `.stash.json` files are skipped.
 
-Workflow `.md` and `.yml` sources compile to source IR version 1. The index stores the ordinary `entries` row and metadata derived from that IR, not a workflow AST or a plan; starting a run recompiles the source and freezes the plan in `state.db`.
+Workflow `.md` sources compile to source IR version 1. The index stores the ordinary `entries` row and metadata derived from that IR, not a workflow AST or a plan; starting a run recompiles the source and freezes the plan in `state.db`.
 
 ## Two files, one ref
 
@@ -69,7 +74,7 @@ search returns the indexed file.
 `generateEmbeddingsForDb` (`src/indexer/materialize-embeddings.ts`) embeds each entry's own search text. Fragments are not embedded. Knobs are under `embedding.*` in [Configuration](../../reference/configuration.md).
 
 - **Model per row.** Each `embeddings` row records the fingerprint it was made under (`remote:<model>|<dimension>` for an endpoint, `local:<localModel>` otherwise; the endpoint URL is not part of it). `index_meta.embeddingFingerprint` holds the configured one. An entry is embedded when it has no row for that fingerprint, so a model change re-embeds entry by entry and an interrupted run resumes. Readers serve only the configured model's rows.
-- **Per-document cap.** Text is cut to `embedding.maxInputTokens` (default 512, estimated at 4 characters per token) before batching; the run reports how many entries were cut.
+- **Per-document cap.** Text is cut to `embedding.maxInputTokens` (default 512, estimated at 4 characters per token) before batching; the run reports how many entries were cut. Text past the cut never reaches the embedder, so a change there rewrites the entry's keyword rows and keeps its vector. The run opens with `Embedding N changed entries (M unchanged)`.
 - **Batching** (`RemoteEmbedder.embedBatch`, `src/llm/embedders/remote.ts`). Requests are bounded by `embedding.maxTokens` (default 6000 estimated tokens) and `embedding.batchSize` (default 100 documents).
 - **Concurrency.** `embedding.concurrency` (1 to 16); unset, it is 1 for a loopback endpoint and 2 for a remote one.
 - **Timeout.** `embedding.timeoutMs` (default 120000) is the budget for a full-size request; smaller requests get a proportionally smaller timeout, never below 30 seconds.

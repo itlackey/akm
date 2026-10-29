@@ -141,8 +141,7 @@ for (const apply of [false, true]) {
 
   test(`${apply ? "apply" : "status"}: a config loadConfig() rejects blocks the plan instead of throwing out of runMigration`, async () => {
     // bundles.primary.path is a number, not a string — schema-invalid, so the
-    // task-file step's own `loadConfig()` throws; the stash-dir step tolerates
-    // it (a non-string path reads as no configured stash).
+    // task-file step's own `loadConfig()` throws, as the stash-dir step's does.
     writeSandboxConfig({
       defaultBundle: "primary",
       bundles: { primary: { path: 42, writable: true } },

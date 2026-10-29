@@ -17,7 +17,7 @@
  * longer take any lease.
  *
  * What remains here guards actual data loss (a lost or conflicting git
- * commit), so per AGENTS.md `## Defensive Code` it stays — but with the same
+ * commit), so core principle 1's data-loss exemption keeps it — but with the same
  * fix applied: no age-based stale-reclaim. A holder is only ever reclaimed
  * once its PID is verifiably dead; a live-but-wedged holder makes an
  * acquisition attempt wait (bounded by `maxWaitMs`) or fail, never silently
@@ -177,7 +177,12 @@ export async function withAssetMutationLease<T>(purpose: string, run: () => Prom
 
   const context = inherited ?? new Set<string>();
   const execute = async (): Promise<T> => {
-    const lease = await acquireAssetMutationLease({ purpose });
+    const lease = await acquireAssetMutationLease({
+      purpose,
+      // #956: say who is in the way instead of waiting silently, as the sync path does.
+      onWait: ({ waitedMs }) =>
+        warn(`waiting for ${describeAssetMutationHolder(lockPath)} — ${Math.round(waitedMs / 1000)}s`),
+    });
     if (!lease) throw new Error(`asset mutation lease unavailable for ${purpose}`);
     context.add(lockPath);
     try {

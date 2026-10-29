@@ -4,12 +4,11 @@
 
 /**
  * #952 — `renderReflectPromptPreview` (reflect.ts) renders the composed
- * reflect prompt for exactly one asset with no engine dispatch. `akm improve
+ * reflect prompt for exactly one asset with no model call. `akm improve
  * <ref> --show-prompt` (improve-cli.ts) is its CLI surface.
  *
  * Under tests/integration (not tests/) because the read-only helpers reused
- * here (readRecentFeedback -> readEvents) open the real state.db, per the
- * ORG-03..06 classification rule in AGENTS.md.
+ * here (readRecentFeedback -> readEvents) open the real state.db.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -61,7 +60,7 @@ describe("renderReflectPromptPreview (#952)", () => {
     );
 
     expect(preview.ref).toBe("lessons/test-lesson");
-    expect(preview.engine).toBe("test-improve-llm");
+    expect(preview.engine).toBe("default");
 
     // #952 — feedback is framed as a signal, not a fact, and the actual
     // feedback signal is present so the field can see it echoed in.

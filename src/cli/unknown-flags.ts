@@ -27,6 +27,7 @@
  * validation) — conservative by design.
  */
 
+import { closestMatch } from "../core/closest-match";
 import { UsageError } from "../core/errors";
 import { warn } from "../core/warn";
 import {
@@ -35,7 +36,6 @@ import {
   findCittyTopLevelCommandIndex,
   toAliasArray,
 } from "./invocation";
-import { retiredFlagHint } from "./retired-commands";
 
 /**
  * Commands that must never refuse on an unrecognized flag — `akm info` warns
@@ -48,45 +48,15 @@ const UNKNOWN_FLAG_TOLERANT_COMMANDS: ReadonlySet<string> = new Set(["info"]);
 
 /** The structural subset of a citty command this module reads. */
 export interface FlagScanCommand {
-  readonly args?: Record<string, { readonly type?: string; readonly alias?: string | readonly string[] }>;
+  readonly args?: Record<
+    string,
+    { readonly type?: string; readonly alias?: string | readonly string[]; readonly hidden?: boolean }
+  >;
   readonly subCommands?: Record<string, FlagScanCommand> | undefined;
 }
 
 /** Flags citty implements itself, which no command declares. */
 const IMPLICIT_FLAGS = ["help", "h", "version", "v"];
-
-/**
- * Retired flags whose commands still diagnose them THEMSELVES, with a message
- * that names the replacement ("`--scope` was removed, use `--filter`",
- * "`--source` was renamed to `--generator`"). A generic "unknown flag" would
- * preempt the better diagnosis, so these are passed through — but ONLY on the
- * command path that owns the diagnostic, keyed by the resolved path. On every
- * other command the same spelling is a genuine typo and still fails fast
- * A retired flag is rejected everywhere else, where silently dropping it could
- * run a real mutation.
- *
- * Shrink-only: when a command drops its bespoke diagnostic, drop the entry and
- * the generic error takes over.
- */
-const SELF_DIAGNOSED_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
-  Object.entries({
-    show: ["akmView", "scope"], // removed view grammar; --scope points at --filter
-    index: ["enrich", "re-enrich"], // removed index-time enrichment flags
-    "proposal accept": ["source"], // renamed to --generator
-    "proposal reject": ["source"], // renamed to --generator
-    "proposal drain": ["profile"], // retired, points at --strategy
-    search: ["source"], // renamed to --from
-    curate: ["source"], // renamed to --from
-    "task list": ["source"], // renamed to --from (alias of `search --type task`, #951)
-    remember: ["target"], // renamed to --bundle
-    clone: ["target"], // renamed to --bundle
-    improve: ["auto-accept", "target"], // retired in 0.9.0 / renamed to --bundle
-    "task add": ["target"], // renamed to --bundle
-    "task run": ["target"], // renamed to --bundle
-    "task history": ["target"], // renamed to --bundle
-    "task sync": ["target"], // renamed to --bundle
-  }).map(([path, flags]) => [path, new Set(flags.map(cittyComparableName))]),
-);
 
 interface KnownArgs {
   /** Every accepted flag spelling, in comparable form. */
@@ -95,7 +65,7 @@ interface KnownArgs {
   readonly valueFlags: ReadonlySet<string>;
   /** Comparable names of boolean flags — the only ones `--no-` may negate. */
   readonly booleanFlags: ReadonlySet<string>;
-  /** Human-readable spellings, for the did-you-mean suggestion. */
+  /** Human-readable spellings, for the did-you-mean suggestion. Hidden flags are accepted but never suggested. */
   readonly displayNames: readonly string[];
   /** Resolved command path tokens (e.g. ["proposal", "accept"]). */
   readonly path: readonly string[];
@@ -132,7 +102,7 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
       // Shared args (GLOBAL_OUTPUT_ARGS) recur at every level; suggest each once.
       if (!names.has(comparable)) {
         names.add(comparable);
-        displayNames.push(`--${key}`);
+        if (def.hidden !== true) displayNames.push(`--${key}`);
       }
       if (def.type === "string" || def.type === "enum") valueFlags.add(comparable);
       if (def.type === "boolean") booleanFlags.add(comparable);
@@ -147,6 +117,11 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
     if (!subCommands || Object.keys(subCommands).length === 0) break;
     const idx = findCittyTopLevelCommandIndex(args, (cmd.args ?? {}) as CittyArgsDefinitionForScan);
     const token = idx >= 0 ? args[idx] : undefined;
+    // A command that takes a positional AND has subcommands (`improve [scope]`
+    // beside `improve report`) is itself the target when the token is absent
+    // or names none of them.
+    const takesPositional = Object.values(cmd.args ?? {}).some((def) => def.type === "positional");
+    if (takesPositional && (token === undefined || !subCommands[token])) break;
     // A group with no subcommand token: citty reports "no command specified".
     if (token === undefined) return { names, valueFlags, booleanFlags, displayNames, path, resolved: false };
     const sub = subCommands[token];
@@ -161,39 +136,6 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
   return { names, valueFlags, booleanFlags, displayNames, path, resolved: true };
 }
 
-/** Single-row-at-a-time edit-distance DP (inputs are short flag/command names). */
-function editDistance(a: string, b: string): number {
-  let previous: number[] = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i += 1) {
-    const current: number[] = [i];
-    for (let j = 1; j <= b.length; j += 1) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      current.push(Math.min((previous[j] ?? 0) + 1, (current[j - 1] ?? 0) + 1, (previous[j - 1] ?? 0) + cost));
-    }
-    previous = current;
-  }
-  return previous[b.length] ?? 0;
-}
-
-/**
- * Closest candidate within `threshold` edit distance, or undefined when
- * nothing is close enough to be worth suggesting. Shared by the unknown-flag
- * and unknown-command (src/cli.ts) did-you-mean paths, which pick different
- * thresholds.
- */
-export function closestMatch(attempted: string, candidates: readonly string[], threshold: number): string | undefined {
-  let best: string | undefined;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const candidate of candidates) {
-    const distance = editDistance(attempted, candidate);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = candidate;
-    }
-  }
-  return best !== undefined && bestDistance <= threshold ? best : undefined;
-}
-
 /**
  * The one unknown-flag rejection, shared by the short- and long-flag scans so
  * the user-facing error contract cannot drift between them. No explicit hint
@@ -204,15 +146,6 @@ export function closestMatch(attempted: string, candidates: readonly string[], t
  * @param attempted  The spelling to edit-distance against `--long` candidates.
  */
 function throwUnknownFlag(shown: string, attempted: string, known: KnownArgs): never {
-  // Flags the 0.9 overhaul removed outright get their retirement note, not a
-  // did-you-mean — same reasoning as `retiredCommandHint` in src/cli.ts:
-  // edit distance can point at an unrelated survivor rather than the real
-  // replacement procedure (e.g. `index --background` is closer to no other
-  // `index` flag than it is to any useful suggestion).
-  const retired = retiredFlagHint(known.path, attempted);
-  if (retired) {
-    throw new UsageError(`Unknown flag "${shown}".`, "UNKNOWN_FLAG", retired);
-  }
   const threshold = Math.max(2, Math.ceil(attempted.length / 3));
   const suggestion = closestMatch(attempted, known.displayNames, threshold);
   throw new UsageError(
@@ -241,16 +174,13 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
   // `workflow run`, `task run`, and `task explain` each own one deliberately
   // dynamic namespace: long options become exact-name parameter/input flags
   // and are checked against the frozen plan / task source's own contract
-  // before this gate would otherwise reject them (spec
-  // docs/plans/specs/p2a-task-source-v4.md §5.1 — task run's
+  // before this gate would otherwise reject them (task run's
   // UNKNOWN_FLAG/INPUT_BINDING_INVALID must be raised from INSIDE the command
   // body, where runWithJsonErrors renders the JSON envelope, not from this
-  // generic pre-dispatch gate; docs/plans/specs/p2b-input-bindings.md §4.5,
-  // B-55 — `task explain` reuses the identical `parseTaskInputFlags`
-  // scanner, so it needs the identical exemption).
+  // generic pre-dispatch gate; `task explain` reuses the identical
+  // `parseTaskInputFlags` scanner, so it needs the identical exemption).
   const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain"]);
   const dynamicWorkflowParams = dynamicNamedFlagCommands.has(known.path.join(" "));
-  const selfDiagnosed = SELF_DIAGNOSED_FLAGS.get(known.path.join(" "));
   const tolerant = UNKNOWN_FLAG_TOLERANT_COMMANDS.has(known.path.join(" "));
 
   for (let i = 0; i < ownArgs.length; i += 1) {
@@ -296,7 +226,6 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
         : undefined;
 
     const candidates = [cittyComparableName(rawName), ...(negated ? [cittyComparableName(negated)] : [])];
-    if (selfDiagnosed !== undefined && candidates.some((name) => selfDiagnosed.has(name))) continue;
     if (!candidates.some((name) => known.names.has(name))) {
       // `workflow run` owns one deliberately dynamic namespace: long options
       // become exact-name workflow parameters and are checked against the

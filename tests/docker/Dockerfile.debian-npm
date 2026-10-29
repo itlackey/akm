@@ -1,0 +1,42 @@
+# Debian 12 (Bookworm), Node 24, no compiler — npm install -g of the packed package,
+# with install scripts off.
+#
+# `npm install -g akm-cli` is the install path the docs put first. It must work on
+# a machine with no compiler, python or make, and without running any install
+# script: npm 12 runs none by default, so akm and every package it depends on must
+# work without one (a dependency whose install script built from source, or fetched
+# its binary, failed here or installed broken). `--ignore-scripts` holds any npm to
+# that, and the smoke test then runs on what was installed. The install's exit code
+# is part of the check, so a failure stops this build.
+
+# The package is built and packed in a full image; only the tarball moves on.
+FROM node:24 AS pack
+RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
+
+WORKDIR /opt/akm
+COPY package.json bun.lock* ./
+RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile
+COPY tsconfig.json tsconfig.build.json biome.json ./
+COPY README.md LICENSE SECURITY.md STABILITY.md CHANGELOG.md ./
+COPY docs/ docs/
+COPY schemas/ schemas/
+COPY src/ src/
+COPY scripts/ scripts/
+RUN bun run build
+RUN mkdir -p /opt/pack && npm pack --pack-destination /opt/pack
+
+FROM node:24-slim
+# The premise of this image: nothing here can build a native addon.
+RUN ! command -v cc && ! command -v gcc && ! command -v make && ! command -v python3
+COPY --from=pack /opt/pack/*.tgz /tmp/akm-cli.tgz
+RUN npm install -g --ignore-scripts /tmp/akm-cli.tgz
+
+# Copy smoke test
+COPY tests/docker/smoke-test.sh /opt/smoke-test.sh
+RUN chmod +x /opt/smoke-test.sh
+
+ENV AKM_INSTALL_METHOD="npm"
+CMD ["/opt/smoke-test.sh"]

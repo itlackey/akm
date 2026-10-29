@@ -89,14 +89,9 @@ describe("akm config — JSON envelope snapshot (WS6)", () => {
     expect(stdout.trim()).toBe("");
   });
 
-  test("config path --all: success envelope carries config/bundle/cache/index paths", async () => {
-    const { stdout, status } = await runCli(["config", "path", "--all"]);
+  test("config path: prints the bare config file path", async () => {
+    const { stdout, status } = await runCli(["config", "path"]);
     expect(status).toBe(0);
-    const env = JSON.parse(stdout);
-    expect(typeof env.config).toBe("string");
-    expect(typeof env.bundle).toBe("string");
-    expect(typeof env.cache).toBe("string");
-    expect(typeof env.index).toBe("string");
-    expect(env.ok).toBe(true);
+    expect(stdout.trim()).toContain("config.json");
   });
 });

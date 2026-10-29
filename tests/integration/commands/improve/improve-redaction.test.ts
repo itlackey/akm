@@ -19,16 +19,15 @@ test("improve failure events redact materialized engine credentials", async () =
           config: {
             configVersion: "0.9.0",
             semanticSearchMode: "off",
-            engines: {
+            connections: {
               default: {
-                kind: "llm",
                 endpoint: "https://example.test/v1/chat/completions",
-                model: "test",
+                models: { fast: "test" },
                 apiKey: "$IMPROVE_TEST_API_KEY",
               },
             },
-            defaults: { llmEngine: "default", improveStrategy: "redaction-test" },
             improve: {
+              strategy: "redaction-test",
               strategies: {
                 "redaction-test": {
                   processes: {

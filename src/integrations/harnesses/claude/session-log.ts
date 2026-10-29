@@ -17,17 +17,21 @@ import type {
 } from "../../session-logs/types";
 
 /**
- * Root directory holding Claude Code's per-project JSONL session logs.
+ * Root directory holding Claude Code's per-project JSONL session logs: the
+ * `projects` folder of its config directory (`CLAUDE_CONFIG_DIR`, else `~/.claude`).
  *
- * Resolved per call (not memoized at module load) so the `AKM_CLAUDE_PROJECTS_DIR`
- * override can be set after import. The override exists so tests — and the
- * isolated-storage sandbox — can point the scan at an empty fixture directory
+ * Resolved per call (not memoized at module load) so the environment can be set
+ * after import. `AKM_CLAUDE_PROJECTS_DIR` overrides it so tests, and the
+ * isolated-storage sandbox, can point the scan at an empty fixture directory
  * instead of the real `~/.claude/projects`, which on an actively-used machine
  * holds many large session files and would make `akm health` (which scans it
  * synchronously) slow and non-hermetic.
  */
 function claudeProjectsDir(): string {
-  return process.env.AKM_CLAUDE_PROJECTS_DIR ?? path.join(os.homedir(), ".claude", "projects");
+  return (
+    process.env.AKM_CLAUDE_PROJECTS_DIR ??
+    path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects")
+  );
 }
 
 /**

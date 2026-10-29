@@ -121,6 +121,34 @@ function copyFileOutsideThisProcess(source: string, destination: string): void {
 }
 
 /**
+ * Copy a stable main/WAL pair of the database at `dbPath` to `snapshotPath`
+ * (and `<snapshotPath>-wal`), never attaching SQLite to the source. Retries
+ * while a writer is active; throws {@link SqliteReadSnapshotUnavailableError}
+ * when the files never settle.
+ */
+export function copySqliteSnapshot(dbPath: string, snapshotPath: string): void {
+  for (let attempt = 0; attempt < SNAPSHOT_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) sleepSync(SNAPSHOT_BACKOFF_MS * attempt);
+    try {
+      if (pathExists(`${dbPath}-journal`)) continue;
+      const before = databaseFingerprint(dbPath);
+      copyFileOutsideThisProcess(dbPath, snapshotPath);
+      if (before.wal) copyFileOutsideThisProcess(`${dbPath}-wal`, `${snapshotPath}-wal`);
+      else fs.rmSync(`${snapshotPath}-wal`, { force: true });
+      const after = databaseFingerprint(dbPath);
+      if (fingerprintsEqual(before, after) && !pathExists(`${dbPath}-journal`)) return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+  }
+  throw new SqliteReadSnapshotUnavailableError(
+    `SQLite main/WAL files did not settle after ${SNAPSHOT_MAX_ATTEMPTS} attempts with backoff — ` +
+      "a writer may be continuously active, or a hot rollback journal never cleared",
+  );
+}
+
+/**
  * Open an isolated copy of an existing SQLite database.
  *
  * Returns `undefined` only when the source is absent. Committed WAL frames are
@@ -137,31 +165,7 @@ export function openSqliteReadSnapshot(dbPath: string): Database | undefined {
   const snapshotPath = path.join(snapshotDir, "snapshot.db");
   let db: Database | undefined;
   try {
-    let copied = false;
-    for (let attempt = 0; attempt < SNAPSHOT_MAX_ATTEMPTS; attempt++) {
-      if (attempt > 0) sleepSync(SNAPSHOT_BACKOFF_MS * attempt);
-      try {
-        if (pathExists(`${dbPath}-journal`)) continue;
-        const before = databaseFingerprint(dbPath);
-        copyFileOutsideThisProcess(dbPath, snapshotPath);
-        if (before.wal) copyFileOutsideThisProcess(`${dbPath}-wal`, `${snapshotPath}-wal`);
-        else fs.rmSync(`${snapshotPath}-wal`, { force: true });
-        const after = databaseFingerprint(dbPath);
-        if (fingerprintsEqual(before, after) && !pathExists(`${dbPath}-journal`)) {
-          copied = true;
-          break;
-        }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw error;
-      }
-    }
-    if (!copied) {
-      throw new SqliteReadSnapshotUnavailableError(
-        `SQLite main/WAL files did not settle after ${SNAPSHOT_MAX_ATTEMPTS} attempts with backoff — ` +
-          "a writer may be continuously active, or a hot rollback journal never cleared",
-      );
-    }
+    copySqliteSnapshot(dbPath, snapshotPath);
     db = openDatabaseFinalizing(snapshotPath, { readonly: true, create: false });
     const closeSnapshot = db.close.bind(db);
     let closed = false;

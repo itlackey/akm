@@ -9,7 +9,7 @@ import type { BundleAdapter } from "../../core/adapter/bundle-adapter";
 import { adapterForId } from "../../core/adapter/registry";
 import type { BundleComponent } from "../../core/adapter/types";
 import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { isWithin } from "../../core/common";
+import { isContainedResolvedPath, isWithin } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { bundleComponentConfig, bundlesToSourceEntries } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
@@ -78,11 +78,7 @@ function isLexicallyWithin(candidate: string, root: string): boolean {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
-function implicitComponentForEntry(
-  entry: IndexEntry,
-  config: AkmConfig,
-  realRoot: string,
-): BundleComponent | undefined {
+function implicitComponentForEntry(entry: IndexEntry, config: AkmConfig): BundleComponent | undefined {
   const sources = resolveSourceEntries(undefined, config);
   const installations = deriveInstallations(sources);
   for (const [index, installation] of installations.entries()) {
@@ -91,12 +87,6 @@ function implicitComponentForEntry(
     const component = installation.components[0];
     if (!source || !component) continue;
     const canonicalRoot = realDirectory(component.root, `Canonical implicit source root for ${entry.bundleId}`);
-    if (canonicalRoot !== realRoot) {
-      warnOnce(
-        `execution-source-root-drift:${entry.itemRef}`,
-        `[command] Indexed root for ${JSON.stringify(entry.itemRef)} no longer matches the working bundle source; re-resolving from live config. Run \`akm index --full\` to refresh it.`,
-      );
-    }
     if (component.adapter !== entry.adapterId) {
       warnOnce(
         `execution-source-adapter-drift:${entry.itemRef}`,
@@ -116,7 +106,7 @@ function implicitComponentForEntry(
 function componentForEntry(entry: IndexEntry, config: AkmConfig, realRoot: string): BundleComponent {
   const configured = config.bundles?.[entry.bundleId];
   if (!configured) {
-    const implicit = implicitComponentForEntry(entry, config, realRoot);
+    const implicit = implicitComponentForEntry(entry, config);
     if (implicit) return implicit;
     throw new ConfigError(
       `Indexed execution source ${JSON.stringify(entry.itemRef)} belongs to unconfigured bundle ${JSON.stringify(entry.bundleId)}.`,
@@ -167,12 +157,6 @@ function componentForEntry(entry: IndexEntry, config: AkmConfig, realRoot: strin
         "Remove the escaping symlink or component path, then run `akm index --full`.",
       );
     }
-    if (configuredRoot !== realRoot) {
-      warnOnce(
-        `execution-source-root-drift:${entry.itemRef}`,
-        `[command] Indexed root for ${JSON.stringify(entry.itemRef)} no longer matches the ${JSON.stringify(configuredSource.type)} bundle source; re-resolving from live config. Run \`akm index --full\` to refresh it.`,
-      );
-    }
   }
   const writable = component?.writable ?? configured.writable ?? configured.path !== undefined;
   return Object.freeze({
@@ -187,14 +171,8 @@ function expectedIndexedType(kind: "command" | "persona"): string {
   return kind === "command" ? "command" : "agent";
 }
 
-function assertRenderedIdentity(
-  source: AdapterRenderedExecutionSource,
-  entry: IndexEntry,
-  realRoot: string,
-  realFile: string,
-  content: string,
-): void {
-  const expectedFile = path.relative(realRoot, realFile).replace(/\\/g, "/");
+function assertRenderedIdentity(source: AdapterRenderedExecutionSource, entry: IndexEntry, content: string): void {
+  const expectedFile = path.relative(path.resolve(entry.stashDir), path.resolve(entry.filePath)).replace(/\\/g, "/");
   const expectedHash = createHash("sha256").update(content, "utf8").digest("hex");
   if (
     source.identity.ref !== entry.itemRef ||
@@ -251,8 +229,10 @@ export async function loadAdapterExecutionSource(
 
   const config = await effectiveConfig(options.config);
   const realRoot = realDirectory(entry.stashDir, `Indexed component root for ${entry.itemRef}`);
-  const realFile = realRegularFile(entry.filePath, `Indexed execution source ${entry.itemRef}`);
-  if (!isWithin(realFile, realRoot) || realFile === realRoot) {
+  realRegularFile(entry.filePath, `Indexed execution source ${entry.itemRef}`);
+  // An index row must name a file inside its own component root. Checked on the
+  // authored path, so a file that is a symlink to one elsewhere still loads.
+  if (!isContainedResolvedPath(path.resolve(entry.filePath), path.resolve(entry.stashDir))) {
     throw new ConfigError(
       `Indexed execution source ${JSON.stringify(entry.itemRef)} resolves outside its component root.`,
       "INVALID_CONFIG_FILE",
@@ -283,6 +263,6 @@ export async function loadAdapterExecutionSource(
       "Rebuild the index; if the mismatch remains, repair the source file or owning adapter.",
     );
   }
-  assertRenderedIdentity(rendered, entry, realRoot, realFile, fileContext.content());
+  assertRenderedIdentity(rendered, entry, fileContext.content());
   return rendered;
 }

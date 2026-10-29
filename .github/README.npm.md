@@ -40,6 +40,20 @@ prefers Bun for execution; old, unusable, or absent Bun installations fall
 back to Node.js. Node.js remains required for the npm package. The standalone
 binaries are runtime-free.
 
+Local semantic search runs its embedding model on ONNX Runtime and is offered on
+Linux x64 (glibc) and Apple-silicon macOS; every other platform uses
+keyword search or an embedding endpoint. Choosing it in `akm setup`
+(`--embedding local`) downloads the runtime (about 86 MB) and the model (about
+127 MB) once into akm's cache: installing the package runs no install script and
+downloads nothing native. See
+[Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/#local-semantic-search).
+
+With a connection and no harness, agent work runs on akm's own runtime, a pinned
+OpenCode 2 binary. The first time it runs, akm downloads that binary from the npm
+registry (about 114 MB, once) into its cache; on Alpine/musl it needs `libstdc++`
+and `libgcc` (the Alpine Node image has them). See
+[Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/#akms-own-agent-runtime).
+
 ## Quick Start
 
 ```sh
@@ -55,7 +69,7 @@ akm show scripts/deploy.sh         # View details and run command
 - **One library for every agent** -- Use the same capability library from Claude Code, OpenCode, Cursor, Aider, Windsurf, or any assistant that can run shell commands.
 - **Load only what the task needs** -- Search or curate a shortlist, then load full content by ref. No giant startup prompt is required.
 - **Package complete capabilities** -- Install and share bundles containing skills, scripts, workflows, agents, instructions, memories, and knowledge -- not just prompt snippets.
-- **Improve through evidence, with review** -- Feedback is recorded against each asset and feeds `akm improve`. A negative report can carry an exact text fix, and `akm improve` repairs metadata. Edits land as diffable proposals you accept, reject or revert, unless you opt in to automatic acceptance (`experimental.improveAutonomy`). Only writable bundles are changed.
+- **Improve through evidence, with review** -- Feedback re-ranks assets right away. A negative report can carry an exact text fix, and `akm improve` repairs metadata. Edits land as diffable proposals: the default improve strategy accepts the ones its quality judge passed, the rest wait for you to accept or reject, and any accept can be reverted. Only writable bundles are changed.
 - **Turn knowledge into repeatable work** -- Run persisted workflows with dispatch, gates, retries, budgets, and resume instead of reconstructing a process from prose every session. Workflows are Experimental.
 
 Search and show only return content; running a workflow, task, script, or
@@ -74,7 +88,7 @@ knowledge, instructions, memories, workflows, env files, secrets, lessons, tasks
 sessions, and facts via the `akm` CLI. Use `akm -h` for details.
 ```
 
-Or generate it directly: `akm help agents >> AGENTS.md`
+Or generate it directly: `akm hints --detail brief >> AGENTS.md`
 
 ## Documentation
 

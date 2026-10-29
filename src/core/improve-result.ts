@@ -29,6 +29,7 @@ const COMMON_FIELDS = [
   "plan",
   "actions",
   "skippedProcesses",
+  // No longer written (the retired `--require-engines` probe wrote it); kept readable for envelopes a prior release wrote.
   "engineProbe",
   "distillSkipped",
   "validationFailures",
@@ -40,8 +41,7 @@ const COMMON_FIELDS = [
   "coverageGaps",
   // R10: no longer written (the write-only eval-cases path was removed),
   // but kept in the allow-list so `decodeImproveResult` still reads
-  // improve-result envelopes a prior release wrote with this field —
-  // AGENTS.md "Reading persisted data".
+  // improve-result envelopes a prior release wrote with this field.
   "evalCasesWritten",
   "deadUrls",
   "deadUrlCoverage",
@@ -61,8 +61,7 @@ const COMMON_FIELDS = [
   "reflectGuardRejectedActions",
   // No longer written (nothing has set it since the confidence gate was
   // deleted), but kept in the allow-list so `decodeImproveResult` still reads
-  // the improve_runs rows an older release wrote with it, its value ignored —
-  // AGENTS.md "Reading persisted data".
+  // the improve_runs rows an older release wrote with it, its value ignored.
   "gateAutoAcceptedCount",
   "gateAutoAcceptFailedCount",
   "triage",
@@ -70,6 +69,7 @@ const COMMON_FIELDS = [
   "cycleMetrics",
   "runId",
   "sync",
+  "preRunSync",
   "writtenPaths",
   "terminated",
   "usageReport",
@@ -138,6 +138,8 @@ function validateConsolidationPlan(value: unknown): void {
     ]),
   );
   if (!isRecord(value.configured)) fail("plan.consolidation.configured must be an object");
+  // `minPoolSize` is no longer written (the minimum-pool guard was removed in 0.10, #1131); runs an
+  // older release persisted still carry it, ignored.
   requireExactFields(value.configured, new Set(["enabled", "minPoolSize", "limit", "maxChunkSize"]));
   if (value.configured.enabled !== undefined && typeof value.configured.enabled !== "boolean") {
     fail("plan.consolidation.configured.enabled must be a boolean");
@@ -150,7 +152,8 @@ function validateConsolidationPlan(value: unknown): void {
   if (!isRecord(value.effective)) fail("plan.consolidation.effective must be an object");
   requireExactFields(value.effective, new Set(["enabled", "minPoolSize", "limit", "chunkSize"]));
   if (typeof value.effective.enabled !== "boolean") fail("plan.consolidation.effective.enabled must be a boolean");
-  requireCount(value.effective, "minPoolSize", "plan.consolidation.effective");
+  if (value.effective.minPoolSize !== undefined)
+    requireCount(value.effective, "minPoolSize", "plan.consolidation.effective");
   requireCount(value.effective, "chunkSize", "plan.consolidation.effective");
   if (value.effective.limit !== undefined && typeof value.effective.limit !== "number") {
     fail("plan.consolidation.effective.limit must be a number");
@@ -164,6 +167,8 @@ function validateConsolidationPlan(value: unknown): void {
   requireExactFields(value.gates, new Set(["profile", "minimumPool", "delta"]));
   for (const gateName of ["profile", "minimumPool", "delta"] as const) {
     const gate = value.gates[gateName];
+    // `minimumPool` is no longer written; only an older release's persisted plan has it.
+    if (gate === undefined && gateName === "minimumPool") continue;
     if (!isRecord(gate)) fail(`plan.consolidation.gates.${gateName} must be an object`);
     requireExactFields(gate, new Set(["passed", "reason"]));
     if (typeof gate.passed !== "boolean" || typeof gate.reason !== "string") {
@@ -179,6 +184,8 @@ function validateProactivePlan(value: unknown): void {
     new Set(["configured", "effective", "candidatePool", "dueTotal", "neverReflected", "selected", "selectedRefs"]),
   );
   if (!isRecord(value.configured)) fail("plan.proactive.configured must be an object");
+  // `limit` is no longer written (the `proactiveMaintenance.limit` alias of `maxPerRun` was removed in 0.10, #1091);
+  // runs an older release stored may carry it.
   requireExactFields(value.configured, new Set(["dueDays", "maxPerRun", "limit"]));
   for (const field of ["dueDays", "maxPerRun", "limit"] as const) {
     if (value.configured[field] !== undefined && typeof value.configured[field] !== "number") {
@@ -204,7 +211,6 @@ function validateProactivePlan(value: unknown): void {
 function validateProcessRoutingRows(value: unknown): void {
   if (!Array.isArray(value)) fail("plan.processes must be an array");
   const canonicalNames: readonly string[] = IMPROVE_PROCESS_NAMES;
-  const engineKinds = new Set(["llm", "agent", "sdk"]);
   const seen = new Set<string>();
   for (const row of value) {
     if (!isRecord(row)) fail("plan.processes entries must be objects");
@@ -233,8 +239,9 @@ function validateProcessRoutingRows(value: unknown): void {
     if (typeof row.enabled !== "boolean") fail("plan.processes.enabled must be a boolean");
     if (row.engine !== undefined && typeof row.engine !== "string") fail("plan.processes.engine must be a string");
     if (row.model !== undefined && typeof row.model !== "string") fail("plan.processes.model must be a string");
-    if (row.engineKind !== undefined && (typeof row.engineKind !== "string" || !engineKinds.has(row.engineKind))) {
-      fail("plan.processes.engineKind is invalid");
+    // "connection" or "harness" now; a run recorded by an earlier release said "llm", "agent" or "sdk".
+    if (row.engineKind !== undefined && typeof row.engineKind !== "string") {
+      fail("plan.processes.engineKind must be a string");
     }
     validateLoweringNotices(row.notices);
     if (row.unavailable !== undefined) {
@@ -402,7 +409,7 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   // #947 added plan.processes (2026-09-09T09:03:19Z); every run recorded
   // before it legitimately stored `plan` with no `processes` key at all —
   // validate the rows only when present, same as `proactive` below, so a
-  // pre-#947 envelope still decodes (AGENTS.md "Reading persisted data").
+  // pre-#947 envelope still decodes.
   if (value.processes !== undefined) validateProcessRoutingRows(value.processes);
   if (value.proactive !== undefined) validateProactivePlan(value.proactive);
   validateConsolidationPlan(value.consolidation);
@@ -421,6 +428,8 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
     }
   }
   if (!isRecord(value.triage)) fail("plan.triage must be an object");
+  // `maxDiffLines` is no longer written (the triage config key was dropped before 0.10, #1091); runs an older
+  // release stored may carry it.
   requireExactFields(value.triage, new Set(["enabled", "configuredMode", "mode", "maxAcceptsPerRun", "maxDiffLines"]));
   if (typeof value.triage.enabled !== "boolean") fail("plan.triage.enabled must be a boolean");
   for (const field of ["configuredMode", "mode"] as const) {
@@ -507,6 +516,7 @@ function validateCommon(value: Record<string, unknown>): void {
     "proactiveMaintenance",
     "cycleMetrics",
     "sync",
+    "preRunSync",
     "terminated",
     "plan",
     "deadUrlCoverage",

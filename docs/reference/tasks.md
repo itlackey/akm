@@ -114,25 +114,36 @@ Script refs use this closed table; any other extension fails before dispatch:
 `run` is one non-empty shell string. It may specify `shell` from the closed host
 shell table `bash`, `sh`, `zsh`, `pwsh`, `powershell`, or `cmd`. Shell expansion
 is runtime behavior for an explicitly authored task `run`; AKM does not infer a
-shell from `uses`. `working-directory` must be a relative, contained path under
-the task's workspace root. Absolute paths, traversal, dangling links, and
-symlink escapes fail before execution.
+shell from `uses`. `working-directory` is a non-empty string, relative to the
+task's bundle root or absolute, like a workflow's `exec.cwd`. akm does not
+keep it inside the bundle or check it when the task source is parsed, so a
+symlink that resolves outside the bundle works. The task runs in
+`<bundle root>/<working-directory>` (or the absolute path as written): akm does
+not capture the directory's identity or re-check it when the task runs. A
+`uses: scripts/<file>` target may itself be a symlink to a file outside the
+bundle; the task freezes that file's bytes, not its location. The interpreter
+comes from the name the script has in the bundle, not from the file the link
+points to, so `scripts/deploy.sh` linked to `real-script.txt` runs under the
+shell.
 
 Every field that used to live under v3's `akm:` options bag is a top-level
-key in task source v4: `agent`, `engine`, `model`, `inference`, `tools`,
-`timeout`, `redact`, `maxSteps`, and `maxRetries`, plus `description`,
-`when_to_use`, and `tags`. Environment entries (`env`) are literal string,
+key in task source v4: `agent`, `connection`, `harness`, `model`, `inference`, `timeout`,
+`redact`, `maxSteps`, and `maxRetries`, plus `description`, `when_to_use`, and
+`tags`. A v3 `akm.tools` is dropped by the migration, and a v4 `tools` is
+ignored with a warning. Environment entries (`env`) are literal string,
 number, or boolean values. Keep credentials out of task source; `redact`
 contains environment variable names, never secret values.
 
 `timeout:` (milliseconds) means a different mechanism depending on the
 target. For `run:` (native shell/script) and `workflows/<name>` targets it is
-an outer supervisory deadline: the runner kills the child process, or aborts
-the workflow run at its next step boundary, when it fires. For `uses:
+an outer supervisory deadline: the runner stops the child process (SIGINT, then
+SIGTERM, then SIGKILL; see [How akm runs a
+harness](configuration.md#how-akm-runs-a-harness)), or aborts the workflow run at
+its next step boundary, when it fires. For `uses:
 akm/command`, `commands/<name>`, and any other agent/LLM dispatch target
 there is no outer process kill — `timeout:` instead resolves through the
 execution cascade (config/persona/command/task layers) into the dispatch's
-own deadline, and the SDK/CLI runner races each phase against it internally.
+own deadline, and the runner (a harness's process, or akm's own runtime) enforces it.
 Either way, a dispatch that times out is recorded as `status: failed` with
 `detail.reason: "timeout"` in `task_history` — not a silent `completed` — and
 `akm task run` exits non-zero for it; see [health-advisories.md's
@@ -209,7 +220,7 @@ schedule:
   - cron: "0 8 * * 1"
     inputs: { scope: all, ticket: OPS-1234 }
 timeout: 45000
-engine: reviewer
+harness: reviewer
 redact: [TOKEN]
 ```
 
@@ -249,10 +260,9 @@ redact: [TOKEN]
   consumer — a native run's status comes from its exit code alone — so
   declaring `output:` on them fails parsing with `TASK_SOURCE_INVALID`
   instead of silently recording a contract nothing enforces.
-- A task source v4 document **can** be the target of a workflow step's
-  `uses: tasks/<ref>` — see the
-  [GitHub-shaped YAML subset](workflow-schema.md#github-shaped-yaml-subset)
-  for how a workflow step's `with:` binds a v4 task's declared `inputs:`.
+- A workflow step cannot target a task: the GitHub-shaped YAML workflow format
+  that carried `uses: tasks/<ref>` was removed in 0.10. A task runs a workflow
+  (`uses: workflows/<ref>`), not the other way round.
 
 ### Input flags
 
@@ -278,10 +288,8 @@ workflow step's own composition uses); for every other target — `run:`
 shell, `scripts/<ref>`, `commands/<ref>` — the values are validated and then
 **discarded**. `akm task run`'s own flags never populate an
 `AKM_TASK_INPUTS` environment variable or a `## Task inputs` prompt block.
-Those two surfaces are a *different* delivery path: they exist only when a
-**workflow step** composes this task through `uses: tasks/<ref>` and a
-`with:` binding, resolved fresh for that step's own dispatch — see
-[`with:` on a task-composed step](workflow-schema.md#github-shaped-yaml-subset).
+Those two surfaces existed only for a workflow step composing a task through
+`uses: tasks/<ref>`, which was removed in 0.10.
 A scheduled run (`schedule[].inputs`, above) reaches the target through this
 same `akm task run` path, so it inherits the identical rule: delivered as
 params for a `workflows/<ref>` target, otherwise validated and discarded.
@@ -396,21 +404,17 @@ for full before/after examples and recovery guidance.
 
 ## Operations
 
-- `akm search --type task` (or its alias `akm task list`) and
+- `akm search --type task` and
   `akm show tasks/<id>` inspect task assets.
 - `akm task explain <ref>` prints a task's declared inputs, resolved target,
   effective execution settings, and schedule bindings without running
   anything — see [`akm task explain`](#akm-task-explain) above.
-- `akm task validate <path>` parses one task file by filesystem path (the
-  file need not live in a configured bundle) and reports the same
-  `valid`/`blocked`/`invalid`/`not-a-task` diagnostic
-  `akm task sync` would produce for it — including sync's own cron-dialect
-  check and its per-schedule-entry input-contract check — without touching
-  the scheduler and without requiring a configured engine, even for a
-  command-kind task. The envelope's own `sourceVersion` field names the
-  file's declared schema version. A version 2/3 file, and a `version: 4`
-  file still carrying a retired `schedule[].enabled`, report `blocked`
-  (exit 1) naming `akm migrate apply`, which converts them.
+- `akm lint --type tasks` reports what `akm task sync` would refuse for a task
+  file: a document that does not parse as task source v4, a version 2/3 file or
+  a `version: 4` file still carrying a retired `schedule[].enabled` (the finding
+  names `akm migrate apply`, which converts them), a cron the local scheduler
+  backend cannot parse, and a schedule entry whose `inputs` leave a required
+  input unsatisfied. It is read-only and needs no configured connection or harness.
 - `akm task add` validates a task source v4 document, writes it, adds its ref
   to local scheduler activation, and syncs its bundle. `--params` renders
   typed `inputs:` declarations instead of a `with:` bag; `--schedule` is

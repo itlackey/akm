@@ -5,7 +5,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { migrateLegacySourceShape } from "./config/legacy-source-shape-shim";
 import { ConfigError } from "./errors";
 import { getConfigPath, getDefaultStashDir, getRegistryCacheDir, getRegistryIndexCacheDir } from "./paths";
 
@@ -98,8 +97,9 @@ export function readTextFile(filePath: string, label = "File"): string {
  */
 /**
  * Strip JavaScript-style comments from a JSON string (JSONC support).
- * Handles `//` line comments and `/* *​/` block comments while preserving
- * comment-like sequences inside quoted strings.
+ * Handles `//` line comments, which end at a line feed or a carriage return,
+ * and `/* *​/` block comments while preserving comment-like sequences inside
+ * quoted strings.
  */
 export function stripJsonComments(text: string): string {
   let result = "";
@@ -126,7 +126,7 @@ export function stripJsonComments(text: string): string {
       continue;
     }
     if (text[i] === "/" && text[i + 1] === "/") {
-      while (i < text.length && text[i] !== "\n") i++;
+      while (i < text.length && text[i] !== "\n" && text[i] !== "\r") i++;
       continue;
     }
     if (text[i] === "/" && text[i + 1] === "*") {
@@ -175,7 +175,13 @@ export function writeFileAtomic(target: string, content: string | Buffer, mode?:
   try {
     fd = fs.openSync(tmp, "wx", fileMode);
     tempOwned = true;
-    if (process.platform !== "win32") fs.fchmodSync(fd, fileMode);
+    if (process.platform !== "win32") {
+      try {
+        fs.fchmodSync(fd, fileMode);
+      } catch (error) {
+        if (!isChmodUnsupported(error)) throw error;
+      }
+    }
     let offset = 0;
     while (offset < data.byteLength) {
       const written = fs.writeSync(fd, data, offset, data.byteLength - offset);
@@ -309,8 +315,8 @@ function readStashDirFromConfig(): string | undefined {
     // STASH_DIR_NOT_FOUND despite a perfectly good config.
     const parsed = JSON.parse(stripJsonComments(text));
     if (typeof parsed !== "object" || parsed === null) return undefined;
-    const raw = migrateLegacySourceShape(parsed as Record<string, unknown>, configPath);
-    // 0.9.0 config-shape cutover (spec §10.1): the primary stash is the
+    const raw = parsed as Record<string, unknown>;
+    // The primary stash is the
     // `defaultBundle`'s filesystem `path`. Read it directly (no config module
     // import) so the primary-stash location survives the stashDir → bundles
     // migration without a runtime rewire.
@@ -369,21 +375,12 @@ export function hasErrnoCode(error: unknown, code: string): boolean {
 }
 
 /**
- * True when `value` is a RELATIVE path that cannot leave its base directory:
- * no absolute form (POSIX `/`, Windows `\` or a `C:` drive prefix), no `~`
- * home expansion, and no `..` segment under either separator.
- *
- * This is the SYNTACTIC half of containment — cheap, string-only, usable at
- * authoring time before any directory exists. It is deliberately paired with
- * (never a substitute for) {@link isWithin}, which resolves symlinks against a
- * real base at use time. Workflow `exec` units run both: the parser and the
- * frozen-plan decoder reject uncontained spellings, and the executor re-checks
- * the resolved path before spawning.
+ * True when a chmod failed because the filesystem has no settable POSIX modes
+ * (CIFS/SMB such as an Azure Files share, some FUSE mounts). The mount options
+ * decide the mode there, so callers keep going with whatever mode the file got.
  */
-export function isContainedRelativePath(value: string): boolean {
-  if (value === "" || value.startsWith("/") || value.startsWith("\\") || value.startsWith("~")) return false;
-  if (/^[A-Za-z]:/.test(value)) return false;
-  return !value.split(/[/\\]+/).includes("..");
+export function isChmodUnsupported(error: unknown): boolean {
+  return hasErrnoCode(error, "EPERM") || hasErrnoCode(error, "ENOTSUP") || hasErrnoCode(error, "EINVAL");
 }
 
 export function isWithin(candidate: string, root: string): boolean {
@@ -412,17 +409,11 @@ export function isAkmRegistryCachePath(filePath: string): boolean {
 }
 
 /**
- * {@link isWithin} for callers that must not block the event loop (e.g. the
- * workflow exec dispatch path, which runs once per fan-out unit). Same
- * comparison, same normalization, same nearest-existing-ancestor fallback —
- * only the realpath syscalls are awaited.
+ * The containment comparison behind {@link isWithin}.
+ * Called directly with `path.resolve`d arguments it is a lexical check: it
+ * refuses `..` and absolute names without following symlinks.
  */
-export async function isWithinAsync(candidate: string, root: string): Promise<boolean> {
-  return isContainedResolvedPath(await safeRealpathAsync(candidate), await safeRealpathAsync(root));
-}
-
-/** The containment comparison shared by {@link isWithin} and {@link isWithinAsync}. */
-function isContainedResolvedPath(resolvedCandidate: string, resolvedRoot: string): boolean {
+export function isContainedResolvedPath(resolvedCandidate: string, resolvedRoot: string): boolean {
   const rel = path.relative(
     normalizeFsPathForComparison(resolvedRoot),
     normalizeFsPathForComparison(resolvedCandidate),
@@ -463,28 +454,6 @@ export function safeRealpath(p: string): string {
       try {
         const realParent = fs.realpathSync(current);
         return path.join(realParent, ...suffix);
-      } catch {
-        // parent also doesn't exist; keep walking up
-      }
-    }
-  }
-}
-
-/** {@link safeRealpath}'s async twin — awaited syscalls, identical walk-up. */
-export async function safeRealpathAsync(p: string): Promise<string> {
-  const resolved = path.resolve(p);
-  try {
-    return await fs.promises.realpath(resolved);
-  } catch {
-    const suffix: string[] = [];
-    let current = resolved;
-    for (;;) {
-      const parent = path.dirname(current);
-      if (parent === current) return resolved;
-      suffix.unshift(path.basename(current));
-      current = parent;
-      try {
-        return path.join(await fs.promises.realpath(current), ...suffix);
       } catch {
         // parent also doesn't exist; keep walking up
       }
@@ -968,6 +937,47 @@ export function wellFormedUnicode(value: string): boolean {
  */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The value when it is a plain object, else undefined (for `?.` chains over unknown JSON). */
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
+}
+
+/** Drop each comma that is followed, past whitespace, by `}` or `]`, outside string literals. */
+function stripTrailingCommas(text: string): string {
+  let result = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i] as string;
+    if (inString) {
+      result += char;
+      if (char === "\\") result += text[++i] ?? "";
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === ",") {
+      let next = i + 1;
+      while (next < text.length && /\s/.test(text[next] as string)) next++;
+      if (text[next] === "}" || text[next] === "]") continue;
+    }
+    result += char;
+  }
+  return result;
+}
+
+/**
+ * Parse JSONC: comments stripped by {@link stripJsonComments}, and trailing
+ * commas (`[a, b,]`, `{"k": 1,}`) tolerated, as OpenCode's own `.jsonc` reader does.
+ */
+export function parseJsonc(text: string): unknown {
+  const stripped = stripJsonComments(text);
+  try {
+    return JSON.parse(stripped) as unknown;
+  } catch {
+    return JSON.parse(stripTrailingCommas(stripped)) as unknown;
+  }
 }
 
 /** `JSON.parse` that returns `undefined` instead of throwing. */

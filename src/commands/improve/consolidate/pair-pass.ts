@@ -6,15 +6,13 @@
  * The consolidate pair pass (0.9.17-alpha.9 plan §5.2, brief §A): runs
  * alongside the existing promote pass inside `akmConsolidate`, over new and
  * changed memory-tier assets. Judges each near-duplicate/superseding pair
- * with the calibrated relation prompt and mints a reviewed `retire` proposal
- * for the `duplicate` / `subsumed` / `supersedes` classes — never merges,
- * never writes belief edges for `contradicts`, and is never auto-accepted by
- * triage (`drain.ts`).
+ * with complete claim comparisons and mints a reviewed `retire` proposal
+ * for derived `duplicate` / `subsumed` outcomes — never merges,
+ * never writes belief edges. A staged retirement can be accepted unattended
+ * by triage (`drain.ts`); an unstaged one stays pending.
  *
- * Calibration (owner grades, 2026-09-28; see the plan's "Human calibration,
- * O5" section): the combined retire class (duplicate ∪ subsumed ∪
- * supersedes) is 20/22 = 0.91 precision against the owner. `T_PAIR` is 0.93,
- * not the initial 0.90, because the 0.90–0.93 band alone graded 3/4 (R1).
+ * Pair-selection calibration (owner grades, 2026-09-28): `T_PAIR` stays
+ * 0.93, not the initial 0.90, because the 0.90–0.93 band alone graded 3/4 (R1).
  *
  * Initiator eligibility and dating (post-review, alpha.9): "created" is the
  * asset's git first-add time (one `git log` per run, {@link loadGitFirstAddedMap}),
@@ -32,18 +30,20 @@ import fs from "node:fs";
 import path from "node:path";
 import consolidatePairPrompt from "../../../assets/prompts/consolidate-pair.md" with { type: "text" };
 import consolidatePairCheckPrompt from "../../../assets/prompts/consolidate-pair-check.md" with { type: "text" };
+import consolidatePairSameAge from "../../../assets/prompts/consolidate-pair-same-age.md" with { type: "text" };
+import consolidatePairTerms from "../../../assets/prompts/consolidate-pair-terms.md" with { type: "text" };
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString } from "../../../core/common";
 import { concurrentMap } from "../../../core/concurrent";
-import type { AkmConfig, LlmConnectionConfig } from "../../../core/config/config";
+import type { AkmConfig } from "../../../core/config/config";
 import type { ConsolidatePairJudgeLabel, ConsolidatePairPassResult } from "../../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../../core/parse";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { warnOnce } from "../../../core/warn";
-import { type RunnerSpec, runnerLlmConnection } from "../../../integrations/agent/runner";
-import { assertRunnerCredentials } from "../../../integrations/agent/runner-dispatch";
-import type { ChatCompletionOptions, ChatMessage } from "../../../llm/client";
+import { sameScope, scopeFromFrontmatter } from "../../../indexer/passes/metadata";
+import type { RunnerSpec } from "../../../integrations/agent/runner";
+import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../../../llm/client";
 import { runGit } from "../../../sources/providers/git-install";
 import type { Database } from "../../../storage/database";
 import {
@@ -52,12 +52,14 @@ import {
   openReadonlyExistingDatabase,
 } from "../../../storage/repositories/index-connection";
 import { getAllEntries, getEntryById } from "../../../storage/repositories/index-entries-repository";
-import { getNeighborsByEntryId } from "../../../storage/repositories/index-vec-repository";
+import { getNeighborsByEntryId, hasStoredEmbedding } from "../../../storage/repositories/index-vec-repository";
 import {
+  EXPIRED_GATE_REASON,
   isRetireProposal,
   PAIR_PASS_GATE,
   type RetirementMetadata,
   type RetireReason,
+  STALE_TARGET_GATE_REASON,
 } from "../../proposal/proposal-types";
 import {
   createRetireProposal,
@@ -66,7 +68,7 @@ import {
   proposalContentHash,
   recordGateDecision,
 } from "../../proposal/repository";
-import { type AkmConsolidateOptions, isHotCapturedMemory } from "../consolidate";
+import type { AkmConsolidateOptions } from "../consolidate";
 import { contentHash, stripFrontmatterBody } from "../content-hash";
 import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "../retrieval-scope";
@@ -91,16 +93,12 @@ export const BACKFILL_FLOOR = 0.95;
 export const NEW_MATERIAL_DAYS = 7;
 /** Pairs judged per run, highest cosine first (plan §7's nightly cost budget). */
 export const MAX_PAIRS_PER_RUN = 300;
-/** Body characters sent to the judge per side: enough for nearly every note, so a retirement is judged on the whole text. */
-const PAIR_BODY_TRUNCATE_CHARS = 12_000;
 const MS_PER_DAY = 86_400_000;
-
-const RELATION_LABELS = ["duplicate", "subsumed", "supersedes", "contradicts", "overlap", "unrelated"] as const;
 
 type RetireJudgeLabel = "duplicate" | "subsumed" | "supersedes";
 const RETIRE_LABELS: ReadonlySet<string> = new Set<RetireJudgeLabel>(["duplicate", "subsumed", "supersedes"]);
 
-/** The classes that mint a `retire` proposal (the calibrated combined retire class, 20/22 precision). */
+/** The labels represented by the existing retirement metadata. */
 function isRetireLabel(label: ConsolidatePairJudgeLabel): label is RetireJudgeLabel {
   return RETIRE_LABELS.has(label);
 }
@@ -108,16 +106,13 @@ function isRetireLabel(label: ConsolidatePairJudgeLabel): label is RetireJudgeLa
 /** Exported, with {@link buildPairUserPrompt}, so a replay can drive the exact judge call. */
 export const PAIR_JUDGE_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
-  required: ["onlyInA", "onlyInB", "relation", "redundant", "stale", "confidence", "reason"],
+  required: ["reason", "onlyInA", "onlyInB", "confidence"],
   additionalProperties: false,
   properties: {
+    reason: { type: "string", maxLength: 400 },
     onlyInA: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 20 },
     onlyInB: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 20 },
-    relation: { type: "string", enum: [...RELATION_LABELS] },
-    redundant: { type: ["string", "null"], enum: ["A", "B", null] },
-    stale: { type: ["string", "null"], enum: ["A", null] },
     confidence: { type: "number", minimum: 0, maximum: 1 },
-    reason: { type: "string", maxLength: 400 },
   },
 };
 
@@ -131,8 +126,6 @@ export const PAIR_CHECK_JSON_SCHEMA: Record<string, unknown> = {
 interface RawPairJudgeResponse {
   onlyInA?: unknown;
   onlyInB?: unknown;
-  relation?: unknown;
-  redundant?: unknown;
   confidence?: unknown;
   reason?: unknown;
 }
@@ -148,22 +141,24 @@ export interface PairJudgeVerdict {
   reason: string;
 }
 
-/** Hand-validates the judge's JSON, independent of whatever the provider's own schema enforcement did. */
+/** Validate both claim lists, then derive the outcome instead of asking the model to duplicate that decision. */
 export function parsePairJudgeResponse(raw: string): PairJudgeVerdict | undefined {
   const parsed = parseEmbeddedJsonResponse<RawPairJudgeResponse>(raw);
   if (!parsed) return undefined;
-  if (typeof parsed.relation !== "string" || !(RELATION_LABELS as readonly string[]).includes(parsed.relation)) {
-    return undefined;
-  }
-  const redundant = parsed.redundant;
-  if (redundant !== "A" && redundant !== "B" && redundant !== null) return undefined;
   if (typeof parsed.confidence !== "number" || !Number.isFinite(parsed.confidence)) return undefined;
   const confidence = Math.max(0, Math.min(1, parsed.confidence));
   const reason = typeof parsed.reason === "string" ? parsed.reason : "";
   const onlyInA = claimList(parsed.onlyInA);
   const onlyInB = claimList(parsed.onlyInB);
   if (!onlyInA || !onlyInB) return undefined;
-  return { onlyInA, onlyInB, relation: parsed.relation as ConsolidatePairJudgeLabel, redundant, confidence, reason };
+  const relation =
+    onlyInA.length === 0 && onlyInB.length === 0
+      ? "duplicate"
+      : onlyInA.length === 0 || onlyInB.length === 0
+        ? "subsumed"
+        : "overlap";
+  const redundant = onlyInA.length === 0 ? "A" : onlyInB.length === 0 ? "B" : null;
+  return { onlyInA, onlyInB, relation, redundant, confidence, reason };
 }
 
 function claimList(value: unknown): string[] | undefined {
@@ -389,6 +384,9 @@ export function loadRejectedPairKeys(stashDir: string, proposalsCtx: ProposalsCo
     for (const status of ["rejected", "reverted"] as const) {
       for (const p of listProposalsReadOnly(stashDir, { status, includeArchive: true }, proposalsCtx)) {
         if (!isRetireProposal(p) || !p.retirement) continue;
+        // Expiry and a stale target are procedural, not a person saying no: the pair may be judged again.
+        const autoReason = p.gateDecision?.outcome === "auto-rejected" ? p.gateDecision.reason : undefined;
+        if (autoReason === EXPIRED_GATE_REASON || autoReason === STALE_TARGET_GATE_REASON) continue;
         keys.add(
           rejectedPairKey(
             p.retirement.retiredRef,
@@ -450,16 +448,30 @@ export function selectInitiators(
  * apart from a fully-judged one). S2: fetches `PAIR_NEIGHBOR_FETCH_K` (20)
  * raw neighbours and keeps the first `PAIR_NEIGHBOR_K` (5) that clear every
  * filter, so a few self/twin/bundle/tier misses in the raw top-5 no longer
- * starve an initiator down to zero real candidates.
+ * starve an initiator down to zero real candidates. An initiator with no
+ * stored vector (embeddings off, or not embedded yet) cannot be queried at
+ * all; its ref is added to `unvectored` so the caller does not settle it.
  */
-export function selectCandidates(db: Database, initiators: Initiator[], bundleId: string): PairCandidate[] {
+export function selectCandidates(
+  db: Database,
+  initiators: Initiator[],
+  bundleId: string,
+  unvectored?: Set<string>,
+): PairCandidate[] {
   const candidates: PairCandidate[] = [];
   const seenPairs = new Set<string>();
   for (const initiator of initiators) {
+    if (!hasStoredEmbedding(db, initiator.entryId)) {
+      unvectored?.add(initiator.ref);
+      continue;
+    }
     // S1: a changed-content or new-material initiator judges at T_PAIR; the
     // rest of the backlog (no row, not recently git-added) needs the higher
     // BACKFILL_FLOOR.
     const floor = initiator.backlog && !initiator.newMaterial ? BACKFILL_FLOOR : T_PAIR;
+    const initiatorSide = loadSide(initiator, undefined, "");
+    if (!initiatorSide) continue;
+    const scope = scopeFromFrontmatter(initiatorSide.frontmatter);
     let kept = 0;
     for (const hit of getNeighborsByEntryId(db, initiator.entryId, PAIR_NEIGHBOR_FETCH_K)) {
       if (kept >= PAIR_NEIGHBOR_K) break;
@@ -480,6 +492,8 @@ export function selectCandidates(db: Database, initiators: Initiator[], bundleId
       // distance = sqrt(2 * (1 - cosine)) (index-vec-repository.ts) — invert it back to cosine.
       const cosine = 1 - (hit.distance * hit.distance) / 2;
       if (cosine < floor) continue;
+      const otherSide = loadSide(other, undefined, "");
+      if (!otherSide || !sameScope(scope, scopeFromFrontmatter(otherSide.frontmatter))) continue;
       const key = pairKey(initiator.ref, other.ref);
       if (seenPairs.has(key)) continue;
       seenPairs.add(key);
@@ -541,10 +555,26 @@ function sideSection(label: string, side: PairSide): string[] {
     `Description: ${asNonEmptyString(side.frontmatter.description) ?? "(none)"}`,
     "Content:",
     "```",
-    stripFrontmatterBody(side.raw).slice(0, PAIR_BODY_TRUNCATE_CHARS),
+    stripFrontmatterBody(side.raw),
     "```",
     "",
   ];
+}
+
+/** Lexical attention hints only: equal token sets do not prove equal claims. */
+function exclusiveTerms(side: PairSide, other: PairSide): string {
+  const tokens = (note: PairSide) =>
+    new Set(
+      `${asNonEmptyString(note.frontmatter.description) ?? ""}\n${stripFrontmatterBody(note.raw)}`
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+  const otherTerms = tokens(other);
+  return JSON.stringify([...tokens(side)].filter((term) => !otherTerms.has(term)));
+}
+
+function termHints(lines: string[]): string {
+  return consolidatePairTerms.replace("{{DIFFERENCES}}", lines.join("\n"));
 }
 
 /** Orders two loaded sides by date (older/newer) for the "A (older)"/"B (newer)" labelling the prompt requires. */
@@ -557,7 +587,18 @@ function orderByAge(x: PairSide, y: PairSide): { older: PairSide; newer: PairSid
 
 /** The user message: dates decide "A (older)" / "B (newer)" (plan Appendix A), matching the calibration sample's own ordering. */
 export function buildPairUserPrompt(older: PairSide, newer: PairSide): string {
-  return [...sideSection("A (older)", older), ...sideSection("B (newer)", newer)].join("\n");
+  // Equal dates (a batch added in one commit, notes from one file time) make neither side newer: say so, or the judge
+  // reads "B (newer)" as proof that B replaces A (#1134).
+  const tied = Date.parse(older.createdIso) === Date.parse(newer.createdIso);
+  return [
+    ...sideSection(tied ? "A (same age as B)" : "A (older)", older),
+    ...sideSection(tied ? "B (same age as A)" : "B (newer)", newer),
+    termHints([
+      `Tokens only in A: ${exclusiveTerms(older, newer)}`,
+      `Tokens only in B: ${exclusiveTerms(newer, older)}`,
+    ]),
+    ...(tied ? [consolidatePairSameAge] : []),
+  ].join("\n");
 }
 
 /** The tombstone-vocabulary reason a judge label maps to (`supersedes` -> `superseded`; the rest unchanged). */
@@ -573,8 +614,7 @@ export interface PairDecision {
 /**
  * The calibrated outcome table (owner grades, replacing plan §5.2's
  * "shorter body" rule): `duplicate`/`supersedes` keep the newer copy;
- * `subsumed` keeps the side the judge did NOT name `redundant` (no proposal
- * if that pointer is missing or invalid). A side is retired only when the
+ * `subsumed` keeps the side opposite the derived `redundant` pointer. A side is retired only when the
  * judge listed nothing that it alone holds.
  */
 export function decideRetirement(
@@ -594,7 +634,7 @@ export function decideRetirement(
 
 /** Transport override for tests (matches `CallStructuredRequest["chat"]`); production callers leave it unset. */
 export type PairJudgeChat = (
-  connection: LlmConnectionConfig,
+  connection: ChatCompletionConfig,
   messages: ChatMessage[],
   options?: ChatCompletionOptions,
 ) => Promise<string>;
@@ -645,7 +685,7 @@ function checkSection(label: string, side: PairSide): string {
     `Description: ${asNonEmptyString(side.frontmatter.description) ?? "(none)"}`,
     "Content:",
     "```",
-    stripFrontmatterBody(side.raw).slice(0, PAIR_BODY_TRUNCATE_CHARS),
+    stripFrontmatterBody(side.raw),
     "```",
     "",
   ].join("\n");
@@ -659,15 +699,12 @@ function checkSection(label: string, side: PairSide): string {
  */
 async function confirmNothingLost(ctx: PairPassContext, retired: PairSide, successor: PairSide): Promise<boolean> {
   const outcome = await callStage({
-    feature: "memory_consolidation",
     runner: ctx.llmRunner,
     system: consolidatePairCheckPrompt,
-    prompt: `${checkSection("X (to delete)", retired)}\n${checkSection("Y (kept)", successor)}`,
-    gate: { config: ctx.config, enabled: true },
+    prompt: `${checkSection("X (to delete)", retired)}\n${checkSection("Y (kept)", successor)}\n${termHints([`Tokens only in X: ${exclusiveTerms(retired, successor)}`])}${Date.parse(retired.createdIso) === Date.parse(successor.createdIso) ? `\n${consolidatePairSameAge}` : ""}`,
     request: {
       responseSchema: PAIR_CHECK_JSON_SCHEMA,
       enableThinking: false,
-      ...(Object.hasOwn(ctx.llmRunner, "timeoutMs") ? { timeoutMs: ctx.llmRunner.timeoutMs } : {}),
       signal: ctx.opts.signal,
       ...(ctx.chat ? { chat: ctx.chat } : {}),
     },
@@ -688,6 +725,14 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   const otherSide = loadSide(candidate.other, ctx.gitFirstAdded, ctx.stashDir);
   if (!initiatorSide || !otherSide) return { failed: false }; // unreadable since selection — skip, not a judge failure
 
+  const judgedScope = scopeFromFrontmatter(initiatorSide.frontmatter);
+  if (!sameScope(judgedScope, scopeFromFrontmatter(otherSide.frontmatter))) return { failed: false };
+  const scopesStillFresh = (): boolean =>
+    [initiatorSide, otherSide].every((side) => {
+      const live = loadSide(side.asset, ctx.gitFirstAdded, ctx.stashDir);
+      return live !== undefined && sameScope(judgedScope, scopeFromFrontmatter(live.frontmatter));
+    });
+
   // Item 0 / S1: this exact pair (same two refs, same two content hashes,
   // EITHER orientation) was already judged and rejected OR reverted. Checked
   // HERE, before the judge call, not after — the judge (not yet run) is what
@@ -706,15 +751,12 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   const { older, newer } = orderByAge(initiatorSide, otherSide);
 
   const outcome = await callStage({
-    feature: "memory_consolidation",
     runner: ctx.llmRunner,
     system: consolidatePairPrompt,
     prompt: buildPairUserPrompt(older, newer),
-    gate: { config: ctx.config, enabled: true },
     request: {
       responseSchema: PAIR_JUDGE_JSON_SCHEMA,
       enableThinking: false,
-      ...(Object.hasOwn(ctx.llmRunner, "timeoutMs") ? { timeoutMs: ctx.llmRunner.timeoutMs } : {}),
       signal: ctx.opts.signal,
       ...(ctx.chat ? { chat: ctx.chat } : {}),
     },
@@ -741,9 +783,6 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   }
 
   // Guards (plan §5.2 step 4 / brief §A "Guards").
-  if (retired.asset.type === "memory" && isHotCapturedMemory(retired.asset.filePath)) {
-    return { failed: false }; // never propose retiring a captureMode: hot memory — leave the pair alone
-  }
   if (retired.asset.type === "memory" && retired.asset.name.endsWith(DERIVED_SUFFIX)) {
     // S3: derive the parent path from the FULL file path, not from name +
     // dirname — for a subfolder memory (e.g. memories/sub/foo.derived) the
@@ -760,7 +799,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   // durable half).
   const retiredKey = stripBundle(retired.asset.ref);
   const successorKey = stripBundle(successor.asset.ref);
-  // Must-fix 1 (third review round): a retire-worthy verdict the same-run
+  // A retire-worthy verdict the same-run
   // chain guard drops is not a settled "no action" — a LATER run, once the
   // conflicting retirement has been reviewed, may well mint it. Counted as
   // failed so its initiator gets no row (real data: night 1 alone judged 177
@@ -788,7 +827,9 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     ledgerAccess: { proposalsCtx: ctx.opts.proposalsCtx },
     search: ctx.continuitySearch,
   });
+  if (!scopesStillFresh()) return { failed: true };
   const retirement: RetirementMetadata = {
+    judgedScope,
     retiredRef: retired.asset.ref,
     successorRef: successor.asset.ref,
     cosine: candidate.cosine,
@@ -833,7 +874,8 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     if (
       (verdict.relation !== "duplicate" || verdict.onlyInA.length + verdict.onlyInB.length === 0) &&
       !continuityRisk &&
-      (await confirmNothingLost(ctx, retired, successor))
+      (await confirmNothingLost(ctx, retired, successor)) &&
+      scopesStillFresh()
     ) {
       recordGateDecision(
         ctx.stashDir,
@@ -852,7 +894,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     ctx.warnings.push(
       `Pair pass: could not mint a retire proposal for ${retired.asset.ref}: ${error instanceof Error ? error.message : String(error)}`,
     );
-    // Must-fix 1: a mint failure is transient (a lock, a disk error, a
+    // A mint failure is transient (a lock, a disk error, a
     // validation hiccup) — treated the same as a same-run drop, so no row is
     // written and the pair is retried next run instead of abandoned.
     return { failed: true };
@@ -871,8 +913,8 @@ const emptyLabelCounts = (): Record<ConsolidatePairJudgeLabel, number> => ({
 /**
  * The pair pass (alpha.9): initiators -> candidates -> one judge call per
  * pair -> retire proposals for the calibrated classes. Runs alongside the
- * promote pass, sharing its gate, its frozen LLM runner and its engine
- * concurrency. `bundleId` is the target bundle's id (`undefined` skips the
+ * promote pass, sharing its gate, its frozen LLM runner and its
+ * connection's concurrency. `bundleId` is the target bundle's id (`undefined` skips the
  * pass — nothing to scope candidates to).
  */
 export async function runConsolidatePairPass(
@@ -899,13 +941,14 @@ export async function runConsolidatePairPass(
   let candidates: PairCandidate[];
   let gitFirstAdded: ReadonlyMap<string, number> | undefined;
   let db: ReturnType<typeof openExistingDatabase> | undefined;
+  const unvectored = new Set<string>();
   try {
     db = opts.dryRun ? openReadonlyExistingDatabase(undefined, { isolatedSnapshot: true }) : openExistingDatabase();
     if (!db) return empty;
     gitFirstAdded = loadGitFirstAddedMap(stashDir);
     const pool = loadPairPassPool(db, bundleId);
     initiators = selectInitiators(pool, opts, stashDir, gitFirstAdded).initiators;
-    candidates = selectCandidates(db, initiators, bundleId);
+    candidates = selectCandidates(db, initiators, bundleId, unvectored);
   } catch (error) {
     warnings.push(
       `Pair pass: index unavailable — skipped (${error instanceof Error ? error.message : String(error)}).`,
@@ -915,6 +958,11 @@ export async function runConsolidatePairPass(
     if (db) closeDatabase(db);
   }
   const initiatorsBacklog = initiators.filter((i) => i.backlog).length;
+  if (unvectored.size > 0) {
+    warnings.push(
+      `Pair pass: ${unvectored.size} asset(s) have no stored embedding, so their neighbours cannot be found and they were not judged. The pair pass needs stored embeddings (set semanticSearchMode to "auto" in the config, then run akm index).`,
+    );
+  }
 
   // Never judge a pair when either side already has a pending retire
   // proposal, as the retired ref OR its successor (B2 widens this from the
@@ -935,7 +983,7 @@ export async function runConsolidatePairPass(
 
   const rejectedPairKeys = loadRejectedPairKeys(stashDir, opts.proposalsCtx);
 
-  // Blocker 2: admit WHOLE initiators under MAX_PAIRS_PER_RUN, never
+  // Admit WHOLE initiators under MAX_PAIRS_PER_RUN, never
   // individual pairs — the old flat "top 300 candidates by cosine" cap let a
   // pending-blocked pair spend a budget slot doing nothing, and left
   // whichever initiators landed past slot 300 partially judged forever (no
@@ -991,25 +1039,19 @@ export async function runConsolidatePairPass(
   };
 
   let failedJudgments = 0;
-  // Should-fix 3: an initiator with any failed (or never-sent) judge call
+  // An initiator with any failed (or never-sent) judge call
   // gets no ledger row — a failure attempted nothing conclusive, so writing
   // one would mean the pair is never retried.
   const failedInitiators = new Set<string>();
   if (judgeable.length > 0) {
-    // The promote pass validates opts.llmRunner's credentials once, but only
-    // when it has memories to dispatch — the pair pass can still have work
-    // when that pool is empty, so it validates independently before its
-    // first real dispatch. A test-injected chat seam bypasses the transport
-    // entirely and needs no credential.
-    if (!seams.chat) assertRunnerCredentials(llmRunner);
     const results = await concurrentMap(
       judgeable,
       (candidate) => judgeOne(ctx, candidate),
-      runnerLlmConnection(llmRunner)?.concurrency ?? 1,
+      (llmRunner.kind === "connection" ? llmRunner.concurrency : undefined) ?? 1,
       { signal: opts.signal },
     );
     results.forEach((r, idx) => {
-      // Must-fix 3: `concurrentMap` leaves an entry `undefined` for a call an
+      // `concurrentMap` leaves an entry `undefined` for a call an
       // aborted run never sent at all — `r?.failed === true` reads that as
       // `undefined === true` (false), so an unsent call counted as a clean
       // "no action" verdict. Explicit `undefined` check closes that gap.
@@ -1024,7 +1066,7 @@ export async function runConsolidatePairPass(
   // candidates were admitted (whole-initiator admission above makes this a
   // simple membership check: judgeable either has every one of an
   // initiator's candidates, or none of them) and none of them failed
-  // (should-fix 3) — including an initiator with zero candidates, which
+  // — including an initiator with zero candidates, which
   // trivially satisfies both. One left out by the cap or a pending-proposal
   // collision gets no row at all, so the next run reconsiders it rather
   // than treating it as settled.
@@ -1032,6 +1074,8 @@ export async function runConsolidatePairPass(
     const admittedRefs = new Set(judgeable.map((c) => c.initiator.ref));
     const ledgerInputs = initiators
       .filter((i) => {
+        // No stored vector: the neighbour query never ran, so nothing was judged. Leave it unsettled.
+        if (unvectored.has(i.ref)) return false;
         const hasCandidates = byInitiator.has(i.ref);
         if (!hasCandidates) return true;
         if (!admittedRefs.has(i.ref)) return false;
@@ -1051,7 +1095,7 @@ export async function runConsolidatePairPass(
     initiators: initiators.length,
     initiatorsBacklog,
     pairsConsidered: candidates.length,
-    // Must-fix 3: parsed verdicts only — judgeable.length counted pairs that
+    // Parsed verdicts only — judgeable.length counted pairs that
     // were admitted, not pairs a verdict actually came back for.
     pairsJudged: judgeable.length - failedJudgments,
     labelCounts: ctx.labelCounts,

@@ -10,12 +10,12 @@
  * zero lines here — the walker handles get/set/unset/coercion uniformly.
  *
  * `configVersion` is controlled by the config lifecycle. All execution
- * settings use their canonical engine/strategy paths; retired aliases are not
+ * settings use their canonical connection, harness and strategy paths; retired aliases are not
  * rewritten at this boundary.
  */
 import { isDeepStrictEqual } from "node:util";
 import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
-import { isRecord, resolveStashDir } from "../core/common";
+import { isRecord } from "../core/common";
 import {
   type AkmConfig,
   DEFAULT_CONFIG,
@@ -24,10 +24,12 @@ import {
   mutateConfig,
   parseAndValidateConfigText,
   resolveConfigRefSource,
+  unusableEntryAt,
 } from "../core/config/config";
 import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
+import { isEnvReference } from "../core/config/schema/primitives";
 import { UsageError } from "../core/errors";
-import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "../core/paths";
+import { getConfigPath } from "../core/paths";
 import { formatRegistryUrl } from "../core/registry-url";
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -45,21 +47,19 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
 }
 
 export function listConfig(config: AkmConfig): Record<string, unknown> {
-  // 0.9.0 (spec §10.1): sources live in `bundles` (spread from config); the
+  // Sources live in `bundles` (spread from config); the
   // retired top-level `sources[]` array is no longer surfaced.
   return redactConfigValue({ ...DEFAULT_CONFIG, ...config }) as Record<string, unknown>;
 }
 
 function redactConfigValue(value: unknown, path: string[] = []): unknown {
+  if (path.at(-1) === "apiKey" && typeof value === "string" && !isEnvReference(value)) return undefined;
   if (typeof value === "string" && isRegistryUrlPath(path)) return formatRegistryUrl(value);
   if (Array.isArray(value)) return value.map((child, index) => redactConfigValue(child, [...path, String(index)]));
   if (!value || typeof value !== "object") return value;
   const result: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (
-      key !== "apiKey" ||
-      (typeof child === "string" && /^\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$/.test(child))
-    ) {
+    if (key !== "apiKey" || (typeof child === "string" && isEnvReference(child))) {
       result[key] = redactConfigValue(child, [...path, key]);
     }
   }
@@ -149,30 +149,9 @@ export const configCommand = defineGroupCommand({
   meta: { name: "config", description: "Show and manage configuration" },
   subCommands: {
     path: defineJsonCommand({
-      meta: { name: "path", description: "Show paths to config, bundle, cache, and index" },
-      args: {
-        all: { type: "boolean", description: "Show all paths (config, bundle, cache, index)", default: false },
-      },
-      run({ args }) {
-        const configPath = getConfigPath();
-        if (args.all) {
-          let stashDir: string;
-          try {
-            stashDir = resolveStashDir();
-          } catch {
-            stashDir = `${getDefaultStashDir()} (not initialized)`;
-          }
-          const cacheDir = getCacheDir();
-          const result = {
-            config: configPath,
-            bundle: stashDir,
-            cache: cacheDir,
-            index: getDbPath(),
-          };
-          output("config", result);
-        } else {
-          console.log(configPath);
-        }
+      meta: { name: "path", description: "Print the path to the config file" },
+      run() {
+        console.log(getConfigPath());
       },
     }),
     list: defineJsonCommand({
@@ -253,6 +232,17 @@ export const configCommand = defineGroupCommand({
             `Config key "${args.key}" is inherited from ${source} and cannot be unset here.`,
             "TARGET_NOT_UPDATABLE",
             `Override it locally with "akm config set ${args.key} <value>", or edit the base file directly.`,
+          );
+        }
+        // An entry the reader drops is not in the config `unsetConfigValue` sees, so it would no-op and say ok.
+        const ignored = unusableEntryAt(args.key);
+        if (ignored) {
+          throw new UsageError(
+            `Config key "${args.key}" is inside ${ignored.kind} "${ignored.name}", which akm ignores (${ignored.why}), so \`akm config\` cannot edit it.`,
+            "TARGET_NOT_UPDATABLE",
+            ignored.inFile
+              ? `Remove or fix the ${ignored.group}.${ignored.name} entry in ${getConfigPath()} by hand.`
+              : `${getConfigPath()} is still in the retired engines form: run \`akm migrate apply\` first, then fix or remove the entry.`,
           );
         }
         const result = mutateConfig((current) => unsetConfigValue(current, args.key), { absentNoop: true });

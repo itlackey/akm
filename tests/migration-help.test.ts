@@ -133,6 +133,10 @@ describe("migration help", () => {
     // Fallback lists the bundled versions so users can pick one that exists.
     expect(result).toContain("Available bundled notes:");
     expect(result).toContain("0.6.0");
+    // The longform guide it points at is a file that exists in the repo.
+    const longform = result.match(/Longform migration guide: https:\/\/github\.com\/itlackey\/akm\/blob\/main\/(\S+)/);
+    expect(longform?.[1]).toBeDefined();
+    expect(fs.existsSync(path.join(PROJECT_ROOT, longform?.[1] ?? "missing"))).toBe(true);
   });
 
   test("rejects unsafe version components (path traversal guard)", () => {

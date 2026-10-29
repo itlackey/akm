@@ -23,11 +23,10 @@ path is therefore the one facet you **cannot express twice and cannot change
 without breaking the ref** — so spend it deliberately, on exactly one axis.
 
 Retrieval is search, not browse: no one walks these folders at query time. A
-subdirectory buys you three things: its tokens are indexed as part of the
-asset's **name** (the highest-weighted search field), they are auto-added to
-`tags` (even when you set `tags` explicitly), and for scope-born types a slug
-matching the current repo's name earns an automatic in-project ranking boost.
-Every other facet belongs in frontmatter, where the index can actually read it.
+subdirectory buys you two things: its tokens are indexed as part of the
+asset's **name**, and they are auto-added to `tags` (even when you set `tags`
+explicitly). Search weighs every indexed field equally. Every other facet
+belongs in frontmatter, where the index can actually read it.
 
 ## Choose the partition axis by asset TYPE, not per-asset judgment
 
@@ -38,9 +37,8 @@ differently and bake the wrong guess into an immutable ref. Decide by type:
   `memory`, `lesson`, `task`, `env`, `secret`. These are born bound to the work
   in front of you, so the working context *is* the answer — no judgment needed.
   When the scope is a single repo, use its repo/package name as the slug (as
-  `git remote`/package.json spell it) — ranking auto-boosts assets whose name
-  or tags match the current repo. Client/team slugs get no such boost; just
-  reuse the existing spelling.
+  `git remote`/package.json spell it). For a client or team slug, reuse the
+  existing spelling.
   - `memories/projectA/auth-token-refresh`
   - `lessons/clientX/migration-rollback-gotcha`
   - `secrets/clientX/api-key`
@@ -58,11 +56,8 @@ differently and bake the wrong guess into an immutable ref. Decide by type:
   the type root — if any single project would break when it changes, it is
   scope-born.
 
-**Why reuse types don't take the project axis:** project relevance is already
-recovered at query time — AKM blends a per-project usage signal into ranking
-(scoped utility, keyed off the current repo, not the asset's path). Free the
-scarce path segment for the domain — the *only* handle that co-locates
-cross-project reuse.
+**Why reuse types don't take the project axis:** free the scarce path segment
+for the domain — the *only* handle that co-locates cross-project reuse.
 
 ## Placement rules
 
@@ -86,16 +81,15 @@ cross-project reuse.
   (`acme` vs `acme-corp`) so the prefix does not fragment. Keep the domain
   vocabulary in `facts/conventions/domains`.
 - **Off-axis facets go in `tags:`, not a bare field.** The indexed FTS fields are
-  name, description, tags, hints, and bounded low-weight body content — there is **no `project`
+  name, description, tags, hints, and bounded body content — there is **no `project`
   field**, so `project: projectA` in
   frontmatter is invisible to search. Put the off-axis facet in `tags` instead
   (a project-scoped memory adds `tags: [auth]`; a domain-scoped asset genuinely
   tied to a project adds `tags: [projectA]` sparingly).
 - **Directory tokens join `tags` on their own.** The scope/domain segments of
   the path are always auto-added to `tags` — even when you set `tags`
-  explicitly — so there is no need to restate them; the tag-match ranking
-  boost fires for the scope token either way. Filename tokens are auto-added
-  only when `tags` is empty.
+  explicitly — so there is no need to restate them. Filename tokens are
+  auto-added only when `tags` is empty.
 
 ## Renames and evolution
 

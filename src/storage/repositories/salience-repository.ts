@@ -264,3 +264,21 @@ export function countAssetSalienceMissing(db: Database): number {
   };
   return row.n;
 }
+
+/**
+ * Rewrite every `asset_salience.asset_ref` naming `oldBundleId` to
+ * `newBundleId` (`akm bundle rename`). A legacy unqualified ref is not matched
+ * by the `<old>//` prefix and is left alone. A row already at the new ref can only
+ * be an orphan of a removed bundle by that name; the renamed bundle's row
+ * replaces it. Returns the number of rows rewritten.
+ */
+export function renameAssetSalienceRefs(db: Database, oldBundleId: string, newBundleId: string): number {
+  const prefix = `${oldBundleId}//`;
+  return Number(
+    db
+      .prepare(
+        `UPDATE OR REPLACE asset_salience SET asset_ref = ? || substr(asset_ref, length(?) + 1) WHERE substr(asset_ref, 1, length(?)) = ?`,
+      )
+      .run(newBundleId, oldBundleId, prefix, prefix).changes,
+  );
+}

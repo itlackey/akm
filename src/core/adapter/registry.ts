@@ -48,7 +48,7 @@ export function getAdapters(): BundleAdapter[] {
   return [...BUILTIN_ADAPTERS];
 }
 
-/** Look up an adapter by its own `id` (matches `BundleComponent.adapter`); `undefined` for an unknown id (spec §4 — caller skips + warns). */
+/** Look up an adapter by its own `id` (matches `BundleComponent.adapter`); `undefined` for an unknown id (the caller skips + warns). */
 export function adapterForId(id: string): BundleAdapter | undefined {
   return BY_ID.get(id);
 }

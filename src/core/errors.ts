@@ -41,10 +41,11 @@ export type ConfigErrorCode =
   | "DATA_DIR_NOT_WRITABLE"
   | "INDEX_SCHEMA_INCOMPATIBLE"
   | "LLM_NOT_CONFIGURED"
+  | "AGENT_NOT_CONFIGURED"
+  // A connection or harness was named (a flag, an asset, a config key) that is not configured: never replaced by a default.
+  | "SELECTION_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
   | "UNKNOWN_IMPROVE_STRATEGY"
-  | "DANGEROUS_ENV_AUDIT_FAILED"
-  | "EXECUTION_NOT_AUTHORIZED"
   // Refused stashDir that would clobber a sensitive system path or the user's
   // home directory (#473). Triggered by `akm bundle create`/`akm setup` when the
   // explicit `--dir` argument resolves to e.g. `/`, `$HOME`, `~/.config`,
@@ -62,7 +63,7 @@ export type ConfigErrorCode =
   // contract, filesystem permissions, or leftover upgrade state). The error
   // message carries the specific remediation.
   | "UPGRADE_BLOCKED"
-  // A `secret://<name>` apiKey reference did not resolve to a stored value —
+  // A `${ref}` apiKey reference did not resolve to a stored value —
   // the named secret does not exist, or no store-backed resolver was wired at
   // the call site.
   | "SECRET_REFERENCE_UNRESOLVED"
@@ -76,7 +77,6 @@ export type UsageErrorCode =
   | "INVALID_SOURCE_VALUE"
   | "INVALID_FORMAT_VALUE"
   | "INVALID_DETAIL_VALUE"
-  | "INVALID_SHAPE_VALUE"
   | "INVALID_JSON_CONFIG_VALUE"
   | "INVALID_JSON_ARGUMENT"
   | "MISSING_REQUIRED_ARGUMENT"
@@ -84,6 +84,8 @@ export type UsageErrorCode =
   | "TARGET_NOT_UPDATABLE"
   | "PATH_ESCAPE_VIOLATION"
   | "RESOURCE_ALREADY_EXISTS"
+  /** A conditional Markdown write was based on an older or removed source. */
+  | "ASSET_CONTENT_CHANGED"
   | "TASK_SCHEMA_VERSION_UNSUPPORTED"
   | "INVALID_PROPOSAL"
   | "NON_INTERACTIVE_REQUIRES_YES"
@@ -96,14 +98,11 @@ export type UsageErrorCode =
   // "successfully" and exit 0 — a `--fail-on-flaged`
   // in CI meant the gate never fired.
   | "UNKNOWN_FLAG"
-  // P1a (docs/plans/specs/p1a-with-rejection-classifier.md §2.1, D7): a
-  // workflow step authors with: on a target that cannot bind it. The
-  // authored mapping used to be silently dropped at freeze; now it is
-  // rejected instead (the fail-closed correction). P2b
-  // (docs/plans/specs/p2b-input-bindings.md §1.7 A-N5) narrows this to a
-  // tasks/<ref> target that declares no inputs: at all, and grows it to
-  // commands/<ref> and scripts/<ref> targets, which are never binding
-  // surfaces. Thrown from src/workflows/freeze/targets/task.ts's
+  // A workflow step authors with: on a target that cannot bind it: a
+  // tasks/<ref> target that declares no inputs: at all, or a commands/<ref> or
+  // scripts/<ref> target, which are never binding surfaces. The authored mapping
+  // is rejected rather than silently dropped at freeze (fail-closed). Thrown from
+  // src/workflows/freeze/targets/task.ts's
   // taskDispatch and src/workflows/freeze/freeze.ts's resolveStep.
   | "COMPOSITION_INVALID"
   // P1a: the sourceError funnel in src/tasks/source-v3.ts, re-coded from
@@ -121,16 +120,9 @@ export type UsageErrorCode =
   // P1a: declared only in this phase — wired in P2b when with: bindings are
   // validated against a target's declared inputs.
   | "INPUT_BINDING_INVALID"
-  // P1b (docs/plans/specs/p1b-model-extraction.md, diagnostic-codes ratchet
-  // remedy): originated in the now-deleted src/tasks/source/parse-v3-adapter.ts's
-  // taskDefinitionFromV3, which rejected a validly-parsed task-v3 `uses:`
-  // kind (builtin-command) that had no representation in P1b's closed
-  // TaskDefinitionTarget vocabulary. Distinct from INVALID_FLAG_VALUE: the
-  // input is not malformed, it is a recognized construct the target model
-  // does not model. The code and its hint survive that adapter's P4 deletion
-  // (spec docs/plans/specs/p4-deletions-closeout.md §3.2.7); §5.2 gives it a
-  // live consumer in `prepare/script-capture.ts`'s interpreter rejections
-  // (a later commit in this same phase — not yet wired as of this file).
+  // A recognized construct the target model does not model — distinct from
+  // INVALID_FLAG_VALUE, where the input is malformed. Thrown by
+  // `prepare/script-capture.ts`'s interpreter rejections.
   | "TASK_TARGET_UNSUPPORTED";
 
 /**
@@ -198,7 +190,6 @@ export type NotFoundErrorCode =
   | "SOURCE_NOT_FOUND"
   | "WORKFLOW_NOT_FOUND"
   | "PROPOSAL_NOT_FOUND"
-  | "DANGEROUS_ENV_KEY"
   | "FILE_NOT_FOUND"
   | "IMPROVE_RUN_NOT_FOUND"
   // The registry answered, but not with the thing asked for: HTTP 404/410, or
@@ -226,21 +217,23 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   INDEX_SCHEMA_INCOMPATIBLE:
     "Run `akm index --full` to rebuild the derived index from the currently materialized sources.",
   LLM_NOT_CONFIGURED:
-    'Run `akm setup` or configure an `engines` entry with `kind: "llm"`, then select it with `defaults.llmEngine`.',
+    "Run `akm setup` to add a connection (an OpenAI-compatible endpoint) or enable a harness; model features need one.",
+  AGENT_NOT_CONFIGURED: "Run `akm setup` to enable a harness or add a connection; agent work needs one.",
+  SELECTION_NOT_CONFIGURED:
+    "Name one that is configured (`akm health` lists them), correct the name, or add it with `akm setup --name <name> --endpoint <url>` (a connection) or `akm setup --harness <name>`.",
   TEST_ISOLATION_MISSING:
     "Under bun test, when AKM_BUNDLE_DIR is set you MUST also set XDG_DATA_HOME (or AKM_DATA_DIR) and XDG_STATE_HOME (or AKM_STATE_DIR) to temp directories so the test does not touch the developer's real ~/.local/share/akm or ~/.local/state/akm.",
   UNSAFE_STASH_DIR:
     "Choose a path inside your home directory (e.g. ~/akm) or another empty workspace. The bundle directory cannot be the filesystem root, your home directory itself, or a sensitive system path like /etc, /var, ~/.config, or ~/.ssh.",
   UNKNOWN_IMPROVE_STRATEGY:
     "Pass one of the listed strategy names to `--strategy`, or define it under `improve.strategies`. Names are case-sensitive.",
-  EXECUTION_NOT_AUTHORIZED: "Change the selected tools or update the machine/user execution policy, then retry.",
   SECRET_REFERENCE_UNRESOLVED:
-    "Check the secret exists (`akm secret list`) and the name after `secret://` matches, or run `akm secret set <name> <value>` to store it.",
+    "Check the secret exists (`akm secret list`) and the ref inside `${…}` matches it, or run `akm secret set secrets/<name>` to store it.",
   REGISTRY_URL_INVALID:
     "Registry URLs must be credential-free http(s) URLs. Fix the entry with `akm registry list` / `akm registry add`, or the AKM_REGISTRY_URL / AKM_NPM_REGISTRY variable that supplied it.",
 };
 
-// Code-review finding: COMPOSITION_INVALID covers several unrelated causes
+// COMPOSITION_INVALID covers several unrelated causes
 // (a rejected with:, a multi-job source, a composition cycle/depth/size
 // violation, an invalid child-output reference). USAGE_HINTS below carries
 // only the with:-rejection text — accurate for every with:-rejection throw
@@ -261,9 +254,7 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   INVALID_FLAG_VALUE: "Run `akm <command> --help` to see accepted values.",
   INVALID_SOURCE_VALUE: "Pick one of: local, registry, all, or a configured source name.",
   INVALID_FORMAT_VALUE: "Pick one of: json, jsonl, yaml, text, md, html.",
-  INVALID_DETAIL_VALUE: "Pick one of: brief, normal, full. For agent/summary projections use --shape.",
-  INVALID_SHAPE_VALUE:
-    "Pick one of: human, agent, summary (summary falls back to agent, with a warning, on commands with no summary projection).",
+  INVALID_DETAIL_VALUE: "Pick one of: brief, normal, full, agent.",
   INVALID_JSON_CONFIG_VALUE:
     'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.',
   MISSING_OR_AMBIGUOUS_TARGET:
@@ -273,15 +264,11 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
     "Refs use the form [bundle//]conceptId, e.g. `akm show knowledge/guide.md` or `akm show skills/deploy`.",
   UNKNOWN_COMMAND: "Run `akm --help` to see available commands.",
   UNKNOWN_FLAG: "Run the command with `--help` to see its accepted flags.",
-  // P2b (docs/plans/specs/p2b-input-bindings.md §1.7 A-N5, §7 F-A3): the
-  // "arrives in a later 0.9.x release" promise is gone now that task-call
-  // inputs are implemented. Names the two real rejection causes instead:
-  // (1) a task target that declares no inputs: at all, (2) commands/<ref> /
-  // scripts/<ref>, which are never binding surfaces. F-A3 authorizes this
-  // edit and the matching pinned-string update in
-  // tests/core/errors-usage-hints.test.ts in the same commit.
+  // Names the two real rejection causes: (1) a task target that declares no
+  // inputs: at all, (2) commands/<ref> / scripts/<ref>, which are never binding
+  // surfaces.
   //
-  // Code-review finding: this default is reached ONLY by with:-rejection
+  // This default is reached ONLY by with:-rejection
   // throw sites (the ones above, plus task.ts's noDeclaredInputsError and
   // freeze.ts's resolveStep) — every other
   // COMPOSITION_INVALID throw site (multi-job source, composition
@@ -294,10 +281,7 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   TASK_SOURCE_INVALID: "Fix the task source at the reported path and line, then re-run.",
   TARGET_REF_INVALID:
     "Targets are canonical asset refs: `commands/review`, `scripts/build.sh`, `tasks/nightly`, `workflows/release`.",
-  // P4 (docs/plans/specs/p4-deletions-closeout.md §4.1, row B-53, R-R5): the
-  // original hint named `akm workflow validate`, a verb that was never
-  // implemented. Points at the two verbs that actually inspect a workflow
-  // source without executing it.
+  // Points at the two verbs that inspect a workflow source without executing it.
   WORKFLOW_SOURCE_INVALID:
     "Run `akm lint` to see the failing source location, or `akm workflow plan <ref>` to compile it without writing.",
   INPUT_BINDING_INVALID: "Check the step's with: keys against the target's declared inputs.",

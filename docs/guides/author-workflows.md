@@ -1,7 +1,7 @@
 # Author's Guide: Writing Workflows
 
-This guide walks through writing and testing a workflow definition: choosing a
-source format, the Markdown structure, a minimal complete example, common authoring mistakes,
+This guide walks through writing and testing a workflow definition: the
+Markdown structure, a minimal complete example, common authoring mistakes,
 and how to verify gates and outputs before you publish. It assumes you
 already know what a workflow is; for the exhaustive, exact-syntax reference
 — every frontmatter key, the reference grammar, gates, and outputs — see
@@ -10,17 +10,11 @@ it's written, see [Running Workflows](../guides/run-workflows.md).
 
 ## Start from the template
 
-Authors can choose peer Markdown or GitHub-shaped YAML sources. Markdown is
-the full AKM authoring format: OKF-conformant frontmatter carries the
-orchestration graph and its body carries instructions and gate rubrics.
-GitHub-shaped YAML is a strict local subset for interoperability. Read the
-[authoritative YAML subset](../reference/workflow-schema.md#github-shaped-yaml-subset)
-before translating an Actions-shaped file; AKM does not accept arbitrary
-GitHub semantics. `.yaml` is not recognized—use `.yml`.
+A workflow is a Markdown file: OKF-conformant frontmatter carries the
+orchestration graph and the body carries instructions and gate rubrics.
 
-Use `akm workflow create --print` to print a valid Markdown starter, then edit
-it and register it with `akm workflow create`. Author a YAML source directly
-under `workflows/<name>.yml` and validate either source with `akm lint`:
+Use `akm workflow create --print` to print a valid starter, then edit it and
+register it with `akm workflow create`. Validate with `akm lint`:
 
 ```sh
 akm workflow create my-release --print   # Print the template, without writing
@@ -28,10 +22,9 @@ akm workflow create my-release --from ./my-release.md
 akm lint --type workflows                # Check for structural errors before using it
 ```
 
-Both formats compile to the same workflow plan. Choose Markdown for maps, routes,
-gates, typed artifacts, and prose-rich agent instructions. Choose the bounded
-YAML subset for a single local self-hosted job made of token-safe `run` and
-supported local `uses` steps.
+Markdown is the only workflow format. The GitHub-shaped `.yml` format was
+removed in 0.10: a `.yml` file under `workflows/` is skipped at index time with
+a warning that it must use `.md`.
 
 ## A minimal complete example
 
@@ -66,14 +59,14 @@ attached to this unit as input. Fix any failures before proceeding.
 ```
 
 Walking through it: `validate` and `build` are both bare unit steps — neither
-declares `unit:`, `map:`, or `route:`, so each is "still a unit step," the
+declares `unit:` or `map:`, so each is "still a unit step," the
 minimal declaration. `build` names `steps.validate.output` in `inputs:`, so
 the engine attaches `validate`'s result to `build`'s dispatched context, and
 `build`'s own re-dispatch on a resumed run is keyed to that exact slice — not
 the whole run. `validate` has a `### gate`; `build` does not, so `build`
 completes as soon as its unit succeeds, with no verification pass.
 
-For a richer example — fan-out with `map`, `route`-based branching, retries,
+For a richer example — fan-out with `map`, retries,
 and a run `budget` — see
 [Workflow Schema: Richer example](../reference/workflow-schema.md#richer-example).
 
@@ -157,17 +150,64 @@ step artifact becomes a validated structure:
 stdout must then be **exactly one JSON value** — no log noise around it — and
 downstream steps can address `steps.test.output.failed`.
 
+### Agent in, exec out
+
+A common pair is an agent step that writes something and an exec step that
+acts on it. Give each unit its own `output` schema:
+
+```yaml
+steps:
+  - id: draft
+    unit:
+      output:
+        type: object
+        required: [status, markdown]
+        additionalProperties: false
+        properties:
+          status: { type: string, enum: [done, blocked] }
+          markdown: { type: string, minLength: 1 }
+  - id: publish
+    inputs: [steps.draft.output]
+    unit:
+      exec:
+        command: ["node", "publish.mjs"]
+      output:
+        type: object
+        required: [posted]
+        properties:
+          posted: { type: boolean }
+```
+
+The command is an argv array, so nothing is spliced into it. `publish.mjs`
+reads the draft from `AKM_INPUTS`, a JSON object keyed by each `inputs:`
+reference string exactly as written, and prints one JSON value that matches
+its own `unit.output`:
+
+```js
+const inputs = JSON.parse(process.env.AKM_INPUTS ?? "{}");
+const draft = inputs["steps.draft.output"];
+// ...post draft.markdown; log to stderr, never stdout...
+process.stdout.write(JSON.stringify({ posted: draft.status === "done" }));
+```
+
+The rule: a **unit schema** (`unit.output`) types that unit's result. A
+**step schema** (step-level `output:`) validates the promoted step artifact,
+which for a `map` step is the reducer's result. On a solo step with no
+`unit.output`, a step-level `output:` is also used as the unit's schema;
+writing it under `unit:` says so explicitly.
+
+An agent that cannot do the work still "succeeds": it returns something that
+fits the schema, such as `status: blocked`, and the step completes. If the run
+must stop when the work was not done, make the unit schema require evidence
+of the work, such as a required non-null string with `minLength: 1` (a URL, a
+path, a commit id) that the agent can only fill by doing it.
+
 ### What the command can see
 
-The child does **not** inherit your environment. It starts empty and gets a
-small default allowlist — `PATH`, `HOME`, the locale/temp/identity variables,
-and the Windows essentials (`SystemRoot`, `COMSPEC`, `PATHEXT`, …) that
-process creation itself needs — then your `env:` bindings, then the `AKM_*`
-context variables. Ordinary commands (`bun`, `git`, `make`, `cargo`) work
-unchanged; an unrelated `SOME_OTHER_SERVICE_TOKEN` sitting in the shell that
-ran `akm workflow run` does not reach them.
-
-Widen it only by naming what the unit needs:
+The command inherits your environment, as it would typed in your shell: `PATH`,
+`HOME`, the toolchain variables and any credential of the process that ran `akm
+workflow run` reach it. Then come your `env:` bindings, then the `AKM_*` context
+variables. Ordinary commands (`bun`, `git`, `make`, `cargo`) work unchanged.
 
 ```yaml
   - id: build
@@ -175,44 +215,74 @@ Widen it only by naming what the unit needs:
       env: [env/build]
       exec:
         command: ["cargo", "build", "--release"]
-        pass_env: [CARGO_HOME, SCCACHE_DIR]   # a few extra names
 ```
 
-`pass_env:` is for a **per-machine** variable an `env:` binding cannot express
-(an env asset stores a committed value; `CARGO_HOME` differs per build agent).
-Secrets and fixed values belong in exact named `env:` bindings: those values
-are redacted out of everything journaled, and `pass_env:` values are not.
+Fixed values belong in exact named `env:` bindings, and they reach the journal as
+they are. A credential belongs in `secrets/`, bound by a `${secrets/name}` token
+inside the env asset; only values substituted from such a ref are redacted out of
+everything journaled (see [Binding a secret to a
+unit](../reference/workflow-schema.md#binding-a-secret-to-a-unit)). A value the
+command inherited is not redacted.
 
-A new run freezes its plan at `irVersion: 6`. A run keeps the plan it was
-frozen with: a plan stored by an earlier release still runs on the current
-engine, with a warning.
+`exec.pass_env:`, the list of names an earlier release copied into an otherwise
+empty environment, still parses and selects nothing. Workflow starts freeze the
+durable plan v4 family's current executable format (`irVersion: 8`), which
+rejects `inherit_env`; the command inherits the environment without it.
+Pre-`irVersion`-5 stored plans do not execute; start a new run after updating the
+source.
 
-Named bindings and `pass_env:` are part of the unit's input hash, so changing
-either re-runs the command instead of reusing a row recorded under another
-scope.
+Named bindings are part of the unit's input hash, so changing them re-runs the
+command instead of reusing a row recorded under another scope. What the command
+sees is described under [Workflow Schema: The child's
+environment](../reference/workflow-schema.md#the-childs-environment).
 
-Full list of allowlisted names:
-[Workflow Schema: The child's environment is an allowlist](../reference/workflow-schema.md#the-childs-environment-is-an-allowlist).
+### Using scripts, env and secrets from other bundles
+
+A workflow in one bundle can run a script from a second bundle, with an env
+asset from a third that names a secret in a fourth. Each is addressed by its akm
+ref, `[bundle//]conceptId`, inside a `${...}` token:
+
+```yaml
+  - id: status
+    unit:
+      env: [ci//env/status]                       # env/status.env in bundle ci
+      exec:
+        command: ["bun", "${tools//scripts/lab-status/fetch.ts}"]
+```
+
+```sh
+# env/status.env in bundle ci
+REGION=east
+TOKEN=${vault//secrets/status_token}
+```
+
+`${tools//scripts/...}` becomes the script's absolute path when the unit
+dispatches, `${vault//secrets/status_token}` becomes the secret's value, and
+`REGION` reaches the child as it is. Nothing in the plan records where any of
+them lives, so updating a bundle in the middle of a run is harmless. The unit
+runs in the root of the bundle that holds the workflow (`cwd:` is relative to
+it, or absolute). See [Workflow Schema: The exec
+contract](../reference/workflow-schema.md#the-exec-contract).
 
 ### Things to get right
 
 - **`command:` is an argv array, not a shell string.** `["bun", "run", "test"]`,
   never `"bun run test"`. Nothing is shell-parsed; if you truly need a pipeline,
   write `["bash", "-lc", "a | b"]` and own that choice explicitly.
-- **No interpolation.** The argv is frozen. A `map` step's item reaches the
-  command as `AKM_ITEM` (canonical JSON) and the run params as `AKM_PARAMS` —
+- **No interpolation of run data.** The argv is frozen as authored; the only
+  substitution is a `${ref}` token naming an asset. A `map` step's item reaches
+  the command as `AKM_ITEM` (canonical JSON) and the run params as `AKM_PARAMS` —
   read them from the environment, do not try to splice them into `command:`.
-- **Secrets go in `env:`, never in `command:`.** `command:` is stored verbatim in
-  the frozen plan; `env:` bindings are carried by name and their values are
-  redacted out of everything journaled.
+- **Secrets go in `secrets/`, bound through `env:`, never as literals in
+  `command:`.** `command:` is stored as authored in the frozen plan; `env:` bindings are carried
+  by name, and values substituted from a `${secrets/name}` ref are redacted out
+  of everything journaled.
 - **Long commands need a `timeout:`.** An exec unit defaults to 10 minutes. Use
   `timeout: "30m"` for a slow suite, or `timeout: "none"` only when you really
   mean unbounded.
-- **Don't assume your shell's environment.** The child gets an allowlist, not
-  an inheritance. If a command fails with "not found" or reads a missing
-  toolchain variable, name it in `pass_env:`; use a named `env:` binding for a
-  fixed or secret value. There is no option to inherit the whole process
-  environment.
+- **The command has your shell's environment, so a credential in it reaches
+  it.** Use a named `env:` binding for a fixed or secret value you want redacted
+  from the journal; a value the command inherited is not redacted.
 - **A very chatty command still passes; its artifact just says so.** akm retains
   8 MiB of stdout and 8 MiB of stderr. Past that it keeps draining and discards,
   so the command runs to completion and its exit code decides the step. The
@@ -241,8 +311,7 @@ Full reference: [Workflow Schema: Exec (shell) units](../reference/workflow-sche
   step declared in frontmatter exactly — no titles, no `Step:`/`Step ID:`
   lines, no `# Workflow:` prefix on the H1.
 - **A `unit`/`map` step with no body section.** Its instructions (or, for a
-  map step, its per-item template) are required — a `route`-only step is the
-  one case a body section is optional.
+  map step, its per-item template) are required.
 - **Misplaced or misspelled `### gate`.** It is the format's single reserved
   marker, and it must be a `###` sub-heading inside the step's own section.
   An empty `### gate` section is the same as omitting it — no verification
@@ -250,29 +319,24 @@ Full reference: [Workflow Schema: Exec (shell) units](../reference/workflow-sche
 - **Referencing an item outside a map unit.** `item`/`item_index` are not
   part of the reference language anywhere — they only arrive as attached
   context inside that map step's own unit template.
-- **Backward routes.** Every `route` target (`when.step`, `default`) must be
-  a step declared *later* in the workflow; "loop back until it passes" is a
-  bounded `### gate` on the step doing the work, not a route back to an
-  earlier step.
 - **Referencing an unknown step or param.** `akm lint --type workflows`
   checks every bare reference statically (unknown step, unknown param, bad
   path) — run it before you rely on a workflow working.
 - **Writing `exec.command` as a shell string.** `command: "bun run test"` is
   rejected; it must be an argv array (`["bun", "run", "test"]`). Nothing is
   ever shell-parsed, so metacharacters inside an argument stay literal.
-- **Expecting an exec command to inherit your environment.** It gets a default
-  allowlist (`PATH`, `HOME`, locale/temp/identity, the Windows essentials) plus
-  your `env:` bindings and the `AKM_*` context — nothing else. Widen it with
-  `exec.pass_env:` (a few non-secret names). `pass_env` lives inside `exec:`;
-  the unit-level `env:` key is a list of exact env asset binding refs.
+- **Listing names in `exec.pass_env:`.** It parses and selects nothing: the
+  command already inherits your environment. `pass_env` lives inside `exec:`;
+  the unit-level `env:` key is a list of exact env asset binding refs. A new v4
+  start rejects `inherit_env`.
 - **Asking a model to do deterministic work.** "Run the test suite and tell me
   if it passed" is an [exec step](#deterministic-steps-run-a-command-gate-on-it),
   not a prompt.
 
 ## Typing what a step returns
 
-A step's `output:` (and each `params:` entry) is a JSON Schema, and the engine
-validates the step's artifact against it before the step can complete. The
+An `output:` schema (and each `params:` entry) is a JSON Schema, and the engine
+validates the result against it before the step can complete. The
 runtime enforces a **bounded subset** of JSON Schema — anything outside it is
 an authoring error at `akm lint`, never a silent no-op, because a gate
 depending on a schema that constrains nothing is worse than a loud failure.
@@ -284,18 +348,22 @@ Enforced: `type`, `enum`, `properties`, `required`, `items`,
 
 ```yaml
   - id: release
-    output:
-      type: object
-      required: [version, verdict]
-      additionalProperties: false
-      properties:
-        version: { type: string, minLength: 1 }
-        verdict: { type: string, enum: [pass, fail] }
-        detail:
-          oneOf:
-            - { type: string, minLength: 1 }
-            - { type: "null" }
+    unit:
+      output:
+        type: object
+        required: [version, verdict]
+        additionalProperties: false
+        properties:
+          version: { type: string, minLength: 1 }
+          verdict: { type: string, enum: [pass, fail] }
+          detail:
+            oneOf:
+              - { type: string, minLength: 1 }
+              - { type: "null" }
 ```
+
+`release` is a solo step, so its schema sits under `unit:` (see
+[Agent in, exec out](#agent-in-exec-out)).
 
 Outside the subset (each fails lint with the keyword named, its line, and a
 suggested replacement where one exists): `$ref`/`$defs` — inline the schema
@@ -314,14 +382,20 @@ If lint reports a very broken workflow, note that its errors are sorted by
 line, so fix from the top and re-run — the later ones are usually fallout from
 the first.
 
-## Choosing engines and models
+## Choosing where a step runs and which model
 
-Set `defaults.engine`/`defaults.model` (or per-unit `unit.engine`/`unit.model`)
-rather than hardcoding an exact model id, so the workflow stays
-harness-agnostic. Reference semantic aliases — `fast`, `balanced`, `reasoning`,
-or aliases defined in the installed/user `models.json` files — in `model:` fields; see
+A step that dispatches a model runs on your default harness, or on akm's own
+runtime over your default connection when you have no harness. Leave that to
+the machine the workflow runs on. Name one only when a step needs it:
+`harness:` or `connection:` in `defaults` (or per-unit `unit.harness` /
+`unit.connection`), where a name the machine has not configured is an error that
+names it and lists what the machine has, so a workflow shared across machines
+should name a program only when it needs that one. Set `defaults.model`/`unit.model` to an alias rather
+than hardcoding an exact model id, so the workflow stays portable. The aliases
+are `fast`, `balanced`, `reasoning` and any a connection or harness maps in its
+`models`; see
 [Workflow Schema: Model references](../reference/workflow-schema.md#model-references)
-for the exact resolution order and config shape.
+for the exact resolution order.
 
 Point `reasoning` work at a capable model and keep high-volume fan-out units
 on `fast`/`balanced`. The richer example's `review` map step is a good template: `reasoning` on the
@@ -351,13 +425,13 @@ serial wholesale, set
 `akm config set workflow.defaultMapConcurrency 1`.
 
 The declared width is a **ceiling, not a promise**. Three other limits clamp it
-and the smallest wins: `workflow.maxConcurrency`, the selected engine's
-`engines.<name>.concurrency`, and the host's CPU cap. The engine limit is the
-one that surprises people: an LLM engine pointed at **localhost defaults to 1**,
-because local model servers hold a single loaded model and fall over under
-concurrent requests — so a `map` against a local model stays serial no matter
-what the step declares, until you raise that engine's own `concurrency`. Remote
-LLM endpoints default to 4. See
+and the smallest wins: `workflow.maxConcurrency`, the selected connection's
+`concurrency`, and the host's CPU cap. The connection limit is the one that
+surprises people: a connection pointed at **localhost defaults to 1**, because
+local model servers hold a single loaded model and fall over under concurrent
+requests — so a `map` against a local model stays serial no matter what the step
+declares, until you raise that connection's own `concurrency`. Remote endpoints
+default to 4, and a step on a harness has no limit of this kind. See
 [Workflow Schema: Fan-out and concurrency](../reference/workflow-schema.md#fan-out-and-concurrency)
 for the full table.
 
@@ -377,7 +451,7 @@ can see what a run will do before starting it.
    ```
 
    This catches the body-rule violations above, plus every static reference
-   check (unknown step, unknown param, bad path, backward route).
+   check (unknown step, unknown param, bad path).
 
 2. **Run it for real.** A dry inspection of the markdown doesn't tell you
    whether a gate actually rejects bad output or an `output` schema actually
@@ -403,101 +477,70 @@ can see what a run will do before starting it.
 
 4. **Deliberately break a gate once.** Run the workflow with params you
    expect to fail validation, and confirm the gate actually rejects rather
-   than silently passing. A malformed verdict, or a step with no judge
-   available, does not pass the gate (see
+   than silently passing — a missing judge (no connection or harness to run
+   it) or a malformed verdict rejects the gate rather than bypassing it (see
    [Workflow Schema: Gates and verification](../reference/workflow-schema.md#gates-and-verification)),
    so this is worth confirming once per workflow rather than assuming.
 
-## Composing a task with typed inputs
+## Running a child workflow (Experimental)
 
-A `uses: tasks/<ref>` step in the GitHub-shaped YAML format can bind a task
-source v4 target's declared `inputs:` through `with:`. Given this task:
+A step can run another workflow and use its result. The step names the child
+in its `unit:` bag and binds the child's `params:` with `with:`:
 
-```yaml
-# tasks/ticket-review.yml
-version: 4
-name: Ticket review
-inputs:
-  ticket:
-    type: string
-    required: true
-  scope:
-    type: string
-    enum: [changed, all]
-    default: changed
-uses: commands/review
+```markdown
+---
+type: workflow
+params:
+  topic: { type: string }
+steps:
+  - id: investigate
+    unit:
+      workflow: workflows/research
+      with:
+        topic: { from: params.topic }
+  - id: report
+    inputs: [steps.investigate.output]
+---
+
+## investigate
+
+Runs the research workflow as a child run.
+
+## report
+
+Summarise the research finding.
 ```
 
-a workflow step can bind `ticket` from an EARLIER step's output, and override
-`scope` with a literal:
+A `with:` value is a literal (checked against the child's param type when the
+workflow is frozen) or `{ from: <reference> }`, where the reference is
+`params.<name>` or `steps.<id>.output(.<segment>)*`, resolved just before the
+step runs. The child's **last step output** is the composing step's output, so
+`report` reads it through `inputs:`. Inspect what a step would pass, without
+running anything, with `akm workflow plan workflows/<name> --format json`; the
+per-step `inputBindings` show each literal and each unresolved reference.
 
-```yaml
-# workflows/nightly.yml
-name: Nightly review
-on:
-  workflow_dispatch: {}
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: pick
-        run: echo T-42
-      - id: dispatch
-        uses: tasks/ticket-review
-        with:
-          ticket: { from: "steps.pick.output" }
-          scope: all
-```
-
-`{from: "steps.<id>.output(.<segment>)*"}` and `{from: "params.<name>"}` are
-the only two reference roots; anything else, or an object carrying `from`
-plus any other key, is `INPUT_BINDING_INVALID` at freeze — never silently
-reinterpreted as a literal. `pick`'s output is resolved just before the
-`dispatch` unit dispatches, then validated against `ticket`'s declared
-schema; a literal (like `scope: all` here) is validated at freeze instead,
-before the plan is ever published.
-
-The composed target — `commands/review` here — receives the resolved
-bindings on whichever delivery surface matches its kind: an
-`akm/command`/`commands/<ref>` target gets a `## Task inputs` block appended
-to its prompt; a `run:` shell or `scripts/<ref>` target gets one
-`AKM_TASK_INPUTS` environment variable (canonical JSON of the resolved
-bindings). Inspect exactly what each step's `with:` would deliver, without
-running anything, with `akm workflow plan workflows/nightly --format json`
-— its per-step `inputBindings` show `dispatch`'s `scope` as the literal
-`all` and `ticket` as the unresolved reference `steps.pick.output`, the
-same shape freezing a real run would produce. `akm task explain` is not a
-substitute here: it only reflects a task's OWN CLI flags, declared
-defaults, and `schedule[].inputs` — it never reads a workflow step's
-`with:` binding at all, so pointing it at `tasks/ticket-review` prints
-`scope`'s task-level default (`changed`), not the `all` this step actually
-sends.
+Child workflows are Experimental. See
+[Workflow Schema: Child workflows](../reference/workflow-schema.md#child-workflows)
+for blocked-child recovery and the limits.
 
 ## Troubleshooting
 
-**Every workflow run needs a selected engine.** Freezing resolves an engine
-for each unit. With no `defaults.engine`, akm falls back to a config-free
-`opencode-sdk` engine — provider, model, and auth come from opencode's own
-configuration — and announces it once in the run's `warnings`. The fallback
-needs the **`opencode` binary on PATH**: the bundled `@opencode-ai/sdk`
-package is an HTTP client only and spawns `opencode serve` to have something
-to talk to, so installing the npm package alone is not enough. With no
-binary, freezing fails with `INVALID_CONFIG_FILE` and exit 78.
+**A step that dispatches a model needs a harness or a connection.** Freezing
+resolves where each unit runs: its `unit.harness` or `unit.connection`, else the
+document's `defaults`, else your default harness, else akm's own runtime over
+your default connection. With none of those, freezing fails and the error points
+at `akm setup`. A workflow made only of exec steps needs neither.
 
-A step with a non-empty `### gate` is judged by the engine named in
-`workflow.judgeEngine`, else by the default engine. If neither resolves, akm
-warns when it freezes the run, and the step blocks for `akm workflow resume`
-when it reaches the gate rather than passing unjudged.
+A workflow with a non-empty `### gate` also needs one for the gate judge, which
+runs where model work runs: your default connection, else your default harness.
+An exec-only workflow with a gate still needs it.
 
-`akm setup` normally selects a default execution engine. On a bare container
-or CI image, either install opencode and let the fallback apply, or choose an
-engine explicitly:
+`akm setup` normally configures both. On a bare container or CI image, run it
+with the answers as flags, or add one by hand:
 
 ```sh
-npm i -g opencode-ai           # fallback route: puts `opencode` on PATH
-# ...or pick an engine yourself:
-akm config set engines.claude '{"kind":"agent","platform":"claude"}'
-akm config set defaults.engine claude
+akm setup --yes --endpoint http://localhost:11434/v1   # a model endpoint
+akm setup --yes --harness claude                       # or an agent program you have
 ```
 
 ## See also

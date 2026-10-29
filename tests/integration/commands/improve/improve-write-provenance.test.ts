@@ -22,7 +22,7 @@
  *     the managed-pathspec fallback.
  */
 
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -53,8 +53,8 @@ afterEach(() => {
 
 const config = {
   semanticSearchMode: "off",
-  defaults: { improveStrategy: "provenance-test" },
   improve: {
+    strategy: "provenance-test",
     strategies: {
       "provenance-test": {
         processes: Object.fromEntries(
@@ -133,9 +133,11 @@ function headCount(): number {
  */
 async function runImprove(
   mutate: () => Promise<void> | void,
-  duringLoop?: () => void,
+  duringLoop?: () => void | Promise<void>,
+  extra: Partial<Parameters<typeof akmImprove>[0]> = {},
 ): Promise<Awaited<ReturnType<typeof akmImprove>>> {
   return akmImprove({
+    ...extra,
     scope: "memory",
     stashDir,
     config,
@@ -178,7 +180,7 @@ async function runImprove(
       };
     }) as never,
     runImproveLoopStageFn: (async () => {
-      duringLoop?.();
+      await duringLoop?.();
       return { reflectsWithErrorContext: 0, memoryRefsForInference: new Set() };
     }) as never,
     runImprovePostLoopStageFn: (async () => ({
@@ -234,6 +236,57 @@ test("the crash-path commit also stages only the run's own writes", async () => 
   expect(lastCommitPaths()).toEqual(["memories/alpha.md"]);
   expect(statusPaths()).toContain("memories/human.md");
 });
+
+test("a budget hard-kill banks the run's writes locally and records the terminated run before exiting", async () => {
+  initRepo();
+  const headBefore = headCount();
+  let terminatedCalls = 0;
+  const pushFlags: Array<boolean | undefined> = [];
+  let exited!: (code: number) => void;
+  const exitCode = new Promise<number>((resolve) => {
+    exited = resolve;
+  });
+  // The watchdog's real exit is replaced; it must run AFTER the persistence hooks.
+  const exitSpy = spyOn(process, "exit").mockImplementation(((code?: number) => {
+    exited(code ?? 0);
+  }) as never);
+  let releaseLoop!: () => void;
+  let run!: Promise<unknown>;
+  try {
+    // The loop does not settle (a wedged engine call), so only the hard-kill ends the run.
+    run = runImprove(
+      async () => {
+        await writeAsset("memories/alpha", "Alpha.");
+      },
+      () =>
+        new Promise<void>((resolve) => {
+          releaseLoop = resolve;
+        }),
+      {
+        timeoutMs: 100,
+        saveGitStashFn: ((...args: Parameters<typeof saveGitStash>) => {
+          pushFlags.push((args[3] as { push?: boolean }).push);
+          return saveGitStash(...args);
+        }) as typeof saveGitStash,
+        onBudgetHardKill: () => {
+          terminatedCalls += 1;
+        },
+      },
+    ).catch(() => {});
+    expect(await exitCode).toBe(0);
+  } finally {
+    exitSpy.mockRestore();
+    // Let the wedged run unwind so its lock, listeners and usage sink do not leak into later tests.
+    releaseLoop?.();
+    await run?.catch(() => {});
+  }
+  expect(terminatedCalls).toBe(1);
+  // The pre-run sync pushes as configured; the forced-exit commit is local only: a dead remote must not hang the exit.
+  // (A third call is the released run unwinding afterwards.)
+  expect(pushFlags.slice(0, 2)).toEqual([true, false]);
+  expect(headCount()).toBe(headBefore + 1);
+  expect(lastCommitPaths()).toEqual(["memories/alpha.md"]);
+}, 20_000);
 
 test("auto-sync commits a path that was already dirty before the run and rewritten by it", async () => {
   initRepo();
@@ -336,20 +389,22 @@ test("a path written then removed again during the run produces no commit", asyn
   expect(headCount()).toBe(before);
 });
 
-test("a run that writes nothing commits nothing — an empty set is not the managed fallback", async () => {
+test("a run that writes nothing commits nothing at the end — an empty set is not the managed fallback", async () => {
   initRepo();
   const before = headCount();
-  // Dirty managed content the run did not touch. `saveGitStash`'s managed
-  // pathspec fallback would sweep this up; an EMPTY explicit path list must not.
+  // Dirty managed content the run did not touch. The pre-run sync commits it, as `akm sync`
+  // would; the end-of-run sync, given an EMPTY explicit path list, must not add a commit.
   fs.writeFileSync(path.join(stashDir, "memories", "human.md"), "---\ntype: memory\n---\n\nSomeone else's WIP.\n");
 
   const result = await runImprove(() => {});
 
   expect(result.ok).toBe(true);
   expect(result.writtenPaths).toBeUndefined();
+  expect(result.preRunSync?.committed).toBe(true);
   expect(result.sync?.committed).toBe(false);
-  expect(headCount()).toBe(before);
-  expect(statusPaths()).toContain("memories/human.md");
+  expect(headCount()).toBe(before + 1);
+  expect(lastCommitPaths()).toEqual(["memories/human.md"]);
+  expect(statusPaths()).toEqual([]);
 });
 
 test("saveGitStash with no explicit path list still falls back to managed pathspecs", () => {

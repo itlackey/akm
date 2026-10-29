@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import type { LlmConnectionConfig } from "../src/core/config/config";
+import type { ChatCompletionConfig } from "../src/llm/client";
 import { chatCompletion, LlmCallError } from "../src/llm/client";
 import {
   clearLlmUsageSink,
@@ -18,7 +18,7 @@ import {
 } from "../src/llm/usage-telemetry";
 import { withMockedFetch } from "./_helpers/sandbox";
 
-const CONFIG: LlmConnectionConfig = {
+const CONFIG: ChatCompletionConfig = {
   endpoint: "http://test.local/v1/chat/completions",
   model: "configured-model",
 };
@@ -213,6 +213,27 @@ describe("chatCompletion usage capture", () => {
     expect(rec?.reasoningTokens).toBe(5);
     expect(typeof rec?.durationMs).toBe("number");
     expect(rec?.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test("a call recovered by the retry without the schema is one success, not a failure plus a success", async () => {
+    const records: LlmUsageRecord[] = [];
+    setLlmUsageSink((r) => records.push(r));
+    const config = { ...CONFIG, endpoint: "http://format-ignored.local/v1/chat/completions" };
+    let calls = 0;
+
+    const content = await withMockedFetch(
+      () =>
+        chatCompletion(config, [{ role: "user", content: "hi" }], {
+          responseSchema: { type: "object", properties: {} },
+        }),
+      () =>
+        ++calls === 1 ? new Response('{"error":"format_ignored"}', { status: 502 }) : jsonResponse(fullChatResponse()),
+    );
+
+    expect(content).toBe("hello");
+    expect(calls).toBe(2);
+    expect(records.map((r) => r.outcome)).toEqual(["success"]);
+    expect(records[0]?.totalTokens).toBe(20);
   });
 
   test("absent usage block still records duration + model (token fields omitted)", async () => {

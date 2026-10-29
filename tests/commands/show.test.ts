@@ -88,15 +88,11 @@ describe("akmShow stash .meta convention", () => {
   });
 });
 
-describe("akmShow legacy colon refs (#964)", () => {
-  test("returns the exact slash-form replacement without treating meta refs as assets", async () => {
+describe("akmShow legacy colon refs", () => {
+  test("a colon ref is an ordinary not-found, with no migration tip", async () => {
     saveConfig({ semanticSearchMode: "off" });
-    await expect(akmShow({ ref: "knowledge:print/some-doc" })).rejects.toThrow(
-      /Use the slash form instead: akm show knowledge\/print\/some-doc/,
-    );
-    await expect(akmShow({ ref: "team//skill:ai/agent-tools#usage" })).rejects.toThrow(
-      /akm show team\/\/skills\/ai\/agent-tools#usage/,
-    );
+    await expect(akmShow({ ref: "knowledge:print/some-doc" })).rejects.toThrow(NotFoundError);
+    await expect(akmShow({ ref: "knowledge:print/some-doc" })).rejects.not.toThrow(/slash form/);
   });
 });
 
@@ -256,28 +252,20 @@ describe("akmShow sensitive fragments", () => {
   });
 });
 
-// ── Agent toolPolicy provenance ceiling (07 P1-D) ─────────────────────────────
+// ── Agents resolve from every bundle (#1237) ─────────────────────────────────
 
-describe("akmShow agent toolPolicy provenance ceiling", () => {
-  const AGENT_MD = [
-    "---",
-    "name: helper",
-    "description: A helper agent",
-    "tools: [Read, Write, Bash]",
-    "---",
-    "Do the thing.",
-  ].join("\n");
+describe("akmShow agents across bundles", () => {
+  const AGENT_MD = ["---", "name: helper", "description: A helper agent", "---", "Do the thing."].join("\n");
 
-  test("own-stash agent keeps its self-declared toolPolicy", async () => {
+  test("own-stash agent resolves without an origin", async () => {
     writeFile(path.join(stashDir, "agents", "helper.md"), AGENT_MD);
     const result = await akmShow({ ref: "agents/helper" });
     expect(result.type).toBe("agent");
-    // Own stash → no registry origin → the operator's declared policy stands.
+    // Own stash → no registry origin.
     expect(result.origin ?? null).toBeNull();
-    expect(result.toolPolicy).toEqual(["Read", "Write", "Bash"]);
   });
 
-  test("registry-installed third-party agent's self-declared tools are dropped", async () => {
+  test("registry-installed bundle agent resolves with its origin", async () => {
     const installedStashRoot = createTmpDir("akm-show-tp-agent-");
     writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
     saveConfig({
@@ -296,15 +284,9 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     const result = await akmShow({ ref: "pack//agents/tools/agents/helper" });
     expect(result.type).toBe("agent");
     expect(result.origin).toBe("pack");
-    // Provenance ceiling: only the primary stash may self-grant; an installed
-    // pack is not the primary stash.
-    expect(result.toolPolicy).toBeUndefined();
   });
 
-  test("a --writable installed pack STILL drops toolPolicy (writable ≠ trusted to self-grant)", async () => {
-    // Regression: `akm add <ref> --writable` (opt-in to push edits upstream) marks
-    // a third-party pack writable. Writability must NOT be read as trust — the
-    // ceiling keys off primary-stash identity, not `source.writable`.
+  test("a --writable installed pack resolves its agent", async () => {
     const installedStashRoot = createTmpDir("akm-show-writable-pack-");
     writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
     saveConfig({
@@ -322,7 +304,6 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     ]);
     const result = await akmShow({ ref: "pack//agents/tools/agents/helper" });
     expect(result.type).toBe("agent");
-    expect(result.toolPolicy).toBeUndefined();
   });
 
   test("a read against a cold git bundle (no cache, no lock) skips it fast with a warning — never clones (spec §14.3)", async () => {
@@ -356,10 +337,7 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     }
   }, 5000);
 
-  test("a configured secondary source (nameless git/filesystem) drops toolPolicy", async () => {
-    // Regression for the original bypass: a source added WITHOUT a name has no
-    // registryId, so a registryId-based ceiling missed it. The primary-stash
-    // check catches it — a configured secondary source is not the primary stash.
+  test("a configured secondary source resolves its agent", async () => {
     const thirdPartyDir = createTmpDir("akm-show-secondary-src-");
     writeFile(path.join(thirdPartyDir, "agents", "helper.md"), AGENT_MD);
     // No `name` — the setup-wizard "add a source and leave the name blank" shape.
@@ -367,24 +345,16 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
 
     const result = await akmShow({ ref: "agents/helper" });
     expect(result.type).toBe("agent");
-    // Reads back as `editable: true` (not under an installed cacheDir) — proving
-    // neither `editable` nor `writable` is the trust signal; primary-stash is.
     expect(result.editable).toBe(true);
-    expect(result.toolPolicy).toBeUndefined();
   });
 
-  test("a source NESTED inside the primary stash still drops toolPolicy (longest-prefix attribution)", async () => {
-    // Regression: `akm add ./vendor` where ./vendor lives under the primary stash.
-    // findSourceForPath must attribute the nested asset to the nested (more
-    // specific) source, not the enclosing primary — else its self-declared tools
-    // would be wrongly honoured.
+  test("a source NESTED inside the primary stash resolves its agent", async () => {
     const nestedDir = path.join(stashDir, "vendor");
     writeFile(path.join(nestedDir, "agents", "helper.md"), AGENT_MD);
     saveConfig({ semanticSearchMode: "off", bundles: { vendor: { path: nestedDir } } });
 
     const result = await akmShow({ ref: "agents/vendor/agents/helper" });
     expect(result.type).toBe("agent");
-    expect(result.toolPolicy).toBeUndefined();
   });
 });
 
@@ -507,38 +477,6 @@ describe("akmShow content-based classification", () => {
     expect(result.template).toBe("Deploy $ARGUMENTS.");
     expect(result.modelHint).toBe("gpt-4");
     expect(result.parameters).toEqual(["ARGUMENTS"]);
-  });
-
-  test("tools frontmatter in commands/ overrides to agent (strong signal)", async () => {
-    // tools is an agent-exclusive signal at specificity 20, which beats the
-    // commands/ directory matcher at 10. The indexer classifies this as an
-    // agent, so the ref uses agent: type.
-    writeFile(
-      path.join(stashDir, "commands", "hybrid.md"),
-      ["---", "tools:", "  read: allow", "model: gpt-4", "---", "You are a hybrid agent."].join("\n"),
-    );
-
-    saveConfig({ semanticSearchMode: "off" });
-
-    const result = await akmShow({ ref: "agents/commands/hybrid" });
-
-    expect(result.type).toBe("agent");
-    expect(result.action).toContain("verbatim");
-    expect(result.prompt).toContain("You are a hybrid agent.");
-  });
-
-  test("toolPolicy frontmatter is not an authoring alias for tools", async () => {
-    writeFile(
-      path.join(stashDir, "agents", "legacy-policy.md"),
-      ["---", "toolPolicy:", "  - Read", "  - Write", "---", "You are a legacy agent."].join("\n"),
-    );
-
-    saveConfig({ semanticSearchMode: "off" });
-
-    const result = await akmShow({ ref: "agents/legacy-policy" });
-
-    expect(result.type).toBe("agent");
-    expect(result.toolPolicy).toBeUndefined();
   });
 
   test("command in commands/ directory extracts OpenCode-style frontmatter", async () => {
@@ -667,10 +605,122 @@ describe("akmShow markdown fragments", () => {
     );
   });
 
-  test("the knowledge action points large documents at #fragment", async () => {
+  test("an unmatched fragment's hint points at the outline", async () => {
+    const error = await akmShow({ ref: "knowledge/guide.md#nope" }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NotFoundError);
+    expect((error as NotFoundError).hint()).toContain("akm show <ref> --detail brief");
+  });
+
+  test("the knowledge action points large documents at the outline, then one section", async () => {
     const result = await akmShow({ ref: "knowledge/guide.md" });
-    expect(result.action).toContain("#fragment");
-    expect(result.action).not.toContain("toc");
+    expect(result.action).toContain("akm show <ref> --detail brief");
+    expect(result.action).toContain("`toc`");
+    expect(result.action).toContain("akm show <ref>#<slug>");
+  });
+});
+
+describe("akmShow markdown toc", () => {
+  const DOC = [
+    "---",
+    "description: Notes doc",
+    "---",
+    "# Guide",
+    "Intro.",
+    "",
+    "## Notes",
+    "First notes.",
+    "",
+    "## Notes",
+    "Second notes.",
+    "",
+    "## Notes 1",
+    "Third notes.",
+    "",
+    "### Deep",
+    "Deeper.",
+    "",
+    "## !!!",
+    "Unsluggable.",
+    "",
+    "```md",
+    "## Not a heading",
+    "```",
+  ].join("\n");
+
+  beforeEach(() => {
+    writeFile(path.join(stashDir, "knowledge", "notes.md"), DOC);
+    saveConfig({ semanticSearchMode: "off" });
+  });
+
+  test("a whole document lists its headings with the slug that selects each, duplicates suffixed", async () => {
+    const result = await akmShow({ ref: "knowledge/notes", skipLogging: true });
+    expect(result.content).toBe(DOC);
+    expect(result.toc).toEqual([
+      { level: 1, text: "Guide", slug: "guide", startLine: 4 },
+      { level: 2, text: "Notes", slug: "notes", startLine: 7 },
+      { level: 2, text: "Notes", slug: "notes-1", startLine: 10 },
+      { level: 2, text: "Notes 1", slug: "notes-1-1", startLine: 13 },
+      { level: 3, text: "Deep", slug: "deep", startLine: 16 },
+    ]);
+  });
+
+  test("every toc slug round-trips to the section starting at its line", async () => {
+    const lines = DOC.split("\n");
+    const { toc } = await akmShow({ ref: "knowledge/notes", skipLogging: true });
+    expect(toc?.length).toBeGreaterThan(0);
+    for (const heading of toc ?? []) {
+      const section = await akmShow({ ref: `knowledge/notes#${heading.slug}`, skipLogging: true });
+      expect(section.content?.split("\n")[0]).toBe(lines[heading.startLine - 1]);
+    }
+    expect((await akmShow({ ref: "knowledge/notes#notes-1", skipLogging: true })).content).toBe(
+      "## Notes\nSecond notes.\n",
+    );
+  });
+
+  test("the toc follows the file, not the index, so a heading added since indexing still resolves", async () => {
+    await akmShow({ ref: "knowledge/notes", skipLogging: true });
+    writeFile(path.join(stashDir, "knowledge", "notes.md"), `${DOC}\n\n## Added Later\nNew.\n`);
+
+    // readOnly skips the index refresh, so the indexed entry still predates the edit.
+    const { toc } = await akmShow({ ref: "knowledge/notes", readOnly: true });
+    const added = toc?.find((heading) => heading.text === "Added Later");
+    expect(added?.slug).toBe("added-later");
+    const section = await akmShow({ ref: `knowledge/notes#${added?.slug}`, readOnly: true });
+    expect(section.content).toBe("## Added Later\nNew.\n");
+  });
+
+  test("brief is the outline without the body", async () => {
+    const brief = await akmShow({ ref: "knowledge/notes", detail: "brief", skipLogging: true });
+    expect(brief.toc?.map((heading) => heading.slug)).toEqual(["guide", "notes", "notes-1", "notes-1-1", "deep"]);
+    expect(brief).not.toHaveProperty("content");
+  });
+
+  test("a fragment show carries no toc", async () => {
+    const section = await akmShow({ ref: "knowledge/notes#deep", skipLogging: true });
+    expect(section.content).toBe("### Deep\nDeeper.\n");
+    expect(section).not.toHaveProperty("toc");
+  });
+
+  test("other markdown assets carry it too", async () => {
+    writeFile(
+      path.join(stashDir, "skills", "deploy", "SKILL.md"),
+      "---\ndescription: Deploy\n---\n# Deploy\n\n## Steps\nGo.\n",
+    );
+    const result = await akmShow({ ref: "skills/deploy", skipLogging: true });
+    expect(result.toc).toEqual([
+      { level: 1, text: "Deploy", slug: "deploy", startLine: 4 },
+      { level: 2, text: "Steps", slug: "steps", startLine: 6 },
+    ]);
+  });
+
+  test("a document with no headings and a non-markdown asset carry no toc", async () => {
+    writeFile(path.join(stashDir, "knowledge", "plain.md"), "Just text.\n");
+    writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/bin/sh\n# Not a heading\necho hi\n");
+
+    expect(await akmShow({ ref: "knowledge/plain", skipLogging: true })).not.toHaveProperty("toc");
+    expect(await akmShow({ ref: "knowledge/plain", detail: "brief", skipLogging: true })).not.toHaveProperty("toc");
+    expect(await akmShow({ ref: "scripts/deploy.sh", skipLogging: true })).not.toHaveProperty("toc");
+    expect(await akmShow({ ref: "scripts/deploy.sh", detail: "brief", skipLogging: true })).not.toHaveProperty("toc");
   });
 });
 

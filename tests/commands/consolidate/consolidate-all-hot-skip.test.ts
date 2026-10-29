@@ -1,17 +1,10 @@
 /**
- * Regression test for the all-hot chunk early-exit in `akmConsolidate`.
+ * An all-`captureMode: hot` chunk is sent to the model like any other chunk (hot memories are
+ * consolidated like any memory; 0.10 Policy decision 5).
  *
- * Before the fix, the hot-ref protection was prompt-level only: a chunk whose
- * memories are ALL `captureMode: hot` was still sent to the LLM, which could
- * only ever propose (refused) deletes — pure token waste. The early-exit skips
- * the LLM entirely for an all-hot chunk and buckets every memory as
- * `judgedNoAction`, preserving the accounting invariant.
- *
- * These tests need no LLM: with the feature enabled but no LLM configured, an
- * all-hot chunk that early-exits yields `judgedNoAction === N` and
- * `failedChunkMemories === 0`. WITHOUT the early-exit, the same chunk would hit
- * the "No LLM configured" branch and land in `failedChunkMemories` instead —
- * so the two buckets cleanly distinguish the early-exit from the failure path.
+ * With the feature enabled but no LLM configured, a chunk that reaches the model lands in
+ * `failedChunkMemories` ("No LLM configured"); a chunk skipped without a call would land in
+ * `judgedNoAction`. The two buckets tell the paths apart without a model.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -20,7 +13,6 @@ import path from "node:path";
 
 import { akmConsolidate } from "../../../src/commands/improve/consolidate";
 import type { AkmConfig } from "../../../src/core/config/config";
-import { ConfigError } from "../../../src/core/errors";
 import { getStateDbPath } from "../../../src/core/state-db";
 import type { LoweringNotice } from "../../../src/execution/resolved-request";
 import {
@@ -55,14 +47,14 @@ function writeMemory(name: string, opts: { hot: boolean }): void {
 
 // Consolidation enabled, NO embedding (clustering is a no-op) and NO LLM
 // connection (so any chunk that actually reaches the model lands in the
-// failed bucket — which lets us prove the all-hot chunk never got there).
+// failed bucket — which lets us prove an all-hot chunk does get there).
 const CONFIG = {
   semanticSearchMode: "off",
   profiles: { improve: { default: { processes: { consolidate: { enabled: true } } } } },
 } as unknown as AkmConfig;
 
-describe("akmConsolidate — all-hot chunk early-exit", () => {
-  test("missing required credential does not eagerly create consolidation state", async () => {
+describe("akmConsolidate — all-hot chunk", () => {
+  test("nothing configured does not eagerly create consolidation state", async () => {
     writeMemory("cold-a", { hot: false });
     const config = {
       configVersion: "0.9.0",
@@ -70,23 +62,13 @@ describe("akmConsolidate — all-hot chunk early-exit", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: {
-        planner: {
-          kind: "llm",
-          endpoint: "http://127.0.0.1:1/v1/chat/completions",
-          model: "never-dispatched",
-          apiKey: "$AKM_CONSOLIDATE_REQUIRED_KEY",
-        },
-      },
-      defaults: { llmEngine: "planner", improveStrategy: "default" },
-      improve: { strategies: { default: { processes: { consolidate: { enabled: true } } } } },
+      improve: { strategy: "default", strategies: { default: { processes: { consolidate: { enabled: true } } } } },
     } as AkmConfig;
     const stateDbPath = getStateDbPath();
 
-    await withEnv({ AKM_CONSOLIDATE_REQUIRED_KEY: undefined }, async () => {
-      await expect(akmConsolidate({ stashDir, config })).rejects.toBeInstanceOf(ConfigError);
-    });
+    const result = await akmConsolidate({ stashDir, config });
 
+    expect(result.warnings).toContain("No LLM configured for consolidation");
     expect(fs.existsSync(stateDbPath)).toBe(false);
   });
 
@@ -102,16 +84,14 @@ describe("akmConsolidate — all-hot chunk early-exit", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: {
+      connections: {
         planner: {
-          kind: "llm",
           endpoint: "https://consolidate.example.test/v1/chat/completions",
-          model: "planner",
+          models: { fast: "planner" },
           apiKey: "$AKM_CONSOLIDATE_ROTATING_KEY",
         },
       },
-      defaults: { llmEngine: "planner", improveStrategy: "default" },
-      improve: { strategies: { default: { processes: { consolidate: { enabled: true } } } } },
+      improve: { strategy: "default", strategies: { default: { processes: { consolidate: { enabled: true } } } } },
     } as AkmConfig;
     const original = "consolidate-original-secret";
     const rotated = "consolidate-rotated-secret";
@@ -135,7 +115,7 @@ describe("akmConsolidate — all-hot chunk early-exit", () => {
     expect(observed).toEqual([`Bearer ${original}`, `Bearer ${rotated}`]);
   });
 
-  test("an all-hot chunk skips the LLM and buckets every memory as judgedNoAction", async () => {
+  test("an all-hot chunk reaches the model like any chunk (not skipped as judged no-action)", async () => {
     writeMemory("hot-a", { hot: true });
     writeMemory("hot-b", { hot: true });
     writeMemory("hot-c", { hot: true });
@@ -144,24 +124,65 @@ describe("akmConsolidate — all-hot chunk early-exit", () => {
 
     expect(result.ok).toBe(true);
     expect(result.processed).toBe(3);
-    // Early-exit bucket: all three judged no-action, none reached the LLM.
-    expect(result.judgedNoAction).toBe(3);
-    expect(result.failedChunkMemories).toBe(0);
-    expect(result.failedChunks).toBe(0);
-    expect(result.merged).toBe(0);
-    expect(result.deleted).toBe(0);
-    // Accounting invariant for the all-hot case: processed == judgedNoAction.
-    const actioned = result.merged + result.deleted + (result.promoted?.length ?? 0) + result.contradicted;
-    const sigSkips = result.skipReasons?.length ?? 0;
-    expect(actioned + (result.judgedNoAction ?? 0) + sigSkips + (result.failedChunkMemories ?? 0)).toBe(
-      result.processed,
-    );
+    // The chunk went to the LLM path (no LLM configured here), so it is failed, not judged no-action.
+    expect(result.judgedNoAction).toBe(0);
+    expect(result.failedChunkMemories).toBe(3);
+    expect(result.failedChunks).toBe(1);
   });
 
-  test("a chunk that is NOT all-hot still reaches the (here unconfigured) LLM path", async () => {
-    // One non-hot memory means the chunk is not all-hot, so the early-exit
-    // must NOT fire; with no LLM configured the chunk lands in the failed
-    // bucket rather than judgedNoAction.
+  test("an all-hot chunk calls the model and a promote it returns is planned", async () => {
+    writeMemory("hot-a", { hot: true });
+    writeMemory("hot-b", { hot: true });
+    const config = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      bundles: { stash: { path: stashDir, writable: true } },
+      defaultBundle: "stash",
+      defaultWriteTarget: "stash",
+      connections: {
+        planner: { endpoint: "https://consolidate.example.test/v1/chat/completions", models: { fast: "planner" } },
+      },
+      improve: { strategy: "default", strategies: { default: { processes: { consolidate: { enabled: true } } } } },
+    } as AkmConfig;
+    let calls = 0;
+
+    const result = await withMockedFetch(
+      () => akmConsolidate({ stashDir, config, dryRun: true }),
+      async () => {
+        calls++;
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    operations: [
+                      {
+                        op: "promote",
+                        ref: "memories/hot-a",
+                        knowledgeRef: "knowledge/hot-a",
+                        reason: "stable fact",
+                        description: "hot-a knowledge",
+                        confidence: 0.95,
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    );
+
+    expect(calls).toBe(1);
+    expect(result.ok).toBe(true);
+    expect(result.failedChunkMemories).toBe(0);
+    expect(result.planned).toEqual([expect.objectContaining({ op: "promote", ref: "memories/hot-a" })]);
+  });
+
+  test("a mixed hot and cold chunk still reaches the (here unconfigured) LLM path", async () => {
     writeMemory("hot-a", { hot: true });
     writeMemory("hot-b", { hot: true });
     writeMemory("cold-c", { hot: false });
@@ -170,7 +191,6 @@ describe("akmConsolidate — all-hot chunk early-exit", () => {
 
     expect(result.ok).toBe(true);
     expect(result.processed).toBe(3);
-    // The whole chunk went to the LLM path (no early-exit) and failed there.
     expect(result.judgedNoAction).toBe(0);
     expect(result.failedChunkMemories).toBe(3);
   });
@@ -180,24 +200,15 @@ describe("akmConsolidate — all-hot chunk early-exit", () => {
     const config = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      defaults: { improveStrategy: "freeze-once", llmEngine: "planner" },
       improve: {
-        strategies: {
-          "freeze-once": {
-            processes: {
-              consolidate: {
-                enabled: true,
-                llm: { unsupportedPlannerField: true },
-              },
-            },
-          },
-        },
+        strategy: "freeze-once",
+        processes: { consolidate: { llm: { unsupportedPlannerField: true } } },
+        strategies: { "freeze-once": { processes: { consolidate: { enabled: true } } } },
       },
-      engines: {
+      connections: {
         planner: {
-          kind: "llm",
           endpoint: "https://example.test/v1/chat/completions",
-          model: "planner-model",
+          models: { fast: "planner-model" },
         },
       },
     } as unknown as AkmConfig;
@@ -212,11 +223,10 @@ describe("akmConsolidate — all-hot chunk early-exit", () => {
     expect(reported).toEqual([
       expect.objectContaining({
         code: "untranslated-field",
-        adapter: "llm",
+        adapter: "connection",
         field: "inference.unsupportedPlannerField",
       }),
     ]);
     expect(result.notices).toEqual(reported);
-    expect(result.judgedNoAction).toBe(1);
   });
 });

@@ -3,46 +3,57 @@
 A workflow compiles to a frozen plan, persists run and unit state, dispatches
 its work, verifies declared gates, and resumes without replaying completed
 units. This page is the architecture-level reference for that engine — how a
-run's plan is frozen and stored, how dispatch and resume actually work, how
-one engine owns a run, and how isolated file-mutating units execute. For the
-exact frontmatter/body syntax that produces the plan, see
-[Workflow Schema](../reference/workflow-schema.md). For the day-to-day
-commands that drive a run, see [Running Workflows](../guides/run-workflows.md).
+run's plan is frozen and stored, how dispatch and resume actually work, and
+how one engine owns a run. For the exact frontmatter/body syntax that produces
+the plan, see [Workflow Schema](../reference/workflow-schema.md). For the
+day-to-day commands that drive a run, see
+[Running Workflows](../guides/run-workflows.md).
 
-> **`akm workflow run` is the one command that starts, resumes, and executes a
-> run.** There is no separate driver protocol.
+> **`akm workflow run` is Experimental (see `STABILITY.md`), ungated, and the only
+> execution surface.** It is the canonical start/resume/execute command; there is
+> no separate external-driver protocol.
 
 ## Frozen plans
 
-The first `akm workflow run <ref>` compiles either peer source format
-(Markdown or GitHub-Actions-style YAML) straight to the one plan type and
-stores it as durable plan **`irVersion` 6** on the run row (`plan_json` +
-`plan_hash`); a new start never emits an older version. `plan_ir_version` and
-`plan_hash` are recorded provenance, not gates: a stored plan is decoded as it
-is — irVersion 4 and 5 plans included — and one frozen by an older or newer
-akm that still decodes simply runs (with one warning). A newer akm's plan that
-does not decode is refused with a message naming "Upgrade akm".
+The first `akm workflow run <ref>` compiles the Markdown source straight to
+the one plan type and stores it as durable plan **`irVersion` 8** on the run row
+(`plan_json` + `plan_hash`); a new start never emits an older version.
+`plan_ir_version` and `plan_hash` are recorded provenance: a stored plan is
+decoded as it is — irVersion 5, 6 and 7 plans that hold no model step included.
+One frozen by an older akm that still decodes runs with one warning. One frozen
+by a newer akm (`plan_ir_version` above 8) is refused unread with a message
+naming "Upgrade akm". A plan frozen before 8 with a model step recorded an
+engine where 8 records a connection or harness; it does not decode, and
+`akm workflow run` abandons it and starts afresh.
 
 The durable plan records `sourceHash`, the sha256 of the workflow source file
 at freeze. It is used only for the resume warning below, never to refuse a
 run.
 
-Dispatch-significant material is immutable. The resolved request is frozen,
-the resolved target is frozen, and runner selection is frozen.
-Working directory (`cwd`) identity is frozen.
-Git identity and its commit OID are frozen. An agent binary is frozen by name
-(say, `claude`) and found on `PATH` when the unit dispatches, so upgrading that
-CLI does not invalidate a run.
-Exact models, inference, tools and authorization,
+**Freeze records identities, never locations.** The resolved request is frozen,
+the resolved target is frozen, and runner selection is frozen. So are the refs
+the engine itself dereferences, qualified with their bundle: the run's
+`workflow_ref`, each unit's `env:` refs (`{ kind: "env-ref", ref, precedence }`)
+and each child workflow's ref. Exact models, inference, tools and authorization,
 execution limits, parameter snapshots, command/script bytes, and verifier
 selection therefore cannot drift under an in-flight run.
 
-Workflow environment asset values are the one live-value exception within
-authored workflow inputs. The environment owner key set and secret-token
-topology are frozen, and literal values stay frozen. Pass-through bindings
-materialize at dispatch from the current process, and env and secret references
-materialize their current values at dispatch. A durable plan stores secret
-references, not secret values.
+Everything else is live, found again at dispatch through the one ref lookup
+`akm show` uses (no database is opened):
+
+| Frozen | Live at dispatch |
+| --- | --- |
+| argv, `exec.cwd` and `pass_env` names as authored | the owner root of the run's workflow, which every exec unit and agent works in (`exec.cwd` joins it once) |
+| `env:` refs, bundle-qualified | the env file, its keys and every `${ref}` in it, and the secrets they name |
+| `${ref}` tokens in argv and `cwd`, as authored | the secret value or asset path each one names |
+
+The executable a unit runs is resolved at dispatch too, so upgrading a CLI (say,
+`claude`) never strands a run, and a `bundle update` that moves a bundle to a
+new revision directory in the middle of a run is harmless: the next step runs
+from the new directory. Plans
+frozen as irVersion 5 or 6 also carry a `cwdIdentity` and env owner paths; the
+decoder drops them and such a run dispatches by ref. Durable plans never store
+secret values.
 
 **A run executes the plan compiled at creation; edits to source need a new
 run.** Resuming a run re-reads its workflow source only to warn, once, when
@@ -80,7 +91,7 @@ existing retry loop, after the parent unit's attempt row is already claimed
 `running` (so a crash between claiming that row and publishing the child
 leaves a recoverable `running` parent unit and no orphaned child) and
 **before** the ordinary post-dispatch journaling (redaction, attempt
-finishing, the worktree epilogue), which runs unchanged either way — a
+finishing), which runs unchanged either way — a
 child-workflow unit is journaled exactly like any other.
 
 **The drive contract.** `driveChildWorkflowUnit` validates and resolves the
@@ -106,9 +117,7 @@ decoding the stored plan, taking that run's own lock, and walking its spine
 through `completeWorkflowStep` are identical to the top-level path. That
 reuse is what makes child run locks arbitrate two-parent contention with no
 new mechanism, and what makes a resumed parent skip a completed child step
-with zero dispatcher calls. The child drive passes a no-op
-`disposeDispatchResources` (the parent's `finally` remains the sole owner of
-the process-lifecycle drain for the whole process) and no `maxSteps` or
+with zero dispatcher calls. The child drive passes no `maxSteps` or
 `maxRetries` (the parent's own budgets count only its own spine steps). The
 lower-level `driveRun` that `runWorkflowSteps` wraps stays module-private —
 reaching for it directly, instead of the public entry point, would be
@@ -124,28 +133,9 @@ preimage already covers everything the child drive depends on — the frozen
 target carries the child's ref, plan hash, content hash, binding mode, and
 its entire embedded plan, so any change anywhere in the child changes the
 parent unit's own input hash transitively. The child run id (minted at
-dispatch) and its exported result are unit *outputs*, not inputs, so neither
+dispatch) and its result (the child's last step output) are unit *outputs*, not inputs, so neither
 belongs in the preimage — adding either would be a hashing-boundary
 violation, not a fix.
-
-### Run outputs
-
-A workflow may declare `outputs:` — a run-level export projected from its
-steps' own artifacts once every step has finished (see [Workflow Schema:
-Workflow outputs](../reference/workflow-schema.md#workflow-outputs) for the
-authoring grammar). Resolution happens inside the same write transaction
-that completes the run's final step, immediately after the run's terminal
-status is derived: each declared output is resolved from the persisted step
-evidence and, if declared, validated against its schema. If resolution or
-validation fails for any entry, the **whole completion rolls back** — the
-run stays `active`, its final step stays `pending`, and no completion event
-is emitted — rather than leaving a run `completed` with missing or invalid
-exports. A run with no `outputs:` declaration exports `{runId, status}`
-instead, synthesized on read and never persisted. This exported result is
-exactly what a parent composing this workflow as a child promotes as the
-composing unit's own result on `completed` — the same value, read through
-the same function, whether the caller is `akm workflow status` or a parent
-unit's dispatch.
 
 ## Resume skips completed units
 
@@ -195,50 +185,23 @@ against a run another live process holds refuses up front with
 `RUN_LEASE_HELD` (exit 75), naming the holder pid. A lock whose holder pid is
 dead is reclaimed at once, so a crashed engine does not wedge a run; nothing
 expires by age and nothing renews. `workflow status` and `list` never take
-the lock. When the invocation ends, on every exit path, the engine also closes
-any cached SDK server processes (`disposeDispatchResources`) so the one-shot
-process can exit.
-
-## Worktree isolation
-
-A file-mutating unit can declare `isolation: worktree` in its `unit:` bag
-(agent and sdk runners) — see
-[Workflow Schema: Frontmatter keys](../reference/workflow-schema.md#frontmatter-keys).
-Each unit attempt gets a fresh **detached git worktree** of the run's base
-repository under a run-scoped temp directory; the worktree path is journaled
-on the unit row and passed to the harness as its working directory, so
-parallel fan-out units do not share a working tree. After the
-unit finishes, a clean worktree (`git status --porcelain` empty) is removed
-automatically; a dirty one is retained and its path logged. Retained worktrees
-older than a week are removed by a sweep that runs at most once per process.
-Declaring worktree isolation in a non-git directory fails the step before
-anything dispatches.
-
-> **Outputs matched by `.gitignore` are treated as disposable.** A
-> worktree-isolated unit's output survives only if it lands on a tracked file
-> or an untracked file your repository does not `.gitignore`. Anything a unit
-> writes to a `.gitignore`d path — build outputs, caches, logs, dependency
-> directories like `node_modules`/`dist` — is discarded when its clean worktree
-> is auto-removed. If a unit produces an artifact that must survive, write it
-> to a non-ignored path, or report it as a result (a structured `output` or
-> free-text result), before the unit returns.
-
-The clean probe deliberately does **not** pass `--ignored`, so "uncollected
-work" means tracked or untracked-*unignored* changes only. A worktree whose
-only residue is files your repository's own `.gitignore` matches is treated
-as clean and removed: those files are disposable by the repo's own
-declaration, and retaining a worktree after every package install or build
-would blow up disk under the temp root.
+the lock.
 
 ## Concurrency limits
 
 Native fan-out (`akm workflow run`) uses the minimum of four limits: the
 map's `concurrency` (4 when the map declares none, or `workflow.defaultMapConcurrency`
-when set), the run's frozen `workflow.maxConcurrency`, the selected frozen LLM
-engine's `concurrency` (including an SDK engine's fallback LLM), and the current
-host's CPU-derived limit. The host limit is applied again on resume, so a run
-resumed on a smaller machine uses fewer workers. The policy lives in
+when set), the run's frozen `workflow.maxConcurrency`, the selected frozen
+connection's `concurrency` (a harness has none), and the current host's
+CPU-derived limit. The host limit is applied again on resume, so a run resumed
+on a smaller machine uses fewer workers. The policy lives in
 `src/workflows/concurrency-policy.ts`.
+
+`targetConcurrency` (`src/workflows/freeze/step-values.ts`) freezes the
+connection's value as the target's `concurrency` in the plan, and
+`scheduleUnits` (`src/workflows/exec/scheduler.ts`) applies it as
+`llmConcurrency` to cap `map` and `over` fan-out. The scheduler's own default of
+one is a fail-safe for a caller that names no width, not the `map` default.
 
 - **Unset (default):** the CPU-derived value `min(16, max(1, cores − 2))`.
 - **Set:** an explicit positive integer, clamped when frozen to `[1, 64]`
@@ -254,14 +217,19 @@ $ akm config get workflow.maxConcurrency
 A fan-out runs up to N agents at once, not one; see
 [Running Workflows](../guides/run-workflows.md).
 
-## Run scope and persistence
+## Run identity and persistence
 
 Run state (`plan_json`, `plan_hash`, step statuses, and the unit journal)
-persists in the project's `state.db`; the per-run lock file sits beside it. Run state is scoped to
-the current project directory — the nearest `.akm/config.json`, git root,
-bundle root, or current directory — so the same workflow can run
-independently in separate projects, and `akm workflow list`/`status` without
-an explicit run id only ever see runs in that scope.
+persists in the host's `state.db`; the per-run lock file sits beside it. A run
+is identified by its run id and a workflow by its bundle-qualified ref. Run
+state is not scoped to a directory: `akm workflow run <ref>` always starts a
+new run, `akm workflow run <run-id>` drives an existing one,
+`akm workflow resume <run-id>` re-activates a blocked or failed one, and
+`akm workflow list`/`status` show every run on the host from any working
+directory. Starting a ref that already has active runs warns
+and names them; it is never refused. `akm workflow run <ref> --skip-if-locked`
+skips (exit 0) instead of starting when an active run of that ref is held by a
+live process.
 
 ## See also
 

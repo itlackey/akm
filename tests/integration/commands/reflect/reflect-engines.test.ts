@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Reflect has one path for every engine kind: an LLM and an agent CLI are each
+ * Reflect has one path for every kind of target: a connection and a harness are each
  * asked for the same JSON reply, the reply is held to the same contract, and an
  * invalid one is repaired once. The contract suite runs every transport; one
  * agent row stands for them here.
@@ -21,11 +21,13 @@ import { listProposals } from "../../../../src/commands/proposal/repository";
 import { parseFrontmatter } from "../../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
+import { REFLECT_CONTENT_CAP, REFLECT_TRUNCATION_MARKER } from "../../../../src/integrations/agent/prompts";
 import {
   clearHarnessCalls,
   fakeHarness,
   type HarnessCall,
   harnessCalls,
+  promptOf,
   serveLlmStub,
 } from "../../../_helpers/engine-stubs";
 import { reflectReply } from "../../../_helpers/factories";
@@ -44,15 +46,14 @@ const PROSE = "I have improved the asset.";
 const SCHEMA_INSTRUCTION = "\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n";
 const REPAIR_REQUEST = "could not be extracted using the required output contract";
 
-/** The replies an engine gives to its first, second, … dispatch; the last one repeats. */
+/** The replies a connection or harness gives to its first, second, … dispatch; the last one repeats. */
 const SCENARIOS: Record<string, readonly string[]> = {
   valid: [reflectReply(PATCH)],
   repair: [PROSE, reflectReply(PATCH)],
   invalid: [PROSE],
-  // What the engine says to a reflect run that names no asset: the asset, too.
+  // What the model says to a reflect run that names no asset: the asset, too.
   unscoped: [reflectReply(PATCH, { ref: REF })],
   // The first pass needs its repair; the second pass replies in prose again.
-  refine: [PROSE, reflectReply(PATCH), PROSE],
 };
 
 const { server: llmStub, bodies: llmBodies } = serveLlmStub(SCENARIOS);
@@ -81,54 +82,58 @@ afterEach(() => {
   clearHarnessCalls(bins.dir);
 });
 
-/** One engine kind, and how to see what reached it. */
+/** One kind of target, and how to see what reached it. */
 interface Transport {
   readonly name: string;
-  /** The engine config entry that runs `scenario`. */
+  /** The config entries, named `contract`, that run `scenario`. */
   engine(scenario: string): Record<string, unknown>;
   /** Each dispatch's prompt, in order. */
   prompts(scenario: string): string[];
-  /** The schema the engine received as a native channel, if it has one. */
+  /** The schema the connection received as a native channel, if it has one. */
   nativeSchema?(): unknown;
 }
 
 const LLM: Transport = {
   name: "llm",
   engine: (scenario) => ({
-    kind: "llm",
-    endpoint: `http://127.0.0.1:${llmStub.port}/${scenario}/v1/chat/completions`,
-    model: "stub-model",
+    connections: {
+      contract: {
+        endpoint: `http://127.0.0.1:${llmStub.port}/${scenario}/v1/chat/completions`,
+        models: { fast: "stub-model" },
+      },
+    },
   }),
   prompts: () => llmBodies.map((body) => body.messages.map((message) => message.content).join("\n")),
   nativeSchema: () => llmBodies[0]?.response_format?.json_schema?.schema,
 };
 
-/** The calls the fake opencode binary recorded for `scenario`. */
-const opencodeCalls = (scenario: string): HarnessCall[] => harnessCalls(path.join(bins.dir, scenario));
+/** The calls the fake claude binary recorded for `scenario`. */
+const claudeCalls = (scenario: string): HarnessCall[] => harnessCalls(path.join(bins.dir, scenario));
 
-const OPENCODE: Transport = {
-  name: "opencode",
-  engine: (scenario) => ({ kind: "agent", platform: "opencode", bin: path.join(bins.dir, scenario) }),
-  prompts: (scenario) => opencodeCalls(scenario).map((call) => call.argv.at(-1) ?? ""),
+const CLAUDE: Transport = {
+  name: "claude",
+  engine: (scenario) => ({ harnesses: { contract: { platform: "claude", bin: path.join(bins.dir, scenario) } } }),
+  prompts: (scenario) => claudeCalls(scenario).map((call) => promptOf(call)),
 };
 
-const TRANSPORTS: [string, Transport][] = [LLM, OPENCODE].map((transport) => [transport.name, transport]);
+const TRANSPORTS: [string, Transport][] = [LLM, CLAUDE].map((transport) => [transport.name, transport]);
 
-/** Reflect `REF` on `transport`'s engine for `scenario`, with the quality gate off. */
+/** Reflect `REF` on `transport`'s connection or harness for `scenario`, with the quality gate off. */
 function reflect(transport: Transport, scenario: string, options: Parameters<typeof akmReflect>[0] = {}) {
   const config = {
     configVersion: "0.9.0",
     semanticSearchMode: "off",
-    engines: { contract: transport.engine(scenario) },
-    defaults: { engine: "contract", improveStrategy: "default" },
-    improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } } },
+    ...transport.engine(scenario),
+    improve: {
+      strategy: "default",
+      strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } },
+    },
   } as unknown as AkmConfig;
   return akmReflect({
     ref: REF,
     stashDir: storage.stashDir,
     config,
     assetContent: SOURCE,
-    engine: "contract",
     ...options,
   });
 }
@@ -138,6 +143,77 @@ function completedEvent() {
   expect(events).toHaveLength(1);
   return events[0]?.metadata as Record<string, unknown>;
 }
+
+describe("the 12k content cap is for a prompt that travels as an argument", () => {
+  const TAIL = "FINAL-LINE-OF-THE-ASSET";
+  const LONG = `${SOURCE}\n${"The body goes on and on. ".repeat(1_000)}\n${TAIL}\n`;
+
+  test.each([
+    ["claude", false],
+    ["gemini", true],
+  ])("a %s harness sees the asset %s", async (platform, truncated) => {
+    const config = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      harnesses: { contract: { platform, bin: path.join(bins.dir, "valid") } },
+      improve: {
+        strategy: "default",
+        strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } },
+      },
+    } as unknown as AkmConfig;
+
+    const result = await akmReflect({ ref: REF, stashDir: storage.stashDir, config, assetContent: LONG });
+
+    if (!result.ok) throw new Error(`expected a proposal, got ${result.reason}: ${result.error}`);
+    const [call] = claudeCalls("valid");
+    const prompt = promptOf(call);
+    expect(LONG.length).toBeGreaterThan(REFLECT_CONTENT_CAP);
+    expect(prompt.includes(REFLECT_TRUNCATION_MARKER)).toBe(truncated);
+    expect(prompt.includes(TAIL)).toBe(!truncated);
+  });
+});
+
+describe("reflect runs the runner the improve plan froze", () => {
+  test("it resolves nothing of its own: a config that configures nothing still dispatches, and the plan's runner answers", async () => {
+    const result = await akmReflect({
+      ref: REF,
+      stashDir: storage.stashDir,
+      config: {
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        improve: {
+          strategy: "default",
+          strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } },
+        },
+      } as unknown as AkmConfig,
+      assetContent: SOURCE,
+      llmRunner: {
+        kind: "harness",
+        name: "frozen",
+        platform: "claude",
+        bin: path.join(bins.dir, "valid"),
+        args: [],
+        timeoutMs: null,
+      },
+    });
+
+    if (!result.ok) throw new Error(`expected a proposal, got ${result.reason}: ${result.error}`);
+    expect(result.engine).toBe("frozen");
+    expect(claudeCalls("valid")).toHaveLength(1);
+  });
+
+  test("a plan that froze none for reflect (null) is the same error as a config that names none", async () => {
+    await expect(
+      akmReflect({
+        ref: REF,
+        stashDir: storage.stashDir,
+        config: { configVersion: "0.9.0" } as AkmConfig,
+        assetContent: SOURCE,
+        llmRunner: null,
+      }),
+    ).rejects.toMatchObject({ code: "LLM_NOT_CONFIGURED" });
+  });
+});
 
 describe("reflect asks every engine kind for the same JSON reply", () => {
   test.each(TRANSPORTS)("%s: the reply is queued as a proposal", async (_name, transport) => {
@@ -159,7 +235,7 @@ describe("reflect asks every engine kind for the same JSON reply", () => {
     expect(completedEvent()).toMatchObject({ source: "reflect", engine: "contract", outputMode: "json_schema" });
   });
 
-  // An LLM gets the schema as response_format; an agent engine gets it as the one instruction at the end of its prompt.
+  // A connection gets the schema as response_format; a harness gets it as the one instruction at the end of its prompt.
   test.each(TRANSPORTS)("%s: the reply's JSON Schema is the request's output schema", async (name, transport) => {
     await reflect(transport, "valid");
 
@@ -212,7 +288,7 @@ describe("reflect repairs an invalid reply once, on every engine kind", () => {
     if (result.ok) throw new Error("expected a failure");
     expect(result).toMatchObject({ reason: "parse_error", engine: "contract" });
     expect(result.stdout?.trim()).toBe(PROSE);
-    // The parser's own message, on every engine kind: improve feeds a failed reflect's error into later prompts.
+    // The parser's own message, on a connection and a harness alike: improve feeds a failed reflect's error into later prompts.
     expect(result.error).toBe("direct reflect response was not valid JSON");
     expect(transport.prompts("invalid")).toHaveLength(2);
     expect(listProposals(storage.stashDir)).toEqual([]);
@@ -220,27 +296,11 @@ describe("reflect repairs an invalid reply once, on every engine kind", () => {
   });
 });
 
-describe("reflect's repair is spent once across refine passes, on every engine kind", () => {
-  test.each(TRANSPORTS)("%s: a second pass with an invalid reply is not repaired again", async (_name, transport) => {
-    const result = await reflect(transport, "refine", { maxRefineIters: 2 });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("expected a failure");
-    expect(result.reason).toBe("parse_error");
-    // The first pass, its repair, and the second pass, which critiques the repaired draft and gets no repair.
-    const prompts = transport.prompts("refine");
-    expect(prompts).toHaveLength(3);
-    expect(prompts[2]).toContain("Your previous proposal is shown above");
-    expect(listProposals(storage.stashDir)).toEqual([]);
-    expect(completedEvent()).toMatchObject({ ok: false, reason: "parse_error", repairAttempts: 1 });
-  });
-});
-
 describe("a harness's environment", () => {
   test("model work runs in a scratch directory with the improve event source", async () => {
-    await reflect(OPENCODE, "valid", { eventSource: "improve" });
+    await reflect(CLAUDE, "valid", { eventSource: "improve" });
 
-    const [call] = opencodeCalls("valid");
+    const [call] = claudeCalls("valid");
     expect(call?.eventSource).toBe("improve");
     expect(path.basename(call?.cwd ?? "")).toStartWith("akm-model-work-");
   });

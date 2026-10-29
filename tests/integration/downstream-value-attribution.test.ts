@@ -12,6 +12,7 @@ import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
+import { getSearchHitAttribution } from "../../src/indexer/search/search-attribution";
 import { openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -67,12 +68,40 @@ function writeAsset(
 }
 
 function writeIndexFixture(): void {
-  writeAsset(storage.stashDir, "memories", "parent", "description: surface-parent-needle", "Primary parent body.");
+  writeAsset(
+    storage.stashDir,
+    "memories",
+    "qualified",
+    "description: Do not restart production; staging only, pending confirmation.\ntags: [manual, production]",
+    "qualifiedneedle Authored parent body.",
+  );
+  writeAsset(
+    storage.stashDir,
+    "memories",
+    "qualified.derived",
+    "source: memories/qualified\ndescription: Restart production immediately.\ntags: [restart, derived]",
+    "Overconfident child body.",
+  );
+  writeAsset(
+    storage.stashDir,
+    "memories",
+    "tag-only",
+    "description: tagonlyneedle Restart remains unverified; staging only.",
+    "Parent body.",
+  );
+  writeAsset(
+    storage.stashDir,
+    "memories",
+    "tag-only.derived",
+    "source: memories/tag-only\ndescription: Restart production immediately.\ntags: [derived-tag]",
+    "Derived body.",
+  );
+  writeAsset(storage.stashDir, "memories", "parent", "type: memory", "surface-parent-needle Primary parent body.");
   writeAsset(
     storage.stashDir,
     "memories",
     "parent.derived",
-    "inferred: true\nsource: memories/parent\ndescription: direct-child-needle",
+    "inferred: true\nsource: memories/parent\ndescription: direct-child-needle\ntags: [derived-insight]",
     "Primary derived body.",
   );
   writeAsset(
@@ -90,7 +119,7 @@ function writeIndexFixture(): void {
     "inferred: true\nsource: memories/parent\ndescription: team-parent-derived-needle",
     "Team derived body.",
   );
-  writeAsset(teamDir, "memories", "team-only", "description: team-surface-needle", "Team-only parent body.");
+  writeAsset(teamDir, "memories", "team-only", "type: memory", "team-surface-needle Team-only parent body.");
   writeAsset(
     teamDir,
     "memories",
@@ -199,6 +228,7 @@ describe("downstream value attribution", () => {
     const result = await akmSearch({ query: "team surface needle", source: "team", limit: 10 });
     const teamHit = result.hits.find((hit) => hit.type !== "registry" && hit.name === "team-only" && "ref" in hit);
     expect(teamHit && "ref" in teamHit ? teamHit.ref : undefined).toBe("team//memories/team-only");
+    expect(teamHit && "expandTo" in teamHit ? teamHit.expandTo : undefined).toBe("team//memories/team-only.derived");
     expect(
       usageRows()
         .filter((row) => row.query === "team surface needle")
@@ -215,6 +245,17 @@ describe("downstream value attribution", () => {
     const shown = await akmShowUnified({ ref: "team//memories/team-only.derived", skipLogging: true });
     expect(shown.origin).toBe("team");
     expect(shown.path).toBe(path.join(teamDir, "memories", "team-only.derived.md"));
+  });
+
+  test("duplicate-bundle expansion follows the same child that supplied the surface", async () => {
+    const result = await akmSearch({ query: "team-parent-needle", source: "team", skipLogging: true });
+    const parent = result.hits.find((hit) => hit.type === "memory" && hit.name === "parent");
+    expect(parent && "ref" in parent ? parent.ref : undefined).toBe("team//memories/parent");
+    const expandTo = parent && "expandTo" in parent ? parent.expandTo : undefined;
+    expect(expandTo).toBe("team//memories/parent.derived");
+    const shown = await akmShowUnified({ ref: expandTo ?? "", skipLogging: true });
+    expect(shown.path).toBe(path.join(teamDir, "memories", "parent.derived.md"));
+    expect(shown.content).toContain("Team derived body.");
   });
 
   test("direct show attributes an inferred child", async () => {
@@ -268,3 +309,114 @@ describe("downstream value attribution", () => {
     });
   });
 });
+
+test("real authored qualifications and tags survive search and curate without invented exposure", async () => {
+  const result = await akmSearch({ query: "qualifiedneedle", skipLogging: true });
+  const hit = result.hits.find((candidate) => candidate.name === "qualified");
+  expect(hit?.description).toBe("Do not restart production; staging only, pending confirmation.");
+  expect(hit && "tags" in hit ? hit.tags : undefined).toEqual(["manual", "production"]);
+  expect(hit && "expandTo" in hit ? hit.expandTo : undefined).toBe("memories/qualified.derived");
+  expect(hit && getSearchHitAttribution(hit)).toBeUndefined();
+  const curated = await akmCurate({ query: "qualifiedneedle", limit: 1, searchResponse: result });
+  expect(curated.items[0]?.description).toBe(hit?.description);
+  expect(metadataFor("qualifiedneedle", "stash//memories/qualified")).toEqual({
+    downstreamAttribution: { version: 1, control: true },
+  });
+});
+
+test("tag-only fallback is attributed only by full search; curate never emits tags", async () => {
+  // The real indexer supplies filename tokens when authored tags are absent.
+  const db = openExistingDatabase(getDbPath());
+  const row = db.prepare("SELECT document_json FROM entries WHERE item_ref = ?").get("stash//memories/tag-only") as {
+    document_json: string;
+  };
+  db.close();
+  expect(JSON.parse(row.document_json).tags).toEqual(["tag", "only"]);
+  for (const detail of ["brief", "normal", "agent", "full"] as const) {
+    clearUsageRows();
+    const result = await runCliCapture(["search", "tagonlyneedle", "--detail", detail, "--format", "json"]);
+    expect(result.code).toBe(0);
+    const output = JSON.parse(result.stdout) as { hits: Array<Record<string, unknown>> };
+    const hit = output.hits.find((candidate) => candidate.name === "tag-only");
+    expect(hit?.tags).toEqual(detail === "full" ? ["derived tag"] : undefined);
+    if (detail !== "brief") expect(hit?.description).toBe("tagonlyneedle Restart remains unverified; staging only.");
+    expect(metadataFor("tagonlyneedle", "stash//memories/tag-only")).toEqual({
+      downstreamAttribution: {
+        version: 1,
+        control: detail !== "full",
+        ...(detail === "full"
+          ? { memoryInference: { exposure: "surface", childRef: "stash//memories/tag-only.derived" } }
+          : {}),
+      },
+    });
+  }
+  clearUsageRows();
+  const curated = await runCliCapture([
+    "curate",
+    "tagonlyneedle",
+    "--limit",
+    "1",
+    "--detail",
+    "full",
+    "--format",
+    "json",
+  ]);
+  expect(curated.code).toBe(0);
+  expect(JSON.parse(curated.stdout).items[0]?.description).toBe(
+    "tagonlyneedle Restart remains unverified; staging only.",
+  );
+  expect(metadataFor("tagonlyneedle", "stash//memories/tag-only")).toEqual({
+    downstreamAttribution: { version: 1, control: true },
+  });
+});
+
+test("filename-generated parent description and tags fall back independently to the indexed child", async () => {
+  const db = openExistingDatabase(getDbPath());
+  const row = db.prepare("SELECT document_json FROM entries WHERE item_ref = ?").get("stash//memories/parent") as {
+    document_json: string;
+  };
+  db.close();
+  const indexed = JSON.parse(row.document_json);
+  expect(indexed.source).toBe("filename");
+  expect(indexed.description.trim()).not.toBe("");
+  expect(indexed.tags).toEqual(["parent"]);
+  const result = await akmSearch({ query: "surface-parent-needle", skipLogging: true });
+  const hit = result.hits.find((candidate) => candidate.name === "parent");
+  expect(hit?.description).toBe("direct-child-needle");
+  expect(hit && "tags" in hit ? hit.tags : undefined).toEqual(["derived insight"]);
+  expect(hit && getSearchHitAttribution(hit)?.memoryInference?.surfaceFields).toEqual(["description", "tags"]);
+});
+
+for (const authoredTags of [undefined, ["auth"], ["manual", "auth"]]) {
+  test(`real nested path tags permit fallback unless authored tags add information: ${JSON.stringify(authoredTags)}`, async () => {
+    const name = "Project-One/Ops.v2/auth.vpn_note";
+    writeAsset(
+      storage.stashDir,
+      "memories",
+      name,
+      `description: nestedtagneedle Staging only.${authoredTags ? `\ntags: ${JSON.stringify(authoredTags)}` : ""}`,
+      "Parent body.",
+    );
+    writeAsset(
+      storage.stashDir,
+      "memories",
+      `${name}.derived`,
+      `source: memories/${name}\ndescription: Stronger child claim.\ntags: [derived-tag]`,
+      "Child body.",
+    );
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const result = await akmSearch({ query: "nestedtagneedle", skipLogging: true });
+    const hit = result.hits.find((candidate) => candidate.name === name);
+    expect(hit?.description).toBe("nestedtagneedle Staging only.");
+    const preservesTags = authoredTags?.includes("manual");
+    expect(hit && "tags" in hit ? hit.tags : undefined).toEqual(
+      preservesTags
+        ? ["manual", "auth", "project", "one", "ops", "v2"]
+        : ["derived tag", "project", "one", "ops", "v2"],
+    );
+    expect(hit && "expandTo" in hit ? hit.expandTo : undefined).toBe(`memories/${name}.derived`);
+    expect(hit && getSearchHitAttribution(hit)?.memoryInference?.surfaceFields).toEqual(
+      preservesTags ? undefined : ["tags"],
+    );
+  });
+}

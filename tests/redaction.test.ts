@@ -5,8 +5,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   collectSensitiveValues,
-  ENV_PASSTHROUGH_REDACTION_ALLOWLIST,
-  isEnvPassthroughValueSafeToExpose,
   redactCredentialPatterns,
   redactSensitiveText,
   redactSensitiveValue,
@@ -163,6 +161,38 @@ describe("redactSensitiveText", () => {
     ).toBe("[REDACTED] and [REDACTED] and cost=[REDACTED]");
   });
 
+  test("redacts the JSON-escaped spelling of a value that needs escaping", () => {
+    const secret = 'sk-"q"\\b\nline';
+    const printed = JSON.stringify({ token: secret });
+    expect(printed).not.toContain(secret);
+    expect(redactSensitiveText(printed, [secret])).toBe('{"token":"[REDACTED]"}');
+    expect(redactSensitiveText(`raw ${secret} end`, [secret])).toBe("raw [REDACTED] end");
+  });
+
+  test("redacts a non-ASCII value in both the JSON.stringify and the ASCII-escaped spelling", () => {
+    const secret = "pässwörd-\u{1F511}";
+    const stringified = JSON.stringify(secret).slice(1, -1);
+    // Python's json.dumps(ensure_ascii=True) spelling, including the surrogate pair.
+    const ascii = "p\\u00e4ssw\\u00f6rd-\\ud83d\\udd11";
+    expect(stringified).toBe(secret);
+    expect(redactSensitiveText(`{"t":"${stringified}"}`, [secret])).toBe('{"t":"[REDACTED]"}');
+    expect(redactSensitiveText(`{"t":"${ascii}"}`, [secret])).toBe('{"t":"[REDACTED]"}');
+  });
+
+  test("redacts the uppercase-hex and DEL-escaped spellings other encoders write", () => {
+    const secret = "pä\u007fss";
+    // Java-style uppercase hex, and Python's ensure_ascii escaping DEL as \u007f.
+    expect(redactSensitiveText('{"t":"p\\u00E4\\u007Fss"}', [secret])).toBe('{"t":"[REDACTED]"}');
+    expect(redactSensitiveText('{"t":"p\\u00e4\\u007fss"}', [secret])).toBe('{"t":"[REDACTED]"}');
+  });
+
+  test("an escaped spelling is an ordinary needle: overlapping matches merge and the output stays bounded", () => {
+    const secret = 'a"b';
+    expect(redactSensitiveText('x a"b a\\"b y', [secret])).toBe("x [REDACTED] [REDACTED] y");
+    const text = "a".repeat(50);
+    expect(redactSensitiveText(text, ["a", "E", "D", "T", "C", "R", '"']).length).toBeLessThan(text.length);
+  });
+
   test("redacts every non-empty exact value regardless of length", () => {
     expect(redactSensitiveText("a=abc ab=a", ["", "a", "ab", "abc"])).toBe(
       "[REDACTED]=[REDACTED] [REDACTED]=[REDACTED]",
@@ -177,14 +207,8 @@ describe("redactSensitiveText", () => {
   });
 });
 
-describe("environment passthrough redaction policy", () => {
-  test("keeps ordinary values for every explicitly classified allowlisted name", () => {
-    for (const name of ENV_PASSTHROUGH_REDACTION_ALLOWLIST) {
-      expect(isEnvPassthroughValueSafeToExpose(name, "ordinary-runtime-value"), name).toBe(true);
-    }
-  });
-
-  test("rejects URL userinfo and signed query credentials under every allowlisted name", () => {
+describe("collectSensitiveValues of a URL", () => {
+  test("collects URL userinfo and every signed or OAuth credential parameter, in a query or a fragment", () => {
     const oauthCredentialKeys = [
       "access_token",
       "actor_token",
@@ -214,36 +238,29 @@ describe("environment passthrough redaction policy", () => {
       "user_code",
       "verifier",
     ];
-    for (const name of ENV_PASSTHROUGH_REDACTION_ALLOWLIST) {
-      expect(isEnvPassthroughValueSafeToExpose(name, "https://user:password@example.test/v1"), name).toBe(false);
-      expect(
-        isEnvPassthroughValueSafeToExpose(
-          name,
-          "https://example.test/object?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=secret",
-        ),
-        name,
-      ).toBe(false);
-      for (const key of oauthCredentialKeys) {
-        for (const url of [
-          `https://example.test/oauth/callback?${key}=secret&state=public-state`,
-          `https://example.test/oauth/callback#${key}=secret&token_type=bearer`,
-          `https://example.test/#/nested/oauth/callback?mode=finish&${key}=secret`,
-        ]) {
-          expect(isEnvPassthroughValueSafeToExpose(name, url), `${name}: ${url}`).toBe(false);
-        }
+    expect(collectSensitiveValues(["https://user:password@example.test/v1"])).toContain("password");
+    expect(
+      collectSensitiveValues(["https://example.test/object?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=secret"]),
+    ).toContain("secret");
+    for (const key of oauthCredentialKeys) {
+      for (const url of [
+        `https://example.test/oauth/callback?${key}=secret&state=public-state`,
+        `https://example.test/oauth/callback#${key}=secret&token_type=bearer`,
+        `https://example.test/#/nested/oauth/callback?mode=finish&${key}=secret`,
+      ]) {
+        expect(collectSensitiveValues([url]), url).toContain("secret");
       }
     }
   });
 
-  test("allows unsigned endpoint queries but rejects non-allowlisted names", () => {
+  test("collects only the URL itself for an unsigned endpoint query", () => {
     for (const url of [
       "https://example.test/v1?api-version=2026-01-01",
       "https://example.test/public/docs?api-version=2026-01-01&language=en#authentication",
       "https://example.test/oauth/authorize?client_id=public-client&redirect_uri=https%3A%2F%2Fapp.test%2Fcallback&response_type=code&scope=openid&code_challenge=public-challenge&code_challenge_method=S256",
     ]) {
-      expect(isEnvPassthroughValueSafeToExpose("LLM_BASE_URL", url), url).toBe(true);
+      expect(collectSensitiveValues([url]), url).toEqual([url]);
     }
-    expect(isEnvPassthroughValueSafeToExpose("CUSTOM_VALUE", "ordinary-runtime-value")).toBe(false);
   });
 });
 

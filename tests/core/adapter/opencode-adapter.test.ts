@@ -78,21 +78,6 @@ describe("opencode adapter — recognition golden", () => {
   }
 });
 
-describe("opencode adapter — placement golden (writes normalize to plural)", () => {
-  const byType = loadGolden("placement").byType as Record<string, { conceptId: string; assetPath: string }>;
-
-  function relFromRoot(abs: string): string {
-    return path.relative(FIXTURE_ROOT, abs).split(path.sep).join("/");
-  }
-
-  for (const [typeKey, expected] of Object.entries(byType)) {
-    test(`placeNew(${typeKey}) → ${expected.assetPath}`, () => {
-      const abs = opencodeAdapter.placeNew?.(component(), expected.conceptId);
-      expect(relFromRoot(abs as string)).toBe(expected.assetPath);
-    });
-  }
-});
-
 describe("opencode adapter — renderer golden", () => {
   const byRelPath = loadGolden("renderer").byRelPath as Record<string, Record<string, unknown>>;
 

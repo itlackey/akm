@@ -30,14 +30,10 @@ const RECENCY_FLOOR_HALFLIFE_DAYS = 180;
 const RECENCY_EPSILON = 0.01;
 const SIZE_FLOOR_BYTES = 200;
 
-/** Default weights: the outcome term is on (opt out with `improve.salience.outcomeWeightEnabled: false`). */
+/** Rank-score weights. */
 export const W_ENCODING = 0.25;
 export const W_OUTCOME = 0.15;
 export const W_RETRIEVAL = 0.6;
-/** Weights with the outcome term off. */
-export const W_ENCODING_PARITY = 0.3;
-export const W_OUTCOME_PARITY = 0;
-export const W_RETRIEVAL_PARITY = 0.7;
 
 /** Encoding salience by type, for assets with no content-derived score yet. */
 export const DEFAULT_TYPE_ENCODING_WEIGHTS: Readonly<Record<string, number>> = Object.freeze({
@@ -70,8 +66,6 @@ export interface SalienceInputs {
   maxOutcomeScore?: number;
   sizeBytes?: number;
   now?: number;
-  /** `false` switches to the parity weights (no outcome term). */
-  outcomeWeightEnabled?: boolean;
 }
 
 /** Where a stored `encoding_salience` came from; a type stub never overwrites a content score. */
@@ -114,11 +108,7 @@ export function computeSalience(inputs: SalienceInputs): SalienceVector {
   const retrieval = rawRetrieval / (rawRetrieval + 1);
   // Larger assets rank slightly lower.
   const sizePenalty = 1 / Math.log10(Math.max(SIZE_FLOOR_BYTES, inputs.sizeBytes ?? 0));
-  const [we, wo, wr] =
-    inputs.outcomeWeightEnabled !== false
-      ? [W_ENCODING, W_OUTCOME, W_RETRIEVAL]
-      : [W_ENCODING_PARITY, W_OUTCOME_PARITY, W_RETRIEVAL_PARITY];
-  const rankScore = clamp01((we * encoding + wo * outcome + wr * retrieval) * sizePenalty);
+  const rankScore = clamp01((W_ENCODING * encoding + W_OUTCOME * outcome + W_RETRIEVAL * retrieval) * sizePenalty);
   return { encoding, outcome, retrieval, rankScore, encodingSource };
 }
 

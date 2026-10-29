@@ -21,7 +21,7 @@ it. There are eleven:
 | `claude` | A `.claude/` tool directory | root `CLAUDE.md` (`instruction`), `commands/`, `agents/`, `skills/<name>/SKILL.md`; skips `settings.json` and `.mcp.json` |
 | `opencode` | An `.opencode/` tool directory | root `AGENTS.md` (`instruction`), `commands/`, `agents/`, `skills/<name>/SKILL.md`; skips `opencode.json` |
 | `dotenv` | Env-file bundle | `env/*.env` as `env` (key names only) and any file under `secrets/` as `secret` (name only) |
-| `akm-workflow` | Workflow bundle | `.md` and `.yml` workflow sources |
+| `akm-workflow` | Workflow bundle | `.md` workflow sources |
 | `akm-task` | Task bundle | `.yml` task sources as `task`; `.yaml` is not recognized |
 | `llm-wiki` | LLM Wiki bundle | a root with `schema.md` and `pages/`: pages (type from frontmatter `pageKind`, default `note`) and `raw/` sources (`wiki-source`) |
 | `akm` | The AKM bundle layout | the types listed under "Item types" below |
@@ -54,8 +54,10 @@ emits fourteen types (`KNOWN_TYPES`, `src/core/recognition-util.ts`): `skill`,
 
 ## Reserved and skipped files
 
-`index.md` and `log.md` are reserved at every depth and are not items
-(`RESERVED_FILES`, `src/core/adapter/adapters/shared.ts`). The `akm` adapter also
+The `akm`, `okf`, `claude`, `opencode` and `generic-files` adapters reserve
+`index.md` and `log.md` at every depth, and neither is an item (`RESERVED_FILES`,
+`src/core/adapter/adapters/shared.ts`). `llm-wiki` reserves `schema.md`,
+`index.md` and `log.md` only at the wiki root. The `akm` adapter also
 skips, using path and `stat` checks (`akmStashAbstains`,
 `src/core/adapter/adapters/akm-adapter.ts`):
 
@@ -64,7 +66,7 @@ skips, using path and `stat` checks (`akmStashAbstains`,
 - a `secrets/` file that is a `.sensitive` or `.lock` marker, or that has a sibling `<name>.sensitive` marker;
 - the root-level `schema.md`, `index.md`, and `log.md` of a `wikis/<name>/` directory.
 
-The walker itself skips VCS internals and does not follow symlinks.
+The walker itself skips VCS internals. It indexes a symlink to a file like any other file and never descends a symlinked directory.
 
 ## How the akm adapter picks a type
 
@@ -77,7 +79,6 @@ registered later wins, in the order listed.
 | Specificity | Signal | Type |
 | --- | --- | --- |
 | 25 | file named `SKILL.md` | `skill` |
-| 20 | `tools` in frontmatter | `agent` |
 | 19 | `type: workflow` in frontmatter | `workflow` |
 | 18 | `agent` in frontmatter, or `$ARGUMENTS` in the body | `command` |
 | 18 | `$1`, `$2`, or `$3` in the body, only when no ancestor directory declares a type | `command` |
@@ -94,7 +95,7 @@ Directories that declare a type (`DIR_TYPE_MAP`) and the files they accept:
 | `scripts/` | `script` | script extensions |
 | `skills/` | `skill` | `SKILL.md` (other files under a skill are resources, not skills) |
 | `commands/`, `agents/`, `knowledge/`, `instructions/`, `memories/`, `lessons/`, `facts/`, `sessions/` | `command`, `agent`, `knowledge`, `instruction`, `memory`, `lesson`, `fact`, `session` | `.md` |
-| `workflows/` | `workflow` | `.md`, `.yml` |
+| `workflows/` | `workflow` | `.md` (a `.yml` is typed `workflow`, then skipped at index time with a warning that it must use `.md`) |
 | `tasks/` | `task` | `.yml` |
 | `env/` | `env` | `.env` and `*.env` |
 | `secrets/` | `secret` | any file except `.lock` and `.sensitive` |
@@ -126,7 +127,7 @@ An unknown value warns once and stays searchable.
 | `scripts/deploy.sh` | parent directory (15) | `scripts/deploy.sh` |
 | `skills/review/SKILL.md` | `SKILL.md` (25) | `skills/review` |
 | `commands/release.md` with `agent: coder` | frontmatter (18) | `commands/release` |
-| `agents/reviewer.md` with `tools:` | frontmatter (20) | `agents/reviewer` |
+| `agents/reviewer.md` | parent directory (15) | `agents/reviewer` |
 | `workflows/release.md` | parent directory (15) | `workflows/release` |
 | `env/prod.env` | parent directory (15) | `env/prod` |
 | `secrets/deploy-token` | parent directory (15) | `secrets/deploy-token` |

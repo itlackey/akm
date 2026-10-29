@@ -5,55 +5,42 @@
  *
  * Before this fix, multiple early-return failure sites emitted only
  * `reflect_invoked` and left the loop dangling. These tests exercise each
- * failure path (forced via the injected spawn seam or by passing a
+ * failure path (forced through a fake harness binary or by passing a
  * non-existent / unsupported ref) and assert that exactly one
  * `reflect_completed` event lands per invocation with the expected
  * `ok: false` and a useful `reason` / `subreason`.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
+import path from "node:path";
 import { akmReflect } from "../../../../src/commands/improve/reflect";
 import { listProposals } from "../../../../src/commands/proposal/repository";
+import type { AkmConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
-import type { SpawnedSubprocess, SpawnFn } from "../../../../src/core/subprocess";
+import { writeFakeHarness } from "../../../_helpers/engine-stubs";
 import { quietQualityGateConfig } from "../../../_helpers/factories";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  makeSandboxDir,
+  type SandboxedDir,
+  withIsolatedAkmStorage,
+} from "../../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
+let binDir: SandboxedDir;
 
 function makeStashDir(): string {
   return storage.stashDir;
 }
 
-function asReadableStream(text: string): ReadableStream<Uint8Array> {
-  const bytes = new TextEncoder().encode(text);
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(bytes);
-      controller.close();
-    },
-  });
+/** The fake-agent config whose harness is a fake binary that answers `stdout`, prints `stderr` and exits `exitCode`. */
+function agentConfig(stdout = "", stderr = "", exitCode = 0): AkmConfig {
+  return quietQualityGateConfig(writeFakeHarness(binDir.dir, "fake-agent", [stdout], { stderr, exitCode }));
 }
 
-function fakeSpawn(stdout: string, stderr: string, exitCode: number): SpawnFn {
-  return () => {
-    const proc: SpawnedSubprocess = {
-      exitCode,
-      exited: Promise.resolve(exitCode),
-      stdout: asReadableStream(stdout),
-      stderr: asReadableStream(stderr),
-      stdin: null,
-      kill: () => undefined,
-    };
-    return proc;
-  };
-}
-
-function spawnFailedSpawn(): SpawnFn {
-  return () => {
-    throw new Error("spawn ENOENT fake-agent");
-  };
+/** The fake-agent config whose harness binary does not exist. */
+function missingAgentConfig(): AkmConfig {
+  return quietQualityGateConfig(path.join(binDir.dir, "no-such-agent"));
 }
 
 function getReflectCompletedEvents(): ReturnType<typeof readEvents>["events"] {
@@ -62,9 +49,11 @@ function getReflectCompletedEvents(): ReturnType<typeof readEvents>["events"] {
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  binDir = makeSandboxDir("akm-completed-on-failure-bin");
 });
 
 afterEach(() => {
+  binDir.cleanup();
   storage.cleanup();
 });
 
@@ -74,8 +63,7 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     const result = await akmReflect({
       ref: "scripts/dangerous",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn("ignored", "", 0) },
+      config: agentConfig("ignored"),
     });
     expect(result.ok).toBe(false);
 
@@ -97,8 +85,7 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     const result = await akmReflect({
       ref: "lessons/any",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: spawnFailedSpawn() },
+      config: missingAgentConfig(),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -119,8 +106,7 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     const result = await akmReflect({
       ref: "lessons/bad",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn("", "boom", 7) },
+      config: agentConfig("", "boom", 7),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -144,8 +130,7 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
       // body that doesn't match the markdown-fallback heuristic either.
       ref: "memories/nope",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn("{not valid json", "", 0) },
+      config: agentConfig("{not valid json"),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
@@ -167,20 +152,17 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     await akmReflect({
       ref: "lessons/fail-1",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn("", "boom", 7) },
+      config: agentConfig("", "boom", 7),
     });
     await akmReflect({
       ref: "lessons/fail-2",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: spawnFailedSpawn() },
+      config: missingAgentConfig(),
     });
     await akmReflect({
       ref: "scripts/fail-3",
       stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn("ignored", "", 0) },
+      config: agentConfig("ignored"),
     });
 
     const completed = getReflectCompletedEvents();

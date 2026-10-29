@@ -6,19 +6,1690 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261018] - 2026-10-29
+
+### Fixed
+
+- A run on akm's own runtime whose model makes the same tool call and gets the
+  same result three turns in a row now tells the model so, in a message that
+  names the tool and asks it to use the result it has or take a different
+  approach, in a request that raises a connection's temperature below 0.7 to
+  0.7 (that one request only; every other keeps the connection's settings, and
+  a connection that sets no temperature sends none), and fails with a message
+  that names the tool only if the model makes the call again, instead of
+  running to its deadline or, with no `timeoutMs`, for ever. Each session of a
+  run, a subagent's too, is told for itself. OpenCode has no check of its own
+  for this. The runtime
+  moves from OpenCode 2.1.4 to 2.2.0 with it: the next agent run fetches the
+  binary again, into `<akm cache dir>/opencode/2.2.0/`.
+- Agent work on akm's own runtime runs in the directory it is given: the one
+  `akm agent --cwd` names, and the bundle root for a workflow's agent units.
+  It ran in the directory akm was started from, because OpenCode takes its
+  directory from `PWD`, which akm now sets for the run.
+- A harness run in a directory (`akm agent --cwd`, a harness's `workspace`, the
+  scratch directory of model work) now has `PWD` naming that directory, as it
+  does for a program started after `cd`. OpenCode takes its directory from
+  `PWD`, not the working directory, so an `opencode` harness ran its shell and
+  file tools in the directory akm was started in. The spawn every harness
+  shares sets it, so any program that reads `PWD` gets the directory it runs in.
+- OpenCode model work leaves out OpenCode's built-in browser plugin. From
+  OpenCode 2.2.0 its rules kept the `skill` tool listed for the read-only
+  `akm-model-work` agent (a call to it was refused).
+- `akm migrate apply` keeps agent engines. 0.10.261014 to 0.10.261017 dropped
+  every `opencode-sdk` engine, so agent work moved from the user's own OpenCode
+  and model to akm's own runtime, and `harness:` selectors naming them failed.
+  An `opencode-sdk` engine with no `llmEngine` now becomes an `opencode` harness
+  with its `model`, `bin`, `workspace`, `agent` and `timeoutMs`; one over an
+  `llmEngine` stays akm's own runtime. A harness engine's own `model` stands
+  over `models.json`, and the notes say where agent work ran with no
+  `defaults.engine`, where a gate's judge ran and runs now, and, with no
+  `defaults.llmEngine` and no connection, that model work (improve, index
+  passes, extraction, judges) now runs on the default harness where 0.9 ran
+  none, and how to turn that off with `modelWork: false`. An `opencode-sdk`
+  engine's `args`, which 0.9 did not pass, are dropped with a note. A
+  config a beta already migrated is repaired from its pre-migration copy in
+  `<cache dir>/config-backups/` (migration guide, step 5).
+
+## [0.10.261017] - 2026-10-27
+
 ### Changed
 
-- Bundles are fetched when added and on `akm bundle update`; `akm index` no longer re-fetches a website or git-provider bundle after twelve hours, `--full` does not force a fetch, and a failed `akm bundle update` now reports the failure instead of silently keeping the old copy.
-- `akm search --assets` is removed; it produced no output. Registry hits now carry `installRef` at the default detail level.
-- Your working bundle and plain local bundles are first-party for dangerous env keys: `akm env run` and `akm secret run` warn and proceed; bundles installed from git, npm, a website or a registry still refuse unless `--allow-dangerous-env-keys` is passed, which `secret run` now accepts too.
-- Env and secret files are indexed even when the bundle's `.gitignore` hides them, so `akm show env/<name>` works in a default bundle.
-- `--detail normal` search hits include `ref`.
-- The `auto-accept-validation` health check is renamed `triage-promote-validation`; `--no-probe` now also skips the plugin tag lookup; `akm task doctor` no longer reports an unused history directory.
-- `akm feedback` help and the agent guide no longer claim feedback changes search order; it moves the utility score that `akm improve` reads.
+- `akm search` finds knowledge whose answer sits in fenced code (#1260). The
+  `content` search projection now keeps the identifiers of fenced code (names,
+  CLI flags, config keys, paths, dotted references such as `process.env.CI`)
+  and still drops their literal values (quoted strings, assignment values, URLs,
+  long token-like strings). On akm-eval's code-lookup set nDCG@10 rose from
+  0.530 to 0.764 (keyword) and 0.494 to 0.614 (semantic); the library set
+  improved slightly and the prose-only books set is unchanged. Search results
+  carry no `content`, so what search hands an agent is the same size. Fragments,
+  fragment ids and `akm show` are unchanged. The next `akm index` (including the
+  one `akm upgrade` runs) re-projects every directory once and re-embeds only
+  the entries whose embedded text changed; no `--full` needed.
+
+### Fixed
+
+- The first `akm index` after upgrading re-embeds only the entries whose
+  embedded text changed (follow-up to #1260). The fenced-code identifiers now in
+  the search text come after the prose, past the first `embedding.maxInputTokens`
+  (default 512, about 2,048 characters) that are embedded, so a longer document
+  keeps its vector and only its keyword row is rewritten. The index prints how
+  many entries it is embedding (`Embedding 3,712 changed entries (15,050
+  unchanged)`), and `akm upgrade` shows that line and the rest of the index's
+  progress instead of waiting silently.
+- Documentation sentences that were false on 0.10 are corrected (review of
+  #1273, #1251 follow-up). `asset-types.md` lists every way an env or secret
+  value reaches a process. `classification.md` says that `akm`, `okf`, `claude`,
+  `opencode` and `generic-files` reserve `index.md` and `log.md` at every depth
+  and `llm-wiki` reserves `schema.md`, `index.md` and `log.md` only at the wiki
+  root (`adapters.md` agrees), and that a `.yml` under `workflows/` is typed
+  `workflow`, then skipped at index time. `ref.md`, `workflow-engine.md` (no
+  isolated units; a plan from a newer akm is refused unread) and `workflows.md`
+  say 0.10. `configuration.md` and the stash skeleton's `backlinks.md` no longer
+  call `content` the lowest-weight search field: BM25 weighs the five fields
+  equally. The skeleton's `organization.md` no longer calls the name the
+  highest-weighted field or promises repo-match, tag-match or per-project
+  ranking boosts, which search does not have. `persisted-data-compat.md` has its
+  downgrade warning for retire proposals back. A bare `akm proposal drain`
+  follows the apply mode of `improve.strategy` (`default`, which promotes,
+  unless set); the `--promote` help text, `cli.md` and the improve guide said it
+  queues (whether it should is #1274). The feedback pages and
+  `akm feedback --help` say that in keyword-only search one vote moves a hit
+  one place whatever the keyword margin, and that with embeddings it breaks
+  only near-ties, where they said feedback does not override relevance. The
+  `AKM_REGISTRY_URL` rows say it replaces the configured registries in every
+  registry search. The migration guide and the 0.10.0 release notes name the
+  full refs `akm env` and `akm secret` now require, the removed
+  `akm search --assets`, the end of the index's bundle refresh, the retired
+  `secret://` and `${secret:NAME}`, the `--belief current` default, the
+  Codex and Aider flags akm no longer passes, 0.9 retire proposals, the
+  `akm health` warning where local embeddings are not offered, the dropped JSON
+  fields, the workflow redaction scope, and (in the notes) the frontmatter date
+  keys, symlinked and trimmed secrets, the SIGINT-first stop and the Claude Code
+  and Codex plugin branches, and no longer list `GET /api/config` as a breaking
+  change (`akm ui` is new in 0.10). The fixture READMEs match the code.
+- **`akm bundle rename` keeps the bundle's recorded feedback** (#1250). It rewrote
+  proposals, task history and workflow refs but left `usage_events` under the old
+  prefix, so after a rename no feedback counted in search ranking for any asset
+  in the bundle, improve stopped reading its feedback, and the next `akm index`
+  cut the events off from their entries. It now moves the bundle's
+  `usage_events`, `events`, `improve_ledger`, `asset_salience` and
+  `asset_outcome` rows to the new name too, and matches the old name
+  case-sensitively, so renaming `team` no longer moves or overwrites the rows of
+  a bundle named `Team`.
+- A negative whose exact fix was applied no longer keeps demoting the corrected
+  asset in `akm search` and `akm curate` (#1249). A negative recorded with
+  `--replace`/`--with`, `--superseded-by` or `--outdated` stops counting against
+  the asset once its fix is accepted, the same "already acted on" rule
+  `akm improve` uses; reverting the fix with `akm proposal revert` makes the
+  negative count again. A fix the accept refused, and every negative without a
+  fix, still lower the asset's ranking.
+- **The architecture and CLI reference pages now say that feedback reorders search hits
+  (#1251).** They said a hit's `score` was its fused score and that nothing else changed the
+  order. They now say that after fusion the score is multiplied by
+  `1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))` over the user's recorded feedback for
+  the asset, the list is re-sorted (equal scores by fully qualified ref), and
+  one-hit-per-file and identical-content deduplication then drop entries without reordering
+  it. They also say filters drop ineligible entries from each candidate list before its 100
+  candidates are taken, not from the fused list afterwards. The storage, indexing, registry
+  and improve-guide pages no longer say that search ranking reads the utility score: improve
+  and `akm metrics` read it, search does not.
+- `AKM_REGISTRY_URL` now takes effect in `akm search` and `akm curate` with
+  `--from registry` or `--from all` (#1275). The variable is meant to replace the
+  configured registries, but search always passed the configured list, which
+  won, so a mirror or CI override was never read and your `registries` were
+  queried instead. When it is set, only its comma-separated URLs are searched.
+
+## [0.10.261016] - 2026-10-27
+
+### Added
+
+- `akm show` returns a Markdown document's outline as `toc` (#1259): one
+  `{ level, text, slug, startLine }` entry per heading, at every `--detail`
+  level. `akm show <ref> --detail brief` is the outline without the body, and
+  every `slug` selects its section with `akm show <ref>#<slug>`, repeated
+  headings included. The outline is read from the file the section is cut
+  from. Fragment shows, non-Markdown assets and documents with no headings
+  carry no `toc`. The knowledge `action`, `akm show --help`, the unmatched
+  fragment error, `akm hints` and the OpenCode runtime's `akm_show` tool (which
+  takes `detail: "brief"`) now point agents at the outline first, then the
+  sections they need.
+
+### Changed
+
+- The Release workflow waits for CI on the commit it publishes, up to 25 minutes,
+  instead of failing when that run has not finished, so Release can be dispatched
+  right after the release commit is pushed. It still fails when CI failed or was
+  cancelled, and only the newest push or manual CI run counts: a pull request's
+  run tests a merge and, on a draft, skips the upgrade rehearsal.
+  `tests/release-check.sh` no longer repeats the upgrade rehearsal that CI runs on
+  the same commit.
+- `bun run check:ci` runs the pre-push check the way CI does (in a Docker
+  container with the Bun and Node versions `ci.yml` pins, a clean frozen install,
+  `CI=true` and four test shards); `.github/CONTRIBUTING.md` says when to run it.
+
+### Fixed
+
+- Two processes fetching the OpenCode binary akm's own runtime runs (or the local
+  embedder's ONNX Runtime files) into an empty cache at once no longer rename
+  their copies over each other (#1266). Each downloaded the package and renamed
+  its file into place, which unlinks a binary the other process is already
+  running (it then fails to start it again). One fetch now runs per cache
+  directory at a time, under a `fetch.lock` file in it (a dead holder's lock is
+  reclaimed); a process that finds the files in place once it holds the lock
+  downloads nothing, and a rename never replaces a file that is already whole.
+- `akm health`'s `plugin-version` advisory no longer reports a Claude Code
+  plugin on the `next` channel as stale against the 0.9 stable release. It read
+  the newest version with a semver rule that skips every prerelease. It now reads
+  the channel the marketplace clone follows: on `next`, the release tag on that
+  branch's head; on the default branch, the newest stable tag; on a marketplace
+  added at a tag, that tag.
+- When `crontab -l` cannot read the crontab spool (permission denied) in a
+  process started with no-new-privileges (an agent sandbox, a container, systemd
+  `NoNewPrivileges=`), akm says why: `crontab` reads the spool through its setgid
+  (or setuid) bit, which such a process does not grant. `akm health` and
+  `akm task` commands run from such a process used to repeat a bare
+  `fopen: Permission denied`. A refusal without no-new-privileges is reported as
+  before.
+- `akm health`'s `opencode-plugin-version` advisory reads the OpenCode 1 plugin
+  cache of the spec the global OpenCode config names (#1265). It read only
+  `packages/akm-opencode`, but OpenCode 1 caches each spec in its own folder, so
+  a host with `"plugin": ["akm-opencode@next"]` (cached in
+  `packages/akm-opencode@next`) showed no row at all. It now reads the one folder
+  of the spec under `plugin`: a bare name is `akm-opencode@latest`, as
+  `akm upgrade` reads it, and `akm-opencode@next` is its own folder. A version
+  pin (`akm-opencode@<version>`) is reported as pinned, with no staleness
+  verdict. With no entry, or no folder for it, the check reads
+  `packages/akm-opencode` as before; other cached specs are not scanned.
+
+### Security
+
+- Zod moves from 3.25.76 to 4.6.7 (`zod` `^4.6.6`), closing GHSA-mrhx-c7xc-m3w5 /
+  CVE-2023-54404 (high): Zod before 4.6.6 can exhaust memory validating a large array,
+  and no Zod 3 release has the fix. akm validates its config files with Zod. Visible
+  changes: an integer above 2^53 - 1 in a config file is now rejected; validation
+  messages are Zod 4's (an unknown enum value reads `Invalid option: expected one of ...`);
+  `schemas/akm-config.json` is generated with `z.toJSONSchema` (the `zod-to-json-schema`
+  dev dependency is gone): `additionalProperties: true` is written `{}` (the same), integers
+  state the new `maximum: 9007199254740991`, and every map states its `propertyNames`.
+
+## [0.10.261015] - 2026-10-27
+
+### Changed
+
+- `akm setup` downloads what the configuration it saves needs (#1254). Choosing the
+  built-in embedder (`--embedding local`, or the wizard's choice) downloads ONNX
+  Runtime 1.24.3 for this platform once from the npm registry (about 86 MB,
+  checked against the registry's sha512 integrity before anything is extracted)
+  into `<cache dir>/onnxruntime/<version>-<platform>-<arch>/`, and the model
+  (about 127 MB), then loads both. The wizard asks first, as before; `--yes`
+  and `--from` do it once the config is saved and report `semanticAssets`
+  (`ready`, `blocked: <reason>`, or `skipped`). `--no-probe` now means nothing
+  is contacted or downloaded; the first `akm index` downloads what setup did
+  not, which is also how an install upgraded from an earlier release gets the
+  runtime: its next `akm index` downloads it once. The vectors are unchanged,
+  so no re-index is needed.
+- Local embeddings are offered on Linux x64 (glibc) and Apple-silicon
+  macOS (#1256). Every other platform uses keyword search or an embedding endpoint:
+  setup offers only those, with one sentence saying why, `--embedding local`
+  warns and saves keyword search, `--from` keeps the file's values, the index
+  reports semantic search unavailable for the platform, and `akm health` warns
+  with the setup arguments for keyword search or an endpoint.
+- When agent work runs on akm's own runtime, the setup wizard offers to download
+  its OpenCode binary now rather than on the first agent run. `--yes` and
+  `--from` leave it to the first run.
+- The npm package installs with no install script anywhere in its tree (#1255), so it
+  works as installed where npm runs none (npm 12 blocks dependency scripts by
+  default). On Node, the SQLite driver is `better-sqlite3` 13.0.3, which ships
+  prebuilt N-API bindings for Linux (glibc and musl) and macOS on x64 and arm64
+  and for Windows on x64 and arm64: a Node upgrade no longer needs
+  `npm rebuild`. 32-bit ARM Linux has no SQLite binding on Node.
+- Standalone binaries carry no native code and are up to 36 MB smaller (Linux
+  x64: 123.6 MB to 88.0 MB). A `noexec` temp directory no longer affects
+  semantic search (#1257); akm's cache directory must still allow executing files.
 
 ### Removed
 
-- ROADMAP.md, the docs/plans tree, the decision records, superseded specs, manual test checklists and other historical documentation; SECURITY.md is now a reporting stub.
+- The `onnxruntime-node` dependency, and with it the install script that
+  downloaded about 317 MB of CUDA providers on every Linux x64 `npm install`
+  (akm uses the CPU only; #1254). akm loads that package's binding from its cache
+  instead.
+- The `preinstall` Node.js version check (#1255). Both launchers and the CLI still
+  refuse Node.js older than 22 when akm starts, and npm warns from
+  `engines.node` at install.
+
+## [0.10.261014] - 2026-10-27
+
+### Added
+
+- Connections and harnesses replace engines (#1244). `config.json` names
+  `connections`, the OpenAI-compatible endpoints akm reaches models through
+  (`endpoint`, `apiKey`, `models`, `contextLength`, `timeoutMs`, `concurrency`;
+  every other key on a connection or a model entry is a request field in the
+  endpoint's own spelling, sent as written), and `harnesses`, the agent programs
+  you already have (`platform`, `bin`, `args`, `workspace`, `agent`,
+  `timeoutMs`, `models`). There is no `defaults` block: the entry named
+  `default`, or the only entry, is the default connection or harness. Anywhere a
+  connection or harness can be named (config, a flag, an asset's `connection:`
+  or `harness:`) and none is, the default is used; a name that is not
+  configured is an error (exit 78) that names it, lists the configured ones and
+  the nearest, and is never replaced by the default. With neither
+  configured, model features and agent work are off, each command that needs one
+  says so and points at `akm setup`, and everything that needs no model keeps
+  working.
+  - `improve.strategy` replaces `defaults.improveStrategy`. `improve.processes.
+    <process>` and `improve.qualityGate` say where each process and the quality
+    gates run (`connection` or `harness`, `model`, `llm`, `timeoutMs`),
+    `improve.connection` and `improve.harness` where all of `akm improve`'s model
+    work runs, and `index` takes `connection`, `model`, `llm` and `timeoutMs`. A
+    strategy says which processes run, never where.
+  - `embedding` with a `model` and no `endpoint` is served by the default
+    connection: its endpoint and its key. With no connection, the built-in local
+    embedder runs, with one warning.
+  - A connection or harness its own schema rejects (no endpoint, an endpoint that
+    is not a URL, a harness akm cannot run) is ignored with one warning naming
+    it, instead of stopping every command; the rest of the file loads.
+- Aliases and `akm models`. A connection's `models` maps an alias (`fast`,
+  `balanced`, `reasoning`, or your own) to the model's name, or to an object
+  holding the name and request fields of its own; a harness's `models` maps an
+  alias to the harness's own model name, over the map akm ships for its platform
+  (Claude Code has one). An alias a connection does not map answers with its
+  first model. `akm models` lists a connection's aliases, then the models its
+  endpoint lists, and `akm models set <alias> <model>` changes one, keeping the
+  request fields of an alias that has them and warning when the endpoint does not
+  list the model. `--connection` picks another connection and `--no-probe` skips
+  the listing.
+- `--connection`, `--harness` and `--model` on `akm agent`, `akm command run`,
+  `akm improve`, `akm proposal new`, `akm proposal extract` and `akm task add`
+  say where one invocation runs and with which model; omitted means the default,
+  and `--connection` and `--harness` are mutually exclusive. A run's selection
+  reaches every call in it, the quality-gate judges of `akm improve` included.
+  `akm task add` writes them into the task, and `akm task explain` reads them
+  back.
+- Keys come from a `$VAR` reference (`apiKey: "$NAME"`) or from
+  `<config dir>/credentials.json` (0600), where each key is stored for one
+  endpoint: `{ "connections": { "<name>": { "key", "endpoint" } }, "services":
+  { "embedding" | "curateRerank": { "key", "endpoint" } } }`. A key is read for
+  that endpoint alone, and a connection called `embedding` and the embedding
+  service hold different keys. A connection only an `extends` base defines uses
+  no key stored on this host (the base chose its endpoint); its runner records
+  `storedKey: false`, so a journaled or resumed run withholds it whether or not
+  the config is loaded. A literal `apiKey` in
+  `config.json` is kept, warned about once, and never read, sent or printed;
+  `akm config get` masks it and the redactor treats it as a secret.
+- `akm health` has one `connections-and-harnesses` check, and `akm info` a
+  `connectionsAndHarnesses` list, with a
+  row for each connection (its endpoint, whether its key is held and, for
+  health, whether the endpoint answers), each harness (its platform, whether its
+  binary is found and, when probing, its version) and each kind of work (improve,
+  judges, agents, extract, enrich, index, embedding, curate rerank) naming the
+  connection or harness and the model it resolves to. The rows are resolved by
+  the code the calls use, so the table cannot disagree with a dispatch. An
+  override is compared by kind as well as name and model, so a connection and a
+  harness that share a name do not hide a per-process pin; each override row
+  carries `kind`. `akm info` contacts nothing, and neither does `akm health
+  --no-probe`.
+- `akm setup` asks which installed agent programs to enable (saying whether akm
+  can limit each to reading and searching for its own model calls, judged on the
+  program the harness will run: `harnesses.<name>.bin`, else the platform's
+  binary on `PATH`), whether the default one also
+  takes akm's model calls (a no with no connection after it is saved as
+  `modelWork: false` on that harness, which keeps model calls off it by default;
+  a saved `modelWork: false` stays through `--yes` and is the question's default,
+  and only a yes clears it), an endpoint with its key at a masked prompt and one
+  model for each alias, picked from the models the endpoint lists, and where
+  embeddings come from. A key you type is stored in `credentials.json` for the
+  connection and its endpoint. Each flag answers one question and `--yes` takes the
+  detected default for the rest: `--endpoint`, `--api-key-env`, `--name`,
+  `--harness`, `--embedding`, `--embedding-endpoint` and
+  `--embedding-api-key-env`. A rerun starts from the current config and keeps the
+  alias picks it has. `--no-probe` runs offline: the endpoint is not contacted,
+  no models are listed, and the connection has no model until `akm models set`
+  names one.
+  - Non-interactively, with no harness yet configured, `akm setup` enables every
+    agent program found on `PATH`, the first the default; with none, agent work
+    runs on akm's own runtime over the connection.
+- Agent work on a connection, with no harness, runs on akm's own runtime: a
+  pinned OpenCode 2 binary (2.1.4) that akm fetches and runs as a process, one
+  per run (#1244). It has no entry in config, and `opencode-sdk` is not a
+  harness platform.
+  - The first run fetches the binary: the one `@opencode/cli-<platform>` package
+    for the machine (its OS and CPU, musl, and the baseline build for an x64 CPU
+    without AVX2, chosen as OpenCode's own installer chooses), about 114 MB, from
+    the npm registry into `<akm cache dir>/opencode/2.1.4/`, checked against the
+    registry's sha512 integrity before anything is extracted. Two akm processes
+    fetching at once both finish. A failed fetch fails the run as not started and
+    names the package, its URL and the cache path; with no network for that step,
+    enable the `opencode` harness with an installed OpenCode 2. No setting points
+    the runtime at a binary of your own. On Alpine/musl the binary needs
+    `libstdc++` and `libgcc` (the Alpine Node image has them).
+  - The run is the command the `opencode` harness builds for OpenCode 2 model
+    work (`run --standalone --title akm`, the prompt on stdin), driven by the
+    connection a run was dispatched with, as the run froze it: the connection is
+    the process's only provider (`@ai-sdk/openai-compatible`, which the binary
+    bundles, so nothing is downloaded for it), at the connection's endpoint with
+    its key, carrying the one model the run names and the context window and
+    output cap the connection states, so the endpoint receives the model name as
+    written, as on chat, and a connection edited or removed later cannot redirect
+    the run.
+  - The process is akm's own. OpenCode's config, data, cache, state and temp
+    directories are under `<akm data dir>/opencode-runtime/`, no `OPENCODE_*`
+    variable of akm's environment reaches it, and it has no user or project
+    OpenCode config, no Claude Code skills, no model catalog fetch and no hosted
+    free models. It still
+    loads what OpenCode reads from outside its config directories: `~/.agents`,
+    and OpenCode's system config (`/etc/opencode`, or macOS managed
+    preferences).
+  - `--standalone` keeps a run to one process that ends with it, and another
+    run's unfinished turns are never resumed (OpenCode's background service
+    resumes every top-level session whose turn did not finish, whichever process
+    owns it). OpenCode makes and migrates its database at start, and two
+    processes doing that to one database break each other, so the first start of
+    the runtime's OpenCode version is a run of its own (`session list`, no model)
+    under a lock file in the runtime directory, and every run that starts with it,
+    a workflow's parallel units or another akm process's, waits for it.
+  - A plugin akm writes to the runtime's config directory gives the agent akm's
+    read tools (`akm_search`, `akm_show`, `akm_curate`), which call the `akm` that
+    started the run with `--detail agent --format json` and the run's
+    environment, so a stamped run's reads count as that run's. The same plugin lays
+    the connection's request fields, in the endpoint's own spelling, over each
+    model request, and takes off the output cap OpenCode adds to every request
+    (`max_completion_tokens: 32000` unless the model's limit says otherwise): a
+    request carries the cap the connection or the call writes, and none
+    otherwise, as on chat. A persona goes in the prompt.
+  - The commands the agent runs get the environment a CLI harness's child gets,
+    less its `OPENCODE_*` variables: akm's own, with its directories
+    (`AKM_CONFIG_DIR` and the rest) and the run's variables (workflow and task
+    `env:`, `AKM_EVENT_SOURCE`) set over it. What
+    akm sets for the OpenCode process itself (its directories and its OpenCode
+    settings) is put back to what akm runs in, or removed, for each command.
+  - The connection's key is in no process's environment: the inline config names
+    a file under `<akm data dir>/opencode-runtime/keys/` that holds it for the
+    run (0600, removed when the run ends).
+  - Sessions are stored in the runtime's own OpenCode database,
+    `<akm data dir>/opencode-runtime/data/opencode/opencode.db`; akm reads your
+    OpenCode 2 database read-only, for OpenCode 2 history (below).
+  - A timeout or an abort ends the run's process group, SIGINT first and SIGTERM
+    and SIGKILL after 5 s each, as for every harness. A unit `timeout` therefore
+    ends a turn in about the timeout when the endpoint is down; OpenCode alone
+    retries a failing endpoint with backoff for over a minute and has no config
+    setting to shorten it, so a unit with no `timeout` waits that long.
+  - OpenCode's headless `run` cancels questions and rejects permission requests,
+    and the model carries on. A run reports its session id and the tokens its turn
+    used, read from the session OpenCode keeps in the runtime's database, so a
+    workflow's `budget.max_tokens` and the unit journal count them; a harness run
+    reports neither.
+  - A failed run reports as a harness run does, a non-zero exit with OpenCode's
+    own message: the `llm_rate_limit`, `llm_content_filter` and `parse_error`
+    reasons the embedded runtime gave are not given.
+- `platform: "opencode"` is your OpenCode, whichever major is installed, run
+  through its CLI: `opencode run` with the prompt on stdin, a model only when akm
+  names one, an agent only when the asset names one, and your `args` as written.
+  Agent work adds nothing else. Your OpenCode owns its configuration, logins and
+  sessions; akm reads, copies and embeds nothing of yours, and its runs are in
+  your OpenCode history, which improve reads. An interactive `akm agent` still
+  hands the terminal to the CLI. Model work is akm's own process: it adds its
+  agent to your inline config, read as OpenCode reads it (JSONC, and a
+  `{env:NAME}` reference written outside a string replaced by its value), and
+  keeps the rest of it, sets
+  `OPENCODE_DISABLE_FREE_MODELS=1` (OpenCode 2.1.2 and later honor it: a call
+  with no usable provider fails instead of sending the prompt to OpenCode's
+  hosted free model), and on OpenCode 2 runs `--standalone` (one process that
+  ends with the run, not a background service) with `--title akm`.
+- A config in the old form (`engines`, `defaults.engine`, `defaults.llmEngine`,
+  `defaults.improveStrategy`, `workflow.judgeEngine`, a strategy's `engine`,
+  `model`, `llm` and `timeoutMs`) still loads: it is read as the new form in
+  memory, with one warning that names `akm migrate apply`, and the file is
+  rewritten only by `akm migrate apply`. An ordinary write (`akm config set`)
+  edits the file's own document and no longer converts it or drops what the
+  loader only reads; removing a value the old form supplies is refused, naming
+  `akm migrate apply`. `akm migrate apply` converts it for good, under a backup
+  of `config.json`:
+  - `engines` and `defaults` become `connections` and `harnesses` (the default
+    engine is renamed `default`, and references follow), `defaults.improveStrategy`
+    becomes `improve.strategy`, a strategy's per-process `engine` becomes
+    `connection` or `harness` by the target's kind, the where-fields a strategy
+    carried move to `improve.processes` and `improve.qualityGate`, and
+    `index.defaults.*` and `index.<pass>.engine` become `index.*` and
+    `connection`. An engine that is akm's own OpenCode runtime, or a setting akm
+    no longer reads, is dropped with a note.
+  - An engine's `apiKeyFile`, a literal or `${secrets/...}` `apiKey`, and the
+    same literal or secret-store `apiKey` on a connection, `embedding` or
+    `search.curateRerank`, are read and stored in `credentials.json` for the
+    connection's new name (or the `embedding` or `curateRerank` service) and the
+    endpoint the block names, then removed from the file. A key that cannot be
+    moved (its secret does not resolve, the block names no endpoint of its own, a
+    `connections` entry now gives it another endpoint than its engine wrote the key
+    for, or `credentials.json` already holds a different key or endpoint for that
+    slot) stays on the
+    connection as `apiKey`, with a note. One note per key names it, never its
+    value. `AKM_ENGINE_<NAME>_API_KEY` and `AKM_LLM_API_KEY`, when set, become
+    `apiKey: "$VAR"`. An engine that names no key, with none of those variables
+    set, gets none, and a note names the variables.
+  - A key in `credentials.json`'s older flat `{ "<name>": "<key>" }` form is
+    filed under the endpoint the config gives its block, after the file is copied
+    to `<cache dir>/config-backups/credentials.json.<timestamp>`. A block that
+    already has a stored key is never overwritten: the same key for the same
+    endpoint drops the older entry, and any other leaves both, with a note. A flat
+    key called `connections` or `services` is told from the namespace of that name
+    by its shape.
+  - The old engine names are kept in the data directory (`migrate/engine-targets.json`)
+    until no `engine:` key that names one is left in a file the migration can
+    reach, so an asset in a read-only bundle, a block it could not rewrite, or an
+    asset that is a symbolic link (read through, never rewritten) keeps its
+    meaning in the meantime, as does a retired `--engine` flag. The run
+    that forgets them adds one note, `assetEngineKeys.notes`, listing each
+    renamed engine with the flag that replaces `--engine <old name>`
+    (`--connection` or `--harness`).
+  - The user `models.json` is folded into the models of the connections and
+    harnesses it names, then moved to
+    `<cache dir>/config-backups/models.json.<timestamp>`. A connection's own
+    column beats the `*` column and the flat shorthand, which beat the engine's
+    own model; a model the config already names for an alias stands. What it
+    cannot place is listed in the notes.
+  - `engine:` on commands, agents, workflows (`defaults` and units) and task
+    sources becomes `connection:` or `harness:` by what the name is now, under
+    one backup directory per run (a name that is neither is written as
+    `harness:`, with a note). `akm migrate status` and `--dry-run` list the files.
+    The step reads the roots the runtime reads, by each bundle's adapter (an
+    `akm` stash's typed directories, an `akm-workflow` or `akm-task` bundle's
+    root, a Claude or OpenCode bundle's commands and agents, there for
+    `akm.engine` only), the default stash (`~/akm`)
+    included when no bundle or `AKM_BUNDLE_DIR` names it, and leaves a disabled
+    bundle as written, the default stash or the `AKM_BUNDLE_DIR` directory
+    included, under any spelling of its path.
+  - A connection or harness the loader ignores stays in the file, with a note
+    on what to fix; `akm migrate apply` never deletes one.
+  - The residue sweep leaves the `.akm/` of a stash a disabled bundle owns as
+    written, as the task and asset steps do.
+- The standalone binary does local semantic search. It carries the ONNX Runtime
+  library for its platform and, the first time it embeds, copies it once into
+  `<cache dir>/onnxruntime/<version>-<platform>-<arch>/` (18 to 34 MB) and loads
+  it from there. A binary writes its native addon to the system temp directory,
+  so a `noexec` temp directory blocks semantic search (keyword search works): set
+  `TMPDIR` to an executable one.
+  Alpine/musl and Intel macOS have no native ONNX Runtime library: the index
+  reports semantic search `blocked` with the reason, and keyword search works.
+- `akm index --format json` reports `verification.embeddingRuntime`, the runtime
+  the local embedder embedded with (`onnxruntime-node`); it is absent for a
+  remote embedding provider and when nothing was embedded locally.
+- `akm health` has a `semantic-search` check again. `akm index` records the
+  semantic status it found (with the runtime and, when semantic search is
+  `blocked` or `unavailable` on this machine, the reason) beside its other
+  index facts, and the check reads that record with the index's current entry
+  and vector counts: `pass` when every entry has a vector on the native runtime,
+  `warn` when vectors lag, another runtime embedded, or the platform has no
+  native ONNX Runtime library (Alpine/musl, Intel macOS), `fail` when blocked
+  or unavailable for a cause that can be fixed (the library did not load). It
+  loads no model and sends no request, and search does not read
+  the record. The health report's Semantic Search line shows the check (`OK`,
+  `OFF`, `BLOCKED`, `UNAVAILABLE` or `UNKNOWN`); it used to say `OK` always.
+
+### Changed
+
+- Each kind of call asks for a shipped alias until something nearer names a
+  model: improve passes, extract, enrich and the index passes ask for `fast`;
+  judges (the reflect and distill quality gates, triage's judgment, workflow
+  gates) and agent work ask for `balanced`. A harness with a model map but no
+  entry for the alias warns once.
+- Model work runs on any harness. Where a harness can be restricted it is: Claude
+  Code runs with its settings files ignored, only `Read` and `akm search`, `akm
+  show` and `akm curate`, no MCP servers and no saved transcript, Codex with
+  `--sandbox read-only`, and OpenCode 2 as an agent passed inline for the run,
+  in OpenCode 2's native `agents` map so that an entry of its name in your
+  config cannot replace it, with every tool denied except `read`, `glob` and
+  `grep` (and `akm_search`, `akm_show` and `akm_curate` when the akm plugin is
+  installed), so a tool a plugin adds is denied too; a plugin's own hooks still
+  run. Where it cannot
+  (the other platforms, and OpenCode 1, which warns once), the call runs
+  unrestricted, in a scratch directory, with a notice. A config that names an `opencode` harness for model work loads, and a
+  native agent named for model work is ignored with a notice. Agent work is not
+  restricted: it runs the program as you would.
+- The `opencode` CLI dispatch path is no longer deprecated (0.10.261001 deprecated
+  it in favour of an `opencode-sdk` engine, which is gone): `platform:
+  "opencode"` is the `opencode` harness, your own OpenCode of either major run
+  through `opencode run`.
+- Every process akm starts inherits akm's environment: a harness's child, a
+  workflow `exec` unit's command, a task's command and the commands of an agent
+  on akm's own runtime get the environment akm runs in, with the directories this akm
+  resolved, the run's `AKM_EVENT_SOURCE` and a unit's `env:` bindings set over it.
+  The environment allowlist, the Windows floor, the `PATH` supplement for
+  scheduler contexts, each harness's passthrough names and the passthrough
+  redaction policy are gone, and a frozen `pass_env` still parses and selects
+  nothing. A dispatch reply from any runner is scrubbed of the connection's key.
+  It, and the output and diagnostics a workflow `exec` unit journals, are
+  scrubbed of the values of credential-named variables in the environment the
+  child inherited (names such as `*_API_KEY`, `*_TOKEN`, `*_SECRET` and
+  `*_PASSWORD`, eight characters or more), the same rule a task log uses; a
+  task log also scrubs the values its `redact:` list names, and a workflow
+  journal the `secrets/` values substituted into a binding.
+  `env run --clean` keeps its own list. Agent work on OpenCode adds nothing to the
+  invocation; Codex agent work no longer sets `--sandbox workspace-write` and
+  Aider no longer gets `--no-auto-commits`, so each runs with the settings its
+  own configuration gives it (model work on Codex still runs `--sandbox
+  read-only`).
+- Stopping a child process (a timeout, an abort, or a signal to akm) sends its
+  process group SIGINT first, then SIGTERM and SIGKILL, each after a 5 second
+  grace for as long as it still runs, where it sent SIGTERM and then SIGKILL.
+  SIGTERM also follows at once when the leader exits and leaves members of its
+  group behind. This covers agent programs, workflow `exec` units and task
+  commands. A program that records how a run ended acts on the SIGINT: OpenCode 2
+  marks its session interrupted and releases it, and only a run that had to be
+  terminated or killed stays suspended in your OpenCode history, where your own
+  OpenCode's background service may resume it (up to ten attempts, OpenCode's own
+  policy). On Windows there is no process group and a signal ends the program at
+  once.
+- Harnesses are thin shells. akm writes only the arguments a program needs to run
+  without a person, hands it the prompt and takes its standard output as the
+  reply, as written: it no longer asks for JSON output or reads a result or a
+  session id out of it. A reply that must have a shape is parsed once by the
+  caller, from the schema instruction already in the prompt. Claude Code and pi
+  take the prompt on stdin, and their persona goes to `--append-system-prompt`
+  (appended to pi's own prompt).
+- `akm agent` with no `--prompt` starts the harness for a person, with the
+  terminal and the harness's model; a connection has nothing to start, and the
+  command says so, naming `--prompt` and a harness.
+- One loop corrects a reply that must have a shape. When the parser refuses the
+  reply, it is sent once more with what was wrong; reflect, distill, extract,
+  `akm proposal new`, the judges, the proposal drain's judgment and a workflow
+  unit with an output schema all use it. A call that fails ends as the dispatch
+  reported it, and a workflow exec step is never run twice to fix its output.
+- A model call has one timeout, and it is the resolver's: the call's own setting,
+  else the connection's or harness's `timeoutMs`, else ten minutes for model work
+  (agent work on a harness runs until it finishes). A retry after a transient
+  failure spends what is left of the call's budget, and `akm remember --enrich`
+  keeps its 10 s limit on the request itself.
+- `--engine NAME` on `akm agent`, `akm command run`, `akm task add`, `akm
+  proposal new` and `akm proposal extract`, and `--require-engines` on `akm
+  improve`, are still accepted, hidden from `--help` and completions, with one
+  warning each. `--engine` names a connection by that name, else a harness (`akm
+  task add --engine` writes `connection:` or `harness:`), and `--require-engines`
+  does nothing: `akm improve` stops at planning (exit 78) before any lock, index
+  write or log when no process that calls a model has a connection or harness to
+  run on (or there are several and none is called `default`), with no flag asking
+  for it. That is weaker than what the flag did, and a scheduled caller that
+  relied on it loses that: no check before the run that every enabled process
+  has a usable target and a working completion. A run with some processes that
+  can run and some that cannot runs the former and lists the rest in
+  `skippedProcesses`, and a configured but unusable target (a harness program
+  that is not installed, a connection that does not answer) is found when the
+  process dispatches. Run `akm health` first instead (`akm health && akm
+  improve`; it exits 4 on a warning): its `connections-and-harnesses` check names
+  each connection that does not answer, each harness program that is not
+  installed and a missing default. A did-you-mean for an unknown flag never
+  offers a hidden flag.
+- A workflow run frozen by an earlier release (plan irVersion 7 or lower) whose
+  plan holds a command target is no longer resumed: it is abandoned (status
+  `failed`) with a message naming `akm workflow run <ref>` to start afresh.
+  Converting its engine runners would have changed unit input hashes and
+  published a second child run. Plans with no command target still decode. The
+  plan version is now 8, which freezes a connection or a harness where 7
+  froze an engine.
+- `akm proposal extract --type opencode` and the improve extract gate read
+  OpenCode 2 history from the `session_v2` and `session_message` tables with
+  SQLite, read-only, from your OpenCode database and akm's own: top-level
+  sessions only, without subagent sessions or akm's model work (which ran as the
+  `akm-model-work` agent; OpenCode 1 keeps no such marker). The content hash
+  of every session is unchanged, so nothing is extracted again. A file or
+  session that cannot be read (a session missing from its file, a file with
+  neither OpenCode layout) is recorded as `read_failed`, not as an empty
+  `too_short` session.
+- OpenCode's directories follow `XDG_DATA_HOME`, `XDG_CACHE_HOME` and
+  `XDG_CONFIG_HOME` on every platform, as OpenCode's own do (the data path was
+  wrong on macOS and ignored `XDG_DATA_HOME`); `akm health` follows
+  `XDG_CACHE_HOME` for OpenCode's plugin cache too.
+- Model work no longer counts as user demand. Model work run through
+  `structured-call`, `propose` or `drain` stamped no event source, so the `akm`
+  commands its agent ran were recorded as the user's, which feeds ranking; it now
+  stamps `improve` (a task's agent still records `task`, and an unknown source
+  `unknown`).
+- `GET /api/config` lists `connections` and `harnesses`, each a list of named
+  entries, where it listed `engines`, and the config page shows the two as
+  tables.
+- The npm package depends on no OpenCode library: akm's own runtime fetches one
+  OpenCode binary on first use instead, so `npm install -g akm-cli` needs no
+  compiler (the OpenCode libraries it replaces pulled in a native addon that
+  built from source) and the installed package is smaller. Standalone binaries are
+  built by `scripts/build-standalone.ts` with no stubs for those libraries.
+- Bundles are fetched when added and on `akm bundle update`. `akm index` no
+  longer re-fetches a git or website bundle after twelve hours, `--full` does
+  not force a fetch, and a failed forced refresh reports the failure instead of
+  serving the old copy for up to seven days (the previous copy stays on disk).
+  A configured npm bundle with no lock entry is skipped by `akm index` with one
+  warning naming `akm bundle update`, instead of hitting the npm registry on
+  every index run.
+- `akm search --assets` is removed. It asked registries for asset-level hits,
+  but `akm search` never put them in its output, so the flag printed nothing; the
+  registry providers' asset scoring and the `assetHits` response field go with it.
+- Registry hits from `akm search --from registry|all` carry `installRef` (the ref
+  for `akm bundle add`). The brief projection already listed it, but the hit was
+  built without it, so `--detail brief` showed only the name and score.
+- `akm search --detail normal` includes `ref` on local hits, as `brief` already
+  did. `normal` was the only level that showed a hit without the ref `akm show`
+  needs.
+- Env and secret files are indexed even when the bundle's `.gitignore` hides them
+  (`akm bundle create` ignores `env/` and `secrets/`), so `akm show env/<name>`
+  and `akm search --type env` work in a default bundle. The indexer lists the
+  git-ignored files under those two directories in addition to the tracked and
+  untracked ones; values still never reach the index.
+- `akm health --no-probe` also skips the `plugin-version` newest-tag lookup (a
+  `git ls-remote` against the plugin marketplace). With probing off the row
+  reports `unknown` ("not probed") instead of "up to date", and the local
+  version-range check still runs.
+- `akm task doctor` no longer reports `historyDir`. It named `$CACHE/tasks/history`,
+  which does not exist now that task run history lives in `state.db`.
+- Four user-facing messages no longer cite deleted spec sections: the lesson
+  frontmatter error from `akm distill` ("See v1 spec §13"), the two `agent-skills`
+  lint details ("spec §4.5"), the bundle-identity-drift warning ("spec §11.5") and
+  the unknown-`quality` warning ("v1 spec §4.2").
+- `akm config unset` removes the named key and leaves a parent object that
+  becomes empty. It used to delete the parent too, so unsetting a harness's only
+  key removed the harness and `akm agent` then exited 78 (`{}` is how a harness
+  is enabled).
+- The local embedder runs the model on `onnxruntime-node` with
+  `@huggingface/tokenizers`. `@huggingface/transformers` and the `sharp`,
+  `@huggingface/jinja` and `onnxruntime-web` packages it brought are no longer
+  installed. akm fetches the model's four files from the Hugging Face Hub itself,
+  into the same `$HF_HOME/<repo>/` layout as before (`HF_HUB_OFFLINE` still
+  forbids the fetch), so a model cache an earlier release filled is reused. The
+  vectors are the same to within 1e-6 of Transformers.js, so an index built
+  before stays valid.
+
+### Fixed
+
+- `bun.lock` resolved `onnxruntime-node` to `onnxruntime-web`, so every checkout
+  and CI run embedded on WebAssembly, about eight times slower than the native
+  runtime. It resolves to the real package. (npm installs do not read `bun.lock`;
+  the release binaries could not embed at all, see Added.)
+
+### Removed
+
+- `engines`, the `defaults` block (`defaults.engine`, `defaults.llmEngine`, with
+  `defaults.improveStrategy` now `improve.strategy`), `workflow.judgeEngine`, a
+  strategy's `engine`, `model`, `llm` and `timeoutMs`, `provider`, and
+  `extraParams` as a key (write the request fields on the connection or model
+  entry), all read from an old file and converted by `akm migrate apply`. An
+  `extraParams` key that shadows a first-class setting (`temperature`,
+  `maxTokens`, `enableThinking`, `reasoningEffort`) is dropped with a note, and
+  the setting wins.
+- `models.json`, the user overlay and the one akm shipped, and the `akm models
+  list` and `akm models copy-defaults` commands that managed them. Aliases live
+  on `connections.<name>.models`, and `akm models` shows and changes them.
+- `apiKeyFile`, the implicit `AKM_ENGINE_<NAME>_API_KEY` and `AKM_LLM_API_KEY`
+  lookups, and `${secrets/...}` as a connection key. Use `apiKey: "$VAR"` or
+  `credentials.json`.
+- `supportsJsonSchema`. When an endpoint rejects a response schema, akm retries
+  without one and remembers that for the rest of the process.
+- The fallback engine. With no engine configured, akm used the `opencode` binary
+  on `PATH`; with no connection and no harness, model features and agent work are
+  off and each command that needs one points at `akm setup`.
+- The `opencode-sdk` engine platform, and the load-time rule that refused model
+  work on an `opencode` engine.
+- The LLM feature gate, with the 600 s timeout it carried: curate's rerank reads
+  `search.curateRerank.enabled` and memory inference `index.memory.enabled`
+  themselves.
+- The per-harness result extractors and the JSON output modes they read.
+- The `default-engine`, `default-llm-engine`, `configured-engines`,
+  `active-improve-strategy`, `thinking-control` and `engine-last-used` checks of
+  `akm health`, and its hard failure for an unreachable default connection; an
+  unreachable connection is a warning in the `connections-and-harnesses` check.
+- `akm setup --probe` and `--config`, and the engine, Ollama and provider steps
+  of the wizard.
+- The `opencode serve` server management, the OpenCode 1 and 2 HTTP adapters,
+  and the `@opencode-ai/sdk` and `@opencode/client` dependencies. Agent work on a
+  connection needs no OpenCode of yours or client package, so `akm health` checks
+  for neither.
+- Asset tool requests. An agent or command's `tools:` (or a Claude command's
+  `allowed-tools:`) is no longer read, a task's `tools:` is ignored with a
+  warning, and `akm migrate apply` drops a v3 task's `akm.tools`. With them go
+  the `execution.allowedTools` config key (now an unknown key: warned, ignored
+  and dropped by `akm migrate apply`), the `EXECUTION_NOT_AUTHORIZED` error,
+  `toolPolicy` in `akm show`, the harness builders' tool flags, and recognizing
+  a file as an agent by its `tools:` key. Restrict an agent's tools in the
+  harness's own agent definition and select it with the harness's `agent`.
+
+## [0.10.261013] - 2026-10-23
+
+### Fixed
+
+- A secret is now also redacted when it appears in its JSON-escaped spelling
+  (#1238). Text redaction matched only the exact and URL-encoded forms, so a child
+  that printed `JSON.stringify({ token })` for a secret with a quote, backslash,
+  newline or non-ASCII character left it in the unit journal when the output failed
+  its schema, had no schema, or came with a non-zero exit. The shared redactor now
+  also matches the `\"`, `\\`, `\n` and `\uXXXX` forms (lowercase or uppercase
+  hex, DEL included), for workflow, engine and task-output redaction alike.
+- `akm bundle rename` now rewrites the refs of a bundle whose id contains an
+  emoji or other character outside the Basic Multilingual Plane correctly
+  (#1239). It used to cut into the `//` separator, storing `team/workflows/x`
+  for `💼//workflows/x` and stranding the bundle's workflow runs, task history
+  and proposals.
+- A task's `uses:` script or workflow in an npm, website or read-only bundle now
+  resolves (#1238). It used to fail with "unsupported kind for writes", because
+  the lookup went through the write-target resolver. An unknown bundle in such a
+  ref is reported as not configured, without naming a flag.
+- `akm bundle update` no longer re-clones a git or npm bundle whose upstream
+  revision has not changed. Re-cloning replaced the bundle's directory under any
+  running task or workflow, and left an empty revision directory behind after
+  each real change. An unchanged bundle is now reported as unchanged and left
+  alone (`--force` still fetches it again). After a real change, the previous
+  revision is kept and older revision directories are removed (#1235).
+- Scheduled tasks in the `AKM_BUNDLE_DIR` working stash were silently dropped by
+  an unscoped `akm task sync` (and `--rebind`) once any other bundle was
+  configured (#1236). Task sync now uses the same set of active bundles as
+  search, show and workflows, so the working stash is synced the same way
+  whether you sync everything or name it with `--bundle`.
+- A `bundle update` while a workflow is running no longer fails the run (#1238,
+  #1235). A running workflow used to remember the directory it was started in, so
+  once the update moved the bundle to a new revision directory, the next step
+  failed with `PATH_ESCAPE_VIOLATION` and the only remedy was `abandon`. The
+  run now finds its bundle again at each step and carries on from the new
+  directory. It continues from its frozen plan even if the new revision renamed
+  or removed the workflow file, and a step fails only when the run's bundle is
+  no longer configured.
+- `exec.cwd` is applied once (#1238). `cwd: sub` used to run in `<bundle>/sub/sub`.
+  It now runs in `<bundle>/sub`.
+
+### Changed
+
+- `akm workflow plan --format text` now shows each step's argv, cwd and env refs,
+  and the bundle-qualified ref that every `${ref}` token, `env:` entry and child
+  `workflow:` resolves to; a ref no bundle owns, in the workflow or in a child
+  workflow it runs, fails the plan and names it.
+  `akm workflow status <id> --units` shows the same argv, cwd and resolved refs
+  for a failed unit (#1238).
+- A workflow exec step's command now receives `AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
+  `AKM_CACHE_DIR` and `AKM_STATE_DIR` set to the directories the akm that started
+  it resolved, including ones it found through `XDG_*_HOME`, and `AKM_BUNDLE_DIR`
+  when it had one. A step that runs `akm` uses the same bundle and state without
+  `pass_env` (#1238).
+- `akm env`, `akm secret`, workflow `env:` bindings and child workflows, task
+  `uses:` assets, and `improve`/`distill`/schema-repair file lookups now find an
+  asset with the same lookup `akm show` uses, instead of each keeping its own
+  copy of it (#1238). The visible differences: a missing child workflow fails
+  with the ordinary "Workflow not found" error, an env ref in a workflow does
+  not resolve into a disabled bundle, and `improve` finds a concept in a
+  bundle whose adapter names the file (such as an OKF table) from disk as well
+  as from the index.
+- An asset is addressed by its akm ref and nothing else (#1238). `akm secret
+  set|run` and `akm env create|run|path|export|remove` now take a full ref
+  (`secrets/gitea_token`, `team//env/prod`); a bare name such as `gitea_token`
+  or `prod` is a usage error that names the full form. `akm env create prod` is
+  now `akm env create env/prod`.
+- One substitution token, `${ref}`, replaces `${secret:NAME}` in env values and
+  `secret://name` in config credentials (#1238). A `${secrets/name}` token is
+  replaced with the secret's value and any other asset ref, such as
+  `${scripts/lab/fetch.sh}`, with its absolute path; the ref may name any bundle
+  (`${team//secrets/discord_bot_token}`) rather than only the env file's own
+  bundle. A ref into a bundle of any adapter works when it is qualified and the
+  bundle is installed (`${docs//tables/customers}` in an OKF bundle). A `${...}`
+  body that is not an akm ref, such as `${HOME}` or shell substitution like
+  `${v//-/_}`, is left as text. `engines.*.apiKey`, `embedding.apiKey`,
+  `search.curateRerank.apiKey` and a git bundle's `credential` accept `$VAR`,
+  `${VAR}` or `${secrets/<name>}` (in any bundle, such as `${team//secrets/x}`); a
+  `${...}` naming any other kind of asset, such as `${scripts/x}`, is rejected
+  when the config loads. An env file that still holds `${secret:NAME}` keeps
+  working: akm reads it as `${<the env file's bundle>//secrets/NAME}` and warns
+  once, naming the env ref. The file is not rewritten, so write the full ref.
+- A workflow unit's `env:` bindings are now read at dispatch with the same
+  function `akm env run` uses, so a bundle's env asset, its `${ref}` tokens and
+  the secrets they name behave the same in a workflow as on the command line
+  (#1238). An edit to an env file after a run started is picked up by the next
+  dispatch instead of failing with "key set changed".
+- Only secret values are redacted from workflow output (#1238). A value
+  substituted from a `secrets/` ref is still `[REDACTED]` in stdout, stderr,
+  diagnostics and the journal, but the rest of an env asset, such as a URL or a
+  channel id, now reaches the journal and the next step intact. A credential
+  typed straight into an env file is no longer redacted; keep credentials in
+  `secrets/`.
+- A secret's value is read the same way everywhere (#1238): the file content with
+  surrounding whitespace trimmed. `akm secret run` and env tokens used to pass
+  the raw bytes, trailing newline included, while config credentials and the
+  website fetchers trimmed.
+- Installing a bundle is now the trust decision (#1237). A bundle whose `env/`
+  files set a key such as `PATH` installs, updates unattended, and works in
+  `akm env run`, `akm secret run` and workflow `env:` bindings with no flag, no
+  prompt and no block, whichever bundle it comes from. `akm lint` still reports
+  `dangerous-env-key` findings, non-blocking.
+- An agent's own `tools` list is now honoured for an agent in any bundle, not
+  only the primary stash. `execution.allowedTools` still caps what a run grants.
+- A task `env:` value that looks like a credential is now a warning, in the same
+  style workflow params give, instead of an error that stopped the task. The
+  warning points to `akm secret run` or `akm env run` in the task's `run:`.
+- `--allow-dangerous-env-keys` on `bundle add`, `bundle update` and `env run` is
+  now a deprecated no-op, accepted through 0.10 so existing scripts keep working.
+  It is an unknown flag from 0.11.
+- Reads follow symlinks (#1237). An env file or secret that is a symlink to a
+  file outside its bundle directory now resolves through `akm env`, `akm secret`,
+  `${ref}` substitution and a workflow `env:` binding, and a ref
+  resolved by path does the same, instead of failing with "escapes the secrets
+  directory" or "Ref resolves outside the stash root", so a secret can point at
+  a container's `/run/secrets/<name>`. A command, agent or script that is such a
+  symlink also resolves when a workflow, task or `akm agent` runs it, and
+  `akm index` indexes a file symlink like any other file, so `akm show` and
+  search find it, and `akm env list` and `akm secret list` list it. A symlinked
+  script runs under the interpreter its own name selects, and cloning a skill
+  copies a symlinked file by content. A directory symlink is still never
+  descended. Names with `..`
+  segments or absolute names are still refused, and writes still never follow a
+  symlink out of the bundle.
+- `akm workflow run <ref>` always starts a new run, and `akm workflow run <run-id>`
+  continues one (#1239). `akm workflow resume <run-id>` only re-activates a blocked
+  or failed run so `run <run-id>` can continue it. Before, running a ref
+  silently resumed any active run of that ref started from the same directory,
+  which is why scripts passed `--new` and why a scheduled task and a shell could
+  each start their own run. Now, when other runs of the ref are still active, the
+  start prints one warning naming their ids and the `akm workflow run <id>` /
+  `akm workflow abandon <id>` commands, and starts anyway. Parameters are accepted
+  on every ref start, and `--new` is accepted and does nothing (deprecated,
+  through 0.10).
+- Workflow runs are no longer tied to the directory you run from (#1239).
+  `akm workflow list` and `akm workflow status <ref>` show every run on the host,
+  most recently updated first, from any directory, so the runs of a scheduled
+  task are listed like any other. `--all-scopes` is accepted and does nothing
+  (deprecated, through 0.10), and the `list` result no longer carries a
+  `scopeKey`. Runs started by 0.10 are not visible to a 0.9.15 binary reading the
+  same `state.db`.
+- `akm workflow run <ref> --skip-if-locked` also skips (exit 0, nothing started)
+  when an active run of that ref is being driven by a live process (#1239). Without
+  the flag a start is never refused.
+- `akm bundle rename` rewrites the workflow ref on that bundle's workflow runs, so
+  `akm workflow list` shows the old runs under the new name, and lists the bundle's
+  active and blocked runs in its output, each with its status (#1239). Their frozen
+  plans keep the old refs; continue or abandon them.
+- `akm workflow create` no longer indexes the new workflow, and a new run no longer
+  records an index entry id (#1239).
+- A workflow plan records the refs it uses and no locations (#1238). New runs
+  freeze plan `irVersion` 7, which holds no bundle directory, no directory
+  identity and, for each `env:` ref, only its bundle-qualified ref: the env
+  file, its keys and the secrets it names are read at each step. Runs frozen
+  by earlier releases (`irVersion` 5 and 6) carry those fields, which are never
+  read but are kept as stored, so a run interrupted before the upgrade finds the
+  child workflow run it had already started instead of starting a second one, and
+  continues the same way. A plan frozen by a newer akm is refused with a message
+  that says to upgrade akm, whether or not this akm could decode it. A plan with an
+  agent step records an empty directory identity, so a 0.10 pre-release that finds
+  the run stops at that step instead of running the agent in the wrong directory.
+  `akm workflow plan` lists an env ref without its `keys` and `secretNames`.
+- A workflow's exec units, agents and gate judges work in the root of the bundle
+  that holds the workflow, found at each step, and `exec.cwd` is joined onto it (#1238).
+  `exec.cwd` may now be absolute, and it is no longer required to stay inside the
+  bundle: a command can reach any directory anyway. A step whose workflow no
+  longer resolves to a bundle fails naming the workflow (a step with a gate is
+  blocked by its judge first, for `akm workflow resume`) instead of running in
+  akm's own working directory.
+- An exec step's argv and `exec.cwd` can name an asset in any bundle with the same
+  `${ref}` token env assets use (#1238): `["bun", "${homelab//scripts/lab-status/fetch.ts}"]`.
+  A `secrets/` ref is replaced by the secret's value, which is redacted from the
+  unit's output after it is parsed, like a secret bound through an env asset; any
+  other asset ref by its absolute path. A ref no bundle owns
+  fails the unit, naming it, before anything is spawned. Prompts are not
+  substituted. A workflow in bundle A can now run a script from bundle B with an
+  env asset from bundle C that names a secret in bundle D.
+- A task no longer captures its working directory's identity when it is prepared
+  and re-checks it before it runs (#1238). A `run:` task runs in
+  `<bundle>/<working-directory>`, and a `uses: scripts/<file>` target that is a
+  symlink to a file outside the bundle works: the task freezes that file's
+  bytes.
+- A task's `working-directory` follows the same rule as a workflow's `exec.cwd`
+  (#1238): a non-empty path, relative to the task's bundle root or absolute, and
+  no longer required to stay inside the bundle. A symlink to a directory outside
+  the bundle, an absolute path and a path with `..` all work, and `akm lint` and
+  `akm task sync` no longer need the bundle root to check it.
+
+### Deprecated
+
+- `secret://name` in config is retired in favour of `${secrets/name}` (#1238). A
+  config that still holds it loads as if it said `${secrets/name}`, with one
+  warning naming the key, and `akm migrate apply` rewrites `config.json`.
+  `akm config set` and `bundle add --credential` no longer accept it. A workflow run
+  frozen before the upgrade keeps resolving its engine credential when it is
+  continued, and keeps the `secret://` text it stored.
+
+### Removed
+
+- The dangerous-key audit on `bundle add` and `bundle update`, its prompt, its
+  rollback of a freshly installed bundle, and the `blocked` per-bundle status in
+  `bundle update --all`. The `DANGEROUS_ENV_KEY` and `DANGEROUS_ENV_AUDIT_FAILED`
+  error codes are gone with them (#1237).
+- The first-party and third-party distinction for env and secret injection
+  (`src/core/activation-policy.ts`) and the unused `trusted` field on a derived
+  bundle installation (#1237).
+- `akm show` no longer reports an `activeRun` field. Run state is under
+  `akm workflow` (#1239).
+- The "indexed root no longer matches the bundle source" warnings when a command
+  or persona is dispatched (#1238). A bundle at a different location than the
+  index recorded is no longer reported as drift.
+- The `exec_cwd_escape` failure reason and the checks behind it: the parser, the
+  compiler and the exec runner no longer reject an `exec.cwd` that leaves the
+  workflow's bundle (#1238).
+
+## [0.10.261012] - 2026-10-22
+
+### Changed
+
+- Distill writes more useful lessons without writing wrong ones. The lesson
+  writer treats a tested or measured result about a change or method, stated
+  with the conditions and limits it held under, as a lesson. It answers NONE for
+  a dated status, for the report of one run or day whose cause is only suspected
+  with no fix verified, and for a recap or reminder list whose rules a related
+  asset already states. Lessons are shorter (about half the memory), in the
+  writer's own words, and keep the memory's numbers, names and terms. The lesson
+  judge's REUSABLE criterion credits such a tested result and scores a lesson
+  drawn from an unconfirmed one-run report as not reusable; judging an update
+  to an existing lesson keeps the original criterion.
+
+### Fixed
+
+- A SIGINT or SIGTERM that reached akm just after it started an agent or harness
+  in its own process group could end akm with that group still running (#1230).
+  The signal guard is now in place before the child is spawned, so the group is
+  always terminated with akm.
+
+## [0.10.261011] - 2026-10-22
+
+### Changed
+
+- Date-valued frontmatter keys lose the `_at` suffix and use bare names like
+  `created`, `updated` and `expires`: `observed_at` is now `observed` on memories
+  and knowledge, and `started_at` / `ended_at` are now `started` / `ended` on
+  session assets. The old names are still read, with the new name winning when both
+  are present, so existing stashes keep working; files are not rewritten or
+  migrated, and akm writes only the new names. The memory-inference prompt, its
+  `Source context:` JSON key and the `remember --enrich` model field are now
+  `observed` (`--enrich` still accepts `observed_at`), and the cache namespace is
+  `memory-inference-v5`, so older cached decisions are disposable misses. This
+  supersedes the key names in the entries below. OKF's `generated: {by, at}` and
+  `verified: [{by, at}]` are unchanged.
+- Memory search hints no longer invent a date. A memory without an `observed`
+  date used to get `observed_at:<file mtime>`; a file's write time is not an
+  observation date, so it now gets no date hint. A stated date is indexed as
+  `observed:<date>`.
+- Memory inference receives selected source context alongside the body and copies
+  normalized parent scope to derived memories (#1209). The request and both cache
+  paths share the same effective-input identity under `memory-inference-v4`, so
+  relevant metadata edits reopen pending decisions. Existing children are kept;
+  older cached pending decisions are disposable misses. The request carries the
+  context as JSON under `Source context:` and the raw body, not JSON-escaped,
+  under `Body:`.
+- Memory inference now syncs the scope of existing derived memories with their
+  parent's normalized scope (#1209). Children written before scope was copied,
+  and children whose parent's scope later changed, are now reachable under scope
+  filters, and the parent hit regains `expandTo`. Only the child's scope
+  frontmatter is rewritten: no model call, no regeneration, and the body and
+  other metadata keep every byte. A child that already matches is not written.
+  Each run reports the count as `scopeSynced`.
+- `akm proposal extract --dry-run` JSON changes shape (#1212): `proposals` and
+  `sessions[].proposalIds` no longer carry synthetic `dry-run:<ref>` entries and
+  are empty in a preview; the eligible refs are in `sessions[].previewRefs`.
+  `proposals`, `candidatesCreated` and `--auto`'s `totalProposals` count only
+  proposals that were actually written. Scripts that read preview refs from
+  `proposals` must read `sessions[].previewRefs` instead.
+- Extraction outcomes follow what was written (#1212). A preview with eligible
+  refs records `candidates_previewed`; a live run that wrote nothing records
+  `candidates_blocked` when the ledger held every candidate and
+  `proposal_write_failed` when writes failed. `candidates_queued` now means at
+  least one proposal was written. `akm health` warns on `proposal_write_failed`.
+- A derived memory now records when and by what it was generated as `generated:
+  {by, at}` (the existing proposal-stamp shape; `at` is the write instant, `by` is
+  `akm/<version>`, neither seen by the model), and keeps its parent's explicit
+  `observed`, `evidence`, `evidenceSources` and `provenance.sources` as written
+  (#1210). `updated` stays the child's own write date, and nothing is stamped as
+  `verified`. Existing children are not rewritten. The historical date lives in the
+  child's frontmatter (`observed`, indexed as an `observed:` hint); the model is not
+  required to restate it in the description or body. `show` now also projects
+  `provenance` when it has `generatedAt` or `sources`, not only when the note has
+  `evidence`.
+
+### Fixed
+
+- A session whose proposal writes failed is retried on the next extraction run
+  instead of being skipped as `already_extracted` (#1212). Its seen-session row
+  keeps a null content hash, as an unavailable model does; candidates that were
+  written are held by their ledger window and are not proposed twice.
+- A retried or re-extracted session no longer proposes a candidate again after
+  its proposal from that same session was accepted (#1224). The candidate is
+  counted in `blockedCount` with an `accepted from this session` warning. The
+  same ref extracted from a different session is still proposed as an update.
+- A session whose only failed proposal writes were refused by the validator
+  (`INVALID_PROPOSAL`) now records its content hash, so it is not sent to the
+  model again on every run until its content changes (#1224). Other write
+  failures, such as a busy state.db, still leave the hash null so the session is
+  retried. The seen-session row records the refusals as
+  `failedRejectedCount`. The outcome is still `proposal_write_failed`, and
+  `akm health` still warns when every write failed.
+
+- `processes.memoryInference.minPendingCount` no longer counts a pending parent whose
+  current effective input already has a cached no-change decision, so a
+  pass made only of cached decisions is not admitted; an edited or uncached parent
+  still counts (#1219). Health `memoryInference.noChange` is documented as per run,
+  including cached decisions, not a cumulative total.
+
+## [0.10.261010] - 2026-10-21
+
+### Added
+
+- `akm ui` gains explicit write actions beside proposal decisions (#1217): edit
+  an indexed, writable knowledge or memory document's full Markdown source,
+  create knowledge, submit feedback, add, remove and update bundles, change
+  bundle settings, and view a document's Git file history. Each action reuses the
+  CLI operation and its validation, indexing and Git effects. A save is checked
+  against the source's raw-content revision and refused with `409
+  ASSET_CONTENT_CHANGED` if the file changed. Saves and creates answer `409
+  ASSET_MUTATION_LEASE_HELD` at once while another writer holds the lease, and
+  accept bodies up to 8 MiB (other writes stay at 64 KiB). Endpoints and status
+  codes are in `docs/reference/ui-api.md`.
+
+### Changed
+
+- The shared Markdown writer behind `akm import` and `akm remember` now takes the
+  asset-mutation lease, so it waits for other akm writers instead of racing them
+  (#1217). It also accepts an optional expected content hash, which the UI's
+  editor uses to refuse a stale save. CLI writes without a hash behave as before.
+
+- Curate withholds context for exact whole-message phrases such as `hello`,
+  `thanks, that worked!`, `ok sounds good, go ahead`, `yes`, and `lgtm` (#1201).
+  Matching normalizes case, whitespace and common punctuation; added task text
+  still retrieves. Use `akm search` for literal lookups that collide with the list.
+- Memory inference accepts an explicit, cached "no change" decision (#1208). A
+  tool-count or checkpoint note, or a note already adequate as written, no longer
+  needs a derived memory or a model call on every run. The decision is cached on
+  the note's body hash (cache namespace `memory-inference-v3`; older rows are a
+  disposable miss), writes no child, and does not stamp the parent
+  `inferenceProcessed`, so an edited note is considered again. It is counted in `memoryInference.noChange` in the improve
+  result, progress line and health metrics (the health runs table gains a
+  `nochange` column), never in `skippedNoFacts`. Malformed or HTML replies,
+  timeouts, aborts and endpoint failures are still not cached and are retried.
+
+## [0.10.261009] - 2026-10-21
+
+### Changed
+
+- Search and curate default to `--belief current`, retaining unflagged reference
+  knowledge and active/asserted assets while excluding historical beliefs (#1199).
+  Use `--belief all` for broad investigation or `--belief historical` for old
+  evidence. Curate accepts search's repeatable `--filter` scope controls, and the
+  public `akm-cli/api` options add `source`, normalized `filters`, and `belief`.
+  The same eligibility follows derived surfaces, linked support and packed
+  content; historical results are labelled. Belief labels do not establish factual
+  truth. No migration or reindex is required; direct show remains available. The default
+  also applies to `akm ui` search, `akm remember --show-similar` and the related assets
+  distill reads.
+
+### Fixed
+
+- Search applies eligibility filters (scope, source, type, belief state, proposed quality)
+  before each channel's candidate limit instead of after it (#1198). An eligible asset ranked
+  below many ineligible ones in the keyword or semantic channel is no longer dropped before
+  filtering. The vector channel checks eligibility in similarity order, so unfiltered searches
+  load only the top candidates. No index migration or reindex is needed.
+
+- Extraction proposals retain captured `evidence`, optional guidance and known session sources
+  in the Markdown actually published by acceptance (#1196). Reindexing and full/agent `show` preserve
+  the support; compact discovery continues to provide refs for follow-up. Earlier pending
+  proposals require explicit review/repair of their separate evidence payload; existing accepted
+  notes are not backfilled. Run `akm index --full` to project evidence already present in old files.
+- Invalid health comparison windows are rejected before runtime probes can prepend an unrelated
+  installed-agent advisory to the JSON usage error.
+
+- OKF and LLM Wiki indexing no longer records relationships from links inside code spans,
+  fenced or indented code, including code nested in lists and blockquotes (#1200). Links are
+  read with the `marked` tokenizer (new runtime dependency) instead of raw regex scans; the
+  indexed link syntax is otherwise unchanged. Run `akm index --full` once to drop false
+  relationships stored by earlier builds; incremental indexing keeps unchanged files' old links.
+
+- Consolidation preserves the existing `scope_user`, `scope_agent`, `scope_run`, and
+  `scope_channel` tuple (#1197). Pairing requires exact normalized equality before
+  consuming an eligible neighbor slot. Retirement acceptance, including resume, checks
+  live scopes against the judged tuple; promotion refuses incompatible source/output
+  scopes and preserves differently scoped derived twins. Older retirements without a
+  recorded judged tuple remain readable but require rejection/reassessment before
+  acceptance. Staged stale decisions use the existing stale-target rejection/retry
+  path. No database migration is needed; review pending work before unattended drain.
+
+- Consolidation assesses complete note bodies in both retirement checks instead of silently
+  cutting each at 12,000 characters. Requests exceeding the selected engine's context window fail conservatively;
+  failed second checks leave proposals pending and unstaged. Before unattended proposal drain,
+  review and reject/reassess pending or staged retirements produced by older builds when either
+  body exceeded the former cutoff. An upgrade does not revalidate those decisions. No storage
+  migration is needed; accepted retirements remain recoverable with `akm proposal revert <id>`.
+
+### Changed
+
+- The consolidation pair judge reports claim differences; AKM derives `duplicate`, `subsumed`,
+  or `overlap` and the redundant side from those lists. It no longer asks the model to repeat
+  that decision in relation/pointer fields. Replacement retirements use `subsumed`; historical
+  queued labels remain readable. Lexical attention hints accompany complete bodies and never
+  substitute for assessing their meaning.
+
+## [0.10.261008] - 2026-10-20
+
+### Fixed
+
+- **`akm remember`, config saves and other writes work on filesystems that refuse chmod.** On a CIFS/SMB mount
+  such as an Azure Files share, chmod fails with `EPERM`, and akm treated that as fatal: every atomic write
+  (`akm remember`, `akm setup`, `akm env`, `akm secret`) and every config backup failed. akm now keeps the mode the
+  file was created with when the filesystem refuses chmod (`EPERM`, `ENOTSUP`, `EINVAL`); the mount options decide
+  it there, so `env/`, `secrets/` and config backups are not guaranteed owner-only on such a share. Any other chmod
+  error still fails the write.
+
+## [0.10.261007] - 2026-10-20
+
+### Added
+
+- **`akm proposal new --bundle <name>` queues a new-asset proposal for another configured bundle.** The bundle must be
+  configured and writable; an unknown, disabled or read-only one is refused with the same error `akm remember --bundle`
+  gives. The generation prompt draws its convention facts from that bundle, and the proposal records it as its target,
+  so `akm proposal accept` writes there. Without the flag the proposal goes to the working bundle, as before.
+
+### Fixed
+
+- **`akm ui` searches and asset views never open the index for write.** In read-only mode, `akm search` and
+  `akm show` still opened `index.db` read-write; closing that connection can checkpoint the WAL into the main file,
+  so browsing could change `index.db` even though nothing was written (seen as an intermittent CI failure). They now
+  use read-only connections.
+- **`akm clone` works on flat skill repos and website pages, and records where the clone came from.** A ref whose
+  concept id is not under a type directory (`my-repo//domain-name-brainstormer`, a page from a `bundle add <url>`
+  source) failed with `TypeError: paths[1] must be string`. The source is now found through the bundle's adapter and
+  placed by what the file is: a skill into `skills/<name>/`, other markdown into `knowledge/<name>.md`, and an asset
+  that cannot be placed fails with a usage error that points to `akm import`. Cloned markdown gains the origin ref in
+  its `sources:` frontmatter. A `knowledge/<name>` ref given without `.md` now clones to `<name>.md`; it used to
+  be written with no extension and left out of the index.
+- **`akm ui`'s Overview no longer stalls while another process writes the index.** Its metrics resolved refs through
+  a disposable copy of `index.db`, which retried for several seconds and printed a "could not take a non-mutating
+  snapshot" warning whenever the index was being written. The UI now reads `index.db` directly in read-only mode;
+  `akm metrics` from the CLI is unchanged.
+
+## [0.10.261006] - 2026-10-16
+
+### Added
+
+- **`akm ui` serves a local web UI.** It listens on `127.0.0.1` (a random free port unless `--port` is given),
+  prints a URL that carries a per-launch token and opens your browser; `--no-open` only prints it. It reads health and
+  metrics, bundles with git status, the effective config, the proposal queue, recent changes and search through the
+  functions the CLI uses, and browsing writes nothing: no usage events, no index build, no config or database writes.
+  The page has Overview (health, metrics, recent improve runs, 14-day usage), Bundles, Config (with a source badge per
+  key), Proposals (with diffs), Changes and Search with an asset view. It is plain HTML, CSS and JavaScript with no
+  external requests, backed by a JSON API (`docs/reference/ui-api.md`). Experimental.
+- **`akm ui` can accept and reject proposals.** A proposal's page has Accept (after an inline confirmation) and Reject
+  (with a required reason); the pending list has a checkbox per row and an "Accept selected" bar that accepts several
+  proposals in one commit. These are the UI's only writes, through three `POST` routes that call the functions
+  `akm proposal accept` and `reject` call, so a decision is recorded and committed exactly as on the command line.
+  A write needs the token in the `X-Akm-Ui-Token` header (not the URL), a JSON content type and an `Origin` that is the
+  server's own address; a stale target, an already-decided proposal and a held write lease come back as `409`.
+- **`akm ui` shows a proposal's diff side by side.** The proposal page lines the current asset up against the proposed
+  text (current on the left, proposed on the right, line numbers on both, changed words highlighted inside a changed
+  line) and collapses long unchanged runs behind "Show N unchanged lines". A "Side by side | Inline" switch above the
+  diff picks the layout; the choice is remembered in the browser, and a narrow screen starts inline. The unified diff
+  `akm proposal diff` prints pairs lines by position, so one frontmatter field added near the top used to read as a
+  rewrite of the whole file; the page now aligns the two texts itself. `GET /api/proposals/:id` returns `diff.before`
+  and `diff.after` for this (never for env or secret assets); `diff.unified` is unchanged.
+
+### Fixed
+
+- **Reflect's missing-H1 title is now a valid, byte-preserving edit (#1183).** When a reflect patch carried a title
+  and the body had no level-1 heading, reflect inserted `# <title>` but also stripped every leading blank line of the
+  body, so reviewers and gates reading the rules as "frontmatter only" rejected those proposals as body edits.
+  Reflect now inserts only the heading and one blank line, at the body's first non-blank line and in its line ending;
+  the rest of the body is unchanged. The rules doc now says reflect edits frontmatter
+  plus at most a missing H1.
+- **`akm health` no longer prints credentials carried in configured URLs.** The `egress-endpoints` advisory listed
+  every registry, source, LLM and embedding URL verbatim, so a `?token=…` query or a `user:password@` in a git URL
+  appeared in the health output, its JSON and the HTML/markdown reports. Each entry now goes through the shared
+  credential redaction, which keeps the host and path and replaces the secret with `[REDACTED]`.
+
+## [0.10.261005] - 2026-10-14
+
+### Changed
+
+- **A process that accepts several proposals commits once, not once per proposal.** `akm proposal drain`,
+  `akm proposal accept --generator` and the triage drain inside `akm improve` used to make one commit (and, on a git-kind
+  bundle, one push) per accepted proposal. They now commit once when they finish, with a subject such as
+  `akm proposal drain: 37 accepted (consolidate-pair 30, consolidate 7)` and one `<id8> <source> <ref>` body line per
+  proposal. In `akm improve`, triage accepts join the run's end-of-run batch commit. A single `akm proposal accept <id>`
+  is still one commit, and `akm proposal accept <id> <id> ...` now accepts several ids in one process and commits them
+  once; an id that fails is reported in the batch result (exit 1) and the others still land.
+
+### Fixed
+
+- **`akm sync` pushes commits that were made earlier.** With a clean working tree it fetched and merged the upstream
+  but never pushed, so a commit made outside `akm sync` (an `akm proposal accept` on a filesystem bundle, an improve
+  run killed before its end-of-run sync, a manual commit) stayed ahead of the remote and `akm sync` reported
+  `pushed: false`. It now pushes those commits when the bundle is writable, has an upstream and push is allowed, and
+  reports `pushed: true`. `--no-push`, read-only bundles and branches without an upstream are unchanged.
+
+## [0.10.261004] - 2026-10-13
+
+### Fixed
+
+- **`akm feedback` fails when it cannot record the feedback** (also in 0.9.32). When `state.db` was read-only to the
+  process, as it is inside an agent sandbox that only allows writes in the workspace, the feedback row was silently
+  dropped and the command still printed `"ok": true`. It now fails with a `DATA_DIR_NOT_WRITABLE` config error (exit
+  78) and records nothing. Add akm's data directory to the sandbox's writable paths.
+
+## [0.10.261003] - 2026-10-12
+
+### Fixed
+
+- **`akm upgrade` now keeps the OpenCode 2 plugin (`akm-opencode-v2`) current.** Three things stopped it:
+  `--next` refused with "pins akm-cli ... older than the ... that @latest pins" because npm's `latest` for
+  `akm-opencode-v2` is a retired daily alpha whose 8-digit pin sorts above every monthly build (and the lockstep
+  reported that as "could not read the akm-cli pin"); `--next` now follows the `next` tag and no longer compares it with
+  `@latest`, for OpenCode 1 as well. The refresh trashed the cache and deferred whenever an OpenCode process ran, which
+  on a host with a standing `opencode serve` was always. It now runs OpenCode 2's own `opencode plugin update <spec>`,
+  which installs the new build beside the old one for the running service to pick up at its next restart, so it is
+  neither trashed nor deferred. OpenCode 1 is unchanged.
+
+- **`akm upgrade --next` no longer says the Claude Code and Codex plugins have "no prerelease channel" and work "with
+  any 0.9.x akm".** akm-plugins now has a `next` branch for prereleases, and the plugins require akm 0.10.261001 or
+  newer. The `--next` note now names the ref the `akm-plugins` marketplace follows (read from `claude plugin marketplace
+  list` and Codex's `config.toml`) and, when it is the stable default branch, how to switch to `next`. `akm upgrade`
+  still only updates the ref the marketplace follows.
+
+## [0.10.261002] - 2026-10-12
+
+### Fixed
+
+- **`akm sync` and improve's pre-run sync no longer fail on tracked files under a git-ignored directory.** A stash whose
+  `.gitignore` lists `.akm/evals/runs/` after files under it were committed has tracked, ignored files that change
+  with every eval run (the `latest` symlink). The sync picked them with the managed paths and git refused to stage them
+  ("The following paths are ignored by one of your .gitignore files"), so the whole sync stopped: no fetch, merge,
+  commit or push. Sync now leaves any path a `.gitignore` rule matches out of the paths it picks, tracked or not; those
+  edits stay uncommitted in the working tree. An explicit `paths` request naming an ignored path still fails.
+
+## [0.10.261001] - 2026-10-12
+
+### Changed
+
+- **0.10 release numbers are monthly, `0.10.YYMMNN`, not daily (#1089).** The patch is the UTC year, the month and the
+  release within that month (`NN`, `01` to `99`), two digits each. Every release takes the next `NN`, whatever its
+  stage (`0.10.261001-alpha`, then `0.10.261002-beta`, then `0.10.261003`); a build is no longer promoted through
+  `-alpha`, `-beta` and `-rc` under one number. `bun scripts/release-version.ts next` now counts the month's releases on
+  npm, and the Release workflow rejects the old 8-digit `YYMMDDNN` form for a new release. **Known, accepted break:**
+  semver compares the patch numerically, so every `0.10.YYMMNN` sorts below the 0.10 daily alphas
+  (`0.10.26101001-alpha` to `0.10.26101202-alpha`), and `akm upgrade` will not offer it from one. The next release is
+  `0.10.261001-beta`; if you are on a 0.10 daily alpha, install it explicitly once
+  (`npm install -g akm-cli@0.10.261001-beta`), after which `akm upgrade` works as before.
+
+### Deprecated
+
+- **The `opencode` CLI dispatch path.** An agent engine with `platform: "opencode"`, which runs `opencode run` for each
+  call, still works on OpenCode 1 and 2 throughout 0.10, but is deprecated: use an `opencode-sdk` engine, which covers
+  it, including a default agent (#1098). It may be removed in 0.11 or later (STABILITY.md).
+
+## [0.10.26101202] - 2026-10-12
+
+### Fixed
+
+- **A signal to `akm agent` no longer leaves the CLI harness running (#1049).** `akm agent` on the `opencode`,
+  `claude` and `codex` CLI engines runs the harness in its own process group, so SIGTERM or SIGINT to akm ended akm and
+  left `opencode run` (and, on OpenCode 2, its `serve --stdio` child) running. The managed-subprocess primitive now runs
+  the timeout kill ladder on every live group child when akm gets such a signal with no handler of its own, then
+  re-raises it so akm still ends by the signal.
+- **An OpenCode 2 SDK dispatch ends when akm rejects a permission request (#1049).** OpenCode 2 interrupts the step
+  (`aborted`, "Step interrupted") and goes idle without writing the closing `idle` message, so the dispatch waited out
+  its whole deadline. It now returns at once with `reason: "aborted"` and the declined tool call in `error`.
+- **Documented: OpenCode permission defaults in a dispatch (#1049).** OpenCode 1 asks before reading or writing outside
+  the project directory; OpenCode 2 does not unless its config says `ask`, so akm's permission rejection only happens
+  on OpenCode 2 once you add that rule. akm changes no default. See [Configuration](docs/reference/configuration.md#harnesses).
+
+## [0.10.26101201] - 2026-10-12
+
+### Removed
+
+- **Reflect's retrieval regression gate (#1171).** After the quality judge passed a revision, reflect graded the old and the new text against up to five of the asset's own retrieval queries and refused the revision (`quality_rejected`, a 14-day window) when the mean grade fell at all. Re-measured on 0.10 it refused 12-17% of the revisions the judge had passed and lowered defects fixed from 84 to 77 (35B) and from 92 to 77 (27B) of 96, now that reflect edits frontmatter only. A judge-passed revision is now minted as a proposal with no further check. This also removes the `retrieval-ungraded` review reason, the `retrievalRegression`/`retrievalUngraded` event metadata and the `retrieval-relevance-judge.md` prompt. No config key existed for the gate, so no config changes.
+
+## [0.10.26101101] - 2026-10-11
+
+### Changed
+
+- **A manual fix to an asset applies at once.** `akm feedback --negative ... --replace/--with/--source`, `--superseded-by` and `--outdated` used to queue a `feedback` proposal that waited for `akm proposal accept` and expired after 90 days. The command now files the proposal and accepts it in the same run, through the ordinary accept (a git-backed bundle gets the usual commit; `akm proposal revert` undoes it), with gate decision `manual-fix` and no judge. If the accept refuses, the proposal is rejected, the file is untouched and the command fails. The edited asset stays eligible for every improve process.
+- **`akm improve` syncs before it runs, not only after (#1091).** A live run on a git-backed bundle now does the same
+  fetch / fast-forward-or-merge / commit / push as `akm sync` right after taking its lock and before the index and plan
+  stages, so it plans from what other hosts pushed. It honours `--no-sync` and `--no-push`. A conflict or fetch failure
+  warns and the run continues on the local state; the outcome is `preRunSync` on the result and a `stash_synced` event
+  with `phase: "pre-run"`. Pending hand edits in the managed paths are committed by it, as `akm sync` would.
+- **Reflect no longer locks an asset for 14 days over an uncertain verdict; it asks a person.** A reflect revision the
+  quality judge does not pass but scores 3.5 or more (the judge's own review label begins at 2.5) is now queued as a
+  pending proposal for a person (`judge-uncertain`, with the per-criterion scores and the judge's reason) and records
+  no `quality_rejected` window; a lower score is refused as before. Likewise a retrieval check that cannot grade a
+  revision (transport error, timeout, unreadable reply) queues it for a person (`retrieval-ungraded`) instead of
+  refusing it as a regression, and a distill lesson or promotion whose judge is missing at judge time is queued for
+  review instead of recording a 30-day `quality_rejected` window. Triage never accepts any of these. `akm proposal
+  list` shows the reason as `gate=deferred:<reason>`.
+- **Feedback now changes `akm search` and `akm curate` ranking, as `akm feedback` always said it did.** The fused
+  score is scaled by `1 + 0.03 x (ln(1 + positives) - ln(1 + negatives))`, counting the user's recorded feedback
+  events for the asset (improve, task and audit feedback does not count). The rule is the same for every asset, rises
+  with each positive and falls with each negative, and gains less per vote as votes pile up: about +2% / +3% / +5% /
+  +9% for 1 / 2 / 5 / 20 positives, so an asset with 5 positives outranks one with 2, and the effect reorders close
+  matches without overriding relevance. The counts are read from `state.db` in one query per search. `utility_scores`
+  is still written and read by improve and metrics, but search does not use it.
+- **`akm feedback` reports the real ranking effect.** `rankingUpdate.applied` in its output used to mean the utility
+  EMA write succeeded, which no longer has anything to do with ranking. It is now `true` exactly when the recorded
+  event is user-attributed (the events search counts) and `false` with a reason for improve, task, audit or unknown
+  attribution; a utility-write failure only warns and no longer flips it.
+- **Utility has one formula and one implementation.** `akm feedback` used to move utility with its own bounded step
+  toward the cumulative positive share while `akm index` recomputed the same table with a different formula, so the
+  stored value depended on which ran last. `akm feedback` now calls the indexer's `recomputeUtilityScores` for the one
+  entry (user-attributed events only), so the value it stores is the one `akm index` would compute at that moment; the
+  bounded-step code (`utility-policy.ts`) is removed. A first positive on an entry with no utility row now gives 0.3
+  (the old start was 0.5). Search still does not read utility.
+
+### Fixed
+
+- **The 02:00 nightly `akm improve` can no longer lose its night to the consolidate task's lock.** The shipped
+  `akm-improve-consolidate` task (`20 */4 * * *`) kept the default 2-hour budget, so a 00:20 run could still hold
+  `improve.lock` at 02:00 and the nightly (deliberately without `--skip-if-locked`) failed with `IMPROVE_LOCK_HELD`.
+  The consolidate task now passes `--timeout-ms 3600000`; the nightly is unchanged.
+- **Scheduled command tasks (`uses: commands/…`) get the 6-hour unattended default timeout.** Only workflow and native
+  shell/script tasks had it, so a wedged engine call could hold a command task forever. An explicit task `timeout:`,
+  an engine timeout, or `timeout: null` still wins.
+- **`akm search` no longer warns "no embedding provider is configured" on a default install.** With
+  `semanticSearchMode: auto` and no embedding settings, search uses the built-in local model, so the warning was
+  false on every query. It now fires only for a remote `embedding.endpoint` set without `embedding.model` (the one
+  config that cannot work), and the remedy names that field.
+- **`akm sync` fetches the remote and brings other hosts' changes in before it pushes.** It used to check the stale
+  local tracking ref, so once another host had pushed, the lease push failed and `akm sync` exited 70 instead of
+  committing, and a two-host filesystem bundle never converged. A writable bundle with a remote now fetches, then
+  fast-forwards (or merges with git's default merge) the upstream, then pushes; a host with nothing to commit still
+  receives the upstream. A merge that conflicts is aborted, your commit stays, the push is skipped, and
+  `reason` reads `not pushed: merging upstream conflicts in <files> ...`. A failed fetch likewise only skips the push.
+  `--no-push` and read-only bundles never touch the network.
+- **The end-of-run improve sync reports `committed: true` when only the push failed.** The commit had landed, but the
+  result and the `stash_synced` event said `committed: false`.
+- **The extract per-session lock no longer reclaims a live holder.** It was reclaimed once its file was five minutes
+  old, but one session can hold it across two extraction attempts and the summary call, so a session-end hook racing
+  the improve run processed the session twice. Only a lock whose holder process is dead is reclaimed, as with the
+  improve run lock.
+- **Memory inference writes to the default bundle, not the first bundle in the list.** The pass took `sources[0]`, so
+  it relied on list order and did nothing, silently, when that entry was not an akm bundle. It now selects the source
+  flagged as the default bundle and warns when there is none or when it is not an akm bundle.
+- **Memory inference no longer reverts a parent memory's frontmatter edit.** The `inferenceProcessed` stamp rewrote
+  frontmatter parsed before the model call, so an edit made to the memory in the meantime (accepted proposal,
+  feedback hash) was lost. The stamp now adds its key to the file's current frontmatter.
+- **The session summary prompt fences the transcript as untrusted.** Extract's summary call sent the raw, unfiltered
+  event stream with no boundary, so a crafted session could steer the text written into the session asset. It now
+  uses the same pre-filter and the same `UNTRUSTED SESSION TRANSCRIPT` fence, with forged fence markers neutralised,
+  as the extraction call.
+- **`akm proposal revert` of a retirement still works after the 30-day archive purge.** When the graced purge has
+  deleted the archived copy, the primary is restored byte for byte from the proposal's recorded `backupContent`
+  instead of the revert refusing. A file that now occupies the path is still never overwritten.
+- **Retire proposals can no longer become permanent.** They now expire by age like every other proposal (`akm proposal
+  reopen` brings one back, so the old "never expires" rationale is gone), a staged one whose file or successor is gone
+  or changed is auto-rejected once as `stale-target` instead of failing every drain run, and an expired or stale-target
+  retire proposal no longer counts as a person's rejection that settles its pair.
+- **The consolidate pair pass no longer marks assets judged when they have no stored embedding.** With
+  `semanticSearchMode: off` (or before an asset is embedded) the neighbour query could not run, yet the pass wrote a
+  `judged_no_action` row that held the asset until its body changed. It now writes no row for such an asset, so
+  enabling embeddings reconsiders it, and warns once per run that the pair pass needs stored embeddings.
+- **A transient reflect failure no longer consumes the feedback that planned it.** A transport error, parse error,
+  timeout, budget abort or crash wrote a `failed` ledger row that advanced the signal cursor, so the ref was not
+  retried until new feedback arrived. Like distill, these now write no row; guard rejections and quality rejections
+  are unchanged.
+- **The per-run `akm improve` and `akm index` log files are now purged by the retention pass.**
+  `$CACHE/logs/improve/<ISO>.log` and `$CACHE/logs/index/<ISO>.log` were outside the purge and grew without bound;
+  they now follow `improve.eventRetentionDays` like the task log files.
+- **A run hard-killed by the budget watchdog now leaves a record and banks its writes.** The forced `process.exit(0)`
+  (exit code unchanged) skipped every finally block, so the run left no `improve_runs` row and the files it had
+  written were never committed. Before exiting, the watchdog now records the run as terminated
+  (`budget_exhausted`) and makes the same provenance-scoped auto-sync commit, without pushing.
+
+### Changed
+
+- **`captureMode: hot` memories are consolidated like any other memory.** The pair pass may now retire one, the promote
+  pass may promote one (accepting archives the source, as for any memory), and a chunk of only hot memories goes to the
+  model instead of being skipped as judged no-action. The hot-specific retire guard, chunk skip and promote-prompt
+  annotation are gone; `akm remember` still writes `captureMode: hot`.
+
+## [0.10.26101002] - 2026-10-10
+
+### Changed
+
+- **Triage accepts up to 200 proposals per run by default, up from 25.** The consolidate pair pass stages about 90
+  pairs a night on a real stash, so a lower cap let the review queue grow every night. `maxAcceptsPerRun` still bounds
+  a run, and `akm proposal drain` uses the same default.
+- **`akm improve <scope>` warns when the scope matches no asset.** A type scope that matches nothing in the stash
+  (`akm improve typo`, `improve skills`, `improve memorys`) prints one warning on stderr naming the scope and, for a
+  near-miss of a real type, the likely intended one. The exit code and the empty plan are unchanged, and a valid scope
+  with nothing eligible does not warn.
+
+## [0.10.26101001] - 2026-10-10
+
+### Added
+
+- **OpenCode 2 is the primary OpenCode integration; OpenCode 1 keeps working (#1049).** akm detects the major from
+  the engine's binary (`<bin> --version`, once per binary per process; `opencode2` is preferred when it is on PATH)
+  and drives it through a per-major adapter for SDK dispatch (`opencode-sdk`, on `@opencode/client` 2.0.26 or
+  `@opencode-ai/sdk` 1.2.20), CLI dispatch (`opencode run`, which adds `--standalone` on OpenCode 2 so no background
+  service is left running), session history (chosen from `opencode.db`'s own tables, read-only, with retained
+  OpenCode 1 rows still readable after a native upgrade) and native config import. OpenCode 1 warns once that
+  upgrading is recommended; a binary of an unknown major is driven as OpenCode 2 with a warning, never refused.
+  `akm upgrade` and `akm health` know the `akm-opencode-v2` plugin beside `akm-opencode`.
+- **`akm-cli/api`: the one supported programmatic entry point.** `curate(query, { limit, type, format })` returns
+  exactly the stdout of `akm --detail agent -q curate …`, computed in-process, and rejects with the CLI's message and
+  `code`. It is for in-process recall by the akm plugins; everything else stays CLI-only. `package.json` gains an
+  `exports` map (`./api`, `./package.json`, `./dist/*`); `bin` and `files` behave as before. See
+  [`docs/reference/api.md`](docs/reference/api.md).
+- **Distill extends an existing lesson that a memory repeats (#1090).** When the writer's lesson repeats one the library
+  holds (the judge scores its non-redundancy 2 or below), or the writer answers `NONE` with a lesson nearby, distill
+  asks for that lesson's body again with the lines the memory adds. If every existing line is kept, and the judge
+  passes the added lines against the lesson and the memory, the update is a pending proposal on the lesson's own
+  ref (reason `distill-update`, with the lesson's before-hash), left for a person: the triage drain does not accept
+  it. Otherwise nothing is proposed and the outcome is what it was. The result and the `distill_invoked` event carry
+  `updatesExisting: true`. No new setting; it needs the quality gate.
+
+### Removed
+
+- **The GitHub-shaped YAML workflow format (#1096).** A `.yml` workflow (`name`/`on`/`jobs`, one job, `uses:` and `run:`
+  steps) is gone, with everything that existed only to carry it: workflow-step `uses: tasks/<ref>` (task composition),
+  `uses: scripts/<ref>` and `uses: commands/<ref>` targets, the `with:` rejection classifier for them, YAML `on.schedule`
+  triggers (and the scheduler sync of them), and the `script` frozen target. `.yml` under `workflows/` is skipped at
+  index time with a message saying it must use `.md`. Nothing in the owner's bundle or in OpenPalm used it. **Kept:** a
+  task that runs a workflow (`uses: workflows/<ref>`, or a `run:` calling `akm workflow run`) is a task feature and is
+  unchanged. A stored run whose plan has a `script` target can no longer be decoded and is abandoned like any other
+  undecodable plan.
+- **Top-level workflow `outputs:` (#1096).** Its only consumer was a parent reading a child's exports. A completed
+  child workflow now returns the output of its last step, so `outputs:` is a lint error and the child-output reference
+  check at freeze is gone; a parent reads `steps.<composing-step>.output`. The `outputs_json` column stays readable.
+- **Workflow `route` steps (#1096).** A step can no longer declare `route:` (branch on a value to a later step). It was
+  unused by any workflow found, and its cost was the replay journal for route decisions and cascaded skips. Branching is
+  an `exec` step or an agent step that reads its inputs, plus a gate for "go back and fix it". `route` is now an
+  unknown-key lint error; a stored plan that still has a route step cannot be decoded, so that run is abandoned.
+- **`unit.isolation: worktree` (#1096).** A workflow unit can no longer declare per-attempt git-worktree isolation
+  (`exec/worktree.ts` and the attempt prepare/cleanup in the native executor). It was unused by any workflow found, and
+  the largest standalone block in the engine. `unit.isolation` is now an unknown-key lint error; a stored plan that
+  still carries it decodes and runs the unit in the engine's working directory. The `worktree_path` columns stay readable.
+- **Runtime conversion of config older than 0.9.15 (#1091).** 0.10 reads what 0.9.15 and later wrote; an install on an
+  earlier release runs `akm migrate apply` under akm 0.9.x first. Removed: the in-memory `stashDir`/`sources[]`/
+  `installed[]` to `bundles` conversion (`legacy-source-shape-shim.ts`), the `engines.*.extraParams` lift onto
+  `temperature`/`maxTokens`/`enableThinking`/`reasoningEffort`, and the `{kind, ref, sourceId}` write-back of
+  `scheduler.enabled` that kept 0.9.16 able to read what a newer release wrote (0.10 writes plain refs, still reads the
+  object form). A config with a retired source key now fails to load with one message naming `akm migrate apply` under
+  akm 0.9.x; a legacy `extraParams` key is refused with the first-class field to set. Kept, because 0.9.15 or 0.9.16
+  wrote them: scheduler adoption for a config with no `scheduler.enabled`, the `{kind, ref, sourceId}` reader, and the
+  irVersion 5 frozen-plan reader (there was no separate irVersion 4 reader to remove). `akm migrate apply` and
+  `akm migrate status` are unchanged for 0.9.15 and later data; the task-source migrator moved to
+  `scripts/akm-migrate/migrate/`. See `STABILITY.md` and `docs/architecture/persisted-data-compat.md`.
+- **The `quick`, `reflect-distill`, `thorough` and `catchup` built-in improve strategies, and the `akm-improve-frequent`
+  and `akm-improve-catchup` task templates (#1130).** Measured (nightly eval, n=3, `gpt-5.6-terra` and `qwen3.8-27b`):
+  `quick` solved 0.76 / 0.75 items against `default`'s 0.92 / 0.89, `reflect-distill` 0.78 / 0.77, and `thorough` (the
+  judged triage drain) 0.67 / 0.70 with harmed items at 9 / 6.3 (unsafe retirements accepted, an exact fix applied
+  unreviewed); `catchup` was identical to `consolidate` on the pool (it differed only in the judged triage drain, `maxChunkSize` 50 instead of 25, and `minPoolSize: 0`, which is already the default). An `improve.strategies.<name>` block with one of
+  these names stays valid as an ordinary user-defined strategy, but it now inherits `default` and no longer carries the
+  old built-in's settings (for example the triage drain). `--strategy` or `defaults.improveStrategy` naming one with no
+  such block fails at resolution with an error that names `default`; config load still succeeds. The shipped
+  `akm-improve-nightly` task would now run `default` at 02:15, the same as the `core/improve` task at 02:00, and the
+  hourly `akm-improve-frequent` task would only repeat that pass; `akm-improve-catchup` ran the same `consolidate` as
+  `akm-improve-consolidate`. All three are gone, and setup's server-install preselection now suggests `core/improve`. A task copied from
+  any of them into a bundle keeps its `--strategy` and must be changed to `default` or `consolidate`. (#1130)
+- **The high-salience improve lane and `improve.salience.salienceThreshold` (#1129).** The lane admitted nothing in
+  the measurement and was reachable only by back-dating feedback. The key still loads from an old config with a
+  warning and does nothing; `akm migrate apply` drops it. The `high-salience` lane name stays valid on rows older releases wrote.
+- **The `proactive-maintenance` built-in improve strategy (#1129).** The lane now lives in `default`. A
+  `improve.strategies.proactive-maintenance` block in your config keeps working as a user-defined strategy, merged
+  onto `default`; `defaults.improveStrategy: "proactive-maintenance"` without such a block still loads and fails
+  when improve runs, with the same "removed in 0.10" error as `quick` and the other removed strategies (#1130).
+- **`BundleAdapter.placeNew()` (internal, #1091).** The optional adapter method, its nine implementations and their
+  tests were never called: every write already resolves through the fixed type-to-directory table. No behaviour
+  change. Writable bundles in a layout other than akm's own would need it back; see #1163.
+
+### Changed
+
+- **Child workflows are kept in a simple form (#1096).** A markdown step declares `unit: { workflow: workflows/<name>,
+  with: { <param>: <literal or { from: <reference> }> } }` and the engine starts the child as its own run and drives it
+  to completion; the child's last step output is the composing step's output. The form is Experimental. The freeze,
+  idempotent publish, resume, blocked-child recovery, cycle check and `workflow list --children` behaviour of the existing
+  child executor is unchanged.
+- **`default` drains the proposal queue through the deterministic gates (#1143).** The `default` strategy now runs
+  triage in `promote` mode with judgment off, up to `maxAcceptsPerRun: 25` accepts per run, so the backlog drains
+  without `experimental.improveAutonomy`. The nightly eval's baseline is exactly this path (`proposal drain --promote`
+  without judgment): 0.91 (terra) and 0.89 (qwen) of items solved, 0 to 1 harmed; the judged drain is what caused
+  harm (#1132). The autonomy gate's `triagePromote` lane is now gated only when the triage stage has judgment on: a
+  promote with judgment on and no opt-in is still downgraded to `queue` and reported (`improve_skipped`,
+  `akm task doctor`). Memory inference and memory cleanup stay gated. No new setting. (#1143)
+- **`akm improve` plans the proactive-maintenance lane's picks again, and the lane is on in `default` (#1129).**
+  Measured on assets with silent defects and no feedback (8 planted): 0 fixed with the picks scored only, 6 to 7 with
+  them planned, no harm, about five times the model calls. The picks carry the `proactive` lane on their
+  proposals. The cap against a proposal flood already existed and is now consistent: `maxPerRun` limits the picks per
+  run, `dueDays` (30) admits only an asset not reflected or distilled for 30 days, and reflect's `limit` (25) bounds
+  the run. The code fallback for `maxPerRun` is 15, the shipped value, where it was 25. No new setting.
+  `--require-feedback-signal` turns the lane off for a run.
+- **The judged drain accepts only consolidate promotions, and no built-in strategy turns judgment on (#1132).** On the
+  nightly eval, judging every proposal kind with `experimental.improveAutonomy` solved about half the items
+  (0.49 gpt-5.6-terra, 0.53 qwen3.8-27b) and harmed 14 and 11, changing 18 and 21 notes outside the planted set: it
+  accepted unsafe retirements and applied exact fixes unreviewed. Judging promotions alone was reasonable. The judgment
+  tier now accepts only a consolidate promotion; any other kind it would accept (a retirement, an exact fix, a reflect
+  revision) is left for a person with reason `judgment-not-promotion`, whatever the strategy says. `thorough`, `catchup`,
+  `reflect-distill` and `proactive-maintenance` no longer enable triage judgment. Deterministic promote gates are
+  unchanged. (#1132)
+- **Built-in improve strategies are patches onto `default`, not "complete presets" (#1130).** `docs/reference/configuration.md`
+  said otherwise; the strategy list in the docs, the `--strategy` help and the hints now name only `default`
+  and `consolidate`. (#1130)
+- **A proposal from the proactive lane waits for a person (#1147).** With the lane on in `default` and the default
+  drain promoting through the deterministic gates, a reflect edit on an asset with no feedback was accepted unattended
+  once reflect's judge passed it (the nightly eval showed `when_to_use`, `type` and provenance stamps and a title
+  heading added to assets no one had asked about). `proposal drain` now never accepts a proposal whose
+  `eligibilitySource` is `proactive`, through a deterministic gate, the judgment tier or an earlier staged accept: it is
+  left for review with reason `proactive-needs-review` (and is not sent to the judgment tier). Feedback-driven
+  proposals (`signal-delta`, `scope`) are unchanged. No new setting. (#1147)
+- **0.10 releases are daily builds, `0.10.YYMMDDNN`, with `-alpha`, `-beta` and `-rc` stages (#1089).** The patch
+  number is the UTC year, month and day plus the build that day (`NN`, `01` to `99`), two digits each: the first build
+  on 2026-10-10 is `0.10.26101001`. A prerelease carries its stage only (`0.10.26101001-alpha`, no `.N`), so one build
+  is promoted `-alpha` < `-beta` < `-rc` < `0.10.26101001`; prereleases publish to the npm `next` tag and stable builds
+  to `latest`. The Release workflow validates the format and takes a new `stage` input (`scripts/release-version.ts`);
+  `bun scripts/release-version.ts next` prints the next free build number for today from the versions on npm. Versions
+  sort by date across months and years, so `akm upgrade` and semver ranges order them correctly. The 0.9 line keeps
+  `0.9.N`. See `STABILITY.md`. (#1089)
+
+### Removed
+
+- **Six improve knobs that measured no effect (#1131).** Each is removed with the code that served only it; a config
+  that still sets one loads (named once by the unknown-key warning, dropped by `akm migrate apply`).
+  - `processes.consolidate.antiCollapse`: the random cluster-member injection. Identical results with it off on an
+    80-memory pool.
+  - `processes.consolidate.p90ChunkSecondsDefault`: the up-front budget cap on the consolidation pool keeps its
+    behaviour with a fixed 30 s per chunk. Identical at 10, 30 and 90 s under a 180 s budget.
+  - `processes.consolidate.minPoolSize`: the minimum-pool skip, its `pool_below_min_size` `improve_skipped` reason and
+    the `minPoolSize` / `gates.minimumPool` fields of the consolidation plan. It was bypassed by `--strategy`, and the
+    documented default (500) differed from the code's (0). `improve_runs` rows that carry the plan fields still read.
+  - `processes.distill.fidelityCheck`: the negation-pattern contradiction check. No difference at n=3.
+  - `processes.reflect.lowValueFilter`: the low-value tier of the reflect noise classifier. Reflect edits only
+    frontmatter, which the filter always passes. No-op and cosmetic edits are still refused.
+  - `improve.salience.outcomeWeightEnabled`: the toggle and its parity weights. The outcome term stays on
+    (w_e 0.25, w_o 0.15, w_r 0.60), as it was by default.
+
+- **`akm workflow create --reset` (#1091).** Declared since 0.9.12 as a deprecated alias of `--force`, never read.
+  `--force` alone replaces a workflow with a fresh template; `--force --from <file>` replaces it from the file.
+- **`akm improve --plan` (#1091).** An exact alias of `--dry-run` with no other callers. Use `--dry-run`; it prints the
+  same `plan.processes` routing table.
+- **`akm task list` (#1091).** A delegating alias of `akm search --type task` (added in 0.9.15, #951) with no callers
+  in the plugins, akm-eval or OpenPalm. Use `akm search --type task`.
+- **Improve config keys nothing read (#1091).** `processes.distill.limit`, `processes.memoryInference.cls`,
+  `processes.proactiveMaintenance.limit` (an alias of `maxPerRun`) and `triage.policy` (set in the shipped `default`
+  strategy, read by no code) are gone from the schema and the shipped strategy. A config that still sets one loads
+  (named once by the unknown-key warning). `plan.triage.maxDiffLines` leaves the plan type; stored runs that carry it,
+  or `plan.proactive.configured.limit`, still decode. `processes.distill.cls` is read and stays. OpenPalm's improve
+  editor writes the strategy-level `limit`, not per-process ones, so the process `limit` of reflect and consolidate
+  stays.
+- **The `targetVocab: 2` marker on `task_history` rows, and the `"mcp"` package keyword (#1091).** Nothing read the
+  marker since migration 025 backfilled the old result vocabulary, so new rows no longer carry it and a stored one is
+  ignored; its newer-than-2 warning is gone. akm has no MCP code left, so `package.json` no longer lists `mcp`.
+- **The hard-error and bespoke-warning hints for old config keys (#1091).** `defaults.llm`, `defaults.agent` and
+  `defaults.improve` (rejected since 0.9), the `feedbackDistillation` process (rejected since 0.8.0), and the engine
+  settings under `index.<pass>` and `index.stalenessDetection` (dropped with a bespoke message) now load like any other
+  unknown key: named once by the unknown-key warning, ignored, and dropped by `akm migrate apply`.
+- **`akm improve --auto-accept` is a hard error (#1091).** It was removed in 0.9.0 and has been accepted-and-warned
+  since; it is now an unknown flag like any other (exit 2), and `--auto-accept 90` no longer reaches the scope. Use
+  `akm improve && akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"`.
+- **The hint tables for the 0.9.0 renames (#1091).** `RETIRED_COMMAND_HINTS` (39 entries), `RETIRED_FLAG_HINTS` (5) and
+  `SELF_DIAGNOSED_FLAGS` (`src/cli/retired-commands.ts` is gone), the per-command `--target`, `--source`, `--scope`,
+  `--enrich`/`--re-enrich` and `proposal drain --profile` rejections, the `akm improve canary` scope rejection, the
+  `akm show` colon-ref tip and the `<type>:` search tip. A retired command is now an ordinary `UNKNOWN_COMMAND` (with a
+  did-you-mean when one is close, within a third of the name's length) and a retired flag an ordinary `UNKNOWN_FLAG`
+  (exit 2), with no migration pointer. The same goes for the `--from stash|both` rename error (a bundle may now be named
+  `stash`), the `vault:`/`env:`/`secret:` ref rejections (`env/`, `secrets/`, `secret://` and `${secret:NAME}` are
+  unchanged), the `config get` replacement hints for `stashDir`, `sources`, `installed`, `wiki`, `wikiName` and `llm`,
+  and the retired-spelling notes in the agent hints.
+  `task run`/`task explain` no longer reserve the input name `target`, so a task may declare an input of that name.
+  `akm improve canary` is now an asset-type scope that matches nothing.
+- **`akm help agents` (#1091).** It printed the same two guides as `akm hints` with the opposite default (short, with
+  `--full` for the complete one). `akm hints` is the one command: the complete guide by default, `--detail brief` for the
+  short one (`akm help agents >> AGENTS.md` becomes `akm hints --detail brief >> AGENTS.md`). `akm help agents` is now an
+  ordinary unknown command.
+- **`--shape` (#1091).** It acted on three commands (`search`, `curate`, `show`; `summary` only on `show`) while about 55
+  others ignored it and `--detail`. `--detail agent` replaces `--shape agent`, and `--detail` now takes
+  `brief|normal|full|agent`. `--shape summary` had no caller; use `--detail brief` on `show`. `--shape` is an unknown flag
+  (exit 2, `UNKNOWN_FLAG`) with no alias, so callers must change in step: the akm plugins, akm-eval's retrieval,
+  skillret and longmemeval benchmarks, and `akm help agents`-style scripts. `INVALID_SHAPE_VALUE` is gone, and
+  `INVALID_DETAIL_VALUE` now lists `agent`. The CLI reference no longer claims `--shape summary` errors outside `show`
+  (it warned and fell back to `agent`).
+- **`--target` on `import`, `env create`, `env remove`, `secret set` and `proposal accept`/`diff`/`revert` (#1091).**
+  `--bundle` is the one write-destination flag, as on `remember`, `clone`, `improve` and `task`; `--target` is an
+  unknown flag (exit 2) with no alias. The plugins, akm-eval and OpenPalm pass no `--target`. Errors and hints that said
+  `--target` now say `--bundle`.
+- **`akm task validate` (#1091).** Folded into `akm lint --type tasks`, as `akm workflow validate` was. Lint already parsed
+  every task file through the same version router; it now also runs the two gates `akm task sync` runs before it installs
+  a schedule (the cron suits the local scheduler backend; each schedule entry's `inputs` satisfy the declared contract),
+  so it never reports clean a task sync would refuse. Gone with the command: the `valid`/`blocked`/`invalid`/`not-a-task`
+  outcome, the `resolved` shape and the bare-path argument (point `akm lint --dir` at a bundle root). The
+  owner's crontab and tasks, the plugins, akm-eval and OpenPalm do not call it.
+- **`akm config path --all` (#1091).** `akm info` already reports the bundle, config, data, cache and state directories
+  (the index is `<dataDir>/index.db`), and `--all` was the one place `config path` printed an envelope instead of a bare
+  path. `akm config path` still prints the config file path and still runs when the config itself fails to load; `--all`
+  is an unknown flag (exit 2). Hints that sent you to `config path --all` now say `akm info`.
+- **`akm improve report` and `akm improve judge` are real subcommands (#1091).** They were magic values of the `scope`
+  positional. Both spellings keep working. `--run` and `--since` are now flags of `report` alone, so `akm improve --run x`
+  and `akm improve skills --since 7d` are unknown flags (exit 2) instead of a usage error from a hand-written check;
+  `--strategy` is `judge`'s own flag too. `akm improve [scope]` is unchanged, and `akm-eval`'s judge-gate keeps calling
+  `akm improve judge`.
+
+### Fixed
+
+- **A workflow param's `default:` is now applied (#1096).** An omitted param was absent from the run and the unit
+  prompt said `Run parameters: {}`, so workflows restated their defaults in prose. A run now starts with each declared
+  default for the params it was not given; explicit values still win.
+- **A call recovered by the retry without the schema is one successful call in the usage rows.** The failed schema
+  attempt (`format_ignored` or a 4xx schema rejection) was recorded as a failed call with 0 tokens next to the retry's
+  success, so `akm improve` usage showed e.g. `distill freellm/gpt-oss:120b calls 1 failures 1` beside 17 successes. Only
+  the retry is recorded now; a retry that also fails is still one failure.
+- **Distill's lesson update (#1139) is judged as the lesson it makes, and costs a call only for a lesson that is named.**
+  The judge read only the added lines as a standalone lesson, so a single added fact failed `reusable` and no update
+  passed (0 of 8 on the akm-eval `lesson-update` class, on two models). It now reads the extended lesson (old body plus
+  added lines) as one lesson, in the same single call: reusable and grounded as a whole (a line is grounded when the
+  memory or the lesson states it), and each added line must state something the lesson does not already hold. An update is also tried only for a related lesson that the writer's NONE reason, or the judge's
+  non-redundancy finding, names, or for the only related lesson, not for every lesson among the nearest three. The
+  update writer lists the memory's new facts before the body, and an update that lists none is not proposed. (#1090)
+- **consolidate's pair judge no longer lets a later date alone make one note replace another (#1134).** After the
+  same-age fix (#1146), `gpt-oss:120b` retired notes about a different named thing (two partners on one template:
+  "B is newer and replaces Alder with Birch") as `supersedes`, 1 to 2 unsafe retirements of 60 per run where the build
+  before it had none. The pair prompt now says a note replaces another only when both are about the same named thing
+  (service, integration, partner, component, region, file), and that notes about different named things never replace
+  each other whatever their dates; `unrelated` covers different named things written to one layout. Measured with
+  akm-eval `evals/consolidate`, per-case n=3: `gpt-oss:120b` unsafe retirements 1, 2, 1 -> 0, 0, 0 with recall
+  0.97 -> 0.99; qwen3.8-27b stays at 0 unsafe, recall 0.70.
+- **A gateway that answers 5xx `format_ignored` no longer fails every schema call (#1150).** A `provider_error` 5xx whose
+  body names the response format (`format_ignored`, `response_format` or `json_schema`) is now answered like the 4xx
+  schema rejection: one retry without the schema, remembered for the connection. `gpt-oss:120b` through the lab
+  gateway needed `supportsJsonSchema: false` set by hand. Other 5xx answers keep the transient-retry path. (#1150)
 
 ## [0.9.32] - 2026-10-13
 
@@ -37,6 +1708,16 @@ A patch release: concurrent config writes no longer lose a change, OpenAI's reas
 engines, `akm improve --require-engines` probes send API keys, and the npm package's docs links resolve.
 
 ### Fixed
+
+- **consolidate's pair judge no longer reads two same-age notes with different values as an update (#1134).** On the
+  60 labelled pairs `gpt-5.6-terra` retired 10 notes that held a claim the kept note lacked, in every run, always
+  from the ten `contradicts` pairs: it labelled them `supersedes`, because the prompt called B "newer" although both
+  notes had the same file time, and listed no claim for the old value because "updates" were left out of the lists.
+  The judge now sees "A (same age as B)" / "B (same age as A)" when the dates tie, and a different value counts as a
+  replacement only when B says so or is created later; otherwise both values are listed and the pair is
+  `contradicts`. Measured with akm-eval `evals/consolidate`, n=3 per-case: terra unsafe retirements 10 of 60 ->
+  1 to 3 (first prompt) and 0 on the final build's first run; qwen3.8-27b stays at 0 unsafe, recall 0.69 -> 0.71.
+  Pool (80 memories): terra 2 unsafe per run -> 0 to 2; qwen 0, recall 0.77 -> 0.79.
 
 - **`akm improve --require-engines` sends each engine's API key with its probe.** The probe used the engine's
   connection as resolved, where the key is still a symbolic reference that a dispatch reads only when it sends a
@@ -81,6 +1762,10 @@ plugin on a host that follows `akm-opencode@next`.
 
 - **`akm upgrade` is Stable**, including its plugin step and `--next`, after real-host, empty-container and
   failure-path runs on 0.9.28 (#1099).
+- **`akm proposal extract` and the improve `extract` process move from Experimental to Evolving.** The extract eval
+  (akm-eval `evals/extract`, n=3) measured insights saved 1.00 (terra) / 0.97 (qwen), routine sessions left empty
+  1.00, and planted instructions saved 0. Evolving rather than Stable because 0.10 is still settling the improve
+  defaults; the eval stays its gate (#1133).
 
 ### Fixed
 
@@ -245,7 +1930,7 @@ When upgrading from 0.9.27:
   with a message saying to set `"plugin": ["akm-opencode@next"]`, and lockstep stays on the `@latest` pin.
   Missing, older-than-`@latest` or unpinned `@next` fails closed like the stable lockstep. Claude Code and
   Codex are unchanged (no prerelease channel). The result gains `channel`. Works with `--check`, `--force`
-  and `-q`. See [`akm upgrade`](docs/reference/cli.md#prereleases-next).
+  and `-q`. See [`akm upgrade`](docs/reference/cli.md#prereleases---next).
 
 ## [0.9.28-alpha.4] - 2026-10-08
 
@@ -4316,7 +6001,8 @@ install's cron schedule, not their worth.
   instead. This is a Markdown-frontmatter-only key — a GitHub-shaped
   workflow's closed root key set has no extension surface for it, the same
   reason it cannot declare `params:` either. See
-  [Workflow Schema: Workflow outputs](docs/reference/workflow-schema.md#workflow-outputs).
+  [Moving from akm 0.9 to 0.10: Workflows](docs/migration/v0.9-to-v0.10.md#workflows),
+  which removed top-level `outputs:`.
 - **`akm workflow plan <ref>`** (Evolving) — compiles, resolves, and freezes
   a workflow exactly as starting a run would, then stops: zero durable
   writes, no published run, no event, no lease. Prints the canonical step

@@ -70,25 +70,18 @@ function cwdTarget(overrides: Record<string, unknown> = {}) {
     ref: null,
     contentHash: sha256(content),
     request: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       command: { template: content, content, source: null },
-      engine: { name: "cli", kind: "agent", platform: "claude" },
-      authorization: { status: "not-required" },
+      target: { name: "cli", kind: "harness", platform: "claude" },
+      modelWork: false,
       runtime: { workspace: "/workspace/project" },
-      notices: [],
     },
     runner: {
-      kind: "agent",
-      engine: "cli",
-      profile: {
-        name: "cli",
-        platform: "claude",
-        bin: "/bin/true",
-        args: [],
-        stdio: "captured",
-        envPassthrough: [],
-        parseOutput: "text",
-      },
+      kind: "harness",
+      name: "cli",
+      platform: "claude",
+      bin: "/bin/true",
+      args: [],
       timeoutMs: null,
     },
     cwdIdentity: structuredClone(CWD_IDENTITY),
@@ -145,12 +138,11 @@ function rootUnit(plan: ReturnType<typeof commandPlan>) {
 }
 
 describe("durable workflow v4 immutable executable schema", () => {
-  test("keeps the cwd identity and worktree commit; an older release's executable identity is accepted and dropped", () => {
+  test("still decodes the retired worktree fields; an older release's executable identity is accepted and dropped", () => {
     const decoded = decodeWorkflowPlan(commandPlan({ isolation: "worktree" }));
     const root = decoded.steps[0]?.root;
     expect(root?.kind).toBe("unit");
     if (!root || root.kind !== "unit" || root.frozenTarget.kind !== "command") return;
-    expect(root.frozenTarget).toMatchObject({ cwdIdentity: CWD_IDENTITY, gitCommitOid: "a".repeat(40) });
     expect(Object.hasOwn(root.frozenTarget, "executable")).toBe(false);
 
     // Even an identity that no longer matches the host binary decodes.
@@ -159,7 +151,7 @@ describe("durable workflow v4 immutable executable schema", () => {
     expect(() => decodeWorkflowPlan(stale)).not.toThrow();
   });
 
-  test("accepts shell and script executable identities while retaining exact script bytes", () => {
+  test("accepts a shell executable identity", () => {
     const shellExec = { command: ["/bin/sh", "-c", "printf shell"], timeoutMs: 30_000 };
     const shellEnvironment: never[] = [];
     const shell = commandPlan();
@@ -181,104 +173,111 @@ describe("durable workflow v4 immutable executable schema", () => {
       `akm.workflow.shell.v1\0${canonicalJson({ exec: shellExec, environment: shellEnvironment, cwdIdentity: CWD_IDENTITY })}`,
     );
     expect(() => decodeWorkflowPlan(shell)).not.toThrow();
-
-    const scriptBytes = Buffer.from("#!/bin/sh\nprintf script\n", "utf8");
-    const scriptIdentity = {
-      ref: "fixture//scripts/tool.sh",
-      bundle: "fixture",
-      adapter: "akm",
-      file: "scripts/tool.sh",
-      hash: sha256(scriptBytes),
-    };
-    const script = structuredClone(shell);
-    script.sourceReadSet = [
-      { ...sourceSnapshot(scriptIdentity, 1), size: scriptBytes.byteLength },
-      sourceSnapshot(WORKFLOW_IDENTITY, 2),
-    ];
-    rootUnit(script).frozenTarget = {
-      kind: "script",
-      ref: scriptIdentity.ref,
-      contentHash: sha256(scriptBytes),
-      exec: { command: ["/bin/sh"], timeoutMs: 30_000 },
-      interpreter: "sh",
-      extension: ".sh",
-      bytesBase64: scriptBytes.toString("base64"),
-      byteLength: scriptBytes.byteLength,
-      cwdIdentity: structuredClone(CWD_IDENTITY),
-      materialization: "ephemeral-0700-delete",
-      executable: executableIdentity("/bin/sh"),
-    };
-    expect(() => decodeWorkflowPlan(script)).not.toThrow();
   });
 
-  test("keeps an in-process SDK target free of a host executable requirement", () => {
-    const content = "Use the frozen SDK request.";
-    const sdk = commandPlan({
+  test("keeps a connection target, which akm's own runtime runs, free of a host executable requirement", () => {
+    const content = "Use the frozen runtime request.";
+    const runtime = commandPlan({
       target: {
         kind: "command",
         ref: null,
         contentHash: sha256(content),
         request: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           command: { template: content, content, source: null },
-          engine: { name: "sdk", kind: "sdk", platform: "opencode-sdk" },
-          authorization: { status: "not-required" },
-          runtime: {},
-          notices: [],
+          target: { name: "lab", kind: "connection" },
+          model: { model: "frozen-model" },
+          modelWork: false,
+          runtime: { timeoutMs: null },
         },
         runner: {
-          kind: "sdk",
-          engine: "sdk",
-          profile: {
-            name: "sdk",
-            platform: "opencode-sdk",
-            personaChannel: "native",
-            bin: "opencode",
-            args: [],
-            stdio: "captured",
-            envPassthrough: [],
-            parseOutput: "text",
-          },
+          kind: "connection",
+          name: "lab",
+          endpoint: "https://example.invalid/v1",
+          model: "frozen-model",
+          request: {},
           timeoutMs: null,
         },
       },
     });
-    expect(() => decodeWorkflowPlan(sdk)).not.toThrow();
+    expect(() => decodeWorkflowPlan(runtime)).not.toThrow();
   });
 
-  test("keeps a direct LLM target free of a host executable requirement", () => {
-    const content = "Use the frozen LLM request.";
-    const llm = commandPlan({
-      target: {
-        kind: "command",
-        ref: null,
-        contentHash: sha256(content),
-        request: {
-          schemaVersion: 1,
-          command: { template: content, content, source: null },
-          engine: {
-            name: "fast",
-            kind: "llm",
-            platform: "openai-compatible",
+  test("refuses every command target an earlier release froze, whichever engine it ran: the run starts afresh", () => {
+    const content = "Use the frozen engine request.";
+    const earlier = (engine: Record<string, unknown>, runner: Record<string, unknown>) =>
+      commandPlan({
+        target: {
+          kind: "command",
+          ref: null,
+          contentHash: sha256(content),
+          request: {
+            schemaVersion: 1,
+            command: { template: content, content, source: null },
+            engine,
+            authorization: { status: "not-required" },
+            runtime: {},
+            notices: [],
           },
-          model: { input: "frozen-model", interpretation: "exact", resolved: "frozen-model" },
-          authorization: { status: "not-required" },
-          runtime: {},
-          notices: [],
+          runner,
         },
-        runner: {
+      });
+    const frozen = {
+      sdk: earlier(
+        { name: "sdk", kind: "sdk", platform: "opencode-sdk" },
+        { kind: "sdk", engine: "sdk", profile: { name: "sdk", bin: "opencode" }, timeoutMs: null },
+      ),
+      llm: earlier(
+        { name: "fast", kind: "llm", platform: "openai-compatible" },
+        {
           kind: "llm",
           engine: "fast",
-          connection: {
-            endpoint: "https://example.invalid/v1/chat/completions",
-            apiKeyEnv: null,
-            headers: {},
-            model: "frozen-model",
-          },
+          connection: { endpoint: "https://example.invalid/v1/chat/completions", model: "frozen-model" },
           timeoutMs: null,
         },
+      ),
+      agent: earlier(
+        { name: "cli", kind: "agent", platform: "claude" },
+        {
+          kind: "agent",
+          engine: "cli",
+          profile: { name: "cli", platform: "claude", bin: "/bin/true", args: [] },
+          timeoutMs: null,
+        },
+      ),
+    };
+    for (const [kind, plan] of Object.entries(frozen)) {
+      expect(() => decodeWorkflowPlan(plan), kind).toThrow(/Invalid frozen workflow plan:.*schemaVersion: 1/);
+    }
+  });
+
+  test("refuses a parent whose embedded child plan holds such a command target, whole, before a unit is keyed", () => {
+    const content = "Use the frozen engine request.";
+    const child = commandPlan({
+      target: {
+        kind: "command",
+        ref: null,
+        contentHash: sha256(content),
+        request: {
+          schemaVersion: 1,
+          command: { template: content, content, source: null },
+          engine: { name: "cli", kind: "agent", platform: "claude" },
+          authorization: { status: "not-required" },
+          runtime: {},
+          notices: [],
+        },
+        runner: { kind: "agent", engine: "cli", profile: { name: "cli", platform: "claude", bin: "/bin/true" } },
       },
     });
-    expect(() => decodeWorkflowPlan(llm)).not.toThrow();
+    const parent = commandPlan({
+      target: {
+        kind: "child-workflow",
+        ref: "fixture//workflows/child",
+        planHash: "a".repeat(64),
+        contentHash: "b".repeat(64),
+        frozenPlan: child,
+      },
+    });
+    expect(() => decodeWorkflowPlan(parent)).toThrow(/Invalid frozen workflow plan:.*schemaVersion: 1/);
   });
 });

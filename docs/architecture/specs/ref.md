@@ -9,7 +9,7 @@ Agents should not parse refs or construct them by hand. The intended flow is:
 search -> pick a hit -> pass its ref to show
 ```
 
-This document is the normative ref grammar for 0.9.
+This document is the normative ref grammar.
 
 ## Item Refs
 
@@ -116,7 +116,8 @@ runs collapsed to `-`, trimmed) and match the fragment against those slugs;
 fall back to a case-insensitive match against raw heading text. The selected
 region runs from that heading to the next heading of the same or higher level.
 A fragment that matches no heading is an error that **lists the available
-fragment slugs**, which is how a caller discovers them. Opaque
+fragment slugs**, which is how a caller discovers them; `akm show <ref> --detail brief`
+returns the outline (`toc`, each heading with the slug that selects it) without the body. Opaque
 `#akm-fragment-...` selectors resolve against the indexed revision; see
 [Architecture: Show Resolution](../architecture.md#show-resolution).
 
@@ -248,10 +249,11 @@ walkthrough.
 Renaming a *bundle* is separate: `akm bundle rename <old> <new>` is the one
 command that changes a bundle id. It rewrites the config `bundles` key,
 `defaultBundle` and `defaultWriteTarget`, `scheduler.enabled` refs, the lockfile
-entry, and the stored `bundle//` refs in index entries, proposals, and task
-history. Refs inside bundle content are reported, not rewritten, and usage,
-salience, and outcome history keyed by the old prefix stays behind. See
-the [`bundle` entry in the CLI reference](../../reference/cli.md#bundle).
+entry, and the stored `bundle//` refs in index entries, proposals, task history,
+workflow runs, recorded feedback and usage, and the improve ledger, salience, and
+outcome rows, so search and improve keep counting the bundle's feedback. Refs
+inside bundle content are reported, not rewritten. See
+the [`bundle rename` entry in the CLI reference](../../reference/cli.md#bundle-rename).
 
 ## Usage Notes
 

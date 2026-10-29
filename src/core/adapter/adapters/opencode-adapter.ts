@@ -6,7 +6,7 @@
  * The `opencode` tool-directory adapter — akm 0.9.0 format-family work item
  * (#46).
  *
- * Recognizes an OpenCode `.opencode` layout (spec §6/§7, real-world:
+ * Recognizes an OpenCode `.opencode` layout (real-world:
  * https://opencode.ai/docs/{commands,agents,skills,rules}/): a root `AGENTS.md`
  * → `instruction`, `commands/*.md` → `command`, `agents/*.md` → `agent`,
  * `skills/<name>/SKILL.md` → `skill`, and ABSTAINS on `opencode.json` runtime
@@ -17,7 +17,7 @@
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/opencode/` + goldens
- * `tests/fixtures/format-family-goldens/opencode/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/opencode/{recognition,lint,renderer}.json`.
  */
 
 import fs from "node:fs";

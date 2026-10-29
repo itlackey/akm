@@ -173,8 +173,7 @@ describe("WS-2 wiring — outcomeSalience flows into persisted asset_salience", 
       expect(salience?.outcome_salience).toBeGreaterThan(0);
 
       // rank_score must be positive: encoding salience is non-zero for skill
-      // assets (type-weight 0.9) and the WS-1 parity weights (w_e=0.30, w_r=0.70)
-      // are applied by default (outcomeWeightEnabled is false/absent).
+      // assets (type-weight 0.9).
       expect(typeof salience?.rank_score).toBe("number");
       expect(salience?.rank_score).toBeGreaterThan(0);
     } finally {

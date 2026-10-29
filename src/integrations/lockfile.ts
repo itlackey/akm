@@ -18,20 +18,16 @@ import type { InstallKind } from "../registry/types";
 // ── Types ───────────────────────────────────────────────────────────────────
 
 /**
- * LockfileEntry — resolved lock state for one bundle (spec §10.2).
- *
- * SHAPE BUMP (Chunk-8 WI-8.4): evolved from the pre-cutover per-source entry
- * (`{ id, source, ref, resolvedVersion?, resolvedRevision?, integrity? }`) to
- * the §10.2 bundle lock shape — ONE entry per bundle id, adding the optional
- * resolved fields the spec lists as SHOULD: `localRoot` (materialized root),
- * `manifestDigest`, `adapterIds`, and `installedAt`. The core identity/locator
- * fields are UNCHANGED (`id` = bundle id; `source` = source kind; `ref` =
- * locator), so old per-source `akm.lock` files still read (shape-tolerant:
- * `readLockfile` validates only id/source/ref and carries unknown/absent
- * optional fields through); an entry is upgraded to the new shape lazily on its
- * next `upsertLockEntry` write. The desired configuration lives in config.json's
- * `bundles`; this file records ONLY the resolved cache state (spec §10.2: the
- * config MUST NOT duplicate resolved cache paths/revisions).
+ * LockfileEntry — resolved lock state for one bundle: ONE entry per bundle id.
+ * The core identity/locator fields are `id` (bundle id), `source` (source kind)
+ * and `ref` (locator); the optional resolved fields are `localRoot`
+ * (materialized root), `manifestDigest`, `adapterIds`, and `installedAt`. Old
+ * per-source `akm.lock` files still read (shape-tolerant: `readLockfile`
+ * validates only id/source/ref and carries unknown/absent optional fields
+ * through); an entry is upgraded to the new shape lazily on its next
+ * `upsertLockEntry` write. The desired configuration lives in config.json's
+ * `bundles`; this file records ONLY the resolved cache state (the config must
+ * not duplicate resolved cache paths/revisions).
  *
  * The lockfile lives at `<dataDir>/akm.lock` and is managed independently from
  * `config.json`.
@@ -46,13 +42,13 @@ export interface LockfileEntry {
   resolvedVersion?: string;
   resolvedRevision?: string;
   integrity?: string;
-  /** Local materialized root (spec §10.2 "local materialized root"). */
+  /** Local materialized root. */
   localRoot?: string;
-  /** Manifest digest (spec §10.2), when the install flow computed one. */
+  /** Manifest digest, when the install flow computed one. */
   manifestDigest?: string;
-  /** Component adapter ids (spec §10.2), when known. */
+  /** Component adapter ids, when known. */
   adapterIds?: string[];
-  /** Installation timestamp (spec §10.2). */
+  /** Installation timestamp. */
   installedAt?: string;
 }
 
@@ -204,7 +200,7 @@ function readLockfileOrThrow(): LockfileEntry[] {
 
 /**
  * The materialized content root recorded in the lock for a managed (git/npm)
- * bundle — spec §10.2 desired/resolved split, where the desired config carries
+ * bundle — the desired/resolved split: the desired config carries
  * only the source LOCATOR and the resolved `localRoot` lives here.
  *
  * This is the SINGLE lock-first resolution point shared by the indexer READ

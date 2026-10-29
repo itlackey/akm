@@ -17,32 +17,31 @@ import {
 } from "../core/state-db";
 import { DURATION_UNITS, parseDuration, parseSinceToIso } from "../core/time";
 import { probeLlmEndpoint } from "../llm/client";
-import type { Database } from "../storage/database";
+import { type Database, openDatabase } from "../storage/database";
 import { insertEvent } from "../storage/repositories/events-repository";
 import { getExtractOutcomeCountsSince } from "../storage/repositories/extract-sessions-repository";
-import { countImproveRunsSince } from "../storage/repositories/improve-runs-repository";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries } from "../storage/repositories/index-entries-repository";
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
+import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
 import { getStateDbFreelistInfo, runStateDbIntegrityCheck } from "../storage/state-db-integrity";
 import { pkgVersion } from "../version";
 import { collectArchiveUsageAdvisory } from "./health/archive-usage";
 import {
   HEALTH_CHECKS,
   type HealthCheckContext,
-  probeActiveImproveStrategy,
-  runHealthEngineProbes,
   runPendingStateMigrationsCheck,
   SESSION_EXTRACTION_LEDGER_WINDOW_DAYS,
 } from "./health/checks";
 import { collectConfigSkewAdvisory } from "./health/config-skew";
+import { runConnectionsAndHarnessesCheck } from "./health/connections-and-harnesses-check";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
 import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
-import { engineLastUsedSince, readLastEngineUsage } from "./health/engine-usage";
 import { emptyImproveMetrics, roundRate } from "./health/improve-metrics";
 import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "./health/llm-usage";
 import { collectPluginStalenessAdvisories } from "./health/plugin-staleness";
 import { collectSchedulerBinaryAdvisory } from "./health/scheduler-binary";
+import { readSemanticSearchState } from "./health/semantic-search-check";
 import { collectStashExposureAdvisory, type GitRunner } from "./health/stash-exposure";
 import { buildTypeDirectoryAdvisory } from "./health/type-directory-check";
 import {
@@ -95,11 +94,18 @@ export interface AkmHealthOptions {
    */
   stashExposureGit?: GitRunner;
   /**
-   * Probe LLM engine reachability in the engine checks (#914). Off by default
+   * Probe each connection's endpoint for reachability in the `connections-and-harnesses` check (#914). Off by default
    * so library callers and tests stay offline; the CLI turns it on unless
    * `--no-probe` is given.
    */
   probe?: boolean;
+  /**
+   * Read-only run (`akm ui`): state.db is opened read-only and never created
+   * or migrated (missing or behind on migrations is reported as a failing
+   * check instead), and the append/read round-trip probe is skipped because it
+   * writes a row.
+   */
+  readOnly?: boolean;
 }
 
 const DEFAULT_SINCE_MS = 24 * 60 * 60 * 1000;
@@ -163,7 +169,12 @@ const HEALTH_PROBE_REF = "health/_probe";
  * zero rows — the round trip still genuinely exercises append + read against
  * the real table, it just doesn't accumulate.
  */
-export function probeStateDbRoundTrip(stateDbPath: string): { ok: boolean; durationMs: number | null; error?: string } {
+export function probeStateDbRoundTrip(stateDbPath: string): {
+  ok: boolean;
+  durationMs: number | null;
+  error?: string;
+  skipped?: boolean;
+} {
   const started = Date.now();
   try {
     return withStateDb(
@@ -273,13 +284,19 @@ function computeWorstTaskFailRate(
 }
 
 /** Table presence, the state.db round-trip probe, and task_history-derived rates. */
-function gatherTaskHistoryPhase(db: Database, since: string, stateDbPath: string, now: () => number): TaskHistoryPhase {
+function gatherTaskHistoryPhase(
+  db: Database,
+  since: string,
+  stateDbPath: string,
+  now: () => number,
+  readOnly: boolean,
+): TaskHistoryPhase {
   const tables = listExistingTableNames(db, ["events", "task_history", "proposals", "schema_migrations"]);
   const tableNames = tables.map((row) => row.name).sort();
   const requiredTables = ["events", "proposals", "schema_migrations", "task_history"];
   const missingTables = requiredTables.filter((name) => !tableNames.includes(name));
 
-  const probe = probeStateDbRoundTrip(stateDbPath);
+  const probe = readOnly ? { ok: true, durationMs: null, skipped: true } : probeStateDbRoundTrip(stateDbPath);
   // Read-only, independent of the round-trip probe above — integrity_check
   // catches corruption a successful append/read cannot (out-of-order rowids,
   // bad index entry counts), and the freelist reading is purely informational.
@@ -310,30 +327,25 @@ function gatherTaskHistoryPhase(db: Database, since: string, stateDbPath: string
   };
 }
 
-interface EgressConfigPhase {
-  egressConfigView: EgressConfigView | undefined;
-  /** #949: configured `kind: "llm"` engine names with `enableThinking: false`. */
-  thinkingOffEngines: string[];
+/**
+ * The config view the surfaces advisory needs. Best-effort: an unloadable
+ * config leaves it undefined and the advisory degrades to its generic state.
+ */
+function gatherEgressConfigView(): EgressConfigView | undefined {
+  try {
+    return loadConfig() as EgressConfigView;
+  } catch {
+    return undefined;
+  }
 }
 
-/**
- * Config fields the surfaces advisory and (#949) the `thinking-control`
- * check need. Best-effort: an unloadable config leaves both fields at their
- * empty fallback and the callers degrade to their generic/unknown states.
- */
-function gatherEgressConfigPhase(): EgressConfigPhase {
-  let egressConfigView: EgressConfigView | undefined;
-  let thinkingOffEngines: string[] = [];
+/** The configured `semanticSearchMode`; undefined when the config cannot load. */
+function gatherSemanticSearchMode(): string | undefined {
   try {
-    const config = loadConfig();
-    egressConfigView = config as EgressConfigView;
-    thinkingOffEngines = Object.entries(config.engines ?? {})
-      .filter(([, engine]) => engine.kind === "llm" && engine.enableThinking === false)
-      .map(([name]) => name);
+    return loadConfig().semanticSearchMode;
   } catch {
-    // fall through with undefined/empty
+    return undefined;
   }
-  return { egressConfigView, thinkingOffEngines };
 }
 
 /** Extract-ledger outcome counts for the `session-extraction` check's window, independent of `--since`. */
@@ -558,7 +570,7 @@ function resolveWindowComparePhase(
     windowResults = windowSpecs.map((spec) => {
       const winSince = parseHealthSince(spec.since);
       const winUntil = spec.until ? parseHealthSince(spec.until) : new Date(now()).toISOString();
-      const bundle = buildWindowMetrics(db, stateDbPath, winSince, winUntil, now);
+      const bundle = buildWindowMetrics(db, stateDbPath, winSince, winUntil, now, options.readOnly === true);
       return {
         name: spec.name,
         since: winSince,
@@ -631,6 +643,26 @@ function unreadableStateDbCheck(detail: string): HealthCheckResult {
   };
 }
 
+/**
+ * Why a read-only health run cannot use `stateDbPath`, as the failing check to
+ * report: the file is missing, or it is behind on migrations (a read-only open
+ * must not apply them). `undefined` when it can be read as it is.
+ */
+function readOnlyStateDbUnavailable(stateDbPath: string): HealthCheckResult | undefined {
+  if (!fs.existsSync(stateDbPath)) {
+    return {
+      name: "state-db-readable",
+      kind: "deterministic",
+      status: "fail",
+      confidence: "high",
+      message: `state.db does not exist at ${stateDbPath}; a read-only health run does not create it. Run any akm command that records state, such as \`akm health\`.`,
+      evidence: { path: stateDbPath },
+    };
+  }
+  const pending = runPendingStateMigrationsCheck(stateDbPath, { listPendingStateMigrations });
+  return pending.status === "fail" ? pending : undefined;
+}
+
 export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHealthResult> {
   validateAkmHealthOptions(options);
   const now = options.now ?? (() => Date.now());
@@ -645,9 +677,18 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
   // to find out why everything else is behaving oddly. Report it as a finding
   // instead of dying before any check runs. The open itself applies every
   // pending migration; `state-db-migrations` reports what it applied.
-  let opened: ReturnType<typeof openStateDatabaseWithReport>;
+  const readOnly = options.readOnly === true;
+  let opened: { db: Database; applied: string[]; backupPath?: string };
   try {
-    opened = openStateDatabaseWithReport(stateDbPath);
+    if (readOnly) {
+      const unavailable = readOnlyStateDbUnavailable(stateDbPath);
+      if (unavailable) return degradedStateDbReport(unavailable, options);
+      const db = openDatabase(stateDbPath, { readonly: true, create: false });
+      applyReadonlyPragmas(db);
+      opened = { db, applied: [] };
+    } else {
+      opened = openStateDatabaseWithReport(stateDbPath);
+    }
   } catch (error) {
     const { access, code } = classifyPathAccess(stateDbPath);
     if (access === "inaccessible") {
@@ -674,10 +715,13 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
   const { db } = opened;
 
   try {
+    const { windowResults, deltas } = resolveWindowComparePhase(options, db, stateDbPath, now);
     // Network probes overlap the local database phases below; awaited where consumed.
-    const engineProbesPromise = runHealthEngineProbes({ probeReachable: options.probe ? probeLlmEndpoint : undefined });
-    engineProbesPromise.catch(() => undefined);
-    // #950: same best-effort, --probe-gated discipline as engineProbesPromise
+    const connectionsAndHarnessesPromise = runConnectionsAndHarnessesCheck({
+      probeReachable: options.probe ? probeLlmEndpoint : undefined,
+    });
+    connectionsAndHarnessesPromise.catch(() => undefined);
+    // #950: same best-effort, --probe-gated discipline as connectionsAndHarnessesPromise
     // above — started here, alongside it, and awaited later.
     const versionDriftPromise = collectVersionDriftAdvisory(Boolean(options.probe), { cliVersion: pkgVersion });
     versionDriftPromise.catch(() => undefined);
@@ -687,39 +731,33 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       cliVersion: pkgVersion,
     });
     schedulerBinaryDriftPromise.catch(() => undefined);
-    const taskHistory = gatherTaskHistoryPhase(db, since, stateDbPath, now);
+    const taskHistory = gatherTaskHistoryPhase(db, since, stateDbPath, now, readOnly);
     const { tableNames, missingTables, probe } = taskHistory;
 
-    const { egressConfigView, thinkingOffEngines } = gatherEgressConfigPhase();
+    const egressConfigView = gatherEgressConfigView();
 
     // Same window bundle `--window-compare` builds per-window (windows.ts) —
     // reused here for the main `--since` window's improve summary and for
     // `--group-by run`, so neither re-reads `improve_runs`.
     const until = new Date(now()).toISOString();
-    const { improve: improveSummary, perRunSummaries } = buildImproveWindowSummary(db, stateDbPath, since, until);
+    const { improve: improveSummary, perRunSummaries } = buildImproveWindowSummary(
+      db,
+      stateDbPath,
+      since,
+      until,
+      readOnly,
+    );
 
     advisories.push(...gatherAncillaryAdvisories(db, options, egressConfigView));
 
     const sessionExtractionLedger = gatherSessionExtractionLedgerPhase(db, now);
 
-    // #950: computed once (no IO beyond config/env, same as gatherEgressConfigPhase)
-    // so `active-improve-strategy` and `engine-last-used` project the same
-    // process→engine map instead of each resolving the strategy independently.
-    const { check: activeImproveStrategy, processEngines: activeImproveStrategyEngines } = probeActiveImproveStrategy();
-
-    // #950: `engine-last-used` reads a fixed lookback window independent of
-    // `--since` (mirrors sessionExtractionLedger's independent window above).
-    const engineLastUsedSinceIso = engineLastUsedSince(now);
-    const engineLastUsed = readLastEngineUsage(stateDbPath, now);
-    const improveRunsInLookbackWindow = countImproveRunsSince(db, engineLastUsedSinceIso);
-
-    const engineProbes = await engineProbesPromise;
+    const connectionsAndHarnesses = await connectionsAndHarnessesPromise;
     const versionDrift = await versionDriftPromise;
     const schedulerBinaryDrift = await schedulerBinaryDriftPromise;
 
-    // Read once, shared by the `thinking-control` check (#949) and the
-    // `metrics.llmUsage` report field below — same window, same aggregate.
-    const llmUsage = readLlmUsageAggregate(stateDbPath, since);
+    // The `metrics.llmUsage` report field below.
+    const llmUsage = readLlmUsageAggregate(stateDbPath, since, undefined, readOnly);
 
     // Run the ordered health-check registry. Each check projects the shared
     // context computed above into one HealthCheckResult; `channel` routes it to
@@ -742,14 +780,9 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       sessionExtractionLedger,
       autoAccept: improveSummary.autoAccept,
-      engineProbes,
-      thinkingOffEngines,
-      llmUsage,
+      connectionsAndHarnesses,
+      semanticSearch: readSemanticSearchState(gatherSemanticSearchMode()),
       versionDrift,
-      activeImproveStrategy,
-      activeImproveStrategyEngines,
-      engineLastUsed,
-      improveRunsInLookbackWindow,
       schedulerBinaryDrift,
     };
     for (const check of HEALTH_CHECKS) {
@@ -771,9 +804,6 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       (check) => check.status === "warn" && check.kind === "deterministic",
     );
     const status: AkmHealthResult["status"] = hardFailure ? "fail" : deterministicWarnings ? "warn" : "pass";
-
-    // ── Window-compare mode ─────────────────────────────────────
-    const { windowResults, deltas } = resolveWindowComparePhase(options, db, stateDbPath, now);
 
     // ── Per-run mode ────────────────────────────────────────────
     const runs: ImproveRunSummary[] | undefined = options.groupBy === "run" ? perRunSummaries : undefined;

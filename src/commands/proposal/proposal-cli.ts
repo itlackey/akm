@@ -15,12 +15,13 @@
  * registration remains for either spelling.
  */
 
-import { getParsedInvocation } from "../../cli/invocation";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
-import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
+import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import { UsageError } from "../../core/errors";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
+import { ConfigError, UsageError } from "../../core/errors";
+import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { installLlmUsagePersistenceIfAbsent } from "../../llm/usage-persist";
 import { withLlmStage } from "../../llm/usage-telemetry";
@@ -30,6 +31,7 @@ import { resolveImproveStrategy } from "../improve/improve-strategies";
 import { drainProposals } from "./drain";
 import {
   akmProposalAccept,
+  akmProposalAcceptMany,
   akmProposalDiff,
   akmProposalList,
   akmProposalReject,
@@ -40,33 +42,6 @@ import {
 } from "./proposal";
 import { proposalWaitingSince } from "./proposal-types";
 import { proposeCommand } from "./propose-cli";
-
-export function mergeProposalDrainNotices(
-  resolutionNotices: readonly Readonly<LoweringNotice>[] | undefined,
-  dispatchNotices: readonly Readonly<LoweringNotice>[] | undefined,
-): readonly Readonly<LoweringNotice>[] | undefined {
-  const byKey = new Map<string, Readonly<LoweringNotice>>();
-  for (const notice of resolutionNotices ?? []) byKey.set(JSON.stringify(notice), notice);
-  for (const notice of dispatchNotices ?? []) byKey.set(JSON.stringify(notice), notice);
-  return byKey.size > 0 ? Object.freeze([...byKey.values()]) : undefined;
-}
-
-/**
- * `--source` was renamed to `--generator` on `proposal accept`/`proposal
- * reject` in 0.9 (WS3/S8 — "Removed in 0.9.0"). citty is non-strict, so the
- * retired spelling is silently absorbed rather than rejected — a bulk
- * accept/reject invoked with `--source <name>` then has neither `--generator`
- * nor a positional id, and falls through to the single-proposal path, which
- * throws MISSING_REQUIRED_ARGUMENT instead of running the bulk action the
- * caller asked for. Reject it explicitly instead.
- */
-function rejectRetiredProposalSourceFlag(subcommand: "accept" | "reject"): void {
-  if (!getParsedInvocation().hasFlag("--source")) return;
-  throw new UsageError(
-    `\`akm proposal ${subcommand} --source\` was renamed to \`--generator\` in 0.9. Use \`--generator <name>\` instead.`,
-    "INVALID_FLAG_VALUE",
-  );
-}
 
 /**
  * Parse + validate the shared bulk-adjudication filter flags
@@ -132,16 +107,20 @@ const proposalListCommand = defineJsonCommand({
 });
 
 const proposalAcceptCommand = defineJsonCommand({
-  meta: { name: "accept", description: "Accept a proposal and promote it into the bundle" },
+  meta: {
+    name: "accept",
+    description:
+      "Accept proposals and promote them into the bundle. Several ids are accepted in one process and committed once.",
+  },
   args: {
     id: {
       type: "positional",
       description:
-        "Proposal id (uuid / prefix) or asset ref (e.g. skills/akm-dream). Optional when --generator is provided.",
+        "Proposal id (uuid / prefix) or asset ref (e.g. skills/akm-dream); repeat it to accept several at once. Optional when --generator is provided.",
       required: false,
     },
     queue: { type: "string", description: "Select the proposal queue by source name" },
-    target: { type: "string", description: "Write destination; must match the proposal's recorded target" },
+    bundle: { type: "string", description: "Write destination; must match the proposal's recorded target" },
     // F-6 / #393: Batch accept by generator, diff size, or age.
     generator: {
       type: "string",
@@ -171,7 +150,6 @@ const proposalAcceptCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredProposalSourceFlag("accept");
     const generator = args.generator as string | undefined;
     // F-6 / #393: Bulk-accept when --generator is provided without a positional id.
     if (generator && !args.id) {
@@ -192,7 +170,7 @@ const proposalAcceptCommand = defineJsonCommand({
         olderThanMs,
         dryRun: args["dry-run"] as boolean,
         queue: args.queue as string | undefined,
-        target: args.target as string | undefined,
+        target: args.bundle as string | undefined,
       });
       output("proposal-accept-batch", {
         accepted: count,
@@ -208,14 +186,27 @@ const proposalAcceptCommand = defineJsonCommand({
     }
     if (!args.id) {
       throw new UsageError(
-        "Usage: akm proposal accept <id>  OR  akm proposal accept --generator <generator>",
+        "Usage: akm proposal accept <id> [<id> ...]  OR  akm proposal accept --generator <generator>",
         "MISSING_REQUIRED_ARGUMENT",
       );
     }
+    // citty keeps every positional token in `_`, though it declares only `id`.
+    const ids = (Array.isArray(args._) && args._.length > 0 ? args._ : [args.id]).map(String);
+    if (ids.length > 1) {
+      const results = await akmProposalAcceptMany({
+        ids,
+        queue: args.queue as string | undefined,
+        target: args.bundle as string | undefined,
+      });
+      const failed = results.filter((result) => !result.ok).length;
+      output("proposal-accept-batch", { accepted: results.length - failed, failed, results });
+      if (failed > 0) process.exitCode = EXIT_CODES.GENERAL;
+      return;
+    }
     const result = await akmProposalAccept({
-      id: args.id as string,
+      id: ids[0] as string,
       queue: args.queue as string | undefined,
-      target: args.target as string | undefined,
+      target: args.bundle as string | undefined,
     });
     output("proposal-accept", result);
   },
@@ -261,7 +252,6 @@ const proposalRejectCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredProposalSourceFlag("reject");
     const generator = args.generator as string | undefined;
     if (!args.reason || !String(args.reason).trim()) {
       throw new UsageError(
@@ -363,10 +353,10 @@ const proposalDiffCommand = defineJsonCommand({
       required: true,
     },
     queue: { type: "string", description: "Select the proposal queue by source name" },
-    target: { type: "string", description: "Diff destination; must match the proposal's recorded target" },
+    bundle: { type: "string", description: "Diff destination; must match the proposal's recorded target" },
   },
   run({ args }) {
-    const result = akmProposalDiff({ id: args.id, queue: args.queue, target: args.target });
+    const result = akmProposalDiff({ id: args.id, queue: args.queue, target: args.bundle });
     output("proposal-diff", result);
   },
 });
@@ -396,13 +386,13 @@ const proposalRevertCommand = defineJsonCommand({
       required: true,
     },
     queue: { type: "string", description: "Select the proposal queue by source name" },
-    target: { type: "string", description: "Write destination; must match the proposal's recorded target" },
+    bundle: { type: "string", description: "Write destination; must match the proposal's recorded target" },
   },
   async run({ args }) {
     const result = await akmProposalRevert({
       id: args.id as string,
       queue: args.queue as string | undefined,
-      target: args.target as string | undefined,
+      target: args.bundle as string | undefined,
     });
     output("proposal-revert", result);
   },
@@ -429,7 +419,7 @@ const proposalDrainCommand = defineJsonCommand({
   meta: {
     name: "drain",
     description:
-      "Drain the pending proposal backlog: accept what a quality judge passed, reject empty diffs, leave the rest for judgment or review",
+      "Drain the pending proposal backlog: accept what a quality judge passed, reject empty diffs, leave the rest for judgment or review. The judgment tier accepts only consolidate promotions; it accepted unsafe retirements and unreviewed fixes in testing (#1132), so every other kind waits for a person",
   },
   args: {
     "dry-run": {
@@ -453,13 +443,14 @@ const proposalDrainCommand = defineJsonCommand({
     },
     promote: {
       type: "boolean",
-      description: "Promote (accept) matching proposals. Default is queue mode (stage only, no writes to assets).",
+      description:
+        "Promote (accept) matching proposals. Without it, the strategy's apply mode decides, and the default strategy's is promote (akm#1274).",
       default: false,
     },
     judgment: {
       type: "boolean",
       description:
-        "Enable the judgment tier for this drain (overrides judgment.enabled=false; agent/sdk per config). No-op with a logged triage_deferred summary when no runner is configured.",
+        "Enable the judgment tier for this drain (overrides judgment.enabled=false; agent/sdk per config). It accepts only consolidate promotions; every other kind it would accept is left for review. No-op with a logged triage_deferred summary when no runner is configured.",
       default: false,
     },
     strategy: {
@@ -468,10 +459,7 @@ const proposalDrainCommand = defineJsonCommand({
         "Read the triage block (applyMode, ceilings, judgment) from this improve strategy; enabled judgment runs the judge.",
     },
   },
-  async run({ args, rawArgs }) {
-    if (rawArgs.some((arg) => arg === "--profile" || arg.startsWith("--profile="))) {
-      throw new UsageError("proposal drain: --profile is retired; use --strategy.", "INVALID_FLAG_VALUE");
-    }
+  async run({ args }) {
     const stashDir = resolveStashDir();
     const cfg = loadConfig();
 
@@ -486,7 +474,7 @@ const proposalDrainCommand = defineJsonCommand({
     const maxAccepts =
       parsePositiveIntFlag(args["max-accepts"] as string | undefined, "--max-accepts") ??
       triageConfig?.maxAcceptsPerRun ??
-      25;
+      200;
 
     const rawOlderThan = parsePositiveIntFlag(args["older-than"] as string | undefined, "--older-than");
     const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;
@@ -505,10 +493,9 @@ const proposalDrainCommand = defineJsonCommand({
     }
 
     // `--older-than` is applied here as a pre-filter on excludeIds: ids that
-    // are too fresh are excluded so the engine never touches them. This reads
+    // are too fresh are excluded so the drain never touches them. This reads
     // the pending set once here; drainProposals reads the pending set again
-    // internally, so a future engine-level olderThan option could remove this
-    // second read (engine API owned by another agent — not changed here).
+    // internally.
     let excludeIds: Set<string> | undefined;
     if (olderThanMs !== undefined) {
       const { listProposals } = await import("./repository");
@@ -531,16 +518,23 @@ const proposalDrainCommand = defineJsonCommand({
     // disabled block. An explicitly selected strategy may opt in through its
     // judgment block; the implicit default strategy keeps standalone drain's
     // historical no-judge behavior.
-    const judgmentResolution =
-      args.judgment === true || (args.strategy !== undefined && triageConfig?.judgment?.enabled === true)
-        ? resolveImproveExecution({
-            config: cfg,
-            profile: selectedStrategy.config,
-            process: triageConfig,
-            current: triageConfig?.judgment,
-            processName: "proposal-triage-judgment",
-          })
-        : null;
+    const judgmentWanted =
+      args.judgment === true || (args.strategy !== undefined && triageConfig?.judgment?.enabled === true);
+    const judgmentResolution = judgmentWanted
+      ? resolveImproveExecution({
+          config: cfg,
+          process: "triage",
+          processName: "proposal-triage-judgment",
+          alias: SHIPPED_ALIAS.judge,
+        })
+      : null;
+    if (judgmentWanted && !judgmentResolution) {
+      throw new ConfigError(
+        "Proposal judgment was requested, but no connection or harness is configured to judge with.",
+        "LLM_NOT_CONFIGURED",
+        "Run `akm setup`, or set improve.connection or improve.processes.triage.connection.",
+      );
+    }
     const judgment = judgmentResolution?.runner ?? null;
 
     // #576: persist + attribute per-call LLM usage for the standalone drain
@@ -565,7 +559,7 @@ const proposalDrainCommand = defineJsonCommand({
     }
 
     const dispatchNotices = (result as typeof result & { notices?: readonly Readonly<LoweringNotice>[] }).notices;
-    const notices = mergeProposalDrainNotices(judgmentResolution?.notices, dispatchNotices);
+    const notices = mergeNotices(judgmentResolution?.notices, dispatchNotices);
 
     output("proposal-drain", {
       schemaVersion: 1,
@@ -573,7 +567,7 @@ const proposalDrainCommand = defineJsonCommand({
       applyMode,
       dryRun,
       strategy: selectedStrategy.name,
-      judgmentEngine: judgment?.engine ?? null,
+      judgmentEngine: judgment?.name ?? null,
       judgmentKind: judgment?.kind ?? null,
       ...(notices ? { notices } : {}),
       promoted: result.promoted,

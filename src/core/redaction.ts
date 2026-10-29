@@ -2,42 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-const ENV_PASSTHROUGH_REDACTION_POLICY = {
-  HOME: "path",
-  PATH: "path",
-  USER: "identifier",
-  LANG: "identifier",
-  LC_ALL: "identifier",
-  TERM: "identifier",
-  TMPDIR: "path",
-  SYSTEMROOT: "path",
-  COMSPEC: "path",
-  PATHEXT: "path",
-  WINDIR: "path",
-  TEMP: "path",
-  TMP: "path",
-  AKM_EVENT_SOURCE: "identifier",
-  OPENCODE_CONFIG: "path",
-  CLAUDE_CONFIG: "path",
-  CODEX_CONFIG: "path",
-  XDG_CONFIG_HOME: "path",
-  XDG_DATA_HOME: "path",
-  XDG_CACHE_HOME: "path",
-  XDG_STATE_HOME: "path",
-  AWS_PROFILE: "identifier",
-  AWS_REGION: "identifier",
-  LLM_MODEL: "identifier",
-  LLM_BASE_URL: "url",
-} as const;
-
-type EnvPassthroughRedactionPolicy =
-  (typeof ENV_PASSTHROUGH_REDACTION_POLICY)[keyof typeof ENV_PASSTHROUGH_REDACTION_POLICY];
-
-/** Environment names whose ordinary values identify runtime configuration rather than credentials. */
-export const ENV_PASSTHROUGH_REDACTION_ALLOWLIST: ReadonlySet<string> = new Set(
-  Object.keys(ENV_PASSTHROUGH_REDACTION_POLICY),
-);
-
 const SIGNED_QUERY_KEYS = new Set([
   "accesskey",
   "accesskeyid",
@@ -193,6 +157,59 @@ function inspectCredentialBearingUrl(value: string, values?: Set<string>): boole
   }
 }
 
+/**
+ * Shortest value an INFERRED (name-heuristic) match may contribute as a
+ * redaction needle. Declared secrets bypass this entirely.
+ *
+ * Redaction replaces substrings, so a short needle is not merely useless — it
+ * corrupts unrelated output. Below 8 the noise tier is fully intact (`1`, `0`,
+ * `/`, `80`, `true`, `xhigh`, `31999`); at 8 a chance collision with ordinary
+ * log vocabulary is negligible, and every credential format in real use is far
+ * longer. It also matches the conventional minimum password length, so a
+ * secret shorter than this is already outside normal policy.
+ */
+export const MIN_INFERRED_SECRET_LENGTH = 8;
+
+/**
+ * Environment names whose VALUE is treated as a credential on shape alone.
+ *
+ * The keyword must be a whole `_`-delimited word. Anchoring on only one side
+ * would drag in ordinary configuration from whichever side is left open:
+ * a leading anchor alone matches `KEYBOARD_LAYOUT` and `AUTHOR`, a trailing one
+ * matches `MONKEY` and `BYPASS`. Whole-word matching gets `GH_TOKEN`,
+ * `NPM_AUTH_TOKEN`, `MY_API_KEY`, `DB_PASS` and `AWS_SECRET_ACCESS_KEY` right.
+ */
+const INFERRED_SECRET_NAME = /(?:^|_)(?:API_?KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|CREDENTIALS?|AUTH)(?:_|$)/i;
+
+/**
+ * Credential variables whose name is a single glued word, which no
+ * word-boundary rule can see. Enumerated rather than matched: loosening the
+ * pattern enough to catch `PGPASSWORD` also catches `MONKEY`.
+ *
+ * `PWD` cannot be a keyword above for the same reason it appears here as part
+ * of `MYSQL_PWD` — on its own it is the working directory.
+ */
+const KNOWN_SECRET_NAMES = new Set(["PGPASSWORD", "MYSQL_PWD"]);
+
+/** True when the NAME alone marks this variable as holding a credential. */
+export function isInferredSecretName(name: string): boolean {
+  return KNOWN_SECRET_NAMES.has(name.toUpperCase()) || INFERRED_SECRET_NAME.test(name);
+}
+
+/**
+ * The values in `env` whose variable NAME marks them as credentials ({@link isInferredSecretName}), at or above
+ * {@link MIN_INFERRED_SECRET_LENGTH}. Every process akm starts inherits akm's environment, so a reply or a log that
+ * echoes one of these must be scrubbed of it; this is the one place that rule lives (task logs and dispatch replies).
+ */
+export function collectInferredSecretValues(env: NodeJS.ProcessEnv): string[] {
+  const values: string[] = [];
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined || value.length < MIN_INFERRED_SECRET_LENGTH) continue;
+    if (isInferredSecretName(name)) values.push(value);
+  }
+  return values;
+}
+
 /** Collect exact secrets plus decoded values embedded in credential-bearing URLs. */
 export function collectSensitiveValues(rawValues: Iterable<string | undefined>): string[] {
   const values = new Set<string>();
@@ -203,28 +220,6 @@ export function collectSensitiveValues(rawValues: Iterable<string | undefined>):
     if (inspectCredentialBearingUrl(value, values) && trimmed) values.add(trimmed);
   }
   return [...values];
-}
-
-/**
- * Decide whether an allowlisted passthrough value may cross an output boundary.
- * The name allowlist never overrides value inspection: URL userinfo and signed
- * query credentials remain secret even under ordinarily non-secret names.
- */
-export function isEnvPassthroughValueSafeToExpose(name: string, value: string | undefined): boolean {
-  if (value === undefined) return true;
-  const policy = ENV_PASSTHROUGH_REDACTION_POLICY[name as keyof typeof ENV_PASSTHROUGH_REDACTION_POLICY];
-  if (!policy) return false;
-  const classifiedPolicy: EnvPassthroughRedactionPolicy = policy;
-  switch (classifiedPolicy) {
-    case "identifier":
-    case "path":
-    case "url":
-      return !inspectCredentialBearingUrl(value);
-    default: {
-      const exhaustive: never = classifiedPolicy;
-      return exhaustive;
-    }
-  }
 }
 
 interface NormalizedText {
@@ -507,10 +502,26 @@ export function redactErrorBody(input: string): string {
   return out;
 }
 
+/**
+ * The spellings a JSON encoder gives a value inside a string literal: the
+ * `JSON.stringify` form, and the ASCII-only form with non-ASCII as `\uXXXX`
+ * (what Python's `json.dumps` writes). Empty for a value that needs no escaping.
+ */
+function jsonEscapedSpellings(value: string): string[] {
+  const json = JSON.stringify(value).slice(1, -1);
+  // ASCII-only encoders (Python's ensure_ascii) also escape DEL; some (Java's) write uppercase hex.
+  const ascii = json.replace(/[\u007f-\uffff]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  const upper = ascii.replace(/\\u([0-9a-f]{4})/g, (_match, hex: string) => `\\u${hex.toUpperCase()}`);
+  return [...new Set([json, ascii, upper])].filter((spelling) => spelling !== value);
+}
+
 export function redactSensitiveText(text: string, sensitiveValues: Iterable<string>): string {
-  const values = [...new Set(sensitiveValues)]
-    .filter((value) => value.length > 0)
-    .sort((a, b) => b.length - a.length || a.localeCompare(b));
+  const exact = [...sensitiveValues].filter((value) => value.length > 0);
+  // A child that prints JSON writes a secret's escaped spelling (`\"`, `\\`, `\n`, `\uXXXX`),
+  // which the exact value never matches. Each escaped spelling is just another needle.
+  const values = [...new Set([...exact, ...exact.flatMap(jsonEscapedSpellings)])].sort(
+    (a, b) => b.length - a.length || a.localeCompare(b),
+  );
   if (values.length === 0) return text;
   const coverageDelta = new Int32Array(text.length + 1);
   if (text.includes("%") || text.includes("+")) {
@@ -569,4 +580,33 @@ export function redactSensitiveValue<T>(value: T, sensitiveValues: Iterable<stri
     return entry;
   };
   return redact(value) as T;
+}
+
+/** What stands in for a masked value where configuration is shown. */
+export const REDACTED = "[redacted]";
+
+/** Query parameters that carry a credential in a URL. */
+const SECRET_QUERY_PARAM = /^(api[-_]?key|key|token|access[-_]?token|auth|password|secret|sig|signature)$/i;
+
+/** `scheme://user:pass@host/?token=x` with the credentials masked. Anything that is not a URL is returned as is. */
+export function redactUrlCredentials(value: string): string {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return value;
+  try {
+    const url = new URL(value);
+    let changed = false;
+    if (url.username || url.password) {
+      url.username = "";
+      url.password = "";
+      changed = true;
+    }
+    for (const key of [...url.searchParams.keys()]) {
+      if (SECRET_QUERY_PARAM.test(key)) {
+        url.searchParams.set(key, REDACTED);
+        changed = true;
+      }
+    }
+    return changed ? url.toString() : value;
+  } catch {
+    return value;
+  }
 }

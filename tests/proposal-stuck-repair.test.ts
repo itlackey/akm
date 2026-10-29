@@ -24,6 +24,7 @@ import type { ProposalAcceptResult, ProposalRejectResult } from "../src/commands
 import { createProposal, getProposal, type Proposal, recordGateDecision } from "../src/commands/proposal/repository";
 import { repairProposalContent } from "../src/commands/proposal/validators/proposals";
 import type { EventsContext } from "../src/core/events";
+import { testLlmRunner } from "./_helpers/llm-runner";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -194,11 +195,7 @@ describe("Bug 1 — drain skips auto-rejected proposals", () => {
 
     const result = await drainProposals(
       baseOpts(stash, {
-        judgment: {
-          kind: "llm",
-          engine: "judge",
-          connection: { endpoint: "https://example.test/v1/chat/completions", model: "judge" },
-        },
+        judgment: testLlmRunner({ endpoint: "https://example.test/v1/chat/completions", model: "judge" }, "judge"),
       }),
       acceptFn,
       rejectFn,

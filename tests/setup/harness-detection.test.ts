@@ -3,57 +3,63 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Harness auto-detection and PATH probing.
- *
- * `detectHarness` used to return `opencode-sdk` whenever `import(
- * '@opencode-ai/sdk')` resolved — but the SDK is a hard dependency of akm-cli
- * itself, so that import ALWAYS resolves and every machine was reported as
- * opencode-sdk (its CLI fallbacks were unreachable). Headless setup then wrote
- * that engine everywhere and the first agentic command died with spawn ENOENT
- * on machines with no `opencode` binary. These tests pin the corrected
- * contract: in-process/SDK dispatch is preferred, but only when the server
- * binary it spawns is actually present; otherwise CLI harnesses are probed in
- * registry order.
+ * Installed-harness detection for setup, and PATH probing. A harness is
+ * installed when its binary is on PATH; OpenCode is detected like any other,
+ * and nothing about the user's OpenCode config or logins changes the answer.
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { defaultWhich, type WhichFn } from "../../src/integrations/agent/detect";
-import { detectHarness } from "../../src/setup/detect";
+import { detectInstalledHarnesses } from "../../src/setup/detect";
 
 /** A `which` stub resolving exactly the named binaries. */
 const whichFor = (...available: string[]): WhichFn => {
   const set = new Set(available);
   return (bin: string) => (set.has(bin) ? `/usr/local/bin/${bin}` : undefined);
 };
+const platforms = (...available: string[]) => detectInstalledHarnesses(whichFor(...available)).map((h) => h.platform);
 
-describe("detectHarness", () => {
-  test("prefers the SDK when the opencode server binary is on PATH", async () => {
-    expect(await detectHarness(whichFor("opencode"))).toBe("opencode-sdk");
-  });
+const configFile = () => path.join(process.env.XDG_CONFIG_HOME ?? "", "opencode", "opencode.json");
+const authFile = () => path.join(process.env.XDG_DATA_HOME ?? "", "opencode", "auth.json");
+const write = (file: string, content: unknown) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(content));
+};
 
-  test("prefers the SDK over any other installed CLI", async () => {
-    expect(await detectHarness(whichFor("opencode", "claude", "codex"))).toBe("opencode-sdk");
-  });
+afterEach(() => {
+  fs.rmSync(configFile(), { force: true });
+  fs.rmSync(authFile(), { force: true });
+});
 
-  test("does NOT report opencode-sdk when its server binary is absent", async () => {
-    // The regression: the bundled SDK import resolves in this very process, so
-    // an import-only check would answer "opencode-sdk" here.
-    expect(await detectHarness(whichFor("claude"))).toBe("claude");
-  });
-
-  test("falls back to CLI subprocess harnesses in registry order", async () => {
-    expect(await detectHarness(whichFor("claude", "codex"))).toBe("claude");
-    expect(await detectHarness(whichFor("codex", "gemini"))).toBe("codex");
-    expect(await detectHarness(whichFor("gemini"))).toBe("gemini");
+describe("detectInstalledHarnesses", () => {
+  test("lists the agent programs on PATH in registry order, OpenCode among them", () => {
+    expect(platforms("opencode", "claude", "codex")).toEqual(["opencode", "claude", "codex"]);
+    expect(platforms("gemini", "codex")).toEqual(["codex", "gemini"]);
     // `q` is amazonq's binary — detection reports the harness id, not the bin.
-    expect(await detectHarness(whichFor("q"))).toBe("amazonq");
+    expect(platforms("q")).toEqual(["amazonq"]);
   });
 
-  test("returns none when no harness binary is installed", async () => {
-    expect(await detectHarness(whichFor())).toBe("none");
+  test("carries the binary and where it was found", () => {
+    expect(detectInstalledHarnesses(whichFor("claude"))).toEqual([
+      { platform: "claude", bin: "claude", path: "/usr/local/bin/claude" },
+    ]);
+  });
+
+  test("finds nothing when no agent program is on PATH", () => {
+    expect(platforms()).toEqual([]);
+  });
+
+  test("the user's OpenCode config and logins do not make OpenCode installed or hide the others", () => {
+    write(configFile(), {
+      model: "lab/m",
+      provider: { lab: { options: { baseURL: "http://127.0.0.1:1/v1" }, models: { m: {} } } },
+    });
+    write(authFile(), {});
+    expect(platforms("claude")).toEqual(["claude"]);
+    expect(platforms()).toEqual([]);
   });
 });
 

@@ -22,6 +22,7 @@ import {
 } from "../../../src/storage/repositories/workflow-runs-repository";
 import { canonicalJson, canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import type { WorkflowPlan } from "../../../src/workflows/plan";
+import { WORKFLOW_PLAN_VERSION } from "../../../src/workflows/plan";
 import { decodeWorkflowPlan, frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
@@ -42,29 +43,15 @@ function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function cwdIdentity() {
-  return {
-    requestedRoot: storage.stashDir,
-    realRoot: storage.stashDir,
-    rootDevice: "7",
-    rootInode: "100",
-    requestedCwd: storage.stashDir,
-    realCwd: storage.stashDir,
-    cwdDevice: "7",
-    cwdInode: "100",
-  };
-}
-
 function v4ExecUnit(id: string, script: string) {
   const exec = { command: ["/bin/sh", "-lc", script] as [string, ...string[]], timeoutMs: 10_000 };
   const environment = [{ kind: "literal" as const, name: "AKM_TEST_REGION", value: "central" }];
-  const directory = cwdIdentity();
-  const contentHash = sha256(`akm.workflow.shell.v1\0${canonicalJson({ exec, environment, cwdIdentity: directory })}`);
+  const contentHash = sha256(`akm.workflow.shell.v1\0${canonicalJson({ exec, environment })}`);
   return {
     kind: "unit" as const,
     id,
     instructions: `Execute frozen ${id}.`,
-    frozenTarget: { kind: "shell" as const, contentHash, exec, cwdIdentity: directory },
+    frozenTarget: { kind: "shell" as const, contentHash, exec },
     environment,
     onError: "fail" as const,
     isolation: "none" as const,
@@ -73,7 +60,7 @@ function v4ExecUnit(id: string, script: string) {
 
 function v4Plan(): WorkflowPlan {
   return decodeWorkflowPlan({
-    irVersion: 6,
+    irVersion: 7,
     title: "atomic publication",
     sourceHash: sha256("durable atomic workflow source\n"),
     execution: { maxConcurrency: 1 },
@@ -120,12 +107,9 @@ function publicationInput(plan: WorkflowPlan): PublishWorkflowRunV4Input {
     sequenceIndex: step.sequenceIndex,
   }));
   return {
-    workflowRefs: ["fixture//workflows/atomic-publication"],
     run: {
       id: RUN_ID,
       workflowRef: "fixture//workflows/atomic-publication",
-      scopeKey: "dir:v1:atomic-publication",
-      workflowEntryId: null,
       workflowTitle: "atomic publication",
       paramsJson: "{}",
       currentStepId: "prepare",
@@ -201,7 +185,7 @@ describe("workflow run atomic repository publication", () => {
       const row = repo.getRunById(RUN_ID);
       expect(row?.plan_json).toBe(canonicalPlanJson(plan));
       expect(row?.plan_hash).toBe(computePlanHash(plan));
-      expect(row?.plan_ir_version).toBe(6);
+      expect(row?.plan_ir_version).toBe(WORKFLOW_PLAN_VERSION);
       expect(repo.getStepsForRun(RUN_ID).map((step) => step.step_id)).toEqual(["prepare", "publish"]);
       const events = readStateEvents(db, {
         type: "workflow_started",
@@ -225,7 +209,7 @@ describe("workflow run atomic repository publication", () => {
     ],
     [
       "plan attachment",
-      `CREATE TRIGGER wp7_fail_plan AFTER UPDATE OF plan_json ON workflow_runs WHEN NEW.id = '${RUN_ID}' AND NEW.plan_ir_version = 6 BEGIN SELECT RAISE(ABORT, 'wp7-fail-plan'); END`,
+      `CREATE TRIGGER wp7_fail_plan AFTER UPDATE OF plan_json ON workflow_runs WHEN NEW.id = '${RUN_ID}' AND NEW.plan_ir_version = ${WORKFLOW_PLAN_VERSION} BEGIN SELECT RAISE(ABORT, 'wp7-fail-plan'); END`,
     ],
     [
       "workflow_started insert",
@@ -253,7 +237,7 @@ describe("workflow v4 start publication", () => {
     writeWorkflow("fresh-v4");
     const started = await startWorkflowRun("workflows/fresh-v4", {});
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    expect(row?.plan_ir_version).toBe(6);
+    expect(row?.plan_ir_version).toBe(WORKFLOW_PLAN_VERSION);
     expect(row?.plan_json).not.toBeNull();
     const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     expect(row?.plan_json).toBe(canonicalPlanJson(plan));

@@ -42,8 +42,8 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
 const REQUESTED = process.env.AKM_UPGRADE_REHEARSAL === "1";
 // The CI matrix (.github/workflows/ci.yml's upgrade-rehearsal job) runs each
 // KNOWN_UPGRADE_ORIGINS entry in its own parallel job by setting this to one
-// origin; unset (local dev, tests/release-check.sh) runs every origin's
-// describe block in this one process, same as before this filter existed.
+// origin; unset (local dev) runs every origin's describe block in this one
+// process, same as before this filter existed.
 const ORIGIN_FILTER = process.env.AKM_UPGRADE_REHEARSAL_ORIGIN?.trim();
 
 if (!REQUESTED) {
@@ -122,6 +122,8 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
   /** Whether the previous release already writes the inline scheduler row the candidate writes. */
   let originWritesInlineRows: boolean;
   let home: UpgradeHome;
+  /** `migrate apply`'s plan, from test 3. */
+  let applied: { assetEngineKeys?: { notes?: string[] } };
 
   beforeAll(async () => {
     workRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-upgrade-rehearsal-"));
@@ -201,9 +203,23 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     expect(plan.blockers ?? []).toEqual([]);
   });
 
+  test("2b. before `migrate apply` the 0.9 engines form loads as a connection and a harness, with one warning that names the migration", async () => {
+    const info = await runLauncher(candidateLauncher, ["info"], home.env);
+    expect(info.status, info.stderr).toBe(0);
+    const warnings = info.stderr.split("\n").filter((line) => line.includes("uses the retired engines/defaults form"));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("akm migrate apply");
+    const rows = (JSON.parse(info.stdout) as { connectionsAndHarnesses?: { type?: string; name?: string }[] })
+      .connectionsAndHarnesses;
+    const named = (rows ?? []).filter((row) => row.name).map((row) => `${row.type} ${row.name}`);
+    // The `opencode-sdk` engine `defaults.engine` named is the user's own OpenCode: the harness called `default`.
+    expect(named).toEqual(["connection default", "harness claude", "harness default"]);
+  });
+
   test("3. candidate migrate apply succeeds, removes experimental.workflowEngine, and status then reports current", async () => {
     const apply = await runLauncher(candidateLauncher, ["migrate", "apply"], home.env);
     expect(apply.status, apply.stderr).toBe(0);
+    applied = JSON.parse(apply.stdout) as typeof applied;
 
     // `home.ts` writes `experimental.workflowEngine` into config.json to
     // model a value carried over from 0.9.15 (see its comment) — this is
@@ -219,7 +235,42 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     expect(plan.status).toBe("current");
   });
 
-  test("4. core read surfaces succeed: config get, bundle list, info, search, show, task list", async () => {
+  test("3b. migrate apply converted the engines form: the key is filed, models.json moved, the assets rewritten, and a note names the flag that replaces --engine lab", async () => {
+    const config = JSON.parse(fs.readFileSync(home.configPath, "utf8")) as Record<string, unknown>;
+    expect(config.engines).toBeUndefined();
+    expect(config.defaults).toBeUndefined();
+    expect(Object.keys((config.connections ?? {}) as object)).toEqual(["default"]);
+    const harnesses = (config.harnesses ?? {}) as Record<
+      string,
+      { platform?: string; models?: Record<string, unknown> }
+    >;
+    expect(Object.keys(harnesses)).toEqual(["claude", "default"]);
+    expect(harnesses.default?.platform).toBe("opencode");
+    expect(harnesses.default?.models?.balanced).toBe("openai/gpt-rehearsal");
+
+    // The key left `apiKeyFile` for credentials.json. Compared, never printed.
+    const credentials = JSON.parse(
+      fs.readFileSync(path.join(path.dirname(home.configPath), "credentials.json"), "utf8"),
+    ) as {
+      connections?: Record<string, { key?: string }>;
+    };
+    expect(credentials.connections?.default?.key === home.engines.key).toBe(true);
+    expect(fs.existsSync(home.engines.modelsFile)).toBe(false);
+
+    for (const file of [home.engines.commandFile, home.engines.taskFile]) {
+      const text = fs.readFileSync(file, "utf8");
+      expect(text, file).toContain("connection: default");
+      expect(text, file).not.toContain("engine:");
+    }
+    expect(applied.assetEngineKeys?.notes?.join("\n")).toContain("--engine lab is now --connection default");
+
+    // Converted once: the next load has nothing to warn about.
+    const info = await runLauncher(candidateLauncher, ["info"], home.env);
+    expect(info.status, info.stderr).toBe(0);
+    expect(info.stderr).not.toContain("retired engines/defaults form");
+  });
+
+  test("4. core read surfaces succeed: config get, bundle list, info, search, show, search --type task", async () => {
     const configGet = await runLauncher(candidateLauncher, ["config", "get", "defaultBundle"], home.env);
     expect(configGet.status, configGet.stderr).toBe(0);
 
@@ -259,7 +310,7 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     const show = await runLauncher(candidateLauncher, ["show", ref as string], home.env);
     expect(show.status, show.stderr).toBe(0);
 
-    const taskList = await runLauncher(candidateLauncher, ["task", "list"], home.env);
+    const taskList = await runLauncher(candidateLauncher, ["search", "--type", "task"], home.env);
     expect(taskList.status, taskList.stderr).toBe(0);
   });
 
@@ -398,11 +449,11 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     expect(result.stdout).not.toContain("migrate apply");
   });
 
-  test("10. improve --plan runs without an engine, or fails with the documented no-engine error (never exit 70)", async () => {
-    const result = await runLauncher(candidateLauncher, ["improve", "--plan"], home.env);
+  test("10. improve --dry-run runs without an engine, or fails with the documented no-engine error (never exit 70)", async () => {
+    const result = await runLauncher(candidateLauncher, ["improve", "--dry-run"], home.env);
     expect(result.status).not.toBe(70);
     if (result.status === 0) return;
-    // Failures render to stderr as {ok:false, error, code} (AGENTS.md's CLI Contract).
+    // Failures render to stderr as {ok:false, error, code}.
     const envelope = JSON.parse(result.stderr) as { ok?: boolean; code?: string };
     expect(envelope.ok).toBe(false);
     expect(envelope.code).toBe("LLM_NOT_CONFIGURED");
@@ -411,7 +462,7 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
   test("11. read-back: the OLD launcher still works against the candidate-written home", async () => {
     for (const args of [
       ["search", home.searchTerm],
-      ["task", "list"],
+      ["search", "--type", "task"],
       ["bundle", "list"],
     ] as const) {
       const result = await runLauncher(previousLauncher, [...args], home.env);

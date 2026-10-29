@@ -246,18 +246,13 @@ export function getLatestImproveRun(db: Database): ImproveRunRow | undefined {
     .get() as ImproveRunRow | undefined;
 }
 
-/**
- * #950: count real (non-dry-run) improve_runs rows whose `started_at` falls
- * in `[since, now)` — same filter as {@link queryImproveRuns}, but a `SELECT
- * COUNT(*)` for a caller (the `engine-last-used` gate) that only needs to
- * know whether any run happened, not the rows themselves (which would pull
- * every `result_json` blob in the window just to test for zero).
- */
-export function countImproveRunsSince(db: Database, since: string): number {
-  const row = db
-    .prepare("SELECT COUNT(*) AS cnt FROM improve_runs WHERE started_at >= ? AND dry_run = 0")
-    .get(since) as { cnt: number };
-  return row.cnt;
+/** The `limit` most recent real (non-dry-run) improve runs, newest first (`akm ui`'s run list). */
+export function listRecentImproveRuns(db: Database, limit: number): ImproveRunSummaryRow[] {
+  return db
+    .prepare(
+      "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, strategy, result_json FROM improve_runs WHERE dry_run = 0 ORDER BY started_at DESC LIMIT ?",
+    )
+    .all(limit) as ImproveRunSummaryRow[];
 }
 
 /**

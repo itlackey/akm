@@ -3,30 +3,28 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The reference `okf` adapter — akm 0.9.0 chunk-2, WI-A.
+ * The reference `okf` adapter.
  *
- * Implements `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §5 (the reference
- * OKF adapter) + §5.1 (BINDING: `okf` reads `type` FROM FRONTMATTER, with NO
- * directory gate) EXACTLY. This is pure OKF: `type` from frontmatter, identity
- * from path, no directory routing anywhere.
+ * Pure OKF: `type` is read FROM FRONTMATTER, with NO directory gate; identity
+ * is from path; there is no directory routing anywhere.
  *
- *  - recognize (§5): any `.md` NOT named `index.md`/`log.md` (case-insensitive,
+ *  - recognize: any `.md` NOT named `index.md`/`log.md` (case-insensitive,
  *    reserved) → one concept. `type` = frontmatter `type` when a non-empty
  *    string, else the `knowledge` default. conceptId = the concept's path
- *    within the component root minus `.md`. The OKF field projection (§0.1/§3):
+ *    within the component root minus `.md`. The OKF field projection:
  *    name ← title (fallback: last path segment), description ← description,
  *    tags ← tags, updated ← timestamp. The directory a file sits in NEVER
  *    affects `type`.
- *  - links (§9): BOTH OKF link forms — `/`-rooted bundle-relative and standard
+ *  - links: BOTH OKF link forms — `/`-rooted bundle-relative and standard
  *    relative — resolve deterministically into target conceptIds, stored on
  *    `IndexDocument.links`. Unresolvable / out-of-component links are dropped
  *    (tolerant).
- *  - validate (§5, LENIENT): base checks only; unknown frontmatter never fails;
+ *  - validate (LENIENT): base checks only; unknown frontmatter never fails;
  *    `missing-type` is INFO; `missing-ref` on OKF links is a non-blocking
  *    WARNING (consumers tolerate broken links). Reads go through
  *    `ctx.readFile`; ref existence via `ctx.resolveRef`. Never touches the live
  *    filesystem.
- *  - directoryList / looksLikeRoot per §5 / §1.2. Authoring is deliberately
+ *  - directoryList / looksLikeRoot. Authoring is deliberately
  *    absent; AKM-native writers fail before mutating an OKF bundle.
  */
 
@@ -34,6 +32,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
+import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { isRecord, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
@@ -151,23 +150,10 @@ function isReservedFileName(name: string): boolean {
  */
 export function resolveOkfLinks(body: string, fileRelPath: string): string[] {
   const dir = path.posix.dirname(toPosix(fileRelPath));
-  const definitions = new Map<string, string>();
-  for (const match of body.matchAll(/^\s*\[([^\]]+)\]:\s*(\S+)/gm)) {
-    definitions.set(match[1]!.trim().toLowerCase(), match[2]!);
-  }
-  const candidates: Array<{ index: number; target: string }> = [];
-  for (const match of body.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
-    candidates.push({ index: match.index, target: match[1]! });
-  }
-  for (const match of body.matchAll(/(?<!!)\[[^\]]*\]\[([^\]]+)\]/g)) {
-    const target = definitions.get(match[1]!.trim().toLowerCase());
-    if (target) candidates.push({ index: match.index, target });
-  }
-  candidates.sort((a, b) => a.index - b.index);
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const candidate of candidates) {
-    let target = candidate.target.trim();
+  for (const link of markdownLinkTargets(body, true)) {
+    let target = link.trim();
     // Drop an optional markdown link title: `[x](/a.md "Title")`.
     const wsIdx = target.search(/\s/);
     if (wsIdx >= 0) target = target.slice(0, wsIdx);

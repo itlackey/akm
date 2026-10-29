@@ -7,20 +7,22 @@
  *
  * Ranking is two candidate channels fused by reciprocal rank (`ranking.ts`):
  * BM25 over whole documents matching any query word, and the nearest document
- * vectors to the query embedding. Filters narrow the fused list; nothing else
+ * vectors to the query embedding. The fused score is then scaled by the
+ * asset's recorded user feedback. Filters narrow the list; nothing else
  * reorders it.
  */
 
 import path from "node:path";
-import { stashDirFor } from "../../core/asset/asset-placement";
 import { displayRef } from "../../core/asset/resolve-ref";
 import { compareCodePoints } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { classifyPathAccess } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
+import { withStateDbTelemetry } from "../../core/state-db";
 import { systemErrorCode } from "../../core/system-error";
 import { presentationFor } from "../../core/type-presentation";
 import { embed } from "../../llm/embedder";
+import { effectiveEmbedding } from "../../llm/embedders/connection";
 import { applyEmbeddingTemplate, resolveEmbeddingProfile } from "../../llm/embedders/profile";
 import { normalizeEmbeddingEndpoint } from "../../llm/embedders/remote";
 import type {
@@ -35,24 +37,33 @@ import {
   assertIndexPathReadable,
   closeDatabase,
   openExistingDatabase,
+  openReadonlyExistingDatabase,
 } from "../../storage/repositories/index-connection";
 import {
   getAllEntries,
   getBaseBeliefStatesForDerivedTwins,
+  getEntriesByIds,
   getEntryById,
   getEntryCount,
   getEntryRefsAndTypes,
 } from "../../storage/repositories/index-entries-repository";
-import type { DbVecResult } from "../../storage/repositories/index-entry-types";
+import type { CandidateFilter, DbVecResult } from "../../storage/repositories/index-entry-types";
 import { searchFts } from "../../storage/repositories/index-fts-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
 import { ensureIndex } from "../ensure-index";
 import { type IndexDocument, isProposedQuality, type StashEntryScope } from "../passes/metadata";
-import { ftsQueryTokens, parseRefPrefixQuery, parseRetiredTypePrefixQuery } from "./fts-query";
-import { type FusedCandidate, type RankedRef, reciprocalRankFusion } from "./ranking";
+import { countFeedbackSignalsByRef } from "../usage/usage-events";
+import { ftsQueryTokens, parseRefPrefixQuery } from "./fts-query";
+import {
+  applyFeedback,
+  type FeedbackCounts,
+  type FusedCandidate,
+  type RankedRef,
+  reciprocalRankFusion,
+} from "./ranking";
 import { attachSearchHitAttribution } from "./search-attribution";
-import { enrichSearchHit } from "./search-hit-enrichers";
+import { enrichSearchHit, type SearchHitContext } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 
 /**
@@ -118,20 +129,21 @@ function resolveSearchHitRef(entry: IndexDocument, provenance: IndexedProvenance
 // ── Main search entrypoint ───────────────────────────────────────────────────
 
 /**
- * Whether an embedding provider is actually configured.
+ * Whether `auto` has a usable embedding provider.
  *
- * A remote provider needs BOTH endpoint and model. A LOCAL provider needs
- * neither — `embedding.localModel` selects a transformers model that runs in
- * process. Checking only the remote pair told every local-provider user that
- * "no embedding provider is configured" and pointed them at
- * `akm config set embedding '{"endpoint":...}'`, which is the wrong remedy and
- * hid the real diagnostic recorded in the semantic status.
+ * `auto` with no (or no remote) embedding settings falls back to the built-in
+ * local model (`DEFAULT_LOCAL_MODEL`, or `embedding.localModel`), so semantic
+ * search works without any configuration. The only config that can never
+ * succeed is a remote `endpoint` without a `model` — `RemoteEmbedder` throws on
+ * construction. Treating "no endpoint+model pair" as unconfigured warned every
+ * default install that semantic search had no provider while it worked.
  */
 function hasConfiguredEmbeddingProvider(config: {
   embedding?: { endpoint?: string; model?: string; localModel?: string };
 }): boolean {
-  if (config.embedding?.localModel) return true;
-  return Boolean(config.embedding?.endpoint && config.embedding?.model);
+  const embedding = config.embedding;
+  if (!embedding?.endpoint) return true;
+  return Boolean(embedding.model);
 }
 
 export interface SearchLocalInput {
@@ -143,14 +155,13 @@ export interface SearchLocalInput {
   config: AkmConfig;
   /**
    * Optional scope filter (`user`, `agent`, `run`, `channel`). When present,
-   * hits whose `entry.scope` does not satisfy every supplied key are dropped
-   * after fusion — filtering narrows the result set, it does not reorder it.
+   * only entries whose `entry.scope` satisfies every supplied key contribute
+   * to the channels before their candidate budgets.
    */
   filters?: StashEntryScope;
   /**
    * When true, entries with `quality === "proposed"` are kept in the result
-   * set. By default (false) they are filtered out after fusion per v1
-   * spec §4.2.
+   * set. By default (false) they are excluded before candidate selection.
    */
   includeProposed?: boolean;
   beliefFilter?: BeliefFilterMode;
@@ -168,6 +179,11 @@ export interface SearchLocalInput {
    * `session`). No effect when an explicit `--type` is supplied.
    */
   includeExcludedTypes?: boolean;
+  /**
+   * Serve the index as it is: skip the inline bootstrap build `ensureIndex`
+   * would run for a stash the index cannot serve yet (`akm ui` never writes).
+   */
+  readOnly?: boolean;
 }
 
 export async function searchLocal(input: SearchLocalInput): Promise<{
@@ -179,23 +195,23 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
   /** Actual ranking mode, including a failed semantic attempt. */
   mode: SearchExecutionMode;
 }> {
-  const { query, stashDir, config } = input;
+  const { stashDir, config } = input;
   const warnings: string[] = [];
   // Semantic search is attempted fresh on every query (see `startVectorChannel`);
   // there is no cached readiness verdict to consult here. The only thing
   // worth flagging ahead of the attempt is a config that can never succeed.
   if (config.semanticSearchMode === "auto" && !hasConfiguredEmbeddingProvider(config)) {
     warnings.push(
-      "Semantic search is enabled (semanticSearchMode='auto') but no embedding provider is configured. " +
-        'Either: (a) `akm config set embedding \'{"endpoint":"...","model":"..."}\'`, or ' +
-        "(b) `akm config set semanticSearchMode off` to use keyword-only search.",
+      "Semantic search is enabled (semanticSearchMode='auto') but embedding.endpoint is set without embedding.model. " +
+        "Either: (a) set embedding.model, or (b) remove embedding.endpoint to use the built-in local model, or " +
+        "(c) `akm config set semanticSearchMode off` to use keyword-only search.",
     );
   }
 
   // Bootstrap-only: builds the index inline when it cannot serve this stash.
   // Content freshness is the writers' job (indexWrittenAssets + full runs);
   // reads serve the existing index as-is.
-  await ensureIndex(stashDir);
+  if (!input.readOnly) await ensureIndex(stashDir);
 
   const dbPath = getDbPath();
   // An index we cannot READ is not an index that does not exist (#791). Saying
@@ -212,7 +228,10 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     };
   }
 
-  const db = openExistingDatabase(dbPath);
+  // A read-only search (`akm ui`) must not open the index for write: closing a
+  // read-write connection can checkpoint the WAL into the main file, which
+  // changes it even though nothing was written.
+  const db = input.readOnly ? (openReadonlyExistingDatabase(dbPath) as Database) : openExistingDatabase(dbPath);
   try {
     const entryCount = getEntryCount(db);
     if (entryCount === 0) {
@@ -227,11 +246,12 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     const staleHint = buildStaleIndexHint(db);
     if (staleHint) warnings.push(staleHint);
 
-    const { hits, embedMs, rankMs, mode, semanticWarning } = await searchDatabase(db, input);
+    const { hits, embedMs, rankMs, mode, semanticWarning, feedbackWarning } = await searchDatabase(db, input);
     if (semanticWarning) warnings.push(semanticWarning);
+    if (feedbackWarning) warnings.push(feedbackWarning);
     return {
       hits,
-      tip: hits.length === 0 ? emptyResultTip(query) : undefined,
+      tip: hits.length === 0 ? EMPTY_RESULT_TIP : undefined,
       warnings: warnings.length > 0 ? warnings : undefined,
       embedMs,
       rankMs,
@@ -255,6 +275,7 @@ async function searchDatabase(
   rankMs?: number;
   mode: SearchExecutionMode;
   semanticWarning?: string;
+  feedbackWarning?: string;
 }> {
   const { query, searchType, limit, stashDir, sources, config, filters } = input;
   const filterOptions = {
@@ -315,14 +336,22 @@ async function searchDatabase(
   const typeFilter = searchType === "any" ? undefined : searchType;
   const startedAt = Date.now();
   // The query embedding request goes out first, so FTS runs while it is in flight.
-  const vectorChannel = startVectorChannel(db, query, config);
-  const lexical = searchFts(db, query, CHANNEL_DEPTH, typeFilter, defaultExcludes);
+  const filterCandidates: CandidateFilter = (ids) => {
+    const entries = getEntriesByIds(db, ids)
+      .filter(hasIndexedProvenance)
+      .filter((row) => (typeFilter ? row.entry.type === typeFilter : !defaultExcludes.includes(row.entry.type)));
+    return new Set(applyEntryFilters(entries, filterOptions).map((row) => row.id));
+  };
+  const vectorChannel = startVectorChannel(db, query, config, filterCandidates);
+  const lexical = searchFts(db, query, CHANNEL_DEPTH, typeFilter, defaultExcludes, filterCandidates);
   const vector = await vectorChannel;
   const embedMs = Date.now() - startedAt;
 
   const tRank0 = Date.now();
   const vectorCandidates = vector.neighbors ? keepAllowedTypes(db, vector.neighbors, typeFilter, defaultExcludes) : [];
-  const fused = reciprocalRankFusion([lexical, vectorCandidates]);
+  const rrf = reciprocalRankFusion([lexical, vectorCandidates]);
+  const feedback = readFeedback(rrf);
+  const fused = applyFeedback(rrf, feedback.counts);
   const selected = selectFusedEntries(db, fused, limit, filterOptions);
   const rankMs = Date.now() - tRank0;
 
@@ -340,12 +369,36 @@ async function searchDatabase(
         sources,
         config,
         db,
+        eligible: (row) => applyEntryFilters([row], filterOptions).length > 0,
       }),
     ),
   );
 
   const mode: SearchExecutionMode = vector.warning ? "fts-fallback" : vector.neighbors ? "semantic" : "keyword";
-  return { embedMs, rankMs, hits, mode, semanticWarning: vector.warning };
+  return { embedMs, rankMs, hits, mode, semanticWarning: vector.warning, feedbackWarning: feedback.warning };
+}
+
+/**
+ * User feedback counts of the fused candidates, from state.db in one query.
+ * A search never creates state.db, and one that cannot read it ranks without
+ * feedback and says so.
+ */
+function readFeedback(fused: readonly FusedCandidate[]): { counts: Map<string, FeedbackCounts>; warning?: string } {
+  let counts = new Map<string, FeedbackCounts>();
+  try {
+    withStateDbTelemetry((stateDb) => {
+      counts = countFeedbackSignalsByRef(
+        stateDb,
+        fused.map((candidate) => candidate.itemRef),
+      );
+    });
+  } catch (error) {
+    return {
+      counts: new Map(),
+      warning: `Feedback was not applied to the ranking: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  return { counts };
 }
 
 type HydratedEntry = NonNullable<ReturnType<typeof getEntryById>> & { id: number };
@@ -419,19 +472,7 @@ function describeRanks(candidate: FusedCandidate): string[] {
   ];
 }
 
-/**
- * The no-hits tip. A query in the retired `<type>:` / `<type>:<prefix>/` browse
- * grammar gets the conceptId spelling that replaces it: without this it comes
- * back empty and silent, which is the failure D4 removed the grammar to avoid.
- */
-function emptyResultTip(query: string): string {
-  const generic = "No matching stash assets were found. Try a different query or run 'akm index' to rebuild.";
-  const retired = parseRetiredTypePrefixQuery(query);
-  if (!retired) return generic;
-  const root = stashDirFor(retired.type);
-  if (!root) return generic;
-  return `No matching stash assets were found. The '<type>:' browse grammar was removed in 0.9.0 — use the conceptId spelling: 'akm search "${root}/${retired.rest}"'.`;
-}
+const EMPTY_RESULT_TIP = "No matching stash assets were found. Try a different query or run 'akm index' to rebuild.";
 
 // ── Enumeration (browse) path ────────────────────────────────────────────────
 
@@ -508,6 +549,7 @@ async function enumerateEntries(
         sources,
         config,
         db,
+        eligible: (row) => applyEntryFilters([row], opts).length > 0,
       }),
     ),
   );
@@ -527,7 +569,7 @@ interface EntryFilterOptions {
  * source-narrowing → scope → proposed-quality → derived-twin belief
  * inheritance → belief filter.
  */
-function applyEntryFilters<T extends { id: number; entry: IndexDocument; filePath: string }>(
+export function applyEntryFilters<T extends { id: number; entry: IndexDocument; filePath: string }>(
   items: T[],
   opts: EntryFilterOptions,
 ): T[] {
@@ -544,7 +586,7 @@ function applyEntryFilters<T extends { id: number; entry: IndexDocument; filePat
   const scopeFiltered = filters
     ? sourceFiltered.filter((item) => entryMatchesScope(item.entry.scope, filters))
     : sourceFiltered;
-  // Proposed-quality filter (v1 spec §4.2): exclude `quality: "proposed"`
+  // Proposed-quality filter: exclude `quality: "proposed"`
   // entries unless the caller opts in.
   const qualityFiltered = opts.includeProposed
     ? scopeFiltered
@@ -587,7 +629,7 @@ function inheritDerivedTwinBeliefStates(db: Database, items: Array<{ id: number;
   }
 }
 
-function matchBeliefFilter(beliefState: string | undefined, filter: BeliefFilterMode): boolean {
+export function matchBeliefFilter(beliefState: string | undefined, filter: BeliefFilterMode): boolean {
   if (filter === "all") return true;
   // 03: the belief filter applies to ANY flagged entry, not just memories, so
   // `current`/`historical` filters catch contradicted/superseded KNOWLEDGE too.
@@ -618,6 +660,7 @@ function startVectorChannel(
   db: Database,
   query: string,
   config: AkmConfig,
+  filterCandidates: CandidateFilter,
 ): Promise<{ neighbors: DbVecResult[] | null; warning?: string }> {
   if (config.semanticSearchMode === "off") return Promise.resolve({ neighbors: null });
   // A real-time completeness fact, not a cached verdict: skip the round trip
@@ -626,7 +669,8 @@ function startVectorChannel(
   // a live warning instead of silently skipping with no signal.
   if (getEmbeddingCount(db) === 0) return Promise.resolve({ neighbors: null });
 
-  const timeoutMs = config.embedding?.queryTimeoutMs ?? DEFAULT_QUERY_EMBED_TIMEOUT_MS;
+  const embedding = effectiveEmbedding(config);
+  const timeoutMs = embedding?.queryTimeoutMs ?? DEFAULT_QUERY_EMBED_TIMEOUT_MS;
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -635,9 +679,9 @@ function startVectorChannel(
       reject(new Error(`Query embedding timed out after ${timeoutMs}ms`));
     }, timeoutMs);
   });
-  const queryText = applyEmbeddingTemplate(resolveEmbeddingProfile(config.embedding).queryTemplate, query);
-  return Promise.race([embed(queryText, config.embedding, controller.signal), timeout])
-    .then((vector) => ({ neighbors: searchVec(db, vector, CHANNEL_DEPTH) }))
+  const queryText = applyEmbeddingTemplate(resolveEmbeddingProfile(embedding).queryTemplate, query);
+  return Promise.race([embed(queryText, embedding, controller.signal), timeout])
+    .then((vector) => ({ neighbors: searchVec(db, vector, CHANNEL_DEPTH, undefined, filterCandidates) }))
     .catch((error: unknown) => ({ neighbors: null, warning: buildVectorFallbackWarning(config, error) }))
     .finally(() => clearTimeout(timer));
 }
@@ -647,7 +691,7 @@ function buildVectorFallbackWarning(config: AkmConfig, error: unknown): string {
   const reason = classifyVectorFailure(error);
   const target = endpoint
     ? `embedding endpoint ${endpoint}`
-    : config.embedding?.endpoint
+    : effectiveEmbedding(config)?.endpoint
       ? "configured embedding endpoint"
       : "local embedding model";
   const unavailable = reason === "connection failed" ? `cannot reach ${target}` : `${target} is unavailable`;
@@ -659,7 +703,7 @@ function buildVectorFallbackWarning(config: AkmConfig, error: unknown): string {
  * or fragments into a warning. Invalid authored values fail closed.
  */
 function safeEmbeddingEndpoint(config: AkmConfig): string | undefined {
-  const endpoint = config.embedding?.endpoint;
+  const endpoint = effectiveEmbedding(config)?.endpoint;
   if (!endpoint) return undefined;
   try {
     const parsed = new URL(normalizeEmbeddingEndpoint(endpoint));
@@ -715,6 +759,7 @@ export async function buildDbHit(input: {
    * hits without a DB — the enricher then skips that step.
    */
   db?: Database;
+  eligible?: SearchHitContext["eligible"];
 }): Promise<SourceSearchHit> {
   const absolutePath = path.resolve(input.path);
   const source = findSourceForPath(absolutePath, input.sources);
@@ -744,7 +789,7 @@ export async function buildDbHit(input: {
     score: input.score,
     ...(input.whyMatched ? { whyMatched: input.whyMatched } : {}),
     ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),
-    // Surface optional quality (v1 spec §4.2). Omitted when entry has
+    // Surface optional quality. Omitted when entry has
     // no `quality` field so payloads stay compact for the common case.
     ...(input.entry.quality ? { quality: input.entry.quality } : {}),
     ...(input.entry.beliefState ? { beliefState: input.entry.beliefState } : {}),
@@ -761,7 +806,10 @@ export async function buildDbHit(input: {
     type: input.entry.type,
     stashDir: entryStashDir,
     bundleId: input.bundleId,
+    defaultBundleId,
+    descriptionSource: input.entry.source,
     db: input.db,
+    eligible: input.eligible,
   });
 
   return hit;

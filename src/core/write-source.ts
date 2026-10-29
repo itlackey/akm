@@ -8,7 +8,7 @@
  * The only module that branches on `source.kind` for writes. It does two
  * things:
  *
- *  1. Resolve the destination: `--target` → `defaultWriteTarget` → working
+ *  1. Resolve the destination: `--bundle` → `defaultWriteTarget` → working
  *     stash (`defaultBundle`). `writable` defaults to true on `filesystem` and
  *     false on `git`; `website` / `npm` are never writable (the config loader
  *     rejects `writable: true` on them).
@@ -23,7 +23,8 @@
  * {@link commitWriteTargetBoundary} once — or wrap a custom mutation in
  * {@link withWriteTargetMutation}, which does both under the asset lease. An
  * accepted proposal commits its own paths ({@link commitAcceptedPaths}), on a
- * filesystem stash that is a git repository too.
+ * filesystem stash that is a git repository too. A process that accepts many
+ * proposals collects them and commits once at its boundary (#1185).
  */
 
 import fs from "node:fs";
@@ -41,7 +42,7 @@ import {
 } from "../sources/providers/git";
 import { listIgnoredExactPaths } from "../sources/providers/git-stash";
 import { detectAdapterId } from "./adapter/detect-adapter";
-import { ensureAkmMarkdownType } from "./asset/akm-markdown";
+import { normalizeAkmMarkdown } from "./asset/akm-markdown";
 import { assetPathForName, stashDirFor } from "./asset/asset-placement";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
@@ -87,6 +88,16 @@ export function resolveWritable(entry: Pick<SourceConfigEntry, "type" | "writabl
   return entry.type === "filesystem";
 }
 
+/**
+ * Whether a resolved source is write-activated. Only the primary stash and
+ * sources explicitly marked `writable: true` are writable; registry-cached
+ * (installed, read-only) sources are never written in place because
+ * `akm update` overwrites them.
+ */
+export function isSourceWriteActivated(source: { writable?: boolean }): boolean {
+  return source.writable === true;
+}
+
 /** The two kinds writes are defined for; scheduler state binds only to these. */
 export function isWriteCapableSourceKind(kind: string): kind is "filesystem" | "git" {
   return kind === "filesystem" || kind === "git";
@@ -97,16 +108,25 @@ export interface WriteTargetOptions {
   requireWritable?: boolean;
   /**
    * The flag that named the explicit target, spelled in the errors below
-   * (default `--target`). A command whose destination flag is `--bundle`, like
-   * `akm improve`, passes that instead of telling its user to use `--target`.
-   * A target that came from a ref's bundle qualifier rather than a flag passes
+   * (default `--bundle`). A target that came from a ref's bundle qualifier rather than a flag passes
    * how the user knows it, such as "The task ref's bundle".
    */
   flag?: string;
 }
 
 /**
- * Resolve the destination for a write: explicit `--target`, then
+ * Throw when `name` is a configured bundle that is disabled. Callers run it
+ * after a name failed to resolve against the active set, so a disabled bundle
+ * is reported as disabled rather than as not configured.
+ */
+export function assertBundleNotDisabled(akmConfig: AkmConfig, name: string): void {
+  if (resolveConfiguredSources(akmConfig).some((source) => source.name === name)) {
+    throw new UsageError(`Bundle "${name}" is disabled.`, "INVALID_FLAG_VALUE");
+  }
+}
+
+/**
+ * Resolve the destination for a write: explicit `--bundle`, then
  * `defaultWriteTarget`, then the working stash (`defaultBundle`). There is no
  * fallback to the first writable source.
  */
@@ -115,17 +135,14 @@ export function resolveWriteTarget(
   explicitTarget?: string,
   options: WriteTargetOptions = {},
 ): ResolvedWriteTarget {
-  const allConfiguredSources = resolveConfiguredSources(akmConfig);
   const configuredSources = resolveActiveConfiguredSources(akmConfig);
   const requireWritable = options.requireWritable !== false;
-  const flag = options.flag ?? "--target";
+  const flag = options.flag ?? "--bundle";
 
   if (explicitTarget) {
     const match = configuredSources.find((s) => s.name === explicitTarget);
     if (!match) {
-      if (allConfiguredSources.some((source) => source.name === explicitTarget)) {
-        throw new UsageError(`Bundle "${explicitTarget}" is disabled.`, "INVALID_FLAG_VALUE");
-      }
+      assertBundleNotDisabled(akmConfig, explicitTarget);
       throw new UsageError(
         `${flag} must reference a source name from your config. No source named "${explicitTarget}" is configured. Run \`akm bundle list\` to see available sources.`,
         "INVALID_FLAG_VALUE",
@@ -360,7 +377,7 @@ export async function writeAssetToSource(
   assertAkmAssetWrite(source);
 
   const filePath = resolveAssetFilePath(source, ref);
-  const authored = filePath.toLowerCase().endsWith(".md") ? ensureAkmMarkdownType(content, ref.type) : content;
+  const authored = filePath.toLowerCase().endsWith(".md") ? normalizeAkmMarkdown(content, ref.type) : content;
   const normalized = authored.endsWith("\n") ? authored : `${authored}\n`;
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   // Atomic: sibling temp file, fdatasync, rename — a crash or a full disk never
@@ -569,7 +586,7 @@ export function withWriteTargetMutation<T>(
 export function commitWriteTargetBoundary(
   target: ResolvedWriteTarget,
   message: string,
-  options?: { push?: boolean; paths?: string[]; filesystem?: boolean },
+  options?: { push?: boolean; paths?: string[]; filesystem?: boolean; body?: string[] },
 ): void {
   if (target.source.kind !== "git" && !options?.filesystem) return;
   const repoDir = repoDirFor(target.source);
@@ -595,14 +612,16 @@ export function commitWriteTargetBoundary(
     const saved = saveGitStash(undefined, message, resolveWritable(target.config), {
       repoDir,
       paths: committable,
+      ...(options?.body ? { body: options.body } : {}),
       ...(options?.push === undefined ? {} : { push: options.push }),
     });
     if (saved.reason) warn(`warning: "${target.source.name}" ${saved.reason}`);
   } catch (error) {
     if (error instanceof GitStashPushError) {
-      throw new Error(`Changes were committed as ${error.commit}, but publication failed: ${error.message}`, {
-        cause: error,
-      });
+      const what = error.committedNow
+        ? `Changes were committed as ${error.commit}`
+        : `Nothing new to commit; earlier commits up to ${error.commit} are unpushed`;
+      throw new Error(`${what}, but publication failed: ${error.message}`, { cause: error });
     }
     throw error;
   }
@@ -614,10 +633,16 @@ export function commitWriteTargetBoundary(
  * boundary commit skips, locally (the end-of-run sync pushes). A failed commit
  * only warns, since the accept already landed.
  */
-export function commitAcceptedPaths(target: ResolvedWriteTarget, message: string, paths: string[]): void {
+export function commitAcceptedPaths(
+  target: ResolvedWriteTarget,
+  message: string,
+  paths: string[],
+  body?: string[],
+): void {
   try {
     commitWriteTargetBoundary(target, message, {
       paths,
+      ...(body ? { body } : {}),
       filesystem: true,
       ...(target.source.kind === "git" ? {} : { push: false }),
     });

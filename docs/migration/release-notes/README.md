@@ -7,6 +7,7 @@ live one level up in `docs/migration/`.
 
 ## Available notes
 
+- [0.10.0](0.10.0.md) — The 0.10 series: 0.9.15 version floor, merged CLI spellings, `default`/`consolidate` strategies only, OpenCode 2, feedback-scaled ranking, and `0.10.YYMMNN` versions.
 - [0.9.19](0.9.19.md) — Bundle-scoped improve planning, proposal reopen, and consolidate/distill guardrails.
 - [0.9.17](0.9.17.md) — Retire proposals, declared links replacing the LLM entity graph, and scoped improve planning.
 - [0.9.16](0.9.16.md) — Source-bound scheduler grants, local execution authority, and split unsafe overrides.

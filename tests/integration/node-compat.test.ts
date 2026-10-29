@@ -37,12 +37,18 @@ import { type ChildProcess, spawn as nodeSpawn, spawnSync as nodeSpawnSync } fro
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { BOUNDARY_MARKERS, NATIVE_CRASH_MARKER } from "../../scripts/node-runtime-markers";
+import { getCacheDir } from "../../src/core/paths";
 import { runCliCapture } from "../_helpers/cli";
+import { startFakeModel } from "../_helpers/fake-model-server";
+import { expectConnectionConfig, expectHarnessOnlyConfig, type SmokeRun } from "../_helpers/model-surface-smoke";
+import { fetchSharedOpencode, linkSharedOpencode } from "../_helpers/opencode-binary";
 import { withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const ENABLED = process.env.AKM_NODE_COMPAT_TESTS === "1";
+// akm's own runtime runs a pinned OpenCode binary it fetches on first use; the test shares one fetch (skipped, with a message, when the registry is unreachable).
+const OPENCODE_UNAVAILABLE = ENABLED ? await fetchSharedOpencode() : undefined;
+if (OPENCODE_UNAVAILABLE) console.warn(`[node-compat] the runtime test is skipped: ${OPENCODE_UNAVAILABLE}`);
 const REPO_ROOT = path.resolve(import.meta.dir, "../..");
 const CLI_ENTRY = path.join(REPO_ROOT, "dist", "cli-node.mjs");
 const NODE_BIN = process.env.AKM_SMOKE_NODE ?? "node";
@@ -72,6 +78,25 @@ function nodeRunAt(entry: string, args: string[], env: Record<string, string>, s
 
 function nodeRun(args: string[], env: Record<string, string>, stdin?: string): NodeResult {
   return nodeRunAt(CLI_ENTRY, args, env, stdin);
+}
+
+/** Like `nodeRun`, without blocking this process's event loop, so a model server living in it can answer. */
+function nodeRunAsync(args: string[], env: Record<string, string>): Promise<NodeResult> {
+  return new Promise((resolve) => {
+    const child = nodeSpawn(NODE_BIN, [CLI_ENTRY, ...args], {
+      env: { ...process.env, ...env, AKM_OUTPUT: "json", NO_COLOR: "1", CI: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("close", (status) => resolve({ status: status ?? -1, stdout, stderr }));
+  });
 }
 
 // Safety net for every `withEnv` override below: well under this file's own
@@ -137,14 +162,10 @@ function setupStorage(): void {
   cleanup = storage.cleanup;
 }
 
-function configureEngine(name: string, engine: Record<string, unknown>, defaults: Record<string, string>): void {
-  const setEngine = nodeRun(["config", "set", `engines.${name}`, JSON.stringify(engine)], nodeEnv);
-  assertNoBoundaryLeak(setEngine, `config set engine ${name}`);
-  expect(setEngine.status).toBe(0);
-
-  const setDefaults = nodeRun(["config", "set", "defaults", JSON.stringify(defaults)], nodeEnv);
-  assertNoBoundaryLeak(setDefaults, `config set defaults for ${name}`);
-  expect(setDefaults.status).toBe(0);
+function configureConnection(name: string, connection: Record<string, unknown>): void {
+  const set = nodeRun(["config", "set", `connections.${name}`, JSON.stringify(connection)], nodeEnv);
+  assertNoBoundaryLeak(set, `config set connection ${name}`);
+  expect(set.status).toBe(0);
 }
 
 // ── Guard ────────────────────────────────────────────────────────────────────
@@ -176,105 +197,6 @@ describe("version parity", () => {
     expect(nodeResult.status).toBe(0);
     expect(nodeResult.stdout.trim()).toContain(pkgVersion);
     expect(nodeResult.stdout.trim()).toBe(bunResult.stdout.trim());
-  });
-});
-
-// ── packaged models.json ─────────────────────────────────────────────────────
-
-describe("model-map package asset parity", () => {
-  afterEach(() => cleanup());
-
-  test.skipIf(!ENABLED)("Node launcher discovers installed defaults and copies them through the CLI", () => {
-    setupStorage();
-    const result = nodeRun(["models", "copy-defaults"], nodeEnv);
-    assertNoBoundaryLeak(result, "models-copy-defaults");
-    expect(result.status).toBe(0);
-    const copied = path.join(nodeEnv.XDG_CONFIG_HOME!, "akm", "models.json");
-    const document = JSON.parse(fs.readFileSync(copied, "utf8")) as {
-      version?: number;
-      aliases?: Record<string, unknown>;
-    };
-    expect(document.version).toBe(1);
-    expect(Object.keys(document.aliases ?? {}).sort()).toEqual(["balanced", "fast", "reasoning"]);
-  });
-
-  test.skipIf(!ENABLED)("Node health reports a missing or malformed copied-install asset", () => {
-    setupStorage();
-    for (const scenario of ["missing", "malformed"] as const) {
-      const installRoot = fs.mkdtempSync(path.join(REPO_ROOT, ".akm-node-model-map-install-"));
-      try {
-        const copiedDist = path.join(installRoot, "dist");
-        fs.cpSync(path.join(REPO_ROOT, "dist"), copiedDist, { recursive: true });
-        fs.copyFileSync(path.join(REPO_ROOT, "package.json"), path.join(installRoot, "package.json"));
-        fs.copyFileSync(path.join(REPO_ROOT, "CHANGELOG.md"), path.join(installRoot, "CHANGELOG.md"));
-        const copiedAsset = path.join(copiedDist, "assets", "models.json");
-        const moduleUrl = pathToFileURL(path.join(copiedDist, "integrations", "agent", "model-map.js")).href;
-        const pathProbeOutput = path.join(installRoot, "model-map-paths.json");
-        const pathProbe = nodeSpawnSync(
-          NODE_BIN,
-          [
-            "--input-type=module",
-            "--eval",
-            `const fs = await import("node:fs"); const { installedModelMapPaths } = await import(${JSON.stringify(moduleUrl)}); fs.writeFileSync(${JSON.stringify(pathProbeOutput)}, JSON.stringify(installedModelMapPaths()));`,
-          ],
-          { encoding: "utf8" },
-        );
-        expect(pathProbe.status, String(pathProbe.stderr)).toBe(0);
-        expect(JSON.parse(fs.readFileSync(pathProbeOutput, "utf8"))).toEqual([copiedAsset]);
-        if (scenario === "missing") fs.rmSync(copiedAsset);
-        else fs.writeFileSync(copiedAsset, "MALFORMEDINSTALLEDMODELSECRET802");
-        const healthOutput = path.join(nodeEnv.XDG_CACHE_HOME!, `copied-install-${scenario}-health.json`);
-
-        const result = nodeRunAt(
-          path.join(copiedDist, "cli-node.mjs"),
-          ["health", "--format", "json", "--output", healthOutput],
-          nodeEnv,
-        );
-        assertNoBoundaryLeak(result, `copied-install-${scenario}-models`);
-        expect(result.status).toBe(1);
-        const rendered = fs.readFileSync(healthOutput, "utf8");
-        expect(result.stdout + result.stderr + rendered).not.toContain("MALFORMEDINSTALLEDMODELSECRET802");
-        const output = parseJson(rendered) as
-          | { hardChecks?: Array<{ name?: string; status?: string; message?: string }> }
-          | undefined;
-        expect(output?.hardChecks?.find((check) => check.name === "model-map-files")).toMatchObject({
-          status: "fail",
-        });
-      } finally {
-        fs.rmSync(installRoot, { recursive: true, force: true });
-      }
-    }
-  });
-
-  test.skipIf(!ENABLED)("actual Node health never echoes invalid user JSON or version values", () => {
-    for (const [name, text, sentinel] of [
-      ["syntax", "NODEJSONPARSESECRETSENTINEL802", "NODEJSONPARSESECRETSENTINEL802"],
-      [
-        "version",
-        JSON.stringify({ version: "NODEVERSIONSECRETSENTINEL802", aliases: {} }),
-        "NODEVERSIONSECRETSENTINEL802",
-      ],
-    ] as const) {
-      setupStorage();
-      try {
-        const userMap = path.join(nodeEnv.XDG_CONFIG_HOME!, "akm", "models.json");
-        fs.mkdirSync(path.dirname(userMap), { recursive: true });
-        fs.writeFileSync(userMap, text, { mode: 0o600 });
-        const healthOutput = path.join(nodeEnv.XDG_CACHE_HOME!, `node-model-map-${name}-health.json`);
-        const result = nodeRun(["health", "--format", "json", "--output", healthOutput], nodeEnv);
-        assertNoBoundaryLeak(result, `node-model-map-${name}`);
-        const rendered = fs.readFileSync(healthOutput, "utf8");
-        expect(result.stdout + result.stderr + rendered).not.toContain(sentinel);
-        const output = parseJson(rendered) as
-          | { hardChecks?: Array<{ name?: string; status?: string; message?: string }> }
-          | undefined;
-        expect(output?.hardChecks?.find((check) => check.name === "model-map-files")).toMatchObject({
-          status: "warn",
-        });
-      } finally {
-        cleanup();
-      }
-    }
   });
 });
 
@@ -418,7 +340,7 @@ describe("env parity", () => {
     // create via Bun (in-process)
     const bunCreate = await boundedWithEnv(
       { AKM_BUNDLE_DIR: stashDir, ...nodeEnv, AKM_OUTPUT: "json", NO_COLOR: "1" },
-      () => runCliCapture(["env", "create", "node-compat-parity"]),
+      () => runCliCapture(["env", "create", "env/node-compat-parity"]),
     );
     expect(bunCreate.code).toBe(0);
 
@@ -429,7 +351,7 @@ describe("env parity", () => {
     expect(nodeList.stdout).toContain("node-compat-parity");
 
     // remove via Node
-    const nodeRemove = nodeRun(["env", "remove", "node-compat-parity", "--yes"], nodeEnv);
+    const nodeRemove = nodeRun(["env", "remove", "env/node-compat-parity", "--yes"], nodeEnv);
     assertNoBoundaryLeak(nodeRemove, "env remove");
     expect(nodeRemove.status).toBe(0);
 
@@ -536,21 +458,21 @@ describe("stash parity", () => {
   test.skipIf(!ENABLED)("stash path returns same value on Bun and Node", async () => {
     setupStorage();
 
-    // No command prints the bare bundle path; `config path --all` emits a JSON
-    // envelope whose `bundle` field is the resolved bundle dir.
-    const nodeResult = nodeRun(["config", "path", "--all"], nodeEnv);
-    assertNoBoundaryLeak(nodeResult, "config path --all");
+    // No command prints the bare bundle path; `info` emits a JSON envelope
+    // whose `bundleDir` field is the resolved bundle dir.
+    const nodeResult = nodeRun(["info"], nodeEnv);
+    assertNoBoundaryLeak(nodeResult, "info");
     expect(nodeResult.status).toBe(0);
-    const nodeJson = parseJson(nodeResult.stdout) as { bundle?: string } | undefined;
-    expect(nodeJson?.bundle).toBe(stashDir);
+    const nodeJson = parseJson(nodeResult.stdout) as { bundleDir?: string } | undefined;
+    expect(nodeJson?.bundleDir).toBe(stashDir);
 
     const bunResult = await boundedWithEnv(
       { AKM_BUNDLE_DIR: stashDir, ...nodeEnv, AKM_OUTPUT: "json", NO_COLOR: "1" },
-      () => runCliCapture(["config", "path", "--all"]),
+      () => runCliCapture(["info"]),
     );
     expect(bunResult.code).toBe(0);
-    const bunJson = parseJson(bunResult.stdout) as { bundle?: string } | undefined;
-    expect(bunJson?.bundle).toBe(nodeJson?.bundle);
+    const bunJson = parseJson(bunResult.stdout) as { bundleDir?: string } | undefined;
+    expect(bunJson?.bundleDir).toBe(nodeJson?.bundleDir);
   });
 });
 
@@ -862,6 +784,59 @@ describe("setup parity", () => {
   );
 });
 
+// ── models: connections, harnesses, health, info, agent work ─────────────────
+
+describe("model surface parity", () => {
+  afterEach(() => cleanup());
+
+  /** `nodeRun` for the shared model-surface sequences, with the boundary check every other test makes. */
+  const onNode: SmokeRun = (args) => {
+    const result = nodeRun(args, nodeEnv);
+    assertNoBoundaryLeak(result, args.join(" "));
+    return result;
+  };
+
+  test.skipIf(!ENABLED)(
+    "setup --endpoint, models, health and info report a connection on Node",
+    () => {
+      setupStorage();
+      expectConnectionConfig(onNode);
+    },
+    180_000,
+  );
+
+  test.skipIf(!ENABLED)("a config with only a harness is reported, and models points at setup, on Node", () => {
+    setupStorage();
+    expectHarnessOnlyConfig(onNode);
+  });
+
+  test.skipIf(!ENABLED || OPENCODE_UNAVAILABLE !== undefined)(
+    "agent work over a connection runs on akm's own runtime under Node, and its akm tools run this akm under Node",
+    async () => {
+      setupStorage();
+      linkSharedOpencode(getCacheDir());
+      const model = startFakeModel();
+      try {
+        configureConnection("default", {
+          endpoint: model.url,
+          models: { fast: "fake-model", balanced: "fake-model", reasoning: "fake-model" },
+        });
+        const run = await nodeRunAsync(["agent", "--prompt", "MODE:akm"], nodeEnv);
+        assertNoBoundaryLeak(run, "agent over a connection");
+        expect(run.status, `agent over a connection:\nstdout:\n${run.stdout}\nstderr:\n${run.stderr}`).toBe(0);
+        const envelope = parseJson(run.stdout) as { ok?: boolean; engine?: string; stdout?: string } | undefined;
+        expect(envelope).toMatchObject({ ok: true, engine: "default" });
+        // The model called akm_search; the plugin ran akm by the argv it runs as (Node and the entry script) and its
+        // JSON came back through the tool.
+        expect(envelope?.stdout?.trim()).toMatch(/^AKM:\{[\s\S]*"hits"/);
+      } finally {
+        model.stop();
+      }
+    },
+    120_000,
+  );
+});
+
 // ── scope flags ───────────────────────────────────────────────────────────────
 
 describe("scope flag parity", () => {
@@ -929,9 +904,7 @@ describe("workflow smoke parity", () => {
     setupStorage();
     // `workflow create <name> --print` writes the RAW markdown template to
     // stdout (no envelope) — matching the dropped `workflow template` it
-    // replaces — `--print > starter.md` must yield a usable file. There is
-    // Creation emits Markdown; execution also accepts peer `.yml` sources
-    // through the same source IR. `.yaml` remains rejected.
+    // replaces — `--print > starter.md` must yield a usable file.
     const tpl = nodeRun(["workflow", "create", "smoke-program", "--print"], nodeEnv);
     assertNoBoundaryLeak(tpl, "workflow create --print");
     expect(tpl.status).toBe(0);
@@ -978,7 +951,7 @@ describe("workflow smoke parity", () => {
 // Reviewer #9: bare `require(...)` in ESM modules throws
 // `ReferenceError: require is not defined` under Node. The offending sites were
 // on the workflow LLM paths — the summary-validation judge
-// (`buildDefaultSummaryJudge` → canonical engine resolution + `await import llm/client`)
+// (`buildDefaultSummaryJudge` → connection resolution + `await import llm/client`)
 // and the native unit dispatcher (`resolveUnitRunner`/`requireDefaultLlm` →
 // `await import` of `integrations/agent/config` and `core/config/config`). These
 // smokes drive those paths on the Node runtime with an LLM configured at a
@@ -988,20 +961,12 @@ describe("workflow smoke parity", () => {
 /** The exact ESM-boundary symptom the bare-`require` fix removes. */
 const REQUIRE_NOT_DEFINED = "require is not defined";
 
-/** Configure a default LLM engine pointing at a closed local port (fast ECONNREFUSED). */
+/** Configure a default connection pointing at a closed local port (fast ECONNREFUSED). */
 function configureDeadLlm(): void {
-  configureEngine(
-    "smoke-llm",
-    {
-      kind: "llm",
-      endpoint: "http://127.0.0.1:1/v1/chat/completions",
-      model: "smoke-model",
-    },
-    { engine: "smoke-llm", llmEngine: "smoke-llm" },
-  );
-  const setJudge = nodeRun(["config", "set", "workflow.judgeEngine", "smoke-llm"], nodeEnv);
-  assertNoBoundaryLeak(setJudge, "config set workflow.judgeEngine");
-  expect(setJudge.status).toBe(0);
+  configureConnection("smoke-llm", {
+    endpoint: "http://127.0.0.1:1/v1/chat/completions",
+    models: { fast: "smoke-model" },
+  });
 }
 
 /**
@@ -1018,15 +983,11 @@ function writeJudgeWorkflow(name: string): void {
       "---",
       "type: workflow",
       "description: Node-compat smoke workflow.",
-      "params:",
-      "  mode: { type: string }",
       "steps:",
       "  - id: only-step",
-      "    route:",
-      "      input: params.mode",
-      "      when: [{ match: go, step: after }]",
-      "      default: after",
-      "    gate: {}",
+      "    unit:",
+      "      exec:",
+      '        command: ["true"]',
       "  - id: after",
       "---",
       "",
@@ -1056,6 +1017,7 @@ function writeDispatchWorkflow(name: string): void {
       "---",
       "type: workflow",
       "description: Node-compat dispatch smoke workflow.",
+      "defaults: { timeout: 5s }",
       "steps:",
       "  - id: only-step",
       "---",
@@ -1079,9 +1041,9 @@ describe("workflow LLM import-site parity (reviewer #9)", () => {
       configureDeadLlm();
       writeJudgeWorkflow("judge-smoke");
 
-      // The route-only first step reaches its frozen judge without dispatching
-      // a unit. The dead endpoint rejects the gate, but the dynamic import must load.
-      const run = nodeRun(["workflow", "run", "workflows/judge-smoke", "--mode=go", "--max-steps=1"], nodeEnv);
+      // The gated exec step makes no model call, so the only LLM call is its frozen
+      // judge. The dead endpoint rejects the gate, but the dynamic import must load.
+      const run = nodeRun(["workflow", "run", "workflows/judge-smoke", "--max-steps=1"], nodeEnv);
       assertNoBoundaryLeak(run, "judge run");
       expect(run.stdout + run.stderr).not.toContain(REQUIRE_NOT_DEFINED);
       expect(run.stderr).not.toContain("resolved workflow judge missing");

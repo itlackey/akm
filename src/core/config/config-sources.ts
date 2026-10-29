@@ -125,7 +125,7 @@ function hashBundleSourceIdentity(identity: Readonly<Record<string, unknown>>): 
 
 /**
  * The resolved primary stash path — the `defaultBundle`'s filesystem `path`
- * (spec §10.1) — or `undefined` when no filesystem primary is configured.
+ * — or `undefined` when no filesystem primary is configured.
  */
 export function primaryBundlePath(config: AkmConfig): string | undefined {
   const bundles = config.bundles;
@@ -222,12 +222,12 @@ export function bundleEntryToSourceEntry(
 }
 
 /**
- * Desired 0.9.0 bundle descriptor for a registry-installed source (spec §10.1).
+ * Desired 0.9.0 bundle descriptor for a registry-installed source.
  * Maps the install source kind onto the ONE source descriptor a bundle entry
  * carries: git/github → a provider-ready clone URL, npm → `{ npm: ref }`,
  * everything else (local/filesystem) → `{ path: stashRoot }`.
  *
- * CRITICAL (spec §10.2:453): the materialized cache root NEVER appears in the
+ * CRITICAL: the materialized cache root NEVER appears in the
  * descriptor for a git/npm bundle — the desired config carries only the source
  * descriptor; the install locator stays in `registryId` and the resolved root
  * belongs exclusively in the lock's `localRoot`. Callers layer

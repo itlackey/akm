@@ -67,7 +67,7 @@ describe("parseWorkflow", () => {
     expect(plan.steps[1]!.gate.criteria).toEqual([]);
   });
 
-  test("bare `- id:` with no map/route/unit is a complete minimal unit step", () => {
+  test("bare `- id:` with no map/unit is a complete minimal unit step", () => {
     const minimal = `---
 type: workflow
 steps:
@@ -84,7 +84,6 @@ Do the one thing.
     expect(result.plan.steps[0]!.stepId).toBe("only");
     expect(result.plan.steps[0]!.spec?.unit).toBeUndefined();
     expect(result.plan.steps[0]!.spec?.map).toBeUndefined();
-    expect(result.plan.steps[0]!.route).toBeUndefined();
   });
 
   test("accepts canonical opaque xrefs in workflow frontmatter", () => {
@@ -222,16 +221,14 @@ And this line.
     expect(result.errors.some((e) => e.message.includes('"## deploy" body section'))).toBe(true);
   });
 
-  test("a route step MAY omit its body section", () => {
-    const routeOnly = `---
+  test("`route` is no longer a step key", () => {
+    const routed = `---
 type: workflow
 steps:
   - id: intake
-  - id: triage
     route:
       input: steps.intake.output.status
       when: [{ match: pass, step: done }]
-      default: done
   - id: done
 ---
 
@@ -243,9 +240,75 @@ Do the intake work.
 
 Post the summary.
 `;
-    const result = parse(routeOnly);
+    const result = parse(routed);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.message.includes('Unknown Step "intake" key "route"'))).toBe(true);
+  });
+
+  test("a misplaced unit key on a step names where it belongs", () => {
+    const result = parse(VALID_WORKFLOW.replace("- id: deploy\n", "- id: deploy\n    timeout: 10m\n"));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(
+      result.errors.some((e) => e.message.includes('Unknown Step "deploy" key "timeout" (this belongs under "unit:")')),
+    ).toBe(true);
+  });
+
+  test("a solo step's output schema is also its unit's schema; map and unit-level schemas are left alone", () => {
+    const schema = { type: "object", required: ["files"] };
+    const doc = `---
+type: workflow
+params:
+  items: { type: array }
+steps:
+  - id: bare
+    output: { type: object, required: [files] }
+  - id: tuned
+    unit: { timeout: 5m }
+    output: { type: object, required: [files] }
+  - id: own
+    unit: { output: { type: object } }
+    output: { type: object, required: [files] }
+  - id: fan
+    map: { over: params.items }
+    output: { type: array }
+  - id: child
+    unit: { workflow: workflows/other }
+    output: { type: object }
+---
+
+## bare
+
+A.
+
+## tuned
+
+B.
+
+## own
+
+C.
+
+## fan
+
+D.
+
+## child
+
+E.
+`;
+    const result = parse(doc);
     expectOk(result);
-    expect(step(result, "triage").spec?.instructions).toBeUndefined();
+    expect(step(result, "bare").spec?.unit?.output).toEqual(schema);
+    expect(step(result, "bare").outputSchema).toEqual(schema);
+    expect(step(result, "tuned").spec?.unit).toEqual({ timeoutMs: 300_000, output: schema });
+    expect(step(result, "own").spec?.unit?.output).toEqual({ type: "object" });
+    expect(step(result, "own").outputSchema).toEqual(schema);
+    expect(step(result, "fan").spec?.unit?.output).toBeUndefined();
+    expect(step(result, "fan").outputSchema).toEqual({ type: "array" });
+    expect(step(result, "child").spec?.unit?.output).toBeUndefined();
+    expect(step(result, "child").outputSchema).toEqual({ type: "object" });
   });
 
   test("every level-2 heading must exactly match a declared step id", () => {

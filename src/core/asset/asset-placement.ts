@@ -147,7 +147,7 @@ const BUILTIN_PLACEMENT_SPECS = {
     toCanonicalName: (typeRoot, filePath) => toPosix(path.relative(typeRoot, filePath)),
     toAssetPath: (typeRoot, name) => path.join(typeRoot, name),
   },
-  // v1 spec §13 — `lesson` asset type. Required frontmatter fields are
+  // `lesson` asset type. Required frontmatter fields are
   // `description` and `when_to_use`; lint enforces both.
   lesson: { stashDir: "lessons", ...markdownSpec },
   // Scheduled tasks. A task file pairs a cron-style schedule with a target

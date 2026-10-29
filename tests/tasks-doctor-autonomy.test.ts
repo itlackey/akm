@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { akmTasksDoctor } from "../src/commands/tasks/tasks";
 import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { IMPROVE_AUTONOMY_CONFIG_KEY } from "../src/core/config/experimental";
+import { getTaskLogDir } from "../src/core/paths";
 import {
   type Cleanup,
   sandboxStashDir,
@@ -44,9 +45,15 @@ afterEach(() => {
   resetConfigCache();
 });
 
+const PROMOTING = {
+  strategies: {
+    promoting: { processes: { triage: { enabled: true, applyMode: "promote" as const, judgment: { enabled: true } } } },
+  },
+};
+
 describe("tasks doctor autonomy reporting", () => {
   test("reports autonomy off and names the gated lanes and the config key", async () => {
-    saveConfig({ semanticSearchMode: "off", defaults: { improveStrategy: "consolidate" } });
+    saveConfig({ semanticSearchMode: "off", improve: { strategy: "consolidate" } });
     resetConfigCache();
 
     const result = await akmTasksDoctor();
@@ -57,11 +64,21 @@ describe("tasks doctor autonomy reporting", () => {
     expect(result.improveAutonomy?.gatedLanes.every((lane) => lane.reason.length > 0)).toBe(true);
   });
 
+  test("reports the task log directory and no history directory (run history lives in state.db)", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    resetConfigCache();
+
+    const result = await akmTasksDoctor();
+
+    expect(result.logDir).toBe(getTaskLogDir());
+    expect(result).not.toHaveProperty("historyDir");
+  });
+
   test("does not report advisory consolidation operations as gated writers", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      defaults: { improveStrategy: "contradiction-report" },
       improve: {
+        strategy: "contradiction-report",
         strategies: {
           "contradiction-report": {
             processes: {
@@ -88,7 +105,7 @@ describe("tasks doctor autonomy reporting", () => {
   test("reports autonomy on with no gated lanes", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      defaults: { improveStrategy: "consolidate" },
+      improve: { strategy: "consolidate" },
       experimental: { improveAutonomy: true },
     });
     resetConfigCache();
@@ -100,20 +117,33 @@ describe("tasks doctor autonomy reporting", () => {
   });
 
   test("improveTriage.applyMode reports the effective mode, not the strategy's raw value", async () => {
-    // `reflect-distill` enables triage in promote mode. With autonomy off the run
-    // uses queue, so doctor must say queue.
-    saveConfig({ semanticSearchMode: "off", defaults: { improveStrategy: "reflect-distill" } });
+    // A strategy that enables triage in promote mode WITH judgment. With autonomy
+    // off the run uses queue, so doctor must say queue.
+    saveConfig({ semanticSearchMode: "off", improve: { ...PROMOTING, strategy: "promoting" } });
     resetConfigCache();
 
     const result = await akmTasksDoctor();
 
     expect(result.improveTriage?.applyMode).toBe("queue");
+    expect(result.improveAutonomy?.gatedLanes.map((lane) => lane.lane)).toContain("triagePromote");
+  });
+
+  test("the default strategy reports deterministic promote with no triagePromote gate (#1143)", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    resetConfigCache();
+
+    const result = await akmTasksDoctor();
+
+    expect(result.improveTriage?.enabled).toBe(true);
+    expect(result.improveTriage?.applyMode).toBe("promote");
+    expect(result.improveAutonomy?.gatedLanes.map((lane) => lane.lane)).not.toContain("triagePromote");
+    expect(result.improveAutonomy?.gatedLanes.map((lane) => lane.lane)).toContain("memoryInference");
   });
 
   test("improveTriage.applyMode reports promote once autonomy is opted into", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      defaults: { improveStrategy: "reflect-distill" },
+      improve: { ...PROMOTING, strategy: "promoting" },
       experimental: { improveAutonomy: true },
     });
     resetConfigCache();

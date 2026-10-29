@@ -11,6 +11,7 @@
 
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import type { Database } from "../../storage/database";
+import { SQLITE_CHUNK_SIZE } from "../../storage/repositories/index-sql";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -29,9 +30,8 @@ const USAGE_EVENT_SOURCES = new Set<UsageEventSource>(["user", "improve", "task"
  * Resolve subprocess provenance without treating an invalid value as user
  * demand.
  *
- * `fallback` (spec docs/plans/specs/p1b-model-extraction.md §5.2, F-1) is what
- * an unset/empty ambient value resolves to — it defaults to `"user"`, which
- * reproduces every pre-P1b call site byte-for-byte (P-07). A caller that
+ * `fallback` is what an unset/empty ambient value resolves to — it defaults to `"user"`.
+ * A caller that
  * already knows the invocation's provenance (the task runner, threading its
  * `ExecutionProvenanceContext`) passes its resolved value as the fallback
  * instead, so a recognized ambient `AKM_EVENT_SOURCE` still wins everywhere it
@@ -125,24 +125,38 @@ export function insertUsageEventStrict(db: Database, event: UsageEvent): void {
 // ── Query ────────────────────────────────────────────────────────────────────
 
 /**
- * Aggregate positive/negative feedback counts for a single entry.
- *
- * Lifted verbatim from `akm feedback` (feedback-cli.ts) where the same
- * SUM(CASE …) query was hand-rolled inline. Returns plain numbers (NULL SUMs
- * over an empty set are coalesced to 0) so the result fully materialises before
- * any owning connection closes.
+ * User feedback counts for many assets at once, keyed by durable `entry_ref`.
+ * A negative that carried an exact fix does not count once an accepted
+ * `feedback` proposal for the asset exists at or after it (the rule `akm
+ * improve` uses for a fix already acted on); reverting that proposal makes it
+ * count again. Refs with no user feedback are absent from the map. Read in one
+ * query per chunk of refs.
  */
-export function countFeedbackSignals(db: Database, entryId: number): { pos: number; neg: number } {
-  const counts = db
-    .prepare(
-      `SELECT
-         SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
-         SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
-       FROM usage_events
-       WHERE event_type = 'feedback' AND entry_id = ? AND source = 'user'`,
-    )
-    .get(entryId) as { pos: number | null; neg: number | null } | undefined;
-  return { pos: counts?.pos ?? 0, neg: counts?.neg ?? 0 };
+export function countFeedbackSignalsByRef(
+  db: Database,
+  refs: readonly string[],
+): Map<string, { pos: number; neg: number }> {
+  const counts = new Map<string, { pos: number; neg: number }>();
+  for (let i = 0; i < refs.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = refs.slice(i, i + SQLITE_CHUNK_SIZE);
+    const rows = db
+      .prepare(
+        `SELECT u.entry_ref,
+           SUM(CASE WHEN u.signal = 'positive' THEN 1 ELSE 0 END) AS pos,
+           SUM(CASE WHEN u.signal = 'negative' AND NOT (
+             json_extract(u.metadata, '$.fix') IS NOT NULL AND EXISTS (
+               SELECT 1 FROM proposals p
+               WHERE p.ref = u.entry_ref AND p.source = 'feedback' AND p.status = 'accepted'
+                 AND julianday(p.created_at) >= julianday(u.created_at))
+           ) THEN 1 ELSE 0 END) AS neg
+         FROM usage_events u
+         WHERE u.event_type = 'feedback' AND u.source = 'user' AND u.entry_ref IN (${chunk.map(() => "?").join(",")})
+         GROUP BY u.entry_ref`,
+      )
+      .all(...chunk) as Array<{ entry_ref: string; pos: number; neg: number }>;
+    for (const row of rows) counts.set(row.entry_ref, { pos: row.pos, neg: row.neg });
+  }
+  return counts;
 }
 
 /**
@@ -160,7 +174,7 @@ export function countUsageEventsByType(db: Database, eventType: string): number 
 /**
  * Durable refs a user-attributed `search`, `curate` or `show` returned, or a
  * user `feedback` named, at or after `sinceIso`. Machine traffic (`improve`,
- * `task`, `audit`, `unknown`) is not demand, as in {@link countFeedbackSignals}.
+ * `task`, `audit`, `unknown`) is not demand, as in {@link countFeedbackSignalsByRef}.
  */
 export function listUsedEntryRefs(db: Database, sinceIso: string): string[] {
   const rows = db
@@ -211,4 +225,23 @@ export function purgeOldUsageEvents(db: Database, retentionDays: number): void {
   } catch {
     /* Table may not exist yet */
   }
+}
+
+/**
+ * Rewrite every `usage_events.entry_ref` naming `oldBundleId` to `newBundleId`
+ * (`akm bundle rename`). Search ranking counts feedback by `entry_ref`, so an
+ * event left under the old prefix stops counting for the renamed bundle's
+ * assets. `entry_id` is untouched: the rename keeps every entry's row id. A
+ * legacy unqualified ref is not matched by the `<old>//` prefix and is left alone.
+ * Returns the number of rows rewritten.
+ */
+export function renameUsageEventRefs(db: Database, oldBundleId: string, newBundleId: string): number {
+  const prefix = `${oldBundleId}//`;
+  return Number(
+    db
+      .prepare(
+        `UPDATE usage_events SET entry_ref = ? || substr(entry_ref, length(?) + 1) WHERE substr(entry_ref, 1, length(?)) = ?`,
+      )
+      .run(newBundleId, oldBundleId, prefix, prefix).changes,
+  );
 }

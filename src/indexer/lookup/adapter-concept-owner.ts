@@ -5,17 +5,22 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { AdapterReadCandidate, BundleAdapter } from "../../core/adapter/bundle-adapter";
+import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
 import type { BundleComponent } from "../../core/adapter/types";
-import { compareCodePoints, hasErrnoCode, isWithin } from "../../core/common";
+import type { BundleRef } from "../../core/asset/asset-ref";
+import { compareCodePoints, hasErrnoCode } from "../../core/common";
 import { ConfigError, UsageError } from "../../core/errors";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
+import { sensitiveMarkerPath } from "../../core/sensitive-marker-path";
 import { warnOnce } from "../../core/warn";
 import {
   resolveUniqueWorkflowSource,
   type WorkflowSourceFile,
   workflowNameForConceptId,
 } from "../../workflows/source-files";
+import { deriveInstallations } from "../installations";
+import type { SearchSource } from "../search/search-source";
 import { buildFileContext, type FileContext } from "../walk/file-context";
 
 const CONTENT_READ_REQUIRED = Symbol("adapter ownership probe requires content");
@@ -68,23 +73,16 @@ function lexicallyWithin(candidate: string, root: string): boolean {
 }
 
 /** Add case-only suffix spellings beside an adapter-authored read candidate. */
-function candidateSpellings(
-  candidate: AdapterReadCandidate,
-  sourcePath: string,
-  realRoot: string,
-): AdapterReadCandidate[] {
+function candidateSpellings(candidate: AdapterReadCandidate, sourcePath: string): AdapterReadCandidate[] {
   const authored = path.resolve(candidate.path);
   if (!lexicallyWithin(authored, sourcePath)) return [{ ...candidate, path: authored }];
   const parent = path.dirname(authored);
-  let realParent: string;
   let entries: fs.Dirent[];
   try {
-    realParent = fs.realpathSync(parent);
     entries = fs.readdirSync(parent, { withFileTypes: true });
   } catch {
     return [{ ...candidate, path: authored }];
   }
-  if (!isWithin(realParent, realRoot)) return [{ ...candidate, path: authored }];
 
   const extension = path.extname(authored);
   if (!extension) return [{ ...candidate, path: authored }];
@@ -101,7 +99,6 @@ function candidateSpellings(
 
 function inspectCandidate(
   sourcePath: string,
-  realRoot: string,
   adapterId: string,
   candidate: AdapterReadCandidate,
 ): AdapterConceptOwner | undefined {
@@ -121,7 +118,6 @@ function inspectCandidate(
   } catch {
     return undefined;
   }
-  if (!isWithin(realPath, realRoot)) return undefined;
   try {
     if (!fs.statSync(realPath).isFile()) return undefined;
   } catch {
@@ -150,6 +146,19 @@ function claimsWithoutContent(adapter: BundleAdapter, component: BundleComponent
 
 export interface ResolveAdapterConceptOwnerOptions {
   mode?: "read" | "write";
+  /**
+   * Also own an env/secret file that a sibling `.sensitive` marker hides from
+   * the index. For resolving a file to run or inject; never for show or search.
+   */
+  includeSensitive?: boolean;
+}
+
+/** True for an env/secret file that a sibling `.sensitive` marker hides from the index. */
+function isMarkedSensitive(owner: AdapterConceptOwner): boolean {
+  const head = owner.conceptId.split("/")[0];
+  if (head !== "env" && head !== "secrets") return false;
+  const marker = sensitiveMarkerPath(owner.path, head === "env" ? "env" : "secret");
+  return marker !== owner.path && fs.existsSync(marker);
 }
 
 /**
@@ -168,9 +177,8 @@ export function resolveAdapterConceptOwner(
   const normalized = normalizedConceptId(conceptId);
   if (!adapter || !normalized) return undefined;
 
-  let realRoot: string;
   try {
-    realRoot = fs.realpathSync(sourcePath);
+    fs.realpathSync(sourcePath);
   } catch (error) {
     // Genuinely absent — "no owner" is correct. Any other failure (e.g.
     // EACCES) is not "doesn't exist"; treating it as such would report a
@@ -210,7 +218,7 @@ export function resolveAdapterConceptOwner(
   // `candidateSpellings` adds case-only siblings via one `readdirSync` of
   // each candidate's own parent directory.
   const spellings = (adapter.readCandidates?.(component, resolutionConceptId) ?? []).flatMap((candidate) =>
-    candidateSpellings(candidate, sourcePath, realRoot),
+    candidateSpellings(candidate, sourcePath),
   );
   const inspected = [
     ...new Map(
@@ -219,14 +227,19 @@ export function resolveAdapterConceptOwner(
   ]
     .sort((left, right) => compareCodePoints(left.path, right.path))
     .flatMap((candidate) => {
-      const owner = inspectCandidate(sourcePath, realRoot, adapterId, candidate);
+      const owner = inspectCandidate(sourcePath, adapterId, candidate);
       return owner ? [owner] : [];
     });
   for (const candidate of inspected) {
     if (candidate.conceptId !== resolutionConceptId) continue;
     const identity = `${path.resolve(candidate.path)}\0${candidate.conceptId}`;
     if (ownersByIdentity.has(identity)) continue;
-    if (claimsWithoutContent(adapter, component, candidate)) ownersByIdentity.set(identity, candidate);
+    if (
+      claimsWithoutContent(adapter, component, candidate) ||
+      (options?.includeSensitive && isMarkedSensitive(candidate))
+    ) {
+      ownersByIdentity.set(identity, candidate);
+    }
   }
   const owners = [...ownersByIdentity.values()]
     .filter((owner) => owner.conceptId === resolutionConceptId)
@@ -250,6 +263,38 @@ export function resolveAdapterConceptOwner(
     return winner;
   }
   return owners[0];
+}
+
+export interface ConceptOwnerMatch {
+  owner: AdapterConceptOwner;
+  /** The source that owns the file. */
+  source: SearchSource;
+  /** The owning bundle's id, derived over the whole ordered source list. */
+  bundleId: string;
+  adapterId: string;
+}
+
+/**
+ * The one "where is asset X right now?" walk. `sources` is the ordered source
+ * list (`resolveSourceEntries`: default bundle first, then installation
+ * priority). The first source with a physical owner for the ref ends the
+ * walk; a qualified ref only considers its own bundle. Synchronous and
+ * index-free: it never opens a database, so a caller may use it at dispatch.
+ */
+export function resolveConceptOwner(
+  ref: BundleRef,
+  sources: readonly SearchSource[],
+  options?: ResolveAdapterConceptOwnerOptions,
+): ConceptOwnerMatch | undefined {
+  const installations = deriveInstallations([...sources]);
+  for (const [index, source] of sources.entries()) {
+    const bundleId = installations[index]?.id;
+    if (!bundleId || (ref.bundle !== undefined && bundleId !== ref.bundle)) continue;
+    const adapterId = source.adapterId ?? detectAdapterId(source.path);
+    const owner = resolveAdapterConceptOwner(source.path, adapterId, ref.conceptId, options);
+    if (owner) return { owner, source, bundleId, adapterId };
+  }
+  return undefined;
 }
 
 export function indexedPathMatchesOwner(indexedPath: string, owner: AdapterConceptOwner): boolean {

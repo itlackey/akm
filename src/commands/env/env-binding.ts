@@ -10,26 +10,23 @@
  * REUSES the exact same machinery instead of forking it. Every safety
  * invariant carries over unchanged:
  *
- *   - `${secret:NAME}` tokens resolve against the env's own stash; a missing
- *     secret is a hard error and NOTHING is injected (no partial injection).
- *   - Known process-hijacking keys (LD_PRELOAD, PATH, …) are blocked for
- *     third-party-sourced stashes and warned about for first-party ones.
+ *   - `${ref}` tokens resolve through the one ref walk (a `secrets/` ref to the
+ *     secret's trimmed value, any other asset ref to its absolute path); a
+ *     missing ref is a hard error and NOTHING is injected (no partial injection).
  *   - An `env_access` audit event records key NAMES only, never values.
  *   - Resolved values must never be written to stdout or logs by callers.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { decideDangerousEnvInjection } from "../../core/activation-policy";
-import { assetPathForName } from "../../core/asset/asset-placement";
-import { isWithin } from "../../core/common";
-import { makeEnvRef, makeSecretRef, resolveEnvPath } from "../../core/env-secret-ref";
+import { isInstalledBundle, makeEnvRef, resolveEnvPath, resolveRefOwner } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { isThirdPartySource } from "../../indexer/search/search-source";
-import { isDangerousEnvKey } from "../lint/env-key-rules";
-import { loadEnv, resolveSecretTokens } from "./env";
-import { readValue } from "./secret";
+import { substituteRefTokens } from "../../core/ref-token";
+import { readValue } from "../../core/secret-value";
+import { warnOnce } from "../../core/warn";
+import { loadEnv } from "./env";
+
+/** The retired `${secret:NAME}` env-value token (see `resolveEnvBinding`). */
+const LEGACY_SECRET_TOKEN_RE = /\$\{secret:([^}\s]+)\}/g;
 
 export interface ResolvedEnvBinding {
   /** Canonical env ref (with origin when the source has one). */
@@ -38,6 +35,23 @@ export interface ResolvedEnvBinding {
   values: Record<string, string>;
   /** Key names, safe to log/audit. */
   keys: string[];
+  /** Every value substituted from a `secrets/` ref, for redaction. Configuration values are not listed. */
+  secretValues: string[];
+}
+
+/**
+ * What a `${ref}` token stands for: a `secrets/` ref yields the secret's
+ * trimmed value, any other asset ref its absolute path, a ref no bundle owns
+ * `undefined`. The one resolver behind env values and exec argv.
+ */
+export function resolveRefToken(
+  ref: string,
+): { kind: "secret"; value: string } | { kind: "path"; path: string } | undefined {
+  const owner = resolveRefOwner(ref);
+  if (owner === undefined) return undefined;
+  return owner.type === "secret"
+    ? { kind: "secret", value: readValue(owner.absPath) }
+    : { kind: "path", path: owner.absPath };
 }
 
 export interface ResolveEnvBindingOptions {
@@ -47,22 +61,17 @@ export interface ResolveEnvBindingOptions {
   except?: string[];
   /** Callback for non-fatal warnings (defaults to stderr). */
   warn?: (message: string) => void;
-  allowDangerousEnvKeys?: boolean;
 }
 
 /**
  * Resolve an env ref to its injectable values: load the file, apply key
- * filtering, substitute `${secret:NAME}` tokens from the sibling secrets
- * directory, enforce the dangerous-key policy, and append the keys-only
+ * filtering, substitute `${ref}` tokens, and append the keys-only
  * `env_access` audit event.
  */
 export function resolveEnvBinding(target: string, options: ResolveEnvBindingOptions = {}): ResolvedEnvBinding {
   const warn = options.warn ?? ((message: string) => process.stderr.write(`warning: ${message}\n`));
-  const { name, absPath, source } = resolveEnvPath(target);
+  const { name, absPath, source, bundleId } = resolveEnvPath(target);
   const envRef = makeEnvRef(name, source);
-  if (!fs.existsSync(absPath)) {
-    throw new NotFoundError(`Env not found: ${envRef}`);
-  }
 
   const allValues = loadEnv(absPath);
 
@@ -83,61 +92,47 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
     envValues = Object.fromEntries(Object.entries(allValues).filter(([k]) => !excluded.has(k)));
   }
 
-  // Substitute `${secret:NAME}` tokens with the sibling secret asset in the
-  // SAME stash. A missing secret is a hard error — inject NOTHING.
-  const secretsRoot = path.join(source.path, "secrets");
-  const resolveSecret = (secretName: string): string | undefined => {
-    const secretPath = assetPathForName("secret", secretsRoot, secretName);
-    // Defense-in-depth: ensure the resolved path stays inside the secrets dir.
-    if (!isWithin(secretPath, secretsRoot)) {
-      throw new UsageError(`Secret name "${secretName}" escapes the secrets directory.`);
-    }
-    if (!fs.existsSync(secretPath)) return undefined;
-    // Match `secret run`: read utf8, do not trim (stay consistent with that path).
-    return readValue(secretPath).toString("utf8");
-  };
-  const { values: substituted, missing } = resolveSecretTokens(envValues, resolveSecret);
+  // Read-compat: env files written for 0.9 / early 0.10 spell a secret
+  // `${secret:NAME}`, meaning `secrets/NAME` in this env asset's own bundle.
+  // Read it as the `${ref}` it stands for; the file is bundle content and is
+  // never rewritten.
+  let firstLegacy: string | undefined;
+  envValues = Object.fromEntries(
+    Object.entries(envValues).map(([key, value]) => [
+      key,
+      value.replace(LEGACY_SECRET_TOKEN_RE, (_token, secretName: string) => {
+        const spelling = `\${${bundleId}//secrets/${secretName}}`;
+        firstLegacy ??= spelling;
+        return spelling;
+      }),
+    ]),
+  );
+  if (firstLegacy !== undefined) {
+    warnOnce(
+      `legacy-secret-token:${envRef}`,
+      `Env "${envRef}" uses the retired \${secret:NAME} spelling; reading it as ${firstLegacy}. Write the full ref in the env file.`,
+    );
+  }
+
+  // Substitute `${ref}` tokens. A missing ref is a hard error — inject NOTHING.
+  const {
+    values: substituted,
+    missing,
+    secretValues,
+  } = substituteRefTokens(envValues, resolveRefToken, isInstalledBundle);
   if (missing.length > 0) {
     throw new NotFoundError(
-      `Env "${envRef}" references secret(s) not found in its stash: ${missing.map((n) => makeSecretRef(n)).join(", ")}. Nothing was injected.`,
+      `Env "${envRef}" references asset(s) that no bundle owns: ${missing.join(", ")}. Nothing was injected.`,
       "FILE_NOT_FOUND",
-      `Create the missing secret, e.g. \`akm secret set ${makeSecretRef(missing[0]!)}\`.`,
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
+      "Write each `${ref}` as a full akm ref that exists, e.g. `${secrets/name}` or `${team//scripts/run.sh}`.",
     );
   }
   envValues = substituted;
   const keys = Object.keys(envValues);
 
-  // Scan injected keys for known process-hijacking variables. The workspace
-  // activation policy decides block (a bundle installed from elsewhere) vs.
-  // warn (first-party stash, where the operator owns the file).
-  const dangerous = keys.filter(isDangerousEnvKey);
-  if (dangerous.length > 0) {
-    const detail = `Env "${envRef}" injects process-hijacking variable(s): ${dangerous.join(", ")}.`;
-    const thirdParty = isThirdPartySource(source);
-    const decision = decideDangerousEnvInjection({
-      dangerousKeys: dangerous,
-      thirdParty,
-      allowDangerousEnvKeys: options.allowDangerousEnvKeys,
-    });
-    if (decision === "block") {
-      throw new UsageError(
-        `Refusing to inject env from a third-party stash. ${detail}\n` +
-          `       Review the file, then copy the values into a first-party env if you trust them, ` +
-          `or pass --allow-dangerous-env-keys once you have.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    if (decision === "warn") {
-      warn(
-        options.allowDangerousEnvKeys && thirdParty
-          ? `${detail} Injecting anyway (--allow-dangerous-env-keys).`
-          : `${detail} Injecting anyway (first-party stash).`,
-      );
-    }
-  }
-
   // Audit trail: keys only, never values.
   appendEvent({ eventType: "env_access", ref: envRef, metadata: { keys } });
 
-  return { ref: envRef, values: envValues, keys };
+  return { ref: envRef, values: envValues, keys, secretValues };
 }

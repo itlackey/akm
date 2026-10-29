@@ -19,7 +19,6 @@ import {
 } from "../src/core/config/config";
 import { validateConfigShape } from "../src/core/config/config-schema";
 import { configSet } from "../src/core/config/config-walker";
-import { ConfigError } from "../src/core/errors";
 import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 
@@ -84,190 +83,101 @@ describe("0.9 config contract", () => {
     expect(normalizeConfigFile(getConfigPath(), { apply: false }).changed).toBe(false);
   });
 
-  test("loads a config with retired profile vocabulary and a literal engine apiKey, using both as configured", () => {
+  test("loads a config with retired profile vocabulary and a literal connection apiKey, never reading the key", () => {
     writeConfig({
       configVersion: "0.9.0" as const,
       profiles: { llm: {} },
-      engines: {
-        fast: {
-          kind: "llm",
-          endpoint: "https://example.test/v1/chat/completions",
-          model: "test",
-          apiKey: "not-symbolic",
-        },
+      connections: {
+        fast: { endpoint: "https://example.test/v1", models: { fast: "test" }, apiKey: "not-symbolic" },
       },
     });
-    const config = loadUserConfig();
-    expect(config.engines?.fast?.apiKey).toBe("not-symbolic");
+    const warnings = captureWarnings(() => {
+      expect(loadUserConfig().connections?.fast?.apiKey).toBe("not-symbolic");
+    });
+    expect(warnings.some((w) => w.includes("Unknown config key") && w.includes("profiles"))).toBe(true);
+    expect(warnings.some((w) => w.includes("literal apiKey"))).toBe(true);
   });
 
-  test("accepts symbolic engine credentials and retains them on save", () => {
+  test("accepts a $VAR connection key and retains it on save", () => {
     const config = {
       configVersion: "0.9.0" as const,
       semanticSearchMode: "auto" as const,
-      engines: {
-        fast: {
-          kind: "llm" as const,
-          endpoint: "https://example.test/v1/chat/completions",
-          model: "test",
-          apiKey: `\${FAST_API_KEY}`,
-        },
+      connections: {
+        fast: { endpoint: "https://example.test/v1", models: { fast: "test" }, apiKey: `\${FAST_API_KEY}` },
       },
-      defaults: { llmEngine: "fast" },
     };
     saveConfig(config);
-    expect(loadUserConfig().engines?.fast?.apiKey).toBe(`\${FAST_API_KEY}`);
+    expect(loadUserConfig().connections?.fast?.apiKey).toBe(`\${FAST_API_KEY}`);
   });
 
-  test("accepts first-class reasoningEffort on an LLM engine", () => {
-    const config = {
-      configVersion: "0.9.0" as const,
-      semanticSearchMode: "auto" as const,
-      engines: {
-        fast: {
-          kind: "llm" as const,
-          endpoint: "https://example.test/v1/chat/completions",
-          model: "fast-model",
-          reasoningEffort: "none",
-        },
+  test("accepts a ${ref} git credential without the literal-key warning", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      bundles: { private: { git: "https://git.example.com/private/repo.git", credential: "${team//secrets/gitea}" } },
+    });
+    const warnings = captureWarnings(() => {
+      const config = loadUserConfig();
+      expect(config.bundles?.private?.credential).toBe("${team//secrets/gitea}");
+    });
+    expect(warnings).toEqual([]);
+  });
+
+  test("secret://<name> is retired: read as ${secrets/<name>} with one warning per key, rewritten only by akm migrate apply", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      bundles: {
+        private: { git: "https://git.example.com/private/repo.git", credential: "secret://team//secrets/gitea" },
+        other: { git: "https://git.example.com/other/repo.git", credential: "secret://other-key" },
       },
-      defaults: { llmEngine: "fast" },
-    };
-    expect(validateConfigShape(config).ok).toBe(true);
+    });
+
+    const warnings = captureWarnings(() => {
+      const config = loadUserConfig();
+      expect(config.bundles?.private?.credential).toBe("${team//secrets/gitea}");
+      expect(config.bundles?.other?.credential).toBe("${secrets/other-key}");
+      loadUserConfig();
+    });
+    const named = warnings.filter((w) => w.includes("secret://"));
+    expect(named).toHaveLength(2);
+    expect(named.some((w) => w.includes("bundles.private.credential"))).toBe(true);
+    expect(named.some((w) => w.includes("bundles.other.credential"))).toBe(true);
+
+    // Reading never rewrites the file.
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toContain("secret://other-key");
+
+    const preview = normalizeConfigFile(getConfigPath(), { apply: false });
+    expect(preview).toMatchObject({ changed: true, applied: false });
+    expect(preview.keys).toEqual(expect.arrayContaining(["bundles"]));
+
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    const onDisk = fs.readFileSync(getConfigPath(), "utf8");
+    expect(onDisk).not.toContain("secret://");
+    expect(JSON.parse(onDisk).bundles.private.credential).toBe("${team//secrets/gitea}");
+    expect(JSON.parse(onDisk).bundles.other.credential).toBe("${secrets/other-key}");
+    expect(normalizeConfigFile(getConfigPath(), { apply: false }).changed).toBe(false);
+  });
+
+  test("an improve process or judgment may name a connection or harness that is not configured: it is resolved when used", () => {
     expect(
       validateConfigShape({
-        ...config,
-        engines: { fast: { ...config.engines.fast, reasoningEffort: "" } },
+        configVersion: "0.9.0",
+        improve: {
+          strategies: {
+            custom: {
+              processes: { reflect: { connection: "missing" }, triage: { judgment: { harness: "missing" } } },
+            },
+          },
+        },
       }).ok,
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  test("workflow.judgeEngine accepts named LLM or agent engines and rejects unknown names", () => {
-    const engines = {
-      fast: { kind: "llm" as const, endpoint: "https://example.test/v1/chat/completions", model: "fast-model" },
-      reviewer: { kind: "agent" as const, platform: "codex" as const },
-    };
-    expect(validateConfigShape({ configVersion: "0.9.0", engines, workflow: { judgeEngine: "fast" } }).ok).toBe(true);
-    expect(validateConfigShape({ configVersion: "0.9.0", engines, workflow: { judgeEngine: "reviewer" } }).ok).toBe(
-      true,
-    );
-    const invalid = validateConfigShape({
-      configVersion: "0.9.0",
-      engines,
-      workflow: { judgeEngine: "missing" },
+  test("permits only $VAR connection apiKey values through config set", () => {
+    const current = { configVersion: "0.9.0", connections: { fast: { endpoint: "https://example.test/v1" } } };
+    expect(configSet(current, "connections.fast.apiKey", "$FAST_API_KEY")).toMatchObject({
+      connections: { fast: { apiKey: "$FAST_API_KEY" } },
     });
-    expect(invalid.ok).toBe(false);
-    if (!invalid.ok) expect(invalid.errors).toContainEqual(expect.objectContaining({ path: "workflow.judgeEngine" }));
-  });
-
-  test("permits only symbolic engine apiKey values through config set", () => {
-    const current = {
-      configVersion: "0.9.0",
-      engines: {
-        fast: {
-          kind: "llm",
-          endpoint: "https://example.test/v1/chat/completions",
-          model: "test",
-        },
-      },
-    };
-    expect(configSet(current, "engines.fast.apiKey", "$FAST_API_KEY")).toMatchObject({
-      engines: { fast: { apiKey: "$FAST_API_KEY" } },
-    });
-    expect(() => configSet(current, "engines.fast.apiKey", "literal-secret")).toThrow();
-  });
-
-  test("rejects protected and credential-shaped extraParams keys", () => {
-    writeConfig({
-      configVersion: "0.9.0",
-      engines: {
-        fast: {
-          kind: "llm",
-          endpoint: "https://example.test/v1/chat/completions",
-          model: "test",
-          extraParams: { nested: { "API-Key": "leak" } },
-        },
-      },
-    });
-    expect(() => loadUserConfig()).toThrow(ConfigError);
-  });
-
-  test("rejects normalized protected top-level keys and secret keys inside arrays", () => {
-    writeConfig({
-      configVersion: "0.9.0",
-      engines: {
-        fast: {
-          kind: "llm",
-          endpoint: "https://example.test/v1/chat/completions",
-          model: "test",
-          extraParams: { "Response-Format": {}, provider: [{ auth: [{ API_KEY: "leak" }] }] },
-        },
-      },
-    });
-    expect(() => loadUserConfig()).toThrow(ConfigError);
-  });
-
-  test("rejects chat_template_kwargs overrides", () => {
-    writeConfig({
-      configVersion: "0.9.0",
-      engines: {
-        fast: {
-          kind: "llm",
-          endpoint: "https://example.test/v1/chat/completions",
-          model: "test",
-          extraParams: { chat_template_kwargs: { enable_thinking: true } },
-        },
-      },
-    });
-    expect(() => loadUserConfig()).toThrow(ConfigError);
-  });
-
-  // #852 (following #815): `extraParams.reasoning_effort` was the documented
-  // 0.9.1 workaround for LM Studio, where `enableThinking` is a no-op.
-  // `reasoningEffort` became a first-class — and therefore protected — field
-  // in 0.9.2. AGENTS.md cites this exact guard as already fixed to
-  // warn-and-auto-lift; loads onto the first-class field in memory, warning
-  // once and naming `akm migrate apply` as the way to persist it.
-  test("loads a legacy reasoning_effort extraParams override by lifting it, naming akm migrate apply in the warning", () => {
-    writeConfig({
-      configVersion: "0.9.0",
-      engines: {
-        fast: {
-          kind: "llm",
-          endpoint: "https://example.test/v1/chat/completions",
-          model: "test",
-          extraParams: { reasoning_effort: "high" },
-        },
-      },
-    });
-    const warnings: string[] = [];
-    _resetWarnOnceForTests();
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-    try {
-      const config = loadUserConfig();
-      expect(config.engines?.fast?.reasoningEffort).toBe("high");
-      expect(warnings.some((w) => w.includes("akm migrate apply"))).toBe(true);
-    } finally {
-      _setWarnSinkForTests(undefined);
-    }
-  });
-
-  test("rejects a reasoning_effort extraParams override that conflicts with a different first-class reasoningEffort", () => {
-    writeConfig({
-      configVersion: "0.9.0",
-      engines: {
-        fast: {
-          kind: "llm",
-          endpoint: "https://example.test/v1/chat/completions",
-          model: "test",
-          reasoningEffort: "none",
-          extraParams: { reasoning_effort: "high" },
-        },
-      },
-    });
-    expect(() => loadUserConfig()).toThrow(ConfigError);
+    expect(() => configSet(current, "connections.fast.apiKey", "literal-secret")).toThrow();
   });
 
   test("tolerates retired improve process selectors like any unknown key", () => {
@@ -341,46 +251,12 @@ describe("0.9 config contract", () => {
     expect(afterApply.limit).toBe(7); // the still-valid key is untouched
   });
 
-  test("rejects an improve process that selects a missing or incompatible engine", () => {
-    writeConfig({
-      configVersion: "0.9.0",
-      engines: { reviewer: { kind: "agent", platform: "pi" } },
-      improve: { strategies: { default: { processes: { reflect: { engine: "reviewer" } } } } },
-    });
-    expect(() => loadUserConfig()).toThrow(ConfigError);
-  });
-
-  test("cross-validates default strategies, strategy engines, and nested judgment engines", () => {
-    const base = {
-      configVersion: "0.9.0",
-      engines: {
-        llm: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "test" },
-        agent: { kind: "agent", platform: "pi" },
-        confined: { kind: "agent", platform: "claude" },
-      },
-    };
-    expect(validateConfigShape({ ...base, defaults: { improveStrategy: "missing" } }).ok).toBe(false);
-    expect(validateConfigShape({ ...base, defaults: { improveStrategy: "quick" } }).ok).toBe(true);
-    expect(validateConfigShape({ ...base, improve: { strategies: { custom: { engine: "agent" } } } }).ok).toBe(false);
-    // A triage judgment is unattended model work: an agent that cannot confine the policy is refused.
-    expect(
-      validateConfigShape({
-        ...base,
-        improve: { strategies: { custom: { processes: { triage: { judgment: { engine: "agent" } } } } } },
-      }).ok,
-    ).toBe(false);
-    expect(
-      validateConfigShape({
-        ...base,
-        improve: { strategies: { custom: { processes: { triage: { judgment: { engine: "confined" } } } } } },
-      }).ok,
-    ).toBe(true);
-    expect(
-      validateConfigShape({
-        ...base,
-        improve: { strategies: { custom: { processes: { triage: { judgment: { engine: "llm" } } } } } },
-      }).ok,
-    ).toBe(true);
+  test("validates improve.strategy against the built-in and configured strategies", () => {
+    const base = { configVersion: "0.9.0" };
+    expect(validateConfigShape({ ...base, improve: { strategy: "missing" } }).ok).toBe(false);
+    expect(validateConfigShape({ ...base, improve: { strategy: "consolidate" } }).ok).toBe(true);
+    // Removed in 0.10 (#1130): config load must not fail; resolution refuses it, naming `default`.
+    expect(validateConfigShape({ ...base, improve: { strategy: "thorough" } }).ok).toBe(true);
   });
 
   test("accepts a bundles + defaultBundle config (0.9.0 shape, spec §10.1 / D-R5)", () => {
@@ -444,15 +320,43 @@ describe("0.9 config contract", () => {
     );
   });
 
-  test("index.metadataEnhance is retired: a single warning, an ordinary write keeps it, only akm migrate apply drops it", () => {
+  test("old hint-only keys load and are named once by the unknown-key warning (#1091)", () => {
     writeConfig({
       configVersion: "0.9.0",
-      engines: { index: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "test" } },
-      index: { metadataEnhance: { enabled: true }, defaults: { engine: "index" } },
+      connections: { main: { endpoint: "https://example.test/v1", models: { fast: "test" } } },
+      llm: "x",
+      agent: "y",
+      index: {
+        stalenessDetection: { enabled: true },
+        memory: { connection: "main", endpoint: "https://example.test" },
+      },
+      improve: { strategies: { mine: { processes: { feedbackDistillation: { enabled: true } } } } },
     });
 
     const warnings = captureWarnings(() => {
-      expect(loadUserConfig().index?.defaults?.engine).toBe("index");
+      expect(loadUserConfig().connections?.main?.endpoint).toBe("https://example.test/v1");
+    });
+    for (const key of [
+      "llm",
+      "agent",
+      "index.stalenessDetection",
+      "index.memory.endpoint",
+      "improve.strategies.mine.processes.feedbackDistillation",
+    ]) {
+      const named = warnings.filter((w) => w.includes(`Unknown config key "${key}"`));
+      expect(named).toHaveLength(1);
+    }
+  });
+
+  test("index.metadataEnhance is retired: a single warning, an ordinary write keeps it, only akm migrate apply drops it", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      connections: { index: { endpoint: "https://example.test/v1", models: { fast: "test" } } },
+      index: { metadataEnhance: { enabled: true }, connection: "index" },
+    });
+
+    const warnings = captureWarnings(() => {
+      expect(loadUserConfig().index?.connection).toBe("index");
     });
     const named = warnings.filter((w) => w.includes("index.metadataEnhance"));
     expect(named).toHaveLength(1);
@@ -470,7 +374,7 @@ describe("0.9 config contract", () => {
     expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
     const afterMigrateApply = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
     expect(afterMigrateApply.index.metadataEnhance).toBeUndefined();
-    expect(afterMigrateApply.index.defaults).toEqual({ engine: "index" });
+    expect(afterMigrateApply.index.connection).toBe("index");
   });
 
   test("feedback.allowedFailureModes is retired: a config that sets it still loads with one warning, and only akm migrate apply drops it", () => {
@@ -490,6 +394,59 @@ describe("0.9 config contract", () => {
     expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).feedback).toEqual({ requireReason: false });
   });
 
+  test("the improve knobs removed in 0.10 (#1131, #1129) still load, with one warning apiece, and only akm migrate apply drops them", () => {
+    const removed = [
+      "improve.salience.outcomeWeightEnabled",
+      "improve.salience.salienceThreshold",
+      "improve.strategies.default.processes.consolidate.antiCollapse",
+      "improve.strategies.default.processes.consolidate.p90ChunkSecondsDefault",
+      "improve.strategies.default.processes.consolidate.minPoolSize",
+      "improve.strategies.default.processes.distill.fidelityCheck",
+      "improve.strategies.default.processes.reflect.lowValueFilter",
+    ];
+    writeConfig({
+      configVersion: "0.9.0",
+      improve: {
+        salience: { outcomeWeightEnabled: false, salienceThreshold: 0.8 },
+        strategies: {
+          default: {
+            processes: {
+              consolidate: {
+                antiCollapse: { enabled: false },
+                p90ChunkSecondsDefault: 10,
+                minPoolSize: 500,
+                limit: 7,
+              },
+              distill: { fidelityCheck: { enabled: true } },
+              reflect: { lowValueFilter: { enabled: true } },
+            },
+          },
+        },
+      },
+    });
+
+    const warnings = captureWarnings(() => {
+      const config = loadUserConfig();
+      expect(config.improve?.strategies?.default?.processes?.consolidate?.limit).toBe(7);
+    });
+    for (const dotted of removed) {
+      expect(warnings.filter((w) => w.includes(`"${dotted}"`))).toHaveLength(1);
+    }
+
+    // An ordinary write keeps them; only `akm migrate apply` drops them.
+    mutateConfig((current) => ({ ...current, archiveRetentionDays: 30 }));
+    const read = () => JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).improve;
+    expect(read().salience.outcomeWeightEnabled).toBe(false);
+    expect(read().strategies.default.processes.consolidate.minPoolSize).toBe(500);
+
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    const after = read();
+    expect(after.salience).toEqual({});
+    expect(after.strategies.default.processes.consolidate).toEqual({ limit: 7 });
+    expect(after.strategies.default.processes.distill).toEqual({});
+    expect(after.strategies.default.processes.reflect).toEqual({});
+  });
+
   test("rejects a bundle key that is not a legal slug and a non-source or multi-source entry", () => {
     // Illegal slug key (contains ':').
     expect(validateConfigShape({ configVersion: "0.9.0", bundles: { "github:owner/repo": { path: "/s" } } }).ok).toBe(
@@ -501,6 +458,21 @@ describe("0.9 config contract", () => {
     expect(
       validateConfigShape({ configVersion: "0.9.0", bundles: { a: { path: "/s", git: "https://x.test/y.git" } } }).ok,
     ).toBe(false);
+  });
+
+  test("a map key that breaks its naming rule is reported with that rule", () => {
+    const result = validateConfigShape({
+      configVersion: "0.9.0",
+      bundles: { "a:b": { path: "/s" } },
+      improve: { strategies: { Bad: {} } },
+    });
+    expect(result.errors).toEqual([
+      { path: "bundles.a:b", message: "bundle key must be a legal slug (no '/', ':', '.', '#', or whitespace)" },
+      {
+        path: "improve.strategies.Bad",
+        message: "names must be lowercase kebab-case and must not begin with reserved akm-",
+      },
+    ]);
   });
 
   test("resolveConfiguredSources consumes bundles: defaultBundle first, then map insertion order (D-R4/D-R5)", () => {
@@ -534,15 +506,6 @@ describe("0.9 config contract", () => {
 
   test("ignores a stray top-level bindings block instead of failing config load", () => {
     expect(validateConfigShape({ configVersion: "0.9.0", bindings: { release: { export: "a//x" } } }).ok).toBe(true);
-  });
-
-  test("rejects a per-engine model alias table (still meaningful on an engine, unlike the retired top-level table)", () => {
-    expect(
-      validateConfigShape({
-        configVersion: "0.9.0",
-        engines: { agent: { kind: "agent", platform: "pi", modelAliases: { fast: "model-a" } } },
-      }).ok,
-    ).toBe(false);
   });
 
   test("ignores the retired top-level modelAliases table instead of failing config load", () => {

@@ -4,35 +4,16 @@
 
 /**
  * Top-level `improve` config section (salience, state GC, strategies). Retired
- * keys (`salience.replayBudget`, `collapseDetector`, `utilityDecay`) are
+ * keys (`salience.replayBudget`, `salienceThreshold`, `collapseDetector`, `utilityDecay`) are
  * tolerated as unknown keys.
  */
 import { z } from "zod";
 import { ImproveProfileConfigSchema } from "./improve-processes";
-import { engineName, nonNegativeNumber } from "./primitives";
+import { engineName, LlmInvocationOverridesSchema, nonEmptyString, nonNegativeNumber, positiveInt } from "./primitives";
 
 // ── Improve top-level (event retention, salience, state GC) ────────────────
 
-const ImproveSalienceSchema = z
-  .object({
-    /**
-     * WS-2 Part-V gate: enable the outcome-weight term in the salience projection.
-     * Default TRUE/absent (DEFAULT ON since the G2 saturation cap landed — see
-     * salience.ts): uses the WS-2 weights (w_e=0.25, w_o=0.15, w_r=0.60) so the
-     * prediction-error outcome signal shapes rankScore (the R1 loop-closure).
-     * Set to `false` to opt out and restore the WS-1 parity weights
-     * (w_e=0.30, w_r=0.70, w_o=0); the `outcome` sub-score is still computed
-     * and stored for observability in that mode.
-     */
-    outcomeWeightEnabled: z.boolean().optional(),
-    /**
-     * Minimum encoding salience score [0, 1] for a zero-feedback asset to be
-     * admitted to the high-salience improve lane (#608).
-     * Default 0.75. Set to 1.0 to disable the lane entirely.
-     */
-    salienceThreshold: z.number().min(0).max(1).optional(),
-  })
-  .passthrough();
+const ImproveSalienceSchema = z.object({}).passthrough();
 
 // #733 — orphan-GC pass (Workstream C, lean by design: one config gate).
 // The pass ALWAYS runs and ALWAYS reports counts (via the `asset_state_gc`
@@ -51,8 +32,45 @@ const ImproveStateGcSchema = z
   })
   .passthrough();
 
+/**
+ * Where one improve call runs: a connection or a harness, the model (an alias or
+ * a name), inference settings and a timeout. Strategies say which processes run;
+ * this says where, whichever strategy is selected.
+ */
+export const ImproveWhereSchema = z
+  .object({
+    connection: nonEmptyString.optional(),
+    harness: nonEmptyString.optional(),
+    model: nonEmptyString.optional(),
+    llm: LlmInvocationOverridesSchema.optional(),
+    timeoutMs: z.union([positiveInt, z.null()]).optional(),
+  })
+  .passthrough();
+
+/** The improve processes that make a model call; `proactiveMaintenance` makes none, so it has no place to run. */
+const ImproveProcessesSchema = z
+  .object({
+    reflect: ImproveWhereSchema.optional(),
+    distill: ImproveWhereSchema.optional(),
+    consolidate: ImproveWhereSchema.optional(),
+    memoryInference: ImproveWhereSchema.optional(),
+    extract: ImproveWhereSchema.optional(),
+    validation: ImproveWhereSchema.optional(),
+    triage: ImproveWhereSchema.optional(),
+  })
+  .passthrough();
+
 export const ImproveConfigSchema = z
   .object({
+    /** The strategy `akm improve` runs when `--strategy` names none. */
+    strategy: engineName.optional(),
+    /** Where improve's model work runs: a connection, or a harness, over the default. */
+    connection: nonEmptyString.optional(),
+    harness: nonEmptyString.optional(),
+    /** Where each improve process runs, over `connection` / `harness` above. */
+    processes: ImproveProcessesSchema.optional(),
+    /** Where the judge of the reflect and distill quality gates runs, over `connection` / `harness` above (not over the process's own settings, which are the writer's). */
+    qualityGate: ImproveWhereSchema.optional(),
     strategies: z.record(engineName, ImproveProfileConfigSchema).optional(),
     eventRetentionDays: nonNegativeNumber.optional(),
     salience: ImproveSalienceSchema.optional(),

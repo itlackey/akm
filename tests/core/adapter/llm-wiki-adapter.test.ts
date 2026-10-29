@@ -7,7 +7,7 @@
  *
  * Drives the adapter over the authored SPECIFICATION fixture
  * `tests/fixtures/bundles/llm-wiki/` and asserts the four authored goldens
- * (`tests/fixtures/format-family-goldens/llm-wiki/{recognition,placement,renderer,lint}.json`).
+ * (`tests/fixtures/format-family-goldens/llm-wiki/{recognition,renderer,lint}.json`).
  * The goldens are the oracle — the adapter is built to match them, not vice
  * versa. Each golden entry carries descriptive annotations (`derivation`,
  * `reason`, `citedBy`, `note`) that are NOT `IndexDocument` fields; the
@@ -95,32 +95,6 @@ describe("llm-wiki adapter — recognition golden", () => {
   test("a broken xref still resolves to a (nonexistent) target conceptId on links", () => {
     const orphan = recognizeRel("pages/orphan.md");
     expect(orphan?.links).toEqual(["pages/does-not-exist"]);
-  });
-});
-
-// ── placement golden ────────────────────────────────────────────────────────────
-
-describe("llm-wiki adapter — placement golden", () => {
-  const golden = loadGolden("placement");
-  const byType = golden.byType as Record<string, { conceptId: string; assetPath: string; name: string }>;
-
-  function relFromRoot(abs: string): string {
-    return path.relative(FIXTURE_ROOT, abs).split(path.sep).join("/");
-  }
-
-  for (const [typeKey, expected] of Object.entries(byType)) {
-    test(`placeNew(${typeKey}) → ${expected.assetPath}`, () => {
-      const abs = llmWikiAdapter.placeNew?.(component(), expected.conceptId);
-      expect(abs).toBeDefined();
-      expect(relFromRoot(abs as string)).toBe(expected.assetPath);
-      // name = the conceptId's last path segment (placement golden `name`).
-      expect(expected.conceptId.split("/").pop()).toBe(expected.name);
-    });
-  }
-
-  test("directoryList + looksLikeRoot are wired", () => {
-    expect(llmWikiAdapter.directoryList?.(component())).toEqual(["."]);
-    expect(llmWikiAdapter.looksLikeRoot?.(FIXTURE_ROOT)).toBe(true);
   });
 });
 

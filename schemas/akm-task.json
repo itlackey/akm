@@ -9,8 +9,7 @@
     "maxStringUtf8Bytes": 262144,
     "maxJsonDepth": 64,
     "maxJsonNodes": 10000,
-    "canonicalRefsRequireNfc": true,
-    "workingDirectoryRequiresWorkspaceRoot": true
+    "canonicalRefsRequireNfc": true
   },
   "type": "object",
   "required": ["version"],
@@ -55,8 +54,7 @@
     "working-directory": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 262144,
-      "pattern": "^(?![\\\\/])(?![A-Za-z]:[\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$))(?!.*[\\\\/]{2})(?!.*[\\\\/]$)[^\\u0000]+$"
+      "maxLength": 262144
     },
     "schedule": {
       "oneOf": [
@@ -70,6 +68,8 @@
       ]
     },
     "agent": { "$ref": "#/definitions/nullableSelector" },
+    "connection": { "$ref": "#/definitions/nullableSelector" },
+    "harness": { "$ref": "#/definitions/nullableSelector" },
     "engine": { "$ref": "#/definitions/nullableSelector" },
     "model": { "$ref": "#/definitions/nullableSelector" },
     "inference": {
@@ -196,7 +196,7 @@
       "additionalProperties": { "$ref": "#/definitions/jsonValue" }
     },
     "taskInputName": {
-      "description": "One `inputs:` declaration key. Matches the identifier pattern AND excludes every name `akm task run` reserves for its own flags (src/tasks/task-run-reserved-flags.ts's TASK_RUN_RESERVED_FLAG_NAMES — the union of TASK_RUN_VALUE_FLAGS, TASK_RUN_BOOLEAN_FLAGS, and TASK_RUN_SELF_DIAGNOSED_FLAGS) — declaring an input under one of these names is rejected at parse time (TASK_SOURCE_INVALID, parseInputDeclarations) because the CLI would always treat the flag as its own, never as this input's. `no-quiet`/`no-verbose` are citty's negations of the `quiet`/`verbose` booleans and are listed for completeness even though the identifier pattern already excludes any hyphenated name.",
+      "description": "One `inputs:` declaration key. Matches the identifier pattern AND excludes every name `akm task run` reserves for its own flags (src/tasks/task-run-reserved-flags.ts's TASK_RUN_RESERVED_FLAG_NAMES — the union of TASK_RUN_VALUE_FLAGS and TASK_RUN_BOOLEAN_FLAGS) — declaring an input under one of these names is rejected at parse time (TASK_SOURCE_INVALID, parseInputDeclarations) because the CLI would always treat the flag as its own, never as this input's. `no-quiet`/`no-verbose` are citty's negations of the `quiet`/`verbose` booleans and are listed for completeness even though the identifier pattern already excludes any hyphenated name.",
       "type": "string",
       "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
       "not": {
@@ -211,8 +211,7 @@
           "verbose",
           "help",
           "no-quiet",
-          "no-verbose",
-          "target"
+          "no-verbose"
         ]
       }
     },

@@ -23,8 +23,6 @@ const AKM_SKIP_DIRS = new Set(["node_modules", "bin", ".cache"]);
 export interface WalkStashFlatOptions {
   /** Let the owning adapter see every directory except VCS internals. */
   includeAllDirectories?: boolean;
-  /** Include workflow-file symlinks for the named native adapter without following symlink directories. */
-  workflowSymlinkAdapter?: "akm" | "akm-workflow";
 }
 
 export interface WalkStashFlatResult {
@@ -165,13 +163,11 @@ function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkSta
   for (const relFile of files) {
     const absPath = path.join(stashRoot, relFile);
     try {
-      // lstat, not stat: a tracked symlink must not be dereferenced. statSync
-      // follows the link, so a target outside stashRoot would be read and
-      // indexed. The manual walk below already skips symlinks for exactly this
-      // reason; the two walkers have to agree regardless of whether the stash
-      // happens to sit inside a git repo.
+      // A file that is a symlink to a file anywhere is indexed like any other
+      // file: installing a bundle is the trust decision. git lists a symlinked
+      // directory as one entry, so directory symlinks are never descended.
       const stat = fs.lstatSync(absPath);
-      if (stat.isFile() || (stat.isSymbolicLink() && isOwnedWorkflowSymlink(stashRoot, absPath, options))) {
+      if (stat.isFile() || (stat.isSymbolicLink() && isFileOrFileSymlink(absPath))) {
         results.push(buildFileContext(stashRoot, absPath));
       }
     } catch {
@@ -237,7 +233,10 @@ export function walkMarkdownFiles(root: string): WalkMarkdownFilesResult {
 
     for (const entry of entries) {
       const full = path.join(current, entry.name);
-      if (entry.isSymbolicLink()) continue;
+      if (entry.isSymbolicLink()) {
+        if (entry.name.toLowerCase().endsWith(".md") && isFileOrFileSymlink(full)) files.push(full);
+        continue;
+      }
       if (entry.isDirectory()) {
         stack.push(full);
       } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
@@ -268,11 +267,9 @@ function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): Walk
       if (entry.name === ".stash.json") continue;
       const fullPath = path.join(current, entry.name);
       if (entry.isSymbolicLink()) {
-        // Native workflow components arbitrate file symlinks explicitly in the
-        // drain before reading them. Directory symlinks remain unfollowed.
-        if (isOwnedWorkflowSymlink(stashRoot, fullPath, options)) {
-          results.push(buildFileContext(stashRoot, fullPath));
-        }
+        // A file symlink is indexed like any other file; a directory symlink
+        // is never descended (no cycles).
+        if (isFileOrFileSymlink(fullPath)) results.push(buildFileContext(stashRoot, fullPath));
         continue;
       }
       if (entry.isDirectory()) {
@@ -291,12 +288,11 @@ function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): Walk
   return { files: results, complete };
 }
 
-function isOwnedWorkflowSymlink(stashRoot: string, candidatePath: string, options: WalkStashFlatOptions): boolean {
-  const adapterId = options.workflowSymlinkAdapter;
-  if (!adapterId) return false;
-  const relativePath = path.relative(path.resolve(stashRoot), path.resolve(candidatePath)).replaceAll("\\", "/");
-  if (!relativePath || relativePath.startsWith("../") || path.posix.isAbsolute(relativePath)) return false;
-  if (adapterId === "akm" && !relativePath.startsWith("workflows/")) return false;
-  const extension = path.posix.extname(relativePath).toLowerCase();
-  return (WORKFLOW_EXTENSIONS as readonly string[]).includes(extension);
+/** True for a regular file, or a symlink whose target is a regular file. */
+export function isFileOrFileSymlink(filePath: string): boolean {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
 }

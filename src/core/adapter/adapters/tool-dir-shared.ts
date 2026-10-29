@@ -6,24 +6,24 @@
  * Shared recognition / placement / validation for the two AGENT TOOL-DIRECTORY
  * adapters — `claude` (`.claude`) and `opencode` (`.opencode`) — akm 0.9.0
  * format-family work item (#46). Both translate a foreign tool layout into the
- * open AKM `type` vocabulary (spec §6/§7): a root instruction file
+ * open AKM `type` vocabulary: a root instruction file
  * (CLAUDE.md / AGENTS.md) → `instruction`, `commands/*.md` → `command`,
  * `agents/*.md` → `agent`, `skills/<name>/SKILL.md` → `skill` (item = the dir).
  * They differ only in two parameters carried on {@link ToolDirLayout}:
  *   - the instruction basename + its concept id,
  *   - the adapter id + component id.
  *
- * The SKILL.md codec is shared with the `agent-skills` adapter as functions
- * (spec §8): a skill's conceptId is its DIRECTORY, and its `name` is the
- * frontmatter `name` (== the dir name per the Agent Skills §4.5 hard rule).
+ * The SKILL.md codec is shared with the `agent-skills` adapter as functions:
+ * a skill's conceptId is its DIRECTORY, and its `name` is the
+ * frontmatter `name` (== the dir name per the Agent Skills hard rule).
  *
- * ── D-R6 (reserved files) ──
+ * ── reserved files ──
  *
  * `index.md` / `log.md` are OKF structural files at EVERY depth — never a
  * concept. `classify` excludes them up front so a stray `commands/index.md`
  * never becomes a `command` (mirrors okf/akm/llm-wiki `RESERVED_FILES`).
  *
- * ── validate leniency (spec §6 skill row) ──
+ * ── validate leniency ──
  *
  * The tool-dir adapters TOLERATE the tools' native frontmatter (argument-hint,
  * allowed-tools, tools, model, mode, temperature, agent, …) — the strict
@@ -49,11 +49,7 @@
  */
 
 import path from "node:path";
-import {
-  type AdapterOwnedExtensions,
-  type AdapterRenderedExecutionSource,
-  createAdapterExtensions,
-} from "../../../execution/source";
+import type { AdapterRenderedExecutionSource } from "../../../execution/source";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
@@ -166,27 +162,6 @@ export function recognizeToolDir(layout: ToolDirLayout, c: BundleComponent, file
   return doc;
 }
 
-/**
- * placeNew() for a tool-dir adapter (spec §7: "AKM workspace layout IS the tool
- * dir minus the prefix"). Writes NORMALIZE to the canonical plural subdir
- * (open-question-6): a `command/foo` concept still places at `commands/foo.md`.
- * The instruction file is fixed at the component root.
- */
-export function placeNewToolDir(layout: ToolDirLayout, c: BundleComponent, conceptId: string): string {
-  const posix = toPosix(conceptId);
-  if (posix === layout.instructionConceptId) return path.join(c.root, layout.instructionFile);
-
-  const segs = posix.split("/").filter((s) => s.length > 0);
-  const head = segs[0];
-  const rest = segs.slice(1).join("/");
-  if (rest.length > 0) {
-    if (layout.skillDirs.has(head!)) return path.join(c.root, CANONICAL_SKILL_DIR, rest, SKILL_MANIFEST);
-    if (layout.commandDirs.has(head!)) return path.join(c.root, CANONICAL_COMMAND_DIR, `${rest}.md`);
-    if (layout.agentDirs.has(head!)) return path.join(c.root, CANONICAL_AGENT_DIR, `${rest}.md`);
-  }
-  return path.join(c.root, `${posix}.md`);
-}
-
 /** List native read spellings. */
 export function readCandidatesToolDir(layout: ToolDirLayout, c: BundleComponent, conceptId: string) {
   const posix = toPosix(conceptId);
@@ -215,7 +190,7 @@ function nameOrSignalDiagnostics(
   body: string,
 ): Diagnostic[] {
   if (nonEmptyString(data.name) !== undefined || nonEmptyString(data.description) !== undefined) return [];
-  // command-shaped body/frontmatter signals (spec §6 command row): $ARGUMENTS / $1 / an `agent` frontmatter key.
+  // command-shaped body/frontmatter signals: $ARGUMENTS / $1 / an `agent` frontmatter key.
   if (
     type === "command" &&
     (/\$ARGUMENTS\b/.test(body) || /\$\d/.test(body) || nonEmptyString(data.agent) !== undefined)
@@ -266,25 +241,6 @@ export async function validateToolDir(
   return diagnostics;
 }
 
-function nativeExecutionExtensions(
-  layout: ToolDirLayout,
-  cls: ToolDirClassification,
-  data: Readonly<Record<string, unknown>>,
-): AdapterOwnedExtensions | undefined {
-  const values: Record<string, string> = {};
-  if (layout.adapterId === "claude" && cls.type === "command" && Object.hasOwn(data, "argument-hint")) {
-    if (typeof data["argument-hint"] !== "string") {
-      throw new TypeError("frontmatter.argument-hint must be a string");
-    }
-    values.argumentHint = data["argument-hint"];
-  }
-  if (layout.adapterId === "opencode" && Object.hasOwn(data, "mode")) {
-    if (typeof data.mode !== "string") throw new TypeError("frontmatter.mode must be a string");
-    values.mode = data.mode;
-  }
-  return Object.keys(values).length > 0 ? createAdapterExtensions(layout.adapterId, values) : undefined;
-}
-
 /** Translate a native Claude/OpenCode command or agent without exposing raw frontmatter. */
 export function renderToolDirExecutionSource(
   layout: ToolDirLayout,
@@ -306,9 +262,7 @@ export function renderToolDirExecutionSource(
     defaults: (data) =>
       executionDefaultsFromFrontmatter(data, {
         kind: cls.type === "command" ? "command" : "persona",
-        toolsKeys: layout.adapterId === "claude" && cls.type === "command" ? ["allowed-tools", "tools"] : ["tools"],
       }),
-    extensions: (data) => nativeExecutionExtensions(layout, cls, data),
   });
 }
 
@@ -322,7 +276,6 @@ export function makeToolDirAdapter(layout: ToolDirLayout, looksLikeRoot: (root: 
     renderExecutionSource: (c, file) => renderToolDirExecutionSource(layout, c, file),
     validate: (c, changes, ctx) => validateToolDir(layout, c, changes, ctx),
     readCandidates: (c, conceptId) => readCandidatesToolDir(layout, c, conceptId),
-    placeNew: (c, conceptId) => placeNewToolDir(layout, c, conceptId),
     directoryList: () => [CANONICAL_COMMAND_DIR, CANONICAL_AGENT_DIR, CANONICAL_SKILL_DIR],
     looksLikeRoot,
   };

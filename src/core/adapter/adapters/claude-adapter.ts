@@ -5,7 +5,7 @@
 /**
  * The `claude` tool-directory adapter — akm 0.9.0 format-family work item (#46).
  *
- * Recognizes a Claude Code `.claude` layout (spec §6/§7, real-world:
+ * Recognizes a Claude Code `.claude` layout (real-world:
  * https://code.claude.com/docs/en/claude-directory): a root `CLAUDE.md` →
  * `instruction`, `commands/*.md` → `command`, `agents/*.md` → `agent`,
  * `skills/<name>/SKILL.md` → `skill` (item = the dir; bundled resources abstain),
@@ -17,7 +17,7 @@
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/claude/` + goldens
- * `tests/fixtures/format-family-goldens/claude/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/claude/{recognition,lint,renderer}.json`.
  */
 
 import fs from "node:fs";

@@ -5,10 +5,15 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { stashDirFor } from "../../core/asset/asset-placement";
+import { isDeepStrictEqual } from "node:util";
+import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { adapterForId } from "../../core/adapter/registry";
+import { placementSpecFor, stashDirFor } from "../../core/asset/asset-placement";
 import { isBundleSlug } from "../../core/asset/asset-ref";
-import { displayRef, parseQualifiedRefInput } from "../../core/asset/resolve-ref";
-import { isWithin } from "../../core/common";
+import { serializeFrontmatter } from "../../core/asset/asset-serialize";
+import { parseFrontmatter, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
+import { conceptIdFromTypeName, displayRef, parseQualifiedRefInput } from "../../core/asset/resolve-ref";
+import { isWithin, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { defaultBundleForTarget } from "../../core/mutation-target";
@@ -21,10 +26,14 @@ import {
 } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
+import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import { buildFileContext } from "../../indexer/walk/file-context";
+import { isFileOrFileSymlink } from "../../indexer/walk/walker";
 import { isRemoteOrigin, resolveSourcesForLocator, resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
 import { resolveAssetPath } from "../../sources/resolve";
+import { inferAssetName } from "../read/knowledge";
 
 export interface CloneOptions {
   /** Source ref (e.g., npm:@scope/pkg//script:deploy.sh) */
@@ -124,11 +133,23 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     };
   }
 
+  // A ref whose conceptId is not under a known type directory (a flat skill
+  // repo, a website or wiki page) is opaque: its source and type come from the
+  // adapter that owns the concept, not from the shape of the ref.
+  const known = placementSpecFor(parsed.type) !== undefined;
   let sourcePath: string | undefined;
+  let opaqueType: string | undefined;
   let lastError: Error | undefined;
   for (const source of searchSources) {
     try {
-      sourcePath = await resolveAssetPath(source.path, parsed.type, parsed.name);
+      if (known) {
+        sourcePath = await resolveAssetPath(source.path, parsed.type, parsed.name);
+      } else {
+        const owned = resolveOpaqueAsset(source, parsed.name);
+        if (!owned) throw new NotFoundError(`Source asset not found for ref: ${options.sourceRef}`, "ASSET_NOT_FOUND");
+        sourcePath = owned.path;
+        opaqueType = owned.type;
+      }
       break;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -147,8 +168,20 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
 
   const sourceSource = findSourceForPath(sourcePath, allSources);
 
-  const destName = options.newName ?? parsed.name;
-  const typeDir = stashDirFor(parsed.type) as string;
+  // Where the clone lands: a known-type ref keeps its type and name; an opaque
+  // one is placed by what the source file is.
+  const sourceExt = path.extname(sourcePath);
+  const cloneType = known ? parsed.type : placementTypeForOpaque(options.sourceRef, sourcePath, opaqueType);
+  const defaultName = known ? parsed.name : slugName(parsed.name);
+  const destName = options.newName ?? defaultName;
+  const typeDir = stashDirFor(cloneType) as string;
+  // A ref's name often omits its extension (`knowledge/<name>` names `<name>.md`), and an opaque one is a slug:
+  // either way the copy keeps the source file's extension, or it would be written as a file the index ignores.
+  const destFileName = path.extname(destName) ? destName : destName + sourceExt;
+  const isSkill = cloneType === "skill";
+  // A concept id is the path without its markdown extension.
+  const originConceptId = (known ? conceptIdFromTypeName(parsed.type, parsed.name) : parsed.name).replace(/\.md$/i, "");
+  const originRef = sourceSource?.registryId ? `${sourceSource.registryId}//${originConceptId}` : undefined;
 
   // Validate destName to prevent path traversal (parsed.name is already
   // validated by the ref parser, but newName comes directly from user input).
@@ -183,18 +216,19 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       ? `in target "${writeTarget.selector}"`
       : "in working stash";
 
-  // Guard against self-clone
-  if (parsed.type === "skill") {
-    const sourceSkillDir = path.resolve(path.dirname(sourcePath));
-    const destSkillDir = path.resolve(path.join(destRoot, typeDir, destName));
+  // Guard against self-clone. Compare physical paths: sourcePath is the
+  // authored path, and a source that is a symlink to the destination is the
+  // same file (or skill) even though the authored paths differ.
+  if (isSkill) {
+    const sourceSkillDir = safeRealpath(path.dirname(sourcePath));
+    const destSkillDir = safeRealpath(path.join(destRoot, typeDir, destName));
     if (sourceSkillDir === destSkillDir) {
       throw new Error(`Source and destination are the same path. Use --name to provide a new name for the clone.`);
     }
   } else {
-    const resolvedSource = path.resolve(sourcePath);
-    const sourceExt = path.extname(sourcePath);
-    const effectiveDestName = !path.extname(destName) && sourceExt ? destName + sourceExt : destName;
-    const resolvedDest = path.resolve(path.join(destRoot, typeDir, effectiveDestName));
+    const resolvedSource = safeRealpath(sourcePath);
+    const effectiveDestName = !path.extname(destFileName) && sourceExt ? destFileName + sourceExt : destFileName;
+    const resolvedDest = safeRealpath(path.join(destRoot, typeDir, effectiveDestName));
     if (resolvedSource === resolvedDest) {
       throw new Error(`Source and destination are the same path. Use --name to provide a new name for the clone.`);
     }
@@ -204,8 +238,10 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     let destPath: string;
     let overwritten: boolean;
     let operationPaths: string[];
-    if (parsed.type === "skill") {
-      const sourceSkillDir = path.dirname(sourcePath);
+    if (isSkill) {
+      // sourcePath is the authored path; a symlinked skill directory must be
+      // copied by content, never as the link.
+      const sourceSkillDir = fs.realpathSync(path.dirname(sourcePath));
       const destSkillDir = path.join(destRoot, typeDir, destName);
       assertNoDestinationSymlinkParent(destRoot, destSkillDir);
       const existing = lstatIfExists(destSkillDir);
@@ -223,7 +259,12 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       // final symlink is removed as an entry, never traversed.
       const stagingDir = `${destSkillDir}.tmp-${randomUUID()}`;
       try {
+        // Directory links are copied as links and never descended (as the walker
+        // does); each file link is then replaced by its content, so the stamp
+        // below never writes through a link.
         fs.cpSync(sourceSkillDir, stagingDir, { recursive: true, errorOnExist: true, force: false });
+        materializeFileLinks(stagingDir);
+        stampCloneOrigin(path.join(stagingDir, "SKILL.md"), originRef);
         if (overwritten) fs.rmSync(destSkillDir, { recursive: true, force: true });
         fs.renameSync(stagingDir, destSkillDir);
       } catch (err) {
@@ -234,7 +275,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       destPath = path.join(destSkillDir, "SKILL.md");
       operationPaths = [...new Set([...replacedPaths, ...listTreeFiles(destSkillDir)])];
     } else {
-      destPath = path.join(destRoot, typeDir, destName);
+      destPath = path.join(destRoot, typeDir, destFileName);
       assertNoDestinationSymlinkParent(destRoot, destPath);
       const existing = lstatIfExists(destPath);
       overwritten = existing !== undefined;
@@ -250,6 +291,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       const stagingPath = `${destPath}.tmp-${randomUUID()}`;
       try {
         fs.copyFileSync(sourcePath, stagingPath, fs.constants.COPYFILE_EXCL);
+        if (cloneType !== "workflow" && sourceExt.toLowerCase() === ".md") stampCloneOrigin(stagingPath, originRef);
         if (overwritten) fs.rmSync(destPath, { recursive: true, force: true });
         fs.renameSync(stagingPath, destPath);
       } catch (err) {
@@ -259,7 +301,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       operationPaths = [destPath];
     }
 
-    const ref = destinationRef(config, writeTarget, parsed.type, destName);
+    const ref = destinationRef(config, writeTarget, cloneType, destName);
 
     if (writeTarget) {
       const commitRoot = writeTarget.source.repoPath ?? writeTarget.source.path;
@@ -279,6 +321,79 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       ...(remoteFetched ? { remoteFetched } : {}),
     };
   });
+}
+
+/**
+ * Find an opaque concept (one whose id is not under a known type directory) in
+ * a source through the adapter that owns it, and name the type that adapter
+ * recognizes the file as. The same ownership + recognition `akm show` and the
+ * index use, so a clone sees exactly the file the index holds for the ref.
+ */
+function resolveOpaqueAsset(source: SearchSource, conceptId: string): { path: string; type?: string } | undefined {
+  const adapterId = source.adapterId ?? detectAdapterId(source.path);
+  const owner = resolveAdapterConceptOwner(source.path, adapterId, conceptId, { mode: "read" });
+  if (!owner) return undefined;
+  let type: string | undefined;
+  try {
+    const component = { id: adapterId, adapter: adapterId, root: source.path, writable: false };
+    type = adapterForId(adapterId)?.recognize(component, buildFileContext(source.path, owner.path))?.type;
+  } catch {
+    // An adapter that cannot recognize the file leaves its type unknown.
+  }
+  return { path: owner.realPath, type };
+}
+
+/**
+ * Where an opaque asset is cloned: a skill (SKILL.md) as a directory under
+ * `skills/`, any other recognized placement type under its own directory, and
+ * markdown of an unknown type (a website or wiki page, a flat doc) as
+ * `knowledge/`. Anything else cannot be placed.
+ */
+function placementTypeForOpaque(sourceRef: string, sourcePath: string, indexedType: string | undefined): string {
+  if (indexedType === "skill" && path.basename(sourcePath) === "SKILL.md") return "skill";
+  if (indexedType !== undefined && indexedType !== "skill" && placementSpecFor(indexedType) !== undefined) {
+    return indexedType;
+  }
+  if (path.extname(sourcePath).toLowerCase() === ".md") return "knowledge";
+  throw new UsageError(
+    `cannot clone ${sourceRef}: its type${indexedType ? ` "${indexedType}"` : ""} has no place in a bundle and ` +
+      `${path.basename(sourcePath)} is not markdown; use \`akm import <path>\` or copy the file.`,
+  );
+}
+
+/** Clone name of an opaque asset: the last segment of its concept id, slugified like every other asset name. */
+function slugName(conceptId: string): string {
+  const last = conceptId.split("/").pop() ?? conceptId;
+  const stem = last.replace(/\.[A-Za-z0-9]{1,5}$/, "");
+  return inferAssetName("", "clone", stem);
+}
+
+/**
+ * Record where a cloned markdown asset came from by merging the origin ref into
+ * its `sources:` frontmatter. `sources:` is free-form provenance that `akm lint` does
+ * not resolve, unlike `xrefs:`: the origin bundle is often not installed where the
+ * clone is read (a shared domain bundle), and an `xrefs:` entry would be reported as
+ * a missing ref there. Only the `sources` block is rewritten; every other
+ * byte stays as written. A file whose frontmatter cannot be edited that way
+ * (and still parse back to exactly the intended mapping) is left untouched.
+ */
+function stampCloneOrigin(filePath: string, originRef: string | undefined): void {
+  if (!originRef) return;
+  const raw = fs.readFileSync(filePath, "utf8");
+  const parsed = parseFrontmatter(raw);
+  const existing = parsed.data.sources;
+  const prior = Array.isArray(existing) ? existing : typeof existing === "string" ? [existing] : [];
+  if (existing !== undefined && prior.length === 0) return;
+  if (prior.includes(originRef)) return;
+  const sources = [...prior, originRef];
+  let next: string | null;
+  if (parsed.frontmatter === null) {
+    next = `---\n${serializeFrontmatter({ sources })}\n---\n${raw}`;
+  } else {
+    next = replaceFrontmatterBlocks(raw, ["sources"], serializeFrontmatter({ sources }).split("\n"));
+    if (next === null || !isDeepStrictEqual(parseFrontmatter(next).data, { ...parsed.data, sources })) return;
+  }
+  fs.writeFileSync(filePath, next);
 }
 
 function lstatIfExists(filePath: string): fs.Stats | undefined {
@@ -304,6 +419,21 @@ function assertNoDestinationSymlinkParent(root: string, destination: string): vo
       `Clone destination has a symbolic-link parent outside the selected target boundary: ${parentDir}.`,
       "PATH_ESCAPE_VIOLATION",
     );
+  }
+}
+
+/** Replace each file symlink under `root` with a regular file holding its target's bytes. Directory links are left as links. */
+function materializeFileLinks(root: string): void {
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      materializeFileLinks(entryPath);
+    } else if (entry.isSymbolicLink() && isFileOrFileSymlink(entryPath)) {
+      const content = fs.readFileSync(entryPath);
+      const { mode } = fs.statSync(entryPath);
+      fs.rmSync(entryPath);
+      fs.writeFileSync(entryPath, content, { mode });
+    }
   }
 }
 

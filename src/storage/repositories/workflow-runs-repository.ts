@@ -165,7 +165,6 @@ export interface ReserveUnitAttemptV4Input {
   engine: string | null;
   model: string | null;
   inputHash: string;
-  worktreePath?: string | null;
   now: string;
 }
 
@@ -211,8 +210,6 @@ function dispatchingProcess(): string {
 export interface InsertRunInput {
   id: string;
   workflowRef: string;
-  scopeKey: string | null;
-  workflowEntryId: number | null;
   workflowTitle: string;
   paramsJson: string;
   currentStepId: string | null;
@@ -234,8 +231,6 @@ export interface InsertStepInput {
 
 /** Complete publication envelope for a fresh run. */
 export interface PublishWorkflowRunV4Input {
-  readonly workflowRefs: readonly string[];
-  readonly force?: boolean;
   readonly run: InsertRunInput;
   readonly steps: InsertStepInput[];
   readonly planJson: string;
@@ -243,10 +238,9 @@ export interface PublishWorkflowRunV4Input {
 }
 
 /**
- * Publication envelope for a child workflow run (migration 023). Unlike
- * {@link PublishWorkflowRunV4Input} it carries no `workflowRefs`/`force`: the
- * child plan was frozen into the parent's plan, and a child run applies no
- * top-level scope-conflict rule of its own.
+ * Publication envelope for a child workflow run (migration 023). The child
+ * plan was frozen into the parent's plan, and the envelope also names the
+ * parent unit and spawn key.
  */
 export interface PublishChildWorkflowRunInput {
   readonly parentRunId: string;
@@ -263,8 +257,6 @@ export interface PublishChildWorkflowRunInput {
 
 /** Filter object for {@link WorkflowRunsRepository.listRuns}. */
 export interface ListRunsFilter {
-  /** `null` (#942, `akm workflow list --all-scopes`) omits the scope predicate — every scope. */
-  scopeKey: string | null;
   workflowRef?: string;
   workflowRefs?: readonly string[];
   /**
@@ -272,8 +264,7 @@ export interface ListRunsFilter {
    * executable). `blocked`/`failed`/`completed` runs are excluded — a `blocked`
    * run is parked awaiting a human `resume`, not executable, so it must not
    * surface under `--active`. It stays visible in an unfiltered `listRuns` with
-   * its own status. For the active-OR-blocked "who occupies this scope" query
-   * (the `akm show` guard) use {@link WorkflowRunsRepository.findActiveOrBlockedRunForScope}.
+   * its own status.
    */
   activeOnly?: boolean;
   /**
@@ -316,88 +307,10 @@ export class WorkflowRunsRepository {
 
   // ── reads (fully materialised) ─────────────────────────────────────────────
 
-  /**
-   * The top-level start guard `publishWorkflowRunV4` uses to refuse starting
-   * a SECOND active run of the same ref in the same scope. `AND
-   * parent_run_id IS NULL` (B-N10's FOURTH site, code-review round 4 finding
-   * 2 / Review log R2): a child run carries the PARENT's `scope_key` (P3a
-   * §5.2), so once a parent publishes a child of some ref, starting a
-   * TOP-LEVEL run of that same ref in that scope must never resolve to the
-   * child — the child is not "already an active run in this scope" from a
-   * fresh top-level invocation's point of view; the PARENT, if anything, is.
-   * Before this filter, `publishWorkflowRunV4` refused with
-   * `RESOURCE_ALREADY_EXISTS` naming the CHILD's own run id, instructing the
-   * operator to `akm workflow abandon` a child a parent is actively driving.
-   * For any database with no child rows the result is byte-identical, same
-   * as the other three B-N10 sites below.
-   *
-   * Always scope-local: `scopeKey` is a real scope, never "every scope" — see
-   * {@link findActiveRunOutsideScope} for the cross-scope warning's query.
-   */
-  findActiveRunForScope(
-    workflowRefs: string | readonly string[],
-    scopeKey: string,
-  ): { id: string; current_step_id: string | null } | undefined {
-    const refs = typeof workflowRefs === "string" ? [workflowRefs] : [...workflowRefs];
-    if (refs.length === 0) return undefined;
-    return this.db
-      .prepare(
-        `SELECT id, current_step_id FROM workflow_runs WHERE workflow_ref IN (${refs.map(() => "?").join(", ")}) AND scope_key = ? AND status = 'active' AND parent_run_id IS NULL ORDER BY updated_at DESC, created_at DESC LIMIT 1`,
-      )
-      .get(...refs, scopeKey) as { id: string; current_step_id: string | null } | undefined;
-  }
-
-  /**
-   * The cross-scope start warning's query (#942): the most recently active
-   * run of these refs OUTSIDE `scopeKey` — i.e. `scope_key IS NULL OR
-   * scope_key != scopeKey`, not merely "the most recent active run of these
-   * refs anywhere". A same-scope active row must never win the `LIMIT 1` and
-   * mask a DIFFERENT scope's run: with `--new`/`--force`, the caller's own
-   * active run could otherwise sort first (most recently updated) and hide a
-   * third scope's run entirely, so `startWorkflowRun` silently warned about
-   * nothing while a genuinely stale run in another scope went unreported.
-   * `findActiveRunForScope` deliberately stays scope-local and is never used
-   * for this purpose.
-   */
-  findActiveRunOutsideScope(workflowRefs: string | readonly string[], scopeKey: string): WorkflowRunRow | undefined {
-    const refs = typeof workflowRefs === "string" ? [workflowRefs] : [...workflowRefs];
-    if (refs.length === 0) return undefined;
-    return (
-      (this.db
-        .prepare(
-          `SELECT * FROM workflow_runs WHERE workflow_ref IN (${refs.map(() => "?").join(", ")}) AND (scope_key IS NULL OR scope_key != ?) AND status = 'active' AND parent_run_id IS NULL ORDER BY updated_at DESC, created_at DESC LIMIT 1`,
-        )
-        .get(...refs, scopeKey) as WorkflowRunRow | undefined) ?? undefined
-    );
-  }
-
   getRunById(runId: string): WorkflowRunRow | undefined {
     return (
       (this.db.prepare("SELECT * FROM workflow_runs WHERE id = ?").get(runId) as WorkflowRunRow | undefined) ??
       undefined
-    );
-  }
-
-  /**
-   * The scope-attach lookup `akm workflow run <ref>` uses to find an
-   * in-progress top-level run to resume instead of starting a new one.
-   * `AND parent_run_id IS NULL` (B-N10): a child run must never be attached
-   * to directly through this path — a parent-driven child would then have
-   * TWO drivers. For any database with no child rows the result is
-   * byte-identical.
-   *
-   * Always scope-local: `scopeKey` is a real scope, never "every scope" — see
-   * {@link findActiveRunOutsideScope} for the cross-scope warning's query.
-   */
-  getActiveRunRowForScope(workflowRefs: string | readonly string[], scopeKey: string): WorkflowRunRow | undefined {
-    const refs = typeof workflowRefs === "string" ? [workflowRefs] : [...workflowRefs];
-    if (refs.length === 0) return undefined;
-    return (
-      (this.db
-        .prepare(
-          `SELECT * FROM workflow_runs WHERE workflow_ref IN (${refs.map(() => "?").join(", ")}) AND scope_key = ? AND status = 'active' AND parent_run_id IS NULL ORDER BY updated_at DESC, created_at DESC LIMIT 1`,
-        )
-        .get(...refs, scopeKey) as WorkflowRunRow | undefined) ?? undefined
     );
   }
 
@@ -424,16 +337,9 @@ export class WorkflowRunsRepository {
     throw new NotFoundError(`Workflow run "${prefix}" not found.`, "WORKFLOW_NOT_FOUND");
   }
 
-  listRuns(filter: ListRunsFilter): WorkflowRunRow[] {
+  listRuns(filter: ListRunsFilter = {}): WorkflowRunRow[] {
     const filters: string[] = [];
     const params: string[] = [];
-    // `scopeKey: null` (#942) is "every scope" — the predicate is omitted
-    // rather than bound as SQL NULL (which would match nothing, since a real
-    // `scope_key` column value is never NULL for a fresh run).
-    if (filter.scopeKey !== null) {
-      filters.push("scope_key = ?");
-      params.push(filter.scopeKey);
-    }
     if (filter.workflowRef) {
       filters.push("workflow_ref = ?");
       params.push(filter.workflowRef);
@@ -447,11 +353,7 @@ export class WorkflowRunsRepository {
       // human `resume`), so it must never appear under `--active`, or a script
       // treating `--active` output as executable work would pick up a blocked
       // run (owner manual-validation finding 1). Blocked runs stay visible in
-      // plain `list` (all statuses) with their `blocked` status. The
-      // active-OR-blocked scope semantics some call sites want (the `akm show`
-      // scope guard, which surfaces a blocked run as the scope's occupant) live
-      // in the SEPARATE {@link findActiveOrBlockedRunForScope} — never folded
-      // into this shared list filter.
+      // plain `list` (all statuses) with their `blocked` status.
       filters.push("status = 'active'");
     }
     // B-N10: a child run is invisible to this scope query unless the caller
@@ -478,46 +380,25 @@ export class WorkflowRunsRepository {
       | undefined;
   }
 
-  /**
-   * The `akm show` active-run guard: which run (if any) currently occupies
-   * this scope. `AND parent_run_id IS NULL` (B-N10) — a child a parent is
-   * driving must never be reported as "the" active run; the PARENT is. For
-   * any database with no child rows the result is byte-identical.
-   */
-  findActiveOrBlockedRunForScope(
-    scopeKey: string,
-  ): { id: string; current_step_id: string | null; workflow_ref: string } | null {
-    return (
-      this.db
-        .prepare<{ id: string; current_step_id: string | null; workflow_ref: string }>(
-          "SELECT id, current_step_id, workflow_ref FROM workflow_runs WHERE scope_key = ? AND status IN ('active', 'blocked') AND parent_run_id IS NULL ORDER BY updated_at DESC LIMIT 1",
-        )
-        .get(scopeKey) ?? null
-    );
-  }
-
   // ── writes ─────────────────────────────────────────────────────────────────
 
   insertRun(input: InsertRunInput): void {
-    // R-R3 (P3a Review log; docs/plans/specs/p4-deletions-closeout.md §8):
-    // this 12-column list is hand-duplicated by publishChildWorkflowRun's own
+    // This column list is hand-duplicated by publishChildWorkflowRun's own
     // INSERT below, which extends it with parent_run_id/parent_unit_id/
-    // invocation_key. A signature refactor to share one INSERT builder was
-    // considered and deliberately deferred — see
-    // docs/architecture/decisions/0009-child-run-publication-column-parity.md.
-    // Keep both column lists in sync by hand.
+    // invocation_key; one shared INSERT builder was deliberately not introduced.
+    // Keep both column lists in sync by hand. `scope_key` and
+    // `workflow_entry_id` are legacy columns: read tolerantly, never written
+    // (#1239), so a fresh row carries NULL in both.
     this.db
       .prepare(
         `INSERT INTO workflow_runs (
-          id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at,
+          id, workflow_ref, workflow_title, status, params_json, current_step_id, created_at, updated_at,
           agent_harness, agent_session_id
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
         input.workflowRef,
-        input.scopeKey,
-        input.workflowEntryId,
         input.workflowTitle,
         input.paramsJson,
         input.currentStepId,
@@ -612,25 +493,6 @@ export class WorkflowRunsRepository {
    */
   publishWorkflowRunV4(input: PublishWorkflowRunV4Input): void {
     this.immediateTransaction((db) => {
-      if (!input.force) {
-        // The uniqueness guard must never silently skip its scope predicate
-        // (#942) — every real caller (`startWorkflowRun`) stamps a concrete
-        // scope key, so a null one here means the caller is misusing this
-        // top-level guard, not that scoping should be waived.
-        if (input.run.scopeKey === null) {
-          throw new Error("publishWorkflowRunV4: run.scopeKey must not be null for the scope uniqueness guard.");
-        }
-        const existing = this.findActiveRunForScope(input.workflowRefs, input.run.scopeKey);
-        if (existing) {
-          throw new UsageError(
-            `Workflow ${input.run.workflowRef} already has an active run in this scope ` +
-              `(id=${existing.id}, scope=${input.run.scopeKey}, step=${existing.current_step_id ?? "—"}). ` +
-              `Use 'akm workflow run ${input.run.workflowRef}' to resume it or ` +
-              `'akm workflow abandon ${existing.id}' to give up on it.`,
-            "RESOURCE_ALREADY_EXISTS",
-          );
-        }
-      }
       this.insertRun(input.run);
       this.insertSteps(input.steps);
       db.prepare("UPDATE workflow_runs SET plan_json = ?, plan_hash = ?, plan_ir_version = ? WHERE id = ?").run(
@@ -664,13 +526,10 @@ export class WorkflowRunsRepository {
    * (`plan_ir_version` = the current plan version), and append its
    * `workflow_started` event — then return the freshly-inserted row.
    *
-   * Deliberately does NOT call {@link findActiveRunForScope} or raise
-   * `RESOURCE_ALREADY_EXISTS` (top-level scope-conflict rules do not apply to
-   * a child), and reads no source: the child plan was frozen into the parent's.
+   * Reads no source: the child plan was frozen into the parent's.
    *
    * This method's serialization guarantee holds only when it is the
-   * OUTERMOST transaction on the connection (spec Review log R10,
-   * docs/plans/specs/p3a-plan-v5-child-freeze.md). `withImmediateTransaction`
+   * OUTERMOST transaction on the connection. `withImmediateTransaction`
    * (src/core/state-db.ts) has a re-entrancy guard: if a transaction is
    * already open on the connection, it SILENTLY JOINS that transaction
    * instead of issuing its own `BEGIN IMMEDIATE`.
@@ -688,11 +547,10 @@ export class WorkflowRunsRepository {
    * same `(parentRunId, invocationKey)` serialize on SQLite's write lock: the
    * first to acquire it inserts and commits, and the second's own SELECT —
    * which can only run once it has acquired the lock in turn — finds and
-   * returns the first's row rather than inserting a duplicate or throwing
-   * (C-09). Calling this twice with the same key, including across a crash
+   * returns the first's row rather than inserting a duplicate or throwing.
+   * Calling this twice with the same key, including across a crash
    * between publish and parent-side recording, is therefore safe and returns
-   * the same child both times, with exactly one event and one step set
-   * (C-08).
+   * the same child both times, with exactly one event and one step set.
    */
   publishChildWorkflowRun(input: PublishChildWorkflowRunInput): WorkflowRunRow {
     return this.immediateTransaction((db) => {
@@ -701,21 +559,17 @@ export class WorkflowRunsRepository {
         .get(input.parentRunId, input.invocationKey) as WorkflowRunRow | undefined;
       if (existing) return existing;
 
-      // R-R3 (P3a Review log; docs/plans/specs/p4-deletions-closeout.md §8):
-      // the first 12 columns here must stay byte-identical to insertRun's own
-      // column list above (hand-duplicated, not shared, by deliberate choice
-      // — see docs/architecture/decisions/0009-child-run-publication-column-parity.md).
+      // The first 10 columns here must stay byte-identical to insertRun's own
+      // column list above (hand-duplicated, not shared, by deliberate choice).
       // Keep both column lists in sync by hand.
       db.prepare(
         `INSERT INTO workflow_runs (
-          id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id, created_at, updated_at,
+          id, workflow_ref, workflow_title, status, params_json, current_step_id, created_at, updated_at,
           agent_harness, agent_session_id, parent_run_id, parent_unit_id, invocation_key
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         input.run.id,
         input.run.workflowRef,
-        input.run.scopeKey,
-        input.run.workflowEntryId,
         input.run.workflowTitle,
         input.run.paramsJson,
         input.run.currentStepId,
@@ -745,16 +599,6 @@ export class WorkflowRunsRepository {
 
       return db.prepare("SELECT * FROM workflow_runs WHERE id = ?").get(input.run.id) as WorkflowRunRow;
     });
-  }
-
-  /**
-   * Persist a run's resolved declared `outputs:` (migration 024, P3b §4.3).
-   * Called from INSIDE `completeWorkflowStep`'s own write transaction — this
-   * method opens none of its own, matching `updateStepCompletion` /
-   * `updateRunState` immediately above.
-   */
-  setRunOutputs(runId: string, outputsJson: string): void {
-    this.db.prepare("UPDATE workflow_runs SET outputs_json = ? WHERE id = ?").run(outputsJson, runId);
   }
 
   /** Every child run published under `parentRunId`, oldest first. `[]` when none. */
@@ -854,9 +698,9 @@ export class WorkflowRunsRepository {
       db.prepare(
         `INSERT INTO workflow_run_unit_attempts (
            run_id, unit_id, attempt, dispatch_id, step_id, node_id, phase,
-           runner, engine, model, input_hash, status, worktree_path, started_at,
+           runner, engine, model, input_hash, status, started_at,
            claim_holder, claim_expires_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
       ).run(
         input.runId,
         input.unitId,
@@ -869,7 +713,6 @@ export class WorkflowRunsRepository {
         input.engine,
         input.model,
         input.inputHash,
-        input.worktreePath ?? null,
         input.now,
         holder,
         input.now,
@@ -877,8 +720,8 @@ export class WorkflowRunsRepository {
       db.prepare(
         `INSERT INTO workflow_run_units (
            run_id, unit_id, step_id, node_id, parent_unit_id, phase, runner, engine, model,
-           status, input_hash, worktree_path, started_at, claim_holder, claim_expires_at, attempts
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)
+           status, input_hash, started_at, claim_holder, claim_expires_at, attempts
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
          ON CONFLICT(run_id, unit_id) DO UPDATE SET
            step_id = excluded.step_id,
            node_id = excluded.node_id,
@@ -889,7 +732,6 @@ export class WorkflowRunsRepository {
            model = excluded.model,
            status = 'running',
            input_hash = excluded.input_hash,
-           worktree_path = excluded.worktree_path,
            started_at = excluded.started_at,
            claim_holder = excluded.claim_holder,
            claim_expires_at = excluded.claim_expires_at,
@@ -910,7 +752,6 @@ export class WorkflowRunsRepository {
         input.engine,
         input.model,
         input.inputHash,
-        input.worktreePath ?? null,
         input.now,
         holder,
         input.now,
@@ -1046,6 +887,48 @@ export class WorkflowRunsRepository {
       | WorkflowRunUnitRow
       | undefined;
   }
+}
+
+/**
+ * Preview counterpart of {@link renameWorkflowRunRefs} for `akm bundle rename`:
+ * how many run rows name `oldBundleId`, and which of them are still `active`
+ * or `blocked` (their frozen `plan_json` keeps the old qualified refs, so the operator
+ * finishes or abandons them — the rename lists them rather than touching them).
+ */
+export function countWorkflowRunRefsForRename(
+  db: Database,
+  oldBundleId: string,
+): { refs: number; active: Array<{ id: string; workflowRef: string; status: string }> } {
+  const prefix = `${oldBundleId}//`;
+  const refs = (
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM workflow_runs WHERE substr(workflow_ref, 1, length(?)) = ?`)
+      .get(prefix, prefix) as {
+      n: number;
+    }
+  ).n;
+  const active = db
+    .prepare(
+      `SELECT id, workflow_ref AS workflowRef, status FROM workflow_runs WHERE substr(workflow_ref, 1, length(?)) = ? AND status IN ('active', 'blocked') ORDER BY updated_at DESC, created_at DESC`,
+    )
+    .all(prefix, prefix) as Array<{ id: string; workflowRef: string; status: string }>;
+  return { refs, active };
+}
+
+/**
+ * Rewrite every `workflow_runs.workflow_ref` naming `oldBundleId` to
+ * `newBundleId` (`akm bundle rename`). A legacy unqualified ref is not matched
+ * by the `<old>//` prefix and is left alone. Returns the number of rows rewritten.
+ */
+export function renameWorkflowRunRefs(db: Database, oldBundleId: string, newBundleId: string): number {
+  const prefix = `${oldBundleId}//`;
+  return Number(
+    db
+      .prepare(
+        `UPDATE workflow_runs SET workflow_ref = ? || substr(workflow_ref, length(?) + 1) WHERE substr(workflow_ref, 1, length(?)) = ?`,
+      )
+      .run(newBundleId, oldBundleId, prefix, prefix).changes,
+  );
 }
 
 /**

@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Embedded task registry — asserts the 5 bundled `core/` templates and the 4
- * bundled `improve/` templates are present with the exact ids and default
+ * Embedded task registry — asserts the 5 bundled `core/` templates and the 1
+ * bundled `improve/` template are present with the exact ids and default
  * schedules, and that they are read from the bundled assets dir (not any
  * user stash).
  *
@@ -30,16 +30,13 @@ const EXPECTED = [
   { id: "index-refresh", category: "core", schedule: "0 4 * * *", enabled: true },
   { id: "extract", category: "core", schedule: "*/30 * * * *", enabled: true },
   { id: "sync", category: "core", schedule: "*/15 * * * *", enabled: true },
-  { id: "akm-improve-frequent", category: "improve", schedule: "40 * * * *", enabled: true },
   { id: "akm-improve-consolidate", category: "improve", schedule: "20 */4 * * *", enabled: true },
-  { id: "akm-improve-nightly", category: "improve", schedule: "15 2 * * *", enabled: true },
-  { id: "akm-improve-catchup", category: "improve", schedule: "0 4 * * *", enabled: false },
 ] as const;
 
 describe("embedded task registry", () => {
-  test("enumerates all 9 templates", () => {
+  test("enumerates all 6 templates", () => {
     const tasks = listEmbeddedTasks();
-    expect(tasks.length).toBe(9);
+    expect(tasks.length).toBe(6);
   });
 
   test("each template has the exact id, default schedule, and enablement", () => {
@@ -57,19 +54,37 @@ describe("embedded task registry", () => {
 
   test("every improve/ template guards against overlapping runs", () => {
     const improveTasks = listEmbeddedTasks().filter((t) => t.label.startsWith("improve/"));
-    expect(improveTasks.length).toBe(4);
+    expect(improveTasks.length).toBe(1);
     for (const task of improveTasks) expect(task.command).toContain("--skip-if-locked");
   });
 
-  // #957: scheduled improve runs should fail loudly (exit 78) rather than
-  // silently degrade when an engine/credential is unavailable — the whole
-  // point of a nightly job is that nobody is watching it fail quietly.
-  test("every scheduled improve template requires available engines (#957)", () => {
+  // The nightly (02:00, no --skip-if-locked, must not be skipped) shares improve.lock with the
+  // consolidate task. Every consolidate run must end before the nightly starts, or the
+  // nightly throws IMPROVE_LOCK_HELD and the whole night is lost.
+  test("the consolidate improve task always finishes before the 02:00 nightly starts", () => {
+    const nightlyMinute = 2 * 60;
+    const consolidate = listEmbeddedTasks().find((t) => t.id === "akm-improve-consolidate");
+    expect(consolidate?.schedule).toBe("20 */4 * * *");
+    const timeoutMs = Number(/--timeout-ms[ =](\d+)/.exec(consolidate?.command ?? "")?.[1] ?? 2 * 60 * 60 * 1000);
+    for (let hour = 0; hour < 24; hour += 4) {
+      const start = hour * 60 + 20;
+      const end = start + timeoutMs / 60_000;
+      const overlaps = start < nightlyMinute && end > nightlyMinute;
+      expect(overlaps, `consolidate run at ${hour}:20 ends ${end} min, past the nightly at ${nightlyMinute}`).toBe(
+        false,
+      );
+    }
+  });
+
+  // A scheduled improve run stops at planning (exit 78) when nothing it needs is configured, with no flag
+  // asking for it (tests/commands/improve/improve-planning-stops.test.ts), so the templates carry none.
+  test("no scheduled improve template carries the retired preflight flags", () => {
     const scheduledImproveTasks = listEmbeddedTasks().filter(
       (t) => t.label === "core/improve" || t.label.startsWith("improve/"),
     );
-    expect(scheduledImproveTasks.length).toBe(5);
-    for (const task of scheduledImproveTasks) expect(task.command).toContain("--require-engines");
+    expect(scheduledImproveTasks.length).toBe(2);
+    for (const task of scheduledImproveTasks)
+      expect(task.command).not.toMatch(/--require-(targets|engines)|--preflight/);
   });
 
   test("every enabled embedded command resolves to a real top-level CLI command", () => {

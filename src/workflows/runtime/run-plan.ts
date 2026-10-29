@@ -6,16 +6,23 @@
  * Reading a run row's frozen plan: the ONE plan decoder and its tolerant
  * row-level wrapper.
  *
- * {@link decodeWorkflowPlan} accepts every plan shape a release has stored —
- * irVersion 4 and 5 (with their `sourceReadSet` and host-identity fields) as
- * well as the current one — and keeps keys it does not know rather than
- * refusing them. It rejects only a plan it cannot run: no steps, a unit with
- * no frozen target, a request that does not decode. `plan_ir_version` and
- * `plan_hash` are informational columns: neither gates execution. A plan that
- * cannot be decoded comes back from {@link readRunPlan} as a `problem`
+ * {@link decodeWorkflowPlan} accepts every plan shape a release at or above
+ * the 0.9.15 floor has stored — irVersion 5 (with its `sourceReadSet` and
+ * host-identity fields, which 0.9.15 and 0.9.16 wrote) and irVersion 6 (with
+ * its frozen `cwdIdentity` and env owner paths) as well as the current one —
+ * and keeps keys it does not know rather than refusing them. A stored target
+ * is kept exactly as stored, location fields included: the unit `input_hash`
+ * and the child invocation key derive from the whole target, so dropping them
+ * would make an interrupted run publish a second child after an upgrade.
+ * Dispatch finds the bundle and the env asset by ref and never reads them. It
+ * rejects only a plan it cannot run: no steps, a unit with no frozen target, a
+ * request that does not decode — which is every command target an earlier
+ * irVersion froze, since each names an engine. `plan_hash` is an informational column. A plan
+ * that cannot be decoded comes back from {@link readRunPlan} as a `problem`
  * sentence and the caller decides the remedy (the engine abandons such a run
- * instead of throwing) — except for a plan a NEWER akm froze, which is `newer`
- * and whose problem names upgrading akm as the remedy.
+ * instead of throwing) — except for a plan a NEWER akm froze (`plan_ir_version`
+ * above this release's), which is refused unread as `newer` with a problem that
+ * names upgrading akm as the remedy.
  */
 
 import { UsageError } from "../../core/errors";
@@ -25,10 +32,9 @@ import { decodeResolvedExecutionRequest, type ResolvedExecutionRequestV1 } from 
 import { decodeFrozenRunnerSpec, type RunnerSpec } from "../../integrations/agent/runner";
 import type { WorkflowRunRow } from "../../storage/repositories/workflow-runs-repository";
 import {
+  type FrozenLegacyField,
   type FrozenWorkflowCommandTarget,
-  type FrozenWorkflowDirectoryIdentity,
   type FrozenWorkflowEnvironmentBinding,
-  type FrozenWorkflowEnvironmentOwner,
   type FrozenWorkflowTarget,
   WORKFLOW_PLAN_VERSION,
   type WorkflowExecNode,
@@ -37,7 +43,6 @@ import {
   type WorkflowMapNode,
   type WorkflowPlan,
   type WorkflowPlanStep,
-  type WorkflowRoute,
   type WorkflowUnitNode,
 } from "../plan";
 
@@ -49,6 +54,15 @@ export function readRunPlan(
   if (!row.plan_json)
     return { ok: false, newer: false, problem: `Workflow run ${row.id} has no frozen workflow plan.` };
   const version = row.plan_ir_version ?? null;
+  if (version !== null && version > WORKFLOW_PLAN_VERSION) {
+    return {
+      ok: false,
+      newer: true,
+      problem:
+        `Workflow run ${row.id} was frozen by a newer akm (plan irVersion ${version}) and this akm ` +
+        `(irVersion ${WORKFLOW_PLAN_VERSION}) will not run it. Upgrade akm to continue this run.`,
+    };
+  }
   try {
     const plan = decodeWorkflowPlan(JSON.parse(row.plan_json), {
       ...(row.workflow_ref ? { workflowRef: row.workflow_ref } : {}),
@@ -63,15 +77,6 @@ export function readRunPlan(
     return { ok: true, plan };
   } catch (cause) {
     const detail = cause instanceof Error ? cause.message : String(cause);
-    if (version !== null && version > WORKFLOW_PLAN_VERSION) {
-      return {
-        ok: false,
-        newer: true,
-        problem:
-          `Workflow run ${row.id} was frozen by a newer akm (plan irVersion ${version}) and this akm cannot decode it: ` +
-          `${detail}. Upgrade akm to continue this run.`,
-      };
-    }
     const frozenAs = version === null ? "" : ` (frozen as plan irVersion ${version})`;
     return {
       ok: false,
@@ -98,18 +103,10 @@ export function frozenStepRows(plan: WorkflowPlan): FrozenStepRowDefinition[] {
       ? step.root.kind === "map"
         ? step.root.template.instructions
         : step.root.instructions
-      : routeInstructions(step.route as WorkflowRoute),
+      : "",
     completionJson: step.gate.criteria.length > 0 ? JSON.stringify(step.gate.criteria) : null,
     sequenceIndex: step.sequenceIndex,
   }));
-}
-
-function routeInstructions(route: WorkflowRoute): string {
-  const branches = Object.entries(route.when)
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([match, stepId]) => `"${match}" -> ${stepId}`);
-  if (route.defaultStepId !== undefined) branches.push(`default -> ${route.defaultStepId}`);
-  return `Route on ${route.input}: ${branches.join(", ")}.`;
 }
 
 export interface DecodeWorkflowPlanOptions {
@@ -122,11 +119,6 @@ export function decodeWorkflowPlan(input: unknown, options: DecodeWorkflowPlanOp
   const raw = record(input, "plan");
   if (!Array.isArray(raw.steps) || raw.steps.length === 0) fail("steps must be a non-empty array");
   const steps = raw.steps.map((value, index) => decodeStep(value, index));
-  if (raw.outputs !== undefined) {
-    for (const [name, entry] of Object.entries(record(raw.outputs, "outputs"))) {
-      string(record(entry, `outputs.${name}`).from, `outputs.${name}.from`);
-    }
-  }
   const sourceHash =
     typeof raw.sourceHash === "string" ? raw.sourceHash : legacySourceHash(raw.sourceReadSet, options.workflowRef);
   return {
@@ -151,26 +143,16 @@ function legacySourceHash(readSet: unknown, workflowRef: string | undefined): st
 function decodeStep(value: unknown, index: number): WorkflowPlanStep {
   const step = record(value, `step ${index}`);
   const stepId = string(step.stepId, `step ${index} stepId`);
-  const route = step.route === undefined ? undefined : decodeRoute(step.route, stepId);
-  const root = step.root === undefined ? undefined : decodeNode(step.root, stepId);
-  if (!root && !route) fail(`step ${stepId} has neither a frozen root nor a route`);
+  if (step.root === undefined) fail(`step ${stepId} has no frozen root`);
+  const root = decodeNode(step.root, stepId);
   return {
     ...step,
     stepId,
     title: typeof step.title === "string" ? step.title : stepId,
     sequenceIndex: index,
-    ...(root ? { root } : {}),
-    ...(route ? { route } : {}),
+    root,
     gate: decodeGate(step.gate, stepId),
   } as WorkflowPlanStep;
-}
-
-function decodeRoute(value: unknown, stepId: string): WorkflowRoute {
-  const route = record(value, `step ${stepId} route`);
-  string(route.input, `step ${stepId} route.input`);
-  const when = record(route.when, `step ${stepId} route.when`);
-  for (const target of Object.values(when)) string(target, `step ${stepId} route target`);
-  return route as unknown as WorkflowRoute;
 }
 
 function decodeNode(value: unknown, stepId: string): WorkflowExecNode {
@@ -195,7 +177,6 @@ function decodeUnit(node: Record<string, unknown>, stepId: string): WorkflowUnit
     id,
     instructions: typeof node.instructions === "string" ? node.instructions : "",
     onError: node.onError === "continue" ? "continue" : "fail",
-    isolation: node.isolation === "worktree" ? "worktree" : "none",
     frozenTarget: decodeTarget(node.frozenTarget, label),
     environment: Array.isArray(node.environment)
       ? node.environment.map((binding, index) => decodeEnvironmentBinding(binding, `${label} environment[${index}]`))
@@ -224,11 +205,7 @@ function decodeGate(value: unknown, stepId: string): WorkflowGateNode {
 function decodeTarget(value: unknown, label: string): FrozenWorkflowTarget {
   const target = record(value, `${label} frozenTarget`);
   const inputBindings = decodeInputBindings(target.inputBindings, label);
-  const gitCommitOid = typeof target.gitCommitOid === "string" ? target.gitCommitOid : undefined;
-  const optional = {
-    ...(gitCommitOid ? { gitCommitOid } : {}),
-    ...(inputBindings ? { inputBindings } : {}),
-  };
+  const optional = inputBindings ? { inputBindings } : {};
   switch (target.kind) {
     case "command":
       return decodeCommandTarget(target, label);
@@ -237,21 +214,7 @@ function decodeTarget(value: unknown, label: string): FrozenWorkflowTarget {
         kind: "shell",
         contentHash: string(target.contentHash, `${label} contentHash`),
         exec: decodeExec(target.exec, label),
-        cwdIdentity: record(target.cwdIdentity, `${label} cwdIdentity`) as unknown as FrozenWorkflowDirectoryIdentity,
-        ...optional,
-      };
-    case "script":
-      return {
-        kind: "script",
-        ref: string(target.ref, `${label} script ref`),
-        contentHash: string(target.contentHash, `${label} contentHash`),
-        exec: decodeExec(target.exec, label),
-        interpreter: string(target.interpreter, `${label} interpreter`),
-        extension: string(target.extension, `${label} extension`),
-        bytesBase64: typeof target.bytesBase64 === "string" ? target.bytesBase64 : fail(`${label} has no script bytes`),
-        byteLength: typeof target.byteLength === "number" ? target.byteLength : 0,
-        cwdIdentity: record(target.cwdIdentity, `${label} cwdIdentity`) as unknown as FrozenWorkflowDirectoryIdentity,
-        materialization: "ephemeral-0700-delete",
+        ...legacyField(target, "cwdIdentity"),
         ...optional,
       };
     case "child-workflow":
@@ -261,7 +224,7 @@ function decodeTarget(value: unknown, label: string): FrozenWorkflowTarget {
         planHash: string(target.planHash, `${label} planHash`),
         frozenPlan: decodeWorkflowPlan(target.frozenPlan),
         contentHash: string(target.contentHash, `${label} contentHash`),
-        via: target.via === "task" ? "task" : "direct",
+        ...(target.via === "task" || target.via === "direct" ? { via: target.via } : {}),
         ...(typeof target.taskRef === "string" ? { taskRef: target.taskRef } : {}),
         ...(inputBindings ? { inputBindings } : {}),
       };
@@ -288,12 +251,15 @@ function decodeCommandTarget(target: Record<string, unknown>, label: string): Fr
     request,
     runner,
     ...(concurrency !== undefined ? { concurrency } : {}),
-    ...(target.cwdIdentity && typeof target.cwdIdentity === "object"
-      ? { cwdIdentity: target.cwdIdentity as FrozenWorkflowDirectoryIdentity }
-      : {}),
-    ...(typeof target.gitCommitOid === "string" ? { gitCommitOid: target.gitCommitOid } : {}),
+    ...legacyField(target, "cwdIdentity"),
     ...(inputBindings ? { inputBindings } : {}),
   };
+}
+
+/** A location field a stored target carries, kept as stored (see the module doc). */
+function legacyField(source: Record<string, unknown>, key: string): { [key: string]: FrozenLegacyField } {
+  const value = source[key];
+  return value && typeof value === "object" ? { [key]: value as FrozenLegacyField } : {};
 }
 
 function decodeExec(value: unknown, label: string): WorkflowExecSpec {
@@ -331,15 +297,21 @@ function decodeEnvironmentBinding(value: unknown, label: string): FrozenWorkflow
   }
   if (binding.kind === "pass-through") return { kind: "pass-through", name: string(binding.name, label) };
   if (binding.kind !== "env-ref") fail(`${label} has an unsupported kind`);
+  // Plans before irVersion 7 also carry the env file's owner, key names and secret names: kept as stored,
+  // never read (dispatch reads the env asset by ref).
   const strings = (items: unknown): string[] =>
     Array.isArray(items) ? items.filter((item): item is string => typeof item === "string") : [];
   return {
     kind: "env-ref",
     ref: string(binding.ref, `${label} ref`),
-    owner: record(binding.owner, `${label} owner`) as unknown as FrozenWorkflowEnvironmentOwner,
-    keys: strings(binding.keys),
-    secretNames: strings(binding.secretNames),
     precedence: typeof binding.precedence === "number" ? binding.precedence : 0,
+    ...(binding.owner && typeof binding.owner === "object"
+      ? {
+          owner: binding.owner as FrozenLegacyField,
+          keys: strings(binding.keys),
+          secretNames: strings(binding.secretNames),
+        }
+      : {}),
   };
 }
 

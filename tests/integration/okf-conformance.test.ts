@@ -679,16 +679,12 @@ describe("OKF first-class conformance", () => {
       semanticSearchMode: "off",
       defaultBundle: "native",
       defaultWriteTarget: "native",
-      engines: {
-        "test-agent": { kind: "agent", platform: "opencode-sdk" },
+      connections: {
         "test-llm": {
-          kind: "llm",
           endpoint: "http://localhost:1/v1/chat/completions",
-          model: "test-model",
+          models: { fast: "test-model" },
         },
       },
-      defaults: { engine: "test-agent", llmEngine: "test-llm" },
-      workflow: { judgeEngine: "test-llm" },
       bundles: {
         local: { path: storage.stashDir },
         native: {
@@ -713,7 +709,7 @@ describe("OKF first-class conformance", () => {
     const started = await getNextWorkflowStep(created.ref);
     expect(started.run.workflowRef).toBe("native//authored");
     expect((await listWorkflowRuns({ workflowRef: created.ref })).runs).toHaveLength(1);
-    await expect(getNextWorkflowStep("native//authored")).resolves.toMatchObject({
+    await expect(getNextWorkflowStep(started.run.id)).resolves.toMatchObject({
       run: { id: started.run.id, workflowRef: "native//authored" },
     });
     expect(
@@ -735,20 +731,16 @@ describe("OKF first-class conformance", () => {
       semanticSearchMode: "off",
       defaultBundle: "local",
       defaultWriteTarget: "local",
-      engines: {
-        "test-agent": { kind: "agent", platform: "opencode-sdk" },
+      connections: {
         "test-llm": {
-          kind: "llm",
           endpoint: "http://localhost:1/v1/chat/completions",
-          model: "test-model",
+          models: { fast: "test-model" },
         },
       },
-      defaults: { engine: "test-agent", llmEngine: "test-llm" },
-      workflow: { judgeEngine: "test-llm" },
       bundles: { local: { path: storage.stashDir, writable: true } },
     });
     resetConfigCache();
-    expect((await getNextWorkflowStep("native//authored")).run.workflowRef).toBe("native//authored");
+    // The bundle is gone from config: its recorded runs stay listable by their stored ref.
     expect((await listWorkflowRuns({ workflowRef: "native//authored" })).runs).toHaveLength(1);
     // Ref -> run-id resolution, asserted through the surviving surface: the
     // CLI resolves the ref itself and must land on the run we started.
@@ -758,7 +750,7 @@ describe("OKF first-class conformance", () => {
   });
 
   test.skipIf(process.platform === "win32")(
-    "standalone workflow lookup contains symlinks and handles extension case deterministically",
+    "standalone workflow lookup follows a file symlink and handles extension case deterministically",
     async () => {
       const workflowRoot = path.join(storage.root, "standalone-workflow-safety");
       const outside = path.join(storage.root, "outside-workflow.md");
@@ -766,7 +758,7 @@ describe("OKF first-class conformance", () => {
       write(workflowRoot, "duplicate.md", getWorkflowTemplate());
       write(workflowRoot, "duplicate.MD", getWorkflowTemplate());
       write(storage.root, "outside-workflow.md", getWorkflowTemplate());
-      fs.symlinkSync(outside, path.join(workflowRoot, "escape.md"));
+      fs.symlinkSync(outside, path.join(workflowRoot, "linked.md"));
       writeSandboxConfig({
         semanticSearchMode: "off",
         defaultBundle: "native",
@@ -781,7 +773,8 @@ describe("OKF first-class conformance", () => {
       resetConfigCache();
 
       expect((await loadWorkflowAsset("native//upper")).path).toBe(path.join(workflowRoot, "upper.MD"));
-      await expect(loadWorkflowAsset("native//escape")).rejects.toMatchObject({ code: "ASSET_NOT_FOUND" });
+      // A workflow that is a symlink to a file outside the bundle loads (#1237).
+      expect((await loadWorkflowAsset("native//linked")).path).toBe(path.join(workflowRoot, "linked.md"));
       await expect(loadWorkflowAsset("native//duplicate")).rejects.toMatchObject({
         code: "RESOURCE_ALREADY_EXISTS",
       });
@@ -809,16 +802,12 @@ describe("OKF first-class conformance", () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "local",
-      engines: {
-        "test-agent": { kind: "agent", platform: "opencode-sdk" },
+      connections: {
         "test-llm": {
-          kind: "llm",
           endpoint: "http://localhost:1/v1/chat/completions",
-          model: "test-model",
+          models: { fast: "test-model" },
         },
       },
-      defaults: { engine: "test-agent", llmEngine: "test-llm" },
-      workflow: { judgeEngine: "test-llm" },
       bundles: {
         local: {
           path: storage.stashDir,

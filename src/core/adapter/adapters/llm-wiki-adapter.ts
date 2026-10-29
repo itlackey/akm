@@ -3,22 +3,20 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The first-class `llm-wiki` adapter — akm 0.9.0 chunk-4 (DEV-7 restore).
+ * The first-class `llm-wiki` adapter.
  *
- * The `wiki` ASSET-TYPE dies in chunk 4 (plan §11 Chunk 4 / §7.4), but the LLM
- * Wiki structure stays first-class as its OWN adapter. This relocates the
- * native wiki semantics from the retired `src/wiki/` module into a
- * `BundleAdapter` implementing `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §7
- * (llm-wiki row), §6 (wiki-page row), §0.2 (the `wiki` asset-type is retired;
- * the adapter is first-class), §1.2 (probe = schema.md + pages/), §9 (links).
+ * The `wiki` ASSET-TYPE is retired, but the LLM Wiki structure stays first-class
+ * as its OWN adapter: a `BundleAdapter` carrying the native wiki semantics
+ * (probe = schema.md + pages/, wiki-page recognition, links) that the retired
+ * `src/wiki/` module used to own.
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/llm-wiki/` + goldens
- * `tests/fixtures/format-family-goldens/llm-wiki/{recognition,placement,renderer,lint}.json`.
+ * `tests/fixtures/format-family-goldens/llm-wiki/{recognition,renderer,lint}.json`.
  * The adapter is built to MATCH those goldens (driven by
  * `tests/core/adapter/llm-wiki-adapter.test.ts`).
  *
- * ── Structure (spec §7, wiki.ts canonical-content contract) ──
+ * ── Structure ──
  *
  *   - `schema.md` / `index.md` / `log.md` at the wiki ROOT are RESERVED
  *     (recognized, never indexed as concepts) — analogous to OKF's index.md/log.md.
@@ -32,24 +30,24 @@
  *   - Anything else (root README, stray root `.md`, other dirs) is NOT a wiki
  *     asset (`recognize` abstains) — pages live under `pages/`.
  *
- * ── Links / citations (spec §9) ──
+ * ── Links / citations ──
  *
  * A page's `IndexDocument.links` = its resolved `xrefs:` frontmatter (the
  * `wiki:<name>/<conceptId>` form, stripped to the target conceptId) PLUS its
  * body bundle-relative markdown links, deduped, first-appearance order. Its
  * `sources:` frontmatter resolves to the cited raw conceptIds (citation edges),
- * carried on `documentJson` (adapter extras — plan §4.3) and consumed by the
+ * carried on `documentJson` (adapter extras) and consumed by the
  * uncited-raw lint check.
  *
- * ── validate (spec §6/§7, §9) — native wiki checks ONLY ──
+ * ── validate — native wiki checks ONLY ──
  *
  * The native structural checks ported from the retired `src/wiki/` module's
  * `lintWiki`: `broken-xref`
  * (an xref target that does not resolve to an existing page), `uncited-raw`
  * (a `raw/` source not cited by any page's `sources:`), `missing-description`
  * (a page with no description), and `broken-source` (a page `sources:` entry
- * with no matching raw file). Broken xrefs are TOLERATED (warning, non-blocking,
- * spec §9). The shared `runBaseValidateChecks` (unquoted-colon / missing-updated
+ * with no matching raw file). Broken xrefs are TOLERATED (warning, non-blocking).
+ * The shared `runBaseValidateChecks` (unquoted-colon / missing-updated
  * / stale-path / missing-ref) is NOT run: wiki files never carry an `updated`
  * field, so `missing-updated` would fire on every page/reserved file and
  * contradict the lint golden's clean result — the native checks are the wiki's
@@ -76,6 +74,7 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../asset/frontmatter";
+import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
@@ -91,7 +90,7 @@ const WIKI_SOURCE_TYPE = "wiki-source";
 /** Default open `type` for a `pages/` file whose frontmatter carries no `pageKind`. */
 const DEFAULT_PAGE_KIND = "note";
 
-/** Reserved wiki files (case-insensitive) at the wiki ROOT — recognized, never indexed as concepts (spec §7). */
+/** Reserved wiki files (case-insensitive) at the wiki ROOT — recognized, never indexed as concepts. */
 const RESERVED_ROOT_FILES = new Set(["schema.md", "index.md", "log.md"]);
 
 /** Content subdirectory holding immutable ingested sources. */
@@ -191,13 +190,10 @@ function resolveXref(xref: string, bundleId: string): string | null {
  */
 function resolveBodyLinks(body: string, fileRelPath: string): string[] {
   const dir = path.posix.dirname(toPosix(fileRelPath));
-  const linkRe = /\[[^\]]*\]\(([^)]+)\)/g;
   const out: string[] = [];
   const seen = new Set<string>();
-  let match: RegExpExecArray | null;
-  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-  while ((match = linkRe.exec(body)) !== null) {
-    let target = match[1]!.trim();
+  for (const link of markdownLinkTargets(body, false)) {
+    let target = link.trim();
     const wsIdx = target.search(/\s/);
     if (wsIdx >= 0) target = target.slice(0, wsIdx);
     const hashIdx = target.indexOf("#");
@@ -418,11 +414,6 @@ export const llmWikiAdapter: BundleAdapter = {
   readCandidates(c: BundleComponent, conceptId: string) {
     const canonical = toPosix(conceptId).replace(/\.md$/i, "");
     return [{ path: path.join(c.root, `${canonical}.md`), conceptId: canonical }];
-  },
-
-  /** `<c.root>/<conceptId>.md` — the conceptId already carries its `pages/`/`raw/` prefix (placement golden). */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    return path.join(c.root, `${conceptId}.md`);
   },
 
   /** The wiki owns its whole root (schema/index/log at root plus pages/ + raw/); one component. */

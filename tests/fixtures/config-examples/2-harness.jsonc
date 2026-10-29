@@ -1,0 +1,18 @@
+// 2. A cloud endpoint plus Claude Code.
+// Written by: akm setup --endpoint https://api.openai.com/v1 --api-key-env OPENAI_API_KEY --harness claude --embedding text-embedding-3-small
+// (Interactively, the key is typed into a masked prompt and lands in ~/.config/akm/credentials.json
+//  under "default" instead; then there is no apiKey line at all.)
+// Agent work runs on Claude Code, the only harness and therefore the default.
+// Model calls go to the endpoint, because the user said "no" to using Claude for them.
+// Embeddings use the default connection, so no connection is named.
+{
+  "connections": {
+    "default": {
+      "endpoint": "https://api.openai.com/v1",
+      "apiKey": "$OPENAI_API_KEY",
+      "models": { "fast": "gpt-5-mini", "balanced": "gpt-5", "reasoning": "gpt-5" }
+    }
+  },
+  "harnesses": { "claude": {} },
+  "embedding": { "model": "text-embedding-3-small" }
+}

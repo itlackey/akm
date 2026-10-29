@@ -27,7 +27,7 @@ that the indexer records:
 | --- | --- |
 | `tags` | Free-form categorization |
 | `source` | Where the memory came from (also used as the derived-memory parent backref — see below) |
-| `observed_at` | When the observation happened |
+| `observed` | When the observation happened. Older memories may carry `observed_at`; it is still read, and `observed` wins when both are present. `akm` writes only `observed`. |
 | `expires` | When the memory should stop being considered current |
 | `subjective` | Marks the memory as opinion/preference rather than fact |
 | `description` | Short human-readable summary |
@@ -55,12 +55,13 @@ supported values, from strongest to weakest authority:
 | `contradicted` | Marked as contradicted by other evidence | historical |
 | `archived` | Soft-deleted; retained for audit | historical |
 
-`akm search` filters via `--belief current|historical|all`:
+`akm search` and `akm curate` filter via `--belief current|historical|all`:
 
-- `current` → `active` + `asserted`
+- `current` (default) → `active` + `asserted`; an asset with no `beliefState`
+  counts as `active`, so ordinary skills, knowledge and notes still surface
 - `historical` → `deprecated` + `superseded` + `contradicted` + `archived`
-- `all` (default — no filter) → every belief state, including `archived` and
-  `contradicted` memories, is eligible to surface.
+- `all` → no filter: every belief state, including `archived` and
+  `contradicted`, is eligible to surface.
 
 ### Derived memories as retrieval shortcuts
 
@@ -71,10 +72,35 @@ parent/child link in the `derived_from` column. This provenance backref is a
 sanctioned internal channel that carries a bare parent name, not a public
 [ref](refs.md) — agents never construct it.
 
-Search hits for the parent memory are then enriched in-place: the parent's
-description and tags are swapped with the derived child's surface text, and
-an `expandTo: memories/<derived>` field on the hit points at the richer
-derived ref. The parent ref itself is preserved on the hit, so existing
+Inference receives the body with selected existing source context: title,
+description, evidence and references, known source dates, and normalized scope.
+The request carries that context as JSON after a `Source context:` line, then
+the raw body after a `Body:` line, as written and not JSON-escaped. Everything
+after the first `Body:` line is treated as the body, so a body cannot pose as
+context. A memory with an empty body is not sent. The prompt asks the model to preserve qualifications, uncertainty, actors, and the distinction between
+requests, references, attempts, and demonstrated outcomes. The caller copies
+the parent's normalized user/agent/run/channel scope to the child; the model
+cannot author that scope. Source evidence remains on the parent via the backref.
+Existing children are kept and never regenerated. On each inference run, an
+existing child (`<parent>.derived.md` with `inferred: true` and `derivedFrom`
+naming its parent) whose scope differs from its parent's has only its scope
+frontmatter rewritten to match. This covers children written before scope was
+copied and later parent scope edits, so the child stays reachable under the
+parent's scope filter. The flat `scope_*` keys are set; stale ones and a legacy
+nested `scope:` are removed. The body and other metadata are kept byte for
+byte. No model call is made, a matching child is not written, and a read-only
+default bundle is skipped. The run reports the count as `scopeSynced`. A cached no-change decision is reconsidered when
+the body or supplied source context changes; unrelated metadata does not
+invalidate it.
+
+Search hits for the parent memory preserve a meaningful authored description
+and tags that add information beyond filename and directory tokens. The derived
+child's metadata fills missing or whitespace-only fields independently; a known
+filename-generated description or tags consisting only of generated path tokens
+also permit fallback. An authored tag repeating a path token counts as generated.
+An `expandTo: memories/<derived>` field on the hit points at the richer
+derived ref, qualified with the parent's bundle when needed. The parent ref
+itself is preserved on the hit, so existing
 automation keeps working — agents that want the deeper summary follow
 `expandTo`.
 
@@ -86,8 +112,8 @@ automation keeps working — agents that want the deeper summary follow
 - Background-derived memories (those inferred from other assets by `akm
   improve`) receive `captureMode: background`.
 - A memory with no explicit `beliefState` defaults to `active`.
-- `akm search --belief` defaults to `all` — no filter is applied unless you
-  pass `current` or `historical` explicitly.
+- `akm search --belief` and `akm curate --belief` default to `current`; pass
+  `--belief all` (API `belief: "all"`) for every belief state.
 
 ## Storage
 

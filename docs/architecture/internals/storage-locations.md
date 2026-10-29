@@ -32,11 +32,10 @@ lives in `$STATE`, `$CACHE`, or `$DATA`.
 
 | Path | Contents |
 |---|---|
-| `memory-cleanup/belief-transitions.jsonl` | One line per memory belief-state transition: `appliedAt`, `ref`, `parentRef`, `fromState`, `toState`, `reason`, and `relatedRef` when present. Written by the memory cleanup pass (`appendBeliefStateTransitionLog`). |
+| `memory-cleanup/belief-transitions.jsonl` | One line per memory belief-state transition: `appliedAt`, `ref`, `parentRef`, `fromState`, `toState`, `reason`, and `relatedRef`, `relatedRefs` and `currentBeliefRefs` when present. Written by the memory cleanup pass (`appendBeliefStateTransitionLog`). |
 | `memory-cleanup/archive/<stamp>-<ref>/` | A pruned or retired memory moved aside, plus a `cleanup.md` tombstone. Ref resolution reads the tombstones so an edge to a pruned memory reports "archived" instead of "missing" (`src/core/asset/memory-archive.ts`). `akm improve` deletes the archived files of a retirement 30 days after `retiredAt` when the bundle is a git repository and the files are tracked and clean; `cleanup.md` stays. |
 
-`<cwd>/.akm/config.json` is not read as configuration. Its presence marks a
-project root for the workflow scope key (`src/workflows/authoring/scope-key.ts`).
+`<cwd>/.akm/config.json` is not read as configuration.
 
 Older layouts under `.akm/` (`proposals/`, `runs.archived-*`, `archive/`,
 `graph.json`, `consolidate-journal.json`, `proposals.db`, `mv-transactions/`)
@@ -45,7 +44,8 @@ removes them (`scripts/akm-migrate/migrate/dead-residue.ts`).
 
 ## SQLite databases
 
-Every database opens with a 30,000 ms `busy_timeout`. `AKM_SQLITE_JOURNAL_MODE`
+Managed openers set a 30,000 ms `busy_timeout`; the fire-and-forget usage-telemetry
+writes lower it to 250 ms, and `akm info` reads the index with 750 ms. `AKM_SQLITE_JOURNAL_MODE`
 (`WAL`, `DELETE`, `TRUNCATE`) selects the journal mode; the default is WAL, and
 WAL falls back to DELETE when the data directory is on a detected network
 filesystem. The rollback-journal modes also set `synchronous = FULL`
@@ -73,7 +73,8 @@ Vector search is an exact scan of `embeddings` (`src/storage/repositories/index-
 
 `key` TEXT PRIMARY KEY, `value` TEXT NOT NULL. Keys: `version`, `builtAt`,
 `stashDir`, `stashDirs`, `sourceOwners`, `last_utility_computed_at`, `embeddingFingerprint` (the model the
-vectors were made under), `hasEmbeddings` (`"0"` or `"1"`), `vacuumPending`,
+vectors were made under), `hasEmbeddings` (`"0"` or `"1"`), `semanticSearch` (what the
+last `akm index` found about semantic search; `akm health` reads it), `vacuumPending`,
 and `ftsTotalsStale` (set when a delete removed a row from `entries_fts`;
 cleared when `akm index` rebuilds the FTS table).
 
@@ -89,7 +90,7 @@ cleared when `akm index` rebuilds the FTS table).
 | `content_hash` | TEXT | Change detection |
 | `document_json` | TEXT NOT NULL | The stored `IndexDocument` |
 | `derived_from` | TEXT | Set on entries derived from another asset (for example `.derived` memories) |
-| `embed_hash` | TEXT | SHA-256 of the text the entry is embedded from; a change deletes the vector |
+| `embed_hash` | TEXT | SHA-256 of the entry's whole search text. The vector is deleted when the search text cut to `embedding.maxInputTokens` differs from the stored document's; a change past the cut keeps it |
 
 Indexes: `idx_entries_bundle`, `idx_entries_type`, `idx_entries_file_path`,
 `idx_entries_derived_from`.
@@ -157,17 +158,22 @@ mtimes are unchanged.
 
 `asset_ref`, `cache_variant`, `body_hash`, `result_json`, `updated_at`
 (INTEGER, Unix ms); primary key `(asset_ref, cache_variant)`. Holds memory
-inference results (`cache_variant = 'memory-inference-v2'`). A row is a miss
-when the body hash or variant changes; `clearStaleCacheEntries` removes
-orphans.
+inference results (`cache_variant = 'memory-inference-v5'`); `body_hash` hashes
+the cache input, which for memory inference is the body plus selected source
+context. A row is a miss when the effective input or the variant changes. An
+unchanged input is a validated hit with no model call (`cacheHits`); the cached
+value is a derived memory or `{ "noChange": true }`, and an unrecognised or
+corrupt value falls through to a recompute (`src/indexer/passes/memory-inference.ts`,
+`src/indexer/db/llm-cache.ts`). `clearStaleCacheEntries` removes orphans.
 
 #### `utility_scores`
 
 `entry_id` INTEGER PRIMARY KEY (FK to `entries(id)`, ON DELETE CASCADE),
 `utility`, `show_count`, `search_count`, `select_rate`, `last_used_at`,
 `updated_at`. Recomputed by `akm index` from `state.db` `usage_events` and
-adjusted by `akm feedback`. The improve eligibility code reads it
-(`src/commands/improve/eligibility.ts`); search ranking does not.
+adjusted by `akm feedback`. `akm improve` (eligibility and salience,
+`src/commands/improve/eligibility.ts`, `salience.ts`) and `akm metrics` read it;
+search ranking does not.
 
 #### `registry_index_cache`
 
@@ -201,8 +207,8 @@ by migration 020; no current code reads or writes it).
 | `ref` | TEXT | Asset ref, or a synthetic ref such as `proposals/_expiration` |
 | `metadata_json` | TEXT NOT NULL DEFAULT '{}' | |
 
-Indexes on `event_type`, `ref`, `ts`. The event types and their metadata are
-listed in [Data & Telemetry](../../reference/data-and-telemetry.md). `akm
+Indexes on `event_type`, `ref`, `ts`. The event types are listed in [Data &
+Telemetry](../../reference/data-and-telemetry.md). `akm
 improve` purges events older than `improve.eventRetentionDays` (default 90; 0
 disables).
 
@@ -259,7 +265,7 @@ rebuilding `index.db` does not discard it.
 |---|---|---|
 | `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
 | `event_type` | TEXT NOT NULL | `search`, `show`, `curate`, `feedback` |
-| `query` | TEXT | Search query; NULL otherwise |
+| `query` | TEXT | The search or curate query; NULL for show and feedback |
 | `entry_id` | INTEGER | `index.db` entry id; re-linked after a rebuild |
 | `entry_ref` | TEXT | Stable ref string |
 | `signal` | TEXT | `positive` or `negative` for feedback |
@@ -267,8 +273,9 @@ rebuilding `index.db` does not discard it.
 | `source` | TEXT NOT NULL DEFAULT 'user' | `user`, `improve`, `task`, `audit`, `unknown` (`AKM_EVENT_SOURCE` sets it for child processes) |
 | `created_at` | TEXT NOT NULL | |
 
-Only `source = 'user'` rows count as demand or utility. `akm index` deletes rows
-older than 90 days. Indexes on `entry_id`, `event_type`, `entry_ref`, `source`.
+Only `source = 'user'` rows count as demand or utility, and only user feedback
+moves search ranking (`feedbackFactor`, `src/indexer/search/ranking.ts`). `akm
+index` deletes rows older than 90 days. Indexes on `entry_id`, `event_type`, `entry_ref`, `source`.
 
 #### `improve_ledger`
 
@@ -291,20 +298,19 @@ Candidate selection in each improve stage reads it before any model call
 
 | Table | Holds |
 |---|---|
-| `improve_runs` | One row per `akm improve` run: `id`, `started_at`, `completed_at`, `stash_dir`, `dry_run`, `strategy`, `scope_mode`, `scope_value`, `ok`, `result_json`, `metrics_json`. Purged by the retention pass. |
+| `improve_runs` | One row per `akm improve` run: `id`, `started_at`, `completed_at`, `stash_dir`, `dry_run`, `strategy`, `scope_mode`, `scope_value`, `guidance`, `ok`, `result_json`, `metrics_json`, `metadata_json`, and `profile` (no longer written). Purged by the retention pass. |
 | `extract_sessions_seen` | Primary key `(harness, session_id)`; the extractor's record of which sessions it processed and with what outcome. |
 | `asset_salience`, `asset_outcome` | Per-asset improve scoring state, keyed by `asset_ref`. |
 | `body_embeddings` | Cache of memory-body embedding vectors keyed by `content_hash`, with `model_id` (`src/storage/repositories/embeddings-repository.ts`). |
 
 #### Workflow run tables
 
-Run state lives in four tables; runs persist until a retention policy removes
-them. Column definitions are in migrations `020-three-db-cutover`,
+Run state lives in four tables; no retention pass deletes a run. Column definitions are in migrations `020-three-db-cutover`,
 `022-workflow-unit-attempts`, `023-child-workflow-runs`, and
 `024-workflow-run-outputs` (`src/core/state/migrations.ts`); run semantics are
 in [Workflow Engine](../workflow-engine.md).
 
-- `workflow_runs`: one row per run. `status` is `active`, `completed`, `blocked`, or `failed`. It holds the frozen plan (`plan_json`, `plan_hash`, `plan_ir_version`; the version is `WORKFLOW_PLAN_VERSION` in `src/workflows/plan.ts`), `params_json`, `scope_key` (a directory hash that scopes runs to a project), the invoking `agent_harness` and `agent_session_id`, engine lease columns, child-run links (`parent_run_id`, `parent_unit_id`, `invocation_key`), and `outputs_json`.
+- `workflow_runs`: one row per run. `status` is `active`, `completed`, `blocked`, or `failed`. It holds the frozen plan (`plan_json`, `plan_hash`, `plan_ir_version`; the version is `WORKFLOW_PLAN_VERSION` in `src/workflows/plan.ts`, currently 8), `params_json`, the invoking `agent_harness` and `agent_session_id`, child-run links (`parent_run_id`, `parent_unit_id`, `invocation_key`), and `outputs_json`. `scope_key` (a directory hash) and `workflow_entry_id` (an `index.db entries.id`) are legacy: written by releases before 0.10, never written or read now (NULL on new rows), and the columns and their index stay so older rows load. The engine lease columns are legacy too; the lease is the per-run lock file under [Locks and sentinels](#locks-and-sentinels). New starts persist `irVersion` 8, the sole executable plan format. A stored plan from before `irVersion` 5 is rejected rather than upgraded or replayed through another runtime, and so is any earlier plan with a model step, which froze an engine where 8 freezes a connection or harness.
 - `workflow_run_steps`: primary key `(run_id, step_id)`; step `status` is `pending`, `completed`, `blocked`, `failed`, or `skipped`.
 - `workflow_run_units`: primary key `(run_id, unit_id)`; the current status of each node in a run's execution graph.
 - `workflow_run_unit_attempts`: primary key `(run_id, unit_id, attempt)`; an append-only ledger of external dispatches with a unique `dispatch_id`. A crash reclaim keeps the dispatch id for the same attempt; an explicit retry appends a new attempt.
@@ -317,12 +323,38 @@ in [Workflow Engine](../workflow-engine.md).
 `task_id`, `run_id`. `akm improve`'s retention pass deletes rows older than
 `improve.eventRetentionDays` (default 90; 0 disables); there is no size cap.
 
+### `$DATA/opencode-runtime/` (akm's own runtime and its OpenCode sessions)
+
+The directory akm's own agent runtime keeps everything in
+(`src/integrations/harnesses/opencode/roots.ts`, `.../runtime/command.ts`). The
+runtime is a pinned OpenCode 2 binary that akm runs as a process, and these are the
+five directories it is started with as its `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+`XDG_CACHE_HOME`, `XDG_STATE_HOME` and `TMPDIR`: `config/` (OpenCode's own, and
+`akm-plugin/`, akm's plugin), `data/` (logs, repositories, shell output, and
+`data/opencode/opencode.db`), `cache/`, `state/` and `tmp/` (the binary's own native
+pieces, which it unpacks at start). akm creates them on the first run of the
+runtime. Beside them, `prepare.lock` is held while the first run of an OpenCode
+version prepares its database, `prepared-<version>` marks that it did, and
+`keys/` (0700) holds the connection key of each running run, one 0600 file named
+for its session, removed when the run ends.
+
+`data/opencode/opencode.db` is an OpenCode database (the OpenCode 2 layout) that
+keeps the sessions of akm's own agent runtime. It is separate from the user's own
+`opencode.db` under `$XDG_DATA_HOME/opencode` (on every platform;
+`~/.local/share/opencode` by default), which keeps the runs of the `opencode`
+harness and which akm never writes. `akm proposal extract --type opencode` and
+the improve extract stage read both with SQLite alone, read-only, and skip
+sessions that are subagents or akm's own model work (on OpenCode 2, the sessions
+that ran as the `akm-model-work` agent). The binary itself is in
+`$CACHE/opencode/<version>/`.
+
 ## Files in `$CONFIG`, `$DATA`, and `$STASH`
 
 | Path | Contents |
 |---|---|
-| `$CONFIG/config.json` | User configuration (JSONC: comments are stripped at parse time). |
-| `$CACHE/config-backups/config-<ISO-ts>.json` | Snapshot of `config.json` taken before each config write (`backupExistingConfig`, `src/core/config/config-io.ts`), plus `config.latest.json`, a copy of the newest. The five newest timestamped snapshots are kept. |
+| `$CONFIG/config.json` | User configuration: bundles, connections, harnesses, feature flags, registries (JSONC: comments are stripped at parse time). |
+| `$CONFIG/credentials.json` | The API keys akm holds, as `{ "connections": { "<name>": { "key", "endpoint" } }, "services": { "embedding" \| "curateRerank": { "key", "endpoint" } } }`: each key with the endpoint it was stored for. Written atomically with mode `0600` (directory `0700` when akm creates it) by `akm setup` and `akm migrate apply`; never part of `config.json`. See [Credentials](../../reference/configuration.md#credentials). |
+| `$CACHE/config-backups/config-<ISO-ts>.json` | Snapshot of `config.json` taken before each config write (`backupExistingConfig`, `src/core/config/config-io.ts`), plus `config.latest.json`, a copy of the newest. The five newest timestamped snapshots are kept. `akm migrate apply` also leaves `credentials.json.<ts>` (a copy of the key store, taken before it re-files older entries) and `models.json.<ts>` (the retired file, moved aside) here; those are not pruned. |
 | `$DATA/akm.lock` | JSON array of installed bundle entries, maintained by `akm bundle add` and `akm bundle remove` (`src/integrations/lockfile.ts`). |
 | `$STASH/memories/MEMORY.md` | Optional memory index. `akm improve` warns when it passes 180 of a 200-line budget; akm does not write it. |
 
@@ -335,7 +367,7 @@ Subdirectories and file shapes come from `BUILTIN_PLACEMENT_SPECS`,
 |---|---|---|
 | `skills/<name>/` | skill | `SKILL.md` |
 | `commands/`, `agents/`, `knowledge/`, `instructions/`, `memories/`, `lessons/`, `facts/` | command, agent, knowledge, instruction, memory, lesson, fact | `<name>.md` |
-| `workflows/` | workflow | `<name>.md` or `<name>.yml` |
+| `workflows/` | workflow | `<name>.md` |
 | `tasks/` | task | `<name>.yml` |
 | `scripts/` | script | `<name>.<ext>` for `.sh`, `.ts`, `.js`, `.ps1`, `.cmd`, `.bat`, and other script extensions |
 | `env/` | env | `<name>.env` (`.env` is `default`) |
@@ -366,11 +398,11 @@ A bundle recognized by the `llm-wiki` adapter (a root with `schema.md` and
 | `$CACHE/registry-index/git-<hash>/` | Mirror of a `git` bundle: `repo/` and an `index.json` freshness marker | Fetched on add and on `akm bundle update`, never on a timer; if a forced refresh fails, `akm bundle update` reports the error and the old copy stays on disk |
 | `$CACHE/registry-index/website-<hash>/` | A `website` bundle snapshot: `stash/` and `manifest.json` | Fetched on add and on `akm bundle update`, never on a timer; if a forced refresh fails, `akm bundle update` reports the error and the old copy stays on disk |
 | `$CACHE/index/unresolved-sources/<stash>/<name>` | Placeholder path for a configured source whose content root did not resolve; not created on disk | n/a |
-| `$CACHE/tasks/logs/<task-id>/<ISO-ts>.log` | Per-run task log file; the cron backend also writes `<id>.log` directly in `$CACHE/tasks/logs/` | `akm improve` deletes files older than `improve.eventRetentionDays` (default 90) |
-| `$CACHE/logs/index/<ISO-ts>.log`, `$CACHE/logs/improve/<ISO-ts>.log` | Log of one `akm index` run or one non-dry-run `akm improve` run | No automatic cleanup |
-| `$CACHE/models/` | Hugging Face model cache for the local embedder (`HF_HOME`, when not already set) | No automatic cleanup |
-| `$CACHE/codex-output-schemas/<sha256>.json` | JSON output schemas passed to Codex | No automatic cleanup |
-| `$STATE/opencode-model-work/` | `XDG_STATE_HOME` given to the OpenCode plugin when akm dispatches model work through OpenCode (`modelWorkPluginEnv`) | No automatic cleanup |
+| `$CACHE/tasks/logs/<task-id>/<ISO-ts>.log` | Per-run task log file; each scheduler backend (cron, launchd, Task Scheduler) also writes `<id>.log` directly in `$CACHE/tasks/logs/`, which no retention pass deletes | `akm improve` deletes files older than `improve.eventRetentionDays` (default 90) |
+| `$CACHE/logs/index/<ISO-ts>.log`, `$CACHE/logs/improve/<ISO-ts>.log` | Log of one `akm index` run or one non-dry-run `akm improve` run | `akm improve` deletes files older than `improve.eventRetentionDays` (default 90) |
+| `$CACHE/models/` | Hugging Face model cache for the local embedder; `$HF_HOME` is used instead when it is set | No automatic cleanup |
+| `$CACHE/opencode/<version>/opencode` | The OpenCode binary akm's own runtime runs (about 240 MB), fetched from the npm registry on its first use | Permanent; safe to delete (fetched again) |
+| `$CACHE/onnxruntime/<version>-<platform>-<arch>/` | `onnxruntime_binding.node` and the ONNX Runtime library it links, which the local embedder loads; fetched from the npm registry by `akm setup --embedding local` or the first local embedding (about 36 MB kept). Must be on a mount that allows executing files | Permanent; safe to delete (fetched again) |
 
 `git`, `website`, and `npm` bundles are materialized into `$CACHE` by each
 provider's `sync()` (`src/sources/providers/`) before indexing, then indexed
@@ -396,5 +428,5 @@ harness session logs. akm does not write to these paths.
 | Path | Harness |
 |---|---|
 | `~/.claude/projects/` (`AKM_CLAUDE_PROJECTS_DIR` overrides) | Claude Code |
-| `~/.local/share/opencode/` (Linux), `~/Library/Application Support/opencode/` (macOS) | OpenCode |
+| `$XDG_DATA_HOME/opencode/opencode.db` (`~/.local/share/opencode/opencode.db` by default, on every platform) | OpenCode (your own install; akm's own sessions are in `$DATA/opencode-runtime/data/opencode/opencode.db`) |
 | `$CODEX_HOME/sessions/` (`~/.codex/sessions/` by default) | Codex |

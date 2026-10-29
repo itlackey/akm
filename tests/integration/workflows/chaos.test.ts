@@ -648,7 +648,7 @@ const ENV_SOLO_WF = [
   "---",
   "type: workflow",
   "defaults:",
-  "  engine: test-agent",
+  "  engine: test-llm",
   "steps:",
   "  - id: build",
   "    unit: { env: [env/leak] }",
@@ -670,10 +670,19 @@ const ENV_SOLO_WF = [
   "",
 ].join("\n");
 
+/** An env asset in the working stash and the `${secrets/…}` token files it names. */
+function writeEnvAsset(name: string, body: string, secrets: Record<string, string> = {}): void {
+  fs.mkdirSync(path.join(storage.stashDir, "env"), { recursive: true });
+  fs.writeFileSync(path.join(storage.stashDir, "env", `${name}.env`), body, "utf8");
+  for (const [secret, value] of Object.entries(secrets)) {
+    fs.mkdirSync(path.join(storage.stashDir, "secrets"), { recursive: true });
+    fs.writeFileSync(path.join(storage.stashDir, "secrets", secret), value, "utf8");
+  }
+}
+
 describe("chaos: hostile content — secret env VALUES never reach a durable surface", () => {
   test("a bound secret value reaches the child env but appears in NO work-list / result / events / journal output", async () => {
-    fs.mkdirSync(path.join(storage.stashDir, "env"), { recursive: true });
-    fs.writeFileSync(path.join(storage.stashDir, "env", "leak.env"), `FAKE_TOKEN=${FAKE_SECRET}\n`, "utf8");
+    writeEnvAsset("leak", "FAKE_TOKEN=${secrets/fake}\n", { fake: FAKE_SECRET });
     writeProgram("env-bound", ENV_SOLO_WF);
     const started = await startWorkflowRun("workflows/env-bound", {});
     const runId = started.run.id;
@@ -718,6 +727,136 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
     // …and from every journaled unit row.
     const unitDump = JSON.stringify(await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(runId)));
     expect(unitDump).not.toContain(FAKE_SECRET);
+  });
+
+  test("an ordinary inherited value survives in the journaled exec output, with or without a frozen `pass_env` naming it; a secret bound through an env asset is still redacted", async () => {
+    // #1096: inherited values were added to the redaction set, so an inherited
+    // `AKM_BUNDLE_DIR=/stash` turned `/stash/inbox/x` into `[REDACTED]/inbox/x`.
+    // The documented contract is that an inherited value is redacted only when its
+    // name is credential-shaped, which `INHERITED_PROBE` is not. `pass_env` still
+    // parses, selects nothing, and is kept here so a workflow that has it loads.
+    const PASSED = "/pass-env-probe-stash";
+    writeEnvAsset("leak", "FAKE_TOKEN=${secrets/fake}\n", { fake: FAKE_SECRET });
+    const command = [
+      process.execPath,
+      "-e",
+      'process.stdout.write(process.env.INHERITED_PROBE + "/inbox/x " + process.env.FAKE_TOKEN)',
+    ];
+    writeProgram(
+      "pass-env",
+      [
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: build",
+        "    unit:",
+        "      env: [env/leak]",
+        "      exec:",
+        `        command: ${JSON.stringify(command)}`,
+        "        pass_env: [INHERITED_PROBE]",
+        "---",
+        "",
+        "## build",
+        "",
+        "Print both values.",
+        "",
+      ].join("\n"),
+    );
+    const prior = process.env.INHERITED_PROBE;
+    process.env.INHERITED_PROBE = PASSED;
+    try {
+      const started = await startWorkflowRun("workflows/pass-env", {});
+      const result = await runWorkflowSteps({ target: started.run.id, summaryJudge: null });
+      expect(result.run.status).toBe("completed");
+      const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(started.run.id));
+      const journaled = JSON.parse(rows[0]?.result_json ?? "null") as string;
+      expect(journaled).toStartWith(`${PASSED}/inbox/x `);
+      expect(journaled).not.toContain(FAKE_SECRET);
+      expect(journaled).toContain("[REDACTED]");
+    } finally {
+      if (prior === undefined) delete process.env.INHERITED_PROBE;
+      else process.env.INHERITED_PROBE = prior;
+    }
+  });
+
+  test("redaction covers secrets, not configuration: a URL bound through an env asset survives, the token beside it is redacted", async () => {
+    const URL_VALUE = "https://hooks.example.test/inbox/7";
+    writeEnvAsset("hook", "HOOK_URL=https://hooks.example.test/inbox/7\nHOOK_TOKEN=${secrets/hook-token}\n", {
+      "hook-token": FAKE_SECRET,
+    });
+    const command = [
+      process.execPath,
+      "-e",
+      'process.stdout.write(process.env.HOOK_URL + " " + process.env.HOOK_TOKEN)',
+    ];
+    writeProgram(
+      "hook-env",
+      [
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: call",
+        "    unit:",
+        "      env: [env/hook]",
+        "      exec:",
+        `        command: ${JSON.stringify(command)}`,
+        "---",
+        "",
+        "## call",
+        "",
+        "Print the URL and the token.",
+        "",
+      ].join("\n"),
+    );
+    const started = await startWorkflowRun("workflows/hook-env", {});
+    const result = await runWorkflowSteps({ target: started.run.id, summaryJudge: null });
+    expect(result.run.status).toBe("completed");
+
+    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(started.run.id));
+    const journaled = JSON.parse(rows[0]?.result_json ?? "null") as string;
+    expect(journaled).toContain(URL_VALUE);
+    expect(journaled).not.toContain(FAKE_SECRET);
+    expect(journaled).toContain("[REDACTED]");
+  });
+
+  test("a secret that no bundle owns fails the step and nothing is injected", async () => {
+    writeEnvAsset("hook", "HOOK_URL=https://hooks.example.test/x\nHOOK_TOKEN=${secrets/absent}\n");
+    writeProgram(
+      "hook-missing",
+      [
+        "---",
+        "type: workflow",
+        "defaults:",
+        "  engine: test-llm",
+        "steps:",
+        "  - id: call",
+        "    unit: { env: [env/hook] }",
+        "    gate: {}",
+        "---",
+        "",
+        "## call",
+        "",
+        "Call the hook.",
+        "",
+        "### gate",
+        "",
+        "- it was called",
+        "",
+      ].join("\n"),
+    );
+    const started = await startWorkflowRun("workflows/hook-missing", {});
+    let dispatched = false;
+    const result = await runWorkflowSteps({
+      target: started.run.id,
+      maxSteps: 1,
+      summaryJudge: acceptJudge,
+      dispatcher: async (): Promise<UnitDispatchResult> => {
+        dispatched = true;
+        return { ok: true, text: "called" };
+      },
+    });
+    expect(dispatched).toBe(false);
+    expect(JSON.stringify(result)).toContain("secrets/absent");
   });
 });
 

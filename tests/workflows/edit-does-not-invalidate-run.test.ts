@@ -15,6 +15,7 @@ import path from "node:path";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import type { UnitDispatcher } from "../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
+import { WORKFLOW_PLAN_VERSION } from "../../src/workflows/plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -61,7 +62,7 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
     writeWorkflow("unedited", "Do the second thing.");
     const started = await runWorkflowSteps({ target: "workflows/unedited", maxSteps: 1, dispatcher: okDispatcher });
     expect(started.run.status).toBe("active");
-    const resumed = await runWorkflowSteps({ target: "workflows/unedited", dispatcher: okDispatcher });
+    const resumed = await runWorkflowSteps({ target: started.run.id, dispatcher: okDispatcher });
     expect(resumed.run.status).toBe("completed");
     expect(resumed.warnings ?? []).toEqual([]);
   });
@@ -78,7 +79,7 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
     expect(started.run.status).toBe("active");
 
     const before = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    expect(before?.plan_ir_version).toBe(6);
+    expect(before?.plan_ir_version).toBe(WORKFLOW_PLAN_VERSION);
 
     // "edit ~/akm/workflows/repro-919.md — extend a step body"
     writeWorkflow("repro-919", "Do the EDITED second thing, now with more detail.");
@@ -87,7 +88,7 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
     // "akm workflow run workflows/repro-919" (no --max-steps: run to completion)
     const prompts: string[] = [];
     const resumed = await runWorkflowSteps({
-      target: "workflows/repro-919",
+      target: started.run.id,
       dispatcher: async (req) => {
         prompts.push(req.prompt);
         return { ok: true, text: "done" };
@@ -96,7 +97,6 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
 
     // The run resolves and finishes on the frozen plan.
     expect(resumed.run.id).toBe(started.run.id);
-    expect(resumed.resumed).toBe(true);
     expect(resumed.done).toBe(true);
     expect(resumed.run.status).toBe("completed");
 
@@ -104,7 +104,7 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
     const drift = (resumed.warnings ?? []).filter((w) => w.includes("has changed since this run was frozen"));
     expect(drift).toHaveLength(1);
     expect(drift[0]).toContain("continuing with the frozen plan");
-    expect(drift[0]).toContain("--new");
+    expect(drift[0]).toContain("Start a new run with");
 
     // The frozen plan dispatched — never the edited source.
     expect(prompts).toHaveLength(1);
@@ -112,6 +112,6 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
     expect(prompts[0]).not.toContain("EDITED");
 
     const after = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    expect(after?.plan_ir_version).toBe(6);
+    expect(after?.plan_ir_version).toBe(WORKFLOW_PLAN_VERSION);
   });
 });

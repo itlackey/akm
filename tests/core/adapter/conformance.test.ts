@@ -302,11 +302,15 @@ describe("conformance — read candidates and recognition are two-way canonical 
       fs.writeFileSync(reserved, "# reserved");
       expect(genericFilesAdapter.recognize(genericComponent, buildFileContext(genericRoot, reserved))).toBeNull();
 
+      // Installing a bundle is the trust decision: an asset that is a symlink to
+      // a file outside the bundle is owned like any other file (#1237).
       const outside = path.join(sandbox.dir, "outside.md");
       fs.writeFileSync(outside, "outside");
-      const escaping = path.join(genericRoot, "escape.md");
-      fs.symlinkSync(outside, escaping);
-      expect(resolveAdapterConceptOwner(genericRoot, "generic-files", "escape")).toBeUndefined();
+      const linked = path.join(genericRoot, "linked.md");
+      fs.symlinkSync(outside, linked);
+      const linkedOwner = resolveAdapterConceptOwner(genericRoot, "generic-files", "linked");
+      expect(linkedOwner?.path).toBe(linked);
+      expect(linkedOwner?.realPath).toBe(fs.realpathSync(outside));
 
       const dotenvComponent = component("dotenv", "dotenv", dotenvRoot);
       const defaultEnv = path.join(dotenvRoot, "env", ".env");
@@ -315,7 +319,6 @@ describe("conformance — read candidates and recognition are two-way canonical 
       expect(dotenvAdapter.recognize(dotenvComponent, buildFileContext(dotenvRoot, defaultEnv))?.conceptId).toBe(
         "env/default",
       );
-      expect(dotenvAdapter.placeNew?.(dotenvComponent, "env/default")).toBe(defaultEnv);
       expect(dotenvAdapter.readCandidates?.(dotenvComponent, "env/default")[0]).toEqual({
         path: defaultEnv,
         conceptId: "env/default",
@@ -361,7 +364,6 @@ describe("conformance — read candidates and recognition are two-way canonical 
       const authored = [
         ["same.md", "Use $ARGUMENTS exactly.\n"],
         ["loose-workflow.md", "---\ntype: workflow\n---\n\n# Loose workflow\n"],
-        ["loose-tools-agent.md", "---\ntools: [Read]\n---\n\n# Loose tools agent\n"],
         ["loose-agent-command.md", "---\nagent: planner\n---\n\n# Loose agent command\n"],
         ["loose-model-agent.md", "---\nmodel: local\n---\n\n# Loose model agent\n"],
         ["loose-knowledge.md", "# Loose knowledge\n"],

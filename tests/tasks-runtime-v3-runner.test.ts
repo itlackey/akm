@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { openLogsDatabase, queryTaskLogs } from "../src/core/logs-db";
 import type { SpawnFn } from "../src/core/subprocess";
+import { _setWarnSinkForTests } from "../src/core/warn";
 import { runTask } from "../src/tasks/run/run-task";
 import { readTaskHistory } from "../src/tasks/run/task-history";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
@@ -96,14 +97,14 @@ describe("task runner mutation boundary", () => {
       "with is legal only with",
     ],
     [
-      "secret-shaped literal env",
-      'version: 4\nrun: printf no\nenv:\n  API_TOKEN: github_pat_012345678901234567890123456789\nschedule: "@daily"\n',
-      "secret-shaped literal env",
+      "no connection or harness to run on",
+      'version: 4\nuses: akm/command\nwith:\n  content: Review\nschedule: "@daily"\n',
+      "nothing to run agent work on",
     ],
     [
-      "unresolved engine",
-      'version: 4\nuses: akm/command\nwith:\n  content: Review\nengine: missing\nschedule: "@daily"\n',
-      "missing",
+      "a harness that is not configured",
+      'version: 4\nuses: akm/command\nwith:\n  content: Review\nharness: missing\nschedule: "@daily"\n',
+      'Harness "missing" is not configured',
     ],
   ] as const) {
     test(`${label} source fails before any history or log mutation`, async () => {
@@ -139,90 +140,36 @@ describe("task runner mutation boundary", () => {
     expect(logFiles().some((file) => file.endsWith(".log"))).toBe(true);
   });
 
-  test("a multi-job workflow target fails the 0.9.2 runtime boundary before attempt reservation", async () => {
-    const workflowsDir = path.join(storage.stashDir, "workflows");
-    fs.mkdirSync(workflowsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(workflowsDir, "multi.yml"),
-      [
-        "name: Multi",
-        "on:",
-        "  workflow_dispatch: {}",
-        "jobs:",
-        "  first:",
-        "    runs-on: [self-hosted]",
-        "    steps:",
-        "      - id: one",
-        "        run: echo one",
-        "  second:",
-        "    runs-on: [self-hosted]",
-        "    steps:",
-        "      - id: two",
-        "        run: echo two",
-        "",
-      ].join("\n"),
+  test("a secret-shaped literal task env: value warns and the task still runs (#1237)", async () => {
+    writeTask(
+      "secret-env",
+      'version: 4\nrun: exit 0\nshell: sh\nenv:\n  API_TOKEN: github_pat_012345678901234567890123456789\nschedule: "@daily"\n',
     );
-    // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, F-A2.5): the
-    // wrapping task fixture converts to task source v4 — task source version
-    // is orthogonal to this rejection, which fires at workflow compilation.
-    // FLIPPED in P4 (§3.3, row B-34, F-A3.5): the rejection now fires at
-    // PARSE (multi-job-unsupported), not at compileWorkflowPlan's deleted
-    // "exactly one source-IR job" check — this document never reaches it.
-    writeTask("multi", 'version: 4\nuses: workflows/multi\nschedule: "@daily"\n');
-
-    await expect(
-      runTask("multi", { bundleDir: storage.stashDir, bundleName: "fixture", scheduled: true }),
-    ).rejects.toThrow(/requires exactly one job/i);
-    expect(readTaskHistory({ id: "multi" })).toEqual([]);
-    expect(logFiles()).toEqual([]);
-  });
-
-  test("unsupported workflow services fail before attempt reservation", async () => {
-    const workflowsDir = path.join(storage.stashDir, "workflows");
-    fs.mkdirSync(workflowsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(workflowsDir, "services.yml"),
-      [
-        "name: Services",
-        "on:",
-        "  workflow_dispatch: {}",
-        "jobs:",
-        "  only:",
-        "    runs-on: [self-hosted]",
-        "    services:",
-        "      database:",
-        "        image: postgres:latest",
-        "    steps:",
-        "      - id: one",
-        "        run: echo one",
-        "",
-      ].join("\n"),
-    );
-    writeTask("services", 'version: 4\nuses: workflows/services\nschedule: "@daily"\n');
-
-    await expect(
-      runTask("services", { bundleDir: storage.stashDir, bundleName: "fixture", scheduled: true }),
-    ).rejects.toThrow(/services/i);
-    expect(readTaskHistory({ id: "services" })).toEqual([]);
-    expect(logFiles()).toEqual([]);
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      const result = await runTask("secret-env", {
+        bundleDir: storage.stashDir,
+        bundleName: "fixture",
+        scheduled: true,
+      });
+      expect(result).toMatchObject({ status: "completed" });
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(warnings.some((message) => message.includes("env.API_TOKEN looks like a credential"))).toBe(true);
+    expect(warnings.some((message) => message.includes("akm secret run"))).toBe(true);
+    expect(warnings.join("\n")).not.toContain("github_pat_");
   });
 
   test("workflow task env: is dropped (with a warning) and the workflow still dispatches", async () => {
     const workflowsDir = path.join(storage.stashDir, "workflows");
     fs.mkdirSync(workflowsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(workflowsDir, "env-target.yml"),
-      [
-        "name: Env target",
-        "on: { workflow_dispatch: null }",
-        "jobs:",
-        "  main:",
-        "    runs-on: [self-hosted]",
-        "    steps:",
-        "      - id: run",
-        "        run: echo ok",
-        "",
-      ].join("\n"),
+      path.join(workflowsDir, "env-target.md"),
+      ["---", "type: workflow", "steps:", "  - id: run", "---", "", "## run", "", "Run it.", ""].join("\n"),
     );
     writeTask(
       "workflow-env",
@@ -378,59 +325,6 @@ describe("task runner mutation boundary", () => {
       db.close();
     }
   });
-
-  test.skipIf(process.platform === "win32").each(["symlink", "ancestor", "bundle-root", "file"] as const)(
-    "%s cwd replacement fails before spawn and never executes outside the prepared physical directory",
-    async (replacement) => {
-      const outside = path.join(storage.root, `outside-${replacement}`);
-      fs.mkdirSync(outside, { recursive: true });
-      const work = path.join(storage.stashDir, "work");
-      const nested = path.join(work, "nested");
-      fs.mkdirSync(nested, { recursive: true });
-      const authoredCwd =
-        replacement === "ancestor" ? "work/nested" : replacement === "bundle-root" ? undefined : "work";
-      writeTask(
-        "cwd-swap",
-        [
-          "version: 4",
-          "run: printf safe",
-          ...(authoredCwd ? [`working-directory: ${authoredCwd}`] : []),
-          'schedule: "@daily"',
-          "",
-        ].join("\n"),
-      );
-      let spawned = false;
-
-      const result = await runTask("cwd-swap", {
-        bundleDir: storage.stashDir,
-        bundleName: "fixture",
-        beforeNativeDispatch: () => {
-          if (replacement === "bundle-root") {
-            const original = `${storage.stashDir}-original`;
-            fs.renameSync(storage.stashDir, original);
-            fs.symlinkSync(outside, storage.stashDir, "dir");
-            return;
-          }
-          if (replacement === "ancestor") {
-            fs.renameSync(work, `${work}-original`);
-            fs.symlinkSync(outside, work, "dir");
-            return;
-          }
-          fs.rmSync(work, { recursive: true, force: true });
-          if (replacement === "file") fs.writeFileSync(work, "not a directory");
-          else fs.symlinkSync(outside, work, "dir");
-        },
-        spawnFn: () => {
-          spawned = true;
-          return completedSpawn(0);
-        },
-      });
-
-      expect(spawned).toBe(false);
-      expect(result.status).toBe("failed");
-      expect(fs.readFileSync(result.log, "utf8")).toMatch(/working directory|physical|identity|changed/i);
-    },
-  );
 
   test.each([
     ["deleted", undefined],

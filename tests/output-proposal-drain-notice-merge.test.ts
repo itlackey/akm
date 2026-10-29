@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { mergeProposalDrainNotices } from "../src/commands/proposal/proposal-cli";
+import { mergeNotices } from "../src/execution/notices";
 import { formatProposalDrainPlain } from "../src/output/text/proposal-format";
 
 const RESOLUTION_NOTICE = {
@@ -23,7 +23,7 @@ const DISPATCH_NOTICE = {
   message: "The fixture lowerer will attempt dispatch without native schema translation.",
 };
 
-function drainEnvelope(notices: ReturnType<typeof mergeProposalDrainNotices>): Record<string, unknown> {
+function drainEnvelope(notices: ReturnType<typeof mergeNotices>): Record<string, unknown> {
   return {
     schemaVersion: 1,
     ok: true,
@@ -53,7 +53,7 @@ describe("proposal drain lowering notice aggregation", () => {
   });
 
   test("a dispatch-only notice survives structured and text output", () => {
-    const notices = mergeProposalDrainNotices(undefined, [DISPATCH_NOTICE]);
+    const notices = mergeNotices(undefined, [DISPATCH_NOTICE]);
     const envelope = drainEnvelope(notices);
 
     expect(notices).toEqual([DISPATCH_NOTICE]);
@@ -62,13 +62,17 @@ describe("proposal drain lowering notice aggregation", () => {
   });
 
   test("resolution and dispatch notices retain stable order and exact duplicates collapse", () => {
-    const notices = mergeProposalDrainNotices(
+    const notices = mergeNotices(
       [RESOLUTION_NOTICE, DISPATCH_NOTICE],
-      [DISPATCH_NOTICE, { ...DISPATCH_NOTICE, field: "tools" }],
+      [DISPATCH_NOTICE, { ...DISPATCH_NOTICE, field: "inference.vendorKnob" }],
     );
 
-    expect(notices).toEqual([RESOLUTION_NOTICE, DISPATCH_NOTICE, { ...DISPATCH_NOTICE, field: "tools" }]);
+    expect(notices).toEqual([
+      RESOLUTION_NOTICE,
+      DISPATCH_NOTICE,
+      { ...DISPATCH_NOTICE, field: "inference.vendorKnob" },
+    ]);
     expect(Object.isFrozen(notices)).toBe(true);
-    expect(mergeProposalDrainNotices([], [])).toBeUndefined();
+    expect(mergeNotices([], [])).toBeUndefined();
   });
 });

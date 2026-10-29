@@ -4,8 +4,9 @@ These fixtures support manual testing of the CLI.
 
 - `bundle/` supplements the fixed 18-entry ranking baseline with workflow,
   task, agent, command, `.meta`, and fragment-addressing cases.
-- `dangerous-bundle/` and `suppressed-dangerous-bundle/` exercise source
-  installation and dangerous environment-key policy without real secrets.
+- `dangerous-bundle/` and `suppressed-dangerous-bundle/` are bundles whose env
+  files set process-hijacking keys, without real secrets. They exercise that
+  such bundles install without a gate (#1237) and the lint rule.
 - `fake-agent.ts` is a deterministic executable for agent success, failure,
   timeout, signal, capture, and redaction checks.
 - `fake-services.ts` exposes loopback OpenAI enrichment/proposal

@@ -391,8 +391,8 @@ describe("isPathAllowedByRobots", () => {
   // how many literal '*' characters appear in the pattern.
   //
   // The time budget is enforced via bun's own per-test `timeout` (not a
-  // manual `Date.now()`/`performance.now()` delta assertion, which
-  // `scripts/lint-tests-isolation.ts` bans as flake-prone): a correct
+  // manual `Date.now()`/`performance.now()` delta assertion, which is
+  // flake-prone): a correct
   // (collapsed) implementation resolves in well under a millisecond, while a
   // naive uncollapsed one blows this budget by many orders of magnitude.
   test(

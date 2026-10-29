@@ -1,9 +1,0 @@
-name: Child workflow direct composition
-on:
-  workflow_dispatch:
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: dispatch
-        uses: workflows/leaf

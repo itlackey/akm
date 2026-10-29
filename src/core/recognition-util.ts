@@ -37,14 +37,13 @@ export const SCRIPT_EXTENSIONS = new Set([
 ]);
 
 /**
- * Recognized workflow asset extensions. Markdown remains first-class and the
- * strict local GitHub-shaped source adapter adds `.yml` as a peer format.
- * `workflows/<name>` refs resolve against this list.
+ * Recognized workflow asset extensions. `workflows/<name>` refs resolve against
+ * this list.
  */
-export const WORKFLOW_EXTENSIONS = [".md", ".yml"] as const;
+export const WORKFLOW_EXTENSIONS = [".md"] as const;
 
 /**
- * Strip a recognized workflow extension (`.md` or `.yml`) from a workflow asset
+ * Strip the recognized workflow extension (`.md`) from a workflow asset
  * *name* so `foo` and `foo.md` collapse to one canonical identity — the same
  * collapse `workflowSpec.toCanonicalName` performs on a resolved file path.
  * Callers that turn a `workflows/<name>` ref into run identity (the
@@ -75,16 +74,14 @@ export const DERIVED_SUFFIX = ".derived";
 // import, so it lives here without breaking the D1-5 import-free invariant.
 
 /**
- * The AKM-owned built-in asset type keys — the deleted `common.ts` `ASSET_TYPES`
- * set (same order) minus the retired `wiki` type (chunk 4); `instruction`
- * (CLAUDE.md / AGENTS.md project-instruction files) is the newest, added for the
- * format-family adapters (spec §6/§7 instruction row, maintainer resolution
- * 2026-07). An instruction file is a read-like-knowledge markdown document, so
- * it reuses knowledge's presentation shape (label "Instruction", `knowledge-md`
- * renderer, a "read the project instructions" action) rather than the generic
- * fallback. `wiki` was removed here in chunk 4 ("the wiki ASSET-TYPE dies", plan
- * §11 Chunk 4 / §7.4): the LLM Wiki structure now lives in the first-class
- * `llm-wiki` adapter whose page kinds are open (foreign) types, not AKM-owned.
+ * The AKM-owned built-in asset type keys. `instruction`
+ * (CLAUDE.md / AGENTS.md project-instruction files) is the one added for the
+ * format-family adapters: an instruction file is a read-like-knowledge
+ * markdown document, so it reuses knowledge's presentation shape (label
+ * "Instruction", `knowledge-md` renderer, a "read the project instructions"
+ * action) rather than the generic fallback. `wiki` is not an AKM-owned type:
+ * the LLM Wiki structure lives in the first-class `llm-wiki` adapter whose
+ * page kinds are open (foreign) types.
  */
 export const KNOWN_TYPES = [
   "skill",

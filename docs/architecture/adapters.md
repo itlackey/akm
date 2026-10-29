@@ -12,7 +12,7 @@ conversion: the adapter projects native files into AKM's index/runtime shapes
 while the source file remains authoritative. AKM does not synchronize native
 formats, maintain translated canonical copies, or write agent/command assets
 back through the Claude/OpenCode adapters. Execution of agent and command assets
-is described in [Architecture: Engine Boundary](architecture.md#engine-boundary).
+is described in [Architecture: Connections and Harnesses](architecture.md#connections-and-harnesses).
 
 > **Stability note.** The adapter set, bundle-recognition rules, and the
 > `bundles` config shape are still evolving — see [STABILITY.md](../../STABILITY.md).
@@ -41,7 +41,7 @@ agent-skills       -- a <name>/SKILL.md package at the bundle root
 claude             -- root CLAUDE.md + commands/|agents/|skills/
 opencode           -- opencode.json(c), or root AGENTS.md + a tool dir
 dotenv             -- every top-level dir is env/ and/or secrets/
-akm-workflow       -- a top-level .md with type: workflow, or a GitHub-Actions-shaped .yml
+akm-workflow       -- a top-level .md with explicit type: workflow
 akm-task           -- a top-level task source .yml (v4, or a v2/v3 file awaiting migration)
 llm-wiki           -- root schema.md + pages/
 akm                -- .stash marker, or 2+ native subdirs, or fallback
@@ -105,23 +105,21 @@ interface BundleAdapter {
   // reading authored bytes or walking the bundle.
   readCandidates?(c: BundleComponent, conceptId: string): AdapterReadCandidate[]; // { path, conceptId }
 
-  // OPTIONAL — placement / discovery.
-  placeNew?(c: BundleComponent, conceptId: string): string;   // where a new item would live
+  // OPTIONAL — discovery.
   directoryList?(c: BundleComponent): string[];               // owned dirs; feeds git exact-path staging
   looksLikeRoot?(root: string): boolean;                      // install-time probe
 }
 ```
 
 `recognize` and `validate` are required on every adapter; `index`,
-`affectedItems`, `renderExecutionSource`, `readCandidates`, `placeNew`,
-`directoryList`, and `looksLikeRoot` are optional capability methods. An adapter overriding `index()` must keep
+`affectedItems`, `renderExecutionSource`, `readCandidates`, `directoryList`, and
+`looksLikeRoot` are optional capability methods. An adapter overriding `index()` must keep
 `recognize()` coherent with it (conformance: `index()` == fold of
 `recognize()` over the core walk) or declare component-level
 incrementality.
 
-`readCandidates` is intentionally distinct from both `extensions` and
-`placeNew`: extensions are non-exhaustive walk hints, while placement is a
-write-normalization policy. Read candidates preserve canonical directory
+`readCandidates` is intentionally distinct from `extensions`: extensions are
+non-exhaustive walk hints. Read candidates preserve canonical directory
 manifests (for example `skills/<name>/SKILL.md`) so lookup, index-backed show, and workflow runtime share one
 physical-owner decision. Each candidate carries its canonical concept identity,
 so a byte-denying ownership probe never has to infer identity from the query.
@@ -149,9 +147,15 @@ concern.
 
 ---
 
-## `placeNew()`
+## Placement
 
-Nothing in the write path calls `placeNew()`; writes resolve through the native type-to-directory table in `src/core/asset/asset-placement.ts`.
+Adapters do not place new items. AKM-native writes resolve through AKM's own
+flat type→directory placement table (`src/core/asset/asset-placement.ts`'s
+`PLACEMENT_SPECS`), which is correct for akm-layout bundles — the only bundles
+the write commands touch in practice. A per-adapter `placeNew()` existed
+through 0.9 but nothing called it, and it was removed in 0.10. Supporting
+writable bundles in another layout would need it back: see
+[#1163](https://github.com/itlackey/akm/issues/1163).
 
 ---
 
@@ -170,12 +174,10 @@ The default allowlist is `["akm"]`. Two command families widen it explicitly:
 | `akm env create` / `env remove` / `secret set` | `dotenv` |
 | `akm workflow create` | `akm-workflow` |
 
-Every other adapter — including every adapter that already implements
-`placeNew()` (`agent-skills`, `claude`, `opencode`, `akm-task`,
-`generic-files`) — is refused by every AKM-native write command.
+Every other adapter (`agent-skills`, `claude`, `opencode`, `akm-task`,
+`generic-files`, and so on) is rejected by every AKM-native write command.
 `akm task add` in particular uses the *default* allowlist (`akm` only), so a
-standalone `akm-task` bundle is read-only through AKM-native write commands
-even though `akm-task`'s own `placeNew()` is implemented.
+standalone `akm-task` bundle is read-only through AKM-native write commands.
 
 Reading, searching, and `akm lint` are unaffected by this allowlist — only
 creating, editing, or deleting through AKM's own commands is restricted.
@@ -183,8 +185,8 @@ creating, editing, or deleting through AKM's own commands is restricted.
 this write-command restriction, not a filesystem permission.
 
 AKM retrieves and validates every supported format, but its own write
-commands mutate only the targets on the allowlist; implementing `placeNew()`
-does not add a format to it.
+commands mutate only the targets on the allowlist; being able to read a format
+does not add it.
 
 ---
 
@@ -231,9 +233,9 @@ they actually work:
 - **Task adapters share one task source parser.** A standalone `akm-task`
   bundle and task files owned by the native `akm` adapter both route through
   `parseTaskSource` (see [Task adapter](#task-adapter)).
-- **`llm-wiki`, `akm`, and `okf` all reserve `index.md`/`log.md`** as
-  structural files — never indexed as concepts, never valid write targets —
-  at any depth.
+- **`akm` and `okf` reserve `index.md`/`log.md`** as structural files — never
+  indexed as concepts, never valid write targets — at any depth. `llm-wiki`
+  reserves `schema.md`, `index.md` and `log.md` only at the wiki root.
 - **`okf`'s lenient wording is not a lenient gate.** `missing-type` and
   broken-link findings are labelled `info:`/`warning:` in the diagnostic
   text, but diagnostics carry no severity field: `akm lint` funnels every

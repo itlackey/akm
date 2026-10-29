@@ -187,7 +187,7 @@ visible wins:
   asset that mentions a given entity, by confidence). `akm graph orphans`
   surfaces assets that produced zero entities — quality-triage candidates.
   See the 0.8.0 migration guide's
-  [graph extraction section](../migration/README.md).
+  [graph extraction section](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.7-to-v0.8.md#memory-inference-and-graph-extraction-moved-out-of-index).
 - **Better output.** `akm graph relations` and `akm graph entities` now show
   per-row confidence. Search hits annotate the graph-boost contribution in
   `whyMatched`. Related results end with a `Next: akm show '<ref>'` hint
@@ -202,7 +202,7 @@ the next `akm improve` cycle, which makes LLM calls. The first improve cycle
 after upgrade is slower than steady state, but the Phase 1 / Phase 2
 improvements above make it dramatically faster than equivalent re-extraction
 on 0.7.x. See the migration guide section
-[Graph extraction will re-run after upgrade](../migration/README.md).
+[Graph extraction will re-run after upgrade](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.7-to-v0.8.md#graph-extraction-will-re-run-after-upgrade).
 
 ## Config v2 and reflect LLM mode
 
@@ -269,7 +269,7 @@ akm config migrate  # doclint:ignore (historical — akm 0.8.0 release announcem
 ```
 
 Full reference: [configuration reference](../reference/configuration.md).
-Full key mapping: [v0.7 to v0.8 migration guide — Config 0.8.0 migration](../migration/README.md).
+Full key mapping: [v0.7 to v0.8 migration guide — Config 0.8.0 migration](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.7-to-v0.8.md#config-080-migration-unified-profiles).
 
 ## Migration Guidance
 
@@ -327,6 +327,6 @@ akm task list              # shows your defined tasks — doclint:ignore (histor
 akm config get configVersion  # "0.8.0" after akm config migrate
 ```
 
-Full details in the [v0.7 to v0.8 migration guide](../migration/README.md) and the [configuration reference](../reference/configuration.md).
+Full details in the [v0.7 to v0.8 migration guide](https://github.com/itlackey/akm/blob/7a4f302febfc0fe8c0bf3028c6156e6edc5aae33/docs/migration/v0.7-to-v0.8.md) and the [configuration reference](../reference/configuration.md).
 
 Full changelog at [CHANGELOG.md](https://github.com/itlackey/akm/blob/main/CHANGELOG.md).

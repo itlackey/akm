@@ -141,17 +141,21 @@ describe("show unsupported AKM script extension diagnostics", () => {
     expect(response.content).toContain("SCRIPT_BODY_IS_SHOWN");
   });
 
-  test("does not diagnose an unsupported symlink whose target escapes the source", async () => {
+  test("renders an unsupported script that is a symlink to a file outside the source (#1237)", async () => {
     const outsidePath = write(storage.root, "outside/private.txt", "OUTSIDE_SCRIPT_SENTINEL\n");
     const authoredPath = path.join(storage.stashDir, "scripts", "private.txt");
     fs.symlinkSync(outsidePath, authoredPath);
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
-    const error = await captureShowError("scripts/private.txt");
+    const { restore } = captureWarnings();
+    let response: Awaited<ReturnType<typeof showLocal>>;
+    try {
+      response = await showLocal({ ref: "scripts/private.txt" });
+    } finally {
+      restore();
+    }
 
-    expect(error.message).toMatch(/asset not found/i);
-    expect(error.message).not.toMatch(/supported script extension/i);
-    expect(error.message).not.toContain("OUTSIDE_SCRIPT_SENTINEL");
+    expect(response.content).toContain("OUTSIDE_SCRIPT_SENTINEL");
   });
 });
 

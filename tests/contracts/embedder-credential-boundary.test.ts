@@ -5,7 +5,7 @@
 /**
  * #953 — a field run reported `akm index`'s embedding
  * requests reaching the provider with no `Authorization` header at all, even
- * though `embedding.apiKey` was set to a `secret://` reference. The
+ * though `embedding.apiKey` was set to a `${secrets/name}` reference. The
  * reproduction in tests/integration/index-embedding-secret-credential.test.ts
  * did not reproduce the gap against the code as it stands (every candidate
  * path — plain `akm index`, the CLI child process, and an `extends`-inherited

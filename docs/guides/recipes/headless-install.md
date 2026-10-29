@@ -31,7 +31,7 @@ akm info
 akm search "test"
 
 # 7. Install agent guidance
-akm help agents >> AGENTS.md
+akm hints --detail brief >> AGENTS.md
 
 echo "akm setup complete"
 ```
@@ -43,35 +43,35 @@ echo "akm setup complete"
 Node.js >= 22; a working Bun >= 1.0 is optional and preferred for execution
 after Node starts the package launcher.
 
-**Setup.** `akm setup --yes` accepts every default with no prompts. To
-pre-configure an LLM or agent engine at the same time instead of accepting
-defaults, pass `--config` with a JSON object, optionally followed by
-`--probe` to verify connectivity:
+**Setup.** `akm setup --yes` takes the detected default for every question:
+each agent program found on `PATH` is enabled and the first is the default. When
+akm can limit that program to reading and searching it takes akm's own model
+calls too; otherwise a local model server setup finds becomes the connection. To give akm an endpoint
+yourself, answer the question with a flag; the key is named by the environment variable that holds
+it and never appears on the command line:
 
 ```sh
-akm setup --config '{
-  "engines": {
-    "default": {
-      "kind": "llm",
-      "endpoint": "http://localhost:11434/v1/chat/completions",
-      "model": "llama3.2"
-    }
-  },
-  "defaults": { "llmEngine": "default" }
-}' --probe
+akm setup --yes --endpoint https://api.example.com/v1 --api-key-env EXAMPLE_API_KEY
 ```
 
-For the full set of accepted top-level `--config` keys and their meaning,
+`--no-probe` keeps the run offline: nothing is contacted or downloaded (the
+endpoint's model list is not fetched, so a new connection has no model until
+`akm models set` names one).
+For the full set of flags, see `akm setup --help`; for the config they write,
 see [configuration.md](../../reference/configuration.md).
 
-**Semantic search.** `semanticSearchMode` defaults to `off`. Headless setups
-(`--yes` or `--config`, no wizard prompts) defer the embedding-model download
-to the first `akm index` run, unlike the interactive wizard which downloads
-immediately during `akm setup`. Set the mode explicitly:
+**Semantic search.** `--embedding local` chooses the built-in embedder, offered
+on Linux x64 (glibc) and Apple-silicon macOS; elsewhere it warns and
+keeps keyword search. Once the config is saved, a headless setup (`--yes` or
+`--from`) downloads the embedder's runtime and model into akm's cache and
+reports `semanticAssets` in its result (`ready`, `blocked: <reason>`, or
+`skipped` with `--no-probe`, which leaves the download to the first
+`akm index`). Without the flag, semantic search stays as the config has it
+(`off` by default):
 
 ```sh
-akm config set semanticSearchMode auto   # local embeddings, downloaded on first index
-akm config set semanticSearchMode off    # skip embeddings entirely
+akm setup --yes --embedding local          # local embeddings, downloaded now
+akm config set semanticSearchMode off      # skip embeddings entirely
 ```
 
 For resource requirements and remote-embedding alternatives, see
@@ -85,7 +85,7 @@ indexing.
 `indexStats.entryCount` and `semanticSearch.status`; `akm search "<query>"`
 confirms retrieval actually returns results.
 
-**Install agent guidance.** `akm help agents >> AGENTS.md` appends the
+**Install agent guidance.** `akm hints --detail brief >> AGENTS.md` appends the
 canonical usage block agents need to discover and use the library. Run this
 after indexing so the guidance matches the installed version.
 

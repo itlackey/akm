@@ -4,15 +4,13 @@
 
 import { type ExecutionJsonObject, type ExecutionJsonValue, sortExecutionJson } from "./json";
 import {
-  type AdapterOwnedExtensions,
   type AdapterRenderedCommandSource,
   type AdapterRenderedPersonaSource,
   decodeExecutionSourceIdentity,
   type ExecutionSourceIdentity,
-  type ToolSelection,
 } from "./source";
 
-export const RESOLVED_EXECUTION_SCHEMA_VERSION = 1 as const;
+export const RESOLVED_EXECUTION_SCHEMA_VERSION = 2 as const;
 
 export interface ResolvedCommandContent {
   /** Adapter-rendered or anonymous content before portable argument substitution. */
@@ -23,47 +21,33 @@ export interface ResolvedCommandContent {
   readonly content: string;
   /** `null` only for explicitly anonymous inline command content. */
   readonly source: Readonly<ExecutionSourceIdentity> | null;
-  readonly extensions?: AdapterOwnedExtensions;
 }
 
 export interface ResolvedPersonaContent {
   readonly content: string;
   /** Personas are selected assets; anonymous inline persona input is not a surface. */
   readonly source: Readonly<ExecutionSourceIdentity>;
-  readonly extensions?: AdapterOwnedExtensions;
 }
 
-export interface ResolvedEngineSelection {
+/** What a request runs on: a connection (a model endpoint) or a harness (an agent program). */
+export interface ResolvedTargetSelection {
   readonly name: string;
-  /** Transport family only, not a claim about model or harness capabilities. */
-  readonly kind: "agent" | "sdk" | "llm";
-  readonly platform?: string | null;
-  readonly settings?: ExecutionJsonObject | null;
-  readonly extensions?: AdapterOwnedExtensions;
+  readonly kind: "connection" | "harness";
+  /** The harness's platform; absent for a connection. */
+  readonly platform?: string;
 }
 
 export interface ResolvedModelSelection {
-  /** Exact invocation input before alias interpretation. */
-  readonly input: string;
-  readonly interpretation: "alias" | "exact";
-  /** Exact provider/harness model identifier after alias expansion. */
-  readonly resolved: string;
-  readonly extensions?: AdapterOwnedExtensions;
-}
-
-export interface ToolAuthorizationResult {
-  /** `not-required` means no tool grant was selected; it is not an unknown authorization state. */
-  readonly status: "allowed" | "denied" | "not-required";
-  readonly reason?: string | null;
-  readonly policy?: ExecutionJsonObject | null;
+  /** The exact model identifier sent to the endpoint or passed to the harness. */
+  readonly model: string;
+  /** The alias the request named, when it named one. */
+  readonly alias?: string;
 }
 
 export interface ResolvedRuntimeSettings {
   readonly timeoutMs?: number | null;
   readonly workspace?: string | null;
   readonly environment?: Readonly<Record<string, string>> | null;
-  readonly settings?: ExecutionJsonObject | null;
-  readonly extensions?: AdapterOwnedExtensions;
 }
 
 export interface LoweringNotice {
@@ -90,38 +74,24 @@ export interface ResolvedExecutionRequestV1 {
   /** Exact selected agent ref or native harness selector; null explicitly clears selection. */
   readonly agent?: string | null;
   readonly persona?: ResolvedPersonaContent | null;
-  readonly engine: Readonly<ResolvedEngineSelection>;
+  readonly target: Readonly<ResolvedTargetSelection>;
   readonly model?: Readonly<ResolvedModelSelection> | null;
   readonly inference?: ExecutionJsonObject | null;
   readonly outputSchema?: ExecutionJsonObject | null;
-  /** Selected tools. Authorization is deliberately a separate policy result. */
-  readonly tools?: ToolSelection;
-  readonly authorization: Readonly<ToolAuthorizationResult>;
+  /** Unattended model work: it changes nothing directly, so the stash stays read-only to it. */
+  readonly modelWork: boolean;
   readonly runtime: Readonly<ResolvedRuntimeSettings>;
-  readonly notices: readonly Readonly<LoweringNotice>[];
-  readonly extensions?: AdapterOwnedExtensions;
 }
 
 export type ResolvedExecutionRequestInput = Omit<ResolvedExecutionRequestV1, "schemaVersion">;
 
-const COMMAND_KEYS = ["template", "argumentInput", "content", "source", "extensions"] as const;
-const PERSONA_KEYS = ["content", "source", "extensions"] as const;
-const ENGINE_KEYS = ["name", "kind", "platform", "settings", "extensions"] as const;
-const MODEL_KEYS = ["input", "interpretation", "resolved", "extensions"] as const;
-const AUTHORIZATION_KEYS = ["status", "reason", "policy"] as const;
-const RUNTIME_KEYS = ["timeoutMs", "workspace", "environment", "settings", "extensions"] as const;
-const NOTICE_KEYS = ["code", "severity", "adapter", "field", "message", "details"] as const;
+const COMMAND_KEYS = ["template", "argumentInput", "content", "source"] as const;
+const PERSONA_KEYS = ["content", "source"] as const;
+const TARGET_KEYS = ["name", "kind", "platform"] as const;
+const MODEL_KEYS = ["model", "alias"] as const;
+const RUNTIME_KEYS = ["timeoutMs", "workspace", "environment"] as const;
 const IDENTITY_KEYS = ["ref", "bundle", "adapter", "file", "hash"] as const;
-const OPTIONAL_REQUEST_KEYS = [
-  "conversation",
-  "agent",
-  "persona",
-  "model",
-  "inference",
-  "outputSchema",
-  "tools",
-  "extensions",
-] as const;
+const OPTIONAL_REQUEST_KEYS = ["conversation", "agent", "persona", "model", "inference", "outputSchema"] as const;
 
 /** Copy the own, defined fields named by `keys`; omitted stays omitted, `null` stays `null`. */
 function pick(value: object, keys: readonly string[]): Record<string, unknown> {
@@ -151,7 +121,6 @@ export function createResolvedCommand(input: {
     ...(input.argumentInput !== undefined ? { argumentInput: input.argumentInput } : {}),
     content: input.content,
     source: decodeExecutionSourceIdentity(input.source.identity),
-    ...(input.source.extensions ? { extensions: input.source.extensions } : {}),
   });
 }
 
@@ -175,22 +144,20 @@ export function createResolvedPersona(source: AdapterRenderedPersonaSource): Res
   return Object.freeze({
     content: source.content,
     source: decodeExecutionSourceIdentity(source.identity),
-    ...(source.extensions ? { extensions: source.extensions } : {}),
   });
 }
 
 /** Freeze one request without normalizing away optional-field presence. */
 export function createResolvedExecutionRequest(input: ResolvedExecutionRequestInput): ResolvedExecutionRequestV1 {
-  if (!input.command || !input.engine || !input.authorization || !input.runtime || !input.notices) {
-    throw new TypeError("resolved execution request requires command, engine, authorization, runtime, and notices");
+  if (!input.command || !input.target || !input.runtime || typeof input.modelWork !== "boolean") {
+    throw new TypeError("resolved execution request requires command, target, modelWork, and runtime");
   }
   const out: Record<string, unknown> = {
     schemaVersion: RESOLVED_EXECUTION_SCHEMA_VERSION,
     command: input.command,
-    engine: input.engine,
-    authorization: input.authorization,
+    target: input.target,
+    modelWork: input.modelWork,
     runtime: input.runtime,
-    notices: input.notices,
     ...pick(input, OPTIONAL_REQUEST_KEYS),
   };
   return Object.freeze(out) as unknown as ResolvedExecutionRequestV1;
@@ -198,7 +165,8 @@ export function createResolvedExecutionRequest(input: ResolvedExecutionRequestIn
 
 /**
  * Rehydrate a frozen JSON request after workflow resume/replay. Tolerant of
- * unknown keys; refuses only a request written by a newer schema.
+ * unknown keys; refuses a request of any other schema version: an earlier
+ * release's names an engine and cannot run now.
  */
 export function decodeResolvedExecutionRequest(value: unknown): ResolvedExecutionRequestV1 {
   const input = requireRecord(value, "resolved execution request");
@@ -214,24 +182,20 @@ export function decodeResolvedExecutionRequest(value: unknown): ResolvedExecutio
   if (typeof command.template !== "string" || typeof command.content !== "string") {
     throw new TypeError("command template and content must be strings");
   }
-  const engine = requireRecord(input.engine, "engine");
-  if (typeof engine.name !== "string" || (engine.kind !== "agent" && engine.kind !== "sdk" && engine.kind !== "llm")) {
-    throw new TypeError("engine.name must be a string and engine.kind must be agent, sdk, or llm");
+  const target = requireRecord(input.target, "target");
+  if (typeof target.name !== "string" || (target.kind !== "connection" && target.kind !== "harness")) {
+    throw new TypeError("target.name must be a string and target.kind must be connection or harness");
   }
-  const notices = input.notices;
-  if (!Array.isArray(notices)) throw new TypeError("notices must be an array");
+  if (typeof input.modelWork !== "boolean") throw new TypeError("modelWork must be a boolean");
 
   const request: Record<string, unknown> = {
     command: Object.freeze({
       ...pick(command, COMMAND_KEYS),
       source: command.source === null ? null : decodeExecutionSourceIdentity(command.source, "command.source"),
     }),
-    engine: Object.freeze(pick(engine, ENGINE_KEYS)),
-    authorization: Object.freeze(pick(requireRecord(input.authorization, "authorization"), AUTHORIZATION_KEYS)),
+    target: Object.freeze(pick(target, TARGET_KEYS)),
+    modelWork: input.modelWork,
     runtime: Object.freeze(pick(requireRecord(input.runtime, "runtime"), RUNTIME_KEYS)),
-    notices: Object.freeze(
-      notices.map((notice, index) => Object.freeze(pick(requireRecord(notice, `notices[${index}]`), NOTICE_KEYS))),
-    ),
   };
   if (Array.isArray(input.conversation)) {
     request.conversation = Object.freeze(
@@ -254,7 +218,7 @@ export function decodeResolvedExecutionRequest(value: unknown): ResolvedExecutio
   if (Object.hasOwn(input, "model") && input.model !== undefined) {
     request.model = input.model === null ? null : Object.freeze(pick(requireRecord(input.model, "model"), MODEL_KEYS));
   }
-  for (const key of ["inference", "outputSchema", "tools", "extensions"] as const) {
+  for (const key of ["inference", "outputSchema"] as const) {
     if (Object.hasOwn(input, key) && input[key] !== undefined) request[key] = input[key];
   }
   return createResolvedExecutionRequest(request as unknown as ResolvedExecutionRequestInput);
@@ -268,10 +232,9 @@ export function canonicalResolvedExecutionRequest(request: ResolvedExecutionRequ
       ...pick(request.command, COMMAND_KEYS),
       source: request.command.source === null ? null : pick(request.command.source, IDENTITY_KEYS),
     },
-    engine: pick(request.engine, ENGINE_KEYS),
-    authorization: pick(request.authorization, AUTHORIZATION_KEYS),
+    target: pick(request.target, TARGET_KEYS),
+    modelWork: request.modelWork,
     runtime: pick(request.runtime, RUNTIME_KEYS),
-    notices: request.notices.map((notice) => pick(notice, NOTICE_KEYS)),
   };
   if (request.conversation !== undefined) {
     wire.conversation = request.conversation.map((message) => ({ role: message.role, content: message.content }));
@@ -286,7 +249,7 @@ export function canonicalResolvedExecutionRequest(request: ResolvedExecutionRequ
   if (Object.hasOwn(request, "model") && request.model !== undefined) {
     wire.model = request.model === null ? null : pick(request.model, MODEL_KEYS);
   }
-  for (const key of ["inference", "outputSchema", "tools", "extensions"] as const) {
+  for (const key of ["inference", "outputSchema"] as const) {
     if (Object.hasOwn(request, key) && request[key] !== undefined) wire[key] = request[key];
   }
   return `${JSON.stringify(sortExecutionJson(wire as unknown as ExecutionJsonValue))}\n`;

@@ -33,13 +33,13 @@
  *     cannot reach it, because a change is always a file and a manifest-less
  *     package contributes no SKILL.md change (issue #774).
  *
- * Base checks are NOT run:
+ * The two field codes are implemented here. Base checks are NOT run:
  * a SKILL.md carries no `updated` field, so `missing-updated` would fire on
  * every conformant skill and contradict the lint golden.
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/agent-skills/` + goldens
- * `tests/fixtures/format-family-goldens/agent-skills/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/agent-skills/{recognition,lint,renderer}.json`.
  */
 
 import fs from "node:fs";
@@ -256,11 +256,6 @@ export const agentSkillsAdapter: BundleAdapter = {
 
   readCandidates(c: BundleComponent, conceptId: string) {
     return [{ path: path.join(c.root, conceptId, SKILL_MANIFEST), conceptId }];
-  },
-
-  /** A skill places to `<name>/SKILL.md`; the conceptId IS the package directory. */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    return path.join(c.root, conceptId, SKILL_MANIFEST);
   },
 
   /** Install-time probe: a root that directly contains one or more `<name>/SKILL.md` skill packages. */

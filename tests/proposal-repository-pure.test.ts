@@ -295,8 +295,13 @@ describe("proposal repository — pure helpers (post-split)", () => {
   });
 
   // alpha.9: the consolidate pair pass's retire proposals.
-  test("a retire proposal's delete-op change and retirement metadata round-trip", () => {
+  test.each([
+    undefined,
+    {},
+    { user: "alice", agent: "assistant", run: "batch", channel: "chat" },
+  ])("retirement metadata round-trips judged scope %j without inventing a legacy scope", (judgedScope) => {
     const retirement = {
+      ...(judgedScope !== undefined ? { judgedScope } : {}),
       retiredRef: "team//memories/old-note",
       successorRef: "team//memories/new-note",
       cosine: 0.94,

@@ -11,8 +11,8 @@
  * when a response IS truncated mid-JSON, `chatCompletion` resolves
  * successfully (a 200 with valid envelope JSON is not a transport error) and
  * returns only the raw content string — `finishReason` is computed for
- * telemetry (`emitLlmUsage`) but never reaches the caller. `runStructured`
- * (src/core/structured.ts), which every structured-output call site sits on,
+ * telemetry (`emitLlmUsage`) but never reaches the caller. `structuredLoop`
+ * (src/llm/structured.ts), which every structured-output call site sits on,
  * then fails to parse the truncated JSON and reports the same generic
  * `parse_error` it would for garbled or empty model output — there is no
  * channel for "the model was still writing when the token cap cut it off" to
@@ -23,8 +23,8 @@
  * classification (decision: no — see PR/issue notes).
  */
 import { describe, expect, test } from "bun:test";
-import { runStructured } from "../../../src/core/structured";
 import { chatCompletion } from "../../../src/llm/client";
+import { isRefused, jsonParser, structuredLoop } from "../../../src/llm/structured";
 
 function createRequestServer(respond: () => Response): { url: string; server: ReturnType<typeof Bun.serve> } {
   const server = Bun.serve({ port: 0, fetch: () => respond() });
@@ -50,21 +50,22 @@ describe("truncated LLM responses collapse into a generic parse_error (#865)", (
     }
   });
 
-  test("runStructured reports the same parse_error for a truncated response as for garbage", async () => {
-    const truncated = await runStructured({
-      dispatch: async () => '{"file":"a.ts","summary":"this got cut off mid-str',
-      validate: (candidate) => (candidate ? { ok: true, value: candidate } : { ok: false, errors: ["unreachable"] }),
-      maxAttempts: 1,
+  test("the structured loop reports the same parse_error for a truncated response as for garbage", async () => {
+    const parse = jsonParser((candidate) => ({ ok: true, value: candidate }));
+    const truncated = await structuredLoop({
+      dispatch: async () => ({ ok: true, raw: '{"file":"a.ts","summary":"this got cut off mid-str' }),
+      parse,
+      attempts: 1,
     });
-    const garbage = await runStructured({
-      dispatch: async () => "the model said something unrelated, no JSON at all",
-      validate: (candidate) => (candidate ? { ok: true, value: candidate } : { ok: false, errors: ["unreachable"] }),
-      maxAttempts: 1,
+    const garbage = await structuredLoop({
+      dispatch: async () => ({ ok: true, raw: "the model said something unrelated, no JSON at all" }),
+      parse,
+      attempts: 1,
     });
 
     expect(truncated.ok).toBe(false);
     expect(garbage.ok).toBe(false);
-    if (!truncated.ok && !garbage.ok) {
+    if (isRefused(truncated) && isRefused(garbage)) {
       // Both land on the exact same classification — a caller (or a user
       // reading the error) cannot tell "hit the token cap" from "bad output".
       expect(truncated.reason).toBe("parse_error");

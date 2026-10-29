@@ -6,6 +6,8 @@
 // hand-built index with 4-dimension vectors and a stubbed query embedder.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import { akmCurate } from "../../src/commands/read/curate";
 import { type AkmConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
@@ -178,8 +180,13 @@ describe("fused search", () => {
 
 describe("curate over fused search", () => {
   test("an enabled reranker gets each candidate's name, description and indexed content", async () => {
-    put("alpha", { description: "gizmo guide", content: "Alpha body about the gizmo." }, [1, 0, 0, 0]);
-    put("beta", { description: "gizmo notes", content: "Beta body about the gizmo." }, [0, 1, 0, 0]);
+    // Curate emits readable eligible evidence; materialize the hand-built rows.
+    const alpha = path.join(storage.stashDir, "knowledge/alpha.md");
+    const beta = path.join(storage.stashDir, "knowledge/beta.md");
+    fs.writeFileSync(alpha, "Alpha body about the gizmo.");
+    fs.writeFileSync(beta, "Beta body about the gizmo.");
+    put("alpha", { description: "gizmo guide", content: "Alpha body about the gizmo." }, [1, 0, 0, 0], alpha);
+    put("beta", { description: "gizmo notes", content: "Beta body about the gizmo." }, [0, 1, 0, 0], beta);
     saveConfig({
       semanticSearchMode: "off",
       bundles: { stash: { path: storage.stashDir } },

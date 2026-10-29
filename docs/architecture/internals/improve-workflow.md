@@ -1,6 +1,6 @@
 # akm improve: Workflow Reference
 
-`akm improve` is the scheduled self-improvement loop. It selects assets that have fresh feedback (or a scoped subset), runs reflect and distill on them, consolidates memories, optionally extracts proposals from coding-agent session transcripts, drains the proposal backlog under the strategy's triage settings, and runs maintenance passes. Everything it produces is a proposal in `state.db`; proposals stay queued until `akm proposal` review or the triage drain resolves them. Reflect rewrites an asset only from negative feedback on it or for an explicit ref, never on a proactive cadence.
+`akm improve` is the scheduled self-improvement loop. It selects assets that have fresh feedback (or a scoped subset), runs reflect and distill on them, consolidates memories, optionally extracts proposals from coding-agent session transcripts, drains the proposal backlog under the strategy's triage settings, and runs maintenance passes. Everything it produces is a proposal in `state.db`; proposals stay queued until `akm proposal` review or the triage drain resolves them. Reflect is planned from negative feedback on an asset, for an explicit ref, or as a proactive-maintenance pick (an asset due for review with no feedback behind it); a positive signal alone never plans it.
 
 The design and rationale are in [Improvement Loop](../improvement.md). This page is the per-step reference. The code is in `src/commands/improve/`.
 
@@ -9,29 +9,30 @@ The design and rationale are in [Improvement Loop](../improvement.md). This page
 | Option | Purpose |
 |---|---|
 | `[scope]` (positional) | A single ref (`[bundle//]conceptId`), an asset type, or omitted for all assets. `akm improve report` and `akm improve judge` are subcommands, not scopes. |
-| `--strategy <name>` | A named strategy from `improve.strategies` or a built-in: `catchup`, `consolidate`, `default`, `proactive-maintenance`, `quick`, `reflect-distill`, `thorough`. |
+| `--strategy <name>` | A named strategy from `improve.strategies` or a built-in: `default` or `consolidate`. It chooses which processes run, never where. |
+| `--connection <name>` / `--harness <name>` | Run every call of this run, judges included, on this connection or harness instead of the default. They are mutually exclusive. |
+| `--model <alias\|name>` | The model for every call of this run: an alias (`fast`, `balanced`, `reasoning`) or an exact name. |
 | `--task` | Extra guidance for this pass, passed to the reflect prompt. |
 | `--dry-run` | Compute the plan and analyze memory cleanup. Takes no lock, emits no events, calls no model, writes nothing. |
-| `--plan` | Alias for `--dry-run`, for previewing the resolved process, engine, and model routing (`plan.processes`). |
-| `--show-prompt` | Print the composed reflect prompt for one fully-qualified ref and exit. No lock, index write, or engine call. |
+| `--show-prompt` | Print the composed reflect prompt for one fully-qualified ref and exit. No lock, index write, or model call. |
 | `--bundle` | The bundle the run improves and writes to, overriding `defaultWriteTarget` and the working bundle. Only its assets are planned. |
 | `--limit` | Cap the number of assets processed, highest salience first. |
 | `--timeout-ms` | Wall-clock budget for the whole run. Default 7 200 000 ms (2 hours). |
 | `--skip-if-locked` | If another improve run holds the lock, return an exit-0 no-op. Without it, contention is `IMPROVE_LOCK_HELD`, exit 75. |
-| `--require-feedback-signal` | Turn the proactive-maintenance and high-salience fallback lanes off. They only select and score assets, and a rewrite needs negative feedback. |
-| `--require-engines` | Abort with exit 78, before any side effect, if an enabled process has no usable engine or credential or its endpoint fails the reachability probe. Without it, improve skips those processes and lists them in `skippedProcesses`. |
-| `--sync` / `--no-sync`, `--push` / `--no-push` | Override the strategy's `sync` block (end-of-run commit and push for a git-backed bundle). |
+| `--require-feedback-signal` | Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned. |
+| `--sync` / `--no-sync`, `--push` / `--no-push` | Override the strategy's `sync` block (the pre-run sync and the end-of-run commit and push for a git-backed bundle). |
 | `--json-to-stdout` | Also print the full persisted run result as JSON. |
 | `--run`, `--since` | Only for `akm improve report`. |
 
-`--auto-accept` is parsed, warned about, and ignored. `--target` was renamed `--bundle` and is rejected.
+`--require-engines` is retired: it is parsed, warned about once, and ignored. A run already stops at planning (exit 78) when no model-calling process has a connection or harness to run on.
 
 ## Run order
 
 A live run:
 
-1. Resolve the scope and the strategy plan (`resolveImprovePlan`): which processes are enabled and which engine each uses.
+1. Resolve the scope and the strategy plan (`resolveImprovePlan`): which processes are enabled and which connection or harness and model each uses.
 2. Take the whole-run lock, `$STATE/locks/<stash>/improve.lock` (see [Storage Locations](storage-locations.md)).
+   Then, for a git-backed bundle, sync it as `akm sync` does (fetch, merge, commit, push) so the index and the plan see what another host pushed; a conflict or fetch failure warns and the run continues on the local state (`preRunSync` in the result).
 3. Delete aged retirement archives (`purgeGracedArchive`, git-backed bundles only; see [Archive purge](../improvement.md#archive-purge)).
 4. Bring the index current (`runIndexBootstrapPass`), then drain the pending-proposal backlog under the strategy's `triage` settings (`runTriagePrePass`), then index what triage wrote.
 5. Collect eligible refs from the index.
@@ -40,44 +41,45 @@ A live run:
    2. session extract, when the strategy enables it;
    3. memory cleanup: archive redundant derived memories and write belief-state transitions, then reindex if anything changed;
    4. validation: a ref whose file is missing, or a lesson without a `description`, is excluded; schema repair tries to fix those when `validation` is enabled;
-   5. selection: the signal-delta filter, the fallback lanes, salience ranking, a disk check, and `--limit`.
+   5. selection: the signal-delta filter, the proactive-maintenance lane, salience ranking, a disk check, and `--limit`.
 7. The per-asset loop (`runImproveLoopStage`, `loop-stages.ts`): for each selected ref, reflect, then distill for a distillable memory. The wall-clock budget is checked before each ref.
-8. Post-loop maintenance (`runImprovePostLoopStage`), skipped when the budget is spent: memory inference (reindex if it wrote anything), proposal hygiene (orphan purge and expiry), orphaned-state GC, the retention purges (events, `improve_runs`, `logs.db`, task log files), and, for a whole-bundle scope, a dead-link check on URLs in knowledge bodies.
+8. Post-loop maintenance (`runImprovePostLoopStage`), skipped when the budget is spent: memory inference (reindex if it wrote anything), proposal hygiene (orphan purge and expiry), orphaned-state GC, the retention purges (events, `improve_runs`, `logs.db`, task log files, and the per-run improve and index log files under `$CACHE/logs/`; `improve.eventRetentionDays`, default 90), and, for a whole-bundle scope, a dead-link check on URLs in knowledge bodies.
 9. Assemble the result, emit `improve_completed`, run the end-of-run sync, release the lock.
 
 A dry run skips steps 2 to 4. It collects refs (step 5), evaluates the preparation gates read-only (`planOnly`), and reports the plan; nothing is dispatched or persisted.
 
-`experimental.improveAutonomy` gates three lanes: memory inference, memory cleanup apply, and triage `applyMode: promote` (downgraded to `queue`). A gated lane produces an `improve_skipped` event with reason `autonomy_gated` and a warning that names the config key (`src/commands/improve/autonomy-gate.ts`).
+`experimental.improveAutonomy` gates three lanes: memory inference, memory cleanup apply, and triage `applyMode: promote` when the triage judgment tier is on (downgraded to `queue`). A gated lane produces an `improve_skipped` event with reason `autonomy_gated` and a warning that names the config key (`src/commands/improve/autonomy-gate.ts`).
 
 ## reflect (akmReflect)
 
-Reflect changes only an asset's `description`, `when_to_use`, and title. The engine replies with those fields (each `null` when it needs no fix) and akm applies them to the asset it read. The body is kept byte for byte, apart from a `# <title>` heading added when the body has none. Reflect never writes an asset; it queues a proposal with `source: "reflect"`.
+Reflect changes only an asset's `description`, `when_to_use`, and title. The model replies with those fields (each `null` when it needs no fix) and akm applies them to the asset it read. The body is kept byte for byte, apart from a `# <title>` heading and one blank line akm inserts when the body has no level-1 heading (the only body change reflect makes). Reflect never writes an asset; it queues a proposal with `source: "reflect"`.
 
 1. `reflect_invoked` is emitted once the dispatch has validated its credentials; every call ends with one `reflect_completed` event.
 2. The ref is looked up in the index and the file read. A file that is not at the path a proposal would write (`<root>/<type dir>/<name>.md`) is refused as `unsupported_type` before any model call; a skill's `references/a.md` is the ref `knowledge/skills/<name>/references/a`.
-3. The engine is the strategy's `reflect.engine`, falling back to `defaults.llmEngine`. Any engine kind that confines the model-work tool policy can run it ([Configuration](../../reference/configuration.md#engines-for-unattended-model-work)). The reply's JSON Schema is the request's output schema.
+3. Where reflect runs: `improve.processes.reflect`, then `improve.connection` / `improve.harness`, then the default connection (else the default harness), asking for the `fast` model unless a layer names another ([Where each process runs](../../reference/configuration.md#where-each-process-runs)). The runner is a connection or a harness (its tools restricted where it can be), and both run the same iteration. The reply's JSON Schema is the request's output schema: `response_format` for a connection, the shared schema instruction at the end of the prompt for a harness.
 4. The reply is validated by `parseSchemaReflectOutput`. An invalid reply gets one repair turn; one still invalid fails with `parse_error` and queues nothing.
-5. `applyReflectPatch` applies the patch. A patch that changes nothing is the `no_change` outcome (`reflect_skipped_noop`; `reflect_skipped_cosmetic` for a cosmetic-only change) and queues nothing.
+5. `applyReflectPatch` applies the patch; a non-null `title` becomes a `# <title>` heading only when the body has no level-1 heading. A patch that changes nothing is the `no_change` outcome (`reflect_skipped_noop`; `reflect_skipped_cosmetic` for a cosmetic-only change) and queues nothing.
 6. Defect filter (`findReflectDefect`): a revision that adds placeholder text, talks about its own edit, or copies frontmatter into the body is refused as `quality_rejected`. `processes.reflect.defectFilter` replaces or turns off the wording lists.
-7. Quality gate (`processes.reflect.qualityGate`, on unless disabled): a judge scores need, preservation, and quality from 1 to 5 and the revision passes only when every score is 4 or more ([Quality judge](../improvement.md#quality-judge)). A judge that errors or times out defers the proposal for review (`judge-error`).
-8. Retrieval regression gate: a revision that grades lower on the asset's own retrieval queries is refused ([Retrieval regression gate](../improvement.md#retrieval-regression-gate)).
-9. The proposal is minted (`mintProposal`). A pass the judge passed is stamped `staged` and the triage drain may accept it; one with no judge or no verdict is deferred for a person.
+7. Quality gate (`processes.reflect.qualityGate`, on unless disabled): a judge scores need, preservation, and quality from 1 to 5 and the revision passes only when every score is 4 or more ([Quality judge](../improvement.md#quality-judge)). A score that does not pass is refused (`quality_rejected`, no proposal) unless its mean is 3.5 or more: that is uncertain, not bad, and the proposal is deferred for a person (`judge-uncertain`, with the scores and the judge's reason) and records no rejection window. A judge that errors or times out defers the proposal for review (`judge-error`).
+8. The proposal is minted (`mintProposal`). A pass the judge passed is stamped `staged` and the triage drain may accept it; with the gate off the proposal is minted unstamped for the drain to decide. One whose gate has no judge configured (`no-judge-configured`), no verdict, or an uncertain verdict is deferred for a person, and the drain leaves every deferral.
 
-Agent and SDK runners get the asset content capped at `REFLECT_CONTENT_CAP` (12 000 characters) because it travels through argv; a direct LLM call derives its cap from the engine's `contextLength`.
+A harness gets the asset content capped at `REFLECT_CONTENT_CAP` (12 000 characters) because it travels through argv; a connection derives its cap from its `contextLength`.
 
 ## distill (akmDistill)
 
-Distill turns a memory and its feedback into a lesson proposal, or into a knowledge proposal for a reinforced memory. It makes one bounded call through the configured LLM endpoint and never runs an agent. Every call emits a `distill_invoked` event with an `outcome`; a disabled process (`config_disabled`) emits none.
+Distill turns a memory and its feedback into a lesson proposal, or into a knowledge proposal for a reinforced memory. It makes one bounded model call (`callStage`) on the resolved runner: a direct chat completion on a connection, or a run on a harness, restricted where the harness can be. Every call emits a `distill_invoked` event with an `outcome`; a disabled process (`config_disabled`) emits none.
 
 1. Validate the ref and load the asset through the index.
 2. Read the ref's feedback events, minus those named in `excludeFeedbackFromRefs`.
 3. Promotion fast path: when `proposalKind` is `auto` or `knowledge` and `assessMemoryKnowledgePromotionCandidate` returns `promote: true`, queue a knowledge proposal without a model call.
 4. A lesson already at the target ref is not regenerated: distill returns `skipped` with `skipReason: "lesson_exists"` before any model call.
-5. Call the writer on the strategy's `distill.engine` (falling back to `defaults.llmEngine`); the default timeout is 600 000 ms. The prompt carries the memory, its feedback, and the lessons, knowledge notes, and skills nearest it (top 3; `processes.distill.cls.enabled: false` turns them off). A timeout, error, or empty reply is `llm_failed` and leaves the ref eligible.
+5. Call the writer where distill runs (`improve.processes.distill`, then `improve.connection` / `improve.harness`, then the default); a call stops after 600 000 ms unless `timeoutMs` says otherwise. The prompt carries the memory, its feedback, and the lessons, knowledge notes, and skills nearest it (top 3; `processes.distill.cls.enabled: false` turns them off). A timeout, error, or empty reply is `llm_failed` and leaves the ref eligible.
 6. The writer may find no lesson (`NONE`, or `decision: "none"`): distill returns `skipped` with `skipReason: "nothing_reusable"` and makes no judge call.
 7. Strip fences and `<think>` blocks, then validate (`lintLessonContent` for lessons, `validateKnowledgeContent` for knowledge). A failure is `validation_failed` and throws `UsageError`.
-8. Quality gate (`processes.distill.qualityGate`, on unless disabled): a judge scores `reusable`, `nonRedundancy`, and `grounding` from 1 to 5. `grounding` is left out of the mean. A criterion at 2 or below is `quality_rejected` (no proposal; a ledger row). Otherwise the lesson passes when the lowest scored criterion is 4 or more, and a mean of 2.5 or more is `review_needed`. A pass is minted `deferred` for a person (reason `distill-review`), not staged for the drain. An optional fidelity check (`processes.distill.fidelityCheck.enabled`, off by default) sends a lesson that contradicts its source to review.
+8. Quality gate (`processes.distill.qualityGate`, on unless disabled): one judge call, on the gate's own connection or harness (`improve.qualityGate`, else the default), scores `reusable`, `nonRedundancy`, and `grounding` from 1 to 5. A criterion at 2 or below is `quality_rejected` (no proposal; a ledger row). Otherwise the lesson passes when `reusable` and `nonRedundancy` both score 4 or more, and a mean of those two of 2.5 or more is `review_needed`. `grounding` is left out of the mean and of the pass test on purpose (adding it only moved lessons from pass to review, and both go to a person); it still rejects at 2 or below. A judge that times out, replies unparseably, or is missing also gives `review_needed`. A pass is minted `deferred` for a person (reason `distill-review`), not staged for the drain.
 9. Mint the proposal with `source: "distill"` and emit `distill_invoked` with `outcome: "queued"`.
+
+When the lesson repeats one the library holds, distill extends that lesson instead of only dropping the duplicate. This happens with the quality gate on, when the judge scored the writer's lesson 2 or below on `nonRedundancy`, or the writer answered `NONE`. A second call shows the writer the memory, its feedback, and the related lessons (among the top 3 nearby assets, in the bundle the proposal is filed in) that the writer's reason or the judge's names, or the only related lesson when it names none, and asks it for the lesson's whole body with a line added for each fact the memory states and the lesson lacks. The update is proposed only when every existing body line is still there, the extended lesson passes the judge (an edit variant of its rubric), and at least one line was added. It is a pending proposal on the existing lesson's ref, `deferred` for a person (reason `distill-update`), with the memory added to `xrefs` and the lesson's hash as `beforeHash`, so accepting it after the lesson changed is refused as stale. The result and the event are `queued` with `proposalRef` set to the lesson and `updatesExisting: true`. When nothing is proposed, the outcome is what it would have been: `quality_rejected` after a duplicate lesson, `skipped` / `nothing_reusable` after `NONE`.
 
 The lesson ref is `lessons/[<scope>/]<type>-<name>-lesson`, derived from the input ref (`deriveLessonRef`, `distill.ts`): the first segment of a nested name is kept as `<scope>/`, and the rest is lower-cased with non-alphanumerics replaced by `-`. `memories/project-a/deploy` becomes `lessons/project-a/memory-deploy-lesson`; `skills/deploy` becomes `lessons/skill-deploy-lesson`.
 
@@ -95,7 +97,7 @@ An explicit ref scope bypasses these.
 
 `akmConsolidate` runs during preparation, before session extract and the per-asset loop. It returns immediately when the strategy's `processes.consolidate.enabled` is false.
 
-**Promote pass.** It loads eligible non-`.derived` memories, minus those the improve ledger holds (see [Ledger pre-filter](#ledger-pre-filter-signal-delta)). The pool is clustered by embedding similarity, split into chunks (size from the engine's context window, capped by `maxChunkSize`, at most 50), and each chunk is sent to the consolidate engine with a JSON Schema asking for `promote` operations, the only operation offered. `mergePlans` keeps one promotion per source memory. For each operation, the checks below run cheapest first and the first that applies skips the memory, recording a skip reason; otherwise a `knowledge/` proposal is queued with `source: "consolidate"`. If the remaining wall-clock budget cannot cover every chunk, the oldest memories are taken first and the rest are deferred. `minPoolSize` (default 0) skips the pass when fewer memories are eligible (`pool_below_min_size`), unless `--strategy` was given, the scope is a ref, or more than 100 memories are eligible.
+**Promote pass.** It loads eligible non-`.derived` memories, minus those the improve ledger holds (see [Ledger pre-filter](#ledger-pre-filter-signal-delta)). The pool is clustered by embedding similarity, split into chunks (size from the connection's context window, or a default for a harness, capped by `maxChunkSize`, at most 50), and each chunk is sent to the consolidate process's connection or harness with a JSON Schema asking for `promote` operations, the only operation offered. `mergePlans` keeps one promotion per source memory. For each operation, the checks below run cheapest first and the first that applies skips the memory, recording a skip reason; otherwise a `knowledge/` proposal is queued with `source: "consolidate"`. If the remaining wall-clock budget cannot cover every chunk, the oldest memories are taken first and the rest are deferred.
 
 Skip reasons, in check order (`consolidation.skipReasons` in the result):
 
@@ -123,8 +125,8 @@ Accepting a consolidate promotion archives the source memory (and its `.derived`
 
 1. Initiators are memories (base or `.derived`) and flat `knowledge/` or lesson assets in the write-target bundle, in the retrieval scope, that are content-eligible: no ledger row with source `consolidate-pair`, or a row whose recorded body hash differs from the asset's current one. These rows carry no `next_eligible_at`.
 2. For each initiator, the 20 nearest neighbours by stored vector are fetched (`PAIR_NEIGHBOR_FETCH_K`) and the first 5 that clear the filters are kept (`PAIR_NEIGHBOR_K`): same bundle, memory tier only, not its own `.derived` twin or parent, cosine at least `T_PAIR` (0.93). An initiator with no prior ledger row needs `BACKFILL_FLOOR` (0.95) instead, unless it was first added to git within `NEW_MATERIAL_DAYS` (7), in which case `T_PAIR` applies. At most `MAX_PAIRS_PER_RUN` (300) pairs are judged per run, admitted a whole initiator at a time: new or changed initiators first, then the backlog by best cosine.
-3. One judge call per pair (`src/assets/prompts/consolidate-pair.md`) lists the durable claims only each side holds, then labels the pair `duplicate`, `subsumed`, `supersedes`, `contradicts`, `overlap`, or `unrelated`. Each side is shown up to 12 000 body characters.
-4. `duplicate`, `subsumed`, and `supersedes` queue one `retire` proposal with `source: "consolidate-pair"`, subject to guards: not a `captureMode: hot` memory, not a `.derived` memory whose parent exists, not across bundles, not when either side already has a pending retire proposal, not an asset already spent earlier in the same run, and not a side for which the judge listed a claim. `contradicts`, `overlap`, and `unrelated` are recorded `judged_no_action`; `contradicts` is counted in the run report and left to a person.
+3. One judge call per pair (`src/assets/prompts/consolidate-pair.md`), on the consolidate process's own connection or harness, lists the durable claims only each side holds, then labels the pair `duplicate`, `subsumed`, `supersedes`, `contradicts`, `overlap`, or `unrelated`. Each side is shown up to 12 000 body characters.
+4. `duplicate`, `subsumed`, and `supersedes` queue one `retire` proposal with `source: "consolidate-pair"`, subject to guards: not a `.derived` memory whose parent exists, not across bundles, not when either side already has a pending retire proposal, not an asset already spent earlier in the same run, and not a side for which the judge listed a claim. `contradicts`, `overlap`, and `unrelated` are recorded `judged_no_action`; `contradicts` is counted in the run report and left to a person.
 5. A retirement with nothing listed on the retired side, and no continuity risk, gets a second call (`consolidate-pair-check.md`) asking what the retired note holds that the kept one lacks. An empty answer stages the proposal (gate `consolidate-pair`) and the triage drain may accept it under its `applyMode`. Every other retire proposal waits for a person.
 6. A ledger row (the initiator's body hash and outcome `proposed` or `judged_no_action`) is written only when all of the initiator's candidates were admitted and resolved to a verdict. Otherwise no row is written and the next run reconsiders it. A pair a person rejected or reverted is not re-minted while both bodies are unchanged: the pair and its two content hashes are checked against those proposals before the judge is called.
 
@@ -153,13 +155,13 @@ Every stage reads the improve ledger (`improve_ledger` in `state.db`; columns in
 | `proposed`, `review_needed`, `judged_no_action`, `unchanged` | 7 days |
 | `accepted`, `failed` | none |
 
-The consolidate pair pass, and a decided consolidate promotion that recorded a body hash, have no clock: the ref waits until its body differs. `rejected`, `quality_rejected`, and `expired` are hard windows. Every other window is a revisit cadence that a newer signal lifts (`isLedgerBlocked`).
+The consolidate pair pass, and a consolidate promote-pass row (`accepted`, `rejected`, or `judged_no_action`) that recorded a body hash, have no clock: the ref waits until its body differs. `rejected`, `quality_rejected`, and `expired` are hard windows. Every other window is a revisit cadence that a newer signal lifts (`isLedgerBlocked`).
 
 **Selection.** Before the loop, `buildSnapshotManifest` reads the feedback events and the ledger's reflect and distill rows once, and `partitionBySignalDelta` (both in `preparation.ts`) sorts the refs. A ref passes reflect when it has negative feedback dated within the last 30 days and newer than the ref's last reflect attempt, with no hard window blocking it. A positive or note-only signal never plans a reflect. Neither does a negative that came with an exact fix (`akm feedback --replace/--with`, `--outdated`, `--superseded-by`) once an accepted `feedback` proposal has applied the fix. A ref passes distill when it has feedback carrying a signal or a note, positive included, under the same date and ledger rules. Then:
 
 - A ref that passes reflect is planned for the loop. If it does not pass distill, distill is skipped for it.
 - A ref that passes only distill, and is a distill candidate, is planned distill-only.
-- A ref with no in-window feedback is left to the fallback lanes (proactive maintenance and high salience), which pick only what retrieval returned or new material ([Retrieval scope](../improvement.md#retrieval-scope)). The lanes select and score; they do not plan a reflect or distill.
+- A ref with no in-window feedback is left to the proactive-maintenance lane, which picks only what retrieval returned or new material ([Retrieval scope](../improvement.md#retrieval-scope)) and plans its picks with the feedback-bearing refs. The cap against a proposal flood: `maxPerRun` (15) picks per run, an asset due only after `dueDays` (30) without a reflect or distill, and reflect's `limit` (25).
 - Every ref the loop does not take is counted in the plan's gates and reported once, in aggregate, as an `improve_skipped` event (`no_new_signal`, `not_retrieved`).
 - Selected refs are ranked by salience (`scoreSalience` in `preparation.ts`, `computeSalience` in `salience.ts`: encoding, outcome, and retrieval frequency and recency, discounted for file size, with repeated no-ops ranked lower). Refs missing on disk are dropped, then `--limit` cuts the list: reflect-path refs first, then distill-only refs.
 
@@ -167,25 +169,25 @@ An explicit ref scope bypasses every gate. Consolidation, extract, and schema re
 
 ## Strategy processes
 
-A strategy is `improve.strategies.<name>` (config) or a built-in under `src/assets/improve-strategies/*.json`. Its `processes` block configures eight processes (`IMPROVE_PROCESS_NAMES`, `src/core/config/engine-semantics.ts`; schemas in `src/core/config/schema/improve-processes.ts`). Every process takes `enabled`, `engine`, `model`, `llm`, and `timeoutMs`; the table lists the fields that are particular to each.
+A strategy is `improve.strategies.<name>` (config) or a built-in under `src/assets/improve-strategies/*.json` (`default` and `consolidate`). Its `processes` block configures eight processes (`IMPROVE_PROCESS_NAMES`, `src/core/config/engine-semantics.ts`; schemas in `src/core/config/schema/improve-processes.ts`). Every process takes `enabled`; the table lists the fields that are particular to each. A strategy says which processes run and how each is tuned, never where: where each model-calling process runs is `improve.processes.<name>` (`connection` or `harness`, `model`, `llm`, `timeoutMs`), over `improve.connection` / `improve.harness` and the defaults ([Where each process runs](../../reference/configuration.md#where-each-process-runs)).
 
 | Process | Does | Particular fields |
 |---|---|---|
-| `reflect` | Revises an asset's `description`, `when_to_use`, and title from negative feedback | `allowedTypes`, `excludeRefPrefixes`, `limit`, `qualityGate`, `lowValueFilter`, `defectFilter` |
-| `distill` | Turns a memory and its feedback into a lesson or knowledge proposal | `allowedTypes`, `limit`, `qualityGate`, `requirePlannedRefs`, `cls`, `fidelityCheck` |
-| `consolidate` | Promote pass and pair pass over memories | `allowedTypes`, `limit`, `minPoolSize`, `maxChunkSize`, `p90ChunkSecondsDefault`, `antiCollapse` |
-| `memoryInference` | Writes derived memories and marks parents (`inferenceProcessed`); gated by `experimental.improveAutonomy` | `minPendingCount`, `cls` |
+| `reflect` | Revises an asset's `description`, `when_to_use`, and title from negative feedback | `allowedTypes`, `excludeRefPrefixes`, `limit`, `qualityGate`, `defectFilter` |
+| `distill` | Turns a memory and its feedback into a lesson or knowledge proposal | `allowedTypes`, `qualityGate`, `requirePlannedRefs`, `cls` |
+| `consolidate` | Promote pass and pair pass over memories | `allowedTypes`, `limit`, `maxChunkSize` |
+| `memoryInference` | Writes derived memories and marks parents (`inferenceProcessed`); gated by `experimental.improveAutonomy` | `minPendingCount` |
 | `extract` | Queues proposals from coding-agent session transcripts (the same pass as `akm proposal extract`) | `defaultSince`, `maxTotalChars`, `minContentChars`, `triage` (`enabled`, `minScore`), `minNewSessions`, `maxSessionsPerRun`, `indexSessions`, `minSessionDuration` |
-| `validation` | Checks that planned refs exist and lessons have a `description`; with an engine, attempts schema repair (proposals with `source: "schema-repair"`) | none beyond the common fields |
-| `triage` | Drains the pending-proposal backlog before the loop | `applyMode` (`queue` or `promote`), `maxAcceptsPerRun`, `judgment` (boolean or `{ enabled, engine, model, timeoutMs, llm }`) |
-| `proactiveMaintenance` | Fallback lane that scores assets due for review; plans no rewrite | `dueDays`, `maxPerRun`, `limit` |
+| `validation` | Checks that planned refs exist and lessons have a `description`; where it can run a model, attempts schema repair (proposals with `source: "schema-repair"`) | none beyond `enabled` |
+| `triage` | Drains the pending-proposal backlog before the loop | `applyMode` (`queue` or `promote`), `maxAcceptsPerRun`, `judgment` (boolean or `{ enabled }`; the judgment runs where `improve.processes.triage` says) |
+| `proactiveMaintenance` | Picks assets due for review that have no fresh feedback and plans them with the feedback-bearing refs; makes no model call | `dueDays`, `maxPerRun` |
 
-Each strategy also has a `sync` block (`enabled`, `push`, `message`) and a profile-level `limit`. `default` enables reflect, distill, consolidate, memoryInference, and validation, with triage, extract, and proactive maintenance off; `thorough` adds a judged triage drain with `applyMode: promote`. The other built-ins turn processes off as their names suggest; read the JSON for exact settings.
+Each strategy also has a `sync` block (`enabled`, `push`, `message`) and a profile-level `limit`. `default` enables reflect, distill, consolidate, memoryInference (which runs only with `experimental.improveAutonomy`), validation, proactive maintenance, and a triage drain in `promote` mode with judgment off and `maxAcceptsPerRun` 200; improve-stage extract is off. `consolidate` is a patch merged onto `default` that turns every process off but consolidate. Any other name is a user-defined strategy that inherits `default`.
 
-Process selection is resolved once by `resolveImprovePlan`. The plan holds every process's enablement, config, and resolved runner. A process runs on any engine that confines the model-work tool policy; one that cannot is refused when the plan is built, and a process whose engine or credential is missing is skipped and reported in `skippedProcesses`.
+Process selection is resolved once by `resolveImprovePlan`. The plan holds every process's enablement, config, and resolved runner. A process runs on a connection, or on a harness: one whose tools cannot be restricted runs unrestricted in a scratch directory, with a notice ([How akm runs a harness](../../reference/configuration.md#how-akm-runs-a-harness)). A process with no connection or harness is skipped and reported in `skippedProcesses`; a run in which no model-calling process can run stops at planning (exit 78).
 
 ## Output shape
 
-The result is `AkmImproveResult` (`src/core/improve-types.ts`), `schemaVersion: 2`. Besides `strategy`, `scope`, `dryRun`, and `ok` it carries: `plannedRefs`, `plan` (the resolved process routing and gates), `actions`, `distillSkipped` (the folded `distill-skipped` actions), `validationFailures`, `schemaRepairs`, `consolidation`, `extract`, `memoryCleanup`, `memoryInference`, `skippedProcesses`, `engineProbe`, `deadUrls`, `writtenPaths`, and `sync`. A run that found the lock held returns `skipped: { reason: "lock-held" }`.
+The result is `AkmImproveResult` (`src/core/improve-types.ts`), `schemaVersion: 2`. Besides `strategy`, `scope`, `dryRun`, and `ok` it carries: `plannedRefs`, `plan` (the resolved process routing and gates), `actions`, `distillSkipped` (the folded `distill-skipped` actions), `validationFailures`, `schemaRepairs`, `consolidation`, `extract`, `memoryCleanup`, `memoryInference`, `skippedProcesses`, `triage`, `proactiveMaintenance`, `deadUrls`, `writtenPaths`, `preRunSync`, and `sync`. A run that found the lock held returns `skipped: { reason: "lock-held" }`.
 
 `actions` entries are `{ ref, mode, result }` where `mode` is one of `reflect`, `reflect-skipped`, `reflect-guard-rejected`, `reflect-failed`, `distill`, `memory-prune`, `memory-inference`, or `error` (`ImproveActionMode`). `distill-skipped` is emitted per ref but folded into `distillSkipped` before the result is built. `reflect-cooldown` stays in the type for older rows; nothing emits it.

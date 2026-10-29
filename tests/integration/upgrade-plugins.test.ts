@@ -51,6 +51,7 @@ beforeEach(() => {
       XDG_CONFIG_HOME: path.join(root, "xdg-config"),
       OPENCODE_CONFIG: "",
       XDG_DATA_HOME: path.join(root, "xdg-data"),
+      CODEX_HOME: path.join(root, "codex-home"),
       STUB_LOG: log,
       STUB_STATE: state,
     },
@@ -76,12 +77,15 @@ function stubClaude(opts: {
   from: string;
   to: string;
   marketplace?: boolean;
+  /** The ref the marketplace follows; none means the default branch. */
+  ref?: string;
   installed?: boolean;
   failOn?: string;
 }): void {
   setState("claude-version", opts.from);
   setState("claude-next", opts.to);
-  const marketplaces = opts.marketplace === false ? "[]" : '[{"name":"akm-plugins"}]';
+  const refField = opts.ref ? `,"ref":"${opts.ref}"` : "";
+  const marketplaces = opts.marketplace === false ? "[]" : `[{"name":"akm-plugins"${refField}}]`;
   const plugins = opts.installed === false ? "[]" : '[{"id":"akm@akm-plugins","version":"%s"}]';
   stub(
     "claude",
@@ -109,6 +113,17 @@ function stubCodex(opts: { from: string; to: string; installed?: boolean }): voi
 "plugin marketplace upgrade akm-plugins") read n < "$STUB_STATE/codex-next"; printf '%s' "$n" > "$STUB_STATE/codex-version";;
 *) exit 2;;
 esac`,
+  );
+}
+
+/** Codex's config.toml, as `codex plugin marketplace add` writes the akm-plugins entry. */
+function writeCodexConfig(ref?: string): void {
+  const dir = path.join(world.root, "codex-home");
+  fs.mkdirSync(dir, { recursive: true });
+  const refLine = ref ? `ref = "${ref}"\n` : "";
+  fs.writeFileSync(
+    path.join(dir, "config.toml"),
+    `[marketplaces.other]\nref = "other"\n\n[marketplaces.akm-plugins]\nsource_type = "git"\n${refLine}\n[features]\nx = true\n`,
   );
 }
 
@@ -575,19 +590,17 @@ esac`,
       expect(entry(run, "opencode").outcome).toBe("skipped");
     });
 
-    test("akm-opencode@next older than @latest fails closed: CLI held, entry failed", async () => {
+    test("akm-opencode@next pinning an older akm-cli than @latest is still followed: --next asked for the prerelease channel", async () => {
       writeConfig(["akm-opencode@next"]);
       writeCachedOpenCode("0.9.26-rc.1", "next");
       stubNpm({ latest: ["0.9.26", "0.9.26"], next: ["0.9.26-rc.2", "0.9.26-rc.2"] });
       stubOpenCodeNext("0.9.26-rc.2");
       const deps = fakeDeps("0.9.27-rc.1", "0.9.25");
       const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", deps));
-      expect(deps.upgradeCalls[0]).toMatchObject({ latestVersion: "0.9.25", updateAvailable: false });
-      expect(run.result.lockstep).toMatchObject({ pinnedVersion: null, heldBack: true });
-      expect(run.result.lockstep?.reason).toContain("older than the 0.9.26 that akm-opencode@latest");
-      expect(entry(run, "opencode").outcome).toBe("failed");
-      expect(run.mode === "upgrade" && run.failed).toBe(true);
-      expect(mutations()).toEqual([]);
+      expect(deps.upgradeCalls[0]).toMatchObject({ latestVersion: "0.9.26-rc.2", updateAvailable: true });
+      expect(run.result.lockstep).toMatchObject({ pinnedVersion: "0.9.26-rc.2", heldBack: true });
+      expect(entry(run, "opencode")).toMatchObject({ outcome: "updated", to: "0.9.26-rc.2" });
+      expect(commands().some((c) => c.startsWith("npm view akm-opencode@latest"))).toBe(false);
     });
 
     test("real version shapes: a prerelease plugin build is not behind the stable one, the pins decide (#1089)", async () => {
@@ -610,7 +623,7 @@ esac`,
       });
     });
 
-    test("real version shapes: @next whose pin is older than @latest's pin still fails closed", async () => {
+    test("real version shapes: @next whose pin is older than @latest's pin is still followed", async () => {
       writeConfig(["akm-opencode@next"]);
       writeCachedOpenCode("0.9.26-alpha.1.202610010000", "next");
       stubNpm({
@@ -618,12 +631,10 @@ esac`,
         next: ["0.9.27-alpha.1.202610081938", "0.9.26"],
       });
       stubOpenCodeNext("0.9.27-alpha.1.202610081938");
-      const deps = fakeDeps("0.9.28-alpha.8", "0.9.26");
-      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.26", deps));
-      expect(run.result.lockstep).toMatchObject({ pinnedVersion: null, heldBack: true });
-      expect(run.result.lockstep?.reason).toContain("pins akm-cli 0.9.26, older than the 0.9.27");
-      expect(entry(run, "opencode").outcome).toBe("failed");
-      expect(mutations()).toEqual([]);
+      const deps = fakeDeps("0.9.28-alpha.8", "0.9.25");
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", deps));
+      expect(run.result.lockstep).toMatchObject({ pinnedVersion: "0.9.26", heldBack: true });
+      expect(entry(run, "opencode")).toMatchObject({ outcome: "updated", to: "0.9.27-alpha.1.202610081938" });
     });
 
     test("an @next cache that already holds npm's @next build is current: plugin versions are compared for equality only", async () => {
@@ -679,19 +690,37 @@ esac`,
       expect(run.result).not.toHaveProperty("lockstep");
     });
 
-    test("Claude Code and Codex are refreshed as usual and carry a note", async () => {
-      stubClaude({ from: "0.9.26", to: "0.9.27" });
+    test("Claude Code and Codex are refreshed as usual and the note names the prerelease ref they follow", async () => {
+      stubClaude({ from: "0.9.26", to: "0.9.27", ref: "next" });
       stubCodex({ from: "0.9.27", to: "0.9.27" });
+      writeCodexConfig("next");
       const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", fakeDeps("0.9.27-rc.1", "0.9.25")));
       expect(entry(run, "claude-code")).toMatchObject({ outcome: "updated" });
-      expect(entry(run, "claude-code").message).toContain("no prerelease channel");
+      expect(entry(run, "claude-code").message).toContain("follows ref next, the prerelease channel");
       expect(entry(run, "codex")).toMatchObject({ outcome: "current" });
-      expect(entry(run, "codex").message).toContain("no prerelease channel");
+      expect(entry(run, "codex").message).toContain("follows ref next, the prerelease channel");
       expect(mutations()).toEqual([
         "claude plugin marketplace update akm-plugins",
         "claude plugin update akm@akm-plugins",
         "codex plugin marketplace upgrade akm-plugins",
       ]);
+    });
+
+    test("a marketplace on the default branch is reported as stable, with how to switch", async () => {
+      stubClaude({ from: "0.9.26", to: "0.9.27" });
+      stubCodex({ from: "0.9.27", to: "0.9.27" });
+      writeCodexConfig();
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", fakeDeps("0.9.27-rc.1", "0.9.25")));
+      expect(entry(run, "claude-code").message).toContain("follows the default branch (stable)");
+      expect(entry(run, "claude-code").message).toContain("itlackey/akm-plugins@next");
+      expect(entry(run, "codex").message).toContain("follows the default branch (stable)");
+      expect(entry(run, "codex").message).toContain("--ref next");
+    });
+
+    test("another ref is named as it is", async () => {
+      stubClaude({ from: "0.9.26", to: "0.9.27", ref: "v1" });
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", fakeDeps("0.9.27-rc.1", "0.9.25")));
+      expect(entry(run, "claude-code").message).toContain("follows ref v1, not the prerelease channel");
     });
 
     test("without --next those entries carry no note", async () => {

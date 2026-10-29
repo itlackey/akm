@@ -7,10 +7,9 @@ import {
   createResolvedExecutionRequest,
   createResolvedPersona,
   decodeResolvedExecutionRequest,
-  type ResolvedEngineSelection,
   type ResolvedExecutionRequestV1,
+  type ResolvedTargetSelection,
 } from "../../src/execution/resolved-request";
-import { createAdapterExtensions } from "../../src/execution/source";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import {
   canonicalResolvedRequestForTest,
@@ -26,7 +25,6 @@ Review $ARGUMENTS exactly once.
 
 const PERSONA_RAW = `---
 description: Read-only reviewer
-tools: []
 ---
 Review without modifying files.
 `;
@@ -41,7 +39,7 @@ function commandSource() {
       adapter: "akm",
       file: "commands/review.md",
     },
-    defaults: { model: "balanced", tools: [] },
+    defaults: { model: "balanced" },
   });
 }
 
@@ -55,7 +53,6 @@ function personaSource() {
       adapter: "akm",
       file: "agents/reviewer.md",
     },
-    defaults: { tools: [] },
   });
 }
 
@@ -64,24 +61,12 @@ function commonRequest(command: ReturnType<typeof createResolvedCommand>): Resol
     command,
     agent: "fixture//agents/reviewer",
     persona: createResolvedPersona(personaSource()),
-    engine: { name: "fixture-agent", kind: "agent", platform: "opencode" },
-    model: { input: "balanced", interpretation: "alias", resolved: "provider/exact-model" },
+    target: { name: "fixture-agent", kind: "harness", platform: "opencode" },
+    model: { model: "provider/exact-model", alias: "balanced" },
     inference: { temperature: 0, enableThinking: false, extraParams: {} },
     outputSchema: null,
-    tools: [],
-    authorization: { status: "not-required", reason: "no tools selected", policy: {} },
+    modelWork: false,
     runtime: { timeoutMs: 0, workspace: "", environment: {} },
-    notices: [
-      {
-        code: "PERSONA_PROMPT_COMPOSED",
-        severity: "warning",
-        adapter: "fixture-agent",
-        field: "persona.content",
-        message: "Persona was composed into the user prompt.",
-        details: { deterministic: true },
-      },
-    ],
-    extensions: createAdapterExtensions("fixture-agent", { transport: "stdio" }),
   });
 }
 
@@ -109,10 +94,9 @@ describe("resolved execution request v1", () => {
       createResolvedExecutionRequest({
         command,
         ...(conversation ? { conversation } : {}),
-        engine: { name: "fixture-llm", kind: "llm" },
-        authorization: { status: "not-required" },
+        target: { name: "fixture-lab", kind: "connection" },
+        modelWork: false,
         runtime: {},
-        notices: [],
       });
     const transcript = make([
       { role: "system", content: "Code-owned instruction, not a persona." },
@@ -140,10 +124,9 @@ describe("resolved execution request v1", () => {
         ...(agent === undefined ? {} : { agent }),
         persona:
           agent === undefined || agent === "fixture//agents/reviewer" ? createResolvedPersona(personaSource()) : null,
-        engine: { name: "fixture-agent", kind: "agent" },
-        authorization: { status: "not-required" },
+        target: { name: "fixture-agent", kind: "harness" },
+        modelWork: false,
         runtime: {},
-        notices: [],
       });
     const native = make("native-reviewer");
 
@@ -187,25 +170,37 @@ describe("resolved execution request v1", () => {
     expect(canonicalResolvedExecutionRequest(decodeResolvedExecutionRequest(withExtras))).toBe(
       canonicalResolvedExecutionRequest(decodeResolvedExecutionRequest(canonical)),
     );
-    expect(() => decodeResolvedExecutionRequest({ ...canonical, schemaVersion: 2 })).toThrow(/upgrade akm/);
+    expect(() => decodeResolvedExecutionRequest({ ...canonical, schemaVersion: 3 })).toThrow(/upgrade akm/);
   });
 
-  test("covers every runner transport kind without embedding a capability matrix", () => {
+  test("covers every runner kind without embedding a capability matrix", () => {
     const source = commandSource();
-    const runnerKinds = { agent: true, sdk: true, llm: true } satisfies Record<
-      RunnerSpec["kind"] | ResolvedEngineSelection["kind"],
+    const kinds = { connection: true, harness: true } satisfies Record<
+      RunnerSpec["kind"] | ResolvedTargetSelection["kind"],
       true
     >;
-    for (const kind of Object.keys(runnerKinds) as Array<keyof typeof runnerKinds>) {
+    for (const kind of Object.keys(kinds) as Array<keyof typeof kinds>) {
       const request = createResolvedExecutionRequest({
         command: createResolvedCommand({ source, content: source.content }),
-        engine: { name: `fixture-${kind}`, kind },
-        authorization: { status: "not-required" },
+        target: { name: `fixture-${kind}`, kind },
+        modelWork: false,
         runtime: {},
-        notices: [],
       });
-      expect(request.engine.kind).toBe(kind);
+      expect(request.target.kind).toBe(kind);
     }
+  });
+
+  test("refuses a schemaVersion 1 request, which names an engine and cannot run now", () => {
+    const source = commandSource();
+    expect(() =>
+      decodeResolvedExecutionRequest({
+        schemaVersion: 1,
+        command: { template: source.content, content: source.content, source: null },
+        engine: { name: "lab", kind: "llm" },
+        authorization: { status: "allowed" },
+        runtime: {},
+      }),
+    ).toThrow(/unsupported resolved execution schemaVersion: 1/);
   });
 
   test("supports explicit anonymous command content without pretending it came from a native file", () => {
@@ -213,19 +208,16 @@ describe("resolved execution request v1", () => {
     const request = createResolvedExecutionRequest({
       command,
       persona: null,
-      engine: { name: "fixture-llm", kind: "llm" },
+      target: { name: "fixture-lab", kind: "connection" },
       model: null,
-      tools: null,
-      authorization: { status: "not-required" },
+      modelWork: false,
       runtime: { timeoutMs: null, workspace: null, environment: null },
-      notices: [],
     });
 
     expect(request.command.source).toBeNull();
     expect(Object.hasOwn(request, "persona")).toBe(true);
     expect(request.persona).toBeNull();
     expect(request.model).toBeNull();
-    expect(request.tools).toBeNull();
     const canonical = canonicalResolvedExecutionRequest(request);
     expect(canonicalResolvedExecutionRequest(decodeResolvedExecutionRequest(JSON.parse(canonical)))).toBe(canonical);
   });

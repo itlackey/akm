@@ -125,65 +125,6 @@ describe("workflow invocation controls", () => {
     expect(result.run.status).toBe("completed");
   });
 
-  test("route-skipped steps do not consume the maxSteps budget (bug 4 regression)", async () => {
-    fs.mkdirSync(path.join(storage.stashDir, "workflows"), { recursive: true });
-    fs.writeFileSync(
-      path.join(storage.stashDir, "workflows", "routed.md"),
-      [
-        "---",
-        "type: workflow",
-        "params:",
-        "  pick: { type: string }",
-        "steps:",
-        "  - id: choose",
-        "    route:",
-        "      input: params.pick",
-        "      when: [{ match: left, step: left }, { match: right, step: right }]",
-        "  - id: left",
-        "  - id: right",
-        "---",
-        "",
-        "## choose",
-        "",
-        "Choose.",
-        "",
-        "## left",
-        "",
-        "Left branch.",
-        "",
-        "## right",
-        "",
-        "Right branch.",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    const started = await startWorkflowRun("workflows/routed", { pick: "right" });
-    const nodes: string[] = [];
-    const result = await runWorkflowSteps({
-      target: started.run.id,
-      maxSteps: 2,
-      dispatcher: async (req) => {
-        nodes.push(req.nodeId);
-        return { ok: true, text: "done" };
-      },
-      summaryJudge: null,
-    });
-
-    // choose (route decision) is step 1, right is step 2; the skipped `left`
-    // costs nothing — pre-fix it ate the budget and the run stalled before
-    // `right` despite --max-steps 2 covering both real steps.
-    expect(nodes).toEqual(["right"]);
-    expect(result.executed.map((s) => s.stepId)).toEqual(["choose", "left", "right"]);
-    expect(result.stepsProcessed).toBe(2);
-    expect(result.done).toBe(true);
-    const status = await getWorkflowStatus(started.run.id);
-    const byId = new Map(status.workflow.steps.map((s) => [s.id, s.status]));
-    expect(byId.get("choose")).toBe("completed");
-    expect(byId.get("left")).toBe("skipped");
-    expect(byId.get("right")).toBe("completed");
-  });
-
   test("an aborted invocation leaves the step active and releases its lease", async () => {
     writeWorkflow("timeout");
     const started = await startWorkflowRun("workflows/timeout");

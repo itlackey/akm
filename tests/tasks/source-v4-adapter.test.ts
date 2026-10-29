@@ -226,10 +226,9 @@ const FIXTURE_EXPECTATIONS: readonly FixtureExpectation[] = [
       when_to_use: "Run to exercise every non-schedule top-level v4 key",
       tags: ["contract", "review"],
       agent: "reviewer-agent",
-      engine: "fixture-llm",
+      connection: "fixture-llm",
       model: "fixture-exact-model",
       inference: { seed: 7 },
-      tools: ["read", "grep"],
       timeout: 45000,
       redact: ["CONTRACT_FIXTURE_TOKEN"],
       maxSteps: 8,
@@ -299,7 +298,7 @@ describe("projectTaskSourceV4 — every tests/fixtures/execution-contracts/tasks
 
   test.each(
     MANIFEST_FIXTURES.map((fixture) => [fixture.id, fixture] as const),
-  )("%s projects every akm-mapped field individually (description/when_to_use/tags/agent/engine/model/inference/tools/timeout/redact/maxSteps/maxRetries/outputSchema)", (_id, fixture) => {
+  )("%s projects every akm-mapped field individually (description/when_to_use/tags/agent/connection/model/inference/timeout/redact/maxSteps/maxRetries/outputSchema)", (_id, fixture) => {
     const { expectation, projected } = loadCase(fixture);
     const akm = projected.akm as Record<string, unknown> | undefined;
     for (const [key, value] of Object.entries(expectation.akm)) {

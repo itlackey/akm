@@ -56,10 +56,10 @@ akm curate "review an architecture proposal" --type skill
 ```
 
 At the default `--detail brief` both commands return a `ref` for every hit, which
-is all an agent needs to call `akm show`. `--shape agent` (Experimental) adds
-each hit's `path` and `editable` flag, for agents that read or edit the file
-directly. To list a subtree instead of keyword-matching, end the query with a
-slash: `akm search "knowledge/"` or `akm search "team//skills/"`. See
+is all an agent needs to call `akm show`. `--detail agent` adds each hit's `path`
+and `editable` flag, for agents that read or edit the file directly. To list a
+subtree instead of keyword-matching, end the query with a slash:
+`akm search "knowledge/"` or `akm search "team//skills/"`. See
 [CLI Reference](../reference/cli.md) for the full flag tables and exact
 output-field lists per `--detail` level.
 
@@ -81,13 +81,20 @@ in several.
 
 ## 4. Load a document section
 
-Knowledge docs and other markdown assets can be large. Append `#fragment` to
-a ref to return one section by heading slug instead of the whole document:
+Knowledge docs and other markdown assets can be large. Read the outline first,
+then only the sections you need. `--detail brief` returns the document's `toc`
+without the body, and appending `#<slug>` to a ref returns one section:
 
 ```sh
+akm show knowledge/api-guide --detail brief
+# → {"toc": [{"level": 2, "text": "Authentication", "slug": "authentication", "startLine": 12}, ...], ...}
 akm show knowledge/api-guide#authentication
 # → just the "Authentication" section, not the full document
 ```
+
+Every `slug` in `toc` selects its section, including repeated headings, which
+get `-1`, `-2`, ... suffixes. A whole-document show carries the same `toc`
+next to the body.
 
 To get the document's opening context along with the section, add
 `--context lead` and a budget:
@@ -103,8 +110,9 @@ opaque `#akm-fragment-...` handle for that section), `parentRef`,
 `previousRef` and `nextRef`, line bounds, and separate fragment and parent size
 estimates.
 
-An unmatched fragment fails with an error that lists the available slugs, so a
-guess that misses still tells you what to try next.
+An unmatched fragment is an error that lists the available slugs, so a guess
+that misses still tells you what to try next; `--detail brief` is the way to
+see them without guessing.
 
 ## 5. Record the outcome
 
@@ -120,14 +128,14 @@ Record `--negative` only when the asset's content is wrong or stale, and say wha
 is wrong and what it should say. A note that simply did not fit your task is not
 negative feedback: record nothing for it.
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
-flags the asset, and the next `akm improve` run may repair its description,
-title or `when_to_use` from your reason. Improve does not rewrite an asset's
-text, so once you have verified the correct fact, attach the exact fix:
-`--replace "<exact current text>" --with "<corrected text>" --source "<URL,
-command or file that shows it>"`. That is how a one-off task turns into a
-durable improvement to the shared library rather than a result nobody else
-benefits from. `--positive` records that an asset helped and does not trigger a
-rewrite. Feedback is input to `akm improve`; it does not change search ranking.
+flags the asset: it ranks lower right away, and the next `akm improve` run may
+repair its description, title or `when_to_use` from your reason. Improve does
+not rewrite an asset's text, so once you have verified the correct fact, attach
+the exact fix: `--replace "<exact current text>" --with "<corrected text>"
+--source "<URL, command or file that shows it>"`. That is how a one-off task
+turns into a durable improvement to the shared library rather than a result
+nobody else benefits from. `--positive` records that an asset helped (it raises
+its ranking) and does not trigger a rewrite.
 
 ## 6. Troubleshoot an empty or poor result
 
@@ -152,7 +160,7 @@ rewrite. Feedback is input to `akm improve`; it does not change search ranking.
 
 ## 7. Reference links
 
-- [CLI Reference](../reference/cli.md) — full `--detail`/`--shape` flag
+- [CLI Reference](../reference/cli.md) — full `--detail` flag
   semantics, complete flag tables, and exact output-field lists for `search`,
   `curate`, `show`, and `index`
 - [Architecture](../architecture/architecture.md) — ranking and search

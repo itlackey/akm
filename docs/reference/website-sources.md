@@ -58,7 +58,7 @@ Drop fetcher modules into:
 ```
 
 `<stashDir>` is your working bundle. When a command has an explicit write target
-(for example `akm import --target ...`), akm loads fetchers from that target
+(for example `akm import --bundle ...`), akm loads fetchers from that target
 bundle instead. A website bundle's own `scripts/wiki-fetchers/` is never loaded
 when it syncs. Bundle fetchers run before the built-in ones.
 

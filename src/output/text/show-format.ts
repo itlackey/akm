@@ -11,6 +11,7 @@
  * blocks) lives in the sibling `show-directives.ts`.
  */
 
+import type { MarkdownTocEntry } from "../../core/asset/markdown";
 import type { DetailLevel } from "../context";
 import { appendShowDirectives } from "./show-directives";
 
@@ -29,6 +30,10 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
     lines.push(keys.length > 0 ? `keys: ${keys.join(", ")}` : "(no keys)");
   }
   if (r.description) lines.push(`description: ${String(r.description)}`);
+  // Evidence is captured text: keep it on one line so it cannot forge other fields.
+  if (r.evidence) lines.push(`evidence: ${String(r.evidence).replace(/\s+/g, " ")}`);
+  if (Array.isArray(r.evidenceSources)) lines.push(`evidenceSources: ${r.evidenceSources.join(", ")}`);
+  if (r.provenance) lines.push(`provenance: ${JSON.stringify(r.provenance)}`);
   if (r.workflowTitle) lines.push(`workflowTitle: ${String(r.workflowTitle)}`);
   if (r.agent) lines.push(`agent: ${String(r.agent)}`);
   if (Array.isArray(r.parameters) && r.parameters.length > 0) lines.push(`parameters: ${r.parameters.join(", ")}`);
@@ -42,7 +47,6 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
     }
   }
   if (r.modelHint != null) lines.push(`modelHint: ${String(r.modelHint)}`);
-  if (r.toolPolicy != null) lines.push(`toolPolicy: ${JSON.stringify(r.toolPolicy)}`);
   if (r.run) lines.push(`run: ${String(r.run)}`);
   if (r.setup) lines.push(`setup: ${String(r.setup)}`);
   if (r.cwd) lines.push(`cwd: ${String(r.cwd)}`);
@@ -51,6 +55,13 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
     if (r.editable !== undefined) lines.push(`editable: ${String(r.editable)}`);
     if (r.editHint) lines.push(`editHint: ${String(r.editHint)}`);
     if (r.schemaVersion !== undefined) lines.push(`schemaVersion: ${String(r.schemaVersion)}`);
+  }
+  if (Array.isArray(r.toc) && r.toc.length > 0) {
+    lines.push("");
+    lines.push("toc:");
+    for (const heading of r.toc as MarkdownTocEntry[]) {
+      lines.push(`  ${"#".repeat(heading.level)} ${heading.text} (#${heading.slug}, line ${heading.startLine})`);
+    }
   }
   const links = typeof r.links === "object" && r.links !== null ? (r.links as Record<string, unknown>) : undefined;
   if (links) {

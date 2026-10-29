@@ -16,6 +16,7 @@
 import { formatRegistryUrl } from "../../core/registry-url";
 import type { IndexResponse } from "../../indexer/indexer";
 import type { DetailLevel } from "../context";
+import { renderTargetsTable } from "./targets-table";
 
 /** Render the current `InfoResponse` shape. */
 export function formatInfoPlain(r: Record<string, unknown>): string {
@@ -66,6 +67,7 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
       lines.push(`  [${String(source.type ?? "?")}] ${String(label)}${disabled}`);
     }
   }
+  if (Array.isArray(r.connectionsAndHarnesses)) lines.push(...renderTargetsTable(r.connectionsAndHarnesses));
   const indexStats = r.indexStats as Record<string, unknown> | undefined;
   if (indexStats) {
     lines.push("indexStats:");
@@ -174,7 +176,7 @@ export function formatEnvListPlain(r: Record<string, unknown>): string {
   // Multi-env listing: { envs: [{ ref, path, keys }, ...] }
   const envs = Array.isArray(r.envs) ? (r.envs as Array<Record<string, unknown>>) : [];
   if (envs.length === 0) {
-    return "No env files. Create one with `akm env create <name>`, then edit the .env file directly.";
+    return "No env files. Create one with `akm env create env/<name>`, then edit the .env file directly.";
   }
   const lines: string[] = [];
   for (const v of envs) {
@@ -450,33 +452,32 @@ export function formatListPlain(r: Record<string, unknown>): string {
   return lines.join("\n");
 }
 
-/** Render `akm models list`'s `{ rows }` as a column-aligned table (#946). */
-export function formatModelsListPlain(r: Record<string, unknown>): string {
-  const rows = Array.isArray(r.rows) ? (r.rows as Record<string, unknown>[]) : [];
-  if (rows.length === 0) return "No model aliases configured.";
-  const headers = ["ALIAS", "COLUMN", "MODEL", "SOURCE", "VIA", "ENGINE"] as const;
-  const cells: string[][] = rows.map((row) => [
-    String(row.alias ?? "?"),
-    String(row.column ?? "?"),
-    String(row.model ?? "?"),
-    String(row.source ?? "?"),
-    String(row.via ?? "?"),
-    row.engine !== undefined ? String(row.engine) : "-",
-  ]);
-  const widths = headers.map((header, i) => {
-    let width = header.length;
-    for (const cols of cells) {
-      const cell = cols[i];
-      if (cell !== undefined && cell.length > width) width = cell.length;
-    }
-    return width;
-  });
-  const renderRow = (cols: readonly string[]): string =>
-    cols
-      .map((cell, i) => cell.padEnd(widths[i] ?? cell.length))
-      .join("  ")
-      .trimEnd();
-  return [renderRow(headers), ...cells.map(renderRow)].join("\n");
+/** Render `akm models`'s `{ connection, aliases, available }`: each alias's model, then the models the endpoint lists. */
+export function formatModelsPlain(r: Record<string, unknown>): string {
+  const aliases =
+    r.aliases && typeof r.aliases === "object" ? Object.entries(r.aliases as Record<string, unknown>) : [];
+  const available = Array.isArray(r.available) ? r.available.map(String) : [];
+  const title = `Connection ${String(r.connection ?? "?")}`;
+  if (aliases.length === 0 && available.length === 0) {
+    return `${title} has no model aliases. Set one with \`akm models set <alias> <model>\`.`;
+  }
+  const lines = [title];
+  if (aliases.length > 0) {
+    const width = Math.max("ALIAS".length, ...aliases.map(([alias]) => alias.length));
+    lines.push(
+      `${"ALIAS".padEnd(width)}  MODEL`,
+      ...aliases.map(([alias, model]) => `${alias.padEnd(width)}  ${String(model)}`),
+    );
+  }
+  if (available.length > 0)
+    lines.push(...(aliases.length > 0 ? [""] : []), "AVAILABLE", ...available.map((model) => `  ${model}`));
+  return lines.join("\n");
+}
+
+/** Render `akm models set`'s result. */
+export function formatModelsSetPlain(r: Record<string, unknown>): string {
+  const was = typeof r.previous === "string" ? ` (was ${r.previous})` : "";
+  return `${String(r.alias)} -> ${String(r.model)} on connection ${String(r.connection)}${was}`;
 }
 
 /** Render a single `SourceEntry` — `akm bundle show <name>`'s detail view of one `list` row. */
@@ -570,6 +571,10 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
   const proposalRefs = Number(state.proposalRefs ?? 0);
   const proposalTargets = Number(state.proposalTargets ?? 0);
   const taskHistoryRefs = Number(state.taskHistoryRefs ?? 0);
+  const workflowRunRefs = Number(state.workflowRunRefs ?? 0);
+  const activeWorkflowRuns = Array.isArray(r.activeWorkflowRuns)
+    ? (r.activeWorkflowRuns as Array<{ id: string; workflowRef: string; status: string }>)
+    : [];
   const entries = Number(index.entries ?? 0);
   const contentRefs = Array.isArray(r.contentRefs) ? r.contentRefs : [];
   const nativeSchedulerRows = Array.isArray(r.nativeSchedulerRows) ? r.nativeSchedulerRows : [];
@@ -577,8 +582,15 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
   const verb = applied ? "Renamed" : "Would rename";
   const lines = [
     `${verb} bundle "${oldId}" to "${newId}" (${entries} index entries, ${schedulerRefs} scheduler ref(s), ` +
-      `${proposalRefs + proposalTargets} proposal reference(s), ${taskHistoryRefs} task-history row(s)).`,
+      `${proposalRefs + proposalTargets} proposal reference(s), ${taskHistoryRefs} task-history row(s), ` +
+      `${workflowRunRefs} workflow run(s)).`,
   ];
+  if (activeWorkflowRuns.length > 0) {
+    lines.push(
+      "Active and blocked workflow runs keep the old bundle name in their frozen plan; continue them (`akm workflow run <id>`, after `akm workflow resume <id>` for a blocked one) or abandon them (`akm workflow abandon <id>`):",
+    );
+    for (const run of activeWorkflowRuns) lines.push(`  - ${run.id} (${run.workflowRef}, ${run.status})`);
+  }
   if (!applied) {
     lines.push("Re-run without --dry-run to apply. It also re-syncs native scheduler bindings under the new name.");
     if (nativeSchedulerRows.length > 0) {
@@ -654,7 +666,12 @@ export function formatUpdatePlain(r: Record<string, unknown>): string {
   return lines.length > 0 ? lines.join("\n") : `update: nothing to update`;
 }
 
-const HARNESS_LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", opencode: "OpenCode" };
+const HARNESS_LABELS: Record<string, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  opencode: "OpenCode",
+  "opencode-v2": "OpenCode 2",
+};
 
 /** The plugin lines worth printing: nothing for a plugin that is current or has no plugin to update. */
 function formatUpgradePluginLines(r: Record<string, unknown>): string[] {

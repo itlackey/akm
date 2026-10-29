@@ -9,7 +9,8 @@
  * `with:` bindings against the child's `params:`; (2) derive the deterministic
  * invocation key; (3) publish the child run idempotently; (4) drive it with
  * the same engine as a top-level run unless it is already `blocked`/`failed`;
- * (5) map the child's final status onto this unit's outcome.
+ * (5) map the child's final status onto this unit's outcome; a completed
+ * child returns the output of its last step.
  *
  * `runWorkflowSteps` is reached through a lazy dynamic import: a static one
  * would close the cycle native-executor -> child-workflow -> run-workflow ->
@@ -22,7 +23,6 @@ import { type WorkflowRunRow, withWorkflowRunsRepo } from "../../storage/reposit
 import { validateWorkflowParams } from "../ir/params";
 import { canonicalPlanJson } from "../ir/plan-hash";
 import type { FrozenChildWorkflowTarget } from "../plan";
-import { workflowRunExportedResult } from "../runtime/run-outputs";
 import { frozenStepRows } from "../runtime/run-plan";
 import { computeChildInvocationKey } from "./child-invocation";
 import type { UnitOutcome } from "./step-work";
@@ -38,6 +38,7 @@ export interface DriveChildWorkflowContext {
   readonly dispatcher?: UnitDispatcher;
   readonly maxConcurrency?: number;
   readonly eventSource?: string;
+  readonly bundleRootOverride?: string;
   /** Unread here; named so an inline test `ctx` mirroring `StepExecutionContext` type-checks. */
   readonly workflowRef?: string;
   readonly params?: Record<string, unknown>;
@@ -51,7 +52,7 @@ export interface ChildWorkflowDriveOptions {
   readonly dispatcher?: UnitDispatcher;
   readonly maxConcurrency?: number;
   readonly eventSource?: string;
-  readonly disposeDispatchResources?: () => void | Promise<void>;
+  readonly bundleRootOverride?: string;
 }
 
 /** The real engine, via a dynamic import (see the module doc). The caller re-reads the child row afterward. */
@@ -69,6 +70,24 @@ export interface DriveChildWorkflowInput {
   /** The `hashVersion` 7 unit input hash. */
   readonly inputHash: string;
   readonly dispatcher: UnitDispatcher;
+}
+
+/**
+ * A completed child's result: the artifact of its last step (a step with no
+ * recorded evidence yields `null`). Read from the persisted step rows, so a
+ * resumed parent sees the same value as the live one.
+ */
+async function childFinalOutput(childRunId: string): Promise<unknown> {
+  const steps = await withWorkflowRunsRepo((repo) => repo.getStepsForRun(childRunId));
+  const evidenceJson = steps[steps.length - 1]?.evidence_json;
+  if (!evidenceJson) return null;
+  try {
+    const evidence = JSON.parse(evidenceJson) as Record<string, unknown>;
+    // Same projection as `steps.<id>.output` (step-work.ts `projectStepOutput`).
+    return Object.hasOwn(evidence, "output") ? evidence.output : evidence;
+  } catch {
+    return null;
+  }
 }
 
 function errorMessage(err: unknown): string {
@@ -149,8 +168,6 @@ async function publishChildRun(
         run: {
           id: childRunId,
           workflowRef: target.ref,
-          scopeKey: parentRow.scope_key,
-          workflowEntryId: null,
           workflowTitle: target.frozenPlan.title,
           paramsJson: JSON.stringify(childParams),
           currentStepId: target.frozenPlan.steps[0]?.stepId ?? null,
@@ -199,8 +216,7 @@ async function driveChildRun(
     ...(ctx.dispatcher ? { dispatcher: ctx.dispatcher } : {}),
     ...(ctx.maxConcurrency !== undefined ? { maxConcurrency: ctx.maxConcurrency } : {}),
     ...(ctx.eventSource !== undefined ? { eventSource: ctx.eventSource } : {}),
-    // The parent's own `finally` owns the process-lifecycle drain; no maxSteps/maxRetries.
-    disposeDispatchResources: () => {},
+    ...(ctx.bundleRootOverride !== undefined ? { bundleRootOverride: ctx.bundleRootOverride } : {}),
   };
   try {
     // The re-read stays inside this try: an escaped throw would skip the
@@ -295,7 +311,7 @@ export async function driveChildWorkflowUnit(input: DriveChildWorkflowInput): Pr
       return {
         unitId: request.unitId,
         ok: true,
-        result: workflowRunExportedResult(finalRow),
+        result: await childFinalOutput(finalRow.id),
         childRun: childRunSummary,
       };
     case "failed": {

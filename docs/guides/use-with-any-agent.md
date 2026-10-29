@@ -26,14 +26,12 @@ For a longer, agent-facing instruction block — usage patterns, flag guidance,
 the full ref format — generate one instead of hand-writing it:
 
 ```sh
-akm help agents >> AGENTS.md
+akm hints --detail brief >> AGENTS.md
 ```
 
 The output is written for agents rather than humans: it describes the lookup
-workflow (`curate` → `show` → `feedback`) and explains how refs work. `akm help
-agents` prints a short guide by default and the complete one with `--full`;
-`akm hints` prints the complete guide by default and the short one with
-`--detail brief`.
+workflow (`curate` → `show` → `feedback`) and explains how refs work. It prints
+the complete guide by default; `--detail brief` prints the short one.
 
 ## The retrieval loop: curate, show, feedback
 
@@ -53,9 +51,10 @@ akm feedback workflows/deploy-to-prod --positive --reason "Completed without iss
 
 **Get refs from search.** Agents should call `akm search` or `akm curate` to
 discover refs rather than guess them. Both return a `ref` at the default detail
-level; pass it to `akm show`. `--shape agent` (Experimental) additionally
-returns each hit's `path` and `editable` flag, for agents that read or edit the
-file directly.
+level; pass it to `akm show`. `--detail agent` additionally returns each hit's
+`path` and `editable` flag, for agents that read or edit the file directly. For
+a long document, `akm show <ref> --detail brief` returns its outline (`toc`, no
+body), and `akm show <ref>#<slug>` then loads only the sections the task needs.
 
 Feedback closes the loop. Record `--negative` only when the asset's content is
 wrong or stale; a note that simply did not fit the task is not negative
@@ -64,9 +63,9 @@ feedback, so record nothing for it.
 flags the asset, and the next improve run may repair its description, title or
 `when_to_use` from your reason. Once you have verified the correct fact, attach
 the exact fix with `--replace`, `--with` and `--source`. `--positive` records
-that an asset helped and does not trigger a rewrite. Feedback does not change
-search ranking. See [Improve the Library](improve-the-library.md) for what
-happens to feedback after it's recorded.
+that an asset helped (it raises its ranking) and does not trigger a rewrite. See
+[Improve the Library](improve-the-library.md) for what happens to feedback after
+it's recorded.
 
 ## Compatibility matrix
 
@@ -75,7 +74,7 @@ sets expectations by environment.
 
 | Environment | Core support | Optional/extended support |
 | --- | --- | --- |
-| Shell-capable coding agent | `curate` / `show` / `feedback` via the CLI | Generated prompt block (`akm help agents`) or a platform plugin |
+| Shell-capable coding agent | `curate` / `show` / `feedback` via the CLI | Generated prompt block (`akm hints`) or a platform plugin |
 | Claude/OpenCode project layout | Indexed in place through a `BundleAdapter` — no migration needed | `akm clone` selected assets into a writable bundle for editing |
 | IDE assistant without shell access | Not a direct core integration | Requires a plugin, an `akm task`, or an external bridge that can shell out on the assistant's behalf |
 
@@ -85,7 +84,8 @@ recognized and indexed automatically once added as a source — see
 which formats are read-only versus writable in the current release.
 The native directory remains the source of truth: AKM translates recognized
 assets while reading the bundle and does not synchronize, copy, or write them
-back.
+back. Execution of these translated agents and commands is described in
+[Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses).
 
 ## AKM complements, rather than replaces
 
@@ -101,16 +101,15 @@ than replacing either.
 
 - **Tab completion.** `akm completions --install` sets up shell completions
   for subcommands and flags. See [CLI Reference](../reference/cli.md#completions).
-- **Dispatching a bundle agent asset.** `akm agent agents/<name> --engine
-  <engine> --prompt "..."` runs a bundle `agents/<name>` persona and model
-  defaults through a named engine. Models can be named with the built-in
-  aliases `fast`, `balanced` and `reasoning`, which resolve per platform
-  (`akm models list` prints the table). A `tools:` request in the agent asset
-  is honored only up to your `execution.allowedTools` config list, which is
-  empty by default. See
-  [Configuration](../reference/configuration.md#engines) for engines and
-  aliases and [Architecture](../architecture/architecture.md) for how dispatch
-  is built into platform-specific CLI argv per backend.
+- **Dispatching a bundle agent asset.** `akm agent agents/<name> --harness
+  <harness> --prompt "..."` runs a bundle `agents/<name>` persona and model
+  default on a harness (or on akm's own runtime over a connection, with
+  `--connection <name>`), with the aliases `fast`, `balanced` and `reasoning`
+  resolved on whichever you select. See
+  [Configuration](../reference/configuration.md#aliases) for the aliases and
+  [Architecture](../architecture/architecture.md#connections-and-harnesses)
+  for how dispatch reaches each harness. The harness runs as you would run it by
+  hand ([how](../reference/configuration.md#how-akm-runs-a-harness)).
 - **Install refs vs. asset refs.** `npm:@scope/pkg` and `github:owner/repo`
   are install refs, accepted only by `akm bundle add`/`akm clone`, and are a
   different grammar from the `[bundle//]conceptId` refs `show`/`search` use.
@@ -122,12 +121,56 @@ than replacing either.
   browsing, automatic context injection — but the core `akm` CLI works
   without them.
 
+## OpenCode plugins: one package per OpenCode major
+
+OpenCode 1 and OpenCode 2 load different plugin APIs, so akm ships one plugin
+package for each. Install only the one that matches the `opencode` you run; akm
+never installs or replaces the `opencode` binary, and `akm upgrade` never adds
+one plugin to the other major's config.
+
+| OpenCode | Plugin package | Config key | Plugin cache |
+| --- | --- | --- | --- |
+| 1 | `akm-opencode` | `"plugin"` | `~/.cache/opencode/packages/akm-opencode@<tag>/` |
+| 2 | `akm-opencode-v2` | `"plugins"` (the key `opencode plugin add` writes) | `~/.cache/opencode/npm/akm-opencode-v2@<tag>/<build>/` |
+
+(`$XDG_CACHE_HOME` and `$XDG_CONFIG_HOME` move both.) Both packages declare the
+same `akm-cli` dependency.
+
+**OpenCode 1.** Add `akm-opencode` to the global config
+(`~/.config/opencode/opencode.json`):
+
+```json
+{ "plugin": ["akm-opencode"] }
+```
+
+**OpenCode 2.**
+
+```sh
+opencode plugin add akm-opencode-v2
+```
+
+This installs the package and adds it to `plugins` in the global config.
+
+**Updating.** `akm upgrade` refreshes the cached plugin of each major it finds,
+holds the CLI to the `akm-cli` those plugins pin, and leaves a plugin alone
+whose config pins another spec such as `akm-opencode@0.8.0`. Use
+`akm upgrade --next` with `akm-opencode@next` / `akm-opencode-v2@next` in the
+config to follow prereleases. The exact rules are in the
+[`akm upgrade` reference](../reference/cli.md#harness-plugins). `akm health`
+warns when either plugin's bundled `akm-cli` differs from the running CLI.
+
+**Which OpenCode akm runs** does not depend on the plugin: the `opencode`
+harness runs your OpenCode through its CLI (OpenCode 1 and 2), and akm's own
+runtime fetches and runs its own pinned one (see
+[Configuration](../reference/configuration.md#without-a-harness)). Install the plugin for
+the OpenCode you use yourself.
+
 ## See also
 
-- [Configuration](../reference/configuration.md#engines) — named agent engines and model aliases
+- [Configuration](../reference/configuration.md#connections) — connections, harnesses and model aliases
 - [Discover and Load](discover-and-load.md) — the full curate → show retrieval path
 - [Capture Knowledge](capture-knowledge.md) — capturing agent-generated memories
 - [Improve the Library](improve-the-library.md) — feeding back usage signals
-- [CLI Reference](../reference/cli.md) — `completions`, `agent`, and `help agents` command documentation
+- [CLI Reference](../reference/cli.md) — `completions`, `agent`, and `hints` command documentation
 - [Concepts](concepts.md) — bundles, adapters, refs, and the asset type system
 - [Bundle Types](../reference/bundle-types.md) — how AKM indexes existing project layouts in place

@@ -55,11 +55,11 @@ describe("akm health --window-compare=1h JSON shape (akm-health-discord.ts contr
     }
   });
 
-  test("carries the triage-promote-validation advisory evidence shape the script reads", async () => {
+  test("carries the auto-accept-validation advisory evidence shape the script reads", async () => {
     const storage: IsolatedAkmStorage = withIsolatedAkmStorage();
     try {
       const result = await akmHealth({ windowCompare: "1h" });
-      const autoAccept = result.advisories.find((a) => a.name === "triage-promote-validation");
+      const autoAccept = result.advisories.find((a) => a.name === "auto-accept-validation");
       // Always registered (advisory channel, unconditional) — the script reads
       // `a.evidence?.promoted` / `a.evidence?.validationFailed` off it.
       expect(autoAccept).toBeDefined();

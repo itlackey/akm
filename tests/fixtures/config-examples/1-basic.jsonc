@@ -1,0 +1,13 @@
+// 1. Basic — one local endpoint, nothing else.
+// Written by: akm setup --endpoint http://localhost:11434/v1 --yes
+// The only connection is named "default", so nothing has to point at it.
+// Model calls go to it; agent work runs on akm's internal runtime over it.
+// Embeddings are off because the user skipped them.
+{
+  "connections": {
+    "default": {
+      "endpoint": "http://localhost:11434/v1",
+      "models": { "fast": "qwen3-8b", "balanced": "qwen3-32b", "reasoning": "qwen3-32b" }
+    }
+  }
+}

@@ -23,8 +23,7 @@ akm search "team-catalog//"                   # List every item in one bundle
 | `--from` | `local`, `registry`, `all`, or a configured bundle name | `local` |
 | `--limit` | number | `20` |
 | `--format` | `json`, `jsonl`, `text`, `yaml`, `md`, `html` | `json` |
-| `--detail` | `brief`, `normal`, `full` | `brief` |
-| `--shape` | `human`, `agent`, `summary` (`summary` only on `show`) | `human` |
+| `--detail` | `brief`, `normal`, `full`, `agent` (`agent`: search, curate and show only) | `brief` |
 
 Ref-prefix queries (a conceptId prefix ending in `/`, optionally bundle-qualified)
 return a deterministic listing, not a relevance ranking. Drop the trailing slash
@@ -50,7 +49,9 @@ akm curate "review architecture" --type workflow # Restrict to one asset type
 ## Show
 
 Display an asset by ref from the local index and materialized bundle files only.
-On a markdown document `#fragment` selects one section by heading slug.
+On a markdown document `#fragment` selects one section by heading slug. For a
+large document, `akm show <ref> --detail brief` returns its outline (`toc`, no
+body); then `akm show <ref>#<slug>` reads only the sections you need.
 
 ```sh
 akm show scripts/deploy.sh                    # Show script (returns run command)
@@ -58,9 +59,9 @@ akm show skills/code-review                   # Show skill (returns full content
 akm show commands/release                     # Show command (returns template)
 akm show agents/architect                     # Show agent (returns system prompt)
 akm show workflows/ship-release               # Show parsed workflow steps
-akm show knowledge/guide                      # Whole document
+akm show knowledge/guide                      # Whole document, plus its `toc`
+akm show knowledge/guide --detail brief       # Outline only: `toc` (level, text, slug, startLine), no body
 akm show knowledge/guide#auth                 # Just the "Auth" section
-akm show knowledge/guide#nope                 # Lists the available fragment slugs
 akm show knowledge/my-doc                     # Show materialized local content
 ```
 
@@ -69,8 +70,8 @@ akm show knowledge/my-doc                     # Show materialized local content
 | script | `run`, `setup`, `cwd` |
 | skill | `content` (full SKILL.md) |
 | command | `template`, `description`, `parameters` |
-| agent | `prompt`, `description`, `modelHint`, `toolPolicy` |
-| knowledge | `content` (whole document, or one section via `#fragment`) |
+| agent | `prompt`, `description`, `modelHint` |
+| knowledge | `content` (whole document, or one section via `#fragment`); `toc` (each heading's `slug`) on a whole document |
 | workflow | `workflowTitle`, `workflowParameters`, `steps` |
 | memory | `content` (recalled context) |
 | env | `keys` (key names only — values and comment text never returned) |
@@ -90,33 +91,32 @@ akm import ./doc.md --xref knowledge/auth-flow # Merge provenance xrefs into the
 akm import ./new.md --supersedes knowledge/old # Import a correction AND demote the doc it replaces
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL and import it as knowledge
-akm import ./doc.md --target my-other-bundle    # Route import to a named writable bundle source
+akm import ./doc.md --bundle my-other-bundle    # Route import to a named writable bundle source
 akm workflow create ship-release               # Create a workflow asset in the bundle
-akm lint --type workflows                      # Parse and compile every .md/.yml workflow source; list every error
-akm workflow run workflows/ship-release        # Start or resume and execute the workflow
-akm feedback skills/code-review --positive     # Record that an asset helped (moves its utility score for improve; no rewrite)
-akm feedback agents/reviewer --negative --reason "says to run jest; the suite runs on vitest" # Content wrong or stale: lowers its utility score; improve may repair its frontmatter
-akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/" # Queue an exact fix
+akm lint --type workflows                      # Parse and compile every workflow source; list every error
+akm workflow run workflows/ship-release        # Start a new run and execute it
+akm feedback skills/code-review --positive     # Record that an asset helped (ranks it higher; no rewrite)
+akm feedback agents/reviewer --negative --reason "says to run jest; the suite runs on vitest" # Content wrong or stale: lowers its ranking; improve may repair its frontmatter
+akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/" # Apply an exact fix
 akm feedback memories/deployment-notes --positive # Works for memories too
 akm feedback env/prod --positive               # Records env feedback without surfacing values
 ```
 
-Use `akm feedback --positive` when an asset's content materially helps. Feedback
-is recorded against the asset and moves its utility score, which `akm improve`
-uses to choose what to work on; it does not change search order. Record
-negative feedback only when the asset's content is wrong or stale, and say what
-is wrong and what it should say.
+Use `akm feedback --positive` when an asset's content materially helps, so
+future search ranking can learn from actual usage. Record negative feedback only
+when the asset's content is wrong or stale, and say what is wrong and what it
+should say.
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
-flags the asset: its utility score drops right away, and the next improve run
-may repair its description, title or `when_to_use` from your reason. A note that simply did
+flags the asset: it ranks lower right away, and the next improve run may repair
+its description, title or `when_to_use` from your reason. A note that simply did
 not fit your task is not negative feedback: record nothing for it. Improve does
 not rewrite an asset's text: once you have verified the correct fact, attach the
 exact fix with `--replace "<exact current text>" --with "<corrected text>"
---source "<URL, command or file>"`, which akm checks and queues as a proposal.
+--source "<URL, command or file>"`, which akm checks and applies at once.
 A note that is outdated can be marked with `--outdated`, or
 `--superseded-by <ref>` when another note replaces it.
-`--positive` records that an asset helped (it raises its utility score) and
-does not trigger a rewrite; improve no longer rewrites assets from positive signals or on
+`--positive` records that an asset helped (it raises its ranking) and does not
+trigger a rewrite; improve no longer rewrites assets from positive signals or on
 a proactive cadence. An akm command that fails says nothing about the asset;
 don't record it as feedback.
 
@@ -152,8 +152,8 @@ the index (comments can contain commented-out credentials). akm does not edit
 entries — you edit the file with your own editor and akm loads it.
 
 ```sh
-akm env create prod                           # Create an empty env file
-akm env create prod --from-file ./.env        # Ingest an existing .env
+akm env create env/prod                           # Create an empty env file
+akm env create env/prod --from-file ./.env        # Ingest an existing .env
 akm env list                                  # List all env files across bundles with key names
 akm show env/prod                             # Inspect key names (never values or comments)
 akm env run env/prod -- ./deploy.sh           # Run a command with the whole .env injected (the safe path)
@@ -177,9 +177,8 @@ akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0  # 
 
 ## Workflows
 
-Workflows live under `<bundle>/workflows/` as peer `.md` and `.yml` sources.
-Both compile to the same source IR; see `docs/reference/workflow-schema.md` for
-the bounded GitHub-shaped YAML subset.
+Workflows live under `<bundle>/workflows/` as `.md` sources; see
+`docs/reference/workflow-schema.md` for the frontmatter and body syntax.
 
 Ref-based workflow commands are scoped to the current project/worktree/directory,
 so one active run does not block unrelated directories from starting the same
@@ -189,10 +188,10 @@ workflow. Direct run-id commands still target the exact run.
 akm workflow create ship-release --print     # Print a starter workflow template, without writing
 akm workflow create ship-release             # Scaffold a new workflow asset
 akm workflow run workflows/ship-release --version=1.2.3  # Start and execute with exact-name parameter flags
-akm workflow run <run-id> --max-retries 2 --timeout 10m  # Resume with invocation-wide controls
+akm workflow run <run-id> --max-retries 2 --timeout 10m  # Continue a run with invocation-wide controls
 akm workflow status <run-id>                 # Show the exact run by id
-akm workflow resume <run-id>                 # Resume a blocked or failed run
-akm workflow list                            # List workflow runs in the current scope
+akm workflow resume <run-id>                 # Re-activate a blocked or failed run, then `run <run-id>`
+akm workflow list                            # List workflow runs on this host
 ```
 
 ## Clone
@@ -236,7 +235,6 @@ rename instead of starting fresh, run `bun scripts/rekey-asset-ref.ts <old-ref>
 ## Sync
 
 Commit local changes in a git-backed bundle. Behaviour adapts automatically.
-(`akm save` was the pre-0.8 spelling; it was removed in 0.9.0 — use `akm sync`.)
 
 - **No `.git` directory** — no-op (silent skip)
 - **Git repo, no remote** — stage and commit only (the default bundle always falls here)
@@ -256,15 +254,13 @@ akm sync my-skills -m "Update patterns"      # Sync named bundle with message
 The `--sync` / `--no-sync` and `--push` / `--no-push` flags control this:
 
 ```sh
-akm improve                                   # auto-sync per strategy default (most strategies: on; proactive-maintenance/reflect-distill: off)
+akm improve                                   # auto-sync per strategy default (both strategies: on)
 akm improve --no-sync                         # skip the end-of-run commit
 akm improve --no-push                         # commit but skip push for this run
 akm improve --sync                            # force sync even on strategies that disable it
 ```
 
-Strategy sync defaults: `catchup`, `consolidate`, `default`, `quick`, and
-`thorough` auto-commit + push; `proactive-maintenance` and `reflect-distill`
-skip sync entirely. Override with `--sync` / `--no-sync` flags.
+Strategy sync defaults: `consolidate` and `default` auto-commit + push. Override with `--sync` / `--no-sync` flags.
 
 The `--writable` flag on `akm bundle add` opts a remote git bundle into push-on-sync:
 
@@ -288,7 +284,6 @@ akm bundle list --kind git                           # Filter by provider (files
 akm bundle remove <target>                           # Remove by id, ref, path, or name
 akm bundle update --all                              # Update all managed sources
 akm bundle update <target> --force                   # Force re-download
-akm bundle update <target> --allow-dangerous-env-keys # Approve reviewed dangerous env keys
 akm bundle update --all --skip-if-locked             # Scheduled refresh; exit 0 on DB contention
 ```
 
@@ -313,16 +308,18 @@ akm config list                               # Show current config
 akm config get <key>                          # Read a value
 akm config set <key> <value>                  # Set a value
 akm config unset <key>                        # Remove a key
-akm config path --all                         # Show all config paths
+akm models                                    # Which model answers each alias, then what the endpoint lists
+akm models set <alias> <model>                # Change one (--connection <name> for another connection)
 ```
 
 ## Other Commands
 
 ```sh
 akm bundle create                                      # Initialize working bundle (scaffold only)
-akm setup                                     # Interactive wizard: bundle + LLM/embedding + agent + registry config
+akm setup                                     # Interactive wizard: agent programs, model connection, embeddings, bundle + registry config
 akm setup --dir ~/custom-bundle                # Run the wizard against a custom bundle path
 akm setup --yes                               # Non-interactive, accepts all defaults
+akm setup --endpoint <url> --yes              # Non-interactive, adds a model connection (an OpenAI-compatible endpoint)
 akm index                                     # Rebuild search index
 akm index --full                              # Full reindex
 akm bundle list                                      # List all sources
@@ -331,18 +328,17 @@ akm lint --fix                                # Auto-fix Tier 1 issues
 akm lint --fail-on-flagged                    # Exit non-zero when summary.flagged > 0 (CI-friendly)
 akm upgrade                                   # Upgrade akm using its install method, then update installed harness plugins
 akm upgrade --check                           # Report pending CLI and plugin updates, changing nothing
-akm upgrade --next                            # Follow prereleases (@next); OpenCode needs "akm-opencode@next" in its plugin list
+akm upgrade --next                            # Follow prereleases (@next); OpenCode needs "akm-opencode@next" (or "akm-opencode-v2@next" on OpenCode 2) in its plugin list
 akm help migrate 0.6.0                        # Print migration notes for a release (or: latest)
 akm help bundle                               # Print options and subcommands for one command
-akm help agents --full                        # Print this reference
-akm hints                                     # Print this complete agent guide
+akm hints                                     # Print this complete agent guide (--detail brief for the short one)
 akm completions                               # Print bash completion script
 akm completions --install                     # Install completions
 ```
 
 `akm bundle create` only scaffolds the bundle directory and registers it in config;
-`akm setup` additionally walks through embedding/LLM connections, agent
-profiles, sources, and registries. Use `setup` for first-time onboarding,
+`akm setup` additionally walks through agent programs, a model connection,
+embeddings, sources, and registries. Use `setup` for first-time onboarding,
 `bundle create` when you just need a bare bundle.
 
 ## Proposals & Improvement (0.8.0+)
@@ -354,7 +350,7 @@ akm proposal show <id>                                  # Render the proposal bo
 akm proposal diff <ref-or-id>                           # Diff by ref, UUID, or 8-char prefix
 akm proposal diff skills/akm-dream                      # Diff by asset ref
 akm proposal accept 7c115132                            # Accept by UUID prefix
-akm proposal accept <id> --target team-bundle            # Accept to a named writable bundle source
+akm proposal accept <id> --bundle team-bundle            # Accept to a named writable bundle source
 akm proposal reject skills/my-skill --reason "not ready" # Reject by asset ref
 akm proposal reject <id> --reason "..."                 # Archive with a reason
 akm proposal reopen <id> --reason "..."                 # Undo a rejection: back to pending (refused if the target changed)
@@ -363,11 +359,6 @@ akm proposal new <type> <name> --task "..."             # Agent-author a NEW ass
 akm proposal extract --auto                             # Mine native session files into proposals
 akm proposal extract --type claude                 # Restrict extraction to one harness
 ```
-
-The flat verbs `akm proposals` / `akm show proposal` / `akm accept` /
-`akm reject` / `akm diff` / `akm revert` were removed in 0.9.0 — use the
-`akm proposal <verb>` forms above. `akm extract` and `akm propose` moved
-here as `proposal extract` / `proposal new`.
 
 ## Scheduled Tasks
 
@@ -387,11 +378,11 @@ akm task doctor                                # Scheduler binding + runtime eli
 akm task history                               # Recent run rows (status, timing)
 akm task run <id>                              # Run one task immediately (works when disabled)
 akm task explain <ref>                         # Read-only: declared inputs, target, schedule — spawns nothing
-akm search --type task                         # Enumerate task assets (there is no `task list`)
+akm search --type task                         # Enumerate task assets
 ```
 
 Task files use task source v4 (`version: 4`). There is no `akm:` options bag
-or `on:` block — every control (`schedule`, `timeout`, `engine`, `model`,
+or `on:` block — every control (`schedule`, `timeout`, `connection`, `harness`, `model`,
 `redact`, `maxSteps`, `maxRetries`, …) is a top-level key now. Typed
 `inputs:` declarations and a bounded `output:` schema work like a
 workflow's (`output:` replaces v3's `akm.outputSchema`). Task source never
@@ -399,23 +390,24 @@ controls activation: use `akm task enable` / `disable`, which update the
 host-local config allow-list and sync. To remove one, delete the YAML and run
 `akm task sync` — the scheduler entry is unbound. Top-level
 `timeout:` may be `null` (disable the invocation timer) or a duration/number
-overriding the selected engine invocation timeout. Preview old task-v2/v3
+overriding the selected connection's or harness's timeout. Preview old task-v2/v3
 conversion with `akm migrate apply --dry-run`.
 
 ## Agent Dispatch
 
 ```sh
-akm agent --prompt "summarize open proposals"   # Dispatch the configured agent CLI
-akm agent agents/architect --prompt "..."       # Embody a bundle agent asset (system prompt, model, tool policy)
+akm agent --prompt "summarize open proposals"   # Run an agent on your default harness (else akm's own runtime over your connection)
+akm agent agents/architect --prompt "..."       # Embody a bundle agent asset (system prompt, model)
 akm command run commands/release                # Canonical reusable-command dispatch
-akm agent --model sonnet --prompt "..."         # Model override (aliases or exact IDs)
+akm agent --model reasoning --prompt "..."      # Model override (alias fast|balanced|reasoning, or an exact name)
+akm agent --harness claude --prompt "..."       # Run on a named harness (or --connection <name>)
 ```
 
 ## Health, Info, and the Event Log
 
 ```sh
-akm info                                       # Capabilities, bundle dir, index stats, semantic-search status
-akm health                                     # Runtime diagnostics; exit 0 ok / 4 warn / 1 fail
+akm info                                       # Capabilities, bundle dir, index stats, semantic-search status, connections and harnesses
+akm health                                     # Runtime diagnostics, connections and harnesses; exit 0 ok / 4 warn / 1 fail
 akm health --report                            # Adds accept-rate metrics
 akm metrics                                    # Usage, feedback, utility, LLM tokens, tasks, workflows (last 30d, read-only)
 akm metrics --since 7d                         # Narrow the window
@@ -428,7 +420,7 @@ akm log --run <run-id>                         # Events for one workflow-engine 
 
 ## Output Control
 
-Result-envelope commands accept `--format`, `--detail`, and `--shape` flags:
+Result-envelope commands accept `--format` and `--detail` flags:
 
 - `--format json` (default) — structured JSON
 - `--format jsonl` — one JSON object per line (streaming-friendly)
@@ -439,9 +431,7 @@ Result-envelope commands accept `--format`, `--detail`, and `--shape` flags:
 - `--detail brief` (default) — compact output
 - `--detail normal` — adds tags, refs, origins
 - `--detail full` — includes scores, paths, timing, debug info
-- `--shape human` (default) — standard projection
-- `--shape agent` — agent-optimized output: strips non-actionable fields
-- `--shape summary` — metadata only (no content/template/prompt), under 200 tokens; only `akm show` has a dedicated summary projection — elsewhere it falls back to `agent` with a warning
+- `--detail agent` — agent-optimized output on `search`, `curate` and `show`: strips non-actionable fields (other commands ignore it)
 
 Run `akm help <command>` or `akm <command> -h` for per-command help. Run
 `akm --help` for the sectioned command overview.

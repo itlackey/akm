@@ -5,12 +5,12 @@
 /**
  * Native executor — executes one frozen step subgraph (`WorkflowPlanStep.root`)
  * locally: fan-out through the scheduler, structured output through
- * `runStructured`, per-unit journaling through the serialized writer queue,
+ * `structuredLoop`, per-unit journaling through the serialized writer queue,
  * and `workflow_unit_*` events. It never writes step rows; advancing the spine
  * is `run-workflow.ts`'s job.
  *
  *  - Data flow: instructions are the step's prose byte-exact; data reaches a
- *    unit as attached context (docs/architecture/decisions/0001-…).
+ *    unit as attached context.
  *  - An empty successful free-text output is journaled as absent, so a live
  *    run and a resume promote the same artifact.
  *  - A declared step `output` schema is validated before the step completes;
@@ -21,40 +21,39 @@
  *    gate loops journal under `~r<n>` / `~l<n>`.
  *  - `onError: "fail"` fails on any unit failure, `"continue"` lets the gate
  *    decide; `retry: { max, on }` re-dispatches listed failure reasons.
- *  - `isolation: worktree` runs each attempt of an agent/sdk unit in a fresh
- *    detached worktree (removed when clean, kept when dirty); llm units reject it.
  *  - Run `budget` ceilings are consumed per actual dispatch and abort the step
  *    when crossed, regardless of `on_error`.
  */
 
-import { appendEvent } from "../../core/events";
+import { resolveRefToken } from "../../commands/env/env-binding";
+import { isInstalledBundle } from "../../core/env-secret-ref";
+import { NotFoundError } from "../../core/errors";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
-import { runStructured } from "../../core/structured";
+import { substituteRefTokens } from "../../core/ref-token";
 import { warn } from "../../core/warn";
-import { assertFrozenDirectoryContained } from "../../execution/directory-identity";
+import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
+import { type Dispatched, isRefused, jsonParser, structuredLoop } from "../../llm/structured";
 import {
   type WorkflowRunUnitAttemptRowV4,
   type WorkflowRunUnitRow,
   withWorkflowRunsConnection,
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
-import type { TaskV3ScriptInterpreter } from "../../tasks/prepare/prepared-execution";
-import type { WorkflowBudget, WorkflowPlanStep, WorkflowUnitNode } from "../plan";
+import type { WorkflowBudget, WorkflowExecSpec, WorkflowPlanStep } from "../plan";
 import { WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
+import { resolveRunBundleRoot } from "../runtime/workflow-asset-loader";
 // The ONE child-workflow drive — publishes and drives a
 // `child-workflow`-targeted unit; this module's dispatch seam is its only
 // production caller.
 import { driveChildWorkflowUnit } from "./child-workflow";
-// The ONE dispatch redaction contract, shared with the gate-judge path
-// (exec/frozen-judge.ts). Consumers import the leaf directly — this module is
+// The unit outcome scrub. Consumers import the leaf directly — this module is
 // not a second front door onto the seam.
 import { collectWorkflowDispatchSensitiveValues, redactUnitOutcome } from "./dispatch-redaction";
 import { materializeFrozenWorkflowEnvironment } from "./environment";
 // The exec (shell) unit runner — a leaf that owns argv spawning, containment,
 // and the process-outcome → failure-reason mapping.
 import { runExecUnit } from "./exec-unit";
-import { mergeLoweringNotices } from "./lowering-notices";
 import { secretShapedParamValues } from "./param-secrets";
 import { scheduleUnits } from "./scheduler";
 // Shared step semantics — the ONE implementation consumed by the engine
@@ -80,9 +79,7 @@ import {
 
 export type { UnitDispatcher, UnitDispatchRequest, UnitDispatchResult } from "./unit-dispatch";
 
-import { cleanupFrozenScript, frozenScriptCommand, materializeFrozenScript } from "../../tasks/frozen-script";
 import { enqueueUnitWrite } from "./unit-writer";
-import { assertGitWorkTree, cleanupUnitWorktree, createUnitWorktree } from "./worktree";
 
 export interface StepExecutionContext {
   runId: string;
@@ -126,21 +123,10 @@ export interface StepExecutionContext {
   /** Test seam for the engine concurrency cap. */
   maxConcurrency?: number;
   /**
-   * The engine invocation's working directory. Two uses:
-   *   - the git repository `isolation: worktree` mints its per-attempt
-   *     detached worktrees from;
-   *   - the base directory a NON-isolated `exec` unit spawns in (an isolated
-   *     one spawns in its worktree instead).
-   * Defaults to `process.cwd()`; injected by tests so no chdir is needed.
+   * Test seam: the directory exec units and agents work in, instead of the
+   * owner root of `workflowRef`. Production never sets it.
    */
-  workDir?: string;
-  /**
-   * Worktree-isolation preflight seam (defaults to {@link assertGitWorkTree}).
-   * Only invoked when a unit will ACTUALLY dispatch, so a fully-journaled step
-   * resumes even when its cwd is no longer a git worktree or git is missing.
-   * Injected by tests to simulate those conditions deterministically.
-   */
-  preflightWorktree?: (dir: string) => string | undefined;
+  bundleRootOverride?: string;
 }
 
 export interface StepExecutionResult {
@@ -325,37 +311,42 @@ function openDispatchBudget(
 type StepDispatchPrerequisites =
   | {
       ok: true;
+      /** The owner root of the run's workflow: where this step's exec units and agents work. Set whenever a unit will dispatch. */
+      cwd?: string;
       env?: Record<string, string>;
       sensitiveValues?: readonly string[];
-      worktreeBase?: string;
     }
   | { ok: false; result: StepExecutionResult };
 
 /** Resolve the live-at-dispatch prerequisites once, after durable-row reuse is known. */
 async function prepareStepDispatchPrerequisites(input: {
   plan: WorkflowPlanStep;
-  template: WorkflowUnitNode;
-  workUnits: readonly StepWorkUnit[];
   ctx: StepExecutionContext;
+  workUnits: readonly StepWorkUnit[];
   willDispatch: boolean;
   dispatched: number;
 }): Promise<StepDispatchPrerequisites> {
-  const { plan, template, workUnits, ctx, willDispatch, dispatched } = input;
+  const { plan, ctx, workUnits, willDispatch, dispatched } = input;
   let env: Record<string, string> | undefined;
   let sensitiveValues: readonly string[] | undefined;
+  // The run's bundle is found again here, never frozen: a bundle update moves it to a new directory.
+  let cwd = ctx.bundleRootOverride;
+  if (willDispatch && cwd === undefined) {
+    try {
+      cwd = resolveRunBundleRoot(ctx.workflowRef);
+    } catch (err) {
+      return {
+        ok: false,
+        result: failedStep(dispatched, `Step "${plan.stepId}" cannot run: ${message(err).replace(/\.$/, "")}.`),
+      };
+    }
+  }
   const frozenEnvironment = workUnits[0]?.environment;
   if (willDispatch && frozenEnvironment && frozenEnvironment.length > 0) {
     try {
       const materialized = materializeFrozenWorkflowEnvironment(frozenEnvironment);
       env = materialized.values;
       sensitiveValues = materialized.sensitiveValues;
-      for (const audit of materialized.audits) {
-        appendEvent({
-          eventType: audit.eventType,
-          ref: audit.ref,
-          metadata: { keys: audit.keys, secretNames: audit.secretNames },
-        });
-      }
     } catch (err) {
       return {
         ok: false,
@@ -364,38 +355,11 @@ async function prepareStepDispatchPrerequisites(input: {
     }
   }
 
-  let worktreeBase: string | undefined;
-  if (willDispatch && template.isolation === "worktree") {
-    if (template.frozenTarget.kind === "command" && template.frozenTarget.runner.kind === "llm") {
-      return {
-        ok: false,
-        result: failedStep(
-          dispatched,
-          `Step "${plan.stepId}" declares isolation: worktree on an llm unit — the llm runner has no ` +
-            `working directory to isolate. Use the agent or sdk runner for worktree-isolated units.`,
-        ),
-      };
-    }
-    const target = workUnits[0]?.frozenTarget;
-    const frozenCwd = target && "cwdIdentity" in target ? target.cwdIdentity : undefined;
-    if (frozenCwd) assertFrozenDirectoryContained(frozenCwd);
-    const base = frozenCwd?.realRoot ?? ctx.workDir ?? process.cwd();
-    const preflightWorktree = ctx.preflightWorktree ?? assertGitWorkTree;
-    const gitError = preflightWorktree(base);
-    if (gitError !== undefined) {
-      return {
-        ok: false,
-        result: failedStep(dispatched, `Step "${plan.stepId}" cannot use isolation: worktree: ${gitError}`),
-      };
-    }
-    worktreeBase = base;
-  }
-
   return {
     ok: true,
+    ...(cwd !== undefined ? { cwd } : {}),
     ...(env ? { env } : {}),
     ...(sensitiveValues ? { sensitiveValues } : {}),
-    ...(worktreeBase !== undefined ? { worktreeBase } : {}),
   };
 }
 
@@ -434,22 +398,21 @@ async function executeStepPlanInConnection(
     await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(ctx.runId, plan.stepId)),
   );
 
-  // Env resolution and worktree preflight run only when some unit will
-  // dispatch, so a fully-journaled step resumes even if an env asset or git is
-  // gone. Every unit is classified once; the preflight and dispatch share it.
+  // Env resolution runs only when some unit will dispatch, so a fully-journaled
+  // step resumes even if an env asset is gone. Every unit is classified once;
+  // the preflight and dispatch share it.
   const reuseDecisions = workUnits.map((unit) => classifyUnitReuse(unit, completedRows));
   const willDispatch = reuseDecisions.some((decision) => decision.kind === "dispatch");
 
   const prerequisites = await prepareStepDispatchPrerequisites({
     plan,
-    template,
-    workUnits,
     ctx,
+    workUnits,
     willDispatch,
     dispatched,
   });
   if (!prerequisites.ok) return prerequisites.result;
-  const { env, sensitiveValues, worktreeBase } = prerequisites;
+  const { cwd, env, sensitiveValues } = prerequisites;
 
   // Budget ceilings + lifetime-cap accounting, and the budget-chained abort
   // signal they trip. Extracted verbatim (behavior-identical) — see
@@ -457,11 +420,6 @@ async function executeStepPlanInConnection(
   const { signal, budget, unchainSignal } = openDispatchBudget(ctx, dispatched);
 
   let outcomes: Array<UnitOutcome | undefined>;
-  // Worktree removals started by finished units and awaited below, before this
-  // step reports anything. Cleanup is best-effort, but "the step resolved" must
-  // still mean "its clean worktrees are gone" — only the WAIT moves off the
-  // unit's scheduler slot, not the guarantee.
-  const pendingWorktreeCleanups: Array<Promise<void>> = [];
   const frozenTargetConcurrency =
     template.frozenTarget.kind === "command" ? template.frozenTarget.concurrency : undefined;
   try {
@@ -471,14 +429,13 @@ async function executeStepPlanInConnection(
         runUnit({
           plan,
           workUnit,
+          cwd,
           env,
           sensitiveValues,
-          ...(worktreeBase !== undefined ? { worktreeBase } : {}),
           ctx,
           signal,
           dispatcher,
           reuse: reuseDecisions[index]!,
-          pendingWorktreeCleanups,
           budget,
         }),
       {
@@ -490,16 +447,13 @@ async function executeStepPlanInConnection(
     );
   } finally {
     unchainSignal?.();
-    // The barrier. `allSettled` because each task already swallowed its own
-    // failure into a warn — nothing here can fail the step.
-    await Promise.allSettled(pendingWorktreeCleanups);
   }
 
   // Capture live-only diagnostics BEFORE any hard reduction replaces the unit
   // list with a failed-step envelope. Budget/cap and journal-write failures
   // must not erase notices already observed from real dispatches; durable row
   // reuses naturally contribute none.
-  const notices = mergeLoweringNotices(...outcomes.map((outcome) => outcome?.notices));
+  const notices = mergeNotices(...outcomes.map((outcome) => outcome?.notices));
 
   // A declared budget ceiling is a hard backstop: a step that hit one FAILS
   // regardless of on_error policy (a capped run must never quietly pass its
@@ -549,11 +503,11 @@ interface RunUnitInput {
   plan: WorkflowPlanStep;
   /** The precomputed work unit (id, resolved prompt + input hash, node metadata) from step-work. */
   workUnit: StepWorkUnit;
+  /** The step's working directory ({@link StepDispatchPrerequisites}), handed to every target kind. */
+  cwd?: string;
   env?: Record<string, string>;
   /** Current values sampled from frozen env descriptors, for terminal scrub. */
   sensitiveValues?: readonly string[];
-  /** Git repo worktrees are minted from — set exactly when the unit declares `isolation: worktree`. */
-  worktreeBase?: string;
   ctx: StepExecutionContext;
   /**
    * Effective dispatch signal: `ctx.signal`, or the budget-chained
@@ -566,14 +520,12 @@ interface RunUnitInput {
    * gate that consumes the same array — never re-derived here.
    */
   reuse: UnitReuseDecision;
-  /** The step's worktree-removal barrier — see {@link JournaledAttemptInput}. */
-  pendingWorktreeCleanups: Array<Promise<void>>;
   /** Shared lifetime-cap budget; consumed once per actual dispatch attempt. */
   budget: DispatchBudget;
 }
 
 async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
-  const { plan, workUnit, env, sensitiveValues, ctx, dispatcher } = input;
+  const { plan, workUnit, cwd, env, sensitiveValues, ctx, dispatcher } = input;
   const unitId = workUnit.unitId;
 
   // Target validity is a WHOLE-LIST invariant, never a per-unit condition:
@@ -593,19 +545,14 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     prompt,
     frozenTarget: workUnit.frozenTarget,
     ...(workUnit.execContext ? { execContext: workUnit.execContext } : {}),
-    // A NON-isolated exec unit spawns in the engine invocation's working
-    // directory. `dispatchJournaledAttempt` overwrites this with the unit's
-    // fresh worktree when `isolation: worktree` is in play. Only exec units get
-    // it: handing an agent unit a cwd it never had would change harness
-    // behavior, and the agent path already takes its cwd from its profile.
-    ...(workUnit.frozenTarget.kind !== "command" && ctx.workDir !== undefined ? { cwd: ctx.workDir } : {}),
+    ...(cwd !== undefined ? { cwd } : {}),
     timeoutMs: workUnit.timeoutMs,
     ...(workUnit.schema ? { schema: workUnit.schema } : {}),
     ...(env ? { env } : {}),
     ...(sensitiveValues ? { sensitiveValues } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
     // F-1: forwarded to exec-unit.ts's childEnv for a
-    // "script"/"shell" unit, and to dispatchWorkflowExecution's
+    // "shell" unit, and to dispatchWorkflowExecution's
     // runExecution eventSource option (unit-dispatch.ts)
     // for a "command" unit — both arms observe it.
     ...(ctx.eventSource !== undefined ? { eventSource: ctx.eventSource } : {}),
@@ -666,8 +613,6 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
       request: { ...request, unitId: attemptId },
       attemptId,
       inputHash,
-      ...(input.worktreeBase !== undefined ? { worktreeBase: input.worktreeBase } : {}),
-      pendingWorktreeCleanups: input.pendingWorktreeCleanups,
     });
     // Attempts use `~r<n>` journal suffixes while durable step evidence remains
     // attached to the content-derived base identity.
@@ -695,14 +640,6 @@ interface JournaledAttemptInput {
   /** Journal id of this attempt: `<unitId>` or `<unitId>~r<n>` for retries. */
   attemptId: string;
   inputHash: string;
-  /** Git repo to mint this attempt's isolation worktree from (`isolation: worktree`). */
-  worktreeBase?: string;
-  /**
-   * Where this attempt parks its worktree removal for the step to await. See
-   * the barrier in {@link executeStepPlanInConnection} for why it is not
-   * awaited here.
-   */
-  pendingWorktreeCleanups: Array<Promise<void>>;
 }
 
 /**
@@ -719,42 +656,8 @@ function journaledUnitResultJson(outcome: UnitOutcome): string | null {
   return JSON.stringify(clip(parts.join("\n--- unit output ---\n"), WORKFLOW_UNIT_DIAGNOSTIC_CLIP));
 }
 
-type PreparedAttemptWorktree =
-  | { ok: true; request: UnitDispatchRequest; worktreePath?: string }
-  | { ok: false; outcome: UnitOutcome };
-
-async function prepareAttemptWorktree(input: JournaledAttemptInput): Promise<PreparedAttemptWorktree> {
-  if (input.worktreeBase === undefined) return { ok: true, request: input.request };
-  const created = await createUnitWorktree(
-    input.worktreeBase,
-    input.ctx.runId,
-    input.attemptId,
-    // A child-workflow target has no commit of its own (its prepared worktree goes unused).
-    input.workUnit.frozenTarget.kind === "child-workflow" ? undefined : input.workUnit.frozenTarget.gitCommitOid,
-  );
-  if (created.preservedLeftover !== undefined) {
-    warn(
-      `Workflow unit ${input.attemptId}: a previous attempt left uncollected work in its isolation worktree; ` +
-        `preserved at ${created.preservedLeftover}`,
-    );
-  }
-  if (!created.ok) {
-    return {
-      ok: false,
-      outcome: {
-        unitId: input.request.unitId,
-        ok: false,
-        failureReason: "worktree_failed",
-        error: created.error,
-      },
-    };
-  }
-  return { ok: true, request: { ...input.request, cwd: created.path }, worktreePath: created.path };
-}
-
 async function reserveJournaledDispatch(
   input: JournaledAttemptInput,
-  worktreePath: string | undefined,
   startedAt: string,
 ): Promise<WorkflowRunUnitAttemptRowV4> {
   const { plan, workUnit, ctx, attemptId, inputHash } = input;
@@ -770,10 +673,9 @@ async function reserveJournaledDispatch(
         parentUnitId: workUnit.isFanOut ? `${plan.stepId}.map` : null,
         phase: "unit",
         runner: workUnit.runner,
-        engine: target.kind === "command" ? target.request.engine.name : null,
-        model: target.kind === "command" ? (target.request.model?.resolved ?? null) : null,
+        engine: target.kind === "command" ? target.request.target.name : null,
+        model: target.kind === "command" ? (target.request.model?.model ?? null) : null,
         inputHash,
-        worktreePath: worktreePath ?? null,
         now: startedAt,
       }).attempt;
     });
@@ -820,51 +722,21 @@ async function finishJournaledDispatch(input: {
   );
 }
 
-function queueAttemptWorktreeCleanup(input: JournaledAttemptInput, worktreePath: string | undefined): void {
-  if (worktreePath === undefined || input.worktreeBase === undefined) return;
-  const worktreeBase = input.worktreeBase;
-  input.pendingWorktreeCleanups.push(
-    (async () => {
-      try {
-        const cleanup = await cleanupUnitWorktree(worktreeBase, worktreePath);
-        if (cleanup.dirty) {
-          warn(
-            `Workflow unit ${input.attemptId} left uncommitted changes in its isolation worktree; retained at ${worktreePath}`,
-          );
-        } else if (!cleanup.removed) {
-          warn(
-            `Workflow unit ${input.attemptId}: could not clean up isolation worktree ${worktreePath}: ${cleanup.error}`,
-          );
-        }
-      } catch (err) {
-        warn(
-          `Workflow unit ${input.attemptId}: could not clean up isolation worktree ${worktreePath}: ${message(err)}`,
-        );
-      }
-    })(),
-  );
-}
-
 /** Journal one dispatch attempt: insert row, events, dispatch, finish row. */
 async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<UnitOutcome> {
   const { workUnit, ctx, dispatcher, attemptId } = input;
-  const prepared = await prepareAttemptWorktree(input);
-  if (!prepared.ok) return prepared.outcome;
-  let { request } = prepared;
-  const { worktreePath } = prepared;
+  let { request } = input;
 
   const startedAt = new Date().toISOString();
   let durableAttempt: WorkflowRunUnitAttemptRowV4;
   try {
-    durableAttempt = await reserveJournaledDispatch(input, worktreePath, startedAt);
+    durableAttempt = await reserveJournaledDispatch(input, startedAt);
   } catch (err) {
     // A failed dispatch-row insert means NOTHING dispatched (the row is the
     // dispatch's precondition) — fail the unit with the real cause instead of
     // letting the throw escape into the scheduler, where a swallowed worker
     // error is indistinguishable from "never claimed" and used to be
     // misreported as an aborted, never-dispatched unit.
-    if (worktreePath !== undefined && input.worktreeBase !== undefined)
-      await cleanupUnitWorktree(input.worktreeBase, worktreePath);
     return {
       unitId: request.unitId,
       ok: false,
@@ -880,6 +752,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
 
   // A child-workflow unit goes to the child executor instead of the
   // dispatcher, after its attempt row is reserved, so it journals like any unit.
+  const resolvedSecrets = new Set<string>();
   const dispatched =
     request.frozenTarget.kind === "child-workflow"
       ? await driveChildWorkflowUnit({
@@ -890,20 +763,18 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
           inputHash: input.inputHash,
           dispatcher,
         })
-      : await dispatchUnit(request, dispatcher);
+      : await dispatchUnit(request, dispatcher, resolvedSecrets);
   // Credential and passthrough values are intentionally sampled only AFTER
-  // the default dispatcher has authorized/lowered the frozen request and
+  // the default dispatcher has lowered the frozen request and
   // materialized credentials at its terminal dispatch boundary. Custom test
   // dispatchers receive the same post-dispatch journal scrub. Secret-shaped
   // run params join the set: they must reach the prompt in clear (the unit
-  // needs them), but nothing about them needs to reach the journal.
-  const sensitiveValues = collectWorkflowDispatchSensitiveValues(
-    {
-      ...(request.frozenTarget.kind === "command" ? { runner: request.frozenTarget.runner } : {}),
-      sensitiveValues: [...(request.sensitiveValues ?? []), ...secretShapedParamValues(ctx.params)],
-    },
-    request.env,
-  );
+  // needs them), but nothing about them needs to reach the journal. So do the
+  // secrets the dispatcher resolved itself (an exec unit's argv/cwd tokens).
+  const sensitiveValues = collectWorkflowDispatchSensitiveValues({
+    ...(request.frozenTarget.kind === "command" ? { runner: request.frozenTarget.runner } : {}),
+    sensitiveValues: [...(request.sensitiveValues ?? []), ...resolvedSecrets, ...secretShapedParamValues(ctx.params)],
+  });
   const outcome = redactUnitOutcome(dispatched, sensitiveValues);
 
   const finishedAt = new Date().toISOString();
@@ -924,10 +795,6 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
   } catch (err) {
     journalError = err;
   }
-
-  // A clean worktree is removed, a dirty one kept and logged. Cleanup starts
-  // here and is awaited at the step barrier, never holding this scheduler slot.
-  queueAttemptWorktreeCleanup(input, worktreePath);
 
   // A journal-write failure AFTER a successful dispatch is its own loud
   // failure class: the unit's work ran (and may have succeeded), but its
@@ -960,7 +827,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
  * and hunts for a JSON island inside prose, which is the right forgiving
  * behavior for an LLM and the wrong one for a command, where it would silently
  * promote a JSON fragment found in unrelated log noise as the typed artifact.
- * Returning `undefined` makes `runStructured` report `parse_error` (a real
+ * Returning `undefined` makes the structured loop report `parse_error` (a real
  * member of the retry taxonomy), so `retry.on: [parse_error]` still works.
  */
 function parseExecJson(raw: string): unknown {
@@ -973,15 +840,19 @@ function parseExecJson(raw: string): unknown {
   }
 }
 
-/** Transport failures surface as this sentinel so runStructured doesn't retry them. */
-class UnitTransportError extends Error {
-  constructor(readonly result: UnitDispatchResult) {
-    super(result.error ?? "unit dispatch failed");
-    this.name = "UnitTransportError";
-  }
+/** How a unit's dispatch failed, in the unit's own vocabulary (`retry.on` names these reasons). */
+interface UnitTransportFailure {
+  failureReason: string;
+  error: string;
+  text?: string;
 }
 
-async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispatcher): Promise<UnitOutcome> {
+async function dispatchUnit(
+  request: UnitDispatchRequest,
+  dispatcher: UnitDispatcher,
+  /** Receives the secret values the dispatcher resolved, for the caller's journal scrub. */
+  resolvedSecrets: Set<string>,
+): Promise<UnitOutcome> {
   let tokens = 0;
   let sawUsage = false;
   let loweringNotices: UnitDispatchResult["notices"];
@@ -990,20 +861,36 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
   // UnitOutcome and gets journaled by finishUnitAttempt — the seam's
   // contract ("stored opportunistically on the unit row for resume").
   let sessionId: string | undefined;
-  const dispatchOnce = async (feedback?: string): Promise<string> => {
+  const dispatchOnce = async (feedback?: string): Promise<Dispatched<UnitTransportFailure>> => {
     const result = await dispatcher(request, feedback);
+    for (const value of result.sensitiveValues ?? []) resolvedSecrets.add(value);
     if (result.usage) {
       sawUsage = true;
       tokens +=
         (result.usage.inputTokens ?? 0) + (result.usage.outputTokens ?? 0) + (result.usage.reasoningTokens ?? 0);
     }
-    loweringNotices = mergeLoweringNotices(loweringNotices, result.notices);
+    loweringNotices = mergeNotices(loweringNotices, result.notices);
     // Capture before the ok-check: a failed attempt can still have configured
     // a session (e.g. codex `session_configured` then a tool crash).
     if (result.sessionId !== undefined) sessionId = result.sessionId;
-    if (!result.ok) throw new UnitTransportError(result);
-    return result.text;
+    if (!result.ok) {
+      return {
+        ok: false,
+        failureReason: result.failureReason ?? "dispatch_error",
+        error: result.error ?? "unit dispatch failed",
+        text: result.text,
+      };
+    }
+    return { ok: true, raw: result.text };
   };
+  const transportFailed = (failure: UnitTransportFailure): UnitOutcome => ({
+    unitId: request.unitId,
+    ok: false,
+    failureReason: failure.failureReason,
+    error: failure.error,
+    text: failure.text,
+    ...captured(),
+  });
   const captured = (): Partial<UnitOutcome> => ({
     ...(sawUsage ? { tokens } : {}),
     ...(sessionId !== undefined ? { sessionId } : {}),
@@ -1013,28 +900,41 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
   try {
     if (request.schema) {
       const schema = request.schema;
-      const structured = await runStructured<unknown>({
-        dispatch: dispatchOnce,
+      const validate = (candidate: unknown) => {
+        const errors = validateJsonSchemaSubset(candidate, schema);
+        return errors.length === 0
+          ? ({ ok: true, value: candidate } as const)
+          : ({ ok: false, errors, reason: "validation_error" } as const);
+      };
+      const structured = await structuredLoop<unknown, UnitTransportFailure>({
+        dispatch: (correction) => dispatchOnce(correction?.text),
         // A command is not re-promptable. Its stdout must be EXACTLY one JSON
         // value: the default embedded-JSON scan (fences, think-blocks, "find the
         // JSON inside the prose") is right for an LLM and wrong for a command,
         // where it would pluck a JSON fragment out of unrelated log noise and
-        // promote it as the typed artifact. And it gets exactly ONE attempt —
-        // `runStructured`'s corrective retry re-dispatches with feedback, which
+        // promote it as the typed artifact. And it gets exactly ONE attempt:
+        // the loop's corrective retry re-dispatches with feedback, which
         // for a command means running a SIDE-EFFECTING process a second time
         // with byte-identical argv: it cannot produce different output, and it
         // can produce a second deployment. Declared `retry:` still applies (the
         // executor's own loop), because that is a policy the author opted into
         // per failure reason.
-        ...(request.frozenTarget.kind !== "command" ? { parse: parseExecJson, maxAttempts: 1 } : {}),
-        validate: (candidate) => {
-          const errors = validateJsonSchemaSubset(candidate, schema);
-          return errors.length === 0 ? { ok: true, value: candidate } : { ok: false, errors };
-        },
+        ...(request.frozenTarget.kind !== "command"
+          ? {
+              attempts: 1,
+              parse: (raw: string) => {
+                const candidate = parseExecJson(raw);
+                return candidate === undefined
+                  ? ({ ok: false, errors: ["no JSON structure found in response"], reason: "parse_error" } as const)
+                  : validate(candidate);
+              },
+            }
+          : { parse: jsonParser(validate) }),
       });
       if (structured.ok) {
         return { unitId: request.unitId, ok: true, result: structured.value, ...captured() };
       }
+      if (!isRefused(structured)) return transportFailed(structured);
       return {
         unitId: request.unitId,
         ok: false,
@@ -1053,7 +953,9 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
       };
     }
 
-    const text = await dispatchOnce();
+    const dispatched = await dispatchOnce();
+    if (!dispatched.ok) return transportFailed(dispatched);
+    const text = dispatched.raw;
     // Normalize an EMPTY successful output to "no text". `finishUnitAttempt` journals
     // result_json = NULL for a falsy text, so durable-reuse rehydrates NO text
     // from the row (unitOutcomeFromRow). Preserving `text: ""` only in this live
@@ -1063,16 +965,6 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
     // dispatch and engine resume identical.
     return { unitId: request.unitId, ok: true, ...(text ? { text } : {}), ...captured() };
   } catch (err) {
-    if (err instanceof UnitTransportError) {
-      return {
-        unitId: request.unitId,
-        ok: false,
-        failureReason: err.result.failureReason ?? "dispatch_error",
-        error: err.result.error ?? "unit dispatch failed",
-        text: err.result.text,
-        ...captured(),
-      };
-    }
     return {
       unitId: request.unitId,
       ok: false,
@@ -1086,58 +978,21 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
 // ── Default dispatcher (production substrate) ───────────────────────────────
 
 /**
- * Dispatch a frozen engine through the common prepare → lower → dispatch seam.
+ * Dispatch a frozen connection or harness through the common prepare → lower → dispatch seam.
  * No live profile/default/model map is consulted, and credentials remain
  * symbolic until the final dispatch boundary.
  */
 export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) => {
   const frozenTarget = request.frozenTarget;
-  if (frozenTarget.kind === "script") {
-    assertFrozenDirectoryContained(frozenTarget.cwdIdentity);
-    const materialized = materializeFrozenScript({
-      sourceRef: frozenTarget.ref,
-      interpreter: frozenTarget.interpreter as TaskV3ScriptInterpreter,
-      extension: frozenTarget.extension,
-      bytesBase64: frozenTarget.bytesBase64,
-      byteLength: frozenTarget.byteLength,
-      sha256: frozenTarget.contentHash,
-    });
-    try {
-      const command = frozenScriptCommand(
-        {
-          sourceRef: frozenTarget.ref,
-          interpreter: frozenTarget.interpreter as TaskV3ScriptInterpreter,
-          extension: frozenTarget.extension,
-          bytesBase64: frozenTarget.bytesBase64,
-          byteLength: frozenTarget.byteLength,
-          sha256: frozenTarget.contentHash,
-        },
-        materialized.file,
-      );
-      return await runExecUnit({
-        unitId: request.unitId,
-        exec: {
-          ...frozenTarget.exec,
-          command: command as [string, ...string[]],
-        },
-        baseDir: request.cwd ?? frozenTarget.cwdIdentity.realCwd,
-        ...(request.env ? { env: request.env } : {}),
-        ...(request.execContext ? { context: request.execContext } : {}),
-        ...(request.schema ? { hasOutputSchema: true } : {}),
-        timeoutMs: request.timeoutMs,
-        ...(request.signal ? { signal: request.signal } : {}),
-        ...(request.eventSource !== undefined ? { eventSource: request.eventSource } : {}),
-      });
-    } finally {
-      cleanupFrozenScript(materialized);
-    }
-  }
   if (frozenTarget.kind === "shell") {
-    if (frozenTarget.cwdIdentity) assertFrozenDirectoryContained(frozenTarget.cwdIdentity);
-    return runExecUnit({
+    if (request.cwd === undefined) {
+      throw new Error(`exec unit "${request.unitId}" was dispatched with no working directory.`);
+    }
+    const { exec, secretValues } = substituteExecRefs(request.unitId, frozenTarget.exec);
+    const outcome = await runExecUnit({
       unitId: request.unitId,
-      exec: frozenTarget.exec,
-      baseDir: request.cwd ?? frozenTarget.cwdIdentity?.realCwd ?? process.cwd(),
+      exec,
+      baseDir: request.cwd,
       ...(request.env ? { env: request.env } : {}),
       ...(request.execContext ? { context: request.execContext } : {}),
       ...(request.schema ? { hasOutputSchema: true } : {}),
@@ -1145,9 +1000,42 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
       ...(request.signal ? { signal: request.signal } : {}),
       ...(request.eventSource !== undefined ? { eventSource: request.eventSource } : {}),
     });
+    // A secret substituted into argv joins the redaction set, like one bound through an env asset: the
+    // executor scrubs after the structured parse, so a quoted or numeric secret is not missed or corrupted.
+    return { ...outcome, sensitiveValues: secretValues };
   }
   return dispatchWorkflowExecution(request, feedback);
 };
+
+/**
+ * Replace the `${ref}` tokens in an exec unit's argv and `cwd` (prompts are not substituted): a
+ * `secrets/` ref with the secret's value, any other asset ref with its absolute path. A ref no
+ * bundle owns fails the unit before anything is spawned.
+ */
+function substituteExecRefs(
+  unitId: string,
+  exec: WorkflowExecSpec,
+): { exec: WorkflowExecSpec; secretValues: string[] } {
+  const slots: Record<string, string> = Object.fromEntries(exec.command.entries());
+  if (exec.cwd !== undefined) slots.cwd = exec.cwd;
+  const { values, missing, secretValues } = substituteRefTokens(slots, resolveRefToken, isInstalledBundle);
+  if (missing.length > 0) {
+    throw new NotFoundError(
+      `exec unit "${unitId}" references asset(s) that no bundle owns: ${missing.join(", ")}. Nothing was run.`,
+      "FILE_NOT_FOUND",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
+      "Write each `${ref}` as a full akm ref that exists, e.g. `${team//scripts/run.sh}`.",
+    );
+  }
+  return {
+    exec: {
+      ...exec,
+      command: exec.command.map((_, index) => values[index]) as [string, ...string[]],
+      ...(exec.cwd !== undefined ? { cwd: values.cwd } : {}),
+    },
+    secretValues,
+  };
+}
 
 // ── Small helpers ────────────────────────────────────────────────────────────
 

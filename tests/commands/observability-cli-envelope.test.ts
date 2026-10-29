@@ -21,8 +21,8 @@
  * table via a polling loop and would have made this snapshot
  * non-deterministic.
  *
- * Agent guidance is available through both `akm hints` (full by default,
- * preserving its original contract) and `akm help agents` (short by default).
+ * Agent guidance is available through `akm hints` (full by default;
+ * `--detail brief` for the short guide).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -55,20 +55,6 @@ describe("akm observability cluster — JSON envelope snapshot (WS6)", () => {
     expect(Array.isArray(env.events)).toBe(true);
     expect(typeof env.totalCount).toBe("number");
     expect(typeof env.nextOffset).toBe("number");
-  });
-
-  test("help agents: prints the short embedded guide to stdout (exit 0)", async () => {
-    const { stdout, status } = await runCli(["help", "agents"]);
-    expect(status).toBe(0);
-    expect(stdout.length).toBeGreaterThan(0);
-    expect(stdout).toMatch(/akm/i);
-  });
-
-  test("help agents --full: prints the complete guide, longer than the short one (exit 0)", async () => {
-    const short = await runCli(["help", "agents"]);
-    const full = await runCli(["help", "agents", "--full"]);
-    expect(full.status).toBe(0);
-    expect(full.stdout.length).toBeGreaterThan(short.stdout.length);
   });
 
   test("hints: prints the complete guide, with --detail brief selecting the short guide", async () => {

@@ -21,15 +21,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { openStateDatabase } from "../../../src/core/state-db";
 import type { TaskInputBinding } from "../../../src/execution/input-contract";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import {
-  executeStepPlan,
-  type UnitDispatchRequest,
-  type UnitDispatchResult,
-} from "../../../src/workflows/exec/native-executor";
+import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
 import { computeStepWorkList } from "../../../src/workflows/exec/step-work";
 import type { WorkflowPlan, WorkflowPlanStep } from "../../../src/workflows/plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
-import { freezeWorkflow, seedWorkflowRun, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
+import { executeStepPlan, freezeWorkflow, seedWorkflowRun, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
 let storage: IsolatedAkmStorage;
 

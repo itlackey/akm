@@ -3,7 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { AkmConfig } from "../../core/config/config-types";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { UsageError } from "../../core/errors";
+import { mergeNotices } from "../../execution/notices";
 import {
   createInlineResolvedCommand,
   createResolvedCommand,
@@ -20,14 +22,15 @@ import {
 } from "../../execution/source";
 import { recordIndexedShowUsage } from "../../indexer/usage/show-usage";
 import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
-import { fallbackAnnouncement } from "../../integrations/agent/engine-fallback";
 import {
   buildExecution,
+  currentLayer,
   type ExecutionFieldProvenance,
+  type ExecutionLayer,
   type ResolvedExecution,
   resolveExecution,
+  shippedAlias,
 } from "../../integrations/agent/execution";
-import type { ResolvedModelMapV1 } from "../../integrations/agent/model-map";
 import { type RunExecutionOptions, runExecution } from "../../integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../integrations/agent/spawn";
 import { parseBuiltinCommandAction } from "./builtin-action";
@@ -47,7 +50,6 @@ export type CommandExecutionSourceLoader = (
 export interface PrepareCommandInvocationOptions {
   readonly action: unknown;
   readonly config: AkmConfig;
-  readonly modelMap?: ResolvedModelMapV1;
   readonly sourceLoader?: CommandExecutionSourceLoader;
   /** Optional index lookup capability; dry-run supplies a read-only isolated snapshot lookup. */
   readonly sourceLookup?: ExecutionSourceLookup;
@@ -104,18 +106,17 @@ export interface CommandDryRunResult {
 export interface DispatchPreparedCommandOptions {
   readonly runAgent?: RunExecutionOptions["runAgent"];
   readonly runSdk?: RunExecutionOptions["runSdk"];
-  readonly runOptions?: RunExecutionOptions["runOptions"];
+  readonly signal?: RunExecutionOptions["signal"];
   readonly chat?: RunExecutionOptions["chat"];
   /**
-   * F-1 (spec docs/plans/specs/p1b-model-extraction.md §5.2 point 3, R-07
-   * fix): task-runner provenance. When present, it (a) becomes the FALLBACK
+   * Task-runner provenance. When present, it (a) becomes the FALLBACK
    * for `resolveUsageEventSource` — an ambient `AKM_EVENT_SOURCE` still wins
    * — used for the usage events recorded against any consumed command/persona
    * ref, and (b) stamps `AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE ??
-   * eventSource` into the child env handed to the dispatched engine (the
+   * eventSource` into the child env handed to the dispatched harness (the
    * `env` bag `runAgent`/`runSdk` receive), matching the native arm. Absent
    * (every non-task caller: `akm command run`, `akm agent`, …) this function
-   * is byte-identical to before P1b.
+   * is unaffected.
    */
   readonly eventSource?: UsageEventSource;
 }
@@ -227,18 +228,22 @@ export async function prepareCommandInvocation(
   }
   const persona = renderedPersona ? createResolvedPersona(renderedPersona) : selectedAgent.present ? null : undefined;
 
+  const layers: ExecutionLayer[] = [
+    shippedAlias(SHIPPED_ALIAS.agent),
+    ...(renderedPersona
+      ? [{ id: renderedPersona.identity.ref, kind: "agent" as const, values: renderedPersona.defaults }]
+      : []),
+    { id: renderedCommand?.identity.ref ?? "inline-command", kind: "command", values: commandDefaults },
+    ...(options.invocationDefaults
+      ? [{ id: "invocation-defaults", kind: "invocation-defaults" as const, values: options.invocationDefaults }]
+      : []),
+    ...(options.current ? [currentLayer(options.current)] : []),
+  ];
   return resolveExecution({
     command,
     config: options.config,
     ...(persona !== undefined ? { persona } : {}),
-    ...(renderedPersona ? { agentLayer: { id: renderedPersona.identity.ref, values: renderedPersona.defaults } } : {}),
-    commandLayer: {
-      id: renderedCommand?.identity.ref ?? "inline-command",
-      values: commandDefaults,
-    },
-    ...(options.invocationDefaults ? { invocationDefaults: options.invocationDefaults } : {}),
-    ...(options.current ? { current: options.current } : {}),
-    ...(options.modelMap ? { modelMap: options.modelMap } : {}),
+    layers,
   });
 }
 
@@ -249,39 +254,28 @@ function compareText(left: string, right: string): number {
 const DIAGNOSTIC_PROVENANCE_FIELDS = new Set([
   "/inference",
   "agent",
-  "authorization",
   "command",
-  "engine",
-  "engine.requested",
   "model",
   "outputSchema",
   "persona",
   "runtime.environment",
-  "runtime.settings",
   "runtime.timeoutMs",
   "runtime.workspace",
-  "tools",
+  "target",
 ]);
 
 const DIAGNOSTIC_NOTICE_FIELDS = new Set([
   "agent",
   "command.content",
-  "command.extensions",
   "conversation",
-  "engine",
-  "engine.extensions",
-  "extensions",
   "inference",
   "model",
   "outputSchema",
   "persona",
-  "persona.extensions",
   "runtime.environment",
-  "runtime.extensions",
-  "runtime.settings",
   "runtime.timeoutMs",
   "runtime.workspace",
-  "tools",
+  "target",
 ]);
 
 function canonicalDiagnosticProvenanceField(field: string): string | undefined {
@@ -344,7 +338,7 @@ function safeDiagnosticNotice(notice: Readonly<LoweringNotice>): Readonly<Comman
         severity: "info",
         adapter: notice.adapter,
         field: "persona",
-        message: "The selected engine has no native persona channel; AKM composed the persona into the prompt.",
+        message: "The selected harness has no native persona channel; AKM composed the persona into the prompt.",
       });
     default:
       return undefined;
@@ -352,13 +346,9 @@ function safeDiagnosticNotice(notice: Readonly<LoweringNotice>): Readonly<Comman
 }
 
 function diagnosticNotices(notices: readonly Readonly<LoweringNotice>[]): readonly Readonly<CommandDiagnosticNotice>[] {
-  const canonical = new Map<string, Readonly<CommandDiagnosticNotice>>();
-  for (const notice of notices) {
-    const safe = safeDiagnosticNotice(notice);
-    if (safe) canonical.set(JSON.stringify(safe), safe);
-  }
+  const safe = notices.flatMap((notice) => safeDiagnosticNotice(notice) ?? []);
   return Object.freeze(
-    [...canonical.values()].sort((left, right) => compareText(JSON.stringify(left), JSON.stringify(right))),
+    [...(mergeNotices(safe) ?? [])].sort((left, right) => compareText(JSON.stringify(left), JSON.stringify(right))),
   );
 }
 
@@ -373,7 +363,7 @@ export function inspectPreparedCommandInvocation(prepared: PreparedCommandInvoca
     shape: "command-dry-run",
     ok: true,
     dryRun: true,
-    engine: prepared.request.engine.name,
+    engine: prepared.request.target.name,
     provenance: diagnosticProvenance(prepared.provenance),
     notices: diagnosticNotices(built.notices),
   };
@@ -408,19 +398,16 @@ export async function dispatchPreparedCommandInvocation(
 ): Promise<CommandDispatchResult> {
   const { request } = prepared;
   const built = buildExecution(request, prepared.runner);
-  const selectedEngine = request.engine.name;
+  const selectedEngine = request.target.name;
   const result = await runExecution(built, runOptionsFor(options));
   const consumedRefs = new Set<string>();
   if (request.command.source) consumedRefs.add(request.command.source.ref);
   if (request.persona) consumedRefs.add(request.persona.source.ref);
-  // F-1 (spec §5.2 point 3): options.eventSource is only a FALLBACK — an
-  // ambient AKM_EVENT_SOURCE still wins (D5 clause d). Absent, this is
-  // byte-identical to the pre-P1b bare resolveUsageEventSource() call (P-07's
-  // own default is "user").
+  // options.eventSource is only a FALLBACK — an ambient AKM_EVENT_SOURCE still
+  // wins. Absent, the default is "user".
   const eventSource = resolveUsageEventSource(process.env, options.eventSource ?? "user");
   for (const ref of consumedRefs) recordIndexedShowUsage(ref, eventSource);
-  const announcement = fallbackAnnouncement(prepared.fallbackEngineName, selectedEngine);
-  return resultEnvelope(result, selectedEngine, announcement ? [announcement] : [], built.notices);
+  return resultEnvelope(result, selectedEngine, [], built.notices);
 }
 
 export async function executeCommandInvocation(

@@ -4,9 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version already committed in package.json (for example, 1.2.3)"
+        description: "Version already committed in package.json: 0.10 and later 0.<minor>.YYMMNN, the UTC year and month then the release number in that month (for example 0.10.261001; bun scripts/release-version.ts next prints the next free one), earlier lines X.Y.Z."
         required: true
         type: string
+      stage:
+        description: "Stage of this release: alpha, beta or rc publishes <version>-<stage> to the npm next tag; none publishes <version> to latest. Every release takes its own number. 0.10 and later only."
+        required: false
+        default: none
+        type: choice
+        options:
+          - none
+          - alpha
+          - beta
+          - rc
 
 permissions:
   actions: read
@@ -26,7 +36,8 @@ jobs:
     timeout-minutes: 30
     environment: release
     env:
-      CANDIDATE_VERSION: ${{ inputs.version }}
+      VERSION_INPUT: ${{ inputs.version }}
+      STAGE_INPUT: ${{ inputs.stage }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
         with:
@@ -42,32 +53,29 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # scripts/release-version.ts validates the format (0.10+:
+      # 0.<minor>.YYMMNN; older lines: X.Y.Z[-prerelease]) and appends the
+      # stage input to the version (#1089). package.json must carry the
+      # version input, as before; a stage is stamped into this run's
+      # package.json. Each release takes its own number: a build is not
+      # promoted through stages.
       - name: Verify version
         run: |
+          CANDIDATE_VERSION="$(bun scripts/release-version.ts resolve)"
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-          if [ "$PACKAGE_VERSION" != "$CANDIDATE_VERSION" ]; then
-            echo "package.json is $PACKAGE_VERSION, not $CANDIDATE_VERSION"
+          if [ "$PACKAGE_VERSION" != "$VERSION_INPUT" ]; then
+            echo "package.json is $PACKAGE_VERSION, not $VERSION_INPUT"
             exit 1
           fi
-
-      # Lint, typecheck and the unit and integration suites already ran in CI
-      # on this exact commit; require that run to have passed rather than
-      # running them again here.
-      - name: Require green CI on this commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          passed="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" \
-            --json conclusion --jq '[.[] | select(.conclusion == "success")] | length')"
-          if [ "$passed" = "0" ]; then
-            echo "CI has not passed on $GITHUB_SHA; wait for it (or rerun it) before releasing" >&2
-            exit 1
+          if [ "$CANDIDATE_VERSION" != "$VERSION_INPUT" ]; then
+            npm pkg set version="$CANDIDATE_VERSION"
           fi
+          echo "CANDIDATE_VERSION=$CANDIDATE_VERSION" >> "$GITHUB_ENV"
+          echo "Releasing akm-cli@$CANDIDATE_VERSION"
 
       # tests/release-check.sh proves the packaged artifact: npm bin targets,
-      # the akm-migrate bundle under Bun and Node, package acceptance, and the
-      # published-upgrade rehearsal against the packed tarball. Docker runs in
-      # the gated job above.
+      # the akm-migrate bundle under Bun and Node, and package acceptance. Docker
+      # runs in the gated job above; the upgrade rehearsal runs in CI.
       - name: Release check
         run: ./tests/release-check.sh --skip-docker
 
@@ -77,11 +85,10 @@ jobs:
           bun run build
           mkdir artifacts
           while read -r target output; do
-            bun build ./scripts/akm-standalone.ts \
-              --compile \
-              --target="$target" \
+            bun scripts/build-standalone.ts \
+              --target "$target" \
               --outfile "artifacts/$output" \
-              --define "AKM_VERSION='$CANDIDATE_VERSION'"
+              --version "$CANDIDATE_VERSION"
           done <<'EOF'
           bun-linux-x64 akm-linux-x64
           bun-linux-arm64 akm-linux-arm64
@@ -106,6 +113,34 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+
+      # Lint, typecheck, the unit and integration suites and the upgrade
+      # rehearsal run in CI on this exact commit; wait for that run rather than
+      # running them again here, so Release can be dispatched right after the
+      # release commit is pushed. The newest push or manual CI run on the commit
+      # decides: a pull_request run tests a merge with its base branch, and on a
+      # draft skips the upgrade rehearsal. It passes at once when that run
+      # already passed, and fails when it failed or was cancelled, or has not
+      # passed in 25 minutes (50 polls, 30 seconds apart).
+      - name: Require green CI on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for _ in $(seq 50); do
+            runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" \
+              --json event,status,conclusion --jq '.[] | .event + " " + .status + " " + .conclusion')"
+            run="$(awk 'NF && $1 != "pull_request" { print $2 " " $3; exit }' <<<"$runs")"
+            case "$run" in
+              "completed success") exit 0 ;;
+              "completed "*)
+                echo "CI did not pass on $GITHUB_SHA: $run" >&2
+                exit 1
+                ;;
+            esac
+            sleep 30
+          done
+          echo "CI has not passed on $GITHUB_SHA within 25 minutes; last status: ${run:-no push or manual CI run yet}" >&2
+          exit 1
 
       - name: Publish to npm
         env:

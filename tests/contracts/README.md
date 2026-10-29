@@ -20,11 +20,10 @@ section names are intentionally absent from this active suite.
 | File | Current contract |
 | --- | --- |
 | `quality-rules.test.ts` | Runtime quality normalization and proposed filtering |
-| `configuration.test.ts` | Engine/strategy schema and source write constraints |
+| `configuration.test.ts` | Connection, harness and strategy schema, source write constraints, and the retired-selector scan over the active docs |
 | `runtime-boundaries.test.ts` | Current search/show/write/storage architecture |
 | `module-boundaries.test.ts` | Current module-boundary anchors |
 | `extension-points.test.ts` | Supported source and registry provider boundaries |
 | `improve-cli-surface.test.ts` | Current improvement CLI surface |
-| `engine-boundary.test.ts` | Engine lowering and stateless LLM boundary |
-| `engine-interchange.test.ts` | One cross-engine contract over the LLM path, every CLI harness and opencode-sdk |
 | `response-schemas-strict.test.ts` | Every response schema akm sends is valid for a strict structured-output provider |
+| `runtime-port-boundary.test.ts` | Only `integrations/agent/runtime.ts` names the agent runtime's implementation, and the implementation reads no config |

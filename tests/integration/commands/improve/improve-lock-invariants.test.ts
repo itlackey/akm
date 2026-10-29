@@ -35,9 +35,9 @@ const TIMEOUT_MS = 20_000;
 /**
  * Plant an improve lock owned by a real, foreign, genuinely LIVE pid (our parent
  * process — alive for the whole run and never equal to `process.pid`), aged by
- * `ageMs`. The improve-lock acquire path calls `probeLock` with no
- * `staleAfterMs`, so a live holder is always classified `held`, regardless of
- * `ageMs` — `ageMs` exists only to prove age is irrelevant.
+ * `ageMs`. `probeLock` never reclaims on age, so a live holder is always
+ * classified `held`, regardless of `ageMs` — `ageMs` exists only to prove age
+ * is irrelevant.
  */
 function plantLiveHolderImproveLock(lockDir: string, ageMs: number): { lockPath: string; holderPid: number } {
   const lockPath = path.join(getStashLocksDir(lockDir), "improve.lock");
@@ -55,8 +55,8 @@ let stashDir = "";
 function quietConfig(): AkmConfig {
   return {
     semanticSearchMode: "off",
-    defaults: { improveStrategy: "quiet-test" },
     improve: {
+      strategy: "quiet-test",
       strategies: {
         "quiet-test": {
           processes: {

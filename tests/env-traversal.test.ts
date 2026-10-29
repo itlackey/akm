@@ -8,9 +8,10 @@
  *   Fix A — validateName (asset-ref.ts): rejects traversal patterns such as
  *            "../../foo", "foo/../../bar", and ".." during ref parsing.
  *
- *   Fix B — isWithin guard in resolveEnvironmentPath (cli.ts): even if the name
- *            somehow survived validateName, the resolved absolute path is
- *            asserted to stay inside <stash>/env/ before any read/write.
+ *   Fix B — the lexical name check in resolveEnvPath (core/env-secret-ref.ts):
+ *            even if the name somehow survived validateName, the resolved
+ *            path must stay inside <stash>/env/. It does not follow symlinks:
+ *            an env file that is a symlink elsewhere is a legitimate setup.
  *
  * The traversal-rejection cases throw before any I/O, so they run in-process.
  */
@@ -56,8 +57,7 @@ afterEach(() => {
  * tests/config-cli-silent-layer.test.ts:131-139 for the established pattern.
  * All traversal rejections here are USAGE (exit 2); the `code` distinguishes
  * "asset name has relative-path segments" (MISSING_REQUIRED_ARGUMENT, thrown
- * by validateName in src/core/asset/asset-ref.ts) from the retired `vault:`
- * prefix rejection (INVALID_FLAG_VALUE).
+ * by validateName in src/core/asset/asset-ref.ts) from INVALID_FLAG_VALUE.
  */
 function expectRejection(
   result: { status: number; stderr: string },
@@ -126,19 +126,16 @@ describe("env: directory traversal rejection", () => {
     expectRejection(result, "MISSING_REQUIRED_ARGUMENT");
   });
 
-  test("rejects the removed vault: prefix (retired to the legacy stored-ref parser)", async () => {
+  test("rejects traversal hidden behind a colon prefix", async () => {
     const stashDir = freshStash();
-    // F5: `vault:` is not a new-grammar conceptId leading segment, so the env
-    // input path rejects it (the vault-removal signpost now lives only in the
-    // legacy stored-ref parser, which the new-grammar CLI input path never hits).
     const result = await runCli(["env", "path", "vault:../../evil"], stashDir);
-    expectRejection(result, "INVALID_FLAG_VALUE");
+    expectRejection(result, "MISSING_REQUIRED_ARGUMENT");
   });
 
   test("legitimate env name succeeds", async () => {
     const stashDir = freshStash();
 
-    const { status } = await runCli(["env", "create", "prod"], stashDir);
+    const { status } = await runCli(["env", "create", "env/prod"], stashDir);
 
     expect(status).toBe(0);
     // Confirm the file was created inside the stash's env/ dir.

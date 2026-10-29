@@ -146,3 +146,6 @@ export interface LlmCacheEntry {
   resultJson: string;
   updatedAt: number;
 }
+
+/** Select eligible row ids in a bounded candidate batch before channel truncation. */
+export type CandidateFilter = (ids: readonly number[]) => ReadonlySet<number>;

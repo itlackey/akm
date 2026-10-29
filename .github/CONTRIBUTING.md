@@ -15,6 +15,29 @@ cd akm
 bun install
 ```
 
+## Changing Dependencies
+
+Change dependencies with Bun's own commands only: `bun add <package>`,
+`bun remove <package>` or `bun update <package>`. Never edit `bun.lock` by hand,
+and commit it in the same commit as the `package.json` change it belongs to.
+
+A dependency that should resolve to a different package than its name is an
+alias, and an alias lives in `package.json` as `npm:<package>@<range>`, nowhere
+else. `bun install --frozen-lockfile` accepts a lock whose entry names another
+package than `package.json` does; `bun run lint` does not, because it runs
+`scripts/lint-lockfile.ts`, which checks every direct dependency's lock entry for
+the package it names and for a version inside its range or pin, and every other
+entry for a package installed under another name that nothing declares as an
+`npm:` alias.
+
+Every exact pin (a version with no `^` or `~`) gets a line in `package.json`'s
+`pinNotes` saying why it is pinned and what to check before moving it.
+
+No package in the tree may declare an install-time script (`preinstall`,
+`install`, `postinstall`, or a `binding.gyp` npm would build by default). npm 12
+runs none by default, and `tests/docker/Dockerfile.debian-npm` installs with
+`--ignore-scripts`.
+
 ## Development Workflow
 
 Run the CLI from source during development:
@@ -30,6 +53,11 @@ Use an explicit invocation for the behavior you intend to test:
 - Isolated packed-package acceptance: `bun run test:package`
 - Intentional machine-wide checkout install: `bun run build:install`
 
+Running `akm` by hand, outside `bun test`, uses the real `HOME` and your
+bundles. To try something against scratch data instead, point `HOME`, `XDG_*`,
+`AKM_CONFIG_DIR`, `AKM_DATA_DIR` and `AKM_BUNDLE_DIR` at a scratch directory
+first.
+
 The global checkout install deliberately replaces the globally resolved `akm`;
 do not use it for routine inner-loop testing.
 See [Local development](../docs/maintainers/local-development.md) for exact isolated
@@ -38,14 +66,27 @@ package-acceptance commands.
 ### Running Tests
 
 ```bash
-bun test
+bun run test:unit
+bun run test:integration
+bun test tests/<file>.test.ts   # one file, while iterating
 ```
+
+The [testing workflow](../docs/architecture/testing/testing-workflow.md) says
+what each target holds and where a new test goes.
 
 ### Linting
 
 ```bash
-bun run lint
+bun run lint:fix   # Biome with --write; read git diff afterwards
+bun run lint       # what CI runs: Biome, the secret-resolver and shipped-assets lints, the doc-example lint, the lockfile lint
 ```
+What CI runs depends on the event. Every pull-request commit runs `check` (lint,
+types, the unit and integration suites, the build) and one Node smoke; marking
+the pull request ready for review, and every commit after that, adds the second
+Node version and the two upgrade rehearsals, which also run on every push to
+`main` and a release branch and on a manual run. Push a draft in batches that
+you have verified locally with `bun run check`: each push is a CI run.
+
 
 ### Building
 
@@ -53,7 +94,13 @@ bun run lint
 bun run build
 ```
 
+The build compiles `src/**` only into `dist/`; `tests/release-check.sh` fails if
+`dist/tests` appears.
+
 ## Required local verification
+
+Before committing, run `bun run lint:fix`, `bunx tsc --noEmit` and the focused
+tests for what you changed (`bun test tests/<file>.test.ts`).
 
 Before pushing any branch that changes CLI output, search behavior, docs, or tests:
 
@@ -72,6 +119,14 @@ For faster iteration while changing output contracts, run:
 - typecheck
 
 Use it during development, then run `bun run check` before every push.
+
+`bun run check` uses your machine's Bun, as many test shards as it has cores
+(up to 8) and no `CI` variable; CI uses the Bun version `ci.yml` pins, 4 shards
+and `CI=true`, and a failure that depends on one of those only shows up there.
+`bun run check:ci` (Docker required) runs the same check the way CI does, on a
+clean install in a container, and leaves your `node_modules` alone. It takes
+about four and a half minutes; run it on the batch you are about to push instead
+of pushing to find out.
 
 ### Why this exists
 
@@ -101,7 +156,7 @@ When you tag a new release:
    publisher changes, breaking CLI/flag moves. Link to the longform guide
    (e.g. `docs/migration/v0.8-to-v0.9.md`) in the last paragraph if one
    exists.
-3. Extend the `for ... of` list in `tests/integration/migration-help.test.ts`
+3. Extend the `for ... of` list in `tests/migration-help.test.ts`
    (`"every bundled release-notes file is surfaced by the loader"`) so the
    new version is explicitly exercised.
 4. Smoke-test end-to-end: `bun src/cli.ts help migrate <version>`.
@@ -113,14 +168,56 @@ files at runtime from the release-notes directory.
 
 1. Fork the repository and create a feature branch from `main`.
 2. Make your changes, keeping commits focused and well-described.
-3. Ensure all tests pass (`bun test`) and linting is clean (`bun run lint`).
+3. Ensure both test targets pass (`bun run test:unit` and
+   `bun run test:integration`) and linting is clean (`bun run lint`).
 4. Open a pull request against `main` with a clear description of the change.
 
 ## Code Style
 
 - **TypeScript** in strict mode, using ESM modules.
-- **Biome** for formatting and linting. Run `bun run lint` before submitting.
+- **Biome** for formatting and linting; see [Linting](#linting).
 - Keep functions small and well-named. Prefer explicit types over `any`.
+- Prose, templates and comments follow
+  [principle 7](../docs/architecture/akm-core-principles.md#7-prose-lives-in-files-comments-say-why);
+  the other rules for how code is written are in
+  [Core Principles](../docs/architecture/akm-core-principles.md).
+- Lessons from 0.10:
+  - No test-only exports from `src/` (`_…ForTests`) where a behaviour test would do.
+  - No plumbing without a production caller: a parameter, field or export only a
+    test uses is deleted.
+  - The CHANGELOG, the migration guide and the docs describe only behaviour that
+    shipped and was checked.
+  - New code and messages say "connection" and "harness", never "engine".
+  - A converter step must not lose entries to key order or name collisions, and a
+    test pins that.
+  - Instruction files carry no dated counts and no file:line citations.
+
+## Gotchas
+
+- `bun add`, `bun remove` and `bun update` (Bun 1.4) re-encode the `\u2014`
+  escapes in `package.json` as literal characters. Put them back, so the diff
+  holds only the dependency change.
+- Biome 2.4.14 (the pinned version) intermittently parses a file with the wrong
+  grammar (`.ts` as JSON, JSON as JS) and reports errors against correct text:
+  re-run it; don't edit the file it names. A misparse under `--write` has
+  rewritten valid JSON into invalid JSON once, so read `git diff` after
+  `bun run lint:fix`.
+- Read a test run's own exit code. Piped through `| tail` or `| grep`, a red run
+  reports the pipe's.
+- `TMPDIR` must be a `/tmp`-family path (`/tmp/...`, `/var/tmp/...`, or their
+  macOS `/private/...` equivalents) and must contain neither `.cache` nor
+  `registry`. `tests/setup-tmp-stash-guard.test.ts` exercises a production guard
+  (`isTransientStashPath` in `src/core/paths.ts`) that is hardcoded to the real
+  OS temp-dir families, not to whatever `TMPDIR` is, so any other `TMPDIR` makes
+  that file fail for reasons unrelated to the code under test. A `TMPDIR`
+  containing `.cache` or `registry` once masked a real lint-suppression bug
+  (fixed in 0.9.5).
+- `prepublishOnly` copies `.github/README.npm.md` over `README.md` before
+  building, and `postpublish` restores `README.md` with
+  `git checkout -- README.md`. That README churn is not a source edit.
+- `.github/workflows/ci.yml` ignores docs-only changes (`docs/**`, `README.md`,
+  any `CHANGELOG.md`, `CLAUDE.md`, `LICENSE`), so docs-only edits get no normal
+  CI coverage.
 
 ## Reporting Issues
 

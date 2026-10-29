@@ -50,7 +50,7 @@ export function baseFailureFields(
  * on PATH. Used to surface a better error message pointing the user at
  * `akm setup`.
  */
-export function isEnoentFailure(result: AgentRunResult): boolean {
+export function isEnoentFailure(result: Pick<AgentRunResult, "reason" | "error">): boolean {
   return (
     result.reason === "spawn_failed" &&
     (!!result.error?.includes("ENOENT") || !!result.error?.toLowerCase().includes("not found"))

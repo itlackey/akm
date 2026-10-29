@@ -25,12 +25,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { planTaskToV4File } from "../../scripts/akm-migrate/migrate/task-to-v4";
 import { resolveImproveScope } from "../../src/commands/improve/eligibility";
 import { resetConfigCache } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
 import { resolveAssetPath } from "../../src/indexer/walk/path-resolver";
 import { type ProposalRow, proposalRowToProposal } from "../../src/storage/repositories/proposals-repository";
-import { planTaskToV4File } from "../../src/tasks/source/task-to-v4";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 function write(root: string, rel: string, content: string): void {
@@ -58,8 +58,7 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "local",
-      engines: { "test-agent": { kind: "agent", platform: "opencode-sdk" } },
-      defaults: { engine: "test-agent" },
+      connections: { "test-agent": { endpoint: "http://127.0.0.1:1/v1", models: { fast: "test-model" } } },
       bundles: {
         local: {
           path: storage.stashDir,
@@ -78,17 +77,17 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
 
   afterEach(() => storage.cleanup());
 
-  test("indexer walk resolves opaque conceptIds from the index without guessing a disk serialization", async () => {
+  test("indexer walk resolves opaque conceptIds from the index, and from disk through the adapter", async () => {
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const indexed = await resolveAssetPath("adversarial//tables/customers", { honorOrigin: true });
     expect(indexed).toBe(conceptPath);
 
-    // Core cannot assume an opaque adapter serializes a concept as `<id>.md`.
+    // Core does not guess a serialization; the bundle's own adapter names the file.
     const diskOnly = await resolveAssetPath("adversarial//tables/customers", {
       mode: "disk-only",
       honorOrigin: true,
     });
-    expect(diskOnly).toBeNull();
+    expect(diskOnly).toBe(conceptPath);
   });
 
   test("improve: `--scope` recognizes an opaque conceptId as a REF, not a bogus type filter", async () => {
@@ -134,7 +133,6 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
       bytes: Buffer.from('version: 2\nschedule: "@daily"\nprompt: adversarial//tables/customers\n', "utf8"),
       mode: 0o644,
       writable: true,
-      containmentRoot: storage.stashDir,
     });
     expect(outcome).toMatchObject({
       status: "blocked",

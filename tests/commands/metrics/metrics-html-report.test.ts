@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // Pure rendering: renders a fixture AkmMetricsResult through the real template
-// file. No database, network or process involved (AGENTS.md classification rule).
+// file. No database, network or process involved.
 
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";

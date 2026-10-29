@@ -9,8 +9,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import consolidatePairPrompt from "../../../src/assets/prompts/consolidate-pair.md" with { type: "text" };
 import {
+  buildPairUserPrompt,
   decideRetirement,
   isOwnTwinOrParent,
   type PairAsset,
@@ -18,7 +18,6 @@ import {
   parsePairJudgeResponse,
   tombstoneReason,
 } from "../../../src/commands/improve/consolidate/pair-pass";
-import type { ConsolidatePairJudgeLabel } from "../../../src/core/improve-types";
 
 function asset(overrides: Partial<PairAsset> = {}): PairAsset {
   return { ref: "memories/a", type: "memory", name: "a", filePath: "/tmp/a.md", entryId: 1, ...overrides };
@@ -34,92 +33,79 @@ function side(overrides: Partial<PairAsset> = {}): PairSide {
   };
 }
 
+describe("complete pair evidence (#1195)", () => {
+  for (const offset of [11_900, 11_990, 12_100]) {
+    for (const uniqueSide of ["A", "B"] as const) {
+      for (const padding of ["x", "界🙂"]) {
+        test(`keeps ${uniqueSide}'s claim at ${offset} with ${padding} padding`, () => {
+          const claim = "Recovery requires vault key K-1195 from the offline safe.";
+          const body = `${padding.repeat(13_000).slice(0, offset)}${claim}${padding.repeat(500)}`;
+          const a = { ...side(), raw: uniqueSide === "A" ? body : "Shared facts." };
+          const b = { ...side({ ref: "memories/b" }), raw: uniqueSide === "B" ? body : "Shared facts." };
+          const prompt = buildPairUserPrompt(a, b);
+          expect(prompt).toContain(body);
+          expect(prompt).toContain(claim);
+        });
+      }
+    }
+  }
+});
+
 describe("parsePairJudgeResponse", () => {
-  test("accepts a well-formed verdict for each of the six labels", () => {
-    const labels: ConsolidatePairJudgeLabel[] = [
-      "duplicate",
-      "subsumed",
-      "supersedes",
-      "contradicts",
-      "overlap",
-      "unrelated",
-    ];
-    for (const relation of labels) {
-      const raw = JSON.stringify({
-        onlyInA: [],
-        onlyInB: [],
+  for (const [onlyInA, onlyInB, relation, redundant] of [
+    [[], [], "duplicate", "A"],
+    [[], ["port 9000"], "subsumed", "A"],
+    [["port 8000"], [], "subsumed", "B"],
+    [["port 8000"], ["port 9000"], "overlap", null],
+  ] as const) {
+    test(`derives ${relation}/${redundant} from complete claim lists ${JSON.stringify([onlyInA, onlyInB])}`, () => {
+      expect(
+        parsePairJudgeResponse(JSON.stringify({ onlyInA, onlyInB, confidence: 0.8, reason: "comparison" })),
+      ).toEqual({
+        onlyInA: [...onlyInA],
+        onlyInB: [...onlyInB],
         relation,
-        redundant: null,
-        stale: null,
+        redundant,
         confidence: 0.8,
-        reason: "why",
+        reason: "comparison",
       });
-      expect(parsePairJudgeResponse(raw)?.relation).toBe(relation);
+    });
+  }
+
+  test("an extra model deletion pointer cannot override a distinct claim", () => {
+    const verdict = parsePairJudgeResponse(
+      JSON.stringify({
+        onlyInA: ["requires offline key K-1195"],
+        onlyInB: [],
+        confidence: 1,
+        relation: "duplicate",
+        redundant: "A",
+        reason: "inconsistent old response",
+      }),
+    );
+    expect(verdict?.relation).toBe("subsumed");
+    expect(verdict?.redundant).toBe("B");
+    expect(verdict?.onlyInA).toEqual(["requires offline key K-1195"]);
+  });
+
+  test("rejects missing, malformed, or non-string claim lists instead of treating them as empty", () => {
+    for (const bad of [undefined, null, "", [1]]) {
+      for (const side of ["onlyInA", "onlyInB"]) {
+        expect(
+          parsePairJudgeResponse(JSON.stringify({ onlyInA: [], onlyInB: [], confidence: 1, [side]: bad })),
+        ).toBeUndefined();
+      }
     }
   });
 
-  test("accepts redundant: A or B", () => {
-    const raw = JSON.stringify({
-      onlyInA: [],
-      onlyInB: [],
-      relation: "duplicate",
-      redundant: "A",
-      stale: null,
-      confidence: 0.9,
-      reason: "x",
-    });
-    expect(parsePairJudgeResponse(raw)?.redundant).toBe("A");
+  test("rejects missing or non-numeric confidence", () => {
+    for (const confidence of [undefined, null, "0.8"]) {
+      expect(parsePairJudgeResponse(JSON.stringify({ onlyInA: [], onlyInB: [], confidence }))).toBeUndefined();
+    }
   });
 
-  test("rejects an unknown relation label", () => {
-    const raw = JSON.stringify({
-      onlyInA: [],
-      onlyInB: [],
-      relation: "merge",
-      redundant: null,
-      stale: null,
-      confidence: 0.9,
-      reason: "x",
-    });
-    expect(parsePairJudgeResponse(raw)).toBeUndefined();
-  });
-
-  test("rejects an invalid redundant value", () => {
-    const raw = JSON.stringify({
-      onlyInA: [],
-      onlyInB: [],
-      relation: "duplicate",
-      redundant: "C",
-      stale: null,
-      confidence: 0.9,
-      reason: "x",
-    });
-    expect(parsePairJudgeResponse(raw)).toBeUndefined();
-  });
-
-  test("rejects a missing or non-numeric confidence", () => {
-    const raw = JSON.stringify({
-      onlyInA: [],
-      onlyInB: [],
-      relation: "duplicate",
-      redundant: null,
-      stale: null,
-      reason: "x",
-    });
-    expect(parsePairJudgeResponse(raw)).toBeUndefined();
-  });
-
-  test("clamps an out-of-range confidence into [0, 1] rather than rejecting it", () => {
-    const raw = JSON.stringify({
-      onlyInA: [],
-      onlyInB: [],
-      relation: "overlap",
-      redundant: null,
-      stale: null,
-      confidence: 1.4,
-      reason: "x",
-    });
-    expect(parsePairJudgeResponse(raw)?.confidence).toBe(1);
+  test("clamps out-of-range confidence rather than rejecting", () => {
+    expect(parsePairJudgeResponse(JSON.stringify({ onlyInA: [], onlyInB: [], confidence: 1.4 }))?.confidence).toBe(1);
   });
 
   test("rejects malformed JSON and non-object payloads", () => {
@@ -127,51 +113,14 @@ describe("parsePairJudgeResponse", () => {
     expect(parsePairJudgeResponse("[]")).toBeUndefined();
   });
 
-  test("a missing reason defaults to an empty string rather than rejecting", () => {
-    const raw = JSON.stringify({
-      onlyInA: [],
-      onlyInB: [],
-      relation: "unrelated",
-      redundant: null,
-      stale: null,
-      confidence: 0.5,
-    });
-    expect(parsePairJudgeResponse(raw)?.reason).toBe("");
+  test("a missing reason defaults to an empty string", () => {
+    expect(parsePairJudgeResponse(JSON.stringify({ onlyInA: [], onlyInB: [], confidence: 0.5 }))?.reason).toBe("");
   });
 
-  test("rejects a verdict without both claim lists: a missing list is never read as empty", () => {
-    const raw = JSON.stringify({
-      onlyInB: [],
-      relation: "duplicate",
-      redundant: "A",
-      stale: null,
-      confidence: 1,
-      reason: "x",
-    });
-    expect(parsePairJudgeResponse(raw)).toBeUndefined();
-    const notStrings = JSON.stringify({
-      onlyInA: [1],
-      onlyInB: [],
-      relation: "duplicate",
-      redundant: "A",
-      stale: null,
-      confidence: 1,
-      reason: "x",
-    });
-    expect(parsePairJudgeResponse(notStrings)).toBeUndefined();
-  });
-
-  test("keeps the listed claims, trimmed, dropping blank items", () => {
-    const raw = JSON.stringify({
-      onlyInA: [" `--force` flag ", ""],
-      onlyInB: [],
-      relation: "subsumed",
-      redundant: "B",
-      stale: null,
-      confidence: 1,
-      reason: "x",
-    });
-    const verdict = parsePairJudgeResponse(raw);
+  test("keeps listed claims trimmed and drops blank items", () => {
+    const verdict = parsePairJudgeResponse(
+      JSON.stringify({ onlyInA: [" `--force` flag ", ""], onlyInB: [], confidence: 1 }),
+    );
     expect(verdict?.onlyInA).toEqual(["`--force` flag"]);
     expect(verdict?.onlyInB).toEqual([]);
   });
@@ -252,11 +201,5 @@ describe("decideRetirement — the calibrated outcome table (owner grades, O5)",
     expect(decideRetirement("contradicts", null, older, newer, NONE)).toBeUndefined();
     expect(decideRetirement("overlap", null, older, newer, NONE)).toBeUndefined();
     expect(decideRetirement("unrelated", null, older, newer, NONE)).toBeUndefined();
-  });
-});
-
-describe("consolidate-pair prompt", () => {
-  test("the reason names the asset that can be deleted, so it cannot swap A and B", () => {
-    expect(consolidatePairPrompt).toContain("name the asset that can be deleted and what the other asset still holds");
   });
 });

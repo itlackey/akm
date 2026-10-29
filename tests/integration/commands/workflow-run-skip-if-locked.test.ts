@@ -25,7 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
-import { startWorkflowRun } from "../../../src/workflows/runtime/runs";
+import { listWorkflowRuns, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { runCliCapture } from "../../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 import { plantRunLock } from "../../_helpers/workflow";
@@ -104,5 +104,73 @@ describe("akm workflow run <id> against a held run lock", () => {
     expect(envelope.ok).toBe(false);
     expect(envelope.code).not.toBe("RUN_LEASE_HELD");
     expect(envelope.code).not.toBe("STATE_DB_CONTENDED");
+  });
+});
+
+/** A step the engine runs locally (no agent), so a CLI start finishes immediately. */
+function writeExecWorkflow(name: string): void {
+  const file = path.join(storage.stashDir, "workflows", `${name}.md`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(
+    file,
+    [
+      "---",
+      "type: workflow",
+      "steps:",
+      "  - id: only-step",
+      "    unit:",
+      "      exec:",
+      '        command: ["bun", "-e", "0"]',
+      "---",
+      "",
+      "## only-step",
+      "",
+      "Do the thing.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+describe("akm workflow run <ref> --skip-if-locked (#1239)", () => {
+  test("skips with exit 0 and starts nothing while an active run of the ref holds a live lock", async () => {
+    writeWorkflow("skip-lock-ref");
+    const started = await startWorkflowRun("workflows/skip-lock-ref", {});
+    const release = plantRunLock(started.run.id);
+
+    const result = await runCliCapture(["workflow", "run", "workflows/skip-lock-ref", "--skip-if-locked"]);
+    release();
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain("skipping (--skip-if-locked)");
+    const envelope = JSON.parse(result.stdout.trim()) as { ok: boolean; skipped: { reason: string } };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.skipped.reason).toBe("lock-held");
+
+    const { runs } = await listWorkflowRuns({ workflowRef: "workflows/skip-lock-ref" });
+    expect(runs.map((r) => r.id)).toEqual([started.run.id]);
+  });
+
+  test("starts a second run when the active run's lock holder is dead", async () => {
+    writeExecWorkflow("skip-lock-dead");
+    const started = await startWorkflowRun("workflows/skip-lock-dead", {});
+    const release = plantRunLock(started.run.id, 999_999_999);
+
+    const result = await runCliCapture(["workflow", "run", "workflows/skip-lock-dead", "--skip-if-locked"]);
+    release();
+    expect(result.code).toBe(0);
+    const { runs } = await listWorkflowRuns({ workflowRef: "workflows/skip-lock-dead" });
+    expect(runs).toHaveLength(2);
+  });
+
+  test("without the flag a live lock on another run of the ref does not stop a start", async () => {
+    writeExecWorkflow("skip-lock-noflag");
+    const started = await startWorkflowRun("workflows/skip-lock-noflag", {});
+    const release = plantRunLock(started.run.id);
+
+    const result = await runCliCapture(["workflow", "run", "workflows/skip-lock-noflag"]);
+    release();
+    expect(result.code).toBe(0);
+    const { runs } = await listWorkflowRuns({ workflowRef: "workflows/skip-lock-noflag" });
+    expect(runs).toHaveLength(2);
   });
 });

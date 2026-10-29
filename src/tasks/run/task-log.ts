@@ -7,14 +7,10 @@
  * structured logs.db rows, and the shared redaction pass both sinks go
  * through before either is written.
  *
- * Moved body-intact from src/tasks/runner.ts (spec
- * docs/plans/specs/p1b-model-extraction.md §5.1, runner.ts:779-968).
- *
  * A DAG leaf with respect to the rest of src/tasks/run/**: nothing here
  * imports ./task-result, ./task-history, or ./attempt-lifecycle, so every
  * other run/** module can depend on this one without risking an import
- * cycle (tests/architecture/import-cycle-ratchet.test.ts counts type-only
- * imports as real edges too).
+ * cycle.
  */
 
 import fs from "node:fs";
@@ -29,7 +25,7 @@ import {
   type TaskLogLineInput,
   type TaskLogStream,
 } from "../../core/logs-db";
-import { getTaskLogDir } from "../../core/paths";
+import { getRunLogDir, getTaskLogDir } from "../../core/paths";
 import { redactCredentialPatterns, redactSensitiveText } from "../../core/redaction";
 import { collectTaskLogSensitiveValues } from "../log-redaction";
 import type { PreparedTaskV3Execution } from "../prepare/prepared-execution";
@@ -96,6 +92,40 @@ export function purgeOldTaskLogFiles(logDir: string | undefined, retentionDays =
       } catch (error) {
         rethrowIfTestIsolationError(error);
         // Best-effort: a file that vanished or can't be stat'd/removed is skipped.
+      }
+    }
+  }
+  return deleted;
+}
+
+/**
+ * Delete the flat per-run `akm improve` and `akm index` log files
+ * (`$CACHE/logs/{improve,index}/<ISO>.log`) older than `retentionDays`. Same
+ * best-effort contract as {@link purgeOldTaskLogFiles}; `.log` files directly
+ * inside each directory only.
+ */
+export function purgeOldRunLogFiles(retentionDays = 90): number {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
+  const cutoffMs = Date.now() - retentionDays * 86_400_000;
+  let deleted = 0;
+  for (const dir of [getRunLogDir("improve"), getRunLogDir("index")]) {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (error) {
+      rethrowIfTestIsolationError(error);
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".log")) continue;
+      const filePath = path.join(dir, entry.name);
+      try {
+        if (fs.statSync(filePath).mtimeMs < cutoffMs) {
+          fs.unlinkSync(filePath);
+          deleted++;
+        }
+      } catch (error) {
+        rethrowIfTestIsolationError(error);
       }
     }
   }

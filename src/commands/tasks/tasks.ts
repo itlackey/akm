@@ -24,18 +24,21 @@ import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
-import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
 import {
-  bundleKeyForContentRoot,
-  resolveActiveConfiguredSources,
-  resolveConfiguredSources,
-} from "../../core/config/config-sources";
+  defaultConnection,
+  defaultHarness,
+  loadConfig,
+  mutateConfig,
+  resetConfigCache,
+} from "../../core/config/config";
+import { bundleKeyForContentRoot, resolveConfiguredSources } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import {
+  assertBundleNotDisabled,
   commitWriteTargetBoundary,
   isWriteCapableSourceKind,
   prepareWriteTargetForMutation,
@@ -45,7 +48,9 @@ import {
   writeAssetToSource,
 } from "../../core/write-source";
 import type { InputFlag } from "../../execution/input-contract";
-import { withEngineFallback } from "../../integrations/agent/engine-fallback";
+import { deriveInstallations } from "../../indexer/installations";
+import { retiredEngineSelection } from "../../integrations/agent/resolution";
+import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
@@ -53,6 +58,7 @@ import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptio
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
 import { isCheckoutInvocation, type ResolvedAkmInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
+import { activeTaskSources, resolveBundleAsset } from "../../tasks/run/load-task";
 import { createExecutionProvenanceContext } from "../../tasks/run/provenance";
 import { runTask } from "../../tasks/run/run-task";
 import { readTaskHistory } from "../../tasks/run/task-history";
@@ -102,6 +108,10 @@ export interface TasksAddInput {
    * `workflow` and `prompt`.
    */
   command?: string | string[];
+  /** Where a prompt target runs and on which model (`--connection`, `--harness`, `--model`), written into the task. */
+  connection?: string;
+  harness?: string;
+  /** The retired `--engine`: written into the task as a connection by that name, else a harness. */
   engine?: string;
   model?: string;
   timeoutMs?: number;
@@ -159,13 +169,15 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     throw new UsageError(`Resolved task path escapes the stash: "${id}".`, "PATH_ESCAPE_VIOLATION");
   }
 
+  const engineAs = input.engine === undefined ? undefined : retiredEngineSelection(bundle.config, input.engine);
   const yaml = renderTaskYaml({
     id,
     schedule: input.schedule,
     workflow: input.workflow,
     prompt: input.prompt,
     command: input.command,
-    engine: input.engine,
+    connection: input.connection ?? (engineAs?.kind === "connection" ? engineAs.name : undefined),
+    harness: input.harness ?? (engineAs?.kind === "harness" ? engineAs.name : undefined),
     model: input.model,
     timeoutMs: input.timeoutMs,
     params: input.params,
@@ -175,7 +187,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     tags: input.tags,
   });
 
-  const parsedTask = parseTaskSource({ yaml, filePath: assetPath, workspaceRoot: stashDir });
+  const parsedTask = parseTaskSource({ yaml, filePath: assetPath });
   const task = projectTaskSourceV4(parsedTask.v4);
   const qualifiedRef = makeBundleRef(bundle.bundleName, `tasks/${id}`);
   await prepareTaskV3Execution(task, {
@@ -266,16 +278,24 @@ function assertTaskAddTargetShape(input: TasksAddInput): void {
       "INVALID_FLAG_VALUE",
     );
   }
-  // `--timeout-ms` is the workflow's whole-run bound. Engine and model stay
-  // prompt-only because workflow engines come from the frozen plan.
-  if (input.workflow && (input.engine !== undefined || input.model !== undefined)) {
+  // `--timeout-ms` is the workflow's whole-run bound. Connection, harness and
+  // model stay prompt-only because a workflow's connections and harnesses come from the frozen plan.
+  const selects =
+    input.connection !== undefined ||
+    input.harness !== undefined ||
+    input.engine !== undefined ||
+    input.model !== undefined;
+  if (input.workflow && selects) {
     throw new UsageError(
-      "Workflow tasks accept --params and --timeout-ms; engine and model are prompt-task fields.",
+      "Workflow tasks accept --params and --timeout-ms; connection, harness and model are prompt-task fields.",
       "INVALID_FLAG_VALUE",
     );
   }
-  if (hasCommand && (input.engine !== undefined || input.model !== undefined)) {
-    throw new UsageError("Command tasks accept --timeout-ms but not --engine or --model.", "INVALID_FLAG_VALUE");
+  if (hasCommand && selects) {
+    throw new UsageError(
+      "Command tasks accept --timeout-ms but not --connection, --harness or --model.",
+      "INVALID_FLAG_VALUE",
+    );
   }
   if (input.prompt !== undefined) assertInlineTaskPrompt(input.prompt);
 }
@@ -300,17 +320,17 @@ export async function akmTasksRun(
   // own meaning (activation policy, scheduler env), never selecting the event
   // source.
   const provenance = createExecutionProvenanceContext(scheduled);
-  // The raw, exact-name input flags `tasks-cli.ts` captures ride through
-  // unchanged to `runTask` -> `loadPreparedTask`'s materializer, which
-  // attaches the materialized literals to the constructed `TaskInvocation`.
-  // This is only the pass-through surface: a valid flag set does not change
-  // the run, and the inputs are validated only, not delivered to the target.
+  // The raw, exact-name input flags `tasks-cli.ts`'s Stage 1 captures ride
+  // through unchanged to `runTask` -> `loadPreparedTask`'s Stage 2 materializer,
+  // which owns declaring `inputFlags` on `RunTaskOptions` and attaching the
+  // materialized literals to the constructed `TaskInvocation`. This is only
+  // the pass-through surface.
   //
-  // No `as` cast: `RunTaskOptions` (this literal's inferred type is checked
-  // directly against it, below) declares every one of these fields, so the
-  // compiler — not a suppressed excess-property check — enforces this seam. A
-  // future rename or removal on either side fails `tsc`, not silently at the
-  // `runTask` boundary.
+  // No `as` cast: `RunTaskOptions` (this
+  // literal's inferred type is checked directly against it, below) declares
+  // every one of these fields, so the compiler — not a suppressed excess-
+  // property check — enforces this seam. A future rename or removal on
+  // either side now fails `tsc`, not silently at the `runTask` boundary.
   const runOptions: RunTaskOptions = {
     bundleDir: bundle.source.path,
     bundleName: bundle.source.name,
@@ -370,7 +390,6 @@ function resolveTaskActivation(
     const parsedSource = parseTaskSource({
       yaml: fs.readFileSync(sourcePath, "utf8"),
       filePath: sourcePath,
-      workspaceRoot: bundle.source.path,
     });
     if (parsedSource.v4.schedule.length === 0) {
       throw new UsageError(`Task ${JSON.stringify(ref)} has no schedule to enable.`, "INVALID_FLAG_VALUE");
@@ -560,27 +579,29 @@ async function buildSchedulerSyncPlan(
     if (options.dryRun !== true) config = loadConfig();
   }
 
-  const activeSources = resolveActiveConfiguredSources(config);
+  // The one active-bundle set search, show and workflows walk, working stash included.
+  // A working stash that is a disabled configured bundle is left out: an
+  // unscoped sync still removes that bundle's rows (below) and syncs the others,
+  // and a scoped sync reports it as disabled only when it is the selected one.
+  const sources = activeTaskSources(config);
+  const ids = deriveInstallations(sources).map((installation) => installation.id);
+  const kinds = sources.map((source) => source.type);
+  const configuredSources = resolveConfiguredSources(config);
   if (bundleTarget) {
     // Only filesystem and git bundles can carry scheduler state.
-    const targetSource = activeSources.find((source) => source.name === bundleTarget);
-    if (targetSource && !isWriteCapableSourceKind(targetSource.type)) {
+    const targetType = kinds[ids.indexOf(bundleTarget)];
+    if (targetType !== undefined && !isWriteCapableSourceKind(targetType)) {
       throw new UsageError(
-        `Bundle "${bundleTarget}" has kind "${targetSource.type}"; task scheduling is only supported for filesystem and git bundles.`,
+        `Bundle "${bundleTarget}" has kind "${targetType}"; task scheduling is only supported for filesystem and git bundles.`,
         "INVALID_FLAG_VALUE",
       );
     }
   }
-  const configuredSources = resolveConfiguredSources(config);
-  const schedulable = activeSources
-    .filter((source) => isWriteCapableSourceKind(source.type))
-    .map((source) => source.name);
-  // No configured bundle at all: the working stash (e.g. `AKM_BUNDLE_DIR`).
-  const selected: Array<string | undefined> = bundleTarget
-    ? [bundleTarget]
-    : schedulable.length > 0 || configuredSources.length > 0
-      ? schedulable
-      : [undefined];
+  const schedulable = ids.filter((_, index) => {
+    const type = kinds[index];
+    return type !== undefined && isWriteCapableSourceKind(type);
+  });
+  const selected: string[] = bundleTarget ? [bundleTarget] : schedulable;
 
   const enabledRefSet = new Set(enabledRefs);
   const desired: SchedulerBinding[] = [];
@@ -853,20 +874,18 @@ export async function akmTasksDoctor(
     }
   }
   const bindings = groupInstalledBindings(installed);
-  // Report the EFFECTIVE engine view — the same one the runner resolves —
-  // so doctor never says "no engine" on an install where tasks actually run.
-  const { config } = withEngineFallback(loadConfig());
-  const defaultEngine = config.defaults?.engine;
-  const engines = Object.keys(config.engines ?? {});
+  // Report the EFFECTIVE view — the default harness (else connection) agent work runs on, and what is configured.
+  const config = loadConfig();
+  const defaultEngine = (defaultHarness(config) ?? defaultConnection(config))?.name;
+  const engines = [...Object.keys(config.connections ?? {}), ...Object.keys(config.harnesses ?? {})];
 
   // Surface the effective triage settings for the default improve strategy.
-  const improveStrategyName =
-    typeof config.defaults?.improveStrategy === "string" ? config.defaults.improveStrategy : "default";
+  const improveStrategyName = config.improve?.strategy ?? "default";
   // Report the EFFECTIVE strategy, not the raw one. Resolving the raw
   // strategy here would report `applyMode: "promote"` for a promote strategy
   // under a review-first config, while the run actually uses "queue" — a doctor
   // command lying about the thing it exists to diagnose.
-  const rawStrategy = resolveImproveStrategy(config.defaults?.improveStrategy, config).config;
+  const rawStrategy = resolveImproveStrategy(config.improve?.strategy, config).config;
   const { config: effectiveStrategy, gated } = applyAutonomyGate(rawStrategy, config);
   const autonomyEnabled = isImproveAutonomyEnabled(config);
   // Memory cleanup has no strategy flag to downgrade, so add that direct lane
@@ -966,12 +985,7 @@ function taskProjectionAssetResolver(
     if (bundle === bundleName) {
       return { file: await resolveAssetPath(bundleRoot, type, name), bundleRoot };
     }
-    // `bundle` is the qualifier of an asset ref in the task, not a flag.
-    const target = resolveWriteTarget(config, bundle, { requireWritable: false, flag: "The asset ref's bundle" });
-    return {
-      file: await resolveAssetPath(target.source.path, type, name),
-      bundleRoot: target.source.path,
-    };
+    return resolveBundleAsset(config, { bundle, type, name });
   };
 }
 
@@ -984,7 +998,7 @@ function taskProjectionAssetResolver(
 export function resolveTaskReadBundle(
   refBundle: string | undefined,
   flagBundle: string | undefined,
-): ResolvedWriteTarget {
+): Pick<ResolvedWriteTarget, "source"> {
   if (refBundle && flagBundle && refBundle !== flagBundle) {
     throw new UsageError(
       `Task ref selects bundle ${JSON.stringify(refBundle)}, but --bundle selects ${JSON.stringify(flagBundle)}.`,
@@ -993,19 +1007,28 @@ export function resolveTaskReadBundle(
   }
   const selector = flagBundle ?? refBundle;
   const config = loadConfig();
-  let resolved: ResolvedWriteTarget;
+  let resolved: Pick<ResolvedWriteTarget, "source">;
   if (!selector) {
     resolved = resolveWorkingStashTarget(config, { requireWritable: false });
   } else {
-    const configured = resolveActiveConfiguredSources(config).some((source) => source.name === selector);
-    const implicit = configured ? undefined : resolveImplicitScheduledBundleTarget(config, selector);
-    resolved =
-      implicit ??
-      resolveWriteTarget(config, selector, {
-        requireWritable: false,
-        // The selector is `--bundle` when given, else the task ref's own bundle qualifier.
-        flag: flagBundle !== undefined ? "--bundle" : "The task ref's bundle",
-      });
+    // Reading needs no write target: any bundle of the active set resolves.
+    const sources = activeTaskSources(config);
+    const source = resolveSourcesForOrigin(selector, sources)[0];
+    if (!source) {
+      assertBundleNotDisabled(config, selector);
+      throw new UsageError(
+        `${flagBundle !== undefined ? "--bundle" : "The task ref's bundle"} must reference a source name from your config. No source named "${selector}" is configured. Run \`akm bundle list\` to see available sources.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    resolved = {
+      source: {
+        kind: source.type ?? "filesystem",
+        name: selector,
+        path: source.path,
+        adapterId: source.adapterId ?? detectAdapterId(source.path),
+      },
+    };
   }
   if (refBundle && resolved.source.name !== refBundle) {
     throw new UsageError(
@@ -1014,28 +1037,6 @@ export function resolveTaskReadBundle(
     );
   }
   return resolved;
-}
-
-/**
- * New scheduler bindings always carry a canonical `--bundle <owner>` token,
- * including an env-selected working stash. That stash need not be persisted in
- * config (CI, one-shot tools, and fresh installs commonly use only
- * AKM_BUNDLE_DIR), so its scheduled child — every row sets AKM_BUNDLE_DIR to
- * the working stash it was synced from — must accept precisely its derived
- * owner name.
- *
- * This is intentionally narrower than an unknown-bundle fallback: a configured
- * source always wins, and an unconfigured selector is accepted only when it is
- * exactly the current env-selected working stash identity.
- */
-function resolveImplicitScheduledBundleTarget(config: AkmConfig, selector: string): ResolvedWriteTarget | undefined {
-  if (!process.env.AKM_BUNDLE_DIR?.trim()) return undefined;
-  try {
-    const working = resolveWorkingStashTarget(config, { requireWritable: false });
-    return working.source.name === selector ? working : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /** True when `candidate` resolves to the same directory as the primary stash. */
@@ -1059,7 +1060,8 @@ interface RenderInput {
   workflow?: string;
   prompt?: string;
   command?: string | string[];
-  engine?: string;
+  connection?: string;
+  harness?: string;
   model?: string;
   timeoutMs?: number;
   params?: string;
@@ -1120,7 +1122,8 @@ function renderTaskYaml(input: RenderInput): string {
   if (input.description !== undefined) obj.description = input.description;
   if (input.when_to_use !== undefined) obj.when_to_use = input.when_to_use;
   if (input.tags && input.tags.length > 0) obj.tags = input.tags;
-  if (input.engine !== undefined) obj.engine = input.engine;
+  if (input.connection !== undefined) obj.connection = input.connection;
+  if (input.harness !== undefined) obj.harness = input.harness;
   if (input.model !== undefined) obj.model = input.model;
   if (input.timeoutMs !== undefined) obj.timeout = input.timeoutMs;
   if (input.schedule.length > 0) obj.schedule = input.schedule;

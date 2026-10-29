@@ -6,7 +6,7 @@ adapter. Types are `document` / `script` / `file`. This adapter is
 `looksLikeRoot` must never fire.
 
 - **Adapter:** `src/core/adapter/adapters/generic-files-adapter.ts`
-- **Goldens:** `tests/fixtures/format-family-goldens/generic-files/{recognition,placement,lint,renderer}.json`
+- **Goldens:** `tests/fixtures/format-family-goldens/generic-files/{recognition,lint,renderer}.json`
 
 Files: `notes.md` (→ document), `build.sh` (→ script, `.sh` ∈ SCRIPT_EXTENSIONS),
 `data.csv` (→ file).

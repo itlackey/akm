@@ -13,7 +13,7 @@ consistency and reducing repeated context-setting.
 | `knowledge/` | Knowledge | Reference documents, guides, architecture notes |
 | `memories/` | Memories | Persistent facts and preferences learned over time |
 | `commands/` | Commands | Parameterised prompt templates for common workflows |
-| `agents/` | Agents | Agent definitions with system prompts and tool policies |
+| `agents/` | Agents | Agent definitions with system prompts |
 | `workflows/` | Workflows | Multi-step orchestration sequences |
 | `tasks/` | Tasks | Scheduled or on-demand automation tasks |
 | `lessons/` | Lessons | Durable lessons extracted from past sessions |
@@ -77,15 +77,15 @@ akm search "<query>" --type skill
 ### Recording feedback and new knowledge
 
 ```sh
-# Mark an asset as helpful (raises its utility score for improve; does not trigger a rewrite)
+# Mark an asset as helpful (raises its ranking; does not trigger a rewrite)
 akm feedback <ref> --positive
 
-# Flag an asset whose content is wrong or stale: its utility score drops, and the next
+# Flag an asset whose content is wrong or stale: it ranks lower, and the next
 # improve run may repair its description, title or when_to_use from your reason.
 # A note that simply did not fit your task gets no negative feedback.
 akm feedback <ref> --negative --reason "<what is wrong and what should change>"
 
-# Once you have verified the correct fact, attach the exact fix: it is checked and queued for review
+# Once you have verified the correct fact, attach the exact fix: it is checked and applied at once
 akm feedback <ref> --negative --reason "<what is wrong>" --replace "<exact current text>" --with "<corrected text>" --source "<URL, command or file>"
 
 # Capture a durable lesson or memory from the current session

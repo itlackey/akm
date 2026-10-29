@@ -1,0 +1,430 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * `credentials.json`: the keys akm holds for a connection and for the two
+ * services with an endpoint of their own, each stored for one endpoint, and how
+ * a block's `apiKey` resolves to one.
+ */
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
+import {
+  collectCredentialValues,
+  fileFlatCredentials,
+  readCredential,
+  resolveApiKey,
+  writeCredential,
+} from "../src/core/config/credentials";
+import { getConfigDir } from "../src/core/paths";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+
+const storePath = () => path.join(getConfigDir(), "credentials.json");
+const readStoreFile = () => JSON.parse(fs.readFileSync(storePath(), "utf8")) as Record<string, unknown>;
+const writeStoreFile = (value: unknown) => {
+  fs.mkdirSync(path.dirname(storePath()), { recursive: true });
+  fs.writeFileSync(storePath(), typeof value === "string" ? value : JSON.stringify(value));
+};
+const mode = (target: string) => fs.statSync(target).mode & 0o777;
+
+const LAB = "https://lab.example.test/v1";
+const lab = { connection: "lab" } as const;
+const embedding = { service: "embedding" } as const;
+
+let warnings: string[] = [];
+
+beforeEach(() => {
+  fs.rmSync(storePath(), { force: true });
+  warnings = [];
+  _resetWarnOnceForTests();
+  _setWarnSinkForTests((level, args) => {
+    if (level === "warn") warnings.push(args.map(String).join(" "));
+  });
+});
+
+afterEach(() => {
+  _setWarnSinkForTests(undefined);
+  fs.rmSync(storePath(), { force: true });
+});
+
+describe("the store", () => {
+  test("an absent file holds nothing, and reading it is silent", () => {
+    expect(readCredential(lab, LAB)).toBeUndefined();
+    expect(warnings).toEqual([]);
+    expect(fs.existsSync(storePath())).toBe(false);
+  });
+
+  test("writing creates the file 0600, and a key reads back for its slot and endpoint", () => {
+    writeCredential(lab, "key-lab", LAB);
+    expect(readCredential(lab, LAB)).toBe("key-lab");
+    expect(readCredential({ connection: "other" }, LAB)).toBeUndefined();
+    expect(readStoreFile()).toEqual({ connections: { lab: { key: "key-lab", endpoint: LAB } } });
+    expect(mode(storePath())).toBe(0o600);
+  });
+
+  test("a second write keeps the other keys and replaces the same slot", () => {
+    writeCredential(lab, "one", LAB);
+    writeCredential(embedding, "two", "https://embed.example.test/v1");
+    writeCredential(lab, "three", LAB);
+    expect(readStoreFile()).toEqual({
+      connections: { lab: { key: "three", endpoint: LAB } },
+      services: { embedding: { key: "two", endpoint: "https://embed.example.test/v1" } },
+    });
+    expect(mode(storePath())).toBe(0o600);
+  });
+
+  test("an empty stored key reads as no key", () => {
+    writeStoreFile({ connections: { lab: { key: "", endpoint: LAB } } });
+    expect(readCredential(lab, LAB)).toBeUndefined();
+  });
+
+  test("a store that is not a JSON object reads as empty with one warning, and is never overwritten", () => {
+    for (const corrupt of ["{not json", "[]", '"text"']) {
+      _resetWarnOnceForTests();
+      warnings = [];
+      writeStoreFile(corrupt);
+      expect(readCredential(lab, LAB)).toBeUndefined();
+      expect(readCredential(lab, LAB)).toBeUndefined();
+      expect(warnings.filter((w) => w.includes("is not a JSON object"))).toHaveLength(1);
+      expect(() => writeCredential(lab, "new", LAB)).toThrow(/is not a JSON object; refusing to overwrite/);
+      expect(fs.readFileSync(storePath(), "utf8")).toBe(corrupt);
+    }
+  });
+
+  test("a store that cannot be read says so, in its own words, and is never overwritten", () => {
+    // A directory where the file belongs reads as an error that is not "absent".
+    fs.mkdirSync(storePath(), { recursive: true });
+    try {
+      expect(readCredential(lab, LAB)).toBeUndefined();
+      expect(readCredential(lab, LAB)).toBeUndefined();
+      const unreadable = warnings.filter((w) => w.includes("cannot be read"));
+      expect(unreadable).toHaveLength(1);
+      expect(unreadable[0]).toContain("EISDIR");
+      expect(unreadable[0]).not.toContain("not a JSON object");
+      expect(() => writeCredential(lab, "new", LAB)).toThrow(/cannot be read \(EISDIR\); refusing to overwrite/);
+    } finally {
+      fs.rmSync(storePath(), { recursive: true, force: true });
+    }
+  });
+
+  test("an entry that is not { key, endpoint } is named once and ignored, and a write keeps it as it is", () => {
+    writeStoreFile({ connections: { lab: { token: "x" }, other: { key: "k", endpoint: LAB } }, extra: 3 });
+    expect(readCredential(lab, LAB)).toBeUndefined();
+    expect(readCredential(lab, LAB)).toBeUndefined();
+    expect(readCredential({ connection: "other" }, LAB)).toBe("k");
+    expect(warnings.filter((w) => w.includes('the entry for connection "lab" is not'))).toHaveLength(1);
+    expect(warnings.join("\n")).not.toContain("token");
+
+    writeCredential(embedding, "key-embedding", LAB);
+    expect(readStoreFile()).toEqual({
+      connections: { lab: { token: "x" }, other: { key: "k", endpoint: LAB } },
+      services: { embedding: { key: "key-embedding", endpoint: LAB } },
+      extra: 3,
+    });
+  });
+});
+
+describe("a key is stored for one endpoint", () => {
+  test("it is read for that endpoint however it is spelled, and for no other", () => {
+    writeCredential(lab, "key-lab", LAB);
+    expect(readCredential(lab, `${LAB}/`)).toBe("key-lab");
+    expect(readCredential(lab, `${LAB}/chat/completions`)).toBe("key-lab");
+    expect(warnings).toEqual([]);
+    expect(readCredential(lab, "https://other.example.test/v1")).toBeUndefined();
+  });
+
+  test("a block whose endpoint changed gets no key, and the warning names both endpoints without their credentials", () => {
+    writeCredential(lab, "key-lab", "https://user:pw@old.example.test/v1?token=abc");
+    expect(readCredential(lab, "https://user:pw@new.example.test/v1")).toBeUndefined();
+    expect(readCredential(lab, "https://user:pw@new.example.test/v1")).toBeUndefined();
+    const named = warnings.filter((w) => w.includes("belongs to"));
+    expect(named).toHaveLength(1);
+    expect(named[0]).toContain("old.example.test");
+    expect(named[0]).toContain("new.example.test");
+    for (const secret of ["key-lab", "pw", "abc"]) expect(named[0]).not.toContain(secret);
+  });
+
+  test("a stored key is not moved to the new endpoint by a setup that gives none: the old entry stays for the old one", () => {
+    writeCredential(lab, "key-lab", LAB);
+    expect(readCredential(lab, "https://new.example.test/v1")).toBeUndefined();
+    expect(readCredential(lab, LAB)).toBe("key-lab");
+  });
+});
+
+describe("connections and services are different namespaces", () => {
+  test("a connection called embedding and the embedding service hold different keys", () => {
+    writeCredential({ connection: "embedding" }, "chat-key", "https://chat.example.test/v1");
+    writeCredential(embedding, "service-key", "https://embed.example.test/v1");
+    expect(readCredential({ connection: "embedding" }, "https://chat.example.test/v1")).toBe("chat-key");
+    expect(readCredential(embedding, "https://embed.example.test/v1")).toBe("service-key");
+    // Neither is read for the other's slot, even at the other's endpoint.
+    expect(readCredential({ connection: "embedding" }, "https://embed.example.test/v1")).toBeUndefined();
+    expect(readCredential(embedding, "https://chat.example.test/v1")).toBeUndefined();
+  });
+
+  test("writing one leaves the other as it was", () => {
+    writeCredential(embedding, "service-key", "https://embed.example.test/v1");
+    writeCredential({ connection: "embedding" }, "chat-key", "https://chat.example.test/v1");
+    expect(readStoreFile()).toEqual({
+      connections: { embedding: { key: "chat-key", endpoint: "https://chat.example.test/v1" } },
+      services: { embedding: { key: "service-key", endpoint: "https://embed.example.test/v1" } },
+    });
+  });
+});
+
+describe("a key in the older flat form", () => {
+  test("is named once and not used, for any endpoint", () => {
+    writeStoreFile({ lab: "flat-key" });
+    expect(readCredential(lab, LAB)).toBeUndefined();
+    expect(readCredential(lab, LAB)).toBeUndefined();
+    expect(warnings.filter((w) => w.includes('the key "lab" is in the older form'))).toHaveLength(1);
+  });
+
+  test("is filed under the endpoint of the block it belongs to, then read for that endpoint", () => {
+    writeStoreFile({ lab: "flat-key", curateRerank: "rerank-key", ghost: "no-block" });
+    const endpoints: Record<string, string> = {
+      lab: LAB,
+      curateRerank: "https://rerank.example.test/v1",
+    };
+    const endpointOf = (slot: Parameters<typeof readCredential>[0]) =>
+      endpoints["connection" in slot ? slot.connection : slot.service];
+
+    const dryRun = fileFlatCredentials(endpointOf, false);
+    expect(dryRun.filed).toEqual(["lab", "curateRerank"]);
+    expect(readStoreFile()).toEqual({ lab: "flat-key", curateRerank: "rerank-key", ghost: "no-block" });
+
+    fileFlatCredentials(endpointOf, true);
+    expect(readStoreFile()).toEqual({
+      ghost: "no-block",
+      connections: { lab: { key: "flat-key", endpoint: LAB } },
+      services: { curateRerank: { key: "rerank-key", endpoint: "https://rerank.example.test/v1" } },
+    });
+    expect(readCredential(lab, LAB)).toBe("flat-key");
+  });
+
+  test("is not allowed to replace a newer key stored for the same slot, and both stay", () => {
+    writeStoreFile({ lab: "stale-flat-key" });
+    writeCredential(lab, "current-key", LAB);
+    const before = readStoreFile();
+
+    const result = fileFlatCredentials(() => LAB, true);
+
+    expect(result.filed).toEqual([]);
+    expect(result.backupPath).toBeUndefined();
+    expect(result.notes.join("\n")).toContain('connection "lab" already holds a different key or endpoint');
+    expect(result.notes.join("\n")).not.toContain("flat-key");
+    expect(readStoreFile()).toEqual(before);
+    expect(readCredential(lab, LAB)).toBe("current-key");
+  });
+
+  test("the same key for another endpoint is a conflict too: only an exact match is deduplicated", () => {
+    writeStoreFile({ lab: "one-key" });
+    writeCredential(lab, "one-key", "https://elsewhere.example.test/v1");
+    const before = readStoreFile();
+
+    expect(fileFlatCredentials(() => LAB, true).filed).toEqual([]);
+    expect(readStoreFile()).toEqual(before);
+  });
+
+  test("a slot that holds exactly the same key and endpoint just drops the older entry", () => {
+    writeStoreFile({ lab: "same-key", other: "kept" });
+    writeCredential(lab, "same-key", LAB);
+
+    const result = fileFlatCredentials(
+      (slot) => ("connection" in slot && slot.connection === "lab" ? LAB : undefined),
+      true,
+    );
+
+    expect(result.filed).toEqual(["lab"]);
+    expect(readStoreFile()).toEqual({
+      other: "kept",
+      connections: { lab: { key: "same-key", endpoint: LAB } },
+    });
+  });
+
+  test("a key held in a shape akm does not read is a conflict, not free space", () => {
+    writeStoreFile({ lab: "flat-key", connections: { lab: { token: "x" } } });
+    const before = readStoreFile();
+
+    expect(fileFlatCredentials(() => LAB, true).filed).toEqual([]);
+    expect(readStoreFile()).toEqual(before);
+  });
+
+  test("is measured against the key the same migration is about to file", () => {
+    writeStoreFile({ lab: "flat-key" });
+    const pending = (value: string) => [{ slot: lab, value, endpoint: LAB }];
+
+    const conflict = fileFlatCredentials(() => LAB, true, pending("config-key"));
+    expect(conflict.filed).toEqual([]);
+    expect(readStoreFile()).toEqual({ lab: "flat-key" });
+
+    const same = fileFlatCredentials(() => LAB, true, pending("flat-key"));
+    expect(same.filed).toEqual(["lab"]);
+    expect(readStoreFile()).toEqual({});
+  });
+
+  test("the store is copied, mode 0600, before an older entry is removed from it", () => {
+    writeStoreFile({ lab: "flat-key", other: "kept" });
+    const original = fs.readFileSync(storePath(), "utf8");
+
+    const result = fileFlatCredentials(
+      (slot) => ("connection" in slot && slot.connection === "lab" ? LAB : undefined),
+      true,
+    );
+
+    expect(result.filed).toEqual(["lab"]);
+    const backup = result.backupPath as string;
+    expect(backup).toContain(path.join("config-backups", "credentials.json."));
+    expect(fs.readFileSync(backup, "utf8")).toBe(original);
+    expect(mode(backup)).toBe(0o600);
+    fs.rmSync(backup);
+  });
+
+  test("a dry run writes and copies nothing", () => {
+    writeStoreFile({ lab: "flat-key" });
+    const original = fs.readFileSync(storePath(), "utf8");
+
+    const result = fileFlatCredentials(() => LAB, false);
+
+    expect(result.filed).toEqual(["lab"]);
+    expect(result.backupPath).toBeUndefined();
+    expect(fs.readFileSync(storePath(), "utf8")).toBe(original);
+  });
+
+  test("whose name could be a connection or the embedding service is not guessed", () => {
+    writeStoreFile({ embedding: "flat-key" });
+    const result = fileFlatCredentials(() => "https://both.example.test/v1", true);
+    expect(result.filed).toEqual([]);
+    expect(result.notes.join("\n")).toContain("could belong to the embedding service or to the connection");
+    expect(readStoreFile()).toEqual({ embedding: "flat-key" });
+  });
+});
+
+describe("a flat key named like a namespace", () => {
+  const SERVICE = "https://embed.example.test/v1";
+  const endpoints = (named: Record<string, string>) => (slot: Parameters<typeof readCredential>[0]) =>
+    named["connection" in slot ? `connection:${slot.connection}` : `service:${slot.service}`];
+
+  for (const name of ["connections", "services"] as const) {
+    test(`"${name}" as a key is told from the namespace by its shape, and filed under its connection`, () => {
+      writeStoreFile({ [name]: "reserved-key" });
+      const result = fileFlatCredentials(endpoints({ [`connection:${name}`]: LAB }), true);
+
+      expect(result.filed).toEqual([name]);
+      expect(readStoreFile()).toEqual({ connections: { [name]: { key: "reserved-key", endpoint: LAB } } });
+      expect(readCredential({ connection: name }, LAB)).toBe("reserved-key");
+    });
+
+    test(`a write to another slot stops while "${name}" holds a key, and the key is not erased`, () => {
+      writeStoreFile({ [name]: "reserved-key" });
+      const before = fs.readFileSync(storePath(), "utf8");
+      const slot = name === "connections" ? lab : embedding;
+
+      expect(() => writeCredential(slot, "new-key", LAB)).toThrow(/older form.*refusing to overwrite/);
+      expect(fs.readFileSync(storePath(), "utf8")).toBe(before);
+    });
+  }
+
+  test("a key it cannot file stays, blocks the keys that would replace it, and is filed on a later run", () => {
+    writeStoreFile({ connections: "reserved-key", services: "other-key", lab: "lab-key", embedding: "embed-key" });
+    const before = fs.readFileSync(storePath(), "utf8");
+
+    const stuck = fileFlatCredentials(endpoints({ "connection:lab": LAB, "service:embedding": SERVICE }), true);
+    expect(stuck.filed).toEqual([]);
+    expect(stuck.notes.join("\n")).toContain('the key "lab" cannot be filed while the key "connections"');
+    expect(stuck.notes.join("\n")).toContain('the key "embedding" cannot be filed while the key "services"');
+    expect(fs.readFileSync(storePath(), "utf8")).toBe(before);
+
+    const later = fileFlatCredentials(
+      endpoints({
+        "connection:connections": LAB,
+        "connection:services": LAB,
+        "connection:lab": LAB,
+        "service:embedding": SERVICE,
+      }),
+      true,
+    );
+    expect([...later.filed].sort()).toEqual(["connections", "embedding", "lab", "services"]);
+    expect(readStoreFile()).toEqual({
+      connections: {
+        connections: { key: "reserved-key", endpoint: LAB },
+        services: { key: "other-key", endpoint: LAB },
+        lab: { key: "lab-key", endpoint: LAB },
+      },
+      services: { embedding: { key: "embed-key", endpoint: SERVICE } },
+    });
+  });
+
+  test("the namespace object of the same name is not a flat key", () => {
+    writeStoreFile({
+      connections: { lab: { key: "k", endpoint: LAB } },
+      services: { embedding: { key: "e", endpoint: SERVICE } },
+    });
+    const before = fs.readFileSync(storePath(), "utf8");
+
+    expect(fileFlatCredentials(() => LAB, true).filed).toEqual([]);
+    expect(fs.readFileSync(storePath(), "utf8")).toBe(before);
+    writeCredential(lab, "k2", LAB);
+    expect(readCredential(lab, LAB)).toBe("k2");
+  });
+});
+
+describe("resolveApiKey", () => {
+  test("a $VAR reference reads that variable and never the store", () => {
+    writeCredential(lab, "stored", LAB);
+    expect(resolveApiKey("$LAB_KEY", lab, LAB, { LAB_KEY: " from-env " })).toBe("from-env");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var reference syntax under test
+    expect(resolveApiKey("${LAB_KEY}", lab, LAB, { LAB_KEY: "from-env" })).toBe("from-env");
+  });
+
+  test("an unset or empty variable sends no key, naming the variable once and never the store's key", () => {
+    writeCredential(lab, "stored", LAB);
+    expect(resolveApiKey("$LAB_KEY", lab, LAB, {})).toBeUndefined();
+    expect(resolveApiKey("$LAB_KEY", lab, LAB, { LAB_KEY: "  " })).toBeUndefined();
+    expect(warnings.filter((w) => w.includes("LAB_KEY"))).toHaveLength(1);
+  });
+
+  test("quiet resolution does not warn", () => {
+    expect(resolveApiKey("$LAB_KEY", lab, LAB, {}, true)).toBeUndefined();
+    expect(warnings).toEqual([]);
+  });
+
+  test("no apiKey in config reads the key stored for the block's slot and endpoint", () => {
+    writeCredential(lab, "stored", LAB);
+    expect(resolveApiKey(undefined, lab, LAB, {})).toBe("stored");
+    expect(resolveApiKey(undefined, { connection: "other" }, LAB, {})).toBeUndefined();
+    expect(resolveApiKey(undefined, lab, "https://elsewhere.example.test/v1", {})).toBeUndefined();
+  });
+
+  test("a value that is not a $VAR reference is not a key: the store is read instead", () => {
+    writeCredential(lab, "stored", LAB);
+    expect(resolveApiKey("sk-literal", lab, LAB, {})).toBe("stored");
+  });
+});
+
+describe("collectCredentialValues", () => {
+  test("lists every key akm could send, from a variable or the store, whatever endpoint the store holds it for", () => {
+    writeCredential({ connection: "stored-conn" }, "stored-key", "http://b/v1");
+    writeCredential(embedding, "embed-key", "http://e/v1");
+    writeCredential({ connection: "retired" }, "retired-key", "http://old/v1");
+    const values = collectCredentialValues(
+      {
+        connections: {
+          envConn: { endpoint: "http://a/v1", apiKey: "$A_KEY" },
+          "stored-conn": { endpoint: "http://b/v1" },
+          unkeyed: { endpoint: "http://c/v1", apiKey: "$UNSET_KEY" },
+        },
+        search: { curateRerank: { endpoint: "http://d/v1", model: "m", apiKey: "$RERANK_KEY" } },
+      } as unknown as Parameters<typeof collectCredentialValues>[0],
+      { A_KEY: "env-key", RERANK_KEY: "rerank-key" },
+    );
+    expect(values.sort()).toEqual(["embed-key", "env-key", "rerank-key", "retired-key", "stored-key"]);
+    expect(warnings).toEqual([]);
+  });
+
+  test("an empty config has no values", () => {
+    expect(collectCredentialValues({}, {})).toEqual([]);
+  });
+});

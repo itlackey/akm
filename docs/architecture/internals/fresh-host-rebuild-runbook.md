@@ -12,11 +12,12 @@ restore it from.
 2. **Confirm the binary resolves:** `akm --version`.
 3. **Restore `config.json`.** akm reads one user config at
    `~/.config/akm/config.json` (`%APPDATA%\akm\config.json` on Windows; set
-   `AKM_CONFIG_DIR` to move it). It holds your named `engines`,
-   `defaults.engine` and `defaults.llmEngine`, and your improve strategies.
+   `AKM_CONFIG_DIR` to move it). It holds your `connections`, `harnesses`, and
+   your improve strategies.
 4. **Provide secrets.** `config.json` refers to API keys as `$VAR` or
-   `${VAR}`. Export those environment variables, or restore your `env/` and
-   `secrets/` assets, so the named engines and the embedding connection resolve.
+   `${VAR}`. Export those environment variables, or restore `credentials.json`
+   from your own backup (it is never part of `config.json`), so the
+   connections and the embedding endpoint resolve.
 5. **Restore the working bundle.** Clone your bundle's git remote to the path
    of the working bundle's entry under `bundles` in the restored config
    (`defaultBundle` selects which one; the default path is `~/akm`). To start

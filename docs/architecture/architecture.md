@@ -6,9 +6,9 @@ catalogs. This page summarizes how it is put together.
 
 ## Invariants
 
-These behaviors hold across every command. Each names the test that pins
-it; one that names none is held by review. The rules for how the code
-itself is written are in [Core Principles](akm-core-principles.md).
+These behaviors hold across every command. Each names the test that pins it;
+one that names none is held by review. The rules for how the code itself is
+written are in [Core Principles](akm-core-principles.md).
 
 - **Files are the truth.** Capabilities are files in bundles. `index.db` is
   a derived view that `akm index` rebuilds; `state.db` holds akm's
@@ -21,51 +21,87 @@ itself is written are in [Core Principles](akm-core-principles.md).
 - **One local retrieval layer.** Every source materializes to disk and is
   indexed the same way; `show` resolves through the index and reads from
   disk. Registry results are opt-in and arrive in `registryHits`, never
-  merged into `hits`. Pinned by the `SourceProvider` interface in
-  `src/sources/provider.ts` and `tests/integration/output-baseline.test.ts`.
+  merged into `hits`. A source provider fetches and refreshes and implements
+  no search or show, so source resolution, registry install and provider
+  plumbing stay behind indexing and the path from `search` or `curate` to
+  `show` is a lookup in the local index. Pinned by the `SourceProvider`
+  interface in `src/sources/provider.ts` and
+  `tests/integration/output-baseline.test.ts`.
 - **Discovery chooses, show delivers.** `search` and `curate` return enough
-  to pick an asset and a `ref` at every detail level and shape; `show`
-  returns the payload; agent-shaped results also carry `path` and
-  `editable`. Pinned by `tests/output-shapes-unit.test.ts` and
-  `tests/output-baseline.test.ts`.
+  to pick an asset and its `ref` at every detail level (a registry hit
+  carries `installRef` instead); `show` returns the payload; `--detail agent`
+  results also carry `path` and `editable`. Pinned by
+  `tests/output-shapes-unit.test.ts` and `tests/output-baseline.test.ts`.
+- **Every token earns its place.** Default output is lean: `--detail brief`
+  lists only what is needed to choose the next asset, and `normal`, `full`
+  and `agent` widen or reshape it. `show` returns what a consumer needs to
+  act on the asset (a script's run hints, a skill's instructions, a
+  command's template, an agent's prompt, knowledge content, a workflow's
+  steps and parameters, env key names, secret metadata) and never an env or
+  secret value. Pinned by `tests/output-shapes-unit.test.ts`.
 - **Refs are path identities.** `[bundle//]conceptId`, with `#fragment`
   accepted by `show` only. A short ref resolves against `defaultBundle`,
   then the remaining bundles in installation order. A rename is a new
-  identity. Pinned by `tests/asset-ref.test.ts`, `tests/resolve-ref.test.ts`
-  and `tests/contracts/ref-resolver-contract.test.ts`.
+  identity. An agent passes the ref `search` returned to `show` and never
+  parses or builds one. Pinned by `tests/asset-ref.test.ts`,
+  `tests/resolve-ref.test.ts` and
+  `tests/contracts/ref-resolver-contract.test.ts`.
 - **Execution happens only through named surfaces.** Workflow runs, tasks,
   agent and command dispatch, `env run` and `secret run`, the improve and
   proposal processes, index passes, and fetcher modules in the working
   bundle's `scripts/wiki-fetchers/` directory during website sync. `search`
   and `show` execute nothing; a script runs only as a task or workflow
   target. Held by review.
-- **Improvement is review-first.** Proposals are the unit of change. With
-  `experimental.improveAutonomy` on, three lanes act without a person
-  (memory inference, memory cleanup, triage in promote mode). Regardless,
-  `improve` writes session assets, purges graced archives, commits accepted
-  proposals and auto-syncs a git-backed bundle. Pinned by
+- **Improvement is review-first.** Proposals are the unit of change: reflect,
+  distill, extract and consolidate only emit proposals. Three lanes act
+  without a person, and only with `experimental.improveAutonomy` on: memory
+  inference, memory cleanup, and a triage promote that runs the judgment
+  tier (a promote through the deterministic gates alone needs no opt-in). A
+  fix a person types with `akm feedback --replace` is applied at once, as a
+  normal accept that `akm proposal revert` undoes. Regardless of the opt-in,
+  session extraction writes session assets, and `improve` purges graced
+  archives, commits accepted proposals and auto-syncs a git-backed bundle.
+  Pinned by
   `tests/improve-plan-autonomy-wiring.test.ts` and
   `tests/config-experimental-improve-autonomy.test.ts`.
-- **Writes resolve one way.** `--target`, then `defaultWriteTarget`, then
-  the working bundle, then an error. A destination that is not writable is
-  an error, never a fallback. Env and secret values are never printed.
-  Pinned by `tests/integration/write/write-source.test.ts`,
+- **Writes resolve one way.** An explicit `--bundle`, then
+  `defaultWriteTarget`, then the working bundle, then an error. A
+  destination that is not writable is an error, never a fallback. Env and
+  secret values are never printed. Pinned by
+  `tests/integration/write/write-source.test.ts`,
   `tests/integration/env/env.test.ts` and
   `tests/integration/secret/secret-indexing.test.ts`.
-- **Output is for automation first.** `--format json`, `--detail brief` and
-  `--shape human` by default; failures are `{ok, error, code}` on stderr
-  with a stable exit code. Pinned by
-  `tests/integration/output-baseline.test.ts`.
-- **A workflow run executes the plan frozen at creation.** The plan, resolved
-  request, engine and fan-out width are journaled when the run starts; a
-  resumed run reads the journal, never config or credentials, so editing
-  config changes the next run and not the one in flight. Pinned by
-  `tests/workflows/child-plan-immutability.test.ts` and
-  `tests/workflows/immutable-execution-v4-red.test.ts`.
+- **Output is for automation first.** `--format json` and `--detail brief`
+  by default; failures are `{ok, error, code}` on stderr with a stable exit
+  code. Pinned by `tests/integration/output-baseline.test.ts` and
+  `tests/integration/cli-errors.test.ts`.
+- **A workflow run executes the plan frozen at creation.** The plan, the
+  resolved request, the runner selection and the fan-out widths are
+  journaled when the run starts; a resumed run reads the journal and never
+  config, so editing config changes the next run and not the one in flight.
+  The journaled runner is symbolic (a `$VAR` reference, or a connection's name
+  for its stored key), so a credential is not frozen: dispatch materializes the
+  current key, for the frozen endpoint only, and only if the runner was frozen
+  eligible for one (`storedKey: false` marks a connection an `extends` base
+  alone defines). Pinned by `tests/workflows/child-plan-immutability.test.ts`
+  and `tests/workflows/immutable-execution-v4-red.test.ts`.
 - **Host authority is local and never inferred.** Inherited config shares
-  portable policy only; a disabled bundle is inert; the default bundle is
-  explicit. Pinned by `tests/config.test.ts` and
-  `tests/core/activation-policy.test.ts`.
+  portable policy only. A disabled bundle (`enabled: false`) is inert across
+  content reads, writes, indexing and execution; an explicit bundle lifecycle
+  command may still update a named disabled bundle without activating it. The
+  default bundle is carried as explicit identity and default status, never
+  taken from array position. Runtime code never invents authority: the one
+  host-local choice it fills in by itself is `scheduler.enabled`, and only from
+  evidence the operator already created on this host (a config without the list
+  takes the akm-written rows already in the native scheduler as the choice;
+  see [Configuration](../reference/configuration.md#scheduler-activation)).
+  Anything else that would need a new trust decision is reported, never
+  invented. Pinned by `tests/config.test.ts` and
+  `tests/source-source.test.ts`.
+- **An unsafe override names one risk.** `--allow-insecure-transport` allows
+  plain HTTP and nothing else, and there is no combined bypass. Pinned for the
+  flag by `tests/integration/registry/registry-network-boundary.test.ts`; the
+  absence of a combined bypass is held by review.
 
 ---
 
@@ -135,7 +171,8 @@ source only if it has never been materialized on this host; nothing refreshes
 on a timer. A git or npm install recorded in the lockfile whose files are
 missing is reported with a warning that names `akm bundle update`; index does
 not fetch it. A configured npm bundle with no lock entry has no walkable path,
-so index skips it with the same warning instead of calling `sync()`.
+so index skips it with a warning that names `akm bundle update` instead of
+calling `sync()`.
 
 `akm index` indexes each source through its bundle's adapter. A source that
 could not be walked completely keeps its previously indexed rows and the index
@@ -202,10 +239,17 @@ There is **one** ranking for all indexed content: reciprocal rank fusion
    through the model's embedding profile (`src/llm/embedders/profile.ts`)
 
 Filters (type, source, scope, belief, proposed quality, default-excluded
-types) and one-hit-per-file deduplication narrow the fused list without
-reordering it, and a hit's `score` is its fused score. Of entries with
-identical indexed content only the highest-ranked is kept. Nothing else — name,
-type, tag, graph, usage or belief-state signals — changes the order.
+types) drop ineligible entries from each list before its 100 candidates are
+taken. The fused score is then multiplied by
+`1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))` over the user's recorded
+feedback for the asset (`applyFeedback` in `src/indexer/search/ranking.ts`;
+[`akm feedback`](../reference/cli.md#feedback) says which feedback counts, and
+an asset with none keeps its fused score), and the list is re-sorted, equal
+scores by fully qualified ref (`<bundle>//<conceptId>`). A hit's `score` is
+that adjusted score. One-hit-per-file deduplication, and keeping only
+the highest-ranked of entries with identical indexed content, then drop entries
+from the sorted list without reordering it. Nothing else — name, type, tag,
+graph, utility score or belief-state signals — changes the order.
 
 Notes:
 
@@ -220,10 +264,15 @@ Notes:
 - `hints` carries search hints, examples, usage, intent fields, cross-references,
   page kind, and when-to-use text
 - `content` is bounded body text plus TOC headings and parameter metadata; `env`
-  and `secret` entries index key names and file names only
+  and `secret` entries index key names and file names only, and session bodies
+  are not indexed
 - registry results live in `registryHits`, never in `hits`
 - `--from all` keeps registry results in `registryHits` — they are not
   rank-merged with source hits
+- curate carries search's normalized scope/source/type/belief controls through
+  selection, derived-surface enrichment, support refs and packing. Search and curate default
+  to current; explicit all/historical evidence is labelled as historical context.
+  Direct show remains a deliberate inspection path without a belief default.
 - local search and curate expose the actual execution in `searchMode`:
   `semantic`, intentional/unavailable `keyword`, or `fts-fallback` when a
   ready semantic runtime failed during the query; that degradation also
@@ -283,10 +332,10 @@ from the current resolved source roots, is not stored in the index, and is
 
 Writes go through one helper: `src/core/write-source.ts`. It is the only
 place that should branch on `source.kind`; command layers do not hold provider
-knowledge. That is a convention that code review holds, not a lint rule. Where
-a step is meaningful only for a publication-backed target, `write-source.ts`
-exposes a kind-neutral wrapper that does the work for a git target and does
-nothing otherwise:
+knowledge. That is a convention that code review holds (core principle 2), not
+a lint rule. Where a step is meaningful only for a publication-backed target,
+`write-source.ts` exposes a kind-neutral wrapper that does the work for a git
+target and does nothing otherwise:
 `prepareWriteTargetForMutation`, `commitWriteTargetBoundary`, and
 `withWriteTargetMutation` (write the file, `git add` exactly the recorded
 paths, commit, push with `--force-with-lease` when configured). Recording a
@@ -322,8 +371,7 @@ not `false`. `options.pushOnCommit` is not supported: config load reports it
 refresh.
 
 Write-target resolution (`resolveWriteTarget`) follows: an explicit
-destination flag (`--bundle` on `remember`/`clone`/`improve`, `--target` on
-`import`/env/secret mutations) -> `config.defaultWriteTarget` -> working
+destination flag (`--bundle`) -> `config.defaultWriteTarget` -> working
 bundle (`defaultBundle`) -> `ConfigError`. There is no fallback to the first
 writable source. The resolved target keeps the optional configured selector
 separate from the stable `source.name`: APIs that must re-resolve a destination
@@ -360,8 +408,8 @@ whose proposal queue is read or adjudicated; it does not override the proposal's
 write destination. Qualified proposals and unqualified proposals created in a
 configured secondary queue record the destination source name and materialized
 root. Diff, accept, and revert use that binding by default and refuse an
-explicit `--target` that resolves elsewhere. An unbound short proposal needs
-either `--target` or `--queue`; it does not inherit a default write target.
+explicit `--bundle` that resolves elsewhere. An unbound short proposal needs
+either `--bundle` or `--queue`; it does not inherit a default write target.
 
 ---
 
@@ -448,72 +496,106 @@ ordinary `NotFoundError` (exit 1).
 
 ---
 
-## Engine Boundary
+## Connections and Harnesses
 
-Direct commands, task execution, workflows, improve, proposals, and index
-passes all execute through one engine boundary. The other places akm runs code
-are `env run` and `secret run` (a child process that receives the injected
-values) and fetcher modules from the working bundle's `scripts/wiki-fetchers/` directory, imported during website sync
-(`src/sources/snapshot-fetchers/registry.ts`); `search` and `show` execute
-nothing.
+akm reaches models through two things, and nothing else is configured to run
+work. A **connection** is an OpenAI-compatible endpoint with an optional key and
+the models it serves under aliases. A **harness** is an agent program the user
+already has (Claude Code, Codex, OpenCode, and the other platforms registered in
+`HARNESS_REGISTRY`). The connection named `default`, or the only one, is the
+default connection; harnesses follow the same rule. Public execution selection
+names a connection or a harness, never a profile, and
+[Configuration](../reference/configuration.md) is the reference for both.
 
-Public execution selection uses named `engines`, never profiles. An engine is
-either `kind: "llm"` (an OpenAI-compatible chat-completions connection) or
-`kind: "agent"` (a registered harness platform). The SDK runtime is an
-internal transport kind for an `opencode-sdk` agent engine, not a public engine
-kind.
+What runs where follows from the kind of work:
 
-Every execution takes the same four steps
-(`src/integrations/agent/execution.ts`, `runner-dispatch.ts`):
+- **Model work** (the improve processes, judges, index passes, extraction,
+  `remember --enrich`) runs on the default connection as a direct request to its
+  endpoint; with no connection, on the default harness, with its tools restricted
+  where the harness can be.
+- **Agent work** (`akm agent`, `command run`, `proposal new`, agent tasks,
+  workflow agent steps) runs on the default harness; with no harness, on **akm's
+  own runtime** over the default connection. The runtime is a pinned OpenCode 2
+  binary that akm runs as a process, has no name in config, and is not a harness.
+- With neither a connection nor a harness, those features are off, and each
+  command that needs one says so and points at `akm setup`. There is no fallback
+  and nothing hidden.
+
+Every execution — direct commands, tasks, workflows, improve, proposals, and
+index passes — takes the same steps
+(`src/integrations/agent/resolution.ts`, `execution.ts`, `runner-dispatch.ts`):
 
 ```text
 adapter-rendered or anonymous work
   -> resolveExecution(input)          -> { request, runner (a RunnerSpec), provenance }
-  -> buildExecution(request, runner)  -> harness argv inputs or chat messages
-  -> runExecution(built, options)     -> agent CLI, OpenCode SDK, or direct LLM
+  -> buildExecution(request, runner)  -> harness argv inputs, runtime inputs, or chat messages
+  -> runExecution(built, options)     -> harness program, akm's OpenCode runtime, or direct chat
 ```
 
-`resolveExecution` picks the engine from an ordered list — the nearest layer
-that names one, then `defaults.engine`, then the implicit `opencode-sdk`
-fallback when its binary is present — and merges one set of defaults, nearest
-wins: the selected engine's own model/inference/timeout/workspace, then the
-persona, the command, the invocation defaults, and the current call. Omitted,
-explicit `null`, zero, and empty values stay distinct. A recognized
-`models.json` alias expands once, at the layer that chose it; the request
-records the exact final model. Tools are checked against the host-local
-`execution.allowedTools` ceiling; an asset can request tools but not grant
-itself any. The result's `provenance` names the layer behind each field
-(`akm task explain`, `command run --dry-run`).
+`resolveExecution` asks `resolveTarget` (the one resolver; `akm health`, `akm
+info` and `akm task explain` use it too, so what they print is what a call does)
+for the connection or harness and the model, then merges one set of defaults,
+nearest wins. The layers run farthest to nearest: the shipped alias for the kind
+of work, the configuration for the process, the persona, the command, the
+invocation defaults, and the current call's flags. A connection or harness that
+is named and not configured is an error (exit 78) that lists the configured names;
+the default is used only when nothing was named. A
+model is an alias, looked up on the selected connection or harness, or an exact
+name; the request records the exact final model. A connection's request fields
+and the model entry's are sent as written, under the portable settings
+(`temperature`, `maxTokens`, ...) the layers ask for, which the one translation
+in `src/core/llm-inference.ts` writes in the endpoint's own spelling. Omitted,
+explicit `null`, zero, and empty values stay distinct. The result's
+`provenance` names the layer behind each field (`akm task explain`,
+`command run --dry-run`).
 
-An agent asset is a persona (system prompt, requested tools, model preference),
-not executable work. An `agents/<name>` selector (optionally `bundle//`-qualified)
-is resolved by akm into a persona; any other agent string is a native harness
-selector that replaces the persona.
+An agent asset is a persona (a system prompt), not executable work. An
+`agents/<name>` selector (optionally `bundle//`-qualified) is resolved by akm
+into a persona; any other agent string is a native harness selector that
+replaces the persona.
 
 `buildExecution` hands the request to the selected harness's own builder
-(registered on `HARNESS_REGISTRY`), or builds chat messages for a direct LLM.
-A tool policy the transport cannot enforce, or a denied tool selection, stops
-here; any other field the transport cannot carry becomes an
-`untranslated-field` notice and dispatch continues.
+(registered on `HARNESS_REGISTRY`), to the runtime's lowerer, or builds chat
+messages for a direct request. A harness builder is a thin shell: it names the
+program's arguments, delivers the prompt (on stdin where the program reads it,
+as an argument otherwise) and takes standard output as the reply. A field the
+transport cannot carry becomes a secret-free `untranslated-field` notice and
+dispatch continues.
 
-Credentials stay symbolic (an env descriptor, an `apiKeyFile` path, or a
-`secret://` reference) in everything `resolveExecution` returns, so a request
-and runner can be journaled. `runExecution()` reads the current value at each
-dispatch and removes it, with other secret-looking values the child could
-see, from the result. Workflow resume calls `buildExecutionFromWire()` on the
-journaled `{ request, runner }` and does not read config, `models.json`, or
-credentials, so a config edit after the freeze does not change a resumed unit.
-The prompt-free interactive `akm agent` launch resolves its engine directly.
-An explicit missing or incompatible engine is an error and does not fall
-through to another configured engine.
+Credentials stay symbolic (a `$VAR` reference, or the connection's name for its
+`credentials.json` entry) in everything `resolveExecution` returns, so a request
+and runner can be journaled. `runExecution()` materializes the current value at
+each dispatch (`src/core/config/credentials.ts`: the variable's value, else the
+key stored for that connection and the endpoint it was frozen with) and scrubs it
+from the result, together with the values of credential-named variables in the
+environment the child inherited (names such as `*_API_KEY`, `*_TOKEN`, `*_SECRET`
+and `*_PASSWORD`, eight characters or more: `collectInferredSecretValues`,
+`src/core/redaction.ts`, the rule a task log uses). A harness has no key of akm's,
+so a harness reply is scrubbed of the inherited values alone. Two things are
+therefore different at resume: workflow resume calls
+`buildExecutionFromWire()` on the journaled `{ request, runner }` and reads no
+config, so a config edit after the freeze cannot change a resumed unit's
+endpoint, model or settings; but the key is read again at dispatch (a stored key is used only for a
+connection this host's own config defines, which `resolveTarget` records on the
+runner as `storedKey: false` when it does not, so the answer does not depend on
+whether a config is loaded), so a rotated key reaches the resumed unit, and only
+at the endpoint it was frozen with. The prompt-free interactive `akm agent` launch resolves its
+harness directly and starts it with the terminal inherited; a connection has
+nothing to start.
 
-Tasks (source v4) and workflows use this boundary. Markdown and GitHub-shaped
-YAML workflow sources compile to one plan, and a new run freezes plan
-`irVersion` 6 (`WORKFLOW_PLAN_VERSION`). A stored plan that decodes runs
-whatever release froze it, with one warning; one that does not decode is marked
-abandoned and `akm workflow run <ref>` starts afresh. A plan that a newer akm
-froze and this one cannot decode is refused, naming the upgrade. akm does not
-support full GitHub Actions semantics or arbitrary remote action execution.
+A config in the older `engines` form is converted to `connections` and
+`harnesses` by one pure function (`src/core/config/convert-engines.ts`), in
+memory on every load and permanently by `akm migrate apply`.
+
+Task source v4 execution and durable workflow dispatch use this runtime
+boundary. Markdown workflows compile through source IR v1; new starts freeze
+`irVersion: 8`, which records a connection or harness where earlier versions
+recorded an engine. A stored plan that decodes runs whatever release froze it
+(plans with only exec steps from `irVersion` 5 on decode); one that does not,
+which includes every earlier plan with a command step, is marked abandoned and
+`akm workflow run <ref>` starts afresh. Only a plan a newer akm froze is
+refused, naming the upgrade. AKM does not support full GitHub Actions semantics
+or arbitrary remote action execution.
 
 Tasks are `tasks/<name>.yml` documents in task source v4 (`parseTaskSource`).
 Version 2 and 3 files are not read at runtime: they are refused with a message
@@ -525,10 +607,10 @@ remains readable.
 Every helper under `src/llm/` is a **bounded, single-shot, stateless** call.
 Concretely:
 
-- Each public export is either a pure function (`chatCompletion`,
-  `resolveIndexPassExecution`, `parseJsonResponse` in `src/core/parse.ts`, …)
-  or a factory that returns a one-shot client tied to the symbolic
-  runner/config the caller passes in.
+- Each public export is either a stateless function (`chatCompletion` performs
+  one HTTP request and keeps nothing between calls; `resolveIndexPassExecution`,
+  `parseJsonResponse` in `src/core/parse.ts`, …) or a factory that returns a
+  one-shot client tied to the symbolic runner/config the caller passes in.
 - No module under `src/llm/` keeps session, conversation, or response state at
   module scope. The module-level state is the local embedder pipeline and the
   embedding cache in `src/llm/embedder.ts` — an expensive-to-build but
@@ -536,43 +618,99 @@ Concretely:
   tests construct a fresh pipeline.
 - `callStructured()` (`src/llm/structured-call.ts`) is the common bounded
   structured-LLM seam: it adapts an already-resolved symbolic runner into an
-  inline resolved request, lowers it, and dispatches without re-reading aliases
-  or credentials. Index callers use `resolveIndexPassExecution()`
-  (`src/llm/index-passes.ts`) to freeze the typed `{ runner, notices }`
-  selection once per invocation. Improve processes are selected through
-  `improve.strategies`; see `docs/reference/configuration.md` for canonical
-  config paths.
+  inline resolved request, lowers it, and dispatches it through `runExecution`,
+  which materializes the connection's key at dispatch like every other dispatch
+  and re-runs no alias resolution. Index callers use
+  `resolveIndexPassExecution()` (`src/llm/index-passes.ts`) to freeze the typed
+  `{ runner, notices }` selection once per invocation; there is no separate
+  readiness projection. Which improve processes run is chosen by
+  `improve.strategies`, and where each runs by `improve.processes`; see
+  `docs/reference/configuration.md` for canonical config paths.
 
-### External agents (`src/integrations/agent/`)
+Review holds the seam.
 
-External coding agents are reachable via two execution paths:
+### External agents (`src/integrations/agent/`, `src/integrations/harnesses/`)
+
+Agent programs are reachable by two execution paths, both behind
+`runExecution`:
 
 **Spawn path** (`src/integrations/agent/spawn.ts`):
 
-- `runAgent(profile, prompt, options)` is the single shell-out entry point.
-  It owns process spawn, captured/interactive stdio, hard timeout, and
-  structured failure reasons.
+- `runAgent(profile, options)` is the single shell-out entry point. It owns
+  process spawn, captured/interactive stdio, hard timeout, and structured
+  failure reasons. The child's environment is the one akm runs in, with the
+  directories this akm resolved and the call's own variables set over it, and
+  `PWD` naming the directory of a run given one, as `cd` sets it.
+- The `opencode` harness is the user's installed OpenCode, both majors, through
+  `opencode run` with the prompt on stdin
+  (`src/integrations/harnesses/opencode/agent-builder.ts`). Their OpenCode owns
+  its configuration, logins and sessions; akm embeds, copies and reads none of it
+  to run. Agent work runs it as the user would; model work is akm's own process
+  ([How akm runs a harness](../reference/configuration.md#how-akm-runs-a-harness)).
 - The `AgentRunResult` envelope carries `{ ok, exitCode, stdout, stderr,
-  durationMs, reason?, error?, parsed?, … }` where `reason` is a failure code
-  such as `"timeout"`, `"spawn_failed"`, `"non_zero_exit"`, or `"parse_error"`.
+  durationMs, reason?, error?, ... }` where `reason` is a typed code such as
+  `"timeout"`, `"spawn_failed"`, `"non_zero_exit"` or `"parse_error"`.
 
-**SDK path** (`src/integrations/harnesses/opencode-sdk/sdk-runner.ts`):
+**akm's OpenCode runtime** (`src/integrations/harnesses/opencode/runtime/`):
 
-- `runOpencodeSdk(profile, prompt, opts, llmConfig?)` uses the embedded
-  `@opencode-ai/sdk` instead of `Bun.spawn`. The SDK starts `opencode serve`
-  and talks to it over HTTP, so the `opencode` binary must be on `PATH`.
-- Selected by an agent engine whose `platform` is `"opencode-sdk"`. Its optional
-  `llmEngine` supplies the LLM fallback connection. With none, there is no
-  fallback and opencode uses its own configuration; `defaults.llmEngine` is not
-  borrowed.
-- One `opencode serve` child is started per distinct child environment and
-  cached for the process; each dispatch creates its own session, which stays in
-  OpenCode's history. The working directory is passed per call.
-- A cached server keeps the event loop open, so a dispatching command closes
-  the registry (`disposeDispatchResources`, `src/integrations/agent/runner-dispatch.ts`)
-  when it finishes — from the CLI composition root and from the `finally` of
-  `akm workflow run` — on every exit path. A new dispatch backend that leaves a
-  long-lived child process running must be closed by that same drain.
+- It is akm's agent runtime behind one application-owned port,
+  `src/integrations/agent/runtime-port.ts`: the lowering target a request is
+  lowered for (`lowering`) and `run` for one resolved dispatch. Lowering and
+  dispatch use only the port; the one module that names this folder is
+  `src/integrations/agent/runtime.ts`, and the folder reads no config
+  (`tests/contracts/runtime-port-boundary.test.ts` checks both).
+- It is a pinned OpenCode 2 binary run as a process, one per run: `opencode run
+  --standalone --title akm` with the prompt on standard input and the reply on
+  standard output, the same command the `opencode` harness builds for OpenCode 2
+  model work. akm fetches the binary from the npm registry the first time the
+  runtime runs and keeps it in its cache (`binary.ts`: the package for the
+  platform, checked against the registry's integrity hash before anything is
+  extracted). It depends on no OpenCode library, so nothing of OpenCode is
+  installed with akm.
+- The process is akm's own (`command.ts`): the connection a run was dispatched
+  with is its only provider (endpoint, key, model and context window as the run
+  froze them, never from the live config); its config, data, cache, state and
+  temp directories are `<akm data dir>/opencode-runtime/{config,data,cache,state,tmp}`;
+  no user or project OpenCode configuration is read (OpenCode still reads
+  `~/.agents` and its system config), nor are your Claude Code skills, its free
+  models and model-catalog fetch are off, and the `OPENCODE_*` variables akm runs with are not passed to it.
+  `--standalone` keeps a run to one process that ends with it, and replays no
+  killed session. OpenCode makes and migrates its database at start and two
+  processes doing that to one database break each other, so the first start of
+  this OpenCode version is a run of its own (`session list`, no model) under a
+  lock file in the runtime directory (`prepare.lock`, a dead holder reclaimed),
+  which leaves a `prepared-<version>` marker; runs that start with it, in this
+  akm process or another, wait for it.
+- The process loads akm's plugin (`src/assets/opencode/akm-plugin.js`, written
+  to the runtime's config directory): `akm_search`, `akm_show` and `akm_curate`
+  run the akm that started the run, by the argv it runs as (`AKM_OPENCODE_CLI`,
+  a JSON array: the executable alone when compiled, the runtime and the script
+  otherwise), the
+  connection's request fields are laid over each model request, with OpenCode's
+  own output cap taken off, the variables akm set for the process (its
+  directories and its OpenCode settings) are put back to akm's own, or removed,
+  in the environment of the commands the agent runs, and a run whose model has
+  made the same tool call and been given the same result three turns in a row
+  adds a message to its next request that tells it so (a connection's
+  temperature below 0.7 is raised to 0.7 for that request), and fails before the
+  request that would follow if it makes the same call again (OpenCode has no such
+  check).
+- The connection's key is in no environment: the inline config references it as
+  `{file:<data>/opencode-runtime/keys/<session>}`, a 0600 file written for the
+  run and removed after it.
+- Agent work runs OpenCode's default agent with its normal tools. Model work never
+  runs here: on a connection it is a direct request to its endpoint.
+- Every session is stored in akm's own OpenCode database
+  (`<akm data dir>/opencode-runtime/data/opencode/opencode.db`), which `akm
+  proposal extract --type opencode` reads back with SQLite alone, beside your own
+  OpenCode's database.
+- Nobody can answer an akm run: OpenCode's headless `run` cancels questions and
+  rejects permission requests, and the model carries on.
+- The run goes through the spawn path every agent run does (`runBuiltCommand`,
+  `src/integrations/agent/spawn.ts`): one deadline and one abort signal, the
+  SIGINT, SIGTERM, SIGKILL ladder, and captured output. A run that cannot start
+  (no binary and no registry to fetch it from) fails as `spawn_failed`, naming
+  the package, the URL and the cache path.
 
 ---
 
@@ -596,15 +734,20 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/core/asset/asset-placement.ts` | asset type registry and canonical source directories (`PLACEMENT_SPECS`) |
 | `src/core/asset/asset-ref.ts` | asset ref parsing and normalization (`parseBundleRef`) |
 | `src/core/adapter/` | the `BundleAdapter` contract and the built-in adapters (see [Adapters](adapters.md)) |
-| `src/core/config/config.ts` | config loading, validation, env resolution |
+| `src/core/config/config.ts` | config loading, validation, env resolution; the default connection and harness |
+| `src/core/config/credentials.ts` | `credentials.json` and the dispatch-time resolution of a connection's key (`$VAR`, else the stored entry) |
+| `src/core/config/convert-engines.ts` | the one conversion of the older `engines` / `defaults` form to `connections` / `harnesses`, called by the loader and by `akm migrate apply` |
 | `src/core/errors.ts` | error classes with stable codes and hints |
 | `src/core/parse.ts` | shared JSON parsing: think/fence stripping, balanced-brace extraction |
 | `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 1 worker) and keyed serialization |
 | `src/core/write-source.ts` | the single write helper (branches on `source.kind`) |
 | `src/execution/resolved-request.ts` | the versioned resolved execution request and its canonical wire form (tolerant decode) |
-| `src/integrations/agent/execution.ts` | `resolveExecution` (engine, layers, model alias, tools) and `buildExecution` / `buildExecutionFromWire` |
-| `src/integrations/agent/runner-dispatch.ts` | `runExecution`: reads credentials at dispatch, runs agent/SDK/LLM, redacts the result |
-| `src/integrations/agent/request-lowering.ts` | shared factory for the harness-owned request builders |
+| `src/integrations/agent/resolution.ts` | `resolveTarget`: the connection or harness a call runs on, and its model, timeout and request fields |
+| `src/integrations/agent/execution.ts` | `resolveExecution` (target, layers, model alias, persona) and `buildExecution` / `buildExecutionFromWire` |
+| `src/integrations/agent/runner-dispatch.ts` | `runExecution`: reads credentials at dispatch, runs harness / runtime / chat, redacts the result |
+| `src/integrations/agent/request-lowering.ts` | lowers a resolved request for a harness or the runtime, reporting what the target cannot carry |
+| `src/integrations/harnesses/` | `HARNESS_REGISTRY` and one folder per harness (thin shells that turn a request into argv, env and stdin) |
+| `src/commands/targets.ts` | the table of connections, harnesses and the work on them that `akm health`, `akm info` and `akm setup` print |
 | `src/sources/provider.ts` | minimal `SourceProvider` interface |
 | `src/sources/providers/` | filesystem / git / website / npm implementations |
 | `src/sources/resolve.ts` | filesystem path resolution for refs |
@@ -625,18 +768,16 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/commands/agent/` | contribute/agent command surface |
 | `src/registry/providers/` | registry provider implementations (static-index, skills-sh) |
 | `src/output/shapes/`, `src/output/text/` | JSON-envelope and text-output registries per command — a parallel concern to `src/output/renderers.ts`'s per-asset-type `show` renderers, which register themselves when the module loads |
-| `src/workflows/authoring/` | workflow authoring + scope-key helpers |
+| `src/workflows/authoring/` | workflow authoring |
 | `src/workflows/runtime/runs.ts` | workflow run persistence (raw SQL lives in `src/storage/repositories/workflow-runs-repository.ts`) |
 | `src/workflows/runtime/` | run lifecycle: runs, run-plan decoding, run outputs, agent-identity |
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
-| `src/llm/index-passes.ts` | per-pass LLM config resolution for `akm index` |
-| `src/llm/memory-infer.ts` | atomic-fact split helper (selected through `improve.strategies.<name>.processes.memoryInference`) |
+| `src/llm/index-passes.ts` | per-pass connection or harness resolution for `akm index` (`index.*`) |
+| `src/llm/memory-infer.ts` | atomic-fact split helper (runs where `improve.processes.memoryInference` or `index.memory` says) |
 | `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
 | `src/integrations/agent/spawn.ts` | agent CLI shell-out entry point (`runAgent`) |
-| `src/integrations/harnesses/opencode-sdk/sdk-runner.ts` | embedded SDK runner selected by an SDK `RunnerSpec` |
-| `src/integrations/agent/runner-dispatch.ts` | low-level exhaustive `RunnerSpec` transport dispatch and dispatch-time credential redaction |
-| `src/integrations/agent/profiles.ts` | internal spawn descriptors used after agent-engine lowering |
-| `src/integrations/agent/engine-resolution.ts` | named engine and symbolic transport-material resolution; exact request model projection happens in execution lowering |
+| `src/integrations/harnesses/opencode/runtime/` | akm's own runtime: the pinned OpenCode binary, fetched and run as a process |
+| `src/integrations/agent/profiles.ts` | internal spawn descriptors, built from the harness registry |
 | `src/llm/structured-call.ts` | bounded structured-LLM adapter through the common resolved/lowered execution seam |
 | `src/integrations/agent/detect.ts` | PATH-based agent CLI detection for `akm setup` |
 

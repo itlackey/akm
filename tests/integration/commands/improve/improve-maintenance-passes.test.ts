@@ -24,9 +24,11 @@ import {
 } from "../../../../src/commands/improve/loop-stages";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
-import type { MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
+import { collectPendingMemories, type MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
 import type { Database } from "../../../../src/storage/database";
 import { insertEventStrict } from "../../../../src/storage/repositories/events-repository";
+import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
+import { computeBodyHash, upsertLlmCacheEntry } from "../../../../src/storage/repositories/index-llm-cache-repository";
 import { STATE_DB_VACUUMED_EVENT } from "../../../../src/storage/state-db-integrity";
 import { makeStashDir, type SandboxedDir, sandboxXdgCacheHome, sandboxXdgDataHome } from "../../../_helpers/sandbox";
 
@@ -87,6 +89,38 @@ describe("runMemoryInferenceMaintenancePass", () => {
 
     expect(out.memoryInference).toBeUndefined();
     expect(out.warnings).toEqual([]);
+  });
+
+  test("minPendingCount gate does not count a parent with a cached no-change decision (#1219)", async () => {
+    const stash = freshStash();
+    const file = path.join(stash, "memories", "note.md");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "---\ndescription: note\n---\n\nTool calls this session: Read 12.\n", "utf8");
+    const db = openIndexDatabase(path.join(stash, "index.db"));
+    try {
+      upsertLlmCacheEntry(
+        db,
+        file,
+        computeBodyHash(collectPendingMemories(stash)[0]!.effectiveInput),
+        JSON.stringify({ noChange: true }),
+        "memory-inference-v5",
+      );
+      const ctx = makeCtx(stash, {
+        improveProfile: { processes: { memoryInference: { minPendingCount: 1 } } } as MaintenanceCtx["improveProfile"],
+      });
+
+      // Only a cached decision is pending: below the gate, so the seam is not reached.
+      const out = await runMemoryInferenceMaintenancePass(ctx, { current: db }, new Set());
+      expect(out.memoryInference).toBeUndefined();
+      expect(out.warnings).toEqual([]);
+
+      // Editing the body makes the parent count again, so the gate admits the pass.
+      fs.writeFileSync(file, "---\ndescription: note\n---\n\nThe retry cap is 30s via http.retryCap.\n", "utf8");
+      const admitted = await runMemoryInferenceMaintenancePass(ctx, { current: db }, new Set());
+      expect(admitted.warnings).toEqual(["memory inference failed: memoryInferenceFn not expected in this scenario"]);
+    } finally {
+      closeDatabase(db);
+    }
   });
 
   test("success returns the result, the memories/_inference action, and the pass duration", async () => {
@@ -171,6 +205,36 @@ describe("runRetentionPurgePass", () => {
     expect(out.warnings).toEqual([]);
     expect(fs.existsSync(oldFile)).toBe(false);
     expect(fs.existsSync(newFile)).toBe(true);
+  });
+
+  // #1168 §3.8: `$CACHE/logs/improve/<ISO>.log` and `$CACHE/logs/index/<ISO>.log`
+  // are flat files outside the task log dir and were never purged.
+  test("purges per-run improve and index log files past the retention window", async () => {
+    const stash = freshStash();
+    const cacheSb = sandboxXdgCacheHome();
+    disposers.push(cacheSb);
+    const { getRunLogDir } = await import("../../../../src/core/paths");
+
+    const kept: string[] = [];
+    const stale: string[] = [];
+    for (const kind of ["improve", "index"] as const) {
+      const dir = getRunLogDir(kind);
+      fs.mkdirSync(dir, { recursive: true });
+      const oldFile = path.join(dir, "2026-01-01T00-00-00-000Z.log");
+      fs.writeFileSync(oldFile, "stale run");
+      const oldMtime = new Date(Date.now() - 200 * 86_400_000);
+      fs.utimesSync(oldFile, oldMtime, oldMtime);
+      stale.push(oldFile);
+      const newFile = path.join(dir, "2026-10-10T00-00-00-000Z.log");
+      fs.writeFileSync(newFile, "recent run");
+      kept.push(newFile);
+    }
+
+    const out = runRetentionPurgePass(makeCtx(stash)); // default config → 90d window
+
+    expect(out.warnings).toEqual([]);
+    for (const f of stale) expect(fs.existsSync(f)).toBe(false);
+    for (const f of kept) expect(fs.existsSync(f)).toBe(true);
   });
 
   // R0 step 3 wires vacuumIfReclaimable into the

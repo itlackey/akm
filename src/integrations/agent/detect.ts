@@ -3,26 +3,23 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Setup-time agent CLI detection (v1 spec §12.3).
+ * Setup-time agent CLI detection.
  *
  * Probes every known/configured agent profile by checking `which <bin>` on
- * PATH. We do **not** call `<bin> --version` — that would execute the
- * binary at setup time, which is unnecessarily side-effectful for
- * detection. The presence of the binary on PATH is sufficient signal; the
- * spawn wrapper handles failures at run-time.
+ * PATH. Detection does **not** call `<bin> --version` — that would execute the
+ * binary, which is unnecessarily side-effectful for detection. The presence of
+ * the binary on PATH is sufficient signal; the spawn wrapper handles failures
+ * at run-time. A program's version is asked separately, by {@link probeVersion}.
  *
  * Tests inject a fake `whichFn` so detection branches can be exercised
  * without poking at the real PATH.
  */
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../../core/config/config";
-import {
-  type AgentProfile,
-  getBuiltinAgentProfile,
-  listBuiltinAgentProfiles,
-  OPENCODE_SDK_SERVER_BIN,
-} from "./profiles";
+import { childProcessEnv } from "../../core/paths";
+import { type AgentProfile, getBuiltinAgentProfile, listBuiltinAgentProfiles } from "./profiles";
 
 /** Function signature for a binary lookup probe. */
 export type WhichFn = (bin: string) => string | undefined;
@@ -70,6 +67,28 @@ export function defaultWhich(bin: string, envSource: NodeJS.ProcessEnv = process
     }
   }
   return undefined;
+}
+
+/**
+ * `<bin> --version`: its trimmed standard output, or undefined when it could not be run or did not
+ * exit 0. The one version probe: OpenCode's major detection and `akm health` both ask it, and like
+ * any program akm starts it gets the environment akm runs in.
+ */
+export function probeVersion(
+  bin: string,
+  timeoutMs: number,
+  spawn: typeof childProcess.spawnSync = childProcess.spawnSync,
+): string | undefined {
+  const result = spawn(bin, ["--version"], {
+    encoding: "utf8",
+    stdio: "pipe",
+    timeout: timeoutMs,
+    killSignal: "SIGKILL",
+    // Passed explicitly: Bun 1.3 gives a child the process's environment as it was at startup otherwise.
+    env: childProcessEnv(),
+  });
+  if (result.error || result.status !== 0) return undefined;
+  return String(result.stdout ?? "").trim();
 }
 
 /** Windows PATHEXT default, used when the env carries no explicit list. */
@@ -121,7 +140,6 @@ export interface AgentDetectionResult {
 // Swap-and-restore override. Inert in production; only tests call the setter.
 interface AgentDetectOverridesForTests {
   detectAgentCliProfiles?: typeof detectAgentCliProfiles;
-  pickDefaultAgentProfile?: typeof pickDefaultAgentProfile;
 }
 let detectOverrides: AgentDetectOverridesForTests | undefined;
 
@@ -141,18 +159,15 @@ export function _setAgentDetectForTests(fakes?: AgentDetectOverridesForTests): v
 export function detectAgentCliProfiles(agent?: AkmConfig, whichFn: WhichFn = defaultWhich): AgentDetectionResult[] {
   if (detectOverrides?.detectAgentCliProfiles) return detectOverrides.detectAgentCliProfiles(agent, whichFn);
   const profilesByName = new Map(Object.values(listBuiltinAgentProfiles()).map((profile) => [profile.name, profile]));
-  for (const [name, engine] of Object.entries(agent?.engines ?? {})) {
-    if (engine.kind !== "agent") continue;
-    const builtin = getBuiltinAgentProfile(engine.platform);
+  for (const [name, harness] of Object.entries(agent?.harnesses ?? {})) {
+    const platform = harness.platform ?? name;
+    const builtin = getBuiltinAgentProfile(platform);
     profilesByName.set(name, {
       name,
-      platform: engine.platform,
-      bin:
-        engine.bin ?? builtin?.bin ?? (engine.platform === "opencode-sdk" ? OPENCODE_SDK_SERVER_BIN : engine.platform),
-      args: engine.args ?? builtin?.args ?? [],
+      platform,
+      bin: harness.bin ?? builtin?.bin ?? platform,
+      args: harness.args ?? builtin?.args ?? [],
       stdio: "captured",
-      envPassthrough: builtin?.envPassthrough ?? [],
-      parseOutput: "text",
     });
   }
   const profiles = [...profilesByName.values()];
@@ -167,25 +182,4 @@ function probeProfile(profile: AgentProfile, whichFn: WhichFn): AgentDetectionRe
     available: Boolean(resolved),
     ...(resolved ? { resolvedPath: resolved } : {}),
   };
-}
-
-/**
- * Pick the default profile to persist after a setup-time detection run.
- *
- * Strategy:
- *   1. If the user already set `agent.default` and that profile is
- *      available, keep it (round-trip stability).
- *   2. Otherwise, pick the first available result in detection order.
- *   3. If nothing is available, return `undefined` and the caller skips
- *      writing `agent.default`.
- */
-export function pickDefaultAgentProfile(results: AgentDetectionResult[], existingDefault?: string): string | undefined {
-  if (detectOverrides?.pickDefaultAgentProfile)
-    return detectOverrides.pickDefaultAgentProfile(results, existingDefault);
-  if (existingDefault) {
-    const match = results.find((r) => r.name === existingDefault && r.available);
-    if (match) return match.name;
-  }
-  const first = results.find((r) => r.available);
-  return first?.name;
 }

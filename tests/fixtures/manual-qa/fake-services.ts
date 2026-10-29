@@ -66,7 +66,7 @@ const server = Bun.serve({
         JSON.stringify({
           tags: ["manual-qa"],
           description: "Deterministic manual QA response",
-          observed_at: "2026-08-05",
+          observed: "2026-08-05",
           complete: true,
           missing: [],
           feedback: "",

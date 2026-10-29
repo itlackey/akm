@@ -7,26 +7,21 @@
  * (TDZ) error regardless of which module is the FIRST one evaluated in a fresh
  * module graph.
  *
- * The bug: the per-harness barrel `harnesses/opencode-sdk/index.ts` re-exports
- * `runOpencodeSdk`/`closeServer` from `./sdk-runner`, which imports
- * `core/config`; `core/config/config-types` derives `VALID_HARNESS_IDS` back
- * from `harnesses/index.ts`. When the registry imported `OpencodeSdkHarness`
- * through that barrel, importing the barrel first (as the workflow-exec
- * subprocess entry — `run-workflow` → `native-executor`/`runner-dispatch` →
- * this barrel — does) evaluated `harnesses/index.ts` and ran
- * `new OpencodeSdkHarness()` while the barrel's class binding was still
- * initializing, throwing "Cannot access 'OpencodeSdkHarness' before
- * initialization" (process exit 1). That crashed every multi-process workflow
- * chaos driver at import time.
- *
- * The fix moves the descriptor into a config-leaf module
- * (`opencode-sdk/harness.ts`) that the registry imports directly, so loading the
- * SDK path never re-enters the still-initializing registry. This test spawns a
- * REAL `bun` child whose entry import is `run-workflow` (the workflow-exec
- * subprocess entry — the exact order that reproduced the TDZ) and asserts it
- * loads cleanly. A subprocess is required: an in-process import would hit a warm
- * module cache and never exercise the fresh-graph evaluation order (hence
- * tests/integration/ per the spawn rule).
+ * The bug it pins: a harness descriptor that imports (directly or through a
+ * barrel) a module reaching `core/config` makes the registry initialise while
+ * `core/config` is still loading, because `core/config/config-types` derives
+ * `VALID_HARNESS_IDS` back from `harnesses/index.ts`. Importing that module
+ * first (as the workflow-exec subprocess entry does: `run-workflow` →
+ * `native-executor`/`runner-dispatch` → the harness) then ran
+ * `new <Harness>()` while the descriptor's class binding was still
+ * initializing, throwing "Cannot access '<Harness>' before initialization"
+ * (process exit 1), which crashed every multi-process workflow chaos driver at
+ * import time. A descriptor therefore never imports a module that reaches
+ * `core/config`. This test spawns a REAL `bun` child whose entry import is
+ * `run-workflow` (the workflow-exec subprocess entry — the exact order that
+ * reproduced the TDZ) and asserts it loads cleanly. A subprocess is required:
+ * an in-process import would hit a warm module cache and never exercise the
+ * fresh-graph evaluation order (hence tests/integration/ per the spawn rule).
  */
 
 import { describe, expect, test } from "bun:test";

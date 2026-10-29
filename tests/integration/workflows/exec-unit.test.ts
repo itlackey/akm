@@ -18,11 +18,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { readStream } from "../../../src/core/subprocess";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { formatWorkflowStatusPlain } from "../../../src/output/text/workflow-format";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { EXEC_DEFAULT_ENV_PASSTHROUGH, runExecUnit } from "../../../src/workflows/exec/exec-unit";
+import { runExecUnit } from "../../../src/workflows/exec/exec-unit";
 import {
   defaultUnitDispatcher,
   executeStepPlan as executeFrozenStepPlan,
@@ -38,7 +40,7 @@ import {
   WORKFLOW_MAX_EXEC_OUTPUT_BYTES,
 } from "../../../src/workflows/resource-limits";
 import { getWorkflowStatus } from "../../../src/workflows/runtime/runs";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 import {
   freezeWorkflow,
   parseErrors,
@@ -96,7 +98,7 @@ function run(plan: WorkflowPlan, ctx: Partial<StepExecutionContext> = {}): Promi
     workflowRef: "workflows/exec-demo",
     params: {},
     evidence: {},
-    workDir,
+    bundleRootOverride: workDir,
     ...ctx,
   });
 }
@@ -335,12 +337,8 @@ describe("exec unit — timeout and abort really kill the process", () => {
   }, 30_000);
 });
 
-describe("exec unit — the child environment is an ALLOWLIST", () => {
-  /**
-   * A name that is NOT on {@link EXEC_DEFAULT_ENV_PASSTHROUGH} and is really
-   * present in this test process's environment — the stand-in for the unrelated
-   * credentials an interactive shell or a CI job routinely exports.
-   */
+describe("exec unit — the child environment is akm's own", () => {
+  /** A name nothing in akm lists, really present in this test process's environment. */
   const PROBE = "EXEC_UNIT_AMBIENT_PROBE";
   const PROBE_VALUE = "ambient-value-from-the-akm-process";
   let priorProbe: string | undefined;
@@ -354,85 +352,137 @@ describe("exec unit — the child environment is an ALLOWLIST", () => {
     else process.env[PROBE] = priorProbe;
   });
 
-  /** A child that reports the exact env names/values this assertion cares about. */
-  const REPORT = bunArgv(
-    "process.stdout.write(JSON.stringify({" +
-      "PATH: process.env.PATH ?? null, HOME: process.env.HOME ?? null, " +
-      "probe: process.env.EXEC_UNIT_AMBIENT_PROBE ? 'present' : null, " +
-      // Length, not the value: a resolved binding value is scrubbed out of the
-      // artifact by the redaction contract, which is exactly as intended.
-      "binding: process.env.DEPLOY_TOKEN ? 'len=' + process.env.DEPLOY_TOKEN.length : null, " +
-      "runId: process.env.AKM_RUN_ID ?? null, " +
-      'windows: ["SystemRoot", "SystemDrive", "WINDIR", "COMSPEC", "PATHEXT"]' +
-      ".filter((n) => process.env[n] !== undefined)}))",
-  );
-
-  async function report(unitLines: string[], ctx: Partial<StepExecutionContext> = {}) {
-    seedRun(["work"]);
-    const plan = execPlan(["    unit:", "      exec:", `        command: ${JSON.stringify(REPORT)}`, ...unitLines]);
-    storePlan(plan);
-    const result = await run(plan, ctx);
-    expect(result.ok).toBe(true);
-    return JSON.parse(String(result.evidence.output)) as {
-      PATH: string | null;
-      HOME: string | null;
-      probe: string | null;
-      binding: string | null;
-      runId: string | null;
-      windows: string[];
-    };
-  }
-
-  test("PATH and HOME (and, on Windows, the process-creation essentials) arrive by default", async () => {
-    const env = await report([]);
-    expect(env.PATH).toBeTruthy();
-    expect(env.HOME).toBe(process.env.HOME ?? null);
-    // Windows cannot even CREATE a process without these; the allowlist carries
-    // whichever of them the host actually defines, and on POSIX that is none.
-    const expectedWindows = ["SystemRoot", "SystemDrive", "WINDIR", "COMSPEC", "PATHEXT"].filter(
-      (name) => process.env[name] !== undefined,
-    );
-    expect(env.windows.sort()).toEqual(expectedWindows.sort());
-    if (process.platform === "win32") expect(env.windows).toContain("SystemRoot");
-  });
-
-  test("REGRESSION: a parent env var that is NOT on the allowlist is ABSENT from the child", async () => {
-    // The core of the model: `EXEC_UNIT_AMBIENT_PROBE` is genuinely set in this
-    // process, and the command still cannot see it.
-    expect(process.env[PROBE]).toBe(PROBE_VALUE);
-    expect((await report([])).probe).toBeNull();
-  });
-
-  test("`pass_env` widens the allowlist by NAME", async () => {
-    const env = await report([`        pass_env: [${PROBE}]`]);
-    expect(env.probe).toBe("present");
-    expect(env.PATH).toBeTruthy();
-  });
-
-  test("the exported default allowlist is the single definition the child is built from", async () => {
-    // Structural pin: no name reaches the child that is not on the allowlist,
-    // a binding, or the AKM_* context. `_`/`PWD`-style shell additions are not
-    // in play because the child env is replaced wholesale, not merged.
+  /** Run a child that reports `names` from its environment, `null` for one it does not have. */
+  async function reportEnv(names: string[], unitLines: string[] = []): Promise<Record<string, string | null>> {
     seedRun(["work"]);
     const plan = execPlan([
       "    unit:",
       "      exec:",
-      `        command: ${JSON.stringify(bunArgv("process.stdout.write(Object.keys(process.env).join(','))"))}`,
+      `        command: ${JSON.stringify(
+        bunArgv(
+          `process.stdout.write(JSON.stringify(Object.fromEntries(${JSON.stringify(names)}.map((n) => [n, process.env[n] ?? null]))))`,
+        ),
+      )}`,
+      ...unitLines,
     ]);
     storePlan(plan);
-    const names = String((await run(plan)).evidence.output)
-      .split(",")
-      .filter(Boolean);
-    const allowed = new Set<string>([
-      ...EXEC_DEFAULT_ENV_PASSTHROUGH,
-      "AKM_RUN_ID",
-      "AKM_STEP_ID",
-      "AKM_UNIT_ID",
-      "AKM_PARAMS",
-    ]);
-    expect(names.filter((name) => !allowed.has(name))).toEqual([]);
-    expect(names).toContain("PATH");
+    const result = await run(plan);
+    expect(result.ok).toBe(true);
+    return JSON.parse(String(result.evidence.output)) as Record<string, string | null>;
+  }
+
+  test("a variable of akm's own environment reaches the command, as it would from the user's shell", async () => {
+    const env = await reportEnv([PROBE, "PATH", "HOME"]);
+    expect(env.EXEC_UNIT_AMBIENT_PROBE).toBe(PROBE_VALUE);
+    expect(env.PATH).toBe(process.env.PATH ?? null);
+    expect(env.HOME).toBe(process.env.HOME ?? null);
   });
+
+  test("the engine's AKM_* context is set over it", async () => {
+    const env = await reportEnv(["AKM_RUN_ID", "AKM_STEP_ID", "AKM_UNIT_ID", "AKM_PARAMS"]);
+    expect(env.AKM_RUN_ID).toBe(RUN_ID);
+    expect(env.AKM_STEP_ID).toBe("work");
+    expect(env.AKM_UNIT_ID).toBeTruthy();
+    expect(env.AKM_PARAMS).toBe("{}");
+  });
+
+  test("the child sees the parent's EFFECTIVE akm directories, including ones that come from XDG_*_HOME", async () => {
+    // The sandbox sets XDG_*_HOME and no AKM_{CONFIG,DATA,CACHE,STATE}_DIR, as an operator using XDG does.
+    expect(process.env.AKM_CONFIG_DIR).toBeUndefined();
+    expect(process.env.XDG_CONFIG_HOME).toBeTruthy();
+    expect(process.env.AKM_BUNDLE_DIR).toBeTruthy();
+    expect(
+      await reportEnv(["AKM_BUNDLE_DIR", "AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"]),
+    ).toEqual({
+      AKM_BUNDLE_DIR: process.env.AKM_BUNDLE_DIR as string,
+      AKM_CONFIG_DIR: getConfigDir(),
+      AKM_DATA_DIR: getDataDir(),
+      AKM_CACHE_DIR: getCacheDir(),
+      AKM_STATE_DIR: getStateDir(),
+    });
+  });
+
+  test("a bundle dir the parent never set is not invented for the child", async () => {
+    const prior = process.env.AKM_BUNDLE_DIR;
+    delete process.env.AKM_BUNDLE_DIR;
+    try {
+      expect((await reportEnv(["AKM_BUNDLE_DIR"])).AKM_BUNDLE_DIR).toBeNull();
+    } finally {
+      if (prior !== undefined) process.env.AKM_BUNDLE_DIR = prior;
+    }
+  });
+});
+
+describe("exec unit — a credential the command inherits never reaches the journal", () => {
+  /** Credential-named, so its value is scrubbed; the second is ordinary configuration and stays as it is. */
+  const AMBIENT = {
+    EXEC_UNIT_REVIEW_API_KEY: "SYNTHETIC_AMBIENT_CREDENTIAL_123456",
+    EXEC_UNIT_REVIEW_REGION: "eu-ordinary-region",
+  };
+  const KEY = AMBIENT.EXEC_UNIT_REVIEW_API_KEY;
+  const REGION = AMBIENT.EXEC_UNIT_REVIEW_REGION;
+
+  /** Run a one-step exec workflow with no `env:` binding, under akm's environment carrying {@link AMBIENT}. */
+  function runInheriting(code: string, unitLines: string[] = []): Promise<StepExecutionResult> {
+    seedRun(["work"]);
+    const plan = execPlan([
+      "    unit:",
+      "      exec:",
+      `        command: ${JSON.stringify(bunArgv(code))}`,
+      ...unitLines,
+    ]);
+    storePlan(plan);
+    return withEnv(AMBIENT, () => run(plan));
+  }
+
+  test("plain output is scrubbed of the inherited value in the evidence and the unit row; an ordinary variable stays", async () => {
+    const result = await runInheriting(
+      "process.stdout.write(process.env.EXEC_UNIT_REVIEW_API_KEY + ' ' + process.env.EXEC_UNIT_REVIEW_REGION)",
+    );
+    expect(result.ok).toBe(true);
+    expect(result.evidence.output).toBe(`[REDACTED] ${REGION}`);
+    const rows = await unitRows();
+    expect(rows[0]!.status).toBe("completed");
+    expect(rows[0]!.result_json).not.toContain(KEY);
+    expect(JSON.parse(rows[0]!.result_json!)).toBe(`[REDACTED] ${REGION}`);
+  }, 30_000);
+
+  test("parsed JSON under a declared schema is scrubbed of it too", async () => {
+    const result = await runInheriting(
+      "process.stdout.write(JSON.stringify({key: process.env.EXEC_UNIT_REVIEW_API_KEY, region: process.env.EXEC_UNIT_REVIEW_REGION}))",
+      [
+        "      output:",
+        "        type: object",
+        "        required: [key, region]",
+        "        properties:",
+        "          key: { type: string }",
+        "          region: { type: string }",
+      ],
+    );
+    expect(result.ok).toBe(true);
+    expect(result.evidence.output).toEqual({ key: "[REDACTED]", region: REGION });
+    const rows = await unitRows();
+    expect(rows[0]!.result_json).not.toContain(KEY);
+    expect(JSON.parse(rows[0]!.result_json!)).toEqual({ key: "[REDACTED]", region: REGION });
+  }, 30_000);
+
+  test("a failure diagnostic that prints it is scrubbed in the outcome, the summary, the unit row and `status --units`", async () => {
+    const result = await runInheriting(
+      "process.stderr.write('auth failed with ' + process.env.EXEC_UNIT_REVIEW_API_KEY + ' in ' + process.env.EXEC_UNIT_REVIEW_REGION + '\\n'); process.exit(7)",
+    );
+    expect(result.ok).toBe(false);
+    expect(result.units[0]!.failureReason).toBe("non_zero_exit");
+    expect(result.units[0]!.error).toContain(`auth failed with [REDACTED] in ${REGION}`);
+    expect(result.summary).not.toContain(KEY);
+    const rows = await unitRows();
+    expect(rows[0]!.status).toBe("failed");
+    expect(rows[0]!.result_json).toContain("[REDACTED]");
+    expect(rows[0]!.result_json).not.toContain(KEY);
+    const detail = await getWorkflowStatus(RUN_ID, { includeUnits: true });
+    const unit = (detail.units ?? []).find((u) => u.unitId === "work:solo");
+    expect(unit?.diagnostic ?? "").toContain(`auth failed with [REDACTED] in ${REGION}`);
+    expect(JSON.stringify(detail)).not.toContain(KEY);
+  }, 30_000);
 });
 
 describe("exec unit — typed artifacts", () => {
@@ -1069,6 +1119,59 @@ describe("exec unit — a stderr-only diagnosis survives to the journal (finding
     expect(unit?.diagnostic ?? "").toContain(CAUSE);
   }, 30_000);
 
+  test("`status --units` shows a failed exec unit's argv, cwd and the refs its tokens resolve to", async () => {
+    fs.mkdirSync(path.join(storage.stashDir, "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(storage.stashDir, "scripts", "probe.ts"), "// probe\n", "utf8");
+    seedRun(["work"]);
+    const argv = [...bunArgv("process.exit(7)"), "${scripts/probe.ts}"];
+    const plan = execPlan(["    unit:", "      exec:", `        command: ${JSON.stringify(argv)}`, "        cwd: ."]);
+    storePlan(plan);
+    expect((await run(plan)).ok).toBe(false);
+
+    const detail = await getWorkflowStatus(RUN_ID, { includeUnits: true });
+    const unit = (detail.units ?? []).find((u) => u.unitId === "work:solo");
+    expect(unit?.orchestration?.exec?.command).toEqual(argv);
+    expect(unit?.orchestration?.exec?.cwd).toBe(".");
+    expect(unit?.orchestration?.refs).toEqual([
+      { ref: "scripts/probe.ts", resolved: expect.stringMatching(/\/\/scripts\/probe\.ts$/), in: "argv" },
+    ]);
+
+    const text = formatWorkflowStatusPlain({ ...detail } as unknown as Record<string, unknown>) ?? "";
+    expect(text).toContain(`argv: ${JSON.stringify(argv)}`);
+    expect(text).toContain("cwd: .");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ref token as printed
+    expect(text).toContain("${scripts/probe.ts} -> stash//scripts/probe.ts (argv)");
+  }, 30_000);
+
+  test("`status --units` on a run frozen as irVersion 6 still describes a failed unit and does not say it is running the run", async () => {
+    seedRun(["work"]);
+    const argv = bunArgv("process.exit(7)");
+    const plan = execPlan(["    unit:", "      exec:", `        command: ${JSON.stringify(argv)}`]);
+    storePlan(plan);
+    expect((await run(plan)).ok).toBe(false);
+    const db = openStateDatabase();
+    try {
+      db.prepare("UPDATE workflow_runs SET plan_ir_version = 6 WHERE id = ?").run(RUN_ID);
+    } finally {
+      db.close();
+    }
+
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    let detail: Awaited<ReturnType<typeof getWorkflowStatus>>;
+    try {
+      detail = await getWorkflowStatus(RUN_ID, { includeUnits: true });
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+
+    const unit = (detail.units ?? []).find((u) => u.unitId === "work:solo");
+    expect(unit?.orchestration?.exec?.command).toEqual(argv);
+    expect(warnings.join("\n")).not.toContain("running it with the current engine");
+  }, 30_000);
+
   test("a SUCCESSFUL unit's journaled result is unchanged (the artifact, not a diagnostic)", async () => {
     seedRun(["work"]);
     const plan = execPlan([
@@ -1136,7 +1239,7 @@ describe("exec unit — the AKM_* context environment is bounded by THIS PLATFOR
       workflowRef: "workflows/exec-demo",
       params: {},
       evidence: { produce: { output: produced } },
-      workDir,
+      bundleRootOverride: workDir,
     });
   }
 
@@ -1267,7 +1370,7 @@ describe("exec unit — the AKM_* context environment is bounded by THIS PLATFOR
       workflowRef: "workflows/exec-demo",
       params: {},
       evidence: { produce: { output: [HUGE] } },
-      workDir,
+      bundleRootOverride: workDir,
     });
     expect(result.units[0]!.failureReason).toBe("exec_context_too_large");
     expect(result.units[0]!.error).toContain("AKM_ITEM");

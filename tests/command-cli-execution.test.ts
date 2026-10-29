@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { _resetWarnOnceForTests } from "../src/core/warn";
 import { akmIndex } from "../src/indexer/indexer";
 import { runCliCapture } from "./_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
@@ -23,10 +24,9 @@ beforeEach(async () => {
         components: { main: { root: ".", adapter: "akm" } },
       },
     },
-    engines: {
-      reviewer: { kind: "agent", platform: "claude", bin: "/bin/echo", args: [] },
+    harnesses: {
+      reviewer: { platform: "claude", bin: "/bin/echo", args: [] },
     },
-    defaults: { engine: "reviewer" },
   });
   fs.writeFileSync(
     path.join(storage.stashDir, "commands", "review.md"),
@@ -82,15 +82,14 @@ async function installHostileInferenceKey(): Promise<void> {
 describe("command CLI execution convergence", () => {
   test("command run --dry-run authorizes and lowers without dispatch, credentials, usage, or persistent writes", async () => {
     writeSandboxConfig({
-      engines: {
+      harnesses: undefined, // only the connection: agent work would prefer a harness
+      connections: {
         direct: {
-          kind: "llm",
           endpoint: "https://DO-NOT-LEAK.invalid/v1/chat/completions",
-          model: "DO-NOT-LEAK-model",
+          models: { fast: "DO-NOT-LEAK-model" },
           apiKey: "$AKM_REQUIRED_DRY_RUN_SECRET",
         },
       },
-      defaults: { engine: "direct" },
     });
     delete process.env.AKM_REQUIRED_DRY_RUN_SECRET;
     const before = snapshotTree(storage.root);
@@ -121,6 +120,115 @@ describe("command CLI execution convergence", () => {
     expect(envelope).not.toHaveProperty("durationMs");
     expect(JSON.stringify(envelope)).not.toContain("DO-NOT-LEAK");
     expect(snapshotTree(storage.root)).toEqual(before);
+  });
+
+  test("command run --dry-run runs where --connection or --harness says, and refuses both together", async () => {
+    writeSandboxConfig({
+      connections: { lab: { endpoint: "https://lab.invalid/v1/chat/completions", models: { fast: "lab-model" } } },
+    });
+    const dryRun = (...flags: string[]) =>
+      runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json", ...flags]);
+
+    const harness = await dryRun("--harness", "reviewer");
+    expect(harness.code).toBe(0);
+    expect(JSON.parse(harness.stdout)).toMatchObject({ engine: "reviewer" });
+
+    const connection = await dryRun("--connection", "lab", "--model", "fast");
+    expect(connection.code).toBe(0);
+    expect(JSON.parse(connection.stdout)).toMatchObject({ engine: "lab" });
+
+    const both = await dryRun("--connection", "lab", "--harness", "reviewer");
+    expect(both.code).toBe(2);
+    expect(both.stderr).toContain("--connection and --harness are mutually exclusive");
+  });
+
+  describe("a harness: selector in a bundle asset names a harness, else a platform", () => {
+    const configureHarnesses = (names: string[]) =>
+      writeSandboxConfig({
+        harnesses: Object.fromEntries(names.map((name) => [name, { platform: "claude", bin: "/bin/echo", args: [] }])),
+      });
+    const assetSays = async (harness: string) => {
+      fs.writeFileSync(
+        path.join(storage.stashDir, "commands", "review.md"),
+        [
+          "---",
+          "name: review",
+          "type: command",
+          "updated: 2026-08-19",
+          `harness: ${harness}`,
+          "---",
+          "Review: [$ARGUMENTS]",
+          "",
+        ].join("\n"),
+      );
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+      return runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json"]);
+    };
+
+    test("the only claude harness, which setup named default, runs an asset that says claude", async () => {
+      configureHarnesses(["default"]);
+
+      const result = await assetSays("claude");
+
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ engine: "default" });
+    });
+
+    test("two claude harnesses, one named default: the default runs it", async () => {
+      configureHarnesses(["work", "default"]);
+
+      const result = await assetSays("claude");
+
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ engine: "default" });
+    });
+
+    test("two claude harnesses, neither named default: exit 78 naming both, and nothing is picked", async () => {
+      configureHarnesses(["work", "home"]);
+
+      const result = await assetSays("claude");
+
+      expect(result.code).toBe(78);
+      const error = JSON.parse(result.stderr.trim());
+      expect(error.code).toBe("SELECTION_NOT_CONFIGURED");
+      expect(error.error).toContain('"work", "home" all run the claude platform');
+    });
+
+    test("--harness takes a platform the same way", async () => {
+      configureHarnesses(["default"]);
+
+      const result = await runCliCapture([
+        "command",
+        "run",
+        "commands/review",
+        "--dry-run",
+        "--format=json",
+        "--harness",
+        "claude",
+      ]);
+
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ engine: "default" });
+    });
+  });
+
+  test("the retired --engine still names a connection by that name, else a harness, with one warning", async () => {
+    writeSandboxConfig({
+      connections: { lab: { endpoint: "https://lab.invalid/v1/chat/completions", models: { fast: "lab-model" } } },
+    });
+    _resetWarnOnceForTests();
+    const dryRun = (engine: string) =>
+      runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json", "--engine", engine]);
+
+    const harness = await dryRun("reviewer");
+    expect(harness.code).toBe(0);
+    expect(JSON.parse(harness.stdout)).toMatchObject({ engine: "reviewer" });
+    expect(harness.stderr).toContain("--engine is retired: use --connection or --harness");
+
+    const connection = await dryRun("lab");
+    expect(connection.code).toBe(0);
+    expect(JSON.parse(connection.stdout)).toMatchObject({ engine: "lab" });
+    expect(connection.stderr).not.toContain("--engine is retired");
   });
 
   test("live --verbose reports only safe dry-run diagnostics before preserving the dispatch envelope", async () => {

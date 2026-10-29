@@ -3,14 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The prepare seam's document vocabulary (spec
- * docs/plans/specs/p4-deletions-closeout.md §3.2.3).
+ * The prepare seam's document vocabulary.
  *
  * `src` no longer accepts task v3 source — the v3 grammar (`parseTaskV3Yaml`,
  * `parseTaskV3Document`, `classifyTaskV3Uses`, and the GitHub Action locator
  * grammar deleted from classification ahead of this file's own shrink)
  * survives only vendored, frozen, in
- * `src/tasks/source/task-source-v3-frozen.ts` — the ONE place
+ * `scripts/akm-migrate/migrate/task-source-v3-frozen.ts` — the ONE place
  * left that reads a v3 document, reachable only through `akm migrate apply`
  * / `akm-migrate`.
  *
@@ -19,30 +18,20 @@
  * supporting modules still take as their input shape —
  * `PreparableTaskDocument` (`src/tasks/prepare/prepared-execution.ts`) is a
  * name for `TaskV3SourceDocument` that is not version-bound. The type
- * family's NAME stays (spec §0, R-R1: the rename to something version-
- * neutral is deferred to a follow-up commit after the sweep, so the
- * deletion diff this phase exists to prove is not buried under an
- * unrelated rename storm). Only task source v4 ever reaches this shape now
- * — `src/tasks/source/project-v4.ts`'s `projectTaskSourceV4()` is the only
+ * family keeps its `TaskV3*` name; only task source v4 reaches this shape
+ * now — `src/tasks/source/project-v4.ts`'s `projectTaskSourceV4()` is the only
  * producer.
  *
  * The workflow-side trigger classifier that used to live here
- * (`classifyTaskV3Triggers`) is re-homed to `src/workflows/github-yaml.ts`
- * (`parseTriggers`, P4-N3) — its subject was always a WORKFLOW's `on:`
- * trigger fragment, not a task document, and after the move
- * `src/workflows/**` imports nothing at all from `src/tasks/**` source
- * modules.
+ * (`classifyTaskV3Triggers`) went with the GitHub-shaped workflow format.
  */
 
 import type { ParsedBuiltinCommandAction } from "../commands/command/builtin-action";
 import type { ExecutionJsonObject } from "../execution/json";
 import { TASK_V3_MAX_SCHEDULES } from "./source/bounded-document";
 
-// D2-N4 (spec docs/plans/specs/p2a-task-source-v4.md §3.1, §9): re-exported
-// at its EXISTING name so no importer changes. The one name a surviving
-// `src` consumer still imports (task-source-v4.ts) — every other
-// bounded-document re-export this file used to carry was dropped in P4
-// §3.2.3.
+// Re-exported at its existing name so no importer changes: the one name a
+// surviving `src` consumer still imports (task-source-v4.ts).
 export { TASK_V3_MAX_SCHEDULES };
 
 export const TASK_EXTENSION = ".yml";
@@ -74,11 +63,12 @@ export interface TaskV3AkmOptions {
   readonly when_to_use?: string;
   readonly tags?: readonly string[];
   readonly agent?: string | null;
+  readonly connection?: string | null;
+  readonly harness?: string | null;
   readonly engine?: string | null;
   readonly model?: string | null;
   readonly inference?: ExecutionJsonObject | null;
   readonly outputSchema?: ExecutionJsonObject | null;
-  readonly tools?: string | readonly string[] | ExecutionJsonObject | null;
   readonly timeout?: string | number | null;
   readonly redact?: readonly string[];
   readonly maxSteps?: number;

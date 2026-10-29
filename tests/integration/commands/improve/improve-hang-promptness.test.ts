@@ -11,18 +11,18 @@
  * server whose handler never resolves, proving:
  *
  *   1. a default-level heartbeat line appears once the run has waited a few
- *      seconds on its first engine response, so the run is never silent;
+ *      seconds on its first model response, so the run is never silent;
  *   2. `--timeout-ms` aborts the in-flight request and ends the run promptly
- *      instead of waiting out the engine's own (much longer) timeout;
+ *      instead of waiting out the connection's own (much longer) timeout;
  *   3. SIGTERM sent while a request is in flight ends the process within a
  *      bounded grace period.
  *
  * A second, negative case (#957 field-G) pins the opposite direction:
  * the heartbeat used to be armed at run start, before the triage/index
- * prepass, so it fired on healthy runs whose prepass alone (not the engine)
+ * prepass, so it fired on healthy runs whose prepass alone (not the model)
  * took longer than its window. That test drives a slow *embedding* endpoint
  * (semanticSearchMode "auto") to make the prepass slow deterministically,
- * paired with a fast-answering chat-completions engine, and asserts the
+ * paired with a fast-answering chat-completions endpoint, and asserts the
  * heartbeat line does NOT appear even though the run's total wall time
  * exceeds the heartbeat window.
  *
@@ -91,13 +91,26 @@ async function waitUntil(predicate: () => boolean, timeoutMs: number, descriptio
   }
 }
 
+/** Reflect alone: a user-defined strategy, since the built-in `quick` was removed (#1130). */
+const REFLECT_ONLY_STRATEGIES = {
+  "reflect-only": {
+    processes: {
+      distill: { enabled: false },
+      consolidate: { enabled: false },
+      memoryInference: { enabled: false },
+      extract: { enabled: false },
+      triage: { enabled: false },
+      validation: { enabled: false },
+      proactiveMaintenance: { enabled: false },
+    },
+  },
+};
+
 function configureHungEngine(port: number): void {
   saveConfig({
     semanticSearchMode: "off",
-    engines: {
-      hung: { kind: "llm", endpoint: `http://localhost:${port}/v1`, model: "hung-model" },
-    },
-    defaults: { llmEngine: "hung" },
+    connections: { hung: { endpoint: `http://localhost:${port}/v1`, models: { fast: "hung-model" } } },
+    improve: { strategies: REFLECT_ONLY_STRATEGIES },
   });
 }
 
@@ -157,10 +170,8 @@ function configureSlowPrepassFastEngine(embedPort: number, chatPort: number): vo
   saveConfig({
     semanticSearchMode: "auto",
     embedding: { endpoint: `http://localhost:${embedPort}/v1`, model: "slow-embed-model" },
-    engines: {
-      fast: { kind: "llm", endpoint: `http://localhost:${chatPort}/v1`, model: "fast-model" },
-    },
-    defaults: { llmEngine: "fast" },
+    connections: { fast: { endpoint: `http://localhost:${chatPort}/v1`, models: { fast: "fast-model" } } },
+    improve: { strategies: REFLECT_ONLY_STRATEGIES },
   });
 }
 
@@ -211,7 +222,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
           "improve",
           "memories/note-a",
           "--strategy",
-          "quick",
+          "reflect-only",
           "--timeout-ms",
           "7000",
           "--json-to-stdout",
@@ -232,7 +243,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
       // the watchdog's hard-kill grace, generously bounded well under the
       // field's multi-minute hang.
       expect(elapsedMs).toBeLessThan(20_000);
-      expect(stderr).toContain("Still waiting for the first engine response");
+      expect(stderr).toContain("Still waiting for the first model response");
     } finally {
       child?.kill("SIGKILL");
       server.stop(true);
@@ -246,7 +257,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
     try {
       configureHungEngine(server.port!);
 
-      child = Bun.spawn(["bun", "src/cli.ts", "improve", "memories/note-b", "--strategy", "quick"], {
+      child = Bun.spawn(["bun", "src/cli.ts", "improve", "memories/note-b", "--strategy", "reflect-only"], {
         cwd: repoRoot,
         env: { ...process.env },
         stdout: "pipe",
@@ -282,7 +293,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
       configureHungEngine(server.port!);
       const { launcherPath, pidFile } = stageRealCliLauncher(sandbox.dir);
 
-      launcherProc = Bun.spawn(["bun", launcherPath, "improve", "memories/note-c", "--strategy", "quick"], {
+      launcherProc = Bun.spawn(["bun", launcherPath, "improve", "memories/note-c", "--strategy", "reflect-only"], {
         cwd: repoRoot,
         env: { ...process.env },
         stdout: "pipe",
@@ -336,7 +347,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
 
       const startedAt = Date.now();
       launcherProc = Bun.spawn(
-        ["bun", launcherPath, "improve", "memories/note-d", "--strategy", "quick", "--timeout-ms", "2000"],
+        ["bun", launcherPath, "improve", "memories/note-d", "--strategy", "reflect-only", "--timeout-ms", "2000"],
         { cwd: repoRoot, env: { ...process.env }, stdout: "pipe", stderr: "pipe" },
       );
 
@@ -369,7 +380,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
 });
 
 describe("akm improve — a slow prepass must not trip the first-response heartbeat (#957 field-G)", () => {
-  test("negative case: slow embedding prepass + fast-answering engine never prints the heartbeat", async () => {
+  test("negative case: slow embedding prepass + fast-answering endpoint never prints the heartbeat", async () => {
     writeMemory("note-c");
     const embedServer = slowEmbeddingServer(6_000);
     const { server: chatServer, requestCount } = fastReflectServer();
@@ -378,7 +389,7 @@ describe("akm improve — a slow prepass must not trip the first-response heartb
       configureSlowPrepassFastEngine(embedServer.port!, chatServer.port!);
 
       const startedAt = Date.now();
-      const spawned = Bun.spawn(["bun", "src/cli.ts", "improve", "memories/note-c", "--strategy", "quick"], {
+      const spawned = Bun.spawn(["bun", "src/cli.ts", "improve", "memories/note-c", "--strategy", "reflect-only"], {
         cwd: repoRoot,
         env: { ...process.env },
         stdout: "pipe",
@@ -391,15 +402,15 @@ describe("akm improve — a slow prepass must not trip the first-response heartb
 
       // Confirms this run actually exercised the slow path: the prepass
       // (embedding) alone took longer than the heartbeat's own window, and
-      // the chat engine was reached and answered — a genuinely healthy run,
-      // not a run that skipped indexing or never dispatched an engine call.
+      // the chat endpoint was reached and answered — a genuinely healthy run,
+      // not a run that skipped indexing or never made a model call.
       expect(elapsedMs).toBeGreaterThan(5_000);
       expect(requestCount()).toBeGreaterThan(0);
       expect(code).toBe(0);
       // #957 field-G: the heartbeat used to be armed at run start, so a
-      // slow prepass alone (no slow engine at all) tripped it. It must stay
-      // silent when the engine itself never took long.
-      expect(stderr).not.toContain("Still waiting for the first engine response");
+      // slow prepass alone (no slow endpoint at all) tripped it. It must stay
+      // silent when the model itself never took long.
+      expect(stderr).not.toContain("Still waiting for the first model response");
     } finally {
       child?.kill("SIGKILL");
       embedServer.stop(true);

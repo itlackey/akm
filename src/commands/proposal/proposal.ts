@@ -22,6 +22,8 @@ import { resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { isRetireProposal, proposalWaitingSince, type RetirementMetadata } from "./proposal-types";
 import {
+  type AcceptCommitCollector,
+  commitCollectedAccepts,
   diffProposal,
   listProposals,
   type Proposal,
@@ -170,6 +172,8 @@ export interface ProposalAcceptOptions {
   ctx?: ProposalsContext;
   /** Internal drain adjudication metadata, persisted with the terminal transition. */
   gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string };
+  /** A caller that accepts in a loop commits once at its end instead (#1185); see {@link commitCollectedAccepts}. */
+  commitCollector?: AcceptCommitCollector;
 }
 
 export interface ProposalAcceptResult {
@@ -190,7 +194,12 @@ export async function akmProposalAccept(options: ProposalAcceptOptions): Promise
     stash,
     config,
     resolvedId,
-    { target: options.target, queueTarget: queue.target, gateDecision: options.gateDecision },
+    {
+      target: options.target,
+      queueTarget: queue.target,
+      gateDecision: options.gateDecision,
+      ...(options.commitCollector ? { commitCollector: options.commitCollector } : {}),
+    },
     options.ctx,
   );
 
@@ -202,6 +211,44 @@ export async function akmProposalAccept(options: ProposalAcceptOptions): Promise
     assetPath: result.assetPath,
     proposal: result.proposal,
   };
+}
+
+/** One id of a multi-id accept that did not go through; the others' work stands. */
+export interface ProposalAcceptFailure {
+  schemaVersion: 1;
+  ok: false;
+  id: string;
+  error: string;
+}
+
+/**
+ * Accept several proposals in one process and commit them once. An id that
+ * fails is reported and the rest carry on; what was accepted is committed
+ * either way.
+ */
+export async function akmProposalAcceptMany(
+  options: Omit<ProposalAcceptOptions, "id" | "commitCollector"> & { ids: readonly string[] },
+): Promise<Array<ProposalAcceptResult | ProposalAcceptFailure>> {
+  const { ids, ...rest } = options;
+  const commitCollector: AcceptCommitCollector = [];
+  const results: Array<ProposalAcceptResult | ProposalAcceptFailure> = [];
+  try {
+    for (const id of ids) {
+      try {
+        results.push(await akmProposalAccept({ ...rest, id, commitCollector }));
+      } catch (error) {
+        results.push({
+          schemaVersion: 1,
+          ok: false,
+          id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  } finally {
+    commitCollectedAccepts(commitCollector, "akm proposal accept");
+  }
+  return results;
 }
 
 // ── reject ──────────────────────────────────────────────────────────────────
@@ -542,18 +589,30 @@ export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): P
   const skippedForContinuityRisk = matched.filter(isContinuityExcluded).length;
   const pending = matched.filter((p) => !isContinuityExcluded(p));
   const results: BulkAdjudicateResult["results"] = [];
-  for (const proposal of pending) {
-    if (options.dryRun) {
-      results.push({ id: proposal.id, ref: proposal.ref, source: proposal.source, dryRun: true });
-    } else if (options.action === "accept") {
-      results.push(
-        await akmProposalAccept({ stashDir, id: proposal.id, queue: options.queue, target: options.target, config }),
-      );
-    } else {
-      results.push(
-        await akmProposalReject({ stashDir, id: proposal.id, queue: options.queue, reason: options.reason, config }),
-      );
+  const commitCollector: AcceptCommitCollector = [];
+  try {
+    for (const proposal of pending) {
+      if (options.dryRun) {
+        results.push({ id: proposal.id, ref: proposal.ref, source: proposal.source, dryRun: true });
+      } else if (options.action === "accept") {
+        results.push(
+          await akmProposalAccept({
+            stashDir,
+            id: proposal.id,
+            queue: options.queue,
+            target: options.target,
+            config,
+            commitCollector,
+          }),
+        );
+      } else {
+        results.push(
+          await akmProposalReject({ stashDir, id: proposal.id, queue: options.queue, reason: options.reason, config }),
+        );
+      }
     }
+  } finally {
+    commitCollectedAccepts(commitCollector, "akm proposal accept");
   }
   return { count: results.length, results, skippedForContinuityRisk };
 }

@@ -14,10 +14,12 @@ import { serializeFrontmatter } from "../core/asset/asset-serialize";
 import { DESCRIPTION_MAX_CHARS } from "../core/authoring-rules";
 import { toErrorMessage, tryReadStdinText } from "../core/common";
 import { loadConfig } from "../core/config/config";
+import { SHIPPED_ALIAS } from "../core/config/model-aliases";
 import { ConfigError, UsageError } from "../core/errors";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { DURATION_UNITS, parseDuration as parseDurationSpec } from "../core/time";
 import { warn } from "../core/warn";
+import { noticeSet } from "../execution/notices";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { StashEntryScope } from "../indexer/passes/metadata";
 import { SCOPE_KEYS } from "../indexer/passes/metadata";
@@ -103,7 +105,7 @@ export function buildMemoryFrontmatter(fields: MemoryFrontmatterFields): string 
   if (fields.tags && fields.tags.length > 0) obj.tags = fields.tags;
   if (fields.source?.trim()) obj.source = fields.source;
   if (fields.xrefs && fields.xrefs.length > 0) obj.xrefs = fields.xrefs;
-  if (fields.observed_at?.trim()) obj.observed_at = fields.observed_at;
+  if (fields.observed_at?.trim()) obj.observed = fields.observed_at;
   if (fields.expires?.trim()) obj.expires = fields.expires;
   if (fields.subjective) obj.subjective = true;
   if (fields.captureMode === "hot" || fields.captureMode === "background") {
@@ -246,7 +248,7 @@ export function runAutoHeuristics(body: string): HeuristicResult {
   const urlMatch = body.match(/https?:\/\/[^\s)>'"]+/);
   const source = urlMatch ? urlMatch[0] : undefined;
 
-  // ISO date token or obvious relative date phrase → observed_at
+  // ISO date token or obvious relative date phrase → observed
   const observed_at = detectObservedAt(body);
 
   return { tags, source, observed_at, subjective };
@@ -281,8 +283,8 @@ function detectObservedAt(body: string): string | undefined {
  * Result of an `--enrich` LLM call.
  *
  * `tags` is always an array (possibly empty). `description` and
- * `observed_at` are optional — only populated when the model returns them
- * in the expected shape. An absent engine, provider failure, timeout, or
+ * `observed_at` (the memory's `observed` date) are optional — only populated when
+ * the model returns them in the expected shape. No connection or harness, a provider failure, a timeout, or
  * invalid JSON yields `{ tags: [] }` with a warning. Invalid configuration is
  * a hard pre-write error.
  */
@@ -294,7 +296,15 @@ export interface EnrichmentResult {
   notices?: readonly Readonly<LoweringNotice>[];
 }
 
-/** Hard timeout for the `--enrich` LLM call. Write-path must not block on a misbehaving endpoint. */
+/** The model's observation date: `observed`, or the older `observed_at`; only a plain `YYYY-MM-DD` counts. */
+export function parseEnrichObserved(parsed: Record<string, unknown>): string | undefined {
+  for (const raw of [parsed.observed, parsed.observed_at]) {
+    if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) return raw.trim();
+  }
+  return undefined;
+}
+
+/** Timeout for the `--enrich` LLM call, in place of the connection's own. */
 const LLM_ENRICH_TIMEOUT_MS = 10_000;
 
 /**
@@ -305,21 +315,20 @@ const LLM_ENRICH_TIMEOUT_MS = 10_000;
  */
 export async function runLlmEnrich(body: string): Promise<EnrichmentResult> {
   const config = loadConfig();
-  const resolved = resolveImproveExecution({ config, processName: "remember-enrich" });
+  const resolved = resolveImproveExecution({ config, processName: "remember-enrich", alias: SHIPPED_ALIAS.enrich });
   if (!resolved) {
-    warn("Warning: --enrich requires an engine to be configured. Run `akm setup` to configure one.");
+    warn("Warning: --enrich requires a connection or harness to be configured. Run `akm setup` to configure one.");
     return { tags: [] };
   }
   const runner = resolved.runner;
-  const noticesByKey = new Map(resolved.notices.map((notice) => [JSON.stringify(notice), notice]));
-  const noticeFields = (): { notices?: readonly Readonly<LoweringNotice>[] } =>
-    noticesByKey.size > 0 ? { notices: Object.freeze([...noticesByKey.values()]) } : {};
+  const notices = noticeSet();
+  notices.add(resolved.notices);
 
   const prompt = `You are a memory tagger for a developer knowledge base.
 Given the memory text below, return ONLY a JSON object with these fields:
 - "tags": array of 1-5 short lowercase keyword tags
 - "description": one-sentence summary (optional)
-- "observed_at": ISO date (YYYY-MM-DD) if the text references a specific date (optional)
+- "observed": ISO date (YYYY-MM-DD) if the text references a specific date (optional)
 
 Memory text:
 ${body.slice(0, 2000)}
@@ -327,42 +336,27 @@ ${body.slice(0, 2000)}
 Return ONLY the JSON object, no prose, no markdown fences.`;
 
   try {
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-    const result = await (async () => {
-      try {
-        return await Promise.race([
-          withLlmStage("remember", () =>
-            callStructured<string>({
-              feature: "remember_enrich",
-              runner,
-              messages: [
-                { role: "system", content: "Return only valid JSON. No prose." },
-                { role: "user", content: prompt },
-              ],
-              request: { maxTokens: 256, temperature: 0.1 },
-              onNotices: (value) => {
-                for (const notice of value) noticesByKey.set(JSON.stringify(notice), notice);
-              },
-              parse: (raw) => raw ?? "",
-              onError: () => "",
-              fallback: "",
-            }),
-          ),
-          new Promise<never>((_, reject) => {
-            timeoutHandle = setTimeout(() => reject(new Error("LLM enrichment timed out")), LLM_ENRICH_TIMEOUT_MS);
-          }),
-        ]);
-      } finally {
-        if (timeoutHandle !== undefined) {
-          clearTimeout(timeoutHandle);
-        }
-      }
-    })();
+    const outcome = await withLlmStage("remember", () =>
+      callStructured({
+        runner,
+        messages: [
+          { role: "system", content: "Return only valid JSON. No prose." },
+          { role: "user", content: prompt },
+        ],
+        // The write path must not block on a misbehaving endpoint.
+        request: { maxTokens: 256, temperature: 0.1, timeoutMs: LLM_ENRICH_TIMEOUT_MS },
+        onNotices: notices.add,
+      }),
+    );
+    if (!outcome.ok) {
+      warn(`Warning: --enrich failed (${outcome.error}). Writing memory without enrichment.`);
+      return { tags: [], ...notices.fields() };
+    }
 
-    const parsed = parseEmbeddedJsonResponse<Record<string, unknown>>(result);
+    const parsed = parseEmbeddedJsonResponse<Record<string, unknown>>(outcome.raw);
     if (!parsed) {
       warn("Warning: --enrich received invalid JSON from the LLM. Writing memory without enrichment.");
-      return { tags: [], ...noticeFields() };
+      return { tags: [], ...notices.fields() };
     }
 
     const tags = Array.isArray(parsed.tags)
@@ -372,16 +366,11 @@ Return ONLY the JSON object, no prose, no markdown fences.`;
     const description =
       typeof parsed.description === "string" && parsed.description.trim() ? parsed.description.trim() : undefined;
 
-    const observed_at =
-      typeof parsed.observed_at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.observed_at.trim())
-        ? parsed.observed_at.trim()
-        : undefined;
-
-    return { tags, description, observed_at, ...noticeFields() };
+    return { tags, description, observed_at: parseEnrichObserved(parsed), ...notices.fields() };
   } catch (err) {
     if (err instanceof ConfigError) throw err;
     warn(`Warning: --enrich failed (${toErrorMessage(err)}). Writing memory without enrichment.`);
-    return { tags: [], ...noticeFields() };
+    return { tags: [], ...notices.fields() };
   }
 }
 

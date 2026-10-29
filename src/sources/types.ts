@@ -2,6 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import type { TargetRow } from "../commands/targets";
+import type { OkfProvenance } from "../core/adapter/types";
+import type { MarkdownTocEntry } from "../core/asset/markdown";
+import type { StashEntryScope } from "../indexer/passes/metadata";
 import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
 import type { WorkflowExec as ProgramExecCore } from "../workflows/plan";
@@ -10,6 +14,15 @@ export type AkmSearchType = string;
 export type SearchSource = "local" | "registry" | "all";
 export type SearchHitSize = "small" | "medium" | "large";
 export type BeliefFilterMode = "all" | "current" | "historical";
+/** Existing search controls, carried through task-evidence reads. */
+export interface RecallOptions {
+  /** Exact AND-joined scope values; CLI --filter user=…|agent=…|run=…|channel=… . */
+  filters?: StashEntryScope;
+  /** Search and curate default to current; explicit all/historical retain investigation. */
+  belief?: BeliefFilterMode;
+  type?: string;
+  source?: SearchSource | string;
+}
 /** Actual local ranking mode, including a semantic attempt that failed at runtime. */
 export type SearchExecutionMode = "semantic" | "keyword" | "fts-fallback";
 export type FragmentContextMode = "exact" | "lead";
@@ -60,7 +73,7 @@ export interface SourceSearchHit {
    */
   estimatedTokens?: number;
   /**
-   * Non-fatal hit-level warnings surfaced by the indexer or a registry provider
+   * Non-fatal hit-level warnings surfaced by the indexer or a registry provider.
    * Optional; absent when there is nothing to surface. Adding
    * a value here MUST NOT change ranking — warnings are informational only.
    */
@@ -83,9 +96,10 @@ export interface SourceSearchHit {
    * `akm show <expandTo>` to retrieve the distilled lesson surface while the
    * parent itself remains the primary retrieval result.
    *
-   * Absent when no derived child exists. The accompanying description /
-   * searchHints / tags fields on the hit are swapped in from the derived
-   * child when this pointer is set.
+   * Absent when no eligible derived child exists. The child's description
+   * and tags fill missing parent fields independently, including a known
+   * filename-generated description or tags consisting only of generated path
+   * tokens. Meaningful parent metadata is preserved.
    */
   expandTo?: string;
 }
@@ -135,14 +149,14 @@ export interface WorkflowParameter {
 /**
  * Read-only projection of a workflow step's orchestration declarations for
  * `show` (`summarizeStepOrchestration` in src/workflows/renderer.ts).
- * `fanOut.over` and `route.input` carry raw reference strings from the closed
+ * `fanOut.over` carries a raw reference string from the closed
  * grammar (`params.<name>` / `steps.<id>.output…`, no `${{ }}` delimiters); the
  * full JSON Schema is reduced to a presence flag to keep show output compact.
  *
  * The step's dispatch kind is carried by FIELD PRESENCE, the same way `fanOut`
- * and `route` carry the step kind: `exec` present means the step runs a shell
+ * carries the step kind: `exec` present means the step runs a shell
  * command, and `engine`/`model` are then absent because an exec unit names no
- * engine — it must never be described as running on the workflow's default one.
+ * connection or harness — it must never be described as running on the workflow's default one.
  */
 export interface WorkflowStepOrchestrationSummary {
   engine?: string;
@@ -151,8 +165,8 @@ export interface WorkflowStepOrchestrationSummary {
   /**
    * An exec (shell) unit's dispatch. `command` is the argv verbatim — the
    * words that will actually be spawned, never shell-parsed and never clipped,
-   * so what `show` prints is what runs. `passEnv`/`inheritEnv` describe the
-   * child's environment SCOPE by variable name; no value is ever projected.
+   * so what `show` prints is what runs. `passEnv` is the variable names the
+   * author listed; no value is ever projected.
    *
    * The SHARED projection shape (`WorkflowExec`, `workflows/plan.ts`), not a mirror
    * of it: a field added there must not be able to reach the frozen plan while
@@ -162,7 +176,24 @@ export interface WorkflowStepOrchestrationSummary {
   fanOut?: { over: string; concurrency?: number; reducer?: string };
   hasSchema?: boolean;
   env?: string[];
-  route?: { input: string; branches: Array<{ match: string; stepId: string }>; defaultStepId?: string };
+  /** The child workflow ref a composing step runs, as authored. */
+  workflow?: string;
+  /**
+   * Set by `resolveOrchestrationRefs`: the bundle-qualified ref each `${ref}`
+   * token in the argv or cwd, each `env:` entry and the child `workflow:`
+   * resolves to right now. Never a value or a path.
+   */
+  refs?: WorkflowStepRef[];
+  /** The refs above that no bundle owns. */
+  unresolved?: Array<Pick<WorkflowStepRef, "ref" | "in">>;
+}
+
+export interface WorkflowStepRef {
+  /** The ref as written (the body of a `${…}` token, an `env:` entry, a `workflow:` value). */
+  ref: string;
+  /** The same ref qualified by the bundle that owns it. */
+  resolved: string;
+  in: "argv" | "cwd" | "env" | "workflow";
 }
 
 export interface WorkflowStepDefinition {
@@ -190,7 +221,6 @@ export interface WorkflowRunStepState extends WorkflowStepDefinition {
 export interface WorkflowRunSummary {
   id: string;
   workflowRef: string;
-  scopeKey?: string | null;
   workflowEntryId?: number | null;
   workflowTitle: string;
   status: WorkflowRunStatus;
@@ -387,8 +417,8 @@ export interface UpdateSkippedItem {
   id: string;
   kind: SourceKind;
   /** Machine-readable per-bundle outcome for update --all. */
-  status?: "blocked" | "failed" | "skipped";
-  /** Stable AkmError code when the bundle was blocked or failed. */
+  status?: "failed" | "skipped";
+  /** Stable AkmError code when the bundle failed. */
   code?: string;
   reason: string;
 }
@@ -442,28 +472,28 @@ export interface ShowLinkGroup {
 }
 
 export interface ShowResponse extends FragmentProvenance {
+  beliefState?: string;
+  /** Captured support and source identities, when available. Omitted in compact projections. */
+  evidence?: string;
+  evidenceSources?: string[];
+  provenance?: OkfProvenance;
   schemaVersion?: number;
   type: string;
   name: string;
   path: string;
   /** Canonical indexed ref for a materialized local asset. */
   ref?: string;
-  activeRun?: {
-    runId: string;
-    stepId: string | null;
-    workflowRef: string;
-  };
   content?: string;
   template?: string;
   prompt?: string;
+  /**
+   * A whole Markdown document's headings, read from the same bytes `#<slug>`
+   * resolves against. Omitted for a fragment show, non-Markdown assets and
+   * documents without headings.
+   */
+  toc?: MarkdownTocEntry[];
   description?: string;
   tags?: string[];
-  /**
-   * Tool access policy for agent assets. Mapped from the frontmatter `tools` key.
-   * Can be a single tool name, a list of tool names, or a structured policy object
-   * (e.g. `{ read: "allow", write: "deny" }`).
-   */
-  toolPolicy?: string | string[] | Record<string, unknown>;
   modelHint?: string;
   /** For commands: which agent should execute this command (OpenCode convention) */
   agent?: string;
@@ -510,7 +540,7 @@ export interface ShowResponse extends FragmentProvenance {
 }
 
 /** An agent harness whose akm plugin `akm upgrade` keeps current. */
-export type PluginHarness = "claude-code" | "codex" | "opencode";
+export type PluginHarness = "claude-code" | "codex" | "opencode" | "opencode-v2";
 
 /**
  * What `akm upgrade` did (or, under `--check`, would do) for one harness's akm
@@ -531,7 +561,7 @@ export interface PluginUpgradeEntry {
  * below `newestVersion`.
  */
 export interface UpgradeLockstep {
-  plugin: "akm-opencode";
+  plugin: "akm-opencode" | "akm-opencode-v2";
   /** `null` when the pin could not be read; the CLI is then held where it is. */
   pinnedVersion: string | null;
   newestVersion: string;
@@ -630,6 +660,12 @@ export interface InfoResponse {
     status: "disabled" | "pending" | "ready-js";
   };
   registries: Array<{ url: string; name?: string; provider?: string; enabled?: boolean }>;
+  /**
+   * The connections, harnesses and work that run on them (`akm health` adds
+   * reachability and versions; here nothing is contacted). Each connection's key
+   * is reported as held, never its value.
+   */
+  connectionsAndHarnesses: TargetRow[];
   sourceProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
   indexStats: {
     entryCount: number;

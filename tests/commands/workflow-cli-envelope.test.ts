@@ -34,16 +34,17 @@ params:
   release: { type: string }
 steps:
   - id: choose
-    route:
-      input: params.release
-      when: [{ match: stable, step: deploy }]
-      default: deploy
+    unit:
+      exec:
+        command: ["bun", "-e", "0"]
   - id: deploy
 ---
 
 # Release Flow
 
 ## choose
+
+Choose the release channel.
 
 ## deploy
 
@@ -163,7 +164,7 @@ describe("akm workflow — JSON envelope snapshot (WS6)", () => {
     expect(env.code).toBe("WORKFLOW_NOT_FOUND");
   });
 
-  test("workflow status <ref>: never run in this scope → not-found envelope names the scope and suggests --all-scopes (#942)", async () => {
+  test("workflow status <ref>: never run → not-found envelope names the ref (#1239)", async () => {
     const stash = makeStashDir();
     await createReleaseFlow(stash);
     const { stderr, status } = await runCli(["workflow", "status", "workflows/release-flow"], stash);
@@ -172,11 +173,10 @@ describe("akm workflow — JSON envelope snapshot (WS6)", () => {
     expect(env.ok).toBe(false);
     expect(env.code).toBe("WORKFLOW_NOT_FOUND");
     expect(env.error).toContain("workflows/release-flow");
-    expect(env.error).toContain("scope");
-    expect(env.hint).toContain("--all-scopes");
+    expect(env.error).not.toContain("scope");
   });
 
-  test("retired workflow next returns an unknown-command envelope with a migration hint", async () => {
+  test("retired workflow next returns an unknown-command envelope", async () => {
     const stash = makeStashDir();
     await createReleaseFlow(stash);
     const { stderr, status } = await runCli(["workflow", "next", "workflows/release-flow", "--dry-run"], stash);
@@ -184,7 +184,6 @@ describe("akm workflow — JSON envelope snapshot (WS6)", () => {
     const env = JSON.parse(stderr);
     expect(env.ok).toBe(false);
     expect(env.code).toBe("UNKNOWN_COMMAND");
-    expect(env.hint).toContain("workflow run");
   });
 
   // P3b Lane B (spec docs/plans/specs/p3b-child-executor.md §4.6, §6 F-B2):

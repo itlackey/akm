@@ -6,7 +6,7 @@
  * `akm-migrate` runs every migration in one plan, in order: config.json in
  * its current shape, pending state.db migrations, task files, residue sweep.
  * These prove the two steps the CLI proper refuses to do on its own -- the
- * config lift a failing `loadConfig` names as its own remedy, and the
+ * config rewrite (retired keys dropped), and the
  * historical-destructive state migration an ordinary open refuses (#895) --
  * and that they run BEFORE the task-file step, which loads config itself.
  *
@@ -17,14 +17,13 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { runMigration } from "../../scripts/akm-migrate/run-migrate";
-import { resolveStashDir } from "../../src/core/common";
 import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { STATE_MIGRATIONS } from "../../src/core/state/migrations";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { openDatabase } from "../../src/storage/database";
 import { runMigrations } from "../../src/storage/sqlite-migrations";
-import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const BEFORE_018 = STATE_MIGRATIONS.slice(
   0,
@@ -69,26 +68,6 @@ function stateDbOpens(file: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** A config whose only fault is a liftable legacy extraParams key. */
-function writeLegacyExtraParamsConfig(configDir: string): string {
-  const configPath = path.join(configDir, "akm", "config.json");
-  fs.writeFileSync(
-    configPath,
-    JSON.stringify({
-      configVersion: "0.9.0",
-      engines: {
-        "my-llm": {
-          kind: "llm",
-          endpoint: "https://example.com/v1/chat/completions",
-          model: "test-model",
-          extraParams: { temperature: 0.7 },
-        },
-      },
-    }),
-  );
-  return configPath;
 }
 
 /** A config on the legacy `stashDir`/`sources[]` shape, pointing `stashDir` at an existing dir. */
@@ -179,44 +158,6 @@ test("dry-run reports the pending state migrations and applies nothing", async (
   expect(ledgerLength(file)).toBe(BEFORE_018.length);
 });
 
-test("apply lifts a legacy extraParams config to disk, and later steps that load config still run", async () => {
-  // `loadConfig` itself now auto-lifts a legacy extraParams config in memory
-  // (warning once) rather than failing closed, so this step is no longer a
-  // precondition for every LATER step's `loadConfig()` call to succeed —
-  // but `akm migrate apply` still persists the lift to disk (silencing the
-  // warning permanently) and this proves it still runs, and still runs
-  // before the state/task steps that themselves load config and open
-  // state.db. The seeded state.db proves the state step ran after it.
-  const configPath = writeLegacyExtraParamsConfig(storage.configDir);
-  seedBefore018(getStateDbPath());
-  expect(loadConfig().engines?.["my-llm"]?.temperature).toBe(0.7);
-
-  const plan = await runMigration({ apply: true });
-
-  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
-    engines: { "my-llm": { temperature?: number; extraParams?: unknown } };
-  };
-  expect(written.engines["my-llm"].temperature).toBe(0.7);
-  expect(written.engines["my-llm"].extraParams).toBeUndefined();
-  expect(plan.configFile?.applied).toBe(true);
-  expect((plan.stateMigrations as { applied: string[] }).applied).toEqual(FROM_018);
-  expect(plan.status).toBe("current");
-});
-
-test("status reports a pending config lift as ready instead of dying on the config it describes", async () => {
-  writeLegacyExtraParamsConfig(storage.configDir);
-  seedBefore018(getStateDbPath());
-
-  const plan = await runMigration({ apply: false });
-
-  expect(plan.status).toBe("ready");
-  expect(plan.blockers).toEqual([]);
-  expect(plan.configFile).toMatchObject({ changed: true, applied: false });
-  expect(plan.configFile?.keys).toContain("engines");
-  // Read-only still reports what state is waiting behind the lift.
-  expect(plan.stateMigrations).toEqual({ pending: FROM_018 });
-});
-
 test("dry-run reports a pending retired top-level and nested key removal, leaving the config file unchanged", async () => {
   const configPath = writeRetiredConfigKeysConfig(storage.configDir);
 
@@ -263,60 +204,14 @@ test("apply removes the retired top-level and nested keys, keeps the live one, a
   expect(warnings.some((w) => w.includes("retired config key"))).toBe(false);
 });
 
-test("dry-run reports a pending legacy stashDir/sources conversion, leaving the config file and resolved stash unchanged", async () => {
+test("a pre-0.9.15 stashDir/sources config is not converted: apply blocks on it, naming akm 0.9.x, and leaves the file unchanged", async () => {
   const configPath = writeLegacySourceShapeConfig(storage.configDir, storage.stashDir);
-  const beforeStashDir = withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => resolveStashDir());
-
-  const plan = await runMigration({ apply: false });
-
-  expect(plan.configFile).toMatchObject({ changed: true, applied: false });
-  expect(plan.configFile?.keys).toEqual(expect.arrayContaining(["sources", "stashDir"]));
-  expect(plan.status).toBe("ready");
-  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as { stashDir: unknown; sources: unknown };
-  expect(written.stashDir).toBe(storage.stashDir);
-  expect(written.sources).toEqual([{ type: "git", url: "https://example.com/team.git", name: "team" }]);
-  const afterStashDir = withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => resolveStashDir());
-  expect(afterStashDir).toBe(beforeStashDir);
-});
-
-test("apply converts the legacy stashDir/sources shape to bundles/defaultBundle; resolveStashDir and the bundle ids are unchanged, and the next loadConfig warns nothing about it", async () => {
-  const configPath = writeLegacySourceShapeConfig(storage.configDir, storage.stashDir);
-  const beforeStashDir = withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => resolveStashDir());
-  const beforeBundleIds = withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => Object.keys(loadConfig().bundles ?? {}));
-  resetConfigCache();
+  const before = fs.readFileSync(configPath, "utf8");
 
   const plan = await runMigration({ apply: true });
 
-  expect(plan.configFile?.applied).toBe(true);
-  expect(plan.configFile?.keys).toEqual(expect.arrayContaining(["sources", "stashDir"]));
-  const written = JSON.parse(fs.readFileSync(configPath, "utf8")) as {
-    stashDir?: unknown;
-    sources?: unknown;
-    defaultBundle: string;
-    bundles: Record<string, unknown>;
-  };
-  expect(written.stashDir).toBeUndefined();
-  expect(written.sources).toBeUndefined();
-  expect(written.defaultBundle).toBe("stash");
-  expect(written.bundles.stash).toEqual({ path: storage.stashDir, writable: true });
-  expect(written.bundles.team).toEqual({ git: "https://example.com/team.git", writable: false });
-
-  const afterStashDir = withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => resolveStashDir());
-  expect(afterStashDir).toBe(beforeStashDir);
-  resetConfigCache();
-  const afterBundleIds = withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => Object.keys(loadConfig().bundles ?? {}));
-  expect(new Set(afterBundleIds)).toEqual(new Set(beforeBundleIds));
-
-  resetConfigCache();
-  _resetWarnOnceForTests();
-  const warnings: string[] = [];
-  _setWarnSinkForTests((level, args) => {
-    if (level === "warn") warnings.push(args.map(String).join(" "));
-  });
-  try {
-    withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => loadConfig());
-  } finally {
-    _setWarnSinkForTests(undefined);
-  }
-  expect(warnings.some((w) => w.includes("legacy-source-shape") || w.includes("stashDir"))).toBe(false);
+  expect(plan.configFile).toBeUndefined();
+  expect(plan.status).toBe("blocked");
+  expect(plan.blockers.join("\n")).toMatch(/predates akm 0\.9\.15.*akm migrate apply.* with akm 0\.9\.x/);
+  expect(fs.readFileSync(configPath, "utf8")).toBe(before);
 });

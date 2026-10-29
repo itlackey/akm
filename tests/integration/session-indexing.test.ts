@@ -96,15 +96,14 @@ function configFor(stash: string, indexSessions?: boolean, extractEnabled = true
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
     defaultWriteTarget: "stash",
-    engines: {
+    connections: {
       default: {
-        kind: "llm",
         endpoint: "http://localhost:11434/v1/chat/completions",
-        model: "test-model",
-        supportsJsonSchema: true,
+        models: { fast: "test-model" },
       },
     },
     improve: {
+      strategy: "session",
       strategies: {
         session: {
           processes: {
@@ -117,7 +116,6 @@ function configFor(stash: string, indexSessions?: boolean, extractEnabled = true
         },
       },
     },
-    defaults: { llmEngine: "default", improveStrategy: "session" },
   } as AkmConfig;
 }
 

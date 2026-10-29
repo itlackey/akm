@@ -16,6 +16,8 @@ import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
+import { localEmbeddingRuntime } from "../llm/embedder";
+import { effectiveEmbedding } from "../llm/embedders/connection";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 /**
  * Index consistency.
@@ -77,12 +79,8 @@ import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
-import {
-  type AdapterConceptOwner,
-  indexedPathMatchesOwner,
-  resolveAdapterConceptOwner,
-} from "./lookup/adapter-concept-owner";
-import { type EmbeddingGenerationResult, generateEmbeddingsForDb } from "./materialize-embeddings";
+import { type AdapterConceptOwner, indexedPathMatchesOwner, resolveConceptOwner } from "./lookup/adapter-concept-owner";
+import { type EmbeddingGenerationResult, embeddingInputCap, generateEmbeddingsForDb } from "./materialize-embeddings";
 import {
   canUseIncrementalSkip,
   computeDirFingerprint,
@@ -92,12 +90,23 @@ import {
   getDirIndexState,
   inferZeroRowReason,
 } from "./passes/dir-staleness";
-import { type IndexDocument, isWorkflowSkipWarning, type StashFile, withFileSize } from "./passes/metadata";
+import {
+  CONTENT_PROJECTION_VERSION,
+  type IndexDocument,
+  isWorkflowSkipWarning,
+  type StashFile,
+  withFileSize,
+} from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
 import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
 import type { FileContext } from "./walk/file-context";
-import type { IndexVerification, RemovedIndexSource } from "./walk/index-context";
+import {
+  type IndexVerification,
+  type RemovedIndexSource,
+  SEMANTIC_SEARCH_META_KEY,
+  type SemanticSearchRecord,
+} from "./walk/index-context";
 import { walkStashFlatWithStatus } from "./walk/walker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -187,8 +196,8 @@ interface IndexOptions {
    * Whether this run may materialize (clone/pull/fetch) cache-backed sources.
    * Default `true` — the sanctioned materialization callers (`akm index`,
    * source add/update/sync, improve's blocking preflight). A READ command's
-   * inline auto-index passes `false` so query time never touches the network
-   * (spec §14.3 / D11): absent source caches are skipped with a warning instead
+   * inline auto-index passes `false` so query time never touches the network:
+   * absent source caches are skipped with a warning instead
    * of cloned.
    */
   hydrateSources?: boolean;
@@ -308,7 +317,7 @@ export interface EmbeddingPassResult {
 /**
  * The embedding phase (#954): generate and store vectors for every entry
  * missing one, then compute the `hasEmbeddings` fact and the semantic-search
- * verification off the result. `db` must have no ambient transaction open —
+ * verification off the result, and record it for `akm health`. `db` must have no ambient transaction open —
  * each per-batch commit is its own durable write.
  */
 export async function runEmbeddingPass(params: {
@@ -326,6 +335,15 @@ export async function runEmbeddingPass(params: {
   const semanticEntryCount = getEmbeddableEntryCount(db);
   onProgress({ phase: "finalize", message: "Verifying semantic search state." });
   const verification = verifyIndexState(db, config, semanticEntryCount, embeddingResult);
+  const unavailable = verification.semanticStatus === "blocked" ? embeddingResult.runtimeUnavailable : undefined;
+  const record: SemanticSearchRecord = {
+    status: unavailable ? "unavailable" : verification.semanticStatus,
+    ...(unavailable ? { unavailable } : {}),
+    provider: verification.embeddingProvider,
+    ...(verification.embeddingRuntime ? { runtime: verification.embeddingRuntime } : {}),
+    ...(verification.ok ? {} : { reason: verification.message }),
+  };
+  setMeta(db, SEMANTIC_SEARCH_META_KEY, JSON.stringify(record));
   onProgress({ phase: "verify", message: verification.message });
   return { embeddingResult, verification };
 }
@@ -692,7 +710,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
         mode,
         sourcesCount: sourceDirs.length,
         semanticSearchMode: config.semanticSearchMode,
-        embeddingProvider: getEmbeddingProvider(config.embedding),
+        embeddingProvider: getEmbeddingProvider(effectiveEmbedding(config)),
       }),
     });
 
@@ -714,7 +732,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     // …then write it in one transaction: `item_ref = <bundle>//<conceptId>`
     // plus canonical component/adapter provenance per source root.
     const bundleByRoot = buildIndexedSourceOwners(sources);
-    persistDirRecords(db, dirRecords, warnings, bundleByRoot);
+    persistDirRecords(db, dirRecords, warnings, bundleByRoot, embeddingInputCap(config));
     onProgress({
       phase: "scan",
       message: `Scanned ${scannedDirs} ${scannedDirs === 1 ? "directory" : "directories"} and skipped ${skippedDirs}.`,
@@ -1025,9 +1043,6 @@ function buildSourceScanPlans(
     }
     const walked = walkStashFlatWithStatus(currentStashDir, {
       includeAllDirectories: component.adapter === "okf",
-      ...(component.adapter === "akm" || component.adapter === "akm-workflow"
-        ? { workflowSymlinkAdapter: component.adapter }
-        : {}),
     });
     const dirGroups = groupFileContextsByDir(walked.files);
     const adapter = adapterForId(component.adapter);
@@ -1196,7 +1211,9 @@ async function scanSourceDirs(
       warn(`Skipping component "${component.id}": unknown adapter id "${component.adapter}".`);
       continue;
     }
-    const indexVariant = `${adapter.id}@${adapter.version}`;
+    // The content projection's version is part of the variant: a change to what Markdown bodies index re-projects
+    // every directory once instead of keeping the old text for unchanged files.
+    const indexVariant = `${adapter.id}@${adapter.version}+content${CONTENT_PROJECTION_VERSION}`;
 
     for (const removal of removals) {
       dirRecords.push(removal);
@@ -1340,6 +1357,7 @@ function persistDirRecords(
   dirRecords: DirRecord[],
   warnings: string[],
   bundleByRoot: ReadonlyMap<string, { bundleId: string; componentId: string; adapterId: string }>,
+  maxInputTokens: number,
 ): void {
   const deletedUsageEntryIds = new Set<number>();
   const findPersisted = db.prepare("SELECT id, content_hash, file_path, adapter_id FROM entries WHERE item_ref = ?");
@@ -1385,7 +1403,7 @@ function persistDirRecords(
         continue;
       }
 
-      // Diff-persist (F4a M-core-2, spec §14.2): upsert the current file set
+      // Diff-persist: upsert the current file set
       // FIRST (ON CONFLICT preserving `entries.id` so embeddings / utility /
       // usage stay attached to unchanged rows), tracking every upserted
       // durable `item_ref`, then prune only the departed rows below. Replaces the old
@@ -1465,7 +1483,7 @@ function persistDirRecords(
             continue;
           }
 
-          upsertEntry(db, entryPath, withFileSize(entry, entryPath), provenance, contentHash);
+          upsertEntry(db, entryPath, withFileSize(entry, entryPath), provenance, contentHash, maxInputTokens);
         }
       }
 
@@ -1548,7 +1566,8 @@ function verifyIndexState(
   embeddingResult: EmbeddingGenerationResult,
 ): IndexVerification {
   const embeddingCount = getEmbeddingCount(db);
-  const embeddingProvider = getEmbeddingProvider(config.embedding);
+  const embeddingProvider = getEmbeddingProvider(effectiveEmbedding(config));
+  const embeddingRuntime = embeddingProvider === "local" ? localEmbeddingRuntime() : undefined;
   const verification = (
     ok: boolean,
     message: string,
@@ -1563,6 +1582,7 @@ function verifyIndexState(
     semanticSearchMode: config.semanticSearchMode,
     semanticStatus,
     embeddingProvider,
+    ...(embeddingRuntime !== undefined ? { embeddingRuntime } : {}),
     entryCount: embeddableEntries,
     embeddingCount,
   });
@@ -1651,13 +1671,8 @@ async function lookupBundleRefWithResolutionUsing(
 ): Promise<BundleRefLookupResolution> {
   const sources = await resolveLookupSources();
   if (sources.length === 0) return { entry: null };
-  const bundleBySourcePath = new Map(
-    sourceComponents(sources).map((component, index) => [path.resolve(sources[index]!.path), component.id]),
-  );
-
   const qualified = Boolean(ref.bundle);
-  const candidateSources = ref.bundle ? resolveSourcesForOrigin(ref.bundle, sources) : sources;
-  if (candidateSources.length === 0) return { entry: null };
+  if ((ref.bundle ? resolveSourcesForOrigin(ref.bundle, sources) : sources).length === 0) return { entry: null };
 
   let db: Database | undefined;
   let indexError: unknown;
@@ -1672,39 +1687,34 @@ async function lookupBundleRefWithResolutionUsing(
     ...(indexError === undefined ? {} : { indexError }),
   });
   try {
-    for (const source of candidateSources) {
-      const adapterId = source.adapterId ?? detectAdapterId(source.path);
-      const owner = resolveAdapterConceptOwner(source.path, adapterId, ref.conceptId);
-      const lookupConceptId = owner?.conceptId ?? ref.conceptId;
-      const inputRef = makeBundleRef(qualified ? ref.bundle : undefined, lookupConceptId);
-      const sourceBundleId = bundleBySourcePath.get(path.resolve(source.path));
-      const id = db && sourceBundleId ? findEntryIdByRef(db, inputRef, sourceBundleId) : undefined;
-      if (id !== undefined && owner && db) {
-        const entry = readLookupEntry(db, id, ref.conceptId, source.path);
-        if (entry) {
-          if (owner.workflowSource) {
-            try {
-              assertIndexedWorkflowSourceIdentity(inputRef, entry.filePath, owner.workflowSource);
-              if (entry.adapterId !== adapterId) {
-                throw new WorkflowSourceIdentityError(inputRef, entry.filePath, owner.path);
-              }
-            } catch (error) {
-              if (!(error instanceof WorkflowSourceIdentityError)) throw error;
-              warn(`${error.message} Falling back to the physical owner.`);
-              return resolved(null, owner);
+    const match = resolveConceptOwner(ref, sources);
+    if (!match) return resolved(null);
+    const { owner, source, bundleId, adapterId } = match;
+    const inputRef = makeBundleRef(qualified ? ref.bundle : undefined, owner.conceptId);
+    const id = db ? findEntryIdByRef(db, inputRef, bundleId) : undefined;
+    if (id !== undefined && db) {
+      const entry = readLookupEntry(db, id, ref.conceptId, source.path);
+      if (entry) {
+        if (owner.workflowSource) {
+          try {
+            assertIndexedWorkflowSourceIdentity(inputRef, entry.filePath, owner.workflowSource);
+            if (entry.adapterId !== adapterId) {
+              throw new WorkflowSourceIdentityError(inputRef, entry.filePath, owner.path);
             }
-          } else if (entry.adapterId !== adapterId || !indexedPathMatchesOwner(entry.filePath, owner)) {
+          } catch (error) {
+            if (!(error instanceof WorkflowSourceIdentityError)) throw error;
+            warn(`${error.message} Falling back to the physical owner.`);
             return resolved(null, owner);
           }
-          return resolved(entry, owner);
+        } else if (entry.adapterId !== adapterId || !indexedPathMatchesOwner(entry.filePath, owner)) {
+          return resolved(null, owner);
         }
+        return resolved(entry, owner);
       }
-
-      // A physical owner with a missing/incomplete index row still owns this
-      // unqualified concept. Stop here so a later source cannot retarget it.
-      if (owner) return resolved(null, owner);
     }
-    return resolved(null);
+    // A physical owner with a missing/incomplete index row still owns this
+    // concept: no later source can retarget it.
+    return resolved(null, owner);
   } finally {
     if (db && !borrowed) closeDatabase(db);
   }
@@ -1712,6 +1722,18 @@ async function lookupBundleRefWithResolutionUsing(
 
 export async function lookupBundleRefWithResolution(ref: BundleRef): Promise<BundleRefLookupResolution> {
   return lookupBundleRefWithResolutionUsing(ref, openExistingDatabase);
+}
+
+/**
+ * {@link lookupBundleRefWithResolution} on a plain read-only connection (`akm ui`): a read-write one can checkpoint
+ * the WAL into the main file when it closes, changing the file although nothing was written.
+ */
+export async function lookupBundleRefWithResolutionReadonly(ref: BundleRef): Promise<BundleRefLookupResolution> {
+  return lookupBundleRefWithResolutionUsing(ref, (dbPath) => {
+    const db = openReadonlyExistingDatabase(dbPath);
+    if (!db) throw new Error(`Index database not found at ${dbPath}. Run 'akm index' to build it.`);
+    return db;
+  });
 }
 
 /** Resolve an adapter-owned `[bundle//]conceptId` without interpreting its path as an AKM type. */
@@ -1740,11 +1762,14 @@ export async function lookupBundleRefReadonly(ref: BundleRef): Promise<IndexEntr
  * index, which is copied once rather than once per ref. A ref that does not
  * resolve, or an index that cannot be read, gives `null` for that ref.
  */
-export async function lookupBundleRefsReadonly(refs: readonly BundleRef[]): Promise<Array<IndexEntry | null>> {
+export async function lookupBundleRefsReadonly(
+  refs: readonly BundleRef[],
+  options: { isolatedSnapshot?: boolean } = {},
+): Promise<Array<IndexEntry | null>> {
   if (refs.length === 0) return [];
   let db: Database | undefined;
   try {
-    db = openReadonlyExistingDatabase(getDbPath(), { isolatedSnapshot: true });
+    db = openReadonlyExistingDatabase(getDbPath(), { isolatedSnapshot: options.isolatedSnapshot ?? true });
   } catch {
     // Unreadable index: every ref stays unresolved.
   }
@@ -1802,7 +1827,7 @@ function readLookupEntry(db: Database, id: number, fallbackConceptId: string, so
 }
 
 /**
- * Look up a single asset by ref. Spec §6.2 — `akm show` queries this and
+ * Look up a single asset by ref. `akm show` queries this and
  * reads the file from disk. The index is the source of truth for which
  * file corresponds to which ref; the indexer walks `provider.path()` for
  * every configured source, so this query covers all source kinds.
@@ -1817,7 +1842,10 @@ export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
 // ── Utility score recomputation ──────────────────────────────────────────────
 
 /**
- * Recompute utility scores for all entries based on usage_events data.
+ * Recompute utility scores based on usage_events data: every entry by default,
+ * or just `onlyEntryId` (what `akm feedback` passes so the value it stores is
+ * the one `akm index` would compute, not a second formula). A one-entry call
+ * leaves the retention purge and the `last_utility_computed_at` watermark alone.
  *
  * For each entry:
  *   - Count search appearances (event_type = 'search')
@@ -1832,12 +1860,13 @@ export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
  *
  * Called during `akm index` after FTS rebuild.
  */
-export function recomputeUtilityScores(db: Database, stateDb: Database): void {
+export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntryId?: number): void {
   const EMA_DECAY = 0.7;
+  const scoped = onlyEntryId !== undefined;
 
   // Purge stale usage events (90-day retention). usage_events lives in state.db
   // (Chunk-8 WI-8.3); its table is created by state migration 020.
-  purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
+  if (!scoped) purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
 
   // Decay is raised to the days since the last run, floored at one day. Every
   // run therefore applies at least one full round of EMA decay (so runs less
@@ -1875,9 +1904,10 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
       FROM usage_events u
       WHERE u.entry_id IS NOT NULL
         AND u.source = 'user'
+        ${scoped ? "AND u.entry_id = ?" : ""}
       GROUP BY u.entry_id
     `)
-    .all() as Array<{
+    .all(...(scoped ? [onlyEntryId] : [])) as Array<{
     entry_id: number;
     search_count: number;
     show_count: number;
@@ -1892,7 +1922,9 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
 
   // Batch-load existing utility scores
   const existingScores = new Map<number, { utility: number; lastUsedAt: string | undefined }>();
-  const scoreRows = db.prepare("SELECT entry_id, utility, last_used_at FROM utility_scores").all() as Array<{
+  const scoreRows = db
+    .prepare(`SELECT entry_id, utility, last_used_at FROM utility_scores${scoped ? " WHERE entry_id = ?" : ""}`)
+    .all(...(scoped ? [onlyEntryId] : [])) as Array<{
     entry_id: number;
     utility: number;
     last_used_at: string | null;
@@ -1940,5 +1972,5 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
     });
   }
 
-  setMeta(db, "last_utility_computed_at", new Date().toISOString());
+  if (!scoped) setMeta(db, "last_utility_computed_at", new Date().toISOString());
 }

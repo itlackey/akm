@@ -6,7 +6,7 @@
  * Zod schema for AkmConfig — the single source of truth for the on-disk shape.
  *
  * ASSEMBLY BARREL: the individual section schemas live under `./schema/*` (one
- * cohesive module per config area — engines, embedding, improve, sources/
+ * cohesive module per config area — connections, harnesses, embedding, improve, sources/
  * bundles, index, search, output, feedback, workflow, setup, plus shared
  * `primitives`). This file assembles them into the top-level {@link AkmConfigShape}
  * / {@link AkmConfigSchema}, owns the cross-field {@link AkmConfigSchema.superRefine},
@@ -32,7 +32,7 @@
  *   silently dropping them would mask user data loss.
  * - UNKNOWN-KEY POLICY: portable descriptive sections generally use
  *   passthrough so version skew round-trips newer settings. Small finite
- *   authority/toggle sections (`scheduler`, `execution`, `experimental`, and
+ *   authority/toggle sections (`scheduler`, `experimental`, and
  *   reranker policy) are strict: a misspelling there must not silently turn a
  *   safety decision off. The top level remains passthrough and warns on
  *   unknown keys.
@@ -40,17 +40,16 @@
  *   enforced at save time via `superRefine` on the top-level schema.
  */
 import { z } from "zod";
-import { HARNESS_MODEL_WORK_IDS } from "../../integrations/harnesses/ids";
-import { BUILTIN_IMPROVE_STRATEGY_NAMES, IMPROVE_ENGINE_PROCESSES } from "./engine-semantics";
+import { BUILTIN_IMPROVE_STRATEGY_NAMES, REMOVED_IMPROVE_STRATEGY_NAMES } from "./engine-semantics";
+import { ConnectionsSchema } from "./schema/connections";
 import { EmbeddingConnectionConfigSchema } from "./schema/embedding";
-import { EnginesSchema } from "./schema/engines";
-import { ExecutionPolicyConfigSchema } from "./schema/execution";
 import { ExperimentalConfigSchema } from "./schema/experimental";
 import { FeedbackConfigSchema } from "./schema/feedback";
+import { HarnessesSchema } from "./schema/harnesses";
 import { ImproveConfigSchema } from "./schema/improve";
 import { IndexConfigSchema } from "./schema/index-config";
 import { OutputConfigSchema } from "./schema/output";
-import { CURRENT_CONFIG_VERSION, engineName, nonEmptyString, nonNegativeNumber } from "./schema/primitives";
+import { CURRENT_CONFIG_VERSION, nonEmptyString, nonNegativeNumber } from "./schema/primitives";
 import { SchedulerConfigSchema } from "./schema/scheduler";
 import { SearchConfigSchema } from "./schema/search";
 import { SetupConfigSchema } from "./schema/setup";
@@ -59,11 +58,12 @@ import { WorkflowConfigSchema } from "./schema/workflow";
 
 // ── Section re-exports (keep every `./config-schema` import path working) ────
 
+export { ConnectionSchema, ConnectionsSchema } from "./schema/connections";
 export { EmbeddingConnectionConfigSchema } from "./schema/embedding";
-export { EngineConfigSchema, EnginesSchema, LlmConnectionConfigSchema, LlmProfileConfigSchema } from "./schema/engines";
 export { ExperimentalConfigSchema } from "./schema/experimental";
 export { FeedbackConfigSchema } from "./schema/feedback";
-export { ImproveConfigSchema } from "./schema/improve";
+export { HarnessesSchema } from "./schema/harnesses";
+export { ImproveConfigSchema, ImproveWhereSchema } from "./schema/improve";
 export {
   ConsolidateProcessConfigSchema,
   DistillProcessConfigSchema,
@@ -89,16 +89,6 @@ export {
   SourceConfigEntrySchema,
 } from "./schema/sources-bundles";
 export { WorkflowConfigSchema } from "./schema/workflow";
-
-// ── Defaults ───────────────────────────────────────────────────────────────
-
-export const DefaultsSchema = z
-  .object({
-    engine: engineName.optional(),
-    llmEngine: engineName.optional(),
-    improveStrategy: engineName.optional(),
-  })
-  .passthrough();
 
 // ── Top-level AkmConfig ────────────────────────────────────────────────────
 
@@ -127,17 +117,16 @@ export const AkmConfigShape = {
   // `resolveExtendsChain` (./config.ts), not validated here (a bad ref
   // surfaces as a `ConfigError` at load, naming the ref).
   extends: nonEmptyString.optional(),
-  engines: EnginesSchema.optional(),
-  defaults: DefaultsSchema.optional(),
+  connections: ConnectionsSchema.optional(),
+  harnesses: HarnessesSchema.optional(),
   semanticSearchMode: z.enum(["off", "auto"]).default("off"),
   embedding: EmbeddingConnectionConfigSchema.optional(),
-  // Host-local execution authority. Inherited layers are stripped.
-  execution: ExecutionPolicyConfigSchema.optional(),
   index: IndexConfigSchema.optional(),
   registries: z.array(RegistryConfigEntrySchema).optional(),
   // `bundles` + `defaultBundle` are the only source configuration shape. The
-  // retired `stashDir`/`sources[]`/`installed[]` keys are rejected at load;
-  // there is no runtime config translator. `defaultBundle` names the primary
+  // retired `stashDir`/`sources[]`/`installed[]` keys are rejected at load,
+  // naming the 0.9.x `akm migrate apply` that converts them; there is no
+  // runtime config translator. `defaultBundle` names the primary
   // bundle used for short-ref resolution.
   bundles: BundlesConfigSchema.optional(),
   defaultBundle: nonEmptyString.optional(),
@@ -163,9 +152,12 @@ export const AkmConfigBaseSchema = z.object(AkmConfigShape).passthrough();
  * Per-key overrides for unsupported pre-cutover source shapes.
  */
 const RETIRED_SOURCE_SHAPE_KEY_MESSAGES: Record<string, string> = {
-  stashDir:
-    "stashDir is not supported; configure `bundles`, or use `akm config path --all` / `akm info` to inspect current paths.",
+  stashDir: "stashDir is not supported; configure `bundles`, or use `akm info` to inspect current paths.",
 };
+
+/** The one message for a config older than 0.9.15: only akm 0.9.x converts it. */
+const PRE_FLOOR_CONFIG_REMEDY =
+  "This config predates akm 0.9.15 and 0.10 does not convert it: run `akm migrate apply` with akm 0.9.x, then upgrade.";
 
 export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => {
   const raw = config as Record<string, unknown>;
@@ -176,8 +168,7 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: [key],
-        message:
-          RETIRED_SOURCE_SHAPE_KEY_MESSAGES[key] ?? `${key} is not supported; configure the current bundles shape`,
+        message: `${RETIRED_SOURCE_SHAPE_KEY_MESSAGES[key] ?? `${key} is not supported; configure the current bundles shape`} ${PRE_FLOOR_CONFIG_REMEDY}`,
       });
     }
   }
@@ -219,110 +210,27 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       });
     }
   }
-  for (const key of ["llm", "agent", "improve"]) {
-    if (config.defaults && key in config.defaults) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["defaults", key],
-        message: `defaults.${key} is retired in 0.9`,
-      });
-    }
-  }
-  for (const [name, engine] of Object.entries(config.engines ?? {})) {
-    if (engine.kind === "agent" && engine.llmEngine) {
-      const fallback = config.engines?.[engine.llmEngine];
-      if (!fallback || fallback.kind !== "llm") {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["engines", name, "llmEngine"],
-          message: "llmEngine must name an LLM engine",
-        });
-      }
-    }
-  }
-  const defaultEngine = config.defaults?.engine;
-  if (defaultEngine && !config.engines?.[defaultEngine]) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["defaults", "engine"],
-      message: "engine does not name a configured engine",
-    });
-  }
-  // One rule for every key unattended model work reads its engine from: the
-  // engine must confine the model-work tool policy (an LLM, or an agent whose
-  // harness does), because that work runs over generated content with no one
-  // watching.
-  const confining = [...HARNESS_MODEL_WORK_IDS];
-  const confiningPlatforms = `${confining.slice(0, -1).join(", ")} or ${confining.at(-1)}`;
-  const modelWorkEngine = (name: string | undefined, path: (string | number)[]): void => {
-    if (!name) return;
-    const engine = config.engines?.[name];
-    if (!engine) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: "engine does not name a configured engine" });
-    } else if (engine.kind !== "llm" && !HARNESS_MODEL_WORK_IDS.has(engine.platform)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path,
-        message: `engine "${name}" (platform ${engine.platform}) cannot confine the model-work tool policy, which unattended model work requires. Use an LLM engine, or an agent engine on ${confiningPlatforms}.`,
-      });
-    }
-  };
-  modelWorkEngine(config.defaults?.llmEngine, ["defaults", "llmEngine"]);
-  for (const [passName, pass] of Object.entries(config.index ?? {})) {
-    const engine = (pass as { engine?: unknown } | undefined)?.engine;
-    if (typeof engine === "string") modelWorkEngine(engine, ["index", passName, "engine"]);
-  }
-  const workflowJudge = config.workflow?.judgeEngine;
-  if (workflowJudge && !config.engines?.[workflowJudge]) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["workflow", "judgeEngine"],
-      message: "judgeEngine does not name a configured engine",
-    });
-  }
-  const defaultStrategy = config.defaults?.improveStrategy;
+  const improveStrategy = config.improve?.strategy;
   if (
-    defaultStrategy &&
+    improveStrategy &&
     // graph-refresh is exempt from this eager, config-load-time check: unlike
     // a plain typo, it is a specific, known retirement, and refusing it here
     // would fail every command's config load (including `akm migrate apply`,
     // the one that fixes this). `resolveImproveStrategy`
     // (src/commands/improve/improve-strategies.ts) refuses it lazily, at
     // improve-invocation time, with the same message either way.
-    defaultStrategy !== "graph-refresh" &&
-    !BUILTIN_IMPROVE_STRATEGY_NAMES.includes(defaultStrategy as (typeof BUILTIN_IMPROVE_STRATEGY_NAMES)[number]) &&
-    !config.improve?.strategies?.[defaultStrategy]
+    improveStrategy !== "graph-refresh" &&
+    // The strategies removed in 0.10 (#1130) are exempt for the same reason:
+    // `resolveImproveStrategy` refuses them lazily, naming `default`.
+    !REMOVED_IMPROVE_STRATEGY_NAMES.includes(improveStrategy as (typeof REMOVED_IMPROVE_STRATEGY_NAMES)[number]) &&
+    !BUILTIN_IMPROVE_STRATEGY_NAMES.includes(improveStrategy as (typeof BUILTIN_IMPROVE_STRATEGY_NAMES)[number]) &&
+    !config.improve?.strategies?.[improveStrategy]
   ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ["defaults", "improveStrategy"],
-      message: "improveStrategy does not name a built-in or configured strategy",
+      path: ["improve", "strategy"],
+      message: "strategy does not name a built-in or configured improve strategy",
     });
-  }
-  for (const [strategyName, strategy] of Object.entries(config.improve?.strategies ?? {})) {
-    const strategyPath = ["improve", "strategies", strategyName];
-    modelWorkEngine(strategy.engine, [...strategyPath, "engine"]);
-    for (const [processName, process] of Object.entries(strategy.processes ?? {})) {
-      const processConfig = process as {
-        engine?: string;
-        judgment?: { enabled?: boolean; engine?: string };
-        qualityGate?: { engine?: string };
-      };
-      const processPath = [...strategyPath, "processes", processName];
-      if (processConfig.engine && !(IMPROVE_ENGINE_PROCESSES as readonly string[]).includes(processName)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [...processPath, "engine"],
-          message: `${processName} does not dispatch an engine`,
-        });
-      } else {
-        modelWorkEngine(processConfig.engine, [...processPath, "engine"]);
-      }
-      if (processConfig.judgment?.enabled === true) {
-        modelWorkEngine(processConfig.judgment.engine, [...processPath, "judgment", "engine"]);
-      }
-      modelWorkEngine(processConfig.qualityGate?.engine, [...processPath, "qualityGate", "engine"]);
-    }
   }
   // #464.a: defaultWriteTarget must name a configured source. 0.9.0 (spec
   // §10.1): sources are `bundles` keys, so it must name a bundle. With no

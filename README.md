@@ -24,7 +24,7 @@ Search or curate a shortlist, then load full content by ref. No giant startup pr
 Install and share bundles containing skills, scripts, workflows, agents, instructions, memories, and knowledge — not just prompt snippets.
 
 ### Improve through evidence, with review
-Feedback is recorded against each asset and feeds `akm improve`. A negative report can carry an exact text fix, and `akm improve` repairs metadata. Edits land as diffable proposals you accept, reject or revert, unless you opt in to automatic acceptance (`experimental.improveAutonomy`). Only writable bundles are changed.
+Feedback re-ranks assets right away. A negative report can carry an exact text fix, and `akm improve` repairs metadata. Edits land as diffable proposals: the default improve strategy accepts the ones its quality judge passed, the rest wait for you to accept or reject, and any accept can be reverted. Only writable bundles are changed.
 
 ### Turn knowledge into repeatable work
 Run persisted workflows with dispatch, gates, retries, budgets, and resume instead of reconstructing a process from prose every session. Workflows are Experimental.
@@ -53,6 +53,10 @@ Upgrade in place: `akm upgrade`
 
 The npm package always uses Node.js to bootstrap its cross-platform command. If a working [Bun](https://bun.sh) >= 1.0 is also on `PATH`, the launcher prefers Bun for execution; old, unusable, or absent Bun installations fall back to Node.js. Node.js remains required for the npm package. The standalone binaries are runtime-free.
 
+Local semantic search runs its embedding model on ONNX Runtime and is offered on Linux x64 (glibc) and Apple-silicon macOS; every other platform uses keyword search or an embedding endpoint. Choosing it in `akm setup` (`--embedding local`) downloads the runtime (about 86 MB) and the model (about 127 MB) once into akm's cache; nothing native is installed with the package or carried in a standalone binary. [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/#local-semantic-search) has the details.
+
+With a connection and no harness, agent work runs on akm's own runtime, a pinned OpenCode 2 binary. The first time it runs, akm downloads that binary from the npm registry (about 114 MB, once) into its cache; on Alpine/musl it needs `libstdc++` and `libgcc` (the Alpine Node image has them). See [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/#akms-own-agent-runtime).
+
 ## First useful result
 
 ```sh
@@ -66,7 +70,7 @@ akm show <ref>                           # load a match by the ref curate printe
 Each step, with its success check, is in [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/). Then tell your agent AKM exists:
 
 ```sh
-akm help agents >> AGENTS.md
+akm hints --detail brief >> AGENTS.md
 ```
 
 ## Works with what you already have
@@ -78,7 +82,7 @@ AKM recognizes several existing directory layouts in place, each through its own
 | Native akm bundles | Full read/write — scripts, skills, workflows, agents, instructions, memories, knowledge, and more |
 | Claude Code / OpenCode tool directories | Indexes `CLAUDE.md`/`AGENTS.md`, `commands/`, `agents/`, `skills/` in place, read-only |
 | Standalone Agent Skills packages | Indexes `<name>/SKILL.md` collections in place, read-only |
-| Workflow and task files | Indexes standalone `.md`/`.yml` workflows and task source v4 `.yml` files |
+| Workflow and task files | Indexes standalone `.md` workflows and task source v4 `.yml` files |
 | OKF and LLM wikis | Indexes plain-markdown (OKF) and Karpathy-style wiki (`schema.md` + `raw/` + `pages/`) content, read-only |
 | Git, npm, local dirs, and websites | Any of these can be added as a source; AKM detects the bundle format inside and indexes it (a website is crawled into a local snapshot) |
 
@@ -91,7 +95,7 @@ See [Supported Formats](https://akm.fwdslsh.dev/docs/reference/supported-formats
 - Turn feedback and usage into reviewable proposals — [Improve the Library](https://akm.fwdslsh.dev/docs/guides/improve-the-library/)
 - Run resumable, multi-step procedures — [Workflows](https://akm.fwdslsh.dev/docs/reference/workflows/)
 - Author strict scheduled automation — [Tasks](https://akm.fwdslsh.dev/docs/reference/tasks/)
-- Upgrading from an older release — [Migration guides](docs/migration/README.md)
+- Upgrading from 0.9 — [0.9 to 0.10 migration guide](https://akm.fwdslsh.dev/docs/migration/v0.9-to-v0.10/)
 - Wire akm into Claude Code, OpenCode, Cursor, and other assistants — [Use AKM With Any Agent](https://akm.fwdslsh.dev/docs/guides/use-with-any-agent/)
 
 Scheduling background tasks (like `akm improve`) involves reviewing and activating OS scheduler entries — see [Scheduling](https://akm.fwdslsh.dev/docs/guides/scheduling/) for the full walkthrough.

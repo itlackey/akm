@@ -5,22 +5,22 @@
 /**
  * The `generic-files` adapter — akm 0.9.0 format-family work item (#46).
  *
- * The AKM-native FALLBACK family (spec §7). Any leftover file is classified by
- * extension (open-question-5, RESOLVED — maintainer 2026-07):
+ * The AKM-native FALLBACK family. Any leftover file is classified by
+ * extension:
  *   - a SCRIPT_EXTENSIONS extension → `script` (conceptId KEEPS the extension);
  *   - markdown / plain-text → `document` (conceptId STRIPS the extension);
  *   - everything else → `file` (conceptId keeps the extension).
  * Placement is IDENTITY: `document` appends `.md`, `script`/`file` keep their
- * natural path. D-R6 reserved files (`index.md`/`log.md`) are excluded from the
+ * natural path. Reserved files (`index.md`/`log.md`) are excluded from the
  * catch-all so a structural listing is never indexed as a `document`.
  *
- * EXPLICIT-CONFIG ONLY: `generic-files` is never in the §1.2 auto-probe order —
+ * EXPLICIT-CONFIG ONLY: `generic-files` is never in the auto-probe order —
  * a user opts in deliberately — so `looksLikeRoot` NEVER fires. It has no
  * type-specific validators (`validate` runs base checks only).
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/generic-files/` + goldens
- * `tests/fixtures/format-family-goldens/generic-files/{recognition,placement,lint,renderer}.json`.
+ * `tests/fixtures/format-family-goldens/generic-files/{recognition,lint,renderer}.json`.
  */
 
 import path from "node:path";
@@ -90,7 +90,7 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
     if (change.op === "delete") continue;
     const raw = change.after ?? (await ctx.readFile(change.path));
     if (typeof raw !== "string") continue;
-    // No type-specific validators — base checks only (spec §6 script/document/file rows).
+    // No type-specific validators — base checks only.
     diagnostics.push(...(await runBaseValidateChecks(toPosix(change.path), parseFrontmatter(raw), c.root, ctx)));
   }
   return diagnostics;
@@ -116,17 +116,6 @@ export const genericFilesAdapter: BundleAdapter = {
     return DOCUMENT_EXTENSIONS.has(extension)
       ? documentCandidates
       : [{ path: path.join(c.root, posix), conceptId: posix }, ...documentCandidates];
-  },
-
-  /**
-   * IDENTITY placement (open-question-5): a conceptId that carries an extension
-   * (`script`/`file`) places to itself; an extension-less conceptId (a
-   * `document`) appends `.md`.
-   */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    const posix = toPosix(conceptId);
-    const hasExt = path.extname(posix) !== "";
-    return path.join(c.root, hasExt ? posix : `${posix}.md`);
   },
 
   /** generic-files is EXPLICIT-CONFIG ONLY — never auto-selected (§1.2), so this never fires. */

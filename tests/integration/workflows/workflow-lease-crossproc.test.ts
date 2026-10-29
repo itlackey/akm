@@ -28,6 +28,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
+import { WORKFLOW_PLAN_VERSION } from "../../../src/workflows/plan";
 import { getWorkflowStatus, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 import {
@@ -51,8 +52,7 @@ beforeEach(() => {
   storage = withIsolatedAkmStorage();
   writeSandboxConfig({
     configVersion: "0.9.0",
-    engines: { "test-agent": { kind: "agent", platform: "opencode-sdk" } },
-    defaults: { engine: "test-agent" },
+    connections: { "test-agent": { endpoint: "http://127.0.0.1:1/v1", models: { fast: "test-model" } } },
   });
   markerDir = path.join(storage.root, "markers");
   fs.mkdirSync(markerDir, { recursive: true });
@@ -63,7 +63,7 @@ afterEach(() => storage.cleanup());
 const FANOUT_WF = [
   "---",
   "type: workflow",
-  "defaults: { engine: test-agent }",
+  "defaults: { connection: test-agent }",
   "params:",
   "  files: { type: array, items: { type: string } }",
   "steps:",
@@ -83,7 +83,7 @@ describe.skipIf(!BUN)("multi-process run lock (single driver + crash reclaim)", 
     writeProgram(storage.stashDir, "lease-xproc", FANOUT_WF);
     const params = { files: ["a.ts", "b.ts", "c.ts", "d.ts"] };
     const started = await startWorkflowRun("workflows/lease-xproc", params);
-    expect(started.run.planIrVersion).toBe(6);
+    expect(started.run.planIrVersion).toBe(WORKFLOW_PLAN_VERSION);
     const runId = started.run.id;
     const [ua, ub, uc, ud] = await unitIds(runId, params);
 

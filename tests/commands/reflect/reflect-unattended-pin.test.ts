@@ -5,10 +5,11 @@
 /**
  * P1.3 (meta-review 07, Chain G), as the model-work tool policy now states it:
  * unattended `akm improve` never hands reflect an agent that can write the
- * stash. An agent process engine runs under the policy (its own scratch
+ * stash. A process on a harness runs under the policy (its own scratch
  * directory, no stash access beyond `akm search`/`akm show`); one whose
- * harness cannot confine the policy is refused before dispatch; an LLM
- * process engine is honored as-is; with no engine to resolve, reflect fails
+ * harness cannot confine the policy runs unrestricted, in the same scratch
+ * directory, with a notice; a process on a
+ * connection is honored as-is; with no connection or harness to resolve, reflect fails
  * CLOSED instead of dispatching an agent.
  */
 
@@ -17,12 +18,19 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { akmReflect } from "../../../src/commands/improve/reflect";
-import type { AkmConfig, LlmConnectionConfig } from "../../../src/core/config/config";
-import type { SpawnedSubprocess, SpawnFn } from "../../../src/core/subprocess";
+import type { AkmConfig } from "../../../src/core/config/config";
+import type { ChatCompletionConfig } from "../../../src/llm/client";
+import { harnessCalls, writeFakeHarness } from "../../_helpers/engine-stubs";
 import { reflectReply } from "../../_helpers/factories";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  makeSandboxDir,
+  type SandboxedDir,
+  withIsolatedAkmStorage,
+} from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
+let binDir: SandboxedDir;
 
 function makeStashDir(): string {
   const stash = storage.stashDir;
@@ -30,48 +38,21 @@ function makeStashDir(): string {
   return stash;
 }
 
-function asReadableStream(text: string): ReadableStream<Uint8Array> {
-  const bytes = new TextEncoder().encode(text);
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(bytes);
-      controller.close();
-    },
-  });
+/** A fake harness binary that answers with `replies`, and a config whose reflect process runs `platform` on it. */
+function fakeAgent(platform = "claude", replies: readonly string[] = [""]): { bin: string; config: AkmConfig } {
+  const bin = writeFakeHarness(binDir.dir, `fake-agent-${platform}`, replies);
+  return { bin, config: agentModeConfig({ harnesses: { "fake-agent": { platform, bin } } } as Partial<AkmConfig>) };
 }
 
-function spySpawn(onSpawn: (cmd: string[], env: Record<string, string>, cwd?: string) => void, stdout = ""): SpawnFn {
-  return (cmd, options) => {
-    onSpawn(cmd, options.env ?? {}, options.cwd);
-    const proc: SpawnedSubprocess = {
-      exitCode: 0,
-      exited: Promise.resolve(0),
-      stdout: asReadableStream(stdout),
-      stderr: asReadableStream(""),
-      stdin: null,
-      kill: () => undefined,
-    };
-    return proc;
-  };
-}
-
-/** Config whose reflect process resolves a TOOL-CAPABLE (agent) runner. */
+/** Config whose reflect process resolves a TOOL-CAPABLE (harness) runner. */
 function agentModeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
   return {
     configVersion: "0.9.0",
-    defaults: { llmEngine: "pin-target", engine: "fake-agent", improveStrategy: "default" },
-    engines: {
-      "pin-target": { kind: "llm", endpoint: "http://127.0.0.1:9", model: "pin-model" },
-      "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
-    },
+    connections: { "pin-target": { endpoint: "http://127.0.0.1:9", models: { fast: "pin-model" } } },
+    harnesses: { "fake-agent": { platform: "claude", bin: "fake-agent" } },
     improve: {
-      strategies: {
-        default: {
-          processes: {
-            reflect: { enabled: true, engine: "fake-agent", qualityGate: { enabled: false } },
-          },
-        },
-      },
+      processes: { reflect: { harness: "fake-agent" } },
+      strategies: { default: { processes: { reflect: { enabled: true, qualityGate: { enabled: false } } } } },
     },
     ...overrides,
   } as unknown as AkmConfig;
@@ -79,18 +60,18 @@ function agentModeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  binDir = makeSandboxDir("akm-unattended-pin-bin");
 });
 
 afterEach(() => {
+  binDir.cleanup();
   storage.cleanup();
 });
 
 describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
-  test("eventSource=improve runs an agent process engine under the model-work tool policy", async () => {
+  test("eventSource=improve runs a harness process under the model-work tool policy", async () => {
     const stash = makeStashDir();
-    const config = agentModeConfig();
-    let seen: { cmd: string[]; env: Record<string, string>; cwd?: string } | undefined;
-    const payload = reflectReply({ description: "Alpha, the first memory" });
+    const { bin, config } = fakeAgent("claude", [reflectReply({ description: "Alpha, the first memory" })]);
 
     const result = await akmReflect({
       ref: "memories/alpha",
@@ -98,64 +79,51 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
       eventSource: "improve",
       config,
       improveProfile: config.improve?.strategies?.default,
-      runAgentOptions: { spawn: spySpawn((cmd, env, cwd) => (seen = { cmd, env, cwd }), payload) },
     });
 
     expect(result.ok).toBe(true);
-    // opencode runs the injected, confined agent in its own scratch directory, not the stash.
-    expect(seen?.cmd.slice(1, 4)).toEqual(["run", "--agent", "akm-model-work"]);
-    expect(JSON.parse(seen?.env.OPENCODE_CONFIG_CONTENT ?? "{}").agent["akm-model-work"].permission).toMatchObject({
-      "*": "deny",
-      bash: "deny",
-      akm_feedback: "deny",
-    });
+    const [seen] = harnessCalls(bin);
+    // claude runs confined to the model-work tools, in its own scratch directory, not the stash.
+    expect(seen?.argv.slice(0, 2)).toEqual(["--restricted", "--strict-mcp-config"]);
+    expect(seen?.argv).toContain("--permission-mode");
+    expect(seen?.argv).toContain("Read,Bash(akm search *),Bash(akm show *),Bash(akm curate *)");
+    expect(seen?.argv).toContain("--no-session-persistence");
     expect(path.basename(seen?.cwd ?? "")).toStartWith("akm-model-work-");
     // The proposal comes back as the JSON reply of the output schema, which the prompt ends with.
-    expect(seen?.cmd.at(-1)).toContain("Respond with ONLY a JSON value matching this JSON Schema");
+    expect(seen?.stdin).toContain("Respond with ONLY a JSON value matching this JSON Schema");
   });
 
-  test("eventSource=improve refuses an agent engine that cannot confine the policy, before dispatch", async () => {
+  test("eventSource=improve runs a harness that cannot confine the policy unrestricted, in the scratch directory", async () => {
     const stash = makeStashDir();
-    const config = agentModeConfig({
-      engines: {
-        "pin-target": { kind: "llm", endpoint: "http://127.0.0.1:9", model: "pin-model" },
-        "fake-agent": { kind: "agent", platform: "pi", bin: "fake-agent" },
-      },
-    } as Partial<AkmConfig>);
-    let spawned = false;
+    const { bin, config } = fakeAgent("pi", [reflectReply({ description: "Alpha, the first memory" })]);
 
-    await expect(
-      akmReflect({
-        ref: "memories/alpha",
-        stashDir: stash,
-        eventSource: "improve",
-        config,
-        improveProfile: config.improve?.strategies?.default,
-        runAgentOptions: { spawn: spySpawn(() => (spawned = true)) },
-      }),
-    ).rejects.toThrow("The pi transport cannot enforce the model-work tool policy.");
-    expect(spawned).toBe(false);
+    const result = await akmReflect({
+      ref: "memories/alpha",
+      stashDir: stash,
+      eventSource: "improve",
+      config,
+      improveProfile: config.improve?.strategies?.default,
+    });
+
+    expect(result.ok).toBe(true);
+    const [seen] = harnessCalls(bin);
+    expect(seen?.argv).toContain("-p");
+    expect(path.basename(seen?.cwd ?? "")).toStartWith("akm-model-work-");
   });
 
-  test("eventSource=improve honors an LLM process engine unchanged", async () => {
+  test("eventSource=improve honors a connection process unchanged", async () => {
     const stash = makeStashDir();
-    let chatConnection: LlmConnectionConfig | undefined;
+    let chatConnection: ChatCompletionConfig | undefined;
     const config: AkmConfig = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",
-      defaults: { llmEngine: "other", improveStrategy: "default" },
-      engines: {
-        other: { kind: "llm", endpoint: "http://127.0.0.1:9", model: "default-model" },
-        judge: { kind: "llm", endpoint: "http://127.0.0.1:9", model: "block-model" },
+      connections: {
+        default: { endpoint: "http://127.0.0.1:9", models: { fast: "default-model" } },
+        judge: { endpoint: "http://127.0.0.1:9", models: { fast: "block-model" } },
       },
       improve: {
-        strategies: {
-          default: {
-            processes: {
-              reflect: { enabled: true, engine: "judge", qualityGate: { enabled: false } },
-            },
-          },
-        },
+        processes: { reflect: { connection: "judge" } },
+        strategies: { default: { processes: { reflect: { enabled: true, qualityGate: { enabled: false } } } } },
       },
     };
 
@@ -171,18 +139,18 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
       },
     });
 
-    // The process engine is used; defaults.llmEngine does not clobber it.
+    // The process connection is used; the default one does not clobber it.
     expect(chatConnection?.model).toBe("block-model");
   });
 
-  test("eventSource=improve with no engine to resolve fails CLOSED instead of dispatching an agent", async () => {
+  test("eventSource=improve with no connection or harness to resolve fails CLOSED instead of dispatching an agent", async () => {
     const stash = makeStashDir();
-    let spawned = false;
+    const bin = path.join(binDir.dir, "never-run");
 
-    const config = agentModeConfig();
-    config.defaults = { engine: "fake-agent", improveStrategy: "default" };
+    const config = agentModeConfig({ connections: undefined, harnesses: undefined });
+    // Nothing is configured and nothing is pinned: a pin to a harness that is not configured would fail on its own.
+    delete (config.improve as { processes?: unknown }).processes;
     const strategy = config.improve?.strategies?.default;
-    if (strategy?.processes?.reflect) delete strategy.processes.reflect.engine;
 
     await expect(
       akmReflect({
@@ -191,23 +159,17 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
         eventSource: "improve",
         config,
         improveProfile: strategy,
-        runAgentOptions: { spawn: spySpawn(() => (spawned = true)) },
       }),
-    ).rejects.toThrow("Reflect requires an engine for the active improve strategy.");
-    expect(spawned).toBe(false);
+    ).rejects.toThrow("Reflect requires a connection or harness for the active improve strategy.");
+    expect(harnessCalls(bin)).toEqual([]);
   });
 
-  test("interactive reflect (no eventSource) dispatches the configured agent engine", async () => {
+  test("interactive reflect (no eventSource) dispatches the configured harness", async () => {
     const stash = makeStashDir();
-    let spawned = false;
+    const { bin, config } = fakeAgent("gemini");
 
-    await akmReflect({
-      ref: "memories/alpha",
-      stashDir: stash,
-      config: agentModeConfig(),
-      runAgentOptions: { spawn: spySpawn(() => (spawned = true)) },
-    });
+    await akmReflect({ ref: "memories/alpha", stashDir: stash, config: { ...config, connections: undefined } });
 
-    expect(spawned).toBe(true);
+    expect(harnessCalls(bin)).toHaveLength(1);
   });
 });

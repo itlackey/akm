@@ -44,7 +44,7 @@ describe("decodeImproveResult", () => {
     ],
     effectiveRefs: [{ ref: "skills/a", lane: "proactive", reason: "scope-type" }],
     processes: [
-      { process: "reflect", enabled: true, engine: "default", model: "base", engineKind: "llm", notices: [] },
+      { process: "reflect", enabled: true, engine: "default", model: "base", engineKind: "connection", notices: [] },
       { process: "distill", enabled: false, notices: [] },
       { process: "consolidate", enabled: false, notices: [] },
       { process: "memoryInference", enabled: false, notices: [] },
@@ -63,13 +63,12 @@ describe("decodeImproveResult", () => {
       selectedRefs: ["skills/a"],
     },
     consolidation: {
-      configured: { enabled: true, minPoolSize: 3, limit: 4, maxChunkSize: 2 },
-      effective: { enabled: true, minPoolSize: 3, limit: 4, chunkSize: 2 },
+      configured: { enabled: true, limit: 4, maxChunkSize: 2 },
+      effective: { enabled: true, limit: 4, chunkSize: 2 },
       poolSize: 5,
       candidatePoolSize: 4,
       gates: {
         profile: { passed: true, reason: "enabled" },
-        minimumPool: { passed: true, reason: "large enough" },
         delta: { passed: true, reason: "changed" },
       },
       wouldRun: true,
@@ -86,7 +85,6 @@ describe("decodeImproveResult", () => {
       configuredMode: "promote",
       mode: "queue",
       maxAcceptsPerRun: 7,
-      maxDiffLines: 20,
     },
   } satisfies ImproveExecutionPlan;
 
@@ -171,6 +169,44 @@ describe("decodeImproveResult", () => {
     ).toThrow(/limit removal.*selected.*effective|effectiveRefs.length/);
   });
 
+  test("decodes a consolidation plan an older release stored with minPoolSize and the minimumPool gate (#1131)", () => {
+    const old = {
+      ...plan,
+      consolidation: {
+        ...plan.consolidation,
+        configured: { ...plan.consolidation.configured, minPoolSize: 3 },
+        effective: { ...plan.consolidation.effective, minPoolSize: 3 },
+        gates: { ...plan.consolidation.gates, minimumPool: { passed: true, reason: "large enough" } },
+      },
+    };
+    const envelope = {
+      schemaVersion: 2,
+      strategy: "default",
+      ...common,
+      dryRun: true,
+      plannedRefs: [plannedRef],
+      plan: old,
+    };
+    expect(decodeImproveResult(envelope).envelope.plan).toEqual(old);
+  });
+
+  test("decodes a plan an older release stored with proactive.configured.limit and triage.maxDiffLines (#1091)", () => {
+    const old = {
+      ...plan,
+      proactive: { ...plan.proactive, configured: { ...plan.proactive.configured, limit: 4 } },
+      triage: { ...plan.triage, maxDiffLines: 20 },
+    };
+    const envelope = {
+      schemaVersion: 2,
+      strategy: "default",
+      ...common,
+      dryRun: true,
+      plannedRefs: [plannedRef],
+      plan: old,
+    };
+    expect(decodeImproveResult(envelope).envelope.plan).toEqual(old);
+  });
+
   test("decodes a plan with the retrieval gate and one written before it existed (#986)", () => {
     const envelope = {
       schemaVersion: 2,
@@ -206,8 +242,7 @@ describe("decodeImproveResult", () => {
   // stored `plan` without it. `akm health --group-by run` on a real owner
   // state.db found 11 such rows in a 30d window, all silently excluded
   // because `validateProcessRoutingRows` was called unconditionally instead
-  // of guarded like `proactive` below. Must not throw (AGENTS.md "Reading
-  // persisted data").
+  // of guarded like `proactive` below. Must not throw.
   test("decodes a real pre-#947 run record with no plan.processes field (akm health must still count it)", () => {
     const { processes: _processes, ...prePlan947 } = plan;
     const envelope = {
@@ -234,7 +269,7 @@ describe("decodeImproveResult", () => {
   // `graphExtractionDurationMs` fields. Retired in 0.9.17-alpha.9 (nothing
   // routes or runs it anymore), but every pre-alpha.9 run stored this shape,
   // and `akm health` decodes those rows on every read — this must not throw
-  // or silently drop the row (AGENTS.md "Reading persisted data").
+  // or silently drop the row.
   test("decodes a real 0.9.17-alpha.8 run record naming the retired graphExtraction process (health must still count it)", () => {
     // `process: "graphExtraction"` / `name: "graph-extraction"` are
     // deliberately outside the fresh-plan `ProcessRoutingRow`/stage-name
@@ -246,7 +281,14 @@ describe("decodeImproveResult", () => {
       ...plan,
       processes: [
         ...plan.processes,
-        { process: "graphExtraction", enabled: true, engine: "default", model: "base", engineKind: "llm", notices: [] },
+        {
+          process: "graphExtraction",
+          enabled: true,
+          engine: "default",
+          model: "base",
+          engineKind: "connection",
+          notices: [],
+        },
       ],
       stages: [...plan.stages, { name: "graph-extraction", wouldRun: true, reason: "enabled" }],
     };
@@ -523,5 +565,17 @@ describe("decodeImproveResult", () => {
     expect(() =>
       decodeImproveResult({ schemaVersion: 2, strategy: "default", ...common, deadUrlCoverage: [] }),
     ).toThrow(/deadUrlCoverage must be an object/);
+  });
+});
+
+describe("an envelope an earlier release wrote with a field that is no longer written", () => {
+  test("still decodes with engineProbe, the reachability outcomes `--require-targets` recorded", () => {
+    const engineProbe = [
+      { process: "reflect", engine: "lab", endpoint: "https://a.example.test/v1", reachable: true, latencyMs: 42 },
+    ];
+    const decoded = decodeImproveResult(
+      JSON.stringify({ schemaVersion: 2, strategy: "default", ...common, engineProbe }),
+    );
+    expect((decoded.envelope as unknown as Record<string, unknown>).engineProbe).toEqual(engineProbe);
   });
 });
