@@ -16,12 +16,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmHealth } from "../src/commands/health";
 import type { HealthCheckResult } from "../src/commands/health/types";
+import { mockClaudePluginList, selectClaudePlugin } from "./_helpers/claude-plugins";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
+  mockClaudePluginList();
 });
 
 afterEach(() => {
@@ -40,6 +42,9 @@ function findCheck(checks: HealthCheckResult[], name: string): HealthCheckResult
 
 function installPlugin(pluginsRoot: string, version: string, versionRange: string): void {
   const pluginDir = path.join(pluginsRoot, "cache", "akm-plugins", "akm", version);
+  selectClaudePlugin(pluginsRoot, [
+    { id: "akm@akm-plugins", version, scope: "user", enabled: true, installPath: pluginDir },
+  ]);
   fs.mkdirSync(path.join(pluginDir, ".claude-plugin"), { recursive: true });
   fs.writeFileSync(path.join(pluginDir, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "akm", version }));
   fs.mkdirSync(path.join(pluginDir, "shared"), { recursive: true });

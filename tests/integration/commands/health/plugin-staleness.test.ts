@@ -4,17 +4,22 @@
 
 /**
  * `plugin-version` advisory for `akm health` (itlackey/akm#832). Real
- * filesystem fixtures (plugin cache manifests + `akm-version.ts`), an
- * injected `listRemoteTags` seam so no subprocess/network call is ever made.
+ * Integration: native metadata fixtures and real Git subprocesses for remote tag probing.
  */
 
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { collectPluginStalenessAdvisories, type ListRemoteTagsFn } from "../../../src/commands/health/plugin-staleness";
-import { withEnvSync } from "../../_helpers/sandbox";
+import {
+  collectPluginStalenessAdvisories,
+  type ListRemoteTagsFn,
+} from "../../../../src/commands/health/plugin-staleness";
+import { mockClaudePluginList, selectClaudePlugin } from "../../../_helpers/claude-plugins";
+import { withEnvSync } from "../../../_helpers/sandbox";
+
+beforeEach(mockClaudePluginList);
 
 function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -28,6 +33,7 @@ function installPlugin(
     version?: string;
     manifestVersion?: string;
     versionRange?: string | null;
+    selected?: boolean;
   } = {},
 ): void {
   const marketplace = opts.marketplace ?? "akm-plugins";
@@ -38,6 +44,16 @@ function installPlugin(
     path.join(pluginDir, ".claude-plugin", "plugin.json"),
     JSON.stringify({ name: "akm", version: opts.manifestVersion ?? version }),
   );
+  if (opts.selected !== false)
+    selectClaudePlugin(pluginsRoot, [
+      {
+        id: `akm@${marketplace}`,
+        version: opts.manifestVersion ?? version,
+        scope: "user",
+        enabled: true,
+        installPath: pluginDir,
+      },
+    ]);
   if (opts.versionRange !== null) {
     fs.mkdirSync(path.join(pluginDir, "shared"), { recursive: true });
     fs.writeFileSync(
@@ -99,7 +115,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       opencodeCacheRoot: noOpencode(pluginsRoot),
     });
 
-    expect(adv?.status).toBe("pass");
+    expect(adv?.status).toBe("unknown");
     expect(adv?.evidence?.stale).toBe(false);
     expect(adv?.evidence?.availableVersion).toBe("0.10.261013-beta");
     expect(adv?.message).not.toContain("STALE");
@@ -139,20 +155,24 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     expect(adv?.evidence?.availableVersion).toBe("0.9.30202610090106");
   });
 
-  test("with several cached builds, the highest one counts as installed, prereleases included", () => {
+  test("the native selected installation wins over a higher cached version", () => {
     const pluginsRoot = makeTempDir("akm-plugin-cached-builds-");
-    installPlugin(pluginsRoot, { versionRange: null, version: "0.9.30202610090106" });
-    installPlugin(pluginsRoot, { versionRange: null, version: "0.10.261013-beta" });
+    installPlugin(pluginsRoot, { versionRange: "*", version: "0.10.261017" });
+    installPlugin(pluginsRoot, {
+      versionRange: "^0.10.26101002-alpha",
+      version: "0.10.26101002-alpha",
+      selected: false,
+    });
     makeMarketplaceDir(pluginsRoot);
 
     const [adv] = collectPluginStalenessAdvisories({
       pluginsRoot,
-      cliVersion: "0.10.261015-beta",
-      listRemoteTags: fakeTags(["0.9.30202610090106", "0.10.261013-beta"]),
+      cliVersion: "0.10.261019",
+      listRemoteTags: fakeTags(["0.10.261017"]),
       opencodeCacheRoot: noOpencode(pluginsRoot),
     });
 
-    expect(adv?.message).toContain("installed 0.10.261013-beta");
+    expect(adv?.message).toContain("installed 0.10.261017");
     expect(adv?.status).toBe("pass");
   });
 
@@ -244,7 +264,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     });
 
     expect(calls).toBe(0);
-    expect(adv?.status).toBe("pass");
+    expect(adv?.status).toBe("unknown");
     expect(adv?.evidence?.availableVersion).toBeNull();
     expect(adv?.evidence?.stale).toBe(false);
   });
@@ -261,7 +281,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       opencodeCacheRoot: noOpencode(pluginsRoot),
     });
 
-    expect(adv?.status).toBe("pass");
+    expect(adv?.status).toBe("unknown");
     expect(adv?.evidence?.availableVersion).toBeNull();
     expect(adv?.evidence?.stale).toBe(false);
   });
@@ -339,7 +359,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       opencodeCacheRoot: noOpencode(pluginsRoot),
     });
 
-    expect(adv?.status).toBe("pass");
+    expect(adv?.status).toBe("unknown");
     expect(adv?.evidence?.admitted).toBeNull();
     expect(adv?.message).not.toContain("NOT ADMITTED");
   });
@@ -356,9 +376,165 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       opencodeCacheRoot: noOpencode(pluginsRoot),
     });
 
-    expect(adv?.status).toBe("pass");
+    expect(adv?.status).toBe("unknown");
     expect(adv?.evidence?.admitted).toBeNull();
     expect(adv?.evidence?.versionRange).toBeNull();
+  });
+
+  test.each([
+    "0.10.261019",
+    "0.10.261020-beta",
+  ])("current minimum admits %s and ignores superseded high-sorting alpha", (cliVersion) => {
+    const pluginsRoot = makeTempDir("akm-plugin-minimum-");
+    installPlugin(pluginsRoot, { version: "0.10.261017" });
+    installPlugin(pluginsRoot, {
+      version: "0.10.26101002-alpha",
+      versionRange: "^0.10.26101002-alpha",
+      selected: false,
+    });
+    const selected = path.join(pluginsRoot, "cache/akm-plugins/akm/0.10.261017");
+    fs.writeFileSync(path.join(selected, "shared/akm-version.ts"), 'export const AKM_MIN_VERSION = "0.10.261004";');
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion,
+      probe: false,
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+    expect(adv?.evidence).toMatchObject({
+      installedVersion: "0.10.261017",
+      versionRange: ">=0.10.261004",
+      admitted: true,
+      enabled: true,
+      scope: "user",
+    });
+    expect(adv?.message).not.toContain("NOT ADMITTED");
+  });
+
+  test("native scopes and enabled states stay attached to their installation, and disabled plugins do not warn", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-scopes-");
+    installPlugin(pluginsRoot, { version: "0.9.1", versionRange: "0.9.1" });
+    const installPath = path.join(pluginsRoot, "cache/akm-plugins/akm/0.9.1");
+    selectClaudePlugin(pluginsRoot, [
+      { id: "akm@akm-plugins", version: "0.9.1", scope: "user", enabled: false, installPath },
+      {
+        id: "akm@akm-plugins",
+        version: "0.9.1",
+        scope: "project",
+        projectPath: "/some/project",
+        enabled: false,
+        installPath,
+      },
+      {
+        id: "akm@akm-plugins",
+        version: "0.9.1",
+        scope: "local",
+        projectPath: "/another/project",
+        enabled: false,
+        installPath,
+      },
+    ]);
+    const results = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.10.261019",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+    expect(results.map((r) => r.evidence?.scope)).toEqual(["user", "project", "local"]);
+    expect(
+      results.every(
+        (r) =>
+          r.status === "pass" &&
+          r.message.includes("disabled in Claude settings") &&
+          !r.message.includes("NOT ADMITTED"),
+      ),
+    ).toBe(true);
+    expect(results[1]?.evidence?.projectPath).toBe("/some/project");
+  });
+
+  test("differing enabled native scopes are ambiguous, not a false inactive warning", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-ambiguous-");
+    installPlugin(pluginsRoot, { version: "0.9.1", versionRange: "0.9.1" });
+    installPlugin(pluginsRoot, { version: "0.10.261017" });
+    selectClaudePlugin(pluginsRoot, [
+      {
+        id: "akm@akm-plugins",
+        version: "0.9.1",
+        scope: "user",
+        enabled: true,
+        installPath: path.join(pluginsRoot, "cache/akm-plugins/akm/0.9.1"),
+      },
+      {
+        id: "akm@akm-plugins",
+        version: "0.10.261017",
+        scope: "project",
+        projectPath: process.cwd(),
+        enabled: true,
+        installPath: path.join(pluginsRoot, "cache/akm-plugins/akm/0.10.261017"),
+      },
+      {
+        id: "akm@akm-plugins",
+        version: "0.10.261017",
+        scope: "local",
+        projectPath: process.cwd(),
+        enabled: true,
+        installPath: path.join(pluginsRoot, "cache/akm-plugins/akm/0.10.261017"),
+      },
+    ]);
+    const results = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.10.261019",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+    expect(
+      results.every(
+        (r) => r.status === "unknown" && r.evidence?.selectionKnown === false && !r.message.includes("NOT ADMITTED"),
+      ),
+    ).toBe(true);
+  });
+
+  test("malformed native rows remain visible with unknown compatibility", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-incomplete-");
+    selectClaudePlugin(pluginsRoot, [{ id: "akm@akm-plugins", scope: "user", enabled: true }]);
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.10.261019",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+    expect(adv?.status).toBe("unknown");
+    expect(adv?.evidence?.selectionKnown).toBe(false);
+  });
+
+  test.each([undefined, "unknown"])("a missing or unknown native scope stays uncertain (%s)", (scope) => {
+    const pluginsRoot = makeTempDir("akm-scope-unknown-");
+    try {
+      installPlugin(pluginsRoot, { version: "0.9.1", versionRange: "0.9.1" });
+      const rows = JSON.parse(fs.readFileSync(path.join(pluginsRoot, "native-list.json"), "utf8"));
+      rows[0].scope = scope;
+      fs.writeFileSync(path.join(pluginsRoot, "native-list.json"), JSON.stringify(rows));
+      const [advisory] = collectPluginStalenessAdvisories({
+        pluginsRoot,
+        cliVersion: "0.10.1",
+        listRemoteTags: () => ["0.9.1"],
+      });
+      expect(advisory?.status).toBe("unknown");
+      expect(advisory?.evidence?.selectionKnown).toBe(false);
+      expect(advisory?.message).not.toContain("NOT ADMITTED");
+    } finally {
+      fs.rmSync(pluginsRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("an unavailable native listing reports unknown instead of choosing a cache", () => {
+    const pluginsRoot = makeTempDir("akm-plugin-unavailable-");
+    installPlugin(pluginsRoot, { version: "0.10.26101002-alpha" });
+    fs.writeFileSync(path.join(pluginsRoot, "native-list.json"), "unavailable");
+    const [adv] = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.10.261019",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
+    expect(adv?.status).toBe("unknown");
+    expect(adv?.evidence?.installedVersion).toBeNull();
+    expect(adv?.message).not.toContain("NOT ADMITTED");
   });
 
   // OpenCode's bundled akm-cli, checked independently of any
@@ -745,7 +921,7 @@ describe("the real remote probe reads the channel the marketplace clone follows"
     });
 
     expect(adv?.evidence?.availableVersion).toBe("0.10.261013-beta");
-    expect(adv?.status).toBe("pass");
+    expect(adv?.status).toBe("unknown");
   });
 
   test("a clone on next behind the channel head is stale", () => {
@@ -776,7 +952,7 @@ describe("the real remote probe reads the channel the marketplace clone follows"
     });
 
     expect(adv?.evidence?.availableVersion).toBe("0.9.30202610090106");
-    expect(adv?.status).toBe("pass");
+    expect(adv?.status).toBe("unknown");
   });
 
   test("a clone pinned to a tag is compared with that tag, not the newest stable tag or the next head", () => {
@@ -791,7 +967,7 @@ describe("the real remote probe reads the channel the marketplace clone follows"
     });
 
     expect(adv?.evidence?.availableVersion).toBe("0.10.261012-beta");
-    expect(adv?.status).toBe("pass");
+    expect(adv?.status).toBe("unknown");
   });
 
   test("a detached clone at an untagged commit is compared with the newest stable tag, as before", () => {
@@ -807,7 +983,7 @@ describe("the real remote probe reads the channel the marketplace clone follows"
     });
 
     expect(adv?.evidence?.availableVersion).toBe("0.9.30202610090106");
-    expect(adv?.status).toBe("pass");
+    expect(adv?.status).toBe("unknown");
   });
 
   test("a clone with no origin remote makes no staleness claim", () => {
@@ -823,8 +999,8 @@ describe("the real remote probe reads the channel the marketplace clone follows"
     });
 
     expect(adv?.evidence?.availableVersion).toBeNull();
-    expect(adv?.status).toBe("pass");
-    expect(adv?.message).toBe("akm@akm-plugins: installed 0.10.261012-beta");
+    expect(adv?.status).toBe("unknown");
+    expect(adv?.message).toContain("akm@akm-plugins: installed 0.10.261012-beta");
   });
 
   test("an unreachable remote (offline) makes no staleness claim", () => {
@@ -840,6 +1016,6 @@ describe("the real remote probe reads the channel the marketplace clone follows"
     });
 
     expect(adv?.evidence?.availableVersion).toBeNull();
-    expect(adv?.status).toBe("pass");
+    expect(adv?.status).toBe("unknown");
   });
 });

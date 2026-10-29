@@ -549,6 +549,11 @@ export type PluginHarness = "claude-code" | "codex" | "opencode" | "opencode-v2"
  */
 export interface PluginUpgradeEntry {
   harness: PluginHarness;
+  channel?: UpgradeChannel | "pinned" | "unknown";
+  previousChannel?: UpgradeChannel | "pinned" | "unknown";
+  targetChannel?: UpgradeChannel;
+  channelMismatch?: boolean;
+  backups?: string[];
   outcome: "updated" | "current" | "skipped" | "deferred" | "failed" | "pending" | "unknown";
   from?: string;
   to?: string;
@@ -580,6 +585,8 @@ export interface UpgradeCheckResponse {
   installMethod: "binary" | "bun" | "npm" | "pnpm" | "package-local" | "unknown";
   /** The stream this check followed; set by `akm upgrade`. */
   channel?: UpgradeChannel;
+  currentChannel?: UpgradeChannel;
+  targetChannel?: UpgradeChannel;
   lockstep?: UpgradeLockstep;
   /** Per-harness plugin updates that `akm upgrade` would make. */
   plugins?: PluginUpgradeEntry[];
@@ -611,6 +618,8 @@ export interface UpgradeResponse {
   migration?: { status: "current" | "ready" | "blocked" | "failed"; error?: string } & Record<string, unknown>;
   /** The stream this upgrade followed; set by `akm upgrade`. */
   channel?: UpgradeChannel;
+  currentChannel?: UpgradeChannel;
+  targetChannel?: UpgradeChannel;
   lockstep?: UpgradeLockstep;
   /** The per-harness plugin step that follows the CLI step. */
   plugins?: PluginUpgradeEntry[];

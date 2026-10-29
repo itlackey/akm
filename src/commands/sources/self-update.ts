@@ -220,7 +220,8 @@ async function lookupNextVersion(fetchOptions?: { timeout?: number; retries?: nu
 /**
  * The newest release. With `channel: "next"` that includes prereleases: the
  * `next` dist-tag when it is newer than the latest stable release, else the
- * stable release (a prerelease older than a stable one is never a target).
+ * stable release. An explicit channel switch sets exactChannel to select the
+ * actual next tag, leaving downgrade consent to runUpgrade.
  * A binary install downloads the GitHub release tagged `v<version>`, which a
  * prerelease has too, so the version is all the install step needs.
  */
@@ -228,6 +229,7 @@ export async function checkForUpdate(
   currentVersion: string,
   fetchOptions?: { timeout?: number; retries?: number },
   channel: UpgradeChannel = "latest",
+  exactChannel = false,
 ): Promise<UpgradeCheckResponse> {
   const installMethod = detectInstallMethod();
   const url = `https://api.github.com/repos/${REPO}/releases/latest`;
@@ -244,7 +246,8 @@ export async function checkForUpdate(
   let latestVersion = latestTag.replace(/^v/, "");
   if (channel === "next") {
     const next = await lookupNextVersion(fetchOptions);
-    if (next && (latestVersion === "" || semverOrder(latestVersion, next) < 0)) latestVersion = next;
+    if (exactChannel && !next) throw new Error("No next prerelease is published; no channel was changed");
+    if (next && (exactChannel || latestVersion === "" || semverOrder(latestVersion, next) < 0)) latestVersion = next;
   }
 
   return {

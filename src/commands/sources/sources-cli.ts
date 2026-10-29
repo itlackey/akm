@@ -62,6 +62,12 @@ export const upgradeCommand = defineJsonCommand({
       description: "Skip the post-upgrade index rebuild",
       default: false,
     },
+    channel: { type: "string", description: "Switch akm and every installed harness plugin to latest or next" },
+    "allow-downgrade": {
+      type: "boolean",
+      description: "Allow an explicit channel switch to install an older release",
+      default: false,
+    },
     next: {
       type: "boolean",
       description:
@@ -71,10 +77,17 @@ export const upgradeCommand = defineJsonCommand({
   },
   async run({ args }) {
     const run = await runUpgrade(
-      { check: args.check, force: args.force, skipPostUpgrade: args["skip-post-upgrade"], next: args.next },
+      {
+        check: args.check,
+        force: args.force,
+        skipPostUpgrade: args["skip-post-upgrade"],
+        next: args.next,
+        channel: args.channel,
+        allowDowngrade: args["allow-downgrade"],
+      },
       pkgVersion,
       {
-        checkForUpdate: (version, channel) => checkForUpdate(version, undefined, channel),
+        checkForUpdate: (version, channel, exactChannel) => checkForUpdate(version, undefined, channel, exactChannel),
         performUpgrade: (check, opts) => performUpgrade(check, opts),
       },
     );

@@ -18,7 +18,9 @@ import { saveConfig } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { computeDirFingerprint } from "../../../src/indexer/passes/dir-staleness";
-import { CONTENT_PROJECTION_VERSION } from "../../../src/indexer/passes/metadata";
+import { CONTENT_PROJECTION_VERSION, type IndexDocument } from "../../../src/indexer/passes/metadata";
+import { buildSearchText } from "../../../src/indexer/search/search-fields";
+import { sha256Hex } from "../../../src/runtime";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import {
   type Cleanup,
@@ -71,7 +73,7 @@ function stashWithFencedName(): string {
 
 /**
  * Make every directory's stored state what the previous projection's release wrote: its fingerprint hash and
- * variant computed with `+content1`. The files are untouched, so only the projection version differs.
+ * variant computed with `+content2`. The files are untouched, so only the projection version differs.
  */
 function markIndexAsPreviousProjection(): number {
   const db = openIndexDatabase(getDbPath());
@@ -82,7 +84,7 @@ function markIndexAsPreviousProjection(): number {
     }>;
     const update = db.prepare("UPDATE index_dir_state SET file_set_hash = ?, index_variant = ? WHERE dir_path = ?");
     for (const row of rows) {
-      const previous = row.index_variant.replace(`+content${CONTENT_PROJECTION_VERSION}`, "+content1");
+      const previous = row.index_variant.replace(`+content${CONTENT_PROJECTION_VERSION}`, "+content2");
       const files = fs.readdirSync(row.dir_path).map((name) => path.join(row.dir_path, name));
       update.run(computeDirFingerprint(row.dir_path, files, previous).fileSetHash, previous, row.dir_path);
     }
@@ -93,6 +95,76 @@ function markIndexAsPreviousProjection(): number {
 }
 
 describe("content projection version (akm#1260)", () => {
+  test("content2 → content3 rewrites unchanged file projection and its changed embedding input once", async () => {
+    const stashDir = stashWithFencedName();
+    const file = path.join(stashDir, "knowledge", "provider-errors.md");
+    const original = fs
+      .readFileSync(file, "utf8")
+      .replace(
+        "throw new QuokkaInitFailure(code)",
+        "throw new QuokkaInitFailure(code)\nthrow new QuokkaInitFailure(code)",
+      );
+    fs.writeFileSync(file, original);
+    const inputs: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const body = (await request.json()) as { input: string[] };
+        inputs.push(...body.input);
+        return Response.json({ data: body.input.map((_text, index) => ({ embedding: [1, 0, 0], index })) });
+      },
+    });
+    const readEntry = () => {
+      const db = openIndexDatabase(getDbPath());
+      try {
+        return db
+          .prepare("SELECT id, content_hash, document_json, embed_hash FROM entries WHERE file_path = ?")
+          .get(file) as { id: number; content_hash: string; document_json: string; embed_hash: string };
+      } finally {
+        closeDatabase(db);
+      }
+    };
+    try {
+      await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+        saveConfig({
+          semanticSearchMode: "auto",
+          embedding: { endpoint: `http://localhost:${server.port}`, model: "stub", dimension: 3 },
+        });
+        await akmIndex({ stashDir, full: true });
+        const current = readEntry();
+        // Reproduce content2's repeated fence tokens while retaining the exact source hash and vector.
+        const oldDocument = JSON.parse(current.document_json) as IndexDocument;
+        oldDocument.content = `${oldDocument.content} throw new QuokkaInitFailure quokka init failure code`;
+        const db = openIndexDatabase(getDbPath());
+        try {
+          db.prepare("UPDATE entries SET document_json = ?, embed_hash = ? WHERE id = ?").run(
+            JSON.stringify(oldDocument),
+            sha256Hex(buildSearchText(oldDocument)),
+            current.id,
+          );
+        } finally {
+          closeDatabase(db);
+        }
+        expect(markIndexAsPreviousProjection()).toBeGreaterThan(0);
+        inputs.length = 0;
+        await akmIndex({ stashDir });
+        const upgraded = readEntry();
+        const content = (JSON.parse(upgraded.document_json) as IndexDocument).content!;
+        expect(upgraded.id).toBe(current.id);
+        expect(upgraded.content_hash).toBe(current.content_hash);
+        expect(content.match(/QuokkaInitFailure/g)).toHaveLength(1);
+        expect(inputs).toHaveLength(1);
+        expect(inputs[0]?.match(/QuokkaInitFailure/g)).toHaveLength(1);
+        expect(fs.readFileSync(file, "utf8")).toBe(original);
+        inputs.length = 0;
+        await akmIndex({ stashDir });
+        expect(inputs).toEqual([]);
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("an incremental index re-projects unchanged directories written by the previous projection", async () => {
     const stashDir = stashWithFencedName();
     await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {

@@ -274,6 +274,18 @@ describe("checkForUpdate", () => {
       expect(result.updateAvailable).toBe(true);
     });
 
+    test("an explicit next switch targets the tag even when stable is newer", async () => {
+      mockFetch(registry({ latest: "0.9.26", next: "0.9.26-rc.2" }));
+      const result = await checkForUpdate("0.9.26", undefined, "next", true);
+      expect(result.latestVersion).toBe("0.9.26-rc.2");
+      expect(result.updateAvailable).toBe(false);
+    });
+
+    test("an explicit next switch fails when that tag is absent", async () => {
+      mockFetch(registry({ latest: "0.9.26" }));
+      await expect(checkForUpdate("0.9.26", undefined, "next", true)).rejects.toThrow("No next prerelease");
+    });
+
     test("never offers a downgrade: running a newer prerelease than next is already current", async () => {
       mockFetch(registry({ latest: "0.9.26", next: "0.9.27-rc.1" }));
       const result = await checkForUpdate("0.9.27-rc.2", undefined, "next");

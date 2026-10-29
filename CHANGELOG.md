@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `akm upgrade --channel latest|next` switches the CLI and installed Claude,
+  Codex and OpenCode plugins together, preserving unrelated native settings and
+  writing backups. `--check` shows channel mismatches; an older target requires
+  `--allow-downgrade` (#1285).
+
+### Fixed
+
+- Claude plugin health uses native installation, scope and enabled metadata
+  instead of choosing the highest cached version. It reads `AKM_MIN_VERSION`
+  as well as the legacy range, and reports uncertain selections as unknown (#1286).
+- Repeated fenced identifiers contribute once per document to search content,
+  reducing repetition bias while retaining distinct code names. Existing
+  content projections and embedding inputs refresh on the next index pass (#1284).
+
 ## [0.10.261019] - 2026-10-29
 
 The first stable release of the 0.10 line, published to npm `latest`. Its

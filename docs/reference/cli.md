@@ -1537,7 +1537,9 @@ computed, with a 256 MiB binary limit. Release/checksum metadata is capped at
 akm upgrade              # Install a newer release if there is one, run every pending migration, then update the harness plugins
 akm upgrade --check      # Report pending updates, CLI and plugins, without changing anything (no migration step)
 akm upgrade --force      # Force the install even if already on latest
-akm upgrade --next       # Install the newest prerelease (@next) instead of the latest stable release
+akm upgrade --next       # Include prereleases when selecting the newest CLI release
+akm upgrade --channel next   # Switch CLI and installed harness plugins to next
+akm upgrade --channel latest # Return CLI and installed harness plugins to stable
 ```
 
 | Flag | Description |
@@ -1545,7 +1547,9 @@ akm upgrade --next       # Install the newest prerelease (@next) instead of the 
 | `--check` | Report pending updates (CLI and per-harness plugins) without changing anything |
 | `--force` | Force upgrade even if on latest version |
 | `--skip-post-upgrade` | Skip the post-upgrade index rebuild |
-| `--next` | Follow the `next` prerelease channel: install the newest prerelease of akm (and of the OpenCode plugin, see the Prereleases section below). Works with `--check`, `--force` and `-q` |
+| `--channel latest\|next` | Switch the CLI and installed Claude, Codex and OpenCode plugins together; works with `--check` |
+| `--allow-downgrade` | Permit an older target version during an explicit `--channel` switch |
+| `--next` | Include prereleases when selecting the newest CLI release; retain configured harness channels (see below). Works with `--check`, `--force` and `-q` |
 
 Offline, or to migrate without a release check, run `akm migrate apply`
 directly: it is the same step.
@@ -1607,7 +1611,7 @@ target is the akm-cli that `akm-opencode@latest` depends on
 The result then carries `lockstep: { plugin, pinnedVersion, newestVersion, heldBack }`,
 `latestVersion` is the pinned version, the install names that exact version
 rather than `@latest`, and the text output says the CLI is held back. The CLI
-is never moved backwards to meet the pin. With both OpenCode plugins present
+is never moved backwards to meet the pin unless an explicit channel switch also names `--allow-downgrade`. With both OpenCode plugins present
 (`akm-opencode` and `akm-opencode-v2`), the CLI is held to the older of their
 two pins, and `lockstep.plugin` names the one that sets it. Claude Code and Codex have no
 in-process copy and are not part of this rule.
@@ -1623,7 +1627,7 @@ retries.
 #### Prereleases (`--next`)
 
 `akm upgrade --next` means "newest available, prereleases included". The result
-carries `channel: "next"` (`"latest"` otherwise); no other field changes.
+carries `channel: "next"` (`"latest"` otherwise), plus the CLI's inferred `currentChannel` and each installed plugin's configured `channel` and `channelMismatch`.
 
 - **CLI.** The target is the `next` dist-tag of `akm-cli` (read from the npm
   registry, so it works for binary installs too) when that is newer than the
@@ -1656,13 +1660,37 @@ carries `channel: "next"` (`"latest"` otherwise); no other field changes.
 - **Claude Code and Codex.** Their plugin comes from the `akm-plugins` git
   marketplace, and the channel is the ref the marketplace follows: the default
   branch is stable, the `next` branch carries prereleases. `akm upgrade` updates
-  whatever ref the marketplace follows and cannot switch it, with or without
-  `--next`. To follow prereleases, add the marketplace as `itlackey/akm-plugins@next`
-  in Claude Code (`extraKnownMarketplaces.akm-plugins.source.ref = "next"` in
-  `settings.json`), or run `codex plugin marketplace add itlackey/akm-plugins --ref next`
-  in Codex. Under `--next` their entries carry a note naming the ref followed.
+  whatever ref the marketplace follows. `--next` alone leaves that ref unchanged;
+  `--channel next` changes it. Under `--next` their entries carry a note naming
+  the ref followed.
   The plugins need akm 0.10.261001 or newer; any newer akm passes.
 - `--check --next` reports all of this and changes nothing.
+
+#### Switching channels together (`--channel`)
+
+`akm upgrade --channel next` selects the actual npm `next` CLI tag and changes
+installed harness plugins to their `next` branch or package tag.
+`--channel latest` selects stable and removes those prerelease refs. An explicit
+switch may replace a pinned plugin spec. The command checks target CLI and plugin
+versions first; if any would go backwards, repeat with `--allow-downgrade`.
+A failed CLI install or migration stops the plugin switch.
+
+Claude and Codex retain their marketplace registrations, plugin enablement,
+`pluginConfigs`, and unrelated settings. akm edits only the marketplace ref,
+then uses the native updater. Claude's installed user, project and local scopes
+are updated explicitly. OpenCode changes only the installed plugin's spec,
+retaining tuple options and JSONC comments, then refreshes the desired cache.
+Every changed config file has a sibling `.akm-channel-*.bak` backup, whose path
+appears in that harness's `backups` result. Restart the harness to load updates.
+
+`--check --channel next` shows `channel`, `targetChannel` and mismatches without
+writing settings or fetching Git marketplaces. The CLI's `currentChannel` is
+inferred from its version: prerelease means `next`, otherwise `latest`.
+A configured channel is distinct from a successful refresh: native update
+failures retain the configured target and backup paths but report `failed`.
+An installed plugin that cannot switch, including OpenCode awaiting shutdown,
+makes an explicit switch exit `1`; retry after resolving its reported cause.
+The switch is coordinated, not a transaction across independent harnesses.
 
 #### Containers
 
