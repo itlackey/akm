@@ -300,12 +300,13 @@ describe("the request hook", () => {
 
 describe("the repeated-call guard", () => {
   type Call = readonly [name: string, input: unknown, result: string];
+  type Chat = { role: string; content?: unknown };
   const SAME: Call = ["shell", { command: "echo same" }, "same\n"];
-  const message = (tools: string) =>
-    `akm stopped this run: the model called ${tools} with the same input three times in a row and got the same result each time.`;
+  const stopped = (tools: string, turns: number) =>
+    `akm stopped this run: the model called ${tools} with the same input ${turns} times in a row and got the same result each time, although it had been told it was repeating itself.`;
 
   /** The messages of a chat request after `turns`: each is the assistant's calls and the tool messages that answer them. */
-  function conversation(...turns: Call[][]): unknown[] {
+  function conversation(...turns: Call[][]): Chat[] {
     return [
       { role: "system", content: "rules" },
       { role: "user", content: "do the task" },
@@ -329,86 +330,213 @@ describe("the repeated-call guard", () => {
     ];
   }
 
-  /** What the request hook does with a request carrying `messages`: it resolves, or it fails with the guard's message. */
-  async function send(messages: unknown[]) {
-    const { request: hook } = await load({ requestFields: {} });
-    const event = {
-      request: new Request("http://llm.example/v1/chat/completions", {
-        method: "POST",
-        body: JSON.stringify({ model: "m", messages }),
-      }),
+  /** `count` turns of the same call. */
+  const repeats = (count: number, call: Call = SAME): Call[][] => Array.from({ length: count }, () => [call]);
+
+  /**
+   * One run's plugin, as a function from the messages of a request to what the request is forwarded with, or a
+   * rejection with the guard's message. The plugin keeps what it has told the model, so a test that sends several
+   * requests sends them to one. The connection's temperature is 0.
+   */
+  async function run() {
+    const { request: hook } = await load({ requestFields: { temperature: 0 } });
+    return async (messages: Chat[]): Promise<{ messages: Chat[]; temperature: number }> => {
+      const event = {
+        request: new Request("http://llm.example/v1/chat/completions", {
+          method: "POST",
+          body: JSON.stringify({ model: "m", messages }),
+        }),
+      };
+      await hook(event);
+      return (await event.request.json()) as { messages: Chat[]; temperature: number };
     };
-    await hook(event);
-    return event;
   }
 
-  test("fails the run when the last three turns made the same call and got the same result", async () => {
-    await expect(send(conversation([SAME], [SAME], [SAME]))).rejects.toThrow(message("`shell`"));
+  /**
+   * The message the model was told it was repeating itself with, when the request was forwarded with one: it is the
+   * last message, from the user, and everything else is as it was. The request is sent at temperature 0.7 when told,
+   * and otherwise at the connection's.
+   */
+  function told(sent: { messages: Chat[]; temperature: number }, received: Chat[]): string | undefined {
+    if (sent.messages.length === received.length) {
+      expect(sent.messages).toEqual(received);
+      expect(sent.temperature).toBe(0);
+      return undefined;
+    }
+    expect(sent.messages).toHaveLength(received.length + 1);
+    expect(sent.messages.slice(0, -1)).toEqual(received);
+    expect(sent.messages.at(-1)?.role).toBe("user");
+    expect(sent.temperature).toBe(0.7);
+    return String(sent.messages.at(-1)?.content);
+  }
+
+  test("tells the model after the third turn of the same call and result, in a message of the user's after everything else", async () => {
+    const send = await run();
+    const messages = conversation(...repeats(3));
+
+    const message = told(await send(messages), messages);
+
+    expect(message).toContain("You have called `shell` with the same input 3 times in a row");
+    expect(message).toContain("got the same result each time");
+    expect(message).toContain("Use the result you already have, or take a different approach");
+    // The model is told what happens if it goes on.
+    expect(message).toContain("this run will be stopped");
     // Still three, however much came before.
-    await expect(send(conversation([["read", {}, "x"]], [SAME], [SAME], [SAME]))).rejects.toThrow(message("`shell`"));
+    const longer = conversation([["read", {}, "x"]], ...repeats(3));
+    expect(told(await (await run())(longer), longer)).toContain("3 times in a row");
   });
 
-  test("lets two repeats through, and forwards the request as it does any other", async () => {
-    const event = await send(conversation([SAME], [SAME]));
+  test("sends the request that tells the model at a temperature of its own, and every other request at the connection's", async () => {
+    const send = await run();
+    const quiet = conversation(...repeats(2));
+    expect((await send(quiet)).temperature).toBe(0);
 
-    expect(((await event.request.json()) as { messages: unknown[] }).messages).toHaveLength(6);
+    const stuck = conversation(...repeats(3));
+    expect((await send(stuck)).temperature).toBe(0.7);
+
+    const moved = conversation(...repeats(3), [["read", { filePath: "a" }, "text"]]);
+    expect((await send(moved)).temperature).toBe(0);
+  });
+
+  test("lets two repeats through untouched", async () => {
+    const send = await run();
+    const messages = conversation(...repeats(2));
+
+    expect(told(await send(messages), messages)).toBeUndefined();
+  });
+
+  test("stops the run when the model makes the same call again after it was told", async () => {
+    const send = await run();
+    const messages = conversation(...repeats(3));
+    expect(told(await send(messages), messages)).toBeDefined();
+
+    await expect(send(conversation(...repeats(4)))).rejects.toThrow(stopped("`shell`", 4));
+  });
+
+  test("tells a request that is sent again unchanged, as OpenCode does after a failure, the same way", async () => {
+    const send = await run();
+    const messages = conversation(...repeats(3));
+
+    expect(told(await send(messages), messages)).toBeDefined();
+    expect(told(await send(messages), messages)).toBeDefined();
+  });
+
+  test("a model that leaves the repeat is not stopped, and the message is not carried into the next request", async () => {
+    const send = await run();
+    const other: Call = ["read", { filePath: "a" }, "text"];
+    const stuck = conversation(...repeats(3));
+    expect(told(await send(stuck), stuck)).toBeDefined();
+
+    const moved = conversation(...repeats(3), [other]);
+    expect(told(await send(moved), moved)).toBeUndefined();
+  });
+
+  test("tells it once for each repeat: the same call stuck again after another call stops the run, a different call is told in its own right", async () => {
+    const send = await run();
+    const other: Call = ["read", { filePath: "a" }, "text"];
+    const elsewhere: Call = ["shell", { command: "echo else" }, "else\n"];
+    const first = conversation(...repeats(3));
+    expect(told(await send(first), first)).toBeDefined();
+
+    // Another stuck call has not been told about yet.
+    const second = conversation(...repeats(3), ...repeats(3, elsewhere));
+    expect(told(await send(second), second)).toContain("`shell`");
+    // The first one again, after a different call in between: the model has had its warning.
+    await expect(send(conversation(...repeats(3), [other], ...repeats(3)))).rejects.toThrow(stopped("`shell`", 3));
   });
 
   test("lets a call through whose result changes, which is how a poll looks", async () => {
+    const send = await run();
     const poll = (result: string): Call => ["shell", { command: "date +%s%N" }, result];
 
-    await send(conversation([poll("1\n")], [poll("2\n")], [poll("3\n")]));
-    // Two of the three alike is not enough.
-    await send(conversation([poll("1\n")], [poll("2\n")], [poll("2\n")]));
+    for (const messages of [
+      conversation([poll("1\n")], [poll("2\n")], [poll("3\n")]),
+      // Two of the three alike is not enough.
+      conversation([poll("1\n")], [poll("2\n")], [poll("2\n")]),
+    ]) {
+      expect(told(await send(messages), messages)).toBeUndefined();
+    }
   });
 
   test("lets a call through whose input changes", async () => {
-    await send(conversation([SAME], [SAME], [["shell", { command: "echo same " }, "same\n"]]));
+    const send = await run();
+    const messages = conversation([SAME], [SAME], [["shell", { command: "echo same " }, "same\n"]]);
+
+    expect(told(await send(messages), messages)).toBeUndefined();
   });
 
   test("counts only turns in a row: another call between the repeats starts the count again", async () => {
+    const send = await run();
     const other: Call = ["read", { filePath: "a" }, "text"];
 
-    await send(conversation([SAME], [SAME], [other], [SAME], [SAME]));
-    await send(conversation([SAME], [other], [SAME]));
+    for (const messages of [
+      conversation([SAME], [SAME], [other], [SAME], [SAME]),
+      conversation([SAME], [other], [SAME]),
+    ]) {
+      expect(told(await send(messages), messages)).toBeUndefined();
+    }
   });
 
   test("counts only turns of calls: a reply in words or a message from the user ends the run of turns", async () => {
+    const send = await run();
     const reply = { role: "assistant", content: "let me think" };
     const user = { role: "user", content: "go on" };
 
-    await send([...conversation([SAME], [SAME]), reply, ...conversation([SAME]).slice(2)]);
-    await send([...conversation([SAME], [SAME], [SAME]), user]);
+    for (const messages of [
+      [...conversation([SAME], [SAME]), reply, ...conversation([SAME]).slice(2)],
+      [...conversation(...repeats(3)), user],
+    ]) {
+      expect(told(await send(messages), messages)).toBeUndefined();
+    }
   });
 
-  test("compares parallel calls as a set, in whatever order the model lists them", async () => {
+  test("compares parallel calls as a set, in whatever order the model lists them, and names each tool once", async () => {
+    const send = await run();
     const read: Call = ["read", { filePath: "a" }, "text"];
+    const messages = conversation([SAME, read], [read, SAME], [SAME, read]);
 
-    await expect(send(conversation([SAME, read], [read, SAME], [SAME, read]))).rejects.toThrow(
-      message("`shell`, `read`"),
-    );
+    expect(told(await send(messages), messages)).toContain("You have called `shell`, `read` with the same input");
     // One call of the set alone is a different turn.
-    await send(conversation([SAME, read], [SAME], [SAME, read]));
+    const apart = conversation([SAME, read], [SAME], [SAME, read]);
+    expect(told(await send(apart), apart)).toBeUndefined();
   });
 
   test("an output too long to send whole is the same result, though OpenCode saves it to a file of its own each time", async () => {
+    const send = await run();
     // OpenCode 2.2.0's notice on a shell output over its limit (core/src/shell.ts), with the file the call's own.
     const long = (file: string, total = 5000): Call => [
       "shell",
       { command: "seq 1 5000" },
       `4999\n5000\n\n[showing lines 3001-${total} of ${total}; full output saved to /data/opencode/shell/p/${file}.out]`,
     ];
+    const alike = conversation([long("sh_a")], [long("sh_b")], [long("sh_c")]);
 
-    await expect(send(conversation([long("sh_a")], [long("sh_b")], [long("sh_c")]))).rejects.toThrow(
-      message("`shell`"),
-    );
+    expect(told(await send(alike), alike)).toContain("3 times in a row");
     // A long output that changes is still no repeat.
-    await send(conversation([long("sh_a")], [long("sh_b")], [long("sh_c", 5001)]));
+    const changing = conversation([long("sh_a")], [long("sh_b")], [long("sh_c", 5001)]);
+    expect(told(await send(changing), changing)).toBeUndefined();
   });
 
   test("a call that was never answered is no repeat", async () => {
-    const messages = conversation([SAME], [SAME], [SAME]);
+    const send = await run();
+    const messages = conversation(...repeats(3)).slice(0, -1);
 
-    await send(messages.slice(0, -1));
+    expect(told(await send(messages), messages)).toBeUndefined();
+  });
+
+  test("the request is otherwise forwarded as any other: the connection's other fields are laid over it and OpenCode's own cap is dropped", async () => {
+    const { request: hook } = await load({ requestFields: { temperature: 0, top_p: 0.9 } });
+    const event = {
+      request: new Request("http://llm.example/v1/chat/completions", {
+        method: "POST",
+        body: JSON.stringify({ model: "m", max_tokens: 99, messages: conversation(...repeats(3)) }),
+      }),
+    };
+    await hook(event);
+
+    const body = (await event.request.json()) as { temperature: number; top_p: number; max_tokens?: number };
+    expect(body.temperature).toBe(0.7);
+    expect(body.top_p).toBe(0.9);
+    expect(body.max_tokens).toBeUndefined();
   });
 });

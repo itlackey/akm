@@ -30,7 +30,8 @@ import { info } from "../../../../core/warn";
  * `opencode.db` tables that `../session-log-v2.ts` reads. To move it, change this version and `PACKAGES` if the release
  * adds or drops a platform package, then run `tests/integration/opencode-runtime-sessions.test.ts` and
  * `tests/integration/opencode-runtime-loop-guard.test.ts` against the new binary (they fetch it; the plugin ends a
- * looping run by throwing from a hook, which OpenCode might one day handle differently) and read
+ * looping run by throwing from a hook, which OpenCode might one day handle differently, and tells the model by changing
+ * the body of a request, which it might one day stop letting a plugin do) and read
  * `docs/reference/configuration.md` ("Without a harness") for what the version changes.
  */
 export const OPENCODE_RUNTIME_VERSION = "2.2.0";

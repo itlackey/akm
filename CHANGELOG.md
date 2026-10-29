@@ -8,12 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- A run on akm's own runtime that makes the same tool call and gets the same
-  result three turns in a row now fails with a message that names the tool,
-  instead of running to its deadline or, with no `timeoutMs`, for ever. OpenCode
-  has no check of its own for this. The runtime moves from OpenCode 2.1.4 to
-  2.2.0 with it: the next agent run fetches the binary again, into
-  `<akm cache dir>/opencode/2.2.0/`.
+- A run on akm's own runtime whose model makes the same tool call and gets the
+  same result three turns in a row now tells the model so, in a message that
+  names the tool and asks it to use the result it has or take a different
+  approach, in a request that overrides the connection's temperature with 0.7 (that
+  one request only; every other keeps the connection's settings), and fails with a message that names the tool only if the model makes the
+  call again, instead of running to its deadline or, with no `timeoutMs`, for
+  ever. OpenCode has no check of its own for this. The runtime
+  moves from OpenCode 2.1.4 to 2.2.0 with it: the next agent run fetches the
+  binary again, into `<akm cache dir>/opencode/2.2.0/`.
 - Agent work on akm's own runtime runs in the directory it is given: the one
   `akm agent --cwd` names, and the bundle root for a workflow's agent units.
   It ran in the directory akm was started from, because OpenCode takes its

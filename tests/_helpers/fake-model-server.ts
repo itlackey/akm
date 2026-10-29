@@ -15,6 +15,10 @@
  *   repeat    call `shell` with `echo same` on every request, never answering in text (a model stuck on one call)
  *   poll      call `shell` with a command whose output differs on every call, on every request
  *   twice     call `shell` with `echo same` twice, then answer in text
+ *   recover   call `shell` with `echo same` until a message of the user's follows the prompt (akm's nudge to a model that
+ *             repeats itself), then answer "RECOVERED" in text
+ *   relapse   call `shell` with `echo same` until such a message follows the prompt, then once with `echo other`, then
+ *             `echo same` again for ever
  *   long      call `shell` with `seq 1 5000` on every request: the same output each time, too long to send whole
  *   pwd       call `shell` to print its working directory, then reply with the tool result
  *   subagent  call `subagent`, whose prompt asks the child for MODE:env, then reply with its result
@@ -43,6 +47,8 @@ export interface FakeModelRequest {
   readonly tools: readonly string[];
   readonly system: string;
   readonly lastUser: string;
+  /** The text of every message of the user's in the request, the prompt first. */
+  readonly users: readonly string[];
   readonly toolResult?: string;
   /** The request's other fields: sampling and limits. */
   readonly params: Record<string, unknown>;
@@ -109,6 +115,7 @@ export function startFakeModel(): FakeModelServer {
         params,
         summarize: /MUST summarize the conversation|MUST use this format/.test(all),
         lastUser: users.at(-1) ?? "",
+        users,
         ...(afterTool ? { toolResult: text(last?.content) } : {}),
       });
       // A tool result can carry paths under TMPDIR, so the cap has to clear any path a host can have.
@@ -178,6 +185,16 @@ export function startFakeModel(): FakeModelServer {
           assistants < 2
             ? { tool: { name: "shell", args: { command: "echo same", description: "same" } } }
             : { content: "TWICE-DONE" };
+      else if (mode === "recover")
+        reply =
+          users.length > 1
+            ? { content: "RECOVERED" }
+            : { tool: { name: "shell", args: { command: "echo same", description: "same" } } };
+      else if (mode === "relapse")
+        reply =
+          users.length > 1 && !messages.some((m) => m.role === "tool" && text(m.content).trim() === "other")
+            ? { tool: { name: "shell", args: { command: "echo other", description: "other" } } }
+            : { tool: { name: "shell", args: { command: "echo same", description: "same" } } };
       else if (mode === "length")
         reply = assistants === 0 ? { content: "PART-ONE ", finish: "length" } : { content: "PART-TWO" };
       else if (mode === "cutoff") reply = { content: `CUT-${assistants} `, finish: "length" };
