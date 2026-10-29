@@ -238,14 +238,13 @@ describe("engines.<n> kind agent → harnesses.<n>", () => {
         agent: "reviewer",
         timeoutMs: 60000,
         models: { fast: "claude-sonnet-4-6", balanced: "claude-sonnet-4-6", reasoning: "claude-sonnet-4-6" },
-        modelWork: false,
       },
     });
   });
 
   test("an engine named for its platform needs no platform key", () => {
     const { config } = convert({ engines: { claude: { kind: "agent", platform: "claude" } } });
-    expect(config.harnesses).toEqual({ claude: { modelWork: false } });
+    expect(config.harnesses).toEqual({ claude: {} });
   });
 
   test("an opencode-sdk engine with no llmEngine ran the user's own OpenCode: it becomes an opencode harness, keeping its model and every field a harness takes", () => {
@@ -270,7 +269,6 @@ describe("engines.<n> kind agent → harnesses.<n>", () => {
         agent: "akm-workflow",
         timeoutMs: 120000,
         models: { fast: "openai/gpt-5.6-terra", balanced: "openai/gpt-5.6-terra", reasoning: "openai/gpt-5.6-terra" },
-        modelWork: false,
       },
     });
     expect(targets).toEqual({ sdk: { harness: "sdk" } });
@@ -279,7 +277,7 @@ describe("engines.<n> kind agent → harnesses.<n>", () => {
 
   test("an opencode-sdk engine named opencode needs no platform key once it is an opencode harness", () => {
     const { config } = convert({ engines: { opencode: { kind: "agent", platform: "opencode-sdk" } } });
-    expect(config.harnesses).toEqual({ opencode: { modelWork: false } });
+    expect(config.harnesses).toEqual({ opencode: {} });
   });
 
   test("a platform: opencode engine stays an opencode harness, keeping bin, args, agent and its model", () => {
@@ -302,7 +300,6 @@ describe("engines.<n> kind agent → harnesses.<n>", () => {
         args: ["--standalone"],
         agent: "build",
         models: { fast: "x/y", balanced: "x/y", reasoning: "x/y" },
-        modelWork: false,
       },
     });
   });
@@ -421,21 +418,30 @@ describe("model work that ran on an agent engine", () => {
     expect(withConnection.notes.some((text) => text.startsWith('defaults.llmEngine "b"'))).toBe(true);
   });
 
-  test("with no defaults.llmEngine and no connection, 0.9 ran no model work: the default harness is set not to take it", () => {
+  test("with no defaults.llmEngine and no connection, 0.9 ran no model work: the default harness takes it now, and a note says so and how to turn it off", () => {
     const { config, notes } = convert({ engines: agents, defaults: { engine: "a" } });
-    expect((config.harnesses as Dict).default).toEqual({ platform: "claude", modelWork: false });
+    expect((config.harnesses as Dict).default).toEqual({ platform: "claude" });
     expect((config.harnesses as Dict).b).toEqual({ platform: "codex" });
-    const note = notes.find((text) => text.startsWith("harnesses.default: modelWork is false")) ?? "";
-    expect(note).toContain("Without defaults.llmEngine");
+    const note = notes.find((text) => text.startsWith("harnesses.default: akm's own model work")) ?? "";
+    expect(note).toContain("now runs on this harness");
+    expect(note).toContain("Without defaults.llmEngine, 0.9 ran none of it");
+    expect(note).toContain("`modelWork: false`");
     expect(note).toContain("akm setup --endpoint URL");
   });
 
-  test("model work is left where 0.10 sends it when defaults.llmEngine named the harness, or a connection takes it", () => {
+  test("no note when defaults.llmEngine named the harness, a connection takes model work, or the harness already says", () => {
     const named = convert({ engines: agents, defaults: { engine: "a", llmEngine: "a" } });
     expect((named.config.harnesses as Dict).default).not.toHaveProperty("modelWork");
     const connection = convert({ engines: { ...agents, lab: llm() }, defaults: { engine: "a" } });
     expect((connection.config.harnesses as Dict).default).not.toHaveProperty("modelWork");
-    expect(named.notes.concat(connection.notes).some((text) => text.includes("modelWork is false"))).toBe(false);
+    const says = convert({
+      engines: agents,
+      defaults: { engine: "a" },
+      harnesses: { default: { modelWork: false } },
+    });
+    expect((says.config.harnesses as Dict).default).toEqual({ platform: "claude", modelWork: false });
+    const notes = named.notes.concat(connection.notes, says.notes);
+    expect(notes.some((text) => text.includes("akm's own model work"))).toBe(false);
   });
 
   test("defaults.llmEngine naming an opencode-sdk engine over a connection makes that connection the default", () => {
@@ -540,7 +546,7 @@ describe("the defaults become the entries named default", () => {
       defaults: { engine: "claude" },
     });
     expect(config.harnesses).toEqual({
-      default: { platform: "claude", modelWork: false },
+      default: { platform: "claude" },
       "legacy-default-2": { platform: "gemini" },
       "legacy-default": { platform: "pi" },
     });
@@ -568,7 +574,7 @@ describe("the defaults become the entries named default", () => {
       engines: { claude: { kind: "agent", platform: "claude" }, opencode: { kind: "agent", platform: "opencode" } },
       defaults: { engine: "claude" },
     });
-    expect(config.harnesses).toEqual({ default: { platform: "claude", modelWork: false }, opencode: {} });
+    expect(config.harnesses).toEqual({ default: { platform: "claude" }, opencode: {} });
   });
 
   test("defaults.engine naming one of several opencode-sdk engines makes that harness default, every reference to it follows", () => {
@@ -618,7 +624,7 @@ describe("the defaults become the entries named default", () => {
       engines: { claude: { kind: "agent", platform: "claude" } },
       defaults: { engine: "claude" },
     });
-    expect(config.harnesses).toEqual({ claude: { modelWork: false } });
+    expect(config.harnesses).toEqual({ claude: {} });
   });
 
   test("defaults.improveStrategy becomes improve.strategy, without overwriting one already set", () => {

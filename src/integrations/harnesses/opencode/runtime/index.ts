@@ -175,9 +175,7 @@ export const opencodeRuntime: AgentRuntime = {
       const session = `ses_akm${randomUUID().replaceAll("-", "")}`;
       const keyFile = path.join(directory, "keys", session);
       const config = runtimeConfig(connection, where.pluginDirectory, keyFile, ambient);
-      // OpenCode takes its directory from PWD before its own working directory, and the PWD akm inherits names the
-      // directory akm was started in, so a run given a directory names it there too.
-      const env = { ...ambient, ...runtimeEnv(config, where), ...(opts.cwd ? { PWD: path.resolve(opts.cwd) } : {}) };
+      const env = { ...ambient, ...runtimeEnv(config, where) };
       try {
         if (connection.apiKey) writeKeyFile(keyFile, connection.apiKey);
         await prepareDatabase(directory, { argv: runtimePrepareArgv(binary), env }, opts);

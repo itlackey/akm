@@ -15,6 +15,7 @@
  * The command comes from the harness (`harness.build`); this module never
  * touches a model. Agents are reachable only via shell-out.
  */
+import path from "node:path";
 import { ConfigError } from "../../core/errors";
 import { childProcessEnv } from "../../core/paths";
 import { runManagedSubprocess, type StreamReadResult, streamCaptureFailure } from "../../core/subprocess";
@@ -215,10 +216,14 @@ export async function runBuiltCommand(
   // and the optional stdin payload. This keeps the agent-specific surface:
   // the failure taxonomy.
   const start = Date.now();
+  // A program started after `cd <dir>` has PWD equal to <dir>, and OpenCode takes its directory from PWD before its
+  // own working directory: the PWD akm inherits names where akm was started, so a run given a directory names it. One
+  // path is both, so they agree even where the kernel would resolve a `..` after a symbolic link elsewhere.
+  const cwd = options.cwd ? path.resolve(options.cwd) : undefined;
   const result = await runManagedSubprocess([...argv], {
     capture: stdioMode === "captured",
-    env: { ...env },
-    ...(options.cwd ? { cwd: options.cwd } : {}),
+    env: { ...env, ...(cwd ? { PWD: cwd } : {}) },
+    ...(cwd ? { cwd } : {}),
     ...(stdin !== undefined ? { stdin } : {}),
     timeoutMs,
     ...(options.signal ? { signal: options.signal } : {}),

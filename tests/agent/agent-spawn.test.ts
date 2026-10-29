@@ -265,4 +265,38 @@ describe("runAgent — cwd authority", () => {
       work.cleanup();
     }
   });
+
+  test("PWD names that directory too, over the call's env and akm's own, for every harness", async () => {
+    const work = makeSandboxDir("akm-agent-spawn-pwd");
+    try {
+      for (const platform of ["opencode", "claude", "gemini"]) {
+        const result = await runAgent(profileFor("probe", { platform }), {
+          dispatch: { prompt: "go" },
+          cwd: work.dir,
+          env: { PWD: "/call/pwd" },
+        });
+        expect(probed(result.stdout).env.PWD, platform).toBe(work.dir);
+      }
+      const unset = await runAgent(profileFor("probe"), { dispatch: { prompt: "go" } });
+      expect(probed(unset.stdout).env.PWD).toBe(process.env.PWD);
+    } finally {
+      work.cleanup();
+    }
+  });
+
+  test("PWD and the working directory are one directory when the path has `..` after a symbolic link", async () => {
+    const work = makeSandboxDir("akm-agent-spawn-dotdot");
+    try {
+      fs.mkdirSync(path.join(work.dir, "real", "inner"), { recursive: true });
+      fs.mkdirSync(path.join(work.dir, "a"));
+      fs.symlinkSync(path.join(work.dir, "real", "inner"), path.join(work.dir, "a", "link"));
+      // The kernel resolves `a/link/..` to `real`; a shell's `cd` and PWD to `a`.
+      const result = await runAgent(profileFor("probe"), { dispatch: { prompt: "go" }, cwd: `${work.dir}/a/link/..` });
+      const seen = probed(result.stdout);
+      expect(seen.env.PWD).toBe(path.join(work.dir, "a"));
+      expect(fs.realpathSync(seen.cwd)).toBe(fs.realpathSync(path.join(work.dir, "a")));
+    } finally {
+      work.cleanup();
+    }
+  });
 });
