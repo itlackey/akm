@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261019] - 2026-10-29
+
+The first stable release of the 0.10 line, published to npm `latest`. Its
+changes are in the 0.10 sections below; the upgrade from 0.9 is in
+[the 0.9 to 0.10 migration guide](docs/migration/v0.9-to-v0.10.md) and
+`akm help migrate 0.10.261019`.
+
 ## [0.10.261018] - 2026-10-29
 
 ### Fixed

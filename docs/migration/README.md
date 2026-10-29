@@ -5,7 +5,7 @@ Upgrade guides and per-release migration notes.
 ## Current
 
 - [v0.9 -> v0.10 migration guide](v0.9-to-v0.10.md) -- Upgrade order for a 0.9.15+ install, every removed CLI spelling, strategy, config key and workflow feature with its replacement, changed `akm improve` defaults, the OpenCode plugins, and `0.10.YYMMNN` version numbers
-- [v0.10.0 release note](release-notes/0.10.0.md) -- Summary of the 0.10 series: the 0.9.15 version floor, `--shape`/`--target`/`help agents` removals, `default` and `consolidate` as the only built-in strategies, OpenCode 2, feedback-scaled ranking, and what is gone
+- [v0.10.0 release note](release-notes/0.10.261019.md) -- Summary of the 0.10 series: the 0.9.15 version floor, `--shape`/`--target`/`help agents` removals, `default` and `consolidate` as the only built-in strategies, OpenCode 2, feedback-scaled ranking, and what is gone
 - [Release notes index](release-notes/README.md) -- The short per-release notes `akm help migrate <version>` prints, with links to every bundled note
 
 ## Historical
