@@ -311,13 +311,17 @@ default connection. The npm package and the standalone binary do the same.
   a row, akm adds a message from the user to its next request: it names the
   tool, says the result will not change, asks the model to use the result it
   has or take a different approach, and says that calling it again stops the
-  run. **That one request overrides the connection's temperature**: it is sent
-  with a temperature of 0.7, whatever the connection sets, because a model
-  sampled greedily (temperature 0) gave the same call again to every wording in
-  every try, and at 0.7 it left the repeat in about half of them. Every other
-  request keeps the connection's settings. If the model makes the same call
-  again, or comes back to it after another, the run fails (`non_zero_exit`)
-  with a message that names the tool. One that changes course is not stopped.
+  run. **That one request overrides a lower temperature the connection sets**:
+  a `temperature` below 0.7 (0, say) is sent as 0.7, because a model sampled
+  greedily (temperature 0) gave the same call again to every wording in every
+  try, so at 0 the message alone does nothing, and at 0.7 it left the repeat in
+  about half of them. A connection that sets no `temperature` sends none on that
+  request either (the endpoint's default applies, and OpenAI's reasoning models
+  refuse any other), and one of 0.7 or more is kept. Every other request keeps
+  the connection's settings. If the model makes the same call again, or, after
+  other calls, makes it three turns in a row again, the run fails
+  (`non_zero_exit`) with a message that names the tool. One that changes course
+  is not stopped. Each session of a run (a subagent's too) is told for itself.
   OpenCode has no check of its own for this, and with `timeoutMs` unset such a
   run would never end. A call whose result changes is not a repeat, but a poll
   that gets the same answer three times in a row is. An output too long to send

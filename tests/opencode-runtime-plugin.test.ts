@@ -399,6 +399,31 @@ describe("the repeated-call guard", () => {
     expect((await send(moved)).temperature).toBe(0);
   });
 
+  test("raises only a temperature the request carries, and only one below 0.7: none is added, a higher one is kept", async () => {
+    const stuck = conversation(...repeats(3));
+    for (const [requestFields, sent] of [
+      // OpenCode sends no temperature of its own, so with none from the connection the endpoint's default applies;
+      // some endpoints refuse any other (OpenAI's reasoning models answer a temperature but 1 with a 400).
+      [{}, undefined],
+      [{ temperature: 1 }, 1],
+      [{ temperature: 0.2 }, 0.7],
+    ] as const) {
+      const { request: hook } = await load({ requestFields });
+      const event = {
+        sessionID: "ses_a",
+        request: new Request("http://llm.example/v1/chat/completions", {
+          method: "POST",
+          body: JSON.stringify({ model: "m", messages: stuck }),
+        }),
+      };
+      await hook(event);
+      const body = (await event.request.json()) as { messages: Chat[]; temperature?: number };
+
+      expect(body.messages).toHaveLength(stuck.length + 1);
+      expect(body.temperature).toBe(sent);
+    }
+  });
+
   test("lets two repeats through untouched", async () => {
     const send = await run();
     const messages = conversation(...repeats(2));

@@ -691,9 +691,10 @@ Agent programs are reachable by two execution paths, both behind
   directories and its OpenCode settings) are put back to akm's own, or removed,
   in the environment of the commands the agent runs, and a run whose model has
   made the same tool call and been given the same result three turns in a row
-  adds a message to its next request that tells it so (sent at a temperature of
-  0.7), and fails before the request that would follow if it makes the same call
-  again (OpenCode has no such check).
+  adds a message to its next request that tells it so (a connection's
+  temperature below 0.7 is raised to 0.7 for that request), and fails before the
+  request that would follow if it makes the same call again (OpenCode has no such
+  check).
 - The connection's key is in no environment: the inline config references it as
   `{file:<data>/opencode-runtime/keys/<session>}`, a 0600 file written for the
   run and removed after it.

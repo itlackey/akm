@@ -20,11 +20,11 @@
 //     dropped, and the connection's fields carry a cap only when the connection writes one.
 //   - A run that has stopped getting anywhere: when the model has made the same tool calls three turns in a row and
 //     been given the same results each time, the next request carries a message from the user that says so and asks it to
-//     use the result it has or take another route, and is sent with a temperature of its own, because a model that is
-//     sampled greedily answers the same thing to the same context however it is asked; if the model then makes the same
-//     calls again, the run fails with a message that says so, before the next model request is sent. OpenCode has no
-//     such check of its own (its `doom_loop` setting is read and ignored), and a run that never ends has nothing else to
-//     stop it when the connection sets no `timeoutMs`.
+//     use the result it has or take another route, and a temperature it carries below 0.7 is raised to 0.7, because a
+//     model that is sampled greedily answers the same thing to the same context however it is asked; if the model then
+//     makes the same calls again, the run fails with a message that says so, before the next model request is sent.
+//     OpenCode has no such check of its own (its `doom_loop` setting is read and ignored), and a run that never ends has
+//     nothing else to stop it when the connection sets no `timeoutMs`.
 
 import { execFile } from "node:child_process";
 
@@ -139,9 +139,11 @@ function withFields(base, over) {
 const REPEATED_TURNS = 3;
 
 /**
- * The temperature of the one request that tells the model it is repeating itself, whatever the connection sets. A
- * Qwen 27B model sampled greedily (temperature 0) gave the same call again to every wording of the message in every
- * try (0 of 16 replays of a captured request); sampled at 0.7 it left the repeat in about half of them (22 of 44).
+ * The temperature the one request that tells the model it is repeating itself is raised to, when it is sent at a lower
+ * one. A Qwen 27B model sampled greedily (temperature 0) gave the same call again to every wording of the message in
+ * every try (0 of 16 replays of a captured request); sampled at 0.7 it left the repeat in about half of them (22 of 44).
+ * A request that carries no temperature is left to the endpoint's default: some endpoints refuse any temperature but
+ * their own (OpenAI's reasoning models answer anything but 1 with a 400).
  */
 const RECOVERY_TEMPERATURE = 0.7;
 
@@ -244,7 +246,6 @@ export default {
       if (!isObject(body)) return;
       const { max_tokens: _own, max_completion_tokens: _ownCompletion, ...kept } = body;
       const stuck = repeatedToolCalls(body.messages);
-      let recovery = false;
       if (stuck) {
         const key = `${event.sessionID}\n${stuck.signature}`;
         const was = told.get(key);
@@ -268,17 +269,17 @@ export default {
             content: `You have called ${quoted(stuck.names)} with the same input ${stuck.turns} times in a row and got the same result each time, so calling it again will not give you anything new. Use the result you already have, or take a different approach to finish the task. If you call it again with the same input, this run will be stopped.`,
           },
         ];
-        recovery = true;
+      }
+      const forwarded = isObject(fields) ? withFields(kept, fields) : kept;
+      if (stuck && typeof forwarded.temperature === "number" && forwarded.temperature < RECOVERY_TEMPERATURE) {
+        forwarded.temperature = RECOVERY_TEMPERATURE;
       }
       const headers = new Headers(request.headers);
       headers.delete("content-length");
       event.request = new Request(request.url, {
         method: request.method,
         headers,
-        body: JSON.stringify({
-          ...(isObject(fields) ? withFields(kept, fields) : kept),
-          ...(recovery ? { temperature: RECOVERY_TEMPERATURE } : {}),
-        }),
+        body: JSON.stringify(forwarded),
         signal: request.signal,
       });
     });
