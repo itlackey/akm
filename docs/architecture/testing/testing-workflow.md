@@ -439,18 +439,24 @@ orchestration, checksum, and failure paths.
 
 `tests/integration/upgrade-rehearsal/` runs once per origin in
 `KNOWN_UPGRADE_ORIGINS` (`previous-release.ts`): `previous`, the highest stable
-release below the candidate's `package.json` version, and `0.9.15`, a fixed
-older release. For each origin it installs that release as a real global npm
+release below the candidate's `package.json` version; `0.9.32`, which keeps the
+full engines migration covered after `previous` advances to 0.10; and `0.9.15`,
+which covers scheduler rows installed before host-local activation was recorded.
+Each origin installs that release as a real global npm
 package (a real `npm pack` / `npm install --global` into a throwaway prefix, see
-`scripts/package-install.ts`), uses it to build a realistic home — filesystem,
+`scripts/package-install.ts`). The `previous` and `0.9.32` origins build a full
+home — filesystem,
 git (with an in-bundle symlink at its root), website, and npm bundles, scheduled
-tasks, a synced native (fake) crontab, and the 0.9 `engines` form the release
-itself writes (an llm engine with an `apiKeyFile`, an agent engine, a
-`models.json`, a command and a task source that name an engine) — then installs
+tasks, a synced native (fake) crontab, and model configuration the release
+itself writes: native connections/harnesses on 0.10+, or the full 0.9 `engines`
+form (an llm engine with an `apiKeyFile`, agent engines, a `models.json`, and a
+command and task that name an engine). The `0.9.15` origin uses a smaller home
+with one directly installed scheduled task. Each then installs
 the CANDIDATE build OVER it in the SAME prefix: an in-place swap, the same thing
 a real `npm i -g akm-cli@…` or `bun add -g` upgrade does. It then runs the
 candidate against that home (`migrate status` / `apply`, which converts the
-`engines` form, files its key and rewrites the `engine:` keys, `bundle list`,
+`engines` form, files its key and rewrites the `engine:` keys, or preserves
+native connections/harnesses, `bundle list`,
 `search` / `show`, `task sync` dry-run and real — plain, no `--rebind`, as an
 upgrading user runs it — executing the generated cron command and confirming it
 ran the candidate, `task run`, `health`, `improve --dry-run`), and finally runs a

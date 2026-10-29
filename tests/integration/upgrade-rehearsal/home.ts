@@ -7,7 +7,8 @@
  * through it: a stash with every asset type, a second filesystem bundle, a
  * git bundle (with an in-bundle symlink at the bundle root), a website
  * bundle, an npm bundle, a scheduled/enabled task pair plus one that stays
- * ungranted, a synced native (fake) crontab, and the 0.9 `engines` form (an llm
+ * ungranted, a synced native (fake) crontab, and model configuration native to
+ * the origin: connections/harnesses on 0.10+, or the 0.9 `engines` form (an llm
  * engine with an `apiKeyFile`, an agent engine, an `opencode-sdk` engine that is
  * `defaults.engine`, a `models.json`, and a command and a task that name an engine).
  */
@@ -76,7 +77,11 @@ export interface UpgradeHome {
   readonly bundles: UpgradeHomeBundles;
   readonly searchTerm: string;
   readonly rememberedTerm: string;
-  readonly engines: UpgradeHomeEngines;
+  readonly modelConfig: {
+    readonly commandFile: string;
+    readonly taskFile: string;
+    readonly legacyEngines?: UpgradeHomeEngines;
+  };
   readonly deviations: readonly string[];
 }
 
@@ -85,9 +90,6 @@ export interface UpgradeHomeEngines {
   /** The llm engine's `apiKeyFile`, and the (fake) key it holds. */
   readonly keyFile: string;
   readonly key: string;
-  /** The asset files that name an engine (`engine: lab`). */
-  readonly commandFile: string;
-  readonly taskFile: string;
   /** The user's `models.json`, which `akm models copy-defaults` wrote. */
   readonly modelsFile: string;
 }
@@ -263,43 +265,62 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
   await runStep("task enable scheduled-b", oldLauncher, ["task", "enable", `stash//tasks/${taskIds.b}`], env);
   await runStep("task sync", oldLauncher, ["task", "sync"], env);
 
-  // ── 7b. The 0.9 `engines` form, written by the previous release itself ───
-  // (Before the git bundle's symlink for the same reason as the sync above: `task add` reconciles too.)
-  // An llm engine with an `apiKeyFile`, an agent engine, the default llm engine, an
-  // `opencode-sdk` engine with a model of its own as the default agent engine (the
-  // user's own OpenCode, which must stay a harness), a `models.json`, a command and
-  // a task source that name an engine: what the candidate converts (config, key,
-  // models file, assets) in `migrate apply`.
-  // Nothing calls the endpoint: the home builds no embedding and runs no model call.
-  const keyFile = path.join(root, "lab.key");
-  const key = "upgrade-rehearsal-not-a-real-key";
-  fs.writeFileSync(keyFile, key, { mode: 0o600 });
-  const engines = {
-    lab: { kind: "llm", endpoint: "http://127.0.0.1:9/v1/chat/completions", model: "qwen3-8b", apiKeyFile: keyFile },
-    claude: { kind: "agent", platform: "claude" },
-    opencode: { kind: "agent", platform: "opencode-sdk", model: "openai/gpt-rehearsal" },
-  };
-  for (const [name, engine] of Object.entries(engines)) {
-    await runStep(
-      `config set engines.${name}`,
-      oldLauncher,
-      ["config", "set", `engines.${name}`, JSON.stringify(engine)],
-      env,
-    );
+  // ── 7b. Model configuration written by the origin's own CLI ─────────────
+  // Before the git symlink: old `task add` reconciles the scheduler too.
+  // 0.9 writes the full migration fixture; 0.10 writes native connections and
+  // harnesses and must preserve them. Nothing calls the endpoint.
+  let legacyEngines: UpgradeHomeEngines | undefined;
+  if (!semverGte(oldVersion, "0.10.0")) {
+    const keyFile = path.join(root, "lab.key");
+    const key = "upgrade-rehearsal-not-a-real-key";
+    fs.writeFileSync(keyFile, key, { mode: 0o600 });
+    const engines = {
+      lab: { kind: "llm", endpoint: "http://127.0.0.1:9/v1/chat/completions", model: "qwen3-8b", apiKeyFile: keyFile },
+      claude: { kind: "agent", platform: "claude" },
+      opencode: { kind: "agent", platform: "opencode-sdk", model: "openai/gpt-rehearsal" },
+    };
+    for (const [name, engine] of Object.entries(engines)) {
+      await runStep(
+        `config set engines.${name}`,
+        oldLauncher,
+        ["config", "set", `engines.${name}`, JSON.stringify(engine)],
+        env,
+      );
+    }
+    await runStep("config set defaults.llmEngine", oldLauncher, ["config", "set", "defaults.llmEngine", "lab"], env);
+    await runStep("config set defaults.engine", oldLauncher, ["config", "set", "defaults.engine", "opencode"], env);
+    await runStep("models copy-defaults", oldLauncher, ["models", "copy-defaults"], env);
+    legacyEngines = { keyFile, key, modelsFile: path.join(configHome, "akm", "models.json") };
+  } else {
+    for (const [name, value] of Object.entries({
+      "connections.default": { endpoint: "http://127.0.0.1:9/v1/chat/completions", models: { balanced: "qwen3-8b" } },
+      "harnesses.claude": { platform: "claude" },
+      "harnesses.default": { platform: "opencode", models: { balanced: "openai/gpt-rehearsal" } },
+    })) {
+      await runStep(`config set ${name}`, oldLauncher, ["config", "set", name, JSON.stringify(value)], env);
+    }
   }
-  await runStep("config set defaults.llmEngine", oldLauncher, ["config", "set", "defaults.llmEngine", "lab"], env);
-  await runStep("config set defaults.engine", oldLauncher, ["config", "set", "defaults.engine", "opencode"], env);
-  await runStep("models copy-defaults", oldLauncher, ["models", "copy-defaults"], env);
   const commandFile = path.join(stashDir, "commands", "rehearsal-review.md");
   fs.mkdirSync(path.dirname(commandFile), { recursive: true });
+  const selector = legacyEngines ? "engine: lab" : "connection: default";
   fs.writeFileSync(
     commandFile,
-    "---\ndescription: Upgrade rehearsal command\nengine: lab\n---\n\nReview the change.\n",
+    `---\ndescription: Upgrade rehearsal command\n${selector}\n---\n\nReview the change.\n`,
   );
   await runStep(
-    "task add (engine: lab)",
+    `task add (${selector})`,
     oldLauncher,
-    ["task", "add", "engine-task", "--schedule", "0 7 * * *", "--prompt", "say hi", "--engine", "lab", "--disabled"],
+    [
+      "task",
+      "add",
+      "engine-task",
+      "--schedule",
+      "0 7 * * *",
+      "--prompt",
+      "say hi",
+      ...(legacyEngines ? ["--engine", "lab"] : ["--connection", "default"]),
+      "--disabled",
+    ],
     env,
   );
 
@@ -440,12 +461,10 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
     bundles: { stash: "stash", secondFs: "second-fs", git: "git-bundle", website: "site", npm: npmBundleName },
     searchTerm,
     rememberedTerm,
-    engines: {
-      keyFile,
-      key,
+    modelConfig: {
       commandFile,
       taskFile: path.join(stashDir, "tasks", "engine-task.yml"),
-      modelsFile: path.join(configHome, "akm", "models.json"),
+      legacyEngines,
     },
     deviations: HOME_DEVIATIONS,
   };
