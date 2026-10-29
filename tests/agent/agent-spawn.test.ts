@@ -265,4 +265,22 @@ describe("runAgent — cwd authority", () => {
       work.cleanup();
     }
   });
+
+  test("PWD names that directory too, over the call's env and akm's own, for every harness", async () => {
+    const work = makeSandboxDir("akm-agent-spawn-pwd");
+    try {
+      for (const platform of ["opencode", "claude", "gemini"]) {
+        const result = await runAgent(profileFor("probe", { platform }), {
+          dispatch: { prompt: "go" },
+          cwd: work.dir,
+          env: { PWD: "/call/pwd" },
+        });
+        expect(probed(result.stdout).env.PWD, platform).toBe(work.dir);
+      }
+      const unset = await runAgent(profileFor("probe"), { dispatch: { prompt: "go" } });
+      expect(probed(unset.stdout).env.PWD).toBe(process.env.PWD);
+    } finally {
+      work.cleanup();
+    }
+  });
 });

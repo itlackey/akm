@@ -423,8 +423,8 @@ function ownModelsOf(converted: Converted, naming: Naming): OwnModels {
 
 /**
  * Where a gate's judge and akm's other model work run now when nothing names a place: the default connection, else
- * the default harness. With no `defaults.llmEngine`, 0.9 ran none of that work unless a setting named an engine, so a
- * default harness that would now take it is set not to (`modelWork: false`); a setting that names it still runs there.
+ * the default harness. With no `defaults.llmEngine`, 0.9 ran none of that work unless a setting named an engine, so
+ * a default harness that takes it now gets a note saying so and how to turn it off.
  */
 function modelWorkTarget(
   defaults: Dict,
@@ -438,13 +438,12 @@ function modelWorkTarget(
   const harness = defaultName({ ...inherited?.harnesses, ...merged.harnesses });
   const entry = harness === undefined ? undefined : merged.harnesses[harness];
   if (harness === undefined || !isRecord(entry)) return undefined;
-  if (str(defaults.llmEngine) !== undefined || !(harness in naming.harnesses) || entry.modelWork !== undefined)
-    return entry.modelWork === false ? undefined : { harness };
-  entry.modelWork = false;
-  conversion.notes.push(
-    `harnesses.${harness}: modelWork is false. Without defaults.llmEngine, 0.9 ran none of akm's own model work (improve, index passes, extraction, quality gates) unless a setting named an engine, and with no connection that work would now run on this harness. A workflow gate's judge, which 0.9 ran on defaults.engine, is model work now and needs a connection (\`akm setup --endpoint URL\`); to let the harness take akm's model calls instead, remove modelWork.`,
-  );
-  return undefined;
+  if (str(defaults.llmEngine) === undefined && harness in naming.harnesses && entry.modelWork === undefined) {
+    conversion.notes.push(
+      `harnesses.${harness}: akm's own model work (improve, index passes, extraction, judges) now runs on this harness, the default for it with no connection. Without defaults.llmEngine, 0.9 ran none of it unless a setting named an engine (a workflow gate's judge ran on defaults.engine). To keep the 0.9 behaviour, set \`modelWork: false\` on this harness: a call that names it still runs there, but a workflow gate's judge then needs a connection (\`akm setup --endpoint URL\`).`,
+    );
+  }
+  return entry.modelWork === false ? undefined : { harness };
 }
 
 // ── the whole conversion ─────────────────────────────────────────────────────

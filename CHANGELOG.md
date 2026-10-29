@@ -18,6 +18,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm agent --cwd` names, and the bundle root for a workflow's agent units.
   It ran in the directory akm was started from, because OpenCode takes its
   directory from `PWD`, which akm now sets for the run.
+- A harness run in a directory (`akm agent --cwd`, a harness's `workspace`, the
+  scratch directory of model work) now has `PWD` naming that directory, as it
+  does for a program started after `cd`. OpenCode takes its directory from
+  `PWD`, not the working directory, so an `opencode` harness ran its shell and
+  file tools in the directory akm was started in. The spawn every harness
+  shares sets it, so any program that reads `PWD` gets the directory it runs in.
 - OpenCode model work leaves out OpenCode's built-in browser plugin. From
   OpenCode 2.2.0 its rules kept the `skill` tool listed for the read-only
   `akm-model-work` agent (a call to it was refused).
@@ -28,10 +34,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with its `model`, `bin`, `workspace`, `agent` and `timeoutMs`; one over an
   `llmEngine` stays akm's own runtime. A harness engine's own `model` stands
   over `models.json`, and the notes say where agent work ran with no
-  `defaults.engine` and where a gate's judge ran and runs now. With no
-  `defaults.llmEngine` and no connection, the default harness gets
-  `modelWork: false`: 0.9 ran no model work there. An `opencode-sdk` engine's
-  `args`, which 0.9 did not pass, are dropped with a note. A
+  `defaults.engine`, where a gate's judge ran and runs now, and, with no
+  `defaults.llmEngine` and no connection, that model work (improve, index
+  passes, extraction, judges) now runs on the default harness where 0.9 ran
+  none, and how to turn that off with `modelWork: false`. An `opencode-sdk`
+  engine's `args`, which 0.9 did not pass, are dropped with a note. A
   config a beta already migrated is repaired from its pre-migration copy in
   `<cache dir>/config-backups/` (migration guide, step 5).
 
