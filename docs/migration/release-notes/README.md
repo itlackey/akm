@@ -7,6 +7,7 @@ live one level up in `docs/migration/`.
 
 ## Available notes
 
+- [0.10.261020](0.10.261020.md) — Coordinated beta/stable channel switching, native Claude health, and automatic search-projection refresh.
 - [0.10.261019](0.10.261019.md) — The 0.10 series: 0.9.15 version floor, merged CLI spellings, `default`/`consolidate` strategies only, OpenCode 2, feedback-scaled ranking, and `0.10.YYMMNN` versions.
 - [0.9.19](0.9.19.md) — Bundle-scoped improve planning, proposal reopen, and consolidate/distill guardrails.
 - [0.9.17](0.9.17.md) — Retire proposals, declared links replacing the LLM entity graph, and scoped improve planning.

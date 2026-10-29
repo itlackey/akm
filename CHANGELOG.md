@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261020] - 2026-10-29
+
 ### Added
 
 - `akm upgrade --channel latest|next` switches the CLI and installed Claude,
