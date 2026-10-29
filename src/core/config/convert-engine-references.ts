@@ -85,15 +85,39 @@ export function improveStrategyDefault(out: Dict, defaults: Dict, improve: unkno
   (out.improve as Dict).strategy ??= defaults.improveStrategy;
 }
 
-/** `workflow.judgeEngine`: a gate's judge is the default connection or harness now. */
-export function dropJudgeEngine(out: Dict, conversion: Conversion): void {
+/**
+ * `workflow.judgeEngine`, else `defaults.engine`, is where 0.9 ran a gate's judge. It is model work now and runs where
+ * model work does, `judge`: the default connection, else the default harness. `workflow.judgeEngine` is dropped, and
+ * a note says whether the judge moves.
+ */
+export function dropJudgeEngine(
+  out: Dict,
+  conversion: Conversion,
+  target: (engine: string) => EngineTarget | undefined,
+  defaultEngine: string | undefined,
+  judge: EngineTarget | undefined,
+): void {
   const workflow = out.workflow;
-  if (!isRecord(workflow) || !("judgeEngine" in workflow)) return;
-  delete workflow.judgeEngine;
-  conversion.changed = true;
-  conversion.notes.push(
-    "workflow.judgeEngine: a gate's judge is the default connection or harness now; it is dropped.",
-  );
+  const named = isRecord(workflow) && "judgeEngine" in workflow;
+  const engine = named ? str(workflow.judgeEngine) : defaultEngine;
+  if (named) {
+    delete workflow.judgeEngine;
+    conversion.changed = true;
+  }
+  const became = engine === undefined ? undefined : target(engine);
+  const stays = became !== undefined && judge !== undefined && isDeepStrictEqual(became, judge);
+  const kind = judge === undefined ? undefined : "connection" in judge ? "connection" : "harness";
+  if (named) {
+    conversion.notes.push(
+      stays
+        ? `workflow.judgeEngine: "${engine}" is the default ${kind}, where a gate's judge runs now; the setting is dropped.`
+        : `workflow.judgeEngine${engine === undefined ? "" : ` "${engine}"`}: dropped. A gate's judge runs on the default connection, else the default harness, so a judge that ran on another engine has moved; to keep it, make that engine the default.`,
+    );
+  } else if (became !== undefined && judge !== undefined && !stays) {
+    conversion.notes.push(
+      `workflow: with no workflow.judgeEngine, a gate's judge ran on the default engine "${engine}"; it is model work now and runs on the default ${kind}, "${"connection" in judge ? judge.connection : judge.harness}".`,
+    );
+  }
 }
 
 /** `index.defaults.*` and `index.<pass>.engine`: `index.*` and `connection`; a harness cannot run an index pass. */

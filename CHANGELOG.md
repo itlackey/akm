@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `akm migrate apply` keeps agent engines. 0.10.261014 to 0.10.261017 dropped
+  every `opencode-sdk` engine, so agent work moved from the user's own OpenCode
+  and model to akm's own runtime, and `harness:` selectors naming them failed.
+  An `opencode-sdk` engine with no `llmEngine` now becomes an `opencode` harness
+  with its `model`, `bin`, `workspace`, `agent` and `timeoutMs`; one over an
+  `llmEngine` stays akm's own runtime. A harness engine's own `model` stands
+  over `models.json`, and the notes say where agent work ran with no
+  `defaults.engine` and where a gate's judge ran and runs now. With no
+  `defaults.llmEngine` and no connection, the default harness gets
+  `modelWork: false`: 0.9 ran no model work there. An `opencode-sdk` engine's
+  `args`, which 0.9 did not pass, are dropped with a note. A
+  config a beta already migrated is repaired from its pre-migration copy in
+  `<cache dir>/config-backups/` (migration guide, step 5).
+
 ## [0.10.261017] - 2026-10-27
 
 ### Changed
