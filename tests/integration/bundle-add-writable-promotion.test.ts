@@ -23,6 +23,8 @@ let originDir: string;
 let cleanupOrigin: () => void;
 let daemon: ReturnType<typeof Bun.spawn> | undefined;
 let REMOTE_URL = "";
+/** A stored `$VAR` credential reference, resolved from the environment at sync time. */
+const CREDENTIAL_REF = "$AKM_1296_TOKEN";
 
 function git(args: string[]): string {
   const result = spawnSync("git", args, { encoding: "utf8" });
@@ -128,7 +130,7 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
       bundles: {
         shared: {
           ...shared,
-          credential: "${AKM_1296_TOKEN}",
+          credential: CREDENTIAL_REF,
           components: { notes: { root: "knowledge", adapter: "akm", writable: false } },
         },
         other: { path: otherDir.dir },
@@ -145,7 +147,7 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
 
     const bundles = loadConfig().bundles ?? {};
     expect(Object.keys(bundles)).toEqual(["shared", "other"]);
-    expect(bundles.shared?.credential).toBe("${AKM_1296_TOKEN}");
+    expect(bundles.shared?.credential).toBe(CREDENTIAL_REF);
     expect(bundles.shared?.components).toEqual({ notes: { root: "knowledge", adapter: "akm", writable: true } });
     const root = installed().lock?.localRoot as string;
     expect(fs.existsSync(path.join(root, ".git"))).toBe(true);
