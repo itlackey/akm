@@ -58,6 +58,9 @@ describe("ordinary paths are not secret-shaped", () => {
     unc: "\\\\fileserver\\share\\reports-2026-10-30\\out.json",
     nested: { dir: "./build/output-2026-10-30/v1.2.3/bundle.js" },
     list: ["~/work/akm-review-20261030/a.txt", "/var/log/akm/run-20261030-123456/out.log"],
+    relative: "reports/2026-10-30/summary-final.md",
+    relativeWin: "data\\2026\\run-20261030\\out.json",
+    runDir: "/var/runs/550e8400-e29b-41d4-a716-446655440000/out.json",
   };
 
   test("no warning for Unix/Windows paths, including nested params and arrays", () => {
@@ -80,6 +83,8 @@ describe("ordinary paths are not secret-shaped", () => {
       "C:\\Users\\dev\\sk-abcdEFGH1234ijklMNOP5678qrstUVWX\\x.txt",
       "/srv/data/aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1fG/out.json",
       "/api/export/report.json?token=Zm9vYmFyYmF6cXV4",
+      "out/ghp_0123456789abcdefABCDEF0123456789abcd/x.md",
+      "out/aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1fG/out.json",
     ];
     for (const value of risky) {
       expect(detectSecretShapedParams({ p: value })).toHaveLength(1);
@@ -90,6 +95,11 @@ describe("ordinary paths are not secret-shaped", () => {
   test("a non-path high-entropy value is still flagged", () => {
     const params = { blob: "Zx9Qw3Er5Ty7Ui1Op2As4Df6Gh8Jk0Lm" };
     expect(detectSecretShapedParams(params)).toHaveLength(1);
+    expect(secretShapedParamValues(params)).toEqual([params.blob]);
+  });
+
+  test("slash-bearing base64 without a file extension stays on the whole-string check", () => {
+    const params = { blob: "aB3dEfGh/1jKlMn0pQr+StUvWxYz012345/abcDEF==" };
     expect(secretShapedParamValues(params)).toEqual([params.blob]);
   });
 });
