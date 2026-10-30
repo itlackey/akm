@@ -284,7 +284,9 @@ async function addRegistryStash(
     : [];
   const synced = await syncFromRef(ref, {
     writable: effectiveWritable,
-    ...(effectiveWritable && priorLock?.localRoot ? { writableRoot: priorLock.localRoot } : {}),
+    // Reuse a checkout only when the install is already writable; promoting a
+    // read-only snapshot (#1296) materializes a fresh checkout instead.
+    ...(existingWritable && priorLock?.localRoot ? { writableRoot: priorLock.localRoot } : {}),
     ...(requiredRoots.length > 0 ? { writableRequiredRoots: requiredRoots } : {}),
     ...(credentialRef
       ? { credential: resolveSecret(credentialRef, storeSecretResolver.resolveSecret) }
