@@ -24,35 +24,30 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { buildFileContext } from "../../indexer/walk/file-context";
+import { declaredTypeForPath } from "../../indexer/walk/matchers";
 import type { HealthCheckResult } from "./types";
-
-/**
- * Directory → declared-type map, mirroring `DIR_TYPE_MAP` in
- * `src/indexer/walk/matchers.ts` minus its per-directory extension test —
- * this check only needs "which type does this directory declare", not which
- * extensions it accepts. Keep in sync if `DIR_TYPE_MAP` gains, renames, or
- * removes a directory.
- */
-const DECLARED_DIR_TYPES: Readonly<Record<string, string>> = {
-  memories: "memory",
-  knowledge: "knowledge",
-  commands: "command",
-  agents: "agent",
-  workflows: "workflow",
-  facts: "fact",
-  lessons: "lesson",
-  sessions: "session",
-  instructions: "instruction",
-  scripts: "script",
-  env: "env",
-  secrets: "secret",
-  tasks: "task",
-};
 
 /** The minimal shape this check needs from an indexed `entries` row. */
 export interface TypeDirectoryEntry {
   filePath: string;
   type: string;
+  /** Component root the entry was indexed under; directory intent is read only from inside it. */
+  root: string;
+  /** Owning adapter; only the `akm` adapter declares stash directory rules. */
+  adapterId: string;
+}
+
+/**
+ * The type the entry's location declares under the `akm` stash rules, derived
+ * with the indexer's own directory predicates (see `declaredTypeForPath`).
+ * Other adapters, and paths outside the component root, declare nothing.
+ */
+function declaredTypeFor(entry: TypeDirectoryEntry): string | undefined {
+  if (entry.adapterId !== "akm" || !entry.root) return undefined;
+  const rel = path.relative(entry.root, entry.filePath);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return undefined;
+  return declaredTypeForPath(buildFileContext(entry.root, entry.filePath));
 }
 
 export interface TypeDirectoryDisagreement {
@@ -75,30 +70,6 @@ const realReadFile: ReadFileFn = (absPath) => {
     return undefined;
   }
 };
-
-/**
- * The type a file's directory declares, mirroring the `classifyByDirectory` /
- * `classifyByParentDirHint` precedence in matchers.ts: the immediate parent
- * directory wins when it is itself typed (parentDirHint, specificity 15);
- * otherwise the outermost typed ancestor wins (directoryMatcher, specificity
- * 10, which walks root-to-leaf and returns on the first hit).
- */
-function declaredTypeForPath(absPath: string): { dir: string; type: string } | undefined {
-  const segments = path
-    .dirname(absPath)
-    .split(path.sep)
-    .filter((seg) => seg.length > 0);
-  const immediateParent = segments.at(-1);
-  if (immediateParent) {
-    const parentType = DECLARED_DIR_TYPES[immediateParent];
-    if (parentType) return { dir: immediateParent, type: parentType };
-  }
-  for (const seg of segments) {
-    const type = DECLARED_DIR_TYPES[seg];
-    if (type) return { dir: seg, type };
-  }
-  return undefined;
-}
 
 /**
  * Best-effort explanation for why `classifyBySmartMd` (matchers.ts) would
@@ -138,7 +109,7 @@ function explainOverride(
 
 /**
  * Compare every indexed entry's resolved type against the type its
- * directory declares (see {@link DECLARED_DIR_TYPES}), and return one
+ * directory declares (see {@link declaredTypeFor}), and return one
  * {@link TypeDirectoryDisagreement} per mismatch, sorted by path. Entries
  * outside any declared-type directory are not checked — this is only the
  * "directory declares type" invariant.
@@ -149,14 +120,14 @@ export function collectTypeDirectoryDisagreements(
 ): TypeDirectoryDisagreement[] {
   const disagreements: TypeDirectoryDisagreement[] = [];
   for (const entry of entries) {
-    const declared = declaredTypeForPath(entry.filePath);
-    if (!declared || declared.type === entry.type) continue;
+    const declared = declaredTypeFor(entry);
+    if (!declared || declared === entry.type) continue;
     const content = readFile(entry.filePath);
     const explanation = content === undefined ? undefined : explainOverride(entry.type, content);
     disagreements.push({
       path: entry.filePath,
       resolved: entry.type,
-      expected: declared.type,
+      expected: declared,
       winner: explanation?.winner ?? "unknown",
       knownGoodOverride: explanation?.knownGoodOverride ?? false,
     });

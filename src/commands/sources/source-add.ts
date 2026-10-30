@@ -284,7 +284,9 @@ async function addRegistryStash(
     : [];
   const synced = await syncFromRef(ref, {
     writable: effectiveWritable,
-    ...(effectiveWritable && priorLock?.localRoot ? { writableRoot: priorLock.localRoot } : {}),
+    // Reuse a checkout only when the install is already writable; promoting a
+    // read-only snapshot (#1296) materializes a fresh checkout instead.
+    ...(existingWritable && priorLock?.localRoot ? { writableRoot: priorLock.localRoot } : {}),
     ...(requiredRoots.length > 0 ? { writableRequiredRoots: requiredRoots } : {}),
     ...(credentialRef
       ? { credential: resolveSecret(credentialRef, storeSecretResolver.resolveSecret) }
@@ -327,8 +329,10 @@ async function addRegistryStash(
     installedAt: synced.syncedAt,
   });
 
-  // Clean up the old materialized root on re-install (moved cache).
-  if (!effectiveWritable && priorLocalRoot && path.resolve(priorLocalRoot) !== path.resolve(synced.contentDir)) {
+  // Clean up the old materialized root on re-install (moved cache). A writable
+  // checkout may hold local work and is never removed; a read-only snapshot
+  // (including one just promoted to writable, #1296) is.
+  if (!existingWritable && priorLocalRoot && path.resolve(priorLocalRoot) !== path.resolve(synced.contentDir)) {
     try {
       fs.rmSync(priorLocalRoot, { recursive: true, force: true });
     } catch {

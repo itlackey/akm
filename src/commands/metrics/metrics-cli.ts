@@ -170,7 +170,9 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
   const index = readUtility();
   if (index.note) notes.push(index.note);
   const filter: MetricsQueryFilter = { sinceIso, untilIso, source: SOURCE };
-  notes.push("Selects come from the events stream, which records no source, so they are counted for every source.");
+  notes.push(
+    "Selects come from the events stream, which records no source or search id, so they are counted for every source and selects per search is a ratio, not a conversion rate.",
+  );
 
   const input: MetricsInput = {
     window: { since: sinceIso, until: untilIso },

@@ -39,10 +39,11 @@ function fixture(overrides: Partial<AkmMetricsResult> = {}): AkmMetricsResult {
         curates: 1,
         selects: 6,
         zeroResultSearches: 5,
+        searchesWithHits: 15,
         distinctAssets: 8,
         distinctQueries: 9,
       },
-      selectRate: 0.4,
+      selectsPerSearch: 0.4,
       searchMedianMs: 12.4,
       daily: [{ day: "2026-10-07", search: 20, show: 12, curate: 1, feedback: 2 }],
       topAssets: assets,
@@ -108,10 +109,11 @@ function emptyFixture(): AkmMetricsResult {
         curates: 0,
         selects: 0,
         zeroResultSearches: 0,
+        searchesWithHits: 0,
         distinctAssets: 0,
         distinctQueries: 0,
       },
-      selectRate: null,
+      selectsPerSearch: null,
       searchMedianMs: null,
       daily: [],
       topAssets: [],
@@ -143,14 +145,46 @@ function emptyFixture(): AkmMetricsResult {
 const text = (r: AkmMetricsResult, detail: "brief" | "normal" | "full" = "normal") => formatPlain("metrics", r, detail);
 const md = (r: unknown, detail: "brief" | "normal" | "full" = "normal") => getMdRendererHandler("metrics")?.(r, detail);
 
+describe("unknown LLM token usage", () => {
+  const withLlm = (llm: Partial<AkmMetricsResult["llm"]>) => {
+    const f = fixture();
+    return { ...f, llm: { ...f.llm, ...llm } };
+  };
+
+  test("calls without any usage render unknown, not zero", () => {
+    const r = withLlm({
+      calls: 3,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      reasoningTokens: 0,
+      usageCalls: 0,
+      reasoningCalls: 0,
+      byEngine: { local: { ...stage, calls: 3, totalTokens: 0, usageCalls: 0 } },
+    });
+    const out = text(r)!;
+    expect(out).toContain("unknown");
+    expect(out).toContain("0/3");
+    expect(md(r)).toContain("- **total tokens:** unknown");
+  });
+
+  test("a partial batch keeps its measured total and states coverage", () => {
+    const out = md(withLlm({ calls: 4, totalTokens: 140, usageCalls: 1, reasoningCalls: 0 }))!;
+    expect(out).toContain("- **total tokens:** 140");
+    expect(out).toContain("- **calls with token usage:** 1/4");
+    expect(out).not.toContain("total tokens:** unknown");
+  });
+});
+
 describe("metrics text formatter", () => {
   test("renders every section with aligned tables", () => {
     const out = text(fixture())!;
     for (const s of ["USAGE", "FEEDBACK", "UTILITY", "LLM", "INDEX", "TASKS", "PROPOSALS", "WORKFLOWS", "NOTES"]) {
       expect(out).toContain(s);
     }
-    expect(out).toContain("select rate");
-    expect(out).toContain("40.0%");
+    expect(out).toContain("selects per search with hits");
+    expect(out).toContain("searches with hits");
+    expect(out).not.toContain("40.0%");
     expect(out).toContain("Top assets:");
     expect(out).toContain("kubernetes");
     // Newlines in a query never break the row layout.
@@ -188,7 +222,8 @@ describe("metrics md renderer", () => {
     expect(out).toContain("### Top assets");
     expect(out).toContain("| ref | shows | search hits | selects | + | - | last used |");
     expect(out).toContain("| --- | --- |");
-    expect(out).toContain("- **select rate:** 40.0%");
+    expect(out).toContain("- **selects per search with hits:** 0.40");
+    expect(out).toContain("- **searches with hits:** 15");
     expect(out).toContain("## Notes");
   });
 

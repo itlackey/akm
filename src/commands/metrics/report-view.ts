@@ -58,19 +58,32 @@ function sourceFacts(counts: Record<string, number>): string {
   return entries.length === 0 ? "-" : entries.map(([k, v]) => `${k}=${v}`).join(" ");
 }
 
+type LlmCounts = Pick<AkmMetricsResult["llm"], "calls" | "usageCalls">;
+
+/** A token sum, or `unknown` when calls were made and none reported usage (never a measured zero). */
+function tokens(n: number, a: LlmCounts): string {
+  return a.calls > 0 && a.usageCalls === 0 ? "unknown" : int(n);
+}
+
+/** `reported/calls`; `-` for an aggregate that carries no coverage. */
+function usageCoverage(a: LlmCounts): string {
+  return a.usageCalls === undefined ? "-" : `${a.usageCalls}/${a.calls}`;
+}
+
 function llmRows(group: Record<string, AkmMetricsResult["llm"]["byEngine"][string]>): string[][] {
   return Object.entries(group).map(([name, a]) => [
     name,
     int(a.calls),
     int(a.failures),
-    int(a.promptTokens),
-    int(a.completionTokens),
-    int(a.totalTokens),
+    tokens(a.promptTokens, a),
+    tokens(a.completionTokens, a),
+    tokens(a.totalTokens, a),
+    usageCoverage(a),
     ms(a.totalDurationMs),
   ]);
 }
 
-const LLM_HEADERS = ["name", "calls", "failed", "prompt", "completion", "total", "time"];
+const LLM_HEADERS = ["name", "calls", "failed", "prompt", "completion", "total", "calls with usage", "time"];
 
 export function buildMetricsView(r: AkmMetricsResult, detail: DetailLevel): MetricsView {
   const brief = detail === "brief";
@@ -86,7 +99,8 @@ export function buildMetricsView(r: AkmMetricsResult, detail: DetailLevel): Metr
         ["shows", int(usage.totals.shows)],
         ["curates", int(usage.totals.curates)],
         ["selects", int(usage.totals.selects)],
-        ["select rate", pct(usage.selectRate)],
+        ["searches with hits", int(usage.totals.searchesWithHits)],
+        ["selects per search with hits", fixed(usage.selectsPerSearch, 2)],
         [
           "zero-result searches",
           `${usage.totals.zeroResultSearches} (${pct(searches === 0 ? null : usage.totals.zeroResultSearches / searches)})`,
@@ -195,10 +209,11 @@ export function buildMetricsView(r: AkmMetricsResult, detail: DetailLevel): Metr
       facts: [
         ["calls", int(llm.calls)],
         ["failed", int(llm.failures)],
-        ["prompt tokens", int(llm.promptTokens)],
-        ["completion tokens", int(llm.completionTokens)],
-        ["reasoning tokens", int(llm.reasoningTokens)],
-        ["total tokens", int(llm.totalTokens)],
+        ["calls with token usage", usageCoverage(llm)],
+        ["prompt tokens", tokens(llm.promptTokens, llm)],
+        ["completion tokens", tokens(llm.completionTokens, llm)],
+        ["reasoning tokens", llm.calls > 0 && llm.reasoningCalls === 0 ? "unknown" : tokens(llm.reasoningTokens, llm)],
+        ["total tokens", tokens(llm.totalTokens, llm)],
         ["time", ms(llm.totalDurationMs)],
       ],
       tables: [

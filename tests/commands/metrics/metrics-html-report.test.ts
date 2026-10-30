@@ -75,10 +75,11 @@ function fixture(overrides: Partial<AkmMetricsResult> = {}): AkmMetricsResult {
         curates: 0,
         selects: 1,
         zeroResultSearches: 1,
+        searchesWithHits: 2,
         distinctAssets: 2,
         distinctQueries: 2,
       },
-      selectRate: 0.5,
+      selectsPerSearch: 0.5,
       searchMedianMs: 42,
       daily: [{ day: "2026-10-01", search: 1, show: 1, curate: 0, feedback: 0 }],
       topAssets: [{ ref: "main//memories/vpn-note", shows: 1, searchHits: 1, selects: 1, positive: 0, negative: 0 }],
@@ -149,6 +150,8 @@ function fixture(overrides: Partial<AkmMetricsResult> = {}): AkmMetricsResult {
           completionTokens: 30,
           totalTokens: 90,
           reasoningTokens: 0,
+          usageCalls: 1,
+          reasoningCalls: 0,
         },
         {
           day: "2026-10-02",
@@ -163,6 +166,8 @@ function fixture(overrides: Partial<AkmMetricsResult> = {}): AkmMetricsResult {
           completionTokens: 20,
           totalTokens: 60,
           reasoningTokens: 0,
+          usageCalls: 1,
+          reasoningCalls: 0,
         },
       ],
     },
@@ -483,6 +488,31 @@ describe("dashboard client core", () => {
     expect(a.totals).toMatchObject({ calls: 5, tokens: 30, failures: 2, durationMs: 400 });
     expect(a.byStage[0]).toMatchObject({ name: "a", calls: 5, failures: 2 });
     expect(a.daily).toEqual([{ day: "2026-10-01", calls: 5, avgMs: 80 }]);
+  });
+
+  test("aggregateLlm carries how many calls reported usage, so unknown is not zero", () => {
+    const rows = [
+      { day: "2026-10-01", stage: "a", outcome: "success", calls: 3, durationMs: 300, totalTokens: 30, usageCalls: 1 },
+      { day: "2026-10-01", stage: "b", outcome: "success", calls: 2, durationMs: 100, totalTokens: 0, usageCalls: 0 },
+    ];
+    const a = core.aggregateLlm(rows, {});
+    expect(a.totals).toMatchObject({ calls: 5, tokens: 30, usageCalls: 1 });
+    expect(a.byStage.find((x: { name: string }) => x.name === "b")).toMatchObject({ calls: 2, usageCalls: 0 });
+  });
+
+  test("the page shows selects per search as a ratio, never a percentage of select events", () => {
+    const html = renderMetricsHtml(fixture())!;
+    expect(html).toContain('"selectsPerSearch":0.5');
+    expect(html).toContain("Selects per search");
+    expect(html).not.toContain("DATA.usage.selectRate");
+    expect(html).not.toContain("['Select rate'");
+  });
+
+  test("the data island and page carry the coverage and render unknown", () => {
+    const html = renderMetricsHtml(fixture())!;
+    expect(html).toContain('"usageCalls":1');
+    expect(html).toContain("reported usage");
+    expect(html).toContain("'unknown'");
   });
 
   test("aggregateLlm sums tokens per dimension inside the date range", () => {

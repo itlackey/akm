@@ -132,13 +132,14 @@ describe("usage section", () => {
       curates: 1,
       selects: 1,
       zeroResultSearches: 1,
+      searchesWithHits: 2,
       distinctAssets: 2,
       distinctQueries: 2,
     });
   });
 
-  test("select rate divides by searches that returned something; median uses persisted timings", () => {
-    expect(result.selectRate).toBe(1 / 2);
+  test("selects per search divides by searches that returned something; median uses persisted timings", () => {
+    expect(result.selectsPerSearch).toBe(1 / 2);
     expect(result.searchMedianMs).toBe(30);
   });
 
@@ -170,7 +171,7 @@ describe("usage section", () => {
 
   test("rates are null, never NaN, when the denominator is 0", () => {
     const empty = buildMetricsResult(input()).usage;
-    expect(empty.selectRate).toBeNull();
+    expect(empty.selectsPerSearch).toBeNull();
     expect(empty.searchMedianMs).toBeNull();
   });
 });
@@ -293,6 +294,42 @@ describe("tasks, index and rows", () => {
   });
 });
 
+describe("selects per search", () => {
+  const search = (extra: Partial<UsageEventRow> = {}) =>
+    usage({
+      event_type: "search",
+      created_at: "2026-01-03 10:00:00",
+      query: "q",
+      metadata: '{"resultCount":3}',
+      ...extra,
+    });
+  const sel = (n: number) => Array.from({ length: n }, () => ({ ts: "2026-01-03T10:00:01.000Z", ref: "b//skills/x" }));
+  const run = (usageRows: UsageEventRow[], n: number) =>
+    buildMetricsResult(input({ usage: usageRows, selects: sel(n) })).usage;
+
+  test("several selects for one search is a ratio above 1, raw counts kept, never clamped", () => {
+    const u = run([search()], 8);
+    expect(u.selectsPerSearch).toBe(8);
+    expect(u.totals).toMatchObject({ selects: 8, searches: 1, searchesWithHits: 1 });
+  });
+
+  test("curate-only activity and searches without hits give no ratio but keep the select count", () => {
+    const curate = usage({ event_type: "curate", created_at: "2026-01-03 10:00:00", query: "q" });
+    const miss = search({ metadata: '{"resultCount":0}' });
+    for (const rows of [[curate], [miss]]) {
+      const u = run(rows, 3);
+      expect(u.selectsPerSearch).toBeNull();
+      expect(u.totals).toMatchObject({ selects: 3, searchesWithHits: 0 });
+    }
+  });
+
+  test("audit/task-sourced searches count in the denominator as given; the ratio is not bounded", () => {
+    const u = run([search({ source: "improve" })], 2);
+    expect(u.totals.searchesWithHits).toBe(1);
+    expect(u.selectsPerSearch).toBe(2);
+  });
+});
+
 describe("llmRowsFromEvents", () => {
   const call = (ts: string, metadata: Record<string, unknown>) =>
     ({ ts, eventType: "llm_usage", metadata }) as unknown as EventEnvelope;
@@ -338,6 +375,8 @@ describe("llmRowsFromEvents", () => {
       completionTokens: 15,
       totalTokens: 45,
       reasoningTokens: 0,
+      usageCalls: 2,
+      reasoningCalls: 0,
     });
     expect(rows[3]).toMatchObject({ day: "2026-10-02", outcome: "success", calls: 1, durationMs: 1 });
     expect(rows[3]?.stage).toBeUndefined();
@@ -346,6 +385,59 @@ describe("llmRowsFromEvents", () => {
     expect(rows.reduce((n, r) => n + r.calls, 0)).toBe(totals.calls);
     expect(rows.reduce((n, r) => n + r.durationMs, 0)).toBe(totals.totalDurationMs);
     expect(rows.filter((r) => r.outcome === "error").reduce((n, r) => n + r.calls, 0)).toBe(totals.failures);
+  });
+});
+
+describe("unknown token usage", () => {
+  const call = (metadata: Record<string, unknown>, ts = "2026-10-01T01:00:00.000Z") =>
+    ({
+      ts,
+      eventType: "llm_usage",
+      metadata: { outcome: "success", durationMs: 100, ...metadata },
+    }) as unknown as EventEnvelope;
+  const both = (events: EventEnvelope[]) => ({
+    row: llmRowsFromEvents(events.filter((e) => (e.metadata as { outcome: string }).outcome === "success"))[0],
+    agg: summarizeLlmUsage(events as never),
+  });
+
+  test("no usage reported is unknown: calls and duration kept, zero reporting calls", () => {
+    const { row, agg } = both([call({}), call({})]);
+    expect(row).toMatchObject({ calls: 2, durationMs: 200, totalTokens: 0, usageCalls: 0, reasoningCalls: 0 });
+    expect(agg).toMatchObject({ calls: 2, totalDurationMs: 200, usageCalls: 0, reasoningCalls: 0 });
+  });
+
+  test("an explicit zero is measured, unlike an absent field", () => {
+    const { row, agg } = both([call({ promptTokens: 0, completionTokens: 0, totalTokens: 0, reasoningTokens: 0 })]);
+    expect(row).toMatchObject({ calls: 1, totalTokens: 0, usageCalls: 1, reasoningCalls: 1 });
+    expect(agg).toMatchObject({ usageCalls: 1, reasoningCalls: 1 });
+  });
+
+  test("a mixed batch keeps measured totals and the share that reported", () => {
+    const { row, agg } = both([call({ totalTokens: 10, promptTokens: 6, completionTokens: 4 }), call({})]);
+    expect(row).toMatchObject({ calls: 2, totalTokens: 10, promptTokens: 6, usageCalls: 1 });
+    expect(agg).toMatchObject({ calls: 2, totalTokens: 10, usageCalls: 1 });
+  });
+
+  test("prompt and completion without a total still count as reporting", () => {
+    const { row, agg } = both([call({ promptTokens: 6, completionTokens: 4 })]);
+    expect(row).toMatchObject({ promptTokens: 6, completionTokens: 4, totalTokens: 10, usageCalls: 1 });
+    expect(agg).toMatchObject({ promptTokens: 6, completionTokens: 4, totalTokens: 10, usageCalls: 1 });
+  });
+
+  test("missing reasoning usage does not make a call unmeasured", () => {
+    const { row } = both([call({ promptTokens: 6, completionTokens: 4, totalTokens: 10 })]);
+    expect(row).toMatchObject({ usageCalls: 1, reasoningCalls: 0, reasoningTokens: 0 });
+  });
+
+  test("failed calls without usage count as calls and failures, not as measured", () => {
+    const agg = summarizeLlmUsage([call({ outcome: "error", errorCode: "http_500" })] as never);
+    expect(agg).toMatchObject({ calls: 1, failures: 1, totalDurationMs: 100, usageCalls: 0 });
+  });
+
+  test("no calls leaves coverage undefined and the section empty", () => {
+    expect(summarizeLlmUsage([])).toMatchObject({ calls: 0 });
+    expect(summarizeLlmUsage([]).usageCalls).toBeUndefined();
+    expect(llmRowsFromEvents([])).toEqual([]);
   });
 });
 

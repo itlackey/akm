@@ -97,10 +97,11 @@ describe("akm metrics", () => {
       curates: 0,
       selects: 0,
       zeroResultSearches: 0,
+      searchesWithHits: 0,
       distinctAssets: 0,
       distinctQueries: 0,
     });
-    expect(result.usage.selectRate).toBeNull();
+    expect(result.usage.selectsPerSearch).toBeNull();
     expect(result.tasks.failRate).toBeNull();
     expect(result.notes.some((note) => note.includes("state.db was not found"))).toBe(true);
     expect(result.notes.some((note) => note.includes("index.db was not found"))).toBe(true);
@@ -135,7 +136,7 @@ describe("akm metrics", () => {
       distinctAssets: 1,
       distinctQueries: 2,
     });
-    expect(result.usage.selectRate).toBe(1);
+    expect(result.usage.selectsPerSearch).toBe(1);
     expect(result.usage.searchMedianMs).toBe(40);
     expect(result.usage.topAssets[0]).toMatchObject({
       ref: "main//skills/deploy",

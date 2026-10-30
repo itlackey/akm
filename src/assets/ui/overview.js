@@ -70,10 +70,10 @@ function metricsSection(m) {
       ${tile("Searches", fmtNum(u.totals.searches), `${fmtNum(u.totals.zeroResultSearches)} with no results`)}
       ${tile("Shows", fmtNum(u.totals.shows), `${fmtNum(u.totals.distinctAssets)} distinct assets`)}
       ${tile("Curates", fmtNum(u.totals.curates))}
-      ${tile("Select rate", fmtPct(u.selectRate), `${fmtNum(u.totals.selects)} selects`)}
+      ${tile("Selects per search", u.selectsPerSearch == null ? "—" : u.selectsPerSearch.toFixed(2), `${fmtNum(u.totals.selects)} selects / ${fmtNum(u.totals.searchesWithHits)} searches with hits`)}
       ${tile("Median search", fmtMs(u.searchMedianMs))}
       ${tile("Feedback", `+${fmtNum(m.feedback.totals.positive)} / -${fmtNum(m.feedback.totals.negative)}`, "positive / negative")}
-      ${tile("LLM calls", fmtNum(m.llm.calls), `${fmtNum(m.llm.failures)} failed, ${fmtNum(m.llm.totalTokens)} tokens`)}
+      ${tile("LLM calls", fmtNum(m.llm.calls), `${fmtNum(m.llm.failures)} failed, ${m.llm.calls > 0 && m.llm.usageCalls === 0 ? "unknown" : fmtNum(m.llm.totalTokens)} tokens`)}
       ${tile("Pending proposals", fmtNum(m.proposals.byStatus.pending ?? 0))}
       ${tile("Task runs", fmtNum(m.tasks.runs), `${fmtNum(m.tasks.failed)} failed`)}
       ${tile("Index builds", fmtNum(m.index.runs), `median ${fmtMs(m.index.medianMs)}`)}

@@ -45,14 +45,42 @@ function keyLooksSecret(key: string): boolean {
 }
 
 /**
+ * Unix (`/`, `./`, `../`, `~/`) or Windows (`C:\`, `\\server`) filesystem path,
+ * or a bare relative path whose last segment carries a file extension
+ * (`reports/2026-10-30/summary.md`). Base64 never contains `.`, so the
+ * extension keeps slash-bearing base64 blobs on the whole-string check.
+ */
+const PATH_LIKE = /^(\/|\.{1,2}[\\/]|~[\\/]|[A-Za-z]:[\\/]|\\\\)|^[\w.-]+[\\/][^?#]*\.[A-Za-z0-9]{1,8}$/;
+
+/** A canonical UUID — an ordinary run/session directory name, not a credential. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Whether one path segment or query piece looks like a credential: a known
+ * prefix, a secret-named query key (`token=...`), or a long unbroken token
+ * (hex/base64 run, or mixed case with digits).
+ */
+function segmentLooksSecret(seg: string): boolean {
+  if (SECRET_VALUE_PREFIX.test(seg)) return true;
+  const eq = seg.indexOf("=");
+  if (eq > 0 && keyLooksSecret(seg.slice(0, eq)) && seg.length - eq > 8) return true;
+  if (seg.length >= 32 && !UUID.test(seg) && /^[A-Za-z0-9+_=-]+$/.test(seg) && /\d/.test(seg) && /[a-zA-Z]/.test(seg))
+    return true;
+  return seg.length >= 20 && /^[A-Za-z0-9]+$/.test(seg) && /[a-z]/.test(seg) && /[A-Z]/.test(seg) && /\d/.test(seg);
+}
+
+/**
  * A string value is secret-shaped when it is long, whitespace-free, and either
  * carries a known credential prefix or has high character-class diversity /
- * base64-hex shape — an entropy proxy, not a real entropy computation.
+ * base64-hex shape — an entropy proxy, not a real entropy computation. A
+ * filesystem path is judged per segment instead, so separators, dates and
+ * digits do not count as diversity.
  */
 function valueLooksSecret(value: string): boolean {
   const s = value.trim();
   if (s.length < 20 || /\s/.test(s)) return false;
   if (SECRET_VALUE_PREFIX.test(s)) return true;
+  if (PATH_LIKE.test(s)) return s.split(/[/\\?&#]/).some(segmentLooksSecret);
   const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((re) => re.test(s)).length;
   if (s.length >= 24 && classes >= 3) return true;
   if (s.length >= 32 && /^[A-Za-z0-9+/=_-]+$/.test(s)) return true;

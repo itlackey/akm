@@ -210,7 +210,7 @@ function classifyByExtension(ctx: FileContext): MatchFact | null {
   return null;
 }
 
-function classifyByDirectory(ctx: FileContext): MatchFact | null {
+function classifyByDirectory(ctx: PathFileContext): MatchFact | null {
   if (isNestedSkillResource(ctx)) return null;
   for (const dir of ctx.ancestorDirs) {
     const result = matchDirectoryHint(dir, ctx, 10);
@@ -219,7 +219,7 @@ function classifyByDirectory(ctx: FileContext): MatchFact | null {
   return null;
 }
 
-function classifyByParentDirHint(ctx: FileContext): MatchFact | null {
+function classifyByParentDirHint(ctx: PathFileContext): MatchFact | null {
   const { parentDir, ext, fileName } = ctx;
 
   if (isNestedSkillResource(ctx)) return null;
@@ -229,6 +229,17 @@ function classifyByParentDirHint(ctx: FileContext): MatchFact | null {
   }
 
   return matchDirectoryHint(parentDir, ctx, 15);
+}
+
+/**
+ * The type a file's location declares, from the same directory rules the
+ * indexer applies: parent-directory hint (specificity 15) over the outermost
+ * typed ancestor (10), each honouring the rule's extension predicate, the
+ * `README.md` documentation exception and nested skill resources. `undefined`
+ * when no directory rule claims the file. Path fields only; no bytes are read.
+ */
+export function declaredTypeForPath(ctx: PathFileContext): string | undefined {
+  return (classifyByParentDirHint(ctx) ?? classifyByDirectory(ctx))?.type;
 }
 
 function classifyBySmartMd(ctx: FileContext): MatchFact | null {

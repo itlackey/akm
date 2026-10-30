@@ -541,11 +541,11 @@ Result sections (`schemaVersion: 1`):
 | Field | Description |
 | --- | --- |
 | `window`, `filters` | The resolved window and the usage source counted |
-| `usage` | Search, show, curate and select totals, `selectRate` (selects over searches that returned a hit), `searchMedianMs`, a daily series, top assets, top and zero-result queries, and rows by source |
+| `usage` | Search, show, curate and select totals, `searchesWithHits` and `selectsPerSearch` (selects divided by searches that returned a hit: a plain ratio that can exceed 1, not a conversion percentage, since selects carry no source or search id), `searchMedianMs`, a daily series, top assets, top and zero-result queries, and rows by source |
 | `feedback` | Positive and negative totals, per-asset valence, per-tag counts, and the most recent negatives with their reasons |
 | `utility` | A ten-bucket histogram of `utility_scores`, the lowest and highest assets, and how many indexed entries were never used |
 | `outcomes` | The assets with the lowest `outcome_score` |
-| `llm` | `akm health`'s LLM usage aggregate (`byStage`, `byProcess`, and `byEngine`, keyed by the name of the connection or harness) |
+| `llm` | `akm health`'s LLM usage aggregate (`byStage`, `byProcess`, and `byEngine`, keyed by the name of the connection or harness). `usageCalls` and `reasoningCalls` count the calls whose provider response reported token usage; a call without it adds no tokens and the report shows `unknown`, not zero, when none reported |
 | `index`, `tasks`, `proposals`, `workflows` | Index runs and median time, task runs and fail rate, proposals by status and accept rate by source, workflow runs and tokens by model |
 | `rows` | The raw usage and LLM rows of the window; see below |
 | `notes` | Anything that limits what the numbers mean |

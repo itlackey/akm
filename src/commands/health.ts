@@ -16,6 +16,7 @@ import {
   withStateDb,
 } from "../core/state-db";
 import { DURATION_UNITS, parseDuration, parseSinceToIso } from "../core/time";
+import { resolveSourceEntries } from "../indexer/search/search-source";
 import { probeLlmEndpoint } from "../llm/client";
 import { type Database, openDatabase } from "../storage/database";
 import { insertEvent } from "../storage/repositories/events-repository";
@@ -84,7 +85,7 @@ export interface AkmHealthOptions {
    * to a foreign/just-deleted DB. Purely additive: omitted ⇒ identical to before.
    */
   stateDbPath?: string;
-  /** Stash dir for the `stash-git-exposure` advisory. Defaults to `resolveStashDir()`. */
+  /** Working stash dir for the `stash-git-exposure` advisory (configured bundles are checked too). Defaults to `resolveStashDir()`. */
   stashDir?: string;
   /**
    * Injectable git seam for the `stash-git-exposure` advisory. When omitted, the
@@ -376,22 +377,31 @@ function gatherAncillaryAdvisories(
   const indexStateMismatch = detectIndexStateGenerationMismatch(db);
   if (indexStateMismatch) advisories.push(indexStateMismatch);
 
-  // Surface a `stash-git-exposure` advisory when env/secret assets are
-  // git-tracked AND a remote is configured (the leak moment). Best-effort.
-  // Cheap guard: only shell out to git when the stash has its OWN `.git` (or a
-  // test injected a fake seam), so the hot path never spawns for a non-git
-  // stash — the common unit-test case. Trade-off: a stash manually pointed at a
-  // bare subdirectory of a parent git repo (no `.git` of its own) is not
-  // checked. akm-init always creates `.git` at the stash root, so any
-  // akm-initialised stash is covered; this only skips hand-pointed nested ones.
+  // Surface a `stash-git-exposure` advisory for each bundle whose env/secret
+  // assets are git-tracked AND that has a remote (the leak moment). Every
+  // configured bundle is checked, not just the working stash; each honours the
+  // intentional-tracking marker in its own `.gitignore`. Best-effort.
+  // Cheap guard: only shell out to git for a bundle root with its OWN `.git`
+  // (or when a test injected a fake seam), so the hot path never spawns for
+  // non-git bundles. Trade-off: a bundle pointed at a bare subdirectory of a
+  // parent git repo (no `.git` of its own) is not checked; akm-init and
+  // writable git installs put `.git` at the bundle root.
+  const exposureStashDir = options.stashDir ?? resolveStashDir();
+  let exposureRoots = [exposureStashDir];
   try {
-    const exposureStashDir = options.stashDir ?? resolveStashDir();
-    if (options.stashExposureGit || fs.existsSync(path.join(exposureStashDir, ".git"))) {
-      const stashExposure = collectStashExposureAdvisory(exposureStashDir, options.stashExposureGit);
-      if (stashExposure) advisories.push(stashExposure);
-    }
+    exposureRoots = resolveSourceEntries(exposureStashDir).map((source) => source.path);
   } catch {
-    // Non-fatal — a git/probe failure must not abort the health report.
+    // An unreadable bundle config still checks the working stash.
+  }
+  for (const root of new Set(exposureRoots.map((dir) => path.resolve(dir)))) {
+    try {
+      if (options.stashExposureGit || fs.existsSync(path.join(root, ".git"))) {
+        const stashExposure = collectStashExposureAdvisory(root, options.stashExposureGit);
+        if (stashExposure) advisories.push(stashExposure);
+      }
+    } catch {
+      // Non-fatal — a git/probe failure must not abort the health report.
+    }
   }
 
   // 08 surfaces: the remaining read-only advisory group (binary-config-skew,
@@ -465,7 +475,24 @@ function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult 
   try {
     indexDb = openReadonlyExistingDatabase(getDbPath());
     if (!indexDb) return undefined;
-    const entries = getAllEntries(indexDb).map((entry) => ({ filePath: entry.filePath, type: entry.type }));
+    // Directory intent is read only from inside the component root that owns the entry.
+    // Both spellings of each root: indexed paths may be realpaths (a symlinked
+    // stash, macOS /var -> /private/var) while config holds the configured path.
+    const roots = resolveSourceEntries(stashRoot).flatMap((source) => {
+      const resolved = path.resolve(source.path);
+      try {
+        return [resolved, fs.realpathSync.native(resolved)];
+      } catch {
+        return [resolved];
+      }
+    });
+    const entries = getAllEntries(indexDb).map((entry) => ({
+      filePath: entry.filePath,
+      type: entry.type,
+      adapterId: entry.adapterId,
+      root:
+        roots.filter((root) => entry.filePath.startsWith(root + path.sep)).sort((a, b) => b.length - a.length)[0] ?? "",
+    }));
     return buildTypeDirectoryAdvisory(entries, undefined, (absPath) =>
       absPath.startsWith(stashRoot) ? path.relative(stashRoot, absPath) : absPath,
     );
