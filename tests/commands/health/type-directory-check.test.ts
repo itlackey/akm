@@ -19,18 +19,23 @@ import {
   type TypeDirectoryEntry,
 } from "../../../src/commands/health/type-directory-check";
 
+/** An indexed entry of the `akm` adapter living under the synthetic `/stash` component root. */
+function entry(rel: string, type: string, adapterId = "akm"): TypeDirectoryEntry {
+  return { filePath: `/stash/${rel}`, type, root: "/stash", adapterId };
+}
+
 describe("collectTypeDirectoryDisagreements (#831)", () => {
   test("reports nothing when every entry's type matches its directory", () => {
     const entries: TypeDirectoryEntry[] = [
-      { filePath: "/stash/memories/note.md", type: "memory" },
-      { filePath: "/stash/knowledge/guide.md", type: "knowledge" },
-      { filePath: "/stash/commands/deploy.md", type: "command" },
+      entry("memories/note.md", "memory"),
+      entry("knowledge/guide.md", "knowledge"),
+      entry("commands/deploy.md", "command"),
     ];
     expect(collectTypeDirectoryDisagreements(entries, () => "")).toEqual([]);
   });
 
   test("does not check entries outside a DIR_TYPE_MAP directory", () => {
-    const entries: TypeDirectoryEntry[] = [{ filePath: "/stash/skills/my-skill/SKILL.md", type: "skill" }];
+    const entries: TypeDirectoryEntry[] = [entry("skills/my-skill/SKILL.md", "skill")];
     expect(collectTypeDirectoryDisagreements(entries, () => "")).toEqual([]);
   });
 
@@ -38,7 +43,7 @@ describe("collectTypeDirectoryDisagreements (#831)", () => {
     // #826 fixed the numeric-placeholder regex so this can no longer happen via
     // the old bug — construct the disagreement directly (mismatched type on the
     // entry) instead of relying on a body that would trip the old heuristic.
-    const entries: TypeDirectoryEntry[] = [{ filePath: "/stash/memories/910ed479-3-f4f94df3.md", type: "command" }];
+    const entries: TypeDirectoryEntry[] = [entry("memories/910ed479-3-f4f94df3.md", "command")];
     const readFile = () => "Ordering fee is $2,000 due at signing.";
     const result = collectTypeDirectoryDisagreements(entries, readFile);
     expect(result).toEqual([
@@ -53,7 +58,7 @@ describe("collectTypeDirectoryDisagreements (#831)", () => {
   });
 
   test("legitimate override: knowledge/ file containing $ARGUMENTS is named, not silently accepted or mislabeled", () => {
-    const entries: TypeDirectoryEntry[] = [{ filePath: "/stash/knowledge/deploy-cmd.md", type: "command" }];
+    const entries: TypeDirectoryEntry[] = [entry("knowledge/deploy-cmd.md", "command")];
     const readFile = () => "Usage: /deploy $ARGUMENTS\n";
     const result = collectTypeDirectoryDisagreements(entries, readFile);
     expect(result).toEqual([
@@ -68,7 +73,7 @@ describe("collectTypeDirectoryDisagreements (#831)", () => {
   });
 
   test("legitimate override: agents/ file with `agent:` frontmatter is named, not silently accepted or mislabeled", () => {
-    const entries: TypeDirectoryEntry[] = [{ filePath: "/stash/agents/reviewer.md", type: "command" }];
+    const entries: TypeDirectoryEntry[] = [entry("agents/reviewer.md", "command")];
     const readFile = () => "---\nagent: reviewer\n---\nBody.\n";
     const result = collectTypeDirectoryDisagreements(entries, readFile);
     expect(result).toEqual([
@@ -83,7 +88,7 @@ describe("collectTypeDirectoryDisagreements (#831)", () => {
   });
 
   test("unreadable file still reports the disagreement with an unknown reason", () => {
-    const entries: TypeDirectoryEntry[] = [{ filePath: "/stash/memories/gone.md", type: "command" }];
+    const entries: TypeDirectoryEntry[] = [entry("memories/gone.md", "command")];
     const result = collectTypeDirectoryDisagreements(entries, () => undefined);
     expect(result).toEqual([
       {
@@ -97,23 +102,70 @@ describe("collectTypeDirectoryDisagreements (#831)", () => {
   });
 
   test("sorts disagreements by path", () => {
-    const entries: TypeDirectoryEntry[] = [
-      { filePath: "/stash/memories/z.md", type: "command" },
-      { filePath: "/stash/memories/a.md", type: "command" },
-    ];
+    const entries: TypeDirectoryEntry[] = [entry("memories/z.md", "command"), entry("memories/a.md", "command")];
     const result = collectTypeDirectoryDisagreements(entries, () => "");
     expect(result.map((d) => d.path)).toEqual(["/stash/memories/a.md", "/stash/memories/z.md"]);
   });
 });
 
+describe("collectTypeDirectoryDisagreements classifier parity (#1288)", () => {
+  test("README documentation under typed directories is not an incorrectly typed asset", () => {
+    const entries = [
+      entry("scripts/README.md", "knowledge"),
+      entry("agents/README.md", "knowledge"),
+      entry("workflows/README.md", "knowledge"),
+    ];
+    expect(collectTypeDirectoryDisagreements(entries, () => "# supporting documentation")).toEqual([]);
+  });
+
+  test("a recognized script extension under knowledge/ is not warned", () => {
+    expect(collectTypeDirectoryDisagreements([entry("knowledge/example.sh", "script")], () => "")).toEqual([]);
+  });
+
+  test("skill supporting resources keep their intended treatment", () => {
+    const entries = [
+      entry("skills/demo/scripts/helper.sh", "script"),
+      entry("skills/demo/notes/guide.md", "knowledge"),
+    ];
+    expect(collectTypeDirectoryDisagreements(entries, () => "")).toEqual([]);
+  });
+
+  test("the extension predicate applies at ancestor depth too", () => {
+    expect(collectTypeDirectoryDisagreements([entry("knowledge/deep/tool.py", "script")], () => "")).toEqual([]);
+  });
+
+  test("an ordinary memories/ note indexed as command without an override still warns", () => {
+    const result = collectTypeDirectoryDisagreements([entry("memories/note.md", "command")], () => "Plain note.");
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ expected: "memory", resolved: "command", winner: "unknown" });
+  });
+
+  test("a non-akm adapter is evaluated by its own semantics, not stash directory names", () => {
+    const entries = [entry("memories/concept.md", "concept", "okf"), entry("scripts/readme-like.md", "topic", "okf")];
+    expect(collectTypeDirectoryDisagreements(entries, () => "")).toEqual([]);
+  });
+
+  test("ancestor directories outside the component root do not establish type intent", () => {
+    const outside: TypeDirectoryEntry = {
+      filePath: "/stash/memories/vendor/pkg/doc.md",
+      type: "knowledge",
+      root: "/stash/memories/vendor/pkg",
+      adapterId: "akm",
+    };
+    expect(collectTypeDirectoryDisagreements([outside], () => "")).toEqual([]);
+    const unrelated: TypeDirectoryEntry = { ...outside, root: "/elsewhere" };
+    expect(collectTypeDirectoryDisagreements([unrelated], () => "")).toEqual([]);
+  });
+});
+
 describe("buildTypeDirectoryAdvisory (#831)", () => {
   test("returns undefined when nothing disagrees", () => {
-    const entries: TypeDirectoryEntry[] = [{ filePath: "/stash/memories/note.md", type: "memory" }];
+    const entries: TypeDirectoryEntry[] = [entry("memories/note.md", "memory")];
     expect(buildTypeDirectoryAdvisory(entries, () => "")).toBeUndefined();
   });
 
   test("is always a warning, never a hard failure, even for an accidental-looking disagreement", () => {
-    const entries: TypeDirectoryEntry[] = [{ filePath: "/stash/memories/910ed479-3-f4f94df3.md", type: "command" }];
+    const entries: TypeDirectoryEntry[] = [entry("memories/910ed479-3-f4f94df3.md", "command")];
     const advisory = buildTypeDirectoryAdvisory(entries, () => "$2,000 due at signing.");
     expect(advisory?.name).toBe("type-directory-disagreement");
     expect(advisory?.status).toBe("warn");
@@ -131,14 +183,14 @@ describe("buildTypeDirectoryAdvisory (#831)", () => {
   });
 
   test("marks a known-good override in the message so it reads differently from an accident", () => {
-    const entries: TypeDirectoryEntry[] = [{ filePath: "/stash/knowledge/deploy-cmd.md", type: "command" }];
+    const entries: TypeDirectoryEntry[] = [entry("knowledge/deploy-cmd.md", "command")];
     const advisory = buildTypeDirectoryAdvisory(entries, () => "Usage: /deploy $ARGUMENTS\n");
     expect(advisory?.status).toBe("warn");
     expect(advisory?.message).toContain("winner=smart-md:$ARGUMENTS (known-good override)");
   });
 
   test("uses the displayPath projection for both message and evidence", () => {
-    const entries: TypeDirectoryEntry[] = [{ filePath: "/stash/memories/note.md", type: "command" }];
+    const entries: TypeDirectoryEntry[] = [entry("memories/note.md", "command")];
     const advisory = buildTypeDirectoryAdvisory(
       entries,
       () => "",

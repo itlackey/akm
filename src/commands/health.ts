@@ -16,6 +16,7 @@ import {
   withStateDb,
 } from "../core/state-db";
 import { DURATION_UNITS, parseDuration, parseSinceToIso } from "../core/time";
+import { resolveSourceEntries } from "../indexer/search/search-source";
 import { probeLlmEndpoint } from "../llm/client";
 import { type Database, openDatabase } from "../storage/database";
 import { insertEvent } from "../storage/repositories/events-repository";
@@ -465,7 +466,15 @@ function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult 
   try {
     indexDb = openReadonlyExistingDatabase(getDbPath());
     if (!indexDb) return undefined;
-    const entries = getAllEntries(indexDb).map((entry) => ({ filePath: entry.filePath, type: entry.type }));
+    // Directory intent is read only from inside the component root that owns the entry.
+    const roots = resolveSourceEntries(stashRoot).map((source) => path.resolve(source.path));
+    const entries = getAllEntries(indexDb).map((entry) => ({
+      filePath: entry.filePath,
+      type: entry.type,
+      adapterId: entry.adapterId,
+      root:
+        roots.filter((root) => entry.filePath.startsWith(root + path.sep)).sort((a, b) => b.length - a.length)[0] ?? "",
+    }));
     return buildTypeDirectoryAdvisory(entries, undefined, (absPath) =>
       absPath.startsWith(stashRoot) ? path.relative(stashRoot, absPath) : absPath,
     );
