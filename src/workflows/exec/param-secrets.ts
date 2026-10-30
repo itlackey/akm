@@ -44,15 +44,34 @@ function keyLooksSecret(key: string): boolean {
   return SECRET_KEY_HINTS.some((hint) => lower.includes(hint));
 }
 
+/** Unix (`/`, `./`, `../`, `~/`) or Windows (`C:\`, `\\server`) filesystem path. */
+const PATH_LIKE = /^(\/|\.{1,2}[\\/]|~[\\/]|[A-Za-z]:[\\/]|\\\\)/;
+
+/**
+ * Whether one path segment or query piece looks like a credential: a known
+ * prefix, a secret-named query key (`token=...`), or a long unbroken token
+ * (hex/base64 run, or mixed case with digits).
+ */
+function segmentLooksSecret(seg: string): boolean {
+  if (SECRET_VALUE_PREFIX.test(seg)) return true;
+  const eq = seg.indexOf("=");
+  if (eq > 0 && keyLooksSecret(seg.slice(0, eq)) && seg.length - eq > 8) return true;
+  if (seg.length >= 32 && /^[A-Za-z0-9+_=-]+$/.test(seg) && /\d/.test(seg) && /[a-zA-Z]/.test(seg)) return true;
+  return seg.length >= 20 && /^[A-Za-z0-9]+$/.test(seg) && /[a-z]/.test(seg) && /[A-Z]/.test(seg) && /\d/.test(seg);
+}
+
 /**
  * A string value is secret-shaped when it is long, whitespace-free, and either
  * carries a known credential prefix or has high character-class diversity /
- * base64-hex shape — an entropy proxy, not a real entropy computation.
+ * base64-hex shape — an entropy proxy, not a real entropy computation. A
+ * filesystem path is judged per segment instead, so separators, dates and
+ * digits do not count as diversity.
  */
 function valueLooksSecret(value: string): boolean {
   const s = value.trim();
   if (s.length < 20 || /\s/.test(s)) return false;
   if (SECRET_VALUE_PREFIX.test(s)) return true;
+  if (PATH_LIKE.test(s)) return s.split(/[/\\?&#]/).some(segmentLooksSecret);
   const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((re) => re.test(s)).length;
   if (s.length >= 24 && classes >= 3) return true;
   if (s.length >= 32 && /^[A-Za-z0-9+/=_-]+$/.test(s)) return true;

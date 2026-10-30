@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { detectSecretShapedParams } from "../../src/workflows/exec/param-secrets";
+import { detectSecretShapedParams, secretShapedParamValues } from "../../src/workflows/exec/param-secrets";
 
 /**
  * PR #714 review round 2, #13 — best-effort secret-shaped-param detection.
@@ -48,5 +48,48 @@ describe("detectSecretShapedParams", () => {
     const snapshot = JSON.stringify(params);
     expect(() => detectSecretShapedParams(params)).not.toThrow();
     expect(JSON.stringify(params)).toBe(snapshot);
+  });
+});
+
+describe("ordinary paths are not secret-shaped", () => {
+  const ordinary = {
+    config_path: "/tmp/akm-review-20261030/config.json",
+    win: "C:\\Users\\dev\\akm-review-20261030\\config.json",
+    unc: "\\\\fileserver\\share\\reports-2026-10-30\\out.json",
+    nested: { dir: "./build/output-2026-10-30/v1.2.3/bundle.js" },
+    list: ["~/work/akm-review-20261030/a.txt", "/var/log/akm/run-20261030-123456/out.log"],
+  };
+
+  test("no warning for Unix/Windows paths, including nested params and arrays", () => {
+    expect(detectSecretShapedParams(ordinary)).toEqual([]);
+  });
+
+  test("no redaction value for the same paths", () => {
+    expect(secretShapedParamValues(ordinary)).toEqual([]);
+  });
+
+  test("a credential-named key is still flagged and redacted for a path value", () => {
+    const params = { token_path: "/tmp/akm-review-20261030/config.json" };
+    expect(detectSecretShapedParams(params)).toHaveLength(1);
+    expect(secretShapedParamValues(params)).toEqual(["/tmp/akm-review-20261030/config.json"]);
+  });
+
+  test("credential-looking path and query segments are still flagged and redacted", () => {
+    const risky = [
+      "/tmp/ghp_0123456789abcdefABCDEF0123456789abcd/config.json",
+      "C:\\Users\\dev\\sk-abcdEFGH1234ijklMNOP5678qrstUVWX\\x.txt",
+      "/srv/data/aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1fG/out.json",
+      "/api/export/report.json?token=Zm9vYmFyYmF6cXV4",
+    ];
+    for (const value of risky) {
+      expect(detectSecretShapedParams({ p: value })).toHaveLength(1);
+      expect(secretShapedParamValues({ p: value })).toEqual([value]);
+    }
+  });
+
+  test("a non-path high-entropy value is still flagged", () => {
+    const params = { blob: "Zx9Qw3Er5Ty7Ui1Op2As4Df6Gh8Jk0Lm" };
+    expect(detectSecretShapedParams(params)).toHaveLength(1);
+    expect(secretShapedParamValues(params)).toEqual([params.blob]);
   });
 });
