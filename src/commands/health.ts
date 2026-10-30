@@ -386,12 +386,14 @@ function gatherAncillaryAdvisories(
   // non-git bundles. Trade-off: a bundle pointed at a bare subdirectory of a
   // parent git repo (no `.git` of its own) is not checked; akm-init and
   // writable git installs put `.git` at the bundle root.
-  const exposureStashDir = options.stashDir ?? resolveStashDir();
-  let exposureRoots = [exposureStashDir];
+  let exposureRoots: string[] = [];
   try {
+    const exposureStashDir = options.stashDir ?? resolveStashDir();
+    exposureRoots = [exposureStashDir];
     exposureRoots = resolveSourceEntries(exposureStashDir).map((source) => source.path);
   } catch {
-    // An unreadable bundle config still checks the working stash.
+    // An unreadable working stash skips the advisory; an unreadable bundle
+    // config still checks the working stash. Neither aborts the report.
   }
   for (const root of new Set(exposureRoots.map((dir) => path.resolve(dir)))) {
     try {

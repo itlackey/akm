@@ -75,4 +75,16 @@ describe("stash-git-exposure across bundles (#1291)", () => {
       storage.cleanup();
     }
   }, 60_000);
+
+  test("an unreadable working stash skips the advisory without failing the report", async () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      process.env.AKM_BUNDLE_DIR = path.join(storage.stashDir, "does-not-exist");
+      writeSandboxConfig({ semanticSearchMode: "off" });
+      const result = await akmHealth({ since: "7d" });
+      expect(result.advisories.some((check) => check.name === "stash-git-exposure")).toBe(false);
+    } finally {
+      storage.cleanup();
+    }
+  });
 });
