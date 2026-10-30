@@ -44,7 +44,7 @@ export interface TypeDirectoryEntry {
  * Other adapters, and paths outside the component root, declare nothing.
  */
 function declaredTypeFor(entry: TypeDirectoryEntry): string | undefined {
-  if (entry.adapterId !== "akm") return undefined;
+  if (entry.adapterId !== "akm" || !entry.root) return undefined;
   const rel = path.relative(entry.root, entry.filePath);
   if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return undefined;
   return declaredTypeForPath(buildFileContext(entry.root, entry.filePath));

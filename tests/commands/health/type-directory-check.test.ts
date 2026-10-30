@@ -156,6 +156,16 @@ describe("collectTypeDirectoryDisagreements classifier parity (#1288)", () => {
     const unrelated: TypeDirectoryEntry = { ...outside, root: "/elsewhere" };
     expect(collectTypeDirectoryDisagreements([unrelated], () => "")).toEqual([]);
   });
+
+  test("an entry with no resolvable component root establishes no type intent", () => {
+    const rootless: TypeDirectoryEntry = {
+      filePath: `${process.cwd()}/memories/note.md`,
+      type: "command",
+      root: "",
+      adapterId: "akm",
+    };
+    expect(collectTypeDirectoryDisagreements([rootless], () => "")).toEqual([]);
+  });
 });
 
 describe("buildTypeDirectoryAdvisory (#831)", () => {

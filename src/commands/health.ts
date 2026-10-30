@@ -467,7 +467,16 @@ function detectTypeDirectoryDisagreements(stashRoot: string): HealthCheckResult 
     indexDb = openReadonlyExistingDatabase(getDbPath());
     if (!indexDb) return undefined;
     // Directory intent is read only from inside the component root that owns the entry.
-    const roots = resolveSourceEntries(stashRoot).map((source) => path.resolve(source.path));
+    // Both spellings of each root: indexed paths may be realpaths (a symlinked
+    // stash, macOS /var -> /private/var) while config holds the configured path.
+    const roots = resolveSourceEntries(stashRoot).flatMap((source) => {
+      const resolved = path.resolve(source.path);
+      try {
+        return [resolved, fs.realpathSync.native(resolved)];
+      } catch {
+        return [resolved];
+      }
+    });
     const entries = getAllEntries(indexDb).map((entry) => ({
       filePath: entry.filePath,
       type: entry.type,
