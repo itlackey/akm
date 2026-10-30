@@ -10,7 +10,9 @@
  * is when secret assets are git-TRACKED **and** a remote is configured — only
  * then can a `git push` exfiltrate tokens/keys. Warn on exactly that
  * combination; stay silent on the tracked-but-no-remote opt-in so the advisory
- * catches the exposure without nagging the intentional backup.
+ * catches the exposure without nagging the intentional backup. A stash whose
+ * `.gitignore` carries the intentional-tracking marker has acknowledged the
+ * risk, so it is not warned about at all.
  */
 
 import { spawnSync } from "node:child_process";
@@ -38,12 +40,14 @@ function hasIntentionalTrackingMarker(stashDir: string): boolean {
 
 /**
  * Build the `stash-git-exposure` advisory, or `undefined` when there is nothing
- * to warn about (not a git repo, no tracked env/secret assets, or no remote).
+ * to warn about (tracking acknowledged by the marker, not a git repo, no
+ * tracked env/secret assets, or no remote).
  */
 export function collectStashExposureAdvisory(
   stashDir: string,
   git: GitRunner = realGit,
 ): HealthCheckResult | undefined {
+  if (hasIntentionalTrackingMarker(stashDir)) return undefined;
   // Not a git work tree → nothing to expose.
   if (!git(stashDir, ["rev-parse", "--is-inside-work-tree"]).ok) return undefined;
 
@@ -56,21 +60,17 @@ export function collectStashExposureAdvisory(
   const trackedFiles = tracked.stdout.split("\n").filter(Boolean);
   const preview =
     trackedFiles.slice(0, 5).join(", ") + (trackedFiles.length > 5 ? `, +${trackedFiles.length - 5} more` : "");
-  const intentionalTracking = hasIntentionalTrackingMarker(stashDir);
-  const exposure = `${trackedFiles.length} env/secret file(s) are git-tracked AND a remote is configured`;
-  // The marker records intent, not that the remote is trusted: keep the risk visible, drop the command.
-  const message = intentionalTracking
-    ? `${exposure} — tracking is marked intentional in .gitignore, but a 'git push' still sends these ` +
-      `files to every configured remote, so confirm each remote is trusted (${preview}).`
-    : `${exposure} — a 'git push' can leak tokens/keys (${preview}). ` +
-      "Run 'git rm --cached' on them (a .gitignore rule alone does NOT untrack already-tracked " +
-      "files) and then add env/+secrets/ to .gitignore to prevent recurrence (akm bundle create scaffolds it).";
   return {
     name: "stash-git-exposure",
     kind: "deterministic",
     status: "warn",
     confidence: "high",
-    message,
-    evidence: { trackedSecretFiles: trackedFiles, intentionalTracking },
+    message:
+      `${trackedFiles.length} env/secret file(s) are git-tracked AND a remote is configured — ` +
+      `a 'git push' can leak tokens/keys (${preview}). ` +
+      "Run 'git rm --cached' on them (a .gitignore rule alone does NOT untrack already-tracked " +
+      "files) and then add env/+secrets/ to .gitignore to prevent recurrence (akm bundle create scaffolds it), " +
+      `or, to keep tracking them on purpose, add '${STASH_GITIGNORE_TRACK_SECRETS_MARKER}' to .gitignore.`,
+    evidence: { trackedSecretFiles: trackedFiles },
   };
 }

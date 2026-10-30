@@ -31,9 +31,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm bundle add --writable` on a bundle installed read-only from Git makes a
   fresh checkout instead of failing with "is not a checkout", keeping the
   bundle's name, components, order and credential (#1296).
-- `akm health`'s `stash-git-exposure` warning no longer tells a stash whose
-  `.gitignore` carries `# akm: intentionally track env and secrets` to untrack
-  its files; it asks to confirm each remote is trusted (#1291).
+- `akm health` no longer reports `stash-git-exposure` for a stash whose
+  `.gitignore` carries `# akm: intentionally track env and secrets`; the
+  warning names that line as the way to acknowledge intentional tracking (#1291).
 - `akm health`'s `type-directory-disagreement` warning uses the indexer's own
   directory rules, so `scripts/README.md` or `knowledge/example.sh` no longer
   warn, and it checks only `akm`-adapter entries inside their component root (#1288).

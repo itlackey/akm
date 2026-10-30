@@ -66,26 +66,17 @@ describe("collectStashExposureAdvisory intentional tracking marker (#1291)", () 
   }
   const exposed = { tracked: ["secrets/example.key"], remotes: ["origin"] };
 
-  test("without the marker the advisory still prescribes untracking", () => {
+  test("without the marker the advisory prescribes untracking and names the opt-out", () => {
     const adv = collectStashExposureAdvisory(stashWithGitignore("node_modules/\n"), fakeGit(exposed));
-    expect(adv?.message).toContain("git rm --cached");
-    expect(adv?.evidence?.intentionalTracking).toBe(false);
-  });
-
-  test("with the marker the risk stays visible but removal is not commanded", () => {
-    const dir = stashWithGitignore(`${STASH_GITIGNORE_TRACK_SECRETS_MARKER}\n`);
-    const adv = collectStashExposureAdvisory(dir, fakeGit(exposed));
     expect(adv?.status).toBe("warn");
-    expect(adv?.message).toContain("1 env/secret file(s) are git-tracked");
-    expect(adv?.message).not.toContain("git rm --cached");
-    expect(adv?.message).not.toMatch(/private|safe/i);
-    expect(adv?.evidence).toEqual({ trackedSecretFiles: ["secrets/example.key"], intentionalTracking: true });
+    expect(adv?.message).toContain("git rm --cached");
+    expect(adv?.message).toContain(STASH_GITIGNORE_TRACK_SECRETS_MARKER);
+    expect(adv?.evidence).toEqual({ trackedSecretFiles: ["secrets/example.key"] });
   });
 
-  test("marker with no remote or no tracked assets stays silent", () => {
-    const dir = stashWithGitignore(`${STASH_GITIGNORE_TRACK_SECRETS_MARKER}\n`);
-    expect(collectStashExposureAdvisory(dir, fakeGit({ tracked: ["secrets/a"], remotes: [] }))).toBeUndefined();
-    expect(collectStashExposureAdvisory(dir, fakeGit({ tracked: [], remotes: ["origin"] }))).toBeUndefined();
+  test("with the marker, acknowledged tracking is not warned about", () => {
+    const dir = stashWithGitignore(`node_modules/\n${STASH_GITIGNORE_TRACK_SECRETS_MARKER}\n`);
+    expect(collectStashExposureAdvisory(dir, fakeGit(exposed))).toBeUndefined();
   });
 
   test("missing or unreadable .gitignore is treated as no marker", () => {
