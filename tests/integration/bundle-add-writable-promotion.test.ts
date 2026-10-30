@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfig } from "../../src/core/config/config";
+import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { readLockfile } from "../../src/integrations/lockfile";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage, withTTY } from "../_helpers/sandbox";
@@ -114,6 +114,42 @@ describe("bundle add --writable on an existing read-only Git bundle (#1296)", ()
     const root = lock?.localRoot as string;
     expect(git(["-C", root, "rev-parse", "--show-toplevel"]).trim()).toBeTruthy();
     expect(git(["-C", root, "remote", "get-url", "origin"]).trim()).toBe(REMOTE_URL);
+  }, 60_000);
+
+  test("promotion keeps component selection, bundle order and credential, and drops the old snapshot", async () => {
+    expect((await add()).code).toBe(0);
+    const snapshot = installed().lock?.localRoot as string;
+    const otherDir = makeSandboxDir("akm-1296-other");
+    const config = loadConfig();
+    const shared = config.bundles?.shared;
+    if (!shared) throw new Error("shared bundle missing");
+    saveConfig({
+      ...config,
+      bundles: {
+        shared: {
+          ...shared,
+          credential: "${AKM_1296_TOKEN}",
+          components: { notes: { root: "knowledge", adapter: "akm", writable: false } },
+        },
+        other: { path: otherDir.dir },
+      },
+    });
+    process.env.AKM_1296_TOKEN = "synthetic-token";
+    try {
+      const promoted = await add("--writable");
+      expect(promoted.code).toBe(0);
+    } finally {
+      delete process.env.AKM_1296_TOKEN;
+      otherDir.cleanup();
+    }
+
+    const bundles = loadConfig().bundles ?? {};
+    expect(Object.keys(bundles)).toEqual(["shared", "other"]);
+    expect(bundles.shared?.credential).toBe("${AKM_1296_TOKEN}");
+    expect(bundles.shared?.components).toEqual({ notes: { root: "knowledge", adapter: "akm", writable: true } });
+    const root = installed().lock?.localRoot as string;
+    expect(fs.existsSync(path.join(root, ".git"))).toBe(true);
+    expect(fs.existsSync(snapshot)).toBe(false);
   }, 60_000);
 
   test("a failed promotion preserves the read-only snapshot and registration", async () => {

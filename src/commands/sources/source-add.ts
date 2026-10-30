@@ -329,8 +329,10 @@ async function addRegistryStash(
     installedAt: synced.syncedAt,
   });
 
-  // Clean up the old materialized root on re-install (moved cache).
-  if (!effectiveWritable && priorLocalRoot && path.resolve(priorLocalRoot) !== path.resolve(synced.contentDir)) {
+  // Clean up the old materialized root on re-install (moved cache). A writable
+  // checkout may hold local work and is never removed; a read-only snapshot
+  // (including one just promoted to writable, #1296) is.
+  if (!existingWritable && priorLocalRoot && path.resolve(priorLocalRoot) !== path.resolve(synced.contentDir)) {
     try {
       fs.rmSync(priorLocalRoot, { recursive: true, force: true });
     } catch {
