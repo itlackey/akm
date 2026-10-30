@@ -75,10 +75,11 @@ function fixture(overrides: Partial<AkmMetricsResult> = {}): AkmMetricsResult {
         curates: 0,
         selects: 1,
         zeroResultSearches: 1,
+        searchesWithHits: 2,
         distinctAssets: 2,
         distinctQueries: 2,
       },
-      selectRate: 0.5,
+      selectsPerSearch: 0.5,
       searchMedianMs: 42,
       daily: [{ day: "2026-10-01", search: 1, show: 1, curate: 0, feedback: 0 }],
       topAssets: [{ ref: "main//memories/vpn-note", shows: 1, searchHits: 1, selects: 1, positive: 0, negative: 0 }],
@@ -497,6 +498,14 @@ describe("dashboard client core", () => {
     const a = core.aggregateLlm(rows, {});
     expect(a.totals).toMatchObject({ calls: 5, tokens: 30, usageCalls: 1 });
     expect(a.byStage.find((x: { name: string }) => x.name === "b")).toMatchObject({ calls: 2, usageCalls: 0 });
+  });
+
+  test("the page shows selects per search as a ratio, never a percentage of select events", () => {
+    const html = renderMetricsHtml(fixture())!;
+    expect(html).toContain('"selectsPerSearch":0.5');
+    expect(html).toContain("Selects per search");
+    expect(html).not.toContain("DATA.usage.selectRate");
+    expect(html).not.toContain("['Select rate'");
   });
 
   test("the data island and page carry the coverage and render unknown", () => {

@@ -99,7 +99,8 @@ export function buildMetricsView(r: AkmMetricsResult, detail: DetailLevel): Metr
         ["shows", int(usage.totals.shows)],
         ["curates", int(usage.totals.curates)],
         ["selects", int(usage.totals.selects)],
-        ["select rate", pct(usage.selectRate)],
+        ["searches with hits", int(usage.totals.searchesWithHits)],
+        ["selects per search with hits", fixed(usage.selectsPerSearch, 2)],
         [
           "zero-result searches",
           `${usage.totals.zeroResultSearches} (${pct(searches === 0 ? null : usage.totals.zeroResultSearches / searches)})`,

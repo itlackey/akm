@@ -753,7 +753,8 @@ function toCsv(columns, rows) {
     var cards = [
       ['Searches', fmtN(t.searches), fmtN(t.curates) + ' curates', ''],
       ['Shows', fmtN(t.shows), '', ''],
-      ['Select rate', fmtPct(DATA.usage.selectRate), 'window-wide', ''],
+      ['Selects per search', DATA.usage.selectsPerSearch == null ? '—' : DATA.usage.selectsPerSearch.toFixed(2),
+        fmtN(DATA.usage.totals.selects) + ' selects / ' + fmtN(DATA.usage.totals.searchesWithHits) + ' searches with hits, window-wide, selects not source-filtered', ''],
       ['Zero-result rate', fmtPct(t.searches ? t.zeroResult / t.searches : null), fmtN(t.zeroResult) + ' searches', t.zeroResult ? 'yellow' : ''],
       ['Feedback', '<span class="pos">+' + fmtN(t.positive) + '</span> / <span class="neg">−' + fmtN(t.negative) + '</span>',
         'net ' + (t.positive - t.negative >= 0 ? '+' : '−') + Math.abs(t.positive - t.negative), ''],

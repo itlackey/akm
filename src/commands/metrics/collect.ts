@@ -333,10 +333,11 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
       curates,
       selects: input.selects.length,
       zeroResultSearches,
+      searchesWithHits,
       distinctAssets: assets.size,
       distinctQueries: queries.size,
     },
-    selectRate: searchesWithHits > 0 ? input.selects.length / searchesWithHits : null,
+    selectsPerSearch: searchesWithHits > 0 ? input.selects.length / searchesWithHits : null,
     searchMedianMs: median(searchMs),
     daily: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)),
     topAssets: [...assets.values()]

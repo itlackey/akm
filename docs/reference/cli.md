@@ -541,7 +541,7 @@ Result sections (`schemaVersion: 1`):
 | Field | Description |
 | --- | --- |
 | `window`, `filters` | The resolved window and the usage source counted |
-| `usage` | Search, show, curate and select totals, `selectRate` (selects over searches that returned a hit), `searchMedianMs`, a daily series, top assets, top and zero-result queries, and rows by source |
+| `usage` | Search, show, curate and select totals, `searchesWithHits` and `selectsPerSearch` (selects divided by searches that returned a hit: a plain ratio that can exceed 1, not a conversion percentage, since selects carry no source or search id), `searchMedianMs`, a daily series, top assets, top and zero-result queries, and rows by source |
 | `feedback` | Positive and negative totals, per-asset valence, per-tag counts, and the most recent negatives with their reasons |
 | `utility` | A ten-bucket histogram of `utility_scores`, the lowest and highest assets, and how many indexed entries were never used |
 | `outcomes` | The assets with the lowest `outcome_score` |

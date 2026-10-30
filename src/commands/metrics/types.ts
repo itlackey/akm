@@ -135,11 +135,18 @@ export interface AkmMetricsResult {
       curates: number;
       selects: number;
       zeroResultSearches: number;
+      /** Searches (summary rows) that returned at least one hit. */
+      searchesWithHits: number;
       distinctAssets: number;
       distinctQueries: number;
     };
-    /** selects / searches that returned at least one hit; `null` when that is 0. */
-    selectRate: number | null;
+    /**
+     * `totals.selects` / `totals.searchesWithHits`, a plain ratio. Not a
+     * conversion rate and not bounded by 1: selects carry no source or search
+     * id, so they are not the population the searches were drawn from, and one
+     * search can lead to several selects. `null` when no search returned a hit.
+     */
+    selectsPerSearch: number | null;
     /** Median persisted search `totalMs`; `null` when no row in the window carries one. */
     searchMedianMs: number | null;
     daily: MetricsDailyUsage[];

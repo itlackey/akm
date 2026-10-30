@@ -39,10 +39,11 @@ function fixture(overrides: Partial<AkmMetricsResult> = {}): AkmMetricsResult {
         curates: 1,
         selects: 6,
         zeroResultSearches: 5,
+        searchesWithHits: 15,
         distinctAssets: 8,
         distinctQueries: 9,
       },
-      selectRate: 0.4,
+      selectsPerSearch: 0.4,
       searchMedianMs: 12.4,
       daily: [{ day: "2026-10-07", search: 20, show: 12, curate: 1, feedback: 2 }],
       topAssets: assets,
@@ -108,10 +109,11 @@ function emptyFixture(): AkmMetricsResult {
         curates: 0,
         selects: 0,
         zeroResultSearches: 0,
+        searchesWithHits: 0,
         distinctAssets: 0,
         distinctQueries: 0,
       },
-      selectRate: null,
+      selectsPerSearch: null,
       searchMedianMs: null,
       daily: [],
       topAssets: [],
@@ -180,8 +182,9 @@ describe("metrics text formatter", () => {
     for (const s of ["USAGE", "FEEDBACK", "UTILITY", "LLM", "INDEX", "TASKS", "PROPOSALS", "WORKFLOWS", "NOTES"]) {
       expect(out).toContain(s);
     }
-    expect(out).toContain("select rate");
-    expect(out).toContain("40.0%");
+    expect(out).toContain("selects per search with hits");
+    expect(out).toContain("searches with hits");
+    expect(out).not.toContain("40.0%");
     expect(out).toContain("Top assets:");
     expect(out).toContain("kubernetes");
     // Newlines in a query never break the row layout.
@@ -219,7 +222,8 @@ describe("metrics md renderer", () => {
     expect(out).toContain("### Top assets");
     expect(out).toContain("| ref | shows | search hits | selects | + | - | last used |");
     expect(out).toContain("| --- | --- |");
-    expect(out).toContain("- **select rate:** 40.0%");
+    expect(out).toContain("- **selects per search with hits:** 0.40");
+    expect(out).toContain("- **searches with hits:** 15");
     expect(out).toContain("## Notes");
   });
 

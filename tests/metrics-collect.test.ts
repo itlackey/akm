@@ -132,13 +132,14 @@ describe("usage section", () => {
       curates: 1,
       selects: 1,
       zeroResultSearches: 1,
+      searchesWithHits: 2,
       distinctAssets: 2,
       distinctQueries: 2,
     });
   });
 
-  test("select rate divides by searches that returned something; median uses persisted timings", () => {
-    expect(result.selectRate).toBe(1 / 2);
+  test("selects per search divides by searches that returned something; median uses persisted timings", () => {
+    expect(result.selectsPerSearch).toBe(1 / 2);
     expect(result.searchMedianMs).toBe(30);
   });
 
@@ -170,7 +171,7 @@ describe("usage section", () => {
 
   test("rates are null, never NaN, when the denominator is 0", () => {
     const empty = buildMetricsResult(input()).usage;
-    expect(empty.selectRate).toBeNull();
+    expect(empty.selectsPerSearch).toBeNull();
     expect(empty.searchMedianMs).toBeNull();
   });
 });
@@ -290,6 +291,42 @@ describe("tasks, index and rows", () => {
     const withRows = buildMetricsResult(input({ usage: usageRows, includeRows: true }));
     expect(withRows.rows?.usage).toHaveLength(1);
     expect(withRows.rows?.llm).toEqual([]);
+  });
+});
+
+describe("selects per search", () => {
+  const search = (extra: Partial<UsageEventRow> = {}) =>
+    usage({
+      event_type: "search",
+      created_at: "2026-01-03 10:00:00",
+      query: "q",
+      metadata: '{"resultCount":3}',
+      ...extra,
+    });
+  const sel = (n: number) => Array.from({ length: n }, () => ({ ts: "2026-01-03T10:00:01.000Z", ref: "b//skills/x" }));
+  const run = (usageRows: UsageEventRow[], n: number) =>
+    buildMetricsResult(input({ usage: usageRows, selects: sel(n) })).usage;
+
+  test("several selects for one search is a ratio above 1, raw counts kept, never clamped", () => {
+    const u = run([search()], 8);
+    expect(u.selectsPerSearch).toBe(8);
+    expect(u.totals).toMatchObject({ selects: 8, searches: 1, searchesWithHits: 1 });
+  });
+
+  test("curate-only activity and searches without hits give no ratio but keep the select count", () => {
+    const curate = usage({ event_type: "curate", created_at: "2026-01-03 10:00:00", query: "q" });
+    const miss = search({ metadata: '{"resultCount":0}' });
+    for (const rows of [[curate], [miss]]) {
+      const u = run(rows, 3);
+      expect(u.selectsPerSearch).toBeNull();
+      expect(u.totals).toMatchObject({ selects: 3, searchesWithHits: 0 });
+    }
+  });
+
+  test("audit/task-sourced searches count in the denominator as given; the ratio is not bounded", () => {
+    const u = run([search({ source: "improve" })], 2);
+    expect(u.totals.searchesWithHits).toBe(1);
+    expect(u.selectsPerSearch).toBe(2);
   });
 });
 
