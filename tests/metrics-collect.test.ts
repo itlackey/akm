@@ -421,7 +421,7 @@ describe("unknown token usage", () => {
   test("prompt and completion without a total still count as reporting", () => {
     const { row, agg } = both([call({ promptTokens: 6, completionTokens: 4 })]);
     expect(row).toMatchObject({ promptTokens: 6, completionTokens: 4, totalTokens: 10, usageCalls: 1 });
-    expect(agg).toMatchObject({ promptTokens: 6, completionTokens: 4, usageCalls: 1 });
+    expect(agg).toMatchObject({ promptTokens: 6, completionTokens: 4, totalTokens: 10, usageCalls: 1 });
   });
 
   test("missing reasoning usage does not make a call unmeasured", () => {

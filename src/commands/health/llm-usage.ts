@@ -71,7 +71,8 @@ export function summarizeLlmUsage(events: ReturnType<typeof readEvents>["events"
       target.totalDurationMs += record.durationMs;
       target.promptTokens += record.promptTokens ?? 0;
       target.completionTokens += record.completionTokens ?? 0;
-      target.totalTokens += record.totalTokens ?? 0;
+      // A call without a total counts as prompt + completion, as the per-day metrics rows do.
+      target.totalTokens += record.totalTokens ?? (record.promptTokens ?? 0) + (record.completionTokens ?? 0);
       target.reasoningTokens += record.reasoningTokens ?? 0;
       if (record.outcome === "error") target.failures += 1;
     }
