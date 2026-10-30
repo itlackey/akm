@@ -4,14 +4,6 @@
 **with one caveat**: while the version is 0.x, minor releases (0.x → 0.x+1)
 may include breaking changes.
 
-**0.9.x series exception.** The 0.9.x releases are a deliberate refactoring
-and clean-up series: the goal is to pay off all remaining technical debt and
-land every planned breaking change before 0.10. While that work completes,
-**0.9.x patch releases may also contain breaking changes** — each one called
-out in the CHANGELOG with a migration note. The 0.10.x series returns to bug
-fixes and tuning, and aims to restore the normal discipline of breaking
-changes only in major and minor releases.
-
 **Version floor (0.10, #1091).** 0.10 reads what 0.9.15 and later wrote: config,
 `state.db`, task sources, frozen workflow plans and scheduler rows. It does not
 convert anything older. An install on an earlier release runs `akm migrate
