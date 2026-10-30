@@ -338,6 +338,8 @@ describe("llmRowsFromEvents", () => {
       completionTokens: 15,
       totalTokens: 45,
       reasoningTokens: 0,
+      usageCalls: 2,
+      reasoningCalls: 0,
     });
     expect(rows[3]).toMatchObject({ day: "2026-10-02", outcome: "success", calls: 1, durationMs: 1 });
     expect(rows[3]?.stage).toBeUndefined();
@@ -346,6 +348,59 @@ describe("llmRowsFromEvents", () => {
     expect(rows.reduce((n, r) => n + r.calls, 0)).toBe(totals.calls);
     expect(rows.reduce((n, r) => n + r.durationMs, 0)).toBe(totals.totalDurationMs);
     expect(rows.filter((r) => r.outcome === "error").reduce((n, r) => n + r.calls, 0)).toBe(totals.failures);
+  });
+});
+
+describe("unknown token usage", () => {
+  const call = (metadata: Record<string, unknown>, ts = "2026-10-01T01:00:00.000Z") =>
+    ({
+      ts,
+      eventType: "llm_usage",
+      metadata: { outcome: "success", durationMs: 100, ...metadata },
+    }) as unknown as EventEnvelope;
+  const both = (events: EventEnvelope[]) => ({
+    row: llmRowsFromEvents(events.filter((e) => (e.metadata as { outcome: string }).outcome === "success"))[0],
+    agg: summarizeLlmUsage(events as never),
+  });
+
+  test("no usage reported is unknown: calls and duration kept, zero reporting calls", () => {
+    const { row, agg } = both([call({}), call({})]);
+    expect(row).toMatchObject({ calls: 2, durationMs: 200, totalTokens: 0, usageCalls: 0, reasoningCalls: 0 });
+    expect(agg).toMatchObject({ calls: 2, totalDurationMs: 200, usageCalls: 0, reasoningCalls: 0 });
+  });
+
+  test("an explicit zero is measured, unlike an absent field", () => {
+    const { row, agg } = both([call({ promptTokens: 0, completionTokens: 0, totalTokens: 0, reasoningTokens: 0 })]);
+    expect(row).toMatchObject({ calls: 1, totalTokens: 0, usageCalls: 1, reasoningCalls: 1 });
+    expect(agg).toMatchObject({ usageCalls: 1, reasoningCalls: 1 });
+  });
+
+  test("a mixed batch keeps measured totals and the share that reported", () => {
+    const { row, agg } = both([call({ totalTokens: 10, promptTokens: 6, completionTokens: 4 }), call({})]);
+    expect(row).toMatchObject({ calls: 2, totalTokens: 10, promptTokens: 6, usageCalls: 1 });
+    expect(agg).toMatchObject({ calls: 2, totalTokens: 10, usageCalls: 1 });
+  });
+
+  test("prompt and completion without a total still count as reporting", () => {
+    const { row, agg } = both([call({ promptTokens: 6, completionTokens: 4 })]);
+    expect(row).toMatchObject({ promptTokens: 6, completionTokens: 4, totalTokens: 10, usageCalls: 1 });
+    expect(agg).toMatchObject({ promptTokens: 6, completionTokens: 4, usageCalls: 1 });
+  });
+
+  test("missing reasoning usage does not make a call unmeasured", () => {
+    const { row } = both([call({ promptTokens: 6, completionTokens: 4, totalTokens: 10 })]);
+    expect(row).toMatchObject({ usageCalls: 1, reasoningCalls: 0, reasoningTokens: 0 });
+  });
+
+  test("failed calls without usage count as calls and failures, not as measured", () => {
+    const agg = summarizeLlmUsage([call({ outcome: "error", errorCode: "http_500" })] as never);
+    expect(agg).toMatchObject({ calls: 1, failures: 1, totalDurationMs: 100, usageCalls: 0 });
+  });
+
+  test("no calls leaves coverage undefined and the section empty", () => {
+    expect(summarizeLlmUsage([])).toMatchObject({ calls: 0 });
+    expect(summarizeLlmUsage([]).usageCalls).toBeUndefined();
+    expect(llmRowsFromEvents([])).toEqual([]);
   });
 });
 

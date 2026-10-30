@@ -363,17 +363,19 @@ function aggregate(rows, opts) {
 // and carry no ref, source or event type, so only the date range applies.
 function aggregateLlm(rows, f) {
   var by = { stage: Object.create(null), process: Object.create(null), engine: Object.create(null) }, daily = new Map();
-  var t = { calls: 0, tokens: 0, failures: 0, durationMs: 0 };
+  var t = { calls: 0, tokens: 0, failures: 0, durationMs: 0, usageCalls: 0 };
   rows.forEach(function (r) {
     var d = dayOf(r.day);
     if (f.from && d < f.from) return;
     if (f.to && d > f.to) return;
     var tok = tokensOf(r), calls = r.calls || 0, failed = r.outcome === 'error' ? calls : 0;
-    t.calls += calls; t.tokens += tok; t.durationMs += r.durationMs || 0; t.failures += failed;
+    // Rows from a report that predates usage coverage count as fully measured.
+    var measured = r.usageCalls != null ? r.usageCalls : calls;
+    t.calls += calls; t.tokens += tok; t.durationMs += r.durationMs || 0; t.failures += failed; t.usageCalls += measured;
     [['stage', r.stage], ['process', r.process], ['engine', r.engine]].forEach(function (p) {
       var k = p[1] || 'unattributed';
-      var e = by[p[0]][k] || (by[p[0]][k] = { name: k, calls: 0, tokens: 0, failures: 0 });
-      e.calls += calls; e.tokens += tok; e.failures += failed;
+      var e = by[p[0]][k] || (by[p[0]][k] = { name: k, calls: 0, tokens: 0, failures: 0, usageCalls: 0 });
+      e.calls += calls; e.tokens += tok; e.failures += failed; e.usageCalls += measured;
     });
     var day = daily.get(d) || { day: d, calls: 0, durationMs: 0 };
     day.calls += calls; day.durationMs += r.durationMs || 0;
@@ -621,7 +623,7 @@ function toCsv(columns, rows) {
     var agg = useRows ? aggregateLlm(LLM, { from: state.from, to: state.to }) : null;
     $('llm-hint').textContent = useRows ? 'follows the date range only' : 'window-wide aggregate (no per-call rows)';
     function fromAggregate(o) {
-      return Object.keys(o || {}).map(function (k) { return { name: k, tokens: o[k].totalTokens, calls: o[k].calls, failures: o[k].failures }; })
+      return Object.keys(o || {}).map(function (k) { return { name: k, tokens: o[k].totalTokens, calls: o[k].calls, failures: o[k].failures, usageCalls: o[k].usageCalls != null ? o[k].usageCalls : o[k].calls }; })
         .sort(function (a, b) { return b.tokens - a.tokens; });
     }
     var dims = [
@@ -633,7 +635,7 @@ function toCsv(columns, rows) {
       var list = d[1].slice(0, 15);
       if (!hasData(d[0], list.length > 0, 'No LLM calls recorded')) return;
       chart(d[0], Object.assign(barOption(list.map(function (x) { return x.name; }),
-        [{ name: 'tokens', type: 'bar', itemStyle: { color: css('--purple') }, data: list.map(function (x) { return x.tokens; }) }], true), {}));
+        [{ name: 'tokens', type: 'bar', itemStyle: { color: css('--purple') }, data: list.map(function (x) { return x.calls > 0 && x.usageCalls === 0 ? null : x.tokens; }) }], true), {}));
     });
     if (hasData('ch-llm-time', useRows && agg.daily.length > 0, 'No per-call rows in this report')) {
       var days = agg.daily.map(function (d) { return d.day; });
@@ -744,6 +746,9 @@ function toCsv(columns, rows) {
     var t = agg.totals;
     var tokens = llm ? llm.totals.tokens : DATA.llm.totalTokens;
     var calls = llm ? llm.totals.calls : DATA.llm.calls;
+    var usageCalls = llm ? llm.totals.usageCalls : (DATA.llm.usageCalls != null ? DATA.llm.usageCalls : calls);
+    // Calls whose provider sent no usage are unknown, not zero tokens.
+    var llmSub = fmtN(calls) + ' calls' + (usageCalls < calls ? ', ' + fmtN(usageCalls) + ' reported usage' : '');
     var tasks = DATA.tasks || {};
     var cards = [
       ['Searches', fmtN(t.searches), fmtN(t.curates) + ' curates', ''],
@@ -752,7 +757,7 @@ function toCsv(columns, rows) {
       ['Zero-result rate', fmtPct(t.searches ? t.zeroResult / t.searches : null), fmtN(t.zeroResult) + ' searches', t.zeroResult ? 'yellow' : ''],
       ['Feedback', '<span class="pos">+' + fmtN(t.positive) + '</span> / <span class="neg">−' + fmtN(t.negative) + '</span>',
         'net ' + (t.positive - t.negative >= 0 ? '+' : '−') + Math.abs(t.positive - t.negative), ''],
-      ['LLM tokens', fmtN(tokens), fmtN(calls) + ' calls', ''],
+      ['LLM tokens', calls > 0 && usageCalls === 0 ? 'unknown' : fmtN(tokens), llmSub, usageCalls < calls ? 'yellow' : ''],
       ['Task fail rate', fmtPct(tasks.failRate), fmtN(tasks.failed) + ' of ' + fmtN(tasks.runs) + ' runs, window-wide', tasks.failed ? 'red' : '']
     ];
     $('kpis').innerHTML = cards.map(function (c) {

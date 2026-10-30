@@ -545,7 +545,7 @@ Result sections (`schemaVersion: 1`):
 | `feedback` | Positive and negative totals, per-asset valence, per-tag counts, and the most recent negatives with their reasons |
 | `utility` | A ten-bucket histogram of `utility_scores`, the lowest and highest assets, and how many indexed entries were never used |
 | `outcomes` | The assets with the lowest `outcome_score` |
-| `llm` | `akm health`'s LLM usage aggregate (`byStage`, `byProcess`, and `byEngine`, keyed by the name of the connection or harness) |
+| `llm` | `akm health`'s LLM usage aggregate (`byStage`, `byProcess`, and `byEngine`, keyed by the name of the connection or harness). `usageCalls` and `reasoningCalls` count the calls whose provider response reported token usage; a call without it adds no tokens and the report shows `unknown`, not zero, when none reported |
 | `index`, `tasks`, `proposals`, `workflows` | Index runs and median time, task runs and fail rate, proposals by status and accept rate by source, workflow runs and tokens by model |
 | `rows` | The raw usage and LLM rows of the window; see below |
 | `notes` | Anything that limits what the numbers mean |

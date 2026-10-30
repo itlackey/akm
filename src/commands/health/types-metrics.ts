@@ -34,6 +34,13 @@ export interface LlmUsageAggregate {
   reasoningTokens: number;
   /** Count of calls whose `outcome` was `"error"` (#944). */
   failures: number;
+  /**
+   * Calls whose provider response reported any token count; the token sums
+   * cover only these and the rest are unknown, not zero. Set by `summarizeLlmUsage`.
+   */
+  usageCalls?: number;
+  /** Calls that reported reasoning tokens; `reasoningTokens` covers only these. */
+  reasoningCalls?: number;
   /** Per-stage breakdown, keyed by stage name (unscoped calls → `unattributed`). */
   byStage: Record<string, LlmUsageStageAggregate>;
   /** Per-process breakdown using durable improve/runtime attribution. */
@@ -52,6 +59,13 @@ export interface LlmUsageStageAggregate {
   reasoningTokens: number;
   /** Count of calls whose `outcome` was `"error"` (#944). */
   failures: number;
+  /**
+   * Calls whose provider response reported any token count; the token sums
+   * cover only these and the rest are unknown, not zero. Set by `summarizeLlmUsage`.
+   */
+  usageCalls?: number;
+  /** Calls that reported reasoning tokens; `reasoningTokens` covers only these. */
+  reasoningCalls?: number;
 }
 
 /**

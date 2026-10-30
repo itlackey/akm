@@ -143,6 +143,37 @@ function emptyFixture(): AkmMetricsResult {
 const text = (r: AkmMetricsResult, detail: "brief" | "normal" | "full" = "normal") => formatPlain("metrics", r, detail);
 const md = (r: unknown, detail: "brief" | "normal" | "full" = "normal") => getMdRendererHandler("metrics")?.(r, detail);
 
+describe("unknown LLM token usage", () => {
+  const withLlm = (llm: Partial<AkmMetricsResult["llm"]>) => {
+    const f = fixture();
+    return { ...f, llm: { ...f.llm, ...llm } };
+  };
+
+  test("calls without any usage render unknown, not zero", () => {
+    const r = withLlm({
+      calls: 3,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      reasoningTokens: 0,
+      usageCalls: 0,
+      reasoningCalls: 0,
+      byEngine: { local: { ...stage, calls: 3, totalTokens: 0, usageCalls: 0 } },
+    });
+    const out = text(r)!;
+    expect(out).toContain("unknown");
+    expect(out).toContain("0/3");
+    expect(md(r)).toContain("- **total tokens:** unknown");
+  });
+
+  test("a partial batch keeps its measured total and states coverage", () => {
+    const out = md(withLlm({ calls: 4, totalTokens: 140, usageCalls: 1, reasoningCalls: 0 }))!;
+    expect(out).toContain("- **total tokens:** 140");
+    expect(out).toContain("- **calls with token usage:** 1/4");
+    expect(out).not.toContain("total tokens:** unknown");
+  });
+});
+
 describe("metrics text formatter", () => {
   test("renders every section with aligned tables", () => {
     const out = text(fixture())!;

@@ -45,6 +45,10 @@ export interface MetricsLlmRow {
   /** Sum of each call's total, or of its prompt + completion when it had none. */
   totalTokens: number;
   reasoningTokens: number;
+  /** Calls that reported any token count; the token sums cover only these, the rest are unknown. */
+  usageCalls: number;
+  /** Calls that reported reasoning tokens. */
+  reasoningCalls: number;
 }
 
 export interface MetricsDailyUsage {

@@ -16,6 +16,7 @@ import type { UtilityWithRef } from "../../storage/repositories/index-utility-re
 import type { AssetOutcomeRow } from "../../storage/repositories/outcome-repository";
 import { decodeTaskHistoryMetadata, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
 import { computeWallTimeStats } from "../health/improve-metrics";
+import { hasTokenUsage } from "../health/llm-usage";
 import type { LlmUsageAggregate } from "../health/types-metrics";
 import { computeValenceScore } from "../improve/feedback-valence";
 import type {
@@ -175,6 +176,8 @@ export function llmRowsFromEvents(events: EventEnvelope[]): MetricsLlmRow[] {
         completionTokens: 0,
         totalTokens: 0,
         reasoningTokens: 0,
+        usageCalls: 0,
+        reasoningCalls: 0,
       };
       rows.set(key, row);
     }
@@ -185,6 +188,8 @@ export function llmRowsFromEvents(events: EventEnvelope[]): MetricsLlmRow[] {
     // A call without a total counts as prompt + completion, as the dashboard did per call.
     row.totalTokens += record.totalTokens ?? (record.promptTokens ?? 0) + (record.completionTokens ?? 0);
     row.reasoningTokens += record.reasoningTokens ?? 0;
+    if (hasTokenUsage(record)) row.usageCalls += 1;
+    if (record.reasoningTokens !== undefined) row.reasoningCalls += 1;
   }
   return [...rows.values()];
 }

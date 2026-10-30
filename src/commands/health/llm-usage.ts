@@ -27,6 +27,16 @@ function emptyLlmUsageStageAggregate(): LlmUsageStageAggregate {
   };
 }
 
+/** True when the provider response carried any token count. Absent usage is unknown, not zero. */
+export function hasTokenUsage(record: LlmUsageRecord): boolean {
+  return (
+    record.promptTokens !== undefined ||
+    record.completionTokens !== undefined ||
+    record.totalTokens !== undefined ||
+    record.reasoningTokens !== undefined
+  );
+}
+
 /** A zeroed aggregate — also the value health reports when it could not read state.db at all (#791). */
 export function emptyLlmUsageAggregate(): LlmUsageAggregate {
   return { ...emptyLlmUsageStageAggregate(), byStage: {}, byProcess: {}, byEngine: {} };
@@ -35,7 +45,7 @@ export function emptyLlmUsageAggregate(): LlmUsageAggregate {
 /**
  * Aggregate `llm_usage` events (#576) into a window total plus a per-stage
  * breakdown of call count, wall-time, and token usage. Token fields absent from
- * a best-effort record contribute 0. Calls with no `stage` land under
+ * a best-effort record add nothing and the call is left out of `usageCalls`. Calls with no `stage` land under
  * {@link UNATTRIBUTED_STAGE}.
  */
 export function summarizeLlmUsage(events: ReturnType<typeof readEvents>["events"]): LlmUsageAggregate {
@@ -53,7 +63,11 @@ export function summarizeLlmUsage(events: ReturnType<typeof readEvents>["events"
       dimensions.push(groups[key]);
     }
     for (const target of [aggregate, ...dimensions]) {
+      target.usageCalls ??= 0;
+      target.reasoningCalls ??= 0;
       target.calls += 1;
+      if (hasTokenUsage(record)) target.usageCalls += 1;
+      if (record.reasoningTokens !== undefined) target.reasoningCalls += 1;
       target.totalDurationMs += record.durationMs;
       target.promptTokens += record.promptTokens ?? 0;
       target.completionTokens += record.completionTokens ?? 0;
