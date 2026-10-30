@@ -66,11 +66,11 @@ export function collectStashExposureAdvisory(
     status: "warn",
     confidence: "high",
     message:
-      `${trackedFiles.length} env/secret file(s) are git-tracked AND a remote is configured — ` +
+      `Bundle at ${stashDir}: ${trackedFiles.length} env/secret file(s) are git-tracked AND a remote is configured — ` +
       `a 'git push' can leak tokens/keys (${preview}). ` +
       "Run 'git rm --cached' on them (a .gitignore rule alone does NOT untrack already-tracked " +
       "files) and then add env/+secrets/ to .gitignore to prevent recurrence (akm bundle create scaffolds it), " +
       `or, to keep tracking them on purpose, add '${STASH_GITIGNORE_TRACK_SECRETS_MARKER}' to .gitignore.`,
-    evidence: { trackedSecretFiles: trackedFiles },
+    evidence: { bundleRoot: stashDir, trackedSecretFiles: trackedFiles },
   };
 }

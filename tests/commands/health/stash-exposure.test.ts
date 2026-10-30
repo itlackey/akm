@@ -71,7 +71,7 @@ describe("collectStashExposureAdvisory intentional tracking marker (#1291)", () 
     expect(adv?.status).toBe("warn");
     expect(adv?.message).toContain("git rm --cached");
     expect(adv?.message).toContain(STASH_GITIGNORE_TRACK_SECRETS_MARKER);
-    expect(adv?.evidence).toEqual({ trackedSecretFiles: ["secrets/example.key"] });
+    expect(adv?.evidence).toMatchObject({ trackedSecretFiles: ["secrets/example.key"] });
   });
 
   test("with the marker, acknowledged tracking is not warned about", () => {
