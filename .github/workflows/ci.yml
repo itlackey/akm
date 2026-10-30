@@ -85,7 +85,7 @@ jobs:
           AKM_SMOKE_NODE: node
 
   upgrade-rehearsal:
-    # Two previous-release installs per run. The gate before a merge: a ready pull request and every push run it;
+    # Two origin-release installs per job. The gate before a merge: a ready pull request and every push run it;
     # a draft pull request, where commits land many times a day, does not.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
@@ -94,7 +94,7 @@ jobs:
       fail-fast: false
       # One job per KNOWN_UPGRADE_ORIGINS entry (tests/integration/upgrade-rehearsal/previous-release.ts).
       matrix:
-        origin: [previous, "0.9.15"]
+        origin: [previous, "0.9.32", "0.9.15"]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
         with:
