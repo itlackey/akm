@@ -13,8 +13,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   writing backups. `--check` shows channel mismatches; an older target requires
   `--allow-downgrade` (#1285).
 
+### Changed
+
+- `akm metrics` replaces `usage.selectRate` with `usage.selectsPerSearch` and
+  adds `usage.totals.searchesWithHits`. Selects carry no source or search id, so
+  the figure is an unbounded ratio, not a conversion percentage: eight selects
+  after one search read 8.00, not 800% (#1293).
+
 ### Fixed
 
+- A model call whose configured deadline is longer than five minutes is no
+  longer cut off at five minutes by Bun's socket-idle timer (#1295).
+- Workflow params that are ordinary file paths (absolute, relative, Windows,
+  with dates, digits or a UUID directory) are no longer warned about or redacted
+  as secrets; credential-named keys, known token prefixes and token-shaped path
+  segments still are (#1292).
+- `akm bundle add --writable` on a bundle installed read-only from Git makes a
+  fresh checkout instead of failing with "is not a checkout", keeping the
+  bundle's name, components, order and credential (#1296).
+- `akm health`'s `stash-git-exposure` warning no longer tells a stash whose
+  `.gitignore` carries `# akm: intentionally track env and secrets` to untrack
+  its files; it asks to confirm each remote is trusted (#1291).
+- `akm health`'s `type-directory-disagreement` warning uses the indexer's own
+  directory rules, so `scripts/README.md` or `knowledge/example.sh` no longer
+  warn, and it checks only `akm`-adapter entries inside their component root (#1288).
+- `akm metrics` reports token usage as unknown, with the number of calls that
+  reported it, instead of zero when the provider sent none. A call reporting
+  prompt and completion tokens but no total now counts their sum in the LLM
+  usage aggregate `akm health` shares (#1294).
 - Claude plugin health uses native installation, scope and enabled metadata
   instead of choosing the highest cached version. It reads `AKM_MIN_VERSION`
   as well as the legacy range, and reports uncertain selections as unknown (#1286).
