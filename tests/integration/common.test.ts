@@ -26,6 +26,39 @@ describe("fetchWithTimeout", () => {
     await expect(fetchWithTimeout("https://example.invalid", undefined, 1_000, controller.signal)).rejects.toBe(reason);
   });
 
+  test("disables Bun's independent socket-idle timer so long deadlines are not capped at five minutes", async () => {
+    let seen: (RequestInit & { timeout?: unknown }) | undefined;
+    await withMockedFetch(
+      () => fetchWithTimeout("https://example.invalid", { method: "POST" }, 600_000),
+      async (_url, init) => {
+        seen = init as RequestInit & { timeout?: unknown };
+        return new Response("ok");
+      },
+    );
+    expect(seen?.timeout).toBe(false);
+    expect(seen?.method).toBe("POST");
+    expect(seen?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("a short deadline still fails on schedule and a caller abort still cancels the request", async () => {
+    const hang = (_url: unknown, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+          once: true,
+        });
+      });
+    await expect(
+      withMockedFetch(() => fetchWithTimeout("https://example.invalid", undefined, 20), hang),
+    ).rejects.toThrow(/timed out after 20ms/);
+    const controller = new AbortController();
+    const pending = withMockedFetch(
+      () => fetchWithTimeout("https://example.invalid", undefined, 600_000, controller.signal),
+      hang,
+    );
+    controller.abort();
+    await expect(pending).rejects.toThrow(/Request aborted/);
+  });
+
   test("cancels a retryable response body before retrying", async () => {
     let calls = 0;
     let cancelled = false;

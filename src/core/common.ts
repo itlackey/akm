@@ -507,7 +507,10 @@ export async function fetchWithTimeout(
   }
   try {
     if (controller.signal.aborted) throw controller.signal.reason ?? new Error(`Request aborted: ${url}`);
-    return await fetch(url, { ...opts, signal: controller.signal });
+    // `timeout: false` turns off Bun's independent five-minute socket-idle timer,
+    // which would otherwise cut a longer AKM deadline short. The AbortController
+    // signal (deadline + caller cancel) remains the only bound on the request.
+    return await fetch(url, { ...opts, signal: controller.signal, timeout: false } as RequestInit);
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       if (signal?.aborted) {
