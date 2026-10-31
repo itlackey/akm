@@ -239,6 +239,10 @@ function classifyByParentDirHint(ctx: PathFileContext): MatchFact | null {
  * when no directory rule claims the file. Path fields only; no bytes are read.
  */
 export function declaredTypeForPath(ctx: PathFileContext): string | undefined {
+  // In the skills tree, a package name is not a competing type declaration.
+  if (ctx.ancestorDirs[0] === "skills" && ctx.ancestorDirs.length > 1 && ctx.fileName === "SKILL.md") {
+    return "skill";
+  }
   return (classifyByParentDirHint(ctx) ?? classifyByDirectory(ctx))?.type;
 }
 
