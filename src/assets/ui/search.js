@@ -13,9 +13,9 @@ function options(values, selected, allLabel) {
   return html`<option value="">${allLabel}</option>${choices(values, selected)}`;
 }
 
-function hit(h) {
+function hit(h, returnTo) {
   return html`<li class="hit">
-    <div class="hit-head"><a class="mono wrap" href="${assetHref(h.ref)}">${h.ref}</a>${badge(h.type, "info")}${h.origin ? html`<span class="muted small">${h.origin}</span>` : ""}${typeof h.score === "number" ? html`<span class="num muted small" title="Ranking score">score ${h.score.toFixed(3)}</span>` : ""}</div>
+    <div class="hit-head"><a class="mono wrap" href="${assetHref(h.ref, returnTo)}">${h.ref}</a>${badge(h.type, "info")}${h.origin ? html`<span class="muted small">${h.origin}</span>` : ""}${typeof h.score === "number" ? html`<span class="num muted small" title="Ranking score">score ${h.score.toFixed(3)}</span>` : ""}</div>
     ${h.description ? html`<p>${h.description}</p>` : ""}
     ${Array.isArray(h.tags) && h.tags.length > 0 ? html`<div class="tags">${h.tags.map((t) => html`<span class="tag">${t}</span>`)}</div>` : ""}
     ${Array.isArray(h.whyMatched) && h.whyMatched.length > 0 ? html`<p class="muted small">Matched: ${h.whyMatched.join(", ")}</p>` : ""}
@@ -23,6 +23,7 @@ function hit(h) {
 }
 
 export async function render(ctx) {
+  const returnTo = `#/search${ctx.query.size ? `?${ctx.query}` : ""}`;
   const q = ctx.query.get("q") ?? "";
   const type = ctx.query.get("type") ?? "";
   const bundle = ctx.query.get("bundle") ?? "";
@@ -73,10 +74,10 @@ export async function render(ctx) {
       <details class="scope-controls"><summary>Scope filters</summary><div class="form-grid">${Object.entries(scope).map(([key, value]) => html`<label>${key.slice(6)}<input name="${key}" value="${value}" placeholder="Any"></label>`)}</div></details>
       <button type="submit">Search</button>
     </form>
-    ${(result.warnings ?? []).map((w) => html`<div class="notice notice-warn">${w}</div>`)}
+    ${result.warnings?.length ? html`<details class="notice notice-warn"><summary>${result.warnings.length} search ${result.warnings.length === 1 ? "notice" : "notices"}</summary><ul>${result.warnings.map((w) => html`<li>${w}</li>`)}</ul></details>` : ""}
     ${
       result.hits.length === 0
         ? emptyState(q ? `No assets match "${q}".` : "No assets found.", result.tip ?? "")
-        : html`<p class="muted">${result.hits.length} ${result.hits.length === 1 ? "result" : "results"}${result.hits.length === Number(limit) ? ` (first ${limit}; narrow the query or filters for more specific results)` : ""}, ${result.searchMode ?? "search"} mode${result.timing ? `, ${result.timing.totalMs} ms` : ""}.</p>${q ? html`<ul class="hits">${result.hits.map(hit)}</ul>` : html`<div class="asset-inventory">${[...groups].sort(([a], [b]) => a.localeCompare(b)).map(([name, hits]) => html`<details open><summary>${name} <span class="muted">(${hits.length})</span></summary><ul class="hits">${hits.sort((a, b) => a.ref.localeCompare(b.ref)).map(hit)}</ul></details>`)}</div>`}`
+        : html`<p class="muted">${result.hits.length} ${result.hits.length === 1 ? "result" : "results"}${result.hits.length === Number(limit) ? ` (first ${limit}; narrow the query or filters for more specific results)` : ""}, ${result.searchMode ?? "search"} mode${result.timing ? `, ${result.timing.totalMs} ms` : ""}.</p>${q ? html`<ul class="hits">${result.hits.map((h) => hit(h, returnTo))}</ul>` : html`<div class="asset-inventory">${[...groups].sort(([a], [b]) => a.localeCompare(b)).map(([name, hits]) => html`<details open><summary>${name} <span class="muted">(${hits.length})</span></summary><ul class="hits">${hits.sort((a, b) => a.ref.localeCompare(b.ref)).map((h) => hit(h, returnTo))}</ul></details>`)}</div>`}`
     }`;
 }

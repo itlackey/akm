@@ -230,6 +230,7 @@ export function getTaskHistoryRuns(db: Database, taskId: string, limit = 50): Ta
 export function queryTaskHistory(
   db: Database,
   options: {
+    taskId?: string;
     since?: string;
     until?: string;
     status?: string;
@@ -240,6 +241,10 @@ export function queryTaskHistory(
 ): TaskHistoryRow[] {
   const conditions: string[] = [];
   const params: unknown[] = [];
+  if (options.taskId) {
+    conditions.push("task_id = ?");
+    params.push(options.taskId);
+  }
   if (options.since) {
     conditions.push("started_at >= ?");
     params.push(options.since);

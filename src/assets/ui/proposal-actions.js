@@ -40,7 +40,7 @@ function commitLine(commit) {
 
 // ---- one proposal ------------------------------------------------------------
 
-function detailView(state, nextId) {
+function detailView(state, nextId, query = "") {
   const busy = state.mode === "busy";
   switch (state.mode) {
     case "done": {
@@ -53,8 +53,8 @@ function detailView(state, nextId) {
               : html`<p>The reason was recorded: <em>${result.reason}</em></p>`
           }
         </div>
-        <p class="btn-row">${nextId ? html`<a class="btn" href="${proposalHref(nextId)}">Next pending</a>` : ""}<a class="btn btn-secondary" href="#/proposals">Back to queue</a></p>
-        ${nextId ? "" : html`<p class="muted small">No other proposal is waiting.</p>`}`;
+        <p class="btn-row">${nextId ? html`<a class="btn" href="${proposalHref(nextId, query)}">Next pending</a>` : ""}<a class="btn btn-secondary" href="#/proposals${query ? `?${query}` : ""}">Back to queue</a></p>
+        ${nextId ? "" : html`<p class="muted small">No other proposal is waiting in this queue.${query ? html` <a href="#/proposals">View all proposals</a>` : ""}</p>`}`;
     }
     case "confirm-accept":
       return html`<p class="state-title">Accept this proposal?</p>
@@ -78,20 +78,20 @@ function detailView(state, nextId) {
 }
 
 /** The action area of a pending proposal's page; {@link wireDetailActions} brings it to life. */
-export function detailActions(nextId) {
-  return html`<section class="actions" data-actions aria-label="Decide this proposal">${detailView({ mode: "idle" }, nextId)}</section>`;
+export function detailActions(nextId, query = "") {
+  return html`<section class="actions" data-actions aria-label="Decide this proposal">${detailView({ mode: "idle" }, nextId, query)}</section>`;
 }
 
 /**
  * Attach the Accept / Reject controls inside `root`. `onDecided(status)` runs after the server confirms, so the page can
  * show the new status.
  */
-export function wireDetailActions(root, { id, nextId, onDecided }) {
+export function wireDetailActions(root, { id, nextId, query = "", onDecided }) {
   const region = root.querySelector("[data-actions]");
   if (!region) return;
   let state = { mode: "idle", reason: "" };
   const draw = (focus) => {
-    mount(region, detailView(state, nextId));
+    mount(region, detailView(state, nextId, query));
     region.querySelector(focus)?.focus();
   };
 
@@ -143,10 +143,12 @@ export function wireDetailActions(root, { id, nextId, onDecided }) {
         run("reject", `${base}/reject`, { reason });
         break;
       }
-      case "cancel":
+      case "cancel": {
+        const control = state.mode === "reject" ? "reject" : "accept";
         state = { mode: "idle", reason: state.reason };
-        draw();
+        draw(`[data-act=${control}]`);
         break;
+      }
     }
   });
 }
@@ -248,7 +250,8 @@ export function wireBatch(root, { reload }) {
       case "batch-cancel":
       case "batch-dismiss":
         state = { mode: "idle" };
-        draw();
+        draw("[data-act=batch-start]");
+        if (bar.hidden) list.querySelector("input[data-select]")?.focus();
         break;
       case "batch-confirm": {
         const { ids, refs } = state;

@@ -12,7 +12,8 @@
   <div class="shell">
     <nav class="sidebar" aria-label="Main">
       <a class="brand" href="#/overview">akm <span>ui</span></a>
-      <ul class="nav-links">
+      <button type="button" class="menu-toggle btn-secondary" data-menu aria-expanded="false" aria-controls="nav-links">Menu</button>
+      <ul class="nav-links" id="nav-links">
         <li><a data-route="overview" href="#/overview">Overview</a></li>
         <li><a data-route="bundles" href="#/bundles">Bundles</a></li>
         <li><a data-route="config" href="#/config">Config</a></li>
@@ -20,7 +21,7 @@
         <li><a data-route="changes" href="#/changes">Changes</a></li>
         <li><a data-route="search" href="#/search">Search</a></li>
       </ul>
-      <button type="button" data-refresh>Refresh view</button>
+      <button type="button" class="btn-secondary" data-refresh>Refresh view</button>
       <div class="nav-meta" id="nav-meta"></div>
     </nav>
     <div id="unsaved" class="notice notice-warn" role="alert" hidden></div>

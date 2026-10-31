@@ -16,6 +16,7 @@
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
 import { parseBundleRef } from "../../core/asset/asset-ref";
@@ -35,17 +36,15 @@ import { listRecentImproveRuns } from "../../storage/repositories/improve-runs-r
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { getEmbeddingCount } from "../../storage/repositories/index-vec-repository";
-import {
-  countFeedbackBySignal,
-  listFeedbackEventRows,
-  listUsageEventRows,
-} from "../../storage/repositories/metrics-repository";
+import { countFeedbackBySignal, listFeedbackEventRows } from "../../storage/repositories/metrics-repository";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
+import { decodeTaskHistoryMetadata, queryTaskHistory } from "../../storage/repositories/task-history-repository";
 import { applyReadonlyPragmas } from "../../storage/sqlite-pragmas";
 import { pkgVersion } from "../../version";
 import { listConfig } from "../config-cli";
-import { akmHealth } from "../health";
+import { akmHealth, parseHealthSince } from "../health";
 import { computeAcceptRateBySource } from "../health/accept-rate";
+import { buildTasks } from "../metrics/collect";
 import { akmMetrics } from "../metrics/metrics-cli";
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../proposal/repository";
@@ -56,6 +55,7 @@ import { assembleInfo } from "../sources/info";
 import { akmListSources } from "../sources/installed-stashes";
 import { readDocumentSource } from "./document-source";
 import { readBundleGitStatus, readFileRevision, readRecentCommits } from "./git-read";
+import { PROPOSAL_AGE_BANDS, proposalAgeBand, proposalBacklog, retrievalSeries } from "./metrics";
 import { isSecretEnvName, redactForUi } from "./redact";
 
 export interface UiServerInfo {
@@ -70,8 +70,6 @@ type Handler = (query: Query, info: UiServerInfo) => unknown | Promise<unknown>;
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
 const IMPROVE_RUNS_SHOWN = 10;
-const USAGE_DAYS = 14;
-const DAY_MS = 86_400_000;
 
 // ── Parameters ───────────────────────────────────────────────────────────────
 
@@ -131,6 +129,7 @@ async function section<T>(errors: Record<string, string>, name: string, fn: () =
 function meta(_query: Query, info: UiServerInfo) {
   return {
     version: pkgVersion,
+    hostname: os.hostname(),
     runtime: process.versions.bun ? "bun" : "node",
     stashDir: tryStashDir(),
     dataDir: getDataDir(),
@@ -186,33 +185,6 @@ function summarizeImproveRun(row: ReturnType<typeof listRecentImproveRuns>[numbe
   };
 }
 
-/** User-attributed search / curate / show / feedback counts per UTC day for the last {@link USAGE_DAYS} days, oldest first. */
-function usageByDay(db: Database, nowMs: number) {
-  const days = new Map<string, Record<string, number>>();
-  for (let i = USAGE_DAYS - 1; i >= 0; i--) {
-    const date = new Date(nowMs - i * DAY_MS).toISOString().slice(0, 10);
-    days.set(date, { search: 0, curate: 0, show: 0, feedbackPositive: 0, feedbackNegative: 0 });
-  }
-  const first = [...days.keys()][0] as string;
-  const rows = listUsageEventRows(db, {
-    sinceIso: `${first}T00:00:00.000Z`,
-    untilIso: new Date(nowMs).toISOString(),
-    source: "user",
-  });
-  for (const row of rows) {
-    // `created_at` is `YYYY-MM-DD HH:MM:SS` (UTC).
-    const bucket = days.get(row.created_at.slice(0, 10));
-    if (!bucket) continue;
-    if (row.event_type === "feedback") {
-      if (row.signal === "positive") bucket.feedbackPositive = (bucket.feedbackPositive ?? 0) + 1;
-      else if (row.signal === "negative") bucket.feedbackNegative = (bucket.feedbackNegative ?? 0) + 1;
-    } else if (row.event_type === "search" || row.event_type === "curate" || row.event_type === "show") {
-      bucket[row.event_type] = (bucket[row.event_type] ?? 0) + 1;
-    }
-  }
-  return [...days.entries()].map(([date, counts]) => ({ date, ...counts }));
-}
-
 async function overview(query: Query) {
   const errors: Record<string, string> = {};
   const since = query.get("since") || "24h";
@@ -241,22 +213,32 @@ async function overview(query: Query) {
     return { ...base, ...(report ? { report } : {}) };
   });
   const metrics = await section(errors, "metrics", () =>
-    akmMetrics({ since: query.get("metricsSince") || "30d", indexSnapshot: false }),
+    akmMetrics({ since: query.get("metricsSince") || "30d", indexSnapshot: false, includeRows: true }),
   );
   const stateReads = await section(errors, "state", () =>
     withReadonlyStateDb(
       (db) => ({
         improveRuns: listRecentImproveRuns(db, IMPROVE_RUNS_SHOWN).map(summarizeImproveRun),
-        usageByDay: usageByDay(db, Date.now()),
+        taskFailures: metrics
+          ? (() => {
+              const rows = queryTaskHistory(db, metrics.window);
+              // Rank the complete window by failures, not the metrics top-20 by volume.
+              return buildTasks(rows.length, rows)
+                .byTask.filter((task) => task.failed > 0)
+                .sort((a, b) => b.failed - a.failed || b.runs - a.runs || a.taskId.localeCompare(b.taskId))
+                .slice(0, 20);
+            })()
+          : null,
       }),
       null,
     ),
   );
   return {
     health,
-    metrics,
+    metrics: metrics ? { ...metrics, rows: undefined } : null,
     improveRuns: stateReads?.improveRuns ?? [],
-    usageByDay: stateReads?.usageByDay ?? [],
+    retrieval: metrics ? retrievalSeries(metrics.rows?.usage ?? []) : null,
+    taskFailures: stateReads?.taskFailures ?? null,
     ...(Object.keys(errors).length > 0 ? { errors } : {}),
   };
 }
@@ -422,6 +404,12 @@ function proposals(query: Query) {
     throw new UsageError(`Invalid status "${status}". Expected pending or recent.`, "INVALID_FLAG_VALUE");
   }
   const limit = limitParam(query, 100);
+  const source = query.get("source") || "";
+  const age = query.get("age") || "";
+  if (age && !PROPOSAL_AGE_BANDS.some((band) => band === age)) {
+    throw new UsageError("Invalid proposal age band.", "INVALID_FLAG_VALUE");
+  }
+  const now = Date.now();
   return withReadonlyStateDb(
     (db) => {
       const all = listStateProposals(db, { stashDir: resolveStashDir() });
@@ -435,14 +423,52 @@ function proposals(query: Query) {
               .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
       const bySource: Record<string, number> = {};
       for (const proposal of picked) bySource[proposal.source] = (bySource[proposal.source] ?? 0) + 1;
+      const filtered = picked.filter(
+        (p) => (!source || p.source === source) && (!age || proposalAgeBand(p, now) === age),
+      );
       return {
         status,
-        totalCount: picked.length,
+        totalCount: filtered.length,
+        fullCount: picked.length,
         bySource,
-        proposals: picked.slice(0, limit).map(proposalSummary),
+        backlog: proposalBacklog(picked, now),
+        proposals: filtered.slice(0, limit).map(proposalSummary),
       };
     },
-    { status, totalCount: 0, bySource: {}, proposals: [] },
+    { status, totalCount: 0, fullCount: 0, bySource: {}, backlog: [], proposals: [] },
+  );
+}
+
+function taskHistory(query: Query) {
+  const taskId = (query.get("taskId") ?? "").trim();
+  if (!taskId) throw new UsageError("A taskId is required.", "MISSING_REQUIRED_ARGUMENT");
+  const window = { since: parseHealthSince(query.get("since") || "30d"), until: new Date().toISOString() };
+  if (Date.parse(window.since) >= Date.parse(window.until))
+    throw new UsageError("since must be earlier than now.", "INVALID_FLAG_VALUE");
+  const limit = limitParam(query);
+  return withReadonlyStateDb(
+    (db) => {
+      const rows = queryTaskHistory(db, { ...window, taskId });
+      const runs = rows.slice(0, limit).map((row) => {
+        let metadata: ReturnType<typeof decodeTaskHistoryMetadata> | null = null;
+        try {
+          metadata = decodeTaskHistoryMetadata(row.metadata_json);
+        } catch {
+          /* Unknown historical detail stays unknown. */
+        }
+        return {
+          taskId: row.task_id,
+          status: row.status,
+          startedAt: row.started_at,
+          completedAt: row.completed_at,
+          failedAt: row.failed_at,
+          durationMs: metadata?.durationMs ?? null,
+          detail: metadata?.detail ?? null,
+        };
+      });
+      return { available: true, taskId, window, totalCount: rows.length, count: runs.length, runs };
+    },
+    { available: false, taskId, window, totalCount: 0, count: 0, runs: [] },
   );
 }
 
@@ -680,6 +706,7 @@ async function assetHistory(query: Query) {
 const ROUTES: Record<string, Handler> = {
   "/api/meta": meta,
   "/api/overview": overview,
+  "/api/tasks/history": taskHistory,
   "/api/bundles": bundles,
   "/api/config": config,
   "/api/proposals": proposals,

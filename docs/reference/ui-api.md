@@ -52,6 +52,7 @@ The running server and where it reads from.
   "ok": true,
   "data": {
     "version": "0.10.261005",
+    "hostname": "workstation",
     "runtime": "bun",
     "stashDir": "/home/me/akm",
     "dataDir": "/home/me/.local/share/akm",
@@ -66,6 +67,7 @@ The running server and where it reads from.
 ```
 
 `runtime` is `bun` or `node`. `stashDir` is `null` when no bundle is configured yet.
+`hostname` identifies the machine running akm; `host` remains the HTTP listener address.
 
 ## `GET /api/overview`
 
@@ -120,10 +122,11 @@ Everything on the overview page in one call. Query parameters:
         "triage": { "promoted": 2, "rejected": 1, "deferred": 0, "failed": 0, "skippedByCap": 0 }
       }
     ],
-    "usageByDay": [
-      { "date": "2026-10-15", "search": 0, "curate": 0, "show": 0, "feedbackPositive": 0, "feedbackNegative": 0 },
-      { "date": "2026-10-16", "search": 1, "curate": 0, "show": 1, "feedbackPositive": 1, "feedbackNegative": 1 }
-    ]
+    "retrieval": {
+      "daily": [{ "date": "2026-10-16", "searches": 3, "zeroResults": 1, "medianMs": 80, "latencySamples": 2 }],
+      "zeroResultQueries": [{ "date": "2026-10-16", "query": "missing guide", "count": 1 }]
+    },
+    "taskFailures": [{ "taskId": "weekly-review", "runs": 2, "failed": 1, "medianMs": 4000 }]
   }
 }
 ```
@@ -135,10 +138,26 @@ Everything on the overview page in one call. Query parameters:
 - `metrics` is what `akm metrics` returns (without `rows`); see [CLI: metrics](cli.md#metrics).
 - `improveRuns` are the last 10 real (non-dry-run) improve runs, newest first. `preRunSync`, `sync` and `triage` are `null`
   when the run did not record them; `modelCalls` is empty for runs from before the usage report existed.
-- `usageByDay` is the last 14 UTC days, oldest first, user-attributed events only (the same rule as ranking and
-  `akm metrics`). Zero-filled.
-- A section that fails is `null` (`[]` for the two lists) and named in a top-level `errors` object
+- Activity uses `metrics.usage.daily`, counting search/curate summary events rather than individual hits.
+- `retrieval` shares `metrics.window` and its user-attributed source filter. Its UTC daily latency median uses only
+  recorded nonnegative durations (`latencySamples`); no samples means `null`, not zero. Missing result counts do not
+  mean zero results. Query counts group the recorded zero-result searches by date and query.
+- `taskFailures` ranks all recorded task runs in `metrics.window` by failure count before limiting to 20 tasks.
+  Nonfailed runs are not assumed successful, nor are absent runs evidence of a successful scheduled task.
+  Details are available from `/api/tasks/history`. Missing/unreadable state yields `null` rather than a healthy empty list.
+- Charts must retain `metrics.notes` about missing stores and retention; none of these series imply complete history.
+  Improve runs remain the latest 10 across all dates, independently of the metrics window.
+- A section that fails is `null` (`[]` for `improveRuns`) and named in a top-level `errors` object
   (`{ "errors": { "metrics": "..." } }`); the others still load. `errors` is absent when nothing failed.
+
+## `GET /api/tasks/history`
+
+Requires `taskId`; optional `since` (default `30d`, same syntax as metrics) and `limit` (default 50, maximum 200).
+Returns `{ available, taskId, window: { since, until }, totalCount, count, runs }`, newest first. Each run has
+`taskId`, recorded `status`, `startedAt`, nullable `completedAt` / `failedAt`, nullable `durationMs`, and nullable
+decoded `detail` (`reason`, `error`, `exitCode`, `runId` when recorded). Invalid/missing historical detail stays
+unknown. No log paths are returned or files read; these are existing state.db records. `available: false` means
+state.db is absent or needs migration, not that this task has never failed.
 
 ## `GET /api/bundles`
 
@@ -238,6 +257,11 @@ The effective configuration, as `akm config list` shows it, with where each valu
 ## `GET /api/proposals`
 
 The proposal queue, as `akm proposal list` reads it. Query: `status=pending` (default) or `recent`, `limit` (default 100).
+Optional `source` and `age` (`underDay`, `underWeek`, `older`, `unknown`) filter before applying the limit.
+Age is less than one day, one to seven days, seven days or more, or an invalid/future date. It uses the most recent
+reopen timestamp when present. `totalCount` is the filtered count; `fullCount` and `bySource` describe the full
+selected status queue. `backlog` groups that full queue by source and these four age bands, before any list cap.
+It is a current snapshot, not a time-series of historical queue size.
 
 - `pending`: the pending queue, oldest-waiting first.
 - `recent`: accepted, rejected and reverted proposals, most recently decided first.
@@ -248,7 +272,9 @@ The proposal queue, as `akm proposal list` reads it. Query: `status=pending` (de
   "data": {
     "status": "pending",
     "totalCount": 3,
+    "fullCount": 3,
     "bySource": { "consolidate-pair": 2, "reflect": 1 },
+    "backlog": [{ "source": "consolidate-pair", "underDay": 2, "underWeek": 0, "older": 0, "unknown": 0 }, { "source": "reflect", "underDay": 0, "underWeek": 1, "older": 0, "unknown": 0 }],
     "proposals": [
       {
         "id": "d6bb7f94-69aa-48cf-9084-5dba2fa1afb3",

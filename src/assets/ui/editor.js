@@ -1,5 +1,18 @@
 // Source-first creation and revision-checked editing use the existing Markdown writer.
-import { actionForm, api, assetHref, emptyState, html, mount, pageHeader, post, setUnsaved } from "./lib.js";
+import { diffSection } from "./diff-view.js";
+import {
+  actionForm,
+  api,
+  assetHref,
+  emptyState,
+  html,
+  mount,
+  pageHeader,
+  post,
+  searchReturn,
+  setFlash,
+  setUnsaved,
+} from "./lib.js";
 import { markdown, splitFrontmatter } from "./markdown.js";
 
 export async function render(ctx) {
@@ -11,6 +24,7 @@ export async function render(ctx) {
     actionForm(root, ".create-form", (_form, values) => post("/api/knowledge/create", Object.fromEntries(values)), {
       after: (result) => {
         setUnsaved(false);
+        setFlash("Knowledge created.");
         if (result.ref) location.hash = assetHref(result.ref);
         else location.hash = "#/search";
       },
@@ -58,46 +72,99 @@ function saveBody(source, draft) {
 }
 
 async function edit(ctx, ref) {
-  let source = await api("/api/asset/source", { ref });
+  const source = await api("/api/asset/source", { ref });
+  const returnTo = searchReturn(ctx.query);
   const context = { ref: source.ref, bundle: source.ref.split("//")[0] };
   ctx.after.push((root) => {
     const input = root.querySelector('[name="content"]');
+    const recovery = root.querySelector("[data-recovery]");
+    const state = root.querySelector("[data-editor-state]");
+    const showPreview = (showing) => {
+      root.querySelector("[data-preview-panel]").hidden = !showing;
+      root.querySelector("[data-source-panel]").hidden = showing;
+      const toggle = root.querySelector("[data-preview-toggle]");
+      toggle.setAttribute("aria-pressed", String(showing));
+      toggle.textContent = showing ? "Edit source" : "Preview";
+    };
+    let latest = null;
+    const saved = (result) => {
+      setUnsaved(false);
+      setFlash(result.unchanged ? "No changes to save." : "Markdown saved.");
+      location.hash = assetHref(source.ref, returnTo);
+    };
+    const conflict = async () => {
+      latest = await api("/api/asset/source", { ref: source.ref });
+      const diff = diffSection({ before: latest.content, after: input.value });
+      mount(
+        recovery,
+        html`<div class="notice notice-warn"><h2>Review the newer version</h2><p>The document changed on disk. Your draft is kept below. Compare the current disk version with your draft before choosing what to keep.</p>${diff.markup}<p class="btn-row"><button type="button" class="btn-danger" data-overwrite>Overwrite with my draft</button><button type="button" class="btn-secondary" data-keep-draft>Keep editing my draft</button></p><p data-recovery-status role="status"></p></div>`,
+      );
+      diff.wire?.(recovery);
+      recovery.hidden = false;
+      state.textContent = "Conflict — review the newer version";
+    };
     // HTML textarea parsing drops an initial LF, so initialize explicitly.
     input.value = source.content;
     actionForm(
       root,
       ".edit-form",
       async () => {
+        if (latest)
+          throw new Error(
+            "Review the newer version, then use Overwrite with my draft if you want to replace it. Your draft is kept.",
+          );
         try {
           return await post("/api/asset/save", saveBody(source, input.value));
         } catch (error) {
           if (error?.code !== "ASSET_CONTENT_CHANGED") throw error;
-          // Take the new revision in place; the draft in the textarea stays as typed.
-          source = await api("/api/asset/source", { ref: source.ref });
+          await conflict();
           throw new Error(
-            "The document changed on disk since you opened it. Your draft was kept; saving again will overwrite the newer version.",
+            "The document changed on disk since you opened it. Your draft is kept. Review the newer version below.",
           );
         }
       },
-      {
-        after: () => {
-          setUnsaved(false);
-          location.hash = assetHref(source.ref);
-        },
-      },
+      { after: saved },
     );
+    recovery.addEventListener("click", async (event) => {
+      if (event.target.closest("[data-keep-draft]")) {
+        showPreview(false);
+        input.focus();
+        return;
+      }
+      const button = event.target.closest("[data-overwrite]");
+      if (!button || button.disabled || !latest) return;
+      button.disabled = true;
+      try {
+        saved(await post("/api/asset/save", saveBody(latest, input.value)));
+      } catch (error) {
+        if (error?.code === "ASSET_CONTENT_CHANGED") await conflict();
+        const status = recovery.querySelector("[data-recovery-status]");
+        mount(status, html`<span role="alert" class="text-fail">${error.message}</span>`);
+      } finally {
+        button.disabled = false;
+      }
+    });
+    root.querySelector("[data-preview-toggle]").addEventListener("click", () => {
+      showPreview(root.querySelector("[data-preview-panel]").hidden);
+    });
     const draw = () =>
       mount(root.querySelector("[data-preview]"), markdown(splitFrontmatter(input.value).body, context));
     input.addEventListener("input", () => {
       setUnsaved(input.value !== asTextarea(source.content));
+      state.textContent = latest
+        ? "Conflict — your draft is kept"
+        : input.value !== asTextarea(source.content)
+          ? "Unsaved changes"
+          : "No changes";
       draw();
     });
     draw();
   });
   return html`${pageHeader("Edit Markdown", source.ref)}
-    <p><a href="${assetHref(source.ref)}">Back to document</a></p>
-    <p class="muted">Edit the full ${source.type} source, including frontmatter. If the file changes on disk meanwhile, the first save is refused and your draft is kept; saving again overwrites the newer version.</p>
-    <form class="edit-form form-grid"><label>Markdown<textarea name="content" rows="20" spellcheck="false">${source.content}</textarea></label>
-      <button type="submit">Save Markdown</button><div data-status></div>
-    </form><section><h2>Preview</h2><div data-preview></div></section>`;
+    <form class="edit-form form-grid">
+      <div class="editor-actions"><button type="submit">Save Markdown</button><button type="button" class="btn-secondary" data-preview-toggle aria-pressed="false">Preview</button><a href="${assetHref(source.ref, returnTo)}">Cancel</a><span class="muted small" data-editor-state role="status">No changes</span></div>
+      <div data-status></div>
+      <label data-source-panel>Markdown<textarea name="content" rows="16" spellcheck="false">${source.content}</textarea></label>
+      <section data-preview-panel hidden><h2>Preview</h2><div data-preview></div></section>
+    </form><section data-recovery hidden></section>`;
 }

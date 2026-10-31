@@ -1,6 +1,5 @@
-// Overview: health status, check results, metrics, recent improve runs and the 14-day usage chart.
+// Overview: current health and selected-window activity, retrieval and automation metrics.
 
-import { miniBar, usageChart } from "./charts.js";
 import {
   api,
   badge,
@@ -16,10 +15,11 @@ import {
   tableWrap,
   when,
 } from "./lib.js";
+import { overviewCharts } from "./overview-charts.js";
 
 const GROUPS = [
-  { status: "fail", title: "Failing", open: true },
-  { status: "warn", title: "Warnings", open: true },
+  { status: "fail", title: "Failing", open: false },
+  { status: "warn", title: "Warnings", open: false },
   { status: "unknown", title: "Unknown", open: false },
   { status: "pass", title: "Passing", open: false },
 ];
@@ -68,78 +68,38 @@ function metricsSection(m) {
   return html`<section><h2>Metrics</h2><p class="muted">${day(m.window.since)} to ${day(m.window.until)}</p>
     <div class="tiles">
       ${tile("Searches", fmtNum(u.totals.searches), `${fmtNum(u.totals.zeroResultSearches)} with no results`)}
+      ${tile("LLM calls", fmtNum(m.llm.calls), `${fmtNum(m.llm.failures)} failed, ${m.llm.calls > 0 && m.llm.usageCalls === 0 ? "unknown" : fmtNum(m.llm.totalTokens)} tokens`)}
+      ${tile("Pending proposals", fmtNum(m.proposals.byStatus.pending ?? 0))}
+      ${tile("Task runs", fmtNum(m.tasks.runs), `${fmtNum(m.tasks.failed)} failed`)}
+    </div>
+    <details><summary>Metrics details</summary><div class="tiles">
       ${tile("Shows", fmtNum(u.totals.shows), `${fmtNum(u.totals.distinctAssets)} distinct assets`)}
       ${tile("Curates", fmtNum(u.totals.curates))}
       ${tile("Selects per search", u.selectsPerSearch == null ? "—" : u.selectsPerSearch.toFixed(2), `${fmtNum(u.totals.selects)} selects / ${fmtNum(u.totals.searchesWithHits)} searches with hits`)}
       ${tile("Median search", fmtMs(u.searchMedianMs))}
       ${tile("Feedback", `+${fmtNum(m.feedback.totals.positive)} / -${fmtNum(m.feedback.totals.negative)}`, "positive / negative")}
-      ${tile("LLM calls", fmtNum(m.llm.calls), `${fmtNum(m.llm.failures)} failed, ${m.llm.calls > 0 && m.llm.usageCalls === 0 ? "unknown" : fmtNum(m.llm.totalTokens)} tokens`)}
-      ${tile("Pending proposals", fmtNum(m.proposals.byStatus.pending ?? 0))}
-      ${tile("Task runs", fmtNum(m.tasks.runs), `${fmtNum(m.tasks.failed)} failed`)}
       ${tile("Index builds", fmtNum(m.index.runs), `median ${fmtMs(m.index.medianMs)}`)}
     </div>
     ${m.proposals.acceptRateBySource.length > 0 ? html`<h3>Proposal outcomes by source</h3>${tableWrap(html`<table><thead><tr><th>Source</th><th class="r">Total</th><th class="r">Accepted</th><th class="r">Rejected</th><th class="r">Pending</th><th class="r">Accept rate</th></tr></thead><tbody>${m.proposals.acceptRateBySource.map((r) => html`<tr><td class="mono">${r.source}</td><td class="r num">${fmtNum(r.total)}</td><td class="r num">${fmtNum(r.accepted)}</td><td class="r num">${fmtNum(r.rejected)}</td><td class="r num">${fmtNum(r.pending)}</td><td class="r num">${fmtPct(r.acceptRate)}</td></tr>`)}</tbody></table>`)}` : ""}
+    </details>
   </section>`;
 }
 
-function syncText(sync) {
-  if (!sync) return "-";
-  if (sync.skipped) return sync.reason ? `skipped (${sync.reason})` : "skipped";
-  return [sync.committed ? "committed" : "no changes", sync.pushed ? "pushed" : ""].filter(Boolean).join(", ");
-}
-
-function triageText(t) {
-  if (!t) return "-";
-  const parts = [
-    [t.promoted, "promoted"],
-    [t.rejected, "rejected"],
-    [t.deferred, "deferred"],
-    [t.failed, "failed"],
-    [t.skippedByCap, "capped"],
-  ]
-    .filter(([n]) => n > 0)
-    .map(([n, label]) => `${n} ${label}`);
-  return parts.length > 0 ? parts.join(", ") : "none";
-}
-
-function runsSection(runs) {
-  if (runs.length === 0) {
-    return html`<section><h2>Recent improve runs</h2>${emptyState("No improve runs yet.", "Runs appear here after akm improve completes.")}</section>`;
-  }
-  const maxDuration = Math.max(0, ...runs.map((r) => r.durationMs ?? 0));
-  const maxCalls = Math.max(0, ...runs.map((r) => r.modelCalls?.total ?? 0));
-  return html`<section><h2>Recent improve runs</h2><p class="muted">Last ${runs.length}, newest first. Bars share one scale per column.</p>
-    ${tableWrap(
-      html`<table class="runs"><thead><tr><th>Started</th><th>Result</th><th colspan="2">Duration</th><th colspan="2">Model calls</th><th>Sync</th><th>Triage</th></tr></thead><tbody>${runs.map(
-        (r) => {
-          const calls = r.modelCalls?.total ?? 0;
-          const failed = r.modelCalls?.failures ?? 0;
-          return html`<tr>
-        <td>${when(r.startedAt)}<div class="muted small mono">${r.id}</div></td>
-        <td>${r.ok ? badge("ok", "ok") : badge("failed", "fail")}</td>
-        <td class="r num">${fmtMs(r.durationMs)}</td><td>${miniBar(r.durationMs ?? 0, maxDuration, 0, `duration ${fmtMs(r.durationMs)}`)}</td>
-        <td class="r num">${calls}${failed > 0 ? html` <span class="text-fail">(${failed} failed)</span>` : ""}</td><td>${miniBar(calls, maxCalls, failed, `${calls} model calls, ${failed} failed`)}</td>
-        <td>${syncText(r.sync)}</td>
-        <td>${triageText(r.triage)}</td>
-      </tr>`;
-        },
-      )}</tbody></table>`,
-    )}</section>`;
-}
-
-function usageSection(days) {
-  const any = days.some((d) => d.search + d.curate + d.show + d.feedbackPositive + d.feedbackNegative > 0);
-  return html`<section><h2>Usage, last 14 days</h2>${any ? usageChart(days) : emptyState("No usage events in the last 14 days.", "Searches, shows, curates and feedback you make with akm are counted here.")}</section>`;
-}
-
-export async function render() {
-  const [data, meta] = await Promise.all([api("/api/overview"), getMeta().catch(() => null)]);
+export async function render(ctx) {
+  const window = ["24h", "7d", "30d"].includes(ctx.query.get("window")) ? ctx.query.get("window") : "30d";
+  const [data, meta] = await Promise.all([api("/api/overview", { metricsSince: window }), getMeta().catch(() => null)]);
+  ctx.after.push((root) =>
+    root.querySelector("[name=metric-window]").addEventListener("change", (event) => {
+      location.hash = `#/overview?window=${event.target.value}`;
+    }),
+  );
   const errors = data.errors ? Object.entries(data.errors) : [];
   return html`${pageHeader("Overview", "Health, usage and recent improve runs.")}
     ${statusStrip(data.health, meta)}
-    ${errors.length > 0 ? html`<div class="notice notice-warn" role="alert"><strong>Some sections could not load.</strong><ul>${errors.map(([name, message]) => html`<li><span class="mono">${name}</span>: ${message}</li>`)}</ul></div>` : ""}
-    ${data.health ? healthSection(data.health) : ""}
+    ${errors.length > 0 ? html`<details class="notice notice-warn"><summary>${errors.length} sections could not load</summary><ul>${errors.map(([name, message]) => html`<li><span class="mono">${name}</span>: ${message}</li>`)}</ul></details>` : ""}
+    <div class="chart-controls"><label>Metrics window<select name="metric-window">${["24h", "7d", "30d"].map((value) => html`<option value="${value}" ${window === value ? html`selected` : ""}>${value}</option>`)}</select></label><span class="muted small">User-attributed activity · UTC days. Health: last 24 hours.</span></div>
     ${metricsSection(data.metrics)}
-    ${runsSection(data.improveRuns ?? [])}
-    ${usageSection(data.usageByDay ?? [])}`;
+    ${data.metrics?.notes?.length ? html`<details class="chart-notes notice"><summary>Measurement coverage</summary><ul>${data.metrics.notes.map((note) => html`<li>${note}</li>`)}</ul></details>` : ""}
+    ${overviewCharts(ctx, data)}
+    ${data.health ? healthSection(data.health) : ""}`;
 }
