@@ -211,3 +211,71 @@ describe("buildTypeDirectoryAdvisory (#831)", () => {
     expect((advisory?.evidence?.disagreements as Array<{ path: string }>)[0]?.path).toBe("memories/note.md");
   });
 });
+
+describe("skill-directory intent (#1301)", () => {
+  for (const name of ["demo", "knowledge", "memories", "commands"]) {
+    test(`skills/${name}/SKILL.md is a skill regardless of its directory name`, () => {
+      const entries = [entry(`skills/${name}/SKILL.md`, "skill")];
+      expect(
+        collectTypeDirectoryDisagreements(entries, () => {
+          throw new Error("Matching path intent must not read the skill body");
+        }),
+      ).toEqual([]);
+      expect(buildTypeDirectoryAdvisory(entries, () => "# A valid skill\n")).toBeUndefined();
+    });
+  }
+
+  test("nested skill names and supporting resources retain their roles", () => {
+    const entries = [
+      entry("skills/system/knowledge/SKILL.md", "skill"),
+      entry("skills/commands/scripts/helper.sh", "script"),
+      entry("skills/memories/knowledge/guide.md", "knowledge"),
+      entry("skills/knowledge/README.md", "knowledge"),
+    ];
+    expect(collectTypeDirectoryDisagreements(entries, () => "# Supporting documentation\n")).toEqual([]);
+  });
+
+  test("a wrongly indexed skill still reports a genuine disagreement", () => {
+    expect(
+      collectTypeDirectoryDisagreements([entry("skills/knowledge/SKILL.md", "command")], () => "# A skill\n"),
+    ).toEqual([
+      {
+        path: "/stash/skills/knowledge/SKILL.md",
+        resolved: "command",
+        expected: "skill",
+        winner: "unknown",
+        knownGoodOverride: false,
+      },
+    ]);
+  });
+
+  test("a SKILL.md reference under knowledge is not a skills-directory package", () => {
+    const result = collectTypeDirectoryDisagreements(
+      [entry("knowledge/reference/files/SKILL.md", "skill")],
+      () => "# Copied reference\n",
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ expected: "knowledge", resolved: "skill", winner: "unknown" });
+  });
+
+  test("skills outside the component root do not override its directory intent", () => {
+    const result = collectTypeDirectoryDisagreements(
+      [{ ...entry("skills/knowledge/SKILL.md", "skill"), root: "/stash/skills" }],
+      () => "# A document\n",
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ expected: "knowledge", resolved: "skill" });
+  });
+
+  test("other adapters and paths outside the component retain their own semantics", () => {
+    expect(
+      collectTypeDirectoryDisagreements(
+        [
+          entry("skills/knowledge/SKILL.md", "document", "generic-files"),
+          { ...entry("skills/knowledge/SKILL.md", "command"), root: "/elsewhere" },
+        ],
+        () => "",
+      ),
+    ).toEqual([]);
+  });
+});
