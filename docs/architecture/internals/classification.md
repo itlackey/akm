@@ -105,6 +105,12 @@ as `knowledge`. `$ARGUMENTS` and `agent` frontmatter beat a directory hint, so a
 `knowledge/` file containing `$ARGUMENTS` is a `command`. Files under `secrets/`
 are not read for frontmatter.
 
+For the `akm health` type-directory advisory, `SKILL.md` under the component's
+`skills/` tree declares a skill, even when the skill directory is named
+`knowledge`, `memories`, or `commands`. Those names identify the skill, not a
+competing asset type. A copied `knowledge/.../SKILL.md` does not have that
+skills-directory intent and is still checked against its knowledge directory.
+
 ## The `quality` field
 
 `quality` marks how an item was produced (`KNOWN_QUALITY_VALUES`,

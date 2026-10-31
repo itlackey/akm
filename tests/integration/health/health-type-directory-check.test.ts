@@ -162,3 +162,27 @@ describe("type-directory-disagreement advisory (#831, end-to-end)", () => {
     }
   });
 });
+
+test("health accepts indexed skills whose names collide with typed directories (#1301)", async () => {
+  setUpStash();
+  try {
+    const names = ["demo", "knowledge", "memories", "commands"];
+    for (const name of names) {
+      writeFile(path.join(storage.stashDir, "skills", name, "SKILL.md"), `# ${name}\n\nA valid skill.\n`);
+    }
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+
+    const db = openIndexDatabase(getDbPath());
+    try {
+      const entries = db.prepare("SELECT concept_id, type FROM entries ORDER BY concept_id").all();
+      expect(entries).toEqual([...names].sort().map((name) => ({ concept_id: `skills/${name}`, type: "skill" })));
+    } finally {
+      db.close();
+    }
+
+    const result = await akmHealth({ since: "7d" });
+    expect(findAdvisory(result.advisories, "type-directory-disagreement")).toBeUndefined();
+  } finally {
+    storage.cleanup();
+  }
+});
