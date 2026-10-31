@@ -9,10 +9,11 @@ the bundle directory layout, and the metadata every asset carries.
   types**: script, skill, command, agent, knowledge, instruction, env,
   secret, workflow, lesson, memory, task, session, and fact.
 - Scripts, knowledge, commands, agents, skills, and workflows are classified
-  by **file extension and content**, not by directory name. A `.sh` file is
-  a script whether it lives in `scripts/`, `deploy/`, or the bundle root; for
-  these types the conventional directory names below are an **opt-in
-  convention that improves indexing confidence**. The remaining types are
+  by **file extension, directory placement, and supported content signals**.
+  They can also be discovered outside the conventional directories: a `.sh`
+  file is a script whether it lives in `scripts/`, `deploy/`, or the bundle
+  root. A typed directory declares intent that body-placeholder guesses do
+  not override; explicit frontmatter can still take precedence. The remaining types are
   **directory-required**: env, secret, memory, lesson, fact, session, task,
   and instruction assets are only discovered under their placement
   directories (a memory-shaped `.md` outside `memories/` indexes as plain
@@ -34,7 +35,7 @@ There's no required structure, but this skeleton is the opt-in convention:
 my-bundle/
   scripts/        # Executable scripts (.sh, .ts, .js, .py, .rb, .go, etc.)
   skills/         # Skill definitions (directories with SKILL.md)
-  commands/       # Slash commands (.md with $ARGUMENTS or agent frontmatter)
+  commands/       # Command templates (.md; placeholders optional)
   agents/         # Agent definitions (.md with model/tools frontmatter)
   knowledge/      # Reference documents (.md)
   instructions/   # Project guidance (.md)
@@ -58,9 +59,11 @@ recognizes and indexes them.
 
 Scripts and knowledge are classified by **what they are**: a `.sh` file is a
 script; a plain `.md` file is knowledge. Commands and agents are classified
-by **how an LLM should use them**: a `.md` file with `$ARGUMENTS`
-placeholders is a command template; one under `agents/` is an agent
-definition. Workflow assets are `.md`, classified by `type: workflow`
+by **how an LLM should use them**: a `.md` file under `commands/` or with
+`agent` frontmatter is a command template; one under `agents/` is an agent
+definition. Body placeholders such as `$ARGUMENTS` also discover commands in
+untyped directories, but do not override knowledge, memory, or other typed
+directory placement. Workflow assets are `.md`, classified by `type: workflow`
 or placement. Skills are a
 **packaging convention**: a directory containing a `SKILL.md` file.
 
