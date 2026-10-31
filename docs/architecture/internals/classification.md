@@ -80,8 +80,8 @@ registered later wins, in the order listed.
 | --- | --- | --- |
 | 25 | file named `SKILL.md` | `skill` |
 | 19 | `type: workflow` in frontmatter | `workflow` |
-| 18 | `agent` in frontmatter, or `$ARGUMENTS` in the body | `command` |
-| 18 | `$1`, `$2`, or `$3` in the body, only when no ancestor directory declares a type | `command` |
+| 18 | `agent` in frontmatter | `command` |
+| 18 | `$ARGUMENTS`, `$1`, `$2`, or `$3` in the body, only when no ancestor directory declares a type and the file is not a nested skill resource | `command` |
 | 15 | immediate parent directory declares a type | that type |
 | 10 | an ancestor directory declares a type | that type |
 | 8 | `model` in frontmatter, nothing stronger | `agent` |
@@ -101,9 +101,16 @@ Directories that declare a type (`DIR_TYPE_MAP`) and the files they accept:
 | `secrets/` | `secret` | any file except `.lock` and `.sensitive` |
 
 A `README.md` in a typed directory is not the directory's type; it is indexed
-as `knowledge`. `$ARGUMENTS` and `agent` frontmatter beat a directory hint, so a
-`knowledge/` file containing `$ARGUMENTS` is a `command`. Files under `secrets/`
-are not read for frontmatter.
+as `knowledge`. Body placeholders do not override directory declarations:
+`knowledge/` and `memories/` documents keep their types even when prose, inline
+code, or fenced examples contain `$ARGUMENTS`. A command belongs under
+`commands/`, or can declare explicit dispatch intent with `agent` frontmatter,
+which still beats a directory hint. Files under `secrets/` are not read for
+frontmatter.
+
+Classification changes bump the AKM adapter version, which participates in
+directory freshness. The next ordinary `akm index` reclassifies unchanged
+documents and replaces stale refs; no full reset or source-file edit is needed.
 
 ## The `quality` field
 

@@ -105,17 +105,38 @@ describe("#824: real command placeholders still classify as commands", () => {
   });
 });
 
-describe("#824: only the AMBIGUOUS placeholder defers", () => {
-  // The fix draws its line at ambiguity, not at directories. `$ARGUMENTS` is
-  // written by nothing but a command, so it keeps its long-standing precedence
-  // over a directory hint — a contract `tests/integration/commands/show.test.ts`
-  // asserts directly. `$1`/`$2`/`$3` collide with how prose writes money, so
-  // only those defer.
-  test("$ARGUMENTS still outranks a knowledge/ directory hint", () => {
-    expect(
-      classify("knowledge/deploy-cmd.md", "---\ndescription: Deploy helper\n---\nDeploy $ARGUMENTS to staging."),
-    ).toBe("command");
-  });
+describe("#1300: body placeholders defer to directory declarations", () => {
+  for (const [dir, type] of [
+    ["knowledge", "knowledge"],
+    ["memories", "memory"],
+  ] as const) {
+    for (const prefix of [dir, `${dir}/nested`]) {
+      for (const body of [
+        "The command accepts $ARGUMENTS as its input.",
+        "This document explains the literal `$ARGUMENTS` placeholder.",
+        "```markdown\nDeploy $ARGUMENTS to staging.\n```",
+      ]) {
+        test(`${prefix}/ keeps ${type} for ${JSON.stringify(body)}`, () => {
+          expect(classify(`${prefix}/note.md`, MEMORY_FRONTMATTER + body)).toBe(type);
+        });
+      }
+    }
+    test(`explicit agent frontmatter can still declare a command under ${dir}/`, () => {
+      expect(classify(`${dir}/deploy.md`, "---\nagent: build\n---\nDeploy $ARGUMENTS.")).toBe("command");
+    });
+  }
+
+  for (const [dir, type] of [
+    ["lessons", "lesson"],
+    ["facts", "fact"],
+    ["sessions", "session"],
+    ["instructions", "instruction"],
+    ["agents", "agent"],
+  ] as const) {
+    test(`${dir}/ also wins over a body placeholder`, () => {
+      expect(classify(`${dir}/note.md`, `${MEMORY_FRONTMATTER}Substitute $ARGUMENTS here.`)).toBe(type);
+    });
+  }
 
   test("agent frontmatter still outranks an agents/ directory hint", () => {
     expect(

@@ -12,10 +12,8 @@
  * `memories/` namespace — nothing on any normal surface said so). This
  * advisory re-checks that invariant against every currently indexed entry.
  *
- * Legitimate disagreements exist by design — a `knowledge/` file containing
- * `$ARGUMENTS` is deliberately a `command`, and an `agents/` file with an
- * `agent:` frontmatter key is deliberately a `command` (both asserted in
- * `tests/integration/commands/show.test.ts`). So this is never a hard
+ * Legitimate disagreements exist by design — an `agents/` file with an
+ * `agent:` frontmatter key explicitly declares a `command`. So this is never a hard
  * failure: every disagreement is reported with a `winner` naming which
  * classifier signal produced the resolved type, so a deliberate override
  * reads differently from an unexplained one.
@@ -56,7 +54,7 @@ export interface TypeDirectoryDisagreement {
   expected: string;
   /** Which classifier signal produced `resolved`, or "unknown" when none was found. */
   winner: string;
-  /** True for the two documented deliberate-override contracts (and their frontmatter siblings). */
+  /** True for documented explicit frontmatter overrides, never body placeholders. */
   knownGoodOverride: boolean;
 }
 
@@ -72,16 +70,15 @@ const realReadFile: ReadFileFn = (absPath) => {
 };
 
 /**
- * Best-effort explanation for why `classifyBySmartMd` (matchers.ts) would
- * have produced `resolvedType` for this content, in the SAME precedence
+ * Best-effort explanation for why the current or an older `classifyBySmartMd`
+ * (matchers.ts) produced `resolvedType` for this content, in the SAME precedence
  * order the real function checks them. Returns `undefined` when no known
  * override signal is found — that absence is itself the accident signal:
  * nothing in the file explains why its type disagrees with its directory.
  *
- * The numeric-placeholder branch is flagged `knownGoodOverride: false` on
- * purpose: since #826, that heuristic is guarded to never fire when the file
- * sits under a declared-type directory, so seeing it win here would mean the
- * guard regressed, not that this is a sanctioned override.
+ * Body placeholders cannot override a directory declaration. Seeing one win
+ * here indicates a stale index or a classifier regression, not a sanctioned
+ * override.
  */
 function explainOverride(
   resolvedType: string,
@@ -96,7 +93,7 @@ function explainOverride(
     return { winner: "smart-md:agent-frontmatter", knownGoodOverride: true };
   }
   if (resolvedType === "command" && content.includes("$ARGUMENTS")) {
-    return { winner: "smart-md:$ARGUMENTS", knownGoodOverride: true };
+    return { winner: "smart-md:$ARGUMENTS", knownGoodOverride: false };
   }
   if (resolvedType === "command" && /\$[123](?!\d|[.,]\d)/.test(content)) {
     return { winner: "smart-md:numeric-placeholder", knownGoodOverride: false };

@@ -544,22 +544,37 @@ describe("akmShow content-based classification", () => {
     expect(result.run).toContain("bash");
   });
 
-  test("$ARGUMENTS in body classifies .md as command even outside commands/", async () => {
-    // $ARGUMENTS placeholder (specificity 18) beats knowledge/ directory hint (10).
-    // The indexer classifies this as a command based on content.
+  test("$ARGUMENTS in an untyped directory still discovers a command", async () => {
     writeFile(
-      path.join(stashDir, "knowledge", "deploy-cmd.md"),
+      path.join(stashDir, "loose", "deploy-cmd.md"),
       ["---", "description: Deploy helper", "---", "Deploy $ARGUMENTS to staging."].join("\n"),
     );
 
     saveConfig({ semanticSearchMode: "off" });
 
-    const result = await akmShow({ ref: "commands/knowledge/deploy-cmd" });
+    const result = await akmShow({ ref: "commands/loose/deploy-cmd" });
 
     expect(result.type).toBe("command");
     expect(result.template).toBe("Deploy $ARGUMENTS to staging.");
     expect(result.description).toBe("Deploy helper");
   });
+
+  for (const [dir, type] of [
+    ["knowledge", "knowledge"],
+    ["memories", "memory"],
+  ] as const) {
+    test(`$ARGUMENTS documentation under ${dir}/ keeps its ref and presentation`, async () => {
+      writeFile(path.join(stashDir, dir, "placeholder-guide.md"), "This guide explains `$ARGUMENTS`.\n");
+      saveConfig({ semanticSearchMode: "off" });
+
+      const result = await akmShow({ ref: `${dir}/placeholder-guide` });
+
+      expect(result.type).toBe(type);
+      expect(result.content).toContain("This guide explains `$ARGUMENTS`.");
+      expect(result.template).toBeUndefined();
+      expect(result.parameters).toBeUndefined();
+    });
+  }
 
   test("agent frontmatter classifies .md as command even outside commands/", async () => {
     // agent frontmatter (specificity 18) beats agents/ directory hint (15).

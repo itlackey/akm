@@ -125,10 +125,7 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
   },
 ];
 
-/**
- * `$ARGUMENTS` — unambiguous. Nothing else writes it, so finding it in a body
- * is strong evidence of a command wherever the file lives.
- */
+/** Body placeholders can discover loose commands, but also occur in documentation. */
 const ARGUMENTS_PLACEHOLDER_RE = /\$ARGUMENTS/;
 
 /**
@@ -274,22 +271,9 @@ function classifyBySmartMd(ctx: FileContext): MatchFact | null {
     return SMART_MD_FACTS.command;
   }
 
-  // `$ARGUMENTS` is unambiguous, so it keeps its long-standing precedence: a
-  // command dropped under `knowledge/` is still found as a command. A skill's
-  // folder is the one declared context it defers to — a file there is a skill
-  // resource, so documenting a command template must not retype it (#1084).
-  if (ARGUMENTS_PLACEHOLDER_RE.test(body) && !isNestedSkillResource(ctx)) {
-    return SMART_MD_FACTS.command;
-  }
-
-  // A NUMERIC placeholder is a guess, and a typed directory is a declaration.
-  // Where the two disagree the declaration wins — otherwise a note that merely
-  // quotes a price is retyped, which is #824: `memories/*.md` mentioning
-  // `$2,000` were indexed as commands, their refs moved to
-  // `commands/memories/<slug>`, and they left the `memories/` namespace
-  // entirely. Outside a typed directory there is no declaration to defer to,
-  // so the guess still stands.
-  if (NUMERIC_PLACEHOLDER_RE.test(body) && !hasDeclaredDirType(ctx)) {
+  // Mentioning a placeholder is not explicit command intent. Directory
+  // declarations and skill-resource context win over body-text guesses.
+  if (!hasDeclaredDirType(ctx) && (ARGUMENTS_PLACEHOLDER_RE.test(body) || NUMERIC_PLACEHOLDER_RE.test(body))) {
     return SMART_MD_FACTS.command;
   }
 

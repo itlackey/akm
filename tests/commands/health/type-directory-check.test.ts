@@ -6,8 +6,7 @@
  * #831: the `type-directory-disagreement` health advisory must flag every
  * indexed asset whose resolved type disagrees with the type its directory
  * declares, while naming which classifier signal won so a deliberate
- * override (the two contracts asserted in
- * tests/integration/commands/show.test.ts) reads differently from an
+ * override (explicit frontmatter intent) reads differently from an
  * unexplained one. Never a hard failure — always `status: "warn"`, never
  * `"fail"`.
  */
@@ -57,7 +56,7 @@ describe("collectTypeDirectoryDisagreements (#831)", () => {
     ]);
   });
 
-  test("legitimate override: knowledge/ file containing $ARGUMENTS is named, not silently accepted or mislabeled", () => {
+  test("a stale knowledge/ command classification from $ARGUMENTS is not known-good", () => {
     const entries: TypeDirectoryEntry[] = [entry("knowledge/deploy-cmd.md", "command")];
     const readFile = () => "Usage: /deploy $ARGUMENTS\n";
     const result = collectTypeDirectoryDisagreements(entries, readFile);
@@ -67,7 +66,7 @@ describe("collectTypeDirectoryDisagreements (#831)", () => {
         resolved: "command",
         expected: "knowledge",
         winner: "smart-md:$ARGUMENTS",
-        knownGoodOverride: true,
+        knownGoodOverride: false,
       },
     ]);
   });
@@ -192,11 +191,12 @@ describe("buildTypeDirectoryAdvisory (#831)", () => {
     ]);
   });
 
-  test("marks a known-good override in the message so it reads differently from an accident", () => {
+  test("does not describe a body placeholder override as known-good", () => {
     const entries: TypeDirectoryEntry[] = [entry("knowledge/deploy-cmd.md", "command")];
     const advisory = buildTypeDirectoryAdvisory(entries, () => "Usage: /deploy $ARGUMENTS\n");
     expect(advisory?.status).toBe("warn");
-    expect(advisory?.message).toContain("winner=smart-md:$ARGUMENTS (known-good override)");
+    expect(advisory?.message).toContain("winner=smart-md:$ARGUMENTS");
+    expect(advisory?.message).not.toContain("known-good override");
   });
 
   test("uses the displayPath projection for both message and evidence", () => {
