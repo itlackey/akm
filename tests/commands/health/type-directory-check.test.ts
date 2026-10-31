@@ -6,8 +6,7 @@
  * #831: the `type-directory-disagreement` health advisory must flag every
  * indexed asset whose resolved type disagrees with the type its directory
  * declares, while naming which classifier signal won so a deliberate
- * override (the two contracts asserted in
- * tests/integration/commands/show.test.ts) reads differently from an
+ * override (explicit frontmatter intent) reads differently from an
  * unexplained one. Never a hard failure — always `status: "warn"`, never
  * `"fail"`.
  */
@@ -57,7 +56,7 @@ describe("collectTypeDirectoryDisagreements (#831)", () => {
     ]);
   });
 
-  test("legitimate override: knowledge/ file containing $ARGUMENTS is named, not silently accepted or mislabeled", () => {
+  test("a stale knowledge/ command classification from $ARGUMENTS is not known-good", () => {
     const entries: TypeDirectoryEntry[] = [entry("knowledge/deploy-cmd.md", "command")];
     const readFile = () => "Usage: /deploy $ARGUMENTS\n";
     const result = collectTypeDirectoryDisagreements(entries, readFile);
@@ -67,7 +66,7 @@ describe("collectTypeDirectoryDisagreements (#831)", () => {
         resolved: "command",
         expected: "knowledge",
         winner: "smart-md:$ARGUMENTS",
-        knownGoodOverride: true,
+        knownGoodOverride: false,
       },
     ]);
   });
@@ -192,11 +191,12 @@ describe("buildTypeDirectoryAdvisory (#831)", () => {
     ]);
   });
 
-  test("marks a known-good override in the message so it reads differently from an accident", () => {
+  test("does not describe a body placeholder override as known-good", () => {
     const entries: TypeDirectoryEntry[] = [entry("knowledge/deploy-cmd.md", "command")];
     const advisory = buildTypeDirectoryAdvisory(entries, () => "Usage: /deploy $ARGUMENTS\n");
     expect(advisory?.status).toBe("warn");
-    expect(advisory?.message).toContain("winner=smart-md:$ARGUMENTS (known-good override)");
+    expect(advisory?.message).toContain("winner=smart-md:$ARGUMENTS");
+    expect(advisory?.message).not.toContain("known-good override");
   });
 
   test("uses the displayPath projection for both message and evidence", () => {
@@ -209,5 +209,73 @@ describe("buildTypeDirectoryAdvisory (#831)", () => {
     expect(advisory?.message).toContain("memories/note.md");
     expect(advisory?.message).not.toContain("/stash/");
     expect((advisory?.evidence?.disagreements as Array<{ path: string }>)[0]?.path).toBe("memories/note.md");
+  });
+});
+
+describe("skill-directory intent (#1301)", () => {
+  for (const name of ["demo", "knowledge", "memories", "commands"]) {
+    test(`skills/${name}/SKILL.md is a skill regardless of its directory name`, () => {
+      const entries = [entry(`skills/${name}/SKILL.md`, "skill")];
+      expect(
+        collectTypeDirectoryDisagreements(entries, () => {
+          throw new Error("Matching path intent must not read the skill body");
+        }),
+      ).toEqual([]);
+      expect(buildTypeDirectoryAdvisory(entries, () => "# A valid skill\n")).toBeUndefined();
+    });
+  }
+
+  test("nested skill names and supporting resources retain their roles", () => {
+    const entries = [
+      entry("skills/system/knowledge/SKILL.md", "skill"),
+      entry("skills/commands/scripts/helper.sh", "script"),
+      entry("skills/memories/knowledge/guide.md", "knowledge"),
+      entry("skills/knowledge/README.md", "knowledge"),
+    ];
+    expect(collectTypeDirectoryDisagreements(entries, () => "# Supporting documentation\n")).toEqual([]);
+  });
+
+  test("a wrongly indexed skill still reports a genuine disagreement", () => {
+    expect(
+      collectTypeDirectoryDisagreements([entry("skills/knowledge/SKILL.md", "command")], () => "# A skill\n"),
+    ).toEqual([
+      {
+        path: "/stash/skills/knowledge/SKILL.md",
+        resolved: "command",
+        expected: "skill",
+        winner: "unknown",
+        knownGoodOverride: false,
+      },
+    ]);
+  });
+
+  test("a SKILL.md reference under knowledge is not a skills-directory package", () => {
+    const result = collectTypeDirectoryDisagreements(
+      [entry("knowledge/reference/files/SKILL.md", "skill")],
+      () => "# Copied reference\n",
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ expected: "knowledge", resolved: "skill", winner: "unknown" });
+  });
+
+  test("skills outside the component root do not override its directory intent", () => {
+    const result = collectTypeDirectoryDisagreements(
+      [{ ...entry("skills/knowledge/SKILL.md", "skill"), root: "/stash/skills" }],
+      () => "# A document\n",
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ expected: "knowledge", resolved: "skill" });
+  });
+
+  test("other adapters and paths outside the component retain their own semantics", () => {
+    expect(
+      collectTypeDirectoryDisagreements(
+        [
+          entry("skills/knowledge/SKILL.md", "document", "generic-files"),
+          { ...entry("skills/knowledge/SKILL.md", "command"), root: "/elsewhere" },
+        ],
+        () => "",
+      ),
+    ).toEqual([]);
   });
 });

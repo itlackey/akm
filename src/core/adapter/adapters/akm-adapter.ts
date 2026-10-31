@@ -470,9 +470,8 @@ export const akmAdapter: BundleAdapter = {
   // Bump when a change to the matchers (or `recognize`) can retype or re-ref a
   // file that has not changed: the version is folded into each directory's
   // freshness, so the next incremental `akm index` re-drains it and re-files
-  // those rows (#1063). 0.9.1: a skill's resource is never retyped by a `$1`.
-  // 0.9.2: a skill's resource is never retyped by a `$ARGUMENTS` (#1084).
-  version: "0.9.2",
+  // those rows, including old command refs inferred from body placeholders.
+  version: "0.9.3",
   // Recognized-extension HINT, derived from what the matchers accept (§6):
   // `.md` (Markdown types + workflow peer), `.yml` (task and workflow YAML),
   // `.yaml` (task near-miss diagnostics), `.env` (env files), and the 16

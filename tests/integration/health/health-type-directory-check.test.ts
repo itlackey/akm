@@ -7,9 +7,8 @@
  * resolved type disagrees with the type its directory declares, using the
  * actual indexer/index.db, not synthetic entries. It must:
  *   - stay silent when the indexed stash agrees with its directories,
- *   - name the correct classifier + "known-good override" for the two
- *     deliberate-override contracts asserted in
- *     tests/integration/commands/show.test.ts, and
+ *   - name explicit frontmatter overrides as known-good, but never a
+ *     placeholder mentioned in documentation, and
  *   - flag the #824 defect shape (an entry's indexed type disagreeing with
  *     its directory) as an unexplained ("unknown") disagreement, and never
  *     as a hard failure.
@@ -65,12 +64,9 @@ describe("type-directory-disagreement advisory (#831, end-to-end)", () => {
     }
   });
 
-  test("names the two documented deliberate overrides as known-good, and never hard-fails", async () => {
+  test("only explicit frontmatter overrides a document's directory, without hard-failing", async () => {
     setUpStash();
     try {
-      // Same fixture shapes as tests/integration/commands/show.test.ts's
-      // "$ARGUMENTS in body classifies .md as command even outside commands/"
-      // and "agent frontmatter classifies .md as command even outside agents/".
       writeFile(
         path.join(storage.stashDir, "knowledge", "deploy-cmd.md"),
         ["---", "description: Deploy helper", "---", "Deploy $ARGUMENTS to staging."].join("\n"),
@@ -96,12 +92,8 @@ describe("type-directory-disagreement advisory (#831, end-to-end)", () => {
         knownGoodOverride: boolean;
       }>;
       const deployCmd = disagreements.find((d) => d.path.includes("deploy-cmd.md"));
-      expect(deployCmd).toMatchObject({
-        resolved: "command",
-        expected: "knowledge",
-        winner: "smart-md:$ARGUMENTS",
-        knownGoodOverride: true,
-      });
+      expect(deployCmd).toBeUndefined();
+      expect(disagreements).toHaveLength(1);
       const buildCmd = disagreements.find((d) => d.path.includes("build-cmd.md"));
       expect(buildCmd).toMatchObject({
         resolved: "command",
@@ -161,4 +153,28 @@ describe("type-directory-disagreement advisory (#831, end-to-end)", () => {
       storage.cleanup();
     }
   });
+});
+
+test("health accepts indexed skills whose names collide with typed directories (#1301)", async () => {
+  setUpStash();
+  try {
+    const names = ["demo", "knowledge", "memories", "commands"];
+    for (const name of names) {
+      writeFile(path.join(storage.stashDir, "skills", name, "SKILL.md"), `# ${name}\n\nA valid skill.\n`);
+    }
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+
+    const db = openIndexDatabase(getDbPath());
+    try {
+      const entries = db.prepare("SELECT concept_id, type FROM entries ORDER BY concept_id").all();
+      expect(entries).toEqual([...names].sort().map((name) => ({ concept_id: `skills/${name}`, type: "skill" })));
+    } finally {
+      db.close();
+    }
+
+    const result = await akmHealth({ since: "7d" });
+    expect(findAdvisory(result.advisories, "type-directory-disagreement")).toBeUndefined();
+  } finally {
+    storage.cleanup();
+  }
 });

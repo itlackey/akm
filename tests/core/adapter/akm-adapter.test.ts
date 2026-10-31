@@ -63,7 +63,7 @@ function allTypesContexts(): FileContext[] {
 describe("akm adapter — metadata (§7)", () => {
   test("id / version", () => {
     expect(akmAdapter.id).toBe("akm");
-    expect(akmAdapter.version).toBe("0.9.2");
+    expect(akmAdapter.version).toBe("0.9.3");
   });
 
   test("extensions cover the matcher-accepted set (`.md`, `.yaml`/`.yml`, `.env`, script exts)", () => {
