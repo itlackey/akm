@@ -26,6 +26,9 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } f
 const UI_DIR = path.resolve(import.meta.dir, "../../../src/assets/ui");
 const uiFiles = fs.readdirSync(UI_DIR).sort();
 const jsFiles = uiFiles.filter((f) => f.endsWith(".js"));
+// The vendored SVG renderer legitimately creates its own nodes and SVG namespace URLs.
+// Application markup and actions still go only through our escaping helpers.
+const authoredJsFiles = jsFiles.filter((f) => f !== "echarts.js");
 const read = (name: string) => fs.readFileSync(path.join(UI_DIR, name), "utf8");
 
 const CONTENT_TYPE: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
@@ -44,6 +47,33 @@ afterEach(async () => {
 });
 
 describe("static files", () => {
+  test("the local ECharts subset renders bar, line and scatter charts without a browser or network", async () => {
+    const { init } = await import(path.join(UI_DIR, "echarts.js"));
+    const chart = init(null, null, { renderer: "svg", ssr: true, width: 640, height: 300 });
+    try {
+      for (const type of ["bar", "line", "scatter"]) {
+        chart.setOption(
+          {
+            animation: false,
+            xAxis: { type: "category", data: ["<unsafe>", "two"] },
+            yAxis: { type: "value" },
+            series: [{ type, data: [1, 2] }],
+          },
+          { notMerge: true },
+        );
+        const svg = chart.renderToSVGString();
+        expect(svg.startsWith("<svg")).toBe(true);
+        expect(svg.includes("&lt;unsafe&gt;")).toBe(true);
+        expect(svg.includes("<unsafe>")).toBe(false);
+        expect(svg.includes("<script")).toBe(false);
+      }
+    } finally {
+      chart.dispose();
+    }
+    const source = read("echarts.js");
+    expect(source.includes("Apache License")).toBe(true);
+    expect(source.includes("BSD 3-Clause")).toBe(true);
+  });
   test("every UI file is served from disk with the right content type, and nothing needs a token", async () => {
     server = await startUiServer({ port: 0 });
     const base = `http://${server.host}:${server.port}`;
@@ -84,7 +114,7 @@ describe("what the page may load and do", () => {
   });
 
   test("no client file makes an off-host request or evaluates strings", () => {
-    for (const file of jsFiles) {
+    for (const file of authoredJsFiles) {
       const source = read(file);
       expect(source, file).not.toMatch(/["'`]https?:\/\//);
       expect(source, file).not.toMatch(/\beval\s*\(|new\s+Function\s*\(|document\.write|insertAdjacentHTML|outerHTML/);
@@ -94,7 +124,8 @@ describe("what the page may load and do", () => {
   });
 
   test("the only markup write is mount() in lib.js, and it accepts nothing but the escaping html tag", () => {
-    for (const file of jsFiles.filter((f) => f !== "lib.js")) expect(read(file), file).not.toContain("innerHTML");
+    for (const file of authoredJsFiles.filter((f) => f !== "lib.js"))
+      expect(read(file), file).not.toContain("innerHTML");
     const lib = read("lib.js");
     // One assignment, preceded by the instanceof guard, whose value is the escaped text of a SafeHtml.
     expect(lib.match(/\.innerHTML\s*=/g)?.length).toBe(1);
@@ -102,19 +133,19 @@ describe("what the page may load and do", () => {
     // `html` is the only producer of SafeHtml, and it escapes each interpolated value through part().
     expect(lib.match(/new SafeHtml\(/g)?.length).toBe(1);
     expect(lib).toMatch(/out \+= part\(values\[i\]\) \+ strings\[i \+ 1\]/);
-    for (const file of jsFiles.filter((f) => f !== "lib.js")) {
+    for (const file of authoredJsFiles.filter((f) => f !== "lib.js")) {
       expect(read(file), file).not.toMatch(/SafeHtml|\.text\b\s*=/);
     }
   });
 
   test("decisions use inline confirmation only: no window.confirm, alert or prompt anywhere", () => {
-    for (const file of jsFiles) {
+    for (const file of authoredJsFiles) {
       expect(read(file), file).not.toMatch(/\b(?:confirm|alert|prompt)\s*\(/);
     }
   });
 
   test("external links are noopener and carry no unvetted scheme", () => {
-    for (const file of jsFiles) {
+    for (const file of authoredJsFiles) {
       for (const match of read(file).matchAll(/<a\b[^>]*target="_blank"[^>]*>/g)) {
         expect(match[0], file).toContain("noopener");
       }
@@ -258,8 +289,11 @@ describe("pages", () => {
     expect(overview).toContain("Health checks");
     expect(overview).toContain("Recent improve runs");
     expect(overview).toContain("run-1");
-    expect(overview).toContain('<svg class="chart"');
-    expect(overview).toContain("Usage, last 14 days");
+    expect(overview).toContain('id="activity-chart"');
+    expect(overview).toContain("Model utilization");
+    expect(overview).toContain("Retrieval health");
+    expect(overview).toContain("Automation reliability");
+    expect(overview).toContain("UTC days");
 
     const bundles = (await (await view("bundles.js"))(ctx())).text;
     expect(bundles).toContain("Configured bundles");
@@ -356,16 +390,46 @@ describe("pages", () => {
       const pageCtx = ctx(`ref=${encodeURIComponent(ref)}`);
       await (await view("editor.js"))(pageCtx);
       const handlers: Record<string, (event: unknown) => Promise<void> | void> = {};
-      const input = { value: "", addEventListener: (_t: string, fn: () => void) => (handlers.input = fn) };
+      let focused = false;
+      const input = {
+        value: "",
+        focus: () => {
+          focused = true;
+        },
+        addEventListener: (_t: string, fn: () => void) => (handlers.input = fn),
+      };
       const preview = { innerHTML: "" };
       const status = { innerHTML: "" };
+      const recoveryStatus = { innerHTML: "" };
+      const recovery = {
+        innerHTML: "",
+        hidden: true,
+        querySelector: (selector: string) => (selector === "[data-recovery-status]" ? recoveryStatus : null),
+        addEventListener: (_t: string, fn: (event: unknown) => Promise<void>) => (handlers.recovery = fn),
+      };
+      const state = { textContent: "" };
+      const previewPanel = { hidden: true };
+      const sourcePanel = { hidden: false };
+      const toggle = {
+        textContent: "",
+        setAttribute: () => undefined,
+        addEventListener: (_t: string, fn: (event: unknown) => void) => (handlers.toggle = fn),
+      };
       const form = {
         addEventListener: (_t: string, fn: (event: unknown) => Promise<void>) => (handlers.submit = fn),
         querySelector: () => status,
       };
       const root = {
         querySelector: (sel: string) =>
-          sel === '[name="content"]' ? input : sel === "[data-preview]" ? preview : null,
+          ({
+            '[name="content"]': input,
+            "[data-preview]": preview,
+            "[data-recovery]": recovery,
+            "[data-editor-state]": state,
+            "[data-preview-toggle]": toggle,
+            "[data-preview-panel]": previewPanel,
+            "[data-source-panel]": sourcePanel,
+          })[sel] ?? null,
         querySelectorAll: (sel: string) => (sel === ".edit-form" ? [form] : []),
       };
       for (const after of pageCtx.after) after(root);
@@ -379,7 +443,24 @@ describe("pages", () => {
         await handlers.submit?.({ preventDefault: () => undefined, submitter: button });
         return button;
       };
-      return { input, preview, status, type, save };
+      const clickRecovery = async (selector: string) => {
+        const button = { disabled: false };
+        await handlers.recovery?.({ target: { closest: (sel: string) => (sel === selector ? button : null) } });
+      };
+      return {
+        input,
+        preview,
+        status,
+        recovery,
+        recoveryStatus,
+        type,
+        save,
+        clickRecovery,
+        focused: () => focused,
+        togglePreview: () => handlers.toggle?.({ currentTarget: toggle }),
+        previewPanel,
+        sourcePanel,
+      };
     };
     const location = (globalThis as { location: { hash: string } }).location;
 
@@ -407,7 +488,7 @@ describe("pages", () => {
     await mixedEdit.save();
     expect(sent.at(-1)?.content).toBe("# Mixed\nline\nmore\n");
 
-    // A conflict keeps the draft, takes the new revision, and the next save goes through.
+    // A conflict keeps the draft. Ordinary Save cannot become overwrite intent.
     const conflict = await open("knowledge/notes");
     const draft = "---\ndescription: Notes\n---\nMy draft\n";
     conflict.type(draft);
@@ -415,18 +496,43 @@ describe("pages", () => {
     fs.writeFileSync(path.join(dir, "notes.md"), newer);
     const button = await conflict.save();
     expect(conflict.status.innerHTML).toContain("The document changed on disk since you opened it.");
-    expect(conflict.status.innerHTML).toContain("saving again will overwrite");
+    expect(conflict.status.innerHTML).toContain("Review the newer version");
+    expect(conflict.recovery.innerHTML).toContain("Overwrite with my draft");
+    expect(conflict.recovery.innerHTML).toContain("Changed on disk");
     expect(button.disabled).toBe(false);
     expect(conflict.input.value).toBe(draft);
     expect(location.hash).toBe("");
     expect(lib.hasUnsaved()).toBe(true);
     const rejectedRevision = sent.at(-1)?.revision;
+    const rejectedCount = sent.length;
     await conflict.save();
+    expect(sent.length).toBe(rejectedCount);
+    expect(fs.readFileSync(path.join(dir, "notes.md"), "utf8")).toBe(newer);
+    conflict.togglePreview();
+    expect(conflict.sourcePanel.hidden).toBe(true);
+    await conflict.clickRecovery("[data-keep-draft]");
+    expect(conflict.focused()).toBe(true);
+    expect(conflict.sourcePanel.hidden).toBe(false);
+    expect(conflict.previewPanel.hidden).toBe(true);
+    expect(conflict.input.value).toBe(draft);
+
+    // Even explicit overwrite checks the reviewed revision; a second disk edit is not lost.
+    const newest = `${newer}Another external edit\n`;
+    fs.writeFileSync(path.join(dir, "notes.md"), newest);
+    await conflict.clickRecovery("[data-overwrite]");
+    expect(fs.readFileSync(path.join(dir, "notes.md"), "utf8")).toBe(newest);
+    expect(conflict.input.value).toBe(draft);
+    await conflict.clickRecovery("[data-overwrite]");
     expect(sent.at(-1)?.revision).not.toBe(rejectedRevision);
     expect(sent.at(-1)?.content).toBe(draft);
     expect(fs.readFileSync(path.join(dir, "notes.md"), "utf8")).toEndWith("My draft\n");
     expect(location.hash).toBe("#/asset?ref=stash%2F%2Fknowledge%2Fnotes");
     expect(lib.hasUnsaved()).toBe(false);
+    conflict.togglePreview();
+    expect(conflict.previewPanel.hidden).toBe(false);
+    expect(conflict.sourcePanel.hidden).toBe(true);
+    conflict.togglePreview();
+    expect(conflict.previewPanel.hidden).toBe(true);
 
     // The preview anchors in-page links to the document instead of a bare "#x" the router reads as a page.
     conflict.type("[setup](#setup)");
@@ -466,6 +572,85 @@ describe("pages", () => {
     expect(decided).not.toContain("data-actions");
     expect(decided).not.toContain('data-act="accept"');
     expect(decided).toContain("&lt;b&gt;no&lt;/b&gt;");
+    const filteredRecent = (await (await view("proposals.js", "renderList"))(ctx("status=recent&source=missing"))).text;
+    expect(filteredRecent).toContain("Nothing decided from this source.");
+    expect(filteredRecent).toContain('href="#/proposals?status=recent&amp;source=reflect"');
+    expect(filteredRecent).not.toContain("No decided proposals yet.");
+  });
+
+  test("proposal review retains its filtered queue and decisions restore predictable focus", async () => {
+    const { proposalId } = await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const query = "source=reflect&age=underDay";
+    const detail = (await (await view("proposals.js", "renderDetail"))(ctx(query, proposalId))).text;
+    expect(detail).toContain('href="#/proposals?source=reflect&amp;age=underDay"');
+    expect(detail.indexOf("Proposed change")).toBeLessThan(detail.indexOf("data-actions"));
+    expect(detail.indexOf("data-actions")).toBeLessThan(detail.indexOf("Proposal details"));
+    const region = {
+      innerHTML: "",
+      addEventListener: (name: string, fn: (event: unknown) => void) => {
+        handlers[name] = fn;
+      },
+      querySelector: (selector: string) => ({
+        focus: () => {
+          focused = selector;
+        },
+      }),
+    };
+    const handlers: Record<string, (event: unknown) => void> = {};
+    let focused = "";
+    let decided: ((value?: unknown) => void) | undefined;
+    const done = new Promise<void>((resolve) => {
+      decided = () => resolve();
+    });
+    const actions = (await load("proposal-actions.js")) as {
+      wireDetailActions: (root: unknown, options: unknown) => void;
+    };
+    actions.wireDetailActions(
+      { querySelector: () => region },
+      { id: proposalId, nextId: null, query, onDecided: () => decided?.() },
+    );
+    const click = (act: string) =>
+      handlers.click?.({ target: { closest: () => ({ disabled: false, dataset: { act } }) } });
+    click("reject");
+    expect(focused).toBe("[data-reason]");
+    click("reject-confirm");
+    expect(region.innerHTML).toContain("Enter a reason");
+    click("cancel");
+    expect(focused).toBe("[data-act=reject]");
+    click("accept");
+    click("cancel");
+    expect(focused).toBe("[data-act=accept]");
+    click("accept");
+    click("accept-confirm");
+    await done;
+    expect(region.innerHTML).toContain("Accepted");
+    expect(region.innerHTML).toContain('href="#/proposals?source=reflect&amp;age=underDay"');
+    expect(region.innerHTML).toContain("No other proposal is waiting in this queue");
+    expect(region.innerHTML).not.toContain("Next pending");
+    expect(focused).toBe("[role=status]");
+  });
+
+  test("search context survives reading and editing while direct asset links stay usable", async () => {
+    await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const returnTo = "#/search?q=deploy&type=knowledge&bundle=stash";
+    const search = (await (await view("search.js"))(ctx("q=deploy&type=knowledge&bundle=stash"))).text;
+    expect(search).toContain(`returnTo=${encodeURIComponent(returnTo)}`);
+    const params = `ref=knowledge%2Fguide&returnTo=${encodeURIComponent(returnTo)}`;
+    const asset = (await (await view("asset.js"))(ctx(params))).text;
+    expect(asset).toContain("Back to results");
+    expect(asset).toContain('href="#/search?q=deploy&amp;type=knowledge&amp;bundle=stash"');
+    expect(asset).toContain(`&amp;returnTo=${encodeURIComponent(returnTo)}`);
+    expect(asset.indexOf('aria-label="Content"')).toBeLessThan(asset.indexOf("Asset details"));
+    const editor = (await (await view("editor.js"))(ctx(params))).text;
+    expect(editor).toContain(`&amp;returnTo=${encodeURIComponent(returnTo)}`);
+    expect(editor.indexOf("Save Markdown")).toBeLessThan(editor.indexOf("<textarea"));
+    const direct = (await (await view("asset.js"))(ctx("ref=knowledge%2Fguide&returnTo=javascript:alert(1)"))).text;
+    expect(direct).toContain('href="#/search">Search</a>');
+    expect(direct).not.toContain('href="javascript:');
   });
 
   test("an update's diff is aligned: side by side by default, inline on request, word highlights, escaped text", async () => {
@@ -728,17 +913,5 @@ describe("helpers", () => {
       throw new ApiError(400, "USAGE", "Bad input.");
     })();
     expect(ordinary.button.disabled).toBe(false);
-  });
-
-  test("chart scales use round steps and the axis ends at or above the data", async () => {
-    const { niceScale } = (await load("charts.js")) as { niceScale: (m: number) => { top: number; ticks: number[] } };
-    expect(niceScale(0)).toEqual({ top: 1, ticks: [0, 1] });
-    expect(niceScale(7)).toEqual({ top: 8, ticks: [0, 2, 4, 6, 8] });
-    for (const max of [1, 3, 5, 9, 12, 26, 130, 4096]) {
-      const { top, ticks } = niceScale(max);
-      expect(top).toBeGreaterThanOrEqual(max);
-      expect(ticks.length).toBeLessThanOrEqual(7);
-      expect(ticks.at(-1)).toBe(top);
-    }
   });
 });

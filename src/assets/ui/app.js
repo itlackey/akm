@@ -38,6 +38,8 @@ const main = document.getElementById("app");
 let sequence = 0;
 let shownHash = location.hash;
 let pendingHash = null;
+let cleanup = [];
+const positions = new Map();
 const unsaved = document.getElementById("unsaved");
 
 function parseHash() {
@@ -74,6 +76,12 @@ async function route() {
     return;
   }
   unsaved.hidden = true;
+  const oldHash = shownHash;
+  const active = document.activeElement;
+  const focus = main.contains(active) ? { name: active.name, href: active.getAttribute("href") } : null;
+  positions.set(oldHash, { scroll: window.scrollY, focus });
+  for (const dispose of cleanup) dispose();
+  cleanup = [];
   shownHash = location.hash;
   const mine = ++sequence;
   const { name, param, query } = parseHash();
@@ -94,9 +102,19 @@ async function route() {
       const markup = await entry.render(page, ctx);
       if (mine !== sequence) return;
       mount(main, markup);
-      for (const fn of ctx.after) fn(main);
+      for (const fn of ctx.after) {
+        const dispose = fn(main);
+        if (typeof dispose === "function") cleanup.push(dispose);
+      }
       showFlash(main);
-      window.scrollTo(0, 0);
+      const restored = positions.get(shownHash);
+      const wanted = restored?.focus ?? (oldHash.startsWith("#/search") && name === "search" ? focus : null);
+      if (wanted) {
+        [...main.querySelectorAll("[name], a[href]")]
+          .find((node) => (wanted.name ? node.name === wanted.name : node.getAttribute("href") === wanted.href))
+          ?.focus({ preventScroll: true });
+      }
+      window.scrollTo(0, restored?.scroll ?? 0);
     }
   } catch (error) {
     if (mine === sequence) mount(main, errorState(error));
@@ -111,7 +129,7 @@ async function showMeta() {
     const meta = await getMeta();
     mount(
       target,
-      html`<span class="mono">akm ${meta.version}</span><span class="muted small">${meta.readOnly ? "read-only" : ""} ${meta.runtime}</span>`,
+      html`<span class="mono">akm ${meta.version} · ${meta.hostname}</span><span class="muted small">${meta.readOnly ? "read-only" : ""} ${meta.runtime}</span>`,
     );
   } catch {
     mount(target, html``);
@@ -123,7 +141,11 @@ unsaved.addEventListener("click", (event) => {
   const act = event.target.closest("button")?.dataset.act;
   if (!act) return;
   unsaved.hidden = true;
-  if (act !== "discard") return;
+  if (act !== "discard") {
+    if (main.querySelector("[data-source-panel]")?.hidden) main.querySelector("[data-preview-toggle]")?.click();
+    main.querySelector('[name="content"]')?.focus({ preventScroll: true });
+    return;
+  }
   setUnsaved(false);
   const target = pendingHash;
   pendingHash = null;
@@ -144,5 +166,16 @@ document.addEventListener("keydown", (event) => {
   }
 });
 document.querySelector("[data-refresh]")?.addEventListener("click", route);
+const menu = document.querySelector("[data-menu]");
+menu?.addEventListener("click", () => {
+  const open = menu.getAttribute("aria-expanded") !== "true";
+  menu.setAttribute("aria-expanded", String(open));
+  document.querySelector(".sidebar")?.classList.toggle("nav-open", open);
+});
+document.querySelector(".nav-links")?.addEventListener("click", (event) => {
+  if (!event.target.closest("a")) return;
+  menu?.setAttribute("aria-expanded", "false");
+  document.querySelector(".sidebar")?.classList.remove("nav-open");
+});
 showMeta();
 route();

@@ -24,6 +24,7 @@
       "scripts/*.ts",
       "!src/assets/templates/html",
       "!src/vendor/**",
+      "!src/assets/ui/echarts.js",
       "!tests/fixtures/goldens/**/*.json",
       "!tests/fixtures/format-family-goldens/**/*.json",
       "!.claude/**"

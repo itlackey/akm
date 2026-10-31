@@ -579,15 +579,18 @@ the matching CLI commands use, so the UI and the CLI report the same numbers.
 
 | Page | Shows |
 | --- | --- |
-| Overview | Overall health, failing and warning check counts and the akm version; the health checks grouped by status with expandable evidence; metrics tiles; the last 10 improve runs (result, duration, model calls and failures, sync, triage) with bars; and a 14-day stacked usage chart (search, curate, show, feedback). |
+| Overview | Health counts and expandable diagnostics; activity, retrieval latency/no-result queries, model utilization, failed-task history and recent improve-run durations. Metrics share a selectable 24h/7d/30d window; health remains 24h and the latest ten improve runs are all-time. Each chart has exact counts and keyboard-accessible details. |
 | Bundles | Cards including disabled bundles, source, component writability, settings origin, Git and index state. Explicit add, update, confirmed removal, enabled/writable settings and default-bundle/write-target controls use existing AKM operations. |
 | Config | The effective config as a collapsible tree with a `default` / `file` / `extends:<ref>` source badge on every key, the connections and harnesses tables and the `AKM_*` environment. |
-| Proposals | The pending queue grouped by source (filter by source) with age and gate decision, a Recent tab of accepted, rejected and reverted proposals with reasons, and a detail page with the unified diff and, for retirements, the pair judgment. The detail page has Accept (after an inline confirmation) and Reject (with a required reason); the pending list has checkboxes and an Accept selected bar that accepts several in one commit. |
+| Proposals | The full pending backlog by source and waiting age, with queue filters applied before the list limit. Review leads with the change and preserves source/age context through Next and Back. Accept retains its inline confirmation, Reject requires a reason, and Accept selected applies a batch in one commit. Recent decisions and retirement judgments remain available. |
 | Changes | Recent stash commits as a timeline by day, each tagged by origin (`improve-sync`, `accept`, `remember`, `sync`, `other`) with its changed paths. |
 | Search | Search or browse the existing index grouped by path, with type/bundle, current/all/historical and user/agent/run/channel scope controls. Asset detail includes safe Markdown tables/tasks, indexed relative links, heading navigation, source, per-file Git history/diffs and explicit feedback with reasons/tags. New knowledge supports Markdown source and preview through `akm import`, without overwriting existing files. |
 
-The pages are plain HTML, CSS and JavaScript modules in `src/assets/ui/`: no framework, no build step, and no request
-beyond the local server. All text from the API is escaped before it reaches the page.
+The pages are plain HTML, CSS and JavaScript modules in `src/assets/ui/`, with no framework or runtime build step.
+The serving hostname appears beside the version, including in the compact mobile navigation. Charts use a local
+SVG-only ECharts subset, loaded on chart pages, with no request beyond the local server. The subset is included in
+the package and standalone binary; maintainers regenerate its checked-in asset with `bun scripts/build-ui-charts.ts`
+after changing the ECharts dependency or imports. API text is escaped before it reaches the page.
 
 ```sh
 akm ui
@@ -613,6 +616,10 @@ edit existing writable AKM knowledge/memory Markdown. They use the existing oper
 and Git effects. Editing loads the complete live source and rejects a save if its raw-content revision changed;
 an unchanged save leaves source bytes and modification time alone and records no event. Documents whose URL credentials are
 hidden by the UI must be edited outside it. Historical restore remains unavailable.
+Search results retain query, filters and return position through reading and editing. The Markdown editor keeps
+Save and Preview beside its heading and confirms a successful save on the document. A conflicting edit keeps the
+draft and displays a comparison with the newer disk version. Ordinary Save never becomes overwrite permission:
+only **Overwrite with my draft** uses the reviewed newer revision, and another external edit is still refused.
 All write routes need the token in the
 `X-Akm-Ui-Token` header (not the query string), a JSON content type and an `Origin` equal to the server's own address.
 A read is short and the server holds no lock between requests, so browsing never blocks `akm improve`, `akm index` or

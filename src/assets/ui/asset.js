@@ -11,6 +11,7 @@ import {
   html,
   pageHeader,
   post,
+  searchReturn,
   tableWrap,
   when,
 } from "./lib.js";
@@ -65,7 +66,8 @@ export async function render(ctx) {
   if (!ref)
     return html`${pageHeader("Asset")}${emptyState("No asset selected.", html`Pick one from <a href="#/search">search</a>.`)}`;
   const data = await api("/api/asset", { ref });
-  const back = html`<p class="crumbs"><a href="#/search">Search</a> / asset</p>`;
+  const returnTo = searchReturn(ctx.query);
+  const back = html`<p class="crumbs"><a href="${returnTo || "#/search"}">${returnTo ? "Back to results" : "Search"}</a> / asset</p>`;
   if (data.redacted) {
     return html`${back}${pageHeader(html`<span class="mono wrap">${data.ref}</span>`)}<div class="badges">${badge(data.type, "info")}${badge("redacted", "warn")}</div>
       <div class="notice">${data.note}</div>`;
@@ -73,6 +75,8 @@ export async function render(ctx) {
   const asset = data.asset;
   const { fields, body, startLine } = splitFrontmatter(asset.content);
   const canonical = data.durableRef ?? asset.ref;
+  const href = assetHref(canonical, returnTo);
+  const title = fields.find(([key]) => key === "title")?.[1] || body.match(/^#\s+(.+)$/m)?.[1] || asset.name;
   const headings = (data.headings ?? []).filter((h) => h.slug);
   const historyOpen = ctx.query.get("history") === "1";
   let history = "";
@@ -84,7 +88,7 @@ export async function render(ctx) {
       !versions.available
         ? emptyState("No Git history is available for this bundle.")
         : html`
-      ${versions.commits.length === 0 ? emptyState("No committed version of this file.") : html`<ul>${versions.commits.map((c) => html`<li><a href="${assetHref(canonical)}&history=1&revision=${c.sha}">${c.shortSha}</a> ${c.subject} <span class="muted">${when(c.time)} · ${c.author}</span></li>`)}</ul>`}
+      ${versions.commits.length === 0 ? emptyState("No committed version of this file.") : html`<ul>${versions.commits.map((c) => html`<li><a href="${href}&history=1&revision=${c.sha}">${c.shortSha}</a> ${c.subject} <span class="muted">${when(c.time)} · ${c.author}</span></li>`)}</ul>`}
       ${diff?.markup ?? ""}`
     }</section>`;
   }
@@ -109,10 +113,12 @@ export async function render(ctx) {
     // ?section= keeps the plain slug; the heading's element id is prefixed.
     if (section) requestAnimationFrame(() => document.getElementById(headingId(section))?.scrollIntoView());
   });
-  return html`${back}${pageHeader(html`<span class="mono wrap">${asset.ref}</span>`)}
-    <p class="action-links"><a href="${assetHref(canonical)}&history=1">Document history</a> · <a href="#/new">New knowledge</a>${asset.editable && ["knowledge", "memory"].includes(asset.type) ? html` · <a href="#/edit?ref=${encodeURIComponent(canonical)}">Edit Markdown</a>` : ""}</p>
+  return html`${back}${pageHeader(title)}
+    <p class="action-links">${asset.editable && ["knowledge", "memory"].includes(asset.type) ? html`<a href="#/edit?ref=${encodeURIComponent(canonical)}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}">Edit Markdown</a> · ` : ""}<a href="${href}&history=1">Document history</a> · <a href="#/new">New knowledge</a></p>
     <div class="badges">${badge(asset.type, "info")}${asset.origin ? badge(asset.origin, "neutral") : ""}${asset.editable ? badge("editable", "ok") : badge("read-only", "neutral")}</div>
-    <section>${definitionList([
+    ${headings.length > 1 ? html`<details class="contents"><summary>On this page</summary><ul>${headings.map((h) => html`<li><a href="${href}&section=${encodeURIComponent(h.slug)}">${h.text}</a></li>`)}</ul></details>` : ""}
+    <section class="document-body" aria-label="Content">${body.trim() === "" ? emptyState("This asset has no body.") : markdown(body, { ref: canonical, bundle: data.bundle, links: data.links, headings: data.headings, startLine })}</section>
+    <details><summary>Asset details</summary>${definitionList([
       ["Name", html`<span class="mono">${asset.name}</span>`],
       [
         "Durable ref",
@@ -121,10 +127,9 @@ export async function render(ctx) {
           : html`<span class="muted">not indexed</span>`,
       ],
       ["Path", html`<span class="mono wrap">${asset.path}</span>`],
-    ])}</section>
+    ])}
     ${fields.length > 0 ? html`<section><h2>Frontmatter</h2>${tableWrap(html`<table class="fm"><tbody>${fields.map(([k, v]) => html`<tr><th scope="row" class="mono">${k}</th><td class="mono wrap pre-wrap">${v}</td></tr>`)}</tbody></table>`)}</section>` : ""}
-    ${headings.length > 1 ? html`<details class="contents" open><summary>On this page</summary><ul>${headings.map((h) => html`<li><a href="${assetHref(canonical)}&section=${encodeURIComponent(h.slug)}">${h.text}</a></li>`)}</ul></details>` : ""}
-    <section><h2>Content</h2>${body.trim() === "" ? emptyState("This asset has no body.") : markdown(body, { ref: canonical, bundle: data.bundle, links: data.links, headings: data.headings, startLine })}</section>
+    </details>
     <details><summary>Markdown source</summary><pre class="code">${asset.content ?? ""}</pre></details>
     ${history}
     ${linksBlock(asset.links)}

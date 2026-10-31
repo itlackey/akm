@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
 import { createProposal } from "../../../src/commands/proposal/repository";
@@ -28,6 +29,8 @@ import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { acquireAssetMutationLease } from "../../../src/indexer/index-writer-lock";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
+import { upsertProposal } from "../../../src/storage/repositories/proposals-repository";
+import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import * as akmBin from "../../../src/tasks/resolve-akm-bin";
 import { runCliCapture } from "../../_helpers/cli";
 import { makeConfig } from "../../_helpers/factories";
@@ -316,11 +319,12 @@ describe("endpoints", () => {
     const meta = await data(s, "/api/meta");
     expect(meta).toMatchObject({ host: "127.0.0.1", port: s.port, stashDir: storage.stashDir });
     expect(typeof meta.version).toBe("string");
+    expect(meta.hostname).toBe(os.hostname());
     expect(meta.stateDbPath).toBe(getStateDbPath());
     expect(Date.parse(meta.startedAt)).not.toBeNaN();
   });
 
-  test("GET /api/overview: health, metrics, last improve runs and 14 days of user usage", async () => {
+  test("GET /api/overview: health, metrics, last improve runs and canonical user usage", async () => {
     await seed();
     const s = await start();
     const overview = await data(s, "/api/overview");
@@ -345,10 +349,160 @@ describe("endpoints", () => {
     });
     expect(overview.improveRuns[0].durationMs).toBeGreaterThan(0);
 
-    expect(overview.usageByDay).toHaveLength(14);
-    const today = overview.usageByDay.at(-1);
+    expect(overview.usageByDay).toBeUndefined();
+    const today = overview.metrics.usage.daily.at(-1);
     // User-attributed only: the improve-sourced search is not counted.
-    expect(today).toMatchObject({ search: 1, show: 1, feedbackPositive: 1, feedbackNegative: 1, curate: 0 });
+    expect(today).toMatchObject({ search: 1, show: 1, feedback: 2, curate: 0 });
+    expect(overview.retrieval.daily.at(-1)).toMatchObject({
+      searches: 1,
+      zeroResults: 0,
+      medianMs: null,
+      latencySamples: 0,
+    });
+    expect(overview.taskFailures).toEqual([]);
+    expect(overview.metrics.rows).toBeUndefined();
+  });
+
+  test("overview counts search summaries, not hits, and retains missing latency as unknown", async () => {
+    await seed();
+    const db = openStateDatabase();
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      const insert = db.prepare(
+        "INSERT INTO usage_events (event_type, query, entry_ref, metadata, source, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      );
+      const at = `${today} 00:00:00`;
+      insert.run("search", "empty result", null, JSON.stringify({ resultCount: 0, totalMs: 120 }), "user", at);
+      insert.run("search", "empty result", null, JSON.stringify({ resultCount: 0 }), "user", at);
+      insert.run("search", "found", null, JSON.stringify({ resultCount: 2, totalMs: 40 }), "user", at);
+      for (const ref of ["stash//knowledge/guide", "stash//knowledge/notes"]) {
+        insert.run("search", "found", ref, JSON.stringify({ resultCount: 2, totalMs: 40 }), "user", at);
+        insert.run("curate", "found", ref, null, "user", at);
+      }
+      insert.run("curate", "found", null, null, "user", at);
+      insert.run("search", "internal", null, JSON.stringify({ resultCount: 0, totalMs: 900 }), "task", at);
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const overview = await data(s, "/api/overview?metricsSince=7d");
+    expect(overview.metrics.usage.daily.at(-1)).toMatchObject({ search: 4, curate: 1 });
+    expect(overview.retrieval).toEqual({
+      daily: [{ date: today, searches: 4, zeroResults: 2, medianMs: 120, latencySamples: 2 }],
+      zeroResultQueries: [{ date: today, query: "empty result", count: 2 }],
+    });
+  });
+
+  test("task failure ranking includes rare failures beyond busiest 20; history is bounded, read-only and truthful", async () => {
+    await seed();
+    const db = openStateDatabase();
+    const startedAt = new Date(Date.now() - 60_000).toISOString();
+    try {
+      for (let i = 0; i < 21; i++) {
+        for (let n = 0; n < 2; n++)
+          upsertTaskHistory(db, {
+            task_id: `busy-${i}`,
+            status: "completed",
+            started_at: new Date(Date.now() - 120_000 - n * 1000).toISOString(),
+            completed_at: startedAt,
+            failed_at: null,
+            log_path: null,
+            target_kind: null,
+            target_ref: null,
+            metadata_json: JSON.stringify({ durationMs: 10 }),
+          });
+      }
+      upsertTaskHistory(db, {
+        task_id: "rare-failure",
+        status: "failed",
+        started_at: startedAt,
+        completed_at: null,
+        failed_at: startedAt,
+        log_path: "/must-not-read/task.log",
+        target_kind: null,
+        target_ref: null,
+        metadata_json: JSON.stringify({ durationMs: 50, detail: { reason: "timeout", error: "Timed out" } }),
+      });
+      upsertTaskHistory(db, {
+        task_id: "unknown-detail",
+        status: "active",
+        started_at: startedAt,
+        completed_at: null,
+        failed_at: null,
+        log_path: null,
+        target_kind: null,
+        target_ref: null,
+        metadata_json: "{}",
+      });
+    } finally {
+      db.close();
+    }
+    const before = dbSnapshot(getStateDbPath());
+    const s = await start();
+    const overview = await data(s, "/api/overview");
+    expect(overview.metrics.tasks.byTask.some((t: { taskId: string }) => t.taskId === "rare-failure")).toBe(false);
+    expect(overview.taskFailures).toEqual([{ taskId: "rare-failure", runs: 1, failed: 1, medianMs: 50 }]);
+    const detail = await data(s, "/api/tasks/history?taskId=rare-failure&limit=1");
+    expect(detail).toMatchObject({
+      available: true,
+      totalCount: 1,
+      count: 1,
+      runs: [
+        { taskId: "rare-failure", status: "failed", durationMs: 50, detail: { reason: "timeout", error: "Timed out" } },
+      ],
+    });
+    expect(detail.runs[0].logPath).toBeUndefined();
+    expect((await data(s, "/api/tasks/history?taskId=unknown-detail")).runs[0]).toMatchObject({
+      status: "active",
+      durationMs: null,
+      detail: null,
+    });
+    expect((await data(s, `/api/tasks/history?taskId=unknown-detail&since=${Date.now() - 1000}`)).count).toBe(0);
+    expect((await api(s, "/api/tasks/history")).status).toBe(400);
+    expect((await api(s, "/api/tasks/history?taskId=x&since=not-a-date")).status).toBe(400);
+    expect(dbSnapshot(getStateDbPath())).toBe(before);
+  });
+
+  test("proposal counts and age/source filters use the whole queue and respect reopening", async () => {
+    await seed();
+    const original = createProposal(storage.stashDir, {
+      ref: "lessons/rg",
+      source: "reflect",
+      sourceRun: "run-1",
+      target: { source: "stash", root: storage.stashDir },
+      payload: { content: LESSON, frontmatter: { description: "Use ripgrep" } },
+    });
+    const now = new Date().toISOString();
+    const old = new Date(Date.now() - 10 * 86_400_000).toISOString();
+    const week = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      for (let i = 0; i < 201; i++)
+        upsertProposal(db, { ...original, id: `old-${i}`, createdAt: old, updatedAt: old }, storage.stashDir);
+      upsertProposal(
+        db,
+        { ...original, id: "reopened", createdAt: old, reviewHistory: [{ reopenedAt: now }] },
+        storage.stashDir,
+      );
+      upsertProposal(db, { ...original, id: "week", source: "feedback", createdAt: week }, storage.stashDir);
+      upsertProposal(db, { ...original, id: "unknown", createdAt: "invalid" }, storage.stashDir);
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const all = await data(s, "/api/proposals?limit=200");
+    expect(all.totalCount).toBe(205);
+    expect(all.fullCount).toBe(205);
+    expect(all.proposals).toHaveLength(200);
+    expect(all.backlog).toEqual([
+      { source: "feedback", underDay: 0, underWeek: 1, older: 0, unknown: 0 },
+      { source: "reflect", underDay: 2, underWeek: 0, older: 201, unknown: 1 },
+    ]);
+    const filtered = await data(s, "/api/proposals?source=reflect&age=underDay&limit=1");
+    expect(filtered).toMatchObject({ totalCount: 2, fullCount: 205, bySource: { reflect: 204, feedback: 1 } });
+    expect(filtered.proposals).toHaveLength(1);
+    expect((await data(s, "/api/proposals?age=unknown")).proposals[0].id).toBe("unknown");
+    expect((await api(s, "/api/proposals?age=invalid")).status).toBe(400);
   });
 
   test("GET /api/bundles: cards with git status and asset counts, plus the index state", async () => {
@@ -592,6 +746,7 @@ describe("secrets and read-only guarantees", () => {
   const ENDPOINTS = [
     "/api/meta",
     "/api/overview",
+    "/api/tasks/history?taskId=missing",
     "/api/bundles",
     "/api/config",
     "/api/proposals?status=pending",

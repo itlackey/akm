@@ -171,12 +171,18 @@ export function when(iso) {
 
 // ---- small building blocks -------------------------------------------------
 
-export function assetHref(ref) {
-  return `#/asset?ref=${encodeURIComponent(ref)}`;
+export function assetHref(ref, returnTo = "") {
+  return `#/asset?ref=${encodeURIComponent(ref)}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}`;
 }
 
-export function proposalHref(id) {
-  return `#/proposals/${encodeURIComponent(id)}`;
+export function proposalHref(id, query = "") {
+  return `#/proposals/${encodeURIComponent(id)}${String(query) ? `?${query}` : ""}`;
+}
+
+/** Only a search route is a document's return destination, never an arbitrary URL. */
+export function searchReturn(query) {
+  const value = query.get("returnTo") ?? "";
+  return /^#\/search(?:\?|$)/.test(value) ? value : "";
 }
 
 /** Status pill: `kind` is ok | warn | fail | neutral | info. */
@@ -249,10 +255,19 @@ export function hasUnsaved() {
 }
 
 let flash = null;
+export function setFlash(message) {
+  flash = message;
+}
 /** Show the status a form left before its page re-rendered, once. Called by the router after each render. */
 export function showFlash(root) {
   const pending = flash;
   flash = null;
+  if (typeof pending === "string") {
+    const status = document.createElement("div");
+    mount(status, html`<p role="status" class="notice notice-ok">${pending}</p>`);
+    root.prepend(status);
+    return;
+  }
   const status = pending && root.querySelectorAll(pending.selector)[pending.index]?.querySelector("[data-status]");
   if (status) mount(status, html`<p role="status" class="text-ok">${pending.message}</p>`);
 }

@@ -56,6 +56,18 @@ declare module "*/assets/ui/charts.js" {
   const content: string;
   export default content;
 }
+declare module "*/assets/ui/chart-view.js" {
+  const content: string;
+  export default content;
+}
+declare module "*/assets/ui/echarts.js" {
+  const content: string;
+  export default content;
+}
+declare module "*/assets/ui/overview-charts.js" {
+  const content: string;
+  export default content;
+}
 
 declare module "*/assets/ui/config.js" {
   const content: string;

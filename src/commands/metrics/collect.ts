@@ -449,7 +449,7 @@ function taskDurationMs(row: TaskHistoryRow): number | undefined {
   }
 }
 
-function buildTasks(top: number, rows: TaskHistoryRow[]): AkmMetricsResult["tasks"] {
+export function buildTasks(top: number, rows: TaskHistoryRow[]): AkmMetricsResult["tasks"] {
   const byTask = new Map<string, { runs: number; failed: number; durations: number[] }>();
   let failed = 0;
   for (const row of rows) {
