@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261022] - 2026-10-31
+
+### Added
+
+- `akm ui` shows the serving hostname beside the version and adds offline
+  operational charts for activity, retrieval health, automation reliability,
+  model utilization, and proposal waiting age. Each chart has a data table;
+  task history and unsuccessful queries can be inspected without running work
+  (#1302).
+
+### Fixed
+
+- Knowledge, memories, and other typed directories keep their declared type
+  when documents quote `$ARGUMENTS`. Commands under `commands/`, explicit
+  `agent` frontmatter, and command discovery in untyped directories retain
+  their existing behavior. The next ordinary index pass repairs affected refs
+  without rewriting source files (#1300).
+- `akm health` no longer reports valid skills named `knowledge`, `memories`,
+  or `commands` as type-directory disagreements. Genuine mismatches and copied
+  `SKILL.md` reference material remain checked (#1301).
+- Proposal review preserves its filtered queue and keeps the diff ahead of
+  secondary metadata. Asset editing preserves search context, restores focus,
+  retains save feedback, and requires a separate reviewed overwrite action
+  after a conflicting edit. Mobile navigation and diagnostics are more compact;
+  Bundles layout is unchanged (#1302).
+- UI activity uses canonical operation counts instead of counting search hits
+  as separate searches. Task failures are ranked before display limits,
+  proposal backlog includes the full pending queue and reopening dates, and
+  missing measurements remain distinguishable from zero (#1302).
+
 ## [0.10.261021] - 2026-10-30
 
 ### Added

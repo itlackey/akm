@@ -50,7 +50,18 @@ describe("migration help", () => {
     expect(bundled.length).toBeGreaterThan(0);
     // Sanity: every known prior release has a note. Adding a new file to
     // docs/migration/release-notes/ should be all it takes to extend this.
-    for (const version of ["0.0.13", "0.1.0", "0.2.0", "0.3.0", "0.5.0", "0.6.0", "0.7.5", "0.9.0", "0.9.2"]) {
+    for (const version of [
+      "0.0.13",
+      "0.1.0",
+      "0.2.0",
+      "0.3.0",
+      "0.5.0",
+      "0.6.0",
+      "0.7.5",
+      "0.9.0",
+      "0.9.2",
+      "0.10.261022",
+    ]) {
       expect(bundled).toContain(version);
       const result = renderMigrationHelp(version, undefined);
       expect(result).toContain(`# akm v${version} migration notes`);
