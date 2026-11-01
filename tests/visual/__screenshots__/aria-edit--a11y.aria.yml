@@ -45,7 +45,7 @@
     - tab "Preview"
   - tabpanel "Write":
     - text: Markdown
-    - textbox "Write": "/--- description: How to deploy the service tags: \\[deploy, runbook\\] --- # Deploy guide Run the deploy script from the release branch\\. See \\[\\[knowledge\\/rollback\\]\\] for the way back\\. ## Checklist - Check that the build is green\\. - Run `\\.\\/deploy[\\d,.]+[hmsp]+ --env prod`\\. - Watch the dashboards for ten minutes\\./"
+    - textbox "Markdown": "/--- description: How to deploy the service tags: \\[deploy, runbook\\] --- # Deploy guide Run the deploy script from the release branch\\. See \\[\\[knowledge\\/rollback\\]\\] for the way back\\. ## Checklist - Check that the build is green\\. - Run `\\.\\/deploy[\\d,.]+[hmsp]+ --env prod`\\. - Watch the dashboards for ten minutes\\./"
 - contentinfo:
   - text: akm 0.0.0 · visual-host bun
   - group "Theme":

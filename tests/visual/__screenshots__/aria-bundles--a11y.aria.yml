@@ -48,7 +48,6 @@
     - combobox "Default write target":
       - option "Default bundle (stash)"
       - option "stash" [selected]
-    - button "Save defaults"
   - region "Configured bundles":
     - heading "Configured bundles" [level=2]
     - paragraph: Every source akm indexes, with its git state and what it holds.
@@ -61,7 +60,7 @@
       - term: Path
       - definition: /tmp/akm-visual-loaded/stash
       - term: Source
-      - definition: path path
+      - definition: this folder
       - term: Assets
       - definition: "6"
       - img "knowledge 3, command 1, lesson 1, memory 1"

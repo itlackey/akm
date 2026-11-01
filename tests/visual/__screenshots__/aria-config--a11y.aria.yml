@@ -63,7 +63,6 @@
     - text: Candidates to rerank
     - spinbutton "Candidates to rerank"
     - paragraph: /At most \d+\./
-    - button "Save changes" [disabled]
   - region "Library":
     - heading "Library" [level=2]
     - paragraph: Where akm reads by default and where it writes new assets.
@@ -82,7 +81,6 @@
     - text: Require a reason with feedback
     - paragraph: Negative feedback always needs a reason; this asks for one on positive feedback too.
     - switch "Require a reason with feedback"
-    - button "Save changes" [disabled]
   - region "Command output":
     - heading "Command output" [level=2]
     - paragraph: The defaults the akm CLI uses when you pass no --format or --detail.
@@ -103,7 +101,6 @@
         - text: Normal
         - radio "Full"
         - text: Full
-    - button "Save changes" [disabled]
   - region "Model connections":
     - heading "Model connections" [level=2]
     - paragraph: The OpenAI-compatible endpoints improve, judges and agents call. Keys are environment variable references.
@@ -122,7 +119,7 @@
     - text: Value
     - textbox "Value":
       - /placeholder: "true"
-    - switch "Unset this key instead"
+    - checkbox "Unset this key instead"
     - text: Unset this key instead
     - button "Apply"
     - group: Effective config (read-only, secrets redacted)

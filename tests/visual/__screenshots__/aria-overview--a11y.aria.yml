@@ -36,8 +36,9 @@
 - main:
   - heading "Overview" [level=1]
   - paragraph: Your akm environment. Times are UTC.
-  - text: /Overall health warn last \d+ hours 0 failing 1 warning 5 unknown 9 passing window since/
-  - time: /\d+[hmsp]+ ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/
+  - text: /Overall health warn last \d+ hours 0 failing 1 warning 9 passing/
+  - link "3 turned off · 2 not checked":
+    - /url: "#/overview"
   - region "Needs attention":
     - heading "Needs attention" [level=2]
     - list:
@@ -53,8 +54,8 @@
       - listitem:
         - 'link "Set up: connect a model so improve can run Open Config →"':
           - /url: "#/config"
-  - region "Last 7 days against your usual Last 7 days vs the 8 weeks before":
-    - heading "Last 7 days against your usual Last 7 days vs the 8 weeks before" [level=2]
+  - region "Last 7 days against your usual":
+    - heading "Last 7 days against your usual" [level=2]
     - text: /Found nothing \d+% \d+ of \d+ searches\. Above your usual 0% to \d+%\./
     - img "Weekly trend"
     - text: "/Negative feedback 2 2 assets\\. Too few weeks of feedback for a usual range\\. Latest: stash\\/\\/knowledge\\/deploy-guide, 2d ago\\. Runs finishing 6 of 8 Improve 6 of 6 ok\\. Tasks 0 of 2 ok\\. Failed: nightly-improve, \\d+[hmsp]+ ago\\./"
@@ -62,8 +63,8 @@
       - text: "/Last 4 weeks: improve proposed \\d+; 7 accepted \\(1 since reverted\\), 2 rejected \\(0 by you\\), \\d+ waiting · \\d+ model calls/"
       - link "Improve impact →":
         - /url: "#/improve"
-  - region /Trends Last \d+ days/:
-    - heading /Trends Last \d+ days/ [level=2]
+  - region "Trends":
+    - heading "Trends" [level=2]
     - group "Trend window":
       - radio /\d+ days/ [checked]
       - text: /\d+ days/
@@ -72,7 +73,7 @@
     - paragraph: /\d+-\d+-\d+ \d+:\d+ to now, UTC\. Today is partial\. Health covers the last \d+ hours\./
     - heading /Is search finding what you need\? \d+ searches · \d+ found nothing/ [level=2]
     - paragraph: "/Unusual: the week of \\d+-\\d+-\\d+ \\(\\d+%\\) fell outside the usual range\\./"
-    - paragraph: "Found nothing, by week Band: the usual range Improve run (below)"
+    - paragraph: "Found nothing, by week Band: the usual range Dots below: improve runs, finished or failed"
     - img "Share of searches that found nothing, by week, with its usual range. Weekly figures follow in Data and details.":
       - img: /Found nothing 0% 5% \d+% \d+% \d+% \d+% \d+% \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
     - img "Improve runs by week, on the same weeks as the chart above.":
@@ -86,50 +87,36 @@
     - paragraph: Your own searches only. A day or week marked as partial is still filling. Found-nothing describes retrieval, not whether an answer was right.
     - group: Data and details
     - heading "Feedback and use" [level=2]
-    - paragraph: "Your own activity only: searches, curates, shows and feedback you made."
-    - checkbox "Search" [checked]
-    - text: Search
-    - checkbox "Curate" [checked]
-    - text: Curate
-    - checkbox "Show" [checked]
-    - text: Show
-    - checkbox "Feedback" [checked]
-    - text: Feedback
-    - img "Recorded operations by UTC day. Choose series above; exact counts follow in Data and details.":
-      - img: /Operations 0 3 6 9 \d+ \d+ \d+-\d+-\d+\* \d+-\d+-\d+ \d+-\d+-\d+ \d+-\d+-\d+ \d+-\d+-\d+ \d+-\d+-\d+\*/
+    - paragraph: Your own searches, curates, shows and feedback, by UTC day.
+    - paragraph: Search Curate Show Feedback
+    - img "Recorded operations by UTC day, stacked by kind. Exact counts follow in Data and details.":
+      - img: /Operations 0 3 6 9 \d+ \d+ \d+-\d+\* \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
     - group: Data and details
-    - heading "Model utilization" [level=2]
-    - text: Group by
-    - combobox "Group by":
-      - option "Process" [selected]
-      - option "Execution target"
-    - text: Measure
-    - combobox "Measure":
-      - option "Calls" [selected]
-      - option "Tokens"
-      - option "Time"
-    - img "Model utilization ranked by the chosen measure. Select a bar or its table button for counts and coverage.":
-      - img: /Calls reflect triage\.judgment 0 \d+ \d+ \d+ \d+ \d+ \d+/
-    - paragraph: "/Tokens cover \\d+ \\/ \\d+ calls, not monetary cost\\. Time is summed call duration, not elapsed job time\\. All sources: improve, tasks and agents\\./"
+    - heading "Model calls" [level=2]
+    - paragraph: /By process\. Tokens cover \d+ of \d+ calls and are not a cost\. Time is summed call duration\./
+    - list "Model calls by process":
+      - listitem: /reflect \d+ calls \d+,\d+ tokens · [\d,.]+[bkmBKM]+ \d+[hmsp]+/
+      - listitem: /triage\.judgment \d+ calls \d+,\d+ tokens · \d+ s/
     - group: Data and details
-    - heading "Automation reliability" [level=2]
-    - paragraph: Scheduled task runs, ranked by failure rate. n is the number of recorded runs.
-    - img "Failed task runs ranked by failures before any display limit. Exact recorded-run denominators and history are in the table.":
-      - img: /Failure rate \(%\) nightly-improve \(n\.\.\. 0 \d+ \d+ \d+ \d+ \d+/
-    - paragraph: Failures first. Other recorded statuses are not automatically successes; missing runs do not prove a schedule ran.
-    - group: Task data and history
+    - heading "Scheduled tasks" [level=2]
+    - paragraph: Recorded runs in this window, most failures first.
+    - list "Failed runs by scheduled task":
+      - listitem: nightly-improve 1 of 1 failed
+    - group: Run history by task
     - group: /Latest \d+ improve runs \(all time, not this window\)/
   - group: Measurement coverage
   - heading "Health checks" [level=2]
+  - button "Run all checks"
+  - paragraph: 2 checks contact the akm release source or your scheduler, so this page runs them only when you ask.
   - group:
     - text: Warnings 1
     - list:
       - listitem:
         - strong: active-runs
-        - text: deterministic, high confidence
         - paragraph: "/1 active task run\\(s\\) are older than \\d+ minutes: hourly-sync \\([\\d,.]+[bkmBKM]+\\)\\./"
         - group: Evidence
-  - group: Unknown 5
+  - group: Turned off 3
+  - group: Not checked 2
   - group: Passing 9
 - contentinfo:
   - text: akm 0.0.0 · visual-host bun

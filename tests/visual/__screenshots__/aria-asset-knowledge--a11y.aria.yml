@@ -42,14 +42,9 @@
   - paragraph:
     - link "Edit Markdown":
       - /url: "#/edit?ref=stash%2F%2Fknowledge%2Fdeploy-guide"
-    - button "Helpful"
-    - button "Not helpful"
     - button "Copy ref"
     - link "Document history":
       - /url: "#/asset?ref=stash%2F%2Fknowledge%2Fdeploy-guide&history=1"
-    - text: ·
-    - link "New knowledge":
-      - /url: "#/new"
   - text: knowledge stash editable
   - group: On this page
   - region "Content":
@@ -59,7 +54,7 @@
         - /url: "#/asset?ref=stash%2F%2Fknowledge%2Frollback"
         - code: knowledge/rollback
       - text: for the way back.
-    - heading "Checklist" [level=3]
+    - heading "Checklist" [level=2]
     - list:
       - listitem: Check that the build is green.
       - listitem:

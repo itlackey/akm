@@ -89,30 +89,16 @@
     - img /Share of searches that found something, rolling 7 days, over the last \d+ days, with 2 days marked when improve changes were kept\. Weekly figures follow in Data and details\./:
       - img: /Found something \d+% \d+% \d+% \d+% \d+% \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
     - group: Data and details
-  - region "Who decided what, week by week":
-    - heading "Who decided what, week by week" [level=2]
-    - paragraph: Each process, by the week a proposal was decided.
+  - region "Who decided what":
+    - heading "Who decided what" [level=2]
+    - paragraph: Each process's decisions in this window, by who decided and what became of them.
     - paragraph: Accepted by the judge Accepted by you Accepted, decider not recorded Rejected Reverted
-    - heading "consolidate" [level=3]
-    - paragraph: "/1 decided, 1 kept \\(\\d+%\\)\\. Too few weeks with decisions for a trend: read the counts\\./"
-    - 'img "consolidate: decisions per week by who decided and outcome. Counts follow in Data and details."':
-      - img: /Decisions 0 1 \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
-    - heading "consolidate-pair" [level=3]
-    - paragraph: "/3 decided, 3 kept \\(\\d+%\\)\\. Too few weeks with decisions for a trend: read the counts\\./"
-    - 'img "consolidate-pair: decisions per week by who decided and outcome. Counts follow in Data and details."':
-      - img: /Decisions 0 1 2 3 \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
-    - heading "distill" [level=3]
-    - paragraph: "/2 decided, 1 kept \\(\\d+%\\)\\. Too few weeks with decisions for a trend: read the counts\\./"
-    - 'img "distill: decisions per week by who decided and outcome. Counts follow in Data and details."':
-      - img: /Decisions 0 1 \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
-    - heading "extract" [level=3]
-    - paragraph: "1 decided, 0 kept (0%). Too few weeks with decisions for a trend: read the counts."
-    - 'img "extract: decisions per week by who decided and outcome. Counts follow in Data and details."':
-      - img: /Decisions 0 1 \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
-    - heading "reflect" [level=3]
-    - paragraph: /3 decided, 1 kept \(\d+%\)\./
-    - 'img "reflect: decisions per week by who decided and outcome. Counts follow in Data and details."':
-      - img: /Decisions 0 1 \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
+    - list "Decisions by process":
+      - listitem: consolidate 1 of 1 kept accepted, decider not recorded 1
+      - listitem: consolidate-pair 3 of 3 kept accepted, decider not recorded 3
+      - listitem: distill 1 of 2 kept accepted, decider not recorded 1 · reverted 1
+      - listitem: extract 0 of 1 kept rejected 1
+      - listitem: reflect 1 of 3 kept accepted by the judge 1 · rejected 2
     - group: Data and details
   - region "Is review keeping up?":
     - heading "Is review keeping up?" [level=2]
@@ -173,7 +159,7 @@
     - paragraph: /\d+ model calls; tokens are reported for \d+ of them\. Tokens are not money\./
     - paragraph: reflect triage.judgment
     - img "Model calls per week by process.":
-      - img: /Calls 5 \d+ \d+ \d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
+      - img: /Calls 0 5 \d+ \d+ \d+ \d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
     - group: Data and details
   - region "Changed assets, before and after":
     - heading "Changed assets, before and after" [level=2]
