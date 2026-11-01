@@ -2547,3 +2547,37 @@ button:disabled:not(.btn-secondary, .btn-danger) {
 .search-filter {
   flex: 1 1 10rem;
 }
+
+/* ---- selected states that do not rely on colour, and forced colors ---- */
+.chip.active::before,
+.seg button[aria-pressed="true"]::before {
+  content: "✓ " / "";
+}
+
+.tab.active {
+  font-weight: 700;
+}
+
+@media (forced-colors: active) {
+  .badge {
+    border-color: CanvasText;
+  }
+  /* Marks that are only a background colour would vanish, so keep their colour and outline them. */
+  .dot,
+  .swatch,
+  .series-key,
+  .propbar span,
+  .minibar rect {
+    forced-color-adjust: none;
+    border: 1px solid CanvasText;
+  }
+  .chip.active,
+  .seg button[aria-pressed="true"],
+  .tab.active {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  .nav-links a[aria-current="page"] {
+    outline: 2px solid Highlight;
+  }
+}
