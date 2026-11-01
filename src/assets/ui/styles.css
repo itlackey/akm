@@ -1263,8 +1263,23 @@ pre.diff {
 .search-form {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin: 20px 0 16px;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-1);
+  & input[type="search"] {
+    flex: 1 1 20rem;
+    min-inline-size: 0;
+    font-size: var(--text-l);
+    padding-block: 9px;
+  }
+  & button[type="submit"] {
+    padding-block: 9px;
+  }
 }
 
 input[type="search"],
@@ -1351,7 +1366,12 @@ input[type="checkbox"] {
 }
 
 .asset-inventory > details {
-  margin-top: 16px;
+  margin-block-start: var(--space-5);
+  & > summary {
+    margin-block-end: var(--space-2);
+    font-weight: 600;
+    text-transform: capitalize;
+  }
 }
 
 .md [id] {
@@ -1538,11 +1558,22 @@ pre.diff:focus-visible {
   list-style: none;
   margin: 0;
   padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
 }
 
 .hit {
-  padding: 14px 0;
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-4) var(--space-5);
+  border-block-end: 1px solid var(--border);
+  &:last-child {
+    border-block-end: 0;
+  }
+  &:hover {
+    background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+  }
 }
 
 .hit p {
@@ -1564,11 +1595,12 @@ pre.diff:focus-visible {
 }
 
 .tag {
-  padding: 0 8px;
-  border-radius: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
   background: var(--surface-2);
+  border: 1px solid var(--border);
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: var(--text-xs);
 }
 
 .md {
@@ -1910,4 +1942,18 @@ button:disabled {
     margin-inline-end: var(--space-2);
     vertical-align: 0.05em;
   }
+}
+
+.queue-summary {
+  margin-block: var(--space-4) var(--space-5);
+  & details {
+    margin-block-start: var(--space-3);
+  }
+}
+
+.action-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }

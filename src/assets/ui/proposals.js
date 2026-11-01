@@ -1,6 +1,5 @@
 // Proposals: the pending queue grouped by source, recent decisions, and a detail view with the diff.
 
-import { horizontalBars, wireChart } from "./chart-view.js";
 import { diffSection } from "./diff-view.js";
 import {
   api,
@@ -112,27 +111,23 @@ function backlogTable(rows) {
   );
 }
 
-function backlog(ctx, data) {
-  wireChart(
-    ctx,
-    "#backlog-chart",
-    () =>
-      horizontalBars(
-        data.backlog.map((row) => row.source),
-        Object.entries(AGE_BANDS).map(([key, name]) => ({
-          name,
-          stack: "waiting",
-          data: data.backlog.map((row) => row[key]),
-        })),
-        "Pending",
-      ),
-    (event) => {
-      const source = data.backlog[event.dataIndex]?.source;
-      const age = Object.keys(AGE_BANDS)[event.seriesIndex];
-      if (source && age) location.hash = listHref("pending", source, age);
-    },
+function backlog(_ctx, data) {
+  const totals = Object.fromEntries(
+    Object.keys(AGE_BANDS).map((key) => [key, data.backlog.reduce((sum, row) => sum + (row[key] ?? 0), 0)]),
   );
-  return html`<section class="chart-card"><h2>Waiting for review</h2><p class="muted small">All <span data-backlog-total>${data.fullCount}</span> pending proposals. Age starts at the last reopening, or creation.</p><p class="chart-legend">${Object.values(AGE_BANDS).map((label, index) => html`<span><i class="series-key series-${index + 1}" aria-hidden="true"></i>${label}</span>`)}</p>${data.backlog.length ? html`<div class="echarts-view" id="backlog-chart" role="img" aria-label="Pending proposals by source and waiting age. Select a segment or a table link to review that queue."></div>` : ""}<details><summary>Queue counts and filters</summary><div data-backlog-table>${backlogTable(data.backlog)}</div></details></section>`;
+  const tone = { older: "warn" };
+  return html`<section class="queue-summary" aria-label="Waiting for review">
+    <div class="tiles">
+      <div class="tile"><span class="tile-label">Waiting for review</span><span class="tile-value num" data-backlog-total>${data.fullCount}</span><span class="tile-sub muted">age counts from the last reopening</span></div>
+      ${Object.entries(AGE_BANDS)
+        .filter(([key]) => key !== "unknown" || totals.unknown)
+        .map(
+          ([key, label]) =>
+            html`<a class="tile" href="${listHref("pending", "", key)}" ${totals[key] && tone[key] ? html`data-tone="${tone[key]}"` : ""}><span class="tile-label">${label}</span><span class="tile-value num">${totals[key]}</span><span class="tile-sub muted">show these</span></a>`,
+        )}
+    </div>
+    <details><summary>Counts by process and age</summary><div data-backlog-table>${backlogTable(data.backlog)}</div></details>
+  </section>`;
 }
 
 export async function renderList(ctx) {

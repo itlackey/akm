@@ -1,23 +1,13 @@
 {
   "tokens": {
     "light": {
-      "text --on-accent on --accent": "token not defined yet (P2-2)",
       "text --on-danger on --fail": "token not defined yet (P2-2)",
-      "control-edge --border on --bg": "B-18",
-      "control-edge --border on --surface": "B-18",
-      "control-edge --border on --surface-2": "B-18",
       "band-edge --band-edge on --surface": "token not defined yet (P2-2)",
-      "accent-vs-series --accent from --s1": "P2-7 (D-40)",
       "age-ramp --age-1..3": "token not defined yet (P2-2)"
     },
     "dark": {
-      "text --on-accent on --accent": "token not defined yet (P2-2)",
       "text --on-danger on --fail": "token not defined yet (P2-2)",
-      "control-edge --border on --bg": "B-18",
-      "control-edge --border on --surface": "B-18",
-      "control-edge --border on --surface-2": "B-18",
       "band-edge --band-edge on --surface": "token not defined yet (P2-2)",
-      "accent-vs-series --accent from --s1": "P2-7 (D-40)",
       "age-ramp --age-1..3": "token not defined yet (P2-2)"
     }
   },
