@@ -57,6 +57,11 @@ const projects = [
     testMatch: "reflow.pw.ts",
     use: { ...devices["Desktop Chrome"], viewport: { width: 320, height: 640 }, colorScheme: "light" as const },
   },
+  {
+    name: "audit",
+    testMatch: ["style-audit.pw.ts", "tools.pw.ts"],
+    use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 }, colorScheme: "light" as const },
+  },
 ];
 
 export default defineConfig({
