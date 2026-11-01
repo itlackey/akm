@@ -134,9 +134,11 @@ function retrievalCard(ctx, trend, data) {
     pChartLine(labels, weekly, trend.centre, { name: "Found nothing", unit: "Found nothing" }),
   );
   wireChart(ctx, "#trend-events", (token) => eventStrip(labels, runs, { name: "Improve runs", token }));
-  wireChart(ctx, "#trend-searches", () =>
-    verticalBars(labels, [{ name: "Searches", data: weekly.map((w) => w.n) }], "Searches"),
-  );
+  wireChart(ctx, "#trend-searches", () => {
+    const option = verticalBars(labels, [{ name: "Searches", data: weekly.map((w) => w.n) }], "Searches");
+    option.yAxis.splitNumber = 2;
+    return option;
+  });
   const days = data.retrieval?.daily ?? [];
   wireChart(ctx, "#trend-latency", () =>
     lines(

@@ -2835,3 +2835,8 @@ fieldset.trend-window {
 .attention details {
   margin-block-start: var(--space-2);
 }
+
+/* A heading focused by the router is a landmark for the reader, not a control: it needs no ring. */
+h1[tabindex="-1"]:focus {
+  outline: none;
+}
