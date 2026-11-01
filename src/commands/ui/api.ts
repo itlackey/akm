@@ -48,7 +48,7 @@ import { pkgVersion } from "../../version";
 import { listConfig } from "../config-cli";
 import { akmHealth, parseHealthSince } from "../health";
 import { computeAcceptRateBySource } from "../health/accept-rate";
-import { buildTasks, compareTaskFailures, taskFailRate } from "../metrics/collect";
+import { rankTaskFailures } from "../metrics/collect";
 import { akmMetrics } from "../metrics/metrics-cli";
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../proposal/repository";
@@ -225,17 +225,8 @@ async function overview(query: Query) {
       (db) => ({
         pendingNow: stashDir ? countPendingProposals(db, stashDir) : null,
         improveRuns: listRecentImproveRuns(db, IMPROVE_RUNS_SHOWN).map(summarizeImproveRun),
-        taskFailures: metrics
-          ? (() => {
-              const rows = queryTaskHistory(db, metrics.window);
-              // Rank the complete window by failures, not the metrics top-20 by volume.
-              return buildTasks(rows.length, rows)
-                .byTask.filter((task) => task.failed > 0)
-                .sort(compareTaskFailures)
-                .slice(0, 20)
-                .map((task) => ({ ...task, failRate: taskFailRate(task) }));
-            })()
-          : null,
+        // Rank the complete window by rate (M-25), not the metrics top-20 by volume.
+        taskFailures: metrics ? rankTaskFailures(queryTaskHistory(db, metrics.window)).slice(0, 20) : null,
       }),
       null,
     ),

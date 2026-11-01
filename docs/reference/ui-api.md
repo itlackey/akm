@@ -127,7 +127,7 @@ Everything on the overview page in one call. Query parameters:
       "zeroResultQueries": [{ "date": "2026-10-16", "query": "missing guide", "count": 1 }]
     },
     "pendingNow": 3,
-    "taskFailures": [{ "taskId": "weekly-review", "runs": 6, "failed": 2, "medianMs": 4000, "failRate": 0.3333333333333333 }]
+    "taskFailures": [{ "taskId": "weekly-review", "runs": 6, "failed": 2, "medianMs": 4000, "rated": 6, "failRate": 0.3333333333333333 }]
   }
 }
 ```
@@ -149,9 +149,10 @@ Everything on the overview page in one call. Query parameters:
 - `metrics.usage.searchMedianMs` and the `retrieval` daily median share one filter (`totalMs >= 0`);
   `metrics.usage.searchTimed` is the number of searches behind the median. The daily feedback count in
   `metrics.usage.daily` counts signed rows only, like `metrics.feedback.totals`.
-- `taskFailures` lists the tasks with at least one failed run in `metrics.window`, then limits to 20. `failRate` is
-  `failed / runs`, or `null` below 5 recorded runs. Tasks with a rate come first, highest rate first; the rest follow by
-  failures, then runs.
+- `taskFailures` lists the tasks in `metrics.window` with at least one failed run or stuck active run, then limits to
+  20. `rated` is the number of finished runs: completed + failed + active runs started more than 6 h ago (a fresh
+  active run is neither ok nor failed and is not counted). `failRate` is `(rated - completed) / rated`, or `null` below
+  5 rated runs (plan M-25). Tasks with a rate come first, highest rate first; the rest follow by not-ok runs, then runs.
   Nonfailed runs are not assumed successful, nor are absent runs evidence of a successful scheduled task.
   Details are available from `/api/tasks/history`. Missing/unreadable state yields `null` rather than a healthy empty list.
 - Charts must retain `metrics.notes` about missing stores and retention; none of these series imply complete history.

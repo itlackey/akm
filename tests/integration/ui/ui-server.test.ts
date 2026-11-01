@@ -442,7 +442,7 @@ describe("endpoints", () => {
     const overview = await data(s, "/api/overview");
     expect(overview.metrics.tasks.byTask.some((t: { taskId: string }) => t.taskId === "rare-failure")).toBe(false);
     expect(overview.taskFailures).toEqual([
-      { taskId: "rare-failure", runs: 1, failed: 1, medianMs: 50, failRate: null },
+      { taskId: "rare-failure", runs: 1, failed: 1, medianMs: 50, rated: 1, failRate: null },
     ]);
     const detail = await data(s, "/api/tasks/history?taskId=rare-failure&limit=1");
     expect(detail).toMatchObject({
@@ -561,6 +561,39 @@ describe("endpoints", () => {
     const overview = await data(s, "/api/overview");
     expect(overview.taskFailures.map((t: { taskId: string }) => t.taskId)).toEqual(["flaky", "busy", "few"]);
     expect(overview.taskFailures.map((t: { failRate: number | null }) => t.failRate)).toEqual([0.6, 0.2, null]);
+  });
+
+  test("task fail rate counts stale active runs as not ok and ignores fresh active runs (M-25)", async () => {
+    await seed();
+    const db = openStateDatabase();
+    const run = (taskId: string, status: string, ageMs: number) =>
+      upsertTaskHistory(db, {
+        task_id: taskId,
+        status,
+        started_at: new Date(Date.now() - ageMs).toISOString(),
+        completed_at: status === "completed" ? new Date().toISOString() : null,
+        failed_at: status === "failed" ? new Date().toISOString() : null,
+        log_path: null,
+        target_kind: null,
+        target_ref: null,
+        metadata_json: "{}",
+      });
+    try {
+      // fresh-active: 4 failed + 1 fresh active -> rated 4, no rate yet.
+      for (let n = 0; n < 4; n++) run("fresh-active", "failed", 120_000 + n * 1000);
+      run("fresh-active", "active", 600_000);
+      // stale-active: 3 completed + 1 failed + 1 active 10 h ago -> rated 5, 2 not ok = 0.4.
+      for (let n = 0; n < 3; n++) run("stale-active", "completed", 120_000 + n * 1000);
+      run("stale-active", "failed", 130_000);
+      run("stale-active", "active", 10 * 3_600_000);
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const overview = await data(s, "/api/overview");
+    const byId = Object.fromEntries(overview.taskFailures.map((t: { taskId: string }) => [t.taskId, t]));
+    expect(byId["fresh-active"]).toMatchObject({ runs: 5, rated: 4, failRate: null });
+    expect(byId["stale-active"]).toMatchObject({ runs: 5, rated: 5, failRate: 0.4 });
   });
 
   test("GET /api/bundles: cards with git status and asset counts, plus the index state", async () => {
