@@ -40,7 +40,7 @@
   pre,
   .mono {
     font-family: var(--mono);
-    font-size: 0.92em;
+    font-size: var(--text-m);
   }
 
   main {
@@ -68,7 +68,7 @@
     margin: 0 0 var(--space-3);
     font-size: var(--text-l);
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: var(--tracking-snug);
   }
 
   h3 {
@@ -81,7 +81,7 @@
     margin: var(--space-4) 0 var(--space-2);
     font-size: var(--text-xs);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: var(--tracking-caps);
     color: var(--muted);
   }
 
@@ -98,22 +98,21 @@
   }
 
   /* Unsaved-draft guard: floats over the page so the editor underneath stays mounted. */
-  #unsaved {
+  .unsaved-bar {
     position: fixed;
-    top: 16px;
-    right: 16px;
+    inset-block-start: 16px;
+    inset-inline-end: 16px;
     z-index: 10;
-    max-width: min(420px, calc(100vw - 32px));
+    max-inline-size: min(420px, calc(100vw - 32px));
     margin: 0;
-    box-shadow: 0 4px 16px rgb(0 0 0 / 0.2);
-  }
-
-  #unsaved p {
-    margin: 0 0 8px;
+    box-shadow: var(--shadow-float);
+    & p {
+      margin: 0 0 var(--space-2);
+    }
   }
 
   table {
-    width: 100%;
+    inline-size: 100%;
     border-collapse: collapse;
   }
 
@@ -122,7 +121,7 @@
     padding: var(--space-2) var(--space-4);
     text-align: left;
     vertical-align: top;
-    border-bottom: 1px solid var(--border);
+    border-block-end: 1px solid var(--border);
   }
 
   thead th {
@@ -131,14 +130,14 @@
     font-family: var(--mono);
     font-size: var(--text-xs);
     font-weight: 500;
-    letter-spacing: 0.06em;
+    letter-spacing: var(--tracking-caps);
     text-transform: uppercase;
     white-space: nowrap;
   }
 
   tr:last-child > td,
   tr:last-child > th {
-    border-bottom: 0;
+    border-block-end: 0;
   }
 
   tbody tr:hover > * {
@@ -213,7 +212,7 @@
 
   input[type="search"] {
     flex: 1 1 260px;
-    min-width: 0;
+    min-inline-size: 0;
   }
 
   button:disabled {

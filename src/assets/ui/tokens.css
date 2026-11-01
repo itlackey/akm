@@ -3,6 +3,7 @@
   /* akm ui. Colours, space, type, radius and elevation are tokens on :root; each colour is a light-dark() pair, so the system scheme picks one and the Theme control can force either. */
   :root {
     color-scheme: light dark;
+    accent-color: var(--accent);
     --bg: light-dark(#f6f6f9, #0a0a0c);
     --surface: light-dark(#ffffff, #111115);
     --surface-2: light-dark(#efeff4, #17171c);
@@ -72,6 +73,9 @@
     --leading-snug: 1.5;
     --weight-strong: 600;
     --tracking-tight: -0.045em;
+    --tracking-snug: -0.02em;
+    --tracking-caps: 0.06em;
+    --shadow-float: 0 4px 16px rgb(0 0 0 / 0.2);
     --edge-accent: inset 3px 0 0 var(--accent-line);
     --edge-underline: inset 0 -3px 0 var(--accent-line);
     --edge-accent-thin: inset 2px 0 0 var(--accent-line);
@@ -88,9 +92,5 @@
 
   :root[data-theme="dark"] {
     color-scheme: dark;
-  }
-
-  :root {
-    accent-color: var(--accent);
   }
 }

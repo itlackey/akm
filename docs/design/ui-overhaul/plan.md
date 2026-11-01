@@ -1283,17 +1283,17 @@ main  { container: page / inline-size; padding: var(--page-pad); }
 3. A class is the subject of **one** top-level rule across all files. Its states, `@container`, `@media (forced-colors|prefers-contrast|print)` and `@supports` variants nest inside that rule.
 4. Specificity ≤ (0,3,0). Nesting ≤ 2 levels. No IDs. No type-qualified classes. Base element rules go inside `:where()`.
 5. Logical properties only. `width`/`height` are allowed inside media and container preludes.
-6. `@media` only for the shell `50rem`, reduced motion, contrast, forced colors and print. `@container` lengths only from {30rem, 60rem, 56rem}.
+6. `@media` only for the layout breaks of the approved design B (50, 64, 72 and 90rem), reduced motion, contrast, forced colors, colour scheme and print. `@container` lengths only from {30rem, 60rem, 56rem}.
 7. `!important` only inside the reduced-motion block in `base.css`.
 8. No descending specificity, duplicate properties, shorthand overrides or unknown properties.
 9. `dvh`, never `vh`. `clamp()` only in `--page-pad`, `--text-2xl` and `--text-stat`.
 10. State is styled from ARIA and `data-*` attributes. There are no `.active` or `.selected` classes.
-11. `box-shadow` only on `.dialog`, `.status-bar`, `.menu` and `[data-stuck]`.
+11. `box-shadow` only from a token: the edge lines (`--edge-*`), the focus halo and `--shadow-float`. Design B draws its selected-row and attention edges as inset shadows.
 12. No `.card`/`.tile` nested inside `.card`.
-13. `letter-spacing` only in `.nav-section`.
+13. `letter-spacing` only from a `--tracking-*` token (design B tracks headings, labels and caps).
 14. New component blocks are inserted alphabetically, never appended at the end of a file.
 
-**`scripts/lint-ui-css.ts`** is a brace-aware scanner with fixtures in `tests/lint-ui-css.test.ts`. It enforces 1–7 and 9–13. A ratchet allowlist exists, and P2-3/P2-4 must empty it.
+**`scripts/lint-ui-css.ts`** is a brace-aware scanner with fixtures in `tests/lint-ui-css.test.ts`, run by `bun run lint`. It enforces 1, 4–7, 9–11 and 13; rule 1 covers margins, padding, gaps, radii and font sizes, not layout sizes. The stylesheets have no findings, so there is no allowlist.
 
 **Biome** override for `src/assets/ui/**/*.css`, at `error` from P0-3:
 - `style.noDescendingSpecificity`

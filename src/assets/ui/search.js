@@ -27,7 +27,7 @@ function tabs(active, q) {
     const params = new URLSearchParams();
     if (name !== "browse" && name !== "misses" && q) params.set("q", q);
     if (name !== "results") params.set("tab", name);
-    return html`<a class="tab ${active === name ? "active" : ""}" href="#/search${params.size ? `?${params}` : ""}" ${active === name ? html`aria-current="page"` : ""}>${label}${extra}</a>`;
+    return html`<a class="tab" href="#/search${params.size ? `?${params}` : ""}" ${active === name ? html`aria-current="page"` : ""}>${label}${extra}</a>`;
   };
   return html`<nav class="tabs" aria-label="Search views">${link("results", "Results")}${link("browse", "Browse")}${link("misses", "Misses")}</nav>`;
 }

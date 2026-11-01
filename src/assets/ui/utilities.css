@@ -15,11 +15,11 @@
   }
 
   .small {
-    font-size: 0.85em;
+    font-size: var(--text-s);
   }
 
   .big {
-    font-size: 1.5rem;
+    font-size: var(--text-xl);
     font-weight: 600;
   }
 

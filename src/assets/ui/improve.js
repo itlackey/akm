@@ -183,7 +183,7 @@ function outcomesSection(impact) {
         ? emptyState("No proposals decided in this window.", "Improve processes write proposals that are decided here.")
         : html`<ul class="bar-list" aria-label="Decisions by process">${rows.map(
             (row) =>
-              html`<li><span class="bar-name mono">${row.source}</span><span class="bar-track" aria-hidden="true"><span class="bar-stack" style="--share:${max ? row.total / max : 0}">${row.parts.filter((p) => p.n).map((p) => html`<span class="series-${p.colorIndex + 1}" style="flex-grow:${p.n}" title="${p.label}: ${p.n}"></span>`)}</span></span><span class="bar-value num">${fmtNum(row.kept)} of ${fmtNum(row.total)} kept</span><span class="bar-note muted small">${row.parts
+              html`<li><span class="bar-name mono">${row.source}</span><span class="bar-track" aria-hidden="true"><span class="bar-stack" style="--w:${max ? row.total / max : 0}">${row.parts.filter((p) => p.n).map((p) => html`<span class="series-${p.colorIndex + 1}" style="--w:${p.n}" title="${p.label}: ${p.n}"></span>`)}</span></span><span class="bar-value num">${fmtNum(row.kept)} of ${fmtNum(row.total)} kept</span><span class="bar-note muted small">${row.parts
                 .filter((p) => p.n)
                 .map((p) => `${p.label.toLowerCase()} ${p.n}`)
                 .join(" · ")}</span></li>`,

@@ -2,7 +2,7 @@
 @layer layout {
   /* ---- shell: a top bar on wide screens, a menu panel below 72rem ---- */
   .shell {
-    min-block-size: 100vh;
+    min-block-size: 100dvh;
   }
 
   .topbar {
@@ -132,17 +132,14 @@
     border-block-start: 1px solid var(--border);
     color: var(--faint);
     font-size: var(--text-xs);
-    @media (width < 72rem) {
-      padding-inline: var(--space-4);
-    }
-  }
-
-  .site-footer {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
+    @media (width < 72rem) {
+      padding-inline: var(--space-4);
+    }
   }
 
   .nav-meta {
@@ -230,7 +227,7 @@
       margin-block: var(--space-3) var(--space-1);
       font-family: var(--mono);
       font-size: var(--text-xs);
-      letter-spacing: 0.06em;
+      letter-spacing: var(--tracking-caps);
       text-transform: uppercase;
       color: var(--faint);
     }
@@ -277,7 +274,7 @@
   .cards {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
-    gap: 16px;
+    gap: var(--space-4);
   }
 
   .form-grid {
@@ -285,6 +282,7 @@
     gap: var(--space-4);
     margin: var(--space-4) 0;
     & label:not(.check-label, [hidden]) {
+      display: grid;
       gap: var(--space-1);
       font-size: var(--text-s);
       font-weight: 500;
@@ -299,19 +297,14 @@
     }
   }
 
-  .form-grid label:not(.check-label, [hidden]) {
-    display: grid;
-    gap: 4px;
-  }
-
   .form-grid input:not([type="checkbox"]) {
-    width: 100%;
-    min-width: 0;
+    inline-size: 100%;
+    min-inline-size: 0;
   }
 
   .form-grid textarea {
-    width: 100%;
-    min-width: 0;
+    inline-size: 100%;
+    min-inline-size: 0;
     resize: vertical;
     font-family: var(--mono);
   }
@@ -472,6 +465,14 @@
   }
 
   /* ---- review: the queue beside the open proposal ---- */
+  .review-list {
+    min-inline-size: 0;
+  }
+
+  .review-pane {
+    min-inline-size: 0;
+  }
+
   .review {
     display: grid;
     grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr);
@@ -487,14 +488,6 @@
         display: none;
       }
     }
-  }
-
-  .review-list {
-    min-inline-size: 0;
-  }
-
-  .review-pane {
-    min-inline-size: 0;
   }
 
   /* ---- trend cards ---- */

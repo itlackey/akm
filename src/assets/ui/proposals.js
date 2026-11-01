@@ -35,7 +35,7 @@ function refCell(p, query) {
 function sourceChips(counts, active, status, age = "") {
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
   const chip = (label, source, n) =>
-    html`<a class="chip ${(active ?? "") === source ? "active" : ""}" href="${listHref(status, source, age)}" ${(active ?? "") === source ? html`aria-current="true"` : ""}>${label} <span class="num">${n}</span></a>`;
+    html`<a class="chip" href="${listHref(status, source, age)}" ${(active ?? "") === source ? html`aria-current="true"` : ""}>${label} <span class="num">${n}</span></a>`;
   return html`<div class="chips">${chip("All", "", total)}${Object.entries(counts)
     .sort()
     .map(([s, n]) => chip(s, s, n))}</div>`;
@@ -167,7 +167,7 @@ async function reviewPage(ctx, { detailFor = null } = {}) {
   const detail = detailFor ? detailFor(data) : null;
   const current = detail?.id ?? "";
   const head = html`${pageHeader("Proposals", "Changes akm improve has staged for review.")}
-    <nav class="tabs" aria-label="Proposal lists"><a class="tab active" href="${listHref("pending", "")}" aria-current="page">Pending</a><a class="tab" href="${listHref("recent", "")}">Recent</a></nav>`;
+    <nav class="tabs" aria-label="Proposal lists"><a class="tab" href="${listHref("pending", "")}" aria-current="page">Pending</a><a class="tab" href="${listHref("recent", "")}">Recent</a></nav>`;
   ctx.after.push((root) =>
     wireBatch(root, {
       reload: async () => {
@@ -249,7 +249,7 @@ export async function renderList(ctx) {
   const query = String(ctx.query);
   const data = await api("/api/proposals", { status, source, limit: PENDING_LIMIT });
   const head = html`${pageHeader("Proposals", "Changes akm improve has staged for review.")}
-    <nav class="tabs" aria-label="Proposal lists"><a class="tab" href="${listHref("pending", "")}">Pending</a><a class="tab active" href="${listHref("recent", "")}" aria-current="page">Recent</a></nav>`;
+    <nav class="tabs" aria-label="Proposal lists"><a class="tab" href="${listHref("pending", "")}">Pending</a><a class="tab" href="${listHref("recent", "")}" aria-current="page">Recent</a></nav>`;
   ctx.after.push((root) => wireRecent(root));
   return html`${head}${recentView(data, source, query)}`;
 }

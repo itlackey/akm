@@ -22,8 +22,7 @@ export function proportionBar(counts) {
   const total = entries.reduce((sum, [, n]) => sum + n, 0);
   if (total === 0) return html`<p class="muted">No assets.</p>`;
   return html`<div class="propbar" role="img" aria-label="${entries.map(([k, n]) => `${k} ${n}`).join(", ")}">${entries.map(
-    ([k, n], i) =>
-      html`<span class="${PALETTE[i % PALETTE.length]}" style="width:${round((n / total) * 100)}%" title="${k}: ${n}"></span>`,
+    ([k, n], i) => html`<span class="${PALETTE[i % PALETTE.length]}" style="--w:${n}" title="${k}: ${n}"></span>`,
   )}</div>
   <ul class="legend">${entries.map(([k, n], i) => html`<li><span class="swatch ${PALETTE[i % PALETTE.length]}"></span>${k} <span class="num">${n}</span></li>`)}</ul>`;
 }

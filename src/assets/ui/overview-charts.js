@@ -41,7 +41,7 @@ function activity(ctx, metrics) {
 function barList(rows, { max, label }) {
   return html`<ul class="bar-list" aria-label="${label}">${rows.map(
     (row) =>
-      html`<li><span class="bar-name">${row.name}</span><span class="bar-track" aria-hidden="true"><span class="bar-fill" data-tone="${row.tone ?? ""}" style="--share:${max ? Math.max(row.value / max, row.value ? 0.02 : 0) : 0}"></span></span><span class="bar-value num">${row.text}</span>${row.note ? html`<span class="bar-note muted small">${row.note}</span>` : ""}</li>`,
+      html`<li><span class="bar-name">${row.name}</span><span class="bar-track" aria-hidden="true"><span class="bar-fill" data-tone="${row.tone ?? ""}" style="--w:${max ? Math.max(row.value / max, row.value ? 0.02 : 0) : 0}"></span></span><span class="bar-value num">${row.text}</span>${row.note ? html`<span class="bar-note muted small">${row.note}</span>` : ""}</li>`,
   )}</ul>`;
 }
 
