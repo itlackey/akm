@@ -42,6 +42,7 @@ import {
 import {
   getAllEntries,
   getBaseBeliefStatesForDerivedTwins,
+  getDerivedForParent,
   getEntriesByIds,
   getEntryById,
   getEntryCount,
@@ -356,8 +357,8 @@ async function searchDatabase(
   const rankMs = Date.now() - tRank0;
 
   const hits = await Promise.all(
-    selected.map(({ candidate, row }) =>
-      buildDbHit({
+    selected.map(async ({ candidate, row }) => {
+      const hit = await buildDbHit({
         entry: row.entry,
         path: row.filePath,
         itemRef: row.itemRef,
@@ -370,8 +371,12 @@ async function searchDatabase(
         config,
         db,
         eligible: (row) => applyEntryFilters([row], filterOptions).length > 0,
-      }),
-    ),
+      });
+      // The summary stands for its memory: `expandTo` leads back to the full text.
+      if (FAMILY_MODE === "summary-only" && isDerivedChild(row))
+        hit.expandTo = hit.ref.slice(0, -DERIVED_SUFFIX.length);
+      return hit;
+    }),
   );
 
   const mode: SearchExecutionMode = vector.warning ? "fts-fallback" : vector.neighbors ? "semantic" : "keyword";
@@ -403,6 +408,24 @@ function readFeedback(fused: readonly FusedCandidate[]): { counts: Map<string, F
 
 type HydratedEntry = NonNullable<ReturnType<typeof getEntryById>> & { id: number };
 
+// ── Result families (research #1309) ─────────────────────────────────────────
+
+/** Which arrangement of a memory and its `.derived` child the search applies. */
+type FamilyMode = "off" | "slot" | "child-first" | "slot-child-first" | "summary-only" | "summaries-first";
+const FAMILY_MODE = (process.env.AKM_R1309_FAMILY as FamilyMode | undefined) ?? ("off" as FamilyMode);
+
+type SelectedEntry = { candidate: FusedCandidate; row: HydratedEntry };
+
+const DERIVED_SUFFIX = ".derived";
+const isDerivedChild = (row: HydratedEntry): boolean =>
+  row.entry.type === "memory" && row.entry.name.toLowerCase().endsWith(DERIVED_SUFFIX);
+/** A memory and its `.derived` child share a key; every other entry is its own family. */
+function familyKey(row: HydratedEntry): string {
+  if (row.entry.type !== "memory") return row.itemRef;
+  const name = isDerivedChild(row) ? row.entry.name.slice(0, -DERIVED_SUFFIX.length) : row.entry.name;
+  return `${row.bundleId}\0${name}`;
+}
+
 /**
  * Walk the fused list in order, loading entries a batch at a time, and keep
  * the first `limit` that survive path deduplication and the filters. An entry
@@ -414,12 +437,22 @@ function selectFusedEntries(
   fused: FusedCandidate[],
   limit: number,
   filterOptions: EntryFilterOptions,
-): Array<{ candidate: FusedCandidate; row: HydratedEntry }> {
-  const selected: Array<{ candidate: FusedCandidate; row: HydratedEntry }> = [];
+): SelectedEntry[] {
+  const countFamilies =
+    FAMILY_MODE === "slot" ||
+    FAMILY_MODE === "slot-child-first" ||
+    FAMILY_MODE === "summary-only" ||
+    FAMILY_MODE === "summaries-first";
+  const selected: SelectedEntry[] = [];
+  const families = new Set<string>();
   const seenPaths = new Set<string>();
   const seenContent = new Set<string>();
   const batchSize = Math.max(limit * 2, 20);
-  for (let offset = 0; offset < fused.length && selected.length < limit; offset += batchSize) {
+  for (
+    let offset = 0;
+    offset < fused.length && (countFamilies ? families.size : selected.length) < limit;
+    offset += batchSize
+  ) {
     const batch: Array<HydratedEntry & { candidate: FusedCandidate }> = [];
     for (const candidate of fused.slice(offset, offset + batchSize)) {
       const row = getEntryById(db, candidate.id);
@@ -434,10 +467,60 @@ function selectFusedEntries(
         if (seenContent.has(content)) continue;
         seenContent.add(content);
       }
+      if (countFamilies) {
+        const key = familyKey(row);
+        if (!families.has(key) && families.size >= limit) continue;
+        families.add(key);
+      }
       selected.push({ candidate, row });
     }
   }
-  return selected.slice(0, limit);
+  if (FAMILY_MODE === "off") return selected.slice(0, limit);
+  const kept = countFamilies ? selected : selected.slice(0, limit);
+  return arrangeFamilies(db, kept, filterOptions, seenPaths);
+}
+
+/** Lay the selected entries out family by family; a family sits where its best-ranked member did. */
+function arrangeFamilies(
+  db: Database,
+  selected: SelectedEntry[],
+  filterOptions: EntryFilterOptions,
+  seenPaths: Set<string>,
+): SelectedEntry[] {
+  const groups = new Map<string, SelectedEntry[]>();
+  for (const item of selected) {
+    const key = familyKey(item.row);
+    const group = groups.get(key);
+    if (group) group.push(item);
+    else groups.set(key, [item]);
+  }
+  const arranged: SelectedEntry[][] = [];
+  for (const group of groups.values()) {
+    const child = group.find((m) => isDerivedChild(m.row));
+    const parent = group.find((m) => !isDerivedChild(m.row));
+    const fetchChild = FAMILY_MODE === "summary-only" || FAMILY_MODE === "summaries-first";
+    let childItem = child;
+    if (!childItem && parent && fetchChild && parent.row.entry.type === "memory") {
+      const derived = getDerivedForParent(db, `memories/${parent.row.entry.name}`, parent.row.bundleId);
+      const row = derived && getEntryById(db, derived.id);
+      if (derived && row && hasIndexedProvenance(row) && !seenPaths.has(row.filePath)) {
+        const hydrated: HydratedEntry = { ...row, id: derived.id };
+        if (applyEntryFilters([hydrated], filterOptions).length > 0) {
+          childItem = { candidate: parent.candidate, row: hydrated };
+        }
+      }
+    }
+    if (FAMILY_MODE === "slot") arranged.push(group);
+    else if (FAMILY_MODE === "child-first" || FAMILY_MODE === "slot-child-first")
+      arranged.push([...(child ? [child] : []), ...group.filter((m) => m !== child)]);
+    else if (FAMILY_MODE === "summary-only") arranged.push([childItem ?? group[0]!]);
+    else arranged.push([...(childItem ? [childItem] : []), ...(parent ? [parent] : [])]);
+  }
+  if (FAMILY_MODE === "summaries-first") {
+    const flat = arranged.flat();
+    return [...flat.filter((m) => isDerivedChild(m.row)), ...flat.filter((m) => !isDerivedChild(m.row))];
+  }
+  return arranged.flat();
 }
 
 /** Vector candidates of the requested type, nearest first; equal distances are ordered by ref. */
