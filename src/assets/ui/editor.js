@@ -20,6 +20,14 @@ export async function render(ctx) {
   const ref = ctx.query.get("ref") || ctx.param;
   if (ref) return edit(ctx, ref);
   const data = await api("/api/bundles");
+  // From a search that found nothing: `?q=` names the note, `?name=` sets the file name.
+  const wanted = (ctx.query.get("q") ?? "").trim();
+  const title = wanted || "New document";
+  const slug = wanted
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const prefillName = ctx.query.get("name") ?? slug;
   const writable = data.bundles.filter((b) => b.enabled && b.writable && b.components.some((c) => c.adapter === "akm"));
   ctx.after.push((root) => {
     actionForm(root, ".create-form", (_form, values) => post("/api/knowledge/create", Object.fromEntries(values)), {
@@ -56,11 +64,11 @@ export async function render(ctx) {
       <div class="settings-fields">
         <div class="settings-grid create-meta">
           <div class="field"><label class="field-label" for="nk-bundle">Bundle</label><select id="nk-bundle" name="bundle">${writable.map((b) => html`<option value="${b.name}" data-path="${b.path ?? ""}" ${b.name === (data.defaultWriteTarget ?? data.defaultBundle) ? html`selected` : ""}>${b.name}</option>`)}</select></div>
-          <div class="field"><label class="field-label" for="nk-name">Name</label><input id="nk-name" name="name" required placeholder="restore-database" autocomplete="off" spellcheck="false"><p class="field-hint">Becomes the file name and the asset's ref.</p></div>
+          <div class="field"><label class="field-label" for="nk-name">Name</label><input id="nk-name" name="name" required value="${prefillName}" placeholder="restore-database" autocomplete="off" spellcheck="false" aria-describedby="nk-name-hint"><p class="field-hint" id="nk-name-hint">Becomes the file name and the asset's ref. Lowercase letters, numbers and hyphens read best.</p></div>
           <div class="field"><label class="field-label" for="nk-path">Folder</label><div class="field-control"><input id="nk-path" name="path" placeholder="Optional, under knowledge/" autocomplete="off" spellcheck="false"><button type="button" class="btn-secondary" data-browse-folder="nk-path">Browse…</button></div></div>
         </div>
         <div class="compose">
-          <div class="field"><label class="field-label" for="nk-content">Markdown</label><textarea id="nk-content" name="content" rows="18" required spellcheck="false"># New document
+          <div class="field"><label class="field-label" for="nk-content">Markdown</label><textarea id="nk-content" name="content" rows="18" required spellcheck="false"># ${title}
 
 </textarea></div>
           <section class="compose-preview" aria-labelledby="nk-preview"><h2 id="nk-preview" class="field-label">Preview</h2><div class="md-preview" data-preview></div></section>
