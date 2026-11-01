@@ -500,7 +500,16 @@ export function upsertProposal(db: Database, proposal: Proposal, stashDir: strin
  */
 export function listStateProposals(
   db: Database,
-  options: { stashDir?: string; status?: string; ref?: string } = {},
+  options: {
+    stashDir?: string;
+    status?: string;
+    ref?: string;
+    /**
+     * Read the proposed content and frontmatter. A list that only shows summaries sets this to `false`, so a queue of
+     * hundreds of large proposals is not read in full for every request; the content comes back empty.
+     */
+    withContent?: boolean;
+  } = {},
 ): Proposal[] {
   const conditions: string[] = [];
   const params: unknown[] = [];
@@ -520,7 +529,7 @@ export function listStateProposals(
   const rows = db
     .prepare(
       `SELECT id, stash_dir, ref, status, source, created_at, updated_at,
-              content, frontmatter_json, metadata_json
+              ${options.withContent === false ? "'' AS content, '{}' AS frontmatter_json" : "content, frontmatter_json"}, metadata_json
        FROM proposals ${where} ORDER BY created_at ASC, rowid ASC`,
     )
     .all(...(params as SqlValue[])) as ProposalRow[];

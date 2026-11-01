@@ -52,9 +52,10 @@ export function retrievalSeries(rows: MetricsUsageRow[], window?: { since: strin
       // The share of searches that found nothing; null on a day with no searches, never 0.
       noResultRate: row.searches > 0 ? row.zeroResults / row.searches : null,
     })),
-    zeroResultQueries: [...queries.values()].sort(
-      (a, b) => b.date.localeCompare(a.date) || b.count - a.count || a.query.localeCompare(b.query),
-    ),
+    // Capped: every query of a long window would make the response as large as the window. The Misses view is the full list.
+    zeroResultQueries: [...queries.values()]
+      .sort((a, b) => b.date.localeCompare(a.date) || b.count - a.count || a.query.localeCompare(b.query))
+      .slice(0, 100),
   };
 }
 

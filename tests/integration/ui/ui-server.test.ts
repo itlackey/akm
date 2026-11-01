@@ -273,9 +273,9 @@ describe("server and guards", () => {
       expect(await response.json()).toMatchObject({ ok: false, code: "UNAUTHORIZED" });
     }
     expect((await fetch(`http://${s.host}:${s.port}/api/meta?token=wrong`)).status).toBe(401);
-    // The token is accepted as a header or as a query parameter.
+    // The token is accepted as a header only: a token in the URL would end up in history and logs.
     expect((await api(s, "/api/meta")).status).toBe(200);
-    expect((await fetch(`http://${s.host}:${s.port}/api/meta?token=${s.token}`)).status).toBe(200);
+    expect((await fetch(`http://${s.host}:${s.port}/api/meta?token=${s.token}`)).status).toBe(401);
   });
 
   test("only GET is accepted outside the proposal writes: a non-GET needs the token, then is refused", async () => {
@@ -298,6 +298,23 @@ describe("server and guards", () => {
       expect(JSON.parse(refused.body)).toMatchObject({ ok: false, code: "HOST_NOT_ALLOWED" });
     }
     expect((await requestWithHost(s, "evil.example.com", "/")).status).toBe(403);
+  });
+
+  test("static files carry a strong ETag with no-cache, and a matching If-None-Match is a 304", async () => {
+    await seed();
+    const s = await start();
+    const first = await fetch(`http://${s.host}:${s.port}/app.js`);
+    expect(first.status).toBe(200);
+    const etag = first.headers.get("etag") ?? "";
+    expect(etag).toMatch(/^"[0-9a-f]{40}"$/);
+    expect(first.headers.get("cache-control")).toBe("no-cache");
+    const again = await fetch(`http://${s.host}:${s.port}/app.js`, { headers: { "If-None-Match": etag } });
+    expect(again.status).toBe(304);
+    expect(await again.text()).toBe("");
+    // The API is never cached, and says how long its handler took.
+    const meta = await api(s, "/api/meta");
+    expect(meta.headers.get("cache-control")).toBe("no-store");
+    expect(meta.headers.get("server-timing")).toMatch(/^handler;dur=\d+(\.\d+)?$/);
   });
 
   test("an unknown API route is a 404 JSON error and close() frees the port", async () => {

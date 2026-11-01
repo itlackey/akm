@@ -264,8 +264,9 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
     // Only a GET of a static file is open; the API, and anything that is not a GET, needs the token.
     const readMethod = req.method === "GET" || req.method === "HEAD";
     if (isApi || !readMethod) {
+      // The header only: a token in a URL ends up in history and logs, and a link can carry it (B-49).
       const given = req.headers[TOKEN_HEADER];
-      const provided = (Array.isArray(given) ? given[0] : given) ?? url.searchParams.get("token");
+      const provided = Array.isArray(given) ? given[0] : given;
       if (!tokenMatches(provided, token)) {
         sendError(req, res, 401, "UNAUTHORIZED", "Missing or invalid session token.", {
           "WWW-Authenticate": "X-Akm-Ui-Token",
@@ -288,13 +289,23 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
     }
 
     if (isApi) {
+      const started = performance.now();
       try {
         const data = await handleApiRequest(url.pathname, url.searchParams, info);
         if (data === NO_SUCH_ROUTE) {
           sendError(req, res, 404, "NOT_FOUND", `No such API route: ${url.pathname}`);
           return;
         }
-        sendJson(req, res, 200, { ok: true, data: scrubUrlCredentials(data) });
+        // How long the handler took, for a reader looking at the network panel (B-66).
+        sendJson(
+          req,
+          res,
+          200,
+          { ok: true, data: scrubUrlCredentials(data) },
+          {
+            "Server-Timing": `handler;dur=${(performance.now() - started).toFixed(1)}`,
+          },
+        );
       } catch (error) {
         const code = error instanceof AkmError ? error.code : "INTERNAL_ERROR";
         // The editor's source read refuses what a save would refuse, with the same status.
@@ -309,11 +320,24 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
       sendError(req, res, 404, "NOT_FOUND", `No such file: ${url.pathname}`);
       return;
     }
-    res.writeHead(200, {
+    // A strong ETag with `no-cache`: the browser keeps the file and revalidates, so a 200 KB chart library is not
+    // downloaded again on every reload, yet an upgrade is seen at once (B-65).
+    const etag = `"${createHash("sha1").update(asset.body).digest("hex")}"`;
+    const headers = {
       ...SECURITY_HEADERS,
+      "Cache-Control": "no-cache",
+      ETag: etag,
+      "Content-Security-Policy": STATIC_CSP,
+    };
+    if (req.headers["if-none-match"] === etag) {
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      ...headers,
       "Content-Type": asset.type,
       "Content-Length": Buffer.byteLength(asset.body),
-      "Content-Security-Policy": STATIC_CSP,
     });
     res.end(req.method === "HEAD" ? undefined : asset.body);
   }

@@ -98,8 +98,7 @@ Everything on the overview page in one call. Query parameters:
       "report": {
         "window": "24h",
         "compare": "24h",
-        "pendingProposals": [{ "ref": "stash//lessons/rg", "source": "reflect", "createdAt": "..." }],
-        "acceptRateBySource": []
+        "pendingProposals": [{ "ref": "stash//lessons/rg", "source": "reflect", "createdAt": "..." }]
       }
     },
     "metrics": { "schemaVersion": 1, "window": {}, "usage": {}, "feedback": {}, "utility": {}, "llm": {}, "proposals": {}, "notes": [] },

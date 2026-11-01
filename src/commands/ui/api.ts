@@ -48,7 +48,6 @@ import { applyReadonlyPragmas } from "../../storage/sqlite-pragmas";
 import { pkgVersion } from "../../version";
 import { listConfig } from "../config-cli";
 import { akmHealth, parseHealthSince } from "../health";
-import { computeAcceptRateBySource } from "../health/accept-rate";
 import { rankTaskFailures } from "../metrics/collect";
 import { akmMetrics } from "../metrics/metrics-cli";
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
@@ -180,7 +179,6 @@ async function overview(query: Query) {
         pendingProposals: listStateProposals(db, { stashDir: tryStashDir() ?? "", status: "pending" }).map(
           ({ ref, source, createdAt }) => ({ ref, source, createdAt }),
         ),
-        acceptRateBySource: computeAcceptRateBySource(undefined, { db }),
       }),
       null,
     );
@@ -424,7 +422,8 @@ function proposals(query: Query) {
   const now = Date.now();
   return withReadonlyStateDb(
     (db) => {
-      const all = listStateProposals(db, { stashDir: resolveStashDir() });
+      // A list shows summaries, so the proposed content is not read (B-48).
+      const all = listStateProposals(db, { stashDir: resolveStashDir(), withContent: false });
       const picked =
         status === "pending"
           ? all
