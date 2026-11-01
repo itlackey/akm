@@ -378,7 +378,7 @@ describe("pages", () => {
     const overview = (await (await view("overview.js"))(ctx())).text;
     expect(overview).toContain("Overall health");
     expect(overview).toContain("Health checks");
-    expect(overview).toContain("Recent improve runs");
+    expect(overview).toContain("improve runs (all time, not this window)");
     expect(overview).toContain("run-1");
     expect(overview).toContain('id="activity-chart"');
     expect(overview).toContain("Model utilization");

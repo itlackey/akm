@@ -75,10 +75,13 @@ export function wireChart(ctx, selector, options, onSelect) {
   });
 }
 
+/** Axes that count whole things: a tick at "0.5 proposals" means nothing. */
+const COUNT_UNITS = new Set(["Count", "Calls", "Searches", "Operations", "Decisions", "Failures"]);
+
 export function verticalBars(labels, series, unit = "Count") {
   return {
     xAxis: { type: "category", data: labels, axisLabel: { hideOverlap: true } },
-    yAxis: { type: "value", name: unit, min: 0 },
+    yAxis: { type: "value", name: unit, min: 0, ...(COUNT_UNITS.has(unit) ? { minInterval: 1 } : {}) },
     series: series.map((s) => ({ type: "bar", barMaxWidth: 28, ...s })),
   };
 }
@@ -86,7 +89,14 @@ export function verticalBars(labels, series, unit = "Count") {
 export function horizontalBars(labels, series, unit = "Count") {
   return {
     grid: { left: 12, right: 22, top: 24, bottom: 42, containLabel: true },
-    xAxis: { type: "value", name: unit, nameLocation: "middle", nameGap: 28, min: 0 },
+    xAxis: {
+      type: "value",
+      name: unit,
+      nameLocation: "middle",
+      nameGap: 28,
+      min: 0,
+      ...(COUNT_UNITS.has(unit) ? { minInterval: 1 } : {}),
+    },
     yAxis: { type: "category", inverse: true, data: labels, axisLabel: { width: 110, overflow: "truncate" } },
     series: series.map((s) => ({ type: "bar", ...s })),
   };

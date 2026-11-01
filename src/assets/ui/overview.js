@@ -33,8 +33,14 @@ function statusStrip(health, meta) {
   const checks = health ? [...health.hardChecks, ...health.advisories] : [];
   const count = (status) => checks.filter((c) => c.status === status).length;
   const overall = health?.status ?? "unknown";
+  const unknown = count("unknown");
+  const label = !health
+    ? "unavailable"
+    : overall === "pass" && unknown > 0
+      ? `healthy · ${unknown} could not run`
+      : overall;
   return html`<div class="strip">
-    <div class="strip-main"><span class="strip-label">Overall health</span>${badge(health ? overall : "unavailable", statusKind(overall))}</div>
+    <div class="strip-main"><span class="strip-label">Overall health</span>${badge(label, statusKind(overall))}<span class="muted small">last 24 hours</span></div>
     <div class="strip-item"><span class="num big ${count("fail") > 0 ? "text-fail" : ""}">${count("fail")}</span><span class="muted">failing</span></div>
     <div class="strip-item"><span class="num big ${count("warn") > 0 ? "text-warn" : ""}">${count("warn")}</span><span class="muted">warning</span></div>
     <div class="strip-item"><span class="num big">${count("unknown")}</span><span class="muted">unknown</span></div>
