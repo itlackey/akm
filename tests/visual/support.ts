@@ -4,6 +4,8 @@
 
 /** What every visual spec shares: reaching a route on a profile's server, settling it and capturing it (plan 8.7, 11.2). */
 
+import fs from "node:fs";
+import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { FIXED_NOW, PROFILES, type Profile, VISUAL_TOKEN } from "./constants";
 
@@ -65,6 +67,37 @@ export async function visit(page: Page, hash: string, profile: Profile = "loaded
   await settle(page);
 }
 
+/** The gallery: files from this folder, served on the UI origin so its CSP holds. */
+const GALLERY_FILES: Record<string, { file: string; type: string }> = {
+  "/__gallery": { file: "gallery.html", type: "text/html" },
+  "/__gallery.js": { file: "gallery.js", type: "text/javascript" },
+};
+
+const csps = new Map<string, string>();
+
+/** The Content-Security-Policy the product serves its own files with; the gallery gets exactly that. */
+async function productCsp(page: Page, origin: string): Promise<string> {
+  const known = csps.get(origin);
+  if (known) return known;
+  const csp = (await page.request.get(`${origin}/`)).headers()["content-security-policy"];
+  if (!csp) throw new Error(`${origin} sent no Content-Security-Policy`);
+  csps.set(origin, csp);
+  return csp;
+}
+
+async function serveGallery(page: Page, origin: string): Promise<void> {
+  const csp = await productCsp(page, origin);
+  await page.route("**/__gallery*", (route) => {
+    const served = GALLERY_FILES[new URL(route.request().url()).pathname];
+    if (!served) return route.fulfill({ status: 404 });
+    return route.fulfill({
+      contentType: served.type,
+      headers: { "content-security-policy": csp, "cache-control": "no-store" },
+      body: fs.readFileSync(path.join(import.meta.dirname, served.file)),
+    });
+  });
+}
+
 /** The server's version and host name decide how the sidebar footer wraps, so the specs pin them. */
 async function pinMeta(page: Page): Promise<void> {
   await page.route(/\/api\/meta(\?|$)/, async (route) => {
@@ -84,9 +117,28 @@ async function pinMeta(page: Page): Promise<void> {
 export async function open(page: Page, hash: string, profile: Profile = "loaded", fail?: RegExp): Promise<void> {
   const origin = `http://127.0.0.1:${PROFILES[profile]}`;
   await page.clock.setFixedTime(FIXED_NOW);
+  await serveGallery(page, origin);
   await pinMeta(page);
   if (fail) await failApi(page, fail);
   await page.goto(`${origin}/?token=${VISUAL_TOKEN}${hash}`);
+}
+
+/** The gallery page of the live server, under the product's CSP: no violation may fire. */
+export async function visitGallery(page: Page): Promise<void> {
+  const origin = `http://127.0.0.1:${PROFILES.loaded}`;
+  await page.clock.setFixedTime(FIXED_NOW);
+  await serveGallery(page, origin);
+  await page.addInitScript(() => {
+    (window as unknown as { violations: string[] }).violations = [];
+    addEventListener("securitypolicyviolation", (event: SecurityPolicyViolationEvent) =>
+      (window as unknown as { violations: string[] }).violations.push(`${event.violatedDirective} ${event.blockedURI}`),
+    );
+  });
+  const response = await page.goto(`${origin}/__gallery`);
+  expect(response?.headers()["content-security-policy"]).toBe(await productCsp(page, origin));
+  await expect(page.getByRole("heading", { level: 1, name: "Gallery" })).toBeVisible();
+  await settle(page);
+  expect(await page.evaluate(() => (window as unknown as { violations: string[] }).violations)).toEqual([]);
 }
 
 async function settle(page: Page): Promise<void> {

@@ -18,12 +18,46 @@ const SCHEMES = ["light", "dark"] as const;
 const matrix = Object.entries(VIEWPORTS).flatMap(([width, height]) =>
   SCHEMES.map((colorScheme) => ({
     name: `${width}--${colorScheme}`,
-    testMatch: "matrix.pw.ts",
+    testMatch: ["matrix.pw.ts", "interactions.pw.ts", "gallery.pw.ts"],
     use: { ...devices["Desktop Chrome"], viewport: { width: Number(width), height }, colorScheme },
   })),
 );
 
-const projects = [...matrix];
+/** Forced colors and `prefers-contrast: more`, light, at both widths. */
+const accessibility = Object.entries(VIEWPORTS).flatMap(([width, height]) =>
+  (
+    [
+      ["forced-colors", { forcedColors: "active" }],
+      ["contrast-more", { contrast: "more" }],
+    ] as const
+  ).map(([name, preference]) => ({
+    name: `${width}--${name}`,
+    testMatch: "accessibility.pw.ts",
+    use: {
+      ...devices["Desktop Chrome"],
+      viewport: { width: Number(width), height },
+      colorScheme: "light" as const,
+      ...preference,
+    },
+  })),
+);
+
+const projects = [
+  ...matrix,
+  ...accessibility,
+  // The `wide` edge (plan 11.2): light only.
+  {
+    name: "1280--light",
+    testMatch: "wide.pw.ts",
+    use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 }, colorScheme: "light" as const },
+  },
+  // Assertions and audits that take no screenshot.
+  {
+    name: "320--light",
+    testMatch: "reflow.pw.ts",
+    use: { ...devices["Desktop Chrome"], viewport: { width: 320, height: 640 }, colorScheme: "light" as const },
+  },
+];
 
 export default defineConfig({
   testDir: ".",
