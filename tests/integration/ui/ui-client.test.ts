@@ -696,7 +696,7 @@ describe("pages", () => {
     expect(page).toContain("How to read this page");
     for (const heading of [
       "Did improve help search?",
-      "Who decided what, week by week",
+      "Who decided what",
       "Is review keeping up?",
       "How has the library changed?",
       "Harm log",

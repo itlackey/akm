@@ -890,6 +890,10 @@
     background: var(--s1);
   }
 
+  .series-1 {
+    background: var(--s1);
+  }
+
   .series-2 {
     background: var(--s2);
   }
@@ -1362,6 +1366,16 @@
       background: var(--s1);
       &[data-tone="fail"] {
         background: var(--fail);
+      }
+    }
+    & .bar-stack {
+      display: flex;
+      block-size: 100%;
+      inline-size: calc(var(--share) * 100%);
+      overflow: hidden;
+      border-radius: var(--radius-s);
+      & > span {
+        flex-basis: 0;
       }
     }
     & .bar-value {

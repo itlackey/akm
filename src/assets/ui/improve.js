@@ -163,33 +163,28 @@ function summaryLine(impact) {
   return html`<p class="impact-summary"><strong>${impact.since === "all" ? "Last year" : "Last 90 days"}:</strong> <a href="#/improve" data-anchor="outcomes">${fmtNum(s.kept)} kept</a> · <a href="#/improve" data-anchor="harm" ${harm ? html`class="text-warn"` : ""}>${fmtNum(s.reverted)} reverted</a> · <a href="#/improve" data-anchor="harm" ${s.flags ? html`class="text-warn"` : ""}>${fmtNum(s.flags)} ${s.flags === 1 ? "flag" : "flags"} after a change</a> · <a href="#/improve" data-anchor="cost">${tokens} tokens${s.tokenCoverage === null ? "" : ` (${fmtPct(s.tokenCoverage)} of calls reported)`}</a></p>`;
 }
 
-function outcomesSection(ctx, impact) {
+function outcomesSection(impact) {
   const outcomes = impact.outcomes ?? [];
-  const weeks = impact.weeks;
-  const labels = weeks.map((w) => w.slice(5));
-  outcomes.forEach((process, i) => {
-    wireChart(ctx, `#out-${i}`, () =>
-      stackedColumns(
-        labels,
-        CLASSES.map((c) => ({ name: c.label, colorIndex: c.colorIndex, data: process.weeks.map((w) => w[c.key]) })),
-        "Decisions",
-      ),
-    );
-  });
-  return html`<section class="chart-card" aria-labelledby="outcomes">${sectionHead("outcomes", "Who decided what, week by week", "Each process, by the week a proposal was decided.")}
+  const sum = (process, keys) => process.weeks.reduce((n, w) => n + keys.reduce((m, key) => m + w[key], 0), 0);
+  const rows = outcomes.map((process) => ({
+    source: process.source,
+    total: sum(process, CLASSES.map((c) => c.key)),
+    kept: sum(process, ["judge", "you", "unknown"]),
+    parts: CLASSES.map((c) => ({ ...c, n: sum(process, [c.key]) })),
+  }));
+  const max = Math.max(0, ...rows.map((r) => r.total));
+  return html`<section class="chart-card" aria-labelledby="outcomes">${sectionHead("outcomes", "Who decided what", "Each process's decisions in this window, by who decided and what became of them.")}
     <p class="chart-legend">${CLASSES.map((c) => html`<span><i class="series-key series-${c.colorIndex + 1}" aria-hidden="true"></i>${c.label}</span>`)}</p>
     ${
       outcomes.length === 0
         ? emptyState("No proposals decided in this window.", "Improve processes write proposals that are decided here.")
-        : outcomes.map((process, i) => {
-            const total = process.weeks.reduce(
-              (sum, w) => sum + w.judge + w.you + w.unknown + w.rejected + w.reverted,
-              0,
-            );
-            const kept = process.weeks.reduce((sum, w) => sum + w.judge + w.you + w.unknown, 0);
-            return html`<div class="process-row"><h3 class="mono">${process.source}</h3><p class="muted small">${fmtNum(total)} decided, ${fmtNum(kept)} kept${total ? ` (${fmtPct(kept / total)})` : ""}. ${process.weeks.filter((w) => w.judge + w.you + w.unknown + w.rejected + w.reverted > 0).length < 3 ? "Too few weeks with decisions for a trend: read the counts." : ""}</p>
-              <div class="echarts-view" data-height="short" id="out-${i}" role="img" aria-label="${process.source}: decisions per week by who decided and outcome. Counts follow in Data and details."></div></div>`;
-          })
+        : html`<ul class="bar-list" aria-label="Decisions by process">${rows.map(
+            (row) =>
+              html`<li><span class="bar-name mono">${row.source}</span><span class="bar-track" aria-hidden="true"><span class="bar-stack" style="--share:${max ? row.total / max : 0}">${row.parts.filter((p) => p.n).map((p) => html`<span class="series-${p.colorIndex + 1}" style="flex-grow:${p.n}" title="${p.label}: ${p.n}"></span>`)}</span></span><span class="bar-value num">${fmtNum(row.kept)} of ${fmtNum(row.total)} kept</span><span class="bar-note muted small">${row.parts
+                .filter((p) => p.n)
+                .map((p) => `${p.label.toLowerCase()} ${p.n}`)
+                .join(" · ")}</span></li>`,
+          )}</ul>`
     }
     <details><summary>Data and details</summary>${tableWrap(html`<table><thead><tr><th>Process</th><th>Week of</th>${CLASSES.map((c) => html`<th class="r">${c.label}</th>`)}</tr></thead><tbody>${outcomes.flatMap((process) => process.weeks.filter((w) => CLASSES.some((c) => w[c.key])).map((w) => html`<tr><th class="mono">${process.source}</th><td><button type="button" class="btn-secondary" data-drill data-source="${process.source}" data-week="${w.week}">${w.week}</button></td>${CLASSES.map((c) => html`<td class="r num">${w[c.key] ? html`<button type="button" class="btn-secondary" data-drill data-source="${process.source}" data-week="${w.week}" data-class="${c.key}">${w[c.key]}</button>` : "0"}</td>`)}</tr>`))}</tbody></table>`)}
     <div data-drill-panel tabindex="-1" aria-live="polite"></div></details>
@@ -270,8 +265,8 @@ function costSection(ctx, impact) {
   const calls = cost.reduce((sum, w) => sum + w.calls, 0);
   const reported = cost.reduce((sum, w) => sum + w.usageCalls, 0);
   return html`<section class="chart-card" aria-labelledby="cost">${sectionHead("cost", "What does improve cost?", calls ? `${fmtNum(calls)} model calls; tokens are reported for ${fmtNum(reported)} of them. Tokens are not money.` : "")}
-    ${calls === 0 ? emptyState("No model calls recorded in this window.") : html`<p class="chart-legend">${processes.map((name, i) => html`<span><i class="series-key series-${(i % 5) + 1}" aria-hidden="true"></i>${name}</span>`)}</p><div class="echarts-view" data-height="short" id="cost-calls" role="img" aria-label="Model calls per week by process."></div>`}
-    <details><summary>Data and details</summary>${tableWrap(html`<table><thead><tr><th>Week of</th><th class="r">Calls</th><th class="r">Tokens</th><th class="r">Calls reporting tokens</th></tr></thead><tbody>${cost.map((w) => html`<tr><th>${w.week}</th><td class="r num">${fmtNum(w.calls)}</td><td class="r num">${w.usageCalls ? fmtNum(w.tokens) : "unknown"}</td><td class="r num">${fmtNum(w.usageCalls)} / ${fmtNum(w.calls)}</td></tr>`)}</tbody></table>`)}</details>
+    ${calls === 0 ? emptyState("No model calls recorded in this window.") : html`<p class="chart-legend">${processes.map((name, i) => html`<span><i class="series-key series-${(i % 5) + 1}" aria-hidden="true"></i>${name}</span>`)}</p><div class="echarts-view" id="cost-calls" role="img" aria-label="Model calls per week by process."></div>`}
+    <details><summary>Data and details</summary>${tableWrap(html`<table><thead><tr><th>Week of</th><th class="r">Calls</th><th class="r">Tokens</th><th class="r">Calls reporting tokens</th></tr></thead><tbody>${cost.map((w) => html`<tr><th>${w.week}</th><td class="r num">${fmtNum(w.calls)}</td><td class="r num">${w.usageCalls ? fmtNum(w.tokens) : "not reported"}</td><td class="r num">${fmtNum(w.usageCalls)} / ${fmtNum(w.calls)}</td></tr>`)}</tbody></table>`)}</details>
   </section>`;
 }
 
@@ -376,7 +371,7 @@ export async function render(ctx) {
       <nav class="impact-toc" aria-label="On this page"><ul>${SECTIONS.map(([id, label]) => html`<li><a href="#/improve" data-anchor="${id}">${label}${id === "harm" && harmCount ? html` <span class="num">(${harmCount})</span>` : ""}</a></li>`)}</ul></nav>
       <div class="impact-sections">
         ${searchTrend(ctx, retrieval, impact.changedAssets ?? [])}
-        ${outcomesSection(ctx, impact)}
+        ${outcomesSection(impact)}
         ${flowSection(ctx, impact)}
         ${librarySection(ctx, impact)}
         ${harmSection(impact)}

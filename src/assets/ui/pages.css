@@ -532,13 +532,6 @@
     font-size: var(--text-l);
   }
 
-  .process-row {
-    margin-block-start: var(--space-3);
-    & h3 {
-      margin-block-end: var(--space-1);
-    }
-  }
-
   .how-to-read {
     margin-block-end: var(--space-3);
   }
