@@ -18,6 +18,37 @@ import {
 
 initToken();
 
+// ---- theme: System follows the device; Light and Dark force a scheme. The choice is kept in this browser. ----
+const THEME_KEY = "akm-ui-theme";
+function storedTheme() {
+  try {
+    const value = localStorage.getItem(THEME_KEY);
+    return value === "light" || value === "dark" ? value : "system";
+  } catch {
+    return "system";
+  }
+}
+function applyTheme(value) {
+  if (value === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = value;
+  window.dispatchEvent(new Event("akm-theme"));
+}
+applyTheme(storedTheme());
+document.querySelector("[data-theme-control]")?.addEventListener("change", (event) => {
+  const value = event.target.value;
+  try {
+    if (value === "system") localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, value);
+  } catch {
+    // The choice then lasts for this visit only.
+  }
+  applyTheme(value);
+});
+{
+  const chosen = document.querySelector(`[data-theme-control] input[value="${storedTheme()}"]`);
+  if (chosen) chosen.checked = true;
+}
+
 const ROUTES = [
   { name: "overview", label: "Overview", load: () => import("./overview.js"), render: (m, c) => m.render(c) },
   { name: "bundles", label: "Bundles", load: () => import("./bundles.js"), render: (m, c) => m.render(c) },

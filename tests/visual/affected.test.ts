@@ -63,7 +63,12 @@ describe("affectedRoutes", () => {
   });
 
   test("chart modules reach the pages that draw charts", () => {
-    expect(affectedRoutes(["src/assets/ui/charts.js"])).toEqual(["overview", "bundles"]);
-    expect(affectedRoutes(["src/assets/ui/chart-view.js"])).toContain("proposals-pending");
+    expect(affectedRoutes(["src/assets/ui/charts.js"])).toEqual([
+      "overview",
+      "bundles",
+      "asset-knowledge",
+      "asset-command",
+    ]);
+    expect(affectedRoutes(["src/assets/ui/chart-view.js"])).toEqual(["overview", "improve"]);
   });
 });

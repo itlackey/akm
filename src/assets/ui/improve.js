@@ -91,8 +91,8 @@ function searchTrend(ctx, retrieval, changed) {
   const keptDays = new Set(kept.map((entry) => entry.day));
   const known = rates.filter((rate) => rate !== null);
   const floor = known.length ? Math.max(0, Math.floor((Math.min(...known) * 100 - 10) / 10) * 10) : 0;
-  wireChart(ctx, "#improve-trend", () => {
-    const marker = getComputedStyle(document.documentElement).getPropertyValue("--marker").trim();
+  wireChart(ctx, "#improve-trend", (token) => {
+    const marker = token("--marker");
     return {
       xAxis: { type: "category", data: days, axisLabel: { hideOverlap: true, formatter: (day) => day.slice(5) } },
       yAxis: { type: "value", name: "Found something", min: floor, max: 100, axisLabel: { formatter: "{value}%" } },

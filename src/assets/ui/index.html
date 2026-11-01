@@ -42,7 +42,12 @@
     <main id="app" tabindex="-1">
       <noscript><p>akm ui needs JavaScript. It makes no network requests beyond its own local server.</p></noscript>
     </main>
-    <footer class="site-footer"><div class="nav-meta" id="nav-meta"></div></footer>
+    <footer class="site-footer"><div class="nav-meta" id="nav-meta"></div>
+      <fieldset class="segmented theme-control" aria-label="Theme" data-theme-control>
+        <label><input type="radio" name="theme" value="system" checked><span>System</span></label>
+        <label><input type="radio" name="theme" value="light"><span>Light</span></label>
+        <label><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+      </fieldset></footer>
   </div>
 </body>
 </html>

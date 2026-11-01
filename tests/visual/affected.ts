@@ -29,8 +29,11 @@ const SEARCH: RouteName[] = ["search-results", "search-browse"];
 /** The first matching rule wins. `ui/` is `src/assets/ui/`. */
 const RULES: Array<[RegExp, Affected]> = [
   [/^src\/assets\/ui\/(overview|overview-charts)\.js$/, ["overview"]],
-  [/^src\/assets\/ui\/charts\.js$/, ["overview", "bundles"]],
-  [/^src\/assets\/ui\/(chart-view|echarts)\.js$/, ["overview", ...PROPOSALS]],
+  [/^src\/assets\/ui\/charts\.js$/, ["overview", "bundles", ...ASSETS]],
+  [/^src\/assets\/ui\/(chart-view|echarts)\.js$/, ["overview", "improve"]],
+  [/^src\/assets\/ui\/improve\.js$/, ["improve"]],
+  [/^src\/assets\/ui\/shortcuts\.js$/, PROPOSALS],
+  [/^src\/assets\/ui\/folder-picker\.js$/, ["bundles", "edit", "new", ...ASSETS]],
   [/^src\/assets\/ui\/bundles\.js$/, ["bundles"]],
   [/^src\/assets\/ui\/config\.js$/, ["config"]],
   [/^src\/assets\/ui\/(proposals|proposal-actions)\.js$/, PROPOSALS],

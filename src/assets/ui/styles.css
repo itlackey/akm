@@ -1,49 +1,49 @@
-/* akm ui. Colours, space, type, radius and elevation are tokens on :root; the dark set follows prefers-color-scheme. */
+/* akm ui. Colours, space, type, radius and elevation are tokens on :root; each colour is a light-dark() pair, so the system scheme picks one and the Theme control can force either. */
 :root {
   color-scheme: light dark;
-  --bg: #f6f6f9;
-  --surface: #ffffff;
-  --surface-2: #efeff4;
-  --surface-sunk: #e8e8ef;
-  --border: #dcdce4;
-  --border-strong: #767684;
-  --rule: #0f0f14;
-  --text: #0f0f14;
-  --muted: #4a4a57;
-  --faint: #5d5d6a;
-  --accent: #6d28d9;
-  --accent-hover: #5b21b6;
-  --accent-bg: #f0eafe;
-  --accent-line: #6d28d9;
-  --on-accent: #ffffff;
-  --marker: #a16207;
-  --ok: #17753a;
-  --ok-bg: #e3f4e9;
-  --warn: #8a5a00;
-  --warn-bg: #fcf0d3;
-  --fail: #c4202c;
-  --fail-bg: #fde6e8;
-  --info: #5b21b6;
-  --info-bg: #f0eafe;
-  --add-bg: #e3f4e9;
-  --del-bg: #fde6e8;
-  --add-strong: #a8e0bb;
-  --del-strong: #f5b3b9;
-  --hunk-bg: #f3efff;
-  --grid: #dcdce4;
-  --link: #5b21b6;
-  --age-1: #8f7bd1;
-  --age-2: #6d4fc0;
-  --age-3: #4a2a9c;
-  --age-unknown: #767684;
-  --on-danger: #ffffff;
-  --band-edge: #767684;
-  --s1: #2f64d0;
-  --s2: #b45309;
-  --s3: #0f766e;
-  --s4: #be185d;
-  --s5: #7c3aed;
-  --s6: #6b7280;
+  --bg: light-dark(#f6f6f9, #0a0a0c);
+  --surface: light-dark(#ffffff, #111115);
+  --surface-2: light-dark(#efeff4, #17171c);
+  --surface-sunk: light-dark(#e8e8ef, #0d0d10);
+  --border: light-dark(#dcdce4, #26262d);
+  --border-strong: light-dark(#767684, #6b6b78);
+  --rule: light-dark(#0f0f14, #52525e);
+  --text: light-dark(#0f0f14, #ededf0);
+  --muted: light-dark(#4a4a57, #b4b4be);
+  --faint: light-dark(#5d5d6a, #9a9aa6);
+  --accent: light-dark(#6d28d9, #9b72fa);
+  --accent-hover: light-dark(#5b21b6, #b79bfc);
+  --accent-bg: light-dark(#f0eafe, #1b1530);
+  --accent-line: light-dark(#6d28d9, #9b72fa);
+  --on-accent: light-dark(#ffffff, #0a0a0c);
+  --marker: light-dark(#a16207, #fbbf24);
+  --ok: light-dark(#17753a, #34d399);
+  --ok-bg: light-dark(#e3f4e9, #0f2a20);
+  --warn: light-dark(#8a5a00, #fbbf24);
+  --warn-bg: light-dark(#fcf0d3, #2b2210);
+  --fail: light-dark(#c4202c, #f87171);
+  --fail-bg: light-dark(#fde6e8, #2d1416);
+  --info: light-dark(#5b21b6, #c4b5fd);
+  --info-bg: light-dark(#f0eafe, #1b1530);
+  --add-bg: light-dark(#e3f4e9, #0f2a20);
+  --del-bg: light-dark(#fde6e8, #2d1416);
+  --add-strong: light-dark(#a8e0bb, #1d6b49);
+  --del-strong: light-dark(#f5b3b9, #7f2a2f);
+  --hunk-bg: light-dark(#f3efff, #16162b);
+  --grid: light-dark(#dcdce4, #26262d);
+  --link: light-dark(#5b21b6, #c4b5fd);
+  --age-1: light-dark(#8f7bd1, #6a58b0);
+  --age-2: light-dark(#6d4fc0, #8f7bdc);
+  --age-3: light-dark(#4a2a9c, #c4b5fd);
+  --age-unknown: light-dark(#767684, #8a8a96);
+  --on-danger: light-dark(#ffffff, #0a0a0c);
+  --band-edge: light-dark(#767684, #6b6b78);
+  --s1: light-dark(#2f64d0, #c4b5fd);
+  --s2: light-dark(#b45309, #fbbf24);
+  --s3: light-dark(#0f766e, #34d399);
+  --s4: light-dark(#be185d, #f472b6);
+  --s5: light-dark(#7c3aed, #60a5fa);
+  --s6: light-dark(#6b7280, #9a9aa6);
   --target-min: 24px;
   --control-height: 2.75rem;
   --space-1: 4px;
@@ -80,55 +80,13 @@
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
-/* The Graphite palette. */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0a0a0c;
-    --surface: #111115;
-    --surface-2: #17171c;
-    --surface-sunk: #0d0d10;
-    --border: #26262d;
-    --border-strong: #6b6b78;
-    --rule: #52525e;
-    --text: #ededf0;
-    --muted: #b4b4be;
-    --faint: #9a9aa6;
-    --accent: #9b72fa;
-    --accent-hover: #b79bfc;
-    --accent-bg: #1b1530;
-    --accent-line: #9b72fa;
-    --on-accent: #0a0a0c;
-    --marker: #fbbf24;
-    --ok: #34d399;
-    --ok-bg: #0f2a20;
-    --warn: #fbbf24;
-    --warn-bg: #2b2210;
-    --fail: #f87171;
-    --fail-bg: #2d1416;
-    --info: #c4b5fd;
-    --info-bg: #1b1530;
-    --add-bg: #0f2a20;
-    --del-bg: #2d1416;
-    --add-strong: #1d6b49;
-    --del-strong: #7f2a2f;
-    --hunk-bg: #16162b;
-    --grid: #26262d;
-    --link: #c4b5fd;
-    --age-1: #6a58b0;
-    --age-2: #8f7bdc;
-    --age-3: #c4b5fd;
-    --age-unknown: #8a8a96;
-    --on-danger: #0a0a0c;
-    --band-edge: #6b6b78;
-    --s1: #c4b5fd;
-    --s2: #fbbf24;
-    --s3: #34d399;
-    --s4: #f472b6;
-    --s5: #60a5fa;
-    --s6: #9a9aa6;
-  }
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
 * {
   box-sizing: border-box;
 }
@@ -362,6 +320,19 @@ th.r {
   @media (width < 72rem) {
     padding-inline: var(--space-4);
   }
+}
+
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.theme-control {
+  margin: 0;
+  min-inline-size: 0;
 }
 
 .nav-meta {

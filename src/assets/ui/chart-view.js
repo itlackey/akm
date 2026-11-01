@@ -1,4 +1,22 @@
 // SVG charts supplement the adjacent data tables; they never own a write action.
+
+/**
+ * The colour a token resolves to now. A token is a `light-dark()` pair, which a custom property keeps unresolved, so
+ * a probe element takes it as its `color` and the browser says which one applies in the scheme on screen.
+ */
+export function colourReader(near) {
+  const probe = document.createElement("span");
+  probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none";
+  near.parentNode.append(probe);
+  return {
+    token(name) {
+      probe.style.color = `var(${name})`;
+      return getComputedStyle(probe).color;
+    },
+    done: () => probe.remove(),
+  };
+}
+
 export function wireChart(ctx, selector, options, onSelect) {
   ctx.after.push((root) => {
     const element = root.querySelector(selector);
@@ -7,12 +25,13 @@ export function wireChart(ctx, selector, options, onSelect) {
     let chart;
     let observer;
     const scheme = matchMedia("(prefers-color-scheme: dark)");
+    const retheme = () => draw();
     // Texture only where colour alone is not enough: forced colours or a request for more contrast (plan D-04).
     const patterns = matchMedia("(forced-colors: active), (prefers-contrast: more)");
     const draw = () => {
       if (!chart || disposed) return;
-      const css = getComputedStyle(element);
-      const token = (name) => css.getPropertyValue(name).trim();
+      const font = getComputedStyle(element).getPropertyValue("--font").trim();
+      const { token, done } = colourReader(element);
       // The builder gets the token reader, for the few marks that carry a colour of their own.
       const option = options(token);
       const axis = (value) => ({
@@ -25,7 +44,7 @@ export function wireChart(ctx, selector, options, onSelect) {
         {
           animation: false,
           color: ["--s1", "--s2", "--s3", "--s4", "--s5"].map(token),
-          textStyle: { color: token("--text"), fontFamily: token("--font") },
+          textStyle: { color: token("--text"), fontFamily: font },
           aria: {
             enabled: true,
             label: { description: element.getAttribute("aria-label") },
@@ -42,6 +61,7 @@ export function wireChart(ctx, selector, options, onSelect) {
         },
         { notMerge: true },
       );
+      done();
     };
     import("./echarts.js")
       .then(({ init }) => {
@@ -57,7 +77,8 @@ export function wireChart(ctx, selector, options, onSelect) {
         observer = new ResizeObserver(resize);
         observer.observe(element);
         resize();
-        scheme.addEventListener("change", draw);
+        scheme.addEventListener("change", retheme);
+        window.addEventListener("akm-theme", retheme);
       })
       .catch(() => {
         element.hidden = true;
@@ -68,7 +89,8 @@ export function wireChart(ctx, selector, options, onSelect) {
     return () => {
       disposed = true;
       observer?.disconnect();
-      scheme.removeEventListener("change", draw);
+      scheme.removeEventListener("change", retheme);
+      window.removeEventListener("akm-theme", retheme);
       root.removeEventListener("change", draw);
       root.removeEventListener("toggle", resize, true);
       chart?.dispose();
