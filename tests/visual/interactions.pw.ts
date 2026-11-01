@@ -93,3 +93,20 @@ test("editor unsaved guard", async ({ page }) => {
   await expect(page.locator("#unsaved")).toBeVisible();
   await shoot(page, "edit--unsaved-guard");
 });
+
+// The [hidden] contract: a hidden panel must not be displayed, focusable or exposed (WCAG 1.3.2, 2.4.3).
+test("editor preview toggle hides the inactive panel", async ({ page }) => {
+  await visit(page, ROUTES.edit.hash);
+  const source = page.locator("[data-source-panel]");
+  const preview = page.locator("[data-preview-panel]");
+  await expect(source).toBeVisible();
+  await expect(preview).toBeHidden();
+  await page.locator("[data-preview-toggle]").click();
+  await expect(source).toBeHidden();
+  await expect(source).toHaveCSS("display", "none");
+  await expect(preview).toBeVisible();
+  await page.locator("[data-preview-toggle]").click();
+  await expect(source).toBeVisible();
+  await expect(preview).toBeHidden();
+  await expect(preview).toHaveCSS("display", "none");
+});
