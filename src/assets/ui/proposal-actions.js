@@ -224,18 +224,23 @@ function batchView(state, count) {
     case "confirm":
       return html`<span>Accept ${state.ids.length} ${state.ids.length === 1 ? "proposal" : "proposals"}? They are written and committed together.</span>
         <span class="btn-row"><button type="button" data-act="batch-confirm">Confirm accept</button><button type="button" class="btn-secondary" data-act="batch-cancel">Cancel</button></span>`;
+    case "reject":
+      return html`<label for="batch-reason"><strong>Why reject ${state.ids.length} ${state.ids.length === 1 ? "proposal" : "proposals"}?</strong> <span class="muted small">One reason is recorded for each. Required, up to ${REASON_MAX} characters.</span></label>
+        <textarea id="batch-reason" data-batch-reason rows="2" ${state.error ? html`aria-invalid="true" aria-describedby="batch-reason-error"` : ""}>${state.reason ?? ""}</textarea>
+        ${state.error ? html`<p class="field-error" id="batch-reason-error" role="alert">${state.error}</p>` : ""}
+        <span class="btn-row"><button type="button" class="btn-danger" data-act="batch-reject-confirm">Confirm reject</button><button type="button" class="btn-secondary" data-act="batch-cancel">Cancel</button></span>`;
     case "busy":
-      return html`<span role="status" tabindex="-1">Accepting ${state.ids.length}...</span>
-        <span class="btn-row"><button type="button" aria-disabled="true">Accept selected</button></span>`;
+      return html`<span role="status" tabindex="-1">${state.verb === "reject" ? "Rejecting" : "Accepting"} ${state.ids.length}...</span>
+        <span class="btn-row"><button type="button" aria-disabled="true">${state.verb === "reject" ? "Reject selected" : "Accept selected"}</button></span>`;
     case "results": {
       const { data } = state;
       return html`<div class="batch-results" role="status" tabindex="-1">
-          <p class="state-title">${data.accepted} accepted${data.failed > 0 ? html`, ${data.failed} failed` : ""}</p>
-          <p class="small">${commitLine(data.commit)}</p>
+          <p class="state-title">${data.rejected ?? data.accepted} ${state.verb === "reject" ? "rejected" : "accepted"}${data.failed > 0 ? html`, ${data.failed} failed` : ""}</p>
+          ${state.verb === "reject" ? html`<p class="small">Each rejection can be reopened from Recent.</p>` : html`<p class="small">${commitLine(data.commit)}</p>`}
           <ul class="plain">${data.results.map((r) => {
             const label = state.refs[r.id] ?? r.ref ?? r.id;
             return r.ok
-              ? html`<li>${badge("accepted", "ok")} <span class="mono wrap">${label}</span></li>`
+              ? html`<li>${badge(state.verb === "reject" ? "rejected" : "accepted", state.verb === "reject" ? "neutral" : "ok")} <span class="mono wrap">${label}</span></li>`
               : html`<li>${badge("failed", "fail")} <span class="mono wrap">${label}</span> <span class="small">${describeError(new ApiError(0, r.code, r.error)).text || r.error}</span> <code class="small muted">${r.code}</code></li>`;
           })}</ul>
         </div>
@@ -247,7 +252,7 @@ function batchView(state, count) {
       return count === 0
         ? html``
         : html`<span class="num">${count} selected</span>
-          <span class="btn-row"><button type="button" data-act="batch-start">Accept selected</button><button type="button" class="btn-secondary" data-act="batch-clear">Clear</button></span>`;
+          <span class="btn-row"><button type="button" data-act="batch-start">Accept selected</button><button type="button" class="btn-secondary" data-act="batch-reject-start">Reject selected…</button><button type="button" class="btn-secondary" data-act="batch-clear">Clear</button></span>`;
   }
 }
 
@@ -306,6 +311,49 @@ export function wireBatch(root, { reload }) {
         draw("[data-act=batch-confirm]");
         break;
       }
+      case "batch-reject-start": {
+        const picked = chosen();
+        state = {
+          mode: "reject",
+          ids: picked.map((box) => box.value),
+          refs: Object.fromEntries(picked.map((box) => [box.value, box.dataset.ref])),
+        };
+        draw("[data-batch-reason]");
+        break;
+      }
+      case "batch-reject-confirm": {
+        const { ids, refs } = state;
+        const reason = bar.querySelector("[data-batch-reason]")?.value.trim() ?? "";
+        if (reason === "" || reason.length > REASON_MAX) {
+          state = {
+            mode: "reject",
+            ids,
+            refs,
+            reason,
+            error:
+              reason === ""
+                ? "Enter a reason before rejecting."
+                : `The reason is ${reason.length} characters; the limit is ${REASON_MAX}.`,
+          };
+          draw("[data-batch-reason]");
+          break;
+        }
+        state = { mode: "busy", verb: "reject", ids, refs };
+        draw("[role=status]");
+        try {
+          const data = await post("/api/proposals/reject", { ids, reason });
+          state = { mode: "results", verb: "reject", data, refs };
+        } catch (error) {
+          state = { mode: "error", error };
+        }
+        try {
+          mount(list, await reload());
+        } catch {
+          // The results stay visible; the list refreshes on the next visit.
+        }
+        draw(".batch-results, [role=alert]");
+        break;
+      }
       case "batch-clear":
         for (const box of chosen()) box.checked = false;
         syncGroups();
@@ -319,11 +367,11 @@ export function wireBatch(root, { reload }) {
         break;
       case "batch-confirm": {
         const { ids, refs } = state;
-        state = { mode: "busy", ids, refs };
+        state = { mode: "busy", verb: "accept", ids, refs };
         draw("[role=status]");
         try {
           const data = await post("/api/proposals/accept", { ids });
-          state = { mode: "results", data, refs };
+          state = { mode: "results", verb: "accept", data, refs };
         } catch (error) {
           state = { mode: "error", error };
         }
@@ -336,5 +384,51 @@ export function wireBatch(root, { reload }) {
         break;
       }
     }
+  });
+}
+
+// ---- the recent list: undo a decision in place ---------------------------------
+
+/** Revert and Reopen buttons in the Recent table: the first click asks, the second does it. */
+export function wireRecent(root) {
+  const table = root.querySelector("[data-recent-cell]")?.closest("table");
+  if (!table) return;
+  const labels = { revert: "Revert this change?", reopen: "Reopen this proposal?" };
+  const button = (act, id) =>
+    html`<button type="button" class="btn-secondary" data-recent-act="${act}" data-id="${id}">${act === "revert" ? "Revert" : "Reopen"}</button>`;
+  table.addEventListener("click", async (event) => {
+    const trigger = event.target.closest("[data-recent-act]");
+    const cell = event.target.closest("[data-recent-cell]");
+    if (!cell) return;
+    const act = trigger?.dataset.recentAct;
+    if (event.target.closest("[data-recent-cancel]")) {
+      mount(cell, button(cell.__pending.act, cell.__pending.id));
+      cell.querySelector("[data-recent-act]")?.focus();
+      return;
+    }
+    if (event.target.closest("[data-recent-go]")) {
+      const { act: confirmed, id } = cell.__pending;
+      mount(cell, html`<span role="status" tabindex="-1">Working...</span>`);
+      cell.querySelector("[role=status]")?.focus();
+      try {
+        await post(`/api/proposals/${encodeURIComponent(id)}/${confirmed}`, {});
+        mount(
+          cell,
+          html`<span role="status" tabindex="-1" class="text-ok">${confirmed === "revert" ? "Reverted" : "Reopened"}</span>`,
+        );
+      } catch (error) {
+        const { text, message } = describeError(error);
+        mount(cell, html`<span role="alert" tabindex="-1" class="text-fail">${text || message}</span>`);
+      }
+      cell.querySelector("[role=status], [role=alert]")?.focus();
+      return;
+    }
+    if (!act || trigger.disabled) return;
+    cell.__pending = { act, id: trigger.dataset.id };
+    mount(
+      cell,
+      html`<span class="small">${labels[act]}</span> <button type="button" class="btn-danger" data-recent-go>Confirm</button> <button type="button" class="btn-secondary" data-recent-cancel>Cancel</button>`,
+    );
+    cell.querySelector("[data-recent-go]")?.focus();
   });
 }

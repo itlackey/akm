@@ -16,7 +16,7 @@ import {
   tableWrap,
   when,
 } from "./lib.js";
-import { detailActions, wireBatch, wireDetailActions } from "./proposal-actions.js";
+import { detailActions, wireBatch, wireDetailActions, wireRecent } from "./proposal-actions.js";
 import { registerShortcuts } from "./shortcuts.js";
 
 function listHref(status, source, age = "") {
@@ -77,6 +77,22 @@ function outcomeBadge(status) {
   );
 }
 
+const DECIDERS = { triage: ["judge", "info"], human: ["you", "ok"] };
+
+function deciderBadge(p) {
+  if (p.status === "pending") return "";
+  const [label, tone] = DECIDERS[p.decider] ?? ["decider unknown", "neutral"];
+  return badge(label, tone);
+}
+
+function recentActions(p) {
+  if (p.status === "accepted" && p.revertable)
+    return html`<button type="button" class="btn-secondary" data-recent-act="revert" data-id="${p.id}">Revert</button>`;
+  if (p.status === "rejected")
+    return html`<button type="button" class="btn-secondary" data-recent-act="reopen" data-id="${p.id}">Reopen</button>`;
+  return "";
+}
+
 function recentView(data, source, query) {
   const shown = data.proposals.filter((p) => !source || p.source === source);
   if (data.fullCount === 0)
@@ -87,9 +103,9 @@ function recentView(data, source, query) {
       shown.length === 0
         ? emptyState("Nothing decided from this source.")
         : tableWrap(
-            html`<table><thead><tr><th>Decided</th><th>Outcome</th><th>Source</th><th>Asset</th><th>Reason</th></tr></thead><tbody>${shown.map(
+            html`<table><thead><tr><th>Decided</th><th>Outcome</th><th>By</th><th>Source</th><th>Asset</th><th>Reason</th><th>Undo</th></tr></thead><tbody>${shown.map(
               (p) =>
-                html`<tr><td>${when(p.review?.decidedAt ?? p.updatedAt)}</td><td>${outcomeBadge(p.status)}</td><td class="mono">${p.source}</td><td>${refCell(p, query)}</td><td class="wrap">${p.review?.reason ?? p.gateDecision?.reason ?? html`<span class="muted">-</span>`}</td></tr>`,
+                html`<tr><td>${when(p.review?.decidedAt ?? p.updatedAt)}<br><span class="muted small">${fmtDateTime(p.review?.decidedAt ?? p.updatedAt)}</span></td><td>${outcomeBadge(p.status)}</td><td>${deciderBadge(p)}</td><td class="mono">${p.source}</td><td>${refCell(p, query)}</td><td class="wrap">${p.review?.reason ?? p.gateDecision?.reason ?? html`<span class="muted">-</span>`}</td><td data-recent-cell>${recentActions(p)}</td></tr>`,
             )}</tbody></table>`,
           )
     }`;
@@ -232,6 +248,7 @@ export async function renderList(ctx) {
   const data = await api("/api/proposals", { status, source, limit: PENDING_LIMIT });
   const head = html`${pageHeader("Proposals", "Changes akm improve has staged for review.")}
     <nav class="tabs" aria-label="Proposal lists"><a class="tab" href="${listHref("pending", "")}">Pending</a><a class="tab active" href="${listHref("recent", "")}" aria-current="page">Recent</a></nav>`;
+  ctx.after.push((root) => wireRecent(root));
   return html`${head}${recentView(data, source, query)}`;
 }
 
