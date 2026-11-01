@@ -1450,6 +1450,39 @@ describe("workspace actions", () => {
     expect(loadConfig().defaultWriteTarget).toBe("stash");
   });
 
+  test("config set validates like the CLI, keeps secrets and unrelated keys, and unsets", async () => {
+    await writableConfig();
+    const config = loadConfig();
+    writeSandboxConfig({ ...config, unrelated: { keep: [1, "two"] } });
+    const s = await start();
+    const changed = await write(s, "/api/config/set", {
+      set: { semanticSearchMode: "auto", "output.detail": "full", "feedback.requireReason": "true" },
+    });
+    expect(changed.status, changed.body.error).toBe(200);
+    expect(changed.body.data).toEqual({ saved: true });
+    const saved = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(saved).toMatchObject({
+      semanticSearchMode: "auto",
+      output: { detail: "full" },
+      feedback: { requireReason: true },
+    });
+    expect(saved.connections.default.apiKey).toBe("$AKM_UI_TEST_KEY");
+    expect(saved.someToken).toBe(PLANTED_CONFIG_TOKEN);
+    expect(saved.unrelated).toEqual({ keep: [1, "two"] });
+    // Schema errors, literal API keys and configVersion are refused, and nothing is written.
+    expect((await write(s, "/api/config/set", { set: { "output.detail": "loud" } })).status).toBe(400);
+    expect((await write(s, "/api/config/set", { set: { "connections.default.apiKey": "sk-literal" } })).status).toBe(
+      400,
+    );
+    expect((await write(s, "/api/config/set", { set: { configVersion: "1" } })).status).toBe(400);
+    expect((await write(s, "/api/config/set", { set: { semanticSearchMode: 1 } })).status).toBe(400);
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).output.detail).toBe("full");
+    const unset = await write(s, "/api/config/set", { unset: ["output.detail"] });
+    expect(unset.status, unset.body.error).toBe(200);
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).output?.detail).toBeUndefined();
+    expect((await write(s, "/api/config/set", {})).body.data).toEqual({ saved: false });
+  });
+
   test("bundle lifecycle uses real local-source add, update and confirmed remove operations", async () => {
     await writableConfig();
     const source = path.join(storage.root, "extra");

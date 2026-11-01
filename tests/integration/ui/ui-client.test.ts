@@ -395,11 +395,11 @@ describe("pages", () => {
     expect(config).toContain("Effective config");
     expect(config).toContain("redacted");
     expect(config).not.toContain(PLANTED_API_KEY);
-    // Connections and harnesses are two tables; the connection's alias map is shown as alias: model.
-    expect(config).toContain("<h2>Connections</h2>");
-    expect(config).toContain("fast: m");
-    expect(config).toContain("<h2>Harnesses</h2>");
-    expect(config).toContain("No harnesses are configured.");
+    // Settings are editable fields; each connection's model aliases are inputs holding the model.
+    expect(config).toContain("Model connections");
+    expect(config).toMatch(/name="connections\.default\.models\.fast[^"]*"[^>]*value="m"/);
+    expect(config).toContain('name="semanticSearchMode"');
+    expect(config).toContain("Save changes");
     expect(config).not.toContain("<h2>Engines</h2>");
 
     const pending = (await (await view("proposals.js", "renderList"))(ctx())).text;

@@ -27,6 +27,7 @@ export type WorkspaceAction =
   | "bundle-remove"
   | "bundle-update"
   | "bundle-settings"
+  | "config-set"
   | "document-save"
   | "knowledge-create";
 
@@ -36,6 +37,7 @@ const ROUTES: Record<string, WorkspaceAction> = {
   "/api/bundles/remove": "bundle-remove",
   "/api/bundles/update": "bundle-update",
   "/api/bundles/settings": "bundle-settings",
+  "/api/config/set": "config-set",
   "/api/knowledge/create": "knowledge-create",
   "/api/asset/save": "document-save",
 };
@@ -223,6 +225,41 @@ function settings(body: Record<string, unknown>) {
   return { saved: result.written };
 }
 
+/**
+ * Set and unset config keys through the same validated path as `akm config set` / `unset`: each value is coerced
+ * and checked against the schema, literal API keys are refused, and the whole file is validated before one atomic
+ * write. A key inherited from an `extends` base cannot be unset here.
+ */
+function configChanges(body: Record<string, unknown>) {
+  const set = body.set === undefined ? {} : object(body.set);
+  const unset = body.unset ?? [];
+  if (!Array.isArray(unset) || unset.some((key) => typeof key !== "string" || !key.trim()))
+    throw new UsageError("unset must be a list of config keys.");
+  for (const [key, value] of Object.entries(set)) {
+    if (!key.trim()) throw new UsageError("Config keys must not be empty.");
+    if (typeof value !== "string") throw new UsageError(`The value for ${key} must be a string, as on the command line.`);
+  }
+  if (Object.keys(set).length === 0 && unset.length === 0) return { saved: false };
+  const result = mutateConfig((current) => {
+    let updated = current;
+    for (const [key, value] of Object.entries(set)) updated = setConfigValue(updated, key, value as string);
+    for (const key of unset as string[]) {
+      const source = getConfigValueSource(key);
+      if (source.startsWith("extends:"))
+        throw new UsageError(
+          `Config key "${key}" is inherited from ${source} and cannot be unset here.`,
+          "TARGET_NOT_UPDATABLE",
+          `Override it with a value instead, or edit the base file directly.`,
+        );
+      updated = unsetConfigValue(updated, key);
+    }
+    if (updated !== current) preserveUnrelatedConfig(current);
+    return updated;
+  });
+  resetConfigCache();
+  return { saved: result.written };
+}
+
 export async function handleWorkspaceAction(action: WorkspaceAction, value: unknown): Promise<unknown> {
   const body = object(value);
   // `bundle update` writes only the lockfile, so it never passes config through the sanitizer.
@@ -261,6 +298,8 @@ export async function handleWorkspaceAction(action: WorkspaceAction, value: unkn
     }
     case "bundle-settings":
       return settings(body);
+    case "config-set":
+      return configChanges(body);
     case "document-save": {
       if (typeof body.content !== "string") throw new UsageError("Markdown content is required.");
       const content = body.content;
