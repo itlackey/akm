@@ -261,6 +261,8 @@ function configChanges(body: Record<string, unknown>) {
   return { saved: result.written };
 }
 
+const MAX_FIX_PAIRS = 10;
+
 export async function handleWorkspaceAction(action: WorkspaceAction, value: unknown): Promise<unknown> {
   const body = object(value);
   // `bundle update` writes only the lockfile, so it never passes config through the sanitizer.
@@ -275,6 +277,26 @@ export async function handleWorkspaceAction(action: WorkspaceAction, value: unkn
         if (!Array.isArray(body.tags) || body.tags.some((tag) => typeof tag !== "string"))
           throw new UsageError("tags must be strings.");
         for (const tag of body.tags as string[]) args.push(`--tag=${tag}`);
+      }
+      // A suggested fix: up to ten replace/with pairs of equal length, passed as `--replace=` / `--with=` so a value
+      // that starts with a dash is not read as a flag.
+      if (body.replace !== undefined || body.with !== undefined) {
+        const from = body.replace;
+        const to = body.with;
+        const strings = (value: unknown) => Array.isArray(value) && value.every((item) => typeof item === "string");
+        if (
+          !strings(from) ||
+          !strings(to) ||
+          (from as string[]).length === 0 ||
+          (from as string[]).length !== (to as string[]).length
+        )
+          throw new UsageError("replace and with must be lists of the same length.");
+        if ((from as string[]).length > MAX_FIX_PAIRS)
+          throw new UsageError(`At most ${MAX_FIX_PAIRS} replace/with pairs are accepted.`);
+        (from as string[]).forEach((old, i) => {
+          args.push(`--replace=${old}`, `--with=${(to as string[])[i]}`);
+        });
+        if (typeof body.source === "string" && body.source.trim()) args.push(`--source=${body.source.trim()}`);
       }
       return command(args, undefined, true);
     }

@@ -1404,7 +1404,7 @@ export function resolveColor(name /* '--s1' | 'CanvasText' */) → 'rgb(...)'   
 
 | Budget | Target | Today | Enforced by |
 |---|---|---|---|
-| Authored JS + CSS | Σ per-file gzip-9 ≤ **85 KB**; CSS ≤ **12 KB**; page module ≤ 8 KB | 51.9 KB / 5.1 KB | `tests/ui-asset-budget.test.ts` (P0-5) |
+| Authored JS + CSS | Σ per-file gzip-9 ≤ **90 KB** (was 85 KB: the review, impact, Misses and asset-rail pages are in); CSS ≤ **12 KB**; page module ≤ 8 KB | 51.9 KB / 5.1 KB | `tests/ui-asset-budget.test.ts` (P0-5) |
 | ECharts | ≤ **200 KB** gzip-9 (≈ 198 with Tooltip) | 189.4 KB | same |
 | ECharts on Overview first paint | not requested before a chart card intersects | eager | Playwright network log |
 | API sizes and times | per §8.4 | — | integration tests: the median of 5 runs after 1 warm-up; over budget warns, over 2× fails. The 10k fixture is built by direct SQL in one transaction (`tests/_helpers/ui-volume-fixture.ts`) |

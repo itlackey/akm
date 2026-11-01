@@ -1,5 +1,6 @@
 // Asset view: metadata, frontmatter table, the body as safe markdown, links and feedback.
 
+import { sparkline } from "./charts.js";
 import { diffSection } from "./diff-view.js";
 import {
   actionForm,
@@ -11,11 +12,56 @@ import {
   html,
   pageHeader,
   post,
+  proposalHref,
   searchReturn,
   tableWrap,
   when,
 } from "./lib.js";
 import { headingId, markdown, splitFrontmatter } from "./markdown.js";
+
+/** The rail: what this asset is, and what improve and feedback have done to it. */
+function rail(asset, data, improve, bundle) {
+  const pending = (improve?.proposals ?? []).filter((p) => p.status === "pending");
+  const feedback = (improve?.usageByWeek ?? []).reduce(
+    (sum, w) => ({ positive: sum.positive + w.positive, negative: sum.negative + w.negative }),
+    { positive: 0, negative: 0 },
+  );
+  const decided = (improve?.proposals ?? []).filter((p) => p.status !== "pending").slice(0, 5);
+  const spark = sparkline(
+    (improve?.usageByWeek ?? []).map((w) => w.hits),
+    "Weekly finds and opens, last 90 days",
+  );
+  return html`<aside class="asset-rail" aria-label="About this asset">
+    ${definitionList([
+      ["Type", asset.type],
+      ["Bundle", bundle ?? ""],
+      [
+        "Feedback",
+        html`<span class="num"><span class="text-ok">+${feedback.positive}</span> / <span class="text-fail">−${feedback.negative}</span></span> <span class="muted small">90 days</span>`,
+      ],
+    ])}
+    ${pending.length ? html`<p class="notice notice-warn">${pending.length} pending ${pending.length === 1 ? "proposal" : "proposals"} <a href="${proposalHref(pending[0].id)}">Review →</a></p>` : ""}
+    <h2 class="rail-title">Improve history</h2>
+    ${
+      improve === null
+        ? html`<p class="muted small">Unavailable.</p>`
+        : html`${spark}<p class="muted small">Finds and opens per week, last 90 days.</p>
+          ${decided.length ? html`<ul class="plain">${decided.map((p) => html`<li>${badge(p.outcome, p.outcome === "reverted" ? "warn" : "neutral")} <span class="mono small">${p.source}</span> <a class="small" href="${proposalHref(p.id)}">${when(p.decidedAt)}</a></li>`)}</ul>` : html`<p class="muted small">No proposals decided for this asset.</p>`}`
+    }
+  </aside>`;
+}
+
+function fixForm() {
+  return html`<details class="fix"><summary>Suggest a fix</summary>
+    <form class="fix-form form-grid">
+      <label>Replace this exact text <textarea name="replace" rows="2" required></textarea></label>
+      <label>With <textarea name="with" rows="2" required></textarea></label>
+      <label>Why <input name="reason" required placeholder="What is wrong with the current text"></label>
+      <label>Source <input name="source" placeholder="Optional: a URL, command or file that shows it"></label>
+      <p class="muted small">akm checks that the text appears exactly once before it records the fix.</p>
+      <button type="submit">Send suggested fix</button><div data-status></div>
+    </form></details>`;
+}
 
 function linksBlock(links) {
   const groups = Object.entries(links ?? {}).filter(([, kinds]) => kinds && typeof kinds === "object");
@@ -66,6 +112,9 @@ export async function render(ctx) {
   if (!ref)
     return html`${pageHeader("Asset")}${emptyState("No asset selected.", html`Pick one from <a href="#/search">search</a>.`)}`;
   const data = await api("/api/asset", { ref });
+  const improve = data.redacted
+    ? null
+    : await api("/api/asset/improve", { ref: data.durableRef ?? ref }).catch(() => null);
   const returnTo = searchReturn(ctx.query);
   const back = html`<p class="crumbs"><a href="${returnTo || "#/search"}">${returnTo ? "Back to results" : "Search"}</a> / asset</p>`;
   if (data.redacted) {
@@ -108,6 +157,34 @@ export async function render(ctx) {
           .filter(Boolean),
       }),
     );
+    actionForm(root, ".fix-form", (_form, values) =>
+      post("/api/feedback", {
+        ref: canonical,
+        signal: "negative",
+        reason: values.get("reason"),
+        replace: [String(values.get("replace") ?? "")],
+        with: [String(values.get("with") ?? "")],
+        source: values.get("source"),
+      }),
+    );
+    for (const button of root.querySelectorAll("[data-quick-feedback]")) {
+      button.addEventListener("click", () => {
+        const select = root.querySelector('.feedback-form [name="signal"]');
+        if (!select) return;
+        select.value = button.dataset.quickFeedback;
+        select.dispatchEvent(new Event("change"));
+        root.querySelector('.feedback-form [name="reason"]')?.focus();
+      });
+    }
+    root.querySelector("[data-copy-ref]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      try {
+        await navigator.clipboard.writeText(canonical);
+        button.textContent = "Copied";
+      } catch {
+        button.textContent = "Copy failed";
+      }
+    });
     const signal = root.querySelector('[name="signal"]');
     const reason = root.querySelector('[name="reason"]');
     signal?.addEventListener("change", () => {
@@ -118,7 +195,9 @@ export async function render(ctx) {
     if (section) requestAnimationFrame(() => document.getElementById(headingId(section))?.scrollIntoView());
   });
   return html`${back}${pageHeader(title)}
-    <p class="action-links">${asset.editable && ["knowledge", "memory"].includes(asset.type) ? html`<a href="#/edit?ref=${encodeURIComponent(canonical)}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}">Edit Markdown</a> · ` : ""}<a href="${href}&history=1">Document history</a> · <a href="#/new">New knowledge</a></p>
+    <p class="action-links">${asset.editable && ["knowledge", "memory"].includes(asset.type) ? html`<a class="btn" href="#/edit?ref=${encodeURIComponent(canonical)}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}">Edit Markdown</a> ` : ""}${data.durableRef ? html`<button type="button" class="btn-secondary" data-quick-feedback="positive">Helpful</button> <button type="button" class="btn-secondary" data-quick-feedback="negative">Not helpful</button> <button type="button" class="btn-secondary" data-copy-ref>Copy ref</button> ` : ""}<a href="${href}&history=1">Document history</a> · <a href="#/new">New knowledge</a></p>
+    ${asset.editable && ["knowledge", "memory"].includes(asset.type) ? "" : data.durableRef ? fixForm() : ""}
+    <div class="asset-layout"><div class="asset-main">
     <div class="badges">${badge(asset.type, "info")}${asset.origin ? badge(asset.origin, "neutral") : ""}${asset.editable ? badge("editable", "ok") : badge("read-only", "neutral")}</div>
     ${headings.length > 1 ? html`<details class="contents"><summary>On this page</summary><ul>${headings.map((h) => html`<li><a href="${href}&section=${encodeURIComponent(h.slug)}">${h.text}</a></li>`)}</ul></details>` : ""}
     <section class="document-body" aria-label="Content">${body.trim() === "" ? emptyState("This asset has no body.") : markdown(body, { ref: canonical, bundle: data.bundle, links: data.links, headings: data.headings, startLine, skipTitle: frontmatterTitle ? undefined : bodyTitle?.trim() })}</section>
@@ -137,5 +216,6 @@ export async function render(ctx) {
     <details><summary>Markdown source</summary><pre class="code" tabindex="0" role="group" aria-label="Markdown source, scrolls sideways">${source}</pre></details>
     ${history}
     ${linksBlock(asset.links)}
-    ${feedbackBlock(data.feedback, data.durableRef, data.feedbackRequireReason)}`;
+    ${feedbackBlock(data.feedback, data.durableRef, data.feedbackRequireReason)}
+    </div>${rail(asset, data, improve, data.bundle)}</div>`;
 }

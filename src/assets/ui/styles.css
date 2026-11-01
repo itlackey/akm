@@ -1149,13 +1149,6 @@ ul.plain {
 }
 
 /* ---- config tree ---- */
-.tree {
-  list-style: none;
-  margin: 0;
-  padding: 0 0 0 20px;
-  border-left: 1px solid var(--border);
-}
-
 .tree.root {
   padding: 12px 16px;
   border: 1px solid var(--border);
@@ -1163,40 +1156,8 @@ ul.plain {
   background: var(--surface);
 }
 
-.tree li {
-  margin: 3px 0;
-}
-
-.tree summary {
-  padding: 2px 0;
-}
-
-.leaf {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 12px;
-}
-
-.leaf-value {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
 .key {
   font-weight: 600;
-}
-
-.v-str {
-  color: var(--ok);
-  font-family: var(--mono);
-  font-size: 0.92em;
-}
-
-.v-lit {
-  color: var(--s2);
-  font-family: var(--mono);
-  font-size: 0.92em;
 }
 
 .redacted {
@@ -1204,11 +1165,6 @@ ul.plain {
   font-style: italic;
   font-family: var(--mono);
   font-size: 0.92em;
-}
-
-.legend-line {
-  color: var(--muted);
-  font-size: 0.9rem;
 }
 
 details.inline {
@@ -1938,29 +1894,6 @@ button:disabled {
   gap: var(--space-4);
 }
 
-.window-control {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--muted);
-  font-size: var(--text-s);
-}
-
-.overview-top {
-  display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: var(--space-5);
-  & > section {
-    margin-block-start: var(--space-6);
-  }
-  @media (width < 64rem) {
-    grid-template-columns: minmax(0, 1fr);
-    & > section + section {
-      margin-block-start: 0;
-    }
-  }
-}
-
 .attention-list {
   list-style: none;
   margin: 0;
@@ -2100,10 +2033,6 @@ button:disabled {
 :where(h1, .crumbs) .mono,
 h1.mono {
   font-size: inherit;
-}
-
-.window-control select {
-  font-size: var(--text-m);
 }
 
 /* ---- form system ---- */
@@ -2905,4 +2834,50 @@ h1[tabindex="-1"]:focus {
 
 .how-to-read {
   margin-block-end: var(--space-3);
+}
+
+/* ---- asset: body and rail ---- */
+.asset-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+  @media (width >= 64rem) {
+    grid-template-columns: minmax(0, 1fr) 18rem;
+  }
+}
+
+.asset-main {
+  min-inline-size: 0;
+}
+
+.asset-rail {
+  min-inline-size: 0;
+  padding-inline-start: var(--space-4);
+  border-inline-start: 1px solid var(--rule);
+  @media (width < 64rem) {
+    order: -1;
+    padding-inline-start: 0;
+    border-inline-start: 0;
+    border-block-end: 1px solid var(--rule);
+    padding-block-end: var(--space-3);
+  }
+}
+
+.rail-title {
+  margin-block-start: var(--space-4);
+  font-size: var(--text-m);
+}
+
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--control-height);
+  padding: var(--space-2) var(--space-5);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-s);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+  text-decoration: none;
 }

@@ -1565,6 +1565,23 @@ describe("workspace actions", () => {
     expect((await write(s, "/api/feedback", { ref: "stash//knowledge/guide", signal: "negative" })).status).toBe(200);
   });
 
+  test("a suggested fix needs equal replace and with lists, at most ten pairs", async () => {
+    await seed();
+    const s = await start();
+    const ref = "stash//knowledge/guide";
+    const bad = (body: Record<string, unknown>) =>
+      write(s, "/api/feedback", { ref, signal: "negative", reason: "wrong", ...body });
+    expect((await bad({ replace: ["a"], with: [] })).status).toBe(400);
+    expect((await bad({ replace: [], with: [] })).status).toBe(400);
+    expect((await bad({ replace: "a", with: "b" })).status).toBe(400);
+    const many = Array.from({ length: 11 }, (_, i) => `x${i}`);
+    expect((await bad({ replace: many, with: many })).status).toBe(400);
+    // A pair whose text does not occur is the CLI's refusal, not a crash.
+    const missing = await bad({ replace: ["text that is not in the guide"], with: ["anything"], source: "docs" });
+    expect(missing.status).not.toBe(500);
+    expect(missing.status).not.toBe(200);
+  });
+
   test("settings save only allowed fields and preserve secrets, unknown values and disabled/default state", async () => {
     await writableConfig();
     const config = loadConfig();

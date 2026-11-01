@@ -15,7 +15,7 @@ import { gzipSync } from "node:zlib";
 
 const KB = 1000;
 const BUDGET = {
-  authoredTotal: 85 * KB,
+  authoredTotal: 90 * KB,
   css: 12 * KB,
   pageModule: 8 * KB,
   echarts: 200 * KB,
