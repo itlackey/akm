@@ -543,7 +543,7 @@ Result sections (`schemaVersion: 1`):
 | Field | Description |
 | --- | --- |
 | `window`, `filters` | The resolved window and the usage source counted |
-| `usage` | Search, show, curate and select totals, `searchesWithHits` and `selectsPerSearch` (selects divided by searches that returned a hit: a plain ratio that can exceed 1, not a conversion percentage; selects are deduped per search id and ref, and kept only when they followed a search from the counted source, except legacy selects with no source, which count for every source), `searchMedianMs`, a daily series, top assets, top and zero-result queries, and rows by source |
+| `usage` | Search, show, curate and select totals, `searchesWithHits` and `selectsPerSearch` (selects divided by searches that returned a hit: a plain ratio that can exceed 1, not a conversion percentage; selects are deduped per search id and ref, and kept only when they followed a search from the counted source, except legacy selects with no source, which count for every source), `searchMedianMs` (over searches with `totalMs >= 0`; `searchTimed` is their count), a daily series, top assets, top and zero-result queries, and rows by source |
 | `feedback` | Positive and negative totals, per-asset valence, per-tag counts, and the most recent negatives with their reasons |
 | `utility` | A ten-bucket histogram of `utility_scores`, the lowest and highest assets, and how many indexed entries were never used |
 | `outcomes` | The assets with the lowest `outcome_score` |

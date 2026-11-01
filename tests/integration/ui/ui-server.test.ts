@@ -441,7 +441,9 @@ describe("endpoints", () => {
     const s = await start();
     const overview = await data(s, "/api/overview");
     expect(overview.metrics.tasks.byTask.some((t: { taskId: string }) => t.taskId === "rare-failure")).toBe(false);
-    expect(overview.taskFailures).toEqual([{ taskId: "rare-failure", runs: 1, failed: 1, medianMs: 50 }]);
+    expect(overview.taskFailures).toEqual([
+      { taskId: "rare-failure", runs: 1, failed: 1, medianMs: 50, failRate: null },
+    ]);
     const detail = await data(s, "/api/tasks/history?taskId=rare-failure&limit=1");
     expect(detail).toMatchObject({
       available: true,
@@ -503,6 +505,62 @@ describe("endpoints", () => {
     expect(filtered.proposals).toHaveLength(1);
     expect((await data(s, "/api/proposals?age=unknown")).proposals[0].id).toBe("unknown");
     expect((await api(s, "/api/proposals?age=invalid")).status).toBe(400);
+  });
+
+  test("overview pendingNow counts this stash's pending queue, unwindowed, like the proposals list", async () => {
+    await seed();
+    const original = createProposal(storage.stashDir, {
+      ref: "lessons/rg",
+      source: "reflect",
+      sourceRun: "run-1",
+      target: { source: "stash", root: storage.stashDir },
+      payload: { content: LESSON, frontmatter: { description: "Use ripgrep" } },
+    });
+    const old = new Date(Date.now() - 10 * 86_400_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      for (let i = 0; i < 3; i++)
+        upsertProposal(db, { ...original, id: `old-${i}`, createdAt: old, updatedAt: old }, storage.stashDir);
+      upsertProposal(db, { ...original, id: "elsewhere", createdAt: old, updatedAt: old }, "/other/stash");
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const overview = await data(s, "/api/overview?metricsSince=24h");
+    const list = await data(s, "/api/proposals?limit=200");
+    expect(overview.metrics.proposals.byStatus.pending ?? 0).toBeLessThan(overview.pendingNow);
+    expect(overview.pendingNow).toBe(list.totalCount);
+    expect(overview.pendingNow).toBe(overview.health.report.pendingProposals.length);
+  });
+
+  test("task failures rank by failure rate once a task has 5 runs, then by failures", async () => {
+    await seed();
+    const db = openStateDatabase();
+    const base = Date.now() - 60_000;
+    const run = (taskId: string, status: string, n: number) =>
+      upsertTaskHistory(db, {
+        task_id: taskId,
+        status,
+        started_at: new Date(base - n * 1000).toISOString(),
+        completed_at: status === "completed" ? new Date(base).toISOString() : null,
+        failed_at: status === "failed" ? new Date(base).toISOString() : null,
+        log_path: null,
+        target_kind: null,
+        target_ref: null,
+        metadata_json: "{}",
+      });
+    try {
+      // busy: 2 of 10 failed (0.2); flaky: 3 of 5 (0.6); few: 2 of 2 (no rate, ranks after the rated tasks).
+      for (let n = 0; n < 10; n++) run("busy", n < 2 ? "failed" : "completed", n);
+      for (let n = 0; n < 5; n++) run("flaky", n < 3 ? "failed" : "completed", n);
+      for (let n = 0; n < 2; n++) run("few", "failed", n);
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const overview = await data(s, "/api/overview");
+    expect(overview.taskFailures.map((t: { taskId: string }) => t.taskId)).toEqual(["flaky", "busy", "few"]);
+    expect(overview.taskFailures.map((t: { failRate: number | null }) => t.failRate)).toEqual([0.6, 0.2, null]);
   });
 
   test("GET /api/bundles: cards with git status and asset counts, plus the index state", async () => {

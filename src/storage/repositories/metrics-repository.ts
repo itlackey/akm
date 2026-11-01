@@ -148,6 +148,14 @@ export function countProposalsByStatus(db: Database, sinceIso: string, untilIso:
   return Object.fromEntries(rows.map((row) => [row.status, row.n]));
 }
 
+/** Pending proposals of one stash right now: unwindowed, so it matches `akm proposal list --status pending`. */
+export function countPendingProposals(db: Database, stashDir: string): number {
+  const row = db
+    .prepare("SELECT COUNT(*) AS n FROM proposals WHERE stash_dir = ? AND status = 'pending'")
+    .get(stashDir) as { n: number };
+  return row.n;
+}
+
 /**
  * Workflow runs created in the window by status, and the tokens their unit
  * attempts spent by model. Attempts, not the unit projection, so a retried

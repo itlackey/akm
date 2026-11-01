@@ -126,7 +126,8 @@ Everything on the overview page in one call. Query parameters:
       "daily": [{ "date": "2026-10-16", "searches": 3, "zeroResults": 1, "medianMs": 80, "latencySamples": 2 }],
       "zeroResultQueries": [{ "date": "2026-10-16", "query": "missing guide", "count": 1 }]
     },
-    "taskFailures": [{ "taskId": "weekly-review", "runs": 2, "failed": 1, "medianMs": 4000 }]
+    "pendingNow": 3,
+    "taskFailures": [{ "taskId": "weekly-review", "runs": 6, "failed": 2, "medianMs": 4000, "failRate": 0.3333333333333333 }]
   }
 }
 ```
@@ -142,7 +143,15 @@ Everything on the overview page in one call. Query parameters:
 - `retrieval` shares `metrics.window` and its user-attributed source filter. Its UTC daily latency median uses only
   recorded nonnegative durations (`latencySamples`); no samples means `null`, not zero. Missing result counts do not
   mean zero results. Query counts group the recorded zero-result searches by date and query.
-- `taskFailures` ranks all recorded task runs in `metrics.window` by failure count before limiting to 20 tasks.
+- `pendingNow` is the number of pending proposals in the current stash right now. It is not windowed, and equals the
+  pending count of `akm proposal list`. It is `null` when there is no stash or state is unreadable. Use it instead of
+  `metrics.proposals.byStatus.pending`, which counts only proposals last updated in the window, across all stashes.
+- `metrics.usage.searchMedianMs` and the `retrieval` daily median share one filter (`totalMs >= 0`);
+  `metrics.usage.searchTimed` is the number of searches behind the median. The daily feedback count in
+  `metrics.usage.daily` counts signed rows only, like `metrics.feedback.totals`.
+- `taskFailures` lists the tasks with at least one failed run in `metrics.window`, then limits to 20. `failRate` is
+  `failed / runs`, or `null` below 5 recorded runs. Tasks with a rate come first, highest rate first; the rest follow by
+  failures, then runs.
   Nonfailed runs are not assumed successful, nor are absent runs evidence of a successful scheduled task.
   Details are available from `/api/tasks/history`. Missing/unreadable state yields `null` rather than a healthy empty list.
 - Charts must retain `metrics.notes` about missing stores and retention; none of these series imply complete history.

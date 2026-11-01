@@ -298,7 +298,7 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
       bump(row.at, "search");
       if ((row.resultCount ?? 0) > 0) searchesWithHits += 1;
       if (row.resultCount === 0) zeroResultSearches += 1;
-      if (row.totalMs !== undefined) searchMs.push(row.totalMs);
+      if (row.totalMs !== undefined && row.totalMs >= 0) searchMs.push(row.totalMs);
       const query = row.query?.trim();
       if (query) {
         const entry = queries.get(query) ?? { count: 0, results: [], lastAt: row.at };
@@ -327,8 +327,10 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
         touch(entry, row.at);
       }
     } else if (row.eventType === "feedback") {
+      // Signed rows only, so the daily series and the totals count the same rows.
+      if (row.signal === undefined) continue;
       bump(row.at, "feedback");
-      if (row.ref !== undefined && row.signal !== undefined) {
+      if (row.ref !== undefined) {
         const entry = asset(row.ref);
         entry[row.signal] += 1;
         touch(entry, row.at);
@@ -365,6 +367,7 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
     },
     selectsPerSearch: searchesWithHits > 0 ? input.selects.length / searchesWithHits : null,
     searchMedianMs: median(searchMs),
+    searchTimed: searchMs.length,
     daily: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)),
     topAssets: [...assets.values()]
       .sort(
@@ -473,6 +476,23 @@ function taskDurationMs(row: TaskHistoryRow): number | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Fewest recorded runs for which a task's failure rate is shown (M-25). */
+export const MIN_TASK_RATE_RUNS = 5;
+
+/** Failed runs over recorded runs, or `null` below {@link MIN_TASK_RATE_RUNS}. */
+export function taskFailRate(task: { runs: number; failed: number }): number | null {
+  return task.runs >= MIN_TASK_RATE_RUNS ? task.failed / task.runs : null;
+}
+
+/** Tasks with a rate first, highest rate first; the rest by failures. Ties: failures, runs, id. */
+export function compareTaskFailures(a: MetricsTaskSummary, b: MetricsTaskSummary): number {
+  const rateA = taskFailRate(a);
+  const rateB = taskFailRate(b);
+  if (rateA !== null && rateB !== null && rateA !== rateB) return rateB - rateA;
+  if ((rateA === null) !== (rateB === null)) return rateA === null ? 1 : -1;
+  return b.failed - a.failed || b.runs - a.runs || a.taskId.localeCompare(b.taskId);
 }
 
 export function buildTasks(top: number, rows: TaskHistoryRow[]): AkmMetricsResult["tasks"] {

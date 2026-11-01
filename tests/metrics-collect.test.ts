@@ -143,6 +143,22 @@ describe("usage section", () => {
     expect(result.searchMedianMs).toBe(30);
   });
 
+  test("median search uses totalMs >= 0 and reports how many searches were timed", () => {
+    const timed = buildMetricsResult(
+      input({
+        usage: [
+          usage({ event_type: "search", created_at: "2026-01-03 10:00:00", metadata: JSON.stringify({ totalMs: -5 }) }),
+          usage({ event_type: "search", created_at: "2026-01-03 10:01:00", metadata: JSON.stringify({ totalMs: 0 }) }),
+          usage({ event_type: "search", created_at: "2026-01-03 10:02:00", metadata: JSON.stringify({ totalMs: 40 }) }),
+          usage({ event_type: "search", created_at: "2026-01-03 10:03:00" }),
+        ],
+      }),
+    ).usage;
+    expect(timed.searchMedianMs).toBe(40);
+    expect(timed.searchTimed).toBe(2);
+    expect(timed.totals.searches).toBe(4);
+  });
+
   test("daily buckets by UTC day, ascending", () => {
     expect(result.daily).toEqual([
       { day: "2026-01-02", search: 1, show: 0, curate: 0, feedback: 0 },
@@ -173,6 +189,32 @@ describe("usage section", () => {
     const empty = buildMetricsResult(input()).usage;
     expect(empty.selectsPerSearch).toBeNull();
     expect(empty.searchMedianMs).toBeNull();
+  });
+});
+
+describe("daily feedback", () => {
+  test("counts signed rows only, like the feedback totals", () => {
+    const result = buildMetricsResult(
+      input({
+        usage: [
+          usage({
+            event_type: "feedback",
+            created_at: "2026-01-03 10:00:00",
+            entry_ref: "b//skills/a",
+            signal: "positive",
+          }),
+          usage({
+            event_type: "feedback",
+            created_at: "2026-01-03 11:00:00",
+            entry_ref: "b//skills/a",
+            signal: "negative",
+          }),
+          usage({ event_type: "feedback", created_at: "2026-01-03 12:00:00", entry_ref: "b//skills/a" }),
+        ],
+      }),
+    );
+    expect(result.usage.daily).toEqual([{ day: "2026-01-03", search: 0, show: 0, curate: 0, feedback: 2 }]);
+    expect(result.feedback.totals).toEqual({ positive: 1, negative: 1 });
   });
 });
 

@@ -36,7 +36,11 @@ import { listRecentImproveRuns } from "../../storage/repositories/improve-runs-r
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { getEmbeddingCount } from "../../storage/repositories/index-vec-repository";
-import { countFeedbackBySignal, listFeedbackEventRows } from "../../storage/repositories/metrics-repository";
+import {
+  countFeedbackBySignal,
+  countPendingProposals,
+  listFeedbackEventRows,
+} from "../../storage/repositories/metrics-repository";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
 import { decodeTaskHistoryMetadata, queryTaskHistory } from "../../storage/repositories/task-history-repository";
 import { applyReadonlyPragmas } from "../../storage/sqlite-pragmas";
@@ -44,7 +48,7 @@ import { pkgVersion } from "../../version";
 import { listConfig } from "../config-cli";
 import { akmHealth, parseHealthSince } from "../health";
 import { computeAcceptRateBySource } from "../health/accept-rate";
-import { buildTasks } from "../metrics/collect";
+import { buildTasks, compareTaskFailures, taskFailRate } from "../metrics/collect";
 import { akmMetrics } from "../metrics/metrics-cli";
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../proposal/repository";
@@ -215,9 +219,11 @@ async function overview(query: Query) {
   const metrics = await section(errors, "metrics", () =>
     akmMetrics({ since: query.get("metricsSince") || "30d", indexSnapshot: false, includeRows: true }),
   );
+  const stashDir = tryStashDir();
   const stateReads = await section(errors, "state", () =>
     withReadonlyStateDb(
       (db) => ({
+        pendingNow: stashDir ? countPendingProposals(db, stashDir) : null,
         improveRuns: listRecentImproveRuns(db, IMPROVE_RUNS_SHOWN).map(summarizeImproveRun),
         taskFailures: metrics
           ? (() => {
@@ -225,8 +231,9 @@ async function overview(query: Query) {
               // Rank the complete window by failures, not the metrics top-20 by volume.
               return buildTasks(rows.length, rows)
                 .byTask.filter((task) => task.failed > 0)
-                .sort((a, b) => b.failed - a.failed || b.runs - a.runs || a.taskId.localeCompare(b.taskId))
-                .slice(0, 20);
+                .sort(compareTaskFailures)
+                .slice(0, 20)
+                .map((task) => ({ ...task, failRate: taskFailRate(task) }));
             })()
           : null,
       }),
@@ -236,6 +243,7 @@ async function overview(query: Query) {
   return {
     health,
     metrics: metrics ? { ...metrics, rows: undefined } : null,
+    pendingNow: stateReads?.pendingNow ?? null,
     improveRuns: stateReads?.improveRuns ?? [],
     retrieval: metrics ? retrievalSeries(metrics.rows?.usage ?? []) : null,
     taskFailures: stateReads?.taskFailures ?? null,
