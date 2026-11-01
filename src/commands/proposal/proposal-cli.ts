@@ -444,7 +444,7 @@ const proposalDrainCommand = defineJsonCommand({
     promote: {
       type: "boolean",
       description:
-        "Promote (accept) matching proposals. Without it, the strategy's apply mode decides, and the default strategy's is promote (akm#1274).",
+        "Promote (accept) judge-passed proposals. Without it, drain queues: it stages its decisions and writes nothing to assets.",
       default: false,
     },
     judgment: {
@@ -464,12 +464,16 @@ const proposalDrainCommand = defineJsonCommand({
     const cfg = loadConfig();
 
     // Phase 2: read the triage block from the named improve strategy. CLI flags
-    // always override config; config supplies defaults for any flag omitted.
+    // always override config; config supplies defaults for any flag omitted,
+    // except that a bare drain queues: the apply mode comes from `--promote`
+    // or an explicitly named `--strategy`, never from the implicit default
+    // strategy (#1274).
     const selectedStrategy = resolveImproveStrategy(args.strategy as string | undefined, cfg);
     const triageConfig = selectedStrategy.config.processes?.triage;
 
     const dryRun = args["dry-run"] === true;
-    const applyMode: "queue" | "promote" = args.promote === true ? "promote" : (triageConfig?.applyMode ?? "queue");
+    const applyMode: "queue" | "promote" =
+      args.promote === true ? "promote" : args.strategy !== undefined ? (triageConfig?.applyMode ?? "queue") : "queue";
 
     const maxAccepts =
       parsePositiveIntFlag(args["max-accepts"] as string | undefined, "--max-accepts") ??

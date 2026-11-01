@@ -14,6 +14,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   applied before candidate budgets), and recency is a small tie-break in the
   fused score. The next ordinary index pass records the dates (#1228).
 
+### Changed
+
+- A bare `akm proposal drain` queues, as its help and docs say: it stages its
+  decisions and writes nothing to assets, whatever the default strategy's
+  `triage.applyMode` is. `--promote` always promotes, and an explicit
+  `--strategy <name>` still supplies that strategy's apply mode, ceilings and
+  judgment. `akm improve`'s own triage pre-pass still applies its strategy's
+  `applyMode`. This reverses 0.10.261019, where a bare drain on a stock install
+  promoted (#1274).
+
 ### Fixed
 
 - A writing `akm proposal extract` checks that its proposal queue has a writable
