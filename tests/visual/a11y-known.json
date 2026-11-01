@@ -1,0 +1,256 @@
+{
+  "tokens": {
+    "light": {
+      "text --on-accent on --accent": "token not defined yet (P2-2)",
+      "text --on-danger on --fail": "token not defined yet (P2-2)",
+      "control-edge --border on --bg": "B-18",
+      "control-edge --border on --surface": "B-18",
+      "control-edge --border on --surface-2": "B-18",
+      "band-edge --band-edge on --surface": "token not defined yet (P2-2)",
+      "accent-vs-series --accent from --s1": "P2-7 (D-40)",
+      "age-ramp --age-1..3": "token not defined yet (P2-2)"
+    },
+    "dark": {
+      "text --on-accent on --accent": "token not defined yet (P2-2)",
+      "text --on-danger on --fail": "token not defined yet (P2-2)",
+      "control-edge --border on --bg": "B-18",
+      "control-edge --border on --surface": "B-18",
+      "control-edge --border on --surface-2": "B-18",
+      "band-edge --band-edge on --surface": "token not defined yet (P2-2)",
+      "accent-vs-series --accent from --s1": "P2-7 (D-40)",
+      "age-ramp --age-1..3": "token not defined yet (P2-2)"
+    }
+  },
+  "findings": {
+    "_focus-after-route": {
+      "focus-after-route asset-command": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route asset-knowledge": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route bundles": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route changes": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route config": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route edit": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route new": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route overview": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route proposal-create": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route proposal-edit": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route proposal-noop": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route proposal-retire": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route proposals-pending": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route proposals-recent": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route search-browse": {
+        "count": 1,
+        "ref": "B-21"
+      }
+    },
+    "_focus-async": {
+      "focus-async overview window": {
+        "count": 1,
+        "ref": "B-22"
+      },
+      "focus-async proposal accept": {
+        "count": 1,
+        "ref": "B-27"
+      }
+    },
+    "_route-status": {
+      "route-status main-is-live": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status regions": {
+        "count": 1,
+        "ref": "B-19"
+      }
+    },
+    "asset-command": {
+      "axe dark 1280 target-size": {
+        "count": 2,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe dark 320 target-size": {
+        "count": 2,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe light 1280 target-size": {
+        "count": 2,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe light 320 target-size": {
+        "count": 2,
+        "ref": "B-24, B-59, B-60"
+      }
+    },
+    "asset-knowledge": {
+      "axe dark 1280 target-size": {
+        "count": 2,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe dark 320 scrollable-region-focusable": {
+        "count": 1,
+        "ref": "B-40"
+      },
+      "axe dark 320 target-size": {
+        "count": 2,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe light 1280 target-size": {
+        "count": 2,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe light 320 scrollable-region-focusable": {
+        "count": 1,
+        "ref": "B-40"
+      },
+      "axe light 320 target-size": {
+        "count": 2,
+        "ref": "B-24, B-59, B-60"
+      }
+    },
+    "bundles": {
+      "axe dark 320 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe light 320 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      }
+    },
+    "proposal-create": {
+      "axe dark 1280 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe dark 320 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe light 1280 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe light 320 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "text-spacing 320": {
+        "count": 1,
+        "ref": "untriaged (Phase 1)"
+      }
+    },
+    "proposal-edit": {
+      "axe dark 1280 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe dark 320 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe light 1280 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe light 320 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      }
+    },
+    "proposal-noop": {
+      "axe dark 1280 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe dark 320 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe light 1280 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe light 320 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      }
+    },
+    "proposal-retire": {
+      "axe dark 1280 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe dark 320 scrollable-region-focusable": {
+        "count": 1,
+        "ref": "B-40"
+      },
+      "axe dark 320 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe light 1280 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      },
+      "axe light 320 scrollable-region-focusable": {
+        "count": 1,
+        "ref": "B-40"
+      },
+      "axe light 320 target-size": {
+        "count": 1,
+        "ref": "B-24, B-59, B-60"
+      }
+    },
+    "proposals-pending": {
+      "text-spacing 1280": {
+        "count": 6,
+        "ref": "untriaged (Phase 1)"
+      },
+      "text-spacing 320": {
+        "count": 6,
+        "ref": "untriaged (Phase 1)"
+      }
+    }
+  }
+}

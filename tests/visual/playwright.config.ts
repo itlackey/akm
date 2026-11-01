@@ -57,6 +57,12 @@ const projects = [
     testMatch: "reflow.pw.ts",
     use: { ...devices["Desktop Chrome"], viewport: { width: 320, height: 640 }, colorScheme: "light" as const },
   },
+  // The accessibility ratchet changes viewport and scheme itself, route by route.
+  {
+    name: "a11y",
+    testMatch: "a11y.pw.ts",
+    use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 }, colorScheme: "light" as const },
+  },
   {
     name: "audit",
     testMatch: ["style-audit.pw.ts", "tools.pw.ts"],
