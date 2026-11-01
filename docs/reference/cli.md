@@ -697,12 +697,14 @@ candidates are taken. The fused score is then multiplied by
 feedback for the asset (see [`akm feedback`](#feedback)), and, among dated
 candidates only, by a recency factor `1 + 0.04 × r`, where `r` is 1 for the newest dated candidate and halves for every
 year older (measured from that candidate, not from today). The date is the observed date, else `updated`. Dated
-candidates are reordered among the places dated candidates already hold, so undated candidates keep their
-places and scores, and recency decides only near-ties: it never outweighs a clear match, and it needs two distinct dates
-among the candidates. Hits are ordered
+candidates are reordered among the places dated candidates already hold, and each place keeps its score, so undated
+candidates keep their places and scores. Recency needs two distinct dates among the candidates. When both channels
+contribute it passes only near-ties; in keyword-only search, where every fused score is `1 / (60 + rank)`, it can lift
+a dated hit one place past a dated hit most of a year older, or two places past one 1.5 to 2.5 years older,
+whatever the keyword margin. Hits are ordered
 by that score, equal scores by fully qualified ref (`<bundle>//<conceptId>`,
 even where the output shows the short form). A hit's `score` is the adjusted
-score. If `state.db` exists but cannot be read, the search ranks without
+score of its place. If `state.db` exists but cannot be read, the search ranks without
 feedback and adds a warning. The query is embedded with the model's query template (see
 `embedding.queryTemplate` in [`configuration.md`](configuration.md)); when the
 embedding takes longer than `embedding.queryTimeoutMs` (default 3000) or fails,

@@ -100,9 +100,13 @@ export function applyFeedback(
  * Weight of recency among dated candidates. A dated candidate's score is scaled
  * by 1 + w·r, where r is 1 for the newest dated candidate and halves for every
  * {@link RECENCY_HALF_LIFE_DAYS} older: the newest outscores a much older one by
- * up to 4% at 0.04. In keyword-only search neighbours in the first 20 ranks sit
- * 1.3 to 1.6% apart, so recency reorders neighbours of about equal relevance and
- * never outweighs a clear keyword margin.
+ * up to 4% at 0.04. In keyword-only search every fused score is 1 / (RRF_K + rank),
+ * so neighbours in the first 20 ranks sit 1.3 to 1.6% apart whatever their keyword
+ * margin: there the newest passes an older dated neighbour from about 0.6 to 0.8
+ * years apart, two from about 1.5 to 2.5 years, and never three in the first 10
+ * ranks. When both channels contribute, their ranks spread the scores and recency
+ * passes only near-ties. At 0.02 it passes none of the dated retrieval set's
+ * pairs (akm-eval `evals/retrieval/assets/dated`, 1 to 1.7 years apart).
  */
 export const RECENCY_WEIGHT = 0.04;
 
