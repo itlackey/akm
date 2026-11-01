@@ -3274,6 +3274,13 @@ and points at `akm setup`. It runs on the default connection, else the default
 harness; `--connection`, `--harness` and `--model` choose another, and
 `improve.processes.extract` sets it for the improve stage too.
 
+A run that writes proposals first checks that the proposal queue (the stash it
+extracts into) has a configured, writable bundle, and fails before any model
+call when it does not, with the reason (`No configured bundle owns proposal
+queue <dir>.` or `Proposal bundle "<name>" is not writable.`). It never
+registers a replacement or changes a bundle's permissions. `--dry-run` previews
+need no writable owner.
+
 **Output.** `ok` means the command ran to completion — it is `true` even when
 every session was skipped (an unreachable connection included); it does not
 mean anything was harvested. Consumers that need "did this run actually
