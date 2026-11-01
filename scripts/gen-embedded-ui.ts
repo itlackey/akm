@@ -30,16 +30,19 @@ function importName(file: string): string {
   return `${name}-${ext.slice(1)}`.replace(/[-.](\w)/g, (_, c: string) => c.toUpperCase());
 }
 
-export function renderEmbeddedUi(files: string[]): string {
+function renderEmbeddedUi(files: string[]): string {
   const imports = files.map((f) => `import ${importName(f)} from "../../assets/ui/${f}" with { type: "text" };`);
   const entries = files.map((f) => `  "${f}": ${importName(f)} as unknown as string,`);
   return `${HEADER}${imports.join("\n")}\n\nexport const EMBEDDED_UI: Record<string, string> = {\n${entries.join("\n")}\n};\n`;
 }
 
-/** Biome sorts imports by path without the extension; match it so the generated file is already formatted. */
+/** Biome sorts imports by path without the extension; match it so the generated file is already formatted. Ties on the stem fall back to the full name. */
 function compareByStem(a: string, b: string): number {
   const stem = (file: string) => path.parse(file).name;
-  return stem(a) < stem(b) ? -1 : stem(a) > stem(b) ? 1 : 0;
+  const [sa, sb] = [stem(a), stem(b)];
+  if (sa !== sb) return sa < sb ? -1 : 1;
+  // Same stem (styles.css / styles.js): break the tie on the full name so the order never depends on readdir.
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 function listUiFiles(): string[] {
