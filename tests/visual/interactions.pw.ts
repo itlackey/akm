@@ -40,7 +40,7 @@ test("overview details open", async ({ page }) => {
   // One element per shot: the full page's height shifts by a few px while a full-page capture resizes the viewport.
   for (const [slug, heading] of Object.entries(sections)) {
     await expect(
-      page.locator("main section", { has: page.getByRole("heading", { level: 2, name: heading }) }),
+      page.locator("main .chart-card", { has: page.getByRole("heading", { level: 2, name: heading }) }),
     ).toHaveScreenshot(`overview--details-open-${slug}.png`, { mask: volatileMasks(page) });
   }
   await expect(page.locator("details.chart-notes")).toHaveScreenshot("overview--details-open-measurement-coverage.png");

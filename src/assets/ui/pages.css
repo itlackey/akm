@@ -106,16 +106,26 @@
     border-block-end: 1px solid var(--border);
   }
 
+  /* A link tab (aria-current) or a button tab (aria-selected): plain words, the current one underlined. */
   .tab {
+    min-block-size: 0;
     padding: var(--space-2) var(--space-4);
     margin-block-end: -1px;
+    border: 0;
+    border-block-end: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
     color: var(--muted);
+    font-size: inherit;
     text-decoration: none;
     font-weight: 500;
-    border-block-end: 2px solid transparent;
+    &:hover:not(:disabled) {
+      background: transparent;
+      color: var(--text);
+    }
   }
 
-  .tab[aria-current] {
+  .tab:is([aria-current], [aria-selected="true"]) {
     color: var(--accent);
     border-block-end-color: var(--accent);
     font-weight: 700;

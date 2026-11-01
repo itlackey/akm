@@ -221,8 +221,8 @@ async function edit(ctx, ref) {
     <form class="edit-form form-grid">
       <div class="editor-actions"><button type="submit">Save Markdown</button><a class="btn btn-secondary" href="${assetHref(source.ref, returnTo)}">Cancel</a><span class="muted small" data-editor-state role="status">No changes</span></div>
       <div data-status></div>
-      <div class="tabs editor-tabs" role="tablist" aria-label="Editor view"><button type="button" role="tab" id="tab-write" aria-selected="true" aria-controls="panel-write" data-write-tab>Write</button><button type="button" role="tab" id="tab-preview" aria-selected="false" aria-controls="panel-preview" tabindex="-1" data-preview-toggle>Preview</button></div>
-      <label data-source-panel role="tabpanel" id="panel-write" aria-labelledby="tab-write">Markdown<textarea name="content" rows="16" spellcheck="false">${source.content}</textarea></label>
+      <div class="tabs editor-tabs" role="tablist" aria-label="Editor view"><button type="button" class="tab" role="tab" id="tab-write" aria-selected="true" aria-controls="panel-write" data-write-tab>Write</button><button type="button" class="tab" role="tab" id="tab-preview" aria-selected="false" aria-controls="panel-preview" tabindex="-1" data-preview-toggle>Preview</button></div>
+      <div data-source-panel role="tabpanel" id="panel-write" aria-labelledby="tab-write"><label>Markdown<textarea name="content" rows="16" spellcheck="false">${source.content}</textarea></label></div>
       <section data-preview-panel role="tabpanel" id="panel-preview" aria-labelledby="tab-preview" hidden><h2>Preview</h2><div data-preview></div></section>
     </form><section data-recovery hidden></section>`;
 }

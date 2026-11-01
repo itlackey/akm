@@ -1249,7 +1249,7 @@
     }
     .chip[aria-current],
     .seg button[aria-pressed="true"],
-    .tab[aria-current] {
+    .tab:is([aria-current], [aria-selected="true"]) {
       outline: 2px solid Highlight;
       outline-offset: -2px;
     }
