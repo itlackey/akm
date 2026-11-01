@@ -694,13 +694,12 @@ document vectors nearest to the query embedding, 100 candidates each. Filters
 proposed quality) drop ineligible entries from each list before its 100
 candidates are taken. The fused score is then multiplied by
 `1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))` over the user's recorded
-feedback for the asset (see [`akm feedback`](#feedback)), and by a recency
-factor `1 + 0.04 × (r − ½)`, where `r` is 1 for the newest dated candidate and
-halves for every year older (measured from that candidate, not from today).
-Recency moves a score by at most 2% either way, so it reorders neighbours of
-about equal relevance and never outweighs a clear match. It needs two distinct
-dates among the candidates, a candidate without a date keeps factor 1, and the
-date is the observed date, else `updated`. Hits are ordered
+feedback for the asset (see [`akm feedback`](#feedback)), and, among dated
+candidates only, by a recency factor `1 + 0.04 × r`, where `r` is 1 for the newest dated candidate and halves for every
+year older (measured from that candidate, not from today). The date is the observed date, else `updated`. Dated
+candidates are reordered among the places dated candidates already hold, so undated candidates keep their
+places and scores, and recency decides only near-ties: it never outweighs a clear match, and it needs two distinct dates
+among the candidates. Hits are ordered
 by that score, equal scores by fully qualified ref (`<bundle>//<conceptId>`,
 even where the output shows the short form). A hit's `score` is the adjusted
 score. If `state.db` exists but cannot be read, the search ranks without

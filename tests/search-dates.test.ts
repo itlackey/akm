@@ -232,17 +232,31 @@ describe("recency tie-break", () => {
     expect(order(applyRecency(fused, days))).toEqual(["old", "new"]);
   });
 
-  test("undated candidates keep their score, and with no dates nothing changes", () => {
+  test("undated candidates keep their place and score, and with no dates nothing changes", () => {
     const fused = [candidate(1, "a", 1 / 61), candidate(2, "b", 1 / 62), candidate(3, "c", 1 / 63)];
     expect(applyRecency(fused, new Map())).toEqual(fused);
+    // b and c are dated and nearly tied; a, undated, stays first with its score.
     const dated = applyRecency(
       fused,
       new Map([
-        [2, "2026-01-01"],
-        [3, "2025-01-01"],
+        [2, "2025-01-01"],
+        [3, "2026-09-01"],
       ]),
     );
-    expect(dated.find((c) => c.id === 1)?.score).toBe(1 / 61);
+    expect(order(dated)).toEqual(["a", "c", "b"]);
+    expect(dated.map((c) => c.score)).toEqual(fused.map((c) => c.score));
+  });
+
+  test("an undated candidate between two dated ones keeps its place", () => {
+    const fused = [candidate(1, "old", 1 / 61), candidate(2, "undated", 1 / 61.5), candidate(3, "new", 1 / 62)];
+    const out = applyRecency(
+      fused,
+      new Map([
+        [1, "2025-01-01"],
+        [3, "2026-09-01"],
+      ]),
+    );
+    expect(order(out)).toEqual(["new", "undated", "old"]);
   });
 
   test("a single date, alone or shared, changes nothing", () => {
@@ -259,17 +273,19 @@ describe("recency tie-break", () => {
     ).toEqual(fused);
   });
 
-  test("the factor moves a score by at most half the weight either way", () => {
-    const fused = [candidate(1, "old", 1), candidate(2, "new", 1)];
-    const scores = applyRecency(
-      fused,
-      new Map([
-        [1, "1990-01-01"],
-        [2, "2026-09-01"],
-      ]),
-    );
-    expect(scores.find((c) => c.id === 2)?.score).toBeCloseTo(1 + RECENCY_WEIGHT / 2, 6);
-    expect(scores.find((c) => c.id === 1)?.score).toBeGreaterThan(1 - RECENCY_WEIGHT / 2 - 1e-6);
+  test("the newest outscores a much older candidate by at most the weight", () => {
+    // 1 / 61 against 1 / 61 x (1 + weight): any gap wider than the weight keeps its order.
+    const wider = 1 / 61 / (1 + RECENCY_WEIGHT * 1.01);
+    const fused = [candidate(1, "old", 1 / 61), candidate(2, "new", wider)];
+    const days = new Map([
+      [1, "1990-01-01"],
+      [2, "2026-09-01"],
+    ]);
+    expect(order(applyRecency(fused, days))).toEqual(["old", "new"]);
+    expect(order(applyRecency([candidate(1, "old", 1 / 61), candidate(2, "new", wider * 1.0105)], days))).toEqual([
+      "new",
+      "old",
+    ]);
   });
 
   test("age is measured from the newest candidate, not the clock", () => {
@@ -282,7 +298,6 @@ describe("recency tie-break", () => {
       ]),
     );
     expect(order(shifted)).toEqual(["b", "a"]);
-    expect(shifted[0]?.score).toBeCloseTo(1 + RECENCY_WEIGHT / 2, 3);
   });
 
   test("end to end, equal matches come back newest first", async () => {

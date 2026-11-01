@@ -8,7 +8,7 @@
  * Ranking is two candidate channels fused by reciprocal rank (`ranking.ts`):
  * BM25 over whole documents matching any query word, and the nearest document
  * vectors to the query embedding. The fused score is then scaled by the
- * asset's recorded user feedback and, slightly, by its recency. Filters narrow
+ * asset's recorded user feedback and, among dated assets, ordered by recency. Filters narrow
  * the list; nothing else reorders it.
  */
 
