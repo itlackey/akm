@@ -491,7 +491,8 @@ export interface RankedTaskFailure extends MetricsTaskSummary {
 
 /**
  * Per-task failure ranking (plan M-25). Fresh active runs are neither ok nor failed, so they are left out of `rated`.
- * Tasks with a rate come first, highest rate first; the rest by not-ok runs. Ties: runs, id.
+ * Membership stays `failed > 0` until the client shows not-ok/rated (P1-4b). Tasks with a rate come first, highest
+ * rate first; the rest by not-ok runs. Ties: runs, id.
  */
 export function rankTaskFailures(rows: TaskHistoryRow[], now: number = Date.now()): RankedTaskFailure[] {
   const staleBefore = now - ACTIVE_STALE_H * 3_600_000;
@@ -517,7 +518,7 @@ export function rankTaskFailures(rows: TaskHistoryRow[], now: number = Date.now(
         },
       };
     })
-    .filter(({ notOk }) => notOk > 0)
+    .filter(({ task }) => task.failed > 0)
     .sort((a, b) => {
       const rateA = a.ranked.failRate;
       const rateB = b.ranked.failRate;

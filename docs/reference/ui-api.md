@@ -149,8 +149,8 @@ Everything on the overview page in one call. Query parameters:
 - `metrics.usage.searchMedianMs` and the `retrieval` daily median share one filter (`totalMs >= 0`);
   `metrics.usage.searchTimed` is the number of searches behind the median. The daily feedback count in
   `metrics.usage.daily` counts signed rows only, like `metrics.feedback.totals`.
-- `taskFailures` lists the tasks in `metrics.window` with at least one failed run or stuck active run, then limits to
-  20. `rated` is the number of finished runs: completed + failed + active runs started more than 6 h ago (a fresh
+- `taskFailures` lists the tasks in `metrics.window` with at least one failed run, then limits to 20. Stuck active runs
+  count toward `rated` and `failRate` but do not add a task to the list on their own. `rated` is the number of finished runs: completed + failed + active runs started more than 6 h ago (a fresh
   active run is neither ok nor failed and is not counted). `failRate` is `(rated - completed) / rated`, or `null` below
   5 rated runs (plan M-25). Tasks with a rate come first, highest rate first; the rest follow by not-ok runs, then runs.
   Nonfailed runs are not assumed successful, nor are absent runs evidence of a successful scheduled task.

@@ -596,6 +596,29 @@ describe("endpoints", () => {
     expect(byId["stale-active"]).toMatchObject({ runs: 5, rated: 5, failRate: 0.4 });
   });
 
+  test("a task whose only problem is a stale active run stays out of taskFailures", async () => {
+    await seed();
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "stale-only",
+        status: "active",
+        started_at: new Date(Date.now() - 10 * 3_600_000).toISOString(),
+        completed_at: null,
+        failed_at: null,
+        log_path: null,
+        target_kind: null,
+        target_ref: null,
+        metadata_json: "{}",
+      });
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const overview = await data(s, "/api/overview");
+    expect(overview.taskFailures.map((t: { taskId: string }) => t.taskId)).not.toContain("stale-only");
+  });
+
   test("GET /api/bundles: cards with git status and asset counts, plus the index state", async () => {
     await seed();
     const s = await start();
