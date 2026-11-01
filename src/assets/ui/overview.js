@@ -30,7 +30,7 @@ function checkItem(check) {
     <div class="check-head"><span class="dot dot-${statusKind(check.status)}" aria-hidden="true"></span><strong class="mono">${check.name}</strong>
       <span class="muted small">${check.kind}, ${check.confidence} confidence</span></div>
     <p class="check-msg">${check.message}</p>
-    ${evidence ? html`<details><summary>Evidence</summary><pre class="code">${pretty(evidence)}</pre></details>` : ""}
+    ${evidence ? html`<details data-volatile><summary>Evidence</summary><pre class="code">${pretty(evidence)}</pre></details>` : ""}
   </li>`;
 }
 
@@ -53,7 +53,7 @@ function statusStrip(health, meta) {
     <div class="strip-item"><span class="num big ${count("warn") > 0 ? "text-warn" : ""}">${count("warn")}</span><span class="muted">warning</span></div>
     <div class="strip-item"><span class="num big">${count("unknown")}</span><span class="muted">unknown</span></div>
     <div class="strip-item"><span class="num big">${count("pass")}</span><span class="muted">passing</span></div>
-    <div class="strip-item strip-right"><span class="mono">akm ${meta ? meta.version : "?"}</span>${health ? html`<span class="muted small">window since ${when(health.since)}</span>` : ""}</div>
+    <div class="strip-item strip-right"><span class="mono" data-volatile>akm ${meta ? meta.version : "?"}</span>${health ? html`<span class="muted small">window since ${when(health.since)}</span>` : ""}</div>
   </div>`;
 }
 

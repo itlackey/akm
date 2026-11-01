@@ -129,7 +129,7 @@ async function showMeta() {
     const meta = await getMeta();
     mount(
       target,
-      html`<span class="mono">akm ${meta.version} · ${meta.hostname}</span><span class="muted small">${meta.readOnly ? "read-only" : ""} ${meta.runtime}</span>`,
+      html`<span class="mono" data-volatile>akm ${meta.version} · ${meta.hostname}</span><span class="muted small">${meta.readOnly ? "read-only" : ""} ${meta.runtime}</span>`,
     );
   } catch {
     mount(target, html``);
