@@ -78,7 +78,9 @@ export async function render(ctx) {
   const { fields, body, startLine } = splitFrontmatter(source);
   const canonical = data.durableRef ?? asset.ref;
   const href = assetHref(canonical, returnTo);
-  const title = fields.find(([key]) => key === "title")?.[1] || body.match(/^#\s+(.+)$/m)?.[1] || asset.name;
+  const frontmatterTitle = fields.find(([key]) => key === "title")?.[1];
+  const bodyTitle = body.match(/^#\s+(.+)$/m)?.[1];
+  const title = frontmatterTitle || bodyTitle || asset.name;
   const headings = (data.headings ?? []).filter((h) => h.slug);
   const historyOpen = ctx.query.get("history") === "1";
   let history = "";
@@ -119,7 +121,7 @@ export async function render(ctx) {
     <p class="action-links">${asset.editable && ["knowledge", "memory"].includes(asset.type) ? html`<a href="#/edit?ref=${encodeURIComponent(canonical)}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}">Edit Markdown</a> · ` : ""}<a href="${href}&history=1">Document history</a> · <a href="#/new">New knowledge</a></p>
     <div class="badges">${badge(asset.type, "info")}${asset.origin ? badge(asset.origin, "neutral") : ""}${asset.editable ? badge("editable", "ok") : badge("read-only", "neutral")}</div>
     ${headings.length > 1 ? html`<details class="contents"><summary>On this page</summary><ul>${headings.map((h) => html`<li><a href="${href}&section=${encodeURIComponent(h.slug)}">${h.text}</a></li>`)}</ul></details>` : ""}
-    <section class="document-body" aria-label="Content">${body.trim() === "" ? emptyState("This asset has no body.") : markdown(body, { ref: canonical, bundle: data.bundle, links: data.links, headings: data.headings, startLine })}</section>
+    <section class="document-body" aria-label="Content">${body.trim() === "" ? emptyState("This asset has no body.") : markdown(body, { ref: canonical, bundle: data.bundle, links: data.links, headings: data.headings, startLine, skipTitle: frontmatterTitle ? undefined : bodyTitle?.trim() })}</section>
     <details><summary>Asset details</summary>${definitionList([
       ["Name", html`<span class="mono">${asset.name}</span>`],
       [
@@ -132,7 +134,7 @@ export async function render(ctx) {
     ])}
     ${fields.length > 0 ? html`<section><h2>Frontmatter</h2>${tableWrap(html`<table class="fm"><tbody>${fields.map(([k, v]) => html`<tr><th scope="row" class="mono">${k}</th><td class="mono wrap pre-wrap">${v}</td></tr>`)}</tbody></table>`)}</section>` : ""}
     </details>
-    <details><summary>Markdown source</summary><pre class="code">${source}</pre></details>
+    <details><summary>Markdown source</summary><pre class="code" tabindex="0" role="group" aria-label="Markdown source, scrolls sideways">${source}</pre></details>
     ${history}
     ${linksBlock(asset.links)}
     ${feedbackBlock(data.feedback, data.durableRef, data.feedbackRequireReason)}`;

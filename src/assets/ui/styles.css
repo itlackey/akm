@@ -2543,3 +2543,7 @@ button:disabled:not(.btn-secondary, .btn-danger) {
     transform: none;
   }
 }
+
+.search-filter {
+  flex: 1 1 10rem;
+}

@@ -294,7 +294,7 @@ describe("pages", () => {
     const asset = (await (await view("asset.js"))(ctx("ref=commands%2Frelease"))).text;
     expect(asset).not.toContain("This asset has no body.");
     expect(asset).toContain("Run the &lt;b&gt;release&lt;/b&gt; checklist");
-    expect(asset).toMatch(/<summary>Markdown source<\/summary><pre class="code">[\s\S]*checklist/);
+    expect(asset).toMatch(/<summary>Markdown source<\/summary><pre class="code"[^>]*>[\s\S]*checklist/);
   });
 
   const writeSelect = (page: string) => page.match(/<select name="defaultWriteTarget"[\s\S]*?<\/select>/)?.[0] ?? "";
@@ -487,7 +487,9 @@ describe("pages", () => {
         focus: () => {
           focused = true;
         },
-        addEventListener: (_t: string, fn: () => void) => (handlers.input = fn),
+        addEventListener: (type: string, fn: () => void) => {
+          if (type === "input") handlers.input = fn;
+        },
       };
       const preview = { innerHTML: "" };
       const status = { innerHTML: "" };
@@ -940,7 +942,7 @@ describe("helpers", () => {
     expect(out).toContain('href="#/asset?ref=stash%2F%2Fknowledge%2Fnotes%23notes"');
     expect(out).toContain('href="#/asset?ref=stash%2F%2Fknowledge%2Fguide&section=guide"');
     expect(out).not.toContain('href="missing.md"');
-    expect(out).toContain('<pre class="code"><code># Hidden\n[code](notes.md)</code></pre>');
+    expect(out).toContain('<code># Hidden\n[code](notes.md)</code></pre>');
   });
 
   test("links are own properties only, a table needs a piped delimiter row, and nested fences keep heading ids", async () => {

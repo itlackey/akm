@@ -176,7 +176,7 @@ function retirementBlock(r) {
     [
       "Continuity risk",
       r.continuityRisk
-        ? html`${badge("flagged", "warn")} <pre class="code">${pretty(r.continuityRisk)}</pre>`
+        ? html`${badge("flagged", "warn")} <pre class="code" tabindex="0" role="group" aria-label="Continuity risk, scrolls sideways">${pretty(r.continuityRisk)}</pre>`
         : html`<span class="muted">none flagged</span>`,
     ],
   ])}</div></section>`;

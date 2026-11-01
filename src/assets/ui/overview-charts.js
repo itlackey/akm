@@ -186,7 +186,10 @@ function automation(ctx, tasks, runs, since) {
     const run = runs.find((r) => r.id === id);
     if (!run || !root) return;
     const detail = root.querySelector("[data-run-detail]");
-    mount(detail, html`<h3>Run ${run.id}</h3><pre class="code">${pretty(run)}</pre>`);
+    mount(
+      detail,
+      html`<h3>Run ${run.id}</h3><pre class="code" tabindex="0" role="group" aria-label="Run record, scrolls sideways">${pretty(run)}</pre>`,
+    );
     detail.focus({ preventScroll: true });
   };
   ctx.after.push((element) => {

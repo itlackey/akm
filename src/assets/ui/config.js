@@ -149,7 +149,7 @@ function newConnectionForm() {
 }
 
 function referenceTree(value) {
-  return html`<pre class="code config-json">${pretty(value)}</pre>`;
+  return html`<pre class="code config-json" tabindex="0" role="group" aria-label="Configuration, scrolls sideways">${pretty(value)}</pre>`;
 }
 
 export async function render(ctx) {

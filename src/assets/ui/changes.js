@@ -25,8 +25,9 @@ export async function render() {
   if (data.commits.length === 0) return html`${head}${emptyState("No commits yet.")}`;
   const days = new Map();
   for (const c of data.commits) {
-    const day = c.time.slice(0, 10);
+    // Commits carry the committer's local offset; every other page groups by UTC, so this one does too (B-34).
+    const day = Number.isNaN(Date.parse(c.time)) ? c.time.slice(0, 10) : new Date(c.time).toISOString().slice(0, 10);
     days.set(day, [...(days.get(day) ?? []), c]);
   }
-  return html`${head}<div class="timeline">${[...days].map(([day, items]) => html`<section><h2 class="day">${day} <span class="muted num">${items.length}</span></h2><ol class="commits">${items.map(commit)}</ol></section>`)}</div>`;
+  return html`${head}<div class="timeline">${[...days].map(([day, items]) => html`<section><h2 class="day">${day} <span class="muted small">UTC</span> <span class="muted num">${items.length}</span></h2><ol class="commits">${items.map(commit)}</ol></section>`)}</div>`;
 }

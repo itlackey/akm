@@ -162,18 +162,27 @@ async function edit(ctx, ref) {
       mount(root.querySelector("[data-preview]"), markdown(splitFrontmatter(input.value).body, context));
     input.addEventListener("input", () => {
       setUnsaved(input.value !== asTextarea(source.content));
-      state.textContent = latest
+      const next = latest
         ? "Conflict — your draft is kept"
         : input.value !== asTextarea(source.content)
           ? "Unsaved changes"
           : "No changes";
+      // The status is a live region: write it only when it changes, not on every keystroke (B-42).
+      if (state.textContent !== next) state.textContent = next;
       draw();
     });
     draw();
+    // Ctrl or Cmd+S saves here, not the browser's own page-save dialog (B-43).
+    input.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        input.form?.requestSubmit();
+      }
+    });
   });
   return html`${pageHeader("Edit Markdown", source.ref)}
     <form class="edit-form form-grid">
-      <div class="editor-actions"><button type="submit">Save Markdown</button><button type="button" class="btn-secondary" data-preview-toggle aria-pressed="false">Preview</button><a href="${assetHref(source.ref, returnTo)}">Cancel</a><span class="muted small" data-editor-state role="status">No changes</span></div>
+      <div class="editor-actions"><button type="submit">Save Markdown</button><button type="button" class="btn-secondary" data-preview-toggle aria-pressed="false">Preview</button><a class="btn btn-secondary" href="${assetHref(source.ref, returnTo)}">Cancel</a><span class="muted small" data-editor-state role="status">No changes</span></div>
       <div data-status></div>
       <label data-source-panel>Markdown<textarea name="content" rows="16" spellcheck="false">${source.content}</textarea></label>
       <section data-preview-panel hidden><h2>Preview</h2><div data-preview></div></section>
