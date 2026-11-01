@@ -27,7 +27,7 @@
       - listitem:
         - link "Config":
           - /url: "#/config"
-    - search:
+    - search "Site search":
       - text: Search assets
       - searchbox "Search assets"
 - main:
@@ -79,61 +79,62 @@
   - textbox "Tags":
     - /placeholder: Optional key:value tags, comma-separated (team:platform)
   - button "Send feedback"
-  - table:
-    - rowgroup:
-      - row "When Signal Source Reason Tags":
-        - columnheader "When"
-        - columnheader "Signal"
-        - columnheader "Source"
-        - columnheader "Reason"
-        - columnheader "Tags"
-    - rowgroup:
-      - row "2d ago negative user The rollback link is wrong":
-        - cell "2d ago":
-          - time: 2d ago
-        - cell "negative"
-        - cell "user"
-        - cell "The rollback link is wrong"
-        - cell
-      - row "8d ago positive user Clear and complete":
-        - cell "8d ago":
-          - time: 8d ago
-        - cell "positive"
-        - cell "user"
-        - cell "Clear and complete"
-        - cell
-      - row "15d ago positive user Clear and complete":
-        - cell "15d ago":
-          - time: 15d ago
-        - cell "positive"
-        - cell "user"
-        - cell "Clear and complete"
-        - cell
-      - row "22d ago positive user Clear and complete":
-        - cell "22d ago":
-          - time: 22d ago
-        - cell "positive"
-        - cell "user"
-        - cell "Clear and complete"
-        - cell
-      - row "30d ago positive user Clear and complete":
-        - cell "30d ago":
-          - time: 30d ago
-        - cell "positive"
-        - cell "user"
-        - cell "Clear and complete"
-        - cell
-      - row "41d ago positive user Clear and complete":
-        - cell "41d ago":
-          - time: 41d ago
-        - cell "positive"
-        - cell "user"
-        - cell "Clear and complete"
-        - cell
-      - row "57d ago positive user Clear and complete":
-        - cell "57d ago":
-          - time: 57d ago
-        - cell "positive"
-        - cell "user"
-        - cell "Clear and complete"
-        - cell
+  - group "Table":
+    - table:
+      - rowgroup:
+        - row "When Signal Source Reason Tags":
+          - columnheader "When"
+          - columnheader "Signal"
+          - columnheader "Source"
+          - columnheader "Reason"
+          - columnheader "Tags"
+      - rowgroup:
+        - row "2d ago negative user The rollback link is wrong":
+          - cell "2d ago":
+            - time: 2d ago
+          - cell "negative"
+          - cell "user"
+          - cell "The rollback link is wrong"
+          - cell
+        - row "8d ago positive user Clear and complete":
+          - cell "8d ago":
+            - time: 8d ago
+          - cell "positive"
+          - cell "user"
+          - cell "Clear and complete"
+          - cell
+        - row "15d ago positive user Clear and complete":
+          - cell "15d ago":
+            - time: 15d ago
+          - cell "positive"
+          - cell "user"
+          - cell "Clear and complete"
+          - cell
+        - row "22d ago positive user Clear and complete":
+          - cell "22d ago":
+            - time: 22d ago
+          - cell "positive"
+          - cell "user"
+          - cell "Clear and complete"
+          - cell
+        - row "30d ago positive user Clear and complete":
+          - cell "30d ago":
+            - time: 30d ago
+          - cell "positive"
+          - cell "user"
+          - cell "Clear and complete"
+          - cell
+        - row "41d ago positive user Clear and complete":
+          - cell "41d ago":
+            - time: 41d ago
+          - cell "positive"
+          - cell "user"
+          - cell "Clear and complete"
+          - cell
+        - row "57d ago positive user Clear and complete":
+          - cell "57d ago":
+            - time: 57d ago
+          - cell "positive"
+          - cell "user"
+          - cell "Clear and complete"
+          - cell

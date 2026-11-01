@@ -57,6 +57,11 @@ declare module "*/assets/ui/charts.js" {
   export default content;
 }
 
+declare module "*/assets/ui/folder-picker.js" {
+  const content: string;
+  export default content;
+}
+
 declare module "*/assets/ui/improve.js" {
   const content: string;
   export default content;

@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The UI's Bundles "Add a bundle" source field and New knowledge's folder field
+  have a Browse button. It opens a folder picker backed by a new read-only
+  `GET /api/fs/folders` (sub-folders of one absolute path; folders only, hidden
+  ones on request). On New knowledge it stays inside the chosen bundle's
+  `knowledge/` folder and fills a relative path.
+- Improve impact opens with "Did improve help search?": the share of searches
+  that returned something, over a rolling 7 days and 90 days, with a marker on
+  each day improve changes were kept. It reads a new `GET /api/retrieval`.
+
+### Changed
+
+- Scrollable tables in the UI are keyboard focusable.
+
 ## [0.10.261102] - 2026-11-01
 
 ### Added

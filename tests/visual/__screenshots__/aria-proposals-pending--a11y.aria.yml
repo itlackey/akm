@@ -27,7 +27,7 @@
       - listitem:
         - link "Config":
           - /url: "#/config"
-    - search:
+    - search "Site search":
       - text: Search assets
       - searchbox "Search assets"
 - main:
@@ -66,173 +66,179 @@
   - heading "consolidate 1" [level=2]
   - checkbox "select all in this group"
   - text: select all in this group
-  - table:
-    - rowgroup:
-      - row "Select Asset Waiting Gate decision Confidence":
-        - columnheader "Select"
-        - columnheader "Asset"
-        - columnheader "Waiting"
-        - columnheader "Gate decision"
-        - columnheader "Confidence"
-    - rowgroup:
-      - row /Select stash\/\/commands\/release-notes stash\/\/commands\/release-notes 20d ago - \d+\.\d+/:
-        - cell "Select stash//commands/release-notes":
-          - checkbox "Select stash//commands/release-notes"
-        - cell "stash//commands/release-notes":
-          - link "stash//commands/release-notes":
-            - /url: "#/proposals/p-pending-consolidate"
-        - cell "20d ago":
-          - time: 20d ago
-        - cell "-"
-        - cell /\d+\.\d+/
+  - group "Table":
+    - table:
+      - rowgroup:
+        - row "Select Asset Waiting Gate decision Confidence":
+          - columnheader "Select"
+          - columnheader "Asset"
+          - columnheader "Waiting"
+          - columnheader "Gate decision"
+          - columnheader "Confidence"
+      - rowgroup:
+        - row /Select stash\/\/commands\/release-notes stash\/\/commands\/release-notes 20d ago - \d+\.\d+/:
+          - cell "Select stash//commands/release-notes":
+            - checkbox "Select stash//commands/release-notes"
+          - cell "stash//commands/release-notes":
+            - link "stash//commands/release-notes":
+              - /url: "#/proposals/p-pending-consolidate"
+          - cell "20d ago":
+            - time: 20d ago
+          - cell "-"
+          - cell /\d+\.\d+/
   - heading "consolidate-pair 1" [level=2]
   - checkbox "select all in this group"
   - text: select all in this group
-  - table:
-    - rowgroup:
-      - row "Select Asset Waiting Gate decision Confidence":
-        - columnheader "Select"
-        - columnheader "Asset"
-        - columnheader "Waiting"
-        - columnheader "Gate decision"
-        - columnheader "Confidence"
-    - rowgroup:
-      - row /Select stash\/\/knowledge\/rollback stash\/\/knowledge\/rollback retires in favour of stash\/\/knowledge\/deploy-guide 4d ago deferred judgment-deferred \d+\.\d+/:
-        - cell "Select stash//knowledge/rollback":
-          - checkbox "Select stash//knowledge/rollback"
-        - cell "stash//knowledge/rollback retires in favour of stash//knowledge/deploy-guide":
-          - link "stash//knowledge/rollback":
-            - /url: "#/proposals/p-pending-retire"
-          - text: ""
-        - cell "4d ago":
-          - time: 4d ago
-        - cell "deferred judgment-deferred"
-        - cell /\d+\.\d+/
+  - group "Table":
+    - table:
+      - rowgroup:
+        - row "Select Asset Waiting Gate decision Confidence":
+          - columnheader "Select"
+          - columnheader "Asset"
+          - columnheader "Waiting"
+          - columnheader "Gate decision"
+          - columnheader "Confidence"
+      - rowgroup:
+        - row /Select stash\/\/knowledge\/rollback stash\/\/knowledge\/rollback retires in favour of stash\/\/knowledge\/deploy-guide 4d ago deferred judgment-deferred \d+\.\d+/:
+          - cell "Select stash//knowledge/rollback":
+            - checkbox "Select stash//knowledge/rollback"
+          - cell "stash//knowledge/rollback retires in favour of stash//knowledge/deploy-guide":
+            - link "stash//knowledge/rollback":
+              - /url: "#/proposals/p-pending-retire"
+            - text: ""
+          - cell "4d ago":
+            - time: 4d ago
+          - cell "deferred judgment-deferred"
+          - cell /\d+\.\d+/
   - heading "distill 2" [level=2]
   - checkbox "select all in this group"
   - text: select all in this group
-  - table:
-    - rowgroup:
-      - row "Select Asset Waiting Gate decision Confidence":
-        - columnheader "Select"
-        - columnheader "Asset"
-        - columnheader "Waiting"
-        - columnheader "Gate decision"
-        - columnheader "Confidence"
-    - rowgroup:
-      - row /Select stash\/\/lessons\/rg stash\/\/lessons\/rg 3d ago - \d+\.\d+/:
-        - cell "Select stash//lessons/rg":
-          - checkbox "Select stash//lessons/rg"
-        - cell "stash//lessons/rg":
-          - link "stash//lessons/rg":
-            - /url: "#/proposals/p-pending-distill"
-        - cell "3d ago":
-          - time: 3d ago
-        - cell "-"
-        - cell /\d+\.\d+/
-      - row /Select stash\/\/knowledge\/incident-template stash\/\/knowledge\/incident-template \d+[hmsp]+ ago - \d+\.\d+/:
-        - cell "Select stash//knowledge/incident-template":
-          - checkbox "Select stash//knowledge/incident-template"
-        - cell "stash//knowledge/incident-template":
-          - link "stash//knowledge/incident-template":
-            - /url: "#/proposals/p-pending-create"
-        - cell /\d+[hmsp]+ ago/:
-          - time: /\d+[hmsp]+ ago/
-        - cell "-"
-        - cell /\d+\.\d+/
+  - group "Table":
+    - table:
+      - rowgroup:
+        - row "Select Asset Waiting Gate decision Confidence":
+          - columnheader "Select"
+          - columnheader "Asset"
+          - columnheader "Waiting"
+          - columnheader "Gate decision"
+          - columnheader "Confidence"
+      - rowgroup:
+        - row /Select stash\/\/lessons\/rg stash\/\/lessons\/rg 3d ago - \d+\.\d+/:
+          - cell "Select stash//lessons/rg":
+            - checkbox "Select stash//lessons/rg"
+          - cell "stash//lessons/rg":
+            - link "stash//lessons/rg":
+              - /url: "#/proposals/p-pending-distill"
+          - cell "3d ago":
+            - time: 3d ago
+          - cell "-"
+          - cell /\d+\.\d+/
+        - row /Select stash\/\/knowledge\/incident-template stash\/\/knowledge\/incident-template \d+[hmsp]+ ago - \d+\.\d+/:
+          - cell "Select stash//knowledge/incident-template":
+            - checkbox "Select stash//knowledge/incident-template"
+          - cell "stash//knowledge/incident-template":
+            - link "stash//knowledge/incident-template":
+              - /url: "#/proposals/p-pending-create"
+          - cell /\d+[hmsp]+ ago/:
+            - time: /\d+[hmsp]+ ago/
+          - cell "-"
+          - cell /\d+\.\d+/
   - heading "feedback 1" [level=2]
   - checkbox "select all in this group"
   - text: select all in this group
-  - table:
-    - rowgroup:
-      - row "Select Asset Waiting Gate decision Confidence":
-        - columnheader "Select"
-        - columnheader "Asset"
-        - columnheader "Waiting"
-        - columnheader "Gate decision"
-        - columnheader "Confidence"
-    - rowgroup:
-      - row /Select stash\/\/knowledge\/deploy-guide stash\/\/knowledge\/deploy-guide 2d ago - \d+\.\d+/:
-        - cell "Select stash//knowledge/deploy-guide":
-          - checkbox "Select stash//knowledge/deploy-guide"
-        - cell "stash//knowledge/deploy-guide":
-          - link "stash//knowledge/deploy-guide":
-            - /url: "#/proposals/p-pending-feedback"
-        - cell "2d ago":
-          - time: 2d ago
-        - cell "-"
-        - cell /\d+\.\d+/
+  - group "Table":
+    - table:
+      - rowgroup:
+        - row "Select Asset Waiting Gate decision Confidence":
+          - columnheader "Select"
+          - columnheader "Asset"
+          - columnheader "Waiting"
+          - columnheader "Gate decision"
+          - columnheader "Confidence"
+      - rowgroup:
+        - row /Select stash\/\/knowledge\/deploy-guide stash\/\/knowledge\/deploy-guide 2d ago - \d+\.\d+/:
+          - cell "Select stash//knowledge/deploy-guide":
+            - checkbox "Select stash//knowledge/deploy-guide"
+          - cell "stash//knowledge/deploy-guide":
+            - link "stash//knowledge/deploy-guide":
+              - /url: "#/proposals/p-pending-feedback"
+          - cell "2d ago":
+            - time: 2d ago
+          - cell "-"
+          - cell /\d+\.\d+/
   - heading "extract 1" [level=2]
   - checkbox "select all in this group"
   - text: select all in this group
-  - table:
-    - rowgroup:
-      - row "Select Asset Waiting Gate decision Confidence":
-        - columnheader "Select"
-        - columnheader "Asset"
-        - columnheader "Waiting"
-        - columnheader "Gate decision"
-        - columnheader "Confidence"
-    - rowgroup:
-      - row /Select stash\/\/memories\/standup stash\/\/memories\/standup \d+[hmsp]+ ago - \d+\.\d+/:
-        - cell "Select stash//memories/standup":
-          - checkbox "Select stash//memories/standup"
-        - cell "stash//memories/standup":
-          - link "stash//memories/standup":
-            - /url: "#/proposals/p-pending-extract"
-        - cell /\d+[hmsp]+ ago/:
-          - time: /\d+[hmsp]+ ago/
-        - cell "-"
-        - cell /\d+\.\d+/
+  - group "Table":
+    - table:
+      - rowgroup:
+        - row "Select Asset Waiting Gate decision Confidence":
+          - columnheader "Select"
+          - columnheader "Asset"
+          - columnheader "Waiting"
+          - columnheader "Gate decision"
+          - columnheader "Confidence"
+      - rowgroup:
+        - row /Select stash\/\/memories\/standup stash\/\/memories\/standup \d+[hmsp]+ ago - \d+\.\d+/:
+          - cell "Select stash//memories/standup":
+            - checkbox "Select stash//memories/standup"
+          - cell "stash//memories/standup":
+            - link "stash//memories/standup":
+              - /url: "#/proposals/p-pending-extract"
+          - cell /\d+[hmsp]+ ago/:
+            - time: /\d+[hmsp]+ ago/
+          - cell "-"
+          - cell /\d+\.\d+/
   - heading "reflect 4" [level=2]
   - checkbox "select all in this group"
   - text: select all in this group
-  - table:
-    - rowgroup:
-      - row "Select Asset Waiting Gate decision Confidence":
-        - columnheader "Select"
-        - columnheader "Asset"
-        - columnheader "Waiting"
-        - columnheader "Gate decision"
-        - columnheader "Confidence"
-    - rowgroup:
-      - row /Select stash\/\/lessons\/rg stash\/\/lessons\/rg \d+[hmsp]+ ago - \d+\.\d+/:
-        - cell "Select stash//lessons/rg":
-          - checkbox "Select stash//lessons/rg"
-        - cell "stash//lessons/rg":
-          - link "stash//lessons/rg":
-            - /url: "#/proposals/p-pending-reopened"
-        - cell /\d+[hmsp]+ ago/:
-          - time: /\d+[hmsp]+ ago/
-        - cell "-"
-        - cell /\d+\.\d+/
-      - row /Select stash\/\/knowledge\/deploy-guide stash\/\/knowledge\/deploy-guide \d+[hmsp]+ ago - \d+\.\d+/:
-        - cell "Select stash//knowledge/deploy-guide":
-          - checkbox "Select stash//knowledge/deploy-guide"
-        - cell "stash//knowledge/deploy-guide":
-          - link "stash//knowledge/deploy-guide":
-            - /url: "#/proposals/p-pending-reflect"
-        - cell /\d+[hmsp]+ ago/:
-          - time: /\d+[hmsp]+ ago/
-        - cell "-"
-        - cell /\d+\.\d+/
-      - row /Select stash\/\/knowledge\/rollback stash\/\/knowledge\/rollback \d+[hmsp]+ ago - \d+\.\d+/:
-        - cell "Select stash//knowledge/rollback":
-          - checkbox "Select stash//knowledge/rollback"
-        - cell "stash//knowledge/rollback":
-          - link "stash//knowledge/rollback":
-            - /url: "#/proposals/p-pending-noop"
-        - cell /\d+[hmsp]+ ago/:
-          - time: /\d+[hmsp]+ ago/
-        - cell "-"
-        - cell /\d+\.\d+/
-      - row /Select stash\/\/knowledge\/onboarding stash\/\/knowledge\/onboarding - - \d+\.\d+/:
-        - cell "Select stash//knowledge/onboarding":
-          - checkbox "Select stash//knowledge/onboarding"
-        - cell "stash//knowledge/onboarding":
-          - link "stash//knowledge/onboarding":
-            - /url: "#/proposals/p-pending-unknown-age"
-        - cell "-":
-          - time: "-"
-        - cell "-"
-        - cell /\d+\.\d+/
+  - group "Table":
+    - table:
+      - rowgroup:
+        - row "Select Asset Waiting Gate decision Confidence":
+          - columnheader "Select"
+          - columnheader "Asset"
+          - columnheader "Waiting"
+          - columnheader "Gate decision"
+          - columnheader "Confidence"
+      - rowgroup:
+        - row /Select stash\/\/lessons\/rg stash\/\/lessons\/rg \d+[hmsp]+ ago - \d+\.\d+/:
+          - cell "Select stash//lessons/rg":
+            - checkbox "Select stash//lessons/rg"
+          - cell "stash//lessons/rg":
+            - link "stash//lessons/rg":
+              - /url: "#/proposals/p-pending-reopened"
+          - cell /\d+[hmsp]+ ago/:
+            - time: /\d+[hmsp]+ ago/
+          - cell "-"
+          - cell /\d+\.\d+/
+        - row /Select stash\/\/knowledge\/deploy-guide stash\/\/knowledge\/deploy-guide \d+[hmsp]+ ago - \d+\.\d+/:
+          - cell "Select stash//knowledge/deploy-guide":
+            - checkbox "Select stash//knowledge/deploy-guide"
+          - cell "stash//knowledge/deploy-guide":
+            - link "stash//knowledge/deploy-guide":
+              - /url: "#/proposals/p-pending-reflect"
+          - cell /\d+[hmsp]+ ago/:
+            - time: /\d+[hmsp]+ ago/
+          - cell "-"
+          - cell /\d+\.\d+/
+        - row /Select stash\/\/knowledge\/rollback stash\/\/knowledge\/rollback \d+[hmsp]+ ago - \d+\.\d+/:
+          - cell "Select stash//knowledge/rollback":
+            - checkbox "Select stash//knowledge/rollback"
+          - cell "stash//knowledge/rollback":
+            - link "stash//knowledge/rollback":
+              - /url: "#/proposals/p-pending-noop"
+          - cell /\d+[hmsp]+ ago/:
+            - time: /\d+[hmsp]+ ago/
+          - cell "-"
+          - cell /\d+\.\d+/
+        - row /Select stash\/\/knowledge\/onboarding stash\/\/knowledge\/onboarding - - \d+\.\d+/:
+          - cell "Select stash//knowledge/onboarding":
+            - checkbox "Select stash//knowledge/onboarding"
+          - cell "stash//knowledge/onboarding":
+            - link "stash//knowledge/onboarding":
+              - /url: "#/proposals/p-pending-unknown-age"
+          - cell "-":
+            - time: "-"
+          - cell "-"
+          - cell /\d+\.\d+/
