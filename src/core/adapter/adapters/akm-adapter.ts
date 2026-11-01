@@ -472,9 +472,11 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
 export const akmAdapter: BundleAdapter = {
   id: "akm",
   // Bump when a change to the matchers (or `recognize`) can retype or re-ref a
-  // file that has not changed: the version is folded into each directory's
-  // freshness, so the next incremental `akm index` re-drains it and re-files
-  // those rows, including old command refs inferred from body placeholders.
+  // file that has not changed, or when the document records new fields from it
+  // (0.9.4: frontmatter dates, #1228): the version is folded into each
+  // directory's freshness, so the next incremental `akm index` re-drains it and
+  // re-files those rows, including old command refs inferred from body
+  // placeholders. Vectors are kept when the search text is unchanged.
   version: "0.9.4",
   // Recognized-extension HINT, derived from what the matchers accept (§6):
   // `.md` (Markdown types + workflow peer), `.yml` (task and workflow YAML),
