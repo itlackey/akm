@@ -18,7 +18,7 @@ import type { Database } from "../../src/storage/database";
 import { recordImproveRun } from "../../src/storage/repositories/improve-runs-repository";
 import { upsertProposal } from "../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
-import { FIXED_NOW } from "./constants";
+import { FIXED_NOW, LONG_NAME, LONG_QUERY } from "./constants";
 
 const NOW = Date.parse(FIXED_NOW);
 const MINUTE = 60_000;
@@ -112,12 +112,17 @@ export function seedStash(stashDir: string): void {
     ["knowledge/onboarding.md", "# Onboarding\n\nRequest access, clone the repo, run the setup script.\n", "akm save"],
     ["memories/standup.md", "Standup moved to 09:30.\n", "akm improve auto-sync"],
   ];
+  commitFiles(stashDir, files);
+}
+
+/** One dated commit per file, the last one a day ago and each earlier one a day before it. */
+function commitFiles(stashDir: string, files: Array<[string, string, string]>): void {
   runGit(stashDir, ["init", "-q", "-b", "main"], iso(30 * DAY));
   files.forEach(([file, body, subject], i) => {
     const target = path.join(stashDir, file);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, body);
-    const committedAt = iso((6 - i) * DAY);
+    const committedAt = iso((files.length - i) * DAY);
     fs.utimesSync(target, new Date(committedAt), new Date(committedAt));
     runGit(stashDir, ["add", file], committedAt);
     runGit(stashDir, ["commit", "-q", "-m", subject], committedAt);
@@ -615,6 +620,69 @@ export function seedVisualState(stashDir: string): void {
     seedTasks(db);
     seedLlmUsage(db);
     seedIndexEvents(db);
+  } finally {
+    db.close();
+  }
+}
+
+// ── Low-data and long-content variants (plan 11.2) ───────────────────────────
+
+/** One note, one commit, and six searches on a single day. */
+export function seedLowData(stashDir: string): void {
+  commitFiles(stashDir, [["knowledge/onboarding.md", "# Onboarding\n\nRequest access, clone the repo.\n", "akm save"]]);
+  const db = openStateDatabase();
+  try {
+    insertUsage(
+      db,
+      QUERIES.slice(0, 6).map((query, i) => ({
+        eventType: "search",
+        query,
+        metadata: { resultCount: i === 5 ? 0 : 2, totalMs: 30 + i },
+        agoMs: 2 * HOUR + i * MINUTE,
+      })),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+/** A path of 40 segments, each short enough to wrap on a phone. */
+const DEEP_DIRS = Array.from({ length: 39 }, (_, i) => `level-${i + 1}`).join("/");
+
+/** An 80-char ref, a 120-char query, a 6-digit count and a 40-segment path. */
+export function seedLongContent(stashDir: string): void {
+  commitFiles(stashDir, [
+    [
+      `knowledge/${LONG_NAME}.md`,
+      `---\ndescription: ${LONG_QUERY}\n---\n# Long runbook\n\nEscalate early.\n`,
+      "akm save",
+    ],
+    [`knowledge/${DEEP_DIRS}/deep.md`, "# Deep note\n\nBuried forty segments down.\n", "akm save"],
+  ]);
+  const db = openStateDatabase();
+  try {
+    db.exec("BEGIN");
+    insertUsage(
+      db,
+      Array.from({ length: 123_456 }, (_, i) => ({
+        eventType: "search",
+        query: i % 2 === 0 ? LONG_QUERY : QUERIES[i % QUERIES.length],
+        metadata: { resultCount: 1, totalMs: 25 },
+        agoMs: (i % (60 * 24)) * MINUTE + HOUR,
+      })),
+    );
+    db.exec("COMMIT");
+    upsertProposal(
+      db,
+      buildProposal(stashDir, {
+        id: "p-long-ref",
+        ref: `${BUNDLE}//knowledge/${LONG_NAME}`,
+        source: "reflect",
+        status: "pending",
+        createdAgoMs: 3 * HOUR,
+      }),
+      stashDir,
+    );
   } finally {
     db.close();
   }

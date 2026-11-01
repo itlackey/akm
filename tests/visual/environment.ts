@@ -8,11 +8,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getConfigPath } from "../../src/core/paths";
+import type { Profile } from "./constants";
 
-/** A fixed path, so no run-specific temp name can reach a screenshot. */
-const ROOT = path.join(os.tmpdir(), "akm-visual");
+/** A fixed path per profile, so no run-specific temp name can reach a screenshot and servers do not collide. */
+const rootFor = (profile: Profile): string => path.join(os.tmpdir(), `akm-visual-${profile}`);
 
-export function isolateEnvironment(): string {
+export function isolateEnvironment(profile: Profile): string {
+  const ROOT = rootFor(profile);
   fs.rmSync(ROOT, { recursive: true, force: true });
   const dirs = {
     stash: path.join(ROOT, "stash"),
@@ -45,13 +47,18 @@ export function isolateEnvironment(): string {
   return dirs.stash;
 }
 
-/** No connections, no embeddings and no probes: nothing leaves the machine. */
-export function writeConfig(stashDir: string): void {
+/**
+ * No connections, no embeddings and no probes: nothing leaves the machine. `configureBundle: false` is a fresh
+ * sandbox: no bundle is configured, and the stash comes only from AKM_BUNDLE_DIR.
+ */
+export function writeConfig(stashDir: string, configureBundle = true): void {
   const config = {
     configVersion: "0.9.0",
-    bundles: { stash: { path: stashDir, writable: true } },
-    defaultBundle: "stash",
-    defaultWriteTarget: "stash",
+    ...(configureBundle && {
+      bundles: { stash: { path: stashDir, writable: true } },
+      defaultBundle: "stash",
+      defaultWriteTarget: "stash",
+    }),
     semanticSearchMode: "off",
   };
   fs.writeFileSync(getConfigPath(), `${JSON.stringify(config, null, 2)}\n`);

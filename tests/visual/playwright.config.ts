@@ -9,17 +9,21 @@
  */
 
 import { defineConfig, devices } from "@playwright/test";
-import { VISUAL_PORT } from "./constants";
+import { PROFILES } from "./constants";
 
 const VIEWPORTS = { 1440: 900, 390: 844 } as const;
 const SCHEMES = ["light", "dark"] as const;
 
-const projects = Object.entries(VIEWPORTS).flatMap(([width, height]) =>
+/** The full matrix: every width in both schemes. */
+const matrix = Object.entries(VIEWPORTS).flatMap(([width, height]) =>
   SCHEMES.map((colorScheme) => ({
     name: `${width}--${colorScheme}`,
+    testMatch: "matrix.pw.ts",
     use: { ...devices["Desktop Chrome"], viewport: { width: Number(width), height }, colorScheme },
   })),
 );
+
+const projects = [...matrix];
 
 export default defineConfig({
   testDir: ".",
@@ -30,7 +34,6 @@ export default defineConfig({
   reporter: [["list"], ["html", { open: "never", outputFolder: "../../.ui-visual/report" }]],
   outputDir: "../../.ui-visual/test-results",
   use: {
-    baseURL: `http://127.0.0.1:${VISUAL_PORT}`,
     deviceScaleFactor: 1,
     locale: "en-US",
     timezoneId: "UTC",
@@ -40,11 +43,13 @@ export default defineConfig({
     toHaveScreenshot: { maxDiffPixels: 0, threshold: 0.1, animations: "disabled", caret: "hide" },
   },
   projects,
-  webServer: {
-    command: "bun tests/visual/serve.ts",
+  webServer: Object.entries(PROFILES).map(([profile, port]) => ({
+    command: `bun tests/visual/serve.ts ${profile}`,
     cwd: "../..",
-    port: VISUAL_PORT,
+    port,
+    stdout: "pipe" as const,
+    stderr: "pipe" as const,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
-  },
+  })),
 });
