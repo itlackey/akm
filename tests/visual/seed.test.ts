@@ -87,6 +87,34 @@ describe("visual seed", () => {
       expect(count("proposals WHERE status = 'pending'")).toBe(10);
     });
   });
+
+  test("gate decisions carry the gate the product stamps", () => {
+    withStateDb((query) => {
+      const meta = query("SELECT status, metadata_json AS m FROM proposals").map((row) => ({
+        status: row.status,
+        ...JSON.parse(row.m as string),
+      }));
+      const judged = meta.filter((p) => p.status === "accepted" && p.gateDecision?.outcome === "auto-accepted");
+      expect(judged).toHaveLength(1);
+      expect(judged[0]?.gateDecision.gate).toBe("triage");
+      for (const p of meta) if (p.gateDecision) expect(typeof p.gateDecision.gate).toBe("string");
+    });
+  });
+
+  test("the retirement batch is three accepted retire proposals in one UTC day, with no bundle removals", () => {
+    withStateDb((query) => {
+      const retired = query("SELECT metadata_json AS m FROM proposals WHERE status = 'accepted'")
+        .map((row) => JSON.parse(row.m as string))
+        .filter((p) => p.retirement && p.changes?.[0]?.op === "delete");
+      const days = new Map<string, number>();
+      for (const p of retired) {
+        const day = String(p.review.decidedAt).slice(0, 10);
+        days.set(day, (days.get(day) ?? 0) + 1);
+      }
+      expect(Math.max(0, ...days.values())).toBeGreaterThanOrEqual(3);
+      expect(query("SELECT COUNT(*) AS n FROM events WHERE event_type = 'remove'")[0]?.n).toBe(0);
+    });
+  });
 });
 
 describe("visual pipeline", () => {

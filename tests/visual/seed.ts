@@ -294,8 +294,13 @@ function decided(agoMs: number, outcome: "accepted" | "rejected", reason?: strin
   return { outcome, decidedAt: iso(agoMs), ...(reason ? { reason } : {}) };
 }
 
-function gate(agoMs: number, outcome: "auto-accepted" | "staged" | "auto-rejected" | "deferred", reason: string) {
-  return { outcome, reason, decidedAt: iso(agoMs), judgeReason: "The change is accurate and scoped." };
+function gate(
+  agoMs: number,
+  outcome: "auto-accepted" | "staged" | "auto-rejected" | "deferred",
+  reason: string,
+  gateName: "triage" | "quality-gate" | "retention",
+) {
+  return { outcome, reason, gate: gateName, decidedAt: iso(agoMs), judgeReason: "The change is accurate and scoped." };
 }
 
 function proposalSpecs(): ProposalSpec[] {
@@ -380,7 +385,7 @@ function proposalSpecs(): ProposalSpec[] {
       status: "pending",
       createdAgoMs: 4 * DAY,
       op: "delete",
-      extra: { retirement, gateDecision: gate(4 * DAY, "deferred", "judgment-deferred") },
+      extra: { retirement, gateDecision: gate(4 * DAY, "deferred", "judgment-deferred", "triage") },
     },
     {
       id: "p-pending-reopened",
@@ -405,7 +410,7 @@ function proposalSpecs(): ProposalSpec[] {
       status: "pending",
       createdAgoMs: 2 * HOUR,
       body: ROLLBACK,
-      extra: { gateDecision: gate(2 * HOUR, "auto-rejected", "empty-diff") },
+      extra: { gateDecision: gate(2 * HOUR, "auto-rejected", "empty-diff", "triage") },
     },
     {
       id: "p-judge-accepted",
@@ -413,7 +418,10 @@ function proposalSpecs(): ProposalSpec[] {
       source: "reflect",
       status: "accepted",
       createdAgoMs: 2 * DAY,
-      extra: { gateDecision: gate(2 * DAY, "auto-accepted", "judgment-accept"), review: decided(2 * DAY, "accepted") },
+      extra: {
+        gateDecision: gate(2 * DAY, "auto-accepted", "judgment-accept", "triage"),
+        review: decided(2 * DAY, "accepted"),
+      },
     },
     {
       id: "p-you-accepted",
@@ -429,7 +437,10 @@ function proposalSpecs(): ProposalSpec[] {
       source: "consolidate",
       status: "accepted",
       createdAgoMs: 5 * DAY,
-      extra: { gateDecision: gate(5 * DAY, "staged", "quality-judge"), review: decided(4 * DAY, "accepted") },
+      extra: {
+        gateDecision: gate(5 * DAY, "staged", "quality-judge", "quality-gate"),
+        review: decided(4 * DAY, "accepted"),
+      },
     },
     {
       id: "p-judge-rejected",
@@ -437,7 +448,10 @@ function proposalSpecs(): ProposalSpec[] {
       source: "extract",
       status: "rejected",
       createdAgoMs: 6 * DAY,
-      extra: { gateDecision: gate(6 * DAY, "auto-rejected", "judgment-reject"), review: decided(6 * DAY, "rejected") },
+      extra: {
+        gateDecision: gate(6 * DAY, "auto-rejected", "judgment-reject", "triage"),
+        review: decided(6 * DAY, "rejected"),
+      },
     },
     {
       id: "p-you-rejected",
@@ -454,10 +468,22 @@ function proposalSpecs(): ProposalSpec[] {
       status: "rejected",
       createdAgoMs: 40 * DAY,
       extra: {
-        gateDecision: gate(10 * DAY, "auto-rejected", "expired"),
+        gateDecision: gate(10 * DAY, "auto-rejected", "expired", "retention"),
         review: decided(10 * DAY, "rejected", "expired"),
       },
     },
+    ...["old-runbook", "old-notes", "stale-note"].map((name, i) => ({
+      id: `p-retired-${name}`,
+      ref: `${BUNDLE}//knowledge/${name}`,
+      source: "consolidate-pair" as const,
+      status: "accepted" as const,
+      createdAgoMs: 3 * DAY,
+      op: "delete" as const,
+      extra: {
+        retirement: { ...retirement, retiredRef: `${BUNDLE}//knowledge/${name}` },
+        review: decided(2 * DAY + 5 * HOUR + 20 * MINUTE - i * 5 * MINUTE, "accepted"),
+      },
+    })),
     {
       id: "p-reverted",
       ref: guide,
@@ -578,12 +604,6 @@ function seedIndexEvents(db: Database): void {
     },
     { db, now: () => NOW - 6 * DAY },
   );
-  ["knowledge/old-runbook", "knowledge/old-notes", "memories/stale-note"].forEach((ref, i) => {
-    appendEvent(
-      { eventType: "remove", ref: `${BUNDLE}//${ref}`, metadata: { reason: "retired" } },
-      { db, now: () => NOW - 2 * DAY - i * MINUTE },
-    );
-  });
 }
 
 /** Write the whole dataset. Run after the stash exists and before the server starts. */

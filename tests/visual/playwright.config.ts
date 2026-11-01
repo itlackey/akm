@@ -27,8 +27,8 @@ export default defineConfig({
   snapshotPathTemplate: "{testDir}/__screenshots__/{arg}--{projectName}{ext}",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
-  outputDir: "test-results",
+  reporter: [["list"], ["html", { open: "never", outputFolder: "../../.ui-visual/report" }]],
+  outputDir: "../../.ui-visual/test-results",
   use: {
     baseURL: `http://127.0.0.1:${VISUAL_PORT}`,
     deviceScaleFactor: 1,

@@ -62,11 +62,11 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
         with:
           name: ui-visual-report
-          path: tests/visual/playwright-report
+          path: .ui-visual/report
           if-no-files-found: ignore
       - if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
         with:
           name: ui-visual-actual
-          path: tests/visual/test-results
+          path: .ui-visual/test-results
           if-no-files-found: ignore
