@@ -683,6 +683,73 @@ Returns `{available, commits, diff?}` using the same Git summary shape as `/api/
 History is unavailable for non-Git bundles and protected env/secret assets. Unknown Git expressions or commit IDs
 outside the returned file history are refused. No fetch, restore, rename tracking or additional version store exists.
 
+## `GET /api/asset/improve`
+
+What improve proposed for one asset and how the asset has been used since. `?ref=<bundle>//<type>/<name>` is required
+(`400` without it).
+
+- `proposals`: each proposal for the ref, newest first: `id`, `source`, `status`, `outcome` (`judge`, `you`, `unknown`,
+  `rejected`, `reverted` or `pending`), `createdAt`, `decidedAt`, `reason`.
+- `usageByWeek`: the last 90 days by ISO week (Monday, UTC): `hits` (searches and shows that returned the asset),
+  `positive` and `negative` feedback.
+- `feedback`: the ten most recent signals with their reasons.
+
+## `GET /api/fs/folders`
+
+The sub-folders of one absolute folder, for the UI's folder picker. `?path=` is an absolute path or `~` (default: the home
+folder); `?hidden=1` includes dot-folders. It lists folders only, never files, and follows a symbolic link only when it
+points at a folder. A relative path or a file is `400`; a path that does not exist is `404`.
+
+```json
+{ "ok": true, "data": { "path": "/home/me/work", "parent": "/home/me", "home": "/home/me",
+  "folders": [{ "name": "skills", "path": "/home/me/work/skills" }], "truncated": false } }
+```
+
+`truncated` is `true` when the folder holds more than 500 sub-folders and the list was cut.
+
+## `GET /api/improve/impact`
+
+What improve proposed and changed, week by week. `?since=90d` (default) or `all` (one year). Each section is computed on its
+own: a failing store leaves that section `null` and names it under `errors`, and the rest is still returned. When the state
+database is unavailable the response is `{ "available": false }`.
+
+- `summary`: `kept`, `reverted`, `flags` (negative feedback within 14 days after a change), `tokens`, `tokenCoverage`
+  (the share of model calls that reported tokens) and `checked` (decisions in the window).
+- `outcomes`: per process (`source`), per week, the decisions by class: `judge`, `you`, `unknown`, `rejected`, `reverted`.
+- `reviewFlow`: per week, proposals `created`, `decided`, and `waiting` at the end of the week.
+- `library`: per week, the library size at the last index (`entries`, `null` before the index recorded it).
+- `harm`: the log, newest first: `reverted`, `reopened`, `risky-retirement`, `flag-after-change`.
+- `cost`: per week, model `calls`, `tokens`, `usageCalls` and calls by process.
+- `changedAssets`: for each accepted change, how often the asset was found and rated in the 28 days before and after
+  (`complete` is `false` until 28 days have passed since the change).
+- `judgeAndYou`: accepted, rejected and reverted counts by who decided.
+
+## `GET /api/overview/pulse`
+
+The last seven days against the eight weeks before them, the four-week improve line, and what needs attention.
+
+- `tiles.foundNothing`: `x` of `n` user searches found nothing; `usual` is the central 95% range of that share at this
+  sample size (`state`: `within`, `above`, `below`, or `low-data` when the baseline has fewer than 30 searches or this week
+  fewer than 10).
+- `tiles.negativeFeedback`: `count`, `assets`, `latest`, and a `usual` weekly range (`state: "low-data"` with fewer than
+  four weeks of data).
+- `tiles.runs`: improve and task runs that finished ok, and the latest failed tasks.
+- `improveLine`: proposals made in the last four weeks and what became of them.
+- `attention`: `pending` (stash-scoped, not windowed), `misses`, `failedRuns`, `harm`, and `setup` when no model
+  connection is configured.
+
+## `GET /api/retrieval`
+
+The per-day user search series over a longer window than the overview's (`?since=90d` by default): days inside the data's
+coverage are filled with zeros, and the first and last day are marked `partial`. Each day has `searches`, `zeroResults`,
+`noResultRate` (`null` on a day with no searches), `medianMs` and `latencySamples`.
+
+## `GET /api/search/misses`
+
+User searches that found nothing, grouped by normalised query: `query`, `count`, `days` (distinct UTC days), `firstAt`,
+`lastAt` and `repeated` (`true` when it came up on two or more days). `?since=30d` by default. The response also carries
+`searches` (all user searches in the window) and `foundNothing`.
+
 ## Workspace actions
 
 Every route below uses the same write guards as [proposal decisions](#deciding-proposals): token **header**, same

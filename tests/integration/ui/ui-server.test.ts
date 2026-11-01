@@ -441,6 +441,37 @@ describe("endpoints", () => {
     });
   });
 
+  test("the dashboard routes answer with their documented shape, and a missing ref is a 400", async () => {
+    await seed();
+    const accepted = propose("lessons/rg");
+    const s = await start();
+    expect((await write(s, `/api/proposals/${accepted}/accept`, {})).status).toBe(200);
+    propose("lessons/two");
+
+    const pulse = await data(s, "/api/overview/pulse");
+    expect(pulse.tiles.foundNothing).toMatchObject({ n: expect.any(Number) });
+    expect(pulse.tiles.foundNothing.usual.state).toBe("low-data");
+    expect(pulse.improveLine).toMatchObject({ weeks: 4, proposed: 2, accepted: 1, waiting: 1 });
+    expect(pulse.attention.pending.count).toBe(1);
+    expect(Object.keys(pulse.window)).toEqual(["current", "baseline"]);
+
+    const impact = await data(s, "/api/improve/impact");
+    expect(impact.available).toBe(true);
+    expect(impact.summary.kept).toBe(1);
+    expect(impact.outcomes.map((o: { source: string }) => o.source)).toEqual(["reflect"]);
+    expect(impact.reviewFlow.at(-1)).toMatchObject({ created: 2, decided: 1, waiting: 1 });
+    expect(impact.changedAssets[0]).toMatchObject({ ref: "stash//lessons/rg", complete: false });
+    expect(impact.judgeAndYou.unknown ?? impact.judgeAndYou.you).toBeDefined();
+
+    const misses = await data(s, "/api/search/misses");
+    expect(misses).toMatchObject({ searches: expect.any(Number), misses: expect.any(Array) });
+
+    const improve = await data(s, `/api/asset/improve?ref=${encodeURIComponent("stash//lessons/rg")}`);
+    expect(improve.proposals).toHaveLength(1);
+    expect(improve.usageByWeek.length).toBeGreaterThan(10);
+    expect((await api(s, "/api/asset/improve")).status).toBe(400);
+  });
+
   test("GET /api/retrieval returns the per-day search series for a longer window than the overview's", async () => {
     await seed();
     const db = openStateDatabase();

@@ -58,10 +58,15 @@ import { akmSearch, normalizeScopeFilters, parseBeliefFilterMode } from "../read
 import { akmShowUnified } from "../read/show";
 import { assembleInfo } from "../sources/info";
 import { akmListSources } from "../sources/installed-stashes";
+import { assetImprove } from "./asset-improve";
 import { readDocumentSource } from "./document-source";
 import { listFolders } from "./folders";
 import { readBundleGitStatus, readFileRevision, readRecentCommits } from "./git-read";
+import { improveImpact } from "./impact";
 import { filledActivity, PROPOSAL_AGE_BANDS, proposalAgeBand, proposalBacklog, retrievalSeries } from "./metrics";
+import { searchMisses } from "./misses";
+import { overviewPulse } from "./pulse";
+import { section, tryStashDir, withReadonlyStateDb } from "./readers";
 import { isSecretEnvName, redactForUi } from "./redact";
 
 export interface UiServerInfo {
@@ -90,44 +95,6 @@ function limitParam(query: Query, fallback = DEFAULT_LIST_LIMIT): number {
 function flag(query: Query, name: string): boolean {
   const raw = query.get(name);
   return raw === "1" || raw === "true";
-}
-
-// ── Read-only databases ──────────────────────────────────────────────────────
-
-/**
- * Run `fn` against `state.db` opened read-only, or return `fallback` when it
- * does not exist or is behind on migrations (a read-only open must not apply
- * them; `akm health` reports that state). The handle is closed before returning,
- * so no request holds a lock past its own read.
- */
-function withReadonlyStateDb<T>(fn: (db: Database) => T, fallback: T): T {
-  const dbPath = getStateDbPath();
-  if (!fs.existsSync(dbPath) || listPendingStateMigrations(dbPath).length > 0) return fallback;
-  const db = openDatabase(dbPath, { readonly: true, create: false });
-  try {
-    applyReadonlyPragmas(db);
-    return fn(db);
-  } finally {
-    db.close();
-  }
-}
-
-function tryStashDir(): string | null {
-  try {
-    return resolveStashDir();
-  } catch {
-    return null;
-  }
-}
-
-/** Run each section of a composite response on its own: one failing store degrades one section, not the page. */
-async function section<T>(errors: Record<string, string>, name: string, fn: () => T | Promise<T>): Promise<T | null> {
-  try {
-    return await fn();
-  } catch (error) {
-    errors[name] = error instanceof Error ? error.message : String(error);
-    return null;
-  }
 }
 
 // ── /api/meta ────────────────────────────────────────────────────────────────
@@ -748,6 +715,10 @@ async function retrievalTrend(query: Query) {
 // ── Routing ──────────────────────────────────────────────────────────────────
 
 const ROUTES: Record<string, Handler> = {
+  "/api/asset/improve": assetImprove,
+  "/api/improve/impact": improveImpact,
+  "/api/overview/pulse": overviewPulse,
+  "/api/search/misses": searchMisses,
   "/api/retrieval": retrievalTrend,
   "/api/fs/folders": (query) => listFolders(query.get("path") ?? "", query.get("hidden") === "1"),
   "/api/meta": meta,

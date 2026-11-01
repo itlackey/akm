@@ -66,3 +66,19 @@ export function nearestRank(sorted: number[], p: number): number | null {
   const rank = Math.min(sorted.length, Math.max(1, Math.ceil(p * sorted.length)));
   return sorted[rank - 1] as number;
 }
+
+/** The smallest k with P(X <= k) >= q for X ~ Binomial(n, p): the exact quantile, computed from the pmf. */
+export function binomialQuantile(n: number, p: number, q: number): number {
+  if (n <= 0) return 0;
+  if (p <= 0) return 0;
+  if (p >= 1) return n;
+  let pmf = (1 - p) ** n;
+  let cdf = pmf;
+  let k = 0;
+  while (cdf < q && k < n) {
+    pmf *= ((n - k) / (k + 1)) * (p / (1 - p));
+    k += 1;
+    cdf += pmf;
+  }
+  return k;
+}
