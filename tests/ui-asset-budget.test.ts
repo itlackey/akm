@@ -5,7 +5,7 @@
 /**
  * Size budgets for the `akm ui` assets (plan §8.5, D-52). Each file is measured at gzip level 9, the size a browser
  * downloads. Authored files (everything but the vendored echarts.js) share one total, CSS has its own cap, and so does
- * every page module. Raise a limit only by changing the plan.
+ * every page module. Sizes are decimal KB (1 KB = 1000 bytes), matching plan §8.5. Raise a limit only by changing the plan.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 
-const KB = 1024;
+const KB = 1000;
 const BUDGET = {
   authoredTotal: 85 * KB,
   css: 12 * KB,
