@@ -417,13 +417,12 @@ const FAMILY_MODE = (process.env.AKM_R1309_FAMILY as FamilyMode | undefined) ?? 
 type SelectedEntry = { candidate: FusedCandidate; row: HydratedEntry };
 
 const DERIVED_SUFFIX = ".derived";
-const isDerivedChild = (row: HydratedEntry): boolean =>
-  row.entry.type === "memory" && row.entry.name.toLowerCase().endsWith(DERIVED_SUFFIX);
-/** A memory and its `.derived` child share a key; every other entry is its own family. */
+/** A memory indexed with a `derived_from` link to its parent: the summary `memory-inference` writes beside it. */
+const isDerivedChild = (row: HydratedEntry): boolean => row.entry.type === "memory" && Boolean(row.entry.derivedFrom);
+/** A memory and the child linked to it share a key; every other entry is its own family. */
 function familyKey(row: HydratedEntry): string {
   if (row.entry.type !== "memory") return row.itemRef;
-  const name = isDerivedChild(row) ? row.entry.name.slice(0, -DERIVED_SUFFIX.length) : row.entry.name;
-  return `${row.bundleId}\0${name}`;
+  return `${row.bundleId}\0${row.entry.derivedFrom ?? `memories/${row.entry.name}`}`;
 }
 
 /**
