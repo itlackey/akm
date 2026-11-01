@@ -315,6 +315,45 @@ describe("pages", () => {
     expect(bundles.indexOf("Working stash")).toBeLessThan(bundles.indexOf("No other bundles."));
   });
 
+  test("bundles lists the default bundle first and labels the write target honestly (B-02)", async () => {
+    await seed();
+    const other = fs.mkdtempSync(path.join(storage.root, "team-"));
+    writeSandboxConfig({
+      bundles: { team: { path: other, writable: true }, stash: { path: storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      defaultWriteTarget: undefined,
+    });
+    resetConfigCache();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const bundles = (await (await view("bundles.js"))(ctx())).text;
+    expect(bundles).not.toContain("Working stash");
+    expect(bundles.indexOf("<h3>stash</h3>")).toBeGreaterThan(-1);
+    expect(bundles.indexOf("<h3>stash</h3>")).toBeLessThan(bundles.indexOf("<h3>team</h3>"));
+    expect(bundles).toContain("Default bundle (stash)");
+    expect(bundles.match(/>default</g)).toHaveLength(1);
+  });
+
+  test("bundles shows no working stash when a component-root default bundle covers the directory (B-02)", async () => {
+    await seed();
+    const root = fs.mkdtempSync(path.join(storage.root, "team-"));
+    fs.mkdirSync(path.join(root, "content"));
+    delete process.env.AKM_BUNDLE_DIR; // restored by the storage teardown
+    writeSandboxConfig({
+      bundles: { team: { path: root, components: { main: { root: "content" } } } },
+      defaultBundle: "team",
+      defaultWriteTarget: undefined,
+    });
+    resetConfigCache();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const bundles = (await (await view("bundles.js"))(ctx())).text;
+    expect(bundles).not.toContain("Working stash");
+    expect(bundles.match(/>default</g)).toHaveLength(1);
+  });
+
   test("overview, bundles, config, proposals, changes, search and asset render real data with hostile text escaped", async () => {
     const { proposalId } = await seed();
     server = await startUiServer({ port: 0 });

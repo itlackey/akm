@@ -25,12 +25,13 @@ import { markdownLinkTargets } from "../../core/asset/markdown-link-targets";
 import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import { getConfigValueSource, loadConfig } from "../../core/config/config";
+import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getConfigPath, getDataDir, getDbPath } from "../../core/paths";
 import { getStateDbPath, listPendingStateMigrations } from "../../core/state-db";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { resolveWriteTarget } from "../../core/write-source";
-import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
+import { findSourceForPath, implicitStashDir, resolveSourceEntries } from "../../indexer/search/search-source";
 import { type Database, openDatabase } from "../../storage/database";
 import { listRecentImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
@@ -270,12 +271,21 @@ async function bundles() {
     })),
   );
 
-  // With no `defaultBundle` the working stash is not a configured bundle, so no card above describes it.
-  const stashDir = tryStashDir();
+  // The working stash is the directory akm reads besides the configured bundles (`implicitStashDir`).
+  // Describe it only when no configured bundle already covers that directory.
+  let stashDir: string | undefined;
+  try {
+    stashDir = implicitStashDir(config);
+  } catch {
+    stashDir = undefined;
+  }
   const workingStash =
-    stashDir && !cards.some((card) => card.path && path.resolve(card.path) === path.resolve(stashDir))
+    stashDir && !bundleKeyForContentRoot(config, stashDir)
       ? { path: stashDir, git: await readBundleGitStatus(stashDir) }
       : null;
+
+  // The default bundle is the working stash when one is configured: list it first.
+  cards.sort((a, b) => Number(b.default) - Number(a.default));
 
   const info = assembleInfo();
   let embeddingCount: number | null = null;
