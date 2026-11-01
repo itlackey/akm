@@ -70,8 +70,11 @@ function items(parts, expanded, opened) {
   const out = [];
   parts.forEach((part, index) => {
     if (part.type === "gap" && !expanded.has(index)) out.push({ gap: index, count: part.rows.length });
-    else
-      part.rows.forEach((row, at) => out.push({ row, revealed: part.type === "gap" && index === opened && at === 0 }));
+    else {
+      part.rows.forEach((row, at) => {
+        out.push({ row, revealed: part.type === "gap" && index === opened && at === 0 });
+      });
+    }
   });
   return out;
 }

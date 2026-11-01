@@ -414,6 +414,10 @@ export function proposalSummary(proposal: Proposal) {
     gateDecision: proposal.gateDecision ?? null,
     review: proposal.review ?? null,
     isRetire: isRetireProposal(proposal),
+    // An accepted change can be undone when accept kept a backup of what it replaced; a created asset has none.
+    revertable: proposal.status === "accepted" && typeof proposal.backupContent === "string",
+    // Who decided: the judge ("triage"), a person, or unknown for a decision recorded before decidedBy existed.
+    decider: proposal.review?.decidedBy ?? null,
     retirement: retirement
       ? {
           retiredRef: retirement.retiredRef,

@@ -942,7 +942,7 @@ describe("helpers", () => {
     expect(out).toContain('href="#/asset?ref=stash%2F%2Fknowledge%2Fnotes%23notes"');
     expect(out).toContain('href="#/asset?ref=stash%2F%2Fknowledge%2Fguide&section=guide"');
     expect(out).not.toContain('href="missing.md"');
-    expect(out).toContain('<code># Hidden\n[code](notes.md)</code></pre>');
+    expect(out).toContain("<code># Hidden\n[code](notes.md)</code></pre>");
   });
 
   test("links are own properties only, a table needs a piped delimiter row, and nested fences keep heading ids", async () => {

@@ -1192,6 +1192,53 @@ describe("proposal writes", () => {
     expect((await data(s, "/api/proposals?status=recent")).proposals[0]).toMatchObject({ id, status: "rejected" });
   });
 
+  test("revert restores the asset from the accept backup, and reopen returns a rejection to the queue", async () => {
+    await seed();
+    const notes = path.join(storage.stashDir, "knowledge", "notes.md");
+    const original = fs.readFileSync(notes, "utf8");
+    const edit = propose("knowledge/notes", NOTES_REWRITE);
+    const s = await start();
+
+    const accepted = await write(s, `/api/proposals/${edit}/accept`, {});
+    expect(accepted.status).toBe(200);
+    expect(fs.readFileSync(notes, "utf8")).not.toBe(original);
+    // An accepted edit says it can be undone, and who decided is carried on the summary.
+    const recent = (await data(s, "/api/proposals?status=recent")).proposals.find((p: { id: string }) => p.id === edit);
+    expect(recent).toMatchObject({ status: "accepted", revertable: true });
+    const reverted = await write(s, `/api/proposals/${edit}/revert`, {});
+    expect(reverted.status, reverted.body.error).toBe(200);
+    expect(reverted.body.data.proposal.status).toBe("reverted");
+    expect(fs.readFileSync(notes, "utf8")).toBe(original);
+
+    const other = propose("lessons/rg");
+    expect((await write(s, `/api/proposals/${other}/reject`, { reason: "later" })).status).toBe(200);
+    const reopened = await write(s, `/api/proposals/${other}/reopen`, {});
+    expect(reopened.status, reopened.body.error).toBe(200);
+    expect(reopened.body.data.proposal.status).toBe("pending");
+    // Reopening a proposal that is still pending is refused, not applied twice.
+    expect((await write(s, `/api/proposals/${other}/reopen`, {})).status).toBe(400);
+  });
+
+  test("batch reject records one reason for each proposal and reports each outcome", async () => {
+    await seed();
+    const first = propose("lessons/one");
+    const second = propose("lessons/two");
+    const s = await start();
+    const response = await write(s, "/api/proposals/reject", {
+      ids: [first, second, "missing-id"],
+      reason: "Out of date.",
+    });
+    expect(response.status, response.body.error).toBe(200);
+    expect(response.body.data).toMatchObject({ rejected: 2, failed: 1 });
+    expect(response.body.data.results.map((r: { ok: boolean }) => r.ok)).toEqual([true, true, false]);
+    expect((await data(s, `/api/proposals/${first}`)).proposal.review).toMatchObject({
+      outcome: "rejected",
+      reason: "Out of date.",
+    });
+    expect((await write(s, "/api/proposals/reject", { ids: [first] })).status).toBe(400);
+    expect((await write(s, "/api/proposals/reject", { reason: "x" })).status).toBe(400);
+  });
+
   test("a rejection needs a reason of 1 to 2000 characters", async () => {
     await seed();
     const id = propose("lessons/rg");
@@ -1338,8 +1385,9 @@ describe("proposal writes", () => {
     const attempts: Array<[string, string]> = [
       ["POST", "/api/proposals"],
       ["POST", `/api/proposals/${id}`],
-      ["POST", `/api/proposals/${id}/revert`],
+      ["POST", `/api/proposals/${id}/delete`],
       ["POST", `/api/proposals/${id}/accept/extra`],
+      ["POST", "/api/proposals/reject/extra"],
       ["POST", "/api/proposals/accept/extra"],
       ["POST", "/api/config"],
       ["POST", "/api/asset?ref=knowledge/guide"],

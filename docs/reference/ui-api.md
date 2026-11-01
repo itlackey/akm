@@ -395,8 +395,8 @@ pending one, or an asset ref (URL-encode it). Unknown: `404` `PROPOSAL_NOT_FOUND
 
 ## Deciding proposals
 
-Three `POST` routes accept or reject proposals. Each calls the function the CLI command calls (`akmProposalAccept`,
-`akmProposalReject`, `akmProposalAcceptMany`) with the arguments the CLI passes, so a decision made here is recorded
+Six `POST` routes decide proposals. Each calls the function the CLI command calls (`akmProposalAccept`,
+`akmProposalReject`, `akmProposalAcceptMany`, `akmProposalRevert`, `akmProposalReopen`) with the arguments the CLI passes, so a decision made here is recorded
 exactly like `akm proposal accept` / `reject`: the same state.db rows and events, the same asset write and the same git
 commit. No other path accepts anything but `GET`.
 
@@ -467,14 +467,13 @@ Reject one pending proposal. The body is `{"reason": "..."}`: required, a string
 }
 ```
 
-A rejection can be undone with `akm proposal reopen`.
+A rejection can be undone with `akm proposal reopen`, and an accepted change with `akm proposal revert`; both are routes below.
 
 ### `POST /api/proposals/accept`
 
 Accept several pending proposals and commit them **once** (`akmProposalAcceptMany`, the call behind
 `akm proposal accept <id> <id> ...`). The body is `{"ids": ["<id>", ...]}`: 1 to 200 non-empty strings; repeats are
-dropped. An id that fails is reported and the rest carry on; what was accepted is committed either way. There is no
-batch reject.
+dropped. An id that fails is reported and the rest carry on; what was accepted is committed either way.
 
 ```json
 {
@@ -495,6 +494,34 @@ batch reject.
   `PROPOSAL_NOT_PENDING`, `PROPOSAL_NOT_FOUND`, `ASSET_MUTATION_LEASE_HELD`, or `ACCEPT_FAILED` for anything else. The
   response is `200` even when some ids failed; a held lease fails the whole request with `409`.
 - `commit` is the single commit for the batch (`null` when nothing was accepted or the bundle is not a git repository).
+
+### `POST /api/proposals/reject`
+
+Reject several pending proposals with **one shared reason** (`{"ids": ["<id>", ...], "reason": "..."}`, the same limits as
+a single rejection and 1 to 200 ids). Each id is decided on its own through `akmProposalReject`, so a failure is reported
+and the rest are still rejected. There is no undo for the batch; each rejected proposal can be reopened on its own.
+
+```json
+{ "ok": true, "data": { "rejected": 2, "failed": 1, "results": [
+  { "ok": true, "id": "...", "ref": "stash//lessons/a", "proposal": { "status": "rejected" } },
+  { "ok": false, "id": "missing-id", "error": "Proposal \"missing-id\" not found", "code": "PROPOSAL_NOT_FOUND" }
+] } }
+```
+
+### `POST /api/proposals/:id/revert`
+
+Undo an accepted change (`akmProposalRevert`, the call behind `akm proposal revert`): the target is restored from the
+backup taken at accept, the proposal becomes `reverted`, and a target edited since acceptance is never overwritten. The
+body is empty. A proposal that created a new asset has no backup and is refused. The summary carries `revertable`
+(`true` for an accepted proposal that kept a backup) so a page can offer Undo only where it works.
+
+### `POST /api/proposals/:id/reopen`
+
+Return a rejected proposal to the pending queue (`akmProposalReopen`, the call behind `akm proposal reopen`). The body
+is empty. A proposal that is not rejected, or whose target changed since, is refused with `400`.
+
+The proposal summary gains two fields: `revertable` (above) and `decider` (`"triage"` for the judge, `"human"` for a
+person, `null` for a decision recorded before `decidedBy` existed).
 
 ## `GET /api/changes`
 
