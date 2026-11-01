@@ -419,7 +419,8 @@ type FamilyMode =
   | "summary-only"
   | "summaries-first"
   | "parent-only"
-  | "top-parent-summaries";
+  | "top-parent-summaries"
+  | "children-last";
 const FAMILY_MODE = (process.env.AKM_R1309_FAMILY as FamilyMode | undefined) ?? ("off" as FamilyMode);
 
 type SelectedEntry = { candidate: FusedCandidate; row: HydratedEntry };
@@ -451,7 +452,8 @@ function selectFusedEntries(
     FAMILY_MODE === "summary-only" ||
     FAMILY_MODE === "summaries-first" ||
     FAMILY_MODE === "parent-only" ||
-    FAMILY_MODE === "top-parent-summaries";
+    FAMILY_MODE === "top-parent-summaries" ||
+    FAMILY_MODE === "children-last";
   const selected: SelectedEntry[] = [];
   const families = new Set<string>();
   const seenPaths = new Set<string>();
@@ -520,7 +522,7 @@ function arrangeFamilies(
         }
       }
     }
-    if (FAMILY_MODE === "slot") arranged.push(group);
+    if (FAMILY_MODE === "slot" || FAMILY_MODE === "children-last") arranged.push(group);
     else if (FAMILY_MODE === "child-first" || FAMILY_MODE === "slot-child-first")
       arranged.push([...(child ? [child] : []), ...group.filter((m) => m !== child)]);
     else if (FAMILY_MODE === "summary-only") arranged.push([childItem ?? group[0]!]);
@@ -528,6 +530,10 @@ function arrangeFamilies(
     else if (FAMILY_MODE === "top-parent-summaries")
       arranged.push(arranged.length === 0 ? [parent ?? group[0]!] : [childItem ?? group[0]!]);
     else arranged.push([...(childItem ? [childItem] : []), ...(parent ? [parent] : [])]);
+  }
+  if (FAMILY_MODE === "children-last") {
+    const flat = arranged.flat();
+    return [...flat.filter((m) => !isDerivedChild(m.row)), ...flat.filter((m) => isDerivedChild(m.row))];
   }
   if (FAMILY_MODE === "summaries-first") {
     const flat = arranged.flat();
