@@ -5,6 +5,9 @@
   --surface: #ffffff;
   --surface-2: #eef0f4;
   --border: #dde1e8;
+  --border-strong: #7d8695;
+  --target-min: 24px;
+  --space-1: 4px;
   --text: #1a2230;
   --muted: #586274;
   --accent: #2354c7;
@@ -39,6 +42,7 @@
     --surface: #161b23;
     --surface-2: #1e2530;
     --border: #2b3340;
+    --border-strong: #68758a;
     --text: #e6eaf1;
     --muted: #9aa5b6;
     --accent: #7ea6ff;
@@ -79,6 +83,9 @@ body {
 }
 
 summary {
+  min-block-size: var(--target-min);
+  padding-block: var(--space-1);
+  overflow-wrap: anywhere;
   cursor: pointer;
 }
 
@@ -218,7 +225,7 @@ main {
   padding: 32px 40px 64px;
 }
 
-@media (max-width: 800px) {
+@media (width < 50rem) {
   .shell {
     display: block;
   }
@@ -274,8 +281,7 @@ main {
 }
 
 .hit,
-.page-head,
-.document-body {
+.page-head {
   overflow-wrap: anywhere;
 }
 .editor-actions {
@@ -327,13 +333,9 @@ main {
 }
 .document-body {
   margin-top: 20px;
+  overflow-wrap: anywhere;
 }
 [hidden] {
-  display: none;
-}
-
-.edit-form [data-source-panel][hidden],
-.edit-form [data-preview-panel][hidden] {
   display: none;
 }
 
@@ -588,7 +590,7 @@ p {
   gap: 0;
 }
 
-@media (max-width: 800px) {
+@media (width < 50rem) {
   .strip-right {
     margin-left: 0;
     align-items: flex-start;
@@ -1097,9 +1099,17 @@ button {
   font: inherit;
   color: var(--text);
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   padding: 8px 12px;
+}
+
+button {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .form-grid {
@@ -1108,18 +1118,19 @@ button {
   margin: 16px 0;
 }
 
-.form-grid label:not(.check) {
+.form-grid label:not(.check-label) {
   display: grid;
   gap: 4px;
 }
 
-.form-grid input:not([type="checkbox"]),
-.form-grid textarea {
+.form-grid input:not([type="checkbox"]) {
   width: 100%;
   min-width: 0;
 }
 
 .form-grid textarea {
+  width: 100%;
+  min-width: 0;
   resize: vertical;
   font-family: var(--mono);
 }
@@ -1128,11 +1139,17 @@ button {
   justify-self: start;
 }
 
-.check {
+.check-label {
   display: flex;
   gap: 8px;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
+  min-block-size: var(--target-min);
+}
+
+input[type="checkbox"] {
+  inline-size: var(--target-min);
+  block-size: var(--target-min);
 }
 
 .scope-controls {
@@ -1158,14 +1175,6 @@ button {
 input[type="search"] {
   flex: 1 1 260px;
   min-width: 0;
-}
-
-button {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--bg);
-  font-weight: 600;
-  cursor: pointer;
 }
 
 /* Aligned diff: side by side (two scrolling panes) or inline (one). Rows are one line high so the panes stay in step. */
@@ -1314,7 +1323,7 @@ button {
   margin-top: 0;
 }
 
-@media (max-width: 799px) {
+@media (width < 50rem) {
   .sbs {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1323,6 +1332,12 @@ button {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Scrollers clip an outside ring, so draw it inside. */
+.dcol:focus-visible,
+pre.diff:focus-visible {
+  outline-offset: -2px;
 }
 
 .hits {
@@ -1410,10 +1425,13 @@ button {
 /* ---- proposal actions ---- */
 .sr-only {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
   overflow: hidden;
-  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 
@@ -1431,7 +1449,7 @@ a.btn {
 button.btn-secondary,
 a.btn.btn-secondary {
   background: var(--surface);
-  border-color: var(--border);
+  border-color: var(--border-strong);
   color: var(--text);
 }
 
@@ -1478,12 +1496,6 @@ button:disabled {
 .field-error {
   margin: 6px 0 0;
   color: var(--fail);
-}
-
-.notice {
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
 }
 
 .notice p {
@@ -1563,10 +1575,4 @@ button:disabled {
 }
 .series-4 {
   background: var(--s4);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
-  }
 }

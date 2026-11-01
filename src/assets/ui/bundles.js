@@ -61,16 +61,16 @@ function card(bundle) {
     <details><summary>Bundle settings</summary>
       <form class="bundle-settings form-grid" data-bundle="${bundle.name}">
         <p class="muted small">Settings from ${bundle.settingsSource ?? "configuration"}. Saving creates a local override. Component settings take precedence over the bundle writable default. Choose another default before disabling the default bundle.</p>
-        <label class="check"><input type="checkbox" name="enabled" data-initial="${bundle.enabled}" ${bundle.enabled ? html`checked` : ""}> Enabled</label>
-        <label class="check"><input type="checkbox" name="writable" data-initial="${bundle.writableSetting ?? bundle.kind === "filesystem"}" ${(bundle.writableSetting ?? bundle.kind === "filesystem") ? html`checked` : ""} ${writableKind ? "" : html`disabled`}> Bundle writable default</label>
-        ${(bundle.components ?? []).map((c) => html`<label class="check"><input type="checkbox" name="component:${c.name}" data-initial="${c.writable ?? bundle.writableSetting ?? bundle.kind === "filesystem"}" ${(c.writable ?? bundle.writableSetting ?? bundle.kind === "filesystem") ? html`checked` : ""} ${writableKind && c.configured && !c.name.includes(".") ? "" : html`disabled`}> ${c.name} writable <span class="muted small">(${c.adapter}, ${c.root ?? "."}${c.writable === undefined ? ", inherits default" : ", explicit override"})</span></label>`)}
+        <label class="check-label"><input type="checkbox" name="enabled" data-initial="${bundle.enabled}" ${bundle.enabled ? html`checked` : ""}> Enabled</label>
+        <label class="check-label"><input type="checkbox" name="writable" data-initial="${bundle.writableSetting ?? bundle.kind === "filesystem"}" ${(bundle.writableSetting ?? bundle.kind === "filesystem") ? html`checked` : ""} ${writableKind ? "" : html`disabled`}> Bundle writable default</label>
+        ${(bundle.components ?? []).map((c) => html`<label class="check-label"><input type="checkbox" name="component:${c.name}" data-initial="${c.writable ?? bundle.writableSetting ?? bundle.kind === "filesystem"}" ${(c.writable ?? bundle.writableSetting ?? bundle.kind === "filesystem") ? html`checked` : ""} ${writableKind && c.configured && !c.name.includes(".") ? "" : html`disabled`}> ${c.name} writable <span class="muted small">(${c.adapter}, ${c.root ?? "."}${c.writable === undefined ? ", inherits default" : ", explicit override"})</span></label>`)}
         <button type="submit">Save settings</button><div data-status></div>
       </form>
     </details>
     <form class="bundle-update" data-bundle="${bundle.name}"><p><button type="submit" class="btn-secondary">Update / reindex bundle</button></p><div data-status></div></form>
     <details><summary>Remove bundle</summary><form class="bundle-remove form-grid" data-bundle="${bundle.name}">
       <p>Uses <code>akm bundle remove</code>. Managed installed content may be deleted; filesystem sources remain on disk.</p>
-      <label class="check"><input type="checkbox" name="confirm" required> Remove ${bundle.name}</label>
+      <label class="check-label"><input type="checkbox" name="confirm" required> Remove ${bundle.name}</label>
       <button type="submit" class="btn-danger">Remove bundle</button><div data-status></div>
     </form></details>
   </article>`;
@@ -165,7 +165,7 @@ export async function render(ctx) {
     <section><h2>Add a bundle</h2><form class="bundle-add form-grid card">
       <label>Source<input name="source" required placeholder="Local path, Git URL, npm package, or website URL"></label>
       <label>Name<input name="name" placeholder="Optional bundle name"></label>
-      <label class="check"><input type="checkbox" name="writable"> Allow writes to a Git source (local directories are writable by default)</label>
+      <label class="check-label"><input type="checkbox" name="writable"> Allow writes to a Git source (local directories are writable by default)</label>
       <p class="muted small">Uses the existing source detection, validation and installation audit. Adding and updating sources can access the network.</p>
       <button type="submit">Add bundle</button><div data-status></div>
     </form></section>
