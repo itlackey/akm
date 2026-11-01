@@ -953,27 +953,19 @@ td.r {
 }
 
 thead th {
+  background: var(--surface-2);
   color: var(--muted);
   font-family: var(--mono);
   font-size: var(--text-xs);
   font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 tr:last-child > td,
 tr:last-child > th {
   border-bottom: 0;
-}
-
-thead th {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-  background: var(--surface-2);
-  white-space: nowrap;
 }
 
 tbody tr:hover > * {
@@ -1419,8 +1411,21 @@ button {
 
 .form-grid {
   display: grid;
-  gap: 12px;
-  margin: 16px 0;
+  gap: var(--space-4);
+  margin: var(--space-4) 0;
+  & label:not(.check-label, [hidden]) {
+    gap: var(--space-1);
+    font-size: var(--text-s);
+    font-weight: 500;
+    color: var(--text);
+    & :where(input, select, textarea) {
+      font-size: var(--text-m);
+      font-weight: 400;
+    }
+  }
+  & .muted.small {
+    font-weight: 400;
+  }
 }
 
 .form-grid label:not(.check-label, [hidden]) {
@@ -1645,13 +1650,10 @@ input[type="search"] {
   }
 }
 
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 /* Scrollers clip an outside ring, so draw it inside. */
 .dcol:focus-visible,
+.table-wrap:focus-visible,
+pre.code:focus-visible,
 pre.diff:focus-visible {
   outline-offset: -2px;
 }
@@ -2106,23 +2108,6 @@ select {
 input::placeholder,
 textarea::placeholder {
   color: var(--faint);
-}
-
-.form-grid {
-  gap: var(--space-4);
-  & label:not(.check-label, [hidden]) {
-    gap: var(--space-1);
-    font-size: var(--text-s);
-    font-weight: 500;
-    color: var(--text);
-    & :where(input, select, textarea) {
-      font-size: var(--text-m);
-      font-weight: 400;
-    }
-  }
-  & .muted.small {
-    font-weight: 400;
-  }
 }
 
 .field {
