@@ -127,7 +127,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(proposalRowToProposal(withHistory([])).reviewHistory).toEqual([]);
   });
 
-  test("acceptedAt round-trips, survives a revert, and a row from the old shape decodes without it (G2)", () => {
+  test("acceptedAt round-trips through the row codec, old-shape rows decode without it, a non-string is refused (G2)", () => {
     const envelope = {
       changes: [{ path: "lessons/history.md", op: "update" }],
       proposedTarget: { source: "team", root: "/tmp/stash" },

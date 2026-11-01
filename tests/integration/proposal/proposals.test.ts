@@ -1245,8 +1245,16 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     // the revert path rather than depending on the accept-path assertion above.
     await indexWrittenAssets(stash, [accepted.assetPath]);
     expect(indexedEntry(lessonPath)?.description).toBe("accepted zanzibar marker");
+    const acceptedProposal = getProposal(stash, created.id);
+    expect(acceptedProposal.acceptedAt).toBeDefined();
+    expect(acceptedProposal.acceptedAt).toBe(acceptedProposal.review?.decidedAt);
 
+    await new Promise((resolve) => setTimeout(resolve, 5));
     await akmProposalRevert({ stashDir: stash, id: created.id, config });
+    const revertedProposal = getProposal(stash, created.id);
+    expect(revertedProposal.status).toBe("reverted");
+    expect(revertedProposal.acceptedAt).toBe(acceptedProposal.acceptedAt);
+    expect(revertedProposal.review?.decidedAt).not.toBe(acceptedProposal.acceptedAt);
     expect(indexedEntry(lessonPath)?.description).toBe("restored orchid marker");
   });
 

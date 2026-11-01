@@ -696,9 +696,16 @@ describe("akm proposal revert on a retire proposal", () => {
     });
     await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
     expect(fs.existsSync(filePath)).toBe(false);
+    const accepted = getProposal(storage.stashDir, proposal.id);
+    expect(accepted.acceptedAt).toBeDefined();
+    expect(accepted.acceptedAt).toBe(accepted.review?.decidedAt);
 
+    await new Promise((resolve) => setTimeout(resolve, 5));
     const reverted = await akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config });
     expect(reverted.proposal.status).toBe("reverted");
+    const afterRevert = getProposal(storage.stashDir, proposal.id);
+    expect(afterRevert.acceptedAt).toBe(accepted.acceptedAt);
+    expect(afterRevert.review?.decidedAt).not.toBe(accepted.acceptedAt);
     expect(fs.existsSync(filePath)).toBe(true);
     expect(fs.readFileSync(filePath, "utf8")).toBe(originalBytes);
 
