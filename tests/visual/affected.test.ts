@@ -21,7 +21,12 @@ describe("affectedRoutes", () => {
   });
 
   test("shared files and the harness affect everything", () => {
-    for (const file of ["src/assets/ui/styles.css", "src/assets/ui/lib.js", "tests/visual/support.ts", "bun.lock"]) {
+    for (const file of [
+      "src/assets/ui/components.css",
+      "src/assets/ui/lib.js",
+      "tests/visual/support.ts",
+      "bun.lock",
+    ]) {
       expect(affectedRoutes([file])).toBe(ALL);
     }
   });

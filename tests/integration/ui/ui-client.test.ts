@@ -111,7 +111,8 @@ describe("what the page may load and do", () => {
     for (const url of urls) expect(url, url).not.toMatch(/^(?:[a-z][a-z0-9+.-]*:)?\/\//i);
     expect(html).not.toMatch(/<script(?![^>]*\ssrc=)/i);
     expect(html).not.toMatch(/\son[a-z]+\s*=/i);
-    expect(read("styles.css")).not.toMatch(/https?:\/\/|@import/i);
+    for (const sheet of fs.readdirSync(UI_DIR).filter((name) => name.endsWith(".css")))
+      expect(read(sheet), sheet).not.toMatch(/https?:\/\/|@import/i);
   });
 
   test("no client file makes an off-host request or evaluates strings", () => {

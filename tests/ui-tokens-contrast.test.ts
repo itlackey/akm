@@ -59,11 +59,14 @@ function schemeTokens(css: string, scheme: Scheme): Map<string, string> {
   const take = (body: string) => {
     for (const [name, value] of declarations(body)) tokens.set(name, value);
   };
-  for (const rule of topLevelRules(stripped)) {
+  // Rules may sit inside `@layer name { ... }`, so lift those out first.
+  const flat = (text: string): ReturnType<typeof topLevelRules> =>
+    topLevelRules(text).flatMap((rule) => (/^@layer\s+[\w-]+$/.test(rule.selector) ? flat(rule.body) : [rule]));
+  for (const rule of flat(stripped)) {
     if (rule.selector === ":root") take(rule.body);
   }
   if (scheme === "dark") {
-    for (const rule of topLevelRules(stripped)) {
+    for (const rule of flat(stripped)) {
       if (!/^@media\s*\(\s*prefers-color-scheme:\s*dark\s*\)$/.test(rule.selector)) continue;
       for (const inner of topLevelRules(rule.body)) if (inner.selector === ":root") take(inner.body);
     }

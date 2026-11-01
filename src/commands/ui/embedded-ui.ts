@@ -7,9 +7,11 @@
 
 import appJs from "../../assets/ui/app.js" with { type: "text" };
 import assetJs from "../../assets/ui/asset.js" with { type: "text" };
+import baseCss from "../../assets/ui/base.css" with { type: "text" };
 import bundlesJs from "../../assets/ui/bundles.js" with { type: "text" };
 import chartViewJs from "../../assets/ui/chart-view.js" with { type: "text" };
 import chartsJs from "../../assets/ui/charts.js" with { type: "text" };
+import componentsCss from "../../assets/ui/components.css" with { type: "text" };
 import configJs from "../../assets/ui/config.js" with { type: "text" };
 import diffJs from "../../assets/ui/diff.js" with { type: "text" };
 import diffViewJs from "../../assets/ui/diff-view.js" with { type: "text" };
@@ -19,22 +21,28 @@ import folderPickerJs from "../../assets/ui/folder-picker.js" with { type: "text
 import historyJs from "../../assets/ui/history.js" with { type: "text" };
 import improveJs from "../../assets/ui/improve.js" with { type: "text" };
 import indexHtml from "../../assets/ui/index.html" with { type: "text" };
+import layersCss from "../../assets/ui/layers.css" with { type: "text" };
+import layoutCss from "../../assets/ui/layout.css" with { type: "text" };
 import libJs from "../../assets/ui/lib.js" with { type: "text" };
 import markdownJs from "../../assets/ui/markdown.js" with { type: "text" };
 import overviewJs from "../../assets/ui/overview.js" with { type: "text" };
 import overviewChartsJs from "../../assets/ui/overview-charts.js" with { type: "text" };
+import pagesCss from "../../assets/ui/pages.css" with { type: "text" };
 import proposalActionsJs from "../../assets/ui/proposal-actions.js" with { type: "text" };
 import proposalsJs from "../../assets/ui/proposals.js" with { type: "text" };
 import searchJs from "../../assets/ui/search.js" with { type: "text" };
 import shortcutsJs from "../../assets/ui/shortcuts.js" with { type: "text" };
-import stylesCss from "../../assets/ui/styles.css" with { type: "text" };
+import tokensCss from "../../assets/ui/tokens.css" with { type: "text" };
+import utilitiesCss from "../../assets/ui/utilities.css" with { type: "text" };
 
 export const EMBEDDED_UI: Record<string, string> = {
   "app.js": appJs as unknown as string,
   "asset.js": assetJs as unknown as string,
+  "base.css": baseCss as unknown as string,
   "bundles.js": bundlesJs as unknown as string,
   "chart-view.js": chartViewJs as unknown as string,
   "charts.js": chartsJs as unknown as string,
+  "components.css": componentsCss as unknown as string,
   "config.js": configJs as unknown as string,
   "diff.js": diffJs as unknown as string,
   "diff-view.js": diffViewJs as unknown as string,
@@ -44,13 +52,17 @@ export const EMBEDDED_UI: Record<string, string> = {
   "history.js": historyJs as unknown as string,
   "improve.js": improveJs as unknown as string,
   "index.html": indexHtml as unknown as string,
+  "layers.css": layersCss as unknown as string,
+  "layout.css": layoutCss as unknown as string,
   "lib.js": libJs as unknown as string,
   "markdown.js": markdownJs as unknown as string,
   "overview.js": overviewJs as unknown as string,
   "overview-charts.js": overviewChartsJs as unknown as string,
+  "pages.css": pagesCss as unknown as string,
   "proposal-actions.js": proposalActionsJs as unknown as string,
   "proposals.js": proposalsJs as unknown as string,
   "search.js": searchJs as unknown as string,
   "shortcuts.js": shortcutsJs as unknown as string,
-  "styles.css": stylesCss as unknown as string,
+  "tokens.css": tokensCss as unknown as string,
+  "utilities.css": utilitiesCss as unknown as string,
 };

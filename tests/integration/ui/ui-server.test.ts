@@ -258,7 +258,7 @@ describe("server and guards", () => {
 
     const js = await fetch(`http://${s.host}:${s.port}/app.js`);
     expect(js.headers.get("content-type")).toContain("javascript");
-    const css = await fetch(`http://${s.host}:${s.port}/styles.css`);
+    const css = await fetch(`http://${s.host}:${s.port}/layers.css`);
     expect(css.headers.get("content-type")).toContain("text/css");
     expect((await fetch(`http://${s.host}:${s.port}/nope.js`)).status).toBe(404);
     expect((await fetch(`http://${s.host}:${s.port}/..%2f..%2fpackage.json`)).status).toBe(404);
