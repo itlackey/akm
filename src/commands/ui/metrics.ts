@@ -3,11 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { computeWallTimeStats } from "../health/improve-metrics";
-import type { MetricsUsageRow } from "../metrics/types";
+import { zeroFill } from "../metrics/stats";
+import type { MetricsDailyUsage, MetricsUsageRow } from "../metrics/types";
 import { type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
 
 /** Drill-down over the same user-attributed summary rows that `akm metrics` counts. */
-export function retrievalSeries(rows: MetricsUsageRow[]) {
+export function retrievalSeries(rows: MetricsUsageRow[], window?: { since: string; until: string }) {
   const days = new Map<string, { searches: number; zeroResults: number; durations: number[] }>();
   const queries = new Map<string, { date: string; query: string; count: number }>();
   for (const row of rows) {
@@ -28,16 +29,29 @@ export function retrievalSeries(rows: MetricsUsageRow[]) {
     }
     days.set(date, day);
   }
+  const present = [...days]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, day]) => ({
+      day: date,
+      date,
+      searches: day.searches,
+      zeroResults: day.zeroResults,
+      medianMs: day.durations.length ? computeWallTimeStats(day.durations).medianMs : null,
+      latencySamples: day.durations.length,
+    }));
+  const filled = window
+    ? zeroFill(
+        present,
+        (day) => ({ day, date: day, searches: 0, zeroResults: 0, medianMs: null, latencySamples: 0 }),
+        window,
+      )
+    : present;
   return {
-    daily: [...days]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, day]) => ({
-        date,
-        searches: day.searches,
-        zeroResults: day.zeroResults,
-        medianMs: day.durations.length ? computeWallTimeStats(day.durations).medianMs : null,
-        latencySamples: day.durations.length,
-      })),
+    daily: filled.map(({ day: _day, ...row }) => ({
+      ...row,
+      // The share of searches that found nothing; null on a day with no searches, never 0.
+      noResultRate: row.searches > 0 ? row.zeroResults / row.searches : null,
+    })),
     zeroResultQueries: [...queries.values()].sort(
       (a, b) => b.date.localeCompare(a.date) || b.count - a.count || a.query.localeCompare(b.query),
     ),
@@ -69,4 +83,9 @@ export function proposalBacklog(proposals: Proposal[], now: number) {
     groups.set(row.source, row);
   }
   return [...groups.values()].sort((a, b) => a.source.localeCompare(b.source));
+}
+
+/** Activity per UTC day with the empty days inside the data's coverage filled in and partial days marked. */
+export function filledActivity(daily: MetricsDailyUsage[], window: { since: string; until: string }) {
+  return zeroFill(daily, (day) => ({ day, search: 0, show: 0, curate: 0, feedback: 0 }), window);
 }

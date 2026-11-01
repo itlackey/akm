@@ -1,5 +1,5 @@
 import { horizontalBars, verticalBars, wireChart } from "./chart-view.js";
-import { api, badge, emptyState, fmtMs, fmtNum, html, mount, pretty, tableWrap, when } from "./lib.js";
+import { api, badge, emptyState, fmtMs, fmtNum, fmtPct, html, mount, pretty, tableWrap, when } from "./lib.js";
 
 const chart = (id, label) => html`<div class="echarts-view" id="${id}" role="img" aria-label="${label}"></div>`;
 const dataTable = (content) => html`<details><summary>Data and details</summary>${tableWrap(content)}</details>`;
@@ -7,6 +7,7 @@ const tokenCount = (row) => (row.calls > 0 && !row.usageCalls ? "Unknown" : fmtN
 
 function activity(ctx, metrics) {
   const days = metrics.usage.daily;
+  const dayLabel = (d) => (d.partial ? `${d.day}*` : d.day);
   const labels = { search: "Search", curate: "Curate", show: "Show", feedback: "Feedback" };
   let selected = Object.keys(labels);
   ctx.after.push((root) =>
@@ -16,7 +17,7 @@ function activity(ctx, metrics) {
   );
   wireChart(ctx, "#activity-chart", () =>
     verticalBars(
-      days.map((d) => d.day),
+      days.map(dayLabel),
       selected.map((key) => ({
         name: labels[key],
         colorIndex: Object.keys(labels).indexOf(key),
@@ -27,7 +28,7 @@ function activity(ctx, metrics) {
   );
   return html`<section class="chart-card"><h2>Activity</h2><p class="muted small">Your own activity only: searches, curates, shows and feedback you made.</p><div class="chart-controls" data-activity-controls>${Object.entries(labels).map(([key, label], index) => html`<label><input type="checkbox" data-activity value="${key}" checked><i class="series-key series-${index + 1}" aria-hidden="true"></i>${label}</label>`)}</div>
     ${days.length ? chart("activity-chart", "Recorded operations by UTC day. Choose series above; exact counts follow in Data and details.") : emptyState("No recorded activity in this window.")}
-    ${dataTable(html`<table><thead><tr><th>UTC day</th>${Object.values(labels).map((label) => html`<th class="r">${label}</th>`)}</tr></thead><tbody>${days.map((d) => html`<tr><th>${d.day}</th>${Object.keys(labels).map((key) => html`<td class="r num">${fmtNum(d[key])}</td>`)}</tr>`)}</tbody></table>`)}
+    ${dataTable(html`<table><thead><tr><th>UTC day</th>${Object.values(labels).map((label) => html`<th class="r">${label}</th>`)}</tr></thead><tbody>${days.map((d) => html`<tr><th>${d.day}${d.partial ? html` <span class="muted small">(partial)</span>` : ""}</th>${Object.keys(labels).map((key) => html`<td class="r num">${fmtNum(d[key])}</td>`)}</tr>`)}</tbody></table>`)}
   </section>`;
 }
 
@@ -124,7 +125,7 @@ function retrieval(ctx, data) {
     "#retrieval-results",
     () =>
       verticalBars(
-        days.map((d) => d.date),
+        days.map((d) => (d.partial ? `${d.date}*` : d.date)),
         [
           { name: "All searches", data: days.map((d) => d.searches) },
           { name: "No results", data: days.map((d) => d.zeroResults) },
@@ -138,7 +139,7 @@ function retrieval(ctx, data) {
     "#retrieval-latency",
     () => ({
       ...verticalBars(
-        days.map((d) => d.date),
+        days.map((d) => (d.partial ? `${d.date}*` : d.date)),
         [],
         "Milliseconds",
       ),
@@ -155,10 +156,10 @@ function retrieval(ctx, data) {
     }),
     (event) => select(days[event.dataIndex]?.date),
   );
-  return html`<section class="chart-card"><h2>Retrieval health</h2><p class="muted small">Your own searches only. Today and the first day are partial.</p>${days.length ? html`<p class="chart-legend"><span><i class="series-key series-1" aria-hidden="true"></i>All searches</span><span><i class="series-key series-2" aria-hidden="true"></i>No results</span></p>${chart("retrieval-results", "Total searches and no-result searches by UTC day. Select a day to inspect unsuccessful queries.")}<h3>Median search latency</h3>${chart("retrieval-latency", "Median recorded search latency by UTC day on its own millisecond scale. Missing samples are gaps.")}` : emptyState("No searches recorded in this window.")}
+  return html`<section class="chart-card"><h2>Retrieval health</h2><p class="muted small">Your own searches only. A day marked * is partial; a day with no searches is zero, and before the first recorded day nothing is shown.</p>${days.length ? html`<p class="chart-legend"><span><i class="series-key series-1" aria-hidden="true"></i>All searches</span><span><i class="series-key series-2" aria-hidden="true"></i>No results</span></p>${chart("retrieval-results", "Total searches and no-result searches by UTC day. Select a day to inspect unsuccessful queries.")}<h3>Median search latency</h3>${chart("retrieval-latency", "Median recorded search latency by UTC day on its own millisecond scale. Missing samples are gaps.")}` : emptyState("No searches recorded in this window.")}
     <p class="muted small">No-result counts describe retrieval, not answer quality. Missing latency samples are unknown.</p>
     <div data-retrieval-detail tabindex="-1" aria-live="polite"></div>
-    <details><summary>Data and details</summary><div data-retrieval-table>${tableWrap(html`<table><thead><tr><th>UTC day / queries</th><th class="r">Searches</th><th class="r">No results</th><th>Median latency</th><th class="r">Latency samples</th></tr></thead><tbody>${days.map((d) => html`<tr><th><button type="button" class="btn-secondary" data-day="${d.date}">${d.date}</button></th><td class="r">${d.searches}</td><td class="r">${d.zeroResults}</td><td>${d.medianMs === null ? "Unknown" : fmtMs(d.medianMs)}</td><td class="r">${d.latencySamples} / ${d.searches}</td></tr>`)}</tbody></table>`)}</div></details></section>`;
+    <details><summary>Data and details</summary><div data-retrieval-table>${tableWrap(html`<table><thead><tr><th>UTC day / queries</th><th class="r">Searches</th><th class="r">No results</th><th class="r">No-result rate</th><th>Median latency</th><th class="r">Latency samples</th></tr></thead><tbody>${days.map((d) => html`<tr><th><button type="button" class="btn-secondary" data-day="${d.date}">${d.date}</button>${d.partial ? html` <span class="muted small">(partial)</span>` : ""}</th><td class="r">${d.searches}</td><td class="r">${d.zeroResults}</td><td class="r">${d.noResultRate === null ? "n/a" : `${fmtPct(d.noResultRate)} of ${d.searches}`}</td><td>${d.medianMs === null ? "Unknown" : fmtMs(d.medianMs)}</td><td class="r">${d.latencySamples} / ${d.searches}</td></tr>`)}</tbody></table>`)}</div></details></section>`;
 }
 
 function automation(ctx, tasks, runs, since) {

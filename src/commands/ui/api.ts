@@ -61,7 +61,7 @@ import { akmListSources } from "../sources/installed-stashes";
 import { readDocumentSource } from "./document-source";
 import { listFolders } from "./folders";
 import { readBundleGitStatus, readFileRevision, readRecentCommits } from "./git-read";
-import { PROPOSAL_AGE_BANDS, proposalAgeBand, proposalBacklog, retrievalSeries } from "./metrics";
+import { filledActivity, PROPOSAL_AGE_BANDS, proposalAgeBand, proposalBacklog, retrievalSeries } from "./metrics";
 import { isSecretEnvName, redactForUi } from "./redact";
 
 export interface UiServerInfo {
@@ -235,10 +235,16 @@ async function overview(query: Query) {
   );
   return {
     health,
-    metrics: metrics ? { ...metrics, rows: undefined } : null,
+    metrics: metrics
+      ? {
+          ...metrics,
+          rows: undefined,
+          usage: { ...metrics.usage, daily: filledActivity(metrics.usage.daily, metrics.window) },
+        }
+      : null,
     pendingNow: stateReads?.pendingNow ?? null,
     improveRuns: stateReads?.improveRuns ?? [],
-    retrieval: metrics ? retrievalSeries(metrics.rows?.usage ?? []) : null,
+    retrieval: metrics ? retrievalSeries(metrics.rows?.usage ?? [], metrics.window) : null,
     taskFailures: stateReads?.taskFailures ?? null,
     ...(Object.keys(errors).length > 0 ? { errors } : {}),
   };
@@ -732,7 +738,7 @@ async function assetHistory(query: Query) {
 /** The per-day search series over a longer window than the Overview's, for the Improve impact trend. */
 async function retrievalTrend(query: Query) {
   const metrics = await akmMetrics({ since: query.get("since") || "90d", indexSnapshot: false, includeRows: true });
-  return retrievalSeries(metrics.rows?.usage ?? []);
+  return retrievalSeries(metrics.rows?.usage ?? [], metrics.window);
 }
 
 // ── Routing ──────────────────────────────────────────────────────────────────

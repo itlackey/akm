@@ -426,7 +426,17 @@ describe("endpoints", () => {
     const overview = await data(s, "/api/overview?metricsSince=7d");
     expect(overview.metrics.usage.daily.at(-1)).toMatchObject({ search: 4, curate: 1 });
     expect(overview.retrieval).toEqual({
-      daily: [{ date: today, searches: 4, zeroResults: 2, medianMs: 120, latencySamples: 2 }],
+      daily: [
+        {
+          date: today,
+          searches: 4,
+          zeroResults: 2,
+          medianMs: 120,
+          latencySamples: 2,
+          noResultRate: 0.5,
+          partial: true,
+        },
+      ],
       zeroResultQueries: [{ date: today, query: "empty result", count: 2 }],
     });
   });
