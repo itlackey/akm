@@ -184,6 +184,10 @@ export function volatileMasks(page: Page): Locator[] {
 
 /** The baseline for `<name>.png` in this project, with the volatile regions masked. */
 export async function shoot(page: Page, name: string): Promise<void> {
+  // A click can scroll the page; a full-page shot taken mid-scroll draws the sticky top bar part-way down, a pixel or
+  // two from where the last run drew it. From the top it is always in the same place.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: true, mask: volatileMasks(page) });
 }
 
