@@ -331,7 +331,12 @@ describe("selects per search", () => {
 });
 
 describe("select dedupe", () => {
-  const select = (ts: string, ref: string, searchId?: string) => ({ ts, ref, ...(searchId ? { searchId } : {}) });
+  const select = (ts: string, ref: string, searchId?: string, source?: string) => ({
+    ts,
+    ref,
+    ...(searchId ? { searchId } : {}),
+    ...(source ? { source } : {}),
+  });
   const run = (selects: ReturnType<typeof select>[]) => buildMetricsResult(input({ selects }));
 
   test("repeated shows of one result after one search are one select", () => {
@@ -343,6 +348,16 @@ describe("select dedupe", () => {
     ]);
     expect(result.usage.totals.selects).toBe(3);
     expect(result.usage.topAssets.find((a) => a.ref === "b//skills/x")?.selects).toBe(2);
+  });
+
+  test("selects after another source's search are excluded; legacy rows with no source are kept", () => {
+    const result = run([
+      select("2026-01-03T10:00:00.000Z", "b//skills/x", "s1", "improve"),
+      select("2026-01-03T10:01:00.000Z", "b//skills/y", "s2", "user"),
+      select("2026-01-02T10:00:00.000Z", "b//skills/z"),
+    ]);
+    expect(result.usage.totals.selects).toBe(2);
+    expect(result.usage.topAssets.map((a) => a.ref).sort()).toEqual(["b//skills/y", "b//skills/z"]);
   });
 
   test("rows with no searchId are all kept, and the note names the first deduped day", () => {

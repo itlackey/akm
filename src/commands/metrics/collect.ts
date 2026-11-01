@@ -43,7 +43,7 @@ const UTILITY_BUCKETS = 10;
  * search is one select. Rows from before selects carried a `searchId` have no
  * key to dedupe on and are all kept.
  */
-export function dedupeSelects(selects: SelectEventRow[]): SelectEventRow[] {
+function dedupeSelects(selects: SelectEventRow[]): SelectEventRow[] {
   const seen = new Set<string>();
   return selects.filter((select) => {
     if (select.searchId === undefined) return true;
@@ -527,7 +527,8 @@ export function buildMetricsResult(input: MetricsInput): AkmMetricsResult {
     negativeFeedbackCount: row.negative_feedback_count,
     acceptedChangeCount: row.accepted_change_count,
   }));
-  const selects = dedupeSelects(input.selects);
+  // A select recorded before `source` existed is kept for every source.
+  const selects = dedupeSelects(input.selects.filter((s) => s.source === undefined || s.source === input.source));
   return {
     schemaVersion: 1,
     window: input.window,

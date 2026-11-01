@@ -69,11 +69,13 @@ export function countFeedbackBySignal(db: Database, entryRef: string): Record<st
   return Object.fromEntries(rows.map((row) => [row.signal, row.n]));
 }
 
-/** A `select` event; `searchId` is absent on rows written before G10. */
+/** A `select` event; `searchId` and `source` are absent on rows written before G10. */
 export interface SelectEventRow {
   ts: string;
   ref: string;
   searchId?: string;
+  /** The usage source of the search the select followed. */
+  source?: string;
 }
 
 /**
@@ -90,19 +92,20 @@ export function listSelectEvents(db: Database, sinceIso: string, untilIso: strin
     )
     .all(sinceIso, untilIso) as Array<{ ts: string; ref: string; metadata_json: string | null }>;
   return rows.map(({ ts, ref, metadata_json }) => {
-    const searchId = parseSearchId(metadata_json);
-    return searchId ? { ts, ref, searchId } : { ts, ref };
+    const { searchId, source } = parseSelectMetadata(metadata_json);
+    return { ts, ref, ...(searchId ? { searchId } : {}), ...(source ? { source } : {}) };
   });
 }
 
-/** A select's `searchId`, absent on rows written before selects carried one. */
-function parseSearchId(metadataJson: string | null): string | undefined {
-  if (!metadataJson) return undefined;
+/** A select's `searchId` and `source`, each absent on rows written before selects carried it. */
+function parseSelectMetadata(metadataJson: string | null): { searchId?: string; source?: string } {
+  if (!metadataJson) return {};
   try {
-    const { searchId } = JSON.parse(metadataJson) as { searchId?: unknown };
-    return typeof searchId === "string" && searchId !== "" ? searchId : undefined;
+    const meta = JSON.parse(metadataJson) as { searchId?: unknown; source?: unknown };
+    const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
+    return { searchId: text(meta.searchId), source: text(meta.source) };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
