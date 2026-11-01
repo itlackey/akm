@@ -1,3 +1,5 @@
+- link "Skip to content":
+  - /url: "#app"
 - banner:
   - navigation "Main":
     - link "akm ui":
@@ -14,7 +16,7 @@
           - /url: "#/improve"
       - listitem:
         - link "History":
-          - /url: "#/changes"
+          - /url: "#/history"
       - listitem:
         - link "Search":
           - /url: "#/search"
@@ -27,9 +29,10 @@
       - listitem:
         - link "Config":
           - /url: "#/config"
-    - search:
+    - search "Site search":
       - text: Search assets
       - searchbox "Search assets"
+- status
 - main:
   - heading "Config" [level=1]
   - paragraph:
@@ -124,3 +127,12 @@
     - button "Apply"
     - group: Effective config (read-only, secrets redacted)
     - group: Environment (8 AKM_* variables)
+- contentinfo:
+  - text: akm 0.0.0 · visual-host bun
+  - group "Theme":
+    - radio "System" [checked]
+    - text: System
+    - radio "Light"
+    - text: Light
+    - radio "Dark"
+    - text: Dark

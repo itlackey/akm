@@ -1,3 +1,5 @@
+- link "Skip to content":
+  - /url: "#app"
 - banner:
   - navigation "Main":
     - link "akm ui":
@@ -14,7 +16,7 @@
           - /url: "#/improve"
       - listitem:
         - link "History":
-          - /url: "#/changes"
+          - /url: "#/history"
       - listitem:
         - link "Search":
           - /url: "#/search"
@@ -27,12 +29,14 @@
       - listitem:
         - link "Config":
           - /url: "#/config"
-    - search:
+    - search "Site search":
       - text: Search assets
       - searchbox "Search assets"
+- status
 - main:
-  - heading "Bundles" [level=1]
-  - paragraph: Default bundle stash, writes go to stash.
+  - heading "Bundles & index" [level=1]
+  - paragraph: Where akm reads assets from and where new ones are written.
+  - paragraph: Default bundle stash; writes go to stash.
   - region "Defaults":
     - heading "Defaults" [level=2]
     - paragraph: Which bundle akm reads first, and where new knowledge, memories and accepted proposals are written.
@@ -75,7 +79,7 @@
       - definition: clean
       - term: Last commit
       - definition:
-        - time: /\d+[hmsp]+ ago/
+        - time: /\d+[hmsp]+ ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/
         - text: 376a148b akm improve auto-sync
       - group: Bundle settings
       - paragraph:
@@ -87,6 +91,8 @@
     - text: Source
     - textbox "Source":
       - /placeholder: ./team-skills, github:org/repo, npm:package or a docs URL
+    - button "Browse…"
+    - paragraph: Type a folder, Git repository, npm package or docs URL, or browse for a folder on this computer.
     - text: Name
     - textbox "Name":
       - /placeholder: Optional; defaults to the source name
@@ -101,7 +107,7 @@
     - definition: "6"
     - term: Last built
     - definition:
-      - time: /\d+[hmsp]+ ago/
+      - time: /\d+[hmsp]+ ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/
     - term: Embeddings
     - definition: none
     - term: Semantic search
@@ -112,3 +118,12 @@
       - listitem: command 1
       - listitem: lesson 1
       - listitem: memory 1
+- contentinfo:
+  - text: akm 0.0.0 · visual-host bun
+  - group "Theme":
+    - radio "System" [checked]
+    - text: System
+    - radio "Light"
+    - text: Light
+    - radio "Dark"
+    - text: Dark

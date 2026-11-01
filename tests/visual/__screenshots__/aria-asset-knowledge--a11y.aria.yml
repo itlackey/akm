@@ -1,3 +1,5 @@
+- link "Skip to content":
+  - /url: "#app"
 - banner:
   - navigation "Main":
     - link "akm ui":
@@ -14,7 +16,7 @@
           - /url: "#/improve"
       - listitem:
         - link "History":
-          - /url: "#/changes"
+          - /url: "#/history"
       - listitem:
         - link "Search":
           - /url: "#/search"
@@ -30,6 +32,7 @@
     - search "Site search":
       - text: Search assets
       - searchbox "Search assets"
+- status: Deploy guide. Asset page loaded.
 - main:
   - paragraph:
     - link "Search":
@@ -39,7 +42,9 @@
   - paragraph:
     - link "Edit Markdown":
       - /url: "#/edit?ref=stash%2F%2Fknowledge%2Fdeploy-guide"
-    - text: ·
+    - button "Helpful"
+    - button "Not helpful"
+    - button "Copy ref"
     - link "Document history":
       - /url: "#/asset?ref=stash%2F%2Fknowledge%2Fdeploy-guide&history=1"
     - text: ·
@@ -48,7 +53,6 @@
   - text: knowledge stash editable
   - group: On this page
   - region "Content":
-    - heading "Deploy guide" [level=2]
     - paragraph:
       - text: Run the deploy script from the release branch. See
       - link "knowledge/rollback":
@@ -89,52 +93,91 @@
           - columnheader "Reason"
           - columnheader "Tags"
       - rowgroup:
-        - row "2d ago negative user The rollback link is wrong":
-          - cell "2d ago":
-            - time: 2d ago
+        - row /2d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\) negative user The rollback link is wrong/:
+          - cell /2d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/:
+            - time: /2d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/
           - cell "negative"
           - cell "user"
           - cell "The rollback link is wrong"
           - cell
-        - row "8d ago positive user Clear and complete":
-          - cell "8d ago":
-            - time: 8d ago
+        - row /8d ago \(6\/9\/\d+, 2:\d+:\d+ PM\) positive user Clear and complete/:
+          - cell /8d ago \(6\/9\/\d+, 2:\d+:\d+ PM\)/:
+            - time: /8d ago \(6\/9\/\d+, 2:\d+:\d+ PM\)/
           - cell "positive"
           - cell "user"
           - cell "Clear and complete"
           - cell
-        - row "15d ago positive user Clear and complete":
-          - cell "15d ago":
-            - time: 15d ago
+        - row /15d ago \(6\/2\/\d+, 2:\d+:\d+ PM\) positive user Clear and complete/:
+          - cell /15d ago \(6\/2\/\d+, 2:\d+:\d+ PM\)/:
+            - time: /15d ago \(6\/2\/\d+, 2:\d+:\d+ PM\)/
           - cell "positive"
           - cell "user"
           - cell "Clear and complete"
           - cell
-        - row "22d ago positive user Clear and complete":
-          - cell "22d ago":
-            - time: 22d ago
+        - row /22d ago \(5\/\d+\/\d+, 2:\d+:\d+ PM\) positive user Clear and complete/:
+          - cell /22d ago \(5\/\d+\/\d+, 2:\d+:\d+ PM\)/:
+            - time: /22d ago \(5\/\d+\/\d+, 2:\d+:\d+ PM\)/
           - cell "positive"
           - cell "user"
           - cell "Clear and complete"
           - cell
-        - row "30d ago positive user Clear and complete":
-          - cell "30d ago":
-            - time: 30d ago
+        - row /30d ago \(5\/\d+\/\d+, 2:\d+:\d+ PM\) positive user Clear and complete/:
+          - cell /30d ago \(5\/\d+\/\d+, 2:\d+:\d+ PM\)/:
+            - time: /30d ago \(5\/\d+\/\d+, 2:\d+:\d+ PM\)/
           - cell "positive"
           - cell "user"
           - cell "Clear and complete"
           - cell
-        - row "41d ago positive user Clear and complete":
-          - cell "41d ago":
-            - time: 41d ago
+        - row /41d ago \(5\/7\/\d+, 2:\d+:\d+ PM\) positive user Clear and complete/:
+          - cell /41d ago \(5\/7\/\d+, 2:\d+:\d+ PM\)/:
+            - time: /41d ago \(5\/7\/\d+, 2:\d+:\d+ PM\)/
           - cell "positive"
           - cell "user"
           - cell "Clear and complete"
           - cell
-        - row "57d ago positive user Clear and complete":
-          - cell "57d ago":
-            - time: 57d ago
+        - row /57d ago \(4\/\d+\/\d+, 2:\d+:\d+ PM\) positive user Clear and complete/:
+          - cell /57d ago \(4\/\d+\/\d+, 2:\d+:\d+ PM\)/:
+            - time: /57d ago \(4\/\d+\/\d+, 2:\d+:\d+ PM\)/
           - cell "positive"
           - cell "user"
           - cell "Clear and complete"
           - cell
+  - complementary "About this asset":
+    - term: Type
+    - definition: knowledge
+    - term: Bundle
+    - definition: stash
+    - term: Feedback
+    - definition: /\+6 \/ −1 \d+ days/
+    - paragraph:
+      - text: 2 pending proposals
+      - link "Review →":
+        - /url: "#/proposals/p-pending-reflect"
+    - heading "Improve history" [level=2]
+    - img /Weekly finds and opens, last \d+ days/
+    - paragraph: /Finds and opens per week, last \d+ days\./
+    - list:
+      - listitem:
+        - text: judge reflect
+        - link /2d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/:
+          - /url: "#/proposals/p-judge-accepted"
+          - time: /2d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/
+      - listitem:
+        - text: rejected extract
+        - link /6d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/:
+          - /url: "#/proposals/p-judge-rejected"
+          - time: /6d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/
+      - listitem:
+        - text: reverted distill
+        - link /9d ago \(6\/8\/\d+, 2:\d+:\d+ PM\)/:
+          - /url: "#/proposals/p-reverted"
+          - time: /9d ago \(6\/8\/\d+, 2:\d+:\d+ PM\)/
+- contentinfo:
+  - text: akm 0.0.0 · visual-host bun
+  - group "Theme":
+    - radio "System" [checked]
+    - text: System
+    - radio "Light"
+    - text: Light
+    - radio "Dark"
+    - text: Dark

@@ -32,10 +32,9 @@ test("overview details open", async ({ page }) => {
   // The health groups have their own shot above.
   for (const summary of await page.locator("main details:not(.group, .group *) > summary").all()) await summary.click();
   const sections = {
-    metrics: "At a glance",
-    activity: "Activity",
+    "search-finding": "Is search finding what you need?",
+    "feedback-and-use": "Feedback and use",
     "model-utilization": "Model utilization",
-    "retrieval-health": "Retrieval health",
     "automation-reliability": "Automation reliability",
   };
   // One element per shot: the full page's height shifts by a few px while a full-page capture resizes the viewport.

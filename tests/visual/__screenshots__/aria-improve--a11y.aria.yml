@@ -1,3 +1,5 @@
+- link "Skip to content":
+  - /url: "#app"
 - banner:
   - navigation "Main":
     - link "akm ui":
@@ -14,7 +16,7 @@
           - /url: "#/improve"
       - listitem:
         - link "History":
-          - /url: "#/changes"
+          - /url: "#/history"
       - listitem:
         - link "Search":
           - /url: "#/search"
@@ -30,198 +32,230 @@
     - search "Site search":
       - text: Search assets
       - searchbox "Search assets"
+- status
 - main:
   - heading "Improve impact" [level=1]
-  - paragraph: What akm's improve processes proposed, what was kept, who decided, and what it cost.
+  - paragraph: What akm's improve processes did in your environment. Times are UTC.
+  - group "Window":
+    - radio /\d+ days/ [checked]
+    - text: /\d+ days/
+    - radio "All"
+    - text: All
+  - paragraph:
+    - strong: /Last \d+ days:/
+    - link "6 kept":
+      - /url: "#/improve"
+    - text: ·
+    - link "1 reverted":
+      - /url: "#/improve"
+    - text: ·
+    - link "1 flag after a change":
+      - /url: "#/improve"
+    - text: ·
+    - link /[\d,.]+[bkmBKM]+ tokens \(\d+% of calls reported\)/:
+      - /url: "#/improve"
+  - group: How to read this page
+  - navigation "On this page":
+    - list:
+      - listitem:
+        - link "Search quality":
+          - /url: "#/improve"
+      - listitem:
+        - link "Outcomes":
+          - /url: "#/improve"
+      - listitem:
+        - link "Review flow":
+          - /url: "#/improve"
+      - listitem:
+        - link "Library":
+          - /url: "#/improve"
+      - listitem:
+        - link "Harm log (5)":
+          - /url: "#/improve"
+      - listitem:
+        - link "Cost":
+          - /url: "#/improve"
+      - listitem:
+        - link "Changed assets":
+          - /url: "#/improve"
+      - listitem:
+        - link "Judge and you":
+          - /url: "#/improve"
   - region "Did improve help search?":
     - heading "Did improve help search?" [level=2]
     - paragraph: /The share of your searches that returned something, over a rolling 7 days and the last \d+ days\. An amber line marks a day when improve changes were kept\. It measures retrieval, not whether answers were right\./
     - paragraph: /\d+% of searches found something, down 3 points since \d+-\d+-\d+ \(\d+%\)\./
     - paragraph: Searches that found something Improve changes kept
     - img /Share of searches that found something, rolling 7 days, over the last \d+ days, with 2 days marked when improve changes were kept\. Weekly figures follow in Data and details\./:
-      - img: /Found something \d+% \d+% \d+% \d+% \d+% \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
+      - img: /Found something \d+% \d+% \d+% \d+% \d+% \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
     - group: Data and details
-  - region /Last \d+ days/:
-    - heading /Last \d+ days/ [level=2]
-    - text: /Changes kept 6 1 by the judge · 5 by you Rejected 3 \d+% of decisions Reverted 1 accepted, then undone Waiting for review \d+/
-    - link "Open the queue":
-      - /url: "#/proposals"
-    - text: /Model calls \d+ [\d,.]+[bkmBKM]+ \d+[hmsp]+ of call time/
-  - heading "Decisions per week" [level=2]
-  - paragraph: Every decided proposal by the week it was decided (UTC, weeks start Monday). The current week is still in progress.
-  - paragraph: Accepted by the judge Accepted by you Rejected Reverted
-  - img /Decided proposals per week for the last \d+ weeks, stacked by outcome\. Exact counts follow in Data and details\./:
-    - img: /Decisions 0 1 2 3 4 5 \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
-  - group: Data and details
-  - heading "Reverted changes" [level=2]
-  - paragraph: "Accepted changes that were later undone. Each one is worth a look: it may point at a process or judge setting to tighten."
-  - list:
-    - listitem:
-      - link "stash//knowledge/deploy-guide":
-        - /url: "#/proposals/p-reverted"
-      - text: reverted distill · 9d ago
-  - region "By process":
-    - heading "By process" [level=2]
-    - paragraph: /Outcomes over the last \d+ decided proposals\. "Kept rate" needs at least 5 decisions\./
+  - region "Who decided what, week by week":
+    - heading "Who decided what, week by week" [level=2]
+    - paragraph: Each process, by the week a proposal was decided.
+    - paragraph: Accepted by the judge Accepted by you Accepted, decider not recorded Rejected Reverted
+    - heading "consolidate" [level=3]
+    - paragraph: "/1 decided, 1 kept \\(\\d+%\\)\\. Too few weeks with decisions for a trend: read the counts\\./"
+    - 'img "consolidate: decisions per week by who decided and outcome. Counts follow in Data and details."':
+      - img: /Decisions 0 1 \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
+    - heading "consolidate-pair" [level=3]
+    - paragraph: "/3 decided, 3 kept \\(\\d+%\\)\\. Too few weeks with decisions for a trend: read the counts\\./"
+    - 'img "consolidate-pair: decisions per week by who decided and outcome. Counts follow in Data and details."':
+      - img: /Decisions 0 1 2 3 \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
+    - heading "distill" [level=3]
+    - paragraph: "/2 decided, 1 kept \\(\\d+%\\)\\. Too few weeks with decisions for a trend: read the counts\\./"
+    - 'img "distill: decisions per week by who decided and outcome. Counts follow in Data and details."':
+      - img: /Decisions 0 1 \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
+    - heading "extract" [level=3]
+    - paragraph: "1 decided, 0 kept (0%). Too few weeks with decisions for a trend: read the counts."
+    - 'img "extract: decisions per week by who decided and outcome. Counts follow in Data and details."':
+      - img: /Decisions 0 1 \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
+    - heading "reflect" [level=3]
+    - paragraph: /3 decided, 1 kept \(\d+%\)\./
+    - 'img "reflect: decisions per week by who decided and outcome. Counts follow in Data and details."':
+      - img: /Decisions 0 1 \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
+    - group: Data and details
+  - region "Is review keeping up?":
+    - heading "Is review keeping up?" [level=2]
+    - paragraph: "This week: 6 made, 5 decided, 9 waiting at the end of it."
+    - heading "Waiting for review, at the end of each week" [level=3]
+    - img "Proposals waiting for review at the end of each week.":
+      - img: /Waiting 2 4 6 8 \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
+    - heading "Made and decided each week" [level=3]
+    - paragraph: Made Decided
+    - img "Proposals made and decided each week.":
+      - img: /Proposals 0 5 \d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
+    - group: Data and details
+  - region "How has the library changed?":
+    - heading "How has the library changed?" [level=2]
+    - paragraph: The library size is recorded each time akm indexes.
+    - paragraph: Two or more indexes in the window draw this line.
+  - region "Harm log (5)":
+    - heading "Harm log (5)" [level=2]
+    - paragraph: Changes that were undone, rejections that were reopened, retirements with a risk flagged, and feedback that came after a change. Never collapsed.
+    - list:
+      - listitem:
+        - text: Flag after a change
+        - link "stash//knowledge/deploy-guide":
+          - /url: "#/asset/stash%2F%2Fknowledge%2Fdeploy-guide"
+        - text: "negative feedback: The rollback link is wrong · 2d ago"
+        - link "Proposal":
+          - /url: "#/proposals/p-reverted"
+      - listitem:
+        - text: Retired with a risk flagged
+        - link "stash//knowledge/stale-note":
+          - /url: "#/asset/stash%2F%2Fknowledge%2Fstale-note"
+        - text: retired with a continuity risk flagged · 2d ago
+        - link "Proposal":
+          - /url: "#/proposals/p-retired-stale-note"
+      - listitem:
+        - text: Retired with a risk flagged
+        - link "stash//knowledge/old-notes":
+          - /url: "#/asset/stash%2F%2Fknowledge%2Fold-notes"
+        - text: retired with a continuity risk flagged · 2d ago
+        - link "Proposal":
+          - /url: "#/proposals/p-retired-old-notes"
+      - listitem:
+        - text: Retired with a risk flagged
+        - link "stash//knowledge/old-runbook":
+          - /url: "#/asset/stash%2F%2Fknowledge%2Fold-runbook"
+        - text: retired with a continuity risk flagged · 2d ago
+        - link "Proposal":
+          - /url: "#/proposals/p-retired-old-runbook"
+      - listitem:
+        - text: Reverted
+        - link "stash//knowledge/deploy-guide":
+          - /url: "#/asset/stash%2F%2Fknowledge%2Fdeploy-guide"
+        - text: distill change undone · 9d ago
+        - link "Proposal":
+          - /url: "#/proposals/p-reverted"
+  - region "What does improve cost?":
+    - heading "What does improve cost?" [level=2]
+    - paragraph: /\d+ model calls; tokens are reported for \d+ of them\. Tokens are not money\./
+    - paragraph: reflect triage.judgment
+    - img "Model calls per week by process.":
+      - img: /Calls 5 \d+ \d+ \d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
+    - group: Data and details
+  - region "Changed assets, before and after":
+    - heading "Changed assets, before and after" [level=2]
+    - paragraph: /How often each changed asset was found and rated in the \d+ days before and after the change\. A change under \d+ days old is still filling, so its after side is partial\./
     - group "Table":
       - table:
         - rowgroup:
-          - row "Process Accepted by judge Rejected Reverted Waiting Kept rate Model calls (30d) Call time (30d)":
+          - row "Asset Process Changed Found Negative After":
+            - columnheader "Asset"
             - columnheader "Process"
-            - columnheader "Accepted"
-            - columnheader "by judge"
-            - columnheader "Rejected"
-            - columnheader "Reverted"
-            - columnheader "Waiting"
-            - columnheader "Kept rate"
-            - columnheader "Model calls (30d)"
-            - columnheader "Call time (30d)"
+            - columnheader "Changed"
+            - columnheader "Found"
+            - columnheader "Negative"
+            - columnheader "After"
         - rowgroup:
-          - row "consolidate-pair 3 0 0 0 1 n/a – –":
-            - rowheader "consolidate-pair"
+          - row "stash//commands/release-notes distill 2d ago 5 → 0 0 → 0 2 days so far":
+            - rowheader "stash//commands/release-notes":
+              - link "stash//commands/release-notes":
+                - /url: "#/asset/stash%2F%2Fcommands%2Frelease-notes"
+            - cell "distill"
+            - cell "2d ago"
+            - cell "5 → 0"
+            - cell "0 → 0"
+            - cell "2 days so far"
+          - row "stash//knowledge/deploy-guide reflect 2d ago 4 → 1 0 → 1 2 days so far":
+            - rowheader "stash//knowledge/deploy-guide":
+              - link "stash//knowledge/deploy-guide":
+                - /url: "#/asset/stash%2F%2Fknowledge%2Fdeploy-guide"
+            - cell "reflect"
+            - cell "2d ago"
+            - cell "4 → 1"
+            - cell "0 → 1"
+            - cell "2 days so far"
+          - row "stash//lessons/rg consolidate 4d ago 4 → 1 0 → 1 4 days so far":
+            - rowheader "stash//lessons/rg":
+              - link "stash//lessons/rg":
+                - /url: "#/asset/stash%2F%2Flessons%2Frg"
+            - cell "consolidate"
+            - cell "4d ago"
+            - cell "4 → 1"
+            - cell "0 → 1"
+            - cell "4 days so far"
+          - row "stash//knowledge/deploy-guide distill 9d ago reverted 5 → 2 0 → 1 9 days so far":
+            - rowheader "stash//knowledge/deploy-guide":
+              - link "stash//knowledge/deploy-guide":
+                - /url: "#/asset/stash%2F%2Fknowledge%2Fdeploy-guide"
+            - cell "distill"
+            - cell "9d ago reverted"
+            - cell "5 → 2"
+            - cell "0 → 1"
+            - cell "9 days so far"
+  - region "Judge and you":
+    - heading "Judge and you" [level=2]
+    - paragraph: How the judge's decisions and yours compare.
+    - group "Table":
+      - table:
+        - rowgroup:
+          - row "Decided by Accepted Rejected Later reverted Kept":
+            - columnheader "Decided by"
+            - columnheader "Accepted"
+            - columnheader "Rejected"
+            - columnheader "Later reverted"
+            - columnheader "Kept"
+        - rowgroup:
+          - row /The judge 1 0 0 \d+%/:
+            - rowheader "The judge"
+            - cell "1"
+            - cell "0"
+            - cell "0"
+            - cell /\d+%/
+          - row /Decider not recorded 5 3 1 \d+%/:
+            - rowheader "Decider not recorded"
+            - cell "5"
             - cell "3"
-            - cell "0"
-            - cell "0"
-            - cell "0"
             - cell "1"
-            - cell "n/a"
-            - cell "–"
-            - cell "–"
-          - row /reflect 1 1 2 0 4 n\/a \d+ [\d,.]+[bkmBKM]+ \d+[hmsp]+/:
-            - rowheader "reflect"
-            - cell "1"
-            - cell "1"
-            - cell "2"
-            - cell "0"
-            - cell "4"
-            - cell "n/a"
-            - cell /\d+/
-            - cell /[\d,.]+[bkmBKM]+ \d+[hmsp]+/
-          - row "consolidate 1 0 0 0 1 n/a – –":
-            - rowheader "consolidate"
-            - cell "1"
-            - cell "0"
-            - cell "0"
-            - cell "0"
-            - cell "1"
-            - cell "n/a"
-            - cell "–"
-            - cell "–"
-          - row "distill 1 0 0 1 2 n/a – –":
-            - rowheader "distill"
-            - cell "1"
-            - cell "0"
-            - cell "0"
-            - cell "1"
-            - cell "2"
-            - cell "n/a"
-            - cell "–"
-            - cell "–"
-          - row "extract 0 0 1 0 1 n/a – –":
-            - rowheader "extract"
-            - cell "0"
-            - cell "0"
-            - cell "1"
-            - cell "0"
-            - cell "1"
-            - cell "n/a"
-            - cell "–"
-            - cell "–"
-          - row "feedback 0 0 0 0 1 n/a – –":
-            - rowheader "feedback"
-            - cell "0"
-            - cell "0"
-            - cell "0"
-            - cell "0"
-            - cell "1"
-            - cell "n/a"
-            - cell "–"
-            - cell "–"
-  - heading "Recent changes to your library" [level=2]
-  - paragraph: The latest accepted proposals. Open one to see its diff and the reason it was made.
-  - list:
-    - listitem:
-      - link "stash//knowledge/deploy-guide":
-        - /url: "#/proposals/p-judge-accepted"
-      - text: judge reflect · 2d ago
-    - listitem:
-      - link "stash//commands/release-notes":
-        - /url: "#/proposals/p-you-accepted"
-      - text: you distill · 2d ago
-    - listitem:
-      - link "stash//knowledge/old-runbook":
-        - /url: "#/proposals/p-retired-old-runbook"
-      - text: retired you consolidate-pair · 2d ago
-    - listitem:
-      - link "stash//knowledge/old-notes":
-        - /url: "#/proposals/p-retired-old-notes"
-      - text: retired you consolidate-pair · 2d ago
-    - listitem:
-      - link "stash//knowledge/stale-note":
-        - /url: "#/proposals/p-retired-stale-note"
-      - text: retired you consolidate-pair · 2d ago
-    - listitem:
-      - link "stash//lessons/rg":
-        - /url: "#/proposals/p-staged-accepted"
-      - text: you consolidate · 4d ago
-  - heading "Improve runs" [level=2]
-  - paragraph: The most recent runs, newest first.
-  - group "Table":
-    - table:
-      - rowgroup:
-        - row "Started Result Model calls Duration":
-          - columnheader "Started"
-          - columnheader "Result"
-          - columnheader "Model calls"
-          - columnheader "Duration"
-      - rowgroup:
-        - row /\d+[hmsp]+ ago finished 6 [\d,.]+[bkmBKM]+ \d+[hmsp]+/:
-          - cell /\d+[hmsp]+ ago/
-          - cell "finished"
-          - cell "6"
-          - cell /[\d,.]+[bkmBKM]+ \d+[hmsp]+/
-        - row /\d+[hmsp]+ ago finished 5 [\d,.]+[bkmBKM]+ \d+[hmsp]+/:
-          - cell /\d+[hmsp]+ ago/
-          - cell "finished"
-          - cell "5"
-          - cell /[\d,.]+[bkmBKM]+ \d+[hmsp]+/
-        - row /2d ago finished 8 [\d,.]+[bkmBKM]+ \d+[hmsp]+/:
-          - cell "2d ago"
-          - cell "finished"
-          - cell "8"
-          - cell /[\d,.]+[bkmBKM]+ \d+[hmsp]+/
-        - row /3d ago finished 7 [\d,.]+[bkmBKM]+ \d+[hmsp]+/:
-          - cell "3d ago"
-          - cell "finished"
-          - cell "7"
-          - cell /[\d,.]+[bkmBKM]+ \d+[hmsp]+/
-        - row /5d ago finished 5 [\d,.]+[bkmBKM]+ \d+[hmsp]+/:
-          - cell "5d ago"
-          - cell "finished"
-          - cell "5"
-          - cell /[\d,.]+[bkmBKM]+ \d+[hmsp]+/
-        - row /6d ago finished 8 [\d,.]+[bkmBKM]+ \d+[hmsp]+/:
-          - cell "6d ago"
-          - cell "finished"
-          - cell "8"
-          - cell /[\d,.]+[bkmBKM]+ \d+[hmsp]+/
-        - row /7d ago finished 7 [\d,.]+[bkmBKM]+ \d+[hmsp]+/:
-          - cell "7d ago"
-          - cell "finished"
-          - cell "7"
-          - cell /[\d,.]+[bkmBKM]+ \d+[hmsp]+/
-        - row /8d ago finished 6 [\d,.]+[bkmBKM]+ \d+[hmsp]+/:
-          - cell "8d ago"
-          - cell "finished"
-          - cell "6"
-          - cell /[\d,.]+[bkmBKM]+ \d+[hmsp]+/
-        - row /9d ago failed 5 \(3 failed\) [\d,.]+[bkmBKM]+ \d+[hmsp]+/:
-          - cell "9d ago"
-          - cell "failed"
-          - cell "5 (3 failed)"
-          - cell /[\d,.]+[bkmBKM]+ \d+[hmsp]+/
-        - row /10d ago finished 8 [\d,.]+[bkmBKM]+ \d+[hmsp]+/:
-          - cell "10d ago"
-          - cell "finished"
-          - cell "8"
-          - cell /[\d,.]+[bkmBKM]+ \d+[hmsp]+/
+            - cell /\d+%/
+- contentinfo:
+  - text: akm 0.0.0 · visual-host bun
+  - group "Theme":
+    - radio "System" [checked]
+    - text: System
+    - radio "Light"
+    - text: Light
+    - radio "Dark"
+    - text: Dark

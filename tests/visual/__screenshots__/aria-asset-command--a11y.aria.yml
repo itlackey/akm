@@ -1,3 +1,5 @@
+- link "Skip to content":
+  - /url: "#app"
 - banner:
   - navigation "Main":
     - link "akm ui":
@@ -14,7 +16,7 @@
           - /url: "#/improve"
       - listitem:
         - link "History":
-          - /url: "#/changes"
+          - /url: "#/history"
       - listitem:
         - link "Search":
           - /url: "#/search"
@@ -27,9 +29,10 @@
       - listitem:
         - link "Config":
           - /url: "#/config"
-    - search:
+    - search "Site search":
       - text: Search assets
       - searchbox "Search assets"
+- status: release-notes. Asset page loaded.
 - main:
   - paragraph:
     - link "Search":
@@ -37,11 +40,15 @@
     - text: / asset
   - heading "release-notes" [level=1]
   - paragraph:
+    - button "Helpful"
+    - button "Not helpful"
+    - button "Copy ref"
     - link "Document history":
       - /url: "#/asset?ref=stash%2F%2Fcommands%2Frelease-notes&history=1"
     - text: ·
     - link "New knowledge":
       - /url: "#/new"
+  - group: Suggest a fix
   - text: command stash editable
   - region "Content":
     - paragraph:
@@ -69,3 +76,37 @@
     - /placeholder: Optional key:value tags, comma-separated (team:platform)
   - button "Send feedback"
   - paragraph: No feedback recorded for this asset.
+  - complementary "About this asset":
+    - term: Type
+    - definition: command
+    - term: Bundle
+    - definition: stash
+    - term: Feedback
+    - definition: /\+0 \/ −0 \d+ days/
+    - paragraph:
+      - text: 1 pending proposal
+      - link "Review →":
+        - /url: "#/proposals/p-pending-consolidate"
+    - heading "Improve history" [level=2]
+    - img /Weekly finds and opens, last \d+ days/
+    - paragraph: /Finds and opens per week, last \d+ days\./
+    - list:
+      - listitem:
+        - text: unknown distill
+        - link /2d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/:
+          - /url: "#/proposals/p-you-accepted"
+          - time: /2d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/
+      - listitem:
+        - text: rejected reflect
+        - link /6d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/:
+          - /url: "#/proposals/p-you-rejected"
+          - time: /6d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/
+- contentinfo:
+  - text: akm 0.0.0 · visual-host bun
+  - group "Theme":
+    - radio "System" [checked]
+    - text: System
+    - radio "Light"
+    - text: Light
+    - radio "Dark"
+    - text: Dark

@@ -1,3 +1,5 @@
+- link "Skip to content":
+  - /url: "#app"
 - banner:
   - navigation "Main":
     - link "akm ui":
@@ -14,7 +16,7 @@
           - /url: "#/improve"
       - listitem:
         - link "History":
-          - /url: "#/changes"
+          - /url: "#/history"
       - listitem:
         - link "Search":
           - /url: "#/search"
@@ -30,6 +32,7 @@
     - search "Site search":
       - text: Search assets
       - searchbox "Search assets"
+- status
 - main:
   - heading "Proposals" [level=1]
   - paragraph: Changes akm improve has staged for review.
@@ -39,16 +42,22 @@
     - link "Recent":
       - /url: "#/proposals?status=recent"
   - region "Waiting for review":
-    - text: /Waiting for review \d+ age counts from the last reopening/
-    - link "Under 1 day 4 show these":
-      - /url: "#/proposals?age=underDay"
-    - link "1–7 days 4 show these":
-      - /url: "#/proposals?age=underWeek"
-    - link "7+ days 1 show these":
-      - /url: "#/proposals?age=older"
-    - link "Unknown age 1 show these":
-      - /url: "#/proposals?age=unknown"
-    - group: Counts by process and age
+    - paragraph:
+      - strong: /\d+/
+      - text: "waiting:"
+      - link "4 under 1 day":
+        - /url: "#/proposals?age=underDay"
+      - text: ","
+      - link "4 1–7 days":
+        - /url: "#/proposals?age=underWeek"
+      - text: ","
+      - link "1 7+ days":
+        - /url: "#/proposals?age=older"
+      - text: ","
+      - link "1 unknown age":
+        - /url: "#/proposals?age=unknown"
+      - text: . Age counts from the last reopening.
+    - group: By source and age
   - link /All \d+/:
     - /url: "#/proposals"
   - link "consolidate 1":
@@ -64,181 +73,108 @@
   - link "reflect 4":
     - /url: "#/proposals?source=reflect"
   - heading "consolidate 1" [level=2]
-  - checkbox "select all in this group"
-  - text: select all in this group
-  - group "Table":
-    - table:
-      - rowgroup:
-        - row "Select Asset Waiting Gate decision Confidence":
-          - columnheader "Select"
-          - columnheader "Asset"
-          - columnheader "Waiting"
-          - columnheader "Gate decision"
-          - columnheader "Confidence"
-      - rowgroup:
-        - row /Select stash\/\/commands\/release-notes stash\/\/commands\/release-notes 20d ago - \d+\.\d+/:
-          - cell "Select stash//commands/release-notes":
-            - checkbox "Select stash//commands/release-notes"
-          - cell "stash//commands/release-notes":
-            - link "stash//commands/release-notes":
-              - /url: "#/proposals/p-pending-consolidate"
-          - cell "20d ago":
-            - time: 20d ago
-          - cell "-"
-          - cell /\d+\.\d+/
+  - checkbox "Select all 1 consolidate proposals"
+  - text: Select all 1 consolidate proposal
+  - list:
+    - listitem:
+      - checkbox "Select stash//commands/release-notes"
+      - link /stash\/\/commands\/release-notes 20d ago \(5\/\d+\/\d+, 2:\d+:\d+ PM\) · conf \d+\.\d+/:
+        - /url: "#/proposals/p-pending-consolidate"
+        - text: ""
+        - time: /20d ago \(5\/\d+\/\d+, 2:\d+:\d+ PM\)/
+        - text: ""
   - heading "consolidate-pair 1" [level=2]
-  - checkbox "select all in this group"
-  - text: select all in this group
-  - group "Table":
-    - table:
-      - rowgroup:
-        - row "Select Asset Waiting Gate decision Confidence":
-          - columnheader "Select"
-          - columnheader "Asset"
-          - columnheader "Waiting"
-          - columnheader "Gate decision"
-          - columnheader "Confidence"
-      - rowgroup:
-        - row /Select stash\/\/knowledge\/rollback stash\/\/knowledge\/rollback retires in favour of stash\/\/knowledge\/deploy-guide 4d ago deferred judgment-deferred \d+\.\d+/:
-          - cell "Select stash//knowledge/rollback":
-            - checkbox "Select stash//knowledge/rollback"
-          - cell "stash//knowledge/rollback retires in favour of stash//knowledge/deploy-guide":
-            - link "stash//knowledge/rollback":
-              - /url: "#/proposals/p-pending-retire"
-            - text: ""
-          - cell "4d ago":
-            - time: 4d ago
-          - cell "deferred judgment-deferred"
-          - cell /\d+\.\d+/
+  - checkbox "Select all 1 consolidate-pair proposals"
+  - text: Select all 1 consolidate-pair proposal
+  - list:
+    - listitem:
+      - checkbox "Select stash//knowledge/rollback"
+      - link /stash\/\/knowledge\/rollback 4d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\) · conf \d+\.\d+ · retire/:
+        - /url: "#/proposals/p-pending-retire"
+        - text: ""
+        - time: /4d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/
+        - text: ""
   - heading "distill 2" [level=2]
-  - checkbox "select all in this group"
-  - text: select all in this group
-  - group "Table":
-    - table:
-      - rowgroup:
-        - row "Select Asset Waiting Gate decision Confidence":
-          - columnheader "Select"
-          - columnheader "Asset"
-          - columnheader "Waiting"
-          - columnheader "Gate decision"
-          - columnheader "Confidence"
-      - rowgroup:
-        - row /Select stash\/\/lessons\/rg stash\/\/lessons\/rg 3d ago - \d+\.\d+/:
-          - cell "Select stash//lessons/rg":
-            - checkbox "Select stash//lessons/rg"
-          - cell "stash//lessons/rg":
-            - link "stash//lessons/rg":
-              - /url: "#/proposals/p-pending-distill"
-          - cell "3d ago":
-            - time: 3d ago
-          - cell "-"
-          - cell /\d+\.\d+/
-        - row /Select stash\/\/knowledge\/incident-template stash\/\/knowledge\/incident-template \d+[hmsp]+ ago - \d+\.\d+/:
-          - cell "Select stash//knowledge/incident-template":
-            - checkbox "Select stash//knowledge/incident-template"
-          - cell "stash//knowledge/incident-template":
-            - link "stash//knowledge/incident-template":
-              - /url: "#/proposals/p-pending-create"
-          - cell /\d+[hmsp]+ ago/:
-            - time: /\d+[hmsp]+ ago/
-          - cell "-"
-          - cell /\d+\.\d+/
+  - checkbox "Select all 2 distill proposals"
+  - text: Select all 2 distill proposals
+  - list:
+    - listitem:
+      - checkbox "Select stash//lessons/rg"
+      - link /stash\/\/lessons\/rg 3d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\) · conf \d+\.\d+/:
+        - /url: "#/proposals/p-pending-distill"
+        - text: ""
+        - time: /3d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/
+        - text: ""
+    - listitem:
+      - checkbox "Select stash//knowledge/incident-template"
+      - link /stash\/\/knowledge\/incident-template \d+[hmsp]+ ago \(6\/\d+\/\d+, 9:\d+:\d+ AM\) · conf \d+\.\d+/:
+        - /url: "#/proposals/p-pending-create"
+        - text: ""
+        - time: /\d+[hmsp]+ ago \(6\/\d+\/\d+, 9:\d+:\d+ AM\)/
+        - text: ""
   - heading "feedback 1" [level=2]
-  - checkbox "select all in this group"
-  - text: select all in this group
-  - group "Table":
-    - table:
-      - rowgroup:
-        - row "Select Asset Waiting Gate decision Confidence":
-          - columnheader "Select"
-          - columnheader "Asset"
-          - columnheader "Waiting"
-          - columnheader "Gate decision"
-          - columnheader "Confidence"
-      - rowgroup:
-        - row /Select stash\/\/knowledge\/deploy-guide stash\/\/knowledge\/deploy-guide 2d ago - \d+\.\d+/:
-          - cell "Select stash//knowledge/deploy-guide":
-            - checkbox "Select stash//knowledge/deploy-guide"
-          - cell "stash//knowledge/deploy-guide":
-            - link "stash//knowledge/deploy-guide":
-              - /url: "#/proposals/p-pending-feedback"
-          - cell "2d ago":
-            - time: 2d ago
-          - cell "-"
-          - cell /\d+\.\d+/
+  - checkbox "Select all 1 feedback proposals"
+  - text: Select all 1 feedback proposal
+  - list:
+    - listitem:
+      - checkbox "Select stash//knowledge/deploy-guide"
+      - link /stash\/\/knowledge\/deploy-guide 2d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\) · conf \d+\.\d+/:
+        - /url: "#/proposals/p-pending-feedback"
+        - text: ""
+        - time: /2d ago \(6\/\d+\/\d+, 2:\d+:\d+ PM\)/
+        - text: ""
   - heading "extract 1" [level=2]
-  - checkbox "select all in this group"
-  - text: select all in this group
-  - group "Table":
-    - table:
-      - rowgroup:
-        - row "Select Asset Waiting Gate decision Confidence":
-          - columnheader "Select"
-          - columnheader "Asset"
-          - columnheader "Waiting"
-          - columnheader "Gate decision"
-          - columnheader "Confidence"
-      - rowgroup:
-        - row /Select stash\/\/memories\/standup stash\/\/memories\/standup \d+[hmsp]+ ago - \d+\.\d+/:
-          - cell "Select stash//memories/standup":
-            - checkbox "Select stash//memories/standup"
-          - cell "stash//memories/standup":
-            - link "stash//memories/standup":
-              - /url: "#/proposals/p-pending-extract"
-          - cell /\d+[hmsp]+ ago/:
-            - time: /\d+[hmsp]+ ago/
-          - cell "-"
-          - cell /\d+\.\d+/
+  - checkbox "Select all 1 extract proposals"
+  - text: Select all 1 extract proposal
+  - list:
+    - listitem:
+      - checkbox "Select stash//memories/standup"
+      - link /stash\/\/memories\/standup \d+[hmsp]+ ago \(6\/\d+\/\d+, 8:\d+:\d+ AM\) · conf \d+\.\d+/:
+        - /url: "#/proposals/p-pending-extract"
+        - text: ""
+        - time: /\d+[hmsp]+ ago \(6\/\d+\/\d+, 8:\d+:\d+ AM\)/
+        - text: ""
   - heading "reflect 4" [level=2]
-  - checkbox "select all in this group"
-  - text: select all in this group
-  - group "Table":
-    - table:
-      - rowgroup:
-        - row "Select Asset Waiting Gate decision Confidence":
-          - columnheader "Select"
-          - columnheader "Asset"
-          - columnheader "Waiting"
-          - columnheader "Gate decision"
-          - columnheader "Confidence"
-      - rowgroup:
-        - row /Select stash\/\/lessons\/rg stash\/\/lessons\/rg \d+[hmsp]+ ago - \d+\.\d+/:
-          - cell "Select stash//lessons/rg":
-            - checkbox "Select stash//lessons/rg"
-          - cell "stash//lessons/rg":
-            - link "stash//lessons/rg":
-              - /url: "#/proposals/p-pending-reopened"
-          - cell /\d+[hmsp]+ ago/:
-            - time: /\d+[hmsp]+ ago/
-          - cell "-"
-          - cell /\d+\.\d+/
-        - row /Select stash\/\/knowledge\/deploy-guide stash\/\/knowledge\/deploy-guide \d+[hmsp]+ ago - \d+\.\d+/:
-          - cell "Select stash//knowledge/deploy-guide":
-            - checkbox "Select stash//knowledge/deploy-guide"
-          - cell "stash//knowledge/deploy-guide":
-            - link "stash//knowledge/deploy-guide":
-              - /url: "#/proposals/p-pending-reflect"
-          - cell /\d+[hmsp]+ ago/:
-            - time: /\d+[hmsp]+ ago/
-          - cell "-"
-          - cell /\d+\.\d+/
-        - row /Select stash\/\/knowledge\/rollback stash\/\/knowledge\/rollback \d+[hmsp]+ ago - \d+\.\d+/:
-          - cell "Select stash//knowledge/rollback":
-            - checkbox "Select stash//knowledge/rollback"
-          - cell "stash//knowledge/rollback":
-            - link "stash//knowledge/rollback":
-              - /url: "#/proposals/p-pending-noop"
-          - cell /\d+[hmsp]+ ago/:
-            - time: /\d+[hmsp]+ ago/
-          - cell "-"
-          - cell /\d+\.\d+/
-        - row /Select stash\/\/knowledge\/onboarding stash\/\/knowledge\/onboarding - - \d+\.\d+/:
-          - cell "Select stash//knowledge/onboarding":
-            - checkbox "Select stash//knowledge/onboarding"
-          - cell "stash//knowledge/onboarding":
-            - link "stash//knowledge/onboarding":
-              - /url: "#/proposals/p-pending-unknown-age"
-          - cell "-":
-            - time: "-"
-          - cell "-"
-          - cell /\d+\.\d+/
+  - checkbox "Select all 4 reflect proposals"
+  - text: Select all 4 reflect proposals
+  - list:
+    - listitem:
+      - checkbox "Select stash//lessons/rg"
+      - link /stash\/\/lessons\/rg \d+[hmsp]+ ago \(6\/\d+\/\d+, 8:\d+:\d+ AM\) · conf \d+\.\d+/:
+        - /url: "#/proposals/p-pending-reopened"
+        - text: ""
+        - time: /\d+[hmsp]+ ago \(6\/\d+\/\d+, 8:\d+:\d+ AM\)/
+        - text: ""
+    - listitem:
+      - checkbox "Select stash//knowledge/deploy-guide"
+      - link /stash\/\/knowledge\/deploy-guide \d+[hmsp]+ ago \(6\/\d+\/\d+, \d+:\d+:\d+ AM\) · conf \d+\.\d+/:
+        - /url: "#/proposals/p-pending-reflect"
+        - text: ""
+        - time: /\d+[hmsp]+ ago \(6\/\d+\/\d+, \d+:\d+:\d+ AM\)/
+        - text: ""
+    - listitem:
+      - checkbox "Select stash//knowledge/rollback"
+      - link /stash\/\/knowledge\/rollback \d+[hmsp]+ ago \(6\/\d+\/\d+, \d+:\d+:\d+ PM\) · conf \d+\.\d+/:
+        - /url: "#/proposals/p-pending-noop"
+        - text: ""
+        - time: /\d+[hmsp]+ ago \(6\/\d+\/\d+, \d+:\d+:\d+ PM\)/
+        - text: ""
+    - listitem:
+      - checkbox "Select stash//knowledge/onboarding"
+      - link /stash\/\/knowledge\/onboarding - \(-\) · conf \d+\.\d+/:
+        - /url: "#/proposals/p-pending-unknown-age"
+        - text: ""
+        - time: "- (-)"
+        - text: ""
+  - paragraph
+  - paragraph: Select a proposal
+  - paragraph: Choose one from the list, or press j to open the first. Press ? for every shortcut.
+- contentinfo:
+  - text: akm 0.0.0 · visual-host bun
+  - group "Theme":
+    - radio "System" [checked]
+    - text: System
+    - radio "Light"
+    - text: Light
+    - radio "Dark"
+    - text: Dark

@@ -1,3 +1,5 @@
+- link "Skip to content":
+  - /url: "#app"
 - banner:
   - navigation "Main":
     - link "akm ui":
@@ -14,7 +16,7 @@
           - /url: "#/improve"
       - listitem:
         - link "History":
-          - /url: "#/changes"
+          - /url: "#/history"
       - listitem:
         - link "Search":
           - /url: "#/search"
@@ -27,9 +29,10 @@
       - listitem:
         - link "Config":
           - /url: "#/config"
-    - search:
+    - search "Site search":
       - text: Search assets
       - searchbox "Search assets"
+- status
 - main:
   - heading "New knowledge" [level=1]
   - paragraph: Write Markdown and optional frontmatter. Existing files are never overwritten.
@@ -42,10 +45,11 @@
   - text: Name
   - textbox "Name":
     - /placeholder: restore-database
-  - paragraph: Becomes the file name and the asset's ref.
+  - paragraph: Becomes the file name and the asset's ref. Lowercase letters, numbers and hyphens read best.
   - text: Folder
   - textbox "Folder":
     - /placeholder: Optional, under knowledge/
+  - button "Browse…"
   - text: Markdown
   - textbox "Markdown": "# New document"
   - region "Preview":
@@ -53,3 +57,12 @@
     - heading "New document" [level=2]
   - text: Existing files are never overwritten.
   - button "Create knowledge"
+- contentinfo:
+  - text: akm 0.0.0 · visual-host bun
+  - group "Theme":
+    - radio "System" [checked]
+    - text: System
+    - radio "Light"
+    - text: Light
+    - radio "Dark"
+    - text: Dark

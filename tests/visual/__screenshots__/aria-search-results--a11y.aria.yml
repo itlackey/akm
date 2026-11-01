@@ -1,3 +1,5 @@
+- link "Skip to content":
+  - /url: "#app"
 - banner:
   - navigation "Main":
     - link "akm ui":
@@ -14,7 +16,7 @@
           - /url: "#/improve"
       - listitem:
         - link "History":
-          - /url: "#/changes"
+          - /url: "#/history"
       - listitem:
         - link "Search":
           - /url: "#/search"
@@ -27,12 +29,20 @@
       - listitem:
         - link "Config":
           - /url: "#/config"
-    - search:
+    - search "Site search":
       - text: Search assets
       - searchbox "Search assets"
+- status: Search. 2 results for deploy.
 - main:
   - heading "Search" [level=1]
   - paragraph: Search or browse your indexed assets. Browsing is not counted as usage.
+  - navigation "Search views":
+    - link "Results":
+      - /url: "#/search?q=deploy"
+    - link "Browse":
+      - /url: "#/search?tab=browse"
+    - link "Misses":
+      - /url: "#/search?tab=misses"
   - paragraph:
     - link "New knowledge":
       - /url: "#/new"
@@ -40,20 +50,24 @@
   - search:
     - searchbox "Query": deploy
     - button "Search"
+    - text: Type
     - combobox "Type":
       - option "All types" [selected]
       - option "command"
       - option "knowledge"
       - option "lesson"
       - option "memory"
+    - text: Bundle
     - combobox "Bundle":
       - option "All bundles" [selected]
       - option "stash"
+    - text: Belief state
     - combobox "Belief state":
       - option "current" [selected]
       - option "all"
       - option "historical"
-    - combobox "Result limit":
+    - text: Results
+    - combobox "Results":
       - option /\d+/ [selected]
       - option /\d+/
       - option /\d+/
@@ -74,3 +88,12 @@
       - paragraph: Roll back a bad deploy
       - text: rollback
       - paragraph: "Matched: lexical rank 2"
+- contentinfo:
+  - text: akm 0.0.0 · visual-host bun
+  - group "Theme":
+    - radio "System" [checked]
+    - text: System
+    - radio "Light"
+    - text: Light
+    - radio "Dark"
+    - text: Dark

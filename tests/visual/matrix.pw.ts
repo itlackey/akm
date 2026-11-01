@@ -117,7 +117,7 @@ for (const name of FAILING) {
 
 // Partial error: /api/overview answers, but a section failed on the server. The page draws what loaded, drops the
 // failed sections and says so in a warning disclosure (overview.js, `errors`). A failed /api/meta is a second,
-// quieter degradation (the footer and the strip's version), so it is part of the same shot.
+// quieter degradation (the footer's version line is empty), so it is part of the same shot.
 test("overview partial", async ({ page }) => {
   await page.route(ROUTES.overview.api, async (route) => {
     const response = await route.fetch();
@@ -133,7 +133,6 @@ test("overview partial", async ({ page }) => {
   await visit(page, ROUTES.overview.hash, "loaded", /\/api\/meta/);
   await expect(page.getByText("1 sections could not load")).toBeVisible();
   await expect(page.locator("#nav-meta")).toBeEmpty();
-  await expect(page.locator(".strip-right")).toContainText("akm ?");
   await shoot(page, "overview--partial");
 });
 
