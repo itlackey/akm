@@ -456,6 +456,21 @@
     flex: 1 1 10rem;
   }
 
+  .history-filter {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--space-3);
+    margin-block: var(--space-4) var(--space-5);
+    & .field:first-child {
+      flex: 2 1 16rem;
+    }
+    /* The base search input grows along its row; in a column field that would be its height. */
+    & .field input[type="search"] {
+      flex: none;
+    }
+  }
+
   /* ---- review: the queue beside the open proposal ---- */
   .review {
     display: grid;

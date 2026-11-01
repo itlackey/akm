@@ -50,7 +50,7 @@ export async function render(ctx) {
     if (kept.length) shown.set(day, kept);
   }
   const origins = [...new Set(data.commits.map((c) => c.origin))].sort();
-  const filter = html`<form class="history-filter search-form" role="search" aria-label="Filter commits"><div class="field"><label class="field-label" for="h-q">Filter</label><input id="h-q" type="search" name="q" value="${q}" placeholder="Subject, author, path"></div><div class="field search-filter"><label class="field-label" for="h-origin">Made by</label><select id="h-origin" name="origin"><option value="">Anything</option>${origins.map((o) => html`<option value="${o}" ${o === origin ? html`selected` : ""}>${o}</option>`)}</select></div><button type="submit">Filter</button></form>`;
+  const filter = html`<form class="history-filter" role="search" aria-label="Filter commits"><div class="field"><label class="field-label" for="h-q">Filter</label><input id="h-q" type="search" name="q" value="${q}" placeholder="Subject, author, path"></div><div class="field search-filter"><label class="field-label" for="h-origin">Made by</label><select id="h-origin" name="origin"><option value="">Anything</option>${origins.map((o) => html`<option value="${o}" ${o === origin ? html`selected` : ""}>${o}</option>`)}</select></div><button type="submit">Filter</button></form>`;
   if (shown.size === 0)
     return html`${head}${filter}${emptyState("No commit matches.", html`<a href="#/history">Clear the filter</a>`)}`;
   return html`${head}${filter}<div class="timeline">${[...shown].map(([day, items]) => html`<section><h2 class="day">${day} <span class="muted small">UTC</span> <span class="muted num">${items.length}</span></h2><ol class="commits">${items.map(commit)}</ol></section>`)}</div>`;

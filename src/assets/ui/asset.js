@@ -167,15 +167,6 @@ export async function render(ctx) {
         source: values.get("source"),
       }),
     );
-    for (const button of root.querySelectorAll("[data-quick-feedback]")) {
-      button.addEventListener("click", () => {
-        const select = root.querySelector('.feedback-form [name="signal"]');
-        if (!select) return;
-        select.value = button.dataset.quickFeedback;
-        select.dispatchEvent(new Event("change"));
-        root.querySelector('.feedback-form [name="reason"]')?.focus();
-      });
-    }
     root.querySelector("[data-copy-ref]")?.addEventListener("click", async (event) => {
       const button = event.currentTarget;
       try {
@@ -195,7 +186,7 @@ export async function render(ctx) {
     if (section) requestAnimationFrame(() => document.getElementById(headingId(section))?.scrollIntoView());
   });
   return html`${back}${pageHeader(title)}
-    <p class="action-links">${asset.editable && ["knowledge", "memory"].includes(asset.type) ? html`<a class="btn" href="#/edit?ref=${encodeURIComponent(canonical)}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}">Edit Markdown</a> ` : ""}${data.durableRef ? html`<button type="button" class="btn-secondary" data-quick-feedback="positive">Helpful</button> <button type="button" class="btn-secondary" data-quick-feedback="negative">Not helpful</button> <button type="button" class="btn-secondary" data-copy-ref>Copy ref</button> ` : ""}<a href="${href}&history=1">Document history</a> · <a href="#/new">New knowledge</a></p>
+    <p class="action-links">${asset.editable && ["knowledge", "memory"].includes(asset.type) ? html`<a class="btn" href="#/edit?ref=${encodeURIComponent(canonical)}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}">Edit Markdown</a> ` : ""}${data.durableRef ? html`<button type="button" class="btn-secondary" data-copy-ref>Copy ref</button> ` : ""}<a href="${href}&history=1">Document history</a></p>
     ${asset.editable && ["knowledge", "memory"].includes(asset.type) ? "" : data.durableRef ? fixForm() : ""}
     <div class="asset-layout"><div class="asset-main">
     <div class="badges">${badge(asset.type, "info")}${asset.origin ? badge(asset.origin, "neutral") : ""}${asset.editable ? badge("editable", "ok") : badge("read-only", "neutral")}</div>
