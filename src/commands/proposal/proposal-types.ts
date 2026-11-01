@@ -85,10 +85,15 @@ export interface ProposalFeedbackFix {
   source: string;
 }
 
+/** Who made a decision: the triage drain (`triage`) or a person (`human`). */
+export type ProposalDecider = "triage" | "human";
+
 export interface ProposalReview {
   outcome: "accepted" | "rejected";
   reason?: string;
   decidedAt: string;
+  /** Written by accept/reject from 0.10 on; absent on older decisions, which stay unknown. */
+  decidedBy?: ProposalDecider;
 }
 
 /**

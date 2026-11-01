@@ -168,7 +168,8 @@ function validatePresentMetadata(meta: Record<string, unknown>): void {
       review === null ||
       (review.outcome !== "accepted" && review.outcome !== "rejected") ||
       typeof review.decidedAt !== "string" ||
-      (review.reason !== undefined && typeof review.reason !== "string")
+      (review.reason !== undefined && typeof review.reason !== "string") ||
+      (review.decidedBy !== undefined && typeof review.decidedBy !== "string")
     ) {
       invalidPresentField("review");
     }

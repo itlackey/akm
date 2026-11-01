@@ -51,7 +51,7 @@ import {
 } from "../improve/consolidate/coverage";
 import { errMessage } from "../improve/stage";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
-import { isRetireProposal, PAIR_PASS_GATE, STALE_TARGET_GATE_REASON } from "./proposal-types";
+import { isRetireProposal, PAIR_PASS_GATE, type ProposalDecider, STALE_TARGET_GATE_REASON } from "./proposal-types";
 import {
   type AcceptCommitCollector,
   commitCollectedAccepts,
@@ -68,7 +68,7 @@ import {
 export type DrainDeferReason = "needs-judgment" | "proactive-needs-review";
 
 /** The gate label on every decision the drain records. */
-const DRAIN_GATE = "triage";
+const DRAIN_GATE = "triage" satisfies ProposalDecider;
 
 export interface DrainOptions {
   stashDir: string;
@@ -183,6 +183,7 @@ async function acceptProposal(
         ...(opts.config ? { config: opts.config } : {}),
         ...(opts.commitCollector ? { commitCollector: opts.commitCollector } : {}),
         gateDecision,
+        decidedBy: DRAIN_GATE,
       });
     } else if (opts.config) {
       if (!proposal) throw new Error(`Proposal ${id} disappeared during drain preflight.`);
@@ -203,6 +204,7 @@ async function acceptProposal(
         id,
         reason: `stale-target: ${message}`,
         gateDecision: { outcome: "auto-rejected", reason: STALE_TARGET_GATE_REASON, gate: DRAIN_GATE },
+        decidedBy: DRAIN_GATE,
       });
       return "rejected";
     } catch (rejectErr) {
@@ -233,6 +235,7 @@ async function rejectProposal(
         gate: DRAIN_GATE,
         ...(judgeReason ? { judgeReason } : {}),
       },
+      decidedBy: DRAIN_GATE,
     });
     return undefined;
   } catch (err) {

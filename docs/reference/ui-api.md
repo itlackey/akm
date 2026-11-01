@@ -308,7 +308,8 @@ It is a current snapshot, not a time-series of historical queue size.
 - `totalCount` and `bySource` count the whole selection; `proposals` holds the first `limit`.
 - `waitingSince` is the last reopen, else creation: the age to show. `gateDecision` is the drain's or quality gate's
   verdict (`outcome`: `staged`, `auto-rejected`, `deferred`, ...; `reason` is a stable token). `review` is
-  `{ outcome, reason?, decidedAt }` on a decided proposal.
+  `{ outcome, reason?, decidedAt, decidedBy? }` on a decided proposal; `decidedBy` is `triage` or `human` and is absent
+  on decisions made before it was recorded (decider unknown).
 - `retirement` is `null` unless the proposal retires an asset (`isRetire`). `continuityRisk` is
   `{ failingQueries, unverifiedQueries?, ranks }` when the continuity check flagged the pair, else `null`.
 - Refs are durable `bundle//conceptId` refs.

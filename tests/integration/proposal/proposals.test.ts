@@ -1223,6 +1223,30 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     expect(indexedEntry(accepted.assetPath)?.description).toBe("accepted zanzibar marker");
   });
 
+  test("accept and reject record review.decidedBy: human by default, triage when the caller says so (G3)", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const content = "---\ndescription: decider marker\nwhen_to_use: Verifying decidedBy\n---\n\nBody.\n";
+    const make = (name: string) =>
+      createProposal(stash, { ref: `lessons/${name}`, source: "distill", payload: { content } });
+
+    const byDefault = make("decider-default");
+    await akmProposalAccept({ stashDir: stash, id: byDefault.id, config });
+    expect(getProposal(stash, byDefault.id).review?.decidedBy).toBe("human");
+
+    const byDrain = make("decider-drain");
+    await akmProposalAccept({ stashDir: stash, id: byDrain.id, config, decidedBy: "triage" });
+    expect(getProposal(stash, byDrain.id).review?.decidedBy).toBe("triage");
+
+    const rejectedByDefault = make("decider-reject-default");
+    await akmProposalReject({ stashDir: stash, id: rejectedByDefault.id, config });
+    expect(getProposal(stash, rejectedByDefault.id).review?.decidedBy).toBe("human");
+
+    const rejectedByDrain = make("decider-reject-drain");
+    await akmProposalReject({ stashDir: stash, id: rejectedByDrain.id, config, decidedBy: "triage" });
+    expect(getProposal(stash, rejectedByDrain.id).review?.decidedBy).toBe("triage");
+  });
+
   test("revert reindexes the restored asset immediately", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);

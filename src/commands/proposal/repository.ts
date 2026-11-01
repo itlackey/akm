@@ -84,6 +84,7 @@ import {
   isValidProposalSource,
   PROPOSAL_SOURCES,
   type Proposal,
+  type ProposalDecider,
   type ProposalFeedbackFix,
   type ProposalGateDecision,
   type ProposalPayload,
@@ -758,6 +759,7 @@ export function archiveProposal(
   reason: string | undefined,
   ctx?: ProposalsContext,
   gateDecision?: GateDecisionInput,
+  decidedBy?: ProposalDecider,
 ): Proposal {
   return withProposalsDb(ctx, (db) =>
     withImmediateTransaction(db, () => {
@@ -773,7 +775,12 @@ export function archiveProposal(
         ...existing,
         status,
         updatedAt: decidedAt,
-        review: { outcome: status, ...(reason !== undefined ? { reason } : {}), decidedAt },
+        review: {
+          outcome: status,
+          ...(reason !== undefined ? { reason } : {}),
+          decidedAt,
+          ...(decidedBy ? { decidedBy } : {}),
+        },
         ...(gateDecision ? { gateDecision: { ...gateDecision, decidedAt: gateDecision.decidedAt ?? decidedAt } } : {}),
       };
       upsertProposal(db, updated, stashDir);
@@ -959,6 +966,7 @@ function persistProposalDecision(
         backupContent?: string;
         eventMetadata?: Record<string, unknown>;
         gateDecision?: GateDecisionInput;
+        decidedBy?: ProposalDecider;
         decidedAt: string;
       }
     | { operation: "revert"; assetPath: string; decidedAt: string },
@@ -1000,7 +1008,11 @@ function persistProposalDecision(
           status: "accepted",
           updatedAt: decision.decidedAt,
           acceptedAt: decision.decidedAt,
-          review: { outcome: "accepted", decidedAt: decision.decidedAt },
+          review: {
+            outcome: "accepted",
+            decidedAt: decision.decidedAt,
+            ...(decision.decidedBy ? { decidedBy: decision.decidedBy } : {}),
+          },
           acceptedTarget: {
             source: decision.target.source.name,
             root,
@@ -1072,6 +1084,7 @@ export function rejectProposalDurably(
   reason?: string,
   ctx?: ProposalsContext,
   gateDecision?: GateDecisionInput,
+  decidedBy?: ProposalDecider,
 ): Proposal {
   const decidedAt = nowIso(ctx);
   const rejected = archiveProposal(
@@ -1081,6 +1094,7 @@ export function rejectProposalDurably(
     reason,
     { ...ctx, now: () => Date.parse(decidedAt) },
     gateDecision,
+    decidedBy,
   );
   withProposalsDb(ctx, (db) =>
     withImmediateTransaction(db, () => {
@@ -1308,6 +1322,7 @@ export async function promoteProposal(
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
     gateDecision?: GateDecisionInput;
+    decidedBy?: ProposalDecider;
     /** Defer the commit to the caller (see {@link AcceptCommitCollector}). */
     commitCollector?: AcceptCommitCollector;
   } = {},
@@ -1632,6 +1647,7 @@ async function promoteProposalWithLease(
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
     gateDecision?: GateDecisionInput;
+    decidedBy?: ProposalDecider;
     /** Defer the commit to the caller (see {@link AcceptCommitCollector}). */
     commitCollector?: AcceptCommitCollector;
   },
@@ -1681,6 +1697,7 @@ async function promoteProposalWithLease(
       ...(backup !== undefined ? { backupContent: backup.toString("utf8") } : {}),
       ...(options.eventMetadata ? { eventMetadata: options.eventMetadata } : {}),
       ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
+      ...(options.decidedBy ? { decidedBy: options.decidedBy } : {}),
       decidedAt,
     },
     ctx,
@@ -1779,6 +1796,7 @@ function persistRetireAcceptance(
     archiveDirs: string[];
     backupContent: string;
     gateDecision?: GateDecisionInput;
+    decidedBy?: ProposalDecider;
     eventMetadata?: Record<string, unknown>;
   },
   ctx?: ProposalsContext,
@@ -1797,7 +1815,7 @@ function persistRetireAcceptance(
         status: "accepted",
         updatedAt: decidedAt,
         acceptedAt: decidedAt,
-        review: { outcome: "accepted", decidedAt },
+        review: { outcome: "accepted", decidedAt, ...(info.decidedBy ? { decidedBy: info.decidedBy } : {}) },
         acceptedTarget: {
           source: info.targetName,
           root: info.targetRoot,
@@ -1912,6 +1930,7 @@ async function retireProposalWithLease(
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
     gateDecision?: GateDecisionInput;
+    decidedBy?: ProposalDecider;
     /** Defer the commit to the caller (see {@link AcceptCommitCollector}). */
     commitCollector?: AcceptCommitCollector;
   },
@@ -2064,6 +2083,7 @@ async function retireProposalWithLease(
       archiveDirs,
       backupContent: intent.backupContent,
       ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
+      ...(options.decidedBy ? { decidedBy: options.decidedBy } : {}),
       ...(options.eventMetadata ? { eventMetadata: options.eventMetadata } : {}),
     },
     ctx,
