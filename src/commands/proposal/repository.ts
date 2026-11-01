@@ -2293,15 +2293,7 @@ async function unretireProposalWithLease(
   for (const p of pending) {
     fs.rmSync(p.dirAbs, { recursive: true, force: true });
   }
-  try {
-    if (!(await indexWrittenAssets(target.source.path, restoredPaths, { bundleId: target.source.name }))) {
-      warn(`[proposals] ${restoredPaths.join(", ")} were restored but not indexed; run \`akm index\`.`);
-    }
-  } catch (error) {
-    warn(
-      `[proposals] restored paths were not indexed (${error instanceof Error ? error.message : String(error)}); run \`akm index\`.`,
-    );
-  }
+  await indexWrittenProposalAssets(target, restoredPaths);
   return { proposal: reverted, assetPath, ref: proposal.ref };
 }
 
