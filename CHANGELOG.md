@@ -19,6 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   unchanged. `akm health`'s `session-extraction` advisory now warns when some
   sessions harvested while others had writes fail and were not extracted
   again (#1290).
+- Accepting a retire proposal (`akm proposal accept`, bulk accept, or a drain
+  outside `akm improve`) updates the search index for the moved files, so
+  `search` and `curate` stop returning the retired asset, in keyword and
+  semantic mode, without waiting for the next `akm index` (#1307).
 
 ## [0.10.261022] - 2026-10-31
 

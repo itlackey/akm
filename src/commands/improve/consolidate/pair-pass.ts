@@ -7,9 +7,10 @@
  * alongside the existing promote pass inside `akmConsolidate`, over new and
  * changed memory-tier assets. Judges each near-duplicate/superseding pair
  * with complete claim comparisons and mints a reviewed `retire` proposal
- * for derived `duplicate` / `subsumed` outcomes — never merges,
- * never writes belief edges. A staged retirement can be accepted unattended
- * by triage (`drain.ts`); an unstaged one stays pending.
+ * for derived `duplicate` / `subsumed` / `supersedes` outcomes — never merges.
+ * The pass itself writes no belief edges; accepting a `supersedes` retirement
+ * writes the `supersededBy` edge before archiving. A staged retirement can be
+ * accepted unattended by triage (`drain.ts`); an unstaged one stays pending.
  *
  * Pair-selection calibration (owner grades, 2026-09-28): `T_PAIR` stays
  * 0.93, not the initial 0.90, because the 0.90–0.93 band alone graded 3/4 (R1).

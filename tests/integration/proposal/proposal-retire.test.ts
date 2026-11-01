@@ -48,13 +48,17 @@ import {
   proposalContentHash,
   recordGateDecision,
 } from "../../../src/commands/proposal/repository";
+import { akmCurate } from "../../../src/commands/read/curate";
+import { akmSearch } from "../../../src/commands/read/search";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { saveConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
 import { openStateDatabase } from "../../../src/core/state-db";
+import { akmIndex } from "../../../src/indexer/indexer";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { upsertProposal } from "../../../src/storage/repositories/proposals-repository";
 import { makeConfig } from "../../_helpers/factories";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 
@@ -1677,4 +1681,68 @@ describe("an accept into a git repository commits what it removed and archived",
     expect(files.filter((file) => file.startsWith(".akm/memory-cleanup/archive/"))).toHaveLength(4);
     expect(status()).toBe("");
   });
+});
+
+describe("an accepted retirement leaves the search index at once (#1307)", () => {
+  // Keyword: the query's tokens are in both notes. Semantic: the query matches no
+  // indexed token, so only the vector channel can return a note, and a stale
+  // embedding shows up as a hit the keyword rows cannot explain.
+  const modes = [
+    { name: "keyword", semanticSearchMode: "off", query: "quartz" },
+    { name: "semantic", semanticSearchMode: "auto", query: "qfillerazq qfillerbzq" },
+  ] as const;
+
+  for (const { name, semanticSearchMode, query } of modes) {
+    test(`${name}: search and curate drop the retired ref after accept, and return it after revert`, async () => {
+      await withEnv({ AKM_EMBED_DETERMINISTIC: "1" }, async () => {
+        const oldPath = writeAsset("memories/old-note.md", "description: quartz old note", "quartz old\n");
+        const newPath = writeAsset("memories/new-note.md", "description: quartz new note", "quartz new\n");
+        saveConfig({
+          semanticSearchMode,
+          bundles: { stash: { path: storage.stashDir, writable: true } },
+          defaultBundle: "stash",
+          defaultWriteTarget: "stash",
+          registries: [],
+        });
+        await akmIndex({ stashDir: storage.stashDir, full: true });
+
+        const refs = async (): Promise<string[]> => {
+          const searched = (await akmSearch({ query, skipLogging: true, limit: 20 })).hits.map((hit) =>
+            "ref" in hit ? String(hit.ref) : "",
+          );
+          const curated = (await akmCurate({ query, limit: 20 })).items.map((item) =>
+            "ref" in item ? String(item.ref) : "",
+          );
+          return [...new Set([...searched, ...curated])];
+        };
+        const has = (all: string[], name: string) => all.some((ref) => ref.endsWith(`memories/${name}`));
+
+        const before = await refs();
+        expect(has(before, "old-note")).toBe(true);
+        expect(has(before, "new-note")).toBe(true);
+
+        const config = makeConfig(storage.stashDir);
+        const proposal = createRetireProposal(storage.stashDir, {
+          ref: "memories/old-note",
+          source: "consolidate-pair",
+          retirement: retirement({
+            retiredPath: oldPath,
+            retiredRef: "memories/old-note",
+            successorPath: newPath,
+            successorRef: "memories/new-note",
+            judgeLabel: "supersedes",
+          }),
+        });
+        await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+        const accepted = await refs();
+        expect(has(accepted, "old-note")).toBe(false);
+        expect(has(accepted, "new-note")).toBe(true);
+
+        await akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config });
+        const reverted = await refs();
+        expect(has(reverted, "old-note")).toBe(true);
+        expect(has(reverted, "new-note")).toBe(true);
+      });
+    });
+  }
 });

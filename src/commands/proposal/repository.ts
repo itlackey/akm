@@ -1115,15 +1115,16 @@ function writeProposalAssetFile(assetPath: string, content: string): void {
   recordWrittenPath(assetPath);
 }
 
-/** Index the file just written; the next `akm index` catches up when this cannot. */
-async function indexWrittenProposalAsset(target: ResolvedWriteTarget, assetPath: string): Promise<void> {
+/** Index the files just written or moved; the next `akm index` catches up when this cannot. */
+async function indexWrittenProposalAssets(target: ResolvedWriteTarget, assetPaths: string[]): Promise<void> {
+  const label = assetPaths.join(", ");
   try {
-    if (!(await indexWrittenAssets(target.source.path, [assetPath], { bundleId: target.source.name }))) {
-      warn(`[proposals] ${assetPath} was written but not indexed; run \`akm index\`.`);
+    if (!(await indexWrittenAssets(target.source.path, assetPaths, { bundleId: target.source.name }))) {
+      warn(`[proposals] ${label} was written but not indexed; run \`akm index\`.`);
     }
   } catch (error) {
     warn(
-      `[proposals] ${assetPath} was written but not indexed (${error instanceof Error ? error.message : String(error)}); run \`akm index\`.`,
+      `[proposals] ${label} was written but not indexed (${error instanceof Error ? error.message : String(error)}); run \`akm index\`.`,
     );
   }
 }
@@ -1683,7 +1684,7 @@ async function promoteProposalWithLease(
     },
     ctx,
   );
-  await indexWrittenProposalAsset(mutationTarget, assetPath);
+  await indexWrittenProposalAssets(mutationTarget, [assetPath]);
   const paths = [assetPath];
   if (accepted.status === "accepted" && accepted.source === "consolidate")
     retirePromotionSource(mutationTarget, accepted, paths);
@@ -2065,6 +2066,8 @@ async function retireProposalWithLease(
     },
     ctx,
   );
+  // The moved files left the index's view; drop their rows now, not at the next `akm index`.
+  await indexWrittenProposalAssets(mutationTarget, twinPath ? [intent.assetPath, twinPath] : [intent.assetPath]);
   return { proposal: accepted, assetPath: intent.assetPath, ref: accepted.ref };
 }
 
@@ -2354,7 +2357,7 @@ async function revertProposalWithLease(
   writeProposalAssetFile(assetPath, backupContent.endsWith("\n") ? backupContent : `${backupContent}\n`);
   commitWriteTargetBoundary(target, `Revert ${proposal.ref}`, { paths: [assetPath] });
   const reverted = persistProposalDecision(stashDir, proposal, { operation: "revert", assetPath, decidedAt }, ctx);
-  await indexWrittenProposalAsset(target, assetPath);
+  await indexWrittenProposalAssets(target, [assetPath]);
   return { proposal: reverted, assetPath, ref: proposal.ref };
 }
 
