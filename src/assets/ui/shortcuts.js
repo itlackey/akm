@@ -63,7 +63,7 @@ function onKey(event) {
  */
 export function registerShortcuts(shortcuts) {
   // Rendering in a test or any context without a real document has no keys to listen to.
-  if (typeof document?.addEventListener !== "function") return () => {};
+  if (typeof document === "undefined" || typeof document.addEventListener !== "function") return () => {};
   active = shortcuts;
   if (!listening) {
     document.addEventListener("keydown", onKey);
