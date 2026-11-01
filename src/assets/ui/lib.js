@@ -232,7 +232,7 @@ export function pageHeader(title, subtitle = "") {
 /** A definition list from [label, value] pairs; null/undefined/empty values are skipped. */
 export function definitionList(pairs) {
   const rows = pairs.filter(([, value]) => value !== null && value !== undefined && value !== "");
-  return html`<dl class="kv">${rows.map(([label, value]) => html`<dt>${label}</dt><dd>${value}</dd>`)}</dl>`;
+  return html`<div class="kv-box"><dl class="kv">${rows.map(([label, value]) => html`<dt>${label}</dt><dd>${value}</dd>`)}</dl></div>`;
 }
 
 export function pretty(value) {
