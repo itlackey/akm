@@ -51,6 +51,16 @@ export function wireChart(ctx, selector, options, onSelect) {
             decal: { show: patterns.matches },
           },
           grid: { left: 12, right: 22, top: 24, bottom: 16, containLabel: true },
+          // richText draws the tooltip as chart text, never as HTML, so a series name or a query cannot inject markup.
+          tooltip: {
+            trigger: "axis",
+            renderMode: "richText",
+            confine: true,
+            backgroundColor: token("--surface"),
+            borderColor: token("--border-strong"),
+            textStyle: { color: token("--text"), fontFamily: font, fontSize: 12 },
+            axisPointer: { type: "line", lineStyle: { color: token("--border-strong") } },
+          },
           ...option,
           series: option.series.map(({ colorIndex, ...series }, index) => ({
             ...series,

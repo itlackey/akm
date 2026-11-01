@@ -4,10 +4,10 @@
 
 // Only the components used by the local UI. Bundled by build-ui-charts.ts.
 import { BarChart, LineChart, ScatterChart } from "echarts/charts";
-import { AriaComponent, GridComponent } from "echarts/components";
+import { AriaComponent, GridComponent, TooltipComponent } from "echarts/components";
 import { init, use } from "echarts/core";
 import { SVGRenderer } from "echarts/renderers";
 
-use([BarChart, LineChart, ScatterChart, GridComponent, AriaComponent, SVGRenderer]);
+use([BarChart, LineChart, ScatterChart, GridComponent, AriaComponent, TooltipComponent, SVGRenderer]);
 
 export { init };
