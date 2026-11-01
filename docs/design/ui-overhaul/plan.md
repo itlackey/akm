@@ -2063,7 +2063,7 @@ The owner answered these questions on 2026-11-01. Answers that differ from the r
 | Q-12 | As the judge (default confirmed). |
 | Q-14 | All bundles, with a filter (default confirmed). |
 | Q-17 | Yes: un-retire in the UI with an inline confirm (default confirmed). |
-| Q-21 | **Changed.** Keep a separate content-design (CD) reviewer: four reviewer roles (VD, AX, DA, CD); copy and microcopy get their own sign-off. Turnaround stays 1 business day. |
+| Q-21 | **Changed.** Keep a separate content-design (CD) reviewer: four reviewer roles (VD, AX, DV, CD); copy and microcopy get their own sign-off. Turnaround stays 1 business day. |
 
 ### 13.3 Out of scope
 
