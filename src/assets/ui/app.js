@@ -125,6 +125,8 @@ async function route() {
           .find((node) => (wanted.name ? node.name === wanted.name : node.getAttribute("href") === wanted.href))
           ?.focus({ preventScroll: true });
       }
+      // `autofocus` only applies on a document's first load, so honour it for content mounted later.
+      if (document.activeElement === document.body) main.querySelector("[autofocus]")?.focus({ preventScroll: true });
       window.scrollTo(0, restored?.scroll ?? 0);
     }
   } catch (error) {
