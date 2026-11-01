@@ -14,6 +14,7 @@ Task-oriented guides and command tours for using akm.
 - [Bundles](bundles.md) -- Connect local dirs, git repos, npm packages, and websites; browse the registry
 - [Capture Knowledge](capture-knowledge.md) -- Capture memories and import documents
 - [Improve the Library](improve-the-library.md) -- Feedback, the event log, `akm improve`, and proposals
+- [The Local UI](ui.md) -- `akm ui`: the Overview, reviewing proposals, improve impact, search, bundles and config
 
 ## Running workflows
 
