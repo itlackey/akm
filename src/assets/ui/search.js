@@ -67,12 +67,12 @@ export async function render(ctx) {
     <p class="action-links"><a href="#/new">New knowledge</a> <span class="muted small">· Ctrl/Cmd+K opens search</span></p>
     <form class="search-form" role="search">
       <input type="search" name="q" value="${q}" placeholder="Search assets (empty browses the index)" aria-label="Query" autofocus>
+      <button type="submit">Search</button>
       <select name="type" aria-label="Type">${options([...types].sort(), type, "All types")}</select>
       <select name="bundle" aria-label="Bundle">${options(bundleNames, bundle, "All bundles")}</select>
       <select name="belief" aria-label="Belief state">${choices(["current", "all", "historical"], belief)}</select>
       <select name="limit" aria-label="Result limit">${choices(["50", "100", "200"], limit)}</select>
       <details class="scope-controls"><summary>Scope filters</summary><div class="form-grid">${Object.entries(scope).map(([key, value]) => html`<label>${key.slice(6)}<input name="${key}" value="${value}" placeholder="Any"></label>`)}</div></details>
-      <button type="submit">Search</button>
     </form>
     ${result.warnings?.length ? html`<details class="notice notice-warn"><summary>${result.warnings.length} search ${result.warnings.length === 1 ? "notice" : "notices"}</summary><ul>${result.warnings.map((w) => html`<li>${w}</li>`)}</ul></details>` : ""}
     ${

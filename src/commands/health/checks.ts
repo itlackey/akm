@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import type { AkmConfig } from "../../core/config/config";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
 import { listPendingStateMigrations, type StateDatabaseMigrationReport } from "../../core/state-db";
 import type { ExtractOutcomeCount } from "../../storage/repositories/extract-sessions-repository";
@@ -10,6 +11,8 @@ import {
   type StateDbFreelistInfo,
   type StateDbIntegrityResult,
 } from "../../storage/state-db-integrity";
+import { resolveImproveStrategy, resolveProcessEnabled } from "../improve/improve-strategies";
+import { resolveProposalQueueTarget } from "../proposal/repository";
 import { type SemanticSearchState, semanticSearchCheck } from "./semantic-search-check";
 import { ACTIVE_RUN_WARN_MS, type HealthCheckResult, type ImproveHealthMetrics, TASK_FAIL_RATE_WARN } from "./types";
 
@@ -65,6 +68,8 @@ export interface HealthCheckContext {
    * writes an `improve_runs` row at all.
    */
   sessionExtractionLedger: { since: string; rows: ExtractOutcomeCount[] };
+  /** #1289: whether the primary stash's proposal queue has a writable owner, resolved once (`proposalQueueState`). */
+  proposalQueue: ProposalQueueState | undefined;
   autoAccept: ImproveHealthMetrics["autoAccept"];
   /** The connections, harnesses and work table, collected once (`connections-and-harnesses-check.ts`). */
   connectionsAndHarnesses: HealthCheckResult;
@@ -85,6 +90,35 @@ export interface HealthCheckContext {
    * other check.
    */
   schedulerBinaryDrift: HealthCheckResult;
+}
+
+/** Who owns the primary stash's proposal queue, and whether the active strategy extracts. */
+export interface ProposalQueueState {
+  stashDir: string;
+  /** The active improve strategy enables the extract process. */
+  extractEnabled: boolean;
+  /** The resolver's refusal; absent when the queue has a writable owner. */
+  problem?: string;
+}
+
+/**
+ * Resolve the proposal queue owner through the resolver extract and every other
+ * proposal writer use. A config that cannot load or a strategy that cannot
+ * resolve counts as extraction off: those are other checks' findings.
+ */
+export function proposalQueueState(config: AkmConfig, stashDir: string): ProposalQueueState {
+  let extractEnabled = false;
+  try {
+    extractEnabled = resolveProcessEnabled("extract", resolveImproveStrategy(undefined, config).config);
+  } catch {
+    // reported by the config checks
+  }
+  try {
+    resolveProposalQueueTarget(stashDir, config);
+    return { stashDir, extractEnabled };
+  } catch (error) {
+    return { stashDir, extractEnabled, problem: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /** Which array a check's result is collected into. */
@@ -448,6 +482,22 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
         };
       }
 
+      // #1290: some sessions harvested while others had candidate writes fail. A failed write that is not a validator
+      // refusal keeps the session's hash null, so it is retried; a row stops counting once the session is extracted
+      // again, and a refusal (hash recorded) is no infrastructure failure. A session that queued some candidates and
+      // failed to write others is recorded as `candidates_queued`.
+      const unresolvedWrites = rows
+        .filter((row) => row.retryable && ["proposal_write_failed", "candidates_queued"].includes(row.outcome))
+        .reduce((sum, row) => sum + row.count, 0);
+      if (unresolvedWrites > 0) {
+        return {
+          ...base,
+          evidence: { ...base.evidence, unresolvedWriteFailures: unresolvedWrites },
+          status: "warn",
+          message: `${unresolvedWrites} of ${totalRows} sessions in the last ${days} days had candidate writes fail (proposal_write_failed) and are not yet extracted again.`,
+        };
+      }
+
       const outcomeCounts = new Map<string, number>();
       for (const row of rows) outcomeCounts.set(row.outcome, (outcomeCounts.get(row.outcome) ?? 0) + row.count);
       const outcomeSummary = [...outcomeCounts.entries()]
@@ -458,6 +508,35 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
         ...base,
         status: "pass",
         message: `Session extraction active in the last ${days} days (${outcomeSummary}).`,
+      };
+    },
+  },
+  {
+    // #1289: the same resolver extract calls before it spends model work. Only for learning that is on: the
+    // strategy enables extract, or the ledger shows extraction ran (a hook-driven machine has no strategy).
+    name: "proposal-queue",
+    channel: "advisory",
+    run: (ctx) => {
+      const base = { name: "proposal-queue", kind: "deterministic", confidence: "high" } as const;
+      if (!ctx.proposalQueue) {
+        return {
+          ...base,
+          status: "unknown",
+          message: "The primary stash or config could not be read; the proposal queue owner was not checked.",
+        };
+      }
+      const { stashDir, extractEnabled, problem } = ctx.proposalQueue;
+      const ranRecently = ctx.sessionExtractionLedger.rows.some((row) => row.count > 0);
+      if (!extractEnabled && !ranRecently) {
+        return { ...base, status: "unknown", message: "Learning is off, so the proposal queue owner was not checked." };
+      }
+      if (!problem)
+        return { ...base, status: "pass", message: `The proposal queue of ${stashDir} has a writable owner.` };
+      return {
+        ...base,
+        status: "warn",
+        message: `Extraction cannot queue proposals: ${problem} Register ${stashDir} as a writable bundle (\`akm bundle add\`), or mark its owner writable.`,
+        evidence: { stashDir, problem },
       };
     },
   },

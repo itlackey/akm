@@ -1003,7 +1003,7 @@ section, an absent key, and an explicit `false` all read identically as off.
   deterministic-only promote runs without it), and `memoryCleanup` lanes. `akm improve`
   itself always runs; this only gates mutations without a human in the loop.
   Consolidation is not gated: it remains advisory and emits reviewable
-  proposals. With `triage` `applyMode: "promote"` on, `akm proposal drain`
+  proposals. With `triage` `applyMode: "promote"` on, `akm improve`'s triage pass
   accepts the proposals the quality judge passed, and the consolidate pair
   pass's retire proposals that it staged with no continuity risk. These are
   outside the gate: session assets written under `sessions/`, the purge of

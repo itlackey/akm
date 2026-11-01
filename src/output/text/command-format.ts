@@ -278,6 +278,8 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (Array.isArray(hit.tags) && hit.tags.length > 0) lines.push(`  tags: ${hit.tags.join(", ")}`);
     // Optional quality marker (e.g. "curated" / "proposed").
     if (typeof hit.quality === "string" && hit.quality) lines.push(`  quality: ${hit.quality}`);
+    if (typeof hit.observed === "string") lines.push(`  observed: ${hit.observed}`);
+    if (typeof hit.updated === "string") lines.push(`  updated: ${hit.updated}`);
     // Surface optional hit-level warnings.
     if (Array.isArray(hit.warnings) && hit.warnings.length > 0) {
       lines.push(`  warnings: ${(hit.warnings as string[]).join("; ")}`);

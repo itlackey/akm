@@ -1,7 +1,18 @@
 // akm ui client: hash router and shell. Pages read the local JSON API and return markup
 // built with the escaping `html` tag; this file only mounts it.
 
-import { errorState, getMeta, hasUnsaved, html, initToken, loadingState, mount, setUnsaved, showFlash } from "./lib.js";
+import {
+  api,
+  errorState,
+  getMeta,
+  hasUnsaved,
+  html,
+  initToken,
+  loadingState,
+  mount,
+  setUnsaved,
+  showFlash,
+} from "./lib.js";
 
 initToken();
 
@@ -15,7 +26,8 @@ const ROUTES = [
     load: () => import("./proposals.js"),
     render: (m, c) => (c.param ? m.renderDetail(c) : m.renderList(c)),
   },
-  { name: "changes", label: "Changes", load: () => import("./changes.js"), render: (m, c) => m.render(c) },
+  { name: "improve", label: "Improve impact", load: () => import("./improve.js"), render: (m, c) => m.render(c) },
+  { name: "changes", label: "History", load: () => import("./changes.js"), render: (m, c) => m.render(c) },
   { name: "search", label: "Search", load: () => import("./search.js"), render: (m, c) => m.render(c) },
   { name: "asset", label: "Asset", nav: "search", load: () => import("./asset.js"), render: (m, c) => m.render(c) },
   {
@@ -28,7 +40,6 @@ const ROUTES = [
   {
     name: "new",
     label: "New knowledge",
-    nav: "search",
     load: () => import("./editor.js"),
     render: (m, c) => m.render(c),
   },
@@ -114,6 +125,8 @@ async function route() {
           .find((node) => (wanted.name ? node.name === wanted.name : node.getAttribute("href") === wanted.href))
           ?.focus({ preventScroll: true });
       }
+      // `autofocus` only applies on a document's first load, so honour it for content mounted later.
+      if (document.activeElement === document.body) main.querySelector("[autofocus]")?.focus({ preventScroll: true });
       window.scrollTo(0, restored?.scroll ?? 0);
     }
   } catch (error) {
@@ -123,13 +136,25 @@ async function route() {
   }
 }
 
+async function showPendingCount() {
+  const target = document.querySelector("[data-pending-count]");
+  if (!target) return;
+  try {
+    const { fullCount } = await api("/api/proposals", { status: "pending", limit: 1 });
+    target.textContent = String(fullCount);
+    target.hidden = !fullCount;
+  } catch {
+    target.hidden = true;
+  }
+}
+
 async function showMeta() {
   const target = document.getElementById("nav-meta");
   try {
     const meta = await getMeta();
     mount(
       target,
-      html`<span class="mono">akm ${meta.version} · ${meta.hostname}</span><span class="muted small">${meta.readOnly ? "read-only" : ""} ${meta.runtime}</span>`,
+      html`<span class="mono" data-volatile>akm ${meta.version} · ${meta.hostname}</span><span class="muted small">${meta.readOnly ? "read-only" : ""} ${meta.runtime}</span>`,
     );
   } catch {
     mount(target, html``);
@@ -149,7 +174,7 @@ unsaved.addEventListener("click", (event) => {
   setUnsaved(false);
   const target = pendingHash;
   pendingHash = null;
-  // A same-hash target (Refresh view) fires no hashchange, so route directly.
+  // A same-hash target fires no hashchange, so route directly.
   if (target === null || target === location.hash) route();
   else location.hash = target;
 });
@@ -165,17 +190,33 @@ document.addEventListener("keydown", (event) => {
     else location.hash = "#/search";
   }
 });
-document.querySelector("[data-refresh]")?.addEventListener("click", route);
 const menu = document.querySelector("[data-menu]");
-menu?.addEventListener("click", () => {
-  const open = menu.getAttribute("aria-expanded") !== "true";
-  menu.setAttribute("aria-expanded", String(open));
-  document.querySelector(".sidebar")?.classList.toggle("nav-open", open);
-});
+const topbar = document.querySelector(".topbar");
+function setMenu(open) {
+  menu?.setAttribute("aria-expanded", String(open));
+  topbar?.classList.toggle("nav-open", open);
+}
+menu?.addEventListener("click", () => setMenu(menu.getAttribute("aria-expanded") !== "true"));
 document.querySelector(".nav-links")?.addEventListener("click", (event) => {
-  if (!event.target.closest("a")) return;
-  menu?.setAttribute("aria-expanded", "false");
-  document.querySelector(".sidebar")?.classList.remove("nav-open");
+  if (event.target.closest("a")) setMenu(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || menu?.getAttribute("aria-expanded") !== "true") return;
+  setMenu(false);
+  menu.focus();
+});
+document.addEventListener("click", (event) => {
+  if (menu?.getAttribute("aria-expanded") === "true" && !event.target.closest(".topbar")) setMenu(false);
+});
+document.querySelector("[data-topbar-search]")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const input = event.currentTarget.elements.q;
+  const q = input.value.trim();
+  location.hash = q ? `#/search?q=${encodeURIComponent(q)}` : "#/search";
+  input.value = "";
+  setMenu(false);
 });
 showMeta();
+showPendingCount();
+window.addEventListener("hashchange", showPendingCount);
 route();

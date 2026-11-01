@@ -1,0 +1,71 @@
+- banner:
+  - navigation "Main":
+    - link "akm ui":
+      - /url: "#/overview"
+    - list:
+      - listitem:
+        - link "Overview":
+          - /url: "#/overview"
+      - listitem:
+        - link /Proposals \d+/:
+          - /url: "#/proposals"
+      - listitem:
+        - link "Improve impact":
+          - /url: "#/improve"
+      - listitem:
+        - link "History":
+          - /url: "#/changes"
+      - listitem:
+        - link "Search":
+          - /url: "#/search"
+      - listitem:
+        - link "New knowledge":
+          - /url: "#/new"
+      - listitem:
+        - link "Bundles":
+          - /url: "#/bundles"
+      - listitem:
+        - link "Config":
+          - /url: "#/config"
+    - search:
+      - text: Search assets
+      - searchbox "Search assets"
+- main:
+  - paragraph:
+    - link "Search":
+      - /url: "#/search"
+    - text: / asset
+  - heading "release-notes" [level=1]
+  - paragraph:
+    - link "Document history":
+      - /url: "#/asset?ref=stash%2F%2Fcommands%2Frelease-notes&history=1"
+    - text: ·
+    - link "New knowledge":
+      - /url: "#/new"
+  - text: command stash editable
+  - region "Content":
+    - paragraph:
+      - text: Draft release notes for
+      - code: $ARGUMENTS
+      - text: .
+    - list:
+      - listitem: List the pull requests merged since the last tag.
+      - listitem: Group them under Added, Changed and Fixed.
+      - listitem: Keep each line to one sentence.
+  - group: Asset details
+  - group: Markdown source
+  - heading "Feedback" [level=2]
+  - paragraph: 0 positive 0 negative
+  - text: Feedback
+  - combobox "Feedback":
+    - option "Helpful" [selected]
+    - option "Incorrect or stale"
+  - text: Reason
+  - textbox "Reason":
+    - /placeholder: What helped, or what is wrong and should change
+  - paragraph: A reason is required for negative feedback. A note that did not fit your task is not necessarily incorrect.
+  - text: Tags
+  - textbox "Tags":
+    - /placeholder: Optional key:value tags, comma-separated (team:platform)
+  - button "Send feedback"
+  - paragraph: No feedback recorded for this asset.

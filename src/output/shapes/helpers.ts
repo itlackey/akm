@@ -340,6 +340,8 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
         "estimatedTokens",
         "warnings",
         "quality",
+        "observed",
+        "updated",
       ]),
       NORMAL_DESCRIPTION_LIMIT,
     );
@@ -363,6 +365,8 @@ export function shapeSearchHitForAgent(hit: Record<string, unknown>): Record<str
     "score",
     "estimatedTokens",
     "keys",
+    "observed",
+    "updated",
   ]);
   if (picked.editable !== false) delete picked.editHint;
   return capDescription(picked, NORMAL_DESCRIPTION_LIMIT);

@@ -265,8 +265,12 @@ export interface IndexDocument {
   derivedFrom?: string;
   // ── IndexDocument-native extras (no IndexDocument equivalent) ──
   pinned?: boolean;
-  /** ← OKF `timestamp` (v0.1) — v0.2 prefers `generated.at` when present; see `updated`'s derivation note below. */
+  /** ← OKF `timestamp` (v0.1) — v0.2 prefers `generated.at` when present; see `updated`'s derivation note below. AKM-native assets: the frontmatter `updated:`. */
   updated?: string;
+  /** ← frontmatter `created`, `observed` (legacy `observed_at`) and `expires`: ISO dates as written, kept only when they start with a calendar day. `observed` is when the fact was seen; `created`/`updated` describe the file. */
+  created?: string;
+  observed?: string;
+  expires?: string;
   /** Resolved native links = relationships (§9); navigation/lint, NOT graph boost. */
   links?: string[];
   /** The assets a workflow's steps or a task target (`uses:` refs, stored `akm/command` refs), in authored order. */

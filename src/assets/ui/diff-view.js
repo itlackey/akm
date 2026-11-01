@@ -8,7 +8,7 @@ import { buildDiff, newFileRows, splitLines } from "./diff.js";
 import { html, mount } from "./lib.js";
 
 const MODE_KEY = "akm-ui-diff-mode";
-const NARROW = "(max-width: 799px)";
+const NARROW = "(width < 50rem)";
 
 /** The saved layout, else side by side (inline on a narrow screen). */
 export function preferredMode() {

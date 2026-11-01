@@ -702,6 +702,13 @@ export interface AkmExtractResult {
   proposals: string[];
   sessions: ExtractedSessionResult[];
   warnings: string[];
+  /**
+   * Candidate writes that failed for a reason the validator did not give (state.db busy, I/O, config), summed over
+   * `sessions`: the run is incomplete, and `proposals` holds only what was queued. `ok` stays `true`, as for a skipped
+   * session (see `ok`). Absent when no write failed that way, so a no-op, a validator refusal (counted per session in
+   * `failedRejectedCount`) and a full success read alike. `causes` is bounded.
+   */
+  writeFailures?: { candidates: number; sessions: number; causes: string[] };
   durationMs: number;
   /** Stable, secret-free execution-lowering diagnostics. */
   notices?: readonly Readonly<LoweringNotice>[];

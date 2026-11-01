@@ -87,6 +87,11 @@ export interface SourceSearchHit {
   quality?: string;
   beliefState?: string;
   currentBeliefRefs?: string[];
+  /** Frontmatter dates as written; each is absent when the asset has none. `observed` is when the fact was seen, the others describe the file. */
+  observed?: string;
+  created?: string;
+  updated?: string;
+  expires?: string;
   /**
    * Derived-memory pointer.
    *

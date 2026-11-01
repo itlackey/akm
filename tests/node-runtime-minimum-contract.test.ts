@@ -78,6 +78,7 @@ describe("Node 22 runtime minimum contract", () => {
       "gated-ci.yml#native-scheduler",
       "gated-ci.yml#semantic-search",
       "release.yml#release",
+      "ui-visual.yml#visual",
     ]);
   });
 });

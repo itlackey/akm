@@ -126,7 +126,8 @@ Everything on the overview page in one call. Query parameters:
       "daily": [{ "date": "2026-10-16", "searches": 3, "zeroResults": 1, "medianMs": 80, "latencySamples": 2 }],
       "zeroResultQueries": [{ "date": "2026-10-16", "query": "missing guide", "count": 1 }]
     },
-    "taskFailures": [{ "taskId": "weekly-review", "runs": 2, "failed": 1, "medianMs": 4000 }]
+    "pendingNow": 3,
+    "taskFailures": [{ "taskId": "weekly-review", "runs": 6, "failed": 2, "medianMs": 4000, "rated": 6, "failRate": 0.3333333333333333 }]
   }
 }
 ```
@@ -142,7 +143,16 @@ Everything on the overview page in one call. Query parameters:
 - `retrieval` shares `metrics.window` and its user-attributed source filter. Its UTC daily latency median uses only
   recorded nonnegative durations (`latencySamples`); no samples means `null`, not zero. Missing result counts do not
   mean zero results. Query counts group the recorded zero-result searches by date and query.
-- `taskFailures` ranks all recorded task runs in `metrics.window` by failure count before limiting to 20 tasks.
+- `pendingNow` is the number of pending proposals in the current stash right now. It is not windowed, and equals the
+  pending count of `akm proposal list`. It is `null` when there is no stash or state is unreadable. Use it instead of
+  `metrics.proposals.byStatus.pending`, which counts only proposals last updated in the window, across all stashes.
+- `metrics.usage.searchMedianMs` and the `retrieval` daily median share one filter (`totalMs >= 0`);
+  `metrics.usage.searchTimed` is the number of searches behind the median. The daily feedback count in
+  `metrics.usage.daily` counts signed rows only, like `metrics.feedback.totals`.
+- `taskFailures` lists the tasks in `metrics.window` with at least one failed run, then limits to 20. Stuck active runs
+  count toward `rated` and `failRate` but do not add a task to the list on their own. `rated` is the number of finished runs: completed + failed + active runs started more than 6 h ago (a fresh
+  active run is neither ok nor failed and is not counted). `failRate` is `(rated - completed) / rated`, or `null` below
+  5 rated runs (plan M-25). Tasks with a rate come first, highest rate first; the rest follow by not-ok runs, then runs.
   Nonfailed runs are not assumed successful, nor are absent runs evidence of a successful scheduled task.
   Details are available from `/api/tasks/history`. Missing/unreadable state yields `null` rather than a healthy empty list.
 - Charts must retain `metrics.notes` about missing stores and retention; none of these series imply complete history.
@@ -170,6 +180,8 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   "data": {
     "defaultBundle": "stash",
     "defaultWriteTarget": null,
+    "workingStash": null,
+    "automaticWriteTarget": { "name": "stash", "path": "/home/me/akm" },
     "bundles": [
       {
         "name": "stash",
@@ -207,6 +219,13 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
 
 - `kind` is `filesystem`, `git`, `npm` or `website`. `source` describes where the bundle comes from; `path` is its local
   root (`null` if it has none).
+- The default bundle's card comes first; the rest keep their configured order.
+- `workingStash` is `{ path, git }` for the directory akm reads besides the configured bundles (`AKM_BUNDLE_DIR`, or the
+  platform stash when no `defaultBundle` is set). `git` has the same shape as a card's `git`. It is `null` when a
+  configured bundle already covers that directory or it cannot be resolved.
+- `automaticWriteTarget` is `{ name, path }` for where a write goes when `defaultWriteTarget` is empty: `AKM_BUNDLE_DIR`
+  when set (even with a `defaultBundle`), otherwise the default bundle. It is `null` when neither exists, so writes need
+  a target.
 - `git` is `null` unless the bundle's root is itself a git repository. `upstream`, `ahead` and `behind` are `null` without an
   upstream; `branch` is `null` on a detached HEAD; `lastCommit` is `null` for a repository with no commits. `dirtyPaths`
   counts paths with uncommitted changes.
@@ -308,7 +327,8 @@ It is a current snapshot, not a time-series of historical queue size.
 - `totalCount` and `bySource` count the whole selection; `proposals` holds the first `limit`.
 - `waitingSince` is the last reopen, else creation: the age to show. `gateDecision` is the drain's or quality gate's
   verdict (`outcome`: `staged`, `auto-rejected`, `deferred`, ...; `reason` is a stable token). `review` is
-  `{ outcome, reason?, decidedAt }` on a decided proposal.
+  `{ outcome, reason?, decidedAt, decidedBy? }` on a decided proposal; `decidedBy` is `triage` or `human` and is absent
+  when the decider was not recorded (older decisions, system archives, reverts): decider unknown.
 - `retirement` is `null` unless the proposal retires an asset (`isRetire`). `continuityRisk` is
   `{ failingQueries, unverifiedQueries?, ranks }` when the continuity check flagged the pair, else `null`.
 - Refs are durable `bundle//conceptId` refs.

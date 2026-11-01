@@ -62,6 +62,8 @@ function appendShowTrace(ref: string, type: string, name: string): void {
       metadata: {
         query: matchingSearch.metadata?.query as string | undefined,
         searchTs: matchingSearch.ts,
+        searchId: matchingSearch.metadata?.searchId as string | undefined,
+        source: matchingSearch.metadata?.source as string | undefined,
         rankPosition: resultRefs.findIndex((candidate) => traceParentRef(candidate) === ref),
       },
     });

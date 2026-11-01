@@ -127,6 +127,50 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(proposalRowToProposal(withHistory([])).reviewHistory).toEqual([]);
   });
 
+  test("acceptedAt round-trips through the row codec, old-shape rows decode without it, a non-string is refused (G2)", () => {
+    const envelope = {
+      changes: [{ path: "lessons/history.md", op: "update" }],
+      proposedTarget: { source: "team", root: "/tmp/stash" },
+    };
+    const oldRow = { ...historicalRow, status: "accepted", metadata_json: JSON.stringify(envelope) };
+    const old = proposalRowToProposal(oldRow);
+    expect(old.acceptedAt).toBeUndefined();
+    expect(proposalToRowValues(old, historicalRow.stash_dir).metadata_json).not.toContain("acceptedAt");
+
+    const acceptedAt = "2026-01-02T00:00:00.000Z";
+    const accepted = { ...old, acceptedAt };
+    const reverted = {
+      ...accepted,
+      status: "reverted" as const,
+      review: { outcome: "rejected" as const, reason: "reverted", decidedAt: "2026-01-09T00:00:00.000Z" },
+    };
+    const values = proposalToRowValues(reverted, historicalRow.stash_dir);
+    expect(proposalRowToProposal({ ...historicalRow, ...values }).acceptedAt).toBe(acceptedAt);
+
+    const bad = { ...oldRow, metadata_json: JSON.stringify({ ...envelope, acceptedAt: 5 }) };
+    expect(() => proposalRowToProposal(bad)).toThrow(/acceptedAt/);
+  });
+
+  test("review.decidedBy round-trips, old-shape reviews decode without it, a non-string is refused (G3)", () => {
+    const envelope = { changes: [{ path: "lessons/history.md", op: "update" }] };
+    const review = { outcome: "accepted", decidedAt: "2026-01-02T00:00:00.000Z" };
+    const row = (r: Record<string, unknown>) => ({
+      ...historicalRow,
+      status: "accepted",
+      metadata_json: JSON.stringify({ ...envelope, review: r }),
+    });
+    expect(proposalRowToProposal(row(review)).review?.decidedBy).toBeUndefined();
+
+    for (const decidedBy of ["triage", "human"] as const) {
+      const decoded = proposalRowToProposal(row({ ...review, decidedBy }));
+      expect(decoded.review?.decidedBy).toBe(decidedBy);
+      const values = proposalToRowValues(decoded, historicalRow.stash_dir);
+      expect(proposalRowToProposal({ ...historicalRow, ...values }).review?.decidedBy).toBe(decidedBy);
+    }
+
+    expect(() => proposalRowToProposal(row({ ...review, decidedBy: 5 }))).toThrow(/review/);
+  });
+
   test("proposalWaitingSince counts from the last reopen, else from creation (#997)", () => {
     const created = "2026-01-01T00:00:00.000Z";
     expect(proposalWaitingSince({ createdAt: created })).toBe(created);

@@ -142,13 +142,16 @@ export interface AkmMetricsResult {
     };
     /**
      * `totals.selects` / `totals.searchesWithHits`, a plain ratio. Not a
-     * conversion rate and not bounded by 1: selects carry no source or search
-     * id, so they are not the population the searches were drawn from, and one
-     * search can lead to several selects. `null` when no search returned a hit.
+     * conversion rate and not bounded by 1: selects recorded before they
+     * carried a source are counted for every source, so they are not the
+     * population the searches were drawn from, and one search can lead to
+     * several selects. `null` when no search returned a hit.
      */
     selectsPerSearch: number | null;
     /** Median persisted search `totalMs`; `null` when no row in the window carries one. */
     searchMedianMs: number | null;
+    /** Searches behind `searchMedianMs`: summary rows with `totalMs >= 0`. */
+    searchTimed: number;
     daily: MetricsDailyUsage[];
     topAssets: MetricsAssetUsage[];
     topQueries: MetricsQueryCount[];

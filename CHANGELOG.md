@@ -6,6 +6,76 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261102] - 2026-11-01
+
+### Added
+
+- The local UI is redesigned: a top bar with a menu that collapses on narrow
+  screens, a site search field, ruled sections, large stat numbers and a
+  dark Graphite palette (with a matching light set). The Overview opens with a
+  "Needs attention" list, an improve status line and linked tiles.
+- A new Improve impact page: decisions per week by outcome and decider, outcomes
+  and cost by process, reverted changes, recent library changes and recent
+  improve runs.
+- The UI's Config page is editable. Each setting group saves through
+  `POST /api/config/set`, which validates like `akm config set`, refuses
+  literal API keys and keys inherited from `extends:`, and leaves unrelated
+  keys alone. Model connections can be added and edited there.
+- Search and select events record their source and search id; indexes record
+  library size; a reverted proposal keeps its accept time; reviews record
+  `decidedBy`.
+
+### Changed
+
+- Proposals shows waiting-age tiles that filter the queue. Changes is now
+  History. Bundles lists the working stash.
+
+### Fixed
+
+- The command asset body shows in the UI, and the Overview server numbers are
+  corrected.
+
+## [0.10.261101] - 2026-11-01
+
+### Added
+
+- Search reads frontmatter dates as fields: hits carry `observed`, `created`,
+  `updated` and `expires` when the asset has them, `akm search` takes
+  `--since` and `--until` (`YYYY-MM-DD`, on the observed date, else `updated`,
+  applied before candidate budgets), and recency is a small tie-break in the
+  fused score. The next ordinary index pass records the dates (#1228).
+
+### Changed
+
+- A bare `akm proposal drain` queues, as its help and docs say: it stages its
+  decisions and writes nothing to assets, whatever the default strategy's
+  `triage.applyMode` is. `--promote` always promotes, and an explicit
+  `--strategy <name>` still supplies that strategy's apply mode, ceilings and
+  judgment. `akm improve`'s own triage pre-pass still applies its strategy's
+  `applyMode`. This reverses 0.10.261019, where a bare drain on a stock install
+  promoted (#1274).
+
+### Fixed
+
+- A writing `akm proposal extract` checks that its proposal queue has a writable
+  owner before it calls the model, and fails with the resolver's reason instead
+  of spending model work on candidates it cannot queue. Previews are unaffected.
+  `akm health` reports the same finding as the `proposal-queue` advisory when
+  learning is on (#1289).
+- `akm proposal extract` and `akm improve` report candidate writes that failed
+  for a reason other than the validator's refusal in a new `writeFailures`
+  field (counts and at most three causes) and a warning line, with `ok`
+  unchanged. `akm health`'s `session-extraction` advisory now warns when some
+  sessions harvested while others had writes fail and were not extracted
+  again (#1290).
+- Accepting a retire proposal (`akm proposal accept`, bulk accept, or a drain
+  outside `akm improve`) updates the search index for the moved files, so
+  `search` and `curate` stop returning the retired asset, in keyword and
+  semantic mode, without waiting for the next `akm index` (#1307).
+- Search ranking counts only user feedback from the last 90 days, the same
+  window a full `akm index` retains, so older feedback stops moving rank on a
+  host that has not run an unscoped index (#1252).
+
 ## [0.10.261022] - 2026-10-31
 
 ### Added

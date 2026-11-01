@@ -232,7 +232,7 @@ function automation(ctx, tasks, runs, since) {
     }),
     (event) => selectRun(runs[event.dataIndex]?.id),
   );
-  return html`<section class="chart-card"><h2>Automation reliability</h2>${tasks === null ? emptyState("Task measurements unavailable.") : tasks?.length ? chart("tasks-chart", "Failed task runs ranked by failures before any display limit. Exact recorded-run denominators and history are in the table.") : emptyState("No failed task runs recorded in this window.")}
+  return html`<section class="chart-card" id="automation"><h2>Automation reliability</h2>${tasks === null ? emptyState("Task measurements unavailable.") : tasks?.length ? chart("tasks-chart", "Failed task runs ranked by failures before any display limit. Exact recorded-run denominators and history are in the table.") : emptyState("No failed task runs recorded in this window.")}
     <p class="muted small">Failures first. Other recorded statuses are not automatically successes; missing runs do not prove a schedule ran.</p>
     <div data-task-detail tabindex="-1" aria-live="polite"></div>
     <details><summary>Task data and history</summary><div data-task-table>${tableWrap(html`<table><thead><tr><th>Task</th><th class="r">Failed / recorded</th><th>Median duration</th></tr></thead><tbody>${(tasks ?? []).map((t) => html`<tr><th><button type="button" class="btn-secondary" data-task="${t.taskId}">${t.taskId}</button></th><td class="r">${t.failed} / ${t.runs}</td><td>${fmtMs(t.medianMs)}</td></tr>`)}</tbody></table>`)}</div></details>

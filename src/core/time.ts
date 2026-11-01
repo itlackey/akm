@@ -63,6 +63,20 @@ export function parseDuration(spec: string, units: Readonly<Record<string, numbe
   return amount * multiplier;
 }
 
+// ── Calendar days ────────────────────────────────────────────────────────────
+
+/**
+ * The `YYYY-MM-DD` day a date value starts with (`2026-06-18`, or an ISO
+ * timestamp such as `2026-06-18T10:30:00Z`), or `undefined` when it does not
+ * start with a real calendar day. Search dates compare by day.
+ */
+export function isoDay(value: string): string | undefined {
+  const day = /^(\d{4}-\d{2}-\d{2})(?:$|[T ])/.exec(value.trim())?.[1];
+  if (!day) return undefined;
+  const parsed = new Date(`${day}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day ? day : undefined;
+}
+
 // ── Since-flag parsing ───────────────────────────────────────────────────────
 
 /**

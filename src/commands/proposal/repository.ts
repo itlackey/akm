@@ -84,6 +84,7 @@ import {
   isValidProposalSource,
   PROPOSAL_SOURCES,
   type Proposal,
+  type ProposalDecider,
   type ProposalFeedbackFix,
   type ProposalGateDecision,
   type ProposalPayload,
@@ -758,6 +759,7 @@ export function archiveProposal(
   reason: string | undefined,
   ctx?: ProposalsContext,
   gateDecision?: GateDecisionInput,
+  decidedBy?: ProposalDecider,
 ): Proposal {
   return withProposalsDb(ctx, (db) =>
     withImmediateTransaction(db, () => {
@@ -773,7 +775,12 @@ export function archiveProposal(
         ...existing,
         status,
         updatedAt: decidedAt,
-        review: { outcome: status, ...(reason !== undefined ? { reason } : {}), decidedAt },
+        review: {
+          outcome: status,
+          ...(reason !== undefined ? { reason } : {}),
+          decidedAt,
+          ...(decidedBy ? { decidedBy } : {}),
+        },
         ...(gateDecision ? { gateDecision: { ...gateDecision, decidedAt: gateDecision.decidedAt ?? decidedAt } } : {}),
       };
       upsertProposal(db, updated, stashDir);
@@ -959,6 +966,7 @@ function persistProposalDecision(
         backupContent?: string;
         eventMetadata?: Record<string, unknown>;
         gateDecision?: GateDecisionInput;
+        decidedBy?: ProposalDecider;
         decidedAt: string;
       }
     | { operation: "revert"; assetPath: string; decidedAt: string },
@@ -999,7 +1007,12 @@ function persistProposalDecision(
           ...persisted,
           status: "accepted",
           updatedAt: decision.decidedAt,
-          review: { outcome: "accepted", decidedAt: decision.decidedAt },
+          acceptedAt: decision.decidedAt,
+          review: {
+            outcome: "accepted",
+            decidedAt: decision.decidedAt,
+            ...(decision.decidedBy ? { decidedBy: decision.decidedBy } : {}),
+          },
           acceptedTarget: {
             source: decision.target.source.name,
             root,
@@ -1071,6 +1084,7 @@ export function rejectProposalDurably(
   reason?: string,
   ctx?: ProposalsContext,
   gateDecision?: GateDecisionInput,
+  decidedBy?: ProposalDecider,
 ): Proposal {
   const decidedAt = nowIso(ctx);
   const rejected = archiveProposal(
@@ -1080,6 +1094,7 @@ export function rejectProposalDurably(
     reason,
     { ...ctx, now: () => Date.parse(decidedAt) },
     gateDecision,
+    decidedBy,
   );
   withProposalsDb(ctx, (db) =>
     withImmediateTransaction(db, () => {
@@ -1115,15 +1130,16 @@ function writeProposalAssetFile(assetPath: string, content: string): void {
   recordWrittenPath(assetPath);
 }
 
-/** Index the file just written; the next `akm index` catches up when this cannot. */
-async function indexWrittenProposalAsset(target: ResolvedWriteTarget, assetPath: string): Promise<void> {
+/** Index the files just written or moved; the next `akm index` catches up when this cannot. */
+async function indexWrittenProposalAssets(target: ResolvedWriteTarget, assetPaths: string[]): Promise<void> {
+  const label = assetPaths.join(", ");
   try {
-    if (!(await indexWrittenAssets(target.source.path, [assetPath], { bundleId: target.source.name }))) {
-      warn(`[proposals] ${assetPath} was written but not indexed; run \`akm index\`.`);
+    if (!(await indexWrittenAssets(target.source.path, assetPaths, { bundleId: target.source.name }))) {
+      warn(`[proposals] ${label} was written but not indexed; run \`akm index\`.`);
     }
   } catch (error) {
     warn(
-      `[proposals] ${assetPath} was written but not indexed (${error instanceof Error ? error.message : String(error)}); run \`akm index\`.`,
+      `[proposals] ${label} was written but not indexed (${error instanceof Error ? error.message : String(error)}); run \`akm index\`.`,
     );
   }
 }
@@ -1306,6 +1322,7 @@ export async function promoteProposal(
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
     gateDecision?: GateDecisionInput;
+    decidedBy?: ProposalDecider;
     /** Defer the commit to the caller (see {@link AcceptCommitCollector}). */
     commitCollector?: AcceptCommitCollector;
   } = {},
@@ -1630,6 +1647,7 @@ async function promoteProposalWithLease(
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
     gateDecision?: GateDecisionInput;
+    decidedBy?: ProposalDecider;
     /** Defer the commit to the caller (see {@link AcceptCommitCollector}). */
     commitCollector?: AcceptCommitCollector;
   },
@@ -1679,11 +1697,12 @@ async function promoteProposalWithLease(
       ...(backup !== undefined ? { backupContent: backup.toString("utf8") } : {}),
       ...(options.eventMetadata ? { eventMetadata: options.eventMetadata } : {}),
       ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
+      ...(options.decidedBy ? { decidedBy: options.decidedBy } : {}),
       decidedAt,
     },
     ctx,
   );
-  await indexWrittenProposalAsset(mutationTarget, assetPath);
+  await indexWrittenProposalAssets(mutationTarget, [assetPath]);
   const paths = [assetPath];
   if (accepted.status === "accepted" && accepted.source === "consolidate")
     retirePromotionSource(mutationTarget, accepted, paths);
@@ -1777,6 +1796,7 @@ function persistRetireAcceptance(
     archiveDirs: string[];
     backupContent: string;
     gateDecision?: GateDecisionInput;
+    decidedBy?: ProposalDecider;
     eventMetadata?: Record<string, unknown>;
   },
   ctx?: ProposalsContext,
@@ -1794,7 +1814,8 @@ function persistRetireAcceptance(
         retireAcceptIntent: undefined, // finalized — the intent only matters while still pending
         status: "accepted",
         updatedAt: decidedAt,
-        review: { outcome: "accepted", decidedAt },
+        acceptedAt: decidedAt,
+        review: { outcome: "accepted", decidedAt, ...(info.decidedBy ? { decidedBy: info.decidedBy } : {}) },
         acceptedTarget: {
           source: info.targetName,
           root: info.targetRoot,
@@ -1909,6 +1930,7 @@ async function retireProposalWithLease(
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
     gateDecision?: GateDecisionInput;
+    decidedBy?: ProposalDecider;
     /** Defer the commit to the caller (see {@link AcceptCommitCollector}). */
     commitCollector?: AcceptCommitCollector;
   },
@@ -2061,10 +2083,13 @@ async function retireProposalWithLease(
       archiveDirs,
       backupContent: intent.backupContent,
       ...(options.gateDecision ? { gateDecision: options.gateDecision } : {}),
+      ...(options.decidedBy ? { decidedBy: options.decidedBy } : {}),
       ...(options.eventMetadata ? { eventMetadata: options.eventMetadata } : {}),
     },
     ctx,
   );
+  // The moved files left the index's view; drop their rows now, not at the next `akm index`.
+  await indexWrittenProposalAssets(mutationTarget, twinPath ? [intent.assetPath, twinPath] : [intent.assetPath]);
   return { proposal: accepted, assetPath: intent.assetPath, ref: accepted.ref };
 }
 
@@ -2290,15 +2315,7 @@ async function unretireProposalWithLease(
   for (const p of pending) {
     fs.rmSync(p.dirAbs, { recursive: true, force: true });
   }
-  try {
-    if (!(await indexWrittenAssets(target.source.path, restoredPaths, { bundleId: target.source.name }))) {
-      warn(`[proposals] ${restoredPaths.join(", ")} were restored but not indexed; run \`akm index\`.`);
-    }
-  } catch (error) {
-    warn(
-      `[proposals] restored paths were not indexed (${error instanceof Error ? error.message : String(error)}); run \`akm index\`.`,
-    );
-  }
+  await indexWrittenProposalAssets(target, restoredPaths);
   return { proposal: reverted, assetPath, ref: proposal.ref };
 }
 
@@ -2354,7 +2371,7 @@ async function revertProposalWithLease(
   writeProposalAssetFile(assetPath, backupContent.endsWith("\n") ? backupContent : `${backupContent}\n`);
   commitWriteTargetBoundary(target, `Revert ${proposal.ref}`, { paths: [assetPath] });
   const reverted = persistProposalDecision(stashDir, proposal, { operation: "revert", assetPath, decidedAt }, ctx);
-  await indexWrittenProposalAsset(target, assetPath);
+  await indexWrittenProposalAssets(target, [assetPath]);
   return { proposal: reverted, assetPath, ref: proposal.ref };
 }
 

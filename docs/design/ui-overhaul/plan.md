@@ -299,7 +299,7 @@ SETUP
 ```
 ┌──────────────┬──────────────────────────────────────────────────────────────────┐
 │ akm ui       │ Overview                                Updated 2 min ago  Reload │
-│ Overview  ◂  │ Your akm environment. Times are UTC.                              │
+│ Overview  ◂  │ Your akm environment. Times are UTC.                              │ doclint:ignore
 │ Search       │ ✓ Healthy · 4 checks could not run  0 failing · 0 warning · 4 · 10│
 │ REVIEW       │                                                 [Last 24 hours]   │
 │ Proposals 12 │ Needs attention                                                   │
@@ -412,7 +412,7 @@ Proposals                                                 Updated 1 min ago  Rel
 │  conf 0.82                 │││ stash//lessons/rg [reflect] [pending]             ││
 │ stash//commands/deploy 9d  │││        ‹K  J›   [Reject  R]   [Accept  A]         ││
 │ DISTILL · 3                ││└───────────────────────────────────────────────────┘│
-│ …                          ││ Why akm proposed this                              │
+│ …                          ││ Why akm proposed this                              │ doclint:ignore
 │                            ││   Process      reflect · feedback lane             │
 │                            ││   Triggered by "rg flags are wrong on macOS" (3 Oct)│
 │                            ││   Judge        passed: "fixes the flag order…"     │

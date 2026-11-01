@@ -506,8 +506,10 @@ proposal extract --session-id ...` invocation never writes. It reports
 purpose" from "broken"), `warn` when every session in the window was skipped
 for an infrastructure reason (`llm_unavailable`, `read_failed`, `exception`,
 `locked_concurrent`) — naming the reason and, when recorded, the connection or
-harness it ran on, as `engine "<name>"` — and `pass` otherwise, with
-per-outcome counts.
+harness it ran on, as `engine "<name>"`. It also `warn`s when some sessions
+harvested but others had candidate writes fail and were not yet extracted again
+(a validator refusal does not count; extracting the session again clears it).
+Otherwise it is `pass`, with per-outcome counts.
 
 ### metrics
 
@@ -541,7 +543,7 @@ Result sections (`schemaVersion: 1`):
 | Field | Description |
 | --- | --- |
 | `window`, `filters` | The resolved window and the usage source counted |
-| `usage` | Search, show, curate and select totals, `searchesWithHits` and `selectsPerSearch` (selects divided by searches that returned a hit: a plain ratio that can exceed 1, not a conversion percentage, since selects carry no source or search id), `searchMedianMs`, a daily series, top assets, top and zero-result queries, and rows by source |
+| `usage` | Search, show, curate and select totals, `searchesWithHits` and `selectsPerSearch` (selects divided by searches that returned a hit: a plain ratio that can exceed 1, not a conversion percentage; selects are deduped per search id and ref, and kept only when they followed a search from the counted source, except legacy selects with no source, which count for every source), `searchMedianMs` (over searches with `totalMs >= 0`; `searchTimed` is their count), a daily series, top assets, top and zero-result queries, and rows by source |
 | `feedback` | Positive and negative totals, per-asset valence, per-tag counts, and the most recent negatives with their reasons |
 | `utility` | A ten-bucket histogram of `utility_scores`, the lowest and highest assets, and how many indexed entries were never used |
 | `outcomes` | The assets with the lowest `outcome_score` |
@@ -564,8 +566,10 @@ Notes you may see:
   (`usage_events` keeps 90 days; `events`, which holds selects, LLM calls and
   index runs, keeps `improve.eventRetentionDays`, default 90) and where its data
   effectively starts, so a long window is never silently shorter than asked.
-- Selects are read from the events stream, which records no source, so they are
-  counted whatever the usage source is.
+- `Selects deduped from <date>`: selects carry a source and search id from that
+  date. From then on a select counts once per search id and ref, and only when
+  its source matches the counted source. Earlier selects have neither field, so
+  they are counted as recorded, for every source.
 
 ### ui
 
@@ -644,6 +648,9 @@ akm search "deploy" --filter user=alice --filter agent=claude
 # Include proposal-queue entries:
 akm search "deploy" --include-proposed
 
+# Only assets dated within a range (observed date, else updated):
+akm search "deploy host" --since 2026-06-01 --until 2026-09-30
+
 # ConceptId-prefix enumeration — list a subtree instead of keyword-matching:
 akm search "memories/projectA/"
 akm search "knowledge/"
@@ -689,10 +696,17 @@ document vectors nearest to the query embedding, 100 candidates each. Filters
 proposed quality) drop ineligible entries from each list before its 100
 candidates are taken. The fused score is then multiplied by
 `1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))` over the user's recorded
-feedback for the asset (see [`akm feedback`](#feedback)), and hits are ordered
+feedback for the asset (see [`akm feedback`](#feedback)), and, among dated
+candidates only, by a recency factor `1 + 0.04 × r`, where `r` is 1 for the newest dated candidate and halves for every
+year older (measured from that candidate, not from today). The date is the observed date, else `updated`. Dated
+candidates are reordered among the places dated candidates already hold, and each place keeps its score, so undated
+candidates keep their places and scores. Recency needs two distinct dates among the candidates. When both channels
+contribute it passes only near-ties; in keyword-only search, where every fused score is `1 / (60 + rank)`, it can lift
+a dated hit one place past a dated hit most of a year older, or two places past one 1.5 to 2.5 years older,
+whatever the keyword margin. Hits are ordered
 by that score, equal scores by fully qualified ref (`<bundle>//<conceptId>`,
 even where the output shows the short form). A hit's `score` is the adjusted
-score. If `state.db` exists but cannot be read, the search ranks without
+score of its place. If `state.db` exists but cannot be read, the search ranks without
 feedback and adds a warning. The query is embedded with the model's query template (see
 `embedding.queryTemplate` in [`configuration.md`](configuration.md)); when the
 embedding takes longer than `embedding.queryTimeoutMs` (default 3000) or fails,
@@ -710,6 +724,8 @@ it.
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the candidates before ranking. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--belief` | `all`, `current`, `historical` | `current` | Belief filter on any asset. `current` keeps unflagged/active/asserted assets; `historical` keeps deprecated/contradicted/superseded/archived assets. Labels do not establish truth. |
+| `--since` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or after this day: the `observed` date, else `updated`. Assets with neither are dropped. Applies before the candidate budgets, like `--filter`. Search only; registry hits are unaffected. |
+| `--until` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or before this day, by the same date. |
 | `--include-sessions` | flag | `false` | Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md`, `html` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output verbosity level, or the `agent` projection |
@@ -743,9 +759,9 @@ assembled into the shape registry by the `src/output/shapes.ts` barrel:
 | Level | Local bundle hits | Registry hits |
 | --- | --- | --- |
 | `brief` (default) | `type`, `name`, `ref`, `action`, `estimatedTokens` | `name`, `installRef`, `score` |
-| `normal` | `type`, `name`, `ref`, `description`, `action`, `score`, `estimatedTokens`, optional `warnings`/`quality`/`keys` | `name`, `description`, `action`, `installRef`, `score`, optional `warnings` |
-| `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, timings, bundle metadata) | full hit object |
-| `agent` | `name`, `ref`, `type`, `path`, `editable`, conditional `editHint`, `description`, `action`, `score`, optional `estimatedTokens`/`keys` | no local access fields |
+| `normal` | `type`, `name`, `ref`, `description`, `action`, `score`, `estimatedTokens`, optional `warnings`/`quality`/`observed`/`updated`/`keys` | `name`, `description`, `action`, `installRef`, `score`, optional `warnings` |
+| `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, optional `observed`/`created`/`updated`/`expires`, timings, bundle metadata) | full hit object |
+| `agent` | `name`, `ref`, `type`, `path`, `editable`, conditional `editHint`, `description`, `action`, `score`, optional `estimatedTokens`/`keys`/`observed`/`updated` | no local access fields |
 
 There is no registry `curated` boolean. Renderers surface an optional
 `warnings: string[]` field on hits when a provider has non-fatal issues to
@@ -2078,7 +2094,7 @@ a hit depends on the search. In keyword-only search every fused score is exactly
 `1/(60 + rank)`, so neighbouring hits in the first 20 sit 1.3 to 1.6 percent
 apart and one vote (about 2 percent) moves a hit one place whatever the keyword
 margin between them. When embeddings contribute too, the two channels' ranks spread the scores
-and a vote breaks only near-ties. Only feedback recorded as the user counts, not
+and a vote breaks only near-ties. Only feedback recorded as the user in the last 90 days counts, not
 feedback from improve, task or audit runs; the output's `rankingUpdate.applied`
 says which it was (`true`, or `false` with a `reason`).
 Feedback also updates the utility score that improve and `akm metrics` read.
@@ -3274,6 +3290,13 @@ and points at `akm setup`. It runs on the default connection, else the default
 harness; `--connection`, `--harness` and `--model` choose another, and
 `improve.processes.extract` sets it for the improve stage too.
 
+A run that writes proposals first checks that the proposal queue (the stash it
+extracts into) has a configured, writable bundle, and fails before any model
+call when it does not, with the reason (`No configured bundle owns proposal
+queue <dir>.` or `Proposal bundle "<name>" is not writable.`). It never
+registers a replacement or changes a bundle's permissions. `--dry-run` previews
+need no writable owner.
+
 **Output.** `ok` means the command ran to completion — it is `true` even when
 every session was skipped (an unreachable connection included); it does not
 mean anything was harvested. Consumers that need "did this run actually
@@ -3285,6 +3308,7 @@ harvest" branch on `skipReasons`, `warnings`, or `sessionsProcessed` /
 | `engine` | Name of the connection or harness the run resolved to. Absent only when extract is disabled by the selected improve strategy (the run returns before a target is resolved). |
 | `engineKind` | `"connection"` or `"harness"` — what `engine` names. Same absence condition as `engine`. |
 | `skipReasons` | Per-`skipReason` count across `sessions[]` (e.g. `{ "llm_unavailable": 25 }`). Present only when `sessionsSkipped > 0`. |
+| `writeFailures` | `{ candidates, sessions, causes }` when candidate writes failed for a reason other than the validator's refusal (state.db busy, I/O, config), summed over `sessions[]`; `causes` is at most three distinct messages. `ok` stays `true`, as for a skipped session, so a scheduler or hook does not start failing. The run is incomplete: `proposals` holds only what was queued, and the failed sessions stay retryable. Absent when no write failed that way, so a no-op, a validator refusal (counted per session in `failedRejectedCount`) and a full success read alike. `akm improve` carries the same field in its `extract[]` results. |
 | `warnings` | Includes one aggregate line per infrastructure skip reason that fired (`llm_unavailable`, `read_failed`, `exception`, `locked_concurrent`) — e.g. `25 of 25 sessions skipped: llm_unavailable (engine "default")` — so an outage is visible without inspecting `sessions[]`. Session-content skips (`already_extracted`, `too_short`, `triaged_out`) are counted in `skipReasons` but never produce a warning line. |
 | `sessions[].warnings` | One line per candidate the model wrote that the output contract refuses, as `<type>:<name> dropped: <reason>` — a lesson without a `when_to_use` of 15 characters, a description under 20, a name that is not a kebab-case slug — and one per candidate held back by the improve ledger. A session whose every candidate was dropped has `candidateCount: 0` and no `rationaleIfEmpty`, so this is where the loss shows. |
 
@@ -3623,13 +3647,12 @@ person (reason `judgment-not-promotion`). Judged over every kind, the tier
 accepted unsafe retirements, applied exact fixes unreviewed and changed notes
 nobody had touched: 6 to 14 harmed items a night on two models (#1132). A reflect revision that changes the body, and
 every distill lesson or knowledge promotion, is deferred for review even when
-its judge passes it. A bare `akm proposal drain` follows the apply mode of the
-triage block of your improve strategy (`improve.strategy`, `default` unless
-set). `default`'s is promote, so it accepts (and asks for confirmation first).
-A strategy whose apply mode is `queue` stages decisions instead and writes
-nothing to assets; `--promote` always accepts. Whether a
-bare drain should promote is an open question
-([#1274](https://github.com/itlackey/akm/issues/1274)).
+its judge passes it. A bare `akm proposal drain` queues: it stages its
+decisions and writes nothing to assets, whatever the default strategy's apply
+mode is. `--promote` always accepts (and asks for confirmation first). An
+explicit `--strategy <name>` supplies that strategy's apply mode, ceilings and
+judgment; a strategy whose apply mode is `queue` stages instead. `akm improve`'s
+triage pre-pass follows its strategy's apply mode.
 
 ```sh
 akm proposal drain --dry-run                        # Preview without writing
@@ -3641,7 +3664,7 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 | Flag | Description |
 | --- | --- |
 | `--strategy` | Read the triage block (apply mode, ceilings, judgment) from this improve strategy instead |
-| `--promote` | Promote (accept) judge-passed proposals. Without it, the strategy's apply mode decides, and the default strategy's is promote (#1274). |
+| `--promote` | Promote (accept) judge-passed proposals. Without it, a bare drain queues: it stages decisions and writes nothing to assets; an explicit `--strategy` supplies its own apply mode |
 | `--dry-run` | List what would be accepted/rejected/deferred, without writing |
 | `--max-accepts` | Hard per-run accept ceiling; accepts beyond this are reported as `skippedByCap` |
 | `--older-than` | Only consider proposals created (or last reopened) more than this many days ago |

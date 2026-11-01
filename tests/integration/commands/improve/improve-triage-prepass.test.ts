@@ -54,7 +54,7 @@ function writeMemory(name: string, body: string): void {
  * Config selecting a `triage-test` strategy that enables triage but disables the
  * heavy full-pass siblings so the improve loop stays cheap and deterministic.
  */
-function triageEnabledConfig(enabled: boolean): AkmConfig {
+function triageEnabledConfig(enabled: boolean, applyMode: "queue" | "promote" = "queue"): AkmConfig {
   return {
     semanticSearchMode: "off",
     improve: {
@@ -68,7 +68,7 @@ function triageEnabledConfig(enabled: boolean): AkmConfig {
             memoryInference: { enabled: false },
             extract: { enabled: false },
             validation: { enabled: false },
-            triage: { enabled, applyMode: "queue", maxAcceptsPerRun: 25 },
+            triage: { enabled, applyMode, maxAcceptsPerRun: 25 },
             proactiveMaintenance: { enabled: false },
             recombine: { enabled: false },
             procedural: { enabled: false },
@@ -97,6 +97,30 @@ afterEach(() => {
 });
 
 describe("akm improve — triage pre-pass", () => {
+  test(
+    "applies its strategy's apply mode, not the standalone drain's queue default (#1274)",
+    async () => {
+      writeMemory("alpha", "Remember alpha details.");
+      await akmIndex({ stashDir, full: true });
+
+      const captured: Array<import("../../../../src/commands/proposal/drain").DrainOptions> = [];
+      const drainProposalsFn = mock(async (opts: import("../../../../src/commands/proposal/drain").DrainOptions) => {
+        captured.push(opts);
+        return emptyDrainResult();
+      });
+
+      await akmImprove({
+        scope: "memory",
+        stashDir,
+        config: triageEnabledConfig(true, "promote"),
+        drainProposalsFn: drainProposalsFn as never,
+      });
+
+      expect(captured[0]?.applyMode).toBe("promote");
+    },
+    TIMEOUT_MS,
+  );
+
   test(
     "fires on a whole-stash run when triage is enabled",
     async () => {

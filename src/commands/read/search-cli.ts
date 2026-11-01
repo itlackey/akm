@@ -20,6 +20,7 @@ import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared"
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
 import { UsageError } from "../../core/errors";
+import { isoDay } from "../../core/time";
 import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { getOutputMode, type OutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/html-render";
@@ -63,6 +64,16 @@ export const searchCommand = defineJsonCommand({
       default: false,
     },
     belief: { ...beliefArg, default: "current" },
+    since: {
+      type: "string",
+      description:
+        "Only local assets dated on or after this day (YYYY-MM-DD): the observed date, else updated. Undated assets are excluded. Applied before ranking.",
+    },
+    until: {
+      type: "string",
+      description:
+        "Only local assets dated on or before this day (YYYY-MM-DD): the observed date, else updated. Undated assets are excluded. Applied before ranking.",
+    },
     "include-sessions": {
       type: "boolean",
       description:
@@ -82,6 +93,8 @@ export const searchCommand = defineJsonCommand({
     const includeProposed = args["include-proposed"] === true;
     const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
     const includeSessions = args["include-sessions"];
+    const since = parseDayFlag(args.since, "--since");
+    const until = parseDayFlag(args.until, "--until");
     const outputMode = getOutputMode();
     const result = await akmSearch({
       query,
@@ -89,6 +102,8 @@ export const searchCommand = defineJsonCommand({
       limit,
       source,
       filters,
+      since,
+      until,
       includeProposed,
       belief,
       includeSessions,
@@ -98,6 +113,16 @@ export const searchCommand = defineJsonCommand({
     output("search", result);
   },
 });
+
+function parseDayFlag(raw: unknown, flag: string): string | undefined {
+  if (raw === undefined) return undefined;
+  const day = typeof raw === "string" ? isoDay(raw) : undefined;
+  if (day) return day;
+  throw new UsageError(
+    `Invalid value for ${flag}: ${String(raw)}. Expected a date as YYYY-MM-DD.`,
+    "INVALID_FLAG_VALUE",
+  );
+}
 
 export const curateCommand = defineJsonCommand({
   meta: {

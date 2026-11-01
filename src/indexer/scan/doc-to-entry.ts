@@ -98,6 +98,9 @@ export function indexDocumentToStashEntry(doc: IndexDocument): IndexDocument {
   if (doc.lessonStrength !== undefined) entry.lessonStrength = doc.lessonStrength;
   if (doc.derivedFrom !== undefined) entry.derivedFrom = doc.derivedFrom;
   if (doc.pinned !== undefined) entry.pinned = doc.pinned;
+  if (doc.created !== undefined) entry.created = doc.created;
+  if (doc.observed !== undefined) entry.observed = doc.observed;
+  if (doc.expires !== undefined) entry.expires = doc.expires;
 
   // ── documentJson-carried extras (DOCUMENT_JSON_CARRIED_FIELDS) ──
   // The `renderer` key on documentJson is adapter-internal (WI-C presentation),

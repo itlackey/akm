@@ -31,6 +31,7 @@ import { collectArchiveUsageAdvisory } from "./health/archive-usage";
 import {
   HEALTH_CHECKS,
   type HealthCheckContext,
+  proposalQueueState,
   runPendingStateMigrationsCheck,
   SESSION_EXTRACTION_LEDGER_WINDOW_DAYS,
 } from "./health/checks";
@@ -344,6 +345,15 @@ function gatherEgressConfigView(): EgressConfigView | undefined {
 function gatherSemanticSearchMode(): string | undefined {
   try {
     return loadConfig().semanticSearchMode;
+  } catch {
+    return undefined;
+  }
+}
+
+/** #1289: who owns the primary stash's proposal queue; a stash or config that cannot load is other checks' finding. */
+function gatherProposalQueue(): HealthCheckContext["proposalQueue"] {
+  try {
+    return proposalQueueState(loadConfig(), resolveStashDir());
   } catch {
     return undefined;
   }
@@ -780,6 +790,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
     advisories.push(...gatherAncillaryAdvisories(db, options, egressConfigView));
 
     const sessionExtractionLedger = gatherSessionExtractionLedgerPhase(db, now);
+    const proposalQueue = gatherProposalQueue();
 
     const connectionsAndHarnesses = await connectionsAndHarnessesPromise;
     const versionDrift = await versionDriftPromise;
@@ -808,6 +819,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       worstTaskFailRate: taskHistory.worstTaskFailRate,
       agentFailureReasonCounts: taskHistory.agentFailureReasonCounts,
       sessionExtractionLedger,
+      proposalQueue,
       autoAccept: improveSummary.autoAccept,
       connectionsAndHarnesses,
       semanticSearch: readSemanticSearchState(gatherSemanticSearchMode()),

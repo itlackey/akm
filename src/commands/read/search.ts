@@ -84,6 +84,9 @@ export async function akmSearch(input: {
    * Eligibility is applied before each channel's candidate budget.
    */
   filters?: StashEntryScope;
+  /** Inclusive `YYYY-MM-DD` bounds on the hit's `observed` date, else `updated`. Local hits only. */
+  since?: string;
+  until?: string;
   /**
    * When true, hits with `quality === "proposed"` are kept in the result
    * set. Default behavior excludes them. The flag has no
@@ -201,6 +204,8 @@ export async function akmSearch(input: {
           sources,
           config,
           filters,
+          since: input.since,
+          until: input.until,
           includeProposed,
           beliefFilter: belief,
           // When `--from <name>` narrowed the source list above, propagate
@@ -366,10 +371,13 @@ function logSearchEvent(
   const stashHits = response.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
   // Include registry hit refs so a show following a registry-only search generates a select event
   const registryHitRefs = (response.registryHits ?? []).map((h) => `registry:${h.id}`);
+  // Lets a later `select` name the search it came from, so metrics can dedupe
+  // repeated shows of one result and attribute them to this search's source.
+  const searchId = crypto.randomUUID();
   const allResultRefs = [...stashHits.map((h) => h.ref), ...registryHitRefs];
   appendEvent({
     eventType: "search",
-    metadata: { query, hitCount: stashHits.length, resultRefs: allResultRefs, mode },
+    metadata: { query, hitCount: stashHits.length, resultRefs: allResultRefs, mode, source: eventSource, searchId },
   });
 
   try {

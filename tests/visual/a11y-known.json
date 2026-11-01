@@ -1,0 +1,276 @@
+{
+  "tokens": {
+    "light": {
+      "text --on-danger on --fail": "token not defined yet (P2-2)",
+      "band-edge --band-edge on --surface": "token not defined yet (P2-2)",
+      "age-ramp --age-1..3": "token not defined yet (P2-2)"
+    },
+    "dark": {
+      "text --on-danger on --fail": "token not defined yet (P2-2)",
+      "band-edge --band-edge on --surface": "token not defined yet (P2-2)",
+      "age-ramp --age-1..3": "token not defined yet (P2-2)"
+    }
+  },
+  "findings": {
+    "_focus-after-route": {
+      "focus-after-route asset-command": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route asset-knowledge": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route bundles": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route changes": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route config": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route edit": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route new": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route overview": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route proposal-create": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route proposal-edit": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route proposal-noop": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route proposal-retire": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route proposals-pending": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "focus-after-route proposals-recent": {
+        "count": 1,
+        "ref": "B-21"
+      },
+      "route-status message asset-command": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message asset-knowledge": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message bundles": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message changes": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message config": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message edit": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message new": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message overview": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message proposal-create": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message proposal-edit": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message proposal-noop": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message proposal-retire": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message proposals-pending": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message proposals-recent": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message search-browse": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message search-results": {
+        "count": 1,
+        "ref": "B-19"
+      }
+    },
+    "_focus-async": {
+      "focus-async overview window": {
+        "count": 1,
+        "ref": "B-22"
+      },
+      "focus-async proposal accept": {
+        "count": 1,
+        "ref": "B-27"
+      }
+    },
+    "_route-status": {
+      "route-status main-is-live": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status regions": {
+        "count": 1,
+        "ref": "B-19"
+      }
+    },
+    "asset-knowledge": {
+      "axe dark 320 scrollable-region-focusable": {
+        "count": 1,
+        "ref": "B-40"
+      },
+      "axe light 320 scrollable-region-focusable": {
+        "count": 1,
+        "ref": "B-40"
+      }
+    },
+    "proposal-create": {
+      "axe contrast-more target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe dark 1280 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe dark 320 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe forced-colors target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe light 1280 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe light 320 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "text-spacing 320": {
+        "count": 1,
+        "ref": "#1389"
+      }
+    },
+    "proposal-edit": {
+      "axe contrast-more target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe dark 1280 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe dark 320 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe forced-colors target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe light 1280 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe light 320 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      }
+    },
+    "proposal-noop": {
+      "axe contrast-more target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe dark 1280 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe dark 320 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe forced-colors target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe light 1280 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe light 320 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      }
+    },
+    "proposal-retire": {
+      "axe contrast-more target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe dark 1280 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe dark 320 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe forced-colors target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe light 1280 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
+      "axe light 320 target-size": {
+        "count": 1,
+        "ref": "#1388"
+      }
+    }
+  }
+}

@@ -441,7 +441,9 @@ describe("endpoints", () => {
     const s = await start();
     const overview = await data(s, "/api/overview");
     expect(overview.metrics.tasks.byTask.some((t: { taskId: string }) => t.taskId === "rare-failure")).toBe(false);
-    expect(overview.taskFailures).toEqual([{ taskId: "rare-failure", runs: 1, failed: 1, medianMs: 50 }]);
+    expect(overview.taskFailures).toEqual([
+      { taskId: "rare-failure", runs: 1, failed: 1, medianMs: 50, rated: 1, failRate: null },
+    ]);
     const detail = await data(s, "/api/tasks/history?taskId=rare-failure&limit=1");
     expect(detail).toMatchObject({
       available: true,
@@ -503,6 +505,118 @@ describe("endpoints", () => {
     expect(filtered.proposals).toHaveLength(1);
     expect((await data(s, "/api/proposals?age=unknown")).proposals[0].id).toBe("unknown");
     expect((await api(s, "/api/proposals?age=invalid")).status).toBe(400);
+  });
+
+  test("overview pendingNow counts this stash's pending queue, unwindowed, like the proposals list", async () => {
+    await seed();
+    const original = createProposal(storage.stashDir, {
+      ref: "lessons/rg",
+      source: "reflect",
+      sourceRun: "run-1",
+      target: { source: "stash", root: storage.stashDir },
+      payload: { content: LESSON, frontmatter: { description: "Use ripgrep" } },
+    });
+    const old = new Date(Date.now() - 10 * 86_400_000).toISOString();
+    const db = openStateDatabase();
+    try {
+      for (let i = 0; i < 3; i++)
+        upsertProposal(db, { ...original, id: `old-${i}`, createdAt: old, updatedAt: old }, storage.stashDir);
+      upsertProposal(db, { ...original, id: "elsewhere", createdAt: old, updatedAt: old }, "/other/stash");
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const overview = await data(s, "/api/overview?metricsSince=24h");
+    const list = await data(s, "/api/proposals?limit=200");
+    expect(overview.metrics.proposals.byStatus.pending ?? 0).toBeLessThan(overview.pendingNow);
+    expect(overview.pendingNow).toBe(list.totalCount);
+    expect(overview.pendingNow).toBe(overview.health.report.pendingProposals.length);
+  });
+
+  test("task failures rank by failure rate once a task has 5 runs, then by failures", async () => {
+    await seed();
+    const db = openStateDatabase();
+    const base = Date.now() - 60_000;
+    const run = (taskId: string, status: string, n: number) =>
+      upsertTaskHistory(db, {
+        task_id: taskId,
+        status,
+        started_at: new Date(base - n * 1000).toISOString(),
+        completed_at: status === "completed" ? new Date(base).toISOString() : null,
+        failed_at: status === "failed" ? new Date(base).toISOString() : null,
+        log_path: null,
+        target_kind: null,
+        target_ref: null,
+        metadata_json: "{}",
+      });
+    try {
+      // busy: 2 of 10 failed (0.2); flaky: 3 of 5 (0.6); few: 2 of 2 (no rate, ranks after the rated tasks).
+      for (let n = 0; n < 10; n++) run("busy", n < 2 ? "failed" : "completed", n);
+      for (let n = 0; n < 5; n++) run("flaky", n < 3 ? "failed" : "completed", n);
+      for (let n = 0; n < 2; n++) run("few", "failed", n);
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const overview = await data(s, "/api/overview");
+    expect(overview.taskFailures.map((t: { taskId: string }) => t.taskId)).toEqual(["flaky", "busy", "few"]);
+    expect(overview.taskFailures.map((t: { failRate: number | null }) => t.failRate)).toEqual([0.6, 0.2, null]);
+  });
+
+  test("task fail rate counts stale active runs as not ok and ignores fresh active runs (M-25)", async () => {
+    await seed();
+    const db = openStateDatabase();
+    const run = (taskId: string, status: string, ageMs: number) =>
+      upsertTaskHistory(db, {
+        task_id: taskId,
+        status,
+        started_at: new Date(Date.now() - ageMs).toISOString(),
+        completed_at: status === "completed" ? new Date().toISOString() : null,
+        failed_at: status === "failed" ? new Date().toISOString() : null,
+        log_path: null,
+        target_kind: null,
+        target_ref: null,
+        metadata_json: "{}",
+      });
+    try {
+      // fresh-active: 4 failed + 1 fresh active -> rated 4, no rate yet.
+      for (let n = 0; n < 4; n++) run("fresh-active", "failed", 120_000 + n * 1000);
+      run("fresh-active", "active", 600_000);
+      // stale-active: 3 completed + 1 failed + 1 active 10 h ago -> rated 5, 2 not ok = 0.4.
+      for (let n = 0; n < 3; n++) run("stale-active", "completed", 120_000 + n * 1000);
+      run("stale-active", "failed", 130_000);
+      run("stale-active", "active", 10 * 3_600_000);
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const overview = await data(s, "/api/overview");
+    const byId = Object.fromEntries(overview.taskFailures.map((t: { taskId: string }) => [t.taskId, t]));
+    expect(byId["fresh-active"]).toMatchObject({ runs: 5, rated: 4, failRate: null });
+    expect(byId["stale-active"]).toMatchObject({ runs: 5, rated: 5, failRate: 0.4 });
+  });
+
+  test("a task whose only problem is a stale active run stays out of taskFailures", async () => {
+    await seed();
+    const db = openStateDatabase();
+    try {
+      upsertTaskHistory(db, {
+        task_id: "stale-only",
+        status: "active",
+        started_at: new Date(Date.now() - 10 * 3_600_000).toISOString(),
+        completed_at: null,
+        failed_at: null,
+        log_path: null,
+        target_kind: null,
+        target_ref: null,
+        metadata_json: "{}",
+      });
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const overview = await data(s, "/api/overview");
+    expect(overview.taskFailures.map((t: { taskId: string }) => t.taskId)).not.toContain("stale-only");
   });
 
   test("GET /api/bundles: cards with git status and asset counts, plus the index state", async () => {
@@ -1334,6 +1448,39 @@ describe("workspace actions", () => {
       (await write(s, "/api/bundles/settings", { bundle: "stash", enabled: true, defaultWriteTarget: "stash" })).status,
     ).toBe(200);
     expect(loadConfig().defaultWriteTarget).toBe("stash");
+  });
+
+  test("config set validates like the CLI, keeps secrets and unrelated keys, and unsets", async () => {
+    await writableConfig();
+    const config = loadConfig();
+    writeSandboxConfig({ ...config, unrelated: { keep: [1, "two"] } });
+    const s = await start();
+    const changed = await write(s, "/api/config/set", {
+      set: { semanticSearchMode: "auto", "output.detail": "full", "feedback.requireReason": "true" },
+    });
+    expect(changed.status, changed.body.error).toBe(200);
+    expect(changed.body.data).toEqual({ saved: true });
+    const saved = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(saved).toMatchObject({
+      semanticSearchMode: "auto",
+      output: { detail: "full" },
+      feedback: { requireReason: true },
+    });
+    expect(saved.connections.default.apiKey).toBe("$AKM_UI_TEST_KEY");
+    expect(saved.someToken).toBe(PLANTED_CONFIG_TOKEN);
+    expect(saved.unrelated).toEqual({ keep: [1, "two"] });
+    // Schema errors, literal API keys and configVersion are refused, and nothing is written.
+    expect((await write(s, "/api/config/set", { set: { "output.detail": "loud" } })).status).toBe(400);
+    expect((await write(s, "/api/config/set", { set: { "connections.default.apiKey": "sk-literal" } })).status).toBe(
+      400,
+    );
+    expect((await write(s, "/api/config/set", { set: { configVersion: "1" } })).status).toBe(400);
+    expect((await write(s, "/api/config/set", { set: { semanticSearchMode: 1 } })).status).toBe(400);
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).output.detail).toBe("full");
+    const unset = await write(s, "/api/config/set", { unset: ["output.detail"] });
+    expect(unset.status, unset.body.error).toBe(200);
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).output?.detail).toBeUndefined();
+    expect((await write(s, "/api/config/set", {})).body.data).toEqual({ saved: false });
   });
 
   test("bundle lifecycle uses real local-source add, update and confirmed remove operations", async () => {

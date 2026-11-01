@@ -261,6 +261,10 @@ function indexDocumentFromEntry(
   if (entry.captureMode !== undefined) doc.captureMode = entry.captureMode;
   if (entry.lessonStrength !== undefined) doc.lessonStrength = entry.lessonStrength;
   if (entry.derivedFrom !== undefined) doc.derivedFrom = entry.derivedFrom;
+  if (entry.created !== undefined) doc.created = entry.created;
+  if (entry.updated !== undefined) doc.updated = entry.updated;
+  if (entry.observed !== undefined) doc.observed = entry.observed;
+  if (entry.expires !== undefined) doc.expires = entry.expires;
   // Internal fragment substrate follows the recognition projection without
   // becoming an IndexDocument field or serialized search payload.
   if (hasMarkdownFragmentContent(entry)) setMarkdownFragmentContent(doc, getMarkdownFragmentContent(entry));
@@ -468,10 +472,12 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
 export const akmAdapter: BundleAdapter = {
   id: "akm",
   // Bump when a change to the matchers (or `recognize`) can retype or re-ref a
-  // file that has not changed: the version is folded into each directory's
-  // freshness, so the next incremental `akm index` re-drains it and re-files
-  // those rows, including old command refs inferred from body placeholders.
-  version: "0.9.3",
+  // file that has not changed, or when the document records new fields from it
+  // (0.9.4: frontmatter dates, #1228): the version is folded into each
+  // directory's freshness, so the next incremental `akm index` re-drains it and
+  // re-files those rows, including old command refs inferred from body
+  // placeholders. Vectors are kept when the search text is unchanged.
+  version: "0.9.4",
   // Recognized-extension HINT, derived from what the matchers accept (§6):
   // `.md` (Markdown types + workflow peer), `.yml` (task and workflow YAML),
   // `.yaml` (task near-miss diagnostics), `.env` (env files), and the 16
