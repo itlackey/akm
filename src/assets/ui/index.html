@@ -15,11 +15,16 @@
       <button type="button" class="menu-toggle btn-secondary" data-menu aria-expanded="false" aria-controls="nav-links">Menu</button>
       <ul class="nav-links" id="nav-links">
         <li><a data-route="overview" href="#/overview">Overview</a></li>
+        <li class="nav-group" aria-hidden="true">Review</li>
+        <li><a data-route="proposals" href="#/proposals">Proposals <span class="nav-count" data-pending-count hidden></span></a></li>
+        <li><a data-route="improve" href="#/improve">Improve impact</a></li>
+        <li><a data-route="changes" href="#/changes">History</a></li>
+        <li class="nav-group" aria-hidden="true">Library</li>
+        <li><a data-route="search" href="#/search">Search</a></li>
+        <li><a data-route="new" href="#/new">New knowledge</a></li>
+        <li class="nav-group" aria-hidden="true">Setup</li>
         <li><a data-route="bundles" href="#/bundles">Bundles</a></li>
         <li><a data-route="config" href="#/config">Config</a></li>
-        <li><a data-route="proposals" href="#/proposals">Proposals</a></li>
-        <li><a data-route="changes" href="#/changes">Changes</a></li>
-        <li><a data-route="search" href="#/search">Search</a></li>
       </ul>
       <button type="button" class="btn-secondary" data-refresh>Refresh view</button>
       <div class="nav-meta" id="nav-meta"></div>

@@ -1,7 +1,18 @@
 // akm ui client: hash router and shell. Pages read the local JSON API and return markup
 // built with the escaping `html` tag; this file only mounts it.
 
-import { errorState, getMeta, hasUnsaved, html, initToken, loadingState, mount, setUnsaved, showFlash } from "./lib.js";
+import {
+  api,
+  errorState,
+  getMeta,
+  hasUnsaved,
+  html,
+  initToken,
+  loadingState,
+  mount,
+  setUnsaved,
+  showFlash,
+} from "./lib.js";
 
 initToken();
 
@@ -15,7 +26,8 @@ const ROUTES = [
     load: () => import("./proposals.js"),
     render: (m, c) => (c.param ? m.renderDetail(c) : m.renderList(c)),
   },
-  { name: "changes", label: "Changes", load: () => import("./changes.js"), render: (m, c) => m.render(c) },
+  { name: "improve", label: "Improve impact", load: () => import("./improve.js"), render: (m, c) => m.render(c) },
+  { name: "changes", label: "History", load: () => import("./changes.js"), render: (m, c) => m.render(c) },
   { name: "search", label: "Search", load: () => import("./search.js"), render: (m, c) => m.render(c) },
   { name: "asset", label: "Asset", nav: "search", load: () => import("./asset.js"), render: (m, c) => m.render(c) },
   {
@@ -28,7 +40,6 @@ const ROUTES = [
   {
     name: "new",
     label: "New knowledge",
-    nav: "search",
     load: () => import("./editor.js"),
     render: (m, c) => m.render(c),
   },
@@ -123,6 +134,18 @@ async function route() {
   }
 }
 
+async function showPendingCount() {
+  const target = document.querySelector("[data-pending-count]");
+  if (!target) return;
+  try {
+    const { fullCount } = await api("/api/proposals", { status: "pending", limit: 1 });
+    target.textContent = String(fullCount);
+    target.hidden = !fullCount;
+  } catch {
+    target.hidden = true;
+  }
+}
+
 async function showMeta() {
   const target = document.getElementById("nav-meta");
   try {
@@ -178,4 +201,6 @@ document.querySelector(".nav-links")?.addEventListener("click", (event) => {
   document.querySelector(".sidebar")?.classList.remove("nav-open");
 });
 showMeta();
+showPendingCount();
+window.addEventListener("hashchange", showPendingCount);
 route();

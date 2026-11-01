@@ -16,6 +16,7 @@ import diffJs from "../../assets/ui/diff.js" with { type: "text" };
 import diffViewJs from "../../assets/ui/diff-view.js" with { type: "text" };
 import echartsJs from "../../assets/ui/echarts.js" with { type: "text" };
 import editorJs from "../../assets/ui/editor.js" with { type: "text" };
+import improveJs from "../../assets/ui/improve.js" with { type: "text" };
 import indexHtml from "../../assets/ui/index.html" with { type: "text" };
 import libJs from "../../assets/ui/lib.js" with { type: "text" };
 import markdownJs from "../../assets/ui/markdown.js" with { type: "text" };
@@ -38,6 +39,7 @@ export const EMBEDDED_UI: Record<string, string> = {
   "diff-view.js": diffViewJs as unknown as string,
   "echarts.js": echartsJs as unknown as string,
   "editor.js": editorJs as unknown as string,
+  "improve.js": improveJs as unknown as string,
   "index.html": indexHtml as unknown as string,
   "lib.js": libJs as unknown as string,
   "markdown.js": markdownJs as unknown as string,
