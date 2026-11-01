@@ -99,13 +99,28 @@ async function request(url, init) {
 }
 
 /** GET `path` with optional query values (empty ones are dropped); resolves to the response's `data`. */
-export function api(path, query = {}) {
+let routeSignal = null;
+
+/** The signal every `api()` read aborts with: the router sets one per page, and aborts it when the reader navigates away. */
+export function setRouteSignal(signal) {
+  routeSignal = signal;
+}
+
+/**
+ * GET `path` and return its `data`. A read is tied to the page on screen and is abandoned when the reader leaves it;
+ * pass `{ signal: null }` for one that must outlive the page (the sidebar's count).
+ */
+export function api(path, query = {}, { signal } = {}) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
   }
   const url = search.size > 0 ? `${path}?${search}` : path;
-  return request(url, { headers: { "X-Akm-Ui-Token": token ?? "" }, cache: "no-store" });
+  return request(url, {
+    headers: { "X-Akm-Ui-Token": token ?? "" },
+    cache: "no-store",
+    signal: signal === undefined ? (routeSignal ?? undefined) : signal,
+  });
 }
 
 /** POST `body` as JSON to an explicit action. The token goes in the header, never the URL. */
@@ -122,7 +137,7 @@ let metaPromise = null;
 /** `/api/meta`, fetched once. */
 export function getMeta() {
   if (!metaPromise) {
-    metaPromise = api("/api/meta");
+    metaPromise = api("/api/meta", {}, { signal: null });
     metaPromise.catch(() => {
       metaPromise = null;
     });

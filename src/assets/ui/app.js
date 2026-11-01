@@ -11,6 +11,7 @@ import {
   initToken,
   loadingState,
   mount,
+  setRouteSignal,
   setUnsaved,
   showFlash,
 } from "./lib.js";
@@ -51,6 +52,7 @@ let sequence = 0;
 let shownHash = location.hash;
 let pendingHash = null;
 let cleanup = [];
+let pageRequests = null;
 const positions = new Map();
 const unsaved = document.getElementById("unsaved");
 
@@ -128,13 +130,17 @@ async function route() {
   cleanup = [];
   shownHash = location.hash;
   const mine = ++sequence;
+  // Leaving a page abandons its requests: a slow answer for a page the reader has left is never drawn.
+  pageRequests?.abort();
+  pageRequests = new AbortController();
+  setRouteSignal(pageRequests.signal);
   const { name, param, query } = parseHash();
   const entry = ROUTES.find((r) => r.name === name);
   markNav(entry ? (entry.nav ?? entry.name) : "");
   document.title = `${entry ? entry.label : "Not found"} · akm ui`;
   main.setAttribute("aria-busy", "true");
   mount(main, loadingState());
-  const ctx = { query, param, after: [], announcement: null };
+  const ctx = { query, param, after: [], announcement: null, signal: pageRequests.signal };
   try {
     if (!entry) {
       mount(
@@ -186,7 +192,7 @@ async function showPendingCount() {
   const target = document.querySelector("[data-pending-count]");
   if (!target) return;
   try {
-    const { fullCount } = await api("/api/proposals", { status: "pending", limit: 1 });
+    const { fullCount } = await api("/api/proposals", { status: "pending", limit: 1 }, { signal: null });
     target.textContent = String(fullCount);
     target.hidden = !fullCount;
   } catch {
