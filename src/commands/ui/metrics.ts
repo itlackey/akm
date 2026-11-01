@@ -8,7 +8,7 @@ import type { MetricsDailyUsage, MetricsUsageRow } from "../metrics/types";
 import { type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
 
 /** Drill-down over the same user-attributed summary rows that `akm metrics` counts. */
-export function retrievalSeries(rows: MetricsUsageRow[], window?: { since: string; until: string }) {
+export function retrievalSeries(rows: MetricsUsageRow[], window: { since: string; until: string }) {
   const days = new Map<string, { searches: number; zeroResults: number; durations: number[] }>();
   const queries = new Map<string, { date: string; query: string; count: number }>();
   for (const row of rows) {
@@ -39,13 +39,11 @@ export function retrievalSeries(rows: MetricsUsageRow[], window?: { since: strin
       medianMs: day.durations.length ? computeWallTimeStats(day.durations).medianMs : null,
       latencySamples: day.durations.length,
     }));
-  const filled = window
-    ? zeroFill(
-        present,
-        (day) => ({ day, date: day, searches: 0, zeroResults: 0, medianMs: null, latencySamples: 0 }),
-        window,
-      )
-    : present;
+  const filled = zeroFill(
+    present,
+    (day) => ({ day, date: day, searches: 0, zeroResults: 0, medianMs: null, latencySamples: 0 }),
+    window,
+  );
   return {
     daily: filled.map(({ day: _day, ...row }) => ({
       ...row,

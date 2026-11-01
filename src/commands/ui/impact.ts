@@ -8,9 +8,10 @@
  * card. Nothing here writes.
  */
 
+import { readStateEvents } from "../../storage/repositories/events-repository";
+import { listIndexCompletedEvents } from "../../storage/repositories/metrics-repository";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
 import { akmMetrics } from "../metrics/metrics-cli";
-import { dayRange } from "../metrics/stats";
 import type { MetricsUsageRow } from "../metrics/types";
 import { isRetireProposal, type Proposal } from "../proposal/proposal-types";
 import { classifyOutcome, decidedAt, type OutcomeClass, weekOf, weekRange } from "./derive";
@@ -40,28 +41,48 @@ function outcomesByProcess(proposals: Proposal[], weeks: string[]) {
     .map(([source, perWeek]) => ({
       source,
       weeks: weeks.map((week) => ({ week, ...(perWeek.get(week) ?? blank()) })),
-      created: proposals.filter((p) => p.source === source).length,
     }))
     .sort((a, b) => a.source.localeCompare(b.source));
 }
 
 /** Waiting for review at the end of each week: made by then and not yet decided by then. */
 function reviewFlow(proposals: Proposal[], weeks: string[]) {
+  // One pass buckets each proposal's week once; "waiting" needs the end of each week, so it compares strings.
+  const created = new Map<string, number>();
+  const decided = new Map<string, number>();
+  for (const p of proposals) {
+    const madeIn = weekOf(p.createdAt);
+    created.set(madeIn, (created.get(madeIn) ?? 0) + 1);
+    if (p.status !== "pending") {
+      const decidedIn = weekOf(decidedAt(p));
+      decided.set(decidedIn, (decided.get(decidedIn) ?? 0) + 1);
+    }
+  }
   return weeks.map((week) => {
     const end = new Date(Date.parse(`${week}T00:00:00Z`) + 7 * DAY).toISOString();
-    const created = proposals.filter((p) => weekOf(p.createdAt) === week).length;
-    const decided = proposals.filter((p) => p.status !== "pending" && weekOf(decidedAt(p)) === week).length;
     const waiting = proposals.filter(
       (p) => p.createdAt < end && (p.status === "pending" || decidedAt(p) >= end),
     ).length;
-    return { week, created, decided, waiting };
+    return { week, created: created.get(week) ?? 0, decided: decided.get(week) ?? 0, waiting };
   });
+}
+
+/** Usage rows grouped by asset ref, so a per-asset lookup does not rescan every row. */
+function rowsByRef(rows: MetricsUsageRow[]): Map<string, MetricsUsageRow[]> {
+  const byRef = new Map<string, MetricsUsageRow[]>();
+  for (const row of rows) {
+    if (!row.ref) continue;
+    const list = byRef.get(row.ref);
+    if (list) list.push(row);
+    else byRef.set(row.ref, [row]);
+  }
+  return byRef;
 }
 
 function harmLog(
   proposals: Proposal[],
   usage: MetricsUsageRow[],
-  reopened: Array<{ ts: string; ref: string | null }>,
+  reopened: Array<{ ts: string; ref?: string }>,
   sinceIso: string,
 ) {
   const items: Array<{ kind: string; ref: string; at: string; detail: string; proposalId?: string }> = [];
@@ -88,13 +109,13 @@ function harmLog(
       items.push({ kind: "reopened", ref: event.ref, at: event.ts, detail: "a rejection was reopened" });
   }
   // A flag after a change: negative feedback on an asset within two weeks after improve changed it.
-  const negative = usage.filter((row) => row.eventType === "feedback" && row.signal === "negative" && row.ref);
+  const negative = rowsByRef(usage.filter((row) => row.eventType === "feedback" && row.signal === "negative"));
   for (const p of proposals) {
     if (p.status !== "accepted" && p.status !== "reverted") continue;
     const at = decidedAt(p);
     if (at < sinceIso) continue;
     const end = new Date(Date.parse(at) + FLAG_DAYS * DAY).toISOString();
-    const flags = negative.filter((row) => row.ref === p.ref && row.at > at && row.at <= end);
+    const flags = (negative.get(p.ref) ?? []).filter((row) => row.at > at && row.at <= end);
     for (const flag of flags)
       items.push({
         kind: "flag-after-change",
@@ -109,12 +130,17 @@ function harmLog(
 
 /** Before and after counts of how an asset was found and rated, around the day improve changed it. */
 function changedAssets(proposals: Proposal[], usage: MetricsUsageRow[], now: number) {
+  const byRef = rowsByRef(usage);
   return proposals
     .filter((p) => (p.status === "accepted" || p.status === "reverted") && !isRetireProposal(p))
+    .sort((a, b) => decidedAt(b).localeCompare(decidedAt(a)))
+    .slice(0, 50)
     .map((p) => {
       const at = Date.parse(decidedAt(p));
       const count = (from: number, to: number) => {
-        const mine = usage.filter((row) => row.ref === p.ref && Date.parse(row.at) >= from && Date.parse(row.at) < to);
+        const fromIso = new Date(from).toISOString();
+        const toIso = new Date(to).toISOString();
+        const mine = (byRef.get(p.ref) ?? []).filter((row) => row.at >= fromIso && row.at < toIso);
         return {
           hits: mine.filter((row) => row.eventType === "search" || row.eventType === "show").length,
           negative: mine.filter((row) => row.signal === "negative").length,
@@ -134,9 +160,7 @@ function changedAssets(proposals: Proposal[], usage: MetricsUsageRow[], now: num
         // Fewer than four weeks since the change: the "after" side is still filling.
         complete: afterDays >= COMPARE_DAYS,
       };
-    })
-    .sort((a, b) => b.decidedAt.localeCompare(a.decidedAt))
-    .slice(0, 50);
+    });
 }
 
 function judgeAndYou(proposals: Proposal[]) {
@@ -175,13 +199,9 @@ export async function improveImpact(query: URLSearchParams) {
   const stashDir = tryStashDir();
   const state = withReadonlyStateDb(
     (db) => ({
-      proposals: stashDir ? listStateProposals(db, { stashDir }) : [],
-      reopened: db
-        .prepare("SELECT ts, ref FROM events WHERE event_type = 'proposal_reopened' AND ts >= ? ORDER BY ts")
-        .all(sinceIso) as Array<{ ts: string; ref: string | null }>,
-      library: db
-        .prepare("SELECT ts, metadata_json FROM events WHERE event_type = 'index_completed' AND ts >= ? ORDER BY ts")
-        .all(sinceIso) as Array<{ ts: string; metadata_json: string }>,
+      proposals: stashDir ? listStateProposals(db, { stashDir, withContent: false }) : [],
+      reopened: readStateEvents(db, { type: "proposal_reopened", since: sinceIso }).events,
+      library: listIndexCompletedEvents(db, sinceIso, new Date(now + DAY).toISOString()),
     }),
     null,
   );
@@ -253,7 +273,6 @@ export async function improveImpact(query: URLSearchParams) {
     cost,
     changedAssets: changed,
     judgeAndYou: judge,
-    dayCount: dayRange(sinceIso.slice(0, 10), new Date(now).toISOString().slice(0, 10)).length,
     ...(Object.keys(errors).length > 0 ? { errors } : {}),
   };
 }

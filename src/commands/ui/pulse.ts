@@ -9,7 +9,7 @@
  */
 
 import { loadConfig } from "../../core/config/config";
-import { listRecentImproveRuns } from "../../storage/repositories/improve-runs-repository";
+import { queryImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
 import { queryTaskHistory } from "../../storage/repositories/task-history-repository";
 import { akmMetrics } from "../metrics/metrics-cli";
@@ -17,14 +17,11 @@ import { nearestRank } from "../metrics/stats";
 import type { MetricsUsageRow } from "../metrics/types";
 import { proposalWaitingSince } from "../proposal/proposal-types";
 import { againstUsual, classifyOutcome } from "./derive";
-import { missesFromRows } from "./misses";
+import { isUserSearch, missesFromRows } from "./misses";
 import { tryStashDir, withReadonlyStateDb } from "./readers";
 
 const DAY = 86_400_000;
 const iso = (ms: number): string => new Date(ms).toISOString();
-
-const isUserSearch = (row: MetricsUsageRow): boolean =>
-  row.eventType === "search" && row.ref === undefined && row.source === "user";
 
 export async function overviewPulse() {
   const now = Date.now();
@@ -38,11 +35,12 @@ export async function overviewPulse() {
   const current = searches.filter((row) => row.at >= weekAgo);
   const baseline = searches.filter((row) => row.at >= baselineStart && row.at < weekAgo);
   const miss = (list: MetricsUsageRow[]) => list.filter((row) => row.resultCount === 0).length;
+  const missedNow = miss(current);
   const foundNothing = {
-    x: miss(current),
+    x: missedNow,
     n: current.length,
-    rate: current.length ? miss(current) / current.length : null,
-    usual: againstUsual(miss(current), current.length, miss(baseline), baseline.length),
+    rate: current.length ? missedNow / current.length : null,
+    usual: againstUsual(missedNow, current.length, miss(baseline), baseline.length),
   };
 
   // Negative feedback: a count this week against the weekly counts before it.
@@ -69,9 +67,9 @@ export async function overviewPulse() {
   const stashDir = tryStashDir();
   const state = withReadonlyStateDb(
     (db) => {
-      const runs = listRecentImproveRuns(db, 300).filter((run) => run.started_at >= weekAgo);
+      const runs = queryImproveRuns(db, weekAgo);
       const tasks = queryTaskHistory(db, { since: weekAgo });
-      const proposals = stashDir ? listStateProposals(db, { stashDir }) : [];
+      const proposals = stashDir ? listStateProposals(db, { stashDir, withContent: false }) : [];
       return { runs, tasks, proposals };
     },
     { runs: [], tasks: [], proposals: [] },

@@ -486,10 +486,6 @@
     font-size: 0.92em;
   }
 
-  details.inline {
-    display: inline-block;
-  }
-
   pre.code {
     padding: var(--space-3) var(--space-4);
     background: var(--surface-2);
@@ -862,11 +858,6 @@
   .notice-fail {
     border-color: var(--fail);
     background: var(--fail-bg);
-  }
-
-  .select {
-    inline-size: 1%;
-    white-space: nowrap;
   }
 
   .chart-legend {

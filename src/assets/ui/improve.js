@@ -1,7 +1,20 @@
 // Improve impact: what akm's improve processes proposed, changed and cost over the weeks, and what went wrong.
 
 import { lines, stackedColumns, stepLine, wireChart } from "./chart-view.js";
-import { ago, api, badge, emptyState, fmtNum, fmtPct, html, mount, proposalHref, tableWrap, weekStart } from "./lib.js";
+import {
+  ago,
+  api,
+  assetHref,
+  badge,
+  emptyState,
+  fmtNum,
+  fmtPct,
+  html,
+  mount,
+  proposalHref,
+  tableWrap,
+  weekStart,
+} from "./lib.js";
 
 const TREND_DAYS = 90;
 const ROLLING_DAYS = 7;
@@ -160,7 +173,7 @@ function summaryLine(impact) {
   const s = impact.summary;
   const harm = s.reverted + s.flags;
   const tokens = s.tokens >= 1000 ? `${Math.round(s.tokens / 1000)}k` : String(s.tokens);
-  return html`<p class="impact-summary"><strong>${impact.since === "all" ? "Last year" : "Last 90 days"}:</strong> <a href="#/improve" data-anchor="outcomes">${fmtNum(s.kept)} kept</a> · <a href="#/improve" data-anchor="harm" ${harm ? html`class="text-warn"` : ""}>${fmtNum(s.reverted)} reverted</a> · <a href="#/improve" data-anchor="harm" ${s.flags ? html`class="text-warn"` : ""}>${fmtNum(s.flags)} ${s.flags === 1 ? "flag" : "flags"} after a change</a> · <a href="#/improve" data-anchor="cost">${tokens} tokens${s.tokenCoverage === null ? "" : ` (${fmtPct(s.tokenCoverage)} of calls reported)`}</a></p>`;
+  return html`<p class="impact-summary"><strong>${impact.since === "365d" ? "Last year" : "Last 90 days"}:</strong> <a href="#/improve" data-anchor="outcomes">${fmtNum(s.kept)} kept</a> · <a href="#/improve" data-anchor="harm" ${harm ? html`class="text-warn"` : ""}>${fmtNum(s.reverted)} reverted</a> · <a href="#/improve" data-anchor="harm" ${s.flags ? html`class="text-warn"` : ""}>${fmtNum(s.flags)} ${s.flags === 1 ? "flag" : "flags"} after a change</a> · <a href="#/improve" data-anchor="cost">${tokens} tokens${s.tokenCoverage === null ? "" : ` (${fmtPct(s.tokenCoverage)} of calls reported)`}</a></p>`;
 }
 
 function outcomesSection(impact) {
@@ -249,7 +262,7 @@ function harmSection(impact) {
     ${
       harm.length === 0
         ? html`<div class="attention-clear"><span class="dot dot-ok" aria-hidden="true"></span>No reverts, reopened rejections or risky retirements, and no flags after a change, in this window. Checked ${fmtNum(impact.summary.checked)} decisions.</div>`
-        : html`<ul class="change-list">${harm.map((item) => html`<li>${badge(HARM_LABEL[item.kind] ?? item.kind, item.kind === "flag-after-change" ? "warn" : "neutral")} <a class="mono wrap" href="#/asset/${encodeURIComponent(item.ref)}">${item.ref}</a><span class="muted small">${item.detail} · ${ago(item.at)}</span>${item.proposalId ? html`<a class="small" href="${proposalHref(item.proposalId)}">Proposal</a>` : ""}</li>`)}</ul>`
+        : html`<ul class="change-list">${harm.map((item) => html`<li>${badge(HARM_LABEL[item.kind] ?? item.kind, item.kind === "flag-after-change" ? "warn" : "neutral")} <a class="mono wrap" href="${assetHref(item.ref)}">${item.ref}</a><span class="muted small">${item.detail} · ${ago(item.at)}</span>${item.proposalId ? html`<a class="small" href="${proposalHref(item.proposalId)}">Proposal</a>` : ""}</li>`)}</ul>`
     }
   </section>`;
 }
@@ -281,7 +294,7 @@ function changedSection(impact) {
       changed.length === 0
         ? emptyState("No changes kept in this window.")
         : tableWrap(
-            html`<table><thead><tr><th>Asset</th><th>Process</th><th>Changed</th><th class="r">Found</th><th class="r">Negative</th><th>After</th></tr></thead><tbody>${changed.map((c) => html`<tr><th><a class="mono wrap" href="#/asset/${encodeURIComponent(c.ref)}">${c.ref}</a></th><td class="mono">${c.source}</td><td>${ago(c.decidedAt)}${c.outcome === "reverted" ? html` ${badge("reverted", "warn")}` : ""}</td><td class="r">${arrow(c.before.hits, c.after.hits)}</td><td class="r">${arrow(c.before.negative, c.after.negative)}</td><td>${c.complete ? "28 days" : `${c.afterDays} days so far`}</td></tr>`)}</tbody></table>`,
+            html`<table><thead><tr><th>Asset</th><th>Process</th><th>Changed</th><th class="r">Found</th><th class="r">Negative</th><th>After</th></tr></thead><tbody>${changed.map((c) => html`<tr><th><a class="mono wrap" href="${assetHref(c.ref)}">${c.ref}</a></th><td class="mono">${c.source}</td><td>${ago(c.decidedAt)}${c.outcome === "reverted" ? html` ${badge("reverted", "warn")}` : ""}</td><td class="r">${arrow(c.before.hits, c.after.hits)}</td><td class="r">${arrow(c.before.negative, c.after.negative)}</td><td>${c.complete ? "28 days" : `${c.afterDays} days so far`}</td></tr>`)}</tbody></table>`,
           )
     }
   </section>`;

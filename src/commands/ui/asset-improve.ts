@@ -16,7 +16,10 @@ export async function assetImprove(query: URLSearchParams) {
   const ref = query.get("ref")?.trim();
   if (!ref) throw new UsageError("Give the asset's ref: ?ref=<bundle>//<type>/<name>.", "MISSING_REQUIRED_ARGUMENT");
   const stashDir = tryStashDir();
-  const proposals = withReadonlyStateDb((db) => (stashDir ? listStateProposals(db, { stashDir, ref }) : []), []);
+  const proposals = withReadonlyStateDb(
+    (db) => (stashDir ? listStateProposals(db, { stashDir, ref, withContent: false }) : []),
+    [],
+  );
   const metrics = await akmMetrics({ since: "90d", indexSnapshot: false, includeRows: true });
   const mine = (metrics.rows?.usage ?? []).filter((row) => row.ref === ref);
   const now = Date.now();
@@ -47,10 +50,5 @@ export async function assetImprove(query: URLSearchParams) {
       }))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     usageByWeek,
-    feedback: mine
-      .filter((row) => row.signal)
-      .map((row) => ({ at: row.at, signal: row.signal, reason: row.reason ?? null }))
-      .sort((a, b) => b.at.localeCompare(a.at))
-      .slice(0, 10),
   };
 }

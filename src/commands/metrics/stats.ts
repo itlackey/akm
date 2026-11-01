@@ -52,16 +52,6 @@ export function zeroFill<T extends { day: string }>(
   });
 }
 
-/** The Wilson score interval for `successes` of `n` (95% by default); null when there is nothing to estimate. */
-export function wilson(successes: number, n: number, z = 1.96): { low: number; high: number } | null {
-  if (n <= 0) return null;
-  const p = successes / n;
-  const z2 = z * z;
-  const centre = (p + z2 / (2 * n)) / (1 + z2 / n);
-  const margin = (z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / (1 + z2 / n);
-  return { low: Math.max(0, centre - margin), high: Math.min(1, centre + margin) };
-}
-
 /** The nearest-rank percentile `p` (0..1) of an ascending list; null for an empty list. */
 export function nearestRank(sorted: number[], p: number): number | null {
   if (sorted.length === 0) return null;

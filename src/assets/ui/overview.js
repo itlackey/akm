@@ -33,6 +33,12 @@ function checkState(check, checks, probed = false) {
 
 const allChecks = (health) => (health ? [...health.hardChecks, ...health.advisories] : []);
 
+/** Every check with the group it belongs in, decided once per render. */
+function classified(health, probed) {
+  const checks = allChecks(health);
+  return checks.map((check) => ({ check, state: checkState(check, checks, probed) }));
+}
+
 function checkItem(check) {
   const evidence = check.evidence && Object.keys(check.evidence).length > 0 ? check.evidence : null;
   return html`<li class="check">
@@ -46,23 +52,23 @@ const STATE_DOT = { fail: "fail", warn: "warn", off: "neutral", unchecked: "neut
 
 /** `probed`: the network checks ran, so a check still undecided could not be checked, and says why. */
 function healthSection(health, probed = false) {
-  const checks = allChecks(health);
-  const unchecked = probed ? 0 : checks.filter((c) => checkState(c, checks) === "unchecked").length;
+  const checks = classified(health, probed);
+  const unchecked = probed ? 0 : checks.filter((c) => c.state === "unchecked").length;
   const groups = probed
     ? GROUPS.map((g) => (g.state === "unchecked" ? { ...g, title: "Could not check", open: true } : g))
     : GROUPS;
   return html`<section id="health"><div class="trends-head"><h2>Health checks</h2>${unchecked ? html`<button type="button" class="btn-secondary" data-run-checks>Run all checks</button>` : ""}</div>
     ${unchecked ? html`<p class="muted small">${unchecked} ${unchecked === 1 ? "check contacts" : "checks contact"} the akm release source or your scheduler, so this page runs ${unchecked === 1 ? "it" : "them"} only when you ask.</p>` : ""}
     <div data-health-groups>${groups.map((g) => {
-      const items = checks.filter((c) => checkState(c, checks, probed) === g.state);
+      const items = checks.filter((c) => c.state === g.state).map((c) => c.check);
       if (items.length === 0) return "";
       return html`<details class="group" ${g.open ? html`open` : ""}><summary><span class="dot dot-${STATE_DOT[g.state]}" aria-hidden="true"></span>${g.title} <span class="num muted">${items.length}</span></summary><ul class="checks">${items.map(checkItem)}</ul></details>`;
     })}</div>${checks.length === 0 ? emptyState("No health checks ran.") : ""}</section>`;
 }
 
 function statusStrip(health, probed = false) {
-  const checks = allChecks(health);
-  const count = (state) => checks.filter((c) => checkState(c, checks, probed) === state).length;
+  const checks = classified(health, probed);
+  const count = (state) => checks.filter((c) => c.state === state).length;
   const overall = health?.status ?? "unknown";
   const quiet = [
     count("off") ? `${count("off")} turned off` : "",
@@ -176,7 +182,6 @@ function pulseSection(pulse, trend) {
     return html`<section aria-labelledby="pulse-title"><h2 id="pulse-title">Last 7 days against your usual</h2>${emptyState("The weekly comparison is unavailable.")}</section>`;
   const { foundNothing, negativeFeedback, runs } = pulse.tiles;
   const rates = (trend?.weekly ?? []).map((w) => w.rate);
-  const fmtShare = (value) => fmtPct(value);
   const line = pulse.improveLine;
   const improveLine = line.proposed
     ? html`<p class="improve-line">Last ${line.weeks} weeks: improve proposed ${fmtNum(line.proposed)}; ${fmtNum(line.accepted)} accepted${line.acceptedThenReverted ? ` (${line.acceptedThenReverted} since reverted)` : ""}, ${fmtNum(line.rejected)} rejected${line.rejected ? ` (${line.rejectedByYou} by you)` : ""}, ${fmtNum(line.waiting)} waiting · ${fmtNum(line.calls)} model calls <a href="#/improve">Improve impact →</a></p>`
@@ -185,12 +190,12 @@ function pulseSection(pulse, trend) {
     <div class="tiles pulse-tiles">
       ${pulseTile({
         title: "Found nothing",
-        value: foundNothing.n ? fmtShare(foundNothing.rate) : "–",
+        value: foundNothing.n ? fmtPct(foundNothing.rate) : "–",
         lines: [
           foundNothing.n
             ? `${fmtNum(foundNothing.x)} of ${fmtNum(foundNothing.n)} searches.`
             : "No searches recorded yet.",
-          usualText(foundNothing.usual, fmtShare),
+          usualText(foundNothing.usual, fmtPct),
         ],
         tone: foundNothing.usual.state === "above" ? "warn" : "",
         spark: sparkline(rates),

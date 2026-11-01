@@ -29,7 +29,7 @@ function showHelp() {
     });
     document.body.append(helper);
   }
-  const rows = [...active.filter((s) => s.label), ...GLOBAL];
+  const rows = [...active, ...GLOBAL];
   mount(
     helper,
     html`<form method="dialog" class="shortcut-help-body">
@@ -50,16 +50,15 @@ function onKey(event) {
     return;
   }
   if (typing(event.target)) return;
-  const shortcut = active.find((s) => s.key === event.key && s.run);
+  const shortcut = active.find((s) => s.key === event.key);
   if (!shortcut) return;
-  if (shortcut.when && !shortcut.when()) return;
   event.preventDefault();
   shortcut.run(event);
 }
 
 /**
- * Register this page's shortcuts: `[{ key, label, run, when? }]`. Registering again replaces the previous page's keys;
- * the returned function removes them. A shortcut with no `run` is listed in the help only.
+ * Register this page's shortcuts: `[{ key, label, run }]`. Registering again replaces the previous page's keys; the
+ * returned function removes them.
  */
 export function registerShortcuts(shortcuts) {
   // Rendering in a test or any context without a real document has no keys to listen to.
@@ -74,6 +73,3 @@ export function registerShortcuts(shortcuts) {
     closeHelp();
   };
 }
-
-/** The key as it should be drawn in running text. */
-export const kbd = (key) => html`<kbd>${key}</kbd>`;

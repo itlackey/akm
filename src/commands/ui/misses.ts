@@ -18,6 +18,10 @@ export interface Miss {
   repeated: boolean;
 }
 
+/** A search the user ran themselves, not a lookup of one asset and not an agent's search. */
+export const isUserSearch = (row: MetricsUsageRow): boolean =>
+  row.eventType === "search" && row.ref === undefined && row.source === "user";
+
 const normalize = (query: string): string => query.trim().replace(/\s+/g, " ").toLowerCase();
 
 /** The user's searches that found nothing, grouped by normalised query, repeats first then most recent. */
@@ -27,7 +31,7 @@ export function missesFromRows(rows: MetricsUsageRow[]): Miss[] {
     { query: string; count: number; days: Set<string>; firstAt: string; lastAt: string }
   >();
   for (const row of rows) {
-    if (row.eventType !== "search" || row.ref !== undefined || row.source !== "user" || row.resultCount !== 0) continue;
+    if (!isUserSearch(row) || row.resultCount !== 0) continue;
     const query = row.query?.trim();
     if (!query) continue;
     const key = normalize(query);
@@ -53,8 +57,6 @@ export async function searchMisses(query: URLSearchParams) {
   const since = query.get("since") || "30d";
   const metrics = await akmMetrics({ since, indexSnapshot: false, includeRows: true });
   const misses = missesFromRows(metrics.rows?.usage ?? []);
-  const searches = (metrics.rows?.usage ?? []).filter(
-    (row) => row.eventType === "search" && row.ref === undefined && row.source === "user",
-  ).length;
+  const searches = (metrics.rows?.usage ?? []).filter(isUserSearch).length;
   return { window: metrics.window, searches, foundNothing: misses.reduce((sum, m) => sum + m.count, 0), misses };
 }

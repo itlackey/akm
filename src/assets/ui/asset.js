@@ -20,7 +20,7 @@ import {
 import { headingId, markdown, splitFrontmatter } from "./markdown.js";
 
 /** The rail: what this asset is, and what improve and feedback have done to it. */
-function rail(asset, data, improve, bundle) {
+function rail(asset, improve, bundle) {
   const pending = (improve?.proposals ?? []).filter((p) => p.status === "pending");
   const feedback = (improve?.usageByWeek ?? []).reduce(
     (sum, w) => ({ positive: sum.positive + w.positive, negative: sum.negative + w.negative }),
@@ -185,9 +185,10 @@ export async function render(ctx) {
     // ?section= keeps the plain slug; the heading's element id is prefixed.
     if (section) requestAnimationFrame(() => document.getElementById(headingId(section))?.scrollIntoView());
   });
+  const markdownEditable = asset.editable && ["knowledge", "memory"].includes(asset.type);
   return html`${back}${pageHeader(title)}
-    <p class="action-links">${asset.editable && ["knowledge", "memory"].includes(asset.type) ? html`<a class="btn" href="#/edit?ref=${encodeURIComponent(canonical)}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}">Edit Markdown</a> ` : ""}${data.durableRef ? html`<button type="button" class="btn-secondary" data-copy-ref>Copy ref</button> ` : ""}<a href="${href}&history=1">Document history</a></p>
-    ${asset.editable && ["knowledge", "memory"].includes(asset.type) ? "" : data.durableRef ? fixForm() : ""}
+    <p class="action-links">${markdownEditable ? html`<a class="btn" href="#/edit?ref=${encodeURIComponent(canonical)}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}">Edit Markdown</a> ` : ""}${data.durableRef ? html`<button type="button" class="btn-secondary" data-copy-ref>Copy ref</button> ` : ""}<a href="${href}&history=1">Document history</a></p>
+    ${markdownEditable ? "" : data.durableRef ? fixForm() : ""}
     <div class="asset-layout"><div class="asset-main">
     <div class="badges">${badge(asset.type, "info")}${asset.origin ? badge(asset.origin, "neutral") : ""}${asset.editable ? badge("editable", "ok") : badge("read-only", "neutral")}</div>
     ${headings.length > 1 ? html`<details class="contents"><summary>On this page</summary><ul>${headings.map((h) => html`<li><a href="${href}&section=${encodeURIComponent(h.slug)}">${h.text}</a></li>`)}</ul></details>` : ""}
@@ -208,5 +209,5 @@ export async function render(ctx) {
     ${history}
     ${linksBlock(asset.links)}
     ${feedbackBlock(data.feedback, data.durableRef, data.feedbackRequireReason)}
-    </div>${rail(asset, data, improve, data.bundle)}</div>`;
+    </div>${rail(asset, improve, data.bundle)}</div>`;
 }

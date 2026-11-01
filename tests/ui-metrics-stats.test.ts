@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { dayRange, isoWeekStart, nearestRank, wilson, zeroFill } from "../src/commands/metrics/stats";
+import { dayRange, isoWeekStart, nearestRank, zeroFill } from "../src/commands/metrics/stats";
 
 describe("dashboard stats", () => {
   test("dayRange is inclusive and empty when reversed", () => {
@@ -48,15 +48,6 @@ describe("dashboard stats", () => {
     expect(
       zeroFill([], (day) => ({ day }), { since: "2026-10-31T00:00:00.000Z", until: "2026-11-01T00:00:00.000Z" }),
     ).toEqual([]);
-  });
-
-  test("wilson gives a wide interval for a small sample and none for zero", () => {
-    expect(wilson(0, 0)).toBeNull();
-    const small = wilson(1, 2);
-    const large = wilson(50, 100);
-    expect(small && large && small.high - small.low > large.high - large.low).toBe(true);
-    expect(large?.low).toBeGreaterThan(0.39);
-    expect(large?.high).toBeLessThan(0.61);
   });
 
   test("nearestRank picks the ranked element", () => {

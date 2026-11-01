@@ -505,19 +505,6 @@
   }
 
   /* ---- overview: pulse and trend header ---- */
-  .chip-note {
-    margin-inline-start: var(--space-2);
-    padding: 0 var(--space-2);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-pill);
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: var(--text-xs);
-    font-weight: 500;
-    letter-spacing: 0;
-    white-space: nowrap;
-  }
-
   fieldset.trend-window {
     margin: 0;
     min-inline-size: 0;

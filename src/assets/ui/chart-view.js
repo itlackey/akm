@@ -150,25 +150,6 @@ export function verticalBars(labels, series, unit = "Count") {
 
 const percent = (value) => `${value}%`;
 
-/** Positive and negative counts per label as columns on either side of zero (e.g. flagged vs. kept). */
-export function divergingColumns(labels, positive, negative, { positiveName, negativeName, unit = "Count" }) {
-  return {
-    xAxis: { type: "category", data: labels, axisLabel: { hideOverlap: true } },
-    yAxis: { type: "value", name: unit, axisLabel: { formatter: (value) => Math.abs(value) }, minInterval: 1 },
-    series: [
-      { type: "bar", name: positiveName, stack: "d", colorIndex: 2, barMaxWidth: 28, data: positive },
-      {
-        type: "bar",
-        name: negativeName,
-        stack: "d",
-        colorIndex: 3,
-        barMaxWidth: 28,
-        data: negative.map((n) => (n ? -n : n)),
-      },
-    ],
-  };
-}
-
 /** One row of marks over the same labels as the chart above it: an `events` entry is `{ index, tone }`. */
 export function eventStrip(labels, events, { name = "Events", token }) {
   const tones = { ok: "--ok", warn: "--warn", fail: "--fail", info: "--info" };

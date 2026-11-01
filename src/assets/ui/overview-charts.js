@@ -113,7 +113,7 @@ function retrievalCard(ctx, trend, data) {
     <h3>Search time</h3>
     <div class="echarts-view" data-height="short" id="trend-latency" role="img" aria-label="Median search time by day. A gap means no timing was recorded that day."></div>
     <p class="muted small">Your own searches only. A day or week marked as partial is still filling. Found-nothing describes retrieval, not whether an answer was right.</p>
-    <details><summary>Data and details</summary>${tableWrap(html`<table><thead><tr><th>Week of</th><th class="r">Searches</th><th class="r">Found nothing</th><th class="r">Share</th><th class="r">Usual range</th></tr></thead><tbody>${weekly.map((w) => html`<tr><th>${w.week}</th><td class="r num">${fmtNum(w.n)}</td><td class="r num">${fmtNum(w.x)}</td><td class="r num">${w.rate === null ? "n/a" : fmtPct(w.rate)}${w.signal ? html` <span class="badge" data-tone="warn">unusual</span>` : ""}</td><td class="r num">${w.lower === null ? "n/a" : `${fmtPct(w.lower)} to ${fmtPct(w.upper)}`}</td></tr>`)}</tbody></table>`)}</details>
+    <details><summary>Data and details</summary>${tableWrap(html`<table><thead><tr><th>Week of</th><th class="r">Searches</th><th class="r">Found nothing</th><th class="r">Share</th><th class="r">Usual range</th></tr></thead><tbody>${weekly.map((w) => html`<tr><th>${w.week}</th><td class="r num">${fmtNum(w.n)}</td><td class="r num">${fmtNum(w.x)}</td><td class="r num">${w.rate === null ? "n/a" : fmtPct(w.rate)}${w.signal ? html` ${badge("unusual", "warn")}` : ""}</td><td class="r num">${w.lower === null ? "n/a" : `${fmtPct(w.lower)} to ${fmtPct(w.upper)}`}</td></tr>`)}</tbody></table>`)}</details>
   </section>`;
 }
 
