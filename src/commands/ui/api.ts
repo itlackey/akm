@@ -270,6 +270,13 @@ async function bundles() {
     })),
   );
 
+  // With no `defaultBundle` the working stash is not a configured bundle, so no card above describes it.
+  const stashDir = tryStashDir();
+  const workingStash =
+    stashDir && !cards.some((card) => card.path && path.resolve(card.path) === path.resolve(stashDir))
+      ? { path: stashDir, git: await readBundleGitStatus(stashDir) }
+      : null;
+
   const info = assembleInfo();
   let embeddingCount: number | null = null;
   try {
@@ -289,6 +296,7 @@ async function bundles() {
     defaultBundle: config.defaultBundle ?? null,
     defaultWriteTarget: config.defaultWriteTarget ?? null,
     bundles: cards,
+    workingStash,
     index: {
       entryCount,
       byType: info.indexStats.byType,

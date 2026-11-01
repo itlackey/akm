@@ -280,6 +280,41 @@ describe("pages", () => {
     for (const name of browserGlobals) delete (globalThis as Record<string, unknown>)[name];
   });
 
+  test("a command asset shows its template as the body and as Markdown source (B-01)", async () => {
+    await seed();
+    fs.mkdirSync(path.join(storage.stashDir, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(storage.stashDir, "commands", "release.md"),
+      "---\ndescription: Cut a release\n---\nRun the <b>release</b> checklist\n",
+    );
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const asset = (await (await view("asset.js"))(ctx("ref=commands%2Frelease"))).text;
+    expect(asset).not.toContain("This asset has no body.");
+    expect(asset).toContain("Run the &lt;b&gt;release&lt;/b&gt; checklist");
+    expect(asset).toMatch(/<summary>Markdown source<\/summary><pre class="code">[\s\S]*checklist/);
+  });
+
+  test("bundles lists the working stash first when it is not a configured bundle (B-02)", async () => {
+    await seed();
+    writeSandboxConfig({ bundles: undefined, defaultBundle: undefined, defaultWriteTarget: undefined });
+    resetConfigCache();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const bundles = (await (await view("bundles.js"))(ctx())).text;
+    expect(bundles).toContain("Working stash");
+    expect(bundles).toContain(storage.stashDir);
+    expect(bundles).toContain("No other bundles.");
+    expect(bundles).toContain("akm bundle add &lt;source&gt;");
+    expect(bundles).toContain("Automatic (working stash)");
+    expect(bundles).not.toContain("akm init");
+    expect(bundles).not.toContain("Use fallback");
+    expect(bundles.indexOf("Working stash")).toBeLessThan(bundles.indexOf("No other bundles."));
+  });
+
   test("overview, bundles, config, proposals, changes, search and asset render real data with hostile text escaped", async () => {
     const { proposalId } = await seed();
     server = await startUiServer({ port: 0 });
