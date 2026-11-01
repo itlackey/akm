@@ -61,7 +61,7 @@ import {
 import { type ImproveLedgerRow, listImproveLedgerRows } from "../../storage/repositories/improve-ledger-repository";
 import { getStateProposal } from "../../storage/repositories/proposals-repository";
 import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
-import type { ProposalsContext } from "../proposal/repository";
+import { type ProposalsContext, resolveProposalQueueTarget } from "../proposal/repository";
 import { contentHash } from "./content-hash";
 import { resolveImproveExecution } from "./execution";
 import {
@@ -1193,6 +1193,8 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     locking: tracking && !dryRun && !options.stateDb,
   });
   const modelPlanCount = planned.plans.filter((plan) => plan.kind === "model").length;
+  // A writing run needs a writable owner for its proposal queue; learn that before spending model work (#1289).
+  if (modelPlanCount > 0 && !dryRun) resolveProposalQueueTarget(stashDir, config);
 
   let stateDb: Database | undefined;
   let tally: ExtractLoopTally;

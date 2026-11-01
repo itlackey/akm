@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A writing `akm proposal extract` checks that its proposal queue has a writable
+  owner before it calls the model, and fails with the resolver's reason instead
+  of spending model work on candidates it cannot queue. Previews are unaffected.
+  `akm health` reports the same finding as the `proposal-queue` advisory when
+  learning is on (#1289).
+
 ## [0.10.261022] - 2026-10-31
 
 ### Added
