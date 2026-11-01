@@ -4,8 +4,8 @@
 
 /**
  * Reciprocal rank fusion (Cormack, Clarke and Büttcher, SIGIR 2009) of the
- * lexical and vector candidate lists, then one feedback factor on the fused
- * score — the whole of search ranking.
+ * lexical and vector candidate lists, then one feedback factor and one small
+ * recency factor on the fused score — the whole of search ranking.
  *
  * Fusing ranks rather than scores needs no calibration between BM25 and cosine
  * similarity, so it holds for every embedding model. On the retrieval suite,
@@ -92,6 +92,44 @@ export function applyFeedback(
     .map((candidate) => {
       const counts = feedback.get(candidate.itemRef);
       return counts ? { ...candidate, score: candidate.score * feedbackFactor(counts) } : candidate;
+    })
+    .sort((a, b) => b.score - a.score || compareCodePoints(a.itemRef, b.itemRef));
+}
+
+/**
+ * Weight of recency on the fused score. The factor is 1 + w·(r − ½), where r
+ * (1 for the newest dated candidate, halving every {@link RECENCY_HALF_LIFE_DAYS}
+ * older) is the candidate's recency: the newest gains w/2 and a much older one
+ * loses w/2, about 2% each at 0.04. In keyword-only search neighbours in the
+ * first 20 ranks sit 1.3 to 1.6% apart, so recency reorders neighbours of about
+ * equal relevance and never outweighs a clear keyword margin. Candidates with
+ * no date keep factor 1.
+ */
+export const RECENCY_WEIGHT = 0.04;
+
+/** Age, measured from the newest dated candidate, at which recency halves. */
+export const RECENCY_HALF_LIFE_DAYS = 365;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Scale fused scores by recency and reorder, with the same tie-break as fusion.
+ * `days` maps an entry id to its `YYYY-MM-DD` date; age is measured from the
+ * newest date among the candidates, never from the clock, so the order depends
+ * only on the index and the query. Fewer than two distinct dates change nothing.
+ */
+export function applyRecency(fused: readonly FusedCandidate[], days: ReadonlyMap<number, string>): FusedCandidate[] {
+  const distinct = [...new Set(days.values())].sort(compareCodePoints);
+  // One date, or none, says nothing about which candidate is newer.
+  if (distinct.length < 2) return [...fused];
+  const newestMs = Date.parse(distinct[distinct.length - 1] as string);
+  return fused
+    .map((candidate) => {
+      const day = days.get(candidate.id);
+      if (day === undefined) return candidate;
+      const ageDays = (newestMs - Date.parse(day)) / DAY_MS;
+      const recency = 0.5 ** (ageDays / RECENCY_HALF_LIFE_DAYS);
+      return { ...candidate, score: candidate.score * (1 + RECENCY_WEIGHT * (recency - 0.5)) };
     })
     .sort((a, b) => b.score - a.score || compareCodePoints(a.itemRef, b.itemRef));
 }

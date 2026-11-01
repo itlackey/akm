@@ -646,6 +646,9 @@ akm search "deploy" --filter user=alice --filter agent=claude
 # Include proposal-queue entries:
 akm search "deploy" --include-proposed
 
+# Only assets dated within a range (observed date, else updated):
+akm search "deploy host" --since 2026-06-01 --until 2026-09-30
+
 # ConceptId-prefix enumeration — list a subtree instead of keyword-matching:
 akm search "memories/projectA/"
 akm search "knowledge/"
@@ -691,7 +694,13 @@ document vectors nearest to the query embedding, 100 candidates each. Filters
 proposed quality) drop ineligible entries from each list before its 100
 candidates are taken. The fused score is then multiplied by
 `1 + 0.03 × (ln(1 + positives) − ln(1 + negatives))` over the user's recorded
-feedback for the asset (see [`akm feedback`](#feedback)), and hits are ordered
+feedback for the asset (see [`akm feedback`](#feedback)), and by a recency
+factor `1 + 0.04 × (r − ½)`, where `r` is 1 for the newest dated candidate and
+halves for every year older (measured from that candidate, not from today).
+Recency moves a score by at most 2% either way, so it reorders neighbours of
+about equal relevance and never outweighs a clear match. It needs two distinct
+dates among the candidates, a candidate without a date keeps factor 1, and the
+date is the observed date, else `updated`. Hits are ordered
 by that score, equal scores by fully qualified ref (`<bundle>//<conceptId>`,
 even where the output shows the short form). A hit's `score` is the adjusted
 score. If `state.db` exists but cannot be read, the search ranks without
@@ -712,6 +721,8 @@ it.
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the candidates before ranking. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--belief` | `all`, `current`, `historical` | `current` | Belief filter on any asset. `current` keeps unflagged/active/asserted assets; `historical` keeps deprecated/contradicted/superseded/archived assets. Labels do not establish truth. |
+| `--since` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or after this day: the `observed` date, else `updated`. Assets with neither are dropped. Applies before the candidate budgets, like `--filter`. Search only; registry hits are unaffected. |
+| `--until` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or before this day, by the same date. |
 | `--include-sessions` | flag | `false` | Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md`, `html` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output verbosity level, or the `agent` projection |
@@ -745,9 +756,9 @@ assembled into the shape registry by the `src/output/shapes.ts` barrel:
 | Level | Local bundle hits | Registry hits |
 | --- | --- | --- |
 | `brief` (default) | `type`, `name`, `ref`, `action`, `estimatedTokens` | `name`, `installRef`, `score` |
-| `normal` | `type`, `name`, `ref`, `description`, `action`, `score`, `estimatedTokens`, optional `warnings`/`quality`/`keys` | `name`, `description`, `action`, `installRef`, `score`, optional `warnings` |
-| `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, timings, bundle metadata) | full hit object |
-| `agent` | `name`, `ref`, `type`, `path`, `editable`, conditional `editHint`, `description`, `action`, `score`, optional `estimatedTokens`/`keys` | no local access fields |
+| `normal` | `type`, `name`, `ref`, `description`, `action`, `score`, `estimatedTokens`, optional `warnings`/`quality`/`observed`/`updated`/`keys` | `name`, `description`, `action`, `installRef`, `score`, optional `warnings` |
+| `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, optional `observed`/`created`/`updated`/`expires`, timings, bundle metadata) | full hit object |
+| `agent` | `name`, `ref`, `type`, `path`, `editable`, conditional `editHint`, `description`, `action`, `score`, optional `estimatedTokens`/`keys`/`observed`/`updated` | no local access fields |
 
 There is no registry `curated` boolean. Renderers surface an optional
 `warnings: string[]` field on hits when a provider has non-fatal issues to

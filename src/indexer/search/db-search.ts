@@ -8,8 +8,8 @@
  * Ranking is two candidate channels fused by reciprocal rank (`ranking.ts`):
  * BM25 over whole documents matching any query word, and the nearest document
  * vectors to the query embedding. The fused score is then scaled by the
- * asset's recorded user feedback. Filters narrow the list; nothing else
- * reorders it.
+ * asset's recorded user feedback and, slightly, by its recency. Filters narrow
+ * the list; nothing else reorders it.
  */
 
 import path from "node:path";
@@ -20,6 +20,7 @@ import { classifyPathAccess } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
 import { withStateDbTelemetry } from "../../core/state-db";
 import { systemErrorCode } from "../../core/system-error";
+import { isoDay } from "../../core/time";
 import { presentationFor } from "../../core/type-presentation";
 import { embed } from "../../llm/embedder";
 import { effectiveEmbedding } from "../../llm/embedders/connection";
@@ -57,6 +58,7 @@ import { countFeedbackSignalsByRef } from "../usage/usage-events";
 import { ftsQueryTokens, parseRefPrefixQuery } from "./fts-query";
 import {
   applyFeedback,
+  applyRecency,
   type FeedbackCounts,
   type FusedCandidate,
   type RankedRef,
@@ -159,6 +161,13 @@ export interface SearchLocalInput {
    * to the channels before their candidate budgets.
    */
   filters?: StashEntryScope;
+  /**
+   * Inclusive `YYYY-MM-DD` bounds on an entry's date: `observed`, else
+   * `updated`. Applied with the other eligibility filters, before candidate
+   * budgets; an entry with neither date fails when a bound is set.
+   */
+  since?: string;
+  until?: string;
   /**
    * When true, entries with `quality === "proposed"` are kept in the result
    * set. By default (false) they are excluded before candidate selection.
@@ -283,6 +292,8 @@ async function searchDatabase(
     sources,
     restrictToSources: input.restrictToSources === true,
     filters,
+    since: input.since,
+    until: input.until,
     includeProposed: input.includeProposed === true,
     beliefFilter: input.beliefFilter ?? "all",
   };
@@ -351,7 +362,7 @@ async function searchDatabase(
   const vectorCandidates = vector.neighbors ? keepAllowedTypes(db, vector.neighbors, typeFilter, defaultExcludes) : [];
   const rrf = reciprocalRankFusion([lexical, vectorCandidates]);
   const feedback = readFeedback(rrf);
-  const fused = applyFeedback(rrf, feedback.counts);
+  const fused = applyRecency(applyFeedback(rrf, feedback.counts), readEntryDays(db, rrf));
   const selected = selectFusedEntries(db, fused, limit, filterOptions);
   const rankMs = Date.now() - tRank0;
 
@@ -399,6 +410,19 @@ function readFeedback(fused: readonly FusedCandidate[]): { counts: Map<string, F
     };
   }
   return { counts };
+}
+
+/** The date of each fused candidate that has one, by entry id. */
+function readEntryDays(db: Database, fused: readonly FusedCandidate[]): Map<number, string> {
+  const days = new Map<number, string>();
+  for (const { id, entry } of getEntriesByIds(
+    db,
+    fused.map((candidate) => candidate.id),
+  )) {
+    const day = entryDay(entry);
+    if (day) days.set(id, day);
+  }
+  return days;
 }
 
 type HydratedEntry = NonNullable<ReturnType<typeof getEntryById>> & { id: number };
@@ -560,14 +584,22 @@ interface EntryFilterOptions {
   sources: SearchSource[];
   restrictToSources: boolean;
   filters?: StashEntryScope;
+  since?: string;
+  until?: string;
   includeProposed: boolean;
   beliefFilter: BeliefFilterMode;
 }
 
+/** The day an entry is dated by: when it was observed, else when it was last updated. */
+function entryDay(entry: IndexDocument): string | undefined {
+  const date = entry.observed ?? entry.updated;
+  return date === undefined ? undefined : isoDay(date);
+}
+
 /**
  * Filter chain shared by the scored and browse paths, in this order:
- * source-narrowing → scope → proposed-quality → derived-twin belief
- * inheritance → belief filter.
+ * source-narrowing → scope → date range → proposed-quality → derived-twin
+ * belief inheritance → belief filter.
  */
 export function applyEntryFilters<T extends { id: number; entry: IndexDocument; filePath: string }>(
   items: T[],
@@ -586,11 +618,21 @@ export function applyEntryFilters<T extends { id: number; entry: IndexDocument; 
   const scopeFiltered = filters
     ? sourceFiltered.filter((item) => entryMatchesScope(item.entry.scope, filters))
     : sourceFiltered;
+  // Date filter: keep entries dated within the inclusive range; undated
+  // entries cannot satisfy a bound.
+  const { since, until } = opts;
+  const dateFiltered =
+    since === undefined && until === undefined
+      ? scopeFiltered
+      : scopeFiltered.filter((item) => {
+          const day = entryDay(item.entry);
+          return day !== undefined && (since === undefined || day >= since) && (until === undefined || day <= until);
+        });
   // Proposed-quality filter: exclude `quality: "proposed"`
   // entries unless the caller opts in.
   const qualityFiltered = opts.includeProposed
-    ? scopeFiltered
-    : scopeFiltered.filter((item) => !isProposedQuality(item.entry.quality));
+    ? dateFiltered
+    : dateFiltered.filter((item) => !isProposedQuality(item.entry.quality));
   // 03-R3: derived twins inherit their base's demoting belief state BEFORE the
   // belief filter, so the filter (and the reported hit state) stays consistent
   // across both paths.
@@ -794,6 +836,10 @@ export async function buildDbHit(input: {
     ...(input.entry.quality ? { quality: input.entry.quality } : {}),
     ...(input.entry.beliefState ? { beliefState: input.entry.beliefState } : {}),
     ...(input.entry.currentBeliefRefs ? { currentBeliefRefs: input.entry.currentBeliefRefs } : {}),
+    ...(input.entry.observed ? { observed: input.entry.observed } : {}),
+    ...(input.entry.created ? { created: input.entry.created } : {}),
+    ...(input.entry.updated ? { updated: input.entry.updated } : {}),
+    ...(input.entry.expires ? { expires: input.entry.expires } : {}),
   };
 
   if (input.entry.content) hitContent.set(hit, input.entry.content);

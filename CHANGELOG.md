@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Search reads frontmatter dates as fields: hits carry `observed`, `created`,
+  `updated` and `expires` when the asset has them, `akm search` takes
+  `--since` and `--until` (`YYYY-MM-DD`, on the observed date, else `updated`,
+  applied before candidate budgets), and recency is a small tie-break in the
+  fused score. The next ordinary index pass records the dates (#1228).
+
 ### Fixed
 
 - A writing `akm proposal extract` checks that its proposal queue has a writable
