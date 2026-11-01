@@ -13,6 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   of spending model work on candidates it cannot queue. Previews are unaffected.
   `akm health` reports the same finding as the `proposal-queue` advisory when
   learning is on (#1289).
+- `akm proposal extract` and `akm improve` report candidate writes that failed
+  for a reason other than the validator's refusal in a new `writeFailures`
+  field (counts and at most three causes) and a warning line, with `ok`
+  unchanged. `akm health`'s `session-extraction` advisory now warns when some
+  sessions harvested while others had writes fail and were not extracted
+  again (#1290).
 
 ## [0.10.261022] - 2026-10-31
 

@@ -864,7 +864,8 @@ describe("akmExtract — accounting matches persisted effects (#1212)", () => {
         }
         const health = await akmHealth({ since: "7d" });
         const advisory = health.advisories.find((check) => check.name === "session-extraction");
-        expect(advisory?.status).toBe(mode === "preview" ? "unknown" : mode === "failed" ? "warn" : "pass");
+        // A write that failed leaves the session retryable, whether or not other candidates queued (#1290).
+        expect(advisory?.status).toBe(mode === "preview" ? "unknown" : failed ? "warn" : "pass");
         if (mode !== "preview") expect(JSON.stringify(advisory?.evidence)).toContain(outcome);
         const metrics = await akmMetrics();
         expect(metrics.proposals.byStatus.pending ?? 0).toBe(persisted);
