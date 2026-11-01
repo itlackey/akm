@@ -174,11 +174,18 @@ describe("extract reports write failures beside ok: true (#1290)", () => {
     const db = openStateDatabase();
     try {
       db.exec(`CREATE TRIGGER fail_extract_proposal BEFORE INSERT ON proposals
-        WHEN NEW.ref LIKE '%/broken%' BEGIN SELECT RAISE(ABORT, 'scripted write failure ' || NEW.ref); END`);
+        WHEN NEW.ref LIKE '%/broken%' BEGIN
+          SELECT RAISE(ABORT, 'scripted write failure ' || NEW.ref || ' ' || printf('%.300c', 'x'));
+        END`);
       const names = ["broken1", "broken2", "broken3", "broken4", "broken5"];
       const result = await extract(db, stash, [session("s1"), session("s2")], names);
       expect(result.writeFailures).toMatchObject({ candidates: 10, sessions: 2 });
-      expect(result.writeFailures?.causes.length).toBeLessThanOrEqual(3);
+      // Five distinct causes, each over 300 characters: the first three, each cut to 200.
+      expect(result.writeFailures?.causes).toHaveLength(3);
+      for (const cause of result.writeFailures?.causes ?? []) {
+        expect(cause).toStartWith("scripted write failure");
+        expect(cause).toHaveLength(200);
+      }
       for (const s of result.sessions) expect(s).not.toHaveProperty("failedCauses");
     } finally {
       db.close();
