@@ -92,7 +92,7 @@ export interface ProposalReview {
   outcome: "accepted" | "rejected";
   reason?: string;
   decidedAt: string;
-  /** Written by accept/reject from 0.10 on; absent on older decisions, which stay unknown. */
+  /** Written by accept/reject since #1373; absent on earlier decisions, which stay unknown. */
   decidedBy?: ProposalDecider;
 }
 
