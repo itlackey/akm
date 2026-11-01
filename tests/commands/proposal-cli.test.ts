@@ -187,6 +187,68 @@ describe("akm proposal drain strategy selector", () => {
     expect(forced.stdout).toBe("");
   });
 
+  function seedJudgedLesson(stashDir: string, name: string) {
+    const created = createProposal(stashDir, {
+      ref: `lessons/${name}`,
+      source: "extract",
+      sourceRun: "run-x",
+      target: { source: slugForPath(stashDir), root: stashDir },
+      payload: { content: VALID_LESSON, frontmatter: { description: `${name} fixture` } },
+    });
+    stageJudgedProposal(stashDir, created);
+    return created;
+  }
+
+  test("a bare drain queues against the default strategy, and --promote accepts (#1274)", async () => {
+    const stashDir = makeStashDir();
+    // The stock `default` strategy sets triage.applyMode to promote; a bare drain does not inherit it.
+    const created = seedJudgedLesson(stashDir, "bare-drain");
+
+    const bare = await runCli(["proposal", "drain", "--format=json"], { stashDir });
+    expect(bare.status).toBe(0);
+    expect(JSON.parse(bare.stdout)).toMatchObject({ strategy: "default", applyMode: "queue", promoted: [] });
+    expect(getProposal(stashDir, created.id).status).toBe("pending");
+
+    const promoted = await runCli(["proposal", "drain", "--promote", "-y", "--format=json"], { stashDir });
+    expect(promoted.status).toBe(0);
+    expect(JSON.parse(promoted.stdout)).toMatchObject({ applyMode: "promote", promoted: [created.id] });
+    expect(getProposal(stashDir, created.id).status).toBe("accepted");
+  });
+
+  test("an explicit --strategy supplies its apply mode: queue stages, promote promotes (#1274)", async () => {
+    const stashDir = makeStashDir();
+    const bundleId = slugForPath(stashDir);
+    writeSandboxConfig({
+      configVersion: "0.9.0",
+      bundles: { [bundleId]: { path: stashDir, writable: true } },
+      defaultBundle: bundleId,
+      defaultWriteTarget: bundleId,
+      improve: {
+        strategies: {
+          "queue-mode": { processes: { triage: { enabled: true, applyMode: "queue" } } },
+          "promote-mode": { processes: { triage: { enabled: true, applyMode: "promote" } } },
+        },
+      },
+    });
+    const created = seedJudgedLesson(stashDir, "explicit-strategy");
+
+    const queued = await runCli(["proposal", "drain", "--strategy", "queue-mode", "--format=json"], { stashDir });
+    expect(queued.status).toBe(0);
+    expect(JSON.parse(queued.stdout)).toMatchObject({ strategy: "queue-mode", applyMode: "queue", promoted: [] });
+    expect(getProposal(stashDir, created.id).status).toBe("pending");
+
+    const promoted = await runCli(["proposal", "drain", "--strategy", "promote-mode", "-y", "--format=json"], {
+      stashDir,
+    });
+    expect(promoted.status).toBe(0);
+    expect(JSON.parse(promoted.stdout)).toMatchObject({
+      strategy: "promote-mode",
+      applyMode: "promote",
+      promoted: [created.id],
+    });
+    expect(getProposal(stashDir, created.id).status).toBe("accepted");
+  });
+
   test("a stale-target refusal is auto-rejected, not left as a generic failure (STALE, R20)", async () => {
     const stashDir = makeStashDir();
     const assetPath = path.join(stashDir, "lessons", "cli-stale.md");

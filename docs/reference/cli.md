@@ -3645,13 +3645,12 @@ person (reason `judgment-not-promotion`). Judged over every kind, the tier
 accepted unsafe retirements, applied exact fixes unreviewed and changed notes
 nobody had touched: 6 to 14 harmed items a night on two models (#1132). A reflect revision that changes the body, and
 every distill lesson or knowledge promotion, is deferred for review even when
-its judge passes it. A bare `akm proposal drain` follows the apply mode of the
-triage block of your improve strategy (`improve.strategy`, `default` unless
-set). `default`'s is promote, so it accepts (and asks for confirmation first).
-A strategy whose apply mode is `queue` stages decisions instead and writes
-nothing to assets; `--promote` always accepts. Whether a
-bare drain should promote is an open question
-([#1274](https://github.com/itlackey/akm/issues/1274)).
+its judge passes it. A bare `akm proposal drain` queues: it stages its
+decisions and writes nothing to assets, whatever the default strategy's apply
+mode is. `--promote` always accepts (and asks for confirmation first). An
+explicit `--strategy <name>` supplies that strategy's apply mode, ceilings and
+judgment; a strategy whose apply mode is `queue` stages instead. `akm improve`'s
+triage pre-pass follows its strategy's apply mode.
 
 ```sh
 akm proposal drain --dry-run                        # Preview without writing
@@ -3663,7 +3662,7 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 | Flag | Description |
 | --- | --- |
 | `--strategy` | Read the triage block (apply mode, ceilings, judgment) from this improve strategy instead |
-| `--promote` | Promote (accept) judge-passed proposals. Without it, the strategy's apply mode decides, and the default strategy's is promote (#1274). |
+| `--promote` | Promote (accept) judge-passed proposals. Without it, a bare drain queues: it stages decisions and writes nothing to assets; an explicit `--strategy` supplies its own apply mode |
 | `--dry-run` | List what would be accepted/rejected/deferred, without writing |
 | `--max-accepts` | Hard per-run accept ceiling; accepts beyond this are reported as `skippedByCap` |
 | `--older-than` | Only consider proposals created (or last reopened) more than this many days ago |
