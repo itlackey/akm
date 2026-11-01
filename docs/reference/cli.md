@@ -2080,7 +2080,7 @@ a hit depends on the search. In keyword-only search every fused score is exactly
 `1/(60 + rank)`, so neighbouring hits in the first 20 sit 1.3 to 1.6 percent
 apart and one vote (about 2 percent) moves a hit one place whatever the keyword
 margin between them. When embeddings contribute too, the two channels' ranks spread the scores
-and a vote breaks only near-ties. Only feedback recorded as the user counts, not
+and a vote breaks only near-ties. Only feedback recorded as the user in the last 90 days counts, not
 feedback from improve, task or audit runs; the output's `rankingUpdate.applied`
 says which it was (`true`, or `false` with a `reason`).
 Feedback also updates the utility score that improve and `akm metrics` read.
