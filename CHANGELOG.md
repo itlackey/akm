@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261102] - 2026-11-01
+
+### Added
+
+- The local UI is redesigned: a top bar with a menu that collapses on narrow
+  screens, a site search field, ruled sections, large stat numbers and a
+  dark Graphite palette (with a matching light set). The Overview opens with a
+  "Needs attention" list, an improve status line and linked tiles.
+- A new Improve impact page: decisions per week by outcome and decider, outcomes
+  and cost by process, reverted changes, recent library changes and recent
+  improve runs.
+- The UI's Config page is editable. Each setting group saves through
+  `POST /api/config/set`, which validates like `akm config set`, refuses
+  literal API keys and keys inherited from `extends:`, and leaves unrelated
+  keys alone. Model connections can be added and edited there.
+- Search and select events record their source and search id; indexes record
+  library size; a reverted proposal keeps its accept time; reviews record
+  `decidedBy`.
+
+### Changed
+
+- Proposals shows waiting-age tiles that filter the queue. Changes is now
+  History. Bundles lists the working stash.
+
+### Fixed
+
+- The command asset body shows in the UI, and the Overview server numbers are
+  corrected.
+
 ## [0.10.261101] - 2026-11-01
 
 ### Added
