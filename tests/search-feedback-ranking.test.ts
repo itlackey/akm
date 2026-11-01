@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmSearch } from "../src/commands/read/search";
 import { saveConfig } from "../src/core/config/config";
+import { openStateDatabase } from "../src/core/state-db";
 import { akmIndex } from "../src/indexer/indexer";
 import { applyFeedback, FEEDBACK_WEIGHT, feedbackFactor, reciprocalRankFusion } from "../src/indexer/search/ranking";
 import { runCliCapture } from "./_helpers/cli";
@@ -163,6 +164,31 @@ describe("akm search with recorded feedback", () => {
     await vote(first, "negative", 1);
     expect((await fixNegative(first)).code).toBe(0);
     expect(await order()).toEqual([second, first, third]);
+  });
+
+  /** Record `times` user feedback events for `ref`, stamped `ageDays` ago (no index run purges them). */
+  function seedFeedback(ref: string, signal: "positive" | "negative", times: number, ageDays: number): void {
+    const db = openStateDatabase();
+    try {
+      for (let i = 0; i < times; i++) {
+        db.prepare(
+          `INSERT INTO usage_events (event_type, entry_ref, signal, source, created_at)
+           VALUES ('feedback', ?, ?, 'user', datetime('now', ?))`,
+        ).run(`stash//${ref}`, signal, `-${ageDays} days`);
+      }
+    } finally {
+      db.close();
+    }
+  }
+
+  test("feedback older than 90 days does not move the ranking, even before an index purges it (#1252)", async () => {
+    const base = await order();
+    const [first, , third] = base as [string, string, string];
+    seedFeedback(third, "positive", 5, 91);
+    seedFeedback(first, "negative", 5, 91);
+    expect(await order()).toEqual(base);
+    seedFeedback(third, "positive", 5, 89);
+    expect(await order()).toEqual([third, first, base[1] as string]);
   });
 
   test("feedback that is not user-attributed does not move the ranking", async () => {

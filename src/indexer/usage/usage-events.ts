@@ -126,7 +126,8 @@ export function insertUsageEventStrict(db: Database, event: UsageEvent): void {
 
 /**
  * User feedback counts for many assets at once, keyed by durable `entry_ref`.
- * A negative that carried an exact fix does not count once an accepted
+ * Only feedback newer than {@link USAGE_EVENT_RETENTION_DAYS} counts, whether or not
+ * a full index has purged the older rows yet. A negative that carried an exact fix does not count once an accepted
  * `feedback` proposal for the asset exists at or after it (the rule `akm
  * improve` uses for a fix already acted on); reverting that proposal makes it
  * count again. Refs with no user feedback are absent from the map. Read in one
@@ -137,6 +138,7 @@ export function countFeedbackSignalsByRef(
   refs: readonly string[],
 ): Map<string, { pos: number; neg: number }> {
   const counts = new Map<string, { pos: number; neg: number }>();
+  const cutoff = new Date(Date.now() - USAGE_EVENT_RETENTION_DAYS * 86_400_000).toISOString();
   for (let i = 0; i < refs.length; i += SQLITE_CHUNK_SIZE) {
     const chunk = refs.slice(i, i + SQLITE_CHUNK_SIZE);
     const rows = db
@@ -151,9 +153,10 @@ export function countFeedbackSignalsByRef(
            ) THEN 1 ELSE 0 END) AS neg
          FROM usage_events u
          WHERE u.event_type = 'feedback' AND u.source = 'user' AND u.entry_ref IN (${chunk.map(() => "?").join(",")})
+           AND datetime(u.created_at) >= datetime(?)
          GROUP BY u.entry_ref`,
       )
-      .all(...chunk) as Array<{ entry_ref: string; pos: number; neg: number }>;
+      .all(...chunk, cutoff) as Array<{ entry_ref: string; pos: number; neg: number }>;
     for (const row of rows) counts.set(row.entry_ref, { pos: row.pos, neg: row.neg });
   }
   return counts;
