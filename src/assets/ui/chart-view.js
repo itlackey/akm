@@ -43,7 +43,7 @@ export function wireChart(ctx, selector, options, onSelect) {
       chart.setOption(
         {
           animation: false,
-          color: ["--s1", "--s2", "--s3", "--s4", "--s5"].map(token),
+          color: SERIES.map(token),
           textStyle: { color: token("--text"), fontFamily: font },
           aria: {
             enabled: true,
@@ -63,27 +63,48 @@ export function wireChart(ctx, selector, options, onSelect) {
       );
       done();
     };
-    import("./echarts.js")
-      .then(({ init }) => {
-        if (disposed || !element.isConnected) return;
-        const resize = () => {
-          if (disposed || !element.clientWidth || !element.clientHeight) return;
-          if (!chart) {
-            chart = init(element, null, { renderer: "svg" });
-            if (onSelect) chart.on("click", onSelect);
-            draw();
-          } else chart.resize();
-        };
-        observer = new ResizeObserver(resize);
-        observer.observe(element);
-        resize();
-        scheme.addEventListener("change", retheme);
-        window.addEventListener("akm-theme", retheme);
-      })
-      .catch(() => {
-        element.hidden = true;
-      });
-    root.addEventListener("change", draw);
+    // A chart is drawn when its card nears the screen, so ECharts is not fetched for a page that never scrolls to one.
+    const start = () =>
+      import("./echarts.js")
+        .then(({ init }) => {
+          if (disposed || !element.isConnected) return;
+          const resize = () => {
+            if (disposed || !element.clientWidth || !element.clientHeight) return;
+            if (!chart) {
+              chart = init(element, null, { renderer: "svg" });
+              if (onSelect) chart.on("click", onSelect);
+              draw();
+            } else chart.resize();
+          };
+          observer = new ResizeObserver(resize);
+          observer.observe(element);
+          resize();
+          scheme.addEventListener("change", retheme);
+          window.addEventListener("akm-theme", retheme);
+        })
+        .catch(() => {
+          // Say so, instead of leaving a blank box: the numbers are in the table beside it (B-33).
+          element.textContent = "Chart unavailable. The same figures are in Data and details.";
+          element.classList.add("chart-failed");
+        });
+    let lazy;
+    if (typeof IntersectionObserver === "function") {
+      lazy = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((entry) => entry.isIntersecting)) return;
+          lazy.disconnect();
+          start();
+        },
+        { rootMargin: "300px" },
+      );
+      lazy.observe(element);
+    } else start();
+    // A control redraws the chart in its own card only, not every chart on the page (B-47).
+    const card = element.closest(".chart-card") ?? element.parentElement;
+    const redraw = (event) => {
+      if (card?.contains(event.target)) draw();
+    };
+    root.addEventListener("change", redraw);
     const resize = () => chart?.resize();
     root.addEventListener("toggle", resize, true);
     return () => {
@@ -91,12 +112,16 @@ export function wireChart(ctx, selector, options, onSelect) {
       observer?.disconnect();
       scheme.removeEventListener("change", retheme);
       window.removeEventListener("akm-theme", retheme);
-      root.removeEventListener("change", draw);
+      lazy?.disconnect();
+      root.removeEventListener("change", redraw);
       root.removeEventListener("toggle", resize, true);
       chart?.dispose();
     };
   });
 }
+
+/** The categorical colours, in order; a series without its own `colorIndex` takes the next. */
+const SERIES = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6"];
 
 /** Axes that count whole things: a tick at "0.5 proposals" means nothing. */
 const COUNT_UNITS = new Set(["Count", "Calls", "Searches", "Operations", "Decisions", "Failures"]);

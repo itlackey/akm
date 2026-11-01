@@ -161,6 +161,16 @@ export async function visitGallery(page: Page): Promise<void> {
 async function settle(page: Page): Promise<void> {
   await expect(page.locator("main")).not.toHaveAttribute("aria-busy", "true");
   await page.waitForLoadState("networkidle");
+  // Charts draw when their card nears the screen, so walk the page once to wake them, then return to the top.
+  await page.evaluate(async () => {
+    const step = Math.max(window.innerHeight / 2, 200);
+    for (let y = 0; y < document.documentElement.scrollHeight; y += step) {
+      window.scrollTo(0, y);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    window.scrollTo(0, 0);
+  });
+  await page.waitForLoadState("networkidle");
   await page.evaluate(() => document.fonts.ready);
 }
 

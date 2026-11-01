@@ -2855,3 +2855,11 @@ a.btn {
   font-weight: 600;
   text-decoration: none;
 }
+
+.chart-failed {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: var(--text-s);
+  text-align: center;
+}
