@@ -159,6 +159,11 @@ Everything on the overview page in one call. Query parameters:
 - A section that fails is `null` (`[]` for `improveRuns`) and named in a top-level `errors` object
   (`{ "errors": { "metrics": "..." } }`); the others still load. `errors` is absent when nothing failed.
 
+## `GET /api/health`
+
+The `health` part of `/api/overview` on its own, with the same `since` and `probe` parameters. The Overview calls it
+with `probe=1` when you press **Run all checks**.
+
 ## `GET /api/tasks/history`
 
 Requires `taskId`; optional `since` (default `30d`, same syntax as metrics) and `limit` (default 50, maximum 200).

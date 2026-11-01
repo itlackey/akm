@@ -187,10 +187,17 @@ export function divergingColumns(labels, positive, negative, { positiveName, neg
 
 /** One row of marks over the same labels as the chart above it: an `events` entry is `{ index, tone }`. */
 export function eventStrip(labels, events, { name = "Events", token }) {
-  const tones = { ok: 2, warn: 1, fail: 3, info: 0 };
+  const tones = { ok: "--ok", warn: "--warn", fail: "--fail", info: "--info" };
   return {
     grid: { left: 12, right: 22, top: 4, bottom: 4, containLabel: true },
-    xAxis: { type: "category", data: labels, axisLabel: { show: false }, axisTick: { show: false } },
+    xAxis: {
+      type: "category",
+      data: labels,
+      axisLabel: { show: false },
+      axisTick: { show: false },
+      axisLine: { show: false },
+      splitLine: { show: false },
+    },
     yAxis: { type: "value", min: 0, max: 1, axisLabel: { show: false }, splitLine: { show: false } },
     series: [
       {
@@ -199,7 +206,7 @@ export function eventStrip(labels, events, { name = "Events", token }) {
         symbolSize: 12,
         data: events.map((event) => ({
           value: [event.index, 0.5],
-          itemStyle: { color: token(`--s${(tones[event.tone] ?? 0) + 1}`) },
+          itemStyle: { color: token(tones[event.tone] ?? "--info") },
         })),
       },
     ],

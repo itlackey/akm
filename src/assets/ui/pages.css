@@ -520,7 +520,6 @@
   fieldset.trend-window {
     margin: 0;
     min-inline-size: 0;
-    border: 2px solid var(--border-strong);
   }
 
   .attention details {

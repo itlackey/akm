@@ -1,4 +1,4 @@
-import { eventStrip, horizontalBars, lines, pChartLine, verticalBars, wireChart } from "./chart-view.js";
+import { eventStrip, lines, pChartLine, stackedColumns, verticalBars, wireChart } from "./chart-view.js";
 import {
   api,
   badge,
@@ -20,95 +20,58 @@ const tokenCount = (row) => (row.calls > 0 && !row.usageCalls ? "Unknown" : fmtN
 
 function activity(ctx, metrics) {
   const days = metrics.usage.daily;
-  const dayLabel = (d) => (d.partial ? `${d.day}*` : d.day);
+  const dayLabel = (d) => (d.partial ? `${d.day.slice(5)}*` : d.day.slice(5));
   const labels = { search: "Search", curate: "Curate", show: "Show", feedback: "Feedback" };
-  let selected = Object.keys(labels);
-  ctx.after.push((root) =>
-    root.querySelector("[data-activity-controls]")?.addEventListener("change", () => {
-      selected = [...root.querySelectorAll("[data-activity]:checked")].map((node) => node.value);
-    }),
-  );
+  const keys = Object.keys(labels);
   wireChart(ctx, "#activity-chart", () =>
-    verticalBars(
+    stackedColumns(
       days.map(dayLabel),
-      selected.map((key) => ({
-        name: labels[key],
-        colorIndex: Object.keys(labels).indexOf(key),
-        data: days.map((d) => d[key]),
-      })),
+      keys.map((key, index) => ({ name: labels[key], colorIndex: index, data: days.map((d) => d[key]) })),
       "Operations",
     ),
   );
-  return html`<section class="chart-card"><h2>Feedback and use</h2><p class="muted small">Your own activity only: searches, curates, shows and feedback you made.</p><div class="chart-controls" data-activity-controls>${Object.entries(labels).map(([key, label], index) => html`<label><input type="checkbox" data-activity value="${key}" checked><i class="series-key series-${index + 1}" aria-hidden="true"></i>${label}</label>`)}</div>
-    ${days.length ? chart("activity-chart", "Recorded operations by UTC day. Choose series above; exact counts follow in Data and details.") : emptyState("No recorded activity in this window.")}
-    ${dataTable(html`<table><thead><tr><th>UTC day</th>${Object.values(labels).map((label) => html`<th class="r">${label}</th>`)}</tr></thead><tbody>${days.map((d) => html`<tr><th>${d.day}${d.partial ? html` <span class="muted small">(partial)</span>` : ""}</th>${Object.keys(labels).map((key) => html`<td class="r num">${fmtNum(d[key])}</td>`)}</tr>`)}</tbody></table>`)}
+  return html`<section class="chart-card"><h2>Feedback and use</h2><p class="muted small">Your own searches, curates, shows and feedback, by UTC day.</p>
+    <p class="chart-legend">${keys.map((key, index) => html`<span><i class="series-key series-${index + 1}" aria-hidden="true"></i>${labels[key]}</span>`)}</p>
+    ${days.length ? chart("activity-chart", "Recorded operations by UTC day, stacked by kind. Exact counts follow in Data and details.") : emptyState("No recorded activity in this window.")}
+    ${dataTable(html`<table><thead><tr><th>UTC day</th>${Object.values(labels).map((label) => html`<th class="r">${label}</th>`)}</tr></thead><tbody>${days.map((d) => html`<tr><th>${d.day}${d.partial ? html` <span class="muted small">(partial)</span>` : ""}</th>${keys.map((key) => html`<td class="r num">${fmtNum(d[key])}</td>`)}</tr>`)}</tbody></table>`)}
   </section>`;
+}
+
+/** Rows of a label, a bar drawn to scale against the largest row, and the figures. No chart library, no controls. */
+function barList(rows, { max, label }) {
+  return html`<ul class="bar-list" aria-label="${label}">${rows.map(
+    (row) =>
+      html`<li><span class="bar-name">${row.name}</span><span class="bar-track" aria-hidden="true"><span class="bar-fill" data-tone="${row.tone ?? ""}" style="--share:${max ? Math.max(row.value / max, row.value ? 0.02 : 0) : 0}"></span></span><span class="bar-value num">${row.text}</span>${row.note ? html`<span class="bar-note muted small">${row.note}</span>` : ""}</li>`,
+  )}</ul>`;
 }
 
 function modelTable(rows) {
   return tableWrap(
-    html`<table><thead><tr><th>Group</th><th class="r">Calls</th><th class="r">Failures</th><th class="r">Tokens</th><th>Token coverage</th><th>Summed call time</th></tr></thead><tbody>${rows.map(([name, row]) => html`<tr><th><button type="button" class="btn-secondary" data-model="${name}">${name}</button></th><td class="r">${fmtNum(row.calls)}</td><td class="r">${fmtNum(row.failures)}</td><td class="r">${tokenCount(row)}</td><td>${fmtNum(row.usageCalls)} / ${fmtNum(row.calls)} calls</td><td>${fmtMs(row.totalDurationMs)}</td></tr>`)}</tbody></table>`,
+    html`<table><thead><tr><th>Group</th><th class="r">Calls</th><th class="r">Failures</th><th class="r">Tokens</th><th>Token coverage</th><th>Summed call time</th></tr></thead><tbody>${rows.map(([name, row]) => html`<tr><th>${name}</th><td class="r">${fmtNum(row.calls)}</td><td class="r">${fmtNum(row.failures)}</td><td class="r">${tokenCount(row)}</td><td>${fmtNum(row.usageCalls)} / ${fmtNum(row.calls)} calls</td><td>${fmtMs(row.totalDurationMs)}</td></tr>`)}</tbody></table>`,
   );
 }
 
-function models(ctx, llm) {
-  let group = "byProcess";
-  let field = "calls";
-  const rows = () =>
-    Object.entries(llm[group] ?? {}).sort((a, b) => b[1][field] - a[1][field] || a[0].localeCompare(b[0]));
-  const units = { calls: "Calls", totalTokens: "Reported tokens", totalDurationMs: "Summed milliseconds" };
-  let root;
-  const select = (name) => {
-    const row = llm[group]?.[name];
-    if (!row || !root) return;
-    const detail = root.querySelector("[data-model-detail]");
-    mount(
-      detail,
-      html`<h3>${name}</h3><p>${fmtNum(row.calls)} calls · ${fmtNum(row.failures)} failures · ${tokenCount(row)} reported tokens · ${fmtMs(row.totalDurationMs)} summed call time.</p><p class="muted">Token measurements: ${fmtNum(row.usageCalls)} of ${fmtNum(row.calls)} calls.</p>`,
-    );
-    detail.focus({ preventScroll: true });
-  };
-  ctx.after.push((element) => {
-    root = element;
-    root.querySelector("[data-model-controls]")?.addEventListener("change", () => {
-      group = root.querySelector("[name=model-group]").value;
-      field = root.querySelector("[name=model-value]").value;
-      mount(root.querySelector("[data-model-table]"), modelTable(rows()));
-      mount(root.querySelector("[data-model-detail]"), html``);
-    });
-    root.querySelector("[data-model-table]")?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-model]");
-      if (button) select(button.dataset.model);
-    });
-  });
-  wireChart(
-    ctx,
-    "#model-chart",
-    () =>
-      horizontalBars(
-        rows().map(([name]) => name),
-        [
-          {
-            name: units[field],
-            // A bar whose calls only partly report tokens is drawn hollow: its length is a lower bound.
-            data: rows().map(([, row]) => {
-              if (field !== "totalTokens") return row[field];
-              if (row.calls && !row.usageCalls) return null;
-              return row.usageCalls / row.calls < 0.8
-                ? { value: row[field], itemStyle: { color: "transparent", borderWidth: 2 } }
-                : row[field];
-            }),
-          },
-        ],
-        units[field],
-      ),
-    (event) => select(rows()[event.dataIndex]?.[0]),
-  );
-  return html`<section class="chart-card"><h2>Model utilization</h2><div class="chart-controls" data-model-controls><label>Group by<select name="model-group"><option value="byProcess">Process</option><option value="byEngine">Execution target</option></select></label><label>Measure<select name="model-value"><option value="calls">Calls</option><option value="totalTokens">Tokens</option><option value="totalDurationMs">Time</option></select></label></div>
-    ${llm.calls ? chart("model-chart", "Model utilization ranked by the chosen measure. Select a bar or its table button for counts and coverage.") : emptyState("No model calls recorded in this window.")}
-    ${llm.calls ? html`<p class="muted small chart-notes">Tokens cover ${fmtNum(llm.usageCalls ?? 0)} / ${fmtNum(llm.calls)} calls, not monetary cost. Time is summed call duration, not elapsed job time. All sources: improve, tasks and agents.</p>` : ""}
-    <div data-model-detail tabindex="-1" aria-live="polite"></div>
-    <details><summary>Data and details</summary><div data-model-table>${modelTable(rows())}</div></details></section>`;
+function models(llm) {
+  const sorted = (group) =>
+    Object.entries(llm[group] ?? {}).sort((a, b) => b[1].calls - a[1].calls || a[0].localeCompare(b[0]));
+  const byProcess = sorted("byProcess");
+  const max = Math.max(0, ...byProcess.map(([, row]) => row.calls));
+  return html`<section class="chart-card"><h2>Model calls</h2><p class="muted small">By process. Tokens cover ${fmtNum(llm.usageCalls ?? 0)} of ${fmtNum(llm.calls ?? 0)} calls and are not a cost. Time is summed call duration.</p>
+    ${
+      llm.calls
+        ? barList(
+            byProcess.map(([name, row]) => ({
+              name,
+              value: row.calls,
+              text: `${fmtNum(row.calls)} calls`,
+              tone: row.failures ? "fail" : "",
+              note: `${row.failures ? `${fmtNum(row.failures)} failed · ` : ""}${tokenCount(row)} tokens · ${fmtMs(row.totalDurationMs)}`,
+            })),
+            { max, label: "Model calls by process" },
+          )
+        : emptyState("No model calls recorded in this window.")
+    }
+    <details><summary>Data and details</summary><h3>By process</h3>${modelTable(byProcess)}<h3>By execution target</h3>${modelTable(sorted("byEngine"))}</details></section>`;
 }
 
 /** "Is search finding what you need?": the weekly share that found nothing as a p-chart, with improve runs under it. */
@@ -149,7 +112,7 @@ function retrievalCard(ctx, trend, data) {
   );
   return html`<section class="chart-card chart-wide"><h2>Is search finding what you need? <span class="muted small num">${fmtNum(total)} searches · ${fmtNum(missed)} found nothing</span></h2>
     <p>${takeaway}</p>
-    <p class="chart-legend"><span><i class="series-key series-1" aria-hidden="true"></i>Found nothing, by week</span><span>Band: the usual range</span><span><i class="marker-key" aria-hidden="true"></i>Improve run (below)</span></p>
+    <p class="chart-legend"><span><i class="series-key series-1" aria-hidden="true"></i>Found nothing, by week</span><span>Band: the usual range</span><span>Dots below: improve runs, <i class="dot dot-ok" aria-hidden="true"></i>finished or <i class="dot dot-fail" aria-hidden="true"></i>failed</span></p>
     <div class="echarts-view" data-height="tall" id="trend-rate" role="img" aria-label="Share of searches that found nothing, by week, with its usual range. Weekly figures follow in Data and details."></div>
     <div class="echarts-view" data-height="strip" id="trend-events" role="img" aria-label="Improve runs by week, on the same weeks as the chart above."></div>
     <h3>Searches per week</h3>
@@ -207,22 +170,6 @@ function automation(ctx, tasks, runs, since) {
   });
   wireChart(
     ctx,
-    "#tasks-chart",
-    () =>
-      horizontalBars(
-        (tasks ?? []).map((t) => `${t.taskId} (n=${t.runs})`),
-        [
-          {
-            name: "Failure rate",
-            data: (tasks ?? []).map((t) => (t.runs ? Math.round((t.failed / t.runs) * 1000) / 10 : 0)),
-          },
-        ],
-        "Failure rate (%)",
-      ),
-    (event) => selectTask(tasks[event.dataIndex]?.taskId),
-  );
-  wireChart(
-    ctx,
     "#improve-chart",
     () => ({
       xAxis: {
@@ -245,15 +192,29 @@ function automation(ctx, tasks, runs, since) {
     }),
     (event) => selectRun(runs[event.dataIndex]?.id),
   );
-  return html`<section class="chart-card" id="automation"><h2>Automation reliability</h2><p class="muted small">Scheduled task runs, ranked by failure rate. n is the number of recorded runs.</p>${tasks === null ? emptyState("Task measurements unavailable.") : tasks?.length ? chart("tasks-chart", "Failed task runs ranked by failures before any display limit. Exact recorded-run denominators and history are in the table.") : emptyState("No failed task runs recorded in this window.")}
-    <p class="muted small">Failures first. Other recorded statuses are not automatically successes; missing runs do not prove a schedule ran.</p>
+  return html`<section class="chart-card" id="automation"><h2>Scheduled tasks</h2><p class="muted small">Recorded runs in this window, most failures first.</p>${
+    tasks === null
+      ? emptyState("Task measurements unavailable.")
+      : tasks?.length
+        ? barList(
+            tasks.map((t) => ({
+              name: t.taskId,
+              value: t.runs ? t.failed / t.runs : 0,
+              text: `${t.failed} of ${t.runs} failed`,
+              tone: t.failed ? "fail" : "",
+              note: t.medianMs == null ? "" : `median ${fmtMs(t.medianMs)}`,
+            })),
+            { max: 1, label: "Failed runs by scheduled task" },
+          )
+        : emptyState("No failed task runs recorded in this window.")
+  }
     <div data-task-detail tabindex="-1" aria-live="polite"></div>
-    <details><summary>Task data and history</summary><div data-task-table>${tableWrap(html`<table><thead><tr><th>Task</th><th class="r">Failed / recorded</th><th>Median duration</th></tr></thead><tbody>${(tasks ?? []).map((t) => html`<tr><th><button type="button" class="btn-secondary" data-task="${t.taskId}">${t.taskId}</button></th><td class="r">${t.failed} / ${t.runs}</td><td>${fmtMs(t.medianMs)}</td></tr>`)}</tbody></table>`)}</div></details>
+    <details><summary>Run history by task</summary><div data-task-table>${tableWrap(html`<table><thead><tr><th>Task</th><th class="r">Failed / recorded</th><th>Median duration</th></tr></thead><tbody>${(tasks ?? []).map((t) => html`<tr><th><button type="button" class="btn-secondary" data-task="${t.taskId}">${t.taskId}</button></th><td class="r">${t.failed} / ${t.runs}</td><td>${fmtMs(t.medianMs)}</td></tr>`)}</tbody></table>`)}</div></details>
     <details><summary>Latest ${runs.length} improve runs (all time, not this window)</summary><p class="muted small">UTC timestamps. Circle: recorded success; triangle: failure; diamond: unknown.</p>${runs.length ? chart("improve-chart", "Duration of the latest improve runs. Circle is success, triangle failure, diamond unknown. Select a point or table button for its recorded result.") : emptyState("No improve runs recorded.")}
     <div data-run-detail tabindex="-1" aria-live="polite"></div><div data-run-table>${tableWrap(html`<table><thead><tr><th>Run</th><th>Result</th><th>Duration</th><th>Model calls / failures</th></tr></thead><tbody>${runs.map((r) => html`<tr><th><button type="button" class="btn-secondary" data-run="${r.id}">${when(r.startedAt)}</button></th><td>${badge(r.ok === true ? "ok" : r.ok === false ? "failed" : "unknown", r.ok === false ? "fail" : "neutral")}</td><td>${fmtMs(r.durationMs)}</td><td>${fmtNum(r.modelCalls?.total)} / ${fmtNum(r.modelCalls?.failures)}</td></tr>`)}</tbody></table>`)}</div></details></section>`;
 }
 
 export function overviewCharts(ctx, data, trend) {
   if (!data.metrics) return emptyState("Usage and model measurements unavailable.");
-  return html`${retrievalCard(ctx, trend, data)}${activity(ctx, data.metrics)}${models(ctx, data.metrics.llm)}${automation(ctx, data.taskFailures ?? null, data.improveRuns ?? [], data.metrics.window.since)}`;
+  return html`${retrievalCard(ctx, trend, data)}${activity(ctx, data.metrics)}${models(data.metrics.llm)}${automation(ctx, data.taskFailures ?? null, data.improveRuns ?? [], data.metrics.window.since)}`;
 }

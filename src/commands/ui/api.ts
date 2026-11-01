@@ -746,6 +746,9 @@ const ROUTES: Record<string, Handler> = {
   "/api/fs/folders": (query) => listFolders(query.get("path") ?? "", query.get("hidden") === "1"),
   "/api/meta": meta,
   "/api/overview": overview,
+  // Health alone, so the Overview can run the network probes when asked without reloading its metrics.
+  "/api/health": (query) =>
+    akmHealth({ since: query.get("since") || "24h", groupBy: "run", probe: flag(query, "probe"), readOnly: true }),
   "/api/tasks/history": taskHistory,
   "/api/bundles": bundles,
   "/api/config": config,

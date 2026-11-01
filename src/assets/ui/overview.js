@@ -1,52 +1,80 @@
 // Overview: current health and selected-window activity, retrieval and automation metrics.
 
 import { sparkline } from "./charts.js";
-import { ago, api, badge, emptyState, fmtNum, fmtPct, html, pretty, statusKind, when } from "./lib.js";
+import { ago, announce, api, badge, emptyState, fmtNum, fmtPct, html, mount, pretty, statusKind } from "./lib.js";
 import { overviewCharts } from "./overview-charts.js";
 
 const GROUPS = [
-  { status: "fail", title: "Failing", open: true },
-  { status: "warn", title: "Warnings", open: true },
-  { status: "unknown", title: "Unknown", open: false },
-  { status: "pass", title: "Passing", open: false },
+  { state: "fail", title: "Failing", open: true },
+  { state: "warn", title: "Warnings", open: true },
+  { state: "off", title: "Turned off", open: false },
+  { state: "unchecked", title: "Not checked", open: false },
+  { state: "idle", title: "No data yet", open: false },
+  { state: "pass", title: "Passing", open: false },
 ];
+
+/** Checks that report "unknown" because a feature is off, not because something is wrong. */
+const OFF_WHEN_UNKNOWN = new Set(["connections-and-harnesses", "proposal-queue"]);
+
+/**
+ * Where a check belongs on this page. A check the server could not decide is either a feature that is turned off (no
+ * model connected, learning off) or a probe this page skipped because it reaches the network.
+ */
+function checkState(check, checks, probed = false) {
+  if (check.status !== "unknown") return check.status;
+  if (OFF_WHEN_UNKNOWN.has(check.name)) return "off";
+  // Extraction needs a model; with none connected it cannot have run.
+  const noModel = checks.some((c) => c.name === "connections-and-harnesses" && c.status === "unknown");
+  if (check.name === "session-extraction" && noModel) return "off";
+  // A probe this page skips unless asked says so in its message; anything else simply has nothing recorded yet.
+  if (probed) return "unchecked";
+  return /not probed/i.test(check.message ?? "") ? "unchecked" : "idle";
+}
+
+const allChecks = (health) => (health ? [...health.hardChecks, ...health.advisories] : []);
 
 function checkItem(check) {
   const evidence = check.evidence && Object.keys(check.evidence).length > 0 ? check.evidence : null;
   return html`<li class="check">
-    <div class="check-head"><span class="dot dot-${statusKind(check.status)}" aria-hidden="true"></span><strong class="mono">${check.name}</strong>
-      <span class="muted small">${check.kind}, ${check.confidence} confidence</span></div>
+    <div class="check-head"><strong class="mono">${check.name}</strong></div>
     <p class="check-msg">${check.message}</p>
     ${evidence ? html`<details><summary>Evidence</summary><pre class="code" data-volatile tabindex="0" role="group" aria-label="Evidence, scrolls sideways">${pretty(evidence)}</pre></details>` : ""}
   </li>`;
 }
 
-function healthSection(health) {
-  const checks = [...health.hardChecks, ...health.advisories];
-  return html`<section id="health"><h2>Health checks</h2>${GROUPS.map((g) => {
-    const items = checks.filter((c) => c.status === g.status);
-    if (items.length === 0) return "";
-    return html`<details class="group" ${g.open ? html`open` : ""}><summary><span class="dot dot-${statusKind(g.status)}" aria-hidden="true"></span>${g.title} <span class="num muted">${items.length}</span></summary><ul class="checks">${items.map(checkItem)}</ul></details>`;
-  })}${checks.length === 0 ? emptyState("No health checks ran.") : ""}</section>`;
+const STATE_DOT = { fail: "fail", warn: "warn", off: "neutral", unchecked: "neutral", idle: "neutral", pass: "ok" };
+
+/** `probed`: the network checks ran, so a check still undecided could not be checked, and says why. */
+function healthSection(health, probed = false) {
+  const checks = allChecks(health);
+  const unchecked = probed ? 0 : checks.filter((c) => checkState(c, checks) === "unchecked").length;
+  const groups = probed
+    ? GROUPS.map((g) => (g.state === "unchecked" ? { ...g, title: "Could not check", open: true } : g))
+    : GROUPS;
+  return html`<section id="health"><div class="trends-head"><h2>Health checks</h2>${unchecked ? html`<button type="button" class="btn-secondary" data-run-checks>Run all checks</button>` : ""}</div>
+    ${unchecked ? html`<p class="muted small">${unchecked} ${unchecked === 1 ? "check contacts" : "checks contact"} the akm release source or your scheduler, so this page runs ${unchecked === 1 ? "it" : "them"} only when you ask.</p>` : ""}
+    <div data-health-groups>${groups.map((g) => {
+      const items = checks.filter((c) => checkState(c, checks, probed) === g.state);
+      if (items.length === 0) return "";
+      return html`<details class="group" ${g.open ? html`open` : ""}><summary><span class="dot dot-${STATE_DOT[g.state]}" aria-hidden="true"></span>${g.title} <span class="num muted">${items.length}</span></summary><ul class="checks">${items.map(checkItem)}</ul></details>`;
+    })}</div>${checks.length === 0 ? emptyState("No health checks ran.") : ""}</section>`;
 }
 
-function statusStrip(health) {
-  const checks = health ? [...health.hardChecks, ...health.advisories] : [];
-  const count = (status) => checks.filter((c) => c.status === status).length;
+function statusStrip(health, probed = false) {
+  const checks = allChecks(health);
+  const count = (state) => checks.filter((c) => checkState(c, checks, probed) === state).length;
   const overall = health?.status ?? "unknown";
-  const unknown = count("unknown");
-  const label = !health
-    ? "unavailable"
-    : overall === "pass" && unknown > 0
-      ? `healthy · ${unknown} could not run`
-      : overall;
+  const quiet = [
+    count("off") ? `${count("off")} turned off` : "",
+    count("unchecked") ? `${count("unchecked")} ${probed ? "could not check" : "not checked"}` : "",
+    count("idle") ? `${count("idle")} no data yet` : "",
+  ].filter(Boolean);
   return html`<div class="strip">
-    <div class="strip-main"><span class="strip-label">Overall health</span>${badge(label, statusKind(overall))}<span class="muted small">last 24 hours</span></div>
+    <div class="strip-main"><span class="strip-label">Overall health</span>${badge(health ? overall : "unavailable", statusKind(overall))}<span class="muted small">last 24 hours</span></div>
     <div class="strip-item"><span class="num big ${count("fail") > 0 ? "text-fail" : ""}">${count("fail")}</span><span class="muted">failing</span></div>
     <div class="strip-item"><span class="num big ${count("warn") > 0 ? "text-warn" : ""}">${count("warn")}</span><span class="muted">warning</span></div>
-    <div class="strip-item"><span class="num big">${count("unknown")}</span><span class="muted">unknown</span></div>
     <div class="strip-item"><span class="num big">${count("pass")}</span><span class="muted">passing</span></div>
-    <div class="strip-item strip-right">${health ? html`<span class="muted small">window since ${when(health.since)}</span>` : ""}</div>
+    <div class="strip-item strip-right">${quiet.length ? html`<a class="muted small" href="#/overview" data-anchor="health">${quiet.join(" · ")}</a>` : ""}</div>
   </div>`;
 }
 
@@ -55,7 +83,7 @@ const ATTENTION_MAX = 5;
 /** What needs the reader, most severe first. Each row is a sentence and a verb link. */
 function attentionItems(data, pulse) {
   const items = [];
-  const checks = data.health ? [...data.health.hardChecks, ...data.health.advisories] : [];
+  const checks = allChecks(data.health);
   const failing = checks.filter((c) => c.status === "fail");
   const warning = checks.filter((c) => c.status === "warn");
   const plural = (n, one, many = `${one}s`) => `${fmtNum(n)} ${n === 1 ? one : many}`;
@@ -153,7 +181,7 @@ function pulseSection(pulse, trend) {
   const improveLine = line.proposed
     ? html`<p class="improve-line">Last ${line.weeks} weeks: improve proposed ${fmtNum(line.proposed)}; ${fmtNum(line.accepted)} accepted${line.acceptedThenReverted ? ` (${line.acceptedThenReverted} since reverted)` : ""}, ${fmtNum(line.rejected)} rejected${line.rejected ? ` (${line.rejectedByYou} by you)` : ""}, ${fmtNum(line.waiting)} waiting · ${fmtNum(line.calls)} model calls <a href="#/improve">Improve impact →</a></p>`
     : html`<p class="improve-line muted">Improve has proposed nothing in the last ${line.weeks} weeks. <a href="#/improve">Improve impact →</a></p>`;
-  return html`<section aria-labelledby="pulse-title"><h2 id="pulse-title">Last 7 days against your usual <span class="chip-note">Last 7 days vs the 8 weeks before</span></h2>
+  return html`<section aria-labelledby="pulse-title"><h2 id="pulse-title">Last 7 days against your usual</h2>
     <div class="tiles pulse-tiles">
       ${pulseTile({
         title: "Found nothing",
@@ -215,24 +243,40 @@ export async function render(ctx) {
         location.hash = `#/overview?window=${event.target.value}`;
       });
     }
-    root.querySelector(".attention")?.addEventListener("click", (event) => {
+    root.addEventListener("click", (event) => {
       const link = event.target.closest("a[data-anchor]");
       if (!link) return;
       event.preventDefault();
       root.querySelector(`#${link.dataset.anchor}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    root.querySelector("[data-health]")?.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-run-checks]");
+      if (!button) return;
+      button.disabled = true;
+      button.textContent = "Checking…";
+      try {
+        const health = await api("/api/health", { probe: "1" }, { signal: null });
+        mount(root.querySelector("[data-health]"), healthSection(health, true));
+        mount(root.querySelector("[data-strip]"), statusStrip(health, true));
+        announce("Health checks finished.");
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = "Run all checks";
+        announce(`Health checks failed: ${error.message}`);
+      }
     });
   });
   const errors = data.errors ? Object.entries(data.errors) : [];
   const choice = (value) =>
     html`<label><input type="radio" name="metric-window" value="${value}" ${window === value ? html`checked` : ""}><span>${value === "30d" ? "30 days" : "90 days"}</span></label>`;
   return html`<header class="page-head page-head-row"><div><h1>Overview</h1><p>Your akm environment. Times are UTC.</p></div></header>
-    ${statusStrip(data.health)}
+    <div data-strip>${statusStrip(data.health)}</div>
     ${errors.length > 0 ? html`<details class="notice notice-warn"><summary>${errors.length} sections could not load</summary><ul>${errors.map(([name, message]) => html`<li><span class="mono">${name}</span>: ${message}</li>`)}</ul></details>` : ""}
     ${attention(data, pulse)}
     ${pulseSection(pulse, trend)}
-    <section aria-labelledby="trends-title"><div class="trends-head"><h2 id="trends-title">Trends <span class="chip-note">Last ${window === "30d" ? "30" : "90"} days</span></h2><fieldset class="segmented trend-window" aria-label="Trend window">${choice("30d")}${choice("90d")}</fieldset></div>
+    <section aria-labelledby="trends-title"><div class="trends-head"><h2 id="trends-title">Trends</h2><fieldset class="segmented trend-window" aria-label="Trend window">${choice("30d")}${choice("90d")}</fieldset></div>
     <p class="muted small">${data.metrics ? `${data.metrics.window.since.slice(0, 16).replace("T", " ")} to now, UTC. ` : ""}Today is partial. Health covers the last 24 hours.</p>
     <div class="chart-grid">${overviewCharts(ctx, data, trend)}</div></section>
     ${metricsCoverage(data.metrics)}
-    ${data.health ? healthSection(data.health) : ""}`;
+    <div data-health>${data.health ? healthSection(data.health) : ""}</div>`;
 }

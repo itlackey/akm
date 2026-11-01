@@ -994,15 +994,15 @@
     }
   }
 
+  /* A quiet switch: plain words, the chosen one underlined in the accent. No box around the group. */
   .segmented {
     display: inline-flex;
     flex-wrap: wrap;
-    gap: var(--space-1);
+    gap: var(--space-4);
     inline-size: fit-content;
-    padding: var(--space-1);
-    border: 2px solid var(--border-strong);
-    border-radius: var(--radius);
-    background: var(--surface-sunk);
+    margin: 0;
+    padding: 0;
+    border: 0;
     & label {
       position: relative;
       display: flex;
@@ -1015,15 +1015,18 @@
       cursor: pointer;
     }
     & span {
-      padding: var(--space-2) var(--space-4);
-      border-radius: var(--radius-s);
+      padding: var(--space-1) 0;
+      border-block-end: 2px solid transparent;
       font-size: var(--text-s);
       font-weight: 500;
       color: var(--muted);
     }
+    & label:hover span {
+      color: var(--text);
+    }
     & input:checked + span {
-      background: var(--accent);
-      color: var(--on-accent);
+      border-block-end-color: var(--accent);
+      color: var(--text);
     }
     & input:focus-visible + span {
       outline: 2px solid var(--accent);
@@ -1031,7 +1034,7 @@
     }
     @media (forced-colors: active) {
       & input:checked + span {
-        outline: 2px solid CanvasText;
+        border-block-end-color: CanvasText;
       }
     }
   }
@@ -1328,5 +1331,51 @@
     color: var(--muted);
     font-size: var(--text-s);
     text-align: center;
+  }
+
+  /* A ranked list with a bar per row: for a handful of rows a chart is overkill. */
+  .bar-list {
+    display: grid;
+    grid-template-columns: minmax(6rem, max-content) minmax(4rem, 1fr) max-content;
+    gap: var(--space-2) var(--space-3);
+    align-items: center;
+    margin: var(--space-3) 0;
+    padding: 0;
+    list-style: none;
+    & li {
+      display: contents;
+    }
+    & .bar-name {
+      overflow-wrap: anywhere;
+      font-size: var(--text-s);
+    }
+    & .bar-track {
+      block-size: var(--space-3);
+      border-radius: var(--radius-s);
+      background: var(--surface-sunk);
+    }
+    & .bar-fill {
+      display: block;
+      block-size: 100%;
+      inline-size: calc(var(--share) * 100%);
+      border-radius: var(--radius-s);
+      background: var(--s1);
+      &[data-tone="fail"] {
+        background: var(--fail);
+      }
+    }
+    & .bar-value {
+      font-size: var(--text-s);
+      text-align: end;
+    }
+    & .bar-note {
+      grid-column: 1 / -1;
+      margin-block: calc(-1 * var(--space-1)) var(--space-1);
+    }
+    @media (forced-colors: active) {
+      & .bar-fill {
+        background: CanvasText;
+      }
+    }
   }
 }

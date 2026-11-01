@@ -465,6 +465,9 @@ describe("endpoints", () => {
     expect((await write(s, `/api/proposals/${accepted}/accept`, {})).status).toBe(200);
     propose("lessons/two");
 
+    const health = await data(s, "/api/health");
+    expect(health).toMatchObject({ hardChecks: expect.any(Array), advisories: expect.any(Array) });
+
     const pulse = await data(s, "/api/overview/pulse");
     expect(pulse.tiles.foundNothing).toMatchObject({ n: expect.any(Number) });
     expect(pulse.tiles.foundNothing.usual.state).toBe("low-data");
