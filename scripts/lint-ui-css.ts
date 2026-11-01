@@ -113,6 +113,8 @@ function checkDeclaration(
   if (file !== "tokens.css") {
     const lengths = [...value.matchAll(LENGTH)].filter(([whole, number, unit]) => {
       if (Number(number) === 0) return false;
+      // An em font size scales with its surroundings (inline code, small print); it is not a fixed size.
+      if (property === "font-size" && unit === "em") return false;
       return !(unit === "px" && (whole === "1px" || whole === "2px"));
     });
     if (lengths.length && TOKEN_LENGTHS.test(property)) add(1, `${property}: ${value}`);

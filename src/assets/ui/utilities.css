@@ -15,7 +15,7 @@
   }
 
   .small {
-    font-size: var(--text-s);
+    font-size: 0.85em;
   }
 
   .big {

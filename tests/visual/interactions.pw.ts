@@ -34,8 +34,8 @@ test("overview details open", async ({ page }) => {
   const sections = {
     "search-finding": "Is search finding what you need?",
     "feedback-and-use": "Feedback and use",
-    "model-utilization": "Model utilization",
-    "automation-reliability": "Automation reliability",
+    "model-calls": "Model calls",
+    "scheduled-tasks": "Scheduled tasks",
   };
   // One element per shot: the full page's height shifts by a few px while a full-page capture resizes the viewport.
   for (const [slug, heading] of Object.entries(sections)) {

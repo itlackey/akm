@@ -948,7 +948,7 @@ describe("helpers", () => {
     const out = markdown(
       "## Title <x>\n\n1. one\n2. two\n\n- a `c<d>`\n\n[ok](https://example.com) [no](javascript:alert(1)) **b**\n",
     ).text;
-    expect(out).toContain("<h3>Title &lt;x&gt;</h3>");
+    expect(out).toContain("<h2>Title &lt;x&gt;</h2>");
     expect(out).toContain("<ol><li>one</li><li>two</li></ol>");
     expect(out).toContain("<code>c&lt;d&gt;</code>");
     expect(out).toContain('<a href="https://example.com" target="_blank" rel="noopener noreferrer">ok</a>');

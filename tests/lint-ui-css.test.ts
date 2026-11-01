@@ -27,6 +27,8 @@ describe("lint-ui-css", () => {
   test("rule 1: space, radius and type literals, and colours outside tokens.css", () => {
     expect(rules(".a { padding: 12px; }")).toEqual([1]);
     expect(rules(".a { font-size: 0.85rem; }")).toEqual([1]);
+    // An em font size is relative to its surroundings, not a fixed size.
+    expect(rules(".a { font-size: 0.92em; }")).toEqual([]);
     expect(rules(".a { color: #ff0000; }")).toEqual([1]);
     expect(rules(":root { --x: rgb(0 0 0); }")).toEqual([1]);
     expect(rules(":root { --x: rgb(0 0 0); }", "tokens.css")).toEqual([]);

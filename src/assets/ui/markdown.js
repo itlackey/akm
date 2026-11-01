@@ -79,6 +79,7 @@ export function markdown(source, context = {}) {
   let list = null;
   const slugByLine = new Map((context.headings ?? []).map((h) => [h.line, h.slug]));
   let titleSkipped = false;
+  let topDepth = null;
   const firstLine = context.startLine ?? 1;
   const flushParagraph = () => {
     if (paragraph.length > 0) blocks.push(html`<p>${inline(paragraph.join(" "), context)}</p>`);
@@ -105,13 +106,15 @@ export function markdown(source, context = {}) {
     if (heading) {
       flushParagraph();
       flushList();
-      const level = Math.min(heading[1].length + 1, 6);
       const slug = slugByLine.get(firstLine + i);
       // The page's own h1 already says this: a body that opens with the same title does not repeat it (B-41).
       if (!titleSkipped && context.skipTitle && heading[1].length === 1 && heading[2].trim() === context.skipTitle) {
         titleSkipped = true;
         continue;
       }
+      // The page's h1 is the title, so the body's first heading level becomes h2 and no level is skipped.
+      topDepth ??= heading[1].length;
+      const level = Math.min(Math.max(heading[1].length - topDepth + 2, 2), 6);
       blocks.push(
         html`<h${level}${slug ? html` id="${headingId(slug)}"` : ""}>${inline(heading[2].replace(/\s+#+\s*$/, ""), context)}</h${level}>`,
       );
