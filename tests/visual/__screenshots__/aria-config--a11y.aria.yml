@@ -1,0 +1,88 @@
+- navigation "Main":
+  - link "akm ui":
+    - /url: "#/overview"
+  - list:
+    - listitem:
+      - link "Overview":
+        - /url: "#/overview"
+    - listitem:
+      - link "Bundles":
+        - /url: "#/bundles"
+    - listitem:
+      - link "Config":
+        - /url: "#/config"
+    - listitem:
+      - link "Proposals":
+        - /url: "#/proposals"
+    - listitem:
+      - link "Changes":
+        - /url: "#/changes"
+    - listitem:
+      - link "Search":
+        - /url: "#/search"
+  - button "Refresh view"
+  - text: akm 0.0.0 · visual-host bun
+- main:
+  - heading "Config" [level=1]
+  - paragraph: The effective configuration, and where each value comes from. Secret values are redacted by the server.
+  - term: Config file
+  - definition: /tmp/akm-visual-loaded/config/config.json
+  - heading "Effective config" [level=2]
+  - paragraph: "Source: default built-in file this install's config.json extends:ref a config it extends"
+  - list:
+    - listitem: configVersion 0.9.0 file
+    - listitem: semanticSearchMode off file
+    - listitem:
+      - text: registries
+      - group: 2 items
+      - text: default
+    - listitem:
+      - group:
+        - text: output 2 keys
+        - list:
+          - listitem: format json default
+          - listitem: detail brief default
+    - listitem:
+      - group:
+        - text: bundles 1 key
+        - list:
+          - listitem:
+            - group: stash 3 keys
+    - listitem: defaultBundle stash file
+    - listitem: defaultWriteTarget stash file
+  - heading "Connections" [level=2]
+  - paragraph: No connections are configured.
+  - heading "Harnesses" [level=2]
+  - paragraph: No harnesses are configured.
+  - heading "Environment" [level=2]
+  - paragraph: AKM_* variables set for the server. They override paths and credentials.
+  - table:
+    - rowgroup:
+      - row "Name Value":
+        - columnheader "Name"
+        - columnheader "Value"
+    - rowgroup:
+      - row "AKM_BUNDLE_DIR /tmp/akm-visual-loaded/stash":
+        - cell "AKM_BUNDLE_DIR"
+        - cell "/tmp/akm-visual-loaded/stash"
+      - row "AKM_CACHE_DIR /tmp/akm-visual-loaded/cache":
+        - cell "AKM_CACHE_DIR"
+        - cell "/tmp/akm-visual-loaded/cache"
+      - row "AKM_CLAUDE_PLUGINS_DIR /tmp/akm-visual-loaded/empty":
+        - cell "AKM_CLAUDE_PLUGINS_DIR"
+        - cell "/tmp/akm-visual-loaded/empty"
+      - row "AKM_CLAUDE_PROJECTS_DIR /tmp/akm-visual-loaded/empty":
+        - cell "AKM_CLAUDE_PROJECTS_DIR"
+        - cell "/tmp/akm-visual-loaded/empty"
+      - row "AKM_CONFIG_DIR /tmp/akm-visual-loaded/config":
+        - cell "AKM_CONFIG_DIR"
+        - cell "/tmp/akm-visual-loaded/config"
+      - row "AKM_DATA_DIR /tmp/akm-visual-loaded/data":
+        - cell "AKM_DATA_DIR"
+        - cell "/tmp/akm-visual-loaded/data"
+      - row "AKM_OPENCODE_CACHE_DIR /tmp/akm-visual-loaded/empty":
+        - cell "AKM_OPENCODE_CACHE_DIR"
+        - cell "/tmp/akm-visual-loaded/empty"
+      - row "AKM_STATE_DIR /tmp/akm-visual-loaded/state":
+        - cell "AKM_STATE_DIR"
+        - cell "/tmp/akm-visual-loaded/state"

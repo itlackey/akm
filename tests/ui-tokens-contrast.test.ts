@@ -53,7 +53,7 @@ function declarations(body: string): Map<string, string> {
 }
 
 /** The `:root` declarations that apply in `scheme`, each as a still-unresolved value. */
-export function schemeTokens(css: string, scheme: Scheme): Map<string, string> {
+function schemeTokens(css: string, scheme: Scheme): Map<string, string> {
   const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
   const tokens = new Map<string, string>();
   const take = (body: string) => {
@@ -97,13 +97,13 @@ const linear = (c: number) => {
 };
 const luminance = ([r, g, b]: Rgb) => 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
 
-export function contrast(a: Rgb, b: Rgb): number {
+function contrast(a: Rgb, b: Rgb): number {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
   return (hi + 0.05) / (lo + 0.05);
 }
 
 /** OKLab distance (Ottosson), for the accent/series check. */
-export function deltaE(a: Rgb, b: Rgb): number {
+function deltaE(a: Rgb, b: Rgb): number {
   const lab = (rgb: Rgb) => {
     const [r, g, bl] = rgb.map(linear) as Rgb;
     const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * bl);
@@ -166,7 +166,7 @@ const readCss = () =>
     .join("\n");
 
 /** Every violated assertion for `scheme`, keyed `scheme rule fg/bg`. */
-export function violations(css: string, scheme: Scheme): Record<string, string> {
+function violations(css: string, scheme: Scheme): Record<string, string> {
   const tokens = schemeTokens(css, scheme);
   const found: Record<string, string> = {};
   const fail = (key: string, why: string) => {

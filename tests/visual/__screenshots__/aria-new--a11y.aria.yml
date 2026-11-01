@@ -1,0 +1,44 @@
+- navigation "Main":
+  - link "akm ui":
+    - /url: "#/overview"
+  - list:
+    - listitem:
+      - link "Overview":
+        - /url: "#/overview"
+    - listitem:
+      - link "Bundles":
+        - /url: "#/bundles"
+    - listitem:
+      - link "Config":
+        - /url: "#/config"
+    - listitem:
+      - link "Proposals":
+        - /url: "#/proposals"
+    - listitem:
+      - link "Changes":
+        - /url: "#/changes"
+    - listitem:
+      - link "Search":
+        - /url: "#/search"
+  - button "Refresh view"
+  - text: akm 0.0.0 · visual-host bun
+- main:
+  - heading "New knowledge" [level=1]
+  - paragraph: Write Markdown and optional frontmatter. Existing files are never overwritten.
+  - paragraph:
+    - link "Back to search":
+      - /url: "#/search"
+  - text: Bundle
+  - combobox "Bundle":
+    - option "stash" [selected]
+  - text: Name
+  - textbox "Name":
+    - /placeholder: restore-database
+  - text: Subdirectory
+  - textbox "Subdirectory":
+    - /placeholder: Optional, under knowledge/
+  - text: Markdown
+  - textbox "Markdown": "# New document"
+  - button "Create knowledge"
+  - heading "Preview" [level=2]
+  - heading "New document" [level=2]

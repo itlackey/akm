@@ -1,0 +1,68 @@
+- navigation "Main":
+  - link "akm ui":
+    - /url: "#/overview"
+  - list:
+    - listitem:
+      - link "Overview":
+        - /url: "#/overview"
+    - listitem:
+      - link "Bundles":
+        - /url: "#/bundles"
+    - listitem:
+      - link "Config":
+        - /url: "#/config"
+    - listitem:
+      - link "Proposals":
+        - /url: "#/proposals"
+    - listitem:
+      - link "Changes":
+        - /url: "#/changes"
+    - listitem:
+      - link "Search":
+        - /url: "#/search"
+  - button "Refresh view"
+  - text: akm 0.0.0 · visual-host bun
+- main:
+  - heading "Search" [level=1]
+  - paragraph: Search or browse your indexed assets. Browsing is not counted as usage.
+  - paragraph:
+    - link "New knowledge":
+      - /url: "#/new"
+    - text: · Ctrl/Cmd+K opens search
+  - search:
+    - searchbox "Query": deploy
+    - combobox "Type":
+      - option "All types" [selected]
+      - option "command"
+      - option "knowledge"
+      - option "lesson"
+      - option "memory"
+    - combobox "Bundle":
+      - option "All bundles" [selected]
+      - option "stash"
+    - combobox "Belief state":
+      - option "current" [selected]
+      - option "all"
+      - option "historical"
+    - combobox "Result limit":
+      - option /\d+/ [selected]
+      - option /\d+/
+      - option /\d+/
+    - group: Scope filters
+    - button "Search"
+  - paragraph: 2 results, keyword mode, 0 ms.
+  - list:
+    - listitem:
+      - link "knowledge/deploy-guide":
+        - /url: "#/asset?ref=knowledge%2Fdeploy-guide&returnTo=%23%2Fsearch%3Fq%3Ddeploy"
+      - text: /knowledge stash score \d+\.\d+/
+      - paragraph: How to deploy the service
+      - text: deploy runbook
+      - paragraph: "Matched: lexical rank 1"
+    - listitem:
+      - link "knowledge/rollback":
+        - /url: "#/asset?ref=knowledge%2Frollback&returnTo=%23%2Fsearch%3Fq%3Ddeploy"
+      - text: /knowledge stash score \d+\.\d+/
+      - paragraph: Roll back a bad deploy
+      - text: rollback
+      - paragraph: "Matched: lexical rank 2"

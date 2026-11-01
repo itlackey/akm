@@ -82,6 +82,70 @@
       "focus-after-route search-browse": {
         "count": 1,
         "ref": "B-21"
+      },
+      "route-status message asset-command": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message asset-knowledge": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message bundles": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message changes": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message config": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message edit": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message new": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message overview": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message proposal-create": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message proposal-edit": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message proposal-noop": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message proposal-retire": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message proposals-pending": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message proposals-recent": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message search-browse": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message search-results": {
+        "count": 1,
+        "ref": "B-19"
       }
     },
     "_focus-async": {
@@ -105,27 +169,43 @@
       }
     },
     "asset-command": {
+      "axe contrast-more target-size": {
+        "count": 2,
+        "ref": "B-24"
+      },
       "axe dark 1280 target-size": {
         "count": 2,
-        "ref": "B-24, B-59, B-60"
+        "ref": "B-24"
       },
       "axe dark 320 target-size": {
         "count": 2,
-        "ref": "B-24, B-59, B-60"
+        "ref": "B-24"
+      },
+      "axe forced-colors color-contrast": {
+        "count": 1,
+        "ref": "#1390"
+      },
+      "axe forced-colors target-size": {
+        "count": 2,
+        "ref": "B-24"
       },
       "axe light 1280 target-size": {
         "count": 2,
-        "ref": "B-24, B-59, B-60"
+        "ref": "B-24"
       },
       "axe light 320 target-size": {
         "count": 2,
-        "ref": "B-24, B-59, B-60"
+        "ref": "B-24"
       }
     },
     "asset-knowledge": {
+      "axe contrast-more target-size": {
+        "count": 2,
+        "ref": "B-24"
+      },
       "axe dark 1280 target-size": {
         "count": 2,
-        "ref": "B-24, B-59, B-60"
+        "ref": "B-24"
       },
       "axe dark 320 scrollable-region-focusable": {
         "count": 1,
@@ -133,11 +213,19 @@
       },
       "axe dark 320 target-size": {
         "count": 2,
-        "ref": "B-24, B-59, B-60"
+        "ref": "B-24"
+      },
+      "axe forced-colors color-contrast": {
+        "count": 1,
+        "ref": "#1390"
+      },
+      "axe forced-colors target-size": {
+        "count": 2,
+        "ref": "B-24"
       },
       "axe light 1280 target-size": {
         "count": 2,
-        "ref": "B-24, B-59, B-60"
+        "ref": "B-24"
       },
       "axe light 320 scrollable-region-focusable": {
         "count": 1,
@@ -145,111 +233,169 @@
       },
       "axe light 320 target-size": {
         "count": 2,
-        "ref": "B-24, B-59, B-60"
+        "ref": "B-24"
       }
     },
     "bundles": {
       "axe dark 320 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "B-24"
+      },
+      "axe forced-colors color-contrast": {
+        "count": 2,
+        "ref": "#1390"
       },
       "axe light 320 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "B-24"
+      }
+    },
+    "edit": {
+      "axe forced-colors color-contrast": {
+        "count": 1,
+        "ref": "#1390"
+      }
+    },
+    "new": {
+      "axe forced-colors color-contrast": {
+        "count": 1,
+        "ref": "#1390"
       }
     },
     "proposal-create": {
+      "axe contrast-more target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
       "axe dark 1280 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
       },
       "axe dark 320 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
+      },
+      "axe forced-colors color-contrast": {
+        "count": 1,
+        "ref": "#1390"
+      },
+      "axe forced-colors target-size": {
+        "count": 1,
+        "ref": "#1388"
       },
       "axe light 1280 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
       },
       "axe light 320 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
       },
       "text-spacing 320": {
         "count": 1,
-        "ref": "untriaged (Phase 1)"
+        "ref": "#1389"
       }
     },
     "proposal-edit": {
+      "axe contrast-more target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
       "axe dark 1280 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
       },
       "axe dark 320 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
+      },
+      "axe forced-colors color-contrast": {
+        "count": 1,
+        "ref": "#1390"
+      },
+      "axe forced-colors target-size": {
+        "count": 1,
+        "ref": "#1388"
       },
       "axe light 1280 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
       },
       "axe light 320 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
       }
     },
     "proposal-noop": {
+      "axe contrast-more target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
       "axe dark 1280 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
       },
       "axe dark 320 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
+      },
+      "axe forced-colors color-contrast": {
+        "count": 1,
+        "ref": "#1390"
+      },
+      "axe forced-colors target-size": {
+        "count": 1,
+        "ref": "#1388"
       },
       "axe light 1280 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
       },
       "axe light 320 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
       }
     },
     "proposal-retire": {
+      "axe contrast-more target-size": {
+        "count": 1,
+        "ref": "#1388"
+      },
       "axe dark 1280 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
-      },
-      "axe dark 320 scrollable-region-focusable": {
-        "count": 1,
-        "ref": "B-40"
+        "ref": "#1388"
       },
       "axe dark 320 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
+      },
+      "axe forced-colors color-contrast": {
+        "count": 1,
+        "ref": "#1390"
+      },
+      "axe forced-colors target-size": {
+        "count": 1,
+        "ref": "#1388"
       },
       "axe light 1280 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
-      },
-      "axe light 320 scrollable-region-focusable": {
-        "count": 1,
-        "ref": "B-40"
+        "ref": "#1388"
       },
       "axe light 320 target-size": {
         "count": 1,
-        "ref": "B-24, B-59, B-60"
+        "ref": "#1388"
       }
     },
-    "proposals-pending": {
-      "text-spacing 1280": {
-        "count": 6,
-        "ref": "untriaged (Phase 1)"
-      },
-      "text-spacing 320": {
-        "count": 6,
-        "ref": "untriaged (Phase 1)"
+    "search-browse": {
+      "axe forced-colors color-contrast": {
+        "count": 1,
+        "ref": "#1390"
+      }
+    },
+    "search-results": {
+      "axe forced-colors color-contrast": {
+        "count": 1,
+        "ref": "#1390"
       }
     }
   }

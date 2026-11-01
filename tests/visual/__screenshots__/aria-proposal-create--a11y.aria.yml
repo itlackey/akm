@@ -1,0 +1,46 @@
+- navigation "Main":
+  - link "akm ui":
+    - /url: "#/overview"
+  - list:
+    - listitem:
+      - link "Overview":
+        - /url: "#/overview"
+    - listitem:
+      - link "Bundles":
+        - /url: "#/bundles"
+    - listitem:
+      - link "Config":
+        - /url: "#/config"
+    - listitem:
+      - link "Proposals":
+        - /url: "#/proposals"
+    - listitem:
+      - link "Changes":
+        - /url: "#/changes"
+    - listitem:
+      - link "Search":
+        - /url: "#/search"
+  - button "Refresh view"
+  - text: akm 0.0.0 · visual-host bun
+- main:
+  - paragraph:
+    - link "Back to queue":
+      - /url: "#/proposals"
+    - text: / p-pendin
+  - heading "stash//knowledge/incident-template" [level=1]
+  - text: pending distill
+  - heading "Validation" [level=2]
+  - list:
+    - listitem: "warn invalid-description Proposal p-pending-create (stash//knowledge/incident-template) has an invalid description: MISSING_FRONTMATTER_DESCRIPTION."
+  - heading "Proposed change" [level=2]
+  - paragraph: New asset. Target /tmp/akm-visual-loaded/stash/knowledge/incident-template.md
+  - paragraph: 3 lines added
+  - region "Changes, scrolls sideways": "1 + # Incident template 2 + 3 + What happened, impact, timeline, follow-ups."
+  - region "Decide this proposal":
+    - paragraph:
+      - button "Accept"
+      - button "Reject"
+  - group: Proposal details
+  - paragraph:
+    - link "View the asset as it is now":
+      - /url: "#/asset?ref=stash%2F%2Fknowledge%2Fincident-template"

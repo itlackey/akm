@@ -1,0 +1,101 @@
+- navigation "Main":
+  - link "akm ui":
+    - /url: "#/overview"
+  - list:
+    - listitem:
+      - link "Overview":
+        - /url: "#/overview"
+    - listitem:
+      - link "Bundles":
+        - /url: "#/bundles"
+    - listitem:
+      - link "Config":
+        - /url: "#/config"
+    - listitem:
+      - link "Proposals":
+        - /url: "#/proposals"
+    - listitem:
+      - link "Changes":
+        - /url: "#/changes"
+    - listitem:
+      - link "Search":
+        - /url: "#/search"
+  - button "Refresh view"
+  - text: akm 0.0.0 · visual-host bun
+- main:
+  - heading "Search" [level=1]
+  - paragraph: Search or browse your indexed assets. Browsing is not counted as usage.
+  - paragraph:
+    - link "New knowledge":
+      - /url: "#/new"
+    - text: · Ctrl/Cmd+K opens search
+  - search:
+    - searchbox "Query"
+    - combobox "Type":
+      - option "All types" [selected]
+      - option "command"
+      - option "knowledge"
+      - option "lesson"
+      - option "memory"
+    - combobox "Bundle":
+      - option "All bundles" [selected]
+      - option "stash"
+    - combobox "Belief state":
+      - option "current" [selected]
+      - option "all"
+      - option "historical"
+    - combobox "Result limit":
+      - option /\d+/ [selected]
+      - option /\d+/
+      - option /\d+/
+    - group: Scope filters
+    - button "Search"
+  - paragraph: 6 results, keyword mode, 0 ms.
+  - group:
+    - text: commands (1)
+    - list:
+      - listitem:
+        - link "commands/release-notes":
+          - /url: "#/asset?ref=commands%2Frelease-notes&returnTo=%23%2Fsearch"
+        - text: /command stash score \d+\.\d+/
+        - paragraph: Draft release notes from merged pull requests
+        - text: release notes
+  - group:
+    - text: knowledge (3)
+    - list:
+      - listitem:
+        - link "knowledge/deploy-guide":
+          - /url: "#/asset?ref=knowledge%2Fdeploy-guide&returnTo=%23%2Fsearch"
+        - text: /knowledge stash score \d+\.\d+/
+        - paragraph: How to deploy the service
+        - text: deploy runbook
+      - listitem:
+        - link "knowledge/onboarding":
+          - /url: "#/asset?ref=knowledge%2Fonboarding&returnTo=%23%2Fsearch"
+        - text: /knowledge stash score \d+\.\d+/
+        - paragraph: onboarding
+        - text: onboarding
+      - listitem:
+        - link "knowledge/rollback":
+          - /url: "#/asset?ref=knowledge%2Frollback&returnTo=%23%2Fsearch"
+        - text: /knowledge stash score \d+\.\d+/
+        - paragraph: Roll back a bad deploy
+        - text: rollback
+  - group:
+    - text: lessons (1)
+    - list:
+      - listitem:
+        - link "lessons/rg":
+          - /url: "#/asset?ref=lessons%2Frg&returnTo=%23%2Fsearch"
+        - text: /lesson stash score \d+\.\d+/
+        - paragraph: Prefer ripgrep for repository search
+        - text: rg
+  - group:
+    - text: memories (1)
+    - list:
+      - listitem:
+        - link "memories/standup":
+          - /url: "#/asset?ref=memories%2Fstandup&returnTo=%23%2Fsearch"
+        - text: /memory stash score \d+\.\d+/
+        - paragraph: standup
+        - text: standup
