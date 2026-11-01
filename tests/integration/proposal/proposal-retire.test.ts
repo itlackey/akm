@@ -1697,6 +1697,8 @@ describe("an accepted retirement leaves the search index at once (#1307)", () =>
       await withEnv({ AKM_EMBED_DETERMINISTIC: "1" }, async () => {
         const oldPath = writeAsset("memories/old-note.md", "description: quartz old note", "quartz old\n");
         const newPath = writeAsset("memories/new-note.md", "description: quartz new note", "quartz new\n");
+        // The `.derived` twin moves with the retired note, and comes back with it.
+        writeAsset("memories/old-note.derived.md", "description: quartz old derived note", "quartz old derived\n");
         saveConfig({
           semanticSearchMode,
           bundles: { stash: { path: storage.stashDir, writable: true } },
@@ -1719,6 +1721,7 @@ describe("an accepted retirement leaves the search index at once (#1307)", () =>
 
         const before = await refs();
         expect(has(before, "old-note")).toBe(true);
+        expect(has(before, "old-note.derived")).toBe(true);
         expect(has(before, "new-note")).toBe(true);
 
         const config = makeConfig(storage.stashDir);
@@ -1736,11 +1739,13 @@ describe("an accepted retirement leaves the search index at once (#1307)", () =>
         await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
         const accepted = await refs();
         expect(has(accepted, "old-note")).toBe(false);
+        expect(has(accepted, "old-note.derived")).toBe(false);
         expect(has(accepted, "new-note")).toBe(true);
 
         await akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config });
         const reverted = await refs();
         expect(has(reverted, "old-note")).toBe(true);
+        expect(has(reverted, "old-note.derived")).toBe(true);
         expect(has(reverted, "new-note")).toBe(true);
       });
     });
