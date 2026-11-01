@@ -237,7 +237,7 @@ async function showMeta() {
     const meta = await getMeta();
     mount(
       target,
-      html`<span class="mono" data-volatile>akm ${meta.version} · ${meta.hostname}</span><span class="muted small">${meta.runtime}</span>`,
+      html`<span class="mono" data-volatile>akm ${meta.version} · ${meta.hostname}</span><span class="muted">${meta.runtime}</span>`,
     );
   } catch {
     mount(target, html``);

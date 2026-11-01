@@ -1367,7 +1367,7 @@
     }
     & .bar-note {
       grid-column: 1 / -1;
-      margin-block: calc(-1 * var(--space-1)) var(--space-1);
+      margin-block-end: var(--space-1);
     }
     @media (forced-colors: active) {
       & .bar-fill {

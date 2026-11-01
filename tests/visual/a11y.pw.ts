@@ -315,7 +315,7 @@ test("focus survives an asynchronous action", async ({ page }) => {
 
   // Changing the Overview window redraws the route: focus must not fall to the body (B-22).
   await visit(page, ROUTES.overview.hash);
-  await page.locator("select[name=metric-window]").selectOption("7d");
+  await page.getByRole("radio", { name: "90 days" }).check();
   await expect(page.locator("main")).not.toHaveAttribute("aria-busy", "true");
   await page.waitForLoadState("networkidle");
   if (await page.evaluate(() => document.activeElement === document.body)) found["focus-async overview window"] = 1;
