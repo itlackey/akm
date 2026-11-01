@@ -506,8 +506,10 @@ proposal extract --session-id ...` invocation never writes. It reports
 purpose" from "broken"), `warn` when every session in the window was skipped
 for an infrastructure reason (`llm_unavailable`, `read_failed`, `exception`,
 `locked_concurrent`) — naming the reason and, when recorded, the connection or
-harness it ran on, as `engine "<name>"` — and `pass` otherwise, with
-per-outcome counts.
+harness it ran on, as `engine "<name>"`. It also `warn`s when some sessions
+harvested but others had candidate writes fail and were not yet extracted again
+(a validator refusal does not count; extracting the session again clears it).
+Otherwise it is `pass`, with per-outcome counts.
 
 ### metrics
 
@@ -3292,6 +3294,7 @@ harvest" branch on `skipReasons`, `warnings`, or `sessionsProcessed` /
 | `engine` | Name of the connection or harness the run resolved to. Absent only when extract is disabled by the selected improve strategy (the run returns before a target is resolved). |
 | `engineKind` | `"connection"` or `"harness"` — what `engine` names. Same absence condition as `engine`. |
 | `skipReasons` | Per-`skipReason` count across `sessions[]` (e.g. `{ "llm_unavailable": 25 }`). Present only when `sessionsSkipped > 0`. |
+| `writeFailures` | `{ candidates, sessions, causes }` when candidate writes failed for a reason other than the validator's refusal (state.db busy, I/O, config), summed over `sessions[]`; `causes` is at most three distinct messages. `ok` stays `true`, as for a skipped session, so a scheduler or hook does not start failing. The run is incomplete: `proposals` holds only what was queued, and the failed sessions stay retryable. Absent when no write failed that way, so a no-op, a validator refusal (counted per session in `failedRejectedCount`) and a full success read alike. `akm improve` carries the same field in its `extract[]` results. |
 | `warnings` | Includes one aggregate line per infrastructure skip reason that fired (`llm_unavailable`, `read_failed`, `exception`, `locked_concurrent`) — e.g. `25 of 25 sessions skipped: llm_unavailable (engine "default")` — so an outage is visible without inspecting `sessions[]`. Session-content skips (`already_extracted`, `too_short`, `triaged_out`) are counted in `skipReasons` but never produce a warning line. |
 | `sessions[].warnings` | One line per candidate the model wrote that the output contract refuses, as `<type>:<name> dropped: <reason>` — a lesson without a `when_to_use` of 15 characters, a description under 20, a name that is not a kebab-case slug — and one per candidate held back by the improve ledger. A session whose every candidate was dropped has `candidateCount: 0` and no `rationaleIfEmpty`, so this is where the loss shows. |
 

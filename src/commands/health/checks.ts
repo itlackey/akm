@@ -482,6 +482,22 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
         };
       }
 
+      // #1290: some sessions harvested while others had candidate writes fail. A failed write that is not a validator
+      // refusal keeps the session's hash null, so it is retried; a row stops counting once the session is extracted
+      // again, and a refusal (hash recorded) is no infrastructure failure. A session that queued some candidates and
+      // failed to write others is recorded as `candidates_queued`.
+      const unresolvedWrites = rows
+        .filter((row) => row.retryable && ["proposal_write_failed", "candidates_queued"].includes(row.outcome))
+        .reduce((sum, row) => sum + row.count, 0);
+      if (unresolvedWrites > 0) {
+        return {
+          ...base,
+          evidence: { ...base.evidence, unresolvedWriteFailures: unresolvedWrites },
+          status: "warn",
+          message: `${unresolvedWrites} of ${totalRows} sessions in the last ${days} days had candidate writes fail (proposal_write_failed) and are not yet extracted again.`,
+        };
+      }
+
       const outcomeCounts = new Map<string, number>();
       for (const row of rows) outcomeCounts.set(row.outcome, (outcomeCounts.get(row.outcome) ?? 0) + row.count);
       const outcomeSummary = [...outcomeCounts.entries()]

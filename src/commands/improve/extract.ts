@@ -680,6 +680,7 @@ async function processSession(
   let blockedCount = 0;
   let failedCount = 0;
   let failedRejectedCount = 0;
+  const failedCauses: string[] = [];
   if (payload.candidates.length > 0) {
     // A candidate the ledger holds a live window for (pending, or recently rejected) is not queued again.
     const access = { proposalsCtx: options.ctx, eventsCtx: options.eventsCtx, ...(dryRun ? { readOnly: true } : {}) };
@@ -751,10 +752,10 @@ async function processSession(
         failedCount += 1;
         // The validator's refusal recurs on every retry of this content; any other failure
         // (state.db busy, I/O, config) may clear, so it keeps the session retryable.
+        const message = err instanceof Error ? err.message : String(err);
         if (err instanceof UsageError && err.code === "INVALID_PROPOSAL") failedRejectedCount += 1;
-        warnings.push(
-          `candidate ${candidate.type}:${candidate.name} failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        else failedCauses.push(message);
+        warnings.push(`candidate ${candidate.type}:${candidate.name} failed: ${message}`);
       }
     }
   }
@@ -767,6 +768,7 @@ async function processSession(
     blockedCount,
     failedCount,
     failedRejectedCount,
+    ...(failedCauses.length > 0 ? { failedCauses: boundedCauses(failedCauses) } : {}),
     ...(empty && payload.rationale_if_empty ? { rationaleIfEmpty: payload.rationale_if_empty } : {}),
     warnings,
     ...sessionAsset,
@@ -796,6 +798,14 @@ async function processSession(
     options.eventsCtx,
   );
   return result;
+}
+
+const MAX_FAILURE_CAUSES = 3;
+const MAX_FAILURE_CAUSE_CHARS = 200;
+
+/** The distinct causes, first few, each cut short: a result names why writes failed without growing with them. */
+function boundedCauses(causes: readonly string[]): string[] {
+  return [...new Set(causes.map((cause) => cause.slice(0, MAX_FAILURE_CAUSE_CHARS)))].slice(0, MAX_FAILURE_CAUSES);
 }
 
 /** Queue outcomes follow effects, never merely the presence of model candidates. */
@@ -1249,6 +1259,25 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
         `${n} of ${tally.sessions.length} sessions skipped: ${reason} (engine "${llmRunner.name}")`,
       );
   }
+  // A write the validator refused recurs on every retry and is not a failure of the run; any other
+  // failure may clear, so the session stays retryable and the run is incomplete (#1290).
+  const failedSessions = tally.sessions.filter((session) => session.failedCauses);
+  const writeFailures =
+    failedSessions.length > 0
+      ? {
+          candidates: failedSessions.reduce(
+            (sum, session) => sum + (session.failedCount ?? 0) - (session.failedRejectedCount ?? 0),
+            0,
+          ),
+          sessions: failedSessions.length,
+          causes: boundedCauses(failedSessions.flatMap((session) => session.failedCauses ?? [])),
+        }
+      : undefined;
+  if (writeFailures) {
+    topLevelWarnings.push(
+      `${writeFailures.candidates} candidate write(s) failed in ${writeFailures.sessions} session(s): ${writeFailures.causes.join("; ")}; those sessions stay retryable.`,
+    );
+  }
   if (modelPlanCount > 0 && resolved.gates.triage.enabled && tally.triageEvaluated > 0) {
     appendEvent(
       {
@@ -1275,6 +1304,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
     proposals: tally.allProposalIds,
     sessions: tally.sessions,
     warnings: topLevelWarnings,
+    ...(writeFailures ? { writeFailures } : {}),
     durationMs: Date.now() - startMs,
     ...notices.fields(),
     ...(Object.keys(counts).length > 0 ? { skipReasons: counts } : {}),

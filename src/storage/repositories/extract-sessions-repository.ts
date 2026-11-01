@@ -170,6 +170,11 @@ export interface ExtractOutcomeCount {
   skipReason: string | null;
   /** `metadata_json.engine`, or `null` for a row a pre-#913 release wrote (no such key). */
   engine: string | null;
+  /**
+   * The row keeps a null content hash, so the next run of the session extracts it again. A failed proposal
+   * write sets it unless the validator alone refused: that recurs on the same content and records the hash.
+   */
+  retryable: boolean;
   count: number;
 }
 
@@ -186,17 +191,19 @@ export interface ExtractOutcomeCount {
  * specific cause.
  */
 export function getExtractOutcomeCountsSince(db: Database, sinceIso: string): ExtractOutcomeCount[] {
-  return db
+  const rows = db
     .prepare(
       `SELECT harness, outcome,
               json_extract(metadata_json, '$.skipReason') AS skipReason,
               json_extract(metadata_json, '$.engine') AS engine,
+              content_hash IS NULL AS retryable,
               COUNT(*) AS count
        FROM extract_sessions_seen
        WHERE processed_at >= ?
-       GROUP BY harness, outcome, skipReason, engine`,
+       GROUP BY harness, outcome, skipReason, engine, retryable`,
     )
-    .all(sinceIso) as ExtractOutcomeCount[];
+    .all(sinceIso) as Array<Omit<ExtractOutcomeCount, "retryable"> & { retryable: number }>;
+  return rows.map((row) => ({ ...row, retryable: row.retryable === 1 }));
 }
 
 /**
