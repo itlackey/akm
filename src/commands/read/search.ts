@@ -84,6 +84,9 @@ export async function akmSearch(input: {
    * Eligibility is applied before each channel's candidate budget.
    */
   filters?: StashEntryScope;
+  /** Inclusive `YYYY-MM-DD` bounds on the hit's `observed` date, else `updated`. Local hits only. */
+  since?: string;
+  until?: string;
   /**
    * When true, hits with `quality === "proposed"` are kept in the result
    * set. Default behavior excludes them. The flag has no
@@ -201,6 +204,8 @@ export async function akmSearch(input: {
           sources,
           config,
           filters,
+          since: input.since,
+          until: input.until,
           includeProposed,
           beliefFilter: belief,
           // When `--from <name>` narrowed the source list above, propagate

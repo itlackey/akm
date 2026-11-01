@@ -10,9 +10,10 @@ import path from "node:path";
 // they are imported (and re-exported below) here. `SCOPE_KEYS` (a value) stays.
 import type { AssetParameter, IndexDocument, ScopeKey, StashEntryScope, StashIntent } from "../../core/adapter/types";
 import { parseBundleRef } from "../../core/asset/asset-ref";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { parseFrontmatter, readFrontmatterDate } from "../../core/asset/frontmatter";
 import type { TocHeading } from "../../core/asset/markdown";
 import { asNonEmptyString } from "../../core/common";
+import { isoDay } from "../../core/time";
 import { isVerbose, warn } from "../../core/warn";
 import type { buildFileContext } from "../walk/file-context";
 
@@ -340,6 +341,16 @@ export function applyCuratedFrontmatter(entry: IndexDocument, fmData: Record<str
 
   const quality = asNonEmptyString(fmData.quality);
   if (quality) entry.quality = normalizeQuality(quality);
+
+  // Dates: kept as written when they start with a calendar day, ignored otherwise.
+  const created = asNonEmptyString(fmData.created);
+  if (created && isoDay(created)) entry.created = created;
+  const updated = asNonEmptyString(fmData.updated);
+  if (updated && isoDay(updated)) entry.updated = updated;
+  const observed = readFrontmatterDate(fmData, "observed");
+  if (observed && isoDay(observed)) entry.observed = observed;
+  const expires = asNonEmptyString(fmData.expires);
+  if (expires && isoDay(expires)) entry.expires = expires;
 
   // Capture the `category:` frontmatter key (e.g. `convention`,
   // `meta` on facts) must land on the indexed entry so category-keyed
