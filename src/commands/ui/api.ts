@@ -59,7 +59,7 @@ import { akmShowUnified } from "../read/show";
 import { assembleInfo } from "../sources/info";
 import { akmListSources } from "../sources/installed-stashes";
 import { assetImprove } from "./asset-improve";
-import { classifyOutcome, decidedAt, weekOf } from "./derive";
+import { classifyOutcome, decidedAt, pChart, weekOf, weekRange } from "./derive";
 import { readDocumentSource } from "./document-source";
 import { listFolders } from "./folders";
 import { readBundleGitStatus, readFileRevision, readRecentCommits } from "./git-read";
@@ -720,7 +720,20 @@ async function assetHistory(query: Query) {
 /** The per-day search series over a longer window than the Overview's, for the Improve impact trend. */
 async function retrievalTrend(query: Query) {
   const metrics = await akmMetrics({ since: query.get("since") || "90d", indexSnapshot: false, includeRows: true });
-  return retrievalSeries(metrics.rows?.usage ?? [], metrics.window);
+  const series = retrievalSeries(metrics.rows?.usage ?? [], metrics.window);
+  // The same days by ISO week, for a p-chart of the share that found nothing.
+  const first = series.daily[0]?.date;
+  const weeks = first ? weekRange(first, metrics.window.until.slice(0, 10)) : [];
+  const perWeek = weeks.map((week) => {
+    const days = series.daily.filter((d) => weekOf(d.date) === week);
+    return {
+      week,
+      x: days.reduce((sum, d) => sum + d.zeroResults, 0),
+      n: days.reduce((sum, d) => sum + d.searches, 0),
+    };
+  });
+  const chart = pChart(perWeek);
+  return { ...series, weekly: chart.points, centre: chart.centre };
 }
 
 // ── Routing ──────────────────────────────────────────────────────────────────

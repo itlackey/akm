@@ -1,7 +1,7 @@
 // Improve impact: what akm's improve processes proposed, what was decided and by whom, and what it cost.
 
 import { verticalBars, wireChart } from "./chart-view.js";
-import { ago, api, emptyState, fmtMs, fmtNum, fmtPct, html, proposalHref, tableWrap } from "./lib.js";
+import { ago, api, emptyState, fmtMs, fmtNum, fmtPct, html, proposalHref, tableWrap, weekStart } from "./lib.js";
 
 const WEEKS = 12;
 const MIN_RATE_DECISIONS = 5;
@@ -32,15 +32,6 @@ function outcomeOf(p) {
 
 function decidedAt(p) {
   return p.review?.decidedAt ?? p.updatedAt;
-}
-
-/** Monday 00:00 UTC of the week holding `iso`, as YYYY-MM-DD. */
-function weekStart(iso) {
-  const d = new Date(iso);
-  const day = (d.getUTCDay() + 6) % 7;
-  d.setUTCHours(0, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() - day);
-  return d.toISOString().slice(0, 10);
 }
 
 function lastWeeks(count) {

@@ -27,3 +27,27 @@ export function proportionBar(counts) {
   )}</div>
   <ul class="legend">${entries.map(([k, n], i) => html`<li><span class="swatch ${PALETTE[i % PALETTE.length]}"></span>${k} <span class="num">${n}</span></li>`)}</ul>`;
 }
+
+/** A tiny line of `values` (nulls are gaps) with no axes: shape only, the number beside it is the fact. */
+export function sparkline(values, label = "Weekly trend") {
+  const known = values.filter((v) => typeof v === "number");
+  if (known.length < 3) return "";
+  const W = 120;
+  const H = 28;
+  const max = Math.max(...known, 0.0001);
+  const min = Math.min(...known);
+  const span = max - min || 1;
+  const step = W / Math.max(values.length - 1, 1);
+  const segments = [];
+  let current = [];
+  values.forEach((v, i) => {
+    if (typeof v !== "number") {
+      if (current.length) segments.push(current);
+      current = [];
+      return;
+    }
+    current.push(`${round(i * step)},${round(H - 2 - ((v - min) / span) * (H - 4))}`);
+  });
+  if (current.length) segments.push(current);
+  return html`<svg class="tile-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${label}">${segments.map((points) => html`<polyline points="${points.join(" ")}"/>`)}</svg>`;
+}

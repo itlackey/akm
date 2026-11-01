@@ -170,6 +170,15 @@ export function fmtDateTime(iso) {
   return Number.isNaN(t) ? "-" : new Date(t).toLocaleString();
 }
 
+/** The Monday (00:00 UTC) of the week holding `iso`, as YYYY-MM-DD. */
+export function weekStart(iso) {
+  const d = new Date(iso);
+  const day = (d.getUTCDay() + 6) % 7;
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() - day);
+  return d.toISOString().slice(0, 10);
+}
+
 /** A relative time; the absolute time is its tooltip and is also in the text for a reader who cannot hover. */
 export function when(iso) {
   return html`<time datetime="${iso ?? ""}" title="${fmtDateTime(iso)}">${ago(iso)}<span class="sr-only"> (${fmtDateTime(iso)})</span></time>`;

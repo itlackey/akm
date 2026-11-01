@@ -382,9 +382,12 @@ describe("pages", () => {
     expect(overview).toContain("run-1");
     expect(overview).toContain('id="activity-chart"');
     expect(overview).toContain("Model utilization");
-    expect(overview).toContain("Retrieval health");
+    expect(overview).toContain("Is search finding what you need?");
+    expect(overview).toContain("Feedback and use");
     expect(overview).toContain("Automation reliability");
-    expect(overview).toContain("UTC days");
+    expect(overview).toContain("Last 7 days against your usual");
+    expect(overview).toContain("Needs attention");
+    expect(overview).toContain("Today is partial");
 
     const bundles = (await (await view("bundles.js"))(ctx())).text;
     expect(bundles).toContain("Configured bundles");

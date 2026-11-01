@@ -748,6 +748,10 @@ The per-day user search series over a longer window than the overview's (`?since
 coverage are filled with zeros, and the first and last day are marked `partial`. Each day has `searches`, `zeroResults`,
 `noResultRate` (`null` on a day with no searches), `medianMs` and `latencySamples`.
 
+`weekly` is the same data by ISO week as a p-chart: per week `week`, `x` (found nothing), `n` (searches), `rate`, and the
+control limits `lower` and `upper` (centre ± 3 standard errors at that week's own n); `signal` is `true` for a week
+outside its limits. A week with no searches has `null` for all three. `centre` is the pooled share.
+
 ## `GET /api/search/misses`
 
 User searches that found nothing, grouped by normalised query: `query`, `count`, `days` (distinct UTC days), `firstAt`,

@@ -1,5 +1,18 @@
-import { horizontalBars, verticalBars, wireChart } from "./chart-view.js";
-import { api, badge, emptyState, fmtMs, fmtNum, fmtPct, html, mount, pretty, tableWrap, when } from "./lib.js";
+import { eventStrip, horizontalBars, lines, pChartLine, verticalBars, wireChart } from "./chart-view.js";
+import {
+  api,
+  badge,
+  emptyState,
+  fmtMs,
+  fmtNum,
+  fmtPct,
+  html,
+  mount,
+  pretty,
+  tableWrap,
+  weekStart,
+  when,
+} from "./lib.js";
 
 const chart = (id, label) => html`<div class="echarts-view" id="${id}" role="img" aria-label="${label}"></div>`;
 const dataTable = (content) => html`<details><summary>Data and details</summary>${tableWrap(content)}</details>`;
@@ -26,7 +39,7 @@ function activity(ctx, metrics) {
       "Operations",
     ),
   );
-  return html`<section class="chart-card"><h2>Activity</h2><p class="muted small">Your own activity only: searches, curates, shows and feedback you made.</p><div class="chart-controls" data-activity-controls>${Object.entries(labels).map(([key, label], index) => html`<label><input type="checkbox" data-activity value="${key}" checked><i class="series-key series-${index + 1}" aria-hidden="true"></i>${label}</label>`)}</div>
+  return html`<section class="chart-card"><h2>Feedback and use</h2><p class="muted small">Your own activity only: searches, curates, shows and feedback you made.</p><div class="chart-controls" data-activity-controls>${Object.entries(labels).map(([key, label], index) => html`<label><input type="checkbox" data-activity value="${key}" checked><i class="series-key series-${index + 1}" aria-hidden="true"></i>${label}</label>`)}</div>
     ${days.length ? chart("activity-chart", "Recorded operations by UTC day. Choose series above; exact counts follow in Data and details.") : emptyState("No recorded activity in this window.")}
     ${dataTable(html`<table><thead><tr><th>UTC day</th>${Object.values(labels).map((label) => html`<th class="r">${label}</th>`)}</tr></thead><tbody>${days.map((d) => html`<tr><th>${d.day}${d.partial ? html` <span class="muted small">(partial)</span>` : ""}</th>${Object.keys(labels).map((key) => html`<td class="r num">${fmtNum(d[key])}</td>`)}</tr>`)}</tbody></table>`)}
   </section>`;
@@ -98,68 +111,52 @@ function models(ctx, llm) {
     <details><summary>Data and details</summary><div data-model-table>${modelTable(rows())}</div></details></section>`;
 }
 
-function retrieval(ctx, data) {
-  if (!data)
-    return html`<section class="chart-card"><h2>Retrieval health</h2>${emptyState("Retrieval measurements unavailable.")}</section>`;
-  const days = data.daily;
-  let root;
-  const select = (day) => {
-    if (!root || !day) return;
-    const queries = data.zeroResultQueries.filter((q) => q.date === day);
-    const detail = root.querySelector("[data-retrieval-detail]");
-    mount(
-      detail,
-      html`<h3>No-result queries · ${day} UTC</h3>${queries.length ? tableWrap(html`<table><thead><tr><th>Query</th><th class="r">Count</th></tr></thead><tbody>${queries.map((q) => html`<tr><td class="wrap">${q.query}</td><td class="r">${q.count}</td></tr>`)}</tbody></table>`) : html`<p>No unsuccessful query was recorded for this day.</p>`}`,
-    );
-    detail.focus({ preventScroll: true });
-  };
-  ctx.after.push((element) => {
-    root = element;
-    root.querySelector("[data-retrieval-table]")?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-day]");
-      if (button) select(button.dataset.day);
-    });
-  });
-  wireChart(
-    ctx,
-    "#retrieval-results",
-    () =>
-      verticalBars(
-        days.map((d) => (d.partial ? `${d.date}*` : d.date)),
-        [
-          { name: "All searches", data: days.map((d) => d.searches) },
-          { name: "No results", data: days.map((d) => d.zeroResults) },
-        ],
-        "Searches",
-      ),
-    (event) => select(days[event.dataIndex]?.date),
+/** "Is search finding what you need?": the weekly share that found nothing as a p-chart, with improve runs under it. */
+function retrievalCard(ctx, trend, data) {
+  const weekly = trend?.weekly ?? [];
+  const searched = weekly.filter((w) => w.n > 0);
+  if (!trend || searched.length === 0)
+    return html`<section class="chart-card chart-wide"><h2>Is search finding what you need?</h2>${emptyState("No searches in the last 12 weeks.", "Searches from you and your agents appear here.")}</section>`;
+  const labels = weekly.map((w) => w.week.slice(5));
+  const total = weekly.reduce((sum, w) => sum + w.n, 0);
+  const missed = weekly.reduce((sum, w) => sum + w.x, 0);
+  const odd = weekly.filter((w) => w.signal);
+  const takeaway = odd.length
+    ? `Unusual: ${odd.map((w) => `the week of ${w.week} (${fmtPct(w.rate)})`).join(", ")} fell outside the usual range.`
+    : "No week stands out: the share that found nothing stays within its usual range.";
+  const runs = (data.improveRuns ?? [])
+    .map((run) => ({
+      index: weekly.findIndex((w) => w.week === weekStart(run.startedAt)),
+      tone: run.ok === false ? "fail" : "ok",
+    }))
+    .filter((event) => event.index >= 0);
+  wireChart(ctx, "#trend-rate", () =>
+    pChartLine(labels, weekly, trend.centre, { name: "Found nothing", unit: "Found nothing" }),
   );
-  wireChart(
-    ctx,
-    "#retrieval-latency",
-    () => ({
-      ...verticalBars(
-        days.map((d) => (d.partial ? `${d.date}*` : d.date)),
-        [],
-        "Milliseconds",
-      ),
-      series: [
-        {
-          type: "line",
-          name: "Median latency",
-          connectNulls: false,
-          data: days.map((d) => d.medianMs),
-          symbol: "circle",
-          symbolSize: 7,
-        },
-      ],
-    }),
-    (event) => select(days[event.dataIndex]?.date),
+  wireChart(ctx, "#trend-events", (token) => eventStrip(labels, runs, { name: "Improve runs", token }));
+  wireChart(ctx, "#trend-searches", () =>
+    verticalBars(labels, [{ name: "Searches", data: weekly.map((w) => w.n) }], "Searches"),
   );
-  return html`<section class="chart-card"><h2>Retrieval health</h2><p class="muted small">Your own searches only. A day marked * is partial; a day with no searches is zero, and before the first recorded day nothing is shown.</p>${days.length ? html`<p class="chart-legend"><span><i class="series-key series-1" aria-hidden="true"></i>All searches</span><span><i class="series-key series-2" aria-hidden="true"></i>No results</span></p>${chart("retrieval-results", "Total searches and no-result searches by UTC day. Select a day to inspect unsuccessful queries.")}<h3>Median search latency</h3>${chart("retrieval-latency", "Median recorded search latency by UTC day on its own millisecond scale. Missing samples are gaps.")}` : emptyState("No searches recorded in this window.")}
-    <p class="muted small">No-result counts describe retrieval, not answer quality. Missing latency samples are unknown.</p>
-    <div data-retrieval-detail tabindex="-1" aria-live="polite"></div>
-    <details><summary>Data and details</summary><div data-retrieval-table>${tableWrap(html`<table><thead><tr><th>UTC day / queries</th><th class="r">Searches</th><th class="r">No results</th><th class="r">No-result rate</th><th>Median latency</th><th class="r">Latency samples</th></tr></thead><tbody>${days.map((d) => html`<tr><th><button type="button" class="btn-secondary" data-day="${d.date}">${d.date}</button>${d.partial ? html` <span class="muted small">(partial)</span>` : ""}</th><td class="r">${d.searches}</td><td class="r">${d.zeroResults}</td><td class="r">${d.noResultRate === null ? "n/a" : `${fmtPct(d.noResultRate)} of ${d.searches}`}</td><td>${d.medianMs === null ? "Unknown" : fmtMs(d.medianMs)}</td><td class="r">${d.latencySamples} / ${d.searches}</td></tr>`)}</tbody></table>`)}</div></details></section>`;
+  const days = data.retrieval?.daily ?? [];
+  wireChart(ctx, "#trend-latency", () =>
+    lines(
+      days.map((d) => d.date.slice(5)),
+      [{ name: "Median search time", colorIndex: 1, data: days.map((d) => d.medianMs) }],
+      "Milliseconds",
+    ),
+  );
+  return html`<section class="chart-card chart-wide"><h2>Is search finding what you need? <span class="muted small num">${fmtNum(total)} searches · ${fmtNum(missed)} found nothing</span></h2>
+    <p>${takeaway}</p>
+    <p class="chart-legend"><span><i class="series-key series-1" aria-hidden="true"></i>Found nothing, by week</span><span>Band: the usual range</span><span><i class="marker-key" aria-hidden="true"></i>Improve run (below)</span></p>
+    <div class="echarts-view" data-height="tall" id="trend-rate" role="img" aria-label="Share of searches that found nothing, by week, with its usual range. Weekly figures follow in Data and details."></div>
+    <div class="echarts-view" data-height="strip" id="trend-events" role="img" aria-label="Improve runs by week, on the same weeks as the chart above."></div>
+    <h3>Searches per week</h3>
+    <div class="echarts-view" data-height="short" id="trend-searches" role="img" aria-label="Searches per week."></div>
+    <h3>Search time</h3>
+    <div class="echarts-view" data-height="short" id="trend-latency" role="img" aria-label="Median search time by day. A gap means no timing was recorded that day."></div>
+    <p class="muted small">Your own searches only. A day or week marked as partial is still filling. Found-nothing describes retrieval, not whether an answer was right.</p>
+    <details><summary>Data and details</summary>${tableWrap(html`<table><thead><tr><th>Week of</th><th class="r">Searches</th><th class="r">Found nothing</th><th class="r">Share</th><th class="r">Usual range</th></tr></thead><tbody>${weekly.map((w) => html`<tr><th>${w.week}</th><td class="r num">${fmtNum(w.n)}</td><td class="r num">${fmtNum(w.x)}</td><td class="r num">${w.rate === null ? "n/a" : fmtPct(w.rate)}${w.signal ? html` <span class="badge badge-warn">unusual</span>` : ""}</td><td class="r num">${w.lower === null ? "n/a" : `${fmtPct(w.lower)} to ${fmtPct(w.upper)}`}</td></tr>`)}</tbody></table>`)}</details>
+  </section>`;
 }
 
 function automation(ctx, tasks, runs, since) {
@@ -254,7 +251,7 @@ function automation(ctx, tasks, runs, since) {
     <div data-run-detail tabindex="-1" aria-live="polite"></div><div data-run-table>${tableWrap(html`<table><thead><tr><th>Run</th><th>Result</th><th>Duration</th><th>Model calls / failures</th></tr></thead><tbody>${runs.map((r) => html`<tr><th><button type="button" class="btn-secondary" data-run="${r.id}">${when(r.startedAt)}</button></th><td>${badge(r.ok === true ? "ok" : r.ok === false ? "failed" : "unknown", r.ok === false ? "fail" : "neutral")}</td><td>${fmtMs(r.durationMs)}</td><td>${fmtNum(r.modelCalls?.total)} / ${fmtNum(r.modelCalls?.failures)}</td></tr>`)}</tbody></table>`)}</div></details></section>`;
 }
 
-export function overviewCharts(ctx, data) {
+export function overviewCharts(ctx, data, trend) {
   if (!data.metrics) return emptyState("Usage and model measurements unavailable.");
-  return html`${activity(ctx, data.metrics)}${models(ctx, data.metrics.llm)}${retrieval(ctx, data.retrieval)}${automation(ctx, data.taskFailures ?? null, data.improveRuns ?? [], data.metrics.window.since)}`;
+  return html`${retrievalCard(ctx, trend, data)}${activity(ctx, data.metrics)}${models(ctx, data.metrics.llm)}${automation(ctx, data.taskFailures ?? null, data.improveRuns ?? [], data.metrics.window.since)}`;
 }
