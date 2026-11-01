@@ -76,4 +76,17 @@ describe("timing persistence", () => {
     }
     expect(metadata.walkMs).toBe(result.timing?.walkMs);
   });
+
+  test("index_completed records the library size and counts by type", async () => {
+    const result = await akmIndex({ stashDir: storage.stashDir, full: true });
+
+    const rows = readStateRows<{ metadata_json: string }>(
+      "SELECT metadata_json FROM events WHERE event_type = 'index_completed'",
+    );
+    const metadata = JSON.parse(rows[0]!.metadata_json);
+    expect(metadata.totalEntries).toBe(result.totalEntries);
+    expect(metadata.totalEntries).toBeGreaterThan(0);
+    const typeSum = Object.values(metadata.entriesByType as Record<string, number>).reduce((a, b) => a + b, 0);
+    expect(typeSum).toBe(metadata.totalEntries);
+  });
 });

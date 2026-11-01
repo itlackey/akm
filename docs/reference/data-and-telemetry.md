@@ -158,6 +158,10 @@ regenerable. akm also writes into it:
 - **Task history and workflow runs**: scheduled task runs and workflow run
   state.
 
+`index_completed` metadata carries the phase timings plus `totalEntries` and
+`entriesByType` (library size after the run). Runs recorded before these fields
+were added omit them; readers must treat them as optional.
+
 Event types, for `akm log --type <type>`:
 
 - Bundles and assets: `add`, `remove`, `update`, `remember`, `import`
