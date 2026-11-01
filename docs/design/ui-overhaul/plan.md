@@ -2043,6 +2043,28 @@ Each question has a recommended default, and work proceeds on the default. The "
 | Q-20 | Branch protection and labels: may the P0-0 agent create labels and the ui-overhaul issue template? | Yes if the token permits; otherwise the owner creates them from the list in P0-0. | P0-0 |
 | Q-21 | Reviewer agents: 1-business-day turnaround, CD folded into VD? | Yes. | all gated tasks |
 
+#### 13.2.1 Owner answers (2026-11-01)
+
+The owner answered these questions on 2026-11-01. Answers that differ from the recommended default are marked **changed**; they override the default above and any brief that assumed it.
+
+| ID | Answer |
+|---|---|
+| Q-01 | Yes: the daily rollup (G7) in P6-5a. |
+| Q-02 | No configurable raw retention; raw usage stays at 90 days. |
+| Q-03 | Approved: palette change as its own reviewed PR (P2-7). |
+| Q-04 | Approved: browser floor Chrome/Edge 123, Firefox 121, Safari 17.5, notice on older browsers, no fallback. |
+| Q-05 | Default: latest stable `@playwright/test`, exact-pinned; `mcr.microsoft.com/playwright` image pinned by digest. |
+| Q-06 | Default: FIXED_NOW 2026-06-17T14:20:00Z, port 9391, token `visual-token`, seed per Appendix C. |
+| Q-07 | Yes: `ui-visual` container job, at most 10 minutes per run. |
+| Q-08 | The owner makes `ui-visual` required after 5 consecutive green runs on main. |
+| Q-09 | **Changed.** Design reviewer agents approve the P2-11 reference screens; the owner is not in the loop and page work does not wait for the owner. |
+| Q-10 | **Changed.** No human screen-reader pass or macOS/Windows spot check for now. R3 and R4 rely on automated accessibility-tree snapshots and axe; the human passes are deferred to Phase 6. |
+| Q-11–Q-20 | Recommended defaults stand. |
+| Q-12 | As the judge (default confirmed). |
+| Q-14 | All bundles, with a filter (default confirmed). |
+| Q-17 | Yes: un-retire in the UI with an inline confirm (default confirmed). |
+| Q-21 | **Changed.** Keep a separate content-design (CD) reviewer: four reviewer roles (VD, AX, DA, CD); copy and microcopy get their own sign-off. Turnaround stays 1 business day. |
+
 ### 13.3 Out of scope
 
 - Version, release or build comparisons; eval or ledger import.
