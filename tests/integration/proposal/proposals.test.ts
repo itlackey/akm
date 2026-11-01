@@ -1223,6 +1223,30 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     expect(indexedEntry(accepted.assetPath)?.description).toBe("accepted zanzibar marker");
   });
 
+  test("accept and reject record review.decidedBy: human by default, triage when the caller says so (G3)", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const content = "---\ndescription: decider marker\nwhen_to_use: Verifying decidedBy\n---\n\nBody.\n";
+    const make = (name: string) =>
+      createProposal(stash, { ref: `lessons/${name}`, source: "distill", payload: { content } });
+
+    const byDefault = make("decider-default");
+    await akmProposalAccept({ stashDir: stash, id: byDefault.id, config });
+    expect(getProposal(stash, byDefault.id).review?.decidedBy).toBe("human");
+
+    const byDrain = make("decider-drain");
+    await akmProposalAccept({ stashDir: stash, id: byDrain.id, config, decidedBy: "triage" });
+    expect(getProposal(stash, byDrain.id).review?.decidedBy).toBe("triage");
+
+    const rejectedByDefault = make("decider-reject-default");
+    await akmProposalReject({ stashDir: stash, id: rejectedByDefault.id, config });
+    expect(getProposal(stash, rejectedByDefault.id).review?.decidedBy).toBe("human");
+
+    const rejectedByDrain = make("decider-reject-drain");
+    await akmProposalReject({ stashDir: stash, id: rejectedByDrain.id, config, decidedBy: "triage" });
+    expect(getProposal(stash, rejectedByDrain.id).review?.decidedBy).toBe("triage");
+  });
+
   test("revert reindexes the restored asset immediately", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
@@ -1245,8 +1269,16 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     // the revert path rather than depending on the accept-path assertion above.
     await indexWrittenAssets(stash, [accepted.assetPath]);
     expect(indexedEntry(lessonPath)?.description).toBe("accepted zanzibar marker");
+    const acceptedProposal = getProposal(stash, created.id);
+    expect(acceptedProposal.acceptedAt).toBeDefined();
+    expect(acceptedProposal.acceptedAt).toBe(acceptedProposal.review?.decidedAt);
 
+    await new Promise((resolve) => setTimeout(resolve, 5));
     await akmProposalRevert({ stashDir: stash, id: created.id, config });
+    const revertedProposal = getProposal(stash, created.id);
+    expect(revertedProposal.status).toBe("reverted");
+    expect(revertedProposal.acceptedAt).toBe(acceptedProposal.acceptedAt);
+    expect(revertedProposal.review?.decidedAt).not.toBe(acceptedProposal.acceptedAt);
     expect(indexedEntry(lessonPath)?.description).toBe("restored orchid marker");
   });
 

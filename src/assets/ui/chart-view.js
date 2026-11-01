@@ -7,6 +7,8 @@ export function wireChart(ctx, selector, options, onSelect) {
     let chart;
     let observer;
     const scheme = matchMedia("(prefers-color-scheme: dark)");
+    // Texture only where colour alone is not enough: forced colours or a request for more contrast (plan D-04).
+    const patterns = matchMedia("(forced-colors: active), (prefers-contrast: more)");
     const draw = () => {
       if (!chart || disposed) return;
       const css = getComputedStyle(element);
@@ -23,7 +25,11 @@ export function wireChart(ctx, selector, options, onSelect) {
           animation: false,
           color: ["--s1", "--s2", "--s3", "--s4", "--s5"].map(token),
           textStyle: { color: token("--text"), fontFamily: token("--font") },
-          aria: { enabled: true, label: { description: element.getAttribute("aria-label") }, decal: { show: true } },
+          aria: {
+            enabled: true,
+            label: { description: element.getAttribute("aria-label") },
+            decal: { show: patterns.matches },
+          },
           grid: { left: 12, right: 22, top: 24, bottom: 16, containLabel: true },
           ...option,
           series: option.series.map(({ colorIndex, ...series }, index) => ({
@@ -73,7 +79,7 @@ export function verticalBars(labels, series, unit = "Count") {
   return {
     xAxis: { type: "category", data: labels, axisLabel: { hideOverlap: true } },
     yAxis: { type: "value", name: unit, min: 0 },
-    series: series.map((s) => ({ type: "bar", ...s })),
+    series: series.map((s) => ({ type: "bar", barMaxWidth: 28, ...s })),
   };
 }
 

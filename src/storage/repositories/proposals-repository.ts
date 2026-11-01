@@ -148,7 +148,7 @@ function isReviewHistoryEntry(value: unknown): boolean {
 }
 
 function validatePresentMetadata(meta: Record<string, unknown>): void {
-  const stringFields = ["sourceRun", "beforeHash", "beforeHashNormalized", "backupContent"] as const;
+  const stringFields = ["sourceRun", "beforeHash", "beforeHashNormalized", "backupContent", "acceptedAt"] as const;
   for (const field of stringFields) {
     if (Object.hasOwn(meta, field) && typeof meta[field] !== "string") invalidPresentField(field);
   }
@@ -168,7 +168,8 @@ function validatePresentMetadata(meta: Record<string, unknown>): void {
       review === null ||
       (review.outcome !== "accepted" && review.outcome !== "rejected") ||
       typeof review.decidedAt !== "string" ||
-      (review.reason !== undefined && typeof review.reason !== "string")
+      (review.reason !== undefined && typeof review.reason !== "string") ||
+      (review.decidedBy !== undefined && typeof review.decidedBy !== "string")
     ) {
       invalidPresentField("review");
     }
@@ -361,6 +362,7 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
     ...(proposedTarget !== undefined ? { proposedTarget } : {}),
     ...(typeof meta.beforeHash === "string" ? { beforeHash: meta.beforeHash } : {}),
     ...(typeof meta.beforeHashNormalized === "string" ? { beforeHashNormalized: meta.beforeHashNormalized } : {}),
+    ...(typeof meta.acceptedAt === "string" ? { acceptedAt: meta.acceptedAt } : {}),
     ...(meta.review !== undefined ? { review: meta.review as Proposal["review"] } : {}),
     ...(meta.reviewHistory !== undefined ? { reviewHistory: meta.reviewHistory as Proposal["reviewHistory"] } : {}),
     ...(typeof meta.confidence === "number" ? { confidence: meta.confidence } : {}),
@@ -426,6 +428,7 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   if (proposal.beforeHash !== undefined) metaObj.beforeHash = proposal.beforeHash;
   if (proposal.beforeHashNormalized !== undefined) metaObj.beforeHashNormalized = proposal.beforeHashNormalized;
   if (proposal.sourceRun !== undefined) metaObj.sourceRun = proposal.sourceRun;
+  if (proposal.acceptedAt !== undefined) metaObj.acceptedAt = proposal.acceptedAt;
   if (proposal.review !== undefined) metaObj.review = proposal.review;
   if (proposal.reviewHistory !== undefined) metaObj.reviewHistory = proposal.reviewHistory;
   if (proposal.confidence !== undefined) metaObj.confidence = proposal.confidence;

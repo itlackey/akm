@@ -25,18 +25,23 @@ import { markdownLinkTargets } from "../../core/asset/markdown-link-targets";
 import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import { getConfigValueSource, loadConfig } from "../../core/config/config";
+import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getConfigPath, getDataDir, getDbPath } from "../../core/paths";
 import { getStateDbPath, listPendingStateMigrations } from "../../core/state-db";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
-import { resolveWriteTarget } from "../../core/write-source";
-import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveWorkingStashTarget, resolveWriteTarget } from "../../core/write-source";
+import { findSourceForPath, implicitStashDir, resolveSourceEntries } from "../../indexer/search/search-source";
 import { type Database, openDatabase } from "../../storage/database";
 import { listRecentImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { getEmbeddingCount } from "../../storage/repositories/index-vec-repository";
-import { countFeedbackBySignal, listFeedbackEventRows } from "../../storage/repositories/metrics-repository";
+import {
+  countFeedbackBySignal,
+  countPendingProposals,
+  listFeedbackEventRows,
+} from "../../storage/repositories/metrics-repository";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
 import { decodeTaskHistoryMetadata, queryTaskHistory } from "../../storage/repositories/task-history-repository";
 import { applyReadonlyPragmas } from "../../storage/sqlite-pragmas";
@@ -44,7 +49,7 @@ import { pkgVersion } from "../../version";
 import { listConfig } from "../config-cli";
 import { akmHealth, parseHealthSince } from "../health";
 import { computeAcceptRateBySource } from "../health/accept-rate";
-import { buildTasks } from "../metrics/collect";
+import { rankTaskFailures } from "../metrics/collect";
 import { akmMetrics } from "../metrics/metrics-cli";
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../proposal/repository";
@@ -215,20 +220,14 @@ async function overview(query: Query) {
   const metrics = await section(errors, "metrics", () =>
     akmMetrics({ since: query.get("metricsSince") || "30d", indexSnapshot: false, includeRows: true }),
   );
+  const stashDir = tryStashDir();
   const stateReads = await section(errors, "state", () =>
     withReadonlyStateDb(
       (db) => ({
+        pendingNow: stashDir ? countPendingProposals(db, stashDir) : null,
         improveRuns: listRecentImproveRuns(db, IMPROVE_RUNS_SHOWN).map(summarizeImproveRun),
-        taskFailures: metrics
-          ? (() => {
-              const rows = queryTaskHistory(db, metrics.window);
-              // Rank the complete window by failures, not the metrics top-20 by volume.
-              return buildTasks(rows.length, rows)
-                .byTask.filter((task) => task.failed > 0)
-                .sort((a, b) => b.failed - a.failed || b.runs - a.runs || a.taskId.localeCompare(b.taskId))
-                .slice(0, 20);
-            })()
-          : null,
+        // Rank the complete window by rate (M-25), not the metrics top-20 by volume.
+        taskFailures: metrics ? rankTaskFailures(queryTaskHistory(db, metrics.window)).slice(0, 20) : null,
       }),
       null,
     ),
@@ -236,6 +235,7 @@ async function overview(query: Query) {
   return {
     health,
     metrics: metrics ? { ...metrics, rows: undefined } : null,
+    pendingNow: stateReads?.pendingNow ?? null,
     improveRuns: stateReads?.improveRuns ?? [],
     retrieval: metrics ? retrievalSeries(metrics.rows?.usage ?? []) : null,
     taskFailures: stateReads?.taskFailures ?? null,
@@ -271,6 +271,31 @@ async function bundles() {
     })),
   );
 
+  // The working stash is the directory akm reads besides the configured bundles (`implicitStashDir`).
+  // Describe it only when no configured bundle already covers that directory.
+  let stashDir: string | undefined;
+  try {
+    stashDir = implicitStashDir(config);
+  } catch {
+    stashDir = undefined;
+  }
+  const workingStash =
+    stashDir && !bundleKeyForContentRoot(config, stashDir)
+      ? { path: stashDir, git: await readBundleGitStatus(stashDir) }
+      : null;
+
+  // Where an automatic write goes (no defaultWriteTarget): AKM_BUNDLE_DIR first, then the default bundle.
+  let automaticWriteTarget: { name: string; path: string | null } | null = null;
+  try {
+    const target = resolveWorkingStashTarget(config, { requireWritable: false });
+    automaticWriteTarget = { name: target.source.name, path: target.source.path ?? null };
+  } catch {
+    // No AKM_BUNDLE_DIR and no usable default bundle: writes need an explicit target.
+  }
+
+  // The default bundle is the working stash when one is configured: list it first.
+  cards.sort((a, b) => Number(b.default) - Number(a.default));
+
   const info = assembleInfo();
   let embeddingCount: number | null = null;
   try {
@@ -290,6 +315,8 @@ async function bundles() {
     defaultBundle: config.defaultBundle ?? null,
     defaultWriteTarget: config.defaultWriteTarget ?? null,
     bundles: cards,
+    workingStash,
+    automaticWriteTarget,
     index: {
       entryCount,
       byType: info.indexStats.byType,

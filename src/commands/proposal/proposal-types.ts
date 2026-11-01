@@ -85,10 +85,15 @@ export interface ProposalFeedbackFix {
   source: string;
 }
 
+/** Who made a decision: the triage drain (`triage`) or a person (`human`). */
+export type ProposalDecider = "triage" | "human";
+
 export interface ProposalReview {
   outcome: "accepted" | "rejected";
   reason?: string;
   decidedAt: string;
+  /** Written by accept/reject since #1373; absent on earlier decisions, which stay unknown. */
+  decidedBy?: ProposalDecider;
 }
 
 /**
@@ -273,6 +278,12 @@ export interface Proposal {
    */
   beforeHashNormalized?: string;
   review?: ProposalReview;
+  /**
+   * When the proposal was accepted (ISO). Written once at accept and kept when
+   * the proposal is later reverted, which overwrites `review`. Absent on rows
+   * accepted before this field existed; readers fall back to the `promoted` event.
+   */
+  acceptedAt?: string;
   /** Rejections undone by `akm proposal reopen`, oldest first; absent on a proposal never reopened. */
   reviewHistory?: ProposalReviewHistoryEntry[];
   /** Self-estimated confidence in [0, 1], for reviewers. */

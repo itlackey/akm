@@ -47,16 +47,22 @@ export async function render(ctx) {
             html`Check <a href="#/bundles">bundle settings</a>.`,
           )
         : html`
-    <form class="create-form form-grid">
-      <label>Bundle<select name="bundle">${writable.map((b) => html`<option value="${b.name}" ${b.name === (data.defaultWriteTarget ?? data.defaultBundle) ? html`selected` : ""}>${b.name}</option>`)}</select></label>
-      <label>Name<input name="name" required placeholder="restore-database"></label>
-      <label>Subdirectory<input name="path" placeholder="Optional, under knowledge/"></label>
-      <label>Markdown<textarea name="content" rows="16" required spellcheck="false"># New document
+    <form class="create-form card settings-card">
+      <div class="settings-fields">
+        <div class="settings-grid create-meta">
+          <div class="field"><label class="field-label" for="nk-bundle">Bundle</label><select id="nk-bundle" name="bundle">${writable.map((b) => html`<option value="${b.name}" ${b.name === (data.defaultWriteTarget ?? data.defaultBundle) ? html`selected` : ""}>${b.name}</option>`)}</select></div>
+          <div class="field"><label class="field-label" for="nk-name">Name</label><input id="nk-name" name="name" required placeholder="restore-database" autocomplete="off" spellcheck="false"><p class="field-hint">Becomes the file name and the asset's ref.</p></div>
+          <div class="field"><label class="field-label" for="nk-path">Folder</label><input id="nk-path" name="path" placeholder="Optional, under knowledge/" autocomplete="off" spellcheck="false"></div>
+        </div>
+        <div class="compose">
+          <div class="field"><label class="field-label" for="nk-content">Markdown</label><textarea id="nk-content" name="content" rows="18" required spellcheck="false"># New document
 
-</textarea></label>
-      <button type="submit">Create knowledge</button><div data-status></div>
-    </form>
-    <section><h2>Preview</h2><div data-preview></div></section>`
+</textarea></div>
+          <section class="compose-preview" aria-labelledby="nk-preview"><h2 id="nk-preview" class="field-label">Preview</h2><div class="md-preview" data-preview></div></section>
+        </div>
+      </div>
+      <div class="settings-footer"><span class="muted small">Existing files are never overwritten.</span><div data-status class="settings-status"></div><button type="submit">Create knowledge</button></div>
+    </form>`
     }`;
 }
 

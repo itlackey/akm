@@ -69,19 +69,44 @@ export function countFeedbackBySignal(db: Database, entryRef: string): Record<st
   return Object.fromEntries(rows.map((row) => [row.signal, row.n]));
 }
 
+/** A `select` event; `searchId` and `source` are absent on rows written before G10. */
+export interface SelectEventRow {
+  ts: string;
+  ref: string;
+  searchId?: string;
+  /** The usage source of the search the select followed. */
+  source?: string;
+}
+
 /**
  * `select` events (a show within 60 s of a search that returned the ref) in the
  * window. The events stream stores the ref as the user typed it (often
  * bundle-less), so the caller resolves it to the durable ref.
  */
-export function listSelectEvents(db: Database, sinceIso: string, untilIso: string): Array<{ ts: string; ref: string }> {
-  return db
+export function listSelectEvents(db: Database, sinceIso: string, untilIso: string): SelectEventRow[] {
+  const rows = db
     .prepare(
-      `SELECT ts, ref FROM events
+      `SELECT ts, ref, metadata_json FROM events
        WHERE event_type = 'select' AND ref IS NOT NULL AND ts >= ? AND ts < ?
        ORDER BY id`,
     )
-    .all(sinceIso, untilIso) as Array<{ ts: string; ref: string }>;
+    .all(sinceIso, untilIso) as Array<{ ts: string; ref: string; metadata_json: string | null }>;
+  return rows.map(({ ts, ref, metadata_json }) => {
+    const { searchId, source } = parseSelectMetadata(metadata_json);
+    return { ts, ref, ...(searchId ? { searchId } : {}), ...(source ? { source } : {}) };
+  });
+}
+
+/** A select's `searchId` and `source`, each absent on rows written before selects carried it. */
+function parseSelectMetadata(metadataJson: string | null): { searchId?: string; source?: string } {
+  if (!metadataJson) return {};
+  try {
+    const meta = JSON.parse(metadataJson) as { searchId?: unknown; source?: unknown };
+    const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
+    return { searchId: text(meta.searchId), source: text(meta.source) };
+  } catch {
+    return {};
+  }
 }
 
 /** `index_completed` events (one per `akm index` run) in the window, oldest first. */
@@ -121,6 +146,14 @@ export function countProposalsByStatus(db: Database, sinceIso: string, untilIso:
     )
     .all(sinceIso, untilIso) as Array<{ status: string; n: number }>;
   return Object.fromEntries(rows.map((row) => [row.status, row.n]));
+}
+
+/** Pending proposals of one stash right now: unwindowed, so it matches `akm proposal list --status pending`. */
+export function countPendingProposals(db: Database, stashDir: string): number {
+  const row = db
+    .prepare("SELECT COUNT(*) AS n FROM proposals WHERE stash_dir = ? AND status = 'pending'")
+    .get(stashDir) as { n: number };
+  return row.n;
 }
 
 /**

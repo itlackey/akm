@@ -194,6 +194,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
       scores: { reusable: 4, nonRedundancy: 5, grounding: 3 },
       judgeReason: "adds the rollback step",
     });
+    expect(accepted.review?.decidedBy).toBe("triage");
   });
 
   test("a mocked empty-diff rejection does not pre-stamp a terminal outcome", async () => {
@@ -232,7 +233,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
 
     expect(getProposal(stash, p.id)).toMatchObject({
       status: "rejected",
-      review: { outcome: "rejected", reason: "empty diff" },
+      review: { outcome: "rejected", reason: "empty diff", decidedBy: "triage" },
       gateDecision: { outcome: "auto-rejected", reason: "empty-diff", gate: "triage" },
     });
   });

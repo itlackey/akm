@@ -143,6 +143,22 @@ describe("usage section", () => {
     expect(result.searchMedianMs).toBe(30);
   });
 
+  test("median search uses totalMs >= 0 and reports how many searches were timed", () => {
+    const timed = buildMetricsResult(
+      input({
+        usage: [
+          usage({ event_type: "search", created_at: "2026-01-03 10:00:00", metadata: JSON.stringify({ totalMs: -5 }) }),
+          usage({ event_type: "search", created_at: "2026-01-03 10:01:00", metadata: JSON.stringify({ totalMs: 0 }) }),
+          usage({ event_type: "search", created_at: "2026-01-03 10:02:00", metadata: JSON.stringify({ totalMs: 40 }) }),
+          usage({ event_type: "search", created_at: "2026-01-03 10:03:00" }),
+        ],
+      }),
+    ).usage;
+    expect(timed.searchMedianMs).toBe(40);
+    expect(timed.searchTimed).toBe(2);
+    expect(timed.totals.searches).toBe(4);
+  });
+
   test("daily buckets by UTC day, ascending", () => {
     expect(result.daily).toEqual([
       { day: "2026-01-02", search: 1, show: 0, curate: 0, feedback: 0 },
@@ -173,6 +189,32 @@ describe("usage section", () => {
     const empty = buildMetricsResult(input()).usage;
     expect(empty.selectsPerSearch).toBeNull();
     expect(empty.searchMedianMs).toBeNull();
+  });
+});
+
+describe("daily feedback", () => {
+  test("counts signed rows only, like the feedback totals", () => {
+    const result = buildMetricsResult(
+      input({
+        usage: [
+          usage({
+            event_type: "feedback",
+            created_at: "2026-01-03 10:00:00",
+            entry_ref: "b//skills/a",
+            signal: "positive",
+          }),
+          usage({
+            event_type: "feedback",
+            created_at: "2026-01-03 11:00:00",
+            entry_ref: "b//skills/a",
+            signal: "negative",
+          }),
+          usage({ event_type: "feedback", created_at: "2026-01-03 12:00:00", entry_ref: "b//skills/a" }),
+        ],
+      }),
+    );
+    expect(result.usage.daily).toEqual([{ day: "2026-01-03", search: 0, show: 0, curate: 0, feedback: 2 }]);
+    expect(result.feedback.totals).toEqual({ positive: 1, negative: 1 });
   });
 });
 
@@ -327,6 +369,46 @@ describe("selects per search", () => {
     const u = run([search({ source: "improve" })], 2);
     expect(u.totals.searchesWithHits).toBe(1);
     expect(u.selectsPerSearch).toBe(2);
+  });
+});
+
+describe("select dedupe", () => {
+  const select = (ts: string, ref: string, searchId?: string, source?: string) => ({
+    ts,
+    ref,
+    ...(searchId ? { searchId } : {}),
+    ...(source ? { source } : {}),
+  });
+  const run = (selects: ReturnType<typeof select>[]) => buildMetricsResult(input({ selects }));
+
+  test("repeated shows of one result after one search are one select", () => {
+    const result = run([
+      select("2026-01-03T10:00:01.000Z", "b//skills/x", "s1"),
+      select("2026-01-03T10:00:09.000Z", "b//skills/x", "s1"),
+      select("2026-01-03T10:00:10.000Z", "b//skills/y", "s1"),
+      select("2026-01-03T10:05:00.000Z", "b//skills/x", "s2"),
+    ]);
+    expect(result.usage.totals.selects).toBe(3);
+    expect(result.usage.topAssets.find((a) => a.ref === "b//skills/x")?.selects).toBe(2);
+  });
+
+  test("selects after another source's search are excluded; legacy rows with no source are kept", () => {
+    const result = run([
+      select("2026-01-03T10:00:00.000Z", "b//skills/x", "s1", "improve"),
+      select("2026-01-03T10:01:00.000Z", "b//skills/y", "s2", "user"),
+      select("2026-01-02T10:00:00.000Z", "b//skills/z"),
+    ]);
+    expect(result.usage.totals.selects).toBe(2);
+    expect(result.usage.topAssets.map((a) => a.ref).sort()).toEqual(["b//skills/y", "b//skills/z"]);
+  });
+
+  test("rows with no searchId are all kept, and the note names the first deduped day", () => {
+    const old = [select("2026-01-02T10:00:00.000Z", "b//skills/x"), select("2026-01-02T10:00:01.000Z", "b//skills/x")];
+    expect(run(old).usage.totals.selects).toBe(2);
+    expect(run(old).notes.some((n) => n.includes("deduped"))).toBe(false);
+    const mixed = run([...old, select("2026-01-03T10:00:00.000Z", "b//skills/x", "s1")]);
+    expect(mixed.usage.totals.selects).toBe(3);
+    expect(mixed.notes).toContain("Selects deduped from 2026-01-03; earlier selects are counted as recorded.");
   });
 });
 

@@ -1,0 +1,154 @@
+- banner:
+  - navigation "Main":
+    - link "akm ui":
+      - /url: "#/overview"
+    - list:
+      - listitem:
+        - link "Overview":
+          - /url: "#/overview"
+      - listitem:
+        - link /Proposals \d+/:
+          - /url: "#/proposals"
+      - listitem:
+        - link "Improve impact":
+          - /url: "#/improve"
+      - listitem:
+        - link "History":
+          - /url: "#/changes"
+      - listitem:
+        - link "Search":
+          - /url: "#/search"
+      - listitem:
+        - link "New knowledge":
+          - /url: "#/new"
+      - listitem:
+        - link "Bundles":
+          - /url: "#/bundles"
+      - listitem:
+        - link "Config":
+          - /url: "#/config"
+    - search:
+      - text: Search assets
+      - searchbox "Search assets"
+- main:
+  - heading "Proposals" [level=1]
+  - paragraph: Changes akm improve has staged for review.
+  - navigation "Proposal lists":
+    - link "Pending":
+      - /url: "#/proposals"
+    - link "Recent":
+      - /url: "#/proposals?status=recent"
+  - link /All \d+/:
+    - /url: "#/proposals?status=recent"
+  - link "consolidate 1":
+    - /url: "#/proposals?status=recent&source=consolidate"
+  - link "consolidate-pair 3":
+    - /url: "#/proposals?status=recent&source=consolidate-pair"
+  - link "distill 2":
+    - /url: "#/proposals?status=recent&source=distill"
+  - link "extract 1":
+    - /url: "#/proposals?status=recent&source=extract"
+  - link "reflect 3":
+    - /url: "#/proposals?status=recent&source=reflect"
+  - table:
+    - rowgroup:
+      - row "Decided Outcome Source Asset Reason":
+        - columnheader "Decided"
+        - columnheader "Outcome"
+        - columnheader "Source"
+        - columnheader "Asset"
+        - columnheader "Reason"
+    - rowgroup:
+      - row "2d ago accepted reflect stash//knowledge/deploy-guide judgment-accept":
+        - cell "2d ago":
+          - time: 2d ago
+        - cell "accepted"
+        - cell "reflect"
+        - cell "stash//knowledge/deploy-guide":
+          - link "stash//knowledge/deploy-guide":
+            - /url: "#/proposals/p-judge-accepted?status=recent"
+        - cell "judgment-accept"
+      - row "2d ago accepted distill stash//commands/release-notes Good catch":
+        - cell "2d ago":
+          - time: 2d ago
+        - cell "accepted"
+        - cell "distill"
+        - cell "stash//commands/release-notes":
+          - link "stash//commands/release-notes":
+            - /url: "#/proposals/p-you-accepted?status=recent"
+        - cell "Good catch"
+      - row "2d ago accepted consolidate-pair stash//knowledge/old-runbook retires in favour of stash//knowledge/deploy-guide -":
+        - cell "2d ago":
+          - time: 2d ago
+        - cell "accepted"
+        - cell "consolidate-pair"
+        - cell "stash//knowledge/old-runbook retires in favour of stash//knowledge/deploy-guide":
+          - link "stash//knowledge/old-runbook":
+            - /url: "#/proposals/p-retired-old-runbook?status=recent"
+          - text: ""
+        - cell "-"
+      - row "2d ago accepted consolidate-pair stash//knowledge/old-notes retires in favour of stash//knowledge/deploy-guide -":
+        - cell "2d ago":
+          - time: 2d ago
+        - cell "accepted"
+        - cell "consolidate-pair"
+        - cell "stash//knowledge/old-notes retires in favour of stash//knowledge/deploy-guide":
+          - link "stash//knowledge/old-notes":
+            - /url: "#/proposals/p-retired-old-notes?status=recent"
+          - text: ""
+        - cell "-"
+      - row "2d ago accepted consolidate-pair stash//knowledge/stale-note retires in favour of stash//knowledge/deploy-guide -":
+        - cell "2d ago":
+          - time: 2d ago
+        - cell "accepted"
+        - cell "consolidate-pair"
+        - cell "stash//knowledge/stale-note retires in favour of stash//knowledge/deploy-guide":
+          - link "stash//knowledge/stale-note":
+            - /url: "#/proposals/p-retired-stale-note?status=recent"
+          - text: ""
+        - cell "-"
+      - row "4d ago accepted consolidate stash//lessons/rg quality-judge":
+        - cell "4d ago":
+          - time: 4d ago
+        - cell "accepted"
+        - cell "consolidate"
+        - cell "stash//lessons/rg":
+          - link "stash//lessons/rg":
+            - /url: "#/proposals/p-staged-accepted?status=recent"
+        - cell "quality-judge"
+      - row "6d ago rejected extract stash//knowledge/deploy-guide judgment-reject":
+        - cell "6d ago":
+          - time: 6d ago
+        - cell "rejected"
+        - cell "extract"
+        - cell "stash//knowledge/deploy-guide":
+          - link "stash//knowledge/deploy-guide":
+            - /url: "#/proposals/p-judge-rejected?status=recent"
+        - cell "judgment-reject"
+      - row "6d ago rejected reflect stash//commands/release-notes Not our wording":
+        - cell "6d ago":
+          - time: 6d ago
+        - cell "rejected"
+        - cell "reflect"
+        - cell "stash//commands/release-notes":
+          - link "stash//commands/release-notes":
+            - /url: "#/proposals/p-you-rejected?status=recent"
+        - cell "Not our wording"
+      - row "9d ago reverted distill stash//knowledge/deploy-guide -":
+        - cell "9d ago":
+          - time: 9d ago
+        - cell "reverted"
+        - cell "distill"
+        - cell "stash//knowledge/deploy-guide":
+          - link "stash//knowledge/deploy-guide":
+            - /url: "#/proposals/p-reverted?status=recent"
+        - cell "-"
+      - row "10d ago rejected reflect stash//knowledge/rollback expired":
+        - cell "10d ago":
+          - time: 10d ago
+        - cell "rejected"
+        - cell "reflect"
+        - cell "stash//knowledge/rollback":
+          - link "stash//knowledge/rollback":
+            - /url: "#/proposals/p-expired?status=recent"
+        - cell "expired"

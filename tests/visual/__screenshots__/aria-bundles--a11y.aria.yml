@@ -1,0 +1,114 @@
+- banner:
+  - navigation "Main":
+    - link "akm ui":
+      - /url: "#/overview"
+    - list:
+      - listitem:
+        - link "Overview":
+          - /url: "#/overview"
+      - listitem:
+        - link /Proposals \d+/:
+          - /url: "#/proposals"
+      - listitem:
+        - link "Improve impact":
+          - /url: "#/improve"
+      - listitem:
+        - link "History":
+          - /url: "#/changes"
+      - listitem:
+        - link "Search":
+          - /url: "#/search"
+      - listitem:
+        - link "New knowledge":
+          - /url: "#/new"
+      - listitem:
+        - link "Bundles":
+          - /url: "#/bundles"
+      - listitem:
+        - link "Config":
+          - /url: "#/config"
+    - search:
+      - text: Search assets
+      - searchbox "Search assets"
+- main:
+  - heading "Bundles" [level=1]
+  - paragraph: Default bundle stash, writes go to stash.
+  - region "Defaults":
+    - heading "Defaults" [level=2]
+    - paragraph: Which bundle akm reads first, and where new knowledge, memories and accepted proposals are written.
+    - text: Default bundle
+    - combobox "Default bundle":
+      - option "Automatic (working stash)"
+      - option "stash" [selected]
+    - text: Default write target
+    - combobox "Default write target":
+      - option "Default bundle (stash)"
+      - option "stash" [selected]
+    - button "Save defaults"
+  - region "Configured bundles":
+    - heading "Configured bundles" [level=2]
+    - paragraph: Every source akm indexes, with its git state and what it holds.
+    - article:
+      - heading "stash" [level=3]
+      - text: filesystem default writable
+      - paragraph:
+        - link "Browse assets":
+          - /url: "#/search?bundle=stash"
+      - term: Path
+      - definition: /tmp/akm-visual-loaded/stash
+      - term: Source
+      - definition: path path
+      - term: Assets
+      - definition: "6"
+      - img "knowledge 3, command 1, lesson 1, memory 1"
+      - list:
+        - listitem: knowledge 3
+        - listitem: command 1
+        - listitem: lesson 1
+        - listitem: memory 1
+      - heading "Git" [level=4]
+      - term: Branch
+      - definition: main
+      - term: Remote
+      - definition: no upstream
+      - term: Uncommitted
+      - definition: clean
+      - term: Last commit
+      - definition:
+        - time: /\d+[hmsp]+ ago/
+        - text: 376a148b akm improve auto-sync
+      - group: Bundle settings
+      - paragraph:
+        - button "Update / reindex bundle"
+      - group: Remove bundle
+  - region "Add a bundle":
+    - heading "Add a bundle" [level=2]
+    - paragraph: A local folder, Git repository, npm package or website. akm detects its format, validates it and indexes it. Adding a remote source uses the network.
+    - text: Source
+    - textbox "Source":
+      - /placeholder: ./team-skills, github:org/repo, npm:package or a docs URL
+    - text: Name
+    - textbox "Name":
+      - /placeholder: Optional; defaults to the source name
+    - text: Allow writes to a Git source
+    - paragraph: Local folders are writable by default. Git sources are read-only unless you allow writes.
+    - switch "Allow writes to a Git source"
+    - button "Add bundle"
+  - region "Index":
+    - heading "Index" [level=2]
+    - paragraph: The search index across every enabled bundle.
+    - term: Entries
+    - definition: "6"
+    - term: Last built
+    - definition:
+      - time: /\d+[hmsp]+ ago/
+    - term: Embeddings
+    - definition: none
+    - term: Semantic search
+    - definition: off disabled
+    - img "knowledge 3, command 1, lesson 1, memory 1"
+    - list:
+      - listitem: knowledge 3
+      - listitem: command 1
+      - listitem: lesson 1
+      - listitem: memory 1

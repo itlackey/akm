@@ -20,7 +20,12 @@ import { NotFoundError } from "../../core/errors";
 import type { ResolvedWriteTarget } from "../../core/write-source";
 import { resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { isRetireProposal, proposalWaitingSince, type RetirementMetadata } from "./proposal-types";
+import {
+  isRetireProposal,
+  type ProposalDecider,
+  proposalWaitingSince,
+  type RetirementMetadata,
+} from "./proposal-types";
 import {
   type AcceptCommitCollector,
   commitCollectedAccepts,
@@ -174,6 +179,8 @@ export interface ProposalAcceptOptions {
   gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string };
   /** A caller that accepts in a loop commits once at its end instead (#1185); see {@link commitCollectedAccepts}. */
   commitCollector?: AcceptCommitCollector;
+  /** Who is deciding; recorded as `review.decidedBy`. Defaults to `human`; the drain passes `triage`. */
+  decidedBy?: ProposalDecider;
 }
 
 export interface ProposalAcceptResult {
@@ -198,6 +205,7 @@ export async function akmProposalAccept(options: ProposalAcceptOptions): Promise
       target: options.target,
       queueTarget: queue.target,
       gateDecision: options.gateDecision,
+      decidedBy: options.decidedBy ?? "human",
       ...(options.commitCollector ? { commitCollector: options.commitCollector } : {}),
     },
     options.ctx,
@@ -262,6 +270,8 @@ export interface ProposalRejectOptions {
   config?: AkmConfig;
   /** Internal drain adjudication metadata, persisted with the terminal transition. */
   gateDecision?: Omit<ProposalGateDecision, "decidedAt"> & { decidedAt?: string };
+  /** Who is deciding; recorded as `review.decidedBy`. Defaults to `human`; the drain passes `triage`. */
+  decidedBy?: ProposalDecider;
 }
 
 export interface ProposalRejectResult {
@@ -278,7 +288,14 @@ export async function akmProposalReject(options: ProposalRejectOptions): Promise
     const config = options.config ?? loadConfig();
     const { stashDir: stash } = resolveProposalQueue(options.stashDir, options.queue, config);
     const proposalId = resolveProposalId(stash, options.id, options.ctx).id;
-    const updated = rejectProposalDurably(stash, proposalId, options.reason, options.ctx, options.gateDecision);
+    const updated = rejectProposalDurably(
+      stash,
+      proposalId,
+      options.reason,
+      options.ctx,
+      options.gateDecision,
+      options.decidedBy ?? "human",
+    );
 
     return {
       schemaVersion: 1,

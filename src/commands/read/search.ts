@@ -371,10 +371,13 @@ function logSearchEvent(
   const stashHits = response.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
   // Include registry hit refs so a show following a registry-only search generates a select event
   const registryHitRefs = (response.registryHits ?? []).map((h) => `registry:${h.id}`);
+  // Lets a later `select` name the search it came from, so metrics can dedupe
+  // repeated shows of one result and attribute them to this search's source.
+  const searchId = crypto.randomUUID();
   const allResultRefs = [...stashHits.map((h) => h.ref), ...registryHitRefs];
   appendEvent({
     eventType: "search",
-    metadata: { query, hitCount: stashHits.length, resultRefs: allResultRefs, mode },
+    metadata: { query, hitCount: stashHits.length, resultRefs: allResultRefs, mode, source: eventSource, searchId },
   });
 
   try {

@@ -13,10 +13,12 @@ import type { EventEnvelope } from "../../core/events-types";
 import type { UsageEventRow } from "../../indexer/usage/usage-events";
 import { decodeLlmUsageRecord } from "../../llm/usage-telemetry";
 import type { UtilityWithRef } from "../../storage/repositories/index-utility-repository";
+import type { SelectEventRow } from "../../storage/repositories/metrics-repository";
 import type { AssetOutcomeRow } from "../../storage/repositories/outcome-repository";
 import { decodeTaskHistoryMetadata, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
 import { computeWallTimeStats } from "../health/improve-metrics";
 import { hasTokenUsage } from "../health/llm-usage";
+import { MIN_ROWS_FOR_WORST_TASK_FAIL_RATE } from "../health/types-improve";
 import type { LlmUsageAggregate } from "../health/types-metrics";
 import { computeValenceScore } from "../improve/feedback-valence";
 import type {
@@ -37,6 +39,31 @@ import type {
 const DAY_MS = 86_400_000;
 /** Utility is a score in [0, 1], reported in ten equal buckets. */
 const UTILITY_BUCKETS = 10;
+/**
+ * Keep the first select per (searchId, ref): a result shown twice after one
+ * search is one select. Rows from before selects carried a `searchId` have no
+ * key to dedupe on and are all kept.
+ */
+function dedupeSelects(selects: SelectEventRow[]): SelectEventRow[] {
+  const seen = new Set<string>();
+  return selects.filter((select) => {
+    if (select.searchId === undefined) return true;
+    const key = `${select.searchId}\u0000${select.ref}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** The coverage note naming where dedupe starts, or nothing when no select carries a `searchId`. */
+function selectDedupeNotes(selects: SelectEventRow[]): string[] {
+  const first = selects.filter((select) => select.searchId !== undefined).map((select) => select.ts);
+  if (first.length === 0) return [];
+  return [
+    `Selects deduped from ${first.reduce((a, b) => (a < b ? a : b)).slice(0, 10)}; earlier selects are counted as recorded.`,
+  ];
+}
+
 /** Mean result counts are rounded to two decimals. */
 const MEAN_SCALE = 100;
 /** `improve.eventRetentionDays` default (`runRetentionPurgePass`); 0 disables the purge. */
@@ -53,7 +80,7 @@ export interface MetricsInput {
   includeRows: boolean;
   usage: UsageEventRow[];
   /** `select` events in the window. */
-  selects: Array<{ ts: string; ref: string }>;
+  selects: SelectEventRow[];
   /** `undefined` when `index.db` is missing or unreadable. */
   utility: UtilityWithRef[] | undefined;
   outcomes: AssetOutcomeRow[];
@@ -272,7 +299,7 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
       bump(row.at, "search");
       if ((row.resultCount ?? 0) > 0) searchesWithHits += 1;
       if (row.resultCount === 0) zeroResultSearches += 1;
-      if (row.totalMs !== undefined) searchMs.push(row.totalMs);
+      if (row.totalMs !== undefined && row.totalMs >= 0) searchMs.push(row.totalMs);
       const query = row.query?.trim();
       if (query) {
         const entry = queries.get(query) ?? { count: 0, results: [], lastAt: row.at };
@@ -301,8 +328,10 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
         touch(entry, row.at);
       }
     } else if (row.eventType === "feedback") {
+      // Signed rows only, so the daily series and the totals count the same rows.
+      if (row.signal === undefined) continue;
       bump(row.at, "feedback");
-      if (row.ref !== undefined && row.signal !== undefined) {
+      if (row.ref !== undefined) {
         const entry = asset(row.ref);
         entry[row.signal] += 1;
         touch(entry, row.at);
@@ -339,6 +368,7 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
     },
     selectsPerSearch: searchesWithHits > 0 ? input.selects.length / searchesWithHits : null,
     searchMedianMs: median(searchMs),
+    searchTimed: searchMs.length,
     daily: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)),
     topAssets: [...assets.values()]
       .sort(
@@ -449,6 +479,56 @@ function taskDurationMs(row: TaskHistoryRow): number | undefined {
   }
 }
 
+/** An `active` run older than this counts as not ok (plan M-25). */
+const ACTIVE_STALE_H = 6;
+
+export interface RankedTaskFailure extends MetricsTaskSummary {
+  /** Runs behind `failRate`: completed + failed + active older than {@link ACTIVE_STALE_H}. */
+  rated: number;
+  /** (rated - completed) / rated, or `null` below MIN_ROWS_FOR_WORST_TASK_FAIL_RATE rated runs (M-25). */
+  failRate: number | null;
+}
+
+/**
+ * Per-task failure ranking (plan M-25). Fresh active runs are neither ok nor failed, so they are left out of `rated`.
+ * Membership stays `failed > 0` until the client shows not-ok/rated (P1-4b). Tasks with a rate come first, highest
+ * rate first; the rest by not-ok runs. Ties: runs, id.
+ */
+export function rankTaskFailures(rows: TaskHistoryRow[], now: number = Date.now()): RankedTaskFailure[] {
+  const staleBefore = now - ACTIVE_STALE_H * 3_600_000;
+  const counts = new Map<string, { completed: number; notOk: number }>();
+  for (const row of rows) {
+    const entry = counts.get(row.task_id) ?? { completed: 0, notOk: 0 };
+    if (row.status === "completed") entry.completed += 1;
+    else if (row.status === "failed") entry.notOk += 1;
+    else if (row.status === "active" && Date.parse(row.started_at) < staleBefore) entry.notOk += 1;
+    counts.set(row.task_id, entry);
+  }
+  return buildTasks(rows.length, rows)
+    .byTask.map((task) => {
+      const { completed, notOk } = counts.get(task.taskId) ?? { completed: 0, notOk: 0 };
+      const rated = completed + notOk;
+      return {
+        task,
+        notOk,
+        ranked: {
+          ...task,
+          rated,
+          failRate: rated >= MIN_ROWS_FOR_WORST_TASK_FAIL_RATE ? notOk / rated : null,
+        },
+      };
+    })
+    .filter(({ task }) => task.failed > 0)
+    .sort((a, b) => {
+      const rateA = a.ranked.failRate;
+      const rateB = b.ranked.failRate;
+      if (rateA !== null && rateB !== null && rateA !== rateB) return rateB - rateA;
+      if ((rateA === null) !== (rateB === null)) return rateA === null ? 1 : -1;
+      return b.notOk - a.notOk || b.task.runs - a.task.runs || a.task.taskId.localeCompare(b.task.taskId);
+    })
+    .map(({ ranked }) => ranked);
+}
+
 export function buildTasks(top: number, rows: TaskHistoryRow[]): AkmMetricsResult["tasks"] {
   const byTask = new Map<string, { runs: number; failed: number; durations: number[] }>();
   let failed = 0;
@@ -501,11 +581,13 @@ export function buildMetricsResult(input: MetricsInput): AkmMetricsResult {
     negativeFeedbackCount: row.negative_feedback_count,
     acceptedChangeCount: row.accepted_change_count,
   }));
+  // A select recorded before `source` existed is kept for every source.
+  const selects = dedupeSelects(input.selects.filter((s) => s.source === undefined || s.source === input.source));
   return {
     schemaVersion: 1,
     window: input.window,
     filters: { source: input.source },
-    usage: buildUsage(input, rows),
+    usage: buildUsage({ ...input, selects }, rows),
     feedback: buildFeedback(input.top, rows),
     utility: buildUtility(input),
     outcomes: { lowestOutcome: outcomes },
@@ -515,6 +597,6 @@ export function buildMetricsResult(input: MetricsInput): AkmMetricsResult {
     proposals: input.proposals,
     workflows: input.workflows,
     ...(input.includeRows ? { rows: { usage: rows, llm: input.llmRows } } : {}),
-    notes: input.notes,
+    notes: [...input.notes, ...selectDedupeNotes(selects)],
   };
 }

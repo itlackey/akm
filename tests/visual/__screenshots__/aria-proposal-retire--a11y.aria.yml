@@ -1,0 +1,73 @@
+- banner:
+  - navigation "Main":
+    - link "akm ui":
+      - /url: "#/overview"
+    - list:
+      - listitem:
+        - link "Overview":
+          - /url: "#/overview"
+      - listitem:
+        - link /Proposals \d+/:
+          - /url: "#/proposals"
+      - listitem:
+        - link "Improve impact":
+          - /url: "#/improve"
+      - listitem:
+        - link "History":
+          - /url: "#/changes"
+      - listitem:
+        - link "Search":
+          - /url: "#/search"
+      - listitem:
+        - link "New knowledge":
+          - /url: "#/new"
+      - listitem:
+        - link "Bundles":
+          - /url: "#/bundles"
+      - listitem:
+        - link "Config":
+          - /url: "#/config"
+    - search:
+      - text: Search assets
+      - searchbox "Search assets"
+- main:
+  - paragraph:
+    - link "Back to queue":
+      - /url: "#/proposals"
+    - text: / p-pendin
+  - heading "stash//knowledge/rollback" [level=1]
+  - text: pending consolidate-pair retire
+  - heading "Retirement" [level=2]
+  - term: Retires
+  - definition:
+    - link "stash//knowledge/rollback":
+      - /url: "#/asset?ref=stash%2F%2Fknowledge%2Frollback"
+  - term: Successor
+  - definition:
+    - link "stash//knowledge/deploy-guide":
+      - /url: "#/asset?ref=stash%2F%2Fknowledge%2Fdeploy-guide"
+  - term: Reason
+  - definition: subsumed
+  - term: Judge
+  - definition: subsumed The deploy guide now covers every rollback step.
+  - term: Similarity
+  - definition: /\d+\.\d+ cosine/
+  - term: Only in retired
+  - definition:
+    - list:
+      - listitem: Open an incident note after a rollback
+  - term: Only in successor
+  - definition: nothing
+  - term: Continuity risk
+  - definition: "flagged { \"failingQueries\": 2, \"ranks\": [ { \"query\": \"rollback steps\", \"retiredRank\": 1, \"successorRank\": null }, { \"query\": \"undo deploy\", \"retiredRank\": 3, \"successorRank\": null } ] }"
+  - heading "Proposed change" [level=2]
+  - paragraph: Target /tmp/akm-visual-loaded/stash/knowledge/rollback.md
+  - text: "/--- stash\\/\\/knowledge\\/rollback \\(existing\\) \\+\\+\\+ \\/dev\\/null \\(retired: archived; successor stash\\/\\/knowledge\\/deploy-guide\\) @@ \\d+,\\d+ \\d+,\\d+ @@ ---- -description: Roll back a bad deploy ---- -# Rollback - -Redeploy the previous tag, then open an incident note\\./"
+  - region "Decide this proposal":
+    - paragraph:
+      - button "Accept"
+      - button "Reject"
+  - group: Proposal details
+  - paragraph:
+    - link "View the asset as it is now":
+      - /url: "#/asset?ref=stash%2F%2Fknowledge%2Frollback"

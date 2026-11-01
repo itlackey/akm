@@ -13,7 +13,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { createProposal } from "../../../src/commands/proposal/repository";
-import { EMBEDDED_UI, startUiServer, type UiServer } from "../../../src/commands/ui/server";
+import { EMBEDDED_UI } from "../../../src/commands/ui/embedded-ui";
+import { startUiServer, type UiServer } from "../../../src/commands/ui/server";
 import { markdownHeadingSlug, parseMarkdownToc } from "../../../src/core/asset/markdown";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { openStateDatabase } from "../../../src/core/state-db";
@@ -279,6 +280,96 @@ describe("pages", () => {
     for (const name of browserGlobals) delete (globalThis as Record<string, unknown>)[name];
   });
 
+  test("a command asset shows its template as the body and as Markdown source (B-01)", async () => {
+    await seed();
+    fs.mkdirSync(path.join(storage.stashDir, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(storage.stashDir, "commands", "release.md"),
+      "---\ndescription: Cut a release\n---\nRun the <b>release</b> checklist\n",
+    );
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const asset = (await (await view("asset.js"))(ctx("ref=commands%2Frelease"))).text;
+    expect(asset).not.toContain("This asset has no body.");
+    expect(asset).toContain("Run the &lt;b&gt;release&lt;/b&gt; checklist");
+    expect(asset).toMatch(/<summary>Markdown source<\/summary><pre class="code">[\s\S]*checklist/);
+  });
+
+  const writeSelect = (page: string) => page.match(/<select name="defaultWriteTarget"[\s\S]*?<\/select>/)?.[0] ?? "";
+
+  test("bundles says writes need a default bundle when AKM_BUNDLE_DIR and defaultBundle are both unset (B-02)", async () => {
+    await seed();
+    delete process.env.AKM_BUNDLE_DIR; // restored by the storage teardown
+    writeSandboxConfig({ bundles: undefined, defaultBundle: undefined, defaultWriteTarget: undefined });
+    resetConfigCache();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const bundles = (await (await view("bundles.js"))(ctx())).text;
+    expect(writeSelect(bundles)).toContain("None (writes need a default bundle)");
+    expect(writeSelect(bundles)).not.toContain("Automatic (working stash)");
+  });
+
+  test("bundles lists the working stash first when it is not a configured bundle (B-02)", async () => {
+    await seed();
+    writeSandboxConfig({ bundles: undefined, defaultBundle: undefined, defaultWriteTarget: undefined });
+    resetConfigCache();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const bundles = (await (await view("bundles.js"))(ctx())).text;
+    expect(bundles).toContain("Working stash");
+    expect(bundles).toContain(storage.stashDir);
+    expect(bundles).toContain("No other bundles.");
+    expect(bundles).toContain("akm bundle add &lt;source&gt;");
+    expect(writeSelect(bundles)).toContain("Automatic (working stash)");
+    expect(writeSelect(bundles)).not.toContain("None (writes need");
+    expect(bundles).not.toContain("akm init");
+    expect(bundles).not.toContain("Use fallback");
+    expect(bundles.indexOf("Working stash")).toBeLessThan(bundles.indexOf("No other bundles."));
+  });
+
+  test("bundles lists the default bundle first and labels the write target honestly (B-02)", async () => {
+    await seed();
+    const other = fs.mkdtempSync(path.join(storage.root, "team-"));
+    writeSandboxConfig({
+      bundles: { team: { path: other, writable: true }, stash: { path: storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      defaultWriteTarget: undefined,
+    });
+    resetConfigCache();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const bundles = (await (await view("bundles.js"))(ctx())).text;
+    expect(bundles).not.toContain("Working stash");
+    expect(bundles.indexOf("<h3>stash</h3>")).toBeGreaterThan(-1);
+    expect(bundles.indexOf("<h3>stash</h3>")).toBeLessThan(bundles.indexOf("<h3>team</h3>"));
+    expect(writeSelect(bundles)).toContain("Default bundle (stash)");
+    expect(bundles.match(/>default</g)).toHaveLength(1);
+  });
+
+  test("bundles shows no working stash when a component-root default bundle covers the directory (B-02)", async () => {
+    await seed();
+    const root = fs.mkdtempSync(path.join(storage.root, "team-"));
+    fs.mkdirSync(path.join(root, "content"));
+    delete process.env.AKM_BUNDLE_DIR; // restored by the storage teardown
+    writeSandboxConfig({
+      bundles: { team: { path: root, components: { main: { root: "content" } } } },
+      defaultBundle: "team",
+      defaultWriteTarget: undefined,
+    });
+    resetConfigCache();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const bundles = (await (await view("bundles.js"))(ctx())).text;
+    expect(bundles).not.toContain("Working stash");
+    expect(bundles.match(/>default</g)).toHaveLength(1);
+  });
+
   test("overview, bundles, config, proposals, changes, search and asset render real data with hostile text escaped", async () => {
     const { proposalId } = await seed();
     server = await startUiServer({ port: 0 });
@@ -304,11 +395,11 @@ describe("pages", () => {
     expect(config).toContain("Effective config");
     expect(config).toContain("redacted");
     expect(config).not.toContain(PLANTED_API_KEY);
-    // Connections and harnesses are two tables; the connection's alias map is shown as alias: model.
-    expect(config).toContain("<h2>Connections</h2>");
-    expect(config).toContain("fast: m");
-    expect(config).toContain("<h2>Harnesses</h2>");
-    expect(config).toContain("No harnesses are configured.");
+    // Settings are editable fields; each connection's model aliases are inputs holding the model.
+    expect(config).toContain("Model connections");
+    expect(config).toMatch(/name="connections\.default\.models\.fast[^"]*"[^>]*value="m"/);
+    expect(config).toContain('name="semanticSearchMode"');
+    expect(config).toContain("Save changes");
     expect(config).not.toContain("<h2>Engines</h2>");
 
     const pending = (await (await view("proposals.js", "renderList"))(ctx())).text;

@@ -73,7 +73,9 @@ export async function render(ctx) {
       <div class="notice">${data.note}</div>`;
   }
   const asset = data.asset;
-  const { fields, body, startLine } = splitFrontmatter(asset.content);
+  // Commands carry their body as `template` and prompts as `prompt`; other types as `content`.
+  const source = asset.content || asset.template || asset.prompt || "";
+  const { fields, body, startLine } = splitFrontmatter(source);
   const canonical = data.durableRef ?? asset.ref;
   const href = assetHref(canonical, returnTo);
   const title = fields.find(([key]) => key === "title")?.[1] || body.match(/^#\s+(.+)$/m)?.[1] || asset.name;
@@ -130,7 +132,7 @@ export async function render(ctx) {
     ])}
     ${fields.length > 0 ? html`<section><h2>Frontmatter</h2>${tableWrap(html`<table class="fm"><tbody>${fields.map(([k, v]) => html`<tr><th scope="row" class="mono">${k}</th><td class="mono wrap pre-wrap">${v}</td></tr>`)}</tbody></table>`)}</section>` : ""}
     </details>
-    <details><summary>Markdown source</summary><pre class="code">${asset.content ?? ""}</pre></details>
+    <details><summary>Markdown source</summary><pre class="code">${source}</pre></details>
     ${history}
     ${linksBlock(asset.links)}
     ${feedbackBlock(data.feedback, data.durableRef, data.feedbackRequireReason)}`;

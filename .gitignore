@@ -25,3 +25,6 @@ test.sh
 docs/reviews/akm-meta-review/findings/
 .akm/
 docs/.pending/
+
+# Playwright visual harness output (tests/visual); baselines in __screenshots__ are committed.
+.ui-visual/

@@ -1,0 +1,50 @@
+- banner:
+  - navigation "Main":
+    - link "akm ui":
+      - /url: "#/overview"
+    - list:
+      - listitem:
+        - link "Overview":
+          - /url: "#/overview"
+      - listitem:
+        - link /Proposals \d+/:
+          - /url: "#/proposals"
+      - listitem:
+        - link "Improve impact":
+          - /url: "#/improve"
+      - listitem:
+        - link "History":
+          - /url: "#/changes"
+      - listitem:
+        - link "Search":
+          - /url: "#/search"
+      - listitem:
+        - link "New knowledge":
+          - /url: "#/new"
+      - listitem:
+        - link "Bundles":
+          - /url: "#/bundles"
+      - listitem:
+        - link "Config":
+          - /url: "#/config"
+    - search:
+      - text: Search assets
+      - searchbox "Search assets"
+- main:
+  - paragraph:
+    - link "Back to queue":
+      - /url: "#/proposals"
+    - text: / p-pendin
+  - heading "stash//knowledge/rollback" [level=1]
+  - text: pending reflect
+  - heading "Proposed change" [level=2]
+  - paragraph: Target /tmp/akm-visual-loaded/stash/knowledge/rollback.md
+  - paragraph: No line differs between these versions.
+  - region "Decide this proposal":
+    - paragraph:
+      - button "Accept"
+      - button "Reject"
+  - group: Proposal details
+  - paragraph:
+    - link "View the asset as it is now":
+      - /url: "#/asset?ref=stash%2F%2Fknowledge%2Frollback"
