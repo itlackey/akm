@@ -307,6 +307,16 @@ describe("akm metrics", () => {
     }
   });
 
+  test("selects carrying a searchId are read from the events stream and deduped per search and ref", async () => {
+    for (const searchId of ["s1", "s1", "s2"]) {
+      appendEvent({ eventType: "select", ref: "main//skills/deploy", metadata: { searchId } }, anHourAgo);
+    }
+    appendEvent({ eventType: "select", ref: "main//skills/deploy", metadata: { query: "legacy" } }, anHourAgo);
+    const { result } = await metrics("--since", "1d");
+    expect(result.usage.totals.selects).toBe(3);
+    expect(result.notes.some((note) => note.startsWith("Selects deduped from "))).toBe(true);
+  });
+
   test("a usage row written in the window end's own second is inside the window", async () => {
     // created_at has whole-second resolution; the window ends at now, with milliseconds.
     seedUsage([{ type: "show", at: "2026-01-10 12:00:00", ref: "main//skills/now" }]);

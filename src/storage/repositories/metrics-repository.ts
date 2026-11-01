@@ -69,19 +69,41 @@ export function countFeedbackBySignal(db: Database, entryRef: string): Record<st
   return Object.fromEntries(rows.map((row) => [row.signal, row.n]));
 }
 
+/** A `select` event; `searchId` is absent on rows written before G10. */
+export interface SelectEventRow {
+  ts: string;
+  ref: string;
+  searchId?: string;
+}
+
 /**
  * `select` events (a show within 60 s of a search that returned the ref) in the
  * window. The events stream stores the ref as the user typed it (often
  * bundle-less), so the caller resolves it to the durable ref.
  */
-export function listSelectEvents(db: Database, sinceIso: string, untilIso: string): Array<{ ts: string; ref: string }> {
-  return db
+export function listSelectEvents(db: Database, sinceIso: string, untilIso: string): SelectEventRow[] {
+  const rows = db
     .prepare(
-      `SELECT ts, ref FROM events
+      `SELECT ts, ref, metadata_json FROM events
        WHERE event_type = 'select' AND ref IS NOT NULL AND ts >= ? AND ts < ?
        ORDER BY id`,
     )
-    .all(sinceIso, untilIso) as Array<{ ts: string; ref: string }>;
+    .all(sinceIso, untilIso) as Array<{ ts: string; ref: string; metadata_json: string | null }>;
+  return rows.map(({ ts, ref, metadata_json }) => {
+    const searchId = parseSearchId(metadata_json);
+    return searchId ? { ts, ref, searchId } : { ts, ref };
+  });
+}
+
+/** A select's `searchId`, absent on rows written before selects carried one. */
+function parseSearchId(metadataJson: string | null): string | undefined {
+  if (!metadataJson) return undefined;
+  try {
+    const { searchId } = JSON.parse(metadataJson) as { searchId?: unknown };
+    return typeof searchId === "string" && searchId !== "" ? searchId : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** `index_completed` events (one per `akm index` run) in the window, oldest first. */

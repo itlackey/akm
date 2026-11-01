@@ -36,6 +36,7 @@ import {
   listSelectEvents,
   listUsageEventRows,
   type MetricsQueryFilter,
+  type SelectEventRow,
   summarizeWorkflowRuns,
 } from "../../storage/repositories/metrics-repository";
 import { queryTaskHistory } from "../../storage/repositories/task-history-repository";
@@ -88,10 +89,7 @@ export function metricsIncludeRows(mode: Pick<OutputMode, "format" | "detail">):
  * `bundle//conceptId`; resolving here keeps one asset from showing as two rows.
  * A ref that does not resolve (registry results, removed assets) is kept as is.
  */
-async function durableSelects(
-  selects: Array<{ ts: string; ref: string }>,
-  indexSnapshot = true,
-): Promise<Array<{ ts: string; ref: string }>> {
+async function durableSelects(selects: SelectEventRow[], indexSnapshot = true): Promise<SelectEventRow[]> {
   const unqualified: Array<{ ref: string; parsed: ReturnType<typeof parseBundleRef> }> = [];
   for (const ref of new Set(selects.map((select) => select.ref))) {
     try {
@@ -106,7 +104,7 @@ async function durableSelects(
     { isolatedSnapshot: indexSnapshot },
   );
   const resolved = new Map(unqualified.map(({ ref }, i) => [ref, entries[i]?.itemRef ?? ref]));
-  return selects.map((select) => ({ ts: select.ts, ref: resolved.get(select.ref) ?? select.ref }));
+  return selects.map((select) => ({ ...select, ref: resolved.get(select.ref) ?? select.ref }));
 }
 
 /** `index.db` utility rows, or a note saying why there are none. */
@@ -171,7 +169,7 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
   if (index.note) notes.push(index.note);
   const filter: MetricsQueryFilter = { sinceIso, untilIso, source: SOURCE };
   notes.push(
-    "Selects come from the events stream, which records no source or search id, so they are counted for every source and selects per search is a ratio, not a conversion rate.",
+    "Selects come from the events stream and are counted for every source, so selects per search is a ratio, not a conversion rate.",
   );
 
   const input: MetricsInput = {
@@ -213,7 +211,7 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
     return buildMetricsResult(input);
   }
   const stateDb = openDatabase(stateDbPath, { readonly: true, create: false });
-  let selects: Array<{ ts: string; ref: string }> = [];
+  let selects: SelectEventRow[] = [];
   try {
     applyReadonlyPragmas(stateDb);
     input.usage = listUsageEventRows(stateDb, filter);

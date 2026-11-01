@@ -330,6 +330,31 @@ describe("selects per search", () => {
   });
 });
 
+describe("select dedupe", () => {
+  const select = (ts: string, ref: string, searchId?: string) => ({ ts, ref, ...(searchId ? { searchId } : {}) });
+  const run = (selects: ReturnType<typeof select>[]) => buildMetricsResult(input({ selects }));
+
+  test("repeated shows of one result after one search are one select", () => {
+    const result = run([
+      select("2026-01-03T10:00:01.000Z", "b//skills/x", "s1"),
+      select("2026-01-03T10:00:09.000Z", "b//skills/x", "s1"),
+      select("2026-01-03T10:00:10.000Z", "b//skills/y", "s1"),
+      select("2026-01-03T10:05:00.000Z", "b//skills/x", "s2"),
+    ]);
+    expect(result.usage.totals.selects).toBe(3);
+    expect(result.usage.topAssets.find((a) => a.ref === "b//skills/x")?.selects).toBe(2);
+  });
+
+  test("rows with no searchId are all kept, and the note names the first deduped day", () => {
+    const old = [select("2026-01-02T10:00:00.000Z", "b//skills/x"), select("2026-01-02T10:00:01.000Z", "b//skills/x")];
+    expect(run(old).usage.totals.selects).toBe(2);
+    expect(run(old).notes.some((n) => n.includes("deduped"))).toBe(false);
+    const mixed = run([...old, select("2026-01-03T10:00:00.000Z", "b//skills/x", "s1")]);
+    expect(mixed.usage.totals.selects).toBe(3);
+    expect(mixed.notes).toContain("Selects deduped from 2026-01-03; earlier selects are counted as recorded.");
+  });
+});
+
 describe("llmRowsFromEvents", () => {
   const call = (ts: string, metadata: Record<string, unknown>) =>
     ({ ts, eventType: "llm_usage", metadata }) as unknown as EventEnvelope;

@@ -13,6 +13,7 @@ import type { EventEnvelope } from "../../core/events-types";
 import type { UsageEventRow } from "../../indexer/usage/usage-events";
 import { decodeLlmUsageRecord } from "../../llm/usage-telemetry";
 import type { UtilityWithRef } from "../../storage/repositories/index-utility-repository";
+import type { SelectEventRow } from "../../storage/repositories/metrics-repository";
 import type { AssetOutcomeRow } from "../../storage/repositories/outcome-repository";
 import { decodeTaskHistoryMetadata, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
 import { computeWallTimeStats } from "../health/improve-metrics";
@@ -37,6 +38,31 @@ import type {
 const DAY_MS = 86_400_000;
 /** Utility is a score in [0, 1], reported in ten equal buckets. */
 const UTILITY_BUCKETS = 10;
+/**
+ * Keep the first select per (searchId, ref): a result shown twice after one
+ * search is one select. Rows from before selects carried a `searchId` have no
+ * key to dedupe on and are all kept.
+ */
+export function dedupeSelects(selects: SelectEventRow[]): SelectEventRow[] {
+  const seen = new Set<string>();
+  return selects.filter((select) => {
+    if (select.searchId === undefined) return true;
+    const key = `${select.searchId}\u0000${select.ref}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** The coverage note naming where dedupe starts, or nothing when no select carries a `searchId`. */
+function selectDedupeNotes(selects: SelectEventRow[]): string[] {
+  const first = selects.filter((select) => select.searchId !== undefined).map((select) => select.ts);
+  if (first.length === 0) return [];
+  return [
+    `Selects deduped from ${first.reduce((a, b) => (a < b ? a : b)).slice(0, 10)}; earlier selects are counted as recorded.`,
+  ];
+}
+
 /** Mean result counts are rounded to two decimals. */
 const MEAN_SCALE = 100;
 /** `improve.eventRetentionDays` default (`runRetentionPurgePass`); 0 disables the purge. */
@@ -53,7 +79,7 @@ export interface MetricsInput {
   includeRows: boolean;
   usage: UsageEventRow[];
   /** `select` events in the window. */
-  selects: Array<{ ts: string; ref: string }>;
+  selects: SelectEventRow[];
   /** `undefined` when `index.db` is missing or unreadable. */
   utility: UtilityWithRef[] | undefined;
   outcomes: AssetOutcomeRow[];
@@ -501,11 +527,12 @@ export function buildMetricsResult(input: MetricsInput): AkmMetricsResult {
     negativeFeedbackCount: row.negative_feedback_count,
     acceptedChangeCount: row.accepted_change_count,
   }));
+  const selects = dedupeSelects(input.selects);
   return {
     schemaVersion: 1,
     window: input.window,
     filters: { source: input.source },
-    usage: buildUsage(input, rows),
+    usage: buildUsage({ ...input, selects }, rows),
     feedback: buildFeedback(input.top, rows),
     utility: buildUtility(input),
     outcomes: { lowestOutcome: outcomes },
@@ -515,6 +542,6 @@ export function buildMetricsResult(input: MetricsInput): AkmMetricsResult {
     proposals: input.proposals,
     workflows: input.workflows,
     ...(input.includeRows ? { rows: { usage: rows, llm: input.llmRows } } : {}),
-    notes: input.notes,
+    notes: [...input.notes, ...selectDedupeNotes(selects)],
   };
 }
