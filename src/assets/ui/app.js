@@ -191,15 +191,30 @@ document.addEventListener("keydown", (event) => {
   }
 });
 const menu = document.querySelector("[data-menu]");
-menu?.addEventListener("click", () => {
-  const open = menu.getAttribute("aria-expanded") !== "true";
-  menu.setAttribute("aria-expanded", String(open));
-  document.querySelector(".sidebar")?.classList.toggle("nav-open", open);
-});
+const topbar = document.querySelector(".topbar");
+function setMenu(open) {
+  menu?.setAttribute("aria-expanded", String(open));
+  topbar?.classList.toggle("nav-open", open);
+}
+menu?.addEventListener("click", () => setMenu(menu.getAttribute("aria-expanded") !== "true"));
 document.querySelector(".nav-links")?.addEventListener("click", (event) => {
-  if (!event.target.closest("a")) return;
-  menu?.setAttribute("aria-expanded", "false");
-  document.querySelector(".sidebar")?.classList.remove("nav-open");
+  if (event.target.closest("a")) setMenu(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || menu?.getAttribute("aria-expanded") !== "true") return;
+  setMenu(false);
+  menu.focus();
+});
+document.addEventListener("click", (event) => {
+  if (menu?.getAttribute("aria-expanded") === "true" && !event.target.closest(".topbar")) setMenu(false);
+});
+document.querySelector("[data-topbar-search]")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const input = event.currentTarget.elements.q;
+  const q = input.value.trim();
+  location.hash = q ? `#/search?q=${encodeURIComponent(q)}` : "#/search";
+  input.value = "";
+  setMenu(false);
 });
 showMeta();
 showPendingCount();

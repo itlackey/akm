@@ -1,32 +1,35 @@
-- navigation "Main":
-  - link "akm ui":
-    - /url: "#/overview"
-  - list:
-    - listitem:
-      - link "Overview":
-        - /url: "#/overview"
-    - listitem:
-      - link /Proposals \d+/:
-        - /url: "#/proposals"
-    - listitem:
-      - link "Improve impact":
-        - /url: "#/improve"
-    - listitem:
-      - link "History":
-        - /url: "#/changes"
-    - listitem:
-      - link "Search":
-        - /url: "#/search"
-    - listitem:
-      - link "New knowledge":
-        - /url: "#/new"
-    - listitem:
-      - link "Bundles":
-        - /url: "#/bundles"
-    - listitem:
-      - link "Config":
-        - /url: "#/config"
-  - text: akm 0.0.0 · visual-host bun
+- banner:
+  - navigation "Main":
+    - link "akm ui":
+      - /url: "#/overview"
+    - list:
+      - listitem:
+        - link "Overview":
+          - /url: "#/overview"
+      - listitem:
+        - link /Proposals \d+/:
+          - /url: "#/proposals"
+      - listitem:
+        - link "Improve impact":
+          - /url: "#/improve"
+      - listitem:
+        - link "History":
+          - /url: "#/changes"
+      - listitem:
+        - link "Search":
+          - /url: "#/search"
+      - listitem:
+        - link "New knowledge":
+          - /url: "#/new"
+      - listitem:
+        - link "Bundles":
+          - /url: "#/bundles"
+      - listitem:
+        - link "Config":
+          - /url: "#/config"
+    - search:
+      - text: Search assets
+      - searchbox "Search assets"
 - main:
   - heading "Edit Markdown" [level=1]
   - paragraph: stash//knowledge/deploy-guide
