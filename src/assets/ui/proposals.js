@@ -17,6 +17,7 @@ import {
   when,
 } from "./lib.js";
 import { detailActions, wireBatch, wireDetailActions } from "./proposal-actions.js";
+import { registerShortcuts } from "./shortcuts.js";
 
 function listHref(status, source, age = "") {
   const params = new URLSearchParams();
@@ -25,16 +26,6 @@ function listHref(status, source, age = "") {
   if (age) params.set("age", age);
   const q = params.toString();
   return `#/proposals${q ? `?${q}` : ""}`;
-}
-
-function gate(decision) {
-  if (!decision) return html`<span class="muted">-</span>`;
-  const kind = decision.outcome === "auto-rejected" ? "neutral" : decision.outcome === "deferred" ? "warn" : "info";
-  return html`${badge(decision.outcome, kind)}${decision.reason ? html` <span class="muted small">${decision.reason}</span>` : ""}`;
-}
-
-function selectCell(p) {
-  return html`<td class="select"><input type="checkbox" data-select value="${p.id}" data-ref="${p.ref}" aria-label="Select ${p.ref}"></td>`;
 }
 
 function refCell(p, query) {
@@ -50,12 +41,18 @@ function sourceChips(counts, active, status, age = "") {
     .map(([s, n]) => chip(s, s, n))}</div>`;
 }
 
-function pendingView(data, source, query = "") {
+function listItem(p, query, current) {
+  const here = p.id === current;
+  const confidence = typeof p.confidence === "number" ? ` · conf ${p.confidence.toFixed(2)}` : "";
+  return html`<li class="review-row"><input type="checkbox" data-select value="${p.id}" data-ref="${p.ref}" aria-label="Select ${p.ref}"><a class="review-item" href="${proposalHref(p.id, query)}" ${here ? html`aria-current="true"` : ""}><span class="mono wrap">${p.ref}</span><span class="muted small">${when(p.waitingSince)}${confidence}${p.isRetire ? " · retire" : ""}</span></a></li>`;
+}
+
+function pendingView(data, source, query = "", current = "") {
   const shown = data.proposals.filter((p) => !source || p.source === source);
   if (data.fullCount === 0)
     return emptyState(
-      "No pending proposals.",
-      "The queue is empty. Proposals appear here when akm improve stages a change for review.",
+      "Nothing waiting for review.",
+      html`Improve's next proposals will appear here. <a href="#/proposals?status=recent">See recent decisions</a> · <a href="#/improve">How this queue has changed</a>`,
     );
   const groups = new Map();
   for (const p of shown) groups.set(p.source, [...(groups.get(p.source) ?? []), p]);
@@ -66,13 +63,9 @@ function pendingView(data, source, query = "") {
         ? emptyState("No proposals in this queue.", html`<a href="#/proposals">View all proposals</a>`)
         : [...groups].map(
             ([name, items]) =>
-              html`<section data-group="${name}"><h2>${name} <span class="muted num">${items.length}</span></h2>
-                <label class="select-group"><input type="checkbox" data-select-group aria-label="Select all ${items.length} ${name} proposals"> Select all ${items.length} ${name} ${items.length === 1 ? "proposal" : "proposals"}</label>${tableWrap(
-                  html`<table><thead><tr><th class="select"><span class="sr-only">Select</span></th><th>Asset</th><th>Waiting</th><th>Gate decision</th><th class="r">Confidence</th></tr></thead><tbody>${items.map(
-                    (p) =>
-                      html`<tr>${selectCell(p)}<td>${refCell(p, query)}</td><td>${when(p.waitingSince)}</td><td>${gate(p.gateDecision)}</td><td class="r num">${typeof p.confidence === "number" ? p.confidence.toFixed(2) : "-"}</td></tr>`,
-                  )}</tbody></table>`,
-                )}</section>`,
+              html`<section data-group="${name}" class="review-group"><h2>${name} <span class="muted num">${items.length}</span></h2>
+                <label class="select-group"><input type="checkbox" data-select-group aria-label="Select all ${items.length} ${name} proposals"> Select all ${items.length} ${name} ${items.length === 1 ? "proposal" : "proposals"}</label>
+                <ul class="review-items">${items.map((p) => listItem(p, query, current))}</ul></section>`,
           )
     }`;
 }
@@ -145,17 +138,18 @@ function backlog(_ctx, data) {
   </section>`;
 }
 
-export async function renderList(ctx) {
-  const status = ctx.query.get("status") === "recent" ? "recent" : "pending";
+let reviewed = 0;
+
+/** The two-pane review: the pending queue on the left, the open proposal (or a prompt) on the right. */
+async function reviewPage(ctx, { detailFor = null } = {}) {
   const source = ctx.query.get("source") ?? "";
   const age = ctx.query.get("age") ?? "";
   const query = String(ctx.query);
-  const data = await api("/api/proposals", { status, source, age, limit: PENDING_LIMIT });
-  const tab = (name, label) =>
-    html`<a class="tab ${status === name ? "active" : ""}" href="${listHref(name, "")}" ${status === name ? html`aria-current="page"` : ""}>${label}</a>`;
+  const data = await api("/api/proposals", { status: "pending", source, age, limit: PENDING_LIMIT });
+  const detail = detailFor ? detailFor(data) : null;
+  const current = detail?.id ?? "";
   const head = html`${pageHeader("Proposals", "Changes akm improve has staged for review.")}
-    <nav class="tabs" aria-label="Proposal lists">${tab("pending", "Pending")}${tab("recent", "Recent")}</nav>`;
-  if (status === "recent") return html`${head}${recentView(data, source, query)}`;
+    <nav class="tabs" aria-label="Proposal lists"><a class="tab active" href="${listHref("pending", "")}" aria-current="page">Pending</a><a class="tab" href="${listHref("recent", "")}">Recent</a></nav>`;
   ctx.after.push((root) =>
     wireBatch(root, {
       reload: async () => {
@@ -166,11 +160,79 @@ export async function renderList(ctx) {
         const table = root.querySelector("[data-backlog-table]");
         if (table) mount(table, backlogTable(data.backlog));
         root.dispatchEvent(new Event("change"));
-        return pendingView(fresh, source, query);
+        return pendingView(fresh, source, query, current);
       },
     }),
   );
-  return html`${head}${backlog(ctx, data)}${age ? html`<p>Waiting age: ${AGE_BANDS[age] ?? age} · <a href="${listHref("pending", source)}">Clear age filter</a></p>` : ""}<div data-proposal-list><div data-list>${pendingView(data, source, query)}</div><div class="batch-bar" data-batch-bar hidden></div></div>`;
+  const order = data.proposals.filter((p) => !source || p.source === source).map((p) => p.id);
+  const at = order.indexOf(current);
+  const go = (id) => {
+    if (id) location.hash = proposalHref(id, query);
+  };
+  ctx.after.push((root) =>
+    registerShortcuts([
+      { key: "j", label: "Open the next proposal in the list", run: () => go(order[at + 1] ?? order[0]) },
+      { key: "k", label: "Open the previous proposal", run: () => go(order[at - 1] ?? order.at(-1)) },
+      ...(detail?.pending
+        ? [
+            {
+              key: "a",
+              label: "Accept (press again to confirm)",
+              run: () =>
+                (root.querySelector("[data-act=accept-confirm]") ?? root.querySelector("[data-act=accept]"))?.click(),
+            },
+            {
+              key: "r",
+              label: "Reject, then choose a reason",
+              run: () =>
+                (root.querySelector("[data-act=reject-noop]") ?? root.querySelector("[data-act=reject]"))?.click(),
+            },
+          ]
+        : []),
+      { key: "u", label: "Undo the decision just made", run: () => root.querySelector("[data-act=undo]")?.click() },
+      { key: "n", label: "Go to the next pending proposal", run: () => root.querySelector("[data-next]")?.click() },
+      {
+        key: "x",
+        label: "Select or clear this proposal for a batch",
+        run: () => root.querySelector(`.review-row:has([aria-current]) input[data-select]`)?.click(),
+      },
+      { key: "[", label: "Jump to the previous change in the diff", run: () => jumpHunk(root, -1) },
+      { key: "]", label: "Jump to the next change in the diff", run: () => jumpHunk(root, 1) },
+    ]),
+  );
+  const pane = detail
+    ? detail.markup
+    : html`<div class="state state-empty"><p class="state-title">Select a proposal</p><p>Choose one from the list, or press <kbd>j</kbd> to open the first. Press <kbd>?</kbd> for every shortcut.</p></div>`;
+  return html`${head}${backlog(ctx, data)}${age ? html`<p>Waiting age: ${AGE_BANDS[age] ?? age} · <a href="${listHref("pending", source)}">Clear age filter</a></p>` : ""}
+    <div class="review" ${detail ? html`data-detail` : ""}>
+      <div class="review-list" data-proposal-list><div data-list>${pendingView(data, source, query, current)}</div><div class="batch-bar" data-batch-bar role="region" aria-label="Selection" aria-live="polite" hidden></div><p class="muted small review-count" data-reviewed>${reviewed ? `${reviewed} reviewed this session.` : ""}</p></div>
+      <div class="review-pane">${pane}</div>
+    </div>`;
+}
+
+/** Move focus to the previous or next changed block of the diff on the page. */
+function jumpHunk(root, direction) {
+  const changed = [...root.querySelectorAll(".sbs-pane:first-child .drow, .dcol.inline .drow")].filter((row) =>
+    row.matches(".add, .del"),
+  );
+  const starts = changed.filter((row) => !row.previousElementSibling?.matches(".add, .del"));
+  if (starts.length === 0) return;
+  const here = starts.indexOf(document.activeElement);
+  const next =
+    starts[here === -1 ? (direction > 0 ? 0 : starts.length - 1) : (here + direction + starts.length) % starts.length];
+  next.tabIndex = -1;
+  next.focus();
+}
+
+export async function renderList(ctx) {
+  const status = ctx.query.get("status") === "recent" ? "recent" : "pending";
+  if (status === "pending") return reviewPage(ctx);
+  const source = ctx.query.get("source") ?? "";
+  const query = String(ctx.query);
+  const data = await api("/api/proposals", { status, source, limit: PENDING_LIMIT });
+  const head = html`${pageHeader("Proposals", "Changes akm improve has staged for review.")}
+    <nav class="tabs" aria-label="Proposal lists"><a class="tab" href="${listHref("pending", "")}">Pending</a><a class="tab active" href="${listHref("recent", "")}" aria-current="page">Recent</a></nav>`;
+  return html`${head}${recentView(data, source, query)}`;
 }
 
 // ---- detail ----------------------------------------------------------------
@@ -201,77 +263,95 @@ function statusBadges(p, status) {
   return html`${outcomeBadge(status)}${badge(p.source, "info")}${p.isRetire ? badge("retire", "warn") : ""}`;
 }
 
-/** The pending proposal after `id` in the pending list's order (else the first other one); `null` when none is waiting. */
-async function nextPendingId(id, query) {
-  try {
-    const { proposals } = await api("/api/proposals", {
-      status: "pending",
-      source: query.get("source"),
-      age: query.get("age"),
-      limit: PENDING_LIMIT,
-    });
-    const at = proposals.findIndex((p) => p.id === id);
-    return (proposals[at + 1] ?? proposals.find((p) => p.id !== id))?.id ?? null;
-  } catch {
-    return null;
-  }
+/** "Why akm proposed this": the few facts a reviewer needs before reading the diff. */
+function whyBlock(p, findings) {
+  const gateText = p.gateDecision
+    ? `${p.gateDecision.outcome}${p.gateDecision.reason ? `: ${p.gateDecision.reason}` : ""}`
+    : "";
+  return html`<section class="why" aria-labelledby="why-title"><h2 id="why-title">Why akm proposed this</h2>${definitionList(
+    [
+      ["Process", html`<span class="mono">${p.source}</span>`],
+      ["Source run", p.sourceRun ? html`<span class="mono">${p.sourceRun}</span>` : ""],
+      ["Judge", gateText],
+      ["Confidence", typeof p.confidence === "number" ? p.confidence.toFixed(2) : ""],
+      [
+        "Validation",
+        findings.length > 0
+          ? `${findings.length} ${findings.length === 1 ? "finding" : "findings"} below`
+          : "no findings",
+      ],
+      ["Waiting", html`${when(p.waitingSince)}`],
+    ],
+  )}</section>`;
 }
 
 export async function renderDetail(ctx) {
-  const data = await api(`/api/proposals/${encodeURIComponent(ctx.param)}`);
-  const p = data.proposal;
-  const findings = data.validation?.findings ?? [];
-  const pending = p.status === "pending";
-  const nextId = pending ? await nextPendingId(p.id, ctx.query) : null;
   const query = String(ctx.query);
-  const diff = data.diff ? diffSection(data.diff) : null;
-  // A proposal whose content equals the asset has nothing to accept (B-15).
-  const noop = Boolean(pending && data.diff && !data.diff.isNew && data.diff.before === data.diff.after);
-  if (diff?.wire) ctx.after.push((root) => diff.wire(root));
-  if (pending) {
-    ctx.after.push((root) =>
-      wireDetailActions(root, {
-        id: p.id,
-        nextId,
-        query,
-        noop,
-        onDecided: (status) => {
-          const target = root.querySelector("[data-status]");
-          if (target) mount(target, statusBadges(p, status));
-        },
-      }),
-    );
-  }
-  return html`<nav class="crumbs" aria-label="Breadcrumb"><a href="#/proposals${query ? `?${query}` : ""}">Proposals${ctx.query.get("source") ? `: ${ctx.query.get("source")}` : ""}</a> / <span aria-current="page" class="mono wrap">${p.ref}</span></nav>
-    ${pageHeader(html`<span class="mono wrap">${p.ref}</span>`)}
-    <div class="badges" data-status>${statusBadges(p, p.status)}</div>
-    ${p.retirement ? retirementBlock(p.retirement) : ""}
-    ${findings.length > 0 ? html`<section><h2>Validation</h2><ul class="plain">${findings.map((f) => html`<li>${badge(f.severity ?? "info", f.severity === "error" ? "fail" : "warn")} <span class="mono small">${f.kind}</span> ${f.message}</li>`)}</ul></section>` : ""}
-    <section><h2>Proposed change</h2>${diff ? html`<p class="muted small">${data.diff.isNew ? "New asset. " : ""}Target <span class="mono wrap">${data.diff.targetPath ?? p.proposedTarget?.root ?? ""}</span></p>${diff.markup}` : emptyState("No diff available.", data.diffError ?? "")}</section>
-    ${pending ? detailActions(nextId, query, noop) : ""}
-    <details><summary>Proposal details</summary>${definitionList([
-      ["Id", html`<span class="mono">${p.id}</span>`],
-      ["Created", html`${when(p.createdAt)} <span class="muted small">${fmtDateTime(p.createdAt)}</span>`],
-      ["Waiting since", when(p.waitingSince)],
-      ["Confidence", typeof p.confidence === "number" ? p.confidence.toFixed(2) : ""],
-      ["Source run", p.sourceRun ? html`<span class="mono">${p.sourceRun}</span>` : ""],
-      [
-        "Target",
-        p.proposedTarget
-          ? html`<span class="mono wrap">${p.proposedTarget.root}</span> <span class="muted">(${p.proposedTarget.source})</span>`
-          : "",
-      ],
-      ["Gate decision", p.gateDecision ? gate(p.gateDecision) : ""],
-      [
-        "Review",
-        p.review ? html`${outcomeBadge(p.review.outcome)} ${p.review.reason ?? ""} ${when(p.review.decidedAt)}` : "",
-      ],
-      [
-        "Changes",
-        p.changes?.length > 0
-          ? html`<ul class="plain">${p.changes.map((c) => html`<li>${badge(c.op, "neutral")} <span class="mono wrap">${c.path}</span></li>`)}</ul>`
-          : "",
-      ],
-    ])}</details>
-    <p><a href="${assetHref(p.ref)}">View the asset as it is now</a></p>`;
+  const data = await api(`/api/proposals/${encodeURIComponent(ctx.param)}`);
+  return reviewPage(ctx, {
+    detailFor: (list) => {
+      const p = data.proposal;
+      const findings = data.validation?.findings ?? [];
+      const pending = p.status === "pending";
+      const source = ctx.query.get("source") ?? "";
+      const order = list.proposals.filter((item) => !source || item.source === source).map((item) => item.id);
+      const at = order.indexOf(p.id);
+      const nextId = pending ? (order[at + 1] ?? order.find((id) => id !== p.id) ?? null) : null;
+      const diff = data.diff ? diffSection(data.diff) : null;
+      if (diff?.wire) ctx.after.push((root) => diff.wire(root));
+      // A proposal whose content equals the asset has nothing to accept (B-15).
+      const noop = Boolean(pending && data.diff && !data.diff.isNew && data.diff.before === data.diff.after);
+      if (pending) {
+        ctx.after.push((root) =>
+          wireDetailActions(root, {
+            id: p.id,
+            nextId,
+            query,
+            noop,
+            onDecided: (status) => {
+              const target = root.querySelector("[data-status]");
+              if (target) mount(target, statusBadges(p, status));
+              if (status === "accepted" || status === "rejected") {
+                reviewed += 1;
+                const counter = root.querySelector("[data-reviewed]");
+                if (counter) counter.textContent = `${reviewed} reviewed this session.`;
+              }
+              root.querySelector(".review-item[aria-current]")?.setAttribute("data-decided", status);
+            },
+          }),
+        );
+      }
+      const markup = html`<nav class="crumbs" aria-label="Breadcrumb"><a href="#/proposals${query ? `?${query}` : ""}">Proposals${source ? `: ${source}` : ""}</a> / <span aria-current="page" class="mono wrap">${p.ref}</span></nav>
+        <div class="review-bar"><div class="review-bar-id"><h2 class="mono wrap">${p.ref}</h2><div class="badges" data-status>${statusBadges(p, p.status)}</div></div>${pending ? detailActions(nextId, query, noop) : ""}</div>
+        ${whyBlock(p, findings)}
+        ${p.retirement ? retirementBlock(p.retirement) : ""}
+        ${findings.length > 0 ? html`<section><h2>Validation</h2><ul class="plain">${findings.map((f) => html`<li>${badge(f.severity ?? "info", f.severity === "error" ? "fail" : "warn")} <span class="mono small">${f.kind}</span> ${f.message}</li>`)}</ul></section>` : ""}
+        <section><h2>Proposed change</h2>${diff ? html`<p class="muted small">${data.diff.isNew ? "New asset. " : ""}Target <span class="mono wrap">${data.diff.targetPath ?? p.proposedTarget?.root ?? ""}</span></p>${diff.markup}` : emptyState("No diff available.", data.diffError ?? "")}</section>
+        <details><summary>Proposal details</summary>${definitionList([
+          ["Id", html`<span class="mono">${p.id}</span>`],
+          ["Created", html`${when(p.createdAt)} <span class="muted small">${fmtDateTime(p.createdAt)}</span>`],
+          ["Waiting since", when(p.waitingSince)],
+          [
+            "Target",
+            p.proposedTarget
+              ? html`<span class="mono wrap">${p.proposedTarget.root}</span> <span class="muted">(${p.proposedTarget.source})</span>`
+              : "",
+          ],
+          [
+            "Review",
+            p.review
+              ? html`${outcomeBadge(p.review.outcome)} ${p.review.reason ?? ""} ${when(p.review.decidedAt)}`
+              : "",
+          ],
+          [
+            "Changes",
+            p.changes?.length > 0
+              ? html`<ul class="plain">${p.changes.map((c) => html`<li>${badge(c.op, "neutral")} <span class="mono wrap">${c.path}</span></li>`)}</ul>`
+              : "",
+          ],
+        ])}</details>
+        <p><a href="${assetHref(p.ref)}">View the asset as it is now</a></p>`;
+      return { id: p.id, pending, markup };
+    },
+  });
 }

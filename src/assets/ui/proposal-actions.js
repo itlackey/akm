@@ -9,6 +9,12 @@ import { ApiError, badge, html, mount, post, proposalHref } from "./lib.js";
 
 const REASON_MAX = 2000;
 const NOOP_REASON = "No-op: the proposed content matches the current asset.";
+const REASON_CHIPS = ["Wrong", "Stale", "Duplicate", "Style", "Other"];
+
+/** The reason sent to the server: the chosen chip, then any detail. */
+function composeReason(chip, text) {
+  return [chip, text.trim()].filter(Boolean).join(": ");
+}
 
 /** What went wrong, in words a reviewer can act on; the server's own message and code are shown beside it. */
 export function describeError(error) {
@@ -46,15 +52,23 @@ function detailView(state, nextId, query = "", noop = false) {
   switch (state.mode) {
     case "done": {
       const { kind, result, commit } = state;
-      return html`<div class="notice notice-ok" role="status" tabindex="-1">
-          <p class="state-title">${kind === "accept" ? "Accepted" : "Rejected"}</p>
-          ${
-            kind === "accept"
-              ? html`<p>Written to <span class="mono wrap">${result.assetPath}</span>.</p><p>${commitLine(commit)}</p>`
-              : html`<p>The reason was recorded: <em>${result.reason}</em></p>`
-          }
+      const title = { accept: "Accepted", reject: "Rejected", revert: "Reverted" }[kind];
+      const detail =
+        kind === "accept"
+          ? html`<p>Written to <span class="mono wrap">${result.assetPath}</span>.</p><p>${commitLine(commit)}</p>`
+          : kind === "reject"
+            ? html`<p>The reason was recorded: <em>${result.reason}</em></p>`
+            : html`<p>Restored from the backup taken when it was accepted.</p>`;
+      const undo =
+        kind === "accept" && result.proposal?.revertable
+          ? html`<button type="button" class="btn-secondary" data-act="undo">Undo <kbd>u</kbd></button>`
+          : "";
+      const reopen =
+        kind === "reject" ? html`<button type="button" class="btn-secondary" data-act="reopen">Reopen</button>` : "";
+      return html`<div class="notice notice-ok" role="status" tabindex="-1" data-decided>
+          <p class="state-title">${title}</p>${detail}
         </div>
-        <p class="btn-row">${nextId ? html`<a class="btn" href="${proposalHref(nextId, query)}">Next pending</a>` : ""}<a class="btn btn-secondary" href="#/proposals${query ? `?${query}` : ""}">Back to queue</a></p>
+        <p class="btn-row">${undo}${reopen}${nextId ? html`<a class="btn" data-next href="${proposalHref(nextId, query)}">Next pending <kbd>n</kbd></a>` : ""}<a class="btn btn-secondary" href="#/proposals${query ? `?${query}` : ""}">Back to queue</a></p>
         ${nextId ? "" : html`<p class="muted small">No other proposal is waiting in this queue.${query ? html` <a href="#/proposals">View all proposals</a>` : ""}</p>`}`;
     }
     case "confirm-accept":
@@ -68,7 +82,8 @@ function detailView(state, nextId, query = "", noop = false) {
         return html`<p class="btn-row"><button type="button" aria-disabled="true">Accept</button><button type="button" class="btn-secondary" aria-disabled="true">Reject</button></p>
           <p class="muted" role="status" tabindex="-1">Accepting...</p>`;
       }
-      return html`${state.error ? errorBlock(state.error) : ""}<label for="reject-reason"><strong>Why reject this proposal?</strong> <span class="muted small" id="reject-reason-hint">Required, up to ${REASON_MAX} characters.</span></label>
+      return html`${state.error ? errorBlock(state.error) : ""}<fieldset class="reason-chips" role="radiogroup" aria-label="Why reject this proposal?"><legend><strong>Why reject this proposal?</strong></legend><div class="segmented">${REASON_CHIPS.map((chip) => html`<label><input type="radio" name="reject-chip" value="${chip}" ${state.chip === chip ? html`checked` : ""} ${busy ? html`disabled` : ""}><span>${chip}</span></label>`)}</div></fieldset>
+        <label for="reject-reason"><strong>Details</strong> <span class="muted small" id="reject-reason-hint">${state.chip === "Other" ? "Required for Other" : "Optional with a reason above"}, up to ${REASON_MAX} characters.</span></label>
         <textarea id="reject-reason" data-reason rows="3" required aria-describedby="reject-reason-hint${state.reasonError ? " reject-reason-error" : ""}" ${state.reasonError ? html`aria-invalid="true"` : ""} ${busy ? "disabled" : ""}>${state.reason}</textarea>
         ${state.reasonError ? html`<p class="field-error" id="reject-reason-error" role="alert">${state.reasonError}</p>` : ""}
         <p class="btn-row"><button type="button" class="btn-danger" data-act="reject-confirm" ${busy ? html`aria-disabled="true"` : ""}>Confirm reject</button><button type="button" class="btn-secondary" data-act="cancel" ${busy ? html`aria-disabled="true"` : ""}>Cancel</button></p>
@@ -96,7 +111,7 @@ export function detailActions(nextId, query = "", noop = false) {
 export function wireDetailActions(root, { id, nextId, query = "", noop = false, onDecided }) {
   const region = root.querySelector("[data-actions]");
   if (!region) return;
-  let state = { mode: "idle", reason: "" };
+  let state = { mode: "idle", reason: "", chip: "" };
   const draw = (focus) => {
     mount(region, detailView(state, nextId, query, noop));
     region.querySelector(focus)?.focus();
@@ -107,15 +122,29 @@ export function wireDetailActions(root, { id, nextId, query = "", noop = false, 
     draw("[role=status]");
     try {
       const result = await post(path, body);
-      state = { mode: "done", kind, result, commit: result.commit ?? null, reason: state.reason };
+      if (kind === "reopen") {
+        state = { mode: "idle", reason: "", chip: "" };
+        draw("[data-act=accept], [data-act=reject-noop]");
+        onDecided?.("pending");
+        return;
+      }
+      state = { mode: "done", kind, result, commit: result.commit ?? null, reason: state.reason, chip: state.chip };
       draw("[role=status]");
-      onDecided?.(kind === "accept" ? "accepted" : "rejected");
+      onDecided?.({ accept: "accepted", reject: "rejected", revert: "reverted" }[kind]);
     } catch (error) {
-      state = { mode: kind === "reject" ? "reject" : "idle", reason: state.reason, error };
+      state = { mode: kind === "reject" ? "reject" : "idle", reason: state.reason, chip: state.chip, error };
       draw("[role=alert]");
     }
   };
 
+  region.addEventListener("change", (event) => {
+    if (!event.target.matches("input[name=reject-chip]")) return;
+    state.chip = event.target.value;
+    if (state.reasonError) {
+      state = { ...state, reasonError: "" };
+      draw(`input[name=reject-chip][value="${state.chip}"]`);
+    }
+  });
   region.addEventListener("input", (event) => {
     if (!event.target.matches("[data-reason]")) return;
     state.reason = event.target.value;
@@ -131,7 +160,7 @@ export function wireDetailActions(root, { id, nextId, query = "", noop = false, 
     if (event.key !== "Escape" || (state.mode !== "confirm-accept" && state.mode !== "reject")) return;
     event.preventDefault();
     const control = state.mode === "reject" ? "reject" : "accept";
-    state = { mode: "idle", reason: state.reason };
+    state = { mode: "idle", reason: state.reason, chip: state.chip };
     draw(`[data-act=${control}]`);
   });
   region.addEventListener("click", (event) => {
@@ -147,21 +176,29 @@ export function wireDetailActions(root, { id, nextId, query = "", noop = false, 
         run("accept", `${base}/accept`, {});
         break;
       case "reject":
-        state = { mode: "reject", reason: state.reason };
-        draw("[data-reason]");
+        state = { mode: "reject", reason: state.reason, chip: state.chip };
+        draw("input[name=reject-chip]");
         break;
       case "reject-noop":
-        state = { mode: "reject", reason: NOOP_REASON };
+        state = { mode: "reject", reason: NOOP_REASON, chip: "Other" };
         draw("[data-act=reject-confirm]");
         break;
+      case "undo":
+        run("revert", `${base}/revert`, {});
+        break;
+      case "reopen":
+        run("reopen", `${base}/reopen`, {});
+        break;
       case "reject-confirm": {
-        const reason = state.reason.trim();
+        const reason = composeReason(state.chip, state.reason);
         const reasonError =
-          reason === ""
-            ? "Enter a reason before rejecting."
-            : reason.length > REASON_MAX
-              ? `The reason is ${reason.length} characters; the limit is ${REASON_MAX}. Shorten it by ${reason.length - REASON_MAX}.`
-              : "";
+          state.chip === "" && state.reason.trim() === ""
+            ? "Choose a reason or write one before rejecting."
+            : state.chip === "Other" && state.reason.trim() === ""
+              ? "Say why in the details when the reason is Other."
+              : reason.length > REASON_MAX
+                ? `The reason is ${reason.length} characters; the limit is ${REASON_MAX}. Shorten it by ${reason.length - REASON_MAX}.`
+                : "";
         if (reasonError) {
           state = { ...state, mode: "reject", reasonError };
           draw("[data-reason]");
@@ -172,7 +209,7 @@ export function wireDetailActions(root, { id, nextId, query = "", noop = false, 
       }
       case "cancel": {
         const control = state.mode === "reject" ? "reject" : "accept";
-        state = { mode: "idle", reason: state.reason };
+        state = { mode: "idle", reason: state.reason, chip: state.chip };
         draw(`[data-act=${control}]`);
         break;
       }

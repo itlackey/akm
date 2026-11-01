@@ -642,8 +642,10 @@ describe("pages", () => {
     expect(list).toContain(`<input type="checkbox" data-select value="${proposalId}" data-ref="stash//lessons/rg"`);
     expect(list).toContain('aria-label="Select stash//lessons/rg"');
     expect(list).toContain("Select all 1 reflect proposal");
-    expect(list).toContain('<section data-group="reflect">');
-    expect(list).toContain('<div class="batch-bar" data-batch-bar hidden></div>');
+    expect(list).toContain('<section data-group="reflect" class="review-group">');
+    expect(list).toContain(
+      '<div class="batch-bar" data-batch-bar role="region" aria-label="Selection" aria-live="polite" hidden></div>',
+    );
     // The recent list has no selection.
     expect((await (await view("proposals.js", "renderList"))(ctx("status=recent"))).text).not.toContain("data-select");
 
@@ -654,7 +656,7 @@ describe("pages", () => {
     expect(detail).toContain("data-actions");
     expect(detail).toContain("data-status");
     // The page wires its own buttons once mounted; nothing is attached before that.
-    expect(pageCtx.after).toHaveLength(1);
+    expect(pageCtx.after.length).toBeGreaterThanOrEqual(1);
 
     // Once decided, the page offers no buttons.
     const lib = await load("lib.js");
@@ -678,8 +680,10 @@ describe("pages", () => {
     const query = "source=reflect&age=underDay";
     const detail = (await (await view("proposals.js", "renderDetail"))(ctx(query, proposalId))).text;
     expect(detail).toContain('href="#/proposals?source=reflect&amp;age=underDay"');
-    expect(detail.indexOf("Proposed change")).toBeLessThan(detail.indexOf("data-actions"));
-    expect(detail.indexOf("data-actions")).toBeLessThan(detail.indexOf("Proposal details"));
+    // The decision bar sits above the diff, so it stays in reach (plan 4.3).
+    expect(detail.indexOf("data-actions")).toBeLessThan(detail.indexOf("Proposed change"));
+    expect(detail.indexOf("Proposed change")).toBeLessThan(detail.indexOf("Proposal details"));
+    expect(detail).toContain("Why akm proposed this");
     const region = {
       innerHTML: "",
       addEventListener: (name: string, fn: (event: unknown) => void) => {
@@ -707,9 +711,9 @@ describe("pages", () => {
     const click = (act: string) =>
       handlers.click?.({ target: { closest: () => ({ disabled: false, dataset: { act } }) } });
     click("reject");
-    expect(focused).toBe("[data-reason]");
+    expect(focused).toBe("input[name=reject-chip]");
     click("reject-confirm");
-    expect(region.innerHTML).toContain("Enter a reason");
+    expect(region.innerHTML).toContain("Choose a reason or write one");
     click("cancel");
     expect(focused).toBe("[data-act=reject]");
     click("accept");

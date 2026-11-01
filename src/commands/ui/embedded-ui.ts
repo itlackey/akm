@@ -26,6 +26,7 @@ import overviewChartsJs from "../../assets/ui/overview-charts.js" with { type: "
 import proposalActionsJs from "../../assets/ui/proposal-actions.js" with { type: "text" };
 import proposalsJs from "../../assets/ui/proposals.js" with { type: "text" };
 import searchJs from "../../assets/ui/search.js" with { type: "text" };
+import shortcutsJs from "../../assets/ui/shortcuts.js" with { type: "text" };
 import stylesCss from "../../assets/ui/styles.css" with { type: "text" };
 
 export const EMBEDDED_UI: Record<string, string> = {
@@ -50,5 +51,6 @@ export const EMBEDDED_UI: Record<string, string> = {
   "proposal-actions.js": proposalActionsJs as unknown as string,
   "proposals.js": proposalsJs as unknown as string,
   "search.js": searchJs as unknown as string,
+  "shortcuts.js": shortcutsJs as unknown as string,
   "styles.css": stylesCss as unknown as string,
 };
