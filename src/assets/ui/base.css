@@ -166,7 +166,7 @@
     font: inherit;
     color: var(--text);
     background: var(--surface);
-    border: 2px solid var(--border-strong);
+    border: 1px solid var(--border-strong);
     border-radius: var(--radius-s);
     padding: var(--space-2) var(--space-3);
     &:focus-visible {
@@ -198,9 +198,11 @@
     }
   }
 
+  /* A native box at text size; the margin keeps the click target at least 24px (WCAG 2.5.8). */
   input[type="checkbox"] {
-    inline-size: var(--target-min);
-    block-size: var(--target-min);
+    inline-size: 1rem;
+    block-size: 1rem;
+    margin: var(--space-1);
   }
 
   input[type="checkbox"],

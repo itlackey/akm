@@ -231,10 +231,6 @@
 
   .actions {
     margin: var(--space-4) 0;
-    padding: var(--space-4) var(--space-5);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-l);
-    background: var(--surface);
   }
 
   .actions textarea {
@@ -249,9 +245,6 @@
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
-    margin: 0 0 8px;
-    font-size: 0.9rem;
-    color: var(--muted);
   }
 
   .batch-bar {
@@ -396,8 +389,8 @@
   }
 
   /* ---- selected states that do not rely on colour, and forced colors ---- */
-  .chip.active::before,
-  .seg button[aria-pressed="true"]::before {
+  /* The underline marks a pressed .seg button, so it needs no tick. */
+  .chip.active::before {
     content: "✓ " / "";
   }
 

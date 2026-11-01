@@ -546,10 +546,6 @@
     align-items: center;
     gap: var(--space-2);
     margin: var(--space-4) 0 var(--space-5);
-    padding: var(--space-4);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-l);
     & input[type="search"] {
       flex: 1 1 20rem;
       min-inline-size: 0;
@@ -569,8 +565,11 @@
     min-block-size: var(--target-min);
   }
 
-  .scope-controls {
+  .search-filters {
     flex-basis: 100%;
+    & .form-grid {
+      margin-block-start: var(--space-3);
+    }
   }
 
   .md [id] {
@@ -594,31 +593,30 @@
     margin: 0 0 var(--space-3);
   }
 
+  /* The same quiet switch as .segmented, for buttons: words, the pressed one underlined. */
   .seg {
     display: inline-flex;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    overflow: hidden;
-    background: var(--surface);
+    gap: var(--space-4);
   }
 
   .seg button {
-    padding: 5px var(--space-4);
+    min-block-size: 0;
+    padding: var(--space-1) 0;
     border: 0;
+    border-block-end: 2px solid transparent;
     border-radius: 0;
     background: transparent;
-    color: var(--text);
-    font-size: 0.9rem;
+    color: var(--muted);
+    font-size: var(--text-s);
     font-weight: 500;
-  }
-
-  .seg button + button {
-    border-left: 1px solid var(--border);
-  }
-
-  .seg button[aria-pressed="true"] {
-    background: var(--accent-bg);
-    color: var(--accent);
+    &:hover {
+      background: transparent;
+      color: var(--text);
+    }
+    &[aria-pressed="true"] {
+      border-block-end-color: var(--accent);
+      color: var(--text);
+    }
   }
 
   .sbs {

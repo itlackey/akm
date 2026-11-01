@@ -52,7 +52,7 @@ function card(bundle) {
       [
         "Source",
         bundle.source?.locator === bundle.path
-          ? html`<span class="muted">${bundle.source?.kind ?? "unknown"} path</span>`
+          ? html`<span class="muted">${bundle.source?.kind === "path" ? "this folder" : (bundle.source?.kind ?? "unknown")}</span>`
           : html`<span class="mono">${bundle.source?.locator ?? ""}</span> <span class="muted">(${bundle.source?.kind ?? "unknown"})</span>`,
       ],
       ["Version", bundle.version],
@@ -140,6 +140,13 @@ export async function render(ctx) {
         Object.fromEntries([...values].filter(([key, value]) => value !== form.elements[key].dataset.initial)),
       ),
     );
+    // The save bar shows only once a default differs from what is saved.
+    const defaults = root.querySelector(".bundle-defaults");
+    defaults?.addEventListener("change", () => {
+      defaults.querySelector("button[type=submit]").disabled = [...defaults.querySelectorAll("select")].every(
+        (select) => select.value === select.dataset.initial,
+      );
+    });
     actionForm(root, ".bundle-add", (_form, values) =>
       post("/api/bundles/add", { ...Object.fromEntries(values), writable: values.has("writable") }),
     );
@@ -166,7 +173,7 @@ export async function render(ctx) {
           <div class="field"><label class="field-label" for="bd-default">Default bundle</label><select name="defaultBundle" id="bd-default" data-initial="${data.defaultBundle ?? ""}">${choices(data.defaultBundle, "Automatic (working stash)")}</select></div>
           <div class="field"><label class="field-label" for="bd-write">Default write target</label><select name="defaultWriteTarget" id="bd-write" data-initial="${data.defaultWriteTarget ?? ""}">${choices(data.defaultWriteTarget, writeTargetLabel(data))}</select></div>
         </div>
-        <div class="settings-footer"><span></span><div data-status class="settings-status"></div><button type="submit">Save defaults</button></div>
+        <div class="settings-footer"><span></span><div data-status class="settings-status"></div><button type="submit" disabled>Save defaults</button></div>
       </form>
     </section>
     <section class="settings-section" aria-labelledby="bundles-configured">

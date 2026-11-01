@@ -18,7 +18,6 @@ function hit(h, returnTo) {
     <div class="hit-head"><a class="mono wrap" href="${assetHref(h.ref, returnTo)}">${h.ref}</a>${badge(h.type, "info")}${h.origin ? html`<span class="muted small">${h.origin}</span>` : ""}${typeof h.score === "number" ? html`<span class="num muted small" title="Ranking score">score ${h.score.toFixed(3)}</span>` : ""}</div>
     ${h.description ? html`<p>${h.description}</p>` : ""}
     ${Array.isArray(h.tags) && h.tags.length > 0 ? html`<div class="tags">${h.tags.map((t) => html`<span class="tag">${t}</span>`)}</div>` : ""}
-    ${Array.isArray(h.whyMatched) && h.whyMatched.length > 0 ? html`<p class="muted small">Matched: ${h.whyMatched.join(", ")}</p>` : ""}
   </li>`;
 }
 
@@ -73,6 +72,16 @@ export async function render(ctx) {
   for (const h of result.hits) types.add(h.type);
   if (type) types.add(type);
   const bundleNames = (bundles?.bundles ?? []).map((b) => b.name);
+  // Filters off their defaults, named in the closed summary so a narrowed search never looks like a full one.
+  const active = [
+    type && `type ${type}`,
+    bundle && `bundle ${bundle}`,
+    belief !== "current" && `belief ${belief}`,
+    limit !== String(RESULT_LIMIT) && `${limit} results`,
+    ...Object.entries(scope)
+      .filter(([, value]) => value)
+      .map(([key, value]) => `${key.slice(6)} ${value}`),
+  ].filter(Boolean);
 
   ctx.after.push((root) => {
     const form = root.querySelector("form.search-form");
@@ -99,15 +108,16 @@ export async function render(ctx) {
   ctx.announcement = `Search. ${result.hits.length === 0 ? "No results" : `${result.hits.length} ${result.hits.length === 1 ? "result" : "results"}`}${q ? ` for ${q}` : ""}.`;
   return html`${pageHeader("Search", "Search or browse your indexed assets. Browsing is not counted as usage.")}
     ${tabs(q ? "results" : "browse", q)}
-    <p class="action-links"><a href="#/new">New knowledge</a> <span class="muted small">· Ctrl/Cmd+K opens search</span></p>
     <form class="search-form" role="search">
       <input type="search" name="q" value="${q}" placeholder="Search assets (empty browses the index)" aria-label="Query" autofocus>
       <button type="submit">Search</button>
-      <div class="field search-filter"><label class="field-label" for="s-type">Type</label><select id="s-type" name="type">${options([...types].sort(), type, "All types")}</select></div>
-      <div class="field search-filter"><label class="field-label" for="s-bundle">Bundle</label><select id="s-bundle" name="bundle">${options(bundleNames, bundle, "All bundles")}</select></div>
-      <div class="field search-filter"><label class="field-label" for="s-belief">Belief state</label><select id="s-belief" name="belief">${choices(["current", "all", "historical"], belief)}</select></div>
-      <div class="field search-filter"><label class="field-label" for="s-limit">Results</label><select id="s-limit" name="limit">${choices(["50", "100", "200"], limit)}</select></div>
-      <details class="scope-controls"><summary>Scope filters</summary><div class="form-grid">${Object.entries(scope).map(([key, value]) => html`<label>${key.slice(6)}<input name="${key}" value="${value}" placeholder="Any"></label>`)}</div></details>
+      <details class="search-filters" ${active.length ? html`open` : ""}><summary>Filters${active.length ? html`<span class="muted small">: ${active.join(" · ")}</span>` : ""}</summary><div class="form-grid">
+        <label>Type<select name="type">${options([...types].sort(), type, "All types")}</select></label>
+        <label>Bundle<select name="bundle">${options(bundleNames, bundle, "All bundles")}</select></label>
+        <label>Belief state<select name="belief">${choices(["current", "all", "historical"], belief)}</select></label>
+        <label>Results<select name="limit">${choices(["50", "100", "200"], limit)}</select></label>
+        ${Object.entries(scope).map(([key, value]) => html`<label>${key.slice(6)}<input name="${key}" value="${value}" placeholder="Any"></label>`)}
+      </div></details>
     </form>
     ${result.warnings?.length ? html`<details class="notice notice-warn"><summary>${result.warnings.length} search ${result.warnings.length === 1 ? "notice" : "notices"}</summary><ul>${result.warnings.map((w) => html`<li>${w}</li>`)}</ul></details>` : ""}
     ${

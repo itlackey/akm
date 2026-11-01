@@ -388,6 +388,11 @@
     background: var(--surface-2);
   }
 
+  /* A card with nothing to save shows no save bar; it appears with the first change, and stays to show the result. */
+  .settings-footer:has(> button[type="submit"]:disabled):not(:has(.settings-status > *)) {
+    display: none;
+  }
+
   .settings-footer > :first-child,
   .settings-footer .check-label {
     margin-inline-end: auto;

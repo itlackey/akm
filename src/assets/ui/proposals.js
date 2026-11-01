@@ -43,8 +43,11 @@ function sourceChips(counts, active, status, age = "") {
 
 function listItem(p, query, current) {
   const here = p.id === current;
-  const confidence = typeof p.confidence === "number" ? ` · conf ${p.confidence.toFixed(2)}` : "";
-  return html`<li class="review-row"><input type="checkbox" data-select value="${p.id}" data-ref="${p.ref}" aria-label="Select ${p.ref}"><a class="review-item" href="${proposalHref(p.id, query)}" ${here ? html`aria-current="true"` : ""}><span class="mono wrap">${p.ref}</span><span class="muted small">${when(p.waitingSince)}${confidence}${p.isRetire ? " · retire" : ""}</span></a></li>`;
+  const meta = [
+    Number.isNaN(Date.parse(p.waitingSince ?? "")) ? "" : when(p.waitingSince),
+    p.isRetire ? "retire" : "",
+  ].filter(Boolean);
+  return html`<li class="review-row"><input type="checkbox" data-select value="${p.id}" data-ref="${p.ref}" aria-label="Select ${p.ref}"><a class="review-item" href="${proposalHref(p.id, query)}" ${here ? html`aria-current="true"` : ""}><span class="mono wrap">${p.ref}</span>${meta.length ? html`<span class="muted small">${meta.map((m, i) => html`${i ? " · " : ""}${m}`)}</span>` : ""}</a></li>`;
 }
 
 function pendingView(data, source, query = "", current = "") {
@@ -56,15 +59,14 @@ function pendingView(data, source, query = "", current = "") {
     );
   const groups = new Map();
   for (const p of shown) groups.set(p.source, [...(groups.get(p.source) ?? []), p]);
-  return html`${sourceChips(data.bySource, source, "pending", new URLSearchParams(query).get("age"))}
+  return html`${source ? html`<p>Source: <span class="mono">${source}</span> · <a href="${listHref("pending", "")}">Show all sources</a></p>` : ""}
     ${data.totalCount > data.proposals.length ? html`<p class="muted">Showing the first ${data.proposals.length} of ${data.totalCount}.</p>` : ""}
     ${
       shown.length === 0
         ? emptyState("No proposals in this queue.", html`<a href="#/proposals">View all proposals</a>`)
         : [...groups].map(
             ([name, items]) =>
-              html`<section data-group="${name}" class="review-group"><h2>${name} <span class="muted num">${items.length}</span></h2>
-                <label class="select-group"><input type="checkbox" data-select-group aria-label="Select all ${items.length} ${name} proposals"> Select all ${items.length} ${name} ${items.length === 1 ? "proposal" : "proposals"}</label>
+              html`<section data-group="${name}" class="review-group"><h2><label class="select-group"><input type="checkbox" data-select-group aria-label="Select all ${items.length} ${name} ${items.length === 1 ? "proposal" : "proposals"}">${name}</label> <span class="muted num">${items.length}</span></h2>
                 <ul class="review-items">${items.map((p) => listItem(p, query, current))}</ul></section>`,
           )
     }`;
@@ -112,7 +114,7 @@ function recentView(data, source, query) {
 }
 
 const PENDING_LIMIT = 200;
-const AGE_BANDS = { underDay: "Under 1 day", underWeek: "1–7 days", older: "7+ days", unknown: "Unknown age" };
+const AGE_BANDS = { underDay: "Under 1 day", underWeek: "1–7 days", older: "7+ days", unknown: "No recorded age" };
 
 const AGE_CLASS = { underDay: "age-1", underWeek: "age-2", older: "age-3", unknown: "age-unknown" };
 
