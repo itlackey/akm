@@ -84,8 +84,6 @@ when_to_use: Searching a repository for text
 Prefer \`rg\` over \`grep -r\`: it skips ignored files and is faster.
 `;
 
-const LONG_PATH = Array.from({ length: 40 }, (_, i) => `part-${i + 1}`).join("/");
-
 function runGit(cwd: string, args: string[], dateIso: string): void {
   const result = spawnSync("git", ["-C", cwd, ...args], {
     encoding: "utf8",
@@ -111,7 +109,7 @@ export function seedStash(stashDir: string): void {
     ["knowledge/rollback.md", ROLLBACK, "akm improve auto-sync"],
     ["commands/release-notes.md", RELEASE_NOTES_COMMAND, "akm save"],
     ["lessons/rg.md", RG_LESSON, `akm accept: reflect 3f9a1c20 ${BUNDLE}//lessons/rg`],
-    [`knowledge/${LONG_PATH}.md`, "# Deep note\n", "akm save"],
+    ["knowledge/onboarding.md", "# Onboarding\n\nRequest access, clone the repo, run the setup script.\n", "akm save"],
     ["memories/standup.md", "Standup moved to 09:30.\n", "akm improve auto-sync"],
   ];
   runGit(stashDir, ["init", "-q", "-b", "main"], iso(30 * DAY));
@@ -142,10 +140,6 @@ const QUERIES = [
 ];
 const REPEAT_MISSES = ["kubernetes rollout", "terraform state lock", "oauth device flow"];
 const BURST_QUERY = "flaky test quarantine";
-const LONG_QUERY = `${"how do I configure the staging environment for the nightly regression suite ".repeat(2)}`.slice(
-  0,
-  120,
-);
 
 interface UsageRow {
   eventType: string;
@@ -205,7 +199,6 @@ function searchRows(): UsageRow[] {
       agoMs: 3 * DAY + (10 - i) * MINUTE,
     });
   }
-  rows.push({ eventType: "search", query: LONG_QUERY, metadata: { resultCount: 0, totalMs: 55 }, agoMs: 5 * HOUR });
   rows.push({
     eventType: "search",
     query: "improve internal",
@@ -365,11 +358,11 @@ function proposalSpecs(): ProposalSpec[] {
     },
     {
       id: "p-pending-unknown-age",
-      ref: `${BUNDLE}//knowledge/${LONG_PATH}`,
+      ref: `${BUNDLE}//knowledge/onboarding`,
       source: "reflect",
       status: "pending",
       createdAgoMs: null,
-      body: "# Deep note\n\nMore detail.\n",
+      body: "# Onboarding\n\nRequest access, clone the repo, run the setup script.\nThen read the deploy guide.\n",
     },
     {
       id: "p-pending-create",

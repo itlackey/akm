@@ -11,20 +11,20 @@
 import { defineConfig, devices } from "@playwright/test";
 import { VISUAL_PORT } from "./constants";
 
-const WIDTHS = { desktop: 1440, mobile: 390 } as const;
+const VIEWPORTS = { 1440: 900, 390: 844 } as const;
 const SCHEMES = ["light", "dark"] as const;
 
-const projects = Object.entries(WIDTHS).flatMap(([name, width]) =>
+const projects = Object.entries(VIEWPORTS).flatMap(([width, height]) =>
   SCHEMES.map((colorScheme) => ({
-    name: `${name}-${colorScheme}`,
-    use: { ...devices["Desktop Chrome"], viewport: { width, height: 900 }, colorScheme },
+    name: `${width}--${colorScheme}`,
+    use: { ...devices["Desktop Chrome"], viewport: { width: Number(width), height }, colorScheme },
   })),
 );
 
 export default defineConfig({
   testDir: ".",
   testMatch: "**/*.pw.ts",
-  snapshotPathTemplate: "{testDir}/__screenshots__/{arg}-{projectName}{ext}",
+  snapshotPathTemplate: "{testDir}/__screenshots__/{arg}--{projectName}{ext}",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],

@@ -29,9 +29,9 @@ async function openRoute(page: Page, hash: string, heading: string): Promise<voi
 for (const route of ROUTES) {
   test(`${route.name} matches its baseline`, async ({ page }) => {
     await openRoute(page, route.hash, route.heading);
-    await expect(page).toHaveScreenshot(`${route.name}.png`, {
+    await expect(page).toHaveScreenshot(`${route.name}--loaded.png`, {
       fullPage: true,
-      mask: [page.locator("[data-volatile]")],
+      mask: [page.locator("[data-volatile]").filter({ visible: true })],
     });
   });
 }

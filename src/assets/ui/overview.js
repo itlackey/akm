@@ -30,7 +30,7 @@ function checkItem(check) {
     <div class="check-head"><span class="dot dot-${statusKind(check.status)}" aria-hidden="true"></span><strong class="mono">${check.name}</strong>
       <span class="muted small">${check.kind}, ${check.confidence} confidence</span></div>
     <p class="check-msg">${check.message}</p>
-    ${evidence ? html`<details data-volatile><summary>Evidence</summary><pre class="code">${pretty(evidence)}</pre></details>` : ""}
+    ${evidence ? html`<details><summary>Evidence</summary><pre class="code" data-volatile>${pretty(evidence)}</pre></details>` : ""}
   </li>`;
 }
 
