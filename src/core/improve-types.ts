@@ -618,11 +618,6 @@ export interface ExtractedSessionResult {
   failedCount?: number;
   /** Of `failedCount`, writes the proposal validator refused (`INVALID_PROPOSAL`). Absent on older results. */
   failedRejectedCount?: number;
-  /**
-   * Bounded causes of the writes among `failedCount` that the validator did not refuse (state.db busy, I/O,
-   * config). Absent when none failed that way. Those writes may clear, so the session stays retryable.
-   */
-  failedCauses?: string[];
   /** When candidates was empty, the LLM's explanation. */
   rationaleIfEmpty?: string;
   /** Pre-filter stats for the session. */

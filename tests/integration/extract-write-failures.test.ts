@@ -148,7 +148,6 @@ describe("extract reports write failures beside ok: true (#1290)", () => {
       expect(result.writeFailures).toMatchObject({ candidates: 1, sessions: 1 });
       expect(result.writeFailures?.causes.join(" ")).toContain("scripted write failure");
       expect(result.warnings.join(" ")).toMatch(/1 candidate write\(s\) failed in 1 session\(s\)/);
-      expect(result.sessions[0]?.failedCauses?.join(" ")).toContain("scripted write failure");
       expect(getExtractedSession(db, "claude", "s1")?.content_hash).toBeNull();
     } finally {
       db.close();
@@ -180,7 +179,7 @@ describe("extract reports write failures beside ok: true (#1290)", () => {
       const result = await extract(db, stash, [session("s1"), session("s2")], names);
       expect(result.writeFailures).toMatchObject({ candidates: 10, sessions: 2 });
       expect(result.writeFailures?.causes.length).toBeLessThanOrEqual(3);
-      for (const s of result.sessions) expect(s.failedCauses?.length).toBeLessThanOrEqual(3);
+      for (const s of result.sessions) expect(s).not.toHaveProperty("failedCauses");
     } finally {
       db.close();
     }
@@ -201,7 +200,6 @@ describe("extract reports write failures beside ok: true (#1290)", () => {
       expect(result.ok).toBe(true);
       expect(result.sessions[0]).toMatchObject({ failedCount: 1, failedRejectedCount: 1 });
       expect(result.writeFailures).toBeUndefined();
-      expect(result.sessions[0]?.failedCauses).toBeUndefined();
       expect(result.warnings.join(" ")).not.toMatch(/write\(s\) failed/);
     } finally {
       db.close();

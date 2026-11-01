@@ -246,8 +246,11 @@ export function resolveStandaloneExtractPlan(
   });
 }
 
-/** A session result before the run's engine is stamped on it. */
-type ExtractSessionOutcome = Omit<ExtractedSessionResult, "engine">;
+/**
+ * A session result before the run's engine is stamped on it. `failedCauses` holds the causes of writes the
+ * validator did not refuse; the run sums them into `writeFailures` and does not return them per session (#1290).
+ */
+type ExtractSessionOutcome = Omit<ExtractedSessionResult, "engine"> & { failedCauses?: string[] };
 type PreFilterStats = ExtractedSessionResult["preFilter"];
 
 const NO_PREFILTER: PreFilterStats = { inputCount: 0, outputCount: 0, truncatedCount: 0 };
@@ -768,7 +771,7 @@ async function processSession(
     blockedCount,
     failedCount,
     failedRejectedCount,
-    ...(failedCauses.length > 0 ? { failedCauses: boundedCauses(failedCauses) } : {}),
+    ...(failedCauses.length > 0 ? { failedCauses } : {}),
     ...(empty && payload.rationale_if_empty ? { rationaleIfEmpty: payload.rationale_if_empty } : {}),
     warnings,
     ...sessionAsset,
@@ -823,6 +826,7 @@ interface ExtractLoopTally {
   triagePassed: number;
   triagedOut: number;
   allProposalIds: string[];
+  failedCauses: string[];
   deferred: number;
 }
 
@@ -850,10 +854,12 @@ async function runExtractSessionLoop(
     triagePassed: 0,
     triagedOut: 0,
     allProposalIds: [],
+    failedCauses: [],
     deferred: 0,
   };
-  const account = (result: ExtractSessionOutcome): ExtractedSessionResult => {
+  const account = ({ failedCauses, ...result }: ExtractSessionOutcome): ExtractedSessionResult => {
     const stamped: ExtractedSessionResult = { ...result, engine: run.llmRunner.name };
+    tally.failedCauses.push(...(failedCauses ?? []));
     tally.sessions.push(stamped);
     const preempted = ["read_failed", "too_short", "already_extracted", "locked_concurrent"].includes(
       result.skipReason ?? "",
@@ -1261,7 +1267,9 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   }
   // A write the validator refused recurs on every retry and is not a failure of the run; any other
   // failure may clear, so the session stays retryable and the run is incomplete (#1290).
-  const failedSessions = tally.sessions.filter((session) => session.failedCauses);
+  const failedSessions = tally.sessions.filter(
+    (session) => (session.failedCount ?? 0) > (session.failedRejectedCount ?? 0),
+  );
   const writeFailures =
     failedSessions.length > 0
       ? {
@@ -1270,7 +1278,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
             0,
           ),
           sessions: failedSessions.length,
-          causes: boundedCauses(failedSessions.flatMap((session) => session.failedCauses ?? [])),
+          causes: boundedCauses(tally.failedCauses),
         }
       : undefined;
   if (writeFailures) {
