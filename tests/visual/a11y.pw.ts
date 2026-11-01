@@ -256,14 +256,17 @@ test("focus never falls to the body after a route change", async ({ page }) => {
     await page.waitForLoadState("networkidle");
     // Count the messages #route-status receives: one per route change (S-30, 11.4).
     await page.evaluate(() => {
-      const w = window as unknown as { __messages: number };
+      const w = window as unknown as { __messages: number; __routeObserver?: MutationObserver };
       w.__messages = 0;
+      // Routes change by hash, so the page never reloads: drop the previous iteration's observer.
+      w.__routeObserver?.disconnect();
       let last = document.querySelector("#route-status")?.textContent?.trim() ?? "";
-      new MutationObserver(() => {
+      w.__routeObserver = new MutationObserver(() => {
         const text = document.querySelector("#route-status")?.textContent?.trim() ?? "";
         if (text && text !== last) w.__messages++;
         last = text;
-      }).observe(document.documentElement, { subtree: true, childList: true, characterData: true });
+      });
+      w.__routeObserver.observe(document.documentElement, { subtree: true, childList: true, characterData: true });
     });
     await page.evaluate((hash) => {
       location.hash = hash;
@@ -279,6 +282,32 @@ test("focus never falls to the body after a route change", async ({ page }) => {
     if (off > 0) found[`route-status message ${name}`] = off;
   }
   ratchet("_focus-after-route", found);
+});
+
+test("the route-status counter reads exactly one message per navigation", async ({ page }) => {
+  // Self-check of the observer used above, against a hash-routed page that has #route-status.
+  await page.setContent(
+    `<div id="route-status" role="status"></div><script>addEventListener("hashchange",()=>{document.querySelector("#route-status").textContent=location.hash})</script>`,
+  );
+  for (const hash of ["#a", "#b", "#c", "#d"]) {
+    await page.evaluate(() => {
+      const w = window as unknown as { __messages: number; __routeObserver?: MutationObserver };
+      w.__messages = 0;
+      w.__routeObserver?.disconnect();
+      let last = document.querySelector("#route-status")?.textContent?.trim() ?? "";
+      w.__routeObserver = new MutationObserver(() => {
+        const text = document.querySelector("#route-status")?.textContent?.trim() ?? "";
+        if (text && text !== last) w.__messages++;
+        last = text;
+      });
+      w.__routeObserver.observe(document.documentElement, { subtree: true, childList: true, characterData: true });
+    });
+    await page.evaluate((h) => {
+      location.hash = h;
+    }, hash);
+    await expect(page.locator("#route-status")).toHaveText(hash);
+    expect(await page.evaluate(() => (window as unknown as { __messages: number }).__messages)).toBe(1);
+  }
 });
 
 test("focus survives an asynchronous action", async ({ page }) => {
