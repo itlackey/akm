@@ -29,7 +29,7 @@ test("overview details open", async ({ page }) => {
   // The health groups have their own shot above.
   for (const summary of await page.locator("main details:not(.group, .group *) > summary").all()) await summary.click();
   const sections = {
-    metrics: "Metrics",
+    metrics: "At a glance",
     activity: "Activity",
     "model-utilization": "Model utilization",
     "retrieval-health": "Retrieval health",

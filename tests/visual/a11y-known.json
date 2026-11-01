@@ -158,98 +158,14 @@
         "ref": "B-19"
       }
     },
-    "asset-command": {
-      "axe contrast-more target-size": {
-        "count": 2,
-        "ref": "B-24"
-      },
-      "axe dark 1280 target-size": {
-        "count": 2,
-        "ref": "B-24"
-      },
-      "axe dark 320 target-size": {
-        "count": 2,
-        "ref": "B-24"
-      },
-      "axe forced-colors color-contrast": {
-        "count": 1,
-        "ref": "#1390"
-      },
-      "axe forced-colors target-size": {
-        "count": 2,
-        "ref": "B-24"
-      },
-      "axe light 1280 target-size": {
-        "count": 2,
-        "ref": "B-24"
-      },
-      "axe light 320 target-size": {
-        "count": 2,
-        "ref": "B-24"
-      }
-    },
     "asset-knowledge": {
-      "axe contrast-more target-size": {
-        "count": 2,
-        "ref": "B-24"
-      },
-      "axe dark 1280 target-size": {
-        "count": 2,
-        "ref": "B-24"
-      },
       "axe dark 320 scrollable-region-focusable": {
         "count": 1,
         "ref": "B-40"
       },
-      "axe dark 320 target-size": {
-        "count": 2,
-        "ref": "B-24"
-      },
-      "axe forced-colors color-contrast": {
-        "count": 1,
-        "ref": "#1390"
-      },
-      "axe forced-colors target-size": {
-        "count": 2,
-        "ref": "B-24"
-      },
-      "axe light 1280 target-size": {
-        "count": 2,
-        "ref": "B-24"
-      },
       "axe light 320 scrollable-region-focusable": {
         "count": 1,
         "ref": "B-40"
-      },
-      "axe light 320 target-size": {
-        "count": 2,
-        "ref": "B-24"
-      }
-    },
-    "bundles": {
-      "axe dark 320 target-size": {
-        "count": 1,
-        "ref": "B-24"
-      },
-      "axe forced-colors color-contrast": {
-        "count": 2,
-        "ref": "#1390"
-      },
-      "axe light 320 target-size": {
-        "count": 1,
-        "ref": "B-24"
-      }
-    },
-    "edit": {
-      "axe forced-colors color-contrast": {
-        "count": 1,
-        "ref": "#1390"
-      }
-    },
-    "new": {
-      "axe forced-colors color-contrast": {
-        "count": 1,
-        "ref": "#1390"
       }
     },
     "proposal-create": {
@@ -264,10 +180,6 @@
       "axe dark 320 target-size": {
         "count": 1,
         "ref": "#1388"
-      },
-      "axe forced-colors color-contrast": {
-        "count": 1,
-        "ref": "#1390"
       },
       "axe forced-colors target-size": {
         "count": 1,
@@ -299,10 +211,6 @@
         "count": 1,
         "ref": "#1388"
       },
-      "axe forced-colors color-contrast": {
-        "count": 1,
-        "ref": "#1390"
-      },
       "axe forced-colors target-size": {
         "count": 1,
         "ref": "#1388"
@@ -328,10 +236,6 @@
       "axe dark 320 target-size": {
         "count": 1,
         "ref": "#1388"
-      },
-      "axe forced-colors color-contrast": {
-        "count": 1,
-        "ref": "#1390"
       },
       "axe forced-colors target-size": {
         "count": 1,
@@ -359,10 +263,6 @@
         "count": 1,
         "ref": "#1388"
       },
-      "axe forced-colors color-contrast": {
-        "count": 1,
-        "ref": "#1390"
-      },
       "axe forced-colors target-size": {
         "count": 1,
         "ref": "#1388"
@@ -374,18 +274,6 @@
       "axe light 320 target-size": {
         "count": 1,
         "ref": "#1388"
-      }
-    },
-    "search-browse": {
-      "axe forced-colors color-contrast": {
-        "count": 1,
-        "ref": "#1390"
-      }
-    },
-    "search-results": {
-      "axe forced-colors color-contrast": {
-        "count": 1,
-        "ref": "#1390"
       }
     }
   }
