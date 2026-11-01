@@ -12,6 +12,7 @@ import {
   fmtPct,
   html,
   pageHeader,
+  pathText,
   post,
   when,
 } from "./lib.js";
@@ -47,7 +48,7 @@ function card(bundle) {
     <header class="card-head"><h3>${bundle.name}</h3>${badge(bundle.kind, "info")}${bundle.default ? badge("default", "neutral") : ""}${bundle.enabled ? "" : badge("disabled", "warn")}${bundle.writable ? badge("writable", "ok") : badge("read-only", "neutral")}${bundle.exists ? "" : badge("missing", "fail")}</header>
     <p><a href="#/search?bundle=${encodeURIComponent(bundle.name)}">Browse assets</a></p>
     ${definitionList([
-      ["Path", bundle.path ? html`<span class="mono">${bundle.path}</span>` : html`<span class="muted">none</span>`],
+      ["Path", bundle.path ? pathText(bundle.path) : html`<span class="muted">none</span>`],
       [
         "Source",
         bundle.source?.locator === bundle.path
@@ -80,7 +81,7 @@ function card(bundle) {
 function workingStashCard(stash) {
   return html`<article class="card">
     <header class="card-head"><h3>Working stash</h3>${badge("default", "neutral")}</header>
-    ${definitionList([["Path", html`<span class="mono">${stash.path}</span>`]])}
+    ${definitionList([["Path", pathText(stash.path)]])}
     <h4>Git</h4>${gitBlock(stash.git)}
   </article>`;
 }
@@ -157,7 +158,7 @@ export async function render(ctx) {
           : `Automatic (${t.name})`;
   const choices = (selected, emptyLabel) =>
     html`<option value="">${emptyLabel}</option>${data.bundles.map((b) => html`<option value="${b.name}" ${b.name === selected ? html`selected` : ""}>${b.name}${b.enabled ? "" : " (disabled)"}</option>`)}`;
-  return html`${pageHeader("Bundles", data.defaultBundle ? html`Default bundle <span class="mono">${data.defaultBundle}</span>${data.defaultWriteTarget ? html`, writes go to <span class="mono">${data.defaultWriteTarget}</span>` : ""}.` : "")}
+  return html`${pageHeader("Bundles & index", "Where akm reads assets from and where new ones are written.")}${data.defaultBundle ? html`<p class="muted">Default bundle <span class="mono">${data.defaultBundle}</span>${data.defaultWriteTarget ? html`; writes go to <span class="mono">${data.defaultWriteTarget}</span>` : ""}.</p>` : ""}
     <section class="settings-section" aria-labelledby="bundles-defaults">
       <div class="settings-intro"><h2 id="bundles-defaults">Defaults</h2><p>Which bundle akm reads first, and where new knowledge, memories and accepted proposals are written.</p></div>
       <form class="bundle-defaults card settings-card">

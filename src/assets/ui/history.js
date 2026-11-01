@@ -13,7 +13,7 @@ function commit(c) {
   </li>`;
 }
 
-export async function render() {
+export async function render(ctx) {
   const data = await api("/api/changes", { limit: 100 });
   const head = pageHeader(
     "History",
@@ -29,5 +29,29 @@ export async function render() {
     const day = Number.isNaN(Date.parse(c.time)) ? c.time.slice(0, 10) : new Date(c.time).toISOString().slice(0, 10);
     days.set(day, [...(days.get(day) ?? []), c]);
   }
-  return html`${head}<div class="timeline">${[...days].map(([day, items]) => html`<section><h2 class="day">${day} <span class="muted small">UTC</span> <span class="muted num">${items.length}</span></h2><ol class="commits">${items.map(commit)}</ol></section>`)}</div>`;
+  const q = (ctx?.query.get("q") ?? "").trim().toLowerCase();
+  const match = (c) =>
+    !q ||
+    [c.subject, c.author, c.shortSha, c.origin, ...c.paths].some((text) => String(text).toLowerCase().includes(q));
+  const origin = ctx?.query.get("origin") ?? "";
+  ctx?.after.push((root) => {
+    const form = root.querySelector("form.history-filter");
+    form?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const params = new URLSearchParams();
+      for (const [key, value] of new FormData(form)) if (value) params.set(key, String(value));
+      location.hash = `#/history${params.size ? `?${params}` : ""}`;
+    });
+    form?.querySelector("select")?.addEventListener("change", () => form.requestSubmit());
+  });
+  const shown = new Map();
+  for (const [day, items] of days) {
+    const kept = items.filter((c) => match(c) && (!origin || c.origin === origin));
+    if (kept.length) shown.set(day, kept);
+  }
+  const origins = [...new Set(data.commits.map((c) => c.origin))].sort();
+  const filter = html`<form class="history-filter search-form" role="search" aria-label="Filter commits"><div class="field"><label class="field-label" for="h-q">Filter</label><input id="h-q" type="search" name="q" value="${q}" placeholder="Subject, author, path"></div><div class="field search-filter"><label class="field-label" for="h-origin">Made by</label><select id="h-origin" name="origin"><option value="">Anything</option>${origins.map((o) => html`<option value="${o}" ${o === origin ? html`selected` : ""}>${o}</option>`)}</select></div><button type="submit">Filter</button></form>`;
+  if (shown.size === 0)
+    return html`${head}${filter}${emptyState("No commit matches.", html`<a href="#/history">Clear the filter</a>`)}`;
+  return html`${head}${filter}<div class="timeline">${[...shown].map(([day, items]) => html`<section><h2 class="day">${day} <span class="muted small">UTC</span> <span class="muted num">${items.length}</span></h2><ol class="commits">${items.map(commit)}</ol></section>`)}</div>`;
 }

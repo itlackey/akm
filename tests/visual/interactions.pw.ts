@@ -104,11 +104,12 @@ test("editor preview toggle hides the inactive panel", async ({ page }) => {
   const preview = page.locator("[data-preview-panel]");
   await expect(source).toBeVisible();
   await expect(preview).toBeHidden();
-  await page.locator("[data-preview-toggle]").click();
+  await page.getByRole("tab", { name: "Preview" }).click();
+  await expect(page.getByRole("tab", { name: "Preview" })).toHaveAttribute("aria-selected", "true");
   await expect(source).toBeHidden();
   await expect(source).toHaveCSS("display", "none");
   await expect(preview).toBeVisible();
-  await page.locator("[data-preview-toggle]").click();
+  await page.getByRole("tab", { name: "Write" }).click();
   await expect(source).toBeVisible();
   await expect(preview).toBeHidden();
   await expect(preview).toHaveCSS("display", "none");

@@ -352,15 +352,23 @@ th.r {
   }
 }
 
-.nav-meta {
-  display: none;
-  flex-direction: column;
-  font-size: var(--text-xs);
+.site-footer {
+  max-inline-size: var(--content-max);
+  margin-inline: auto;
+  padding: var(--space-4) var(--space-6) var(--space-5);
+  border-block-start: 1px solid var(--border);
   color: var(--faint);
-  overflow-wrap: anywhere;
-  @media (width >= 100rem) {
-    display: flex;
+  font-size: var(--text-xs);
+  @media (width < 72rem) {
+    padding-inline: var(--space-4);
   }
+}
+
+.nav-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  overflow-wrap: anywhere;
 }
 
 .menu-toggle {
@@ -468,11 +476,6 @@ main {
       background: var(--accent-bg);
       box-shadow: var(--edge-accent);
     }
-  }
-
-  .nav-meta {
-    display: flex;
-    padding-inline: var(--space-3);
   }
 
   main {

@@ -1,7 +1,7 @@
 // Overview: current health and selected-window activity, retrieval and automation metrics.
 
 import { sparkline } from "./charts.js";
-import { ago, api, badge, emptyState, fmtMs, fmtNum, fmtPct, getMeta, html, pretty, statusKind, when } from "./lib.js";
+import { ago, api, badge, emptyState, fmtNum, fmtPct, html, pretty, statusKind, when } from "./lib.js";
 import { overviewCharts } from "./overview-charts.js";
 
 const GROUPS = [
@@ -30,7 +30,7 @@ function healthSection(health) {
   })}${checks.length === 0 ? emptyState("No health checks ran.") : ""}</section>`;
 }
 
-function statusStrip(health, meta) {
+function statusStrip(health) {
   const checks = health ? [...health.hardChecks, ...health.advisories] : [];
   const count = (status) => checks.filter((c) => c.status === status).length;
   const overall = health?.status ?? "unknown";
@@ -46,7 +46,7 @@ function statusStrip(health, meta) {
     <div class="strip-item"><span class="num big ${count("warn") > 0 ? "text-warn" : ""}">${count("warn")}</span><span class="muted">warning</span></div>
     <div class="strip-item"><span class="num big">${count("unknown")}</span><span class="muted">unknown</span></div>
     <div class="strip-item"><span class="num big">${count("pass")}</span><span class="muted">passing</span></div>
-    <div class="strip-item strip-right"><span class="mono" data-volatile>akm ${meta ? meta.version : "?"}</span>${health ? html`<span class="muted small">window since ${when(health.since)}</span>` : ""}</div>
+    <div class="strip-item strip-right">${health ? html`<span class="muted small">window since ${when(health.since)}</span>` : ""}</div>
   </div>`;
 }
 
@@ -204,9 +204,8 @@ function metricsCoverage(m) {
 
 export async function render(ctx) {
   const window = ctx.query.get("window") === "90d" ? "90d" : "30d";
-  const [data, meta, pulse, trend] = await Promise.all([
+  const [data, pulse, trend] = await Promise.all([
     api("/api/overview", { metricsSince: window }),
-    getMeta().catch(() => null),
     api("/api/overview/pulse").catch(() => null),
     api("/api/retrieval", { since: "84d" }).catch(() => null),
   ]);
@@ -227,7 +226,7 @@ export async function render(ctx) {
   const choice = (value) =>
     html`<label><input type="radio" name="metric-window" value="${value}" ${window === value ? html`checked` : ""}><span>${value === "30d" ? "30 days" : "90 days"}</span></label>`;
   return html`<header class="page-head page-head-row"><div><h1>Overview</h1><p>Your akm environment. Times are UTC.</p></div></header>
-    ${statusStrip(data.health, meta)}
+    ${statusStrip(data.health)}
     ${errors.length > 0 ? html`<details class="notice notice-warn"><summary>${errors.length} sections could not load</summary><ul>${errors.map(([name, message]) => html`<li><span class="mono">${name}</span>: ${message}</li>`)}</ul></details>` : ""}
     ${attention(data, pulse)}
     ${pulseSection(pulse, trend)}

@@ -91,19 +91,42 @@ function saveBody(source, draft) {
 }
 
 async function edit(ctx, ref) {
-  const source = await api("/api/asset/source", { ref });
   const returnTo = searchReturn(ctx.query);
+  let source;
+  try {
+    source = await api("/api/asset/source", { ref });
+  } catch (error) {
+    // Not a dead end: say what is wrong and offer the two ways forward (B-74).
+    ctx.after.push((root) =>
+      root.querySelector("[data-copy-index]")?.addEventListener("click", async (event) => {
+        try {
+          await navigator.clipboard.writeText("akm index");
+          event.currentTarget.textContent = "Copied";
+        } catch {
+          event.currentTarget.textContent = "Copy failed";
+        }
+      }),
+    );
+    return html`${pageHeader("Edit Markdown", ref)}
+      <div class="state state-error" role="alert" tabindex="-1"><p class="state-title">The index is out of date for this file.</p>
+      <p>${error instanceof Error ? error.message : String(error)}</p>
+      <p class="btn-row"><button type="button" data-copy-index>Copy <code>akm index</code></button><a class="btn btn-secondary" href="${assetHref(ref, returnTo)}">Open read-only</a></p></div>`;
+  }
   const context = { ref: source.ref, bundle: source.ref.split("//")[0] };
   ctx.after.push((root) => {
     const input = root.querySelector('[name="content"]');
     const recovery = root.querySelector("[data-recovery]");
     const state = root.querySelector("[data-editor-state]");
+    // Write and Preview are tabs (WAI-ARIA tabs pattern): one is selected and focusable, the other is reached by arrow keys.
     const showPreview = (showing) => {
       root.querySelector("[data-preview-panel]").hidden = !showing;
       root.querySelector("[data-source-panel]").hidden = showing;
-      const toggle = root.querySelector("[data-preview-toggle]");
-      toggle.setAttribute("aria-pressed", String(showing));
-      toggle.textContent = showing ? "Edit source" : "Preview";
+      const preview = root.querySelector("[data-preview-toggle]");
+      const write = root.querySelector("[data-write-tab]");
+      preview.setAttribute("aria-selected", String(showing));
+      preview.setAttribute("tabindex", showing ? "0" : "-1");
+      write?.setAttribute("aria-selected", String(!showing));
+      write?.setAttribute("tabindex", showing ? "-1" : "0");
     };
     let latest = null;
     const saved = (result) => {
@@ -163,8 +186,14 @@ async function edit(ctx, ref) {
         button.disabled = false;
       }
     });
-    root.querySelector("[data-preview-toggle]").addEventListener("click", () => {
-      showPreview(root.querySelector("[data-preview-panel]").hidden);
+    root.querySelector("[data-preview-toggle]").addEventListener("click", () => showPreview(true));
+    root.querySelector("[data-write-tab]")?.addEventListener("click", () => showPreview(false));
+    root.querySelector("[role=tablist]")?.addEventListener("keydown", (event) => {
+      const preview = event.key === "ArrowRight" || event.key === "End";
+      if (!preview && event.key !== "ArrowLeft" && event.key !== "Home") return;
+      event.preventDefault();
+      showPreview(preview);
+      root.querySelector(preview ? "[data-preview-toggle]" : "[data-write-tab]")?.focus();
     });
     const draw = () =>
       mount(root.querySelector("[data-preview]"), markdown(splitFrontmatter(input.value).body, context));
@@ -190,9 +219,10 @@ async function edit(ctx, ref) {
   });
   return html`${pageHeader("Edit Markdown", source.ref)}
     <form class="edit-form form-grid">
-      <div class="editor-actions"><button type="submit">Save Markdown</button><button type="button" class="btn-secondary" data-preview-toggle aria-pressed="false">Preview</button><a class="btn btn-secondary" href="${assetHref(source.ref, returnTo)}">Cancel</a><span class="muted small" data-editor-state role="status">No changes</span></div>
+      <div class="editor-actions"><button type="submit">Save Markdown</button><a class="btn btn-secondary" href="${assetHref(source.ref, returnTo)}">Cancel</a><span class="muted small" data-editor-state role="status">No changes</span></div>
       <div data-status></div>
-      <label data-source-panel>Markdown<textarea name="content" rows="16" spellcheck="false">${source.content}</textarea></label>
-      <section data-preview-panel hidden><h2>Preview</h2><div data-preview></div></section>
+      <div class="tabs editor-tabs" role="tablist" aria-label="Editor view"><button type="button" role="tab" id="tab-write" aria-selected="true" aria-controls="panel-write" data-write-tab>Write</button><button type="button" role="tab" id="tab-preview" aria-selected="false" aria-controls="panel-preview" tabindex="-1" data-preview-toggle>Preview</button></div>
+      <label data-source-panel role="tabpanel" id="panel-write" aria-labelledby="tab-write">Markdown<textarea name="content" rows="16" spellcheck="false">${source.content}</textarea></label>
+      <section data-preview-panel role="tabpanel" id="panel-preview" aria-labelledby="tab-preview" hidden><h2>Preview</h2><div data-preview></div></section>
     </form><section data-recovery hidden></section>`;
 }

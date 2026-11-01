@@ -170,6 +170,12 @@ export function fmtDateTime(iso) {
   return Number.isNaN(t) ? "-" : new Date(t).toLocaleString();
 }
 
+/** A file path that may break after each slash, so a long absolute path wraps in a narrow column instead of overflowing. */
+export function pathText(value) {
+  const parts = String(value ?? "").split("/");
+  return html`<span class="mono">${parts.map((part, i) => (i === 0 ? part : html`/<wbr>${part}`))}</span>`;
+}
+
 /** The Monday (00:00 UTC) of the week holding `iso`, as YYYY-MM-DD. */
 export function weekStart(iso) {
   const d = new Date(iso);

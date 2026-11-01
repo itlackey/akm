@@ -241,6 +241,11 @@ document.querySelector(".skip-link")?.addEventListener("click", (event) => {
   event.preventDefault();
   main.focus();
 });
+// Esc on the unsaved-changes notice means "Keep editing".
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || unsaved.hidden) return;
+  unsaved.querySelector("[data-act=keep]")?.click();
+});
 const menu = document.querySelector("[data-menu]");
 const topbar = document.querySelector(".topbar");
 function setMenu(open) {

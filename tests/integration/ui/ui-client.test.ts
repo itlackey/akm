@@ -321,7 +321,7 @@ describe("pages", () => {
 
     const bundles = (await (await view("bundles.js"))(ctx())).text;
     expect(bundles).toContain("Working stash");
-    expect(bundles).toContain(storage.stashDir);
+    expect(bundles.replaceAll("<wbr>", "")).toContain(storage.stashDir);
     expect(bundles).toContain("No other bundles.");
     expect(bundles).toContain("akm bundle add &lt;source&gt;");
     expect(writeSelect(bundles)).toContain("Automatic (working stash)");
@@ -511,6 +511,10 @@ describe("pages", () => {
         setAttribute: () => undefined,
         addEventListener: (_t: string, fn: (event: unknown) => void) => (handlers.toggle = fn),
       };
+      const writeTab = {
+        setAttribute: () => undefined,
+        addEventListener: (_t: string, fn: (event: unknown) => void) => (handlers.write = fn),
+      };
       const form = {
         addEventListener: (_t: string, fn: (event: unknown) => Promise<void>) => (handlers.submit = fn),
         querySelector: () => status,
@@ -523,6 +527,7 @@ describe("pages", () => {
             "[data-recovery]": recovery,
             "[data-editor-state]": state,
             "[data-preview-toggle]": toggle,
+            "[data-write-tab]": writeTab,
             "[data-preview-panel]": previewPanel,
             "[data-source-panel]": sourcePanel,
           })[sel] ?? null,
@@ -553,7 +558,8 @@ describe("pages", () => {
         save,
         clickRecovery,
         focused: () => focused,
-        togglePreview: () => handlers.toggle?.({ currentTarget: toggle }),
+        showPreview: () => handlers.toggle?.({ currentTarget: toggle }),
+        showWrite: () => handlers.write?.({ currentTarget: writeTab }),
         previewPanel,
         sourcePanel,
       };
@@ -604,7 +610,7 @@ describe("pages", () => {
     await conflict.save();
     expect(sent.length).toBe(rejectedCount);
     expect(fs.readFileSync(path.join(dir, "notes.md"), "utf8")).toBe(newer);
-    conflict.togglePreview();
+    conflict.showPreview();
     expect(conflict.sourcePanel.hidden).toBe(true);
     await conflict.clickRecovery("[data-keep-draft]");
     expect(conflict.focused()).toBe(true);
@@ -624,10 +630,10 @@ describe("pages", () => {
     expect(fs.readFileSync(path.join(dir, "notes.md"), "utf8")).toEndWith("My draft\n");
     expect(location.hash).toBe("#/asset?ref=stash%2F%2Fknowledge%2Fnotes");
     expect(lib.hasUnsaved()).toBe(false);
-    conflict.togglePreview();
+    conflict.showPreview();
     expect(conflict.previewPanel.hidden).toBe(false);
     expect(conflict.sourcePanel.hidden).toBe(true);
-    conflict.togglePreview();
+    conflict.showWrite();
     expect(conflict.previewPanel.hidden).toBe(true);
 
     // The preview anchors in-page links to the document instead of a bare "#x" the router reads as a page.
