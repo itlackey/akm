@@ -9,6 +9,7 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
+  <a class="skip-link" href="#app">Skip to content</a>
   <div class="shell">
     <header class="topbar">
       <nav class="topbar-inner" aria-label="Main">
@@ -37,8 +38,9 @@
         </div>
       </nav>
     </header>
+    <div id="route-status" class="sr-only" role="status" aria-live="polite"></div>
     <div id="unsaved" class="notice notice-warn" role="alert" hidden></div>
-    <main id="app" aria-live="polite">
+    <main id="app" tabindex="-1">
       <noscript><p>akm ui needs JavaScript. It makes no network requests beyond its own local server.</p></noscript>
     </main>
   </div>

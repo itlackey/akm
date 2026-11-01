@@ -2536,3 +2536,20 @@ button:disabled:not(.btn-secondary, .btn-danger) {
   border-block-start: 2px solid var(--marker);
   vertical-align: middle;
 }
+
+/* ---- skip link ---- */
+.skip-link {
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-start: var(--space-2);
+  z-index: 20;
+  padding: var(--space-2) var(--space-4);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+  text-decoration: none;
+  transform: translateY(-300%);
+  &:focus {
+    transform: none;
+  }
+}

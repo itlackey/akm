@@ -33,6 +33,12 @@ export function html(strings, ...values) {
   return new SafeHtml(out);
 }
 
+/** Say `message` once to assistive technology, through the page's one polite status region. */
+export function announce(message) {
+  const region = document.getElementById("route-status");
+  if (region) region.textContent = message;
+}
+
 /** Replace the contents of `element` with `safe`. The one markup write in the client. */
 export function mount(element, safe) {
   if (!(safe instanceof SafeHtml)) throw new TypeError("mount() takes the result of html``");

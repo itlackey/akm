@@ -63,6 +63,7 @@ export async function render(ctx) {
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push(h);
   }
+  ctx.announcement = `Search. ${result.hits.length === 0 ? "No results" : `${result.hits.length} ${result.hits.length === 1 ? "result" : "results"}`}${q ? ` for ${q}` : ""}.`;
   return html`${pageHeader("Search", "Search or browse your indexed assets. Browsing is not counted as usage.")}
     <p class="action-links"><a href="#/new">New knowledge</a> <span class="muted small">· Ctrl/Cmd+K opens search</span></p>
     <form class="search-form" role="search">

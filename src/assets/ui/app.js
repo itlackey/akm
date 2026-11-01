@@ -2,6 +2,7 @@
 // built with the escaping `html` tag; this file only mounts it.
 
 import {
+  announce,
   api,
   errorState,
   getMeta,
@@ -66,6 +67,17 @@ function parseHash() {
   return { name, param, query: new URLSearchParams(query) };
 }
 
+/** The route name of a hash such as `#/search?q=x`. */
+function routeName(hash) {
+  return hash.replace(/^#\/?/, "").split(/[/?]/)[0] || "overview";
+}
+
+/** True when `a` and `b` are the same route and parameter, so only the query changed. */
+function sameShownPage(a, b) {
+  const path = (hash) => hash.replace(/^#\/?/, "").split("?")[0];
+  return path(a) === path(b);
+}
+
 function markNav(active) {
   for (const link of document.querySelectorAll("nav a[data-route]")) {
     if (link.dataset.route === active) link.setAttribute("aria-current", "page");
@@ -98,10 +110,10 @@ async function route() {
   const { name, param, query } = parseHash();
   const entry = ROUTES.find((r) => r.name === name);
   markNav(entry ? (entry.nav ?? entry.name) : "");
-  document.title = `${entry ? entry.label : "Not found"} - akm ui`;
+  document.title = `${entry ? entry.label : "Not found"} · akm ui`;
   main.setAttribute("aria-busy", "true");
   mount(main, loadingState());
-  const ctx = { query, param, after: [] };
+  const ctx = { query, param, after: [], announcement: null };
   try {
     if (!entry) {
       mount(
@@ -119,7 +131,8 @@ async function route() {
       }
       showFlash(main);
       const restored = positions.get(shownHash);
-      const wanted = restored?.focus ?? (oldHash.startsWith("#/search") && name === "search" ? focus : null);
+      // A change inside one page (a filter, the window) keeps focus on the control that caused it.
+      const wanted = restored?.focus ?? (routeName(oldHash) === name ? focus : null);
       if (wanted) {
         [...main.querySelectorAll("[name], a[href]")]
           .find((node) => (wanted.name ? node.name === wanted.name : node.getAttribute("href") === wanted.href))
@@ -127,7 +140,19 @@ async function route() {
       }
       // `autofocus` only applies on a document's first load, so honour it for content mounted later.
       if (document.activeElement === document.body) main.querySelector("[autofocus]")?.focus({ preventScroll: true });
+      // A new page takes focus at its heading, so a keyboard user starts at the top and a screen reader names the page.
+      const heading = main.querySelector("h1");
+      if (heading && !main.contains(document.activeElement)) {
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      }
       window.scrollTo(0, restored?.scroll ?? 0);
+      const specific = heading?.textContent?.trim();
+      document.title = `${specific && specific !== entry.label ? `${specific} · ` : ""}${entry.label} · akm ui`;
+      // A page may supply its own message (Search says how many results); otherwise name the page when it changes.
+      if (ctx.announcement) announce(ctx.announcement);
+      else if (!sameShownPage(oldHash, shownHash))
+        announce(specific ? `${specific}. ${entry.label} page loaded.` : `${entry.label} page loaded.`);
     }
   } catch (error) {
     if (mine === sequence) mount(main, errorState(error));
@@ -154,7 +179,7 @@ async function showMeta() {
     const meta = await getMeta();
     mount(
       target,
-      html`<span class="mono" data-volatile>akm ${meta.version} · ${meta.hostname}</span><span class="muted small">${meta.readOnly ? "read-only" : ""} ${meta.runtime}</span>`,
+      html`<span class="mono" data-volatile>akm ${meta.version} · ${meta.hostname}</span><span class="muted small">${meta.runtime}</span>`,
     );
   } catch {
     mount(target, html``);
@@ -189,6 +214,11 @@ document.addEventListener("keydown", (event) => {
     if (location.hash.startsWith("#/search")) document.querySelector('input[name="q"]')?.focus();
     else location.hash = "#/search";
   }
+});
+// The skip link must not change the hash: that would route to a page called "app".
+document.querySelector(".skip-link")?.addEventListener("click", (event) => {
+  event.preventDefault();
+  main.focus();
 });
 const menu = document.querySelector("[data-menu]");
 const topbar = document.querySelector(".topbar");
