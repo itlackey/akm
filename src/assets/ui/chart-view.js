@@ -19,7 +19,7 @@ export function wireChart(ctx, selector, options, onSelect) {
         ...value,
         axisLabel: { color: token("--muted"), ...value?.axisLabel },
         nameTextStyle: { color: token("--muted") },
-        splitLine: { lineStyle: { color: token("--border") } },
+        splitLine: { show: value?.splitLine?.show ?? true, lineStyle: { color: token("--border") } },
       });
       chart.setOption(
         {
@@ -234,7 +234,7 @@ export function stepLine(labels, data, { name = "Level", unit = "Count" } = {}) 
 export function lines(labels, series, unit = "Count") {
   return {
     xAxis: { type: "category", data: labels, boundaryGap: false, axisLabel: { hideOverlap: true } },
-    yAxis: { type: "value", name: unit, min: 0 },
+    yAxis: { type: "value", name: unit, min: 0, splitNumber: 2 },
     series: series.map((item) => ({
       type: "line",
       symbol: "none",
