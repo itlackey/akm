@@ -569,6 +569,8 @@ function seedLlmUsage(db: Database): void {
 }
 
 function seedIndexEvents(db: Database): void {
+  // Indexing under the frozen clock logs its own zero-duration run; the seeded run replaces it.
+  db.prepare("DELETE FROM events WHERE event_type = 'index_completed'").run();
   appendEvent(
     {
       eventType: "index_completed",

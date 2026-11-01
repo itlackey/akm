@@ -8,10 +8,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import { getConfigPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
+import { akmIndex } from "../../src/indexer/indexer";
 import { git } from "../_helpers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { FIXED_NOW } from "./constants";
+import { isolateEnvironment, writeConfig } from "./environment";
 import { seedStash, seedVisualState } from "./seed";
 
 const NOW = Date.parse(FIXED_NOW);
@@ -82,5 +86,38 @@ describe("visual seed", () => {
       expect(count("usage_events WHERE query = 'flaky test quarantine'")).toBe(8);
       expect(count("proposals WHERE status = 'pending'")).toBe(10);
     });
+  });
+});
+
+describe("visual pipeline", () => {
+  let fresh: IsolatedAkmStorage;
+  beforeEach(() => {
+    fresh = withIsolatedAkmStorage();
+  });
+  afterEach(() => fresh.cleanup());
+
+  test("indexing under the frozen clock leaves exactly the seeded index run", async () => {
+    seedStash(fresh.stashDir);
+    await akmIndex({ stashDir: fresh.stashDir, full: true });
+    seedVisualState(fresh.stashDir);
+    withStateDb((query) => {
+      const runs = query("SELECT metadata_json AS metadata FROM events WHERE event_type = 'index_completed'");
+      expect(runs).toHaveLength(1);
+      expect(JSON.parse(runs[0]?.metadata as string).totalMs).toBe(4200);
+    });
+  });
+});
+
+describe("visual environment", () => {
+  test("the harness config is the file akm reads", () => {
+    const saved = { ...process.env };
+    try {
+      const stashDir = isolateEnvironment();
+      writeConfig(stashDir);
+      expect(fs.existsSync(getConfigPath())).toBe(true);
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+    }
   });
 });
