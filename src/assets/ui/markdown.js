@@ -121,7 +121,7 @@ export function markdown(source, context = {}) {
       }
       i--;
       blocks.push(
-        html`<div class="table-wrap"><table><thead><tr>${headers.map((cell) => html`<th>${inline(cell, context)}</th>`)}</tr></thead><tbody>${rows}</tbody></table></div>`,
+        html`<div class="table-wrap" tabindex="0" role="group" aria-label="Table"><table><thead><tr>${headers.map((cell) => html`<th>${inline(cell, context)}</th>`)}</tr></thead><tbody>${rows}</tbody></table></div>`,
       );
       continue;
     }

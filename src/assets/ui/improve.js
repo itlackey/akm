@@ -5,6 +5,9 @@ import { ago, api, emptyState, fmtMs, fmtNum, fmtPct, html, proposalHref, tableW
 
 const WEEKS = 12;
 const MIN_RATE_DECISIONS = 5;
+const TREND_DAYS = 90;
+const ROLLING_DAYS = 7;
+const MIN_ROLLING_SEARCHES = 5;
 const OUTCOMES = [
   { key: "judge", label: "Accepted by the judge", colorIndex: 0 },
   { key: "you", label: "Accepted by you", colorIndex: 2 },
@@ -53,6 +56,129 @@ function lastWeeks(count) {
 
 function tile(label, value, sub = "", tone = "") {
   return html`<div class="tile" ${tone ? html`data-tone="${tone}"` : ""}><span class="tile-label">${label}</span><span class="tile-value num">${value}</span>${sub ? html`<span class="tile-sub muted">${sub}</span>` : ""}</div>`;
+}
+
+/** The last `count` UTC days, oldest first, as YYYY-MM-DD. */
+function lastDays(count) {
+  const out = [];
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  for (let i = count - 1; i >= 0; i--) out.push(new Date(today.getTime() - i * 86_400_000).toISOString().slice(0, 10));
+  return out;
+}
+
+/** Per day: the share of searches in the trailing 7 days that returned something. Null until there are enough searches. */
+function rollingFoundRate(daily, days) {
+  const byDay = new Map(daily.map((d) => [d.date, d]));
+  return days.map((_, index) => {
+    let searches = 0;
+    let misses = 0;
+    for (const day of days.slice(Math.max(0, index - ROLLING_DAYS + 1), index + 1)) {
+      const row = byDay.get(day);
+      if (!row) continue;
+      searches += row.searches;
+      misses += row.zeroResults;
+    }
+    return searches >= MIN_ROLLING_SEARCHES ? 1 - misses / searches : null;
+  });
+}
+
+/** Days on which an improve process had changes kept, with how many and by which process. */
+function keptChangeDays(decided, days) {
+  const first = days[0];
+  const byDay = new Map();
+  for (const p of decided) {
+    if (p.status !== "accepted") continue;
+    const day = decidedAt(p).slice(0, 10);
+    if (day < first) continue;
+    const entry = byDay.get(day) ?? { day, count: 0, sources: new Set() };
+    entry.count++;
+    entry.sources.add(p.source);
+    byDay.set(day, entry);
+  }
+  return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+}
+
+function trendHeadline(rates, days) {
+  const points = rates.map((rate, i) => ({ rate, day: days[i] })).filter((p) => p.rate !== null);
+  const first = points[0];
+  const last = points.at(-1);
+  if (!first || !last || Date.parse(last.day) - Date.parse(first.day) < 14 * 86_400_000)
+    return html`<p class="trend-summary muted">Not enough searches yet to show a trend. It needs ${MIN_ROLLING_SEARCHES} searches in a week, across at least two weeks.</p>`;
+  const change = Math.round((last.rate - first.rate) * 100);
+  const tone = change > 0 ? "text-ok" : change < 0 ? "text-fail" : "";
+  return html`<p class="trend-summary"><span class="trend-figure num">${fmtPct(last.rate)}</span> of searches found something, <span class="${tone}">${change > 0 ? "up" : change < 0 ? "down" : "unchanged,"} ${change === 0 ? "" : `${Math.abs(change)} points`}</span> <span class="muted">since ${first.day} (${fmtPct(first.rate)}).</span></p>`;
+}
+
+function trendChart(ctx, retrieval, decided) {
+  if (!retrieval)
+    return html`<section class="chart-card" aria-labelledby="trend-title"><h2 id="trend-title">Did improve help search?</h2>${emptyState("Search measurements are unavailable.")}</section>`;
+  const days = lastDays(TREND_DAYS);
+  const rates = rollingFoundRate(retrieval.daily, days);
+  const kept = keptChangeDays(decided, days);
+  const keptDays = new Set(kept.map((entry) => entry.day));
+  const known = rates.filter((rate) => rate !== null);
+  const floor = known.length ? Math.max(0, Math.floor((Math.min(...known) * 100 - 10) / 10) * 10) : 0;
+  wireChart(ctx, "#improve-trend", () => {
+    const marker = getComputedStyle(document.documentElement).getPropertyValue("--marker").trim();
+    return {
+      xAxis: { type: "category", data: days, axisLabel: { hideOverlap: true, formatter: (day) => day.slice(5) } },
+      yAxis: { type: "value", name: "Found something", min: floor, max: 100, axisLabel: { formatter: "{value}%" } },
+      series: [
+        {
+          type: "line",
+          name: "Searches that found something",
+          colorIndex: 0,
+          connectNulls: false,
+          symbol: "none",
+          lineStyle: { width: 2.5 },
+          z: 3,
+          data: rates.map((rate) => (rate === null ? null : Math.round(rate * 1000) / 10)),
+        },
+        {
+          // A thin bar to the top of the chart on each day improve changes were kept.
+          type: "bar",
+          name: "Improve changes kept",
+          colorIndex: 1,
+          silent: true,
+          barWidth: 2,
+          z: 1,
+          itemStyle: { color: marker },
+          data: days.map((day) => (keptDays.has(day) ? 100 : null)),
+        },
+      ],
+    };
+  });
+  const weeks = lastWeeks(Math.ceil(TREND_DAYS / 7));
+  const weekRows = weeks.map((week) => {
+    const inWeek = (day) => day >= week && weekStart(`${day}T00:00:00Z`) === week;
+    const rows = retrieval.daily.filter((d) => inWeek(d.date));
+    const searches = rows.reduce((sum, d) => sum + d.searches, 0);
+    const misses = rows.reduce((sum, d) => sum + d.zeroResults, 0);
+    const changes = kept.filter((entry) => inWeek(entry.day));
+    return {
+      week,
+      searches,
+      misses,
+      changes: changes.reduce((sum, c) => sum + c.count, 0),
+      sources: [...new Set(changes.flatMap((c) => [...c.sources]))],
+    };
+  });
+  return html`<section class="chart-card" aria-labelledby="trend-title"><h2 id="trend-title">Did improve help search?</h2>
+    <p class="muted small">The share of your searches that returned something, over a rolling 7 days and the last ${TREND_DAYS} days. An amber line marks a day when improve changes were kept. It measures retrieval, not whether answers were right.</p>
+    ${trendHeadline(rates, days)}
+    <p class="chart-legend"><span><i class="series-key series-1" aria-hidden="true"></i>Searches that found something</span><span><i class="marker-key" aria-hidden="true"></i>Improve changes kept</span></p>
+    ${known.length ? html`<div class="echarts-view" id="improve-trend" role="img" aria-label="Share of searches that found something, rolling 7 days, over the last ${TREND_DAYS} days, with ${kept.length} days marked when improve changes were kept. Weekly figures follow in Data and details."></div>` : emptyState("No searches recorded in the last 90 days.", "The trend appears once you have searched at least a few times a week.")}
+    <details><summary>Data and details</summary>${tableWrap(
+      html`<table><thead><tr><th>Week of</th><th class="r">Searches</th><th class="r">Found nothing</th><th class="r">Found something</th><th class="r">Changes kept</th><th>By</th></tr></thead><tbody>${weekRows
+        .slice()
+        .reverse()
+        .map(
+          (r) =>
+            html`<tr><th>${r.week}</th><td class="r num">${fmtNum(r.searches)}</td><td class="r num">${fmtNum(r.misses)}</td><td class="r num">${r.searches ? fmtPct(1 - r.misses / r.searches) : "n/a"}</td><td class="r num">${fmtNum(r.changes)}</td><td class="mono">${r.sources.join(", ")}</td></tr>`,
+        )}</tbody></table>`,
+    )}</details>
+  </section>`;
 }
 
 function weeklyChart(ctx, decided) {
@@ -164,10 +290,11 @@ function runsTable(runs) {
 }
 
 export async function render(ctx) {
-  const [recent, pending, overview] = await Promise.all([
+  const [recent, pending, overview, retrieval] = await Promise.all([
     api("/api/proposals", { status: "recent", limit: 200 }),
     api("/api/proposals", { status: "pending", limit: 1 }),
     api("/api/overview", { metricsSince: "30d" }).catch(() => ({})),
+    api("/api/retrieval", { since: `${TREND_DAYS}d` }).catch(() => null),
   ]);
   const decided = (recent.proposals ?? []).filter((p) => outcomeOf(p));
   const since = Date.now() - 30 * 86_400_000;
@@ -178,6 +305,7 @@ export async function render(ctx) {
   const reverted = count("reverted");
   const llm = overview.metrics?.llm;
   return html`<header class="page-head"><h1>Improve impact</h1><p>What akm's improve processes proposed, what was kept, who decided, and what it cost.</p></header>
+    ${trendChart(ctx, retrieval, decided)}
     <section aria-labelledby="impact-30d"><h2 id="impact-30d">Last 30 days</h2>
       <div class="tiles">
         ${tile("Changes kept", fmtNum(accepted), `${fmtNum(count("judge"))} by the judge · ${fmtNum(count("you"))} by you`, accepted ? "ok" : "")}

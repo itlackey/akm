@@ -313,6 +313,44 @@ describe("server and guards", () => {
 });
 
 describe("endpoints", () => {
+  test("GET /api/fs/folders lists sub-folders only, hides dot-folders, and refuses what is not a folder", async () => {
+    await seed();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-folders-"));
+    try {
+      for (const name of ["beta", "Alpha", ".hidden"]) fs.mkdirSync(path.join(root, name));
+      fs.writeFileSync(path.join(root, "notes.md"), "not a folder");
+      fs.symlinkSync(path.join(root, "beta"), path.join(root, "link-to-beta"));
+      fs.symlinkSync(path.join(root, "notes.md"), path.join(root, "link-to-file"));
+      const s = await start();
+
+      const listing = await data(s, `/api/fs/folders?path=${encodeURIComponent(root)}`);
+      expect(listing.path).toBe(root);
+      expect(listing.parent).toBe(path.dirname(root));
+      expect(listing.home).toBe(os.homedir());
+      expect(listing.folders.map((f: { name: string }) => f.name)).toEqual(["Alpha", "beta", "link-to-beta"]);
+      expect(listing.folders[0].path).toBe(path.join(root, "Alpha"));
+      expect(listing.truncated).toBe(false);
+
+      const withHidden = await data(s, `/api/fs/folders?path=${encodeURIComponent(root)}&hidden=1`);
+      expect(withHidden.folders.map((f: { name: string }) => f.name)).toContain(".hidden");
+
+      // No path starts at the home folder; the root has no parent.
+      expect((await data(s, "/api/fs/folders")).path).toBe(os.homedir());
+      expect((await data(s, `/api/fs/folders?path=${encodeURIComponent(path.parse(root).root)}`)).parent).toBeNull();
+
+      const relative = await api(s, "/api/fs/folders?path=relative/dir");
+      expect(relative.status).toBe(400);
+      const file = await api(s, `/api/fs/folders?path=${encodeURIComponent(path.join(root, "notes.md"))}`);
+      expect(file.status).toBe(400);
+      const missing = await api(s, `/api/fs/folders?path=${encodeURIComponent(path.join(root, "nope"))}`);
+      expect(missing.status).toBe(404);
+      const noToken = await fetch(`http://${s.host}:${s.port}/api/fs/folders?path=${encodeURIComponent(root)}`);
+      expect(noToken.status).toBe(401);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("GET /api/meta", async () => {
     await seed();
     const s = await start();
@@ -391,6 +429,38 @@ describe("endpoints", () => {
       daily: [{ date: today, searches: 4, zeroResults: 2, medianMs: 120, latencySamples: 2 }],
       zeroResultQueries: [{ date: today, query: "empty result", count: 2 }],
     });
+  });
+
+  test("GET /api/retrieval returns the per-day search series for a longer window than the overview's", async () => {
+    await seed();
+    const db = openStateDatabase();
+    const day = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+    try {
+      const insert = db.prepare(
+        "INSERT INTO usage_events (event_type, query, entry_ref, metadata, source, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      );
+      insert.run("search", "old miss", null, JSON.stringify({ resultCount: 0 }), "user", `${day(60)} 00:00:00`);
+      insert.run("search", "old hit", null, JSON.stringify({ resultCount: 3 }), "user", `${day(60)} 00:00:00`);
+      insert.run("search", "new hit", null, JSON.stringify({ resultCount: 1 }), "user", `${day(1)} 00:00:00`);
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const trend = await data(s, "/api/retrieval");
+    // Seeding may record a search of its own today; only the planted days are compared.
+    const planted = trend.daily
+      .filter((d: { date: string }) => d.date === day(60) || d.date === day(1))
+      .map((d: { date: string; searches: number; zeroResults: number }) => [d.date, d.searches, d.zeroResults]);
+    expect(planted).toEqual([
+      [day(60), 2, 1],
+      [day(1), 1, 0],
+    ]);
+    // The overview's 30-day window leaves the older day out; the trend keeps it.
+    const overview = await data(s, "/api/overview?metricsSince=30d");
+    const overviewDays = overview.retrieval.daily.map((d: { date: string }) => d.date);
+    expect(overviewDays).toContain(day(1));
+    expect(overviewDays).not.toContain(day(60));
+    expect((await api(s, "/api/retrieval?since=nonsense")).status).toBe(400);
   });
 
   test("task failure ranking includes rare failures beyond busiest 20; history is bounded, read-only and truthful", async () => {

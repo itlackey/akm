@@ -37,6 +37,10 @@
         "count": 1,
         "ref": "B-21"
       },
+      "focus-after-route improve": {
+        "count": 1,
+        "ref": "B-21"
+      },
       "focus-after-route new": {
         "count": 1,
         "ref": "B-21"
@@ -90,6 +94,10 @@
         "ref": "B-19"
       },
       "route-status message edit": {
+        "count": 1,
+        "ref": "B-19"
+      },
+      "route-status message improve": {
         "count": 1,
         "ref": "B-19"
       },
@@ -152,16 +160,6 @@
       "route-status regions": {
         "count": 1,
         "ref": "B-19"
-      }
-    },
-    "asset-knowledge": {
-      "axe dark 320 scrollable-region-focusable": {
-        "count": 1,
-        "ref": "B-40"
-      },
-      "axe light 320 scrollable-region-focusable": {
-        "count": 1,
-        "ref": "B-40"
       }
     },
     "proposal-create": {

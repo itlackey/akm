@@ -198,7 +198,8 @@ export function statusKind(status) {
 }
 
 export function tableWrap(inner) {
-  return html`<div class="table-wrap">${inner}</div>`;
+  // Focusable, so a keyboard user can scroll a table that is wider than its column.
+  return html`<div class="table-wrap" tabindex="0" role="group" aria-label="Table">${inner}</div>`;
 }
 
 export function emptyState(title, detail = "") {

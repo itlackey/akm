@@ -59,6 +59,7 @@ import { akmShowUnified } from "../read/show";
 import { assembleInfo } from "../sources/info";
 import { akmListSources } from "../sources/installed-stashes";
 import { readDocumentSource } from "./document-source";
+import { listFolders } from "./folders";
 import { readBundleGitStatus, readFileRevision, readRecentCommits } from "./git-read";
 import { PROPOSAL_AGE_BANDS, proposalAgeBand, proposalBacklog, retrievalSeries } from "./metrics";
 import { isSecretEnvName, redactForUi } from "./redact";
@@ -728,9 +729,17 @@ async function assetHistory(query: Query) {
   };
 }
 
+/** The per-day search series over a longer window than the Overview's, for the Improve impact trend. */
+async function retrievalTrend(query: Query) {
+  const metrics = await akmMetrics({ since: query.get("since") || "90d", indexSnapshot: false, includeRows: true });
+  return retrievalSeries(metrics.rows?.usage ?? []);
+}
+
 // ── Routing ──────────────────────────────────────────────────────────────────
 
 const ROUTES: Record<string, Handler> = {
+  "/api/retrieval": retrievalTrend,
+  "/api/fs/folders": (query) => listFolders(query.get("path") ?? "", query.get("hidden") === "1"),
   "/api/meta": meta,
   "/api/overview": overview,
   "/api/tasks/history": taskHistory,

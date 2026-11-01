@@ -1,5 +1,6 @@
 // Source-first creation and revision-checked editing use the existing Markdown writer.
 import { diffSection } from "./diff-view.js";
+import { wireFolderBrowse } from "./folder-picker.js";
 import {
   actionForm,
   api,
@@ -31,6 +32,10 @@ export async function render(ctx) {
     });
     const form = root.querySelector(".create-form");
     if (form) {
+      wireFolderBrowse(root, () => {
+        const bundlePath = form.elements.bundle.selectedOptions[0]?.dataset.path;
+        return { root: bundlePath ? `${bundlePath.replace(/[\\/]+$/, "")}/knowledge` : null };
+      });
       const draw = () =>
         mount(root.querySelector("[data-preview]"), markdown(splitFrontmatter(form.elements.content.value).body));
       form.elements.content.addEventListener("input", draw);
@@ -50,9 +55,9 @@ export async function render(ctx) {
     <form class="create-form card settings-card">
       <div class="settings-fields">
         <div class="settings-grid create-meta">
-          <div class="field"><label class="field-label" for="nk-bundle">Bundle</label><select id="nk-bundle" name="bundle">${writable.map((b) => html`<option value="${b.name}" ${b.name === (data.defaultWriteTarget ?? data.defaultBundle) ? html`selected` : ""}>${b.name}</option>`)}</select></div>
+          <div class="field"><label class="field-label" for="nk-bundle">Bundle</label><select id="nk-bundle" name="bundle">${writable.map((b) => html`<option value="${b.name}" data-path="${b.path ?? ""}" ${b.name === (data.defaultWriteTarget ?? data.defaultBundle) ? html`selected` : ""}>${b.name}</option>`)}</select></div>
           <div class="field"><label class="field-label" for="nk-name">Name</label><input id="nk-name" name="name" required placeholder="restore-database" autocomplete="off" spellcheck="false"><p class="field-hint">Becomes the file name and the asset's ref.</p></div>
-          <div class="field"><label class="field-label" for="nk-path">Folder</label><input id="nk-path" name="path" placeholder="Optional, under knowledge/" autocomplete="off" spellcheck="false"></div>
+          <div class="field"><label class="field-label" for="nk-path">Folder</label><div class="field-control"><input id="nk-path" name="path" placeholder="Optional, under knowledge/" autocomplete="off" spellcheck="false"><button type="button" class="btn-secondary" data-browse-folder="nk-path">Browse…</button></div></div>
         </div>
         <div class="compose">
           <div class="field"><label class="field-label" for="nk-content">Markdown</label><textarea id="nk-content" name="content" rows="18" required spellcheck="false"># New document

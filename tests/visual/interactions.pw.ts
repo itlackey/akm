@@ -8,6 +8,9 @@
  * arrive with the redesign and get their baselines in the PR that adds them.
  */
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { ROUTES, shoot, visit, volatileMasks } from "./support";
 
@@ -109,4 +112,28 @@ test("editor preview toggle hides the inactive panel", async ({ page }) => {
   await expect(source).toBeVisible();
   await expect(preview).toBeHidden();
   await expect(preview).toHaveCSS("display", "none");
+});
+
+// The folder picker lists folders through the server and fills the field with the one chosen (no screenshot, so the
+// shared server is not changed and the folders come from this run's own temp directory).
+test("bundle folder picker fills the source field", async ({ page }) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-picker-"));
+  fs.mkdirSync(path.join(root, "team-skills"));
+  fs.mkdirSync(path.join(root, ".hidden"));
+  try {
+    await visit(page, ROUTES.bundles.hash);
+    await page.locator("#ba-source").fill(root);
+    await page.getByRole("button", { name: "Browse…" }).click();
+    const dialog = page.getByRole("dialog", { name: "Choose a folder" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "team-skills" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: ".hidden" })).toHaveCount(0);
+    await dialog.getByRole("button", { name: "team-skills" }).click();
+    await expect(dialog.locator("[data-location]")).toHaveText(path.join(root, "team-skills"));
+    await dialog.getByRole("button", { name: "Use this folder" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator("#ba-source")).toHaveValue(path.join(root, "team-skills"));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

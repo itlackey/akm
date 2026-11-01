@@ -1,6 +1,7 @@
 // Bundles: one card per configured bundle with git status and asset counts, plus the index state.
 
 import { proportionBar } from "./charts.js";
+import { wireFolderBrowse } from "./folder-picker.js";
 import {
   actionForm,
   api,
@@ -112,6 +113,7 @@ function indexPanel(index) {
 export async function render(ctx) {
   const data = await api("/api/bundles");
   ctx.after.push((root) => {
+    wireFolderBrowse(root);
     actionForm(root, ".bundle-settings", (form, values) =>
       post("/api/bundles/settings", {
         bundle: form.dataset.bundle,
@@ -173,7 +175,7 @@ export async function render(ctx) {
       <div class="settings-intro"><h2 id="bundles-add">Add a bundle</h2><p>A local folder, Git repository, npm package or website. akm detects its format, validates it and indexes it. Adding a remote source uses the network.</p></div>
       <form class="bundle-add card settings-card">
         <div class="settings-fields">
-          <div class="field"><label class="field-label" for="ba-source">Source</label><input id="ba-source" name="source" required placeholder="./team-skills, github:org/repo, npm:package or a docs URL" autocomplete="off" spellcheck="false"></div>
+          <div class="field"><label class="field-label" for="ba-source">Source</label><div class="field-control"><input id="ba-source" name="source" required placeholder="./team-skills, github:org/repo, npm:package or a docs URL" autocomplete="off" spellcheck="false"><button type="button" class="btn-secondary" data-browse-folder="ba-source">Browse…</button></div><p class="field-hint">Type a folder, Git repository, npm package or docs URL, or browse for a folder on this computer.</p></div>
           <div class="field"><label class="field-label" for="ba-name">Name</label><input id="ba-name" name="name" placeholder="Optional; defaults to the source name" autocomplete="off" spellcheck="false"></div>
           <div class="field field-row"><div class="field-text"><label class="field-label" for="ba-writable">Allow writes to a Git source</label><p class="field-hint">Local folders are writable by default. Git sources are read-only unless you allow writes.</p></div><input id="ba-writable" type="checkbox" role="switch" class="switch" name="writable"></div>
         </div>

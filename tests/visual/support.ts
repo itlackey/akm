@@ -40,6 +40,7 @@ export const ROUTES = {
     hash: "#/proposals/p-pending-noop",
     api: /\/api\/proposals\/p-pending-noop/,
   },
+  improve: { hash: "#/improve", api: /\/api\/proposals\?/ },
   changes: { hash: "#/changes", api: /\/api\/changes\?/ },
   "search-results": { hash: "#/search?q=deploy", api: /\/api\/search\?/ },
   "search-browse": { hash: "#/search", api: /\/api\/search\?/ },
