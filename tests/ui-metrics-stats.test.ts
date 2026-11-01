@@ -15,6 +15,8 @@ describe("dashboard stats", () => {
     expect(isoWeekStart("2026-11-01")).toBe("2026-10-26"); // a Sunday
     expect(isoWeekStart("2026-10-26")).toBe("2026-10-26"); // a Monday
     expect(isoWeekStart("2026-11-04")).toBe("2026-11-02");
+    // Not a date: no week, and no throw.
+    expect(isoWeekStart("soon")).toBe("");
   });
 
   test("zeroFill fills gaps inside coverage, not before the first row, and marks partial days", () => {

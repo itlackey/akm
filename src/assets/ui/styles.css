@@ -1925,6 +1925,9 @@ button:disabled {
 .series-4 {
   background: var(--s4);
 }
+.series-5 {
+  background: var(--s5);
+}
 
 /* ---- overview layout ---- */
 .page-head-row {
@@ -2839,4 +2842,67 @@ fieldset.trend-window {
 /* A heading focused by the router is a landmark for the reader, not a control: it needs no ring. */
 h1[tabindex="-1"]:focus {
   outline: none;
+}
+
+/* ---- improve impact layout ---- */
+.impact-summary {
+  margin-block: var(--space-3);
+  font-size: var(--text-l);
+}
+
+.impact-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+  @media (width >= 64rem) {
+    grid-template-columns: 12rem minmax(0, 1fr);
+  }
+}
+
+.impact-toc {
+  @media (width >= 64rem) {
+    position: sticky;
+    inset-block-start: 5rem;
+  }
+  & ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    @media (width >= 64rem) {
+      flex-direction: column;
+      flex-wrap: nowrap;
+      gap: 0;
+    }
+  }
+  & a {
+    display: block;
+    padding-block: var(--space-1);
+    color: var(--muted);
+    text-decoration: none;
+    &:hover {
+      color: var(--text);
+    }
+  }
+}
+
+.impact-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-inline-size: 0;
+}
+
+.process-row {
+  margin-block-start: var(--space-3);
+  & h3 {
+    margin-block-end: var(--space-1);
+  }
+}
+
+.how-to-read {
+  margin-block-end: var(--space-3);
 }

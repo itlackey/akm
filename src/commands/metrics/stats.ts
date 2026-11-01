@@ -24,6 +24,8 @@ export function dayRange(from: string, to: string): string[] {
 /** The Monday (ISO week start) of the UTC week that holds `day`, as `YYYY-MM-DD`. */
 export function isoWeekStart(day: string): string {
   const at = new Date(`${day}T00:00:00Z`);
+  // A value that is not a date has no week; callers compare it against real weeks and it matches none.
+  if (Number.isNaN(at.getTime())) return "";
   const offset = (at.getUTCDay() + 6) % 7;
   return new Date(at.getTime() - offset * DAY_MS).toISOString().slice(0, 10);
 }

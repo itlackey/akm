@@ -676,6 +676,29 @@ describe("pages", () => {
     expect(filteredRecent).not.toContain("No decided proposals yet.");
   });
 
+  test("improve impact draws each section from the one impact response", async () => {
+    await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const page = (await (await view("improve.js"))(ctx())).text;
+    expect(page).toContain("Improve impact");
+    expect(page).toContain("How to read this page");
+    for (const heading of [
+      "Did improve help search?",
+      "Who decided what, week by week",
+      "Is review keeping up?",
+      "How has the library changed?",
+      "Harm log",
+      "What does improve cost?",
+      "Changed assets, before and after",
+      "Judge and you",
+    ])
+      expect(page).toContain(heading);
+    expect(page).toContain('aria-label="On this page"');
+    // The harm section is never collapsed.
+    expect(page).not.toMatch(/<details[^>]*>\s*<summary>Harm log/);
+  });
+
   test("proposal review retains its filtered queue and decisions restore predictable focus", async () => {
     const { proposalId } = await seed();
     server = await startUiServer({ port: 0 });

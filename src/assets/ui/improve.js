@@ -1,52 +1,33 @@
-// Improve impact: what akm's improve processes proposed, what was decided and by whom, and what it cost.
+// Improve impact: what akm's improve processes proposed, changed and cost over the weeks, and what went wrong.
 
-import { verticalBars, wireChart } from "./chart-view.js";
-import { ago, api, emptyState, fmtMs, fmtNum, fmtPct, html, proposalHref, tableWrap, weekStart } from "./lib.js";
+import { lines, stackedColumns, stepLine, wireChart } from "./chart-view.js";
+import { ago, api, badge, emptyState, fmtNum, fmtPct, html, mount, proposalHref, tableWrap, weekStart } from "./lib.js";
 
-const WEEKS = 12;
-const MIN_RATE_DECISIONS = 5;
 const TREND_DAYS = 90;
 const ROLLING_DAYS = 7;
 const MIN_ROLLING_SEARCHES = 5;
-const OUTCOMES = [
+const CLASSES = [
   { key: "judge", label: "Accepted by the judge", colorIndex: 0 },
   { key: "you", label: "Accepted by you", colorIndex: 2 },
+  { key: "unknown", label: "Accepted, decider not recorded", colorIndex: 4 },
   { key: "rejected", label: "Rejected", colorIndex: 1 },
   { key: "reverted", label: "Reverted", colorIndex: 3 },
 ];
+const HARM_LABEL = {
+  reverted: "Reverted",
+  reopened: "Rejection reopened",
+  "risky-retirement": "Retired with a risk flagged",
+  "flag-after-change": "Flag after a change",
+};
 
-/** Who decided an accept: the recorded decider, else the drain's stamp, else unknown. */
-function decider(p) {
-  if (p.review?.decidedBy === "triage") return "judge";
-  if (p.review?.decidedBy === "human") return "you";
-  if (p.gateDecision?.outcome === "auto-accepted") return "judge";
-  return p.review ? "you" : "unknown";
-}
-
-function outcomeOf(p) {
-  if (p.status === "reverted") return "reverted";
-  if (p.status === "rejected") return "rejected";
-  if (p.status === "accepted") return decider(p) === "judge" ? "judge" : "you";
-  return null;
-}
-
-function decidedAt(p) {
-  return p.review?.decidedAt ?? p.updatedAt;
-}
-
+/** The last `count` ISO week starts (Mondays, UTC), oldest first. */
 function lastWeeks(count) {
-  const out = [];
   const start = new Date(`${weekStart(new Date().toISOString())}T00:00:00Z`);
-  for (let i = count - 1; i >= 0; i--) {
+  return Array.from({ length: count }, (_, i) => {
     const d = new Date(start);
-    d.setUTCDate(d.getUTCDate() - 7 * i);
-    out.push(d.toISOString().slice(0, 10));
-  }
-  return out;
-}
-
-function tile(label, value, sub = "", tone = "") {
-  return html`<div class="tile" ${tone ? html`data-tone="${tone}"` : ""}><span class="tile-label">${label}</span><span class="tile-value num">${value}</span>${sub ? html`<span class="tile-sub muted">${sub}</span>` : ""}</div>`;
+    d.setUTCDate(d.getUTCDate() - 7 * (count - 1 - i));
+    return d.toISOString().slice(0, 10);
+  });
 }
 
 /** The last `count` UTC days, oldest first, as YYYY-MM-DD. */
@@ -74,17 +55,17 @@ function rollingFoundRate(daily, days) {
   });
 }
 
-/** Days on which an improve process had changes kept, with how many and by which process. */
-function keptChangeDays(decided, days) {
+/** Days on which improve changes were kept, from the changed-assets list. */
+function keptChangeDays(changed, days) {
   const first = days[0];
   const byDay = new Map();
-  for (const p of decided) {
-    if (p.status !== "accepted") continue;
-    const day = decidedAt(p).slice(0, 10);
+  for (const change of changed) {
+    if (change.outcome === "reverted") continue;
+    const day = change.decidedAt.slice(0, 10);
     if (day < first) continue;
     const entry = byDay.get(day) ?? { day, count: 0, sources: new Set() };
     entry.count++;
-    entry.sources.add(p.source);
+    entry.sources.add(change.source);
     byDay.set(day, entry);
   }
   return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
@@ -101,12 +82,12 @@ function trendHeadline(rates, days) {
   return html`<p class="trend-summary"><span class="trend-figure num">${fmtPct(last.rate)}</span> of searches found something, <span class="${tone}">${change > 0 ? "up" : change < 0 ? "down" : "unchanged,"} ${change === 0 ? "" : `${Math.abs(change)} points`}</span> <span class="muted">since ${first.day} (${fmtPct(first.rate)}).</span></p>`;
 }
 
-function trendChart(ctx, retrieval, decided) {
+function searchTrend(ctx, retrieval, changed) {
   if (!retrieval)
-    return html`<section class="chart-card" aria-labelledby="trend-title"><h2 id="trend-title">Did improve help search?</h2>${emptyState("Search measurements are unavailable.")}</section>`;
+    return html`<section class="chart-card" id="search" aria-labelledby="trend-title"><h2 id="trend-title">Did improve help search?</h2>${emptyState("Search measurements are unavailable.")}</section>`;
   const days = lastDays(TREND_DAYS);
   const rates = rollingFoundRate(retrieval.daily, days);
-  const kept = keptChangeDays(decided, days);
+  const kept = keptChangeDays(changed, days);
   const keptDays = new Set(kept.map((entry) => entry.day));
   const known = rates.filter((rate) => rate !== null);
   const floor = known.length ? Math.max(0, Math.floor((Math.min(...known) * 100 - 10) / 10) * 10) : 0;
@@ -155,7 +136,7 @@ function trendChart(ctx, retrieval, decided) {
       sources: [...new Set(changes.flatMap((c) => [...c.sources]))],
     };
   });
-  return html`<section class="chart-card" aria-labelledby="trend-title"><h2 id="trend-title">Did improve help search?</h2>
+  return html`<section class="chart-card" id="search" aria-labelledby="trend-title"><h2 id="trend-title">Did improve help search?</h2>
     <p class="muted small">The share of your searches that returned something, over a rolling 7 days and the last ${TREND_DAYS} days. An amber line marks a day when improve changes were kept. It measures retrieval, not whether answers were right.</p>
     ${trendHeadline(rates, days)}
     <p class="chart-legend"><span><i class="series-key series-1" aria-hidden="true"></i>Searches that found something</span><span><i class="marker-key" aria-hidden="true"></i>Improve changes kept</span></p>
@@ -172,141 +153,237 @@ function trendChart(ctx, retrieval, decided) {
   </section>`;
 }
 
-function weeklyChart(ctx, decided) {
-  const weeks = lastWeeks(WEEKS);
-  const counts = Object.fromEntries(weeks.map((w) => [w, { judge: 0, you: 0, rejected: 0, reverted: 0 }]));
-  for (const p of decided) {
-    const bucket = counts[weekStart(decidedAt(p))];
-    if (bucket) bucket[outcomeOf(p)]++;
-  }
-  const inWindow = weeks.reduce((sum, w) => sum + Object.values(counts[w]).reduce((a, b) => a + b, 0), 0);
-  const label = (w) => `${w.slice(5)}${w === weeks.at(-1) ? " (so far)" : ""}`;
-  wireChart(ctx, "#improve-weekly", () =>
-    verticalBars(
-      weeks.map(label),
-      OUTCOMES.map((o) => ({
-        name: o.label,
-        colorIndex: o.colorIndex,
-        stack: "decisions",
-        data: weeks.map((w) => counts[w][o.key]),
-      })),
-      "Decisions",
+const sectionHead = (id, title, note) =>
+  html`<h2 id="${id}">${title}</h2>${note ? html`<p class="muted small">${note}</p>` : ""}`;
+
+function summaryLine(impact) {
+  const s = impact.summary;
+  const harm = s.reverted + s.flags;
+  const tokens = s.tokens >= 1000 ? `${Math.round(s.tokens / 1000)}k` : String(s.tokens);
+  return html`<p class="impact-summary"><strong>${impact.since === "all" ? "Last year" : "Last 90 days"}:</strong> <a href="#/improve" data-anchor="outcomes">${fmtNum(s.kept)} kept</a> · <a href="#/improve" data-anchor="harm" ${harm ? html`class="text-warn"` : ""}>${fmtNum(s.reverted)} reverted</a> · <a href="#/improve" data-anchor="harm" ${s.flags ? html`class="text-warn"` : ""}>${fmtNum(s.flags)} ${s.flags === 1 ? "flag" : "flags"} after a change</a> · <a href="#/improve" data-anchor="cost">${tokens} tokens${s.tokenCoverage === null ? "" : ` (${fmtPct(s.tokenCoverage)} of calls reported)`}</a></p>`;
+}
+
+function outcomesSection(ctx, impact) {
+  const outcomes = impact.outcomes ?? [];
+  const weeks = impact.weeks;
+  const labels = weeks.map((w) => w.slice(5));
+  outcomes.forEach((process, i) => {
+    wireChart(ctx, `#out-${i}`, () =>
+      stackedColumns(
+        labels,
+        CLASSES.map((c) => ({ name: c.label, colorIndex: c.colorIndex, data: process.weeks.map((w) => w[c.key]) })),
+        "Decisions",
+      ),
+    );
+  });
+  return html`<section class="chart-card" aria-labelledby="outcomes">${sectionHead("outcomes", "Who decided what, week by week", "Each process, by the week a proposal was decided.")}
+    <p class="chart-legend">${CLASSES.map((c) => html`<span><i class="series-key series-${c.colorIndex + 1}" aria-hidden="true"></i>${c.label}</span>`)}</p>
+    ${
+      outcomes.length === 0
+        ? emptyState("No proposals decided in this window.", "Improve processes write proposals that are decided here.")
+        : outcomes.map((process, i) => {
+            const total = process.weeks.reduce(
+              (sum, w) => sum + w.judge + w.you + w.unknown + w.rejected + w.reverted,
+              0,
+            );
+            const kept = process.weeks.reduce((sum, w) => sum + w.judge + w.you + w.unknown, 0);
+            return html`<div class="process-row"><h3 class="mono">${process.source}</h3><p class="muted small">${fmtNum(total)} decided, ${fmtNum(kept)} kept${total ? ` (${fmtPct(kept / total)})` : ""}. ${process.weeks.filter((w) => w.judge + w.you + w.unknown + w.rejected + w.reverted > 0).length < 3 ? "Too few weeks with decisions for a trend: read the counts." : ""}</p>
+              <div class="echarts-view" data-height="short" id="out-${i}" role="img" aria-label="${process.source}: decisions per week by who decided and outcome. Counts follow in Data and details."></div></div>`;
+          })
+    }
+    <details><summary>Data and details</summary>${tableWrap(html`<table><thead><tr><th>Process</th><th>Week of</th>${CLASSES.map((c) => html`<th class="r">${c.label}</th>`)}</tr></thead><tbody>${outcomes.flatMap((process) => process.weeks.filter((w) => CLASSES.some((c) => w[c.key])).map((w) => html`<tr><th class="mono">${process.source}</th><td><button type="button" class="btn-secondary" data-drill data-source="${process.source}" data-week="${w.week}">${w.week}</button></td>${CLASSES.map((c) => html`<td class="r num">${w[c.key] ? html`<button type="button" class="btn-secondary" data-drill data-source="${process.source}" data-week="${w.week}" data-class="${c.key}">${w[c.key]}</button>` : "0"}</td>`)}</tr>`))}</tbody></table>`)}
+    <div data-drill-panel tabindex="-1" aria-live="polite"></div></details>
+  </section>`;
+}
+
+function flowSection(ctx, impact) {
+  const flow = impact.reviewFlow ?? [];
+  const labels = impact.weeks.map((w) => w.slice(5));
+  wireChart(ctx, "#flow-waiting", () =>
+    stepLine(
+      labels,
+      flow.map((w) => w.waiting),
+      { name: "Waiting for review", unit: "Waiting" },
     ),
   );
-  return html`<section class="chart-card"><h2>Decisions per week</h2>
-    <p class="muted small">Every decided proposal by the week it was decided (UTC, weeks start Monday). The current week is still in progress.</p>
-    <p class="chart-legend">${OUTCOMES.map((o) => html`<span><i class="series-key series-${o.colorIndex + 1}" aria-hidden="true"></i>${o.label}</span>`)}</p>
-    ${inWindow ? html`<div class="echarts-view" id="improve-weekly" role="img" aria-label="Decided proposals per week for the last ${WEEKS} weeks, stacked by outcome. Exact counts follow in Data and details."></div>` : emptyState(`No decisions in the last ${WEEKS} weeks.`)}
-    <details><summary>Data and details</summary>${tableWrap(
-      html`<table><thead><tr><th>Week of</th>${OUTCOMES.map((o) => html`<th class="r">${o.label}</th>`)}</tr></thead><tbody>${weeks
-        .slice()
-        .reverse()
-        .map(
-          (w) =>
-            html`<tr><th>${w}</th>${OUTCOMES.map((o) => html`<td class="r num">${fmtNum(counts[w][o.key])}</td>`)}</tr>`,
-        )}</tbody></table>`,
-    )}</details>
+  wireChart(ctx, "#flow-rate", () =>
+    lines(
+      labels,
+      [
+        { name: "Made", colorIndex: 0, data: flow.map((w) => w.created) },
+        { name: "Decided", colorIndex: 2, data: flow.map((w) => w.decided) },
+      ],
+      "Proposals",
+    ),
+  );
+  const last = flow.at(-1);
+  return html`<section class="chart-card" aria-labelledby="flow">${sectionHead("flow", "Is review keeping up?", last ? `This week: ${last.created} made, ${last.decided} decided, ${last.waiting} waiting at the end of it.` : "")}
+    <h3>Waiting for review, at the end of each week</h3>
+    <div class="echarts-view" data-height="short" id="flow-waiting" role="img" aria-label="Proposals waiting for review at the end of each week."></div>
+    <h3>Made and decided each week</h3>
+    <p class="chart-legend"><span><i class="series-key series-1" aria-hidden="true"></i>Made</span><span><i class="series-key series-3" aria-hidden="true"></i>Decided</span></p>
+    <div class="echarts-view" data-height="short" id="flow-rate" role="img" aria-label="Proposals made and decided each week."></div>
+    <details><summary>Data and details</summary>${tableWrap(html`<table><thead><tr><th>Week of</th><th class="r">Made</th><th class="r">Decided</th><th class="r">Waiting at the end</th></tr></thead><tbody>${flow.map((w) => html`<tr><th>${w.week}</th><td class="r num">${w.created}</td><td class="r num">${w.decided}</td><td class="r num">${w.waiting}</td></tr>`)}</tbody></table>`)}</details>
   </section>`;
 }
 
-function byProcess(decided, pending, llm) {
-  const rows = new Map();
-  const row = (source) => {
-    if (!rows.has(source)) rows.set(source, { source, judge: 0, you: 0, rejected: 0, reverted: 0, pending: 0 });
-    return rows.get(source);
-  };
-  for (const p of decided) row(p.source)[outcomeOf(p)]++;
-  for (const [source, count] of Object.entries(pending.bySource ?? {})) row(source).pending += count;
-  const cost = llm?.byProcess ?? {};
-  const list = [...rows.values()].sort(
-    (a, b) => b.judge + b.you + b.rejected - (a.judge + a.you + a.rejected) || a.source.localeCompare(b.source),
+function librarySection(ctx, impact) {
+  const library = impact.library ?? [];
+  const known = library.filter((w) => w.entries !== null);
+  const labels = impact.weeks.map((w) => w.slice(5));
+  wireChart(ctx, "#library-size", () =>
+    stepLine(
+      labels,
+      library.map((w) => w.entries),
+      { name: "Assets in the library", unit: "Assets" },
+    ),
   );
-  if (list.length === 0)
-    return emptyState("No proposals yet.", "Improve processes write proposals here when they run.");
-  return tableWrap(
-    html`<table><thead><tr><th>Process</th><th class="r">Accepted</th><th class="r">by judge</th><th class="r">Rejected</th><th class="r">Reverted</th><th class="r">Waiting</th><th class="r">Kept rate</th><th class="r">Model calls (30d)</th><th class="r">Call time (30d)</th></tr></thead><tbody>${list.map(
-      (r) => {
-        const accepted = r.judge + r.you;
-        const decidedCount = accepted + r.rejected + r.reverted;
-        const kept =
-          decidedCount >= MIN_RATE_DECISIONS
-            ? fmtPct(accepted / decidedCount)
-            : html`<span class="muted" title="Fewer than ${MIN_RATE_DECISIONS} decisions">n/a</span>`;
-        const c = cost[r.source];
-        return html`<tr><th class="mono">${r.source}</th><td class="r num">${fmtNum(accepted)}</td><td class="r num">${fmtNum(r.judge)}</td><td class="r num">${fmtNum(r.rejected)}</td><td class="r num">${r.reverted ? html`<span class="text-warn">${fmtNum(r.reverted)}</span>` : "0"}</td><td class="r num">${fmtNum(r.pending)}</td><td class="r num">${kept}</td><td class="r num">${c ? fmtNum(c.calls) : "–"}</td><td class="r num">${c ? fmtMs(c.totalDurationMs) : "–"}</td></tr>`;
-      },
-    )}</tbody></table>`,
-  );
+  const first = known[0];
+  const last = known.at(-1);
+  return html`<section class="chart-card" aria-labelledby="library">${sectionHead("library", "How has the library changed?", known.length >= 2 ? `${fmtNum(first.entries)} assets in the week of ${first.week}, ${fmtNum(last.entries)} in the week of ${last.week}.` : "")}
+    ${known.length < 2 ? emptyState("The library size is recorded each time akm indexes.", "Two or more indexes in the window draw this line.") : html`<div class="echarts-view" data-height="short" id="library-size" role="img" aria-label="Assets in the library at the end of each week."></div>`}
+  </section>`;
 }
 
-function harmLog(decided) {
-  const reverted = decided.filter((p) => p.status === "reverted").slice(0, 10);
-  return html`<section class="chart-card"><h2>Reverted changes</h2>
-    <p class="muted small">Accepted changes that were later undone. Each one is worth a look: it may point at a process or judge setting to tighten.</p>
+function harmSection(impact) {
+  const harm = impact.harm ?? [];
+  return html`<section class="chart-card" aria-labelledby="harm">${sectionHead("harm", `Harm log${harm.length ? ` (${harm.length})` : ""}`, "Changes that were undone, rejections that were reopened, retirements with a risk flagged, and feedback that came after a change. Never collapsed.")}
     ${
-      reverted.length
-        ? html`<ul class="change-list">${reverted.map((p) => html`<li><a href="${proposalHref(p.id)}" class="mono">${p.ref}</a><span class="badge badge-warn">reverted</span><span class="muted small">${p.source} · ${ago(decidedAt(p))}</span></li>`)}</ul>`
-        : html`<div class="attention-clear"><span class="dot dot-ok" aria-hidden="true"></span>No reverted changes.</div>`
+      harm.length === 0
+        ? html`<div class="attention-clear"><span class="dot dot-ok" aria-hidden="true"></span>No reverts, reopened rejections or risky retirements, and no flags after a change, in this window. Checked ${fmtNum(impact.summary.checked)} decisions.</div>`
+        : html`<ul class="change-list">${harm.map((item) => html`<li>${badge(HARM_LABEL[item.kind] ?? item.kind, item.kind === "flag-after-change" ? "warn" : "neutral")} <a class="mono wrap" href="#/asset/${encodeURIComponent(item.ref)}">${item.ref}</a><span class="muted small">${item.detail} · ${ago(item.at)}</span>${item.proposalId ? html`<a class="small" href="${proposalHref(item.proposalId)}">Proposal</a>` : ""}</li>`)}</ul>`
     }
   </section>`;
 }
 
-function recentChanges(decided) {
-  const accepted = decided.filter((p) => p.status === "accepted").slice(0, 12);
-  return html`<section class="chart-card"><h2>Recent changes to your library</h2>
-    <p class="muted small">The latest accepted proposals. Open one to see its diff and the reason it was made.</p>
+function costSection(ctx, impact) {
+  const cost = impact.cost ?? [];
+  const labels = impact.weeks.map((w) => w.slice(5));
+  const processes = [...new Set(cost.flatMap((w) => Object.keys(w.byProcess)))].sort();
+  wireChart(ctx, "#cost-calls", () =>
+    stackedColumns(
+      labels,
+      processes.map((name, i) => ({ name, colorIndex: i % 5, data: cost.map((w) => w.byProcess[name] ?? 0) })),
+      "Calls",
+    ),
+  );
+  const calls = cost.reduce((sum, w) => sum + w.calls, 0);
+  const reported = cost.reduce((sum, w) => sum + w.usageCalls, 0);
+  return html`<section class="chart-card" aria-labelledby="cost">${sectionHead("cost", "What does improve cost?", calls ? `${fmtNum(calls)} model calls; tokens are reported for ${fmtNum(reported)} of them. Tokens are not money.` : "")}
+    ${calls === 0 ? emptyState("No model calls recorded in this window.") : html`<p class="chart-legend">${processes.map((name, i) => html`<span><i class="series-key series-${(i % 5) + 1}" aria-hidden="true"></i>${name}</span>`)}</p><div class="echarts-view" data-height="short" id="cost-calls" role="img" aria-label="Model calls per week by process."></div>`}
+    <details><summary>Data and details</summary>${tableWrap(html`<table><thead><tr><th>Week of</th><th class="r">Calls</th><th class="r">Tokens</th><th class="r">Calls reporting tokens</th></tr></thead><tbody>${cost.map((w) => html`<tr><th>${w.week}</th><td class="r num">${fmtNum(w.calls)}</td><td class="r num">${w.usageCalls ? fmtNum(w.tokens) : "unknown"}</td><td class="r num">${fmtNum(w.usageCalls)} / ${fmtNum(w.calls)}</td></tr>`)}</tbody></table>`)}</details>
+  </section>`;
+}
+
+function changedSection(impact) {
+  const changed = impact.changedAssets ?? [];
+  const arrow = (before, after) => html`<span class="num">${before} → ${after}</span>`;
+  return html`<section class="chart-card" aria-labelledby="changed">${sectionHead("changed", "Changed assets, before and after", "How often each changed asset was found and rated in the 28 days before and after the change. A change under 28 days old is still filling, so its after side is partial.")}
     ${
-      accepted.length
-        ? html`<ul class="change-list">${accepted.map(
-            (p) =>
-              html`<li><a href="${proposalHref(p.id)}" class="mono">${p.isRetire && p.retirement ? p.retirement.retiredRef : p.ref}</a>${p.isRetire ? html`<span class="badge badge-neutral">retired</span>` : ""}<span class="badge ${decider(p) === "judge" ? "badge-info" : "badge-ok"}">${decider(p) === "judge" ? "judge" : "you"}</span><span class="muted small">${p.source} · ${ago(decidedAt(p))}</span></li>`,
-          )}</ul>`
-        : emptyState("No accepted changes yet.")
+      changed.length === 0
+        ? emptyState("No changes kept in this window.")
+        : tableWrap(
+            html`<table><thead><tr><th>Asset</th><th>Process</th><th>Changed</th><th class="r">Found</th><th class="r">Negative</th><th>After</th></tr></thead><tbody>${changed.map((c) => html`<tr><th><a class="mono wrap" href="#/asset/${encodeURIComponent(c.ref)}">${c.ref}</a></th><td class="mono">${c.source}</td><td>${ago(c.decidedAt)}${c.outcome === "reverted" ? html` ${badge("reverted", "warn")}` : ""}</td><td class="r">${arrow(c.before.hits, c.after.hits)}</td><td class="r">${arrow(c.before.negative, c.after.negative)}</td><td>${c.complete ? "28 days" : `${c.afterDays} days so far`}</td></tr>`)}</tbody></table>`,
+          )
     }
   </section>`;
 }
 
-function runsTable(runs) {
-  if (!runs?.length)
-    return emptyState(
-      "No improve runs recorded yet.",
-      "Schedule `akm improve` or run it by hand; each run appears here.",
-    );
-  return tableWrap(
-    html`<table><thead><tr><th>Started</th><th>Result</th><th class="r">Model calls</th><th class="r">Duration</th></tr></thead><tbody>${runs.map(
-      (r) =>
-        html`<tr><td>${ago(r.startedAt)}</td><td>${r.ok ? html`<span class="badge badge-ok">finished</span>` : html`<span class="badge badge-fail">failed</span>`}</td><td class="r num">${fmtNum(r.modelCalls?.total ?? 0)}${r.modelCalls?.failures ? html` <span class="text-fail small">(${fmtNum(r.modelCalls.failures)} failed)</span>` : ""}</td><td class="r num">${r.durationMs != null ? fmtMs(r.durationMs) : "–"}</td></tr>`,
-    )}</tbody></table>`,
-  );
+function judgeSection(impact) {
+  const table = impact.judgeAndYou ?? {};
+  const rows = ["judge", "you", "unknown"].filter((who) => table[who]);
+  const names = { judge: "The judge", you: "You", unknown: "Decider not recorded" };
+  return html`<section class="chart-card" aria-labelledby="judge">${sectionHead("judge", "Judge and you", "How the judge's decisions and yours compare.")}
+    ${
+      rows.length === 0
+        ? emptyState("No decisions yet.")
+        : tableWrap(
+            html`<table><thead><tr><th>Decided by</th><th class="r">Accepted</th><th class="r">Rejected</th><th class="r">Later reverted</th><th class="r">Kept</th></tr></thead><tbody>${rows.map(
+              (who) => {
+                const r = table[who];
+                const total = r.accepted + r.rejected + r.reverted;
+                return html`<tr><th>${names[who]}</th><td class="r num">${r.accepted}</td><td class="r num">${r.rejected}</td><td class="r num">${r.reverted}</td><td class="r num">${total ? fmtPct(r.accepted / total) : "n/a"}</td></tr>`;
+              },
+            )}</tbody></table>`,
+          )
+    }
+  </section>`;
 }
+
+const SECTIONS = [
+  ["search", "Search quality"],
+  ["outcomes", "Outcomes"],
+  ["flow", "Review flow"],
+  ["library", "Library"],
+  ["harm", "Harm log"],
+  ["cost", "Cost"],
+  ["changed", "Changed assets"],
+  ["judge", "Judge and you"],
+];
 
 export async function render(ctx) {
-  const [recent, pending, overview, retrieval] = await Promise.all([
-    api("/api/proposals", { status: "recent", limit: 200 }),
-    api("/api/proposals", { status: "pending", limit: 1 }),
-    api("/api/overview", { metricsSince: "30d" }).catch(() => ({})),
+  const since = ctx.query.get("since") === "all" ? "all" : "90d";
+  const [impact, retrieval] = await Promise.all([
+    api("/api/improve/impact", { since }),
     api("/api/retrieval", { since: `${TREND_DAYS}d` }).catch(() => null),
   ]);
-  const decided = (recent.proposals ?? []).filter((p) => outcomeOf(p));
-  const since = Date.now() - 30 * 86_400_000;
-  const last30 = decided.filter((p) => Date.parse(decidedAt(p)) >= since);
-  const count = (key) => last30.filter((p) => outcomeOf(p) === key).length;
-  const accepted = count("judge") + count("you");
-  const rejected = count("rejected");
-  const reverted = count("reverted");
-  const llm = overview.metrics?.llm;
-  return html`<header class="page-head"><h1>Improve impact</h1><p>What akm's improve processes proposed, what was kept, who decided, and what it cost.</p></header>
-    ${trendChart(ctx, retrieval, decided)}
-    <section aria-labelledby="impact-30d"><h2 id="impact-30d">Last 30 days</h2>
-      <div class="tiles">
-        ${tile("Changes kept", fmtNum(accepted), `${fmtNum(count("judge"))} by the judge · ${fmtNum(count("you"))} by you`, accepted ? "ok" : "")}
-        ${tile("Rejected", fmtNum(rejected), accepted + rejected ? `${fmtPct(rejected / (accepted + rejected + reverted))} of decisions` : "no decisions yet")}
-        ${tile("Reverted", fmtNum(reverted), "accepted, then undone", reverted ? "warn" : "")}
-        ${tile("Waiting for review", fmtNum(pending.fullCount ?? 0), html`<a href="#/proposals">Open the queue</a>`)}
-        ${tile("Model calls", llm ? fmtNum(llm.calls) : "–", llm ? (llm.failures ? `${fmtNum(llm.failures)} failed` : `${fmtMs(llm.totalDurationMs)} of call time`) : "unavailable", llm?.failures ? "fail" : "")}
+  ctx.after.push((root) => {
+    for (const radio of root.querySelectorAll("input[name=impact-since]")) {
+      radio.addEventListener("change", (event) => {
+        location.hash = `#/improve?since=${event.target.value}`;
+      });
+    }
+    root.addEventListener("click", async (event) => {
+      const jump = event.target.closest("a[data-anchor]");
+      if (jump) {
+        event.preventDefault();
+        const target = root.querySelector(`#${jump.dataset.anchor}`);
+        target?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      const drill = event.target.closest("[data-drill]");
+      if (!drill) return;
+      const panel = root.querySelector("[data-drill-panel]");
+      mount(panel, html`<p role="status">Loading...</p>`);
+      try {
+        const { proposals } = await api("/api/proposals", {
+          status: "recent",
+          source: drill.dataset.source,
+          week: drill.dataset.week,
+          class: drill.dataset.class,
+          limit: 50,
+        });
+        mount(
+          panel,
+          html`<h3>${drill.dataset.source}, week of ${drill.dataset.week}${drill.dataset.class ? `, ${drill.dataset.class}` : ""}</h3>${proposals.length ? html`<ul class="change-list">${proposals.map((p) => html`<li><a class="mono wrap" href="${proposalHref(p.id)}">${p.ref}</a>${badge(p.status, p.status === "reverted" ? "warn" : "neutral")}<span class="muted small">${ago(p.review?.decidedAt ?? p.updatedAt)}</span></li>`)}</ul>` : html`<p>No proposals match.</p>`}`,
+        );
+      } catch (error) {
+        mount(panel, html`<p role="alert">${error.message}</p>`);
+      }
+      panel.focus({ preventScroll: true });
+    });
+  });
+  const choice = (value, label) =>
+    html`<label><input type="radio" name="impact-since" value="${value}" ${since === value ? html`checked` : ""}><span>${label}</span></label>`;
+  if (!impact.available)
+    return html`<header class="page-head"><h1>Improve impact</h1><p>What akm's improve processes did in your environment. Times are UTC.</p></header>${emptyState("Improve has not run in this environment yet.", html`It runs with <code>akm improve</code> or on a schedule.`)}`;
+  const harmCount = (impact.harm ?? []).length;
+  return html`<header class="page-head page-head-row"><div><h1>Improve impact</h1><p>What akm's improve processes did in your environment. Times are UTC.</p></div>
+      <fieldset class="segmented trend-window" aria-label="Window">${choice("90d", "90 days")}${choice("all", "All")}</fieldset></header>
+    ${summaryLine(impact)}
+    <details class="how-to-read"><summary>How to read this page</summary><p>Weeks start on Monday, UTC. A change is "kept" when a proposal was accepted and not reverted. A flag after a change is negative feedback on the same asset within 14 days. Before-and-after counts show what happened next to a change, not that the change caused it.</p></details>
+    <div class="impact-layout">
+      <nav class="impact-toc" aria-label="On this page"><ul>${SECTIONS.map(([id, label]) => html`<li><a href="#/improve" data-anchor="${id}">${label}${id === "harm" && harmCount ? html` <span class="num">(${harmCount})</span>` : ""}</a></li>`)}</ul></nav>
+      <div class="impact-sections">
+        ${searchTrend(ctx, retrieval, impact.changedAssets ?? [])}
+        ${outcomesSection(ctx, impact)}
+        ${flowSection(ctx, impact)}
+        ${librarySection(ctx, impact)}
+        ${harmSection(impact)}
+        ${costSection(ctx, impact)}
+        ${changedSection(impact)}
+        ${judgeSection(impact)}
       </div>
-    </section>
-    <div class="chart-grid">${weeklyChart(ctx, decided)}${harmLog(decided)}</div>
-    <section aria-labelledby="by-process"><h2 id="by-process">By process</h2><p class="muted small">Outcomes over the last ${fmtNum(recent.fullCount ?? decided.length)} decided proposals${recent.fullCount > 200 ? " (latest 200 shown)" : ""}. "Kept rate" needs at least ${MIN_RATE_DECISIONS} decisions.</p>${byProcess(decided, pending, llm)}</section>
-    <div class="chart-grid">${recentChanges(decided)}<section class="chart-card"><h2>Improve runs</h2><p class="muted small">The most recent runs, newest first.</p>${runsTable(overview.improveRuns)}</section></div>`;
+    </div>
+    ${impact.errors ? html`<details class="notice notice-warn"><summary>${Object.keys(impact.errors).length} sections could not load</summary><ul>${Object.entries(impact.errors).map(([name, message]) => html`<li><span class="mono">${name}</span>: ${message}</li>`)}</ul></details>` : ""}`;
 }
