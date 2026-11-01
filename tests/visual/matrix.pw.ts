@@ -17,19 +17,19 @@ const EMPTY: RouteName[] = [
   "config",
   "proposals-pending",
   "proposals-recent",
-  "changes",
+  "history",
   "search-browse",
   "search-results",
   "new",
 ];
-const LOW_DATA: RouteName[] = ["overview", "proposals-pending", "changes", "search-results", "bundles"];
+const LOW_DATA: RouteName[] = ["overview", "proposals-pending", "history", "search-results", "bundles"];
 const FAILING: RouteName[] = [
   "overview",
   "bundles",
   "config",
   "proposals-pending",
   "proposal-edit",
-  "changes",
+  "history",
   "search-results",
   "asset-knowledge",
   "edit",
@@ -73,11 +73,11 @@ for (const [name, hash] of LONG) {
 }
 
 // The 40-segment path only shows once a commit's changed-path disclosure is open, so open them all and say it is there.
-test("changes long-content", async ({ page }) => {
-  await visit(page, ROUTES.changes.hash, "long-content");
+test("history long-content", async ({ page }) => {
+  await visit(page, ROUTES.history.hash, "long-content");
   for (const summary of await page.locator("main details > summary").all()) await summary.click();
   await expect(page.locator("main li.wrap").filter({ hasText: "level-39/deep.md" })).toBeVisible();
-  await shoot(page, "changes--long-content");
+  await shoot(page, "history--long-content");
 });
 
 // The Working stash card: the harness stash is a configured bundle, so answer /api/bundles as a stash with none.

@@ -416,7 +416,7 @@ describe("pages", () => {
     expect(detail).toContain("&lt;b&gt;bold?&lt;/b&gt;");
     expect(detail).not.toContain("<b>bold?</b>");
 
-    const changes = (await (await view("changes.js"))(ctx())).text;
+    const changes = (await (await view("history.js"))(ctx())).text;
     expect(changes).toContain("akm improve auto-sync");
     expect(changes).toContain("improve-sync");
 

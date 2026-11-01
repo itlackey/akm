@@ -8,7 +8,6 @@
 import appJs from "../../assets/ui/app.js" with { type: "text" };
 import assetJs from "../../assets/ui/asset.js" with { type: "text" };
 import bundlesJs from "../../assets/ui/bundles.js" with { type: "text" };
-import changesJs from "../../assets/ui/changes.js" with { type: "text" };
 import chartViewJs from "../../assets/ui/chart-view.js" with { type: "text" };
 import chartsJs from "../../assets/ui/charts.js" with { type: "text" };
 import configJs from "../../assets/ui/config.js" with { type: "text" };
@@ -17,6 +16,7 @@ import diffViewJs from "../../assets/ui/diff-view.js" with { type: "text" };
 import echartsJs from "../../assets/ui/echarts.js" with { type: "text" };
 import editorJs from "../../assets/ui/editor.js" with { type: "text" };
 import folderPickerJs from "../../assets/ui/folder-picker.js" with { type: "text" };
+import historyJs from "../../assets/ui/history.js" with { type: "text" };
 import improveJs from "../../assets/ui/improve.js" with { type: "text" };
 import indexHtml from "../../assets/ui/index.html" with { type: "text" };
 import libJs from "../../assets/ui/lib.js" with { type: "text" };
@@ -33,7 +33,6 @@ export const EMBEDDED_UI: Record<string, string> = {
   "app.js": appJs as unknown as string,
   "asset.js": assetJs as unknown as string,
   "bundles.js": bundlesJs as unknown as string,
-  "changes.js": changesJs as unknown as string,
   "chart-view.js": chartViewJs as unknown as string,
   "charts.js": chartsJs as unknown as string,
   "config.js": configJs as unknown as string,
@@ -42,6 +41,7 @@ export const EMBEDDED_UI: Record<string, string> = {
   "echarts.js": echartsJs as unknown as string,
   "editor.js": editorJs as unknown as string,
   "folder-picker.js": folderPickerJs as unknown as string,
+  "history.js": historyJs as unknown as string,
   "improve.js": improveJs as unknown as string,
   "index.html": indexHtml as unknown as string,
   "lib.js": libJs as unknown as string,

@@ -62,7 +62,7 @@ function feedbackBlock(feedback, ref, requireReason) {
 }
 
 export async function render(ctx) {
-  const ref = ctx.query.get("ref") ?? "";
+  const ref = ctx.query.get("ref") || ctx.param || "";
   if (!ref)
     return html`${pageHeader("Asset")}${emptyState("No asset selected.", html`Pick one from <a href="#/search">search</a>.`)}`;
   const data = await api("/api/asset", { ref });

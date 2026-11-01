@@ -17,7 +17,7 @@ import {
 import { markdown, splitFrontmatter } from "./markdown.js";
 
 export async function render(ctx) {
-  const ref = ctx.query.get("ref");
+  const ref = ctx.query.get("ref") || ctx.param;
   if (ref) return edit(ctx, ref);
   const data = await api("/api/bundles");
   const writable = data.bundles.filter((b) => b.enabled && b.writable && b.components.some((c) => c.adapter === "akm"));

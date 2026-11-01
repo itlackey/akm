@@ -41,7 +41,7 @@ export const ROUTES = {
     api: /\/api\/proposals\/p-pending-noop/,
   },
   improve: { hash: "#/improve", api: /\/api\/proposals\?/ },
-  changes: { hash: "#/changes", api: /\/api\/changes\?/ },
+  history: { hash: "#/history", api: /\/api\/changes\?/ },
   "search-results": { hash: "#/search?q=deploy", api: /\/api\/search\?/ },
   "search-browse": { hash: "#/search", api: /\/api\/search\?/ },
   "asset-knowledge": { hash: `#/asset?ref=${SEED_GUIDE}`, api: /\/api\/asset\?/ },

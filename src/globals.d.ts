@@ -47,7 +47,7 @@ declare module "*/assets/ui/bundles.js" {
   export default content;
 }
 
-declare module "*/assets/ui/changes.js" {
+declare module "*/assets/ui/history.js" {
   const content: string;
   export default content;
 }

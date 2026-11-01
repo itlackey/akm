@@ -28,7 +28,7 @@ const ROUTES = [
     render: (m, c) => (c.param ? m.renderDetail(c) : m.renderList(c)),
   },
   { name: "improve", label: "Improve impact", load: () => import("./improve.js"), render: (m, c) => m.render(c) },
-  { name: "changes", label: "History", load: () => import("./changes.js"), render: (m, c) => m.render(c) },
+  { name: "history", label: "History", load: () => import("./history.js"), render: (m, c) => m.render(c) },
   { name: "search", label: "Search", load: () => import("./search.js"), render: (m, c) => m.render(c) },
   { name: "asset", label: "Asset", nav: "search", load: () => import("./asset.js"), render: (m, c) => m.render(c) },
   {
@@ -85,7 +85,28 @@ function markNav(active) {
   }
 }
 
+/** The current form of an address that an earlier release used; `null` when the address is current. */
+function currentAddress({ name, param, query }) {
+  const rest = (params) => (params.size > 0 ? `?${params}` : "");
+  if (name === "changes") return `/history${rest(query)}`;
+  if ((name === "asset" || name === "edit") && !param && query.get("ref")) {
+    const params = new URLSearchParams(query);
+    const ref = params.get("ref");
+    params.delete("ref");
+    return `/${name}/${encodeURIComponent(ref)}${rest(params)}`;
+  }
+  if (name === "overview" && ["24h", "7d"].includes(query.get("window") ?? "")) {
+    const params = new URLSearchParams(query);
+    params.set("window", "30d");
+    return `/overview?${params}`;
+  }
+  return null;
+}
+
 async function route() {
+  const legacy = currentAddress(parseHash());
+  // Replace, not push: the old address should not stay in the history.
+  if (legacy) history.replaceState(null, "", `${location.pathname}${location.search}#${legacy}`);
   if (hasUnsaved()) {
     // Keep the editor's address and ask inline; "Discard changes" repeats the navigation.
     pendingHash = location.hash;

@@ -9,7 +9,7 @@ import { ALL, affectedRoutes } from "./affected";
 
 describe("affectedRoutes", () => {
   test("a page module affects only its routes", () => {
-    expect(affectedRoutes(["src/assets/ui/changes.js"])).toEqual(["changes"]);
+    expect(affectedRoutes(["src/assets/ui/history.js"])).toEqual(["history"]);
     expect(affectedRoutes(["src/assets/ui/search.js"])).toEqual(["search-results", "search-browse"]);
   });
 

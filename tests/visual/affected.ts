@@ -35,7 +35,7 @@ const RULES: Array<[RegExp, Affected]> = [
   [/^src\/assets\/ui\/config\.js$/, ["config"]],
   [/^src\/assets\/ui\/(proposals|proposal-actions)\.js$/, PROPOSALS],
   [/^src\/assets\/ui\/(diff|diff-view)\.js$/, [...PROPOSALS, "edit", "new", ...ASSETS]],
-  [/^src\/assets\/ui\/changes\.js$/, ["changes"]],
+  [/^src\/assets\/ui\/history\.js$/, ["history"]],
   [/^src\/assets\/ui\/search\.js$/, SEARCH],
   [/^src\/assets\/ui\/asset\.js$/, ASSETS],
   [/^src\/assets\/ui\/(editor|markdown)\.js$/, ["edit", "new", ...ASSETS]],
