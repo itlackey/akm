@@ -26,69 +26,98 @@
     - listitem:
       - link "Config":
         - /url: "#/config"
-  - button "Refresh view"
   - text: akm 0.0.0 · visual-host bun
 - main:
   - heading "Config" [level=1]
-  - paragraph: The effective configuration, and where each value comes from. Secret values are redacted by the server.
-  - term: Config file
-  - definition: /tmp/akm-visual-loaded/config/config.json
-  - heading "Effective config" [level=2]
-  - paragraph: "Source: default built-in file this install's config.json extends:ref a config it extends"
-  - list:
-    - listitem: configVersion 0.9.0 file
-    - listitem: semanticSearchMode off file
-    - listitem:
-      - text: registries
-      - group: 2 items
-      - text: default
-    - listitem:
-      - group:
-        - text: output 2 keys
-        - list:
-          - listitem: format json default
-          - listitem: detail brief default
-    - listitem:
-      - group:
-        - text: bundles 1 key
-        - list:
-          - listitem:
-            - group: stash 3 keys
-    - listitem: defaultBundle stash file
-    - listitem: defaultWriteTarget stash file
-  - heading "Connections" [level=2]
-  - paragraph: No connections are configured.
-  - heading "Harnesses" [level=2]
-  - paragraph: No harnesses are configured.
-  - heading "Environment" [level=2]
-  - paragraph: AKM_* variables set for the server. They override paths and credentials.
-  - table:
-    - rowgroup:
-      - row "Name Value":
-        - columnheader "Name"
-        - columnheader "Value"
-    - rowgroup:
-      - row "AKM_BUNDLE_DIR /tmp/akm-visual-loaded/stash":
-        - cell "AKM_BUNDLE_DIR"
-        - cell "/tmp/akm-visual-loaded/stash"
-      - row "AKM_CACHE_DIR /tmp/akm-visual-loaded/cache":
-        - cell "AKM_CACHE_DIR"
-        - cell "/tmp/akm-visual-loaded/cache"
-      - row "AKM_CLAUDE_PLUGINS_DIR /tmp/akm-visual-loaded/empty":
-        - cell "AKM_CLAUDE_PLUGINS_DIR"
-        - cell "/tmp/akm-visual-loaded/empty"
-      - row "AKM_CLAUDE_PROJECTS_DIR /tmp/akm-visual-loaded/empty":
-        - cell "AKM_CLAUDE_PROJECTS_DIR"
-        - cell "/tmp/akm-visual-loaded/empty"
-      - row "AKM_CONFIG_DIR /tmp/akm-visual-loaded/config":
-        - cell "AKM_CONFIG_DIR"
-        - cell "/tmp/akm-visual-loaded/config"
-      - row "AKM_DATA_DIR /tmp/akm-visual-loaded/data":
-        - cell "AKM_DATA_DIR"
-        - cell "/tmp/akm-visual-loaded/data"
-      - row "AKM_OPENCODE_CACHE_DIR /tmp/akm-visual-loaded/empty":
-        - cell "AKM_OPENCODE_CACHE_DIR"
-        - cell "/tmp/akm-visual-loaded/empty"
-      - row "AKM_STATE_DIR /tmp/akm-visual-loaded/state":
-        - cell "AKM_STATE_DIR"
-        - cell "/tmp/akm-visual-loaded/state"
+  - paragraph:
+    - text: Settings for this install, saved to /tmp/akm-visual-loaded/config/config.json. Every change is validated like
+    - code: akm config set
+    - text: .
+  - region "Search":
+    - heading "Search" [level=2]
+    - paragraph: How search finds and ranks your assets.
+    - group "Semantic search set in config.json":
+      - text: ""
+      - paragraph: Auto uses embeddings when the index has them, and keyword search otherwise.
+      - radiogroup:
+        - radio "Off" [checked]
+        - text: "Off"
+        - radio "Auto"
+        - text: Auto
+    - text: Hide these types by default
+    - textbox "Hide these types by default":
+      - /placeholder: memory, script
+    - paragraph: Comma-separated asset types that search leaves out unless you ask for them.
+    - text: Rerank curate results
+    - paragraph: Send the top candidates to a reranker model before curate picks.
+    - switch "Rerank curate results"
+    - text: Reranker endpoint
+    - textbox "Reranker endpoint":
+      - /placeholder: host:port/rerank
+    - text: Candidates to rerank
+    - spinbutton "Candidates to rerank"
+    - paragraph: /At most \d+\./
+    - button "Save changes" [disabled]
+  - region "Library":
+    - heading "Library" [level=2]
+    - paragraph: Where akm reads by default and where it writes new assets.
+    - text: Default bundle set in config.json
+    - combobox "Default bundle":
+      - option "Automatic (working stash)"
+      - option "stash" [selected]
+    - text: Default write target set in config.json
+    - combobox "Default write target":
+      - option "Automatic (working stash)"
+      - option "stash" [selected]
+    - paragraph: New knowledge, memories and accepted proposals are written here.
+    - text: Keep archived assets for
+    - spinbutton "Keep archived assets for"
+    - paragraph: Days before retired assets are purged from the archive.
+    - text: Require a reason with feedback
+    - paragraph: Negative feedback always needs a reason; this asks for one on positive feedback too.
+    - switch "Require a reason with feedback"
+    - button "Save changes" [disabled]
+  - region "Command output":
+    - heading "Command output" [level=2]
+    - paragraph: The defaults the akm CLI uses when you pass no --format or --detail.
+    - text: Format default
+    - combobox "Format":
+      - option "json" [selected]
+      - option "yaml"
+      - option "text"
+      - option "jsonl"
+      - option "md"
+      - option "html"
+    - group "Detail default":
+      - text: ""
+      - radiogroup:
+        - radio "Brief" [checked]
+        - text: Brief
+        - radio "Normal"
+        - text: Normal
+        - radio "Full"
+        - text: Full
+    - button "Save changes" [disabled]
+  - region "Model connections":
+    - heading "Model connections" [level=2]
+    - paragraph: The OpenAI-compatible endpoints improve, judges and agents call. Keys are environment variable references.
+    - paragraph: No connections yet.
+    - paragraph: Add one to let improve and the judges call a model.
+    - group: Add a connection
+  - region "Advanced":
+    - heading "Advanced" [level=2]
+    - paragraph:
+      - text: Set or unset any key, as
+      - code: akm config set
+      - text: does. Objects and lists take JSON.
+    - text: Key
+    - textbox "Key":
+      - /placeholder: improve.processes.reflect.enabled
+    - text: Value
+    - textbox "Value":
+      - /placeholder: "true"
+    - switch "Unset this key instead"
+    - text: Unset this key instead
+    - button "Apply"
+    - group: Effective config (read-only, secrets redacted)
+    - group: Environment (8 AKM_* variables)

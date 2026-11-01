@@ -174,7 +174,7 @@ unsaved.addEventListener("click", (event) => {
   setUnsaved(false);
   const target = pendingHash;
   pendingHash = null;
-  // A same-hash target (Refresh view) fires no hashchange, so route directly.
+  // A same-hash target fires no hashchange, so route directly.
   if (target === null || target === location.hash) route();
   else location.hash = target;
 });
@@ -190,7 +190,6 @@ document.addEventListener("keydown", (event) => {
     else location.hash = "#/search";
   }
 });
-document.querySelector("[data-refresh]")?.addEventListener("click", route);
 const menu = document.querySelector("[data-menu]");
 menu?.addEventListener("click", () => {
   const open = menu.getAttribute("aria-expanded") !== "true";

@@ -138,13 +138,13 @@ function connectionCard(ctx, connection) {
 }
 
 function newConnectionForm() {
-  return html`<details class="card add-card"><summary>Add a connection</summary>
-    <form class="new-connection settings-grid" novalidate>
+  return html`<details class="card settings-card add-card"><summary>Add a connection</summary>
+    <form class="new-connection" novalidate><div class="settings-fields settings-grid">
       <div class="field"><label class="field-label" for="nc-name">Name</label><input id="nc-name" name="name" required pattern="[A-Za-z0-9_-]+" placeholder="local" autocomplete="off"></div>
       <div class="field"><label class="field-label" for="nc-endpoint">Endpoint</label><input id="nc-endpoint" name="endpoint" type="url" required placeholder="127.0.0.1:1234/v1/chat/completions"></div>
       <div class="field"><label class="field-label" for="nc-model">Model</label><input id="nc-model" name="model" required placeholder="model id" autocomplete="off"><p class="field-hint">Used for the fast, balanced and reasoning aliases; change any of them later.</p></div>
       <div class="field"><label class="field-label" for="nc-key">API key</label><input id="nc-key" name="apiKey" placeholder="$OPENAI_API_KEY" autocomplete="off"><p class="field-hint">Optional. An environment variable reference.</p></div>
-      <div class="settings-footer span-all"><span></span><div data-status class="settings-status"></div><button type="submit">Add connection</button></div>
+      </div><div class="settings-footer"><span></span><div data-status class="settings-status"></div><button type="submit">Add connection</button></div>
     </form></details>`;
 }
 
@@ -227,10 +227,10 @@ export async function render(ctx) {
     <section class="settings-section" aria-labelledby="set-advanced">
       <div class="settings-intro"><h2 id="set-advanced">Advanced</h2><p>Set or unset any key, as <code>akm config set</code> does. Objects and lists take JSON.</p></div>
       <div class="stack">
-        <form class="card advanced-set settings-grid" novalidate>
+        <form class="card settings-card advanced-set" novalidate><div class="settings-fields settings-grid">
           <div class="field"><label class="field-label" for="adv-key">Key</label><input id="adv-key" name="key" required placeholder="improve.processes.reflect.enabled" autocomplete="off" spellcheck="false"></div>
           <div class="field"><label class="field-label" for="adv-value">Value</label><input id="adv-value" name="value" placeholder="true" autocomplete="off" spellcheck="false"></div>
-          <div class="settings-footer span-all"><label class="check-label"><input type="checkbox" name="unset"> Unset this key instead</label><div data-status class="settings-status"></div><button type="submit">Apply</button></div>
+          </div><div class="settings-footer"><label class="check-label"><input type="checkbox" role="switch" class="switch" name="unset"> Unset this key instead</label><div data-status class="settings-status"></div><button type="submit">Apply</button></div>
         </form>
         <details class="card"><summary>Effective config <span class="muted small">(read-only, secrets redacted)</span></summary>${referenceTree(config)}</details>
         ${data.harnesses.length ? html`<details class="card"><summary>Harnesses</summary>${tableWrap(html`<table><thead><tr><th>Name</th><th>Platform</th></tr></thead><tbody>${data.harnesses.map((h) => html`<tr><td class="mono">${h.name}</td><td class="mono">${h.platform ?? h.name}</td></tr>`)}</tbody></table>`)}</details>` : ""}

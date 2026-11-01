@@ -237,7 +237,8 @@ function configChanges(body: Record<string, unknown>) {
     throw new UsageError("unset must be a list of config keys.");
   for (const [key, value] of Object.entries(set)) {
     if (!key.trim()) throw new UsageError("Config keys must not be empty.");
-    if (typeof value !== "string") throw new UsageError(`The value for ${key} must be a string, as on the command line.`);
+    if (typeof value !== "string")
+      throw new UsageError(`The value for ${key} must be a string, as on the command line.`);
   }
   if (Object.keys(set).length === 0 && unset.length === 0) return { saved: false };
   const result = mutateConfig((current) => {

@@ -26,7 +26,6 @@
     - listitem:
       - link "Config":
         - /url: "#/config"
-  - button "Refresh view"
   - text: akm 0.0.0 · visual-host bun
 - main:
   - heading "Overview" [level=1]

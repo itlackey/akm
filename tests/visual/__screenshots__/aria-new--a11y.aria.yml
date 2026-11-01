@@ -26,7 +26,6 @@
     - listitem:
       - link "Config":
         - /url: "#/config"
-  - button "Refresh view"
   - text: akm 0.0.0 · visual-host bun
 - main:
   - heading "New knowledge" [level=1]
@@ -40,11 +39,14 @@
   - text: Name
   - textbox "Name":
     - /placeholder: restore-database
-  - text: Subdirectory
-  - textbox "Subdirectory":
+  - paragraph: Becomes the file name and the asset's ref.
+  - text: Folder
+  - textbox "Folder":
     - /placeholder: Optional, under knowledge/
   - text: Markdown
   - textbox "Markdown": "# New document"
+  - region "Preview":
+    - heading "Preview" [level=2]
+    - heading "New document" [level=2]
+  - text: Existing files are never overwritten.
   - button "Create knowledge"
-  - heading "Preview" [level=2]
-  - heading "New document" [level=2]
