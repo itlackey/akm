@@ -1,4 +1,4 @@
-// Changes: recent commits of the write-target stash as a timeline grouped by day.
+// History: recent commits of the write-target stash as a timeline grouped by day.
 
 import { api, badge, emptyState, html, pageHeader } from "./lib.js";
 
@@ -16,7 +16,7 @@ function commit(c) {
 export async function render() {
   const data = await api("/api/changes", { limit: 100 });
   const head = pageHeader(
-    "Changes",
+    "History",
     html`Recent commits to <span class="mono">${data.bundle ?? "the stash"}</span>${data.path ? html` (<span class="mono wrap">${data.path}</span>)` : ""}.`,
   );
   if (!data.git) {
