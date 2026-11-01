@@ -12,8 +12,9 @@ import { akmExtract } from "../../src/commands/improve/extract";
 import { listProposals } from "../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ConfigError, UsageError } from "../../src/core/errors";
-import { getStateDbPath } from "../../src/core/state-db";
+import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import type { SessionData, SessionLogHarness } from "../../src/integrations/session-logs/types";
+import { upsertExtractedSession } from "../../src/storage/repositories/extract-sessions-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -238,5 +239,28 @@ describe("health reports the same proposal destination finding for enabled learn
     );
     process.env.AKM_BUNDLE_DIR = primary;
     expect((await targetCheck())?.status).toBe("unknown");
+  });
+
+  test("warns when the strategy is off but extraction ran recently (a hook-driven machine)", async () => {
+    const primary = makeDir("akm-primary-");
+    writeSandboxConfig(
+      configWith({ stash: { path: primary, writable: false } }, false) as unknown as Record<string, unknown>,
+    );
+    process.env.AKM_BUNDLE_DIR = primary;
+    const db = openStateDatabase();
+    try {
+      upsertExtractedSession(db, {
+        harness: "claude",
+        sessionId: "s1",
+        processedAt: new Date().toISOString(),
+        outcome: "no_candidates",
+        candidateCount: 0,
+        proposalCount: 0,
+        contentHash: "h",
+      });
+    } finally {
+      db.close();
+    }
+    expect((await targetCheck())?.status).toBe("warn");
   });
 });
