@@ -333,6 +333,10 @@ It is a current snapshot, not a time-series of historical queue size.
   `{ failingQueries, unverifiedQueries?, ranks }` when the continuity check flagged the pair, else `null`.
 - Refs are durable `bundle//conceptId` refs.
 
+Two further filters drill down from a chart: `week=YYYY-MM-DD` (a Monday) keeps proposals whose current decision was made
+that ISO week (UTC), and `class=judge|you|unknown|rejected|reverted` keeps one outcome class. They combine with `source`
+and `age`.
+
 ## `GET /api/proposals/:id`
 
 One proposal, as `akm proposal show` plus `akm proposal diff`. `:id` is a proposal id, or an unambiguous prefix of a

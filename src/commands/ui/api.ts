@@ -59,6 +59,7 @@ import { akmShowUnified } from "../read/show";
 import { assembleInfo } from "../sources/info";
 import { akmListSources } from "../sources/installed-stashes";
 import { assetImprove } from "./asset-improve";
+import { classifyOutcome, decidedAt, weekOf } from "./derive";
 import { readDocumentSource } from "./document-source";
 import { listFolders } from "./folders";
 import { readBundleGitStatus, readFileRevision, readRecentCommits } from "./git-read";
@@ -414,6 +415,12 @@ function proposals(query: Query) {
   if (age && !PROPOSAL_AGE_BANDS.some((band) => band === age)) {
     throw new UsageError("Invalid proposal age band.", "INVALID_FLAG_VALUE");
   }
+  // Drill-down from a chart: the proposals decided in one ISO week (`week=YYYY-MM-DD`, a Monday) or of one outcome class.
+  const week = query.get("week") || "";
+  if (week && !/^\d{4}-\d{2}-\d{2}$/.test(week)) throw new UsageError("Invalid week.", "INVALID_FLAG_VALUE");
+  const outcome = query.get("class") || "";
+  if (outcome && !["judge", "you", "unknown", "rejected", "reverted"].includes(outcome))
+    throw new UsageError("Invalid outcome class.", "INVALID_FLAG_VALUE");
   const now = Date.now();
   return withReadonlyStateDb(
     (db) => {
@@ -429,7 +436,11 @@ function proposals(query: Query) {
       const bySource: Record<string, number> = {};
       for (const proposal of picked) bySource[proposal.source] = (bySource[proposal.source] ?? 0) + 1;
       const filtered = picked.filter(
-        (p) => (!source || p.source === source) && (!age || proposalAgeBand(p, now) === age),
+        (p) =>
+          (!source || p.source === source) &&
+          (!age || proposalAgeBand(p, now) === age) &&
+          (!week || weekOf(decidedAt(p)) === week) &&
+          (!outcome || classifyOutcome(p) === outcome),
       );
       return {
         status,

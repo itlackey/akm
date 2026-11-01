@@ -470,6 +470,13 @@ describe("endpoints", () => {
     expect(improve.proposals).toHaveLength(1);
     expect(improve.usageByWeek.length).toBeGreaterThan(10);
     expect((await api(s, "/api/asset/improve")).status).toBe(400);
+    // A chart's drill-down: the proposals decided in a week, or of one class.
+    const week = impact.weeks.at(-1);
+    expect(
+      (await data(s, `/api/proposals?status=recent&week=${week}`)).proposals.map((p: { id: string }) => p.id),
+    ).toEqual([accepted]);
+    expect((await data(s, "/api/proposals?status=recent&class=rejected")).proposals).toHaveLength(0);
+    expect((await api(s, "/api/proposals?status=recent&class=nope")).status).toBe(400);
   });
 
   test("GET /api/retrieval returns the per-day search series for a longer window than the overview's", async () => {
