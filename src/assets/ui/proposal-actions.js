@@ -8,6 +8,7 @@
 import { ApiError, badge, html, mount, post, proposalHref } from "./lib.js";
 
 const REASON_MAX = 2000;
+const NOOP_REASON = "No-op: the proposed content matches the current asset.";
 
 /** What went wrong, in words a reviewer can act on; the server's own message and code are shown beside it. */
 export function describeError(error) {
@@ -40,7 +41,7 @@ function commitLine(commit) {
 
 // ---- one proposal ------------------------------------------------------------
 
-function detailView(state, nextId, query = "") {
+function detailView(state, nextId, query = "", noop = false) {
   const busy = state.mode === "busy";
   switch (state.mode) {
     case "done": {
@@ -63,41 +64,47 @@ function detailView(state, nextId, query = "") {
     case "reject":
     case "busy":
       if (state.mode === "busy" && state.kind === "accept") {
-        return html`<p class="btn-row"><button type="button" disabled>Accept</button><button type="button" class="btn-secondary" disabled>Reject</button></p>
-          <p class="muted" role="status">Accepting...</p>`;
+        // The buttons stay in place and only report busy, so focus has somewhere to be (B-27).
+        return html`<p class="btn-row"><button type="button" aria-disabled="true">Accept</button><button type="button" class="btn-secondary" aria-disabled="true">Reject</button></p>
+          <p class="muted" role="status" tabindex="-1">Accepting...</p>`;
       }
-      return html`${state.error ? errorBlock(state.error) : ""}<label for="reject-reason"><strong>Why reject this proposal?</strong> <span class="muted small">Required, up to ${REASON_MAX} characters.</span></label>
-        <textarea id="reject-reason" data-reason rows="3" maxlength="${REASON_MAX}" required ${busy ? "disabled" : ""}>${state.reason}</textarea>
-        ${state.reasonMissing ? html`<p class="field-error" role="alert">Enter a reason before rejecting.</p>` : ""}
-        <p class="btn-row"><button type="button" class="btn-danger" data-act="reject-confirm" ${busy ? "disabled" : ""}>Confirm reject</button><button type="button" class="btn-secondary" data-act="cancel" ${busy ? "disabled" : ""}>Cancel</button></p>
-        ${busy ? html`<p class="muted" role="status">Rejecting...</p>` : ""}`;
+      return html`${state.error ? errorBlock(state.error) : ""}<label for="reject-reason"><strong>Why reject this proposal?</strong> <span class="muted small" id="reject-reason-hint">Required, up to ${REASON_MAX} characters.</span></label>
+        <textarea id="reject-reason" data-reason rows="3" required aria-describedby="reject-reason-hint${state.reasonError ? " reject-reason-error" : ""}" ${state.reasonError ? html`aria-invalid="true"` : ""} ${busy ? "disabled" : ""}>${state.reason}</textarea>
+        ${state.reasonError ? html`<p class="field-error" id="reject-reason-error" role="alert">${state.reasonError}</p>` : ""}
+        <p class="btn-row"><button type="button" class="btn-danger" data-act="reject-confirm" ${busy ? html`aria-disabled="true"` : ""}>Confirm reject</button><button type="button" class="btn-secondary" data-act="cancel" ${busy ? html`aria-disabled="true"` : ""}>Cancel</button></p>
+        ${busy ? html`<p class="muted" role="status" tabindex="-1">Rejecting...</p>` : ""}`;
     default:
+      if (noop) {
+        return html`${state.error ? errorBlock(state.error) : ""}
+          <div class="notice notice-warn"><p class="state-title">This proposal changes nothing</p><p>The proposed content matches the asset as it is, so accepting would write nothing and record no commit. Rejecting it clears it from the queue.</p></div>
+          <p class="btn-row"><button type="button" data-act="reject-noop">Reject as no-op</button><button type="button" class="btn-secondary" data-act="accept">Accept anyway</button></p>`;
+      }
       return html`${state.error ? errorBlock(state.error) : ""}
         <p class="btn-row"><button type="button" data-act="accept">Accept</button><button type="button" class="btn-secondary" data-act="reject">Reject</button></p>`;
   }
 }
 
 /** The action area of a pending proposal's page; {@link wireDetailActions} brings it to life. */
-export function detailActions(nextId, query = "") {
-  return html`<section class="actions" data-actions aria-label="Decide this proposal">${detailView({ mode: "idle" }, nextId, query)}</section>`;
+export function detailActions(nextId, query = "", noop = false) {
+  return html`<section class="actions" data-actions aria-label="Decide this proposal">${detailView({ mode: "idle" }, nextId, query, noop)}</section>`;
 }
 
 /**
  * Attach the Accept / Reject controls inside `root`. `onDecided(status)` runs after the server confirms, so the page can
  * show the new status.
  */
-export function wireDetailActions(root, { id, nextId, query = "", onDecided }) {
+export function wireDetailActions(root, { id, nextId, query = "", noop = false, onDecided }) {
   const region = root.querySelector("[data-actions]");
   if (!region) return;
   let state = { mode: "idle", reason: "" };
   const draw = (focus) => {
-    mount(region, detailView(state, nextId, query));
+    mount(region, detailView(state, nextId, query, noop));
     region.querySelector(focus)?.focus();
   };
 
   const run = async (kind, path, body) => {
     state = { ...state, mode: "busy", kind, error: null };
-    draw();
+    draw("[role=status]");
     try {
       const result = await post(path, body);
       state = { mode: "done", kind, result, commit: result.commit ?? null, reason: state.reason };
@@ -112,10 +119,20 @@ export function wireDetailActions(root, { id, nextId, query = "", onDecided }) {
   region.addEventListener("input", (event) => {
     if (!event.target.matches("[data-reason]")) return;
     state.reason = event.target.value;
-    if (state.reasonMissing && state.reason.trim() !== "") {
-      state.reasonMissing = false;
+    if (state.reasonError && state.reason.trim() !== "" && state.reason.trim().length <= REASON_MAX) {
+      state.reasonError = "";
       region.querySelector(".field-error")?.remove();
+      event.target.removeAttribute("aria-invalid");
+      event.target.setAttribute("aria-describedby", "reject-reason-hint");
     }
+  });
+  // Esc backs out of a confirmation and returns focus to the control that opened it.
+  region.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || (state.mode !== "confirm-accept" && state.mode !== "reject")) return;
+    event.preventDefault();
+    const control = state.mode === "reject" ? "reject" : "accept";
+    state = { mode: "idle", reason: state.reason };
+    draw(`[data-act=${control}]`);
   });
   region.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-act]");
@@ -133,10 +150,20 @@ export function wireDetailActions(root, { id, nextId, query = "", onDecided }) {
         state = { mode: "reject", reason: state.reason };
         draw("[data-reason]");
         break;
+      case "reject-noop":
+        state = { mode: "reject", reason: NOOP_REASON };
+        draw("[data-act=reject-confirm]");
+        break;
       case "reject-confirm": {
         const reason = state.reason.trim();
-        if (reason === "" || reason.length > REASON_MAX) {
-          state = { ...state, mode: "reject", reasonMissing: true };
+        const reasonError =
+          reason === ""
+            ? "Enter a reason before rejecting."
+            : reason.length > REASON_MAX
+              ? `The reason is ${reason.length} characters; the limit is ${REASON_MAX}. Shorten it by ${reason.length - REASON_MAX}.`
+              : "";
+        if (reasonError) {
+          state = { ...state, mode: "reject", reasonError };
           draw("[data-reason]");
           break;
         }
@@ -161,8 +188,8 @@ function batchView(state, count) {
       return html`<span>Accept ${state.ids.length} ${state.ids.length === 1 ? "proposal" : "proposals"}? They are written and committed together.</span>
         <span class="btn-row"><button type="button" data-act="batch-confirm">Confirm accept</button><button type="button" class="btn-secondary" data-act="batch-cancel">Cancel</button></span>`;
     case "busy":
-      return html`<span role="status">Accepting ${state.ids.length}...</span>
-        <span class="btn-row"><button type="button" disabled>Accept selected</button></span>`;
+      return html`<span role="status" tabindex="-1">Accepting ${state.ids.length}...</span>
+        <span class="btn-row"><button type="button" aria-disabled="true">Accept selected</button></span>`;
     case "results": {
       const { data } = state;
       return html`<div class="batch-results" role="status" tabindex="-1">
@@ -256,7 +283,7 @@ export function wireBatch(root, { reload }) {
       case "batch-confirm": {
         const { ids, refs } = state;
         state = { mode: "busy", ids, refs };
-        draw();
+        draw("[role=status]");
         try {
           const data = await post("/api/proposals/accept", { ids });
           state = { mode: "results", data, refs };

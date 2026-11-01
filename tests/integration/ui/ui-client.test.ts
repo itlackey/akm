@@ -639,7 +639,7 @@ describe("pages", () => {
     const list = (await (await view("proposals.js", "renderList"))(ctx())).text;
     expect(list).toContain(`<input type="checkbox" data-select value="${proposalId}" data-ref="stash//lessons/rg"`);
     expect(list).toContain('aria-label="Select stash//lessons/rg"');
-    expect(list).toContain("select all in this group");
+    expect(list).toContain("Select all 1 reflect proposal");
     expect(list).toContain('<section data-group="reflect">');
     expect(list).toContain('<div class="batch-bar" data-batch-bar hidden></div>');
     // The recent list has no selection.

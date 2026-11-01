@@ -29,7 +29,7 @@ function listHref(status, source, age = "") {
 
 function gate(decision) {
   if (!decision) return html`<span class="muted">-</span>`;
-  const kind = decision.outcome === "auto-rejected" ? "fail" : decision.outcome === "deferred" ? "warn" : "info";
+  const kind = decision.outcome === "auto-rejected" ? "neutral" : decision.outcome === "deferred" ? "warn" : "info";
   return html`${badge(decision.outcome, kind)}${decision.reason ? html` <span class="muted small">${decision.reason}</span>` : ""}`;
 }
 
@@ -67,7 +67,7 @@ function pendingView(data, source, query = "") {
         : [...groups].map(
             ([name, items]) =>
               html`<section data-group="${name}"><h2>${name} <span class="muted num">${items.length}</span></h2>
-                <label class="select-group"><input type="checkbox" data-select-group> select all in this group</label>${tableWrap(
+                <label class="select-group"><input type="checkbox" data-select-group aria-label="Select all ${items.length} ${name} proposals"> Select all ${items.length} ${name} ${items.length === 1 ? "proposal" : "proposals"}</label>${tableWrap(
                   html`<table><thead><tr><th class="select"><span class="sr-only">Select</span></th><th>Asset</th><th>Waiting</th><th>Gate decision</th><th class="r">Confidence</th></tr></thead><tbody>${items.map(
                     (p) =>
                       html`<tr>${selectCell(p)}<td>${refCell(p, query)}</td><td>${when(p.waitingSince)}</td><td>${gate(p.gateDecision)}</td><td class="r num">${typeof p.confidence === "number" ? p.confidence.toFixed(2) : "-"}</td></tr>`,
@@ -80,7 +80,7 @@ function pendingView(data, source, query = "") {
 function outcomeBadge(status) {
   return badge(
     status,
-    status === "accepted" ? "ok" : status === "rejected" ? "fail" : status === "pending" ? "info" : "warn",
+    status === "accepted" ? "ok" : status === "rejected" ? "neutral" : status === "pending" ? "info" : "warn",
   );
 }
 
@@ -210,6 +210,8 @@ export async function renderDetail(ctx) {
   const nextId = pending ? await nextPendingId(p.id, ctx.query) : null;
   const query = String(ctx.query);
   const diff = data.diff ? diffSection(data.diff) : null;
+  // A proposal whose content equals the asset has nothing to accept (B-15).
+  const noop = Boolean(pending && data.diff && !data.diff.isNew && data.diff.before === data.diff.after);
   if (diff?.wire) ctx.after.push((root) => diff.wire(root));
   if (pending) {
     ctx.after.push((root) =>
@@ -217,6 +219,7 @@ export async function renderDetail(ctx) {
         id: p.id,
         nextId,
         query,
+        noop,
         onDecided: (status) => {
           const target = root.querySelector("[data-status]");
           if (target) mount(target, statusBadges(p, status));
@@ -224,13 +227,13 @@ export async function renderDetail(ctx) {
       }),
     );
   }
-  return html`<p class="crumbs"><a href="#/proposals${query ? `?${query}` : ""}">Back to queue${ctx.query.get("source") ? `: ${ctx.query.get("source")}` : ""}</a> / <span class="mono">${p.id.slice(0, 8)}</span></p>
+  return html`<nav class="crumbs" aria-label="Breadcrumb"><a href="#/proposals${query ? `?${query}` : ""}">Proposals${ctx.query.get("source") ? `: ${ctx.query.get("source")}` : ""}</a> / <span aria-current="page" class="mono wrap">${p.ref}</span></nav>
     ${pageHeader(html`<span class="mono wrap">${p.ref}</span>`)}
     <div class="badges" data-status>${statusBadges(p, p.status)}</div>
     ${p.retirement ? retirementBlock(p.retirement) : ""}
     ${findings.length > 0 ? html`<section><h2>Validation</h2><ul class="plain">${findings.map((f) => html`<li>${badge(f.severity ?? "info", f.severity === "error" ? "fail" : "warn")} <span class="mono small">${f.kind}</span> ${f.message}</li>`)}</ul></section>` : ""}
     <section><h2>Proposed change</h2>${diff ? html`<p class="muted small">${data.diff.isNew ? "New asset. " : ""}Target <span class="mono wrap">${data.diff.targetPath ?? p.proposedTarget?.root ?? ""}</span></p>${diff.markup}` : emptyState("No diff available.", data.diffError ?? "")}</section>
-    ${pending ? detailActions(nextId, query) : ""}
+    ${pending ? detailActions(nextId, query, noop) : ""}
     <details><summary>Proposal details</summary>${definitionList([
       ["Id", html`<span class="mono">${p.id}</span>`],
       ["Created", html`${when(p.createdAt)} <span class="muted small">${fmtDateTime(p.createdAt)}</span>`],

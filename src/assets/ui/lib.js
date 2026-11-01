@@ -170,9 +170,9 @@ export function fmtDateTime(iso) {
   return Number.isNaN(t) ? "-" : new Date(t).toLocaleString();
 }
 
-/** A relative time with the absolute time as its tooltip. */
+/** A relative time; the absolute time is its tooltip and is also in the text for a reader who cannot hover. */
 export function when(iso) {
-  return html`<time datetime="${iso ?? ""}" title="${fmtDateTime(iso)}">${ago(iso)}</time>`;
+  return html`<time datetime="${iso ?? ""}" title="${fmtDateTime(iso)}">${ago(iso)}<span class="sr-only"> (${fmtDateTime(iso)})</span></time>`;
 }
 
 // ---- small building blocks -------------------------------------------------
