@@ -221,56 +221,17 @@ export function searchReturn(query) {
   return /^#\/search(?:\?|$)/.test(value) ? value : "";
 }
 
-/** Status pill: `kind` is ok | warn | fail | neutral | info. */
-export function badge(text, kind = "neutral") {
-  return html`<span class="badge badge-${kind}">${text}</span>`;
-}
-
-export function statusKind(status) {
-  if (status === "pass" || status === "ok") return "ok";
-  if (status === "warn") return "warn";
-  if (status === "fail") return "fail";
-  return "neutral";
-}
-
-export function tableWrap(inner) {
-  // Focusable, so a keyboard user can scroll a table that is wider than its column.
-  return html`<div class="table-wrap" tabindex="0" role="group" aria-label="Table">${inner}</div>`;
-}
-
-export function emptyState(title, detail = "") {
-  return html`<div class="state state-empty"><p class="state-title">${title}</p>${detail ? html`<p>${detail}</p>` : ""}</div>`;
-}
-
-export function loadingState(label = "Loading") {
-  return html`<div class="state state-loading" role="status"><span class="spinner" aria-hidden="true"></span>${label}...</div>`;
-}
-
-export function errorState(error) {
-  if (error instanceof ApiError && error.status === 401) {
-    return html`<div class="state state-error" role="alert">
-      <p class="state-title">Not signed in</p>
-      <p>${error.message} Open the URL printed by <code>akm ui</code> (it ends in <code>?token=...</code>) to start a session.</p>
-    </div>`;
-  }
-  const code = error instanceof ApiError ? error.code : "ERROR";
-  const message = error instanceof Error ? error.message : String(error);
-  return html`<div class="state state-error" role="alert">
-    <p class="state-title">Could not load this page</p>
-    <p>${message}</p>
-    <p class="muted"><code>${code}</code></p>
-  </div>`;
-}
-
-export function pageHeader(title, subtitle = "") {
-  return html`<header class="page-head"><h1>${title}</h1>${subtitle ? html`<p class="muted">${subtitle}</p>` : ""}</header>`;
-}
-
-/** A definition list from [label, value] pairs; null/undefined/empty values are skipped. */
-export function definitionList(pairs) {
-  const rows = pairs.filter(([, value]) => value !== null && value !== undefined && value !== "");
-  return html`<dl class="kv">${rows.map(([label, value]) => html`<dt>${label}</dt><dd>${value}</dd>`)}</dl>`;
-}
+// The shared markup builders live in components.js; they are re-exported here so pages keep one import.
+export {
+  badge,
+  definitionList,
+  emptyState,
+  errorState,
+  loadingState,
+  pageHeader,
+  statusKind,
+  tableWrap,
+} from "./components.js";
 
 export function pretty(value) {
   return JSON.stringify(value, null, 2);

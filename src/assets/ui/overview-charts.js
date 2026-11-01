@@ -1,4 +1,5 @@
 import { eventStrip, lines, pChartLine, stackedColumns, verticalBars, wireChart } from "./chart-view.js";
+import { barList } from "./components.js";
 import {
   api,
   badge,
@@ -35,14 +36,6 @@ function activity(ctx, metrics) {
     ${days.length ? chart("activity-chart", "Recorded operations by UTC day, stacked by kind. Exact counts follow in Data and details.") : emptyState("No recorded activity in this window.")}
     ${dataTable(html`<table><thead><tr><th>UTC day</th>${Object.values(labels).map((label) => html`<th class="r">${label}</th>`)}</tr></thead><tbody>${days.map((d) => html`<tr><th>${d.day}${d.partial ? html` <span class="muted small">(partial)</span>` : ""}</th>${keys.map((key) => html`<td class="r num">${fmtNum(d[key])}</td>`)}</tr>`)}</tbody></table>`)}
   </section>`;
-}
-
-/** Rows of a label, a bar drawn to scale against the largest row, and the figures. No chart library, no controls. */
-function barList(rows, { max, label }) {
-  return html`<ul class="bar-list" aria-label="${label}">${rows.map(
-    (row) =>
-      html`<li><span class="bar-name">${row.name}</span><span class="bar-track" aria-hidden="true"><span class="bar-fill" data-tone="${row.tone ?? ""}" style="--w:${max ? Math.max(row.value / max, row.value ? 0.02 : 0) : 0}"></span></span><span class="bar-value num">${row.text}</span>${row.note ? html`<span class="bar-note muted small">${row.note}</span>` : ""}</li>`,
-  )}</ul>`;
 }
 
 function modelTable(rows) {
@@ -120,7 +113,7 @@ function retrievalCard(ctx, trend, data) {
     <h3>Search time</h3>
     <div class="echarts-view" data-height="short" id="trend-latency" role="img" aria-label="Median search time by day. A gap means no timing was recorded that day."></div>
     <p class="muted small">Your own searches only. A day or week marked as partial is still filling. Found-nothing describes retrieval, not whether an answer was right.</p>
-    <details><summary>Data and details</summary>${tableWrap(html`<table><thead><tr><th>Week of</th><th class="r">Searches</th><th class="r">Found nothing</th><th class="r">Share</th><th class="r">Usual range</th></tr></thead><tbody>${weekly.map((w) => html`<tr><th>${w.week}</th><td class="r num">${fmtNum(w.n)}</td><td class="r num">${fmtNum(w.x)}</td><td class="r num">${w.rate === null ? "n/a" : fmtPct(w.rate)}${w.signal ? html` <span class="badge badge-warn">unusual</span>` : ""}</td><td class="r num">${w.lower === null ? "n/a" : `${fmtPct(w.lower)} to ${fmtPct(w.upper)}`}</td></tr>`)}</tbody></table>`)}</details>
+    <details><summary>Data and details</summary>${tableWrap(html`<table><thead><tr><th>Week of</th><th class="r">Searches</th><th class="r">Found nothing</th><th class="r">Share</th><th class="r">Usual range</th></tr></thead><tbody>${weekly.map((w) => html`<tr><th>${w.week}</th><td class="r num">${fmtNum(w.n)}</td><td class="r num">${fmtNum(w.x)}</td><td class="r num">${w.rate === null ? "n/a" : fmtPct(w.rate)}${w.signal ? html` <span class="badge" data-tone="warn">unusual</span>` : ""}</td><td class="r num">${w.lower === null ? "n/a" : `${fmtPct(w.lower)} to ${fmtPct(w.upper)}`}</td></tr>`)}</tbody></table>`)}</details>
   </section>`;
 }
 

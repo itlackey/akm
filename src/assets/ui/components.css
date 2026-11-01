@@ -177,32 +177,32 @@
     white-space: nowrap;
   }
 
-  .badge-ok {
+  .badge[data-tone="ok"] {
     color: var(--ok);
     background: var(--ok-bg);
   }
 
-  .badge-warn {
+  .badge[data-tone="warn"] {
     color: var(--warn);
     background: var(--warn-bg);
   }
 
-  .badge-fail {
+  .badge[data-tone="fail"] {
     color: var(--fail);
     background: var(--fail-bg);
   }
 
-  .badge-info {
+  .badge[data-tone="info"] {
     color: var(--info);
     background: var(--info-bg);
   }
 
-  .badge-accent {
+  .badge[data-tone="accent"] {
     color: var(--s4);
     background: var(--surface-2);
   }
 
-  .badge-neutral {
+  .badge[data-tone="neutral"] {
     color: var(--muted);
     background: var(--surface-2);
     border-color: var(--border);
