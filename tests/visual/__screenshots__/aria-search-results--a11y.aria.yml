@@ -6,20 +6,26 @@
       - link "Overview":
         - /url: "#/overview"
     - listitem:
+      - link /Proposals \d+/:
+        - /url: "#/proposals"
+    - listitem:
+      - link "Improve impact":
+        - /url: "#/improve"
+    - listitem:
+      - link "History":
+        - /url: "#/changes"
+    - listitem:
+      - link "Search":
+        - /url: "#/search"
+    - listitem:
+      - link "New knowledge":
+        - /url: "#/new"
+    - listitem:
       - link "Bundles":
         - /url: "#/bundles"
     - listitem:
       - link "Config":
         - /url: "#/config"
-    - listitem:
-      - link "Proposals":
-        - /url: "#/proposals"
-    - listitem:
-      - link "Changes":
-        - /url: "#/changes"
-    - listitem:
-      - link "Search":
-        - /url: "#/search"
   - button "Refresh view"
   - text: akm 0.0.0 · visual-host bun
 - main:
@@ -31,6 +37,7 @@
     - text: · Ctrl/Cmd+K opens search
   - search:
     - searchbox "Query": deploy
+    - button "Search"
     - combobox "Type":
       - option "All types" [selected]
       - option "command"
@@ -49,7 +56,6 @@
       - option /\d+/
       - option /\d+/
     - group: Scope filters
-    - button "Search"
   - paragraph: 2 results, keyword mode, 0 ms.
   - list:
     - listitem:

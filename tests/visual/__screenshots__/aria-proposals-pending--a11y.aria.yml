@@ -6,20 +6,26 @@
       - link "Overview":
         - /url: "#/overview"
     - listitem:
+      - link /Proposals \d+/:
+        - /url: "#/proposals"
+    - listitem:
+      - link "Improve impact":
+        - /url: "#/improve"
+    - listitem:
+      - link "History":
+        - /url: "#/changes"
+    - listitem:
+      - link "Search":
+        - /url: "#/search"
+    - listitem:
+      - link "New knowledge":
+        - /url: "#/new"
+    - listitem:
       - link "Bundles":
         - /url: "#/bundles"
     - listitem:
       - link "Config":
         - /url: "#/config"
-    - listitem:
-      - link "Proposals":
-        - /url: "#/proposals"
-    - listitem:
-      - link "Changes":
-        - /url: "#/changes"
-    - listitem:
-      - link "Search":
-        - /url: "#/search"
   - button "Refresh view"
   - text: akm 0.0.0 · visual-host bun
 - main:
@@ -30,12 +36,17 @@
       - /url: "#/proposals"
     - link "Recent":
       - /url: "#/proposals?status=recent"
-  - heading "Waiting for review" [level=2]
-  - paragraph: /All \d+ pending proposals\. Age starts at the last reopening, or creation\./
-  - paragraph: Under 1 day 1–7 days 7+ days Unknown age
-  - img "Pending proposals by source and waiting age. Select a segment or a table link to review that queue.":
-    - img: Pending consolidate consolidate-pair distill extract feedback reflect 0 1 2 3 4
-  - group: Queue counts and filters
+  - region "Waiting for review":
+    - text: /Waiting for review \d+ age counts from the last reopening/
+    - link "Under 1 day 4 show these":
+      - /url: "#/proposals?age=underDay"
+    - link "1–7 days 4 show these":
+      - /url: "#/proposals?age=underWeek"
+    - link "7+ days 1 show these":
+      - /url: "#/proposals?age=older"
+    - link "Unknown age 1 show these":
+      - /url: "#/proposals?age=unknown"
+    - group: Counts by process and age
   - link /All \d+/:
     - /url: "#/proposals"
   - link "consolidate 1":

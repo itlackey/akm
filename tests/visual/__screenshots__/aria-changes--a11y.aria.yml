@@ -6,24 +6,30 @@
       - link "Overview":
         - /url: "#/overview"
     - listitem:
+      - link /Proposals \d+/:
+        - /url: "#/proposals"
+    - listitem:
+      - link "Improve impact":
+        - /url: "#/improve"
+    - listitem:
+      - link "History":
+        - /url: "#/changes"
+    - listitem:
+      - link "Search":
+        - /url: "#/search"
+    - listitem:
+      - link "New knowledge":
+        - /url: "#/new"
+    - listitem:
       - link "Bundles":
         - /url: "#/bundles"
     - listitem:
       - link "Config":
         - /url: "#/config"
-    - listitem:
-      - link "Proposals":
-        - /url: "#/proposals"
-    - listitem:
-      - link "Changes":
-        - /url: "#/changes"
-    - listitem:
-      - link "Search":
-        - /url: "#/search"
   - button "Refresh view"
   - text: akm 0.0.0 · visual-host bun
 - main:
-  - heading "Changes" [level=1]
+  - heading "History" [level=1]
   - paragraph: Recent commits to stash (/tmp/akm-visual-loaded/stash).
   - heading /\d+-\d+-\d+ 1/ [level=2]
   - list:
