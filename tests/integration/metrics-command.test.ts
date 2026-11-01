@@ -317,6 +317,26 @@ describe("akm metrics", () => {
     expect(result.notes.some((note) => note.startsWith("Selects deduped from "))).toBe(true);
   });
 
+  test("selects decode a stored source and searchId, and tolerate malformed metadata as legacy", async () => {
+    const ts = new Date(Date.now() - HOUR).toISOString();
+    const state = openStateDatabase();
+    try {
+      const insert = state.prepare(
+        "INSERT INTO events (event_type, ts, ref, metadata_json) VALUES ('select', ?, ?, ?)",
+      );
+      insert.run(ts, "main//skills/a", JSON.stringify({ searchId: "s3", source: "improve" }));
+      insert.run(ts, "main//skills/b", JSON.stringify({ searchId: "s4", source: "user" }));
+      insert.run(ts, "main//skills/c", JSON.stringify({ searchId: 123, source: "" }));
+      insert.run(ts, "main//skills/d", "{not json");
+    } finally {
+      state.close();
+    }
+    const { result } = await metrics("--since", "1d");
+    // The improve-sourced select is excluded from the default user source; the user-sourced one and the
+    // two legacy rows (non-string/empty values, invalid JSON; the column is NOT NULL) are kept.
+    expect(result.usage.totals.selects).toBe(3);
+  });
+
   test("a usage row written in the window end's own second is inside the window", async () => {
     // created_at has whole-second resolution; the window ends at now, with milliseconds.
     seedUsage([{ type: "show", at: "2026-01-10 12:00:00", ref: "main//skills/now" }]);
