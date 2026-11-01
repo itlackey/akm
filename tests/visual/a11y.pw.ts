@@ -44,16 +44,11 @@ const REFS: [scope: RegExp, key: RegExp, ref: string][] = [
   [/^proposal-/, /^axe .* target-size$/, "#1388"],
   [/^proposal-create$/, /^text-spacing 320$/, "#1389"],
   [/./, /^axe .* scrollable-region-focusable$/, "B-40"],
-  [/./, /^axe .* (page-has-heading-one|heading-order)$/, "B-41"],
-  [/./, /^axe .* (landmark-|region$)/, "B-30"],
-  [/./, /^axe .* aria-allowed-attr$/, "B-44"],
   [/./, /^axe forced-colors color-contrast$/, "#1390"],
-  [/./, /^reflow /, "B-23"],
   [/./, /^route-status/, "B-19"],
   [/./, /^focus-after-route/, "B-21"],
   [/./, /^focus-async overview/, "B-22"],
   [/./, /^focus-async proposal/, "B-27"],
-  [/./, /^focus-obscured /, "B-63"],
 ];
 const refFor = (scope: string, key: string): string => {
   const ref = REFS.find(([scopes, keys]) => scopes.test(scope) && keys.test(key))?.[2];

@@ -179,8 +179,8 @@ function violations(css: string, scheme: Scheme): Record<string, string> {
     const fg = resolve(tokens, fgName);
     const bg = resolve(tokens, pair.bg);
     if (!fg || !bg) {
-      // A token the plan defines and the stylesheet does not, or one that is not a plain colour.
-      if (!tokens.has(fgName) || !tokens.has(pair.bg)) fail(key, "token not defined yet");
+      // Never skip: a missing token and a value that is not a plain hex colour both fail, so the pair cannot pass unchecked.
+      fail(key, !tokens.has(fgName) || !tokens.has(pair.bg) ? "token not defined yet" : "not a plain hex colour");
       continue;
     }
     const ratio = contrast(fg, bg);
@@ -189,23 +189,26 @@ function violations(css: string, scheme: Scheme): Record<string, string> {
 
   const accent = resolve(tokens, "--accent");
   const s1 = resolve(tokens, "--s1");
-  if (accent && s1) {
+  if (!accent || !s1) {
+    fail(
+      "accent-vs-series --accent from --s1",
+      tokens.has("--accent") && tokens.has("--s1") ? "not a plain hex colour" : "token not defined yet",
+    );
+  } else {
     const distance = deltaE(accent, s1);
     if (distance < 0.08)
       fail("accent-vs-series --accent from --s1", `OKLab distance ${distance.toFixed(3)}, needs 0.08`);
   }
 
-  // The age ramp is ordinal: lightness falls as age grows, and the light end stays visible on the surface.
+  // The age ramp is ordinal by contrast with the surface (older reads stronger in either scheme), and its weak end stays visible.
   const ramp = ["--age-1", "--age-2", "--age-3"].map((name) => resolve(tokens, name));
-  if (ramp.some((colour) => colour === null)) {
-    fail("age-ramp --age-1..3", "token not defined yet");
+  const surface = resolve(tokens, "--surface");
+  if (ramp.some((colour) => colour === null) || !surface) {
+    fail("age-ramp --age-1..3", "token not defined yet or not a plain hex colour");
   } else {
-    const lum = (ramp as Rgb[]).map(luminance);
-    const surface = resolve(tokens, "--surface");
-    const ordered = (lum[0] as number) > (lum[1] as number) && (lum[1] as number) > (lum[2] as number);
-    if (!ordered) fail("age-ramp --age-1..3", "lightness is not monotone");
-    else if (surface && contrast(ramp[0] as Rgb, surface) < 2)
-      fail("age-ramp --age-1 on --surface", "light end below 2:1");
+    const [c1, c2, c3] = (ramp as Rgb[]).map((colour) => contrast(colour, surface)) as [number, number, number];
+    if (!(c1 < c2 && c2 < c3)) fail("age-ramp --age-1..3", "contrast with --surface does not rise with age");
+    else if (c1 < 2) fail("age-ramp --age-1 on --surface", "weak end below 2:1");
   }
   return found;
 }
@@ -241,6 +244,14 @@ describe("token contrast (plan 7.1)", () => {
     expect(resolve(schemeTokens(pairs, "light"), "--b")).toEqual([255, 255, 255]);
     expect(resolve(schemeTokens(media, "dark"), "--a")).toEqual([0, 0, 0]);
     expect(resolve(schemeTokens(media, "light"), "--a")).toEqual([255, 255, 255]);
+  });
+
+  test("the plan's dark age ramp passes, and an unresolvable token fails instead of being skipped", () => {
+    const ramp = ":root{--surface:#161b23;--age-1:#3a5a9e;--age-2:#5f8ae8;--age-3:#a9c3f7}";
+    expect(violations(ramp, "dark")["dark age-ramp --age-1..3"]).toBeUndefined();
+    expect(violations(ramp, "dark")["dark age-ramp --age-1 on --surface"]).toBeUndefined();
+    const odd = ":root{--surface:#161b23;--muted:oklch(70% 0.1 250)}";
+    expect(violations(odd, "dark")["dark text --muted on --surface"]).toBe("not a plain hex colour");
   });
 
   test("the contrast formula matches known ratios", () => {
