@@ -168,7 +168,10 @@ function outcomesSection(impact) {
   const sum = (process, keys) => process.weeks.reduce((n, w) => n + keys.reduce((m, key) => m + w[key], 0), 0);
   const rows = outcomes.map((process) => ({
     source: process.source,
-    total: sum(process, CLASSES.map((c) => c.key)),
+    total: sum(
+      process,
+      CLASSES.map((c) => c.key),
+    ),
     kept: sum(process, ["judge", "you", "unknown"]),
     parts: CLASSES.map((c) => ({ ...c, n: sum(process, [c.key]) })),
   }));
