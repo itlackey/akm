@@ -4,12 +4,6 @@
     "dark": {}
   },
   "findings": {
-    "_focus-async": {
-      "focus-async overview window": {
-        "count": 1,
-        "ref": "B-22"
-      }
-    },
     "proposal-create": {
       "axe contrast-more target-size": {
         "count": 1,

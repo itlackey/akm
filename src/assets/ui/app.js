@@ -170,6 +170,12 @@ async function route() {
   markNav(entry ? (entry.nav ?? entry.name) : "");
   document.title = `${entry ? entry.label : "Not found"} · akm ui`;
   main.setAttribute("aria-busy", "true");
+  // Focus inside the page would fall to the body when the loading state replaces it; hold it on main until the
+  // page is drawn and the control or heading below takes it back (B-22).
+  if (focus) {
+    main.tabIndex = -1;
+    main.focus({ preventScroll: true });
+  }
   mount(main, loadingState());
   const ctx = { query, param, after: [], announcement: null, signal: pageRequests.signal };
   try {
@@ -197,10 +203,11 @@ async function route() {
           ?.focus({ preventScroll: true });
       }
       // `autofocus` only applies on a document's first load, so honour it for content mounted later.
-      if (document.activeElement === document.body) main.querySelector("[autofocus]")?.focus({ preventScroll: true });
+      if (document.activeElement === document.body || document.activeElement === main)
+        main.querySelector("[autofocus]")?.focus({ preventScroll: true });
       // A new page takes focus at its heading, so a keyboard user starts at the top and a screen reader names the page.
       const heading = main.querySelector("h1");
-      if (heading && !main.contains(document.activeElement)) {
+      if (heading && (document.activeElement === main || !main.contains(document.activeElement))) {
         heading.tabIndex = -1;
         heading.focus({ preventScroll: true });
       }
