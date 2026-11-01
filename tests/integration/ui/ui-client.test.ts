@@ -410,7 +410,7 @@ describe("pages", () => {
     const detail = (await (await view("proposals.js", "renderDetail"))(ctx("", proposalId))).text;
     // A new asset is shown alone, every line added, with its line numbers.
     expect(detail).toContain(
-      '<div class="drow add"><span class="ln"></span><span class="ln">1</span><span class="sign">+</span>',
+      '<div class="drow add" ><span class="ln"></span><span class="ln">1</span><span class="sign" aria-hidden="true">+</span><span class="sr-only">Added: </span>',
     );
     expect(detail).not.toContain("data-diff-mode");
     expect(detail).toContain("&lt;b&gt;bold?&lt;/b&gt;");
@@ -776,7 +776,9 @@ describe("pages", () => {
       expect(side).toContain("when_to_use: Often");
       expect(side.match(/class="drow add"/g)?.length).toBeGreaterThanOrEqual(1);
       expect(side.match(/class="drow del"/g)?.length).toBe(1);
-      expect(side).toContain('<span class="w">');
+      expect(side).toContain('<mark class="w">');
+      // Signs are spoken as words, and the drawn sign is hidden from a screen reader.
+      expect(side).toContain('<span class="sr-only">Removed: </span>');
       expect(side).toContain("&lt;i&gt;");
       expect(side).not.toContain("<i>");
       expect(side).toMatch(/Show \d+ unchanged lines/);

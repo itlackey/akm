@@ -1611,6 +1611,10 @@ input[type="search"] {
 
 .drow .w {
   border-radius: 3px;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
 }
 
 .drow.add .w {
@@ -1632,6 +1636,7 @@ input[type="search"] {
 }
 
 .gap-btn {
+  min-block-size: var(--target-min);
   padding: 0;
   border: 0;
   background: transparent;
