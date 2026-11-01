@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { getConfigPath } from "../../src/core/paths";
 
 /** A fixed path, so no run-specific temp name can reach a screenshot. */
 const ROOT = path.join(os.tmpdir(), "akm-visual");
@@ -53,8 +54,5 @@ export function writeConfig(stashDir: string): void {
     defaultWriteTarget: "stash",
     semanticSearchMode: "off",
   };
-  fs.writeFileSync(
-    path.join(process.env.AKM_CONFIG_DIR as string, "config.json"),
-    `${JSON.stringify(config, null, 2)}\n`,
-  );
+  fs.writeFileSync(getConfigPath(), `${JSON.stringify(config, null, 2)}\n`);
 }

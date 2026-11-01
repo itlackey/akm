@@ -410,7 +410,6 @@ function proposalSpecs(): ProposalSpec[] {
       status: "pending",
       createdAgoMs: 2 * HOUR,
       body: ROLLBACK,
-      extra: { gateDecision: gate(2 * HOUR, "auto-rejected", "empty-diff", "triage") },
     },
     {
       id: "p-judge-accepted",

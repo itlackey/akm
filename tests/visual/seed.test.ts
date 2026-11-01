@@ -15,7 +15,7 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { git } from "../_helpers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { FIXED_NOW } from "./constants";
-import { isolateEnvironment, writeConfig } from "./environment";
+import { writeConfig } from "./environment";
 import { seedStash, seedVisualState } from "./seed";
 
 const NOW = Date.parse(FIXED_NOW);
@@ -101,6 +101,17 @@ describe("visual seed", () => {
     });
   });
 
+  test("no pending proposal carries an auto decision the drain would have made terminal", () => {
+    withStateDb((query) => {
+      const pending = query("SELECT metadata_json AS m FROM proposals WHERE status = 'pending'").map(
+        (row) => JSON.parse(row.m as string).gateDecision?.outcome,
+      );
+      expect(pending).toHaveLength(10);
+      expect(pending).not.toContain("auto-rejected");
+      expect(pending).not.toContain("auto-accepted");
+    });
+  });
+
   test("the retirement batch is three accepted retire proposals in one UTC day, with no bundle removals", () => {
     withStateDb((query) => {
       const retired = query("SELECT metadata_json AS m FROM proposals WHERE status = 'accepted'")
@@ -138,14 +149,7 @@ describe("visual pipeline", () => {
 
 describe("visual environment", () => {
   test("the harness config is the file akm reads", () => {
-    const saved = { ...process.env };
-    try {
-      const stashDir = isolateEnvironment();
-      writeConfig(stashDir);
-      expect(fs.existsSync(getConfigPath())).toBe(true);
-    } finally {
-      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
-      Object.assign(process.env, saved);
-    }
+    writeConfig(storage.stashDir);
+    expect(fs.existsSync(getConfigPath())).toBe(true);
   });
 });
