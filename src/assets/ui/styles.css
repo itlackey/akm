@@ -32,6 +32,12 @@
   --hunk-bg: #f3efff;
   --grid: #dcdce4;
   --link: #5b21b6;
+  --age-1: #8f7bd1;
+  --age-2: #6d4fc0;
+  --age-3: #4a2a9c;
+  --age-unknown: #767684;
+  --on-danger: #ffffff;
+  --band-edge: #767684;
   --s1: #2f64d0;
   --s2: #b45309;
   --s3: #0f766e;
@@ -108,6 +114,12 @@
     --hunk-bg: #16162b;
     --grid: #26262d;
     --link: #c4b5fd;
+    --age-1: #6a58b0;
+    --age-2: #8f7bdc;
+    --age-3: #c4b5fd;
+    --age-unknown: #8a8a96;
+    --on-danger: #0a0a0c;
+    --band-edge: #6b6b78;
     --s1: #c4b5fd;
     --s2: #fbbf24;
     --s3: #34d399;
@@ -1794,7 +1806,7 @@ a.btn.btn-secondary {
 button.btn-danger {
   background: var(--fail);
   border-color: var(--fail);
-  color: var(--on-accent);
+  color: var(--on-danger);
   &:hover:not(:disabled) {
     background: color-mix(in srgb, var(--fail) 85%, black);
     border-color: color-mix(in srgb, var(--fail) 85%, black);
@@ -2580,4 +2592,33 @@ button:disabled:not(.btn-secondary, .btn-danger) {
   .nav-links a[aria-current="page"] {
     outline: 2px solid Highlight;
   }
+}
+
+/* ---- queue by age ---- */
+.age-bar {
+  display: block;
+  inline-size: 100%;
+  min-inline-size: 6rem;
+  block-size: 10px;
+  & .age-1 {
+    fill: var(--age-1);
+  }
+  & .age-2 {
+    fill: var(--age-2);
+  }
+  & .age-3 {
+    fill: var(--age-3);
+  }
+  & .age-unknown {
+    fill: var(--age-unknown);
+  }
+}
+
+.age-cell {
+  inline-size: 40%;
+}
+
+.queue-sentence {
+  margin-block: var(--space-3);
+  font-size: var(--text-l);
 }

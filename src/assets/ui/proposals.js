@@ -105,9 +105,30 @@ function recentView(data, source, query) {
 const PENDING_LIMIT = 200;
 const AGE_BANDS = { underDay: "Under 1 day", underWeek: "1–7 days", older: "7+ days", unknown: "Unknown age" };
 
+const AGE_CLASS = { underDay: "age-1", underWeek: "age-2", older: "age-3", unknown: "age-unknown" };
+
+/** One source's queue by age as an inline bar: a wider, darker part is older (the ramp is ordinal, not categorical). */
+function ageBar(row) {
+  const total = Object.keys(AGE_BANDS).reduce((sum, key) => sum + (row[key] ?? 0), 0);
+  const summary = Object.entries(AGE_BANDS)
+    .filter(([key]) => row[key])
+    .map(([key, label]) => `${row[key]} ${label.toLowerCase()}`)
+    .join(", ");
+  let x = 0;
+  const parts = Object.keys(AGE_BANDS).map((key) => {
+    const width = total ? ((row[key] ?? 0) / total) * 100 : 0;
+    const part = width
+      ? html`<rect class="${AGE_CLASS[key]}" x="${Math.round(x * 10) / 10}" width="${Math.round(width * 10) / 10}" height="10"/>`
+      : "";
+    x += width;
+    return part;
+  });
+  return html`<svg class="age-bar" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="${row.source}: ${summary || "nothing waiting"}">${parts}</svg>`;
+}
+
 function backlogTable(rows) {
   return tableWrap(
-    html`<table><thead><tr><th>Source</th>${Object.values(AGE_BANDS).map((label) => html`<th>${label}</th>`)}</tr></thead><tbody>${rows.map((row) => html`<tr><th>${row.source}</th>${Object.keys(AGE_BANDS).map((key) => html`<td><a href="${listHref("pending", row.source, key)}">${row[key]}</a></td>`)}</tr>`)}</tbody></table>`,
+    html`<table><thead><tr><th>Source</th><th>Age</th>${Object.values(AGE_BANDS).map((label) => html`<th class="r">${label}</th>`)}</tr></thead><tbody>${rows.map((row) => html`<tr><th>${row.source}</th><td class="age-cell">${ageBar(row)}</td>${Object.keys(AGE_BANDS).map((key) => html`<td class="r num"><a href="${listHref("pending", row.source, key)}">${row[key]}</a></td>`)}</tr>`)}</tbody></table>`,
   );
 }
 
@@ -115,18 +136,12 @@ function backlog(_ctx, data) {
   const totals = Object.fromEntries(
     Object.keys(AGE_BANDS).map((key) => [key, data.backlog.reduce((sum, row) => sum + (row[key] ?? 0), 0)]),
   );
-  const tone = { older: "warn" };
+  const parts = Object.entries(AGE_BANDS)
+    .filter(([key]) => totals[key])
+    .map(([key, label]) => html`<a href="${listHref("pending", "", key)}">${totals[key]} ${label.toLowerCase()}</a>`);
   return html`<section class="queue-summary" aria-label="Waiting for review">
-    <div class="tiles">
-      <div class="tile"><span class="tile-label">Waiting for review</span><span class="tile-value num" data-backlog-total>${data.fullCount}</span><span class="tile-sub muted">age counts from the last reopening</span></div>
-      ${Object.entries(AGE_BANDS)
-        .filter(([key]) => key !== "unknown" || totals.unknown)
-        .map(
-          ([key, label]) =>
-            html`<a class="tile" href="${listHref("pending", "", key)}" ${totals[key] && tone[key] ? html`data-tone="${tone[key]}"` : ""}><span class="tile-label">${label}</span><span class="tile-value num">${totals[key]}</span><span class="tile-sub muted">show these</span></a>`,
-        )}
-    </div>
-    <details><summary>Counts by process and age</summary><div data-backlog-table>${backlogTable(data.backlog)}</div></details>
+    <p class="queue-sentence"><strong class="num" data-backlog-total>${data.fullCount}</strong> waiting${parts.length ? ": " : "."}${parts.map((part, i) => html`${i ? ", " : ""}${part}`)}${parts.length ? "." : ""} <span class="muted small">Age counts from the last reopening.</span></p>
+    <details><summary>By source and age</summary><div data-backlog-table>${backlogTable(data.backlog)}</div></details>
   </section>`;
 }
 
