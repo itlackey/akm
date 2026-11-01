@@ -79,7 +79,6 @@ function card(bundle) {
 function workingStashCard(stash) {
   return html`<article class="card">
     <header class="card-head"><h3>Working stash</h3>${badge("default", "neutral")}</header>
-    <p><a href="#/search">Browse assets</a></p>
     ${definitionList([["Path", html`<span class="mono">${stash.path}</span>`]])}
     <h4>Git</h4>${gitBlock(stash.git)}
   </article>`;
@@ -154,8 +153,7 @@ export async function render(ctx) {
       <label>Default write target<select name="defaultWriteTarget" data-initial="${data.defaultWriteTarget ?? ""}">${choices(data.defaultWriteTarget)}</select></label>
       <button type="submit">Save defaults</button><div data-status></div>
     </form></section>
-    <section><h2>Configured bundles</h2><div class="cards">${data.workingStash ? workingStashCard(data.workingStash) : ""}${data.bundles.map(card)}</div>
-      ${data.bundles.length === 0 ? emptyState("No other bundles.", html`Add one below or with <code>akm bundle add &lt;source&gt;</code>.`) : ""}</section>
+    <section><h2>Configured bundles</h2><div class="cards">${data.workingStash ? workingStashCard(data.workingStash) : ""}${data.bundles.map(card)}${data.bundles.length === 0 ? emptyState("No other bundles.", html`Add one below or with <code>akm bundle add &lt;source&gt;</code>.`) : ""}</div></section>
     <section><h2>Add a bundle</h2><form class="bundle-add form-grid card">
       <label>Source<input name="source" required placeholder="Local path, Git URL, npm package, or website URL"></label>
       <label>Name<input name="name" placeholder="Optional bundle name"></label>

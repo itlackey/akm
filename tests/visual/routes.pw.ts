@@ -15,7 +15,35 @@ const ROUTES = [
     hash: `#/asset?ref=${encodeURIComponent("stash//knowledge/deploy-guide")}`,
     heading: "Deploy guide",
   },
+  {
+    name: "asset-command",
+    hash: `#/asset?ref=${encodeURIComponent("stash//commands/release-notes")}`,
+    heading: "release-notes",
+  },
+  { name: "bundles", hash: "#/bundles", heading: "Bundles" },
+  { name: "bundles-working-stash", hash: "#/bundles", heading: "Bundles", workingStashOnly: true },
 ] as const;
+
+/** The harness stash is a configured bundle; answer as a stash with no configured bundles so the Working stash card renders. */
+async function withoutConfiguredBundles(page: Page): Promise<void> {
+  await page.route("**/api/bundles", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        data: {
+          ...body.data,
+          bundles: [],
+          defaultBundle: null,
+          defaultWriteTarget: null,
+          workingStash: { path: body.data.bundles[0].path, git: null },
+        },
+      },
+    });
+  });
+}
 
 async function openRoute(page: Page, hash: string, heading: string): Promise<void> {
   await page.clock.setFixedTime(FIXED_NOW);
@@ -28,6 +56,7 @@ async function openRoute(page: Page, hash: string, heading: string): Promise<voi
 
 for (const route of ROUTES) {
   test(`${route.name} matches its baseline`, async ({ page }) => {
+    if ("workingStashOnly" in route) await withoutConfiguredBundles(page);
     await openRoute(page, route.hash, route.heading);
     await expect(page).toHaveScreenshot(`${route.name}--loaded.png`, {
       fullPage: true,
