@@ -1371,7 +1371,7 @@ export function resolveColor(name /* '--s1' | 'CanvasText' */) → 'rgb(...)'   
    - `stepLine` (+ simple `lines`)
    - `eventStrip` (category bins, snapping with counts)
 
-   `verticalBars` and `horizontalBars` are kept. There is no `dumbbell` and no `pairedColumns`.
+   `verticalBars` is kept. There is no `dumbbell` and no `pairedColumns`.
 
 ### 8.4 API and route design
 

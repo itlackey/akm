@@ -144,22 +144,6 @@ export function verticalBars(labels, series, unit = "Count") {
   };
 }
 
-export function horizontalBars(labels, series, unit = "Count") {
-  return {
-    grid: { left: 12, right: 22, top: 24, bottom: 42, containLabel: true },
-    xAxis: {
-      type: "value",
-      name: unit,
-      nameLocation: "middle",
-      nameGap: 28,
-      min: 0,
-      ...(COUNT_UNITS.has(unit) ? { minInterval: 1 } : {}),
-    },
-    yAxis: { type: "category", inverse: true, data: labels, axisLabel: { width: 110, overflow: "truncate" } },
-    series: series.map((s) => ({ type: "bar", ...s })),
-  };
-}
-
 // ---- chart builders for the dashboard -----------------------------------------------------------------------------
 // Each returns the option object `wireChart` takes. They use only the components the bundled ECharts has (bar, line,
 // scatter, grid, aria), so a band is a stacked area and a strip is a scatter on one row.
