@@ -297,6 +297,21 @@ describe("pages", () => {
     expect(asset).toMatch(/<summary>Markdown source<\/summary><pre class="code">[\s\S]*checklist/);
   });
 
+  const writeSelect = (page: string) => page.match(/<select name="defaultWriteTarget"[\s\S]*?<\/select>/)?.[0] ?? "";
+
+  test("bundles says writes need a default bundle when AKM_BUNDLE_DIR and defaultBundle are both unset (B-02)", async () => {
+    await seed();
+    delete process.env.AKM_BUNDLE_DIR; // restored by the storage teardown
+    writeSandboxConfig({ bundles: undefined, defaultBundle: undefined, defaultWriteTarget: undefined });
+    resetConfigCache();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const bundles = (await (await view("bundles.js"))(ctx())).text;
+    expect(writeSelect(bundles)).toContain("None (writes need a default bundle)");
+    expect(writeSelect(bundles)).not.toContain("Automatic (working stash)");
+  });
+
   test("bundles lists the working stash first when it is not a configured bundle (B-02)", async () => {
     await seed();
     writeSandboxConfig({ bundles: undefined, defaultBundle: undefined, defaultWriteTarget: undefined });
@@ -309,7 +324,8 @@ describe("pages", () => {
     expect(bundles).toContain(storage.stashDir);
     expect(bundles).toContain("No other bundles.");
     expect(bundles).toContain("akm bundle add &lt;source&gt;");
-    expect(bundles).toContain("Automatic (working stash)");
+    expect(writeSelect(bundles)).toContain("Automatic (working stash)");
+    expect(writeSelect(bundles)).not.toContain("None (writes need");
     expect(bundles).not.toContain("akm init");
     expect(bundles).not.toContain("Use fallback");
     expect(bundles.indexOf("Working stash")).toBeLessThan(bundles.indexOf("No other bundles."));
@@ -331,7 +347,7 @@ describe("pages", () => {
     expect(bundles).not.toContain("Working stash");
     expect(bundles.indexOf("<h3>stash</h3>")).toBeGreaterThan(-1);
     expect(bundles.indexOf("<h3>stash</h3>")).toBeLessThan(bundles.indexOf("<h3>team</h3>"));
-    expect(bundles).toContain("Default bundle (stash)");
+    expect(writeSelect(bundles)).toContain("Default bundle (stash)");
     expect(bundles.match(/>default</g)).toHaveLength(1);
   });
 

@@ -145,12 +145,20 @@ export async function render(ctx) {
       post("/api/bundles/remove", { bundle: form.dataset.bundle, confirm: values.has("confirm") }),
     );
   });
+  const writeTargetLabel = ({ automaticWriteTarget: t, defaultBundle, workingStash }) =>
+    !t
+      ? "None (writes need a default bundle)"
+      : workingStash && t.path === workingStash.path
+        ? "Automatic (working stash)"
+        : t.name === defaultBundle
+          ? `Default bundle (${t.name})`
+          : `Automatic (${t.name})`;
   const choices = (selected, emptyLabel) =>
     html`<option value="">${emptyLabel}</option>${data.bundles.map((b) => html`<option value="${b.name}" ${b.name === selected ? html`selected` : ""}>${b.name}${b.enabled ? "" : " (disabled)"}</option>`)}`;
   return html`${pageHeader("Bundles", data.defaultBundle ? html`Default bundle <span class="mono">${data.defaultBundle}</span>${data.defaultWriteTarget ? html`, writes go to <span class="mono">${data.defaultWriteTarget}</span>` : ""}.` : "")}
     <section><h2>Defaults</h2><form class="bundle-defaults form-grid card">
       <label>Default bundle<select name="defaultBundle" data-initial="${data.defaultBundle ?? ""}">${choices(data.defaultBundle, "Automatic (working stash)")}</select></label>
-      <label>Default write target<select name="defaultWriteTarget" data-initial="${data.defaultWriteTarget ?? ""}">${choices(data.defaultWriteTarget, data.defaultBundle ? html`Default bundle (${data.defaultBundle})` : "None (writes need a default bundle)")}</select></label>
+      <label>Default write target<select name="defaultWriteTarget" data-initial="${data.defaultWriteTarget ?? ""}">${choices(data.defaultWriteTarget, writeTargetLabel(data))}</select></label>
       <button type="submit">Save defaults</button><div data-status></div>
     </form></section>
     <section><h2>Configured bundles</h2><div class="cards">${data.workingStash ? workingStashCard(data.workingStash) : ""}${data.bundles.map(card)}${data.bundles.length === 0 ? emptyState("No other bundles.", html`Add one below or with <code>akm bundle add &lt;source&gt;</code>.`) : ""}</div></section>

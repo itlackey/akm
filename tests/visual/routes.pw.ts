@@ -39,6 +39,7 @@ async function withoutConfiguredBundles(page: Page): Promise<void> {
           defaultBundle: null,
           defaultWriteTarget: null,
           workingStash: { path: body.data.bundles[0].path, git: null },
+          automaticWriteTarget: { name: "stash", path: body.data.bundles[0].path },
         },
       },
     });

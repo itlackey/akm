@@ -30,7 +30,7 @@ import { NotFoundError, UsageError } from "../../core/errors";
 import { getConfigPath, getDataDir, getDbPath } from "../../core/paths";
 import { getStateDbPath, listPendingStateMigrations } from "../../core/state-db";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
-import { resolveWriteTarget } from "../../core/write-source";
+import { resolveWorkingStashTarget, resolveWriteTarget } from "../../core/write-source";
 import { findSourceForPath, implicitStashDir, resolveSourceEntries } from "../../indexer/search/search-source";
 import { type Database, openDatabase } from "../../storage/database";
 import { listRecentImproveRuns } from "../../storage/repositories/improve-runs-repository";
@@ -284,6 +284,15 @@ async function bundles() {
       ? { path: stashDir, git: await readBundleGitStatus(stashDir) }
       : null;
 
+  // Where an automatic write goes (no defaultWriteTarget): AKM_BUNDLE_DIR first, then the default bundle.
+  let automaticWriteTarget: { name: string; path: string | null } | null = null;
+  try {
+    const target = resolveWorkingStashTarget(config, { requireWritable: false });
+    automaticWriteTarget = { name: target.source.name, path: target.source.path ?? null };
+  } catch {
+    // No AKM_BUNDLE_DIR and no usable default bundle: writes need an explicit target.
+  }
+
   // The default bundle is the working stash when one is configured: list it first.
   cards.sort((a, b) => Number(b.default) - Number(a.default));
 
@@ -307,6 +316,7 @@ async function bundles() {
     defaultWriteTarget: config.defaultWriteTarget ?? null,
     bundles: cards,
     workingStash,
+    automaticWriteTarget,
     index: {
       entryCount,
       byType: info.indexStats.byType,

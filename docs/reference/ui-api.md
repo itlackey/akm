@@ -180,6 +180,8 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   "data": {
     "defaultBundle": "stash",
     "defaultWriteTarget": null,
+    "workingStash": null,
+    "automaticWriteTarget": { "name": "stash", "path": "/home/me/akm" },
     "bundles": [
       {
         "name": "stash",
@@ -217,6 +219,13 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
 
 - `kind` is `filesystem`, `git`, `npm` or `website`. `source` describes where the bundle comes from; `path` is its local
   root (`null` if it has none).
+- The default bundle's card comes first; the rest keep their configured order.
+- `workingStash` is `{ path, git }` for the directory akm reads besides the configured bundles (`AKM_BUNDLE_DIR`, or the
+  platform stash when no `defaultBundle` is set). `git` has the same shape as a card's `git`. It is `null` when a
+  configured bundle already covers that directory or it cannot be resolved.
+- `automaticWriteTarget` is `{ name, path }` for where a write goes when `defaultWriteTarget` is empty: `AKM_BUNDLE_DIR`
+  when set (even with a `defaultBundle`), otherwise the default bundle. It is `null` when neither exists, so writes need
+  a target.
 - `git` is `null` unless the bundle's root is itself a git repository. `upstream`, `ahead` and `behind` are `null` without an
   upstream; `branch` is `null` on a detached HEAD; `lastCommit` is `null` for a repository with no commits. `dirtyPaths`
   counts paths with uncommitted changes.
