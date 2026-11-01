@@ -411,7 +411,15 @@ type HydratedEntry = NonNullable<ReturnType<typeof getEntryById>> & { id: number
 // ── Result families (research #1309) ─────────────────────────────────────────
 
 /** Which arrangement of a memory and its `.derived` child the search applies. */
-type FamilyMode = "off" | "slot" | "child-first" | "slot-child-first" | "summary-only" | "summaries-first";
+type FamilyMode =
+  | "off"
+  | "slot"
+  | "child-first"
+  | "slot-child-first"
+  | "summary-only"
+  | "summaries-first"
+  | "parent-only"
+  | "top-parent-summaries";
 const FAMILY_MODE = (process.env.AKM_R1309_FAMILY as FamilyMode | undefined) ?? ("off" as FamilyMode);
 
 type SelectedEntry = { candidate: FusedCandidate; row: HydratedEntry };
@@ -441,7 +449,9 @@ function selectFusedEntries(
     FAMILY_MODE === "slot" ||
     FAMILY_MODE === "slot-child-first" ||
     FAMILY_MODE === "summary-only" ||
-    FAMILY_MODE === "summaries-first";
+    FAMILY_MODE === "summaries-first" ||
+    FAMILY_MODE === "parent-only" ||
+    FAMILY_MODE === "top-parent-summaries";
   const selected: SelectedEntry[] = [];
   const families = new Set<string>();
   const seenPaths = new Set<string>();
@@ -497,7 +507,8 @@ function arrangeFamilies(
   for (const group of groups.values()) {
     const child = group.find((m) => isDerivedChild(m.row));
     const parent = group.find((m) => !isDerivedChild(m.row));
-    const fetchChild = FAMILY_MODE === "summary-only" || FAMILY_MODE === "summaries-first";
+    const fetchChild =
+      FAMILY_MODE === "summary-only" || FAMILY_MODE === "summaries-first" || FAMILY_MODE === "top-parent-summaries";
     let childItem = child;
     if (!childItem && parent && fetchChild && parent.row.entry.type === "memory") {
       const derived = getDerivedForParent(db, `memories/${parent.row.entry.name}`, parent.row.bundleId);
@@ -513,6 +524,9 @@ function arrangeFamilies(
     else if (FAMILY_MODE === "child-first" || FAMILY_MODE === "slot-child-first")
       arranged.push([...(child ? [child] : []), ...group.filter((m) => m !== child)]);
     else if (FAMILY_MODE === "summary-only") arranged.push([childItem ?? group[0]!]);
+    else if (FAMILY_MODE === "parent-only") arranged.push([parent ?? group[0]!]);
+    else if (FAMILY_MODE === "top-parent-summaries")
+      arranged.push(arranged.length === 0 ? [parent ?? group[0]!] : [childItem ?? group[0]!]);
     else arranged.push([...(childItem ? [childItem] : []), ...(parent ? [parent] : [])]);
   }
   if (FAMILY_MODE === "summaries-first") {
