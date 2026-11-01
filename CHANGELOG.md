@@ -23,6 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   outside `akm improve`) updates the search index for the moved files, so
   `search` and `curate` stop returning the retired asset, in keyword and
   semantic mode, without waiting for the next `akm index` (#1307).
+- Search ranking counts only user feedback from the last 90 days, the same
+  window a full `akm index` retains, so older feedback stops moving rank on a
+  host that has not run an unscoped index (#1252).
 
 ## [0.10.261022] - 2026-10-31
 
