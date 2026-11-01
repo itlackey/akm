@@ -999,6 +999,7 @@ function persistProposalDecision(
           ...persisted,
           status: "accepted",
           updatedAt: decision.decidedAt,
+          acceptedAt: decision.decidedAt,
           review: { outcome: "accepted", decidedAt: decision.decidedAt },
           acceptedTarget: {
             source: decision.target.source.name,
@@ -1795,6 +1796,7 @@ function persistRetireAcceptance(
         retireAcceptIntent: undefined, // finalized — the intent only matters while still pending
         status: "accepted",
         updatedAt: decidedAt,
+        acceptedAt: decidedAt,
         review: { outcome: "accepted", decidedAt },
         acceptedTarget: {
           source: info.targetName,
