@@ -438,8 +438,8 @@ export function redactCredentialPatterns(input: string): string {
     .replace(/\bBearer\s+[A-Za-z0-9._\-+/=]+/gi, "Bearer [REDACTED]")
     // sk-/sk_ style keys
     .replace(/\bsk[-_][A-Za-z0-9._-]{6,}/g, "[REDACTED]")
-    // key-/key_ shorthand keys
-    .replace(/\bkey[-_][A-Za-z0-9._-]{6,}/g, "[REDACTED]")
+    // key-/key_ shorthand keys: with a digit or an 8-character run, so `key_manager.py` and `key-value-store.md` stay
+    .replace(/\bkey[-_](?=[A-Za-z0-9._-]*(?:\d|[A-Za-z0-9]{8}))[A-Za-z0-9._-]{6,}/g, "[REDACTED]")
     // JSON-style "api_key": "...", "apiKey": "...", "api-key": "..."
     .replace(/("(?:api[_-]?key|apiKey|authorization|token)"\s*:\s*")([^"]*)(")/gi, "$1[REDACTED]$3")
     // Discord webhook URLs: keep the webhook id, redact the token segment.

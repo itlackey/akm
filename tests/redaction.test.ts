@@ -309,3 +309,27 @@ describe("collectSensitiveValues", () => {
     expect(redactSensitiveText(malformed, ["not-present"])).toBe(malformed);
   });
 });
+
+describe("redactCredentialPatterns — key-/sk- shapes next to file names", () => {
+  test("redacts a token followed by a path, scheme-less webhooks and key-like file names", () => {
+    const secrets = [
+      "ghp_abcdefghijklmnopqrstuvwxyz0123456789/repo",
+      "sk-abcdefghijklmnop/v1",
+      "discord.com/api/webhooks/123456/abcDEF_tokenvalue",
+      "hooks.slack.com/services/T0123/B0123/secretvalue99",
+      "key_live_abcdefgh.pem",
+      "sk-proj-abc123456.dev",
+    ];
+    for (const secret of secrets) {
+      const out = redactCredentialPatterns(`see ${secret} now`);
+      expect(out).toContain("[REDACTED]");
+      expect(out).not.toContain(secret);
+    }
+    expect(redactCredentialPatterns("key-abc123xyz")).toBe("[REDACTED]");
+  });
+
+  test("keeps ordinary key-named files", () => {
+    const text = "edit src/key_manager.py and docs/key-value-store.md and key_topics";
+    expect(redactCredentialPatterns(text)).toBe(text);
+  });
+});

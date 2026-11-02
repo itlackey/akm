@@ -14,6 +14,7 @@ import {
   parseSessionSummary,
   SESSION_SUMMARY_JSON_SCHEMA,
 } from "../../../src/commands/improve/session-asset";
+import { collectCredentialValues } from "../../../src/core/config/credentials";
 import type { SessionData } from "../../../src/integrations/session-logs/types";
 
 const data: SessionData = {
@@ -131,5 +132,22 @@ describe("secrets in a session", () => {
     expect(prompt).toContain("https://[REDACTED]@git.example.com/org/repo.git");
     expect(prompt).toContain("src/key_manager.py");
     expect(prompt).toContain("docs/key-value-store.md");
+  });
+
+  test("a connection key from config never reaches the request", () => {
+    const config = { connections: { lab: { endpoint: "https://x.test/v1", apiKey: "plain-config-key-8841" } } };
+    const withKey: SessionData = {
+      ...secretData,
+      events: [{ harness: "claude", role: "user", text: "The lab key is plain-config-key-8841, keep it." }],
+    };
+    const values = collectCredentialValues(config as unknown as Parameters<typeof collectCredentialValues>[0]);
+    expect(buildSessionSummaryPrompt(withKey, values)).not.toContain("plain-config-key-8841");
+  });
+
+  test("truncating a topic does not split a surrogate pair", () => {
+    const topic = parseSessionSummary(
+      JSON.stringify({ summary: "s", key_topics: [`${"a".repeat(99)}😀😀`], tags: [] }),
+    );
+    expect(topic?.keyTopics[0]).toBe(`${"a".repeat(99)}😀`);
   });
 });

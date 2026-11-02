@@ -60,19 +60,9 @@ export const SESSION_SUMMARY_JSON_SCHEMA: Record<string, unknown> = {
 const MAX_KEY_TOPICS = 30;
 const MAX_KEY_TOPIC_LENGTH = 100;
 
-// A file path or name (`src/key_manager.py`), which `redactCredentialPatterns` reads as a `key_…` shorthand key.
-// Not directly after `Bearer `, and not inside a URL, whose userinfo and tokens must still be redacted.
-const PATH_OR_FILE =
-  /(?<!Bearer\s+)(?<![\w:/.@-])(?:[\w.~-]+\/)+[\w.-]+|(?<!Bearer\s+)(?<![\w/.@-])[\w-]+\.[A-Za-z]{1,5}(?![\w-])/g;
-
-/** Credential patterns and the known secret values out of session text, leaving file paths and names intact. */
+/** Credential patterns and the known secret values out of session text. */
 function redactSessionText(text: string, sensitiveValues: readonly string[]): string {
-  const kept: string[] = [];
-  const shielded = redactSensitiveText(text, sensitiveValues).replace(
-    PATH_OR_FILE,
-    (match) => `\uE000${kept.push(match) - 1}\uE001`,
-  );
-  return redactCredentialPatterns(shielded).replace(/\uE000(\d+)\uE001/g, (_m, i: string) => kept[Number(i)] ?? "");
+  return redactCredentialPatterns(redactSensitiveText(text, sensitiveValues));
 }
 
 /** The transcript for the summary prompt, capped at `maxChars`. */
@@ -136,7 +126,7 @@ export function parseSessionSummary(raw: string): SessionSummaryResult | undefin
   const keyTopics: string[] = [];
   for (const raw of Array.isArray(obj.key_topics) ? obj.key_topics : []) {
     if (typeof raw !== "string") continue;
-    const topic = raw.trim().slice(0, MAX_KEY_TOPIC_LENGTH).trim();
+    const topic = Array.from(raw.trim()).slice(0, MAX_KEY_TOPIC_LENGTH).join("").trim();
     const key = topic.toLowerCase();
     if (topic.length === 0 || seen.has(key)) continue;
     seen.add(key);
