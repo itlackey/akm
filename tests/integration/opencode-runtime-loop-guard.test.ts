@@ -81,12 +81,30 @@ const connection: () => ChatCompletionConfig = () => ({
 const temperatures = () => model.requests.map((request) => request.params.temperature);
 
 /** One run on the runtime: `MODE:<mode>` is what the loopback model acts on. */
-function run(mode: string, timeoutMs: number): Promise<AgentRunResult> {
+function run(mode: string, timeoutMs: number, signal?: AbortSignal): Promise<AgentRunResult> {
   return opencodeRuntime.run(
     profile,
-    { cwd: work, timeoutMs, dispatch: { prompt: `MODE:${mode} please` } },
+    { cwd: work, timeoutMs, ...(signal ? { signal } : {}), dispatch: { prompt: `MODE:${mode} please` } },
     connection(),
   );
+}
+
+/**
+ * Lets a run that never ends by itself go on until the model has had `ENOUGH_REQUESTS` requests, then aborts it: the
+ * count starts with the first request, so how long OpenCode took to start does not matter. The long deadline is only
+ * a backstop for a run that hangs.
+ */
+const ENOUGH_REQUESTS = 12;
+async function untilEnoughRequests(start: (signal: AbortSignal) => Promise<AgentRunResult>): Promise<AgentRunResult> {
+  const controller = new AbortController();
+  const timer = setInterval(() => {
+    if (model.requests.length >= ENOUGH_REQUESTS) controller.abort();
+  }, 50);
+  try {
+    return await start(controller.signal);
+  } finally {
+    clearInterval(timer);
+  }
 }
 
 /** The session a run left, which every run on the runtime reports. */
@@ -244,14 +262,17 @@ describe.skipIf(unavailable !== undefined)("a run on akm's runtime that repeats 
     const session = `ses_akm${randomUUID().replaceAll("-", "")}`;
     const prompt = "MODE:repeat please";
 
-    const result = await runBuiltCommand(
-      "the runtime without the check",
-      { argv: runtimeArgv(connection(), { prompt }, binary, session), env, stdin: prompt },
-      { cwd: work, timeoutMs: 8_000 },
-      "captured",
+    const result = await untilEnoughRequests((signal) =>
+      runBuiltCommand(
+        "the runtime without the check",
+        { argv: runtimeArgv(connection(), { prompt }, binary, session), env, stdin: prompt },
+        { cwd: work, timeoutMs: 60_000, signal },
+        "captured",
+      ),
     );
 
-    expect(result.reason).toBe("timeout");
+    // Not stopped by akm: it went on until the test ended it.
+    expect(result.reason).toBe("aborted");
     expect(result.stderr).not.toContain("akm stopped this run");
     expect(model.requests.length).toBeGreaterThan(10);
     expect(model.requests.every((request) => toldIn(request).length === 0)).toBe(true);
@@ -259,9 +280,10 @@ describe.skipIf(unavailable !== undefined)("a run on akm's runtime that repeats 
   }, 90_000);
 
   test("is left alone when the same call gets a different result each time, as a poll does", async () => {
-    const result = await run("poll", 8_000);
+    const result = await untilEnoughRequests((signal) => run("poll", 60_000, signal));
 
-    expect(result.reason).toBe("timeout");
+    // Not stopped by akm: it went on until the test ended it.
+    expect(result.reason).toBe("aborted");
     expect(result.stderr).not.toContain("akm stopped this run");
     expect(model.requests.length).toBeGreaterThan(10);
     expect(model.requests.every((request) => toldIn(request).length === 0)).toBe(true);
