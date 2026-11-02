@@ -1,5 +1,7 @@
 // SVG charts supplement the adjacent data tables; they never own a write action.
 
+import { html } from "./lib.js";
+
 /**
  * The colour a token resolves to now. A token is a `light-dark()` pair, which a custom property keeps unresolved, so
  * a probe element takes it as its `color` and the browser says which one applies in the scheme on screen.
@@ -17,7 +19,7 @@ export function colourReader(near) {
   };
 }
 
-export function wireChart(ctx, selector, options, onSelect) {
+function wireChart(ctx, selector, options, onSelect) {
   ctx.after.push((root) => {
     const element = root.querySelector(selector);
     if (!element) return;
@@ -26,7 +28,7 @@ export function wireChart(ctx, selector, options, onSelect) {
     let observer;
     const scheme = matchMedia("(prefers-color-scheme: dark)");
     const retheme = () => draw();
-    // Texture only where colour alone is not enough: forced colours or a request for more contrast (plan D-04).
+    // Texture only where colour alone is not enough: forced colours or a request for more contrast.
     const patterns = matchMedia("(forced-colors: active), (prefers-contrast: more)");
     const draw = () => {
       if (!chart || disposed) return;
@@ -93,7 +95,7 @@ export function wireChart(ctx, selector, options, onSelect) {
           window.addEventListener("akm-theme", retheme);
         })
         .catch(() => {
-          // Say so, instead of leaving a blank box: the numbers are in the table beside it (B-33).
+          // Say so, instead of leaving a blank box: the numbers are in the table beside it.
           element.textContent = "Chart unavailable. The same figures are in Data and details.";
           element.classList.add("chart-failed");
         });
@@ -109,7 +111,7 @@ export function wireChart(ctx, selector, options, onSelect) {
       );
       lazy.observe(element);
     } else start();
-    // A control redraws the chart in its own card only, not every chart on the page (B-47).
+    // A control redraws the chart in its own card only, not every chart on the page.
     const card = element.closest(".chart-card") ?? element.parentElement;
     const redraw = (event) => {
       if (card?.contains(event.target)) draw();
@@ -128,6 +130,15 @@ export function wireChart(ctx, selector, options, onSelect) {
       chart?.dispose();
     };
   });
+}
+
+/**
+ * A chart's element, drawn once the page is mounted. `options(token)` builds the ECharts option; `height` is the
+ * element's `data-height`; `onSelect` receives a click on a mark. `label` names the chart for assistive technology.
+ */
+export function chart(ctx, id, label, options, { height, onSelect } = {}) {
+  wireChart(ctx, `#${id}`, options, onSelect);
+  return html`<div class="echarts-view" ${height ? html`data-height="${height}"` : ""} id="${id}" role="img" aria-label="${label}"></div>`;
 }
 
 /** The categorical colours, in order; a series without its own `colorIndex` takes the next. */

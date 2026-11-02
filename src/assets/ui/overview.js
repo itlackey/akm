@@ -1,7 +1,22 @@
 // Overview: current health and selected-window activity, retrieval and automation metrics.
 
 import { sparkline } from "./charts.js";
-import { ago, announce, api, badge, emptyState, fmtNum, fmtPct, html, mount, pretty, statusKind } from "./lib.js";
+import {
+  ago,
+  announce,
+  api,
+  badge,
+  emptyState,
+  fmtNum,
+  fmtPct,
+  html,
+  mount,
+  pageHeader,
+  pretty,
+  sectionErrors,
+  statusKind,
+  windowToggle,
+} from "./lib.js";
 import { overviewCharts } from "./overview-charts.js";
 
 const GROUPS = [
@@ -107,7 +122,8 @@ function attentionItems(data, pulse) {
       tone: "fail",
       text: `${plural(failedRuns, "run")} failed this week`,
       verb: "View runs",
-      href: "#/improve",
+      href: "#/overview",
+      anchor: "automation",
     });
   if (warning.length)
     items.push({
@@ -137,7 +153,8 @@ function attentionItems(data, pulse) {
       tone: "info",
       text: `${plural(pulse.attention.harm.reverted, "change")} reverted this week`,
       verb: "View",
-      href: "#/improve#harm",
+      href: "#/improve",
+      anchor: "harm",
     });
   if (pulse?.attention.setup)
     items.push({
@@ -243,17 +260,6 @@ export async function render(ctx) {
     api("/api/retrieval", { since: "84d" }).catch(() => null),
   ]);
   ctx.after.push((root) => {
-    for (const radio of root.querySelectorAll("input[name=metric-window]")) {
-      radio.addEventListener("change", (event) => {
-        location.hash = `#/overview?window=${event.target.value}`;
-      });
-    }
-    root.addEventListener("click", (event) => {
-      const link = event.target.closest("a[data-anchor]");
-      if (!link) return;
-      event.preventDefault();
-      root.querySelector(`#${link.dataset.anchor}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
     root.querySelector("[data-health]")?.addEventListener("click", async (event) => {
       const button = event.target.closest("[data-run-checks]");
       if (!button) return;
@@ -271,15 +277,21 @@ export async function render(ctx) {
       }
     });
   });
-  const errors = data.errors ? Object.entries(data.errors) : [];
-  const choice = (value) =>
-    html`<label><input type="radio" name="metric-window" value="${value}" ${window === value ? html`checked` : ""}><span>${value === "30d" ? "30 days" : "90 days"}</span></label>`;
-  return html`<header class="page-head page-head-row"><div><h1>Overview</h1><p>Your akm environment. Times are UTC.</p></div></header>
+  return html`${pageHeader("Overview", "Your akm environment. Times are UTC.")}
     <div data-strip>${statusStrip(data.health)}</div>
-    ${errors.length > 0 ? html`<details class="notice notice-warn"><summary>${errors.length} sections could not load</summary><ul>${errors.map(([name, message]) => html`<li><span class="mono">${name}</span>: ${message}</li>`)}</ul></details>` : ""}
+    ${sectionErrors(data.errors)}
     ${attention(data, pulse)}
     ${pulseSection(pulse, trend)}
-    <section aria-labelledby="trends-title"><div class="trends-head"><h2 id="trends-title">Trends</h2><fieldset class="segmented trend-window" aria-label="Trend window">${choice("30d")}${choice("90d")}</fieldset></div>
+    <section aria-labelledby="trends-title"><div class="trends-head"><h2 id="trends-title">Trends</h2>${windowToggle({
+      route: "overview",
+      param: "window",
+      label: "Trend window",
+      current: window,
+      choices: [
+        ["30d", "30 days"],
+        ["90d", "90 days"],
+      ],
+    })}</div>
     <p class="muted small">${data.metrics ? `${data.metrics.window.since.slice(0, 16).replace("T", " ")} to now, UTC. ` : ""}Today is partial. Health covers the last 24 hours.</p>
     <div class="chart-grid">${overviewCharts(ctx, data, trend)}</div></section>
     ${metricsCoverage(data.metrics)}

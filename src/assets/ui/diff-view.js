@@ -170,26 +170,25 @@ function aligned(model, before, after, state) {
  * layout toggle and the unchanged-run controls once `markup` is mounted.
  */
 export function diffSection(diff) {
-  const none = null;
-  if (diff.redacted) return { markup: unifiedView(diff.unified, ""), wire: none };
+  if (diff.redacted) return { markup: unifiedView(diff.unified, ""), wire: null };
   const hasSides = typeof diff.after === "string" && !diff.truncated;
   if (!hasSides) {
     const note = diff.truncated ? "This file is too large to line up here, so the plain diff is shown." : "";
-    return { markup: unifiedView(diff.unified, note), wire: none };
+    return { markup: unifiedView(diff.unified, note), wire: null };
   }
   if (typeof diff.before !== "string") {
     // A new asset: the whole file, every line added.
     const model = { parts: [{ type: "hunk", rows: newFileRows(diff.after) }] };
     return {
       markup: html`<p class="muted small num">${splitLines(diff.after).length} lines added</p>${inlineView(inlineList(items(model.parts, new Set())))}`,
-      wire: none,
+      wire: null,
     };
   }
   const model = buildDiff(diff.before, diff.after);
   if (model === null) {
     return {
       markup: unifiedView(diff.unified, "This file is too large to line up here, so the plain diff is shown."),
-      wire: none,
+      wire: null,
     };
   }
   const state = { mode: preferredMode(), expanded: new Set() };

@@ -84,6 +84,7 @@ let shownHash = location.hash;
 let pendingHash = null;
 let cleanup = [];
 let pageRequests = null;
+let pendingAnchor = null;
 const positions = new Map();
 const unsaved = document.getElementById("unsaved");
 
@@ -118,28 +119,16 @@ function markNav(active) {
   }
 }
 
-/** The current form of an address that an earlier release used; `null` when the address is current. */
-function currentAddress({ name, param, query }) {
-  const rest = (params) => (params.size > 0 ? `?${params}` : "");
-  if (name === "changes") return `/history${rest(query)}`;
-  if ((name === "asset" || name === "edit") && !param && query.get("ref")) {
-    const params = new URLSearchParams(query);
-    const ref = params.get("ref");
-    params.delete("ref");
-    return `/${name}/${encodeURIComponent(ref)}${rest(params)}`;
-  }
-  if (name === "overview" && ["24h", "7d"].includes(query.get("window") ?? "")) {
-    const params = new URLSearchParams(query);
-    params.set("window", "30d");
-    return `/overview?${params}`;
-  }
-  return null;
-}
-
 async function route() {
-  const legacy = currentAddress(parseHash());
-  // Replace, not push: the old address should not stay in the history.
-  if (legacy) history.replaceState(null, "", `${location.pathname}${location.search}#${legacy}`);
+  const anchor = pendingAnchor;
+  pendingAnchor = null;
+  // The Changes page is History now. Replace, not push: the old address should not stay in the history.
+  if (/^#\/changes(?=[/?]|$)/.test(location.hash))
+    history.replaceState(
+      null,
+      "",
+      `${location.pathname}${location.search}${location.hash.replace("#/changes", "#/history")}`,
+    );
   if (hasUnsaved()) {
     // Keep the editor's address and ask inline; "Discard changes" repeats the navigation.
     pendingHash = location.hash;
@@ -171,13 +160,13 @@ async function route() {
   document.title = `${entry ? entry.label : "Not found"} · akm ui`;
   main.setAttribute("aria-busy", "true");
   // Focus inside the page would fall to the body when the loading state replaces it; hold it on main until the
-  // page is drawn and the control or heading below takes it back (B-22).
+  // page is drawn and the control or heading below takes it back.
   if (focus) {
     main.tabIndex = -1;
     main.focus({ preventScroll: true });
   }
   mount(main, loadingState());
-  const ctx = { query, param, after: [], announcement: null, signal: pageRequests.signal };
+  const ctx = { query, param, after: [], announcement: null };
   try {
     if (!entry) {
       mount(
@@ -212,6 +201,7 @@ async function route() {
         heading.focus({ preventScroll: true });
       }
       window.scrollTo(0, restored?.scroll ?? 0);
+      if (anchor) main.querySelector(`#${anchor}`)?.scrollIntoView();
       const specific = heading?.textContent?.trim();
       document.title = `${specific && specific !== entry.label ? `${specific} · ` : ""}${entry.label} · akm ui`;
       // A page may supply its own message (Search says how many results); otherwise name the page when it changes.
@@ -252,6 +242,22 @@ async function showMeta() {
 }
 
 window.addEventListener("hashchange", route);
+// The one handler for links and toggles inside a page. Pages attach nothing to <main>, which outlives them.
+main.addEventListener("click", (event) => {
+  const link = event.target.closest("a[data-anchor]");
+  if (!link) return;
+  // A link to a section of another page navigates, and the router scrolls to the section once that page is drawn.
+  if (routeName(link.getAttribute("href")) !== routeName(location.hash)) {
+    pendingAnchor = link.dataset.anchor;
+    return;
+  }
+  event.preventDefault();
+  main.querySelector(`#${link.dataset.anchor}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+main.addEventListener("change", (event) => {
+  const hash = event.target.dataset?.hash;
+  if (hash) location.hash = hash;
+});
 unsaved.addEventListener("click", (event) => {
   const act = event.target.closest("button")?.dataset.act;
   if (!act) return;

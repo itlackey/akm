@@ -107,7 +107,7 @@ export function markdown(source, context = {}) {
       flushParagraph();
       flushList();
       const slug = slugByLine.get(firstLine + i);
-      // The page's own h1 already says this: a body that opens with the same title does not repeat it (B-41).
+      // The page's own h1 already says this: a body that opens with the same title does not repeat it.
       if (!titleSkipped && context.skipTitle && heading[1].length === 1 && heading[2].trim() === context.skipTitle) {
         titleSkipped = true;
         continue;
