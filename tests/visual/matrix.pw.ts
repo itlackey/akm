@@ -128,7 +128,6 @@ test("overview partial", async ({ page }) => {
     const data = {
       ...body.data,
       metrics: null,
-      retrieval: null,
       errors: { metrics: "The usage store could not be read." },
     };
     await route.fulfill({ response, json: { ...body, data } });

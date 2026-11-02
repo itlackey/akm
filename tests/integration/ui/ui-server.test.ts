@@ -410,7 +410,7 @@ describe("endpoints", () => {
     const today = overview.metrics.usage.daily.at(-1);
     // User-attributed only: the improve-sourced search is not counted.
     expect(today).toMatchObject({ search: 1, show: 1, feedback: 2, curate: 0 });
-    expect(overview.retrieval.daily.at(-1)).toMatchObject({
+    expect((await data(s, "/api/retrieval?since=30d")).daily.at(-1)).toMatchObject({
       searches: 1,
       zeroResults: 0,
       medianMs: null,
@@ -444,18 +444,16 @@ describe("endpoints", () => {
     const s = await start();
     const overview = await data(s, "/api/overview?metricsSince=7d");
     expect(overview.metrics.usage.daily.at(-1)).toMatchObject({ search: 4, curate: 1 });
-    expect(overview.retrieval).toEqual({
-      daily: [
-        {
-          date: today,
-          searches: 4,
-          zeroResults: 2,
-          medianMs: 120,
-          latencySamples: 2,
-          partial: true,
-        },
-      ],
-    });
+    expect((await data(s, "/api/retrieval?since=7d")).daily).toEqual([
+      {
+        date: today,
+        searches: 4,
+        zeroResults: 2,
+        medianMs: 120,
+        latencySamples: 2,
+        partial: true,
+      },
+    ]);
   });
 
   test("the dashboard routes answer with their documented shape, and a missing ref is a 400", async () => {
@@ -568,7 +566,7 @@ describe("endpoints", () => {
     expect(impact.library).toHaveLength(impact.weeks.length);
   });
 
-  test("GET /api/retrieval returns the per-day search series for a longer window than the overview's", async () => {
+  test("GET /api/retrieval returns the per-day search series for the requested window", async () => {
     await seed();
     const db = openStateDatabase();
     const day = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
@@ -592,11 +590,8 @@ describe("endpoints", () => {
       [day(60), 2, 1],
       [day(1), 1, 0],
     ]);
-    // The overview's 30-day window leaves the older day out; the trend keeps it.
-    const overview = await data(s, "/api/overview?metricsSince=30d");
-    const overviewDays = overview.retrieval.daily.map((d: { date: string }) => d.date);
-    expect(overviewDays).toContain(day(1));
-    expect(overviewDays).not.toContain(day(60));
+    const short = await data(s, "/api/retrieval?since=30d");
+    expect(short.daily.map((d: { date: string }) => d.date)).not.toContain(day(60));
     expect((await api(s, "/api/retrieval?since=nonsense")).status).toBe(400);
   });
 
@@ -712,7 +707,7 @@ describe("endpoints", () => {
     expect((await api(s, "/api/proposals?age=invalid")).status).toBe(400);
   });
 
-  test("overview pendingNow counts this stash's pending queue, unwindowed, like the proposals list", async () => {
+  test("pulse's pending count is this stash's whole queue, not windowed, like the proposals list", async () => {
     await seed();
     const original = createProposal(storage.stashDir, {
       ref: "lessons/rg",
@@ -731,10 +726,10 @@ describe("endpoints", () => {
       db.close();
     }
     const s = await start();
-    const overview = await data(s, "/api/overview?metricsSince=24h");
+    const pulse = await data(s, "/api/overview/pulse");
     const list = await data(s, "/api/proposals?limit=200");
-    expect(overview.metrics.proposals.byStatus.pending ?? 0).toBeLessThan(overview.pendingNow);
-    expect(overview.pendingNow).toBe(list.totalCount);
+    expect(pulse.attention.pending.count).toBe(list.totalCount);
+    expect(pulse.attention.pending.count).toBe(4);
   });
 
   test("task failures rank in the order of the bars: failed runs over runs, then failures", async () => {

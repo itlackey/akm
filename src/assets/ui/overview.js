@@ -133,8 +133,8 @@ function attentionItems(data, pulse) {
       href: "#/overview",
       anchor: "health",
     });
-  const pending = pulse?.attention.pending ?? { count: data.pendingNow ?? 0, oldest: null };
-  if (pending.count)
+  const pending = pulse?.attention.pending;
+  if (pending?.count)
     items.push({
       tone: "warn",
       text: `${plural(pending.count, "proposal")} waiting${pending.oldest ? `, oldest ${ago(pending.oldest).replace(" ago", "")}` : ""}`,

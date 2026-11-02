@@ -28,27 +28,21 @@ import { getConfigValueSource, loadConfig } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getConfigPath, getDataDir, getDbPath } from "../../core/paths";
-import { getStateDbPath, listPendingStateMigrations } from "../../core/state-db";
+import { getStateDbPath } from "../../core/state-db";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { resolveWorkingStashTarget, resolveWriteTarget } from "../../core/write-source";
 import { findSourceForPath, implicitStashDir, resolveSourceEntries } from "../../indexer/search/search-source";
-import { type Database, openDatabase } from "../../storage/database";
 import { listRecentImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { getEmbeddingCount } from "../../storage/repositories/index-vec-repository";
-import {
-  countFeedbackBySignal,
-  countPendingProposals,
-  listFeedbackEventRows,
-} from "../../storage/repositories/metrics-repository";
+import { countFeedbackBySignal, listFeedbackEventRows } from "../../storage/repositories/metrics-repository";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
 import {
   decodeTaskHistoryMetadata,
   queryTaskHistory,
   type TaskHistoryRow,
 } from "../../storage/repositories/task-history-repository";
-import { applyReadonlyPragmas } from "../../storage/sqlite-pragmas";
 import { pkgVersion } from "../../version";
 import { listConfig } from "../config-cli";
 import { akmHealth, parseHealthSince } from "../health";
@@ -192,13 +186,11 @@ async function overview(query: Query) {
     return { ...base, report: { window: since, compare: sinceIsDuration ? since : null } };
   });
   const metrics = await section(errors, "metrics", () =>
-    akmMetrics({ since: query.get("metricsSince") || "30d", indexSnapshot: false, includeRows: true }),
+    akmMetrics({ since: query.get("metricsSince") || "30d", indexSnapshot: false }),
   );
-  const stashDir = tryStashDir();
   const stateReads = await section(errors, "state", () =>
     withReadonlyStateDb(
       (db) => ({
-        pendingNow: stashDir ? countPendingProposals(db, stashDir) : null,
         improveRuns: listRecentImproveRuns(db, IMPROVE_RUNS_SHOWN).map(summarizeImproveRun),
         // Rank the complete window in the order of the bars (failed runs over runs), not the metrics top-20 by volume.
         taskFailures: metrics ? failingTasks(queryTaskHistory(db, metrics.window)) : null,
@@ -211,13 +203,10 @@ async function overview(query: Query) {
     metrics: metrics
       ? {
           ...metrics,
-          rows: undefined,
           usage: { ...metrics.usage, daily: filledActivity(metrics.usage.daily, metrics.window) },
         }
       : null,
-    pendingNow: stateReads?.pendingNow ?? null,
     improveRuns: stateReads?.improveRuns ?? [],
-    retrieval: metrics ? retrievalSeries(metrics.rows?.usage ?? [], metrics.window) : null,
     taskFailures: stateReads?.taskFailures ?? null,
     ...(Object.keys(errors).length > 0 ? { errors } : {}),
   };

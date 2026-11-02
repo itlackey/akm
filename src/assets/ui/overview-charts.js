@@ -93,7 +93,7 @@ function retrievalCard(ctx, trend, data) {
       tone: run.ok === false ? "fail" : "ok",
     }))
     .filter((event) => event.index >= 0);
-  const days = data.retrieval?.daily ?? [];
+  const days = trend.daily ?? [];
   return html`<section class="chart-card chart-wide"><h2>Is search finding what you need? <span class="muted small num">${fmtNum(total)} searches · ${fmtNum(missed)} found nothing</span></h2>
     <p>${takeaway}</p>
     ${legend([
@@ -210,7 +210,7 @@ function automation(ctx, tasks, runs, since) {
       },
     ],
   });
-  return html`<section class="chart-card" id="automation"><h2>Scheduled tasks</h2><p class="muted small">Recorded runs in this window, most failures first.</p>${
+  return html`<section class="chart-card" id="automation"><h2>Scheduled tasks</h2><p class="muted small">Recorded runs in this window, highest failure rate first.</p>${
     tasks === null
       ? emptyState("Task measurements unavailable.")
       : tasks?.length

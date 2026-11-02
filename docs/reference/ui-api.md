@@ -117,10 +117,6 @@ Everything on the overview page in one call. Query parameters:
         "triage": { "promoted": 2, "rejected": 1, "deferred": 0, "failed": 0, "skippedByCap": 0 }
       }
     ],
-    "retrieval": {
-      "daily": [{ "date": "2026-10-16", "searches": 3, "zeroResults": 1, "medianMs": 80, "latencySamples": 2 }]
-    },
-    "pendingNow": 3,
     "taskFailures": [{ "taskId": "weekly-review", "runs": 6, "failed": 2, "medianMs": 4000 }]
   }
 }
@@ -134,13 +130,8 @@ Everything on the overview page in one call. Query parameters:
 - `improveRuns` are the last 10 real (non-dry-run) improve runs, newest first. `preRunSync`, `sync` and `triage` are `null`
   when the run did not record them; `modelCalls` is empty for runs from before the usage report existed.
 - Activity uses `metrics.usage.daily`, counting search/curate summary events rather than individual hits.
-- `retrieval` shares `metrics.window` and its user-attributed source filter. Its UTC daily latency median uses only
-  recorded nonnegative durations (`latencySamples`); no samples means `null`, not zero. Missing result counts do not
-  mean zero results. The queries behind `zeroResults` are listed by `/api/search/misses`.
-- `pendingNow` is the number of pending proposals in the current stash right now. It is not windowed, and equals the
-  pending count of `akm proposal list`. It is `null` when there is no stash or state is unreadable. Use it instead of
-  `metrics.proposals.byStatus.pending`, which counts only proposals last updated in the window, across all stashes.
-- `metrics.usage.searchMedianMs` and the `retrieval` daily median share one filter (`totalMs >= 0`). The daily feedback
+- `metrics.usage.searchMedianMs` uses recorded nonnegative durations (`totalMs >= 0`), like the daily latency median of
+  [`/api/retrieval`](#get-apiretrieval). The daily feedback
   count in `metrics.usage.daily` counts signed rows only, like `metrics.feedback.totals`.
 - `taskFailures` lists the tasks in `metrics.window` with at least one failed run, ordered as the page's bars are:
   failed runs over runs, highest first, then failed runs, then runs, then id, limited to 20. Nonfailed runs are not
@@ -744,9 +735,11 @@ The last seven days against the eight weeks before them, the four-week improve l
 
 ## `GET /api/retrieval`
 
-The per-day user search series over a longer window than the overview's (`?since=90d` by default): days inside the data's
+The per-day user search series (`?since=90d` by default): days inside the data's
 coverage are filled with zeros, and the first and last day are marked `partial`. Each day has `searches`, `zeroResults`,
-`medianMs` and `latencySamples`.
+`medianMs` and `latencySamples`. The median uses only recorded nonnegative durations; no samples means `null`, not
+zero. Missing result counts do not mean zero results. The queries behind `zeroResults` are listed by
+[`/api/search/misses`](#get-apisearchmisses).
 
 `weekly` is the same data by ISO week as a p-chart: per week `week`, `x` (found nothing), `n` (searches), `rate`, and the
 control limits `lower` and `upper` (centre ± 3 standard errors at that week's own n); `signal` is `true` for a week
