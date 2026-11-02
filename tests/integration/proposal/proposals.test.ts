@@ -1279,6 +1279,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     expect(revertedProposal.status).toBe("reverted");
     expect(revertedProposal.acceptedAt).toBe(acceptedProposal.acceptedAt);
     expect(revertedProposal.review?.decidedAt).not.toBe(acceptedProposal.acceptedAt);
+    expect(revertedProposal.review?.decidedBy).toBe("human");
     expect(indexedEntry(lessonPath)?.description).toBe("restored orchid marker");
   });
 

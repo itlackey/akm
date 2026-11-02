@@ -7,24 +7,33 @@
  * and the p-chart limits for a weekly proportion. No I/O, so each is tested on its own.
  */
 
-import { binomialQuantile, dayRange, isoWeekStart } from "../metrics/stats";
 import type { Proposal } from "../proposal/proposal-types";
+import { binomialQuantile, dayRange, isoWeekStart } from "./stats";
 
 export type OutcomeClass = "judge" | "you" | "unknown" | "rejected" | "reverted" | "pending";
 
-/** Who decided an accepted proposal, or what became of it. A decision recorded before `decidedBy` existed is "unknown". */
-export function classifyOutcome(proposal: Proposal): OutcomeClass {
-  if (proposal.status === "pending") return "pending";
-  if (proposal.status === "rejected") return "rejected";
-  if (proposal.status === "reverted") return "reverted";
+/** Who made the decision. One recorded before `decidedBy` existed is "unknown" unless the gate auto-accepted it. */
+export function deciderOf(proposal: Proposal): "judge" | "you" | "unknown" {
   const by = proposal.review?.decidedBy;
   if (by === "triage") return "judge";
   if (by === "human") return "you";
   return proposal.gateDecision?.outcome === "auto-accepted" ? "judge" : "unknown";
 }
 
-/** When the proposal's current decision was made. */
+/** Who decided an accepted proposal, or what became of it. */
+export function classifyOutcome(proposal: Proposal): OutcomeClass {
+  if (proposal.status === "pending") return "pending";
+  if (proposal.status === "rejected") return "rejected";
+  if (proposal.status === "reverted") return "reverted";
+  return deciderOf(proposal);
+}
+
+/**
+ * When the proposal's current decision was made. A revert overwrites `review` with the revert time, so a reverted
+ * proposal is dated by its accept: the change took effect then, and the revert is a separate event (`updatedAt`).
+ */
 export function decidedAt(proposal: Proposal): string {
+  if (proposal.status === "reverted" && proposal.acceptedAt) return proposal.acceptedAt;
   return proposal.review?.decidedAt ?? proposal.updatedAt;
 }
 

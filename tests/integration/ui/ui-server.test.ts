@@ -19,9 +19,11 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
+import type { Proposal } from "../../../src/commands/proposal/proposal-types";
 import { createProposal } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
 import { DIFF_SIDE_MAX_CHARS } from "../../../src/commands/ui/api";
+import { weekOf } from "../../../src/commands/ui/derive";
 import { MAX_BODY_BYTES, MAX_DOCUMENT_BODY_BYTES, startUiServer, type UiServer } from "../../../src/commands/ui/server";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { getConfigPath, getDbPath } from "../../../src/core/paths";
@@ -29,7 +31,7 @@ import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { acquireAssetMutationLease } from "../../../src/indexer/index-writer-lock";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
-import { upsertProposal } from "../../../src/storage/repositories/proposals-repository";
+import { listStateProposals, upsertProposal } from "../../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import * as akmBin from "../../../src/tasks/resolve-akm-bin";
 import { runCliCapture } from "../../_helpers/cli";
@@ -481,7 +483,8 @@ describe("endpoints", () => {
     expect(impact.outcomes.map((o: { source: string }) => o.source)).toEqual(["reflect"]);
     expect(impact.reviewFlow.at(-1)).toMatchObject({ created: 2, decided: 1, waiting: 1 });
     expect(impact.changedAssets[0]).toMatchObject({ ref: "stash//lessons/rg", complete: false });
-    expect(impact.judgeAndYou.unknown ?? impact.judgeAndYou.you).toBeDefined();
+    // Accepted through the UI, so the decision is the person's.
+    expect(impact.judgeAndYou).toEqual({ you: { accepted: 1, rejected: 0, reverted: 0 } });
 
     const misses = await data(s, "/api/search/misses");
     expect(misses).toMatchObject({ searches: expect.any(Number), misses: expect.any(Array) });
@@ -497,6 +500,57 @@ describe("endpoints", () => {
     ).toEqual([accepted]);
     expect((await data(s, "/api/proposals?status=recent&class=rejected")).proposals).toHaveLength(0);
     expect((await api(s, "/api/proposals?status=recent&class=nope")).status).toBe(400);
+  });
+
+  test("a reverted proposal is dated and attributed by its accept, and still counts as accepted", async () => {
+    await seed();
+    const id = propose("knowledge/notes", NOTES_REWRITE);
+    const s = await start();
+    expect((await write(s, `/api/proposals/${id}/accept`, {})).status).toBe(200);
+    // Move the accept three weeks back, so the accept and the revert fall in different weeks.
+    const day = 86_400_000;
+    const acceptedAt = new Date(Date.now() - 21 * day).toISOString();
+    const db = openStateDatabase();
+    try {
+      const [accepted] = listStateProposals(db, { stashDir: storage.stashDir, status: "accepted" }) as Proposal[];
+      upsertProposal(
+        db,
+        {
+          ...accepted,
+          createdAt: new Date(Date.now() - 22 * day).toISOString(),
+          updatedAt: acceptedAt,
+          acceptedAt,
+          review: { ...accepted.review, decidedAt: acceptedAt },
+        } as Proposal,
+        storage.stashDir,
+      );
+    } finally {
+      db.close();
+    }
+    expect((await write(s, `/api/proposals/${id}/revert`, {})).status).toBe(200);
+
+    const impact = await data(s, "/api/improve/impact");
+    expect(impact.changedAssets[0]).toMatchObject({ proposalId: id, outcome: "reverted", decidedAt: acceptedAt });
+    const reverted = Object.fromEntries(impact.outcomes[0].weeks.map((w: Json) => [w.week, w.reverted]));
+    expect(reverted[weekOf(acceptedAt)]).toBe(1);
+    expect(reverted[impact.weeks.at(-1)]).toBe(0);
+    // Waiting from creation until the accept, not until the revert.
+    expect(impact.reviewFlow.at(-1)).toMatchObject({ waiting: 0 });
+    expect(impact.reviewFlow.find((w: Json) => w.week === weekOf(acceptedAt))).toMatchObject({ decided: 1 });
+    // The revert kept who accepted: a person, not "unknown".
+    expect(impact.judgeAndYou).toEqual({ you: { accepted: 0, rejected: 0, reverted: 1 } });
+    expect(impact.harm.some((item: Json) => item.kind === "reverted" && item.proposalId === id)).toBe(true);
+
+    // Accepted first, so it counts as accepted, and "since reverted" is a part of that figure.
+    const pulse = await data(s, "/api/overview/pulse");
+    expect(pulse.improveLine).toMatchObject({
+      proposed: 1,
+      accepted: 1,
+      acceptedThenReverted: 1,
+      rejected: 0,
+      waiting: 0,
+    });
+    expect(pulse.attention.harm.reverted).toBe(1);
   });
 
   test("GET /api/retrieval returns the per-day search series for a longer window than the overview's", async () => {

@@ -13,12 +13,12 @@ import { queryImproveRuns } from "../../storage/repositories/improve-runs-reposi
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
 import { queryTaskHistory } from "../../storage/repositories/task-history-repository";
 import { akmMetrics } from "../metrics/metrics-cli";
-import { nearestRank } from "../metrics/stats";
 import type { MetricsUsageRow } from "../metrics/types";
 import { proposalWaitingSince } from "../proposal/proposal-types";
 import { againstUsual, classifyOutcome } from "./derive";
 import { isUserSearch, missesFromRows } from "./misses";
 import { tryStashDir, withReadonlyStateDb } from "./readers";
+import { nearestRank } from "./stats";
 
 const DAY = 86_400_000;
 const iso = (ms: number): string => new Date(ms).toISOString();
@@ -95,9 +95,8 @@ export async function overviewPulse() {
   const improveLine = {
     weeks: 4,
     proposed: recent.length,
-    accepted: classes.filter(
-      (c) => ["judge", "you", "unknown", "reverted"].includes(c.outcome) && c.p.review?.outcome !== "rejected",
-    ).length,
+    // A revert writes a rejected review, so count by outcome class: a reverted proposal was accepted first.
+    accepted: classes.filter((c) => ["judge", "you", "unknown", "reverted"].includes(c.outcome)).length,
     acceptedThenReverted: classes.filter((c) => c.outcome === "reverted").length,
     rejected: classes.filter((c) => c.outcome === "rejected").length,
     rejectedByYou: classes.filter((c) => c.outcome === "rejected" && c.p.review?.decidedBy === "human").length,

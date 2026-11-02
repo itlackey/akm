@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { computeWallTimeStats } from "../health/improve-metrics";
-import { zeroFill } from "../metrics/stats";
 import type { MetricsDailyUsage, MetricsUsageRow } from "../metrics/types";
 import { type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
+import { zeroFill } from "./stats";
 
 /** Drill-down over the same user-attributed summary rows that `akm metrics` counts. */
 export function retrievalSeries(rows: MetricsUsageRow[], window: { since: string; until: string }) {

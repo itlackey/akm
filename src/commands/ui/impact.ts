@@ -14,7 +14,7 @@ import { listStateProposals } from "../../storage/repositories/proposals-reposit
 import { akmMetrics } from "../metrics/metrics-cli";
 import type { MetricsUsageRow } from "../metrics/types";
 import { isRetireProposal, type Proposal } from "../proposal/proposal-types";
-import { classifyOutcome, decidedAt, type OutcomeClass, weekOf, weekRange } from "./derive";
+import { classifyOutcome, decidedAt, deciderOf, weekOf, weekRange } from "./derive";
 import { section, tryStashDir, withReadonlyStateDb } from "./readers";
 
 const DAY = 86_400_000;
@@ -166,18 +166,9 @@ function changedAssets(proposals: Proposal[], usage: MetricsUsageRow[], now: num
 function judgeAndYou(proposals: Proposal[]) {
   const table: Record<string, { accepted: number; rejected: number; reverted: number }> = {};
   for (const p of proposals) {
-    const outcome: OutcomeClass = classifyOutcome(p);
+    const outcome = classifyOutcome(p);
     if (outcome === "pending") continue;
-    const who =
-      outcome === "judge"
-        ? "judge"
-        : outcome === "you"
-          ? "you"
-          : p.review?.decidedBy === "triage"
-            ? "judge"
-            : p.review?.decidedBy === "human"
-              ? "you"
-              : "unknown";
+    const who = deciderOf(p);
     const row = table[who] ?? { accepted: 0, rejected: 0, reverted: 0 };
     table[who] = row;
     if (outcome === "rejected") row.rejected += 1;
