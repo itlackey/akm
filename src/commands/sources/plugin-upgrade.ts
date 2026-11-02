@@ -325,8 +325,9 @@ export function openCodeConfigSpec(
   const configDir = opencodeConfigDir();
   const files = [
     flavor.globalConfigOnly ? undefined : process.env.OPENCODE_CONFIG?.trim(),
-    path.join(configDir, "opencode.json"),
+    // OpenCode loads opencode.jsonc after opencode.json, so its plugin list wins.
     path.join(configDir, "opencode.jsonc"),
+    path.join(configDir, "opencode.json"),
   ];
   for (const file of files) {
     if (!file) continue;

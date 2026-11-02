@@ -6,8 +6,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { runUpgrade, type UpgradeRunDependencies, usesHostCache } from "../../src/commands/sources/plugin-upgrade";
+import {
+  openCodeConfigSpec,
+  runUpgrade,
+  type UpgradeRunDependencies,
+  usesHostCache,
+} from "../../src/commands/sources/plugin-upgrade";
 import { moveToTrash } from "../../src/core/trash";
+import { OPENCODE_V1 } from "../../src/integrations/harnesses/opencode/plugin-layout";
 import { shapeForCommand } from "../../src/output/shapes";
 import { formatUpgradePlain } from "../../src/output/text/command-format";
 import type { UpgradeCheckResponse, UpgradeResponse } from "../../src/sources/types";
@@ -534,6 +540,14 @@ esac`,
         runUpgrade(NEXT, "0.9.27-rc.2", fakeDeps("0.9.27-rc.2", "0.9.27-rc.2")),
       );
       expect(entry(run, "opencode")).toMatchObject({ outcome: "current", to: "0.9.27-rc.2" });
+    });
+
+    test("with both opencode.json and opencode.jsonc naming the plugin, the .jsonc spec is the effective one", async () => {
+      writeConfig(["akm-opencode"]);
+      writeConfig(["akm-opencode@next"], "opencode.jsonc");
+      const found = await withEnv(world.env, async () => openCodeConfigSpec(OPENCODE_V1));
+      expect(found?.spec).toBe("akm-opencode@next");
+      expect(found?.file).toBe(path.join(world.root, "xdg-config", "opencode", "opencode.jsonc"));
     });
 
     test("a bare akm-opencode in the config: the entry is skipped with the line to add, lockstep stays on @latest", async () => {
