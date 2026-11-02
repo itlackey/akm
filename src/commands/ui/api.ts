@@ -43,12 +43,16 @@ import {
   listFeedbackEventRows,
 } from "../../storage/repositories/metrics-repository";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
-import { decodeTaskHistoryMetadata, queryTaskHistory } from "../../storage/repositories/task-history-repository";
+import {
+  decodeTaskHistoryMetadata,
+  queryTaskHistory,
+  type TaskHistoryRow,
+} from "../../storage/repositories/task-history-repository";
 import { applyReadonlyPragmas } from "../../storage/sqlite-pragmas";
 import { pkgVersion } from "../../version";
 import { listConfig } from "../config-cli";
 import { akmHealth, parseHealthSince } from "../health";
-import { rankTaskFailures } from "../metrics/collect";
+import { buildTasks } from "../metrics/collect";
 import { akmMetrics, metricsWindow, readUsageRows } from "../metrics/metrics-cli";
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../proposal/repository";
@@ -158,6 +162,19 @@ function summarizeImproveRun(row: ReturnType<typeof listRecentImproveRuns>[numbe
   };
 }
 
+function failingTasks(rows: TaskHistoryRow[]) {
+  return buildTasks(rows.length, rows)
+    .byTask.filter((task) => task.failed > 0)
+    .sort(
+      (a, b) =>
+        b.failed / b.runs - a.failed / a.runs ||
+        b.failed - a.failed ||
+        b.runs - a.runs ||
+        a.taskId.localeCompare(b.taskId),
+    )
+    .slice(0, 20);
+}
+
 async function overview(query: Query) {
   const errors: Record<string, string> = {};
   const since = query.get("since") || "24h";
@@ -172,17 +189,7 @@ async function overview(query: Query) {
       probe: flag(query, "probe"),
       readOnly: true,
     });
-    const report = withReadonlyStateDb(
-      (db) => ({
-        window: since,
-        compare: sinceIsDuration ? since : null,
-        pendingProposals: listStateProposals(db, { stashDir: tryStashDir() ?? "", status: "pending" }).map(
-          ({ ref, source, createdAt }) => ({ ref, source, createdAt }),
-        ),
-      }),
-      null,
-    );
-    return { ...base, ...(report ? { report } : {}) };
+    return { ...base, report: { window: since, compare: sinceIsDuration ? since : null } };
   });
   const metrics = await section(errors, "metrics", () =>
     akmMetrics({ since: query.get("metricsSince") || "30d", indexSnapshot: false, includeRows: true }),
@@ -193,8 +200,8 @@ async function overview(query: Query) {
       (db) => ({
         pendingNow: stashDir ? countPendingProposals(db, stashDir) : null,
         improveRuns: listRecentImproveRuns(db, IMPROVE_RUNS_SHOWN).map(summarizeImproveRun),
-        // Rank the complete window by rate (M-25), not the metrics top-20 by volume.
-        taskFailures: metrics ? rankTaskFailures(queryTaskHistory(db, metrics.window)).slice(0, 20) : null,
+        // Rank the complete window in the order of the bars (failed runs over runs), not the metrics top-20 by volume.
+        taskFailures: metrics ? failingTasks(queryTaskHistory(db, metrics.window)) : null,
       }),
       null,
     ),

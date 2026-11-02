@@ -18,7 +18,6 @@ import type { AssetOutcomeRow } from "../../storage/repositories/outcome-reposit
 import { decodeTaskHistoryMetadata, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
 import { computeWallTimeStats } from "../health/improve-metrics";
 import { hasTokenUsage } from "../health/llm-usage";
-import { MIN_ROWS_FOR_WORST_TASK_FAIL_RATE } from "../health/types-improve";
 import type { LlmUsageAggregate } from "../health/types-metrics";
 import { computeValenceScore } from "../improve/feedback-valence";
 import type {
@@ -368,7 +367,6 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
     },
     selectsPerSearch: searchesWithHits > 0 ? input.selects.length / searchesWithHits : null,
     searchMedianMs: median(searchMs),
-    searchTimed: searchMs.length,
     daily: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)),
     topAssets: [...assets.values()]
       .sort(
@@ -477,56 +475,6 @@ function taskDurationMs(row: TaskHistoryRow): number | undefined {
   } catch {
     return undefined;
   }
-}
-
-/** An `active` run older than this counts as not ok (plan M-25). */
-const ACTIVE_STALE_H = 6;
-
-export interface RankedTaskFailure extends MetricsTaskSummary {
-  /** Runs behind `failRate`: completed + failed + active older than {@link ACTIVE_STALE_H}. */
-  rated: number;
-  /** (rated - completed) / rated, or `null` below MIN_ROWS_FOR_WORST_TASK_FAIL_RATE rated runs (M-25). */
-  failRate: number | null;
-}
-
-/**
- * Per-task failure ranking (plan M-25). Fresh active runs are neither ok nor failed, so they are left out of `rated`.
- * Membership stays `failed > 0` until the client shows not-ok/rated (P1-4b). Tasks with a rate come first, highest
- * rate first; the rest by not-ok runs. Ties: runs, id.
- */
-export function rankTaskFailures(rows: TaskHistoryRow[], now: number = Date.now()): RankedTaskFailure[] {
-  const staleBefore = now - ACTIVE_STALE_H * 3_600_000;
-  const counts = new Map<string, { completed: number; notOk: number }>();
-  for (const row of rows) {
-    const entry = counts.get(row.task_id) ?? { completed: 0, notOk: 0 };
-    if (row.status === "completed") entry.completed += 1;
-    else if (row.status === "failed") entry.notOk += 1;
-    else if (row.status === "active" && Date.parse(row.started_at) < staleBefore) entry.notOk += 1;
-    counts.set(row.task_id, entry);
-  }
-  return buildTasks(rows.length, rows)
-    .byTask.map((task) => {
-      const { completed, notOk } = counts.get(task.taskId) ?? { completed: 0, notOk: 0 };
-      const rated = completed + notOk;
-      return {
-        task,
-        notOk,
-        ranked: {
-          ...task,
-          rated,
-          failRate: rated >= MIN_ROWS_FOR_WORST_TASK_FAIL_RATE ? notOk / rated : null,
-        },
-      };
-    })
-    .filter(({ task }) => task.failed > 0)
-    .sort((a, b) => {
-      const rateA = a.ranked.failRate;
-      const rateB = b.ranked.failRate;
-      if (rateA !== null && rateB !== null && rateA !== rateB) return rateB - rateA;
-      if ((rateA === null) !== (rateB === null)) return rateA === null ? 1 : -1;
-      return b.notOk - a.notOk || b.task.runs - a.task.runs || a.task.taskId.localeCompare(b.task.taskId);
-    })
-    .map(({ ranked }) => ranked);
 }
 
 export function buildTasks(top: number, rows: TaskHistoryRow[]): AkmMetricsResult["tasks"] {

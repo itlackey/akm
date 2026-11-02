@@ -56,7 +56,6 @@ import {
   getAllEntries,
   getEmbeddableEntryCount,
   getEntryCount,
-  getEntryCountByType,
   getIndexedBundleIdsByDir,
   getIndexedDirPathsByBundleId,
   relinkUsageEvents,
@@ -831,7 +830,6 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
         ftsMs: timing.ftsMs,
         finalizeMs: timing.finalizeMs,
         totalEntries,
-        entriesByType: getEntryCountByType(db),
       },
     });
 

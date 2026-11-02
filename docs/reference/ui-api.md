@@ -95,11 +95,7 @@ Everything on the overview page in one call. Query parameters:
       "runs": [],
       "windows": [{ "name": "current", "since": "...", "until": "...", "runs": 1, "improve": {}, "metrics": {} }, { "name": "prior" }],
       "deltas": {},
-      "report": {
-        "window": "24h",
-        "compare": "24h",
-        "pendingProposals": [{ "ref": "stash//lessons/rg", "source": "reflect", "createdAt": "..." }]
-      }
+      "report": { "window": "24h", "compare": "24h" }
     },
     "metrics": { "schemaVersion": 1, "window": {}, "usage": {}, "feedback": {}, "utility": {}, "llm": {}, "proposals": {}, "notes": [] },
     "improveRuns": [
@@ -122,11 +118,10 @@ Everything on the overview page in one call. Query parameters:
       }
     ],
     "retrieval": {
-      "daily": [{ "date": "2026-10-16", "searches": 3, "zeroResults": 1, "medianMs": 80, "latencySamples": 2 }],
-      "zeroResultQueries": [{ "date": "2026-10-16", "query": "missing guide", "count": 1 }]
+      "daily": [{ "date": "2026-10-16", "searches": 3, "zeroResults": 1, "medianMs": 80, "latencySamples": 2 }]
     },
     "pendingNow": 3,
-    "taskFailures": [{ "taskId": "weekly-review", "runs": 6, "failed": 2, "medianMs": 4000, "rated": 6, "failRate": 0.3333333333333333 }]
+    "taskFailures": [{ "taskId": "weekly-review", "runs": 6, "failed": 2, "medianMs": 4000 }]
   }
 }
 ```
@@ -141,18 +136,15 @@ Everything on the overview page in one call. Query parameters:
 - Activity uses `metrics.usage.daily`, counting search/curate summary events rather than individual hits.
 - `retrieval` shares `metrics.window` and its user-attributed source filter. Its UTC daily latency median uses only
   recorded nonnegative durations (`latencySamples`); no samples means `null`, not zero. Missing result counts do not
-  mean zero results. Query counts group the recorded zero-result searches by date and query.
+  mean zero results. The queries behind `zeroResults` are listed by `/api/search/misses`.
 - `pendingNow` is the number of pending proposals in the current stash right now. It is not windowed, and equals the
   pending count of `akm proposal list`. It is `null` when there is no stash or state is unreadable. Use it instead of
   `metrics.proposals.byStatus.pending`, which counts only proposals last updated in the window, across all stashes.
-- `metrics.usage.searchMedianMs` and the `retrieval` daily median share one filter (`totalMs >= 0`);
-  `metrics.usage.searchTimed` is the number of searches behind the median. The daily feedback count in
-  `metrics.usage.daily` counts signed rows only, like `metrics.feedback.totals`.
-- `taskFailures` lists the tasks in `metrics.window` with at least one failed run, then limits to 20. Stuck active runs
-  count toward `rated` and `failRate` but do not add a task to the list on their own. `rated` is the number of finished runs: completed + failed + active runs started more than 6 h ago (a fresh
-  active run is neither ok nor failed and is not counted). `failRate` is `(rated - completed) / rated`, or `null` below
-  5 rated runs (plan M-25). Tasks with a rate come first, highest rate first; the rest follow by not-ok runs, then runs.
-  Nonfailed runs are not assumed successful, nor are absent runs evidence of a successful scheduled task.
+- `metrics.usage.searchMedianMs` and the `retrieval` daily median share one filter (`totalMs >= 0`). The daily feedback
+  count in `metrics.usage.daily` counts signed rows only, like `metrics.feedback.totals`.
+- `taskFailures` lists the tasks in `metrics.window` with at least one failed run, ordered as the page's bars are:
+  failed runs over runs, highest first, then failed runs, then runs, then id, limited to 20. Nonfailed runs are not
+  assumed successful, nor are absent runs evidence of a successful scheduled task.
   Details are available from `/api/tasks/history`. Missing/unreadable state yields `null` rather than a healthy empty list.
 - Charts must retain `metrics.notes` about missing stores and retention; none of these series imply complete history.
   Improve runs remain the latest 10 across all dates, independently of the metrics window.
@@ -717,9 +709,12 @@ points at a folder. A relative path or a file is `400`; a path that does not exi
 
 ## `GET /api/improve/impact`
 
-What improve proposed and changed, week by week. `?since=90d` (default) or `all` (one year). Each section is computed on its
-own: a failing store leaves that section `null` and names it under `errors`, and the rest is still returned. When the state
-database is unavailable the response is `{ "available": false }`.
+What improve proposed and changed, week by week. `?since=90d` (default) or `all` (one year). Each store read (`proposals`,
+`reopened`, `library`, `usage`, `cost`) stands on its own: one that fails reads as empty and is named under `errors`, and the
+rest is still returned. When the state database is unavailable the response is `{ "available": false }`.
+
+A proposal that was later reverted is dated by its accept (`acceptedAt`) in `outcomes`, `reviewFlow`, `changedAssets` and
+`summary`, and keeps the decider of its accept in `judgeAndYou`. The revert itself is the `reverted` entry of `harm`.
 
 - `summary`: `kept`, `reverted`, `flags` (negative feedback within 14 days after a change), `tokens`, `tokenCoverage`
   (the share of model calls that reported tokens) and `checked` (decisions in the window).
@@ -750,7 +745,7 @@ The last seven days against the eight weeks before them, the four-week improve l
 
 The per-day user search series over a longer window than the overview's (`?since=90d` by default): days inside the data's
 coverage are filled with zeros, and the first and last day are marked `partial`. Each day has `searches`, `zeroResults`,
-`noResultRate` (`null` on a day with no searches), `medianMs` and `latencySamples`.
+`medianMs` and `latencySamples`.
 
 `weekly` is the same data by ISO week as a p-chart: per week `week`, `x` (found nothing), `n` (searches), `rate`, and the
 control limits `lower` and `upper` (centre ± 3 standard errors at that week's own n); `signal` is `true` for a week
