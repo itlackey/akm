@@ -324,7 +324,8 @@ It is a current snapshot, not a time-series of historical queue size.
 - `waitingSince` is the last reopen, else creation: the age to show. `gateDecision` is the drain's or quality gate's
   verdict (`outcome`: `staged`, `auto-rejected`, `deferred`, ...; `reason` is a stable token). `review` is
   `{ outcome, reason?, decidedAt, decidedBy? }` on a decided proposal; `decidedBy` is `triage` or `human` and is absent
-  when the decider was not recorded (older decisions, system archives, reverts): decider unknown.
+  when the decider was not recorded (older decisions, system archives, reverts written before a revert kept its accept's
+  decider): decider unknown.
 - `retirement` is `null` unless the proposal retires an asset (`isRetire`). `continuityRisk` is
   `{ failingQueries, unverifiedQueries?, ranks }` when the continuity check flagged the pair, else `null`.
 - Refs are durable `bundle//conceptId` refs.
@@ -771,7 +772,8 @@ general config editor or command-execution endpoint.
 | `/api/bundles/add` | `{source, name?, writable?}` → `akm bundle add`, including source validation. Existing provider restrictions apply; no insecure-transport bypass is exposed. |
 | `/api/bundles/update` | `{bundle}` → `akm bundle update -- <bundle>`. Fetches/reindexes only on explicit submission. A rare update requiring destructive confirmation remains refused; the UI does not silently pass `--yes`. |
 | `/api/bundles/remove` | `{bundle, confirm: true}` → `akm bundle remove --yes -- <bundle>`. The UI requires an inline confirmation before this call. Managed installs may be deleted; local filesystem source files remain on disk. |
-| `/api/bundles/settings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}, defaultBundle?, defaultWriteTarget?}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Defaults take existing names or `""` to unset a local value; inherited values cannot be unset locally. Existing validation rejects invalid defaults, disabled targets and writable npm/website sources. |
+| `/api/bundles/settings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Existing validation rejects disabled targets and writable npm/website sources. The default bundle and write target are edited through `/api/config/set`. |
+| `/api/config/set` | `{set?: {key: string}, unset?: string[]}` → `akm config set` / `unset` on each key, in one validated, atomic write. Values are strings, as on the command line, and are coerced and checked against the schema; literal API keys and `configVersion` are refused. An unset is refused with `400 TARGET_NOT_UPDATABLE` when the key is inherited from an `extends` base or sits inside a connection or harness entry akm ignores, and an unset with no config file writes nothing (`saved: false`), all as `akm config unset` does. |
 | `/api/knowledge/create` | `{bundle, name, path?, content}` → `akm import -` with Markdown on stdin. Uses the existing writable AKM target, name/path validation, frontmatter preservation, index/Git effects, and no `--force`. Existing files are never overwritten. Fails fast with `409 ASSET_MUTATION_LEASE_HELD` while another writer holds the asset-mutation lease. |
 | `/api/asset/save` | `{ref, revision, content}` → the existing shared Markdown writer with `force` and the expected raw-content hash. Only indexed writable AKM knowledge/memory documents accepted by `/api/asset/source` can be edited. The writer takes the asset-mutation lease and compares the live source with `revision` inside it, immediately before writing. While another writer holds the lease the save fails fast with `409 ASSET_MUTATION_LEASE_HELD` instead of waiting. A stale revision returns `409 ASSET_CONTENT_CHANGED` without writing; a source deleted after it was loaded is refused (`404 ASSET_NOT_FOUND`) rather than recreated. The browser keeps the draft after a rejected save. An identical save returns `unchanged: true` without rewriting, reindexing or recording an event. Changed saves retain normal writer validation, indexing and Git effects. |
 
@@ -782,7 +784,7 @@ would write config, is refused with `400 INVALID_FLAG_VALUE` and the user is ask
 the CLI first. A settings request that changes nothing writes nothing and is not refused. It never writes
 `"[redacted]"` back as a credential. Bundle update writes only the lockfile, and feedback, knowledge creation and
 document editing do not save config, so none of them use that config-sanitizer check. Unsetting an inherited
-`defaultBundle` or `defaultWriteTarget` is refused with `400 TARGET_NOT_UPDATABLE`, as `akm config unset` refuses it.
+`defaultBundle` or `defaultWriteTarget` through `/api/config/set` is refused with `400 TARGET_NOT_UPDATABLE`, as `akm config unset` refuses it.
 
 The shared Markdown writer now participates in the existing mutation lease, including CLI import/remember callers;
 omitting the optional expected hash retains their normal write/force behavior. This serializes cooperating AKM

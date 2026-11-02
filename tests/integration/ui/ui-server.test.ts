@@ -1617,6 +1617,9 @@ describe("workspace actions", () => {
     const config = loadConfig();
     writeSandboxConfig({
       ...config,
+      // A disabled bundle cannot be a default, and this route no longer edits the defaults.
+      defaultBundle: undefined,
+      defaultWriteTarget: undefined,
       bundles: {
         ...config.bundles,
         stash: {
@@ -1632,8 +1635,6 @@ describe("workspace actions", () => {
       enabled: false,
       writable: false,
       componentWritability: { main: false },
-      defaultBundle: "",
-      defaultWriteTarget: "",
       connections: { default: { apiKey: "[redacted]" } },
       unrelated: "overwrite attempt",
     });
@@ -1649,18 +1650,16 @@ describe("workspace actions", () => {
     expect(saved.unrelated).toEqual({ keep: [1, "two"] });
     const listed = await data(s, "/api/bundles");
     expect(listed.bundles.find((b: Json) => b.name === "stash")).toMatchObject({ enabled: false, writable: false });
-    expect((await write(s, "/api/bundles/settings", { defaultBundle: "missing" })).status).toBe(400);
     expect((await write(s, "/api/bundles/settings", { bundle: "constructor", enabled: true })).status).toBe(400);
     expect(
       (await write(s, "/api/bundles/settings", { bundle: "stash", componentWritability: { constructor: true } }))
         .status,
     ).toBe(400);
-    expect((await write(s, "/api/bundles/settings", { defaultWriteTarget: "" })).status).toBe(200);
+    // The defaults are edited on the Config page only; this route ignores them.
+    expect((await write(s, "/api/bundles/settings", { defaultWriteTarget: "stash" })).body.data).toEqual({
+      saved: false,
+    });
     expect(loadConfig().defaultWriteTarget).toBeUndefined();
-    expect(
-      (await write(s, "/api/bundles/settings", { bundle: "stash", enabled: true, defaultWriteTarget: "stash" })).status,
-    ).toBe(200);
-    expect(loadConfig().defaultWriteTarget).toBe("stash");
   });
 
   test("config set validates like the CLI, keeps secrets and unrelated keys, and unsets", async () => {
@@ -1694,6 +1693,32 @@ describe("workspace actions", () => {
     expect(unset.status, unset.body.error).toBe(200);
     expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).output?.detail).toBeUndefined();
     expect((await write(s, "/api/config/set", {})).body.data).toEqual({ saved: false });
+  });
+
+  test("config unset refuses an entry akm ignores, and does nothing without a config file", async () => {
+    await seed();
+    const s = await start();
+    const configPath = getConfigPath();
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ configVersion: "0.9.0", connections: { draft: { models: { fast: "m" } } } }),
+    );
+    resetConfigCache();
+    const before = fs.readFileSync(configPath, "utf8");
+    const refused = await write(s, "/api/config/set", { unset: ["connections.draft.models.fast"] });
+    expect(refused.status).toBe(400);
+    expect(refused.body.code).toBe("TARGET_NOT_UPDATABLE");
+    expect(refused.body.error).toContain('connection "draft", which akm ignores');
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+
+    fs.rmSync(configPath);
+    resetConfigCache();
+    expect((await write(s, "/api/config/set", { unset: ["output.detail"] })).body.data).toEqual({ saved: false });
+    expect(fs.existsSync(configPath)).toBe(false);
+    // A set alongside an unset still creates the file.
+    const created = await write(s, "/api/config/set", { set: { "output.detail": "full" }, unset: ["output.format"] });
+    expect(created.body.data).toEqual({ saved: true });
+    expect(fs.existsSync(configPath)).toBe(true);
   });
 
   test("bundle lifecycle uses real local-source add, update and confirmed remove operations", async () => {
