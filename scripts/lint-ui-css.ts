@@ -67,7 +67,7 @@ export function lintCss(css: string, file: string): Finding[] {
       startLine = line;
     } else if (char === ";" || char === "}") {
       const declaration = buffer.trim();
-      if (declaration) checkDeclaration(declaration, file, stack, add);
+      if (declaration) checkDeclaration(declaration, file, add);
       if (char === "}") stack.pop();
       buffer = "";
       startLine = line;
@@ -96,12 +96,7 @@ function openBlock(prelude: string, stack: string[], add: (rule: number, detail:
   if (depth >= 3) add(4, `nested ${depth + 1} levels: ${prelude}`);
 }
 
-function checkDeclaration(
-  declaration: string,
-  file: string,
-  stack: string[],
-  add: (rule: number, detail: string) => void,
-) {
+function checkDeclaration(declaration: string, file: string, add: (rule: number, detail: string) => void) {
   const colon = declaration.indexOf(":");
   if (colon < 0) return;
   const property = declaration.slice(0, colon).trim().toLowerCase();

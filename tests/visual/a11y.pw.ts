@@ -169,7 +169,7 @@ async function obscuredStops(page: Page): Promise<number> {
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-/** The accessibility tree is the screen-reader evidence (Q-10): one baseline per route, recorded in the pinned image. */
+/** The accessibility tree is the screen-reader evidence: one baseline per route, recorded in the pinned image. */
 for (const name of Object.keys(ROUTES) as RouteName[]) {
   test(`${name} keeps its accessibility tree`, async ({ page }) => {
     await visit(page, ROUTES[name].hash);
