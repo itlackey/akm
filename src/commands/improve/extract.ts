@@ -21,6 +21,7 @@ import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
+import { collectCredentialValues } from "../../core/config/credentials";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -34,7 +35,7 @@ import {
 } from "../../core/file-lock";
 import type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
-import { redactErrorBody } from "../../core/redaction";
+import { collectSensitiveValues, redactErrorBody } from "../../core/redaction";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { resolveTypeConventions, typeConventionRef } from "../../core/standards/resolve-type-conventions";
 import { getStateDbPath, openStateDatabase } from "../../core/state-db";
@@ -45,6 +46,7 @@ import { noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import { collectDispatchSensitiveValues } from "../../integrations/agent/runner-dispatch";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
@@ -1035,12 +1037,16 @@ function resolveExtractRun(
     );
   }
   const runner = llmRunner;
+  const sensitiveValues = collectSensitiveValues([
+    ...collectDispatchSensitiveValues(runner),
+    ...collectCredentialValues(config),
+  ]);
   const triage = (process as { triage?: { enabled?: boolean; minScore?: number } } | undefined)?.triage;
   // The default summary generator fails open: no summary, no session asset.
   const generate: SessionSummaryGenerator = async (data) => {
     const outcome = await callStage({
       runner,
-      prompt: buildSessionSummaryPrompt(data),
+      prompt: buildSessionSummaryPrompt(data, sensitiveValues),
       request: {
         responseSchema: SESSION_SUMMARY_JSON_SCHEMA,
         ...(options.signal ? { signal: options.signal } : {}),
