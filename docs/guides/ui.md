@@ -16,11 +16,11 @@ akm ui --no-open  # prints the URL instead
 | **Overview** | Is anything wrong, what needs me, and is search finding what I need? |
 | **Proposals** | What improve wants to change, one diff at a time, with accept, reject and undo. |
 | **Improve impact** | Did improve help? Who decided what, what was undone, and what it cost. |
-| **History** | Every commit to the working stash, grouped by day, filterable by text and by who made it. |
+| **History** | Every commit to the working stash, grouped by day in your time zone, filterable by text and by who made it. |
 | **Search** | Find an asset (Results), read the index (Browse), and see queries that found nothing (Misses). |
 | **New knowledge** | Write a Markdown asset into a writable bundle. Existing files are never overwritten. |
-| **Bundles** | Where akm reads from and writes to; add, update or remove a bundle. |
-| **Config** | The settings akm keeps in `config.json`, each change validated as `akm config set` would. |
+| **Bundles** | The bundles akm reads from and the index; add, update, enable or remove a bundle. |
+| **Config** | The settings akm keeps in `config.json`, including the default bundle and write target, each change validated as `akm config set` would. |
 
 ### Overview
 
@@ -58,10 +58,10 @@ is waiting by age; select an age to show only those.
 
 ### Improve impact
 
-Read the page top to bottom:
+The window is 90 days or one year. Read the page top to bottom:
 
-1. **Did improve help search?** The share of searches that found something, with a mark on each day an improve
-   change was kept.
+1. **Did improve help search?** Searches each week beside the improve changes kept that week. The chart of the share
+   that found nothing is on Overview.
 2. **Who decided what.** One bar per process: accepted by the judge or by you, rejected, reverted.
 3. **Is review keeping up?** Proposals waiting at the end of each week, and how many were made and decided.
 4. **Harm log.** Changes that were undone, rejections reopened, risky retirements and complaints after a change.

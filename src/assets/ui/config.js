@@ -1,7 +1,7 @@
 // Config: an editable settings page. Each card saves its own changed fields through `/api/config/set`, which
 // validates them exactly like `akm config set`. The full effective config stays below as a read-only reference.
 
-import { actionForm, api, badge, emptyState, html, pageHeader, post, pretty, tableWrap } from "./lib.js";
+import { actionForm, api, badge, emptyState, html, pageHeader, post, pretty, switchChanged, tableWrap } from "./lib.js";
 
 const OUTPUT_FORMATS = ["json", "yaml", "text", "jsonl", "md", "html"];
 const DETAILS = ["brief", "normal", "full"];
@@ -85,15 +85,17 @@ function changesOf(form) {
     const key = input.name;
     if (!key || seen.has(key)) continue;
     const kind = input.dataset.kind;
+    if (kind === "toggle") {
+      if (switchChanged(input)) set[key] = String(input.checked);
+      continue;
+    }
     let current;
-    if (kind === "toggle") current = input.checked ? "true" : "false";
-    else if (kind === "segmented") {
+    if (kind === "segmented") {
       seen.add(key);
       current = form.querySelector(`[name="${CSS.escape(key)}"]:checked`)?.value ?? "";
     } else current = input.value.trim();
-    const initial = kind === "toggle" ? (input.dataset.initial === "true" ? "true" : "false") : input.dataset.initial;
-    if (current === initial) continue;
-    if (current === "" && kind !== "toggle") unset.push(key);
+    if (current === input.dataset.initial) continue;
+    if (current === "") unset.push(key);
     else if (kind === "list")
       set[key] = JSON.stringify(
         current

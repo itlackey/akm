@@ -140,6 +140,14 @@ describe("what the page may load and do", () => {
     }
   });
 
+  test("a page attaches nothing to <main>, which outlives it; app.js owns the delegated click and change handlers", () => {
+    // chart-view.js adds its own listeners to <main> and removes them when the page goes.
+    for (const file of authoredJsFiles.filter((f) => f !== "app.js" && f !== "chart-view.js"))
+      expect(read(file), file).not.toMatch(/\broot\.addEventListener\(/);
+    expect(read("app.js")).toMatch(/main\.addEventListener\("click"/);
+    expect(read("app.js")).toMatch(/main\.addEventListener\("change"/);
+  });
+
   test("decisions use inline confirmation only: no window.confirm, alert or prompt anywhere", () => {
     for (const file of authoredJsFiles) {
       expect(read(file), file).not.toMatch(/\b(?:confirm|alert|prompt)\s*\(/);
@@ -281,7 +289,7 @@ describe("pages", () => {
     for (const name of browserGlobals) delete (globalThis as Record<string, unknown>)[name];
   });
 
-  test("a command asset shows its template as the body and as Markdown source (B-01)", async () => {
+  test("a command asset shows its template as the body and as Markdown source", async () => {
     await seed();
     fs.mkdirSync(path.join(storage.stashDir, "commands"), { recursive: true });
     fs.writeFileSync(
@@ -298,22 +306,7 @@ describe("pages", () => {
     expect(asset).toMatch(/<summary>Markdown source<\/summary><pre class="code"[^>]*>[\s\S]*checklist/);
   });
 
-  const writeSelect = (page: string) => page.match(/<select name="defaultWriteTarget"[\s\S]*?<\/select>/)?.[0] ?? "";
-
-  test("bundles says writes need a default bundle when AKM_BUNDLE_DIR and defaultBundle are both unset (B-02)", async () => {
-    await seed();
-    delete process.env.AKM_BUNDLE_DIR; // restored by the storage teardown
-    writeSandboxConfig({ bundles: undefined, defaultBundle: undefined, defaultWriteTarget: undefined });
-    resetConfigCache();
-    server = await startUiServer({ port: 0 });
-    await signIn(server.token);
-
-    const bundles = (await (await view("bundles.js"))(ctx())).text;
-    expect(writeSelect(bundles)).toContain("None (writes need a default bundle)");
-    expect(writeSelect(bundles)).not.toContain("Automatic (working stash)");
-  });
-
-  test("bundles lists the working stash first when it is not a configured bundle (B-02)", async () => {
+  test("bundles lists the working stash first when it is not a configured bundle", async () => {
     await seed();
     writeSandboxConfig({ bundles: undefined, defaultBundle: undefined, defaultWriteTarget: undefined });
     resetConfigCache();
@@ -325,14 +318,12 @@ describe("pages", () => {
     expect(bundles.replaceAll("<wbr>", "")).toContain(storage.stashDir);
     expect(bundles).toContain("No other bundles.");
     expect(bundles).toContain("akm bundle add &lt;source&gt;");
-    expect(writeSelect(bundles)).toContain("Automatic (working stash)");
-    expect(writeSelect(bundles)).not.toContain("None (writes need");
     expect(bundles).not.toContain("akm init");
     expect(bundles).not.toContain("Use fallback");
     expect(bundles.indexOf("Working stash")).toBeLessThan(bundles.indexOf("No other bundles."));
   });
 
-  test("bundles lists the default bundle first and labels the write target honestly (B-02)", async () => {
+  test("bundles lists the default bundle first and edits no defaults itself", async () => {
     await seed();
     const other = fs.mkdtempSync(path.join(storage.root, "team-"));
     writeSandboxConfig({
@@ -348,11 +339,14 @@ describe("pages", () => {
     expect(bundles).not.toContain("Working stash");
     expect(bundles.indexOf("<h3>stash</h3>")).toBeGreaterThan(-1);
     expect(bundles.indexOf("<h3>stash</h3>")).toBeLessThan(bundles.indexOf("<h3>team</h3>"));
-    expect(writeSelect(bundles)).toContain("Default bundle (stash)");
     expect(bundles.match(/>default</g)).toHaveLength(1);
+    // The default bundle and write target are edited on the Config page only.
+    expect(bundles).not.toContain('name="defaultBundle"');
+    expect(bundles).not.toContain('name="defaultWriteTarget"');
+    expect(bundles).toContain('href="#/config"');
   });
 
-  test("bundles shows no working stash when a component-root default bundle covers the directory (B-02)", async () => {
+  test("bundles shows no working stash when a component-root default bundle covers the directory", async () => {
     await seed();
     const root = fs.mkdtempSync(path.join(storage.root, "team-"));
     fs.mkdirSync(path.join(root, "content"));
@@ -710,6 +704,111 @@ describe("pages", () => {
     expect(page).not.toMatch(/<details[^>]*>\s*<summary>Harm log/);
   });
 
+  test("overview and improve toggle their window through data-hash and draw their own headers", async () => {
+    await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const overview = (await (await view("overview.js"))(ctx())).text;
+    expect(overview).toContain('data-hash="#/overview?window=90d"');
+    expect(overview).toContain('<header class="page-head"><h1>Overview</h1>');
+    // A link to another page's section names the page and the section, not a second hash.
+    expect(overview).not.toContain("#/improve#");
+    const improve = (await (await view("improve.js"))(ctx())).text;
+    expect(improve).toContain('data-hash="#/improve?since=all"');
+    expect(improve).toMatch(/<span>1 year<\/span>/);
+    expect(improve).not.toMatch(/<span>All<\/span>/);
+    // The search section reads the server's weekly series; it does not draw a second chart of the same share.
+    expect(improve).toContain("Did improve help search?");
+    expect(improve).not.toContain('id="improve-trend"');
+  });
+
+  test("history groups commits by day and prints their times in the same, local, time zone", async () => {
+    await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const zone = process.env.TZ;
+    // 23:30 at UTC-5 on 1 October is 13:30 on 2 October in Tokyo.
+    process.env.TZ = "Asia/Tokyo";
+    const real = globalThis.fetch;
+    globalThis.fetch = ((input: string, init?: RequestInit) =>
+      input.startsWith("/api/changes")
+        ? Promise.resolve(
+            Response.json({
+              ok: true,
+              data: {
+                git: true,
+                bundle: "stash",
+                path: storage.stashDir,
+                commits: [
+                  {
+                    sha: "a".repeat(40),
+                    shortSha: "aaaaaaa",
+                    subject: "late commit",
+                    author: "me",
+                    time: "2026-10-01T23:30:00-05:00",
+                    origin: "other",
+                    pathCount: 0,
+                    paths: [],
+                  },
+                ],
+              },
+            }),
+          )
+        : real(input, init)) as typeof fetch;
+    try {
+      const history = (await (await view("history.js"))(ctx())).text;
+      expect(history).toContain('<h2 class="day">2026-10-02 ');
+      expect(history).toContain(">13:30<");
+      expect(history).not.toContain("UTC</span>");
+    } finally {
+      globalThis.fetch = real;
+      if (zone === undefined) delete process.env.TZ;
+      else process.env.TZ = zone;
+    }
+  });
+
+  test("undo, reopen and the other decisions each say what they are doing while the request runs", async () => {
+    const { proposalId } = await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const handlers: Record<string, (event: unknown) => void> = {};
+    const region = {
+      innerHTML: "",
+      addEventListener: (name: string, fn: (event: unknown) => void) => {
+        handlers[name] = fn;
+      },
+      querySelector: () => ({ focus: () => undefined }),
+    };
+    const actions = (await load("proposal-actions.js")) as {
+      wireDetailActions: (root: unknown, options: unknown) => void;
+    };
+    actions.wireDetailActions({ querySelector: () => region }, { id: proposalId, nextId: null });
+    const click = (act: string) =>
+      handlers.click?.({ target: { closest: () => ({ disabled: false, dataset: { act } }) } });
+    // Each step is a request: the page names the verb at once, and has settled to something else when it ends.
+    const step = async (act: string, busy: string) => {
+      click(act);
+      expect(region.innerHTML, act).toContain(busy);
+      for (let i = 0; i < 200 && region.innerHTML.includes(busy); i++) await new Promise((r) => setTimeout(r, 25));
+      expect(region.innerHTML, act).not.toContain(busy);
+    };
+    click("reject");
+    handlers.change?.({ target: { matches: () => true, value: "Wrong" } });
+    await step("reject-confirm", "Rejecting...");
+    expect(region.innerHTML).toContain("Rejected");
+    await step("reopen", "Reopening...");
+    expect(region.innerHTML).not.toContain("Rejecting...");
+    click("accept");
+    await step("accept-confirm", "Accepting...");
+    expect(region.innerHTML).toContain("Accepted");
+    click("undo");
+    expect(region.innerHTML).toContain("Undoing...");
+    expect(region.innerHTML).not.toContain("Rejecting...");
+    expect(region.innerHTML).not.toContain("reject-chip");
+    for (let i = 0; i < 200 && region.innerHTML.includes("Undoing..."); i++)
+      await new Promise((r) => setTimeout(r, 25));
+  });
+
   test("proposal review retains its filtered queue and decisions restore predictable focus", async () => {
     const { proposalId } = await seed();
     server = await startUiServer({ port: 0 });
@@ -717,7 +816,7 @@ describe("pages", () => {
     const query = "source=reflect&age=underDay";
     const detail = (await (await view("proposals.js", "renderDetail"))(ctx(query, proposalId))).text;
     expect(detail).toContain('href="#/proposals?source=reflect&amp;age=underDay"');
-    // The decision bar sits above the diff, so it stays in reach (plan 4.3).
+    // The decision bar sits above the diff, so it stays in reach.
     expect(detail.indexOf("data-actions")).toBeLessThan(detail.indexOf("Proposed change"));
     expect(detail.indexOf("Proposed change")).toBeLessThan(detail.indexOf("Proposal details"));
     expect(detail).toContain("Why akm proposed this");

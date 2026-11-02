@@ -96,7 +96,7 @@ async function edit(ctx, ref) {
   try {
     source = await api("/api/asset/source", { ref });
   } catch (error) {
-    // Not a dead end: say what is wrong and offer the two ways forward (B-74).
+    // Not a dead end: say what is wrong and offer the two ways forward.
     ctx.after.push((root) =>
       root.querySelector("[data-copy-index]")?.addEventListener("click", async (event) => {
         try {
@@ -204,12 +204,12 @@ async function edit(ctx, ref) {
         : input.value !== asTextarea(source.content)
           ? "Unsaved changes"
           : "No changes";
-      // The status is a live region: write it only when it changes, not on every keystroke (B-42).
+      // The status is a live region: write it only when it changes, not on every keystroke.
       if (state.textContent !== next) state.textContent = next;
       draw();
     });
     draw();
-    // Ctrl or Cmd+S saves here, not the browser's own page-save dialog (B-43).
+    // Ctrl or Cmd+S saves here, not the browser's own page-save dialog.
     input.addEventListener("keydown", (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
