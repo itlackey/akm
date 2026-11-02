@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** The harness sandbox: environment, directories and config (plan 8.7). */
+/** The harness sandbox: environment, directories and config. */
 
 import fs from "node:fs";
 import os from "node:os";

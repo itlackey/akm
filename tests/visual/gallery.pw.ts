@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** The gallery of shared builders and controls, served on the UI origin (plan 8.7). */
+/** The gallery of shared builders and controls, served on the UI origin. */
 
 import { test } from "@playwright/test";
 import { shoot, visitGallery } from "./support";

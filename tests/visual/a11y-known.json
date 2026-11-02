@@ -1,8 +1,4 @@
 {
-  "tokens": {
-    "light": {},
-    "dark": {}
-  },
   "findings": {
     "proposal-create": {
       "axe contrast-more target-size": {

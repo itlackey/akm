@@ -4,7 +4,7 @@
 
 /**
  * Serves `akm ui` over one seeded visual dataset on its fixed port, with the
- * clock frozen at FIXED_NOW (plan 8.7). Run by Playwright's `webServer`:
+ * clock frozen at FIXED_NOW. Run by Playwright's `webServer`:
  * `bun tests/visual/serve.ts <profile>`, where profile is a key of PROFILES.
  */
 

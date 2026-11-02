@@ -3,15 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The accessibility ratchet (plan 8.6, 11.4, S-30). Every route of today's client is checked with axe (WCAG 2.0 to 2.2
- * A/AA plus best practice, which includes target size), at 1280 and 320, in both schemes, and for reflow at 320 and 640,
- * text spacing, and focus not obscured (2.4.11). Three cross-route checks cover the route announcement, focus after a
- * route change and focus during an asynchronous action.
+ * The accessibility ratchet. Every route is checked with axe (WCAG 2.0 to 2.2 A/AA plus best practice, which includes
+ * target size), at 1280 and 320, in both schemes, and for reflow at 320 and 640, text spacing, and focus not obscured
+ * (2.4.11). Three cross-route checks cover the route announcement, focus after a route change and focus during an
+ * asynchronous action.
  *
- * Today's findings are recorded in `a11y-known.json` under `findings`, each with its plan bug id. A finding the file does
+ * Today's findings are recorded in `a11y-known.json` under `findings`, each with its issue. A finding the file does
  * not record, or one that is larger than recorded, fails; a recorded finding that is gone or smaller also fails, so the
  * file can only shrink. Record today's findings, or lower them after a fix, with
- * `UPDATE_A11Y_KNOWN=1 bun run test:ui-visual:docker -- --project a11y`. The file must be empty by P5-9.
+ * `UPDATE_A11Y_KNOWN=1 bun run test:ui-visual:docker -- --project a11y`.
  */
 
 import { execFileSync } from "node:child_process";
@@ -27,7 +27,7 @@ const UPDATE = process.env.UPDATE_A11Y_KNOWN === "1";
 
 type Entry = { count: number; ref: string };
 type Findings = Record<string, Entry>;
-type Known = { tokens?: unknown; findings?: Record<string, Findings> };
+type Known = { findings?: Record<string, Findings> };
 
 const SCHEMES = ["light", "dark"] as const;
 const AXE_WIDTHS = [1280, 320] as const;
@@ -36,24 +36,17 @@ const AXE_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-
 const TAB_STOPS = 40;
 
 /**
- * The plan bug or issue that explains a finding, by scope (a route or a `_` cross-route check) and key. The first match
- * wins. A finding with no match fails the update, so the file never holds an entry without a reference.
+ * The issue that explains a finding, by scope (a route or a `_` cross-route check) and key. The first match wins. A
+ * finding with no match fails the update, so the file never holds an entry without a reference.
  */
 const REFS: [scope: RegExp, key: RegExp, ref: string][] = [
-  [/^(asset-|bundles$)/, /^axe .* target-size$/, "B-24"],
   [/^proposal-/, /^axe .* target-size$/, "#1388"],
   [/^proposal-create$/, /^text-spacing 320$/, "#1389"],
-  [/./, /^axe .* scrollable-region-focusable$/, "B-40"],
   [/./, /^axe forced-colors color-contrast$/, "#1390"],
-  [/./, /^route-status/, "B-19"],
-  [/./, /^focus-after-route/, "B-21"],
-  [/./, /^focus-async overview/, "B-22"],
-  [/./, /^focus-async proposal/, "B-27"],
 ];
 const refFor = (scope: string, key: string): string => {
   const ref = REFS.find(([scopes, keys]) => scopes.test(scope) && keys.test(key))?.[2];
-  if (!ref)
-    throw new Error(`No bug id or issue for the finding "${key}" in ${scope}; add one to REFS (file an issue).`);
+  if (!ref) throw new Error(`No issue for the finding "${key}" in ${scope}; add one to REFS (file an issue).`);
   return ref;
 };
 
@@ -198,7 +191,7 @@ for (const name of Object.keys(ROUTES) as RouteName[]) {
     }
     await page.emulateMedia({ colorScheme: "light" });
 
-    // Forced colors and increased contrast, once each (plan 8.6).
+    // Forced colors and increased contrast, once each.
     await resize(page, 1280);
     for (const [label, preference] of [
       ["forced-colors", { forcedColors: "active" }],
@@ -235,7 +228,7 @@ test("the route announcement is one polite region, and the page is not live", as
   const found: Record<string, number> = {};
   const regions = await page.locator("#route-status").count();
   if (regions !== 1) found["route-status regions"] = Math.abs(regions - 1);
-  // The whole page announced on every route is B-19.
+  // A live `main` would announce the whole page on every route.
   const live = await page.locator("main[aria-live]").count();
   if (live > 0) found["route-status main-is-live"] = live;
   ratchet("_route-status", found);
@@ -254,7 +247,7 @@ test("focus never falls to the body after a route change", async ({ page }) => {
     );
     await expect(page.locator("main")).not.toHaveAttribute("aria-busy", "true");
     await page.waitForLoadState("networkidle");
-    // Count the messages #route-status receives: one per route change (S-30, 11.4).
+    // Count the messages #route-status receives: one per route change.
     await page.evaluate(() => {
       const w = window as unknown as { __messages: number; __routeObserver?: MutationObserver };
       w.__messages = 0;
@@ -313,14 +306,14 @@ test("the route-status counter reads exactly one message per navigation", async 
 test("focus survives an asynchronous action", async ({ page }) => {
   const found: Record<string, number> = {};
 
-  // Changing the Overview window redraws the route: focus must not fall to the body (B-22).
+  // Changing the Overview window redraws the route: focus must not fall to the body.
   await visit(page, ROUTES.overview.hash);
   await page.getByRole("radio", { name: "90 days" }).check();
   await expect(page.locator("main")).not.toHaveAttribute("aria-busy", "true");
   await page.waitForLoadState("networkidle");
   if (await page.evaluate(() => document.activeElement === document.body)) found["focus-async overview window"] = 1;
 
-  // Confirming Accept while the server is slow (B-27). The request is held, so nothing is accepted.
+  // Confirming Accept while the server is slow. The request is held, so nothing is accepted.
   const proposal = await page.context().newPage();
   await proposal.route(/\/api\/proposals\/p-pending-reflect\/accept/, () => {});
   await visit(proposal, ROUTES["proposal-edit"].hash);
