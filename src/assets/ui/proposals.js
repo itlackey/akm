@@ -336,7 +336,7 @@ export async function renderDetail(ctx) {
         <div class="review-bar"><div><h2 class="mono wrap">${p.ref}</h2><div class="badges" data-status>${statusBadges(p, p.status)}</div></div>${pending ? detailActions(nextId, query, noop) : ""}</div>
         ${whyBlock(p, findings)}
         ${p.retirement ? retirementBlock(p.retirement) : ""}
-        ${findings.length > 0 ? html`<section><h2>Validation</h2><ul class="plain">${findings.map((f) => html`<li>${badge(f.severity ?? "info", f.severity === "error" ? "fail" : "warn")} <span class="mono small">${f.kind}</span> ${f.message}</li>`)}</ul></section>` : ""}
+        ${findings.length > 0 ? html`<section><h2>Validation</h2><ul class="plain">${findings.map((f) => html`<li class="wrap">${badge(f.severity ?? "info", f.severity === "error" ? "fail" : "warn")} <span class="mono small">${f.kind}</span> ${f.message}</li>`)}</ul></section>` : ""}
         <section><h2>Proposed change</h2>${diff ? html`<p class="muted small">${data.diff.isNew ? "New asset. " : ""}Target <span class="mono wrap">${data.diff.targetPath ?? p.proposedTarget?.root ?? ""}</span></p>${diff.markup}` : emptyState("No diff available.", data.diffError ?? "")}</section>
         <details><summary>Proposal details</summary>${definitionList([
           ["Id", html`<span class="mono">${p.id}</span>`],
