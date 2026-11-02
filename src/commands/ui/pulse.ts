@@ -12,7 +12,7 @@ import { loadConfig } from "../../core/config/config";
 import { queryImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
 import { queryTaskHistory } from "../../storage/repositories/task-history-repository";
-import { akmMetrics } from "../metrics/metrics-cli";
+import { metricsWindow, readLlmRows, readUsageRows } from "../metrics/metrics-cli";
 import type { MetricsUsageRow } from "../metrics/types";
 import { proposalWaitingSince } from "../proposal/proposal-types";
 import { againstUsual, classifyOutcome } from "./derive";
@@ -27,8 +27,19 @@ export async function overviewPulse() {
   const now = Date.now();
   const weekAgo = iso(now - 7 * DAY);
   const baselineStart = iso(now - 63 * DAY);
-  const metrics = await akmMetrics({ since: "70d", indexSnapshot: false, includeRows: true });
-  const rows = metrics.rows?.usage ?? [];
+  const window = metricsWindow("70d", now);
+  const stashDir = tryStashDir();
+  const state = withReadonlyStateDb(
+    (db) => ({
+      usage: readUsageRows(db, window),
+      llm: readLlmRows(db, window),
+      runs: queryImproveRuns(db, weekAgo),
+      tasks: queryTaskHistory(db, { since: weekAgo }),
+      proposals: stashDir ? listStateProposals(db, { stashDir, withContent: false }) : [],
+    }),
+    { usage: [], llm: [], runs: [], tasks: [], proposals: [] },
+  );
+  const rows = state.usage;
 
   // Found nothing: this week's share against the eight weeks before.
   const searches = rows.filter(isUserSearch);
@@ -64,17 +75,6 @@ export async function overviewPulse() {
     latest: latest ? { ref: latest.ref ?? null, at: latest.at } : null,
   };
 
-  const stashDir = tryStashDir();
-  const state = withReadonlyStateDb(
-    (db) => {
-      const runs = queryImproveRuns(db, weekAgo);
-      const tasks = queryTaskHistory(db, { since: weekAgo });
-      const proposals = stashDir ? listStateProposals(db, { stashDir, withContent: false }) : [];
-      return { runs, tasks, proposals };
-    },
-    { runs: [], tasks: [], proposals: [] },
-  );
-
   const failedTasks = state.tasks.filter((row) => row.status === "failed");
   const runs = {
     improve: { ok: state.runs.filter((run) => run.ok === 1).length, total: state.runs.length },
@@ -89,7 +89,7 @@ export async function overviewPulse() {
   const fourWeeks = iso(now - 28 * DAY);
   const recent = state.proposals.filter((p) => p.createdAt >= fourWeeks);
   const classes = recent.map((p) => ({ p, outcome: classifyOutcome(p) }));
-  const llmCalls = (metrics.rows?.llm ?? [])
+  const llmCalls = state.llm
     .filter((row) => row.day >= fourWeeks.slice(0, 10))
     .reduce((sum, row) => sum + row.calls, 0);
   const improveLine = {

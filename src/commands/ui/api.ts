@@ -49,7 +49,7 @@ import { pkgVersion } from "../../version";
 import { listConfig } from "../config-cli";
 import { akmHealth, parseHealthSince } from "../health";
 import { rankTaskFailures } from "../metrics/collect";
-import { akmMetrics } from "../metrics/metrics-cli";
+import { akmMetrics, metricsWindow, readUsageRows } from "../metrics/metrics-cli";
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../proposal/repository";
 import { validateProposal } from "../proposal/validators/proposals";
@@ -718,11 +718,14 @@ async function assetHistory(query: Query) {
 
 /** The per-day search series over a longer window than the Overview's, for the Improve impact trend. */
 async function retrievalTrend(query: Query) {
-  const metrics = await akmMetrics({ since: query.get("since") || "90d", indexSnapshot: false, includeRows: true });
-  const series = retrievalSeries(metrics.rows?.usage ?? [], metrics.window);
+  const window = metricsWindow(query.get("since") || "90d");
+  const series = retrievalSeries(
+    withReadonlyStateDb((db) => readUsageRows(db, window), []),
+    window,
+  );
   // The same days by ISO week, for a p-chart of the share that found nothing.
   const first = series.daily[0]?.date;
-  const weeks = first ? weekRange(first, metrics.window.until.slice(0, 10)) : [];
+  const weeks = first ? weekRange(first, window.until.slice(0, 10)) : [];
   const perWeek = weeks.map((week) => {
     const days = series.daily.filter((d) => weekOf(d.date) === week);
     return {

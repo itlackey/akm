@@ -4,8 +4,9 @@
 
 /** `GET /api/search/misses`: what people searched for and akm found nothing, grouped by query. */
 
-import { akmMetrics } from "../metrics/metrics-cli";
+import { metricsWindow, readUsageRows } from "../metrics/metrics-cli";
 import type { MetricsUsageRow } from "../metrics/types";
+import { withReadonlyStateDb } from "./readers";
 
 export interface Miss {
   query: string;
@@ -54,9 +55,13 @@ export function missesFromRows(rows: MetricsUsageRow[]): Miss[] {
 }
 
 export async function searchMisses(query: URLSearchParams) {
-  const since = query.get("since") || "30d";
-  const metrics = await akmMetrics({ since, indexSnapshot: false, includeRows: true });
-  const misses = missesFromRows(metrics.rows?.usage ?? []);
-  const searches = (metrics.rows?.usage ?? []).filter(isUserSearch).length;
-  return { window: metrics.window, searches, foundNothing: misses.reduce((sum, m) => sum + m.count, 0), misses };
+  const window = metricsWindow(query.get("since") || "30d");
+  const rows = withReadonlyStateDb((db) => readUsageRows(db, window), []);
+  const misses = missesFromRows(rows);
+  return {
+    window,
+    searches: rows.filter(isUserSearch).length,
+    foundNothing: misses.reduce((sum, m) => sum + m.count, 0),
+    misses,
+  };
 }

@@ -512,7 +512,7 @@ describe("endpoints", () => {
     const acceptedAt = new Date(Date.now() - 21 * day).toISOString();
     const db = openStateDatabase();
     try {
-      const [accepted] = listStateProposals(db, { stashDir: storage.stashDir, status: "accepted" }) as Proposal[];
+      const accepted = listStateProposals(db, { stashDir: storage.stashDir, status: "accepted" })[0] as Proposal;
       upsertProposal(
         db,
         {
@@ -551,6 +551,23 @@ describe("endpoints", () => {
       waiting: 0,
     });
     expect(pulse.attention.harm.reverted).toBe(1);
+  });
+
+  test("an unreadable proposals table degrades the impact page's proposal cards, not the page", async () => {
+    await seed();
+    const db = openStateDatabase();
+    try {
+      db.exec("DROP TABLE proposals");
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const impact = await data(s, "/api/improve/impact");
+    expect(impact.available).toBe(true);
+    expect(Object.keys(impact.errors)).toEqual(["proposals"]);
+    expect(impact.outcomes).toEqual([]);
+    expect(impact.cost).toHaveLength(impact.weeks.length);
+    expect(impact.library).toHaveLength(impact.weeks.length);
   });
 
   test("GET /api/retrieval returns the per-day search series for a longer window than the overview's", async () => {
