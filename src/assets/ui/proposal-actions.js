@@ -16,19 +16,27 @@ function composeReason(chip, text) {
   return [chip, text.trim()].filter(Boolean).join(": ");
 }
 
+/** Server error codes with a plainer explanation; any other code shows the server's message alone. */
+const KNOWN_ERRORS = {
+  PROPOSAL_STALE: "The asset changed since this proposal was made; it can't be accepted.",
+  PROPOSAL_NOT_PENDING: "This proposal has already been decided.",
+  PROPOSAL_NOT_FOUND: "This proposal no longer exists.",
+  ASSET_MUTATION_LEASE_HELD: "Another akm process is writing to the bundle. Try again in a moment.",
+};
+
 /** What went wrong, in words a reviewer can act on; the server's own message and code are shown beside it. */
 export function describeError(error) {
   const code = error instanceof ApiError ? error.code : "ERROR";
   const message = error instanceof Error ? error.message : String(error);
-  const known = {
-    PROPOSAL_STALE: "The asset changed since this proposal was made; it can't be accepted.",
-    PROPOSAL_NOT_PENDING: "This proposal has already been decided.",
-    PROPOSAL_NOT_FOUND: "This proposal no longer exists.",
-    ASSET_MUTATION_LEASE_HELD: "Another akm process is writing to the bundle. Try again in a moment.",
-    ACCEPT_FAILED: "",
-  };
-  return { text: known[code] ?? "", message, code };
+  return { text: KNOWN_ERRORS[code] ?? "", message, code };
 }
+
+/** The Revert and Reopen buttons of a decided proposal in the Recent table: the first click asks, the second does it. */
+export function recentButton(act, id) {
+  return html`<button type="button" class="btn-secondary" data-recent-act="${act}" data-id="${id}">${act === "revert" ? "Revert" : "Reopen"}</button>`;
+}
+
+const BUSY = { accept: "Accepting...", reject: "Rejecting...", revert: "Undoing...", reopen: "Reopening..." };
 
 function errorBlock(error) {
   const { text, message, code } = describeError(error);
@@ -77,17 +85,17 @@ function detailView(state, nextId, query = "", noop = false) {
         <p class="btn-row"><button type="button" data-act="accept-confirm">Confirm accept</button><button type="button" class="btn-secondary" data-act="cancel">Cancel</button></p>`;
     case "reject":
     case "busy":
-      if (state.mode === "busy" && state.kind === "accept") {
-        // The buttons stay in place and only report busy, so focus has somewhere to be (B-27).
-        return html`<p class="btn-row"><button type="button" aria-disabled="true">Accept</button><button type="button" class="btn-secondary" aria-disabled="true">Reject</button></p>
-          <p class="muted" role="status" tabindex="-1">Accepting...</p>`;
+      if (state.mode === "busy" && state.kind !== "reject") {
+        // Accept's buttons stay in place and only report busy, so focus has somewhere to be.
+        return html`${state.kind === "accept" ? html`<p class="btn-row"><button type="button" aria-disabled="true">Accept</button><button type="button" class="btn-secondary" aria-disabled="true">Reject</button></p>` : ""}
+          <p class="muted" role="status" tabindex="-1">${BUSY[state.kind]}</p>`;
       }
       return html`${state.error ? errorBlock(state.error) : ""}<fieldset class="reason-chips" role="radiogroup" aria-label="Why reject this proposal?"><legend><strong>Why reject this proposal?</strong></legend><div class="segmented">${REASON_CHIPS.map((chip) => html`<label><input type="radio" name="reject-chip" value="${chip}" ${state.chip === chip ? html`checked` : ""} ${busy ? html`disabled` : ""}><span>${chip}</span></label>`)}</div></fieldset>
         <label for="reject-reason"><strong>Details</strong> <span class="muted small" id="reject-reason-hint">${state.chip === "Other" ? "Required for Other" : "Optional with a reason above"}, up to ${REASON_MAX} characters.</span></label>
         <textarea id="reject-reason" data-reason rows="3" required aria-describedby="reject-reason-hint${state.reasonError ? " reject-reason-error" : ""}" ${state.reasonError ? html`aria-invalid="true"` : ""} ${busy ? "disabled" : ""}>${state.reason}</textarea>
         ${state.reasonError ? html`<p class="field-error" id="reject-reason-error" role="alert">${state.reasonError}</p>` : ""}
         <p class="btn-row"><button type="button" class="btn-danger" data-act="reject-confirm" ${busy ? html`aria-disabled="true"` : ""}>Confirm reject</button><button type="button" class="btn-secondary" data-act="cancel" ${busy ? html`aria-disabled="true"` : ""}>Cancel</button></p>
-        ${busy ? html`<p class="muted" role="status" tabindex="-1">Rejecting...</p>` : ""}`;
+        ${busy ? html`<p class="muted" role="status" tabindex="-1">${BUSY.reject}</p>` : ""}`;
     default:
       if (noop) {
         return html`${state.error ? errorBlock(state.error) : ""}
@@ -241,7 +249,7 @@ function batchView(state, count) {
             const label = state.refs[r.id] ?? r.ref ?? r.id;
             return r.ok
               ? html`<li>${badge(state.verb === "reject" ? "rejected" : "accepted", state.verb === "reject" ? "neutral" : "ok")} <span class="mono wrap">${label}</span></li>`
-              : html`<li>${badge("failed", "fail")} <span class="mono wrap">${label}</span> <span class="small">${describeError(new ApiError(0, r.code, r.error)).text || r.error}</span> <code class="small muted">${r.code}</code></li>`;
+              : html`<li>${badge("failed", "fail")} <span class="mono wrap">${label}</span> <span class="small">${KNOWN_ERRORS[r.code] || r.error}</span> <code class="small muted">${r.code}</code></li>`;
           })}</ul>
         </div>
         <span class="btn-row"><button type="button" class="btn-secondary" data-act="batch-dismiss">Dismiss</button></span>`;
@@ -297,30 +305,44 @@ export function wireBatch(root, { reload }) {
     if (state.mode === "idle") draw();
   });
 
+  // Open the confirmation (or the reason box) for the proposals ticked now.
+  const begin = (mode, focus) => {
+    const picked = chosen();
+    state = {
+      mode,
+      ids: picked.map((box) => box.value),
+      refs: Object.fromEntries(picked.map((box) => [box.value, box.dataset.ref])),
+    };
+    draw(focus);
+  };
+  // Send the batch, show what happened per proposal, and refresh the list behind it.
+  const runBatch = async (verb, path, body) => {
+    const { ids, refs } = state;
+    state = { mode: "busy", verb, ids, refs };
+    draw("[role=status]");
+    try {
+      state = { mode: "results", verb, data: await post(path, { ids, ...body }), refs };
+    } catch (error) {
+      state = { mode: "error", error };
+    }
+    try {
+      mount(list, await reload());
+    } catch {
+      // The results stay visible; the list refreshes on the next visit.
+    }
+    draw(".batch-results, [role=alert]");
+  };
+
   page.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-act]");
     if (!button || button.disabled || state.mode === "busy") return;
     switch (button.dataset.act) {
-      case "batch-start": {
-        const picked = chosen();
-        state = {
-          mode: "confirm",
-          ids: picked.map((box) => box.value),
-          refs: Object.fromEntries(picked.map((box) => [box.value, box.dataset.ref])),
-        };
-        draw("[data-act=batch-confirm]");
+      case "batch-start":
+        begin("confirm", "[data-act=batch-confirm]");
         break;
-      }
-      case "batch-reject-start": {
-        const picked = chosen();
-        state = {
-          mode: "reject",
-          ids: picked.map((box) => box.value),
-          refs: Object.fromEntries(picked.map((box) => [box.value, box.dataset.ref])),
-        };
-        draw("[data-batch-reason]");
+      case "batch-reject-start":
+        begin("reject", "[data-batch-reason]");
         break;
-      }
       case "batch-reject-confirm": {
         const { ids, refs } = state;
         const reason = bar.querySelector("[data-batch-reason]")?.value.trim() ?? "";
@@ -338,20 +360,7 @@ export function wireBatch(root, { reload }) {
           draw("[data-batch-reason]");
           break;
         }
-        state = { mode: "busy", verb: "reject", ids, refs };
-        draw("[role=status]");
-        try {
-          const data = await post("/api/proposals/reject", { ids, reason });
-          state = { mode: "results", verb: "reject", data, refs };
-        } catch (error) {
-          state = { mode: "error", error };
-        }
-        try {
-          mount(list, await reload());
-        } catch {
-          // The results stay visible; the list refreshes on the next visit.
-        }
-        draw(".batch-results, [role=alert]");
+        await runBatch("reject", "/api/proposals/reject", { reason });
         break;
       }
       case "batch-clear":
@@ -365,24 +374,9 @@ export function wireBatch(root, { reload }) {
         draw("[data-act=batch-start]");
         if (bar.hidden) list.querySelector("input[data-select]")?.focus();
         break;
-      case "batch-confirm": {
-        const { ids, refs } = state;
-        state = { mode: "busy", verb: "accept", ids, refs };
-        draw("[role=status]");
-        try {
-          const data = await post("/api/proposals/accept", { ids });
-          state = { mode: "results", verb: "accept", data, refs };
-        } catch (error) {
-          state = { mode: "error", error };
-        }
-        try {
-          mount(list, await reload());
-        } catch {
-          // The results stay visible; the list refreshes on the next visit.
-        }
-        draw(".batch-results, [role=alert]");
+      case "batch-confirm":
+        await runBatch("accept", "/api/proposals/accept");
         break;
-      }
     }
   });
 }
@@ -394,27 +388,27 @@ export function wireRecent(root) {
   const table = root.querySelector("[data-recent-cell]")?.closest("table");
   if (!table) return;
   const labels = { revert: "Revert this change?", reopen: "Reopen this proposal?" };
-  const button = (act, id) =>
-    html`<button type="button" class="btn-secondary" data-recent-act="${act}" data-id="${id}">${act === "revert" ? "Revert" : "Reopen"}</button>`;
   table.addEventListener("click", async (event) => {
-    const trigger = event.target.closest("[data-recent-act]");
     const cell = event.target.closest("[data-recent-cell]");
     if (!cell) return;
-    const act = trigger?.dataset.recentAct;
-    if (event.target.closest("[data-recent-cancel]")) {
-      mount(cell, button(cell.__pending.act, cell.__pending.id));
+    const trigger = event.target.closest("[data-recent-act]");
+    // The question and its answers carry what is being asked in data attributes, so the cell holds no state of its own.
+    const cancel = event.target.closest("[data-recent-cancel]");
+    if (cancel) {
+      mount(cell, recentButton(cancel.dataset.recentCancel, cancel.dataset.id));
       cell.querySelector("[data-recent-act]")?.focus();
       return;
     }
-    if (event.target.closest("[data-recent-go]")) {
-      const { act: confirmed, id } = cell.__pending;
+    const go = event.target.closest("[data-recent-go]");
+    if (go) {
+      const { recentGo: act, id } = go.dataset;
       mount(cell, html`<span role="status" tabindex="-1">Working...</span>`);
       cell.querySelector("[role=status]")?.focus();
       try {
-        await post(`/api/proposals/${encodeURIComponent(id)}/${confirmed}`, {});
+        await post(`/api/proposals/${encodeURIComponent(id)}/${act}`, {});
         mount(
           cell,
-          html`<span role="status" tabindex="-1" class="text-ok">${confirmed === "revert" ? "Reverted" : "Reopened"}</span>`,
+          html`<span role="status" tabindex="-1" class="text-ok">${act === "revert" ? "Reverted" : "Reopened"}</span>`,
         );
       } catch (error) {
         const { text, message } = describeError(error);
@@ -423,11 +417,11 @@ export function wireRecent(root) {
       cell.querySelector("[role=status], [role=alert]")?.focus();
       return;
     }
-    if (!act || trigger.disabled) return;
-    cell.__pending = { act, id: trigger.dataset.id };
+    if (!trigger || trigger.disabled) return;
+    const { recentAct: act, id } = trigger.dataset;
     mount(
       cell,
-      html`<span class="small">${labels[act]}</span> <button type="button" class="btn-danger" data-recent-go>Confirm</button> <button type="button" class="btn-secondary" data-recent-cancel>Cancel</button>`,
+      html`<span class="small">${labels[act]}</span> <button type="button" class="btn-danger" data-recent-go="${act}" data-id="${id}">Confirm</button> <button type="button" class="btn-secondary" data-recent-cancel="${act}" data-id="${id}">Cancel</button>`,
     );
     cell.querySelector("[data-recent-go]")?.focus();
   });
