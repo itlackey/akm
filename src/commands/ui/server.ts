@@ -289,23 +289,13 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
     }
 
     if (isApi) {
-      const started = performance.now();
       try {
         const data = await handleApiRequest(url.pathname, url.searchParams, info);
         if (data === NO_SUCH_ROUTE) {
           sendError(req, res, 404, "NOT_FOUND", `No such API route: ${url.pathname}`);
           return;
         }
-        // How long the handler took, for a reader looking at the network panel.
-        sendJson(
-          req,
-          res,
-          200,
-          { ok: true, data: scrubUrlCredentials(data) },
-          {
-            "Server-Timing": `handler;dur=${(performance.now() - started).toFixed(1)}`,
-          },
-        );
+        sendJson(req, res, 200, { ok: true, data: scrubUrlCredentials(data) });
       } catch (error) {
         const code = error instanceof AkmError ? error.code : "INTERNAL_ERROR";
         // The editor's source read refuses what a save would refuse, with the same status.

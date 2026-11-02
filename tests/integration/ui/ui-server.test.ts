@@ -313,10 +313,9 @@ describe("server and guards", () => {
     const again = await fetch(`http://${s.host}:${s.port}/app.js`, { headers: { "If-None-Match": etag } });
     expect(again.status).toBe(304);
     expect(await again.text()).toBe("");
-    // The API is never cached, and says how long its handler took.
+    // The API is never cached.
     const meta = await api(s, "/api/meta");
     expect(meta.headers.get("cache-control")).toBe("no-store");
-    expect(meta.headers.get("server-timing")).toMatch(/^handler;dur=\d+(\.\d+)?$/);
   });
 
   test("an unknown API route is a 404 JSON error and close() frees the port", async () => {
