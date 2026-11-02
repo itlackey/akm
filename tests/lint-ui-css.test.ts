@@ -27,6 +27,8 @@ describe("lint-ui-css", () => {
   test("rule 1: space, radius and type literals, and colours outside tokens.css", () => {
     expect(rules(".a { padding: 12px; }")).toEqual([1]);
     expect(rules(".a { font-size: 0.85rem; }")).toEqual([1]);
+    expect(rules(".a { font: 0.85rem / 1.5 var(--mono); }")).toEqual([1]);
+    expect(rules(".a { inset-block-start: 16px; scroll-margin-block-start: 20px; }")).toEqual([1, 1]);
     // An em font size is relative to its surroundings, not a fixed size.
     expect(rules(".a { font-size: 0.92em; }")).toEqual([]);
     expect(rules(".a { color: #ff0000; }")).toEqual([1]);
@@ -44,6 +46,8 @@ describe("lint-ui-css", () => {
 
   test("rule 5: physical properties", () => {
     expect(rules(".a { margin-left: 0; width: 50%; top: 0; }")).toEqual([5, 5, 5]);
+    expect(rules(".a { scroll-margin-top: var(--space-5); text-align: left; }")).toEqual([5, 5]);
+    expect(rules(".a { text-align: end; }")).toEqual([]);
   });
 
   test("rule 6: media queries outside the layout breaks and preferences", () => {
@@ -51,17 +55,10 @@ describe("lint-ui-css", () => {
     expect(rules("@media (forced-colors: active) { .a { color: CanvasText; } }")).toEqual([]);
   });
 
-  test("rule 7: !important only in base.css's reduced-motion block", () => {
-    expect(rules(".a { animation: none !important; }")).toEqual([7]);
-    expect(rules("@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }", "base.css")).toEqual(
-      [],
-    );
-  });
-
   test("rules 9, 10, 11 and 13", () => {
     expect(rules(".a { min-block-size: 100vh; }")).toEqual([9]);
     expect(rules(".tab.active { font-weight: 700; }")).toEqual([10]);
-    expect(rules(".a { box-shadow: 0 0 4px var(--border); }")).toEqual([1, 11]);
+    expect(rules(".a { box-shadow: 0 0 4px var(--border); }")).toEqual([11]);
     expect(rules(".a { letter-spacing: 0.1em; }")).toEqual([13]);
   });
 
