@@ -19,11 +19,10 @@ describe("lesson judge prompt", () => {
     expect(prompt).toContain("whose cause is only suspected, with no fix verified");
   });
 
-  test("REUSABLE keeps the original criterion when judging an update to an existing lesson", () => {
+  test("REUSABLE asks only whether the added lines leave an existing lesson a rule", () => {
     const prompt = buildJudgePrompt("---\ndescription: d.\n---\n\nbody", "memory", undefined, undefined, "existing");
-    expect(prompt).toContain(
-      "Does the lesson state a rule an agent can use on another occasion, with the reason it holds?",
-    );
+    expect(prompt).toContain("ask only whether the added lines leave it one");
+    expect(prompt).not.toContain("only records what was done");
     expect(prompt).not.toContain("a tested or measured result about a change or method");
   });
 });
