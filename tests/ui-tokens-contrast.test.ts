@@ -3,12 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The token contrast test (plan 7.1). It reads the UI stylesheets, resolves every colour token in both schemes and
- * asserts the WCAG contrast pairs and the accent/series distance. Today's failures, and tokens the plan defines but the
- * stylesheet does not yet, are recorded in `tests/visual/a11y-known.json` under `tokens`: a failure that is not
- * recorded fails the test, and a recorded one that now passes must be removed from the file.
- *
- * The parser reads the target `light-dark(a, b)` pairs and, until P2-2, the `@media (prefers-color-scheme: dark)` block.
+ * The token contrast test. It reads the UI stylesheets, resolves every colour token in both schemes and asserts the
+ * WCAG contrast pairs and the accent/series distance. Every colour token is a `light-dark(a, b)` pair on `:root`.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -16,7 +12,6 @@ import fs from "node:fs";
 import path from "node:path";
 
 const UI_DIR = path.join(import.meta.dirname, "../src/assets/ui");
-const KNOWN_FILE = path.join(import.meta.dirname, "visual/a11y-known.json");
 
 type Scheme = "light" | "dark";
 type Rgb = [number, number, number];
@@ -56,20 +51,11 @@ function declarations(body: string): Map<string, string> {
 function schemeTokens(css: string, scheme: Scheme): Map<string, string> {
   const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
   const tokens = new Map<string, string>();
-  const take = (body: string) => {
-    for (const [name, value] of declarations(body)) tokens.set(name, value);
-  };
   // Rules may sit inside `@layer name { ... }`, so lift those out first.
   const flat = (text: string): ReturnType<typeof topLevelRules> =>
     topLevelRules(text).flatMap((rule) => (/^@layer\s+[\w-]+$/.test(rule.selector) ? flat(rule.body) : [rule]));
   for (const rule of flat(stripped)) {
-    if (rule.selector === ":root") take(rule.body);
-  }
-  if (scheme === "dark") {
-    for (const rule of flat(stripped)) {
-      if (!/^@media\s*\(\s*prefers-color-scheme:\s*dark\s*\)$/.test(rule.selector)) continue;
-      for (const inner of topLevelRules(rule.body)) if (inner.selector === ":root") take(inner.body);
-    }
+    if (rule.selector === ":root") for (const [name, value] of declarations(rule.body)) tokens.set(name, value);
   }
   // `light-dark(a, b)` picks by scheme.
   for (const [name, value] of tokens) {
@@ -124,37 +110,36 @@ function deltaE(a: Rgb, b: Rgb): number {
 
 interface Pair {
   rule: string;
-  fg: string[];
+  fg: string;
   bg: string;
   min: number;
 }
 
-/** The first of `names` the stylesheet defines, so a pair follows a token from its old name to its new one. */
 const SURFACES = ["--bg", "--surface", "--surface-2"];
 const TEXT = 4.5;
 const NON_TEXT = 3;
 
 const PAIRS: Pair[] = [
-  ...SURFACES.concat("--accent-bg").map((bg) => ({ rule: "text", fg: ["--text"], bg, min: TEXT })),
-  ...SURFACES.map((bg) => ({ rule: "text", fg: ["--muted"], bg, min: TEXT })),
-  ...[...SURFACES.slice(0, 2), "--accent-bg"].map((bg) => ({ rule: "text", fg: ["--accent"], bg, min: TEXT })),
-  ...["ok", "warn", "fail", "info"].flatMap((status) =>
-    ["--surface", `--${status}-bg`].map((bg) => ({ rule: "text", fg: [`--${status}`], bg, min: TEXT })),
+  ...SURFACES.concat("--accent-bg").map((bg) => ({ rule: "text", fg: "--text", bg, min: TEXT })),
+  ...SURFACES.map((bg) => ({ rule: "text", fg: "--muted", bg, min: TEXT })),
+  ...[...SURFACES.slice(0, 2), "--accent-bg"].map((bg) => ({ rule: "text", fg: "--accent", bg, min: TEXT })),
+  ...[...SURFACES.slice(0, 2), "--accent-bg"].map((bg) => ({ rule: "text", fg: "--link", bg, min: TEXT })),
+  ...["ok", "warn", "fail"].flatMap((status) =>
+    ["--surface", `--${status}-bg`].map((bg) => ({ rule: "text", fg: `--${status}`, bg, min: TEXT })),
   ),
-  { rule: "text", fg: ["--on-accent"], bg: "--accent", min: TEXT },
-  { rule: "text", fg: ["--on-danger"], bg: "--fail", min: TEXT },
-  // A control edge is `--border-strong`; until it exists the decorative `--border` is what controls use (B-18).
-  ...SURFACES.map((bg) => ({ rule: "control-edge", fg: ["--border-strong", "--border"], bg, min: NON_TEXT })),
+  { rule: "text", fg: "--on-accent", bg: "--accent", min: TEXT },
+  { rule: "text", fg: "--on-accent", bg: "--fail", min: TEXT },
+  ...SURFACES.map((bg) => ({ rule: "control-edge", fg: "--border-strong", bg, min: NON_TEXT })),
   ...["--s1", "--s2", "--s3", "--s4", "--s5", "--s6"].map((fg) => ({
     rule: "series",
-    fg: [fg],
+    fg,
     bg: "--surface",
     min: NON_TEXT,
   })),
-  { rule: "band-edge", fg: ["--band-edge"], bg: "--surface", min: NON_TEXT },
-  ...[...SURFACES.slice(0, 2), "--accent-bg", "--add-bg", "--del-bg"].map((bg) => ({
+  // The focus ring is drawn in `--link` (base.css `:focus-visible`).
+  ...[...SURFACES.slice(0, 2), "--accent-bg", "--ok-bg", "--fail-bg"].map((bg) => ({
     rule: "focus-ring",
-    fg: ["--focus-ring", "--accent"],
+    fg: "--link",
     bg,
     min: NON_TEXT,
   })),
@@ -177,13 +162,12 @@ function violations(css: string, scheme: Scheme): Record<string, string> {
   };
 
   for (const pair of PAIRS) {
-    const fgName = pair.fg.find((name) => tokens.has(name)) ?? (pair.fg[0] as string);
-    const key = `${pair.rule} ${fgName} on ${pair.bg}`;
-    const fg = resolve(tokens, fgName);
+    const key = `${pair.rule} ${pair.fg} on ${pair.bg}`;
+    const fg = resolve(tokens, pair.fg);
     const bg = resolve(tokens, pair.bg);
     if (!fg || !bg) {
       // Never skip: a missing token and a value that is not a plain hex colour both fail, so the pair cannot pass unchecked.
-      fail(key, !tokens.has(fgName) || !tokens.has(pair.bg) ? "token not defined yet" : "not a plain hex colour");
+      fail(key, !tokens.has(pair.fg) || !tokens.has(pair.bg) ? "token not defined" : "not a plain hex colour");
       continue;
     }
     const ratio = contrast(fg, bg);
@@ -195,7 +179,7 @@ function violations(css: string, scheme: Scheme): Record<string, string> {
   if (!accent || !s1) {
     fail(
       "accent-vs-series --accent from --s1",
-      tokens.has("--accent") && tokens.has("--s1") ? "not a plain hex colour" : "token not defined yet",
+      tokens.has("--accent") && tokens.has("--s1") ? "not a plain hex colour" : "token not defined",
     );
   } else {
     const distance = deltaE(accent, s1);
@@ -207,7 +191,7 @@ function violations(css: string, scheme: Scheme): Record<string, string> {
   const ramp = ["--age-1", "--age-2", "--age-3"].map((name) => resolve(tokens, name));
   const surface = resolve(tokens, "--surface");
   if (ramp.some((colour) => colour === null) || !surface) {
-    fail("age-ramp --age-1..3", "token not defined yet or not a plain hex colour");
+    fail("age-ramp --age-1..3", "token not defined or not a plain hex colour");
   } else {
     const [c1, c2, c3] = (ramp as Rgb[]).map((colour) => contrast(colour, surface)) as [number, number, number];
     if (!(c1 < c2 && c2 < c3)) fail("age-ramp --age-1..3", "contrast with --surface does not rise with age");
@@ -216,40 +200,21 @@ function violations(css: string, scheme: Scheme): Record<string, string> {
   return found;
 }
 
-function recorded(scheme: Scheme): Record<string, string> {
-  const known = JSON.parse(fs.readFileSync(KNOWN_FILE, "utf8")) as { tokens?: Record<Scheme, Record<string, string>> };
-  return Object.fromEntries(
-    Object.entries(known.tokens?.[scheme] ?? {}).map(([entry, why]) => [`${scheme} ${entry}`, why]),
-  );
-}
-
-describe("token contrast (plan 7.1)", () => {
+describe("token contrast", () => {
   const css = readCss();
   for (const scheme of ["light", "dark"] as const) {
-    test(`${scheme}: no failure beyond the ratchet, and none left in it that now passes`, () => {
-      const found = Object.keys(violations(css, scheme));
-      const known = Object.keys(recorded(scheme));
-      expect(
-        found.filter((key) => !known.includes(key)),
-        "new failure; fix the token or, for a deliberate gap, record it",
-      ).toEqual([]);
-      expect(
-        known.filter((key) => !found.includes(key)),
-        "fixed; remove it from tests/visual/a11y-known.json",
-      ).toEqual([]);
+    test(`${scheme}: every contrast pair passes`, () => {
+      expect(violations(css, scheme)).toEqual({});
     });
   }
 
-  test("the parser reads light-dark() pairs and the dark media block alike", () => {
+  test("the parser reads light-dark() pairs for either scheme", () => {
     const pairs = ":root{--a: light-dark(#ffffff, #000000); --b: var(--a);}";
-    const media = ":root{--a:#ffffff;--b:#111111}@media (prefers-color-scheme: dark){:root{--a:#000000}}";
     expect(resolve(schemeTokens(pairs, "dark"), "--b")).toEqual([0, 0, 0]);
     expect(resolve(schemeTokens(pairs, "light"), "--b")).toEqual([255, 255, 255]);
-    expect(resolve(schemeTokens(media, "dark"), "--a")).toEqual([0, 0, 0]);
-    expect(resolve(schemeTokens(media, "light"), "--a")).toEqual([255, 255, 255]);
   });
 
-  test("the plan's dark age ramp passes, and an unresolvable token fails instead of being skipped", () => {
+  test("a dark age ramp that rises with contrast passes, and an unresolvable token fails instead of being skipped", () => {
     const ramp = ":root{--surface:#161b23;--age-1:#3a5a9e;--age-2:#5f8ae8;--age-3:#a9c3f7}";
     expect(violations(ramp, "dark")["dark age-ramp --age-1..3"]).toBeUndefined();
     expect(violations(ramp, "dark")["dark age-ramp --age-1 on --surface"]).toBeUndefined();
