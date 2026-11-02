@@ -69,7 +69,7 @@ export function countFeedbackBySignal(db: Database, entryRef: string): Record<st
   return Object.fromEntries(rows.map((row) => [row.signal, row.n]));
 }
 
-/** A `select` event; `searchId` and `source` are absent on rows written before G10. */
+/** A `select` event; `searchId` and `source` are absent on rows written before selects carried them. */
 export interface SelectEventRow {
   ts: string;
   ref: string;

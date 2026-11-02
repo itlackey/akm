@@ -429,7 +429,7 @@ function proposals(query: Query) {
   const now = Date.now();
   return withReadonlyStateDb(
     (db) => {
-      // A list shows summaries, so the proposed content is not read (B-48).
+      // A list shows summaries, so the proposed content is not read.
       const all = listStateProposals(db, { stashDir: resolveStashDir(), withContent: false });
       const picked =
         status === "pending"
