@@ -41,6 +41,9 @@
     --marker: light-dark(#a16207, #fbbf24);
     --target-min: 24px;
     --topbar-h: 4rem; /* the sticky bar; offsets below it derive from this */
+    /* The bar sits at the top on wide screens and at the bottom on narrow ones. */
+    --top-inset: var(--topbar-h);
+    --bottom-inset: 0px;
     --control-height: 2.75rem;
     --space-1: 4px;
     --space-2: 8px;
@@ -87,6 +90,8 @@
   @media (width < 72rem) {
     :root {
       --topbar-h: 3.5rem;
+      --top-inset: 0px;
+      --bottom-inset: calc(var(--topbar-h) + env(safe-area-inset-bottom, 0px));
     }
   }
 }

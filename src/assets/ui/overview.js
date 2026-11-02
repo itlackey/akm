@@ -59,7 +59,7 @@ function checkItem(check) {
   return html`<li class="check">
     <div class="check-head"><strong class="mono">${check.name}</strong></div>
     <p class="check-msg">${check.message}</p>
-    ${evidence ? html`<details><summary>Evidence</summary><pre class="code" data-volatile tabindex="0" role="group" aria-label="Evidence, scrolls sideways">${pretty(evidence)}</pre></details>` : ""}
+    ${evidence ? html`<details class="toggle"><summary>Evidence</summary><pre class="code" data-volatile tabindex="0" role="group" aria-label="Evidence, scrolls sideways">${pretty(evidence)}</pre></details>` : ""}
   </li>`;
 }
 
@@ -178,7 +178,7 @@ function attention(data, pulse) {
     ${
       items.length === 0
         ? html`<div class="attention-clear"><span class="dot dot-ok" aria-hidden="true"></span>Nothing needs you.${last ? ` Last improve run ${ago(last.startedAt)}: ${last.ok ? "finished" : "failed"}.` : " No improve runs recorded yet."}</div>`
-        : html`<ul class="attention-list">${items.slice(0, ATTENTION_MAX).map(row)}</ul>${items.length > ATTENTION_MAX ? html`<details><summary>+${items.length - ATTENTION_MAX} more</summary><ul class="attention-list">${items.slice(ATTENTION_MAX).map(row)}</ul></details>` : ""}`
+        : html`<ul class="attention-list">${items.slice(0, ATTENTION_MAX).map(row)}</ul>${items.length > ATTENTION_MAX ? html`<details class="toggle"><summary>+${items.length - ATTENTION_MAX} more</summary><ul class="attention-list">${items.slice(ATTENTION_MAX).map(row)}</ul></details>` : ""}`
     }
   </section>`;
 }

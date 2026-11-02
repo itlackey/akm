@@ -166,6 +166,23 @@
   }
 
   @media (width < 72rem) {
+    /* Within thumb reach: the bar sits at the bottom and the menu opens upward from it. */
+    .topbar {
+      position: fixed;
+      inset: auto 0 0;
+      padding-block-end: env(safe-area-inset-bottom, 0px);
+      border-block-start: 2px solid var(--rule);
+      border-block-end: 0;
+    }
+
+    .nav-open {
+      box-shadow: var(--shadow-float);
+    }
+
+    .shell {
+      padding-block-end: var(--bottom-inset);
+    }
+
     .topbar-inner {
       flex-wrap: wrap;
       gap: var(--space-3);
@@ -183,8 +200,10 @@
       align-items: stretch;
       align-self: auto;
       gap: var(--space-4);
+      order: -1;
       max-block-size: calc(100dvh - var(--topbar-h));
-      padding-block: var(--space-2) var(--space-5);
+      padding-block: var(--space-4);
+      border-block-end: 1px solid var(--border);
       overflow-y: auto;
     }
 
@@ -401,16 +420,6 @@
     min-inline-size: 0;
   }
 
-  .stack > details.card:not(.add-card) {
-    padding: var(--space-4) var(--space-5);
-    & > summary {
-      font-weight: var(--weight-strong);
-    }
-    & > form {
-      margin-block-start: var(--space-4);
-    }
-  }
-
   .cards-narrow {
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
   }
@@ -521,7 +530,7 @@
   .impact-toc {
     @media (width >= 64rem) {
       position: sticky;
-      inset-block-start: calc(var(--topbar-h) + var(--space-4));
+      inset-block-start: calc(var(--top-inset) + var(--space-4));
     }
     & ul {
       display: flex;

@@ -253,7 +253,7 @@ export function stackedColumns(labels, series, unit = "Count") {
 export function stepLine(labels, data, { name = "Level", unit = "Count" } = {}) {
   return {
     xAxis: { type: "category", data: labels, boundaryGap: false, axisLabel: { hideOverlap: true } },
-    yAxis: { type: "value", name: unit, min: 0, minInterval: 1 },
+    yAxis: { type: "value", name: unit, min: 0, minInterval: 1, splitNumber: 2 },
     series: [
       {
         type: "line",

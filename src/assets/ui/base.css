@@ -6,7 +6,7 @@
 
   html {
     /* The sticky top bar must not cover a focused control. */
-    scroll-padding-block-start: calc(var(--topbar-h) + var(--space-4));
+    scroll-padding-block: calc(var(--top-inset) + var(--space-4)) calc(var(--bottom-inset) + var(--space-4));
   }
 
   body {
@@ -24,11 +24,45 @@
     border-radius: var(--radius);
   }
 
+  /* One disclosure everywhere: a chevron that turns down when open, in place of the browser's triangle. */
   summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
     min-block-size: var(--target-min);
     padding-block: var(--space-1);
+    list-style: none;
+    font-weight: 500;
     overflow-wrap: anywhere;
     cursor: pointer;
+    &::-webkit-details-marker {
+      display: none;
+    }
+    &::before {
+      content: "";
+      flex: none;
+      inline-size: 0.4em;
+      block-size: 0.4em;
+      border-block-end: 2px solid var(--muted);
+      border-inline-end: 2px solid var(--muted);
+      transform: rotate(-45deg);
+    }
+    &:hover::before {
+      border-color: var(--text);
+    }
+  }
+
+  details[open] > summary {
+    margin-block-end: var(--space-2);
+    &::before {
+      transform: rotate(45deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    summary::before {
+      transition: transform 120ms;
+    }
   }
 
   a {

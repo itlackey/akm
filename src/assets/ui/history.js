@@ -20,7 +20,7 @@ function commit(c) {
   return html`<li class="commit">
     <div class="commit-head"><span class="mono small time">${localDayTime(c.time).time}</span>${badge(c.origin, ORIGIN_KIND[c.origin] ?? "neutral")}<span class="commit-subject">${c.subject}</span></div>
     <div class="muted small"><span class="mono">${c.shortSha}</span> by ${c.author}</div>
-    ${c.pathCount > 0 ? html`<details><summary>${c.pathCount} changed ${c.pathCount === 1 ? "path" : "paths"}</summary><ul class="plain mono small">${c.paths.map((p) => html`<li class="wrap">${p}</li>`)}${more ? html`<li class="muted">and ${c.pathCount - c.paths.length} more</li>` : ""}</ul></details>` : ""}
+    ${c.pathCount > 0 ? html`<details class="toggle"><summary>${c.pathCount} changed ${c.pathCount === 1 ? "path" : "paths"}</summary><ul class="plain mono small">${c.paths.map((p) => html`<li class="wrap">${p}</li>`)}${more ? html`<li class="muted">and ${c.pathCount - c.paths.length} more</li>` : ""}</ul></details>` : ""}
   </li>`;
 }
 

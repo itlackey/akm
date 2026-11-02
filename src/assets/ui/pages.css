@@ -415,7 +415,7 @@
 
   .review-bar {
     position: sticky;
-    inset-block-start: calc(var(--topbar-h) + var(--space-1));
+    inset-block-start: calc(var(--top-inset) + var(--space-1));
     z-index: 3;
     display: flex;
     flex-wrap: wrap;

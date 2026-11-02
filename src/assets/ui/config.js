@@ -250,9 +250,9 @@ export async function render(ctx) {
           <div class="field"><label class="field-label" for="adv-value">Value</label><input id="adv-value" name="value" placeholder="true" autocomplete="off" spellcheck="false"></div>
           </div><div class="settings-footer"><label class="check-label"><input type="checkbox" name="unset"> Unset this key instead</label><div data-status class="settings-status"></div><button type="submit">Apply</button></div>
         </form>
-        <details class="card"><summary>Effective config <span class="muted small">(read-only, secrets redacted)</span></summary>${referenceTree(config)}</details>
-        ${data.harnesses.length ? html`<details class="card"><summary>Harnesses</summary>${tableWrap(html`<table><thead><tr><th>Name</th><th>Platform</th></tr></thead><tbody>${data.harnesses.map((h) => html`<tr><td class="mono">${h.name}</td><td class="mono">${h.platform ?? h.name}</td></tr>`)}</tbody></table>`)}</details>` : ""}
-        <details class="card"><summary>Environment <span class="muted small">(${data.env.length} AKM_* variables)</span></summary>${
+        <details><summary>Effective config <span class="muted small">(read-only, secrets redacted)</span></summary>${referenceTree(config)}</details>
+        ${data.harnesses.length ? html`<details><summary>Harnesses</summary>${tableWrap(html`<table><thead><tr><th>Name</th><th>Platform</th></tr></thead><tbody>${data.harnesses.map((h) => html`<tr><td class="mono">${h.name}</td><td class="mono">${h.platform ?? h.name}</td></tr>`)}</tbody></table>`)}</details>` : ""}
+        <details><summary>Environment <span class="muted small">(${data.env.length} AKM_* variables)</span></summary>${
           data.env.length === 0
             ? html`<p class="muted">No AKM_* environment variables are set.</p>`
             : tableWrap(

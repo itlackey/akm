@@ -234,6 +234,38 @@
     background: var(--fail);
   }
 
+  /* A disclosure is a panel with its summary as the header row. Health groups, notices and the add card have their own. */
+  :where(details:not(.add-card, .group, .notice, .toggle)) {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    & > summary {
+      margin: 0;
+      padding: var(--space-2) var(--space-3);
+    }
+    &[open] > summary {
+      border-block-end: 1px solid var(--border);
+    }
+    & > :not(summary) {
+      margin: var(--space-3);
+    }
+  }
+
+  /* A small disclosure inside a row or list: a compact button. */
+  details.toggle > summary {
+    display: inline-flex;
+    min-block-size: var(--target-min);
+    padding: 0 var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    font-size: var(--text-s);
+  }
+
+  :where(details:not(.notice), .group) > summary:hover {
+    background: var(--surface-2);
+  }
+
   .group {
     margin-block-end: var(--space-2);
     border: 1px solid var(--border);
@@ -242,11 +274,8 @@
   }
 
   .group > summary {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
+    margin: 0;
     padding: var(--space-3) var(--space-4);
-    cursor: pointer;
     font-weight: var(--weight-strong);
   }
 
@@ -976,7 +1005,8 @@
   }
 
   .add-card > summary {
-    padding: var(--space-4) var(--space-5);
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
     font-weight: var(--weight-strong);
   }
 
@@ -991,12 +1021,6 @@
   .btn-secondary:disabled,
   .btn-danger:disabled {
     opacity: 0.55;
-  }
-
-  .check-label:has(.switch) {
-    justify-content: space-between;
-    inline-size: 100%;
-    max-inline-size: 36rem;
   }
 
   .compose-preview {
