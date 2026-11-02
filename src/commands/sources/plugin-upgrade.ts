@@ -345,8 +345,9 @@ export function openCodeConfigSpec(
             return { spec, key, file, jsonPath: [key, index, ...(Array.isArray(entry) ? [0] : [])] };
         }
       }
-      // A global file's plugin list replaces the earlier one, so a list that omits the package means it is not loaded.
-      if (setsList && file !== explicit) return undefined;
+      // OpenCode 1: a global file's plugin list replaces the earlier one, so a list that omits the package means it
+      // is not loaded. OpenCode 2's handling of `plugin`/`plugins` across files is not measured, so it keeps looking.
+      if (setsList && file !== explicit && flavor.major === 1) return undefined;
     } catch {
       // Missing or unparseable: this file names no spec.
     }
