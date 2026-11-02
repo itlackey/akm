@@ -1,4 +1,4 @@
-/* Review overlay (plan 11.5.2): a 4px grid and the content edge, drawn over the page. Loaded when the URL has ?overlay=1. */
+/* Review overlay: a 4px grid and the content edge, drawn over the page. Loaded when the URL has ?overlay=1. */
 :root {
   --overlay-grid: oklch(0.65 0.2 25 / 0.18);
   --overlay-edge: oklch(0.6 0.25 25 / 0.7);

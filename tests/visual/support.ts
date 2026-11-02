@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** What every visual spec shares: reaching a route on a profile's server, settling it and capturing it (plan 8.7, 11.2). */
+/** What every visual spec shares: reaching a route on a profile's server, settling it and capturing it. */
 
 import fs from "node:fs";
 import path from "node:path";

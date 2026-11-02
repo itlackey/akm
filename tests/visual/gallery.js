@@ -1,4 +1,4 @@
-// The gallery: every shared builder of /lib.js and every control the client styles, on one page (plan 8.7).
+// The gallery: every shared builder of /lib.js and every control the client styles, on one page.
 // Served by the visual specs on the UI origin with the product's own Content-Security-Policy header (visitGallery checks it).
 
 import {

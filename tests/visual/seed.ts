@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The visual-harness dataset (plan Appendix C). Every timestamp is written
+ * The visual-harness dataset. Every timestamp is written
  * explicitly and relative to FIXED_NOW, because SQLite's `datetime('now')`
  * default and `git commit` would otherwise stamp the real clock.
  */
@@ -625,7 +625,7 @@ export function seedVisualState(stashDir: string): void {
   }
 }
 
-// ── Low-data and long-content variants (plan 11.2) ───────────────────────────
+// ── Low-data and long-content variants ───────────────────────────
 
 /** One note, one commit, and six searches on a single day. */
 export function seedLowData(stashDir: string): void {

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The interaction states the client has today (plan 11.2). None of them submits a write, so the shared
+ * The interaction states of the client. None of them submits a write, so the shared
  * server is never changed. The split view, detail panel, shortcut dialog, reject chips and status bar
  * arrive with the redesign and get their baselines in the PR that adds them.
  */
@@ -26,7 +26,7 @@ test("health groups open", async ({ page }) => {
   );
 });
 
-// B-06, B-07, B-08 and B-10 are drawn only inside these disclosures, and so are the charts' table equivalents.
+// The charts' table equivalents are drawn only inside these disclosures.
 test("overview details open", async ({ page }) => {
   await visit(page, ROUTES.overview.hash);
   // The health groups have their own shot above.

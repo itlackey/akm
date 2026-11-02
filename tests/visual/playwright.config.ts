@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Visual-regression config (plan 8.7). Baselines are only valid when produced
+ * Visual-regression config. Baselines are only valid when produced
  * by the pinned image (`bun run test:ui-visual:docker`, or the ui-visual
  * workflow); never run `--update-snapshots` anywhere else.
  */
@@ -45,7 +45,7 @@ const accessibility = Object.entries(VIEWPORTS).flatMap(([width, height]) =>
 const projects = [
   ...matrix,
   ...accessibility,
-  // The `wide` edge (plan 11.2): light only.
+  // The `wide` edge: light only.
   {
     name: "1280--light",
     testMatch: "wide.pw.ts",
@@ -65,7 +65,7 @@ const projects = [
   },
   {
     name: "audit",
-    testMatch: ["style-audit.pw.ts", "tools.pw.ts"],
+    testMatch: "style-audit.pw.ts",
     use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 }, colorScheme: "light" as const },
   },
 ];

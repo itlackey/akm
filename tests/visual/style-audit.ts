@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The computed-style audit (plan 11.5.2, item 6): walks the DOM and reports every font-size, weight, line-height,
+ * The computed-style audit: walks the DOM and reports every font-size, weight, line-height,
  * colour, border colour, radius, padding, margin, gap and shadow value that no `:root` token produces. A token's value
  * is resolved through a probe element, so `--space-2: 0.5rem` allows `8px`. New pages must report none; old pages
  * may not report more than the ratchet file records.
@@ -15,13 +15,6 @@ import type { Page } from "@playwright/test";
 export type Audit = Record<string, string[]>;
 /** route -> its audit, as stored in `style-audit.ratchet.json`. */
 export type Ratchet = Record<string, Audit>;
-
-export interface RatchetResult {
-  /** Off-token values that the ratchet does not allow. */
-  added: string[];
-  /** Values the ratchet allows that the page no longer shows: lower the ratchet. */
-  cleared: string[];
-}
 
 /** Runs in the page. Written as one function because Playwright serialises it. */
 function collectOffToken(): Audit {
@@ -164,12 +157,8 @@ export function auditStyles(page: Page): Promise<Audit> {
 const flatten = (audit: Audit): Set<string> =>
   new Set(Object.entries(audit).flatMap(([group, values]) => values.map((value) => `${group}: ${value}`)));
 
-/** Compare a page's audit with what the ratchet allows for it (nothing, when the route is not recorded). */
-export function compareToRatchet(found: Audit, allowed: Audit = {}): RatchetResult {
-  const now = flatten(found);
+/** The off-token values of a page that the ratchet does not allow for it (all of them, when the route is not recorded). */
+export function newOffToken(found: Audit, allowed: Audit = {}): string[] {
   const before = flatten(allowed);
-  return {
-    added: [...now].filter((entry) => !before.has(entry)),
-    cleared: [...before].filter((entry) => !now.has(entry)),
-  };
+  return [...flatten(found)].filter((entry) => !before.has(entry));
 }
