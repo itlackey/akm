@@ -45,6 +45,7 @@ import { noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import { collectDispatchSensitiveValues } from "../../integrations/agent/runner-dispatch";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
@@ -1040,7 +1041,7 @@ function resolveExtractRun(
   const generate: SessionSummaryGenerator = async (data) => {
     const outcome = await callStage({
       runner,
-      prompt: buildSessionSummaryPrompt(data),
+      prompt: buildSessionSummaryPrompt(data, collectDispatchSensitiveValues(runner)),
       request: {
         responseSchema: SESSION_SUMMARY_JSON_SCHEMA,
         ...(options.signal ? { signal: options.signal } : {}),

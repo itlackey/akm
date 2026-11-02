@@ -78,3 +78,58 @@ describe("the session summary prompt treats the transcript as untrusted", () => 
     expect(buildSessionSummaryPrompt(hostile)).not.toContain("[user] ok");
   });
 });
+
+describe("key topics cap", () => {
+  const parse = (key_topics: unknown[]) => parseSessionSummary(JSON.stringify({ summary: "s", key_topics, tags: [] }));
+
+  test("keeps 30 topics, truncates an entry at 100 characters, drops case duplicates and blanks", () => {
+    const many = Array.from({ length: 40 }, (_, i) => `topic-${i}`);
+    expect(parse(many)?.keyTopics).toEqual(many.slice(0, 30));
+    const long = `/home/dev/${"a".repeat(200)}`;
+    expect(parse([long])?.keyTopics[0]).toHaveLength(100);
+    expect(parse(["Src/Auth.ts", "src/auth.ts", "  ", 7, "src/auth.ts ", "db-replica-2"])?.keyTopics).toEqual([
+      "Src/Auth.ts",
+      "db-replica-2",
+    ]);
+  });
+});
+
+describe("secrets in a session", () => {
+  const secretData: SessionData = {
+    ref: {
+      harness: "claude",
+      sessionId: "s-2",
+      filePath: "/tmp/s-2.jsonl",
+      title: "Deploy with ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+    },
+    events: [
+      {
+        harness: "claude",
+        role: "user",
+        text: [
+          "Edit src/key_manager.py and docs/key-value-store.md, then run with sk-live1234567890abcdef.",
+          "Clone https://deploy:hunter2pass@git.example.com/org/repo.git and set DB_PASSWORD=swordfish99.",
+          "Header was Authorization: Bearer abc/def+ghi==. The inherited value was zq9-vault-7731.",
+        ].join(" "),
+      },
+    ],
+    inlineRefs: [],
+  };
+
+  test("never reach the model request, which keeps file paths and names", () => {
+    const prompt = buildSessionSummaryPrompt(secretData, ["zq9-vault-7731"]);
+    for (const secret of [
+      "sk-live1234567890abcdef",
+      "hunter2pass",
+      "swordfish99",
+      "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+      "abc/def+ghi",
+      "zq9-vault-7731",
+    ]) {
+      expect(prompt).not.toContain(secret);
+    }
+    expect(prompt).toContain("https://[REDACTED]@git.example.com/org/repo.git");
+    expect(prompt).toContain("src/key_manager.py");
+    expect(prompt).toContain("docs/key-value-store.md");
+  });
+});
