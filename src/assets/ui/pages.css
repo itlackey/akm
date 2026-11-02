@@ -82,22 +82,6 @@
     font-size: var(--text-m);
   }
 
-  .propbar {
-    display: flex;
-    block-size: 10px;
-    margin: var(--space-3) 0 0;
-    overflow: hidden;
-    border-radius: var(--radius);
-    background: var(--surface-2);
-  }
-
-  .propbar span {
-    display: block;
-    flex: var(--w) 0 0;
-    block-size: 100%;
-    min-inline-size: 2px;
-  }
-
   /* ---- proposals, diff ---- */
   .chips {
     display: flex;
@@ -354,18 +338,6 @@
     margin-block-start: var(--space-3);
   }
 
-  .trend-summary {
-    margin: var(--space-3) 0;
-    font-size: var(--text-l);
-  }
-
-  .trend-figure {
-    font-size: var(--text-stat);
-    font-weight: 700;
-    letter-spacing: var(--tracking-tight);
-    line-height: var(--leading-tight);
-  }
-
   /* ---- selected states that do not rely on colour, and forced colors ---- */
   /* The underline marks a pressed .seg button, so it needs no tick. */
   .chip[aria-current]::before {
@@ -373,27 +345,25 @@
   }
 
   /* ---- queue by age ---- */
-  .age-bar {
-    display: block;
-    inline-size: 100%;
-    min-inline-size: 6rem;
-    block-size: 10px;
-    & .age-1 {
-      fill: var(--age-1);
-    }
-    & .age-2 {
-      fill: var(--age-2);
-    }
-    & .age-3 {
-      fill: var(--age-3);
-    }
-    & .age-unknown {
-      fill: var(--age-unknown);
-    }
+  .age-1 {
+    background: var(--age-1);
+  }
+
+  .age-2 {
+    background: var(--age-2);
+  }
+
+  .age-3 {
+    background: var(--age-3);
+  }
+
+  .age-unknown {
+    background: var(--age-unknown);
   }
 
   .age-cell {
     inline-size: 40%;
+    min-inline-size: 6rem;
   }
 
   .queue-sentence {

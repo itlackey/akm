@@ -4,7 +4,7 @@ import { html, stackedBar } from "./lib.js";
 
 const round = (n) => Math.round(n * 10) / 10;
 
-const PALETTE = ["s1", "s2", "s3", "s4", "s5", "s6"];
+const PALETTE = ["series-1", "series-2", "series-3", "series-4", "series-5", "series-6"];
 
 /** A stacked proportion bar with a legend listing each part's count. `counts` is { name: n }. */
 export function proportionBar(counts) {
@@ -14,7 +14,7 @@ export function proportionBar(counts) {
   if (entries.length === 0) return html`<p class="muted">No assets.</p>`;
   const parts = entries.map(([k, n], i) => ({ n, cls: PALETTE[i % PALETTE.length], title: `${k}: ${n}` }));
   return html`${stackedBar(parts, { label: entries.map(([k, n]) => `${k} ${n}`).join(", ") })}
-  <ul class="legend">${entries.map(([k, n], i) => html`<li><span class="swatch ${PALETTE[i % PALETTE.length]}"></span>${k} <span class="num">${n}</span></li>`)}</ul>`;
+  <ul class="legend">${entries.map(([k, n], i) => html`<li><span class="series-key ${PALETTE[i % PALETTE.length]}"></span>${k} <span class="num">${n}</span></li>`)}</ul>`;
 }
 
 /** A tiny line of `values` (nulls are gaps) with no axes: shape only, the number beside it is the fact. */

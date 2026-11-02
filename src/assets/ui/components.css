@@ -370,22 +370,6 @@
     border-radius: var(--radius);
   }
 
-  .minibar {
-    display: block;
-  }
-
-  .minibar .track {
-    fill: var(--surface-2);
-  }
-
-  .minibar .fill {
-    fill: var(--s1);
-  }
-
-  .minibar .fail {
-    fill: var(--fail);
-  }
-
   .card {
     padding: var(--space-5);
     background: var(--surface);
@@ -1155,13 +1139,6 @@
     }
   }
 
-  .marker-key {
-    display: inline-block;
-    inline-size: 1.25rem;
-    border-block-start: 2px solid var(--marker);
-    vertical-align: middle;
-  }
-
   @media (forced-colors: active) {
     .badge {
       border-color: CanvasText;
@@ -1169,8 +1146,7 @@
     /* Marks that are only a background colour would vanish, so keep their colour and outline them. */
     .dot,
     .series-key,
-    .propbar span,
-    .minibar rect {
+    .bar-stack > span {
       forced-color-adjust: none;
       border: 1px solid CanvasText;
     }
@@ -1235,6 +1211,27 @@
     text-align: center;
   }
 
+  /* A bar track holds one fill or a stack of parts; outside a .bar-list it sits in the flow with its own margin. */
+  .bar-track {
+    display: block;
+    block-size: var(--space-3);
+    margin-block-start: var(--space-3);
+    border-radius: var(--radius);
+    background: var(--surface-sunk);
+  }
+
+  .bar-stack {
+    display: flex;
+    block-size: 100%;
+    inline-size: calc(var(--w) * 100%);
+    overflow: hidden;
+    border-radius: var(--radius);
+    & > span {
+      flex: var(--w) 0 0;
+      min-inline-size: 2px;
+    }
+  }
+
   /* A ranked list with a bar per row: for a handful of rows a chart is overkill. */
   .bar-list {
     display: grid;
@@ -1252,9 +1249,7 @@
       font-size: var(--text-s);
     }
     & .bar-track {
-      block-size: var(--space-3);
-      border-radius: var(--radius);
-      background: var(--surface-sunk);
+      margin: 0;
     }
     & .bar-fill {
       display: block;
@@ -1264,16 +1259,6 @@
       background: var(--s1);
       &[data-tone="fail"] {
         background: var(--fail);
-      }
-    }
-    & .bar-stack {
-      display: flex;
-      block-size: 100%;
-      inline-size: calc(var(--w) * 100%);
-      overflow: hidden;
-      border-radius: var(--radius);
-      & > span {
-        flex: var(--w) 0 0;
       }
     }
     & .bar-value {

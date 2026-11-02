@@ -299,7 +299,7 @@ export function pageHeader(title, subtitle = "", controls = "") {
  * reads `data-hash`), so the page attaches nothing. `choices` is `[[value, label]]`.
  */
 export function windowToggle({ route, param, label, current, choices }) {
-  return html`<fieldset class="segmented trend-window" aria-label="${label}">${choices.map(
+  return html`<fieldset class="segmented" aria-label="${label}">${choices.map(
     ([value, text]) =>
       html`<label><input type="radio" name="${param}" value="${value}" data-hash="#/${route}?${param}=${value}" ${current === value ? html`checked` : ""}><span>${text}</span></label>`,
   )}</fieldset>`;

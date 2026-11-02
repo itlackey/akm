@@ -163,7 +163,7 @@ const percent = (value) => `${value}%`;
 
 /** One row of marks over the same labels as the chart above it: an `events` entry is `{ index, tone }`. */
 export function eventStrip(labels, events, { name = "Events", token }) {
-  const tones = { ok: "--ok", warn: "--warn", fail: "--fail", info: "--info" };
+  const tones = { ok: "--ok", warn: "--warn", fail: "--fail", info: "--link" };
   return {
     grid: { left: 12, right: 22, top: 4, bottom: 4, containLabel: true },
     xAxis: {
@@ -182,7 +182,7 @@ export function eventStrip(labels, events, { name = "Events", token }) {
         symbolSize: 12,
         data: events.map((event) => ({
           value: [event.index, 0.5],
-          itemStyle: { color: token(tones[event.tone] ?? "--info") },
+          itemStyle: { color: token(tones[event.tone] ?? "--link") },
         })),
       },
     ],
