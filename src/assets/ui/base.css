@@ -6,7 +6,7 @@
 
   html {
     /* The sticky top bar must not cover a focused control. */
-    scroll-padding-block-start: 5rem;
+    scroll-padding-block-start: calc(var(--topbar-h) + var(--space-4));
   }
 
   body {
@@ -21,7 +21,7 @@
   :focus-visible {
     outline: 2px solid var(--link);
     outline-offset: 2px;
-    border-radius: var(--radius-s);
+    border-radius: var(--radius);
   }
 
   summary {
@@ -53,10 +53,6 @@
     &:focus {
       outline: none;
     }
-  }
-
-  [hidden] {
-    display: none;
   }
 
   /* ---- type ---- */
@@ -104,10 +100,10 @@
   /* Unsaved-draft guard: floats over the page so the editor underneath stays mounted. */
   .unsaved-bar {
     position: fixed;
-    inset-block-start: 16px;
-    inset-inline-end: 16px;
+    inset-block-start: var(--space-4);
+    inset-inline-end: var(--space-4);
     z-index: 10;
-    max-inline-size: min(420px, calc(100vw - 32px));
+    max-inline-size: min(420px, calc(100vw - var(--space-6)));
     margin: 0;
     box-shadow: var(--shadow-float);
     & p {
@@ -123,7 +119,7 @@
   th,
   td {
     padding: var(--space-2) var(--space-4);
-    text-align: left;
+    text-align: start;
     vertical-align: top;
     border-block-end: 1px solid var(--border);
   }
@@ -170,7 +166,7 @@
     color: var(--text);
     background: var(--surface);
     border: 1px solid var(--border-strong);
-    border-radius: var(--radius-s);
+    border-radius: var(--radius);
     padding: var(--space-2) var(--space-3);
     &:focus-visible {
       outline: none;
@@ -179,13 +175,14 @@
     }
   }
 
-  button {
+  button,
+  .btn {
     font: inherit;
     font-size: var(--text-m);
     min-block-size: var(--control-height);
     padding: var(--space-2) var(--space-5);
     border: 2px solid var(--accent);
-    border-radius: var(--radius-s);
+    border-radius: var(--radius);
     background: var(--accent);
     color: var(--on-accent);
     font-weight: 600;
@@ -220,7 +217,9 @@
   }
 
   button:disabled {
-    opacity: 0.55;
+    background: var(--surface-sunk);
+    border-color: var(--border-strong);
+    color: var(--muted);
     cursor: not-allowed;
   }
 
@@ -273,7 +272,7 @@
   kbd {
     padding: 0 var(--space-1);
     border: 1px solid var(--border-strong);
-    border-radius: var(--radius-s);
+    border-radius: var(--radius);
     font-family: var(--mono);
     font-size: var(--text-xs);
   }
