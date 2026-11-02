@@ -3,9 +3,9 @@
  * Generate src/commands/ui/embedded-ui.ts from the files in src/assets/ui, so
  * adding, removing or renaming a UI file never needs a hand-merged import map.
  *
- * Usage:
- *   bun scripts/gen-embedded-ui.ts          # write src/commands/ui/embedded-ui.ts
- *   bun scripts/gen-embedded-ui.ts --check  # exit non-zero if the file is stale
+ * Usage: bun scripts/gen-embedded-ui.ts
+ *
+ * tests/integration/ui/ui-client.test.ts fails when the generated file is stale.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -53,14 +53,5 @@ function listUiFiles(): string[] {
 }
 
 if (import.meta.main) {
-  const generated = renderEmbeddedUi(listUiFiles());
-  if (process.argv.includes("--check")) {
-    const existing = fs.existsSync(OUTPUT_PATH) ? fs.readFileSync(OUTPUT_PATH, "utf8") : "";
-    if (existing !== generated) {
-      console.error("src/commands/ui/embedded-ui.ts is stale. Run `bun scripts/gen-embedded-ui.ts`.");
-      process.exit(1);
-    }
-  } else {
-    fs.writeFileSync(OUTPUT_PATH, generated);
-  }
+  fs.writeFileSync(OUTPUT_PATH, renderEmbeddedUi(listUiFiles()));
 }
