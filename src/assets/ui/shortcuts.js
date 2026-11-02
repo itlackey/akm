@@ -6,7 +6,6 @@ import { html, mount } from "./lib.js";
 const GLOBAL = [{ key: "?", label: "Show these shortcuts" }];
 
 let active = [];
-let listening = false;
 let helper = null;
 
 const typing = (target) =>
@@ -64,10 +63,8 @@ export function registerShortcuts(shortcuts) {
   // Rendering in a test or any context without a real document has no keys to listen to.
   if (typeof document === "undefined" || typeof document.addEventListener !== "function") return () => {};
   active = shortcuts;
-  if (!listening) {
-    document.addEventListener("keydown", onKey);
-    listening = true;
-  }
+  // The same listener added again is ignored, so every page may add it.
+  document.addEventListener("keydown", onKey);
   return () => {
     if (active === shortcuts) active = [];
     closeHelp();

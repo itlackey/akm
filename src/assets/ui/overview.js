@@ -1,6 +1,5 @@
 // Overview: current health and selected-window activity, retrieval and automation metrics.
 
-import { sparkline } from "./charts.js";
 import {
   ago,
   announce,
@@ -14,6 +13,7 @@ import {
   pageHeader,
   pretty,
   sectionErrors,
+  sparkline,
   statusKind,
   windowToggle,
 } from "./lib.js";

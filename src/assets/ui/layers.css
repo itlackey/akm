@@ -1,2 +1,0 @@
-/* The cascade order. A rule in a later layer wins over an earlier one whatever its specificity. */
-@layer tokens, base, layout, components, pages, utilities;

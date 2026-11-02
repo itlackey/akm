@@ -11,7 +11,7 @@ const MODE_KEY = "akm-ui-diff-mode";
 const NARROW = "(width < 50rem)";
 
 /** The saved layout, else side by side (inline on a narrow screen). */
-export function preferredMode() {
+function preferredMode() {
   try {
     const saved = localStorage.getItem(MODE_KEY);
     if (saved === "side" || saved === "inline") return saved;
@@ -192,7 +192,7 @@ export function diffSection(diff) {
     };
   }
   const state = { mode: preferredMode(), expanded: new Set() };
-  const view = () => html`<div class="diffview" data-diffview>${aligned(model, diff.before, diff.after, state)}</div>`;
+  const view = () => html`<div data-diffview>${aligned(model, diff.before, diff.after, state)}</div>`;
   return {
     markup: view(),
     wire(root) {

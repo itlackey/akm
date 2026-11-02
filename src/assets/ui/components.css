@@ -39,9 +39,6 @@
     inline-size: 100%;
     block-size: 280px;
     min-inline-size: 0;
-    &[data-height="tall"] {
-      block-size: 12.5rem;
-    }
     &[data-height="short"] {
       block-size: 7.5rem;
     }
@@ -1041,14 +1038,6 @@
     border-radius: var(--radius);
     background: var(--surface-2);
     overflow: auto;
-  }
-
-  .md-preview :where(.card, .document-body) {
-    margin: 0;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    box-shadow: none;
   }
 
   /* ---- input with an action, and the folder picker ---- */

@@ -98,7 +98,6 @@ async function request(url, init) {
   return body.data;
 }
 
-/** GET `path` with optional query values (empty ones are dropped); resolves to the response's `data`. */
 let routeSignal = null;
 
 /** The signal every `api()` read aborts with: the router sets one per page, and aborts it when the reader navigates away. */
@@ -131,18 +130,6 @@ export function post(path, body = {}) {
     body: JSON.stringify(body),
     cache: "no-store",
   });
-}
-
-let metaPromise = null;
-/** `/api/meta`, fetched once. */
-export function getMeta() {
-  if (!metaPromise) {
-    metaPromise = api("/api/meta", {}, { signal: null });
-    metaPromise.catch(() => {
-      metaPromise = null;
-    });
-  }
-  return metaPromise;
 }
 
 // ---- formatting ------------------------------------------------------------
@@ -255,11 +242,11 @@ export function legend(items) {
 }
 
 export function emptyState(title, detail = "") {
-  return html`<div class="state state-empty"><p class="state-title">${title}</p>${detail ? html`<p>${detail}</p>` : ""}</div>`;
+  return html`<div class="state"><p class="state-title">${title}</p>${detail ? html`<p>${detail}</p>` : ""}</div>`;
 }
 
-export function loadingState(label = "Loading") {
-  return html`<div class="state state-loading" role="status"><span class="spinner" aria-hidden="true"></span>${label}...</div>`;
+export function loadingState() {
+  return html`<div class="state state-loading" role="status"><span class="spinner" aria-hidden="true"></span>Loading...</div>`;
 }
 
 export function errorState(error) {
@@ -421,4 +408,30 @@ export function actionForm(root, selector, action, { after } = {}) {
       }
     });
   });
+}
+
+const round = (n) => Math.round(n * 10) / 10;
+
+/** A tiny line of `values` (nulls are gaps) with no axes: shape only, the number beside it is the fact. */
+export function sparkline(values, label = "Weekly trend") {
+  const known = values.filter((v) => typeof v === "number");
+  if (known.length < 3) return "";
+  const W = 120;
+  const H = 28;
+  const max = Math.max(...known, 0.0001);
+  const min = Math.min(...known);
+  const span = max - min || 1;
+  const step = W / Math.max(values.length - 1, 1);
+  const segments = [];
+  let current = [];
+  values.forEach((v, i) => {
+    if (typeof v !== "number") {
+      if (current.length) segments.push(current);
+      current = [];
+      return;
+    }
+    current.push(`${round(i * step)},${round(H - 2 - ((v - min) / span) * (H - 4))}`);
+  });
+  if (current.length) segments.push(current);
+  return html`<svg class="tile-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${label}">${segments.map((points) => html`<polyline points="${points.join(" ")}"/>`)}</svg>`;
 }

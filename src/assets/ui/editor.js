@@ -62,7 +62,7 @@ export async function render(ctx) {
         : html`
     <form class="create-form card settings-card">
       <div class="settings-fields">
-        <div class="settings-grid create-meta">
+        <div class="settings-grid">
           <div class="field"><label class="field-label" for="nk-bundle">Bundle</label><select id="nk-bundle" name="bundle">${writable.map((b) => html`<option value="${b.name}" data-path="${b.path ?? ""}" ${b.name === (data.defaultWriteTarget ?? data.defaultBundle) ? html`selected` : ""}>${b.name}</option>`)}</select></div>
           <div class="field"><label class="field-label" for="nk-name">Name</label><input id="nk-name" name="name" required value="${prefillName}" placeholder="restore-database" autocomplete="off" spellcheck="false" aria-describedby="nk-name-hint"><p class="field-hint" id="nk-name-hint">Becomes the file name and the asset's ref. Lowercase letters, numbers and hyphens read best.</p></div>
           <div class="field"><label class="field-label" for="nk-path">Folder</label><div class="field-control"><input id="nk-path" name="path" placeholder="Optional, under knowledge/" autocomplete="off" spellcheck="false"><button type="button" class="btn-secondary" data-browse-folder="nk-path">Browse…</button></div></div>
@@ -125,8 +125,8 @@ async function edit(ctx, ref) {
       const write = root.querySelector("[data-write-tab]");
       preview.setAttribute("aria-selected", String(showing));
       preview.setAttribute("tabindex", showing ? "0" : "-1");
-      write?.setAttribute("aria-selected", String(!showing));
-      write?.setAttribute("tabindex", showing ? "-1" : "0");
+      write.setAttribute("aria-selected", String(!showing));
+      write.setAttribute("tabindex", showing ? "-1" : "0");
     };
     let latest = null;
     const saved = (result) => {
@@ -187,7 +187,7 @@ async function edit(ctx, ref) {
       }
     });
     root.querySelector("[data-preview-toggle]").addEventListener("click", () => showPreview(true));
-    root.querySelector("[data-write-tab]")?.addEventListener("click", () => showPreview(false));
+    root.querySelector("[data-write-tab]").addEventListener("click", () => showPreview(false));
     root.querySelector("[role=tablist]")?.addEventListener("keydown", (event) => {
       const preview = event.key === "ArrowRight" || event.key === "End";
       if (!preview && event.key !== "ArrowLeft" && event.key !== "Home") return;
@@ -221,7 +221,7 @@ async function edit(ctx, ref) {
     <form class="edit-form form-grid">
       <div class="editor-actions"><button type="submit">Save Markdown</button><a class="btn btn-secondary" href="${assetHref(source.ref, returnTo)}">Cancel</a><span class="muted small" data-editor-state role="status">No changes</span></div>
       <div data-status></div>
-      <div class="tabs editor-tabs" role="tablist" aria-label="Editor view"><button type="button" class="tab" role="tab" id="tab-write" aria-selected="true" aria-controls="panel-write" data-write-tab>Write</button><button type="button" class="tab" role="tab" id="tab-preview" aria-selected="false" aria-controls="panel-preview" tabindex="-1" data-preview-toggle>Preview</button></div>
+      <div class="tabs" role="tablist" aria-label="Editor view"><button type="button" class="tab" role="tab" id="tab-write" aria-selected="true" aria-controls="panel-write" data-write-tab>Write</button><button type="button" class="tab" role="tab" id="tab-preview" aria-selected="false" aria-controls="panel-preview" tabindex="-1" data-preview-toggle>Preview</button></div>
       <div data-source-panel role="tabpanel" id="panel-write" aria-labelledby="tab-write"><label>Markdown<textarea name="content" rows="16" spellcheck="false">${source.content}</textarea></label></div>
       <section data-preview-panel role="tabpanel" id="panel-preview" aria-labelledby="tab-preview" hidden><h2>Preview</h2><div data-preview></div></section>
     </form><section data-recovery hidden></section>`;

@@ -1,6 +1,5 @@
 // Asset view: metadata, frontmatter table, the body as safe markdown, links and feedback.
 
-import { sparkline } from "./charts.js";
 import { diffSection } from "./diff-view.js";
 import {
   actionForm,
@@ -14,6 +13,7 @@ import {
   post,
   proposalHref,
   searchReturn,
+  sparkline,
   tableWrap,
   when,
 } from "./lib.js";
@@ -52,7 +52,7 @@ function rail(asset, improve, bundle) {
 }
 
 function fixForm() {
-  return html`<details class="fix"><summary>Suggest a fix</summary>
+  return html`<details><summary>Suggest a fix</summary>
     <form class="fix-form form-grid">
       <label>Replace this exact text <textarea name="replace" rows="2" required></textarea></label>
       <label>With <textarea name="with" rows="2" required></textarea></label>
@@ -191,7 +191,7 @@ export async function render(ctx) {
     ${markdownEditable ? "" : data.durableRef ? fixForm() : ""}
     <div class="asset-layout"><div class="asset-main">
     <div class="badges">${badge(asset.type, "info")}${asset.origin ? badge(asset.origin, "neutral") : ""}${asset.editable ? badge("editable", "ok") : badge("read-only", "neutral")}</div>
-    ${headings.length > 1 ? html`<details class="contents"><summary>On this page</summary><ul>${headings.map((h) => html`<li><a href="${href}&section=${encodeURIComponent(h.slug)}">${h.text}</a></li>`)}</ul></details>` : ""}
+    ${headings.length > 1 ? html`<details><summary>On this page</summary><ul>${headings.map((h) => html`<li><a href="${href}&section=${encodeURIComponent(h.slug)}">${h.text}</a></li>`)}</ul></details>` : ""}
     <section class="document-body" aria-label="Content">${body.trim() === "" ? emptyState("This asset has no body.") : markdown(body, { ref: canonical, bundle: data.bundle, links: data.links, headings: data.headings, startLine, skipTitle: frontmatterTitle ? undefined : bodyTitle?.trim() })}</section>
     <details><summary>Asset details</summary>${definitionList([
       ["Name", html`<span class="mono">${asset.name}</span>`],

@@ -51,7 +51,7 @@ function listItem(p, query, current) {
   return html`<li class="review-row"><input type="checkbox" data-select value="${p.id}" data-ref="${p.ref}" aria-label="Select ${p.ref}"><a class="review-item" href="${proposalHref(p.id, query)}" ${here ? html`aria-current="true"` : ""}><span class="mono wrap">${p.ref}</span>${meta.length ? html`<span class="muted small">${meta.map((m, i) => html`${i ? " · " : ""}${m}`)}</span>` : ""}</a></li>`;
 }
 
-function pendingView(data, source, query = "", current = "") {
+function pendingView(data, source, query, current) {
   const shown = data.proposals.filter((p) => !source || p.source === source);
   if (data.fullCount === 0)
     return emptyState(
@@ -212,7 +212,7 @@ async function reviewPage(ctx, { detailFor = null } = {}) {
   );
   const pane = detail
     ? detail.markup
-    : html`<div class="state state-empty"><p class="state-title">Select a proposal</p><p>Choose one from the list, or press <kbd>j</kbd> to open the first. Press <kbd>?</kbd> for every shortcut.</p></div>`;
+    : html`<div class="state"><p class="state-title">Select a proposal</p><p>Choose one from the list, or press <kbd>j</kbd> to open the first. Press <kbd>?</kbd> for every shortcut.</p></div>`;
   return html`${head}${backlog(data)}${age ? html`<p>Waiting age: ${AGE_BANDS[age] ?? age} · <a href="${listHref("pending", source)}">Clear age filter</a></p>` : ""}
     <div class="review" ${detail ? html`data-detail` : ""}>
       <div class="review-list" data-proposal-list><div data-list>${pendingView(data, source, query, current)}</div><div class="batch-bar" data-batch-bar role="region" aria-label="Selection" aria-live="polite" hidden></div><p class="muted small review-count" data-reviewed>${reviewed ? `${reviewed} reviewed this session.` : ""}</p></div>
@@ -333,7 +333,7 @@ export async function renderDetail(ctx) {
         );
       }
       const markup = html`<nav class="crumbs" aria-label="Breadcrumb"><a href="#/proposals${query ? `?${query}` : ""}">Proposals${source ? `: ${source}` : ""}</a> / <span aria-current="page" class="mono wrap">${p.ref}</span></nav>
-        <div class="review-bar"><div class="review-bar-id"><h2 class="mono wrap">${p.ref}</h2><div class="badges" data-status>${statusBadges(p, p.status)}</div></div>${pending ? detailActions(nextId, query, noop) : ""}</div>
+        <div class="review-bar"><div><h2 class="mono wrap">${p.ref}</h2><div class="badges" data-status>${statusBadges(p, p.status)}</div></div>${pending ? detailActions(nextId, query, noop) : ""}</div>
         ${whyBlock(p, findings)}
         ${p.retirement ? retirementBlock(p.retirement) : ""}
         ${findings.length > 0 ? html`<section><h2>Validation</h2><ul class="plain">${findings.map((f) => html`<li>${badge(f.severity ?? "info", f.severity === "error" ? "fail" : "warn")} <span class="mono small">${f.kind}</span> ${f.message}</li>`)}</ul></section>` : ""}
@@ -366,3 +366,5 @@ export async function renderDetail(ctx) {
     },
   });
 }
+
+export const render = (ctx) => (ctx.param ? renderDetail(ctx) : renderList(ctx));

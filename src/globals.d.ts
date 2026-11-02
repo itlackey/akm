@@ -52,11 +52,6 @@ declare module "*/assets/ui/history.js" {
   export default content;
 }
 
-declare module "*/assets/ui/charts.js" {
-  const content: string;
-  export default content;
-}
-
 declare module "*/assets/ui/components.js" {
   const content: string;
   export default content;
@@ -139,10 +134,6 @@ declare module "*/assets/ui/search.js" {
 }
 
 /** Bun text imports of the `akm ui` stylesheets, one file per cascade layer. */
-declare module "*/assets/ui/layers.css" {
-  const content: string;
-  export default content;
-}
 
 declare module "*/assets/ui/tokens.css" {
   const content: string;

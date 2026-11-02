@@ -1,6 +1,6 @@
 // Improve impact: what akm's improve processes proposed, changed and cost over the weeks, and what went wrong.
 
-import { chart, lines, stackedColumns, stepLine } from "./chart-view.js";
+import { chart, lines, stepLine, verticalBars } from "./chart-view.js";
 import {
   ago,
   api,
@@ -217,7 +217,7 @@ function outcomesSection(impact) {
 function wireDrill(root) {
   const panel = root.querySelector("[data-drill-panel]");
   let selection = 0;
-  panel?.parentElement.addEventListener("click", async (event) => {
+  panel.parentElement.addEventListener("click", async (event) => {
     const drill = event.target.closest("[data-drill]");
     if (!drill) return;
     const mine = ++selection;
@@ -340,10 +340,11 @@ function costSection(ctx, impact) {
             "cost-calls",
             "Model calls per week by process.",
             () =>
-              stackedColumns(
+              verticalBars(
                 labels,
                 processes.map((name, i) => ({
                   name,
+                  stack: "total",
                   colorIndex: i % 5,
                   data: cost.map((w) => w.byProcess[name] ?? 0),
                 })),

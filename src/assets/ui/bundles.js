@@ -1,6 +1,5 @@
 // Bundles: one card per configured bundle with git status and asset counts, plus the index state.
 
-import { proportionBar } from "./charts.js";
 import { wireFolderBrowse } from "./folder-picker.js";
 import {
   actionForm,
@@ -11,12 +10,27 @@ import {
   fmtNum,
   fmtPct,
   html,
+  legend,
   pageHeader,
   pathText,
   post,
+  stackedBar,
   switchChanged,
   when,
 } from "./lib.js";
+
+const SERIES = 6;
+
+/** A stacked proportion bar with a legend listing each part's count. `counts` is { name: n }. */
+export function proportionBar(counts) {
+  const entries = Object.entries(counts)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return html`<p class="muted">No assets.</p>`;
+  const parts = entries.map(([k, n], i) => ({ n, cls: `series-${(i % SERIES) + 1}`, title: `${k}: ${n}` }));
+  return html`${stackedBar(parts, { label: entries.map(([k, n]) => `${k} ${n}`).join(", ") })}
+  ${legend(entries.map(([k, n], i) => [html`${k} <span class="num">${n}</span>`, (i % SERIES) + 1]))}`;
+}
 
 function gitBlock(git) {
   if (!git) return html`<p class="muted">Not a git repository.</p>`;

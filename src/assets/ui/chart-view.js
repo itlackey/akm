@@ -6,7 +6,7 @@ import { html } from "./lib.js";
  * The colour a token resolves to now. A token is a `light-dark()` pair, which a custom property keeps unresolved, so
  * a probe element takes it as its `color` and the browser says which one applies in the scheme on screen.
  */
-export function colourReader(near) {
+function colourReader(near) {
   const probe = document.createElement("span");
   probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none";
   near.parentNode.append(probe);
@@ -19,9 +19,13 @@ export function colourReader(near) {
   };
 }
 
-function wireChart(ctx, selector, options, onSelect) {
+/**
+ * A chart's element, drawn once the page is mounted. `options(token)` builds the ECharts option; `height` is the
+ * element's `data-height`; `onSelect` receives a click on a mark. `label` names the chart for assistive technology.
+ */
+export function chart(ctx, id, label, options, { height, onSelect } = {}) {
   ctx.after.push((root) => {
-    const element = root.querySelector(selector);
+    const element = root.querySelector(`#${id}`);
     if (!element) return;
     let disposed = false;
     let chart;
@@ -45,7 +49,6 @@ function wireChart(ctx, selector, options, onSelect) {
       chart.setOption(
         {
           animation: false,
-          color: SERIES.map(token),
           textStyle: { color: token("--text"), fontFamily: font },
           aria: {
             enabled: true,
@@ -75,82 +78,44 @@ function wireChart(ctx, selector, options, onSelect) {
       );
       done();
     };
-    // A chart is drawn when its card nears the screen, so ECharts is not fetched for a page that never scrolls to one.
-    const start = () =>
-      import("./echarts.js")
-        .then(({ init }) => {
-          if (disposed || !element.isConnected) return;
-          const resize = () => {
-            if (disposed || !element.clientWidth || !element.clientHeight) return;
-            if (!chart) {
-              chart = init(element, null, { renderer: "svg" });
-              if (onSelect) chart.on("click", onSelect);
-              draw();
-            } else chart.resize();
-          };
-          observer = new ResizeObserver(resize);
-          observer.observe(element);
-          resize();
-          scheme.addEventListener("change", retheme);
-          window.addEventListener("akm-theme", retheme);
-        })
-        .catch(() => {
-          // Say so, instead of leaving a blank box: the numbers are in the table beside it.
-          element.textContent = "Chart unavailable. The same figures are in Data and details.";
-          element.classList.add("chart-failed");
-        });
-    let lazy;
-    if (typeof IntersectionObserver === "function") {
-      lazy = new IntersectionObserver(
-        (entries) => {
-          if (!entries.some((entry) => entry.isIntersecting)) return;
-          lazy.disconnect();
-          start();
-        },
-        { rootMargin: "300px" },
-      );
-      lazy.observe(element);
-    } else start();
-    // A control redraws the chart in its own card only, not every chart on the page.
-    const card = element.closest(".chart-card") ?? element.parentElement;
-    const redraw = (event) => {
-      if (card?.contains(event.target)) draw();
-    };
-    root.addEventListener("change", redraw);
-    const resize = () => chart?.resize();
-    root.addEventListener("toggle", resize, true);
+    import("./echarts.js")
+      .then(({ init }) => {
+        if (disposed || !element.isConnected) return;
+        const resize = () => {
+          if (disposed || !element.clientWidth || !element.clientHeight) return;
+          if (!chart) {
+            chart = init(element, null, { renderer: "svg" });
+            if (onSelect) chart.on("click", onSelect);
+            draw();
+          } else chart.resize();
+        };
+        observer = new ResizeObserver(resize);
+        observer.observe(element);
+        resize();
+        scheme.addEventListener("change", retheme);
+        window.addEventListener("akm-theme", retheme);
+      })
+      .catch(() => {
+        // Say so, instead of leaving a blank box: the numbers are in the table beside it.
+        element.textContent = "Chart unavailable. The same figures are in Data and details.";
+        element.classList.add("chart-failed");
+      });
     return () => {
       disposed = true;
       observer?.disconnect();
       scheme.removeEventListener("change", retheme);
       window.removeEventListener("akm-theme", retheme);
-      lazy?.disconnect();
-      root.removeEventListener("change", redraw);
-      root.removeEventListener("toggle", resize, true);
       chart?.dispose();
     };
   });
-}
-
-/**
- * A chart's element, drawn once the page is mounted. `options(token)` builds the ECharts option; `height` is the
- * element's `data-height`; `onSelect` receives a click on a mark. `label` names the chart for assistive technology.
- */
-export function chart(ctx, id, label, options, { height, onSelect } = {}) {
-  wireChart(ctx, `#${id}`, options, onSelect);
   return html`<div class="echarts-view" ${height ? html`data-height="${height}"` : ""} id="${id}" role="img" aria-label="${label}"></div>`;
 }
 
-/** The categorical colours, in order; a series without its own `colorIndex` takes the next. */
-const SERIES = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6"];
-
-/** Axes that count whole things: a tick at "0.5 proposals" means nothing. */
-const COUNT_UNITS = new Set(["Count", "Calls", "Searches", "Operations", "Decisions", "Failures"]);
-
-export function verticalBars(labels, series, unit = "Count") {
+export function verticalBars(labels, series, unit) {
   return {
     xAxis: { type: "category", data: labels, axisLabel: { hideOverlap: true } },
-    yAxis: { type: "value", name: unit, min: 0, ...(COUNT_UNITS.has(unit) ? { minInterval: 1 } : {}) },
+    // Whole things are counted: a tick at "0.5 proposals" means nothing.
+    yAxis: { type: "value", name: unit, min: 0, minInterval: 1 },
     series: series.map((s) => ({ type: "bar", barMaxWidth: 28, ...s })),
   };
 }
@@ -162,8 +127,7 @@ export function verticalBars(labels, series, unit = "Count") {
 const percent = (value) => `${value}%`;
 
 /** One row of marks over the same labels as the chart above it: an `events` entry is `{ index, tone }`. */
-export function eventStrip(labels, events, { name = "Events", token }) {
-  const tones = { ok: "--ok", warn: "--warn", fail: "--fail", info: "--link" };
+export function eventStrip(labels, events, { name, token }) {
   return {
     grid: { left: 12, right: 22, top: 4, bottom: 4, containLabel: true },
     xAxis: {
@@ -182,7 +146,7 @@ export function eventStrip(labels, events, { name = "Events", token }) {
         symbolSize: 12,
         data: events.map((event) => ({
           value: [event.index, 0.5],
-          itemStyle: { color: token(tones[event.tone] ?? "--link") },
+          itemStyle: { color: token(event.tone === "fail" ? "--fail" : "--ok") },
         })),
       },
     ],
@@ -193,7 +157,7 @@ export function eventStrip(labels, events, { name = "Events", token }) {
  * A weekly proportion as a p-chart: the share per week, its centre, and the band a steady process stays in. `points` is
  * `pChart(...).points` from the server; a week outside its band is drawn larger. `unit` names the y axis.
  */
-export function pChartLine(labels, points, centre, { name = "Share", unit = "Share" } = {}) {
+export function pChartLine(labels, points, centre, { name, unit }) {
   const pct = (value) => (value === null || value === undefined ? null : Math.round(value * 1000) / 10);
   return {
     xAxis: { type: "category", data: labels, boundaryGap: false, axisLabel: { hideOverlap: true } },
@@ -240,15 +204,6 @@ export function pChartLine(labels, points, centre, { name = "Share", unit = "Sha
   };
 }
 
-/** Counts per label stacked by series: `series` is `[{ name, data, colorIndex? }]`. */
-export function stackedColumns(labels, series, unit = "Count") {
-  return verticalBars(
-    labels,
-    series.map((item) => ({ stack: "total", ...item })),
-    unit,
-  );
-}
-
 /** A level that holds until it changes (a queue length, the library size), as a step line. */
 export function stepLine(labels, data, { name = "Level", unit = "Count" } = {}) {
   return {
@@ -271,7 +226,7 @@ export function stepLine(labels, data, { name = "Level", unit = "Count" } = {}) 
 }
 
 /** Several lines over the same labels (`series`: `[{ name, data, colorIndex? }]`), gaps shown as gaps. */
-export function lines(labels, series, unit = "Count") {
+export function lines(labels, series, unit) {
   return {
     xAxis: { type: "category", data: labels, boundaryGap: false, axisLabel: { hideOverlap: true } },
     yAxis: { type: "value", name: unit, min: 0, splitNumber: 2 },

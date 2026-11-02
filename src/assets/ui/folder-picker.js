@@ -21,7 +21,7 @@ const baseName = (folder) => folder.split(/[\\/]/).filter(Boolean).pop() ?? "";
  * `start` is the folder shown first (default: the home folder). With `root`, the picker stays inside that folder
  * and resolves with the choice relative to it ("" for the root itself).
  */
-export function pickFolder({ start = "", root = null, title = "Choose a folder" } = {}) {
+function pickFolder({ start = "", root = null, title = "Choose a folder" } = {}) {
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
     dialog.className = "folder-picker";

@@ -55,7 +55,7 @@ function commitLine(commit) {
 
 // ---- one proposal ------------------------------------------------------------
 
-function detailView(state, nextId, query = "", noop = false) {
+function detailView(state, nextId, query, noop) {
   const busy = state.mode === "busy";
   switch (state.mode) {
     case "done": {
@@ -108,7 +108,7 @@ function detailView(state, nextId, query = "", noop = false) {
 }
 
 /** The action area of a pending proposal's page; {@link wireDetailActions} brings it to life. */
-export function detailActions(nextId, query = "", noop = false) {
+export function detailActions(nextId, query, noop) {
   return html`<section class="actions" data-actions aria-label="Decide this proposal">${detailView({ mode: "idle" }, nextId, query, noop)}</section>`;
 }
 

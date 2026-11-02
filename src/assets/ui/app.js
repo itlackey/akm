@@ -5,7 +5,6 @@ import {
   announce,
   api,
   errorState,
-  getMeta,
   hasUnsaved,
   html,
   initToken,
@@ -50,32 +49,16 @@ document.querySelector("[data-theme-control]")?.addEventListener("change", (even
 }
 
 const ROUTES = [
-  { name: "overview", label: "Overview", load: () => import("./overview.js"), render: (m, c) => m.render(c) },
-  { name: "bundles", label: "Bundles", load: () => import("./bundles.js"), render: (m, c) => m.render(c) },
-  { name: "config", label: "Config", load: () => import("./config.js"), render: (m, c) => m.render(c) },
-  {
-    name: "proposals",
-    label: "Proposals",
-    load: () => import("./proposals.js"),
-    render: (m, c) => (c.param ? m.renderDetail(c) : m.renderList(c)),
-  },
-  { name: "improve", label: "Improve impact", load: () => import("./improve.js"), render: (m, c) => m.render(c) },
-  { name: "history", label: "History", load: () => import("./history.js"), render: (m, c) => m.render(c) },
-  { name: "search", label: "Search", load: () => import("./search.js"), render: (m, c) => m.render(c) },
-  { name: "asset", label: "Asset", nav: "search", load: () => import("./asset.js"), render: (m, c) => m.render(c) },
-  {
-    name: "edit",
-    label: "Edit Markdown",
-    nav: "search",
-    load: () => import("./editor.js"),
-    render: (m, c) => m.render(c),
-  },
-  {
-    name: "new",
-    label: "New knowledge",
-    load: () => import("./editor.js"),
-    render: (m, c) => m.render(c),
-  },
+  { name: "overview", label: "Overview", load: () => import("./overview.js") },
+  { name: "bundles", label: "Bundles", load: () => import("./bundles.js") },
+  { name: "config", label: "Config", load: () => import("./config.js") },
+  { name: "proposals", label: "Proposals", load: () => import("./proposals.js") },
+  { name: "improve", label: "Improve impact", load: () => import("./improve.js") },
+  { name: "history", label: "History", load: () => import("./history.js") },
+  { name: "search", label: "Search", load: () => import("./search.js") },
+  { name: "asset", label: "Asset", nav: "search", load: () => import("./asset.js") },
+  { name: "edit", label: "Edit Markdown", nav: "search", load: () => import("./editor.js") },
+  { name: "new", label: "New knowledge", load: () => import("./editor.js") },
 ];
 
 const main = document.getElementById("app");
@@ -171,11 +154,11 @@ async function route() {
     if (!entry) {
       mount(
         main,
-        html`<div class="state state-empty"><p class="state-title">No such page</p><p>Try the <a href="#/overview">overview</a>.</p></div>`,
+        html`<div class="state"><p class="state-title">No such page</p><p>Try the <a href="#/overview">overview</a>.</p></div>`,
       );
     } else {
       const page = await entry.load();
-      const markup = await entry.render(page, ctx);
+      const markup = await page.render(ctx);
       if (mine !== sequence) return;
       mount(main, markup);
       for (const fn of ctx.after) {
@@ -231,7 +214,7 @@ async function showPendingCount() {
 async function showMeta() {
   const target = document.getElementById("nav-meta");
   try {
-    const meta = await getMeta();
+    const meta = await api("/api/meta", {}, { signal: null });
     mount(
       target,
       html`<span class="mono" data-volatile>akm ${meta.version} · ${meta.hostname}</span><span class="muted">${meta.runtime}</span>`,
@@ -279,22 +262,10 @@ window.addEventListener("beforeunload", (event) => {
   event.preventDefault();
   event.returnValue = true; // Older browsers ask only when this is set.
 });
-document.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-    event.preventDefault();
-    if (location.hash.startsWith("#/search")) document.querySelector('input[name="q"]')?.focus();
-    else location.hash = "#/search";
-  }
-});
 // The skip link must not change the hash: that would route to a page called "app".
 document.querySelector(".skip-link")?.addEventListener("click", (event) => {
   event.preventDefault();
   main.focus();
-});
-// Esc on the unsaved-changes notice means "Keep editing".
-document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || unsaved.hidden) return;
-  unsaved.querySelector("[data-act=keep]")?.click();
 });
 const menu = document.querySelector("[data-menu]");
 const topbar = document.querySelector(".topbar");
@@ -307,9 +278,19 @@ document.querySelector(".nav-links")?.addEventListener("click", (event) => {
   if (event.target.closest("a")) setMenu(false);
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || menu?.getAttribute("aria-expanded") !== "true") return;
-  setMenu(false);
-  menu.focus();
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    if (location.hash.startsWith("#/search")) document.querySelector('input[name="q"]')?.focus();
+    else location.hash = "#/search";
+    return;
+  }
+  if (event.key !== "Escape") return;
+  // Esc on the unsaved-changes notice means "Keep editing".
+  if (!unsaved.hidden) unsaved.querySelector("[data-act=keep]")?.click();
+  if (menu?.getAttribute("aria-expanded") === "true") {
+    setMenu(false);
+    menu.focus();
+  }
 });
 document.addEventListener("click", (event) => {
   if (menu?.getAttribute("aria-expanded") === "true" && !event.target.closest(".topbar")) setMenu(false);

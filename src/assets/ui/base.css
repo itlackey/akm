@@ -274,8 +274,7 @@
     }
   }
 
-  :where(h1, .crumbs) .mono,
-  h1.mono {
+  :where(h1, .crumbs) .mono {
     font-size: inherit;
   }
 

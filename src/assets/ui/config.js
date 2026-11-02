@@ -66,12 +66,12 @@ function field(ctx, { key, label, hint = "", kind = "text", options = [], placeh
   return html`<div class="field">${head}${control}${help}</div>`;
 }
 
-function settingsCard(id, title, description, fields, footnote = "") {
+function settingsCard(id, title, description, fields) {
   return html`<section class="settings-section" aria-labelledby="${id}">
     <div class="settings-intro"><h2 id="${id}">${title}</h2><p>${description}</p></div>
     <form class="card settings-card config-form" novalidate>
       <div class="settings-fields">${fields}</div>
-      <div class="settings-footer"><span class="muted small">${footnote}</span><div data-status class="settings-status"></div><button type="submit" disabled>Save changes</button></div>
+      <div class="settings-footer"><span class="muted small"></span><div data-status class="settings-status"></div><button type="submit" disabled>Save changes</button></div>
     </form>
   </section>`;
 }
@@ -127,7 +127,7 @@ function connectionCard(ctx, connection) {
   const base = `connections.${connection.name}`;
   const models = isObject(connection.models) ? connection.models : {};
   const aliasKey = (alias) => (isObject(models[alias]) ? `${base}.models.${alias}.model` : `${base}.models.${alias}`);
-  return html`<form class="card settings-card config-form connection-card" novalidate>
+  return html`<form class="card settings-card config-form" novalidate>
     <div class="connection-head"><h3 class="mono">${connection.name}</h3>${ctx.defaultConnection === connection.name ? badge("default", "info") : ""}</div>
     <div class="settings-fields settings-grid">
       ${field(ctx, { key: `${base}.endpoint`, label: "Endpoint", kind: "url", placeholder: "host:port/v1/chat/completions" })}
@@ -148,10 +148,6 @@ function newConnectionForm() {
       <div class="field"><label class="field-label" for="nc-key">API key</label><input id="nc-key" name="apiKey" placeholder="$OPENAI_API_KEY" autocomplete="off"><p class="field-hint">Optional. An environment variable reference.</p></div>
       </div><div class="settings-footer"><span></span><div data-status class="settings-status"></div><button type="submit">Add connection</button></div>
     </form></details>`;
-}
-
-function referenceTree(value) {
-  return html`<pre class="code config-json" tabindex="0" role="group" aria-label="Configuration, scrolls sideways">${pretty(value)}</pre>`;
 }
 
 export async function render(ctx) {
@@ -250,7 +246,7 @@ export async function render(ctx) {
           <div class="field"><label class="field-label" for="adv-value">Value</label><input id="adv-value" name="value" placeholder="true" autocomplete="off" spellcheck="false"></div>
           </div><div class="settings-footer"><label class="check-label"><input type="checkbox" name="unset"> Unset this key instead</label><div data-status class="settings-status"></div><button type="submit">Apply</button></div>
         </form>
-        <details><summary>Effective config <span class="muted small">(read-only, secrets redacted)</span></summary>${referenceTree(config)}</details>
+        <details><summary>Effective config <span class="muted small">(read-only, secrets redacted)</span></summary><pre class="code config-json" tabindex="0" role="group" aria-label="Configuration, scrolls sideways">${pretty(config)}</pre></details>
         ${data.harnesses.length ? html`<details><summary>Harnesses</summary>${tableWrap(html`<table><thead><tr><th>Name</th><th>Platform</th></tr></thead><tbody>${data.harnesses.map((h) => html`<tr><td class="mono">${h.name}</td><td class="mono">${h.platform ?? h.name}</td></tr>`)}</tbody></table>`)}</details>` : ""}
         <details><summary>Environment <span class="muted small">(${data.env.length} AKM_* variables)</span></summary>${
           data.env.length === 0

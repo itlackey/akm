@@ -309,13 +309,6 @@
     gap: var(--space-2);
   }
 
-  .improve-line {
-    & .dot {
-      margin-inline-end: var(--space-2);
-      vertical-align: 0.05em;
-    }
-  }
-
   .queue-summary {
     margin-block: var(--space-4) var(--space-5);
     & details {

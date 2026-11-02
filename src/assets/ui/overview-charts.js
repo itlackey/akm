@@ -1,4 +1,4 @@
-import { chart, eventStrip, lines, pChartLine, stackedColumns, verticalBars } from "./chart-view.js";
+import { chart, eventStrip, lines, pChartLine, verticalBars } from "./chart-view.js";
 import {
   api,
   badge,
@@ -33,9 +33,14 @@ function activity(ctx, metrics) {
             "activity-chart",
             "Recorded operations by UTC day, stacked by kind. Exact counts follow in Data and details.",
             () =>
-              stackedColumns(
+              verticalBars(
                 days.map(dayLabel),
-                keys.map((key, index) => ({ name: labels[key], colorIndex: index, data: days.map((d) => d[key]) })),
+                keys.map((key, index) => ({
+                  name: labels[key],
+                  stack: "total",
+                  colorIndex: index,
+                  data: days.map((d) => d[key]),
+                })),
                 "Operations",
               ),
           )
@@ -108,7 +113,6 @@ function retrievalCard(ctx, trend, data) {
       "trend-rate",
       "Share of searches that found nothing, by week, with its usual range. Weekly figures follow in Data and details.",
       () => pChartLine(labels, weekly, trend.centre, { name: "Found nothing", unit: "Found nothing" }),
-      { height: "tall" },
     )}
     ${chart(
       ctx,
@@ -151,7 +155,7 @@ function automation(ctx, tasks, runs, since) {
   let root;
   let selection = 0;
   const selectTask = async (taskId) => {
-    if (!root || !taskId) return;
+    if (!taskId) return;
     const mine = ++selection;
     const detail = root.querySelector("[data-task-detail]");
     mount(detail, html`<p role="status">Loading recorded runs…</p>`);
@@ -187,9 +191,6 @@ function automation(ctx, tasks, runs, since) {
       const button = event.target.closest("[data-run]");
       if (button) selectRun(button.dataset.run);
     });
-    return () => {
-      selection++;
-    };
   });
   const runChart = () => ({
     xAxis: {
