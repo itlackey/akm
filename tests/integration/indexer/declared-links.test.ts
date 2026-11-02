@@ -166,11 +166,9 @@ describe("declared links", () => {
       expect((await akmShowUnified({ ref: source })).links?.outgoing?.links_to?.refs).toEqual([harbor, mooring]);
       expect((await akmShowUnified({ ref: harbor })).links?.incoming?.links_to?.refs).toEqual([source]);
       const uiLinks = async (ref: string) => {
-        const detail = (await handleApiRequest("/api/asset", new URLSearchParams({ ref }), {
-          startedAt: "2026-10-20T00:00:00Z",
-          host: "127.0.0.1",
-          port: 0,
-        })) as { asset: Awaited<ReturnType<typeof akmShowUnified>> };
+        const detail = (await handleApiRequest("/api/asset", new URLSearchParams({ ref }))) as {
+          asset: Awaited<ReturnType<typeof akmShowUnified>>;
+        };
         return detail.asset.links;
       };
       expect((await uiLinks(source))?.outgoing?.links_to?.refs).toEqual([harbor, mooring]);
