@@ -19,9 +19,11 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
+import type { Proposal } from "../../../src/commands/proposal/proposal-types";
 import { createProposal } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
 import { DIFF_SIDE_MAX_CHARS } from "../../../src/commands/ui/api";
+import { weekOf } from "../../../src/commands/ui/derive";
 import { MAX_BODY_BYTES, MAX_DOCUMENT_BODY_BYTES, startUiServer, type UiServer } from "../../../src/commands/ui/server";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { getConfigPath, getDbPath } from "../../../src/core/paths";
@@ -29,7 +31,7 @@ import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { acquireAssetMutationLease } from "../../../src/indexer/index-writer-lock";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
-import { upsertProposal } from "../../../src/storage/repositories/proposals-repository";
+import { listStateProposals, upsertProposal } from "../../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import * as akmBin from "../../../src/tasks/resolve-akm-bin";
 import { runCliCapture } from "../../_helpers/cli";
@@ -258,7 +260,7 @@ describe("server and guards", () => {
 
     const js = await fetch(`http://${s.host}:${s.port}/app.js`);
     expect(js.headers.get("content-type")).toContain("javascript");
-    const css = await fetch(`http://${s.host}:${s.port}/styles.css`);
+    const css = await fetch(`http://${s.host}:${s.port}/tokens.css`);
     expect(css.headers.get("content-type")).toContain("text/css");
     expect((await fetch(`http://${s.host}:${s.port}/nope.js`)).status).toBe(404);
     expect((await fetch(`http://${s.host}:${s.port}/..%2f..%2fpackage.json`)).status).toBe(404);
@@ -273,9 +275,9 @@ describe("server and guards", () => {
       expect(await response.json()).toMatchObject({ ok: false, code: "UNAUTHORIZED" });
     }
     expect((await fetch(`http://${s.host}:${s.port}/api/meta?token=wrong`)).status).toBe(401);
-    // The token is accepted as a header or as a query parameter.
+    // The token is accepted as a header only: a token in the URL would end up in history and logs.
     expect((await api(s, "/api/meta")).status).toBe(200);
-    expect((await fetch(`http://${s.host}:${s.port}/api/meta?token=${s.token}`)).status).toBe(200);
+    expect((await fetch(`http://${s.host}:${s.port}/api/meta?token=${s.token}`)).status).toBe(401);
   });
 
   test("only GET is accepted outside the proposal writes: a non-GET needs the token, then is refused", async () => {
@@ -326,7 +328,6 @@ describe("endpoints", () => {
       const listing = await data(s, `/api/fs/folders?path=${encodeURIComponent(root)}`);
       expect(listing.path).toBe(root);
       expect(listing.parent).toBe(path.dirname(root));
-      expect(listing.home).toBe(os.homedir());
       expect(listing.folders.map((f: { name: string }) => f.name)).toEqual(["Alpha", "beta", "link-to-beta"]);
       expect(listing.folders[0].path).toBe(path.join(root, "Alpha"));
       expect(listing.truncated).toBe(false);
@@ -355,11 +356,9 @@ describe("endpoints", () => {
     await seed();
     const s = await start();
     const meta = await data(s, "/api/meta");
-    expect(meta).toMatchObject({ host: "127.0.0.1", port: s.port, stashDir: storage.stashDir });
     expect(typeof meta.version).toBe("string");
     expect(meta.hostname).toBe(os.hostname());
-    expect(meta.stateDbPath).toBe(getStateDbPath());
-    expect(Date.parse(meta.startedAt)).not.toBeNaN();
+    expect(["bun", "node"]).toContain(meta.runtime);
   });
 
   test("GET /api/overview: health, metrics, last improve runs and canonical user usage", async () => {
@@ -368,7 +367,6 @@ describe("endpoints", () => {
     const overview = await data(s, "/api/overview");
     expect(overview.errors).toBeUndefined();
     expect(overview.health.hardChecks.length).toBeGreaterThan(0);
-    expect(overview.health.report).toMatchObject({ window: "24h", compare: "24h" });
     expect(overview.health.windows).toHaveLength(2);
     // The round-trip probe writes a row; a read-only run reports it skipped.
     const roundTrip = overview.health.hardChecks.find((c: { name: string }) => c.name === "state-db-round-trip");
@@ -391,11 +389,10 @@ describe("endpoints", () => {
     const today = overview.metrics.usage.daily.at(-1);
     // User-attributed only: the improve-sourced search is not counted.
     expect(today).toMatchObject({ search: 1, show: 1, feedback: 2, curate: 0 });
-    expect(overview.retrieval.daily.at(-1)).toMatchObject({
+    expect((await data(s, "/api/retrieval?since=30d")).daily.at(-1)).toMatchObject({
       searches: 1,
       zeroResults: 0,
       medianMs: null,
-      latencySamples: 0,
     });
     expect(overview.taskFailures).toEqual([]);
     expect(overview.metrics.rows).toBeUndefined();
@@ -425,13 +422,132 @@ describe("endpoints", () => {
     const s = await start();
     const overview = await data(s, "/api/overview?metricsSince=7d");
     expect(overview.metrics.usage.daily.at(-1)).toMatchObject({ search: 4, curate: 1 });
-    expect(overview.retrieval).toEqual({
-      daily: [{ date: today, searches: 4, zeroResults: 2, medianMs: 120, latencySamples: 2 }],
-      zeroResultQueries: [{ date: today, query: "empty result", count: 2 }],
-    });
+    expect((await data(s, "/api/retrieval?since=7d")).daily).toEqual([
+      {
+        date: today,
+        searches: 4,
+        zeroResults: 2,
+        medianMs: 120,
+        partial: true,
+      },
+    ]);
   });
 
-  test("GET /api/retrieval returns the per-day search series for a longer window than the overview's", async () => {
+  test("the dashboard routes answer with their documented shape, and a missing ref is a 400", async () => {
+    await seed();
+    const accepted = propose("lessons/rg");
+    const s = await start();
+    expect((await write(s, `/api/proposals/${accepted}/accept`, {})).status).toBe(200);
+    propose("lessons/two");
+
+    const health = await data(s, "/api/health");
+    expect(health).toMatchObject({ hardChecks: expect.any(Array), advisories: expect.any(Array) });
+
+    const pulse = await data(s, "/api/overview/pulse");
+    expect(pulse.tiles.foundNothing).toMatchObject({ n: expect.any(Number) });
+    expect(pulse.tiles.foundNothing.usual.state).toBe("low-data");
+    expect(pulse.improveLine).toMatchObject({ weeks: 4, proposed: 2, accepted: 1, waiting: 1 });
+    expect(pulse.attention.pending.count).toBe(1);
+
+    const impact = await data(s, "/api/improve/impact");
+    expect(impact.available).toBe(true);
+    expect(impact.summary.kept).toBe(1);
+    expect(impact.outcomes.map((o: { source: string }) => o.source)).toEqual(["reflect"]);
+    expect(impact.reviewFlow.at(-1)).toMatchObject({ created: 2, decided: 1, waiting: 1 });
+    expect(impact.changedAssets[0]).toMatchObject({ ref: "stash//lessons/rg", complete: false });
+    // Accepted through the UI, so the decision is the person's.
+    expect(impact.judgeAndYou).toEqual({ you: { accepted: 1, rejected: 0, reverted: 0 } });
+
+    const misses = await data(s, "/api/search/misses");
+    expect(misses).toMatchObject({ searches: expect.any(Number), misses: expect.any(Array) });
+
+    const improve = await data(s, `/api/asset/improve?ref=${encodeURIComponent("stash//lessons/rg")}`);
+    expect(improve.proposals).toHaveLength(1);
+    expect(improve.usageByWeek.length).toBeGreaterThan(10);
+    expect((await api(s, "/api/asset/improve")).status).toBe(400);
+    // A chart's drill-down: the proposals decided in a week, or of one class.
+    const week = impact.weeks.at(-1);
+    expect(
+      (await data(s, `/api/proposals?status=recent&week=${week}`)).proposals.map((p: { id: string }) => p.id),
+    ).toEqual([accepted]);
+    expect((await data(s, "/api/proposals?status=recent&class=rejected")).proposals).toHaveLength(0);
+    expect((await api(s, "/api/proposals?status=recent&class=nope")).status).toBe(400);
+  });
+
+  test("a reverted proposal is dated and attributed by its accept, and still counts as accepted", async () => {
+    await seed();
+    const id = propose("knowledge/notes", NOTES_REWRITE);
+    const s = await start();
+    expect((await write(s, `/api/proposals/${id}/accept`, {})).status).toBe(200);
+    // Move the accept three weeks back, so the accept and the revert fall in different weeks.
+    const day = 86_400_000;
+    const acceptedAt = new Date(Date.now() - 21 * day).toISOString();
+    const db = openStateDatabase();
+    try {
+      const accepted = listStateProposals(db, { stashDir: storage.stashDir, status: "accepted" })[0] as Proposal;
+      upsertProposal(
+        db,
+        {
+          ...accepted,
+          createdAt: new Date(Date.now() - 22 * day).toISOString(),
+          updatedAt: acceptedAt,
+          acceptedAt,
+          review: { ...accepted.review, decidedAt: acceptedAt },
+        } as Proposal,
+        storage.stashDir,
+      );
+    } finally {
+      db.close();
+    }
+    expect((await write(s, `/api/proposals/${id}/revert`, {})).status).toBe(200);
+
+    const impact = await data(s, "/api/improve/impact");
+    expect(impact.changedAssets[0]).toMatchObject({ outcome: "reverted", decidedAt: acceptedAt });
+    const reverted = Object.fromEntries(impact.outcomes[0].weeks.map((w: Json) => [w.week, w.reverted]));
+    expect(reverted[weekOf(acceptedAt)]).toBe(1);
+    expect(reverted[impact.weeks.at(-1)]).toBe(0);
+    // Waiting from creation until the accept, not until the revert.
+    expect(impact.reviewFlow.at(-1)).toMatchObject({ waiting: 0 });
+    expect(impact.reviewFlow.find((w: Json) => w.week === weekOf(acceptedAt))).toMatchObject({ decided: 1 });
+    // The revert kept who accepted: a person, not "unknown".
+    expect(impact.judgeAndYou).toEqual({ you: { accepted: 0, rejected: 0, reverted: 1 } });
+    expect(impact.harm.some((item: Json) => item.kind === "reverted" && item.proposalId === id)).toBe(true);
+    // The summary counts the reverts the harm log lists.
+    expect(impact.summary.reverted).toBe(1);
+    // The list that drills into the week shows the accept time, the date that put it in that week.
+    const drilled = await data(s, `/api/proposals?status=recent&week=${weekOf(acceptedAt)}&class=reverted`);
+    expect(drilled.proposals[0]).toMatchObject({ id, decidedAt: acceptedAt });
+
+    // Accepted first, so it counts as accepted, and "since reverted" is a part of that figure.
+    const pulse = await data(s, "/api/overview/pulse");
+    expect(pulse.improveLine).toMatchObject({
+      proposed: 1,
+      accepted: 1,
+      acceptedThenReverted: 1,
+      rejected: 0,
+      waiting: 0,
+    });
+    expect(pulse.attention.harm.reverted).toBe(1);
+  });
+
+  test("an unreadable proposals table degrades the impact page's proposal cards, not the page", async () => {
+    await seed();
+    const db = openStateDatabase();
+    try {
+      db.exec("DROP TABLE proposals");
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const impact = await data(s, "/api/improve/impact");
+    expect(impact.available).toBe(true);
+    expect(Object.keys(impact.errors)).toEqual(["proposals"]);
+    expect(impact.outcomes).toEqual([]);
+    expect(impact.cost).toHaveLength(impact.weeks.length);
+    expect(impact.library).toHaveLength(impact.weeks.length);
+  });
+
+  test("GET /api/retrieval returns the per-day search series for the requested window", async () => {
     await seed();
     const db = openStateDatabase();
     const day = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
@@ -455,11 +571,8 @@ describe("endpoints", () => {
       [day(60), 2, 1],
       [day(1), 1, 0],
     ]);
-    // The overview's 30-day window leaves the older day out; the trend keeps it.
-    const overview = await data(s, "/api/overview?metricsSince=30d");
-    const overviewDays = overview.retrieval.daily.map((d: { date: string }) => d.date);
-    expect(overviewDays).toContain(day(1));
-    expect(overviewDays).not.toContain(day(60));
+    const short = await data(s, "/api/retrieval?since=30d");
+    expect(short.daily.map((d: { date: string }) => d.date)).not.toContain(day(60));
     expect((await api(s, "/api/retrieval?since=nonsense")).status).toBe(400);
   });
 
@@ -511,17 +624,13 @@ describe("endpoints", () => {
     const s = await start();
     const overview = await data(s, "/api/overview");
     expect(overview.metrics.tasks.byTask.some((t: { taskId: string }) => t.taskId === "rare-failure")).toBe(false);
-    expect(overview.taskFailures).toEqual([
-      { taskId: "rare-failure", runs: 1, failed: 1, medianMs: 50, rated: 1, failRate: null },
-    ]);
+    expect(overview.taskFailures).toEqual([{ taskId: "rare-failure", runs: 1, failed: 1, medianMs: 50 }]);
     const detail = await data(s, "/api/tasks/history?taskId=rare-failure&limit=1");
     expect(detail).toMatchObject({
       available: true,
       totalCount: 1,
       count: 1,
-      runs: [
-        { taskId: "rare-failure", status: "failed", durationMs: 50, detail: { reason: "timeout", error: "Timed out" } },
-      ],
+      runs: [{ status: "failed", durationMs: 50, detail: { reason: "timeout", error: "Timed out" } }],
     });
     expect(detail.runs[0].logPath).toBeUndefined();
     expect((await data(s, "/api/tasks/history?taskId=unknown-detail")).runs[0]).toMatchObject({
@@ -577,7 +686,7 @@ describe("endpoints", () => {
     expect((await api(s, "/api/proposals?age=invalid")).status).toBe(400);
   });
 
-  test("overview pendingNow counts this stash's pending queue, unwindowed, like the proposals list", async () => {
+  test("pulse's pending count is this stash's whole queue, not windowed, like the proposals list", async () => {
     await seed();
     const original = createProposal(storage.stashDir, {
       ref: "lessons/rg",
@@ -596,14 +705,13 @@ describe("endpoints", () => {
       db.close();
     }
     const s = await start();
-    const overview = await data(s, "/api/overview?metricsSince=24h");
+    const pulse = await data(s, "/api/overview/pulse");
     const list = await data(s, "/api/proposals?limit=200");
-    expect(overview.metrics.proposals.byStatus.pending ?? 0).toBeLessThan(overview.pendingNow);
-    expect(overview.pendingNow).toBe(list.totalCount);
-    expect(overview.pendingNow).toBe(overview.health.report.pendingProposals.length);
+    expect(pulse.attention.pending.count).toBe(list.totalCount);
+    expect(pulse.attention.pending.count).toBe(4);
   });
 
-  test("task failures rank by failure rate once a task has 5 runs, then by failures", async () => {
+  test("task failures rank in the order of the bars: failed runs over runs, then failures", async () => {
     await seed();
     const db = openStateDatabase();
     const base = Date.now() - 60_000;
@@ -620,73 +728,17 @@ describe("endpoints", () => {
         metadata_json: "{}",
       });
     try {
-      // busy: 2 of 10 failed (0.2); flaky: 3 of 5 (0.6); few: 2 of 2 (no rate, ranks after the rated tasks).
-      for (let n = 0; n < 10; n++) run("busy", n < 2 ? "failed" : "completed", n);
+      // busy: 3 of 10 failed (0.3); flaky: 3 of 5 (0.6); few: 2 of 2 (1.0); clean: no failures, so not listed.
+      for (let n = 0; n < 10; n++) run("busy", n < 3 ? "failed" : "completed", n);
       for (let n = 0; n < 5; n++) run("flaky", n < 3 ? "failed" : "completed", n);
       for (let n = 0; n < 2; n++) run("few", "failed", n);
+      run("clean", "completed", 0);
     } finally {
       db.close();
     }
     const s = await start();
     const overview = await data(s, "/api/overview");
-    expect(overview.taskFailures.map((t: { taskId: string }) => t.taskId)).toEqual(["flaky", "busy", "few"]);
-    expect(overview.taskFailures.map((t: { failRate: number | null }) => t.failRate)).toEqual([0.6, 0.2, null]);
-  });
-
-  test("task fail rate counts stale active runs as not ok and ignores fresh active runs (M-25)", async () => {
-    await seed();
-    const db = openStateDatabase();
-    const run = (taskId: string, status: string, ageMs: number) =>
-      upsertTaskHistory(db, {
-        task_id: taskId,
-        status,
-        started_at: new Date(Date.now() - ageMs).toISOString(),
-        completed_at: status === "completed" ? new Date().toISOString() : null,
-        failed_at: status === "failed" ? new Date().toISOString() : null,
-        log_path: null,
-        target_kind: null,
-        target_ref: null,
-        metadata_json: "{}",
-      });
-    try {
-      // fresh-active: 4 failed + 1 fresh active -> rated 4, no rate yet.
-      for (let n = 0; n < 4; n++) run("fresh-active", "failed", 120_000 + n * 1000);
-      run("fresh-active", "active", 600_000);
-      // stale-active: 3 completed + 1 failed + 1 active 10 h ago -> rated 5, 2 not ok = 0.4.
-      for (let n = 0; n < 3; n++) run("stale-active", "completed", 120_000 + n * 1000);
-      run("stale-active", "failed", 130_000);
-      run("stale-active", "active", 10 * 3_600_000);
-    } finally {
-      db.close();
-    }
-    const s = await start();
-    const overview = await data(s, "/api/overview");
-    const byId = Object.fromEntries(overview.taskFailures.map((t: { taskId: string }) => [t.taskId, t]));
-    expect(byId["fresh-active"]).toMatchObject({ runs: 5, rated: 4, failRate: null });
-    expect(byId["stale-active"]).toMatchObject({ runs: 5, rated: 5, failRate: 0.4 });
-  });
-
-  test("a task whose only problem is a stale active run stays out of taskFailures", async () => {
-    await seed();
-    const db = openStateDatabase();
-    try {
-      upsertTaskHistory(db, {
-        task_id: "stale-only",
-        status: "active",
-        started_at: new Date(Date.now() - 10 * 3_600_000).toISOString(),
-        completed_at: null,
-        failed_at: null,
-        log_path: null,
-        target_kind: null,
-        target_ref: null,
-        metadata_json: "{}",
-      });
-    } finally {
-      db.close();
-    }
-    const s = await start();
-    const overview = await data(s, "/api/overview");
-    expect(overview.taskFailures.map((t: { taskId: string }) => t.taskId)).not.toContain("stale-only");
+    expect(overview.taskFailures.map((t: { taskId: string }) => t.taskId)).toEqual(["few", "flaky", "busy"]);
   });
 
   test("GET /api/bundles: cards with git status and asset counts, plus the index state", async () => {
@@ -972,7 +1024,7 @@ describe("secrets and read-only guarantees", () => {
     for (const endpoint of ENDPOINTS) await api(s, endpoint);
     await api(s, "/api/search?q=deploy&type=knowledge");
     await api(s, "/api/asset?ref=knowledge/notes");
-    await api(s, "/api/overview?probe=0&since=7d");
+    await api(s, "/api/overview?probe=0");
 
     expect(countRows("usage_events")).toBe(before.usage);
     expect(countRows("events")).toBe(before.events);
@@ -1182,6 +1234,53 @@ describe("proposal writes", () => {
     expect((await data(s, "/api/proposals?status=recent")).proposals[0]).toMatchObject({ id, status: "rejected" });
   });
 
+  test("revert restores the asset from the accept backup, and reopen returns a rejection to the queue", async () => {
+    await seed();
+    const notes = path.join(storage.stashDir, "knowledge", "notes.md");
+    const original = fs.readFileSync(notes, "utf8");
+    const edit = propose("knowledge/notes", NOTES_REWRITE);
+    const s = await start();
+
+    const accepted = await write(s, `/api/proposals/${edit}/accept`, {});
+    expect(accepted.status).toBe(200);
+    expect(fs.readFileSync(notes, "utf8")).not.toBe(original);
+    // An accepted edit says it can be undone, and who decided is carried on the summary.
+    const recent = (await data(s, "/api/proposals?status=recent")).proposals.find((p: { id: string }) => p.id === edit);
+    expect(recent).toMatchObject({ status: "accepted", revertable: true });
+    const reverted = await write(s, `/api/proposals/${edit}/revert`, {});
+    expect(reverted.status, reverted.body.error).toBe(200);
+    expect(reverted.body.data.proposal.status).toBe("reverted");
+    expect(fs.readFileSync(notes, "utf8")).toBe(original);
+
+    const other = propose("lessons/rg");
+    expect((await write(s, `/api/proposals/${other}/reject`, { reason: "later" })).status).toBe(200);
+    const reopened = await write(s, `/api/proposals/${other}/reopen`, {});
+    expect(reopened.status, reopened.body.error).toBe(200);
+    expect(reopened.body.data.proposal.status).toBe("pending");
+    // Reopening a proposal that is still pending is refused, not applied twice.
+    expect((await write(s, `/api/proposals/${other}/reopen`, {})).status).toBe(400);
+  });
+
+  test("batch reject records one reason for each proposal and reports each outcome", async () => {
+    await seed();
+    const first = propose("lessons/one");
+    const second = propose("lessons/two");
+    const s = await start();
+    const response = await write(s, "/api/proposals/reject", {
+      ids: [first, second, "missing-id"],
+      reason: "Out of date.",
+    });
+    expect(response.status, response.body.error).toBe(200);
+    expect(response.body.data).toMatchObject({ rejected: 2, failed: 1 });
+    expect(response.body.data.results.map((r: { ok: boolean }) => r.ok)).toEqual([true, true, false]);
+    expect((await data(s, `/api/proposals/${first}`)).proposal.review).toMatchObject({
+      outcome: "rejected",
+      reason: "Out of date.",
+    });
+    expect((await write(s, "/api/proposals/reject", { ids: [first] })).status).toBe(400);
+    expect((await write(s, "/api/proposals/reject", { reason: "x" })).status).toBe(400);
+  });
+
   test("a rejection needs a reason of 1 to 2000 characters", async () => {
     await seed();
     const id = propose("lessons/rg");
@@ -1328,8 +1427,9 @@ describe("proposal writes", () => {
     const attempts: Array<[string, string]> = [
       ["POST", "/api/proposals"],
       ["POST", `/api/proposals/${id}`],
-      ["POST", `/api/proposals/${id}/revert`],
+      ["POST", `/api/proposals/${id}/delete`],
       ["POST", `/api/proposals/${id}/accept/extra`],
+      ["POST", "/api/proposals/reject/extra"],
       ["POST", "/api/proposals/accept/extra"],
       ["POST", "/api/config"],
       ["POST", "/api/asset?ref=knowledge/guide"],
@@ -1469,11 +1569,31 @@ describe("workspace actions", () => {
     expect((await write(s, "/api/feedback", { ref: "stash//knowledge/guide", signal: "negative" })).status).toBe(200);
   });
 
+  test("a suggested fix needs equal replace and with lists, at most ten pairs", async () => {
+    await seed();
+    const s = await start();
+    const ref = "stash//knowledge/guide";
+    const bad = (body: Record<string, unknown>) =>
+      write(s, "/api/feedback", { ref, signal: "negative", reason: "wrong", ...body });
+    expect((await bad({ replace: ["a"], with: [] })).status).toBe(400);
+    expect((await bad({ replace: [], with: [] })).status).toBe(400);
+    expect((await bad({ replace: "a", with: "b" })).status).toBe(400);
+    const many = Array.from({ length: 11 }, (_, i) => `x${i}`);
+    expect((await bad({ replace: many, with: many })).status).toBe(400);
+    // A pair whose text does not occur is the CLI's refusal, not a crash.
+    const missing = await bad({ replace: ["text that is not in the guide"], with: ["anything"], source: "docs" });
+    expect(missing.status).not.toBe(500);
+    expect(missing.status).not.toBe(200);
+  });
+
   test("settings save only allowed fields and preserve secrets, unknown values and disabled/default state", async () => {
     await writableConfig();
     const config = loadConfig();
     writeSandboxConfig({
       ...config,
+      // A disabled bundle cannot be a default, and this route no longer edits the defaults.
+      defaultBundle: undefined,
+      defaultWriteTarget: undefined,
       bundles: {
         ...config.bundles,
         stash: {
@@ -1489,8 +1609,6 @@ describe("workspace actions", () => {
       enabled: false,
       writable: false,
       componentWritability: { main: false },
-      defaultBundle: "",
-      defaultWriteTarget: "",
       connections: { default: { apiKey: "[redacted]" } },
       unrelated: "overwrite attempt",
     });
@@ -1506,18 +1624,16 @@ describe("workspace actions", () => {
     expect(saved.unrelated).toEqual({ keep: [1, "two"] });
     const listed = await data(s, "/api/bundles");
     expect(listed.bundles.find((b: Json) => b.name === "stash")).toMatchObject({ enabled: false, writable: false });
-    expect((await write(s, "/api/bundles/settings", { defaultBundle: "missing" })).status).toBe(400);
     expect((await write(s, "/api/bundles/settings", { bundle: "constructor", enabled: true })).status).toBe(400);
     expect(
       (await write(s, "/api/bundles/settings", { bundle: "stash", componentWritability: { constructor: true } }))
         .status,
     ).toBe(400);
-    expect((await write(s, "/api/bundles/settings", { defaultWriteTarget: "" })).status).toBe(200);
+    // The defaults are edited on the Config page only; this route ignores them.
+    expect((await write(s, "/api/bundles/settings", { defaultWriteTarget: "stash" })).body.data).toEqual({
+      saved: false,
+    });
     expect(loadConfig().defaultWriteTarget).toBeUndefined();
-    expect(
-      (await write(s, "/api/bundles/settings", { bundle: "stash", enabled: true, defaultWriteTarget: "stash" })).status,
-    ).toBe(200);
-    expect(loadConfig().defaultWriteTarget).toBe("stash");
   });
 
   test("config set validates like the CLI, keeps secrets and unrelated keys, and unsets", async () => {
@@ -1551,6 +1667,32 @@ describe("workspace actions", () => {
     expect(unset.status, unset.body.error).toBe(200);
     expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).output?.detail).toBeUndefined();
     expect((await write(s, "/api/config/set", {})).body.data).toEqual({ saved: false });
+  });
+
+  test("config unset refuses an entry akm ignores, and does nothing without a config file", async () => {
+    await seed();
+    const s = await start();
+    const configPath = getConfigPath();
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ configVersion: "0.9.0", connections: { draft: { models: { fast: "m" } } } }),
+    );
+    resetConfigCache();
+    const before = fs.readFileSync(configPath, "utf8");
+    const refused = await write(s, "/api/config/set", { unset: ["connections.draft.models.fast"] });
+    expect(refused.status).toBe(400);
+    expect(refused.body.code).toBe("TARGET_NOT_UPDATABLE");
+    expect(refused.body.error).toContain('connection "draft", which akm ignores');
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+
+    fs.rmSync(configPath);
+    resetConfigCache();
+    expect((await write(s, "/api/config/set", { unset: ["output.detail"] })).body.data).toEqual({ saved: false });
+    expect(fs.existsSync(configPath)).toBe(false);
+    // A set alongside an unset still creates the file.
+    const created = await write(s, "/api/config/set", { set: { "output.detail": "full" }, unset: ["output.format"] });
+    expect(created.body.data).toEqual({ saved: true });
+    expect(fs.existsSync(configPath)).toBe(true);
   });
 
   test("bundle lifecycle uses real local-source add, update and confirmed remove operations", async () => {

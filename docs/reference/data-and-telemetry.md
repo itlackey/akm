@@ -158,9 +158,9 @@ regenerable. akm also writes into it:
 - **Task history and workflow runs**: scheduled task runs and workflow run
   state.
 
-`index_completed` metadata carries the phase timings plus `totalEntries` and
-`entriesByType` (library size after the run). Runs recorded before these fields
-were added omit them; readers must treat them as optional.
+`index_completed` metadata carries the phase timings plus `totalEntries`
+(library size after the run). Runs recorded before this field was added omit it;
+readers must treat it as optional.
 
 `search` metadata carries `source` (the usage source that ran it) and `searchId`
 (a UUID). A `select` copies both from the search it followed, and `akm metrics`

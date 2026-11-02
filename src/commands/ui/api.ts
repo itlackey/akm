@@ -24,33 +24,28 @@ import { parseMarkdownToc, uniqueHeadingSlugs } from "../../core/asset/markdown"
 import { markdownLinkTargets } from "../../core/asset/markdown-link-targets";
 import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
-import { getConfigValueSource, loadConfig } from "../../core/config/config";
+import { type AkmConfig, getConfigValueSource, loadConfig } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import { NotFoundError, UsageError } from "../../core/errors";
-import { getConfigPath, getDataDir, getDbPath } from "../../core/paths";
-import { getStateDbPath, listPendingStateMigrations } from "../../core/state-db";
-import { DURATION_UNITS, parseDuration } from "../../core/time";
+import { getConfigPath, getDbPath } from "../../core/paths";
 import { resolveWorkingStashTarget, resolveWriteTarget } from "../../core/write-source";
 import { findSourceForPath, implicitStashDir, resolveSourceEntries } from "../../indexer/search/search-source";
-import { type Database, openDatabase } from "../../storage/database";
 import { listRecentImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { getEmbeddingCount } from "../../storage/repositories/index-vec-repository";
-import {
-  countFeedbackBySignal,
-  countPendingProposals,
-  listFeedbackEventRows,
-} from "../../storage/repositories/metrics-repository";
+import { countFeedbackBySignal, listFeedbackEventRows } from "../../storage/repositories/metrics-repository";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
-import { decodeTaskHistoryMetadata, queryTaskHistory } from "../../storage/repositories/task-history-repository";
-import { applyReadonlyPragmas } from "../../storage/sqlite-pragmas";
+import {
+  decodeTaskHistoryMetadata,
+  queryTaskHistory,
+  type TaskHistoryRow,
+} from "../../storage/repositories/task-history-repository";
 import { pkgVersion } from "../../version";
 import { listConfig } from "../config-cli";
 import { akmHealth, parseHealthSince } from "../health";
-import { computeAcceptRateBySource } from "../health/accept-rate";
-import { rankTaskFailures } from "../metrics/collect";
-import { akmMetrics } from "../metrics/metrics-cli";
+import { buildTasks } from "../metrics/collect";
+import { akmMetrics, metricsWindow, readUsageRows } from "../metrics/metrics-cli";
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../proposal/repository";
 import { validateProposal } from "../proposal/validators/proposals";
@@ -58,20 +53,20 @@ import { akmSearch, normalizeScopeFilters, parseBeliefFilterMode } from "../read
 import { akmShowUnified } from "../read/show";
 import { assembleInfo } from "../sources/info";
 import { akmListSources } from "../sources/installed-stashes";
+import { assetImprove } from "./asset-improve";
+import { classifyOutcome, decidedAt, pChart, weekOf, weekRange } from "./derive";
 import { readDocumentSource } from "./document-source";
 import { listFolders } from "./folders";
 import { readBundleGitStatus, readFileRevision, readRecentCommits } from "./git-read";
-import { PROPOSAL_AGE_BANDS, proposalAgeBand, proposalBacklog, retrievalSeries } from "./metrics";
+import { improveImpact } from "./impact";
+import { filledActivity, PROPOSAL_AGE_BANDS, proposalAgeBand, proposalBacklog, retrievalSeries } from "./metrics";
+import { searchMisses } from "./misses";
+import { overviewPulse } from "./pulse";
+import { section, tryStashDir, withReadonlyStateDb } from "./readers";
 import { isSecretEnvName, redactForUi } from "./redact";
 
-export interface UiServerInfo {
-  startedAt: string;
-  host: string;
-  port: number;
-}
-
 type Query = URLSearchParams;
-type Handler = (query: Query, info: UiServerInfo) => unknown | Promise<unknown>;
+type Handler = (query: Query) => unknown | Promise<unknown>;
 
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
@@ -92,59 +87,13 @@ function flag(query: Query, name: string): boolean {
   return raw === "1" || raw === "true";
 }
 
-// ── Read-only databases ──────────────────────────────────────────────────────
-
-/**
- * Run `fn` against `state.db` opened read-only, or return `fallback` when it
- * does not exist or is behind on migrations (a read-only open must not apply
- * them; `akm health` reports that state). The handle is closed before returning,
- * so no request holds a lock past its own read.
- */
-function withReadonlyStateDb<T>(fn: (db: Database) => T, fallback: T): T {
-  const dbPath = getStateDbPath();
-  if (!fs.existsSync(dbPath) || listPendingStateMigrations(dbPath).length > 0) return fallback;
-  const db = openDatabase(dbPath, { readonly: true, create: false });
-  try {
-    applyReadonlyPragmas(db);
-    return fn(db);
-  } finally {
-    db.close();
-  }
-}
-
-function tryStashDir(): string | null {
-  try {
-    return resolveStashDir();
-  } catch {
-    return null;
-  }
-}
-
-/** Run each section of a composite response on its own: one failing store degrades one section, not the page. */
-async function section<T>(errors: Record<string, string>, name: string, fn: () => T | Promise<T>): Promise<T | null> {
-  try {
-    return await fn();
-  } catch (error) {
-    errors[name] = error instanceof Error ? error.message : String(error);
-    return null;
-  }
-}
-
 // ── /api/meta ────────────────────────────────────────────────────────────────
 
-function meta(_query: Query, info: UiServerInfo) {
+function meta() {
   return {
     version: pkgVersion,
     hostname: os.hostname(),
     runtime: process.versions.bun ? "bun" : "node",
-    stashDir: tryStashDir(),
-    dataDir: getDataDir(),
-    configPath: getConfigPath(),
-    stateDbPath: getStateDbPath(),
-    indexDbPath: getDbPath(),
-    startedAt: info.startedAt,
-    host: info.host,
-    port: info.port,
   };
 }
 
@@ -191,60 +140,82 @@ function summarizeImproveRun(row: ReturnType<typeof listRecentImproveRuns>[numbe
   };
 }
 
+function failingTasks(rows: TaskHistoryRow[]) {
+  return buildTasks(rows.length, rows)
+    .byTask.filter((task) => task.failed > 0)
+    .sort(
+      (a, b) =>
+        b.failed / b.runs - a.failed / a.runs ||
+        b.failed - a.failed ||
+        b.runs - a.runs ||
+        a.taskId.localeCompare(b.taskId),
+    )
+    .slice(0, 20);
+}
+
 async function overview(query: Query) {
   const errors: Record<string, string> = {};
-  const since = query.get("since") || "24h";
-  // The comparison window is the report window, like `akm health --report`; an absolute `since` has no duration to compare.
-  const sinceIsDuration = parseDuration(since, DURATION_UNITS) !== null;
-
-  const health = await section(errors, "health", async () => {
-    const base = await akmHealth({
-      since,
+  const health = await section(errors, "health", () =>
+    akmHealth({
+      since: "24h",
       groupBy: "run",
-      windowCompare: sinceIsDuration ? since : undefined,
+      windowCompare: "24h",
       probe: flag(query, "probe"),
       readOnly: true,
-    });
-    const report = withReadonlyStateDb(
-      (db) => ({
-        window: since,
-        compare: sinceIsDuration ? since : null,
-        pendingProposals: listStateProposals(db, { stashDir: tryStashDir() ?? "", status: "pending" }).map(
-          ({ ref, source, createdAt }) => ({ ref, source, createdAt }),
-        ),
-        acceptRateBySource: computeAcceptRateBySource(undefined, { db }),
-      }),
-      null,
-    );
-    return { ...base, ...(report ? { report } : {}) };
-  });
-  const metrics = await section(errors, "metrics", () =>
-    akmMetrics({ since: query.get("metricsSince") || "30d", indexSnapshot: false, includeRows: true }),
+    }),
   );
-  const stashDir = tryStashDir();
+  const metrics = await section(errors, "metrics", () =>
+    akmMetrics({ since: query.get("metricsSince") || "30d", indexSnapshot: false }),
+  );
   const stateReads = await section(errors, "state", () =>
     withReadonlyStateDb(
       (db) => ({
-        pendingNow: stashDir ? countPendingProposals(db, stashDir) : null,
         improveRuns: listRecentImproveRuns(db, IMPROVE_RUNS_SHOWN).map(summarizeImproveRun),
-        // Rank the complete window by rate (M-25), not the metrics top-20 by volume.
-        taskFailures: metrics ? rankTaskFailures(queryTaskHistory(db, metrics.window)).slice(0, 20) : null,
+        // Rank the complete window in the order of the bars (failed runs over runs), not the metrics top-20 by volume.
+        taskFailures: metrics ? failingTasks(queryTaskHistory(db, metrics.window)) : null,
       }),
       null,
     ),
   );
   return {
     health,
-    metrics: metrics ? { ...metrics, rows: undefined } : null,
-    pendingNow: stateReads?.pendingNow ?? null,
+    metrics: metrics
+      ? {
+          ...metrics,
+          usage: { ...metrics.usage, daily: filledActivity(metrics.usage.daily, metrics.window) },
+        }
+      : null,
     improveRuns: stateReads?.improveRuns ?? [],
-    retrieval: metrics ? retrievalSeries(metrics.rows?.usage ?? []) : null,
     taskFailures: stateReads?.taskFailures ?? null,
     ...(Object.keys(errors).length > 0 ? { errors } : {}),
   };
 }
 
 // ── /api/bundles ─────────────────────────────────────────────────────────────
+
+/**
+ * The working stash is the directory akm reads besides the configured bundles (`implicitStashDir`).
+ * It is described only when no configured bundle already covers that directory.
+ */
+function workingStashDir(config: AkmConfig): string | undefined {
+  try {
+    const dir = implicitStashDir(config);
+    return dir && !bundleKeyForContentRoot(config, dir) ? dir : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Where an automatic write goes (no defaultWriteTarget): AKM_BUNDLE_DIR first, then the default bundle. */
+function automaticWriteTarget(config: AkmConfig) {
+  try {
+    const { source } = resolveWorkingStashTarget(config, { requireWritable: false });
+    const path = source.path ?? null;
+    return { name: source.name, path, workingStash: path !== null && path === workingStashDir(config) };
+  } catch {
+    return null; // No AKM_BUNDLE_DIR and no usable default bundle: writes need an explicit target.
+  }
+}
 
 async function bundles() {
   const config = loadConfig();
@@ -272,27 +243,8 @@ async function bundles() {
     })),
   );
 
-  // The working stash is the directory akm reads besides the configured bundles (`implicitStashDir`).
-  // Describe it only when no configured bundle already covers that directory.
-  let stashDir: string | undefined;
-  try {
-    stashDir = implicitStashDir(config);
-  } catch {
-    stashDir = undefined;
-  }
-  const workingStash =
-    stashDir && !bundleKeyForContentRoot(config, stashDir)
-      ? { path: stashDir, git: await readBundleGitStatus(stashDir) }
-      : null;
-
-  // Where an automatic write goes (no defaultWriteTarget): AKM_BUNDLE_DIR first, then the default bundle.
-  let automaticWriteTarget: { name: string; path: string | null } | null = null;
-  try {
-    const target = resolveWorkingStashTarget(config, { requireWritable: false });
-    automaticWriteTarget = { name: target.source.name, path: target.source.path ?? null };
-  } catch {
-    // No AKM_BUNDLE_DIR and no usable default bundle: writes need an explicit target.
-  }
+  const stashDir = workingStashDir(config);
+  const workingStash = stashDir ? { path: stashDir, git: await readBundleGitStatus(stashDir) } : null;
 
   // The default bundle is the working stash when one is configured: list it first.
   cards.sort((a, b) => Number(b.default) - Number(a.default));
@@ -317,7 +269,6 @@ async function bundles() {
     defaultWriteTarget: config.defaultWriteTarget ?? null,
     bundles: cards,
     workingStash,
-    automaticWriteTarget,
     index: {
       entryCount,
       byType: info.indexStats.byType,
@@ -326,7 +277,6 @@ async function bundles() {
       embeddingCount,
       embeddingCoverage: embeddingCount !== null && entryCount > 0 ? Math.min(1, embeddingCount / entryCount) : null,
       semanticSearch: info.semanticSearch,
-      ...(info.indexStats.links ? { links: info.indexStats.links } : {}),
       ...(info.indexStats.unavailable ? { unavailable: info.indexStats.unavailable } : {}),
       ...(info.indexStats.unreadable ? { unreadable: info.indexStats.unreadable } : {}),
     },
@@ -363,7 +313,8 @@ function configSource(path: string[]): string | null {
 }
 
 function config() {
-  const effective = redactForUi(listConfig(loadConfig())) as Record<string, unknown>;
+  const live = loadConfig();
+  const effective = redactForUi(listConfig(live)) as Record<string, unknown>;
   const leaves: Array<{ path: string[]; value: unknown }> = [];
   configLeaves(effective, [], leaves);
   const entries: ConfigEntry[] = leaves.map(({ path, value }) => ({
@@ -385,6 +336,7 @@ function config() {
     path: configPath,
     exists: fs.existsSync(configPath),
     config: effective,
+    automaticWriteTarget: automaticWriteTarget(live),
     entries,
     connections: named(effective.connections),
     harnesses: named(effective.harnesses),
@@ -404,10 +356,16 @@ export function proposalSummary(proposal: Proposal) {
     createdAt: proposal.createdAt,
     updatedAt: proposal.updatedAt,
     waitingSince: proposalWaitingSince(proposal),
+    // A reverted proposal is dated by its accept, as the impact figures are.
+    decidedAt: proposal.status === "pending" ? null : decidedAt(proposal),
     confidence: proposal.confidence ?? null,
     gateDecision: proposal.gateDecision ?? null,
     review: proposal.review ?? null,
     isRetire: isRetireProposal(proposal),
+    // An accepted change can be undone when accept kept a backup of what it replaced; a created asset has none.
+    revertable: proposal.status === "accepted" && typeof proposal.backupContent === "string",
+    // Who decided: the judge ("triage"), a person, or unknown for a decision recorded before decidedBy existed.
+    decider: proposal.review?.decidedBy ?? null,
     retirement: retirement
       ? {
           retiredRef: retirement.retiredRef,
@@ -437,10 +395,17 @@ function proposals(query: Query) {
   if (age && !PROPOSAL_AGE_BANDS.some((band) => band === age)) {
     throw new UsageError("Invalid proposal age band.", "INVALID_FLAG_VALUE");
   }
+  // Drill-down from a chart: the proposals decided in one ISO week (`week=YYYY-MM-DD`, a Monday) or of one outcome class.
+  const week = query.get("week") || "";
+  if (week && !/^\d{4}-\d{2}-\d{2}$/.test(week)) throw new UsageError("Invalid week.", "INVALID_FLAG_VALUE");
+  const outcome = query.get("class") || "";
+  if (outcome && !["judge", "you", "unknown", "rejected", "reverted"].includes(outcome))
+    throw new UsageError("Invalid outcome class.", "INVALID_FLAG_VALUE");
   const now = Date.now();
   return withReadonlyStateDb(
     (db) => {
-      const all = listStateProposals(db, { stashDir: resolveStashDir() });
+      // A list shows summaries, so the proposed content is not read.
+      const all = listStateProposals(db, { stashDir: resolveStashDir(), withContent: false });
       const picked =
         status === "pending"
           ? all
@@ -452,7 +417,11 @@ function proposals(query: Query) {
       const bySource: Record<string, number> = {};
       for (const proposal of picked) bySource[proposal.source] = (bySource[proposal.source] ?? 0) + 1;
       const filtered = picked.filter(
-        (p) => (!source || p.source === source) && (!age || proposalAgeBand(p, now) === age),
+        (p) =>
+          (!source || p.source === source) &&
+          (!age || proposalAgeBand(p, now) === age) &&
+          (!week || weekOf(decidedAt(p)) === week) &&
+          (!outcome || classifyOutcome(p) === outcome),
       );
       return {
         status,
@@ -485,18 +454,15 @@ function taskHistory(query: Query) {
           /* Unknown historical detail stays unknown. */
         }
         return {
-          taskId: row.task_id,
           status: row.status,
           startedAt: row.started_at,
-          completedAt: row.completed_at,
-          failedAt: row.failed_at,
           durationMs: metadata?.durationMs ?? null,
           detail: metadata?.detail ?? null,
         };
       });
-      return { available: true, taskId, window, totalCount: rows.length, count: runs.length, runs };
+      return { available: true, totalCount: rows.length, count: runs.length, runs };
     },
-    { available: false, taskId, window, totalCount: 0, count: 0, runs: [] },
+    { available: false, totalCount: 0, count: 0, runs: [] },
   );
 }
 
@@ -595,7 +561,7 @@ async function changes(query: Query) {
 
 // ── /api/search and /api/asset ───────────────────────────────────────────────
 
-async function search(query: Query) {
+function search(query: Query) {
   const type = query.get("type") || undefined;
   const bundle = query.get("bundle") || undefined;
   return akmSearch({
@@ -730,18 +696,40 @@ async function assetHistory(query: Query) {
 }
 
 /** The per-day search series over a longer window than the Overview's, for the Improve impact trend. */
-async function retrievalTrend(query: Query) {
-  const metrics = await akmMetrics({ since: query.get("since") || "90d", indexSnapshot: false, includeRows: true });
-  return retrievalSeries(metrics.rows?.usage ?? []);
+function retrievalTrend(query: Query) {
+  const window = metricsWindow(query.get("since") || "90d");
+  const series = retrievalSeries(
+    withReadonlyStateDb((db) => readUsageRows(db, window), []),
+    window,
+  );
+  // The same days by ISO week, for a p-chart of the share that found nothing.
+  const first = series.daily[0]?.date;
+  const weeks = first ? weekRange(first, window.until.slice(0, 10)) : [];
+  const perWeek = weeks.map((week) => {
+    const days = series.daily.filter((d) => weekOf(d.date) === week);
+    return {
+      week,
+      x: days.reduce((sum, d) => sum + d.zeroResults, 0),
+      n: days.reduce((sum, d) => sum + d.searches, 0),
+    };
+  });
+  const chart = pChart(perWeek);
+  return { ...series, weekly: chart.points, centre: chart.centre };
 }
 
 // ── Routing ──────────────────────────────────────────────────────────────────
 
 const ROUTES: Record<string, Handler> = {
+  "/api/asset/improve": assetImprove,
+  "/api/improve/impact": improveImpact,
+  "/api/overview/pulse": overviewPulse,
+  "/api/search/misses": searchMisses,
   "/api/retrieval": retrievalTrend,
   "/api/fs/folders": (query) => listFolders(query.get("path") ?? "", query.get("hidden") === "1"),
   "/api/meta": meta,
   "/api/overview": overview,
+  // Health alone, so the Overview can run the network probes when asked without reloading its metrics.
+  "/api/health": (query) => akmHealth({ since: "24h", groupBy: "run", probe: flag(query, "probe"), readOnly: true }),
   "/api/tasks/history": taskHistory,
   "/api/bundles": bundles,
   "/api/config": config,
@@ -759,9 +747,9 @@ const PROPOSAL_ROUTE = /^\/api\/proposals\/([^/]+)$/;
 export const NO_SUCH_ROUTE = Symbol("no-such-route");
 
 /** Dispatch one `/api/...` request; handler errors propagate, an unknown route is {@link NO_SUCH_ROUTE}. */
-export async function handleApiRequest(pathname: string, query: Query, info: UiServerInfo): Promise<unknown> {
+export async function handleApiRequest(pathname: string, query: Query): Promise<unknown> {
   const route = ROUTES[pathname];
-  if (route) return route(query, info);
+  if (route) return route(query);
   const proposalMatch = PROPOSAL_ROUTE.exec(pathname);
   if (proposalMatch) return proposalDetail(decodeURIComponent(proposalMatch[1] as string));
   return NO_SUCH_ROUTE;

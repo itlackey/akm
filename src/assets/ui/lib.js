@@ -33,6 +33,12 @@ export function html(strings, ...values) {
   return new SafeHtml(out);
 }
 
+/** Say `message` once to assistive technology, through the page's one polite status region. */
+export function announce(message) {
+  const region = document.getElementById("route-status");
+  if (region) region.textContent = message;
+}
+
 /** Replace the contents of `element` with `safe`. The one markup write in the client. */
 export function mount(element, safe) {
   if (!(safe instanceof SafeHtml)) throw new TypeError("mount() takes the result of html``");
@@ -92,14 +98,28 @@ async function request(url, init) {
   return body.data;
 }
 
-/** GET `path` with optional query values (empty ones are dropped); resolves to the response's `data`. */
-export function api(path, query = {}) {
+let routeSignal = null;
+
+/** The signal every `api()` read aborts with: the router sets one per page, and aborts it when the reader navigates away. */
+export function setRouteSignal(signal) {
+  routeSignal = signal;
+}
+
+/**
+ * GET `path` and return its `data`. A read is tied to the page on screen and is abandoned when the reader leaves it;
+ * pass `{ signal: null }` for one that must outlive the page (the sidebar's count).
+ */
+export function api(path, query = {}, { signal } = {}) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
   }
   const url = search.size > 0 ? `${path}?${search}` : path;
-  return request(url, { headers: { "X-Akm-Ui-Token": token ?? "" }, cache: "no-store" });
+  return request(url, {
+    headers: { "X-Akm-Ui-Token": token ?? "" },
+    cache: "no-store",
+    signal: signal === undefined ? (routeSignal ?? undefined) : signal,
+  });
 }
 
 /** POST `body` as JSON to an explicit action. The token goes in the header, never the URL. */
@@ -110,18 +130,6 @@ export function post(path, body = {}) {
     body: JSON.stringify(body),
     cache: "no-store",
   });
-}
-
-let metaPromise = null;
-/** `/api/meta`, fetched once. */
-export function getMeta() {
-  if (!metaPromise) {
-    metaPromise = api("/api/meta");
-    metaPromise.catch(() => {
-      metaPromise = null;
-    });
-  }
-  return metaPromise;
 }
 
 // ---- formatting ------------------------------------------------------------
@@ -164,9 +172,24 @@ export function fmtDateTime(iso) {
   return Number.isNaN(t) ? "-" : new Date(t).toLocaleString();
 }
 
-/** A relative time with the absolute time as its tooltip. */
+/** A file path that may break after each slash, so a long absolute path wraps in a narrow column instead of overflowing. */
+export function pathText(value) {
+  const parts = String(value ?? "").split("/");
+  return html`<span class="mono">${parts.map((part, i) => (i === 0 ? part : html`/<wbr>${part}`))}</span>`;
+}
+
+/** The Monday (00:00 UTC) of the week holding `iso`, as YYYY-MM-DD. */
+export function weekStart(iso) {
+  const d = new Date(iso);
+  const day = (d.getUTCDay() + 6) % 7;
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() - day);
+  return d.toISOString().slice(0, 10);
+}
+
+/** A relative time; the absolute time is its tooltip and is also in the text for a reader who cannot hover. */
 export function when(iso) {
-  return html`<time datetime="${iso ?? ""}" title="${fmtDateTime(iso)}">${ago(iso)}</time>`;
+  return html`<time datetime="${iso ?? ""}" title="${fmtDateTime(iso)}">${ago(iso)}<span class="sr-only"> (${fmtDateTime(iso)})</span></time>`;
 }
 
 // ---- small building blocks -------------------------------------------------
@@ -185,9 +208,12 @@ export function searchReturn(query) {
   return /^#\/search(?:\?|$)/.test(value) ? value : "";
 }
 
-/** Status pill: `kind` is ok | warn | fail | neutral | info. */
-export function badge(text, kind = "neutral") {
-  return html`<span class="badge badge-${kind}">${text}</span>`;
+// ---- markup builders shared by the pages ----------------------------------------
+// They return `html`, hold no state, fetch nothing and attach no listeners.
+
+/** Status pill: `tone` is ok | warn | fail | neutral | info. Always text, never colour alone. */
+export function badge(text, tone = "neutral") {
+  return html`<span class="badge" data-tone="${tone}">${text}</span>`;
 }
 
 export function statusKind(status) {
@@ -202,12 +228,25 @@ export function tableWrap(inner) {
   return html`<div class="table-wrap" tabindex="0" role="group" aria-label="Table">${inner}</div>`;
 }
 
-export function emptyState(title, detail = "") {
-  return html`<div class="state state-empty"><p class="state-title">${title}</p>${detail ? html`<p>${detail}</p>` : ""}</div>`;
+/** The "Data and details" disclosure under a chart: the same figures as a table. */
+export function dataTable(content) {
+  return html`<details><summary>Data and details</summary>${content}</details>`;
 }
 
-export function loadingState(label = "Loading") {
-  return html`<div class="state state-loading" role="status"><span class="spinner" aria-hidden="true"></span>${label}...</div>`;
+/** A chart's key. An item is `[label, series]`: `series` is the colour's 1-based number, or absent for a note. */
+export function legend(items) {
+  return html`<p class="chart-legend">${items.map(
+    ([label, series]) =>
+      html`<span>${series === undefined ? "" : html`<i class="series-key series-${series}" aria-hidden="true"></i>`}${label}</span>`,
+  )}</p>`;
+}
+
+export function emptyState(title, detail = "") {
+  return html`<div class="state"><p class="state-title">${title}</p>${detail ? html`<p>${detail}</p>` : ""}</div>`;
+}
+
+export function loadingState() {
+  return html`<div class="state state-loading" role="status"><span class="spinner" aria-hidden="true"></span>Loading...</div>`;
 }
 
 export function errorState(error) {
@@ -226,8 +265,31 @@ export function errorState(error) {
   </div>`;
 }
 
-export function pageHeader(title, subtitle = "") {
-  return html`<header class="page-head"><h1>${title}</h1>${subtitle ? html`<p class="muted">${subtitle}</p>` : ""}</header>`;
+/** The "N sections could not load" notice for a response that lists the sections that failed as `{ name: message }`. */
+export function sectionErrors(errors) {
+  const entries = Object.entries(errors ?? {});
+  return entries.length === 0
+    ? ""
+    : html`<details class="notice notice-warn"><summary>${entries.length} sections could not load</summary><ul>${entries.map(([name, message]) => html`<li><span class="mono">${name}</span>: ${message}</li>`)}</ul></details>`;
+}
+
+/** A page's heading; `controls` sit beside it. */
+export function pageHeader(title, subtitle = "", controls = "") {
+  const heading = html`<h1>${title}</h1>${subtitle ? html`<p class="muted">${subtitle}</p>` : ""}`;
+  return controls
+    ? html`<header class="page-head page-head-row"><div>${heading}</div>${controls}</header>`
+    : html`<header class="page-head">${heading}</header>`;
+}
+
+/**
+ * A choice of time window. Choosing one moves the page to `#/<route>?<param>=<value>`: the router does the move (it
+ * reads `data-hash`), so the page attaches nothing. `choices` is `[[value, label]]`.
+ */
+export function windowToggle({ route, param, label, current, choices }) {
+  return html`<fieldset class="segmented" aria-label="${label}">${choices.map(
+    ([value, text]) =>
+      html`<label><input type="radio" name="${param}" value="${value}" data-hash="#/${route}?${param}=${value}" ${current === value ? html`checked` : ""}><span>${text}</span></label>`,
+  )}</fieldset>`;
 }
 
 /** A definition list from [label, value] pairs; null/undefined/empty values are skipped. */
@@ -236,12 +298,57 @@ export function definitionList(pairs) {
   return html`<dl class="kv">${rows.map(([label, value]) => html`<dt>${label}</dt><dd>${value}</dd>`)}</dl>`;
 }
 
-export function pretty(value) {
-  return JSON.stringify(value, null, 2);
+/**
+ * Parts side by side, each as wide as its `n`, in a bar that fills `fraction` of its track. A part is
+ * `{ n, cls, title }`. With a `label` the bar is a named image; without one it decorates figures printed beside it.
+ */
+export function stackedBar(parts, { fraction = 1, label = "" } = {}) {
+  return html`<span class="bar-track" ${label ? html`role="img" aria-label="${label}"` : html`aria-hidden="true"`}><span class="bar-stack" style="--w:${fraction}">${parts
+    .filter((part) => part.n > 0)
+    .map((part) => html`<span class="${part.cls}" style="--w:${part.n}" title="${part.title}"></span>`)}</span></span>`;
 }
 
-export function percent(part, total) {
-  return total > 0 ? Math.round((part / total) * 1000) / 10 : 0;
+/**
+ * Ranked rows, each a label, a bar drawn to scale against `max`, and its figures; for a handful of rows a chart is
+ * overkill. A row is `{ name, value, text, tone?, note?, parts? }`; `parts` (see {@link stackedBar}) split its bar.
+ */
+export function barList(rows, { max, label }) {
+  return html`<ul class="bar-list" aria-label="${label}">${rows.map((row) => {
+    const fraction = max ? Math.max(row.value / max, row.value ? 0.02 : 0) : 0;
+    return html`<li><span class="bar-name">${row.name}</span>${
+      row.parts
+        ? stackedBar(row.parts, { fraction })
+        : html`<span class="bar-track" aria-hidden="true"><span class="bar-fill" data-tone="${row.tone ?? ""}" style="--w:${fraction}"></span></span>`
+    }<span class="bar-value num">${row.text}</span>${row.note ? html`<span class="bar-note muted small">${row.note}</span>` : ""}</li>`;
+  })}</ul>`;
+}
+
+/**
+ * Send a filter form's filled fields to `#/<route>?...` on submit or when a select changes. Submitting an unchanged
+ * form routes again, so the page redraws.
+ */
+export function wireFilterForm(form, route) {
+  const go = () => {
+    const params = new URLSearchParams();
+    for (const [key, value] of new FormData(form)) if (value) params.set(key, String(value));
+    const next = `#/${route}${params.size > 0 ? `?${params}` : ""}`;
+    if (location.hash === next) window.dispatchEvent(new HashChangeEvent("hashchange"));
+    else location.hash = next;
+  };
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    go();
+  });
+  for (const select of form.querySelectorAll("select")) select.addEventListener("change", go);
+}
+
+/** True when a switch no longer matches the `data-initial` it was drawn with. */
+export function switchChanged(input) {
+  return input.checked !== (input.dataset.initial === "true");
+}
+
+export function pretty(value) {
+  return JSON.stringify(value, null, 2);
 }
 
 // ---- unsaved drafts and one-shot status ------------------------------------
@@ -301,4 +408,30 @@ export function actionForm(root, selector, action, { after } = {}) {
       }
     });
   });
+}
+
+const round = (n) => Math.round(n * 10) / 10;
+
+/** A tiny line of `values` (nulls are gaps) with no axes: shape only, the number beside it is the fact. */
+export function sparkline(values, label = "Weekly trend") {
+  const known = values.filter((v) => typeof v === "number");
+  if (known.length < 3) return "";
+  const W = 120;
+  const H = 28;
+  const max = Math.max(...known, 0.0001);
+  const min = Math.min(...known);
+  const span = max - min || 1;
+  const step = W / Math.max(values.length - 1, 1);
+  const segments = [];
+  let current = [];
+  values.forEach((v, i) => {
+    if (typeof v !== "number") {
+      if (current.length) segments.push(current);
+      current = [];
+      return;
+    }
+    current.push(`${round(i * step)},${round(H - 2 - ((v - min) / span) * (H - 4))}`);
+  });
+  if (current.length) segments.push(current);
+  return html`<svg class="tile-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${label}">${segments.map((points) => html`<polyline points="${points.join(" ")}"/>`)}</svg>`;
 }

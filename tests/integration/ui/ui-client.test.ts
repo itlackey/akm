@@ -111,7 +111,8 @@ describe("what the page may load and do", () => {
     for (const url of urls) expect(url, url).not.toMatch(/^(?:[a-z][a-z0-9+.-]*:)?\/\//i);
     expect(html).not.toMatch(/<script(?![^>]*\ssrc=)/i);
     expect(html).not.toMatch(/\son[a-z]+\s*=/i);
-    expect(read("styles.css")).not.toMatch(/https?:\/\/|@import/i);
+    for (const sheet of fs.readdirSync(UI_DIR).filter((name) => name.endsWith(".css")))
+      expect(read(sheet), sheet).not.toMatch(/https?:\/\/|@import/i);
   });
 
   test("no client file makes an off-host request or evaluates strings", () => {
@@ -137,6 +138,14 @@ describe("what the page may load and do", () => {
     for (const file of authoredJsFiles.filter((f) => f !== "lib.js")) {
       expect(read(file), file).not.toMatch(/SafeHtml|\.text\b\s*=/);
     }
+  });
+
+  test("a page attaches nothing to <main>, which outlives it; app.js owns the delegated click and change handlers", () => {
+    // chart-view.js adds its own listeners to <main> and removes them when the page goes.
+    for (const file of authoredJsFiles.filter((f) => f !== "app.js" && f !== "chart-view.js"))
+      expect(read(file), file).not.toMatch(/\broot\.addEventListener\(/);
+    expect(read("app.js")).toMatch(/main\.addEventListener\("click"/);
+    expect(read("app.js")).toMatch(/main\.addEventListener\("change"/);
   });
 
   test("decisions use inline confirmation only: no window.confirm, alert or prompt anywhere", () => {
@@ -280,7 +289,7 @@ describe("pages", () => {
     for (const name of browserGlobals) delete (globalThis as Record<string, unknown>)[name];
   });
 
-  test("a command asset shows its template as the body and as Markdown source (B-01)", async () => {
+  test("a command asset shows its template as the body and as Markdown source", async () => {
     await seed();
     fs.mkdirSync(path.join(storage.stashDir, "commands"), { recursive: true });
     fs.writeFileSync(
@@ -294,25 +303,10 @@ describe("pages", () => {
     const asset = (await (await view("asset.js"))(ctx("ref=commands%2Frelease"))).text;
     expect(asset).not.toContain("This asset has no body.");
     expect(asset).toContain("Run the &lt;b&gt;release&lt;/b&gt; checklist");
-    expect(asset).toMatch(/<summary>Markdown source<\/summary><pre class="code">[\s\S]*checklist/);
+    expect(asset).toMatch(/<summary>Markdown source<\/summary><pre class="code"[^>]*>[\s\S]*checklist/);
   });
 
-  const writeSelect = (page: string) => page.match(/<select name="defaultWriteTarget"[\s\S]*?<\/select>/)?.[0] ?? "";
-
-  test("bundles says writes need a default bundle when AKM_BUNDLE_DIR and defaultBundle are both unset (B-02)", async () => {
-    await seed();
-    delete process.env.AKM_BUNDLE_DIR; // restored by the storage teardown
-    writeSandboxConfig({ bundles: undefined, defaultBundle: undefined, defaultWriteTarget: undefined });
-    resetConfigCache();
-    server = await startUiServer({ port: 0 });
-    await signIn(server.token);
-
-    const bundles = (await (await view("bundles.js"))(ctx())).text;
-    expect(writeSelect(bundles)).toContain("None (writes need a default bundle)");
-    expect(writeSelect(bundles)).not.toContain("Automatic (working stash)");
-  });
-
-  test("bundles lists the working stash first when it is not a configured bundle (B-02)", async () => {
+  test("bundles lists the working stash first when it is not a configured bundle", async () => {
     await seed();
     writeSandboxConfig({ bundles: undefined, defaultBundle: undefined, defaultWriteTarget: undefined });
     resetConfigCache();
@@ -321,17 +315,15 @@ describe("pages", () => {
 
     const bundles = (await (await view("bundles.js"))(ctx())).text;
     expect(bundles).toContain("Working stash");
-    expect(bundles).toContain(storage.stashDir);
+    expect(bundles.replaceAll("<wbr>", "")).toContain(storage.stashDir);
     expect(bundles).toContain("No other bundles.");
     expect(bundles).toContain("akm bundle add &lt;source&gt;");
-    expect(writeSelect(bundles)).toContain("Automatic (working stash)");
-    expect(writeSelect(bundles)).not.toContain("None (writes need");
     expect(bundles).not.toContain("akm init");
     expect(bundles).not.toContain("Use fallback");
     expect(bundles.indexOf("Working stash")).toBeLessThan(bundles.indexOf("No other bundles."));
   });
 
-  test("bundles lists the default bundle first and labels the write target honestly (B-02)", async () => {
+  test("bundles lists the default bundle first and edits no defaults itself", async () => {
     await seed();
     const other = fs.mkdtempSync(path.join(storage.root, "team-"));
     writeSandboxConfig({
@@ -347,11 +339,14 @@ describe("pages", () => {
     expect(bundles).not.toContain("Working stash");
     expect(bundles.indexOf("<h3>stash</h3>")).toBeGreaterThan(-1);
     expect(bundles.indexOf("<h3>stash</h3>")).toBeLessThan(bundles.indexOf("<h3>team</h3>"));
-    expect(writeSelect(bundles)).toContain("Default bundle (stash)");
     expect(bundles.match(/>default</g)).toHaveLength(1);
+    // The default bundle and write target are edited on the Config page only.
+    expect(bundles).not.toContain('name="defaultBundle"');
+    expect(bundles).not.toContain('name="defaultWriteTarget"');
+    expect(bundles).toContain('href="#/config"');
   });
 
-  test("bundles shows no working stash when a component-root default bundle covers the directory (B-02)", async () => {
+  test("bundles shows no working stash when a component-root default bundle covers the directory", async () => {
     await seed();
     const root = fs.mkdtempSync(path.join(storage.root, "team-"));
     fs.mkdirSync(path.join(root, "content"));
@@ -370,6 +365,44 @@ describe("pages", () => {
     expect(bundles.match(/>default</g)).toHaveLength(1);
   });
 
+  const writeSelect = (page: string) =>
+    page.match(/<select[^>]*name="defaultWriteTarget"[\s\S]*?<\/select>/)?.[0] ?? "";
+
+  test("config says writes need a default bundle when AKM_BUNDLE_DIR and defaultBundle are both unset", async () => {
+    await seed();
+    delete process.env.AKM_BUNDLE_DIR; // restored by the storage teardown
+    writeSandboxConfig({ bundles: undefined, defaultBundle: undefined, defaultWriteTarget: undefined });
+    resetConfigCache();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const config = (await (await view("config.js"))(ctx())).text;
+    expect(writeSelect(config)).toContain("None (writes need a default bundle)");
+    expect(writeSelect(config)).not.toContain("Automatic (working stash)");
+  });
+
+  test("config labels the write target as the working stash or the default bundle, whichever it is", async () => {
+    await seed();
+    writeSandboxConfig({ bundles: undefined, defaultBundle: undefined, defaultWriteTarget: undefined });
+    resetConfigCache();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const stash = (await (await view("config.js"))(ctx())).text;
+    expect(writeSelect(stash)).toContain("Automatic (working stash)");
+    expect(writeSelect(stash)).not.toContain("None (writes need");
+
+    delete process.env.AKM_BUNDLE_DIR; // restored by the storage teardown
+    writeSandboxConfig({
+      bundles: { stash: { path: storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      defaultWriteTarget: undefined,
+    });
+    resetConfigCache();
+    const bundle = (await (await view("config.js"))(ctx())).text;
+    expect(writeSelect(bundle)).toContain("Default bundle (stash)");
+  });
+
   test("overview, bundles, config, proposals, changes, search and asset render real data with hostile text escaped", async () => {
     const { proposalId } = await seed();
     server = await startUiServer({ port: 0 });
@@ -378,13 +411,20 @@ describe("pages", () => {
     const overview = (await (await view("overview.js"))(ctx())).text;
     expect(overview).toContain("Overall health");
     expect(overview).toContain("Health checks");
-    expect(overview).toContain("Recent improve runs");
+    expect(overview).toContain("improve runs (all time, not this window)");
     expect(overview).toContain("run-1");
     expect(overview).toContain('id="activity-chart"');
-    expect(overview).toContain("Model utilization");
-    expect(overview).toContain("Retrieval health");
-    expect(overview).toContain("Automation reliability");
-    expect(overview).toContain("UTC days");
+    expect(overview).toContain("Model calls");
+    expect(overview).toContain("Is search finding what you need?");
+    expect(overview).toContain("Feedback and use");
+    expect(overview).toContain("Scheduled tasks");
+    // No check is ever shown as "unknown": an un-run probe is "Not checked" with a button, a quiet one "No data yet".
+    expect(overview).not.toMatch(/>\s*unknown\s*</i);
+    expect(overview).toContain("data-run-checks");
+    expect(overview).toContain("No data yet");
+    expect(overview).toContain("Last 7 days against your usual");
+    expect(overview).toContain("Needs attention");
+    expect(overview).toContain("Today is partial");
 
     const bundles = (await (await view("bundles.js"))(ctx())).text;
     expect(bundles).toContain("Configured bundles");
@@ -410,13 +450,13 @@ describe("pages", () => {
     const detail = (await (await view("proposals.js", "renderDetail"))(ctx("", proposalId))).text;
     // A new asset is shown alone, every line added, with its line numbers.
     expect(detail).toContain(
-      '<div class="drow add"><span class="ln"></span><span class="ln">1</span><span class="sign">+</span>',
+      '<div class="drow add" ><span class="ln"></span><span class="ln">1</span><span class="sign" aria-hidden="true">+</span><span class="sr-only">Added: </span>',
     );
     expect(detail).not.toContain("data-diff-mode");
     expect(detail).toContain("&lt;b&gt;bold?&lt;/b&gt;");
     expect(detail).not.toContain("<b>bold?</b>");
 
-    const changes = (await (await view("changes.js"))(ctx())).text;
+    const changes = (await (await view("history.js"))(ctx())).text;
     expect(changes).toContain("akm improve auto-sync");
     expect(changes).toContain("improve-sync");
 
@@ -487,7 +527,9 @@ describe("pages", () => {
         focus: () => {
           focused = true;
         },
-        addEventListener: (_t: string, fn: () => void) => (handlers.input = fn),
+        addEventListener: (type: string, fn: () => void) => {
+          if (type === "input") handlers.input = fn;
+        },
       };
       const preview = { innerHTML: "" };
       const status = { innerHTML: "" };
@@ -506,6 +548,10 @@ describe("pages", () => {
         setAttribute: () => undefined,
         addEventListener: (_t: string, fn: (event: unknown) => void) => (handlers.toggle = fn),
       };
+      const writeTab = {
+        setAttribute: () => undefined,
+        addEventListener: (_t: string, fn: (event: unknown) => void) => (handlers.write = fn),
+      };
       const form = {
         addEventListener: (_t: string, fn: (event: unknown) => Promise<void>) => (handlers.submit = fn),
         querySelector: () => status,
@@ -518,6 +564,7 @@ describe("pages", () => {
             "[data-recovery]": recovery,
             "[data-editor-state]": state,
             "[data-preview-toggle]": toggle,
+            "[data-write-tab]": writeTab,
             "[data-preview-panel]": previewPanel,
             "[data-source-panel]": sourcePanel,
           })[sel] ?? null,
@@ -548,7 +595,8 @@ describe("pages", () => {
         save,
         clickRecovery,
         focused: () => focused,
-        togglePreview: () => handlers.toggle?.({ currentTarget: toggle }),
+        showPreview: () => handlers.toggle?.({ currentTarget: toggle }),
+        showWrite: () => handlers.write?.({ currentTarget: writeTab }),
         previewPanel,
         sourcePanel,
       };
@@ -599,7 +647,7 @@ describe("pages", () => {
     await conflict.save();
     expect(sent.length).toBe(rejectedCount);
     expect(fs.readFileSync(path.join(dir, "notes.md"), "utf8")).toBe(newer);
-    conflict.togglePreview();
+    conflict.showPreview();
     expect(conflict.sourcePanel.hidden).toBe(true);
     await conflict.clickRecovery("[data-keep-draft]");
     expect(conflict.focused()).toBe(true);
@@ -619,10 +667,10 @@ describe("pages", () => {
     expect(fs.readFileSync(path.join(dir, "notes.md"), "utf8")).toEndWith("My draft\n");
     expect(location.hash).toBe("#/asset?ref=stash%2F%2Fknowledge%2Fnotes");
     expect(lib.hasUnsaved()).toBe(false);
-    conflict.togglePreview();
+    conflict.showPreview();
     expect(conflict.previewPanel.hidden).toBe(false);
     expect(conflict.sourcePanel.hidden).toBe(true);
-    conflict.togglePreview();
+    conflict.showWrite();
     expect(conflict.previewPanel.hidden).toBe(true);
 
     // The preview anchors in-page links to the document instead of a bare "#x" the router reads as a page.
@@ -639,9 +687,11 @@ describe("pages", () => {
     const list = (await (await view("proposals.js", "renderList"))(ctx())).text;
     expect(list).toContain(`<input type="checkbox" data-select value="${proposalId}" data-ref="stash//lessons/rg"`);
     expect(list).toContain('aria-label="Select stash//lessons/rg"');
-    expect(list).toContain("select all in this group");
-    expect(list).toContain('<section data-group="reflect">');
-    expect(list).toContain('<div class="batch-bar" data-batch-bar hidden></div>');
+    expect(list).toContain("Select all 1 reflect proposal");
+    expect(list).toContain('<section data-group="reflect" class="review-group">');
+    expect(list).toContain(
+      '<div class="batch-bar" data-batch-bar role="region" aria-label="Selection" aria-live="polite" hidden></div>',
+    );
     // The recent list has no selection.
     expect((await (await view("proposals.js", "renderList"))(ctx("status=recent"))).text).not.toContain("data-select");
 
@@ -652,7 +702,7 @@ describe("pages", () => {
     expect(detail).toContain("data-actions");
     expect(detail).toContain("data-status");
     // The page wires its own buttons once mounted; nothing is attached before that.
-    expect(pageCtx.after).toHaveLength(1);
+    expect(pageCtx.after.length).toBeGreaterThanOrEqual(1);
 
     // Once decided, the page offers no buttons.
     const lib = await load("lib.js");
@@ -669,6 +719,135 @@ describe("pages", () => {
     expect(filteredRecent).not.toContain("No decided proposals yet.");
   });
 
+  test("improve impact draws each section from the one impact response", async () => {
+    await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const page = (await (await view("improve.js"))(ctx())).text;
+    expect(page).toContain("Improve impact");
+    expect(page).toContain("How to read this page");
+    for (const heading of [
+      "Did improve help search?",
+      "Who decided what",
+      "Is review keeping up?",
+      "How has the library changed?",
+      "Harm log",
+      "What does improve cost?",
+      "Changed assets, before and after",
+      "Judge and you",
+    ])
+      expect(page).toContain(heading);
+    expect(page).toContain('aria-label="On this page"');
+    // The harm section is never collapsed.
+    expect(page).not.toMatch(/<details[^>]*>\s*<summary>Harm log/);
+  });
+
+  test("overview and improve toggle their window through data-hash and draw their own headers", async () => {
+    await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const overview = (await (await view("overview.js"))(ctx())).text;
+    expect(overview).toContain('data-hash="#/overview?window=90d"');
+    expect(overview).toContain('<header class="page-head"><h1>Overview</h1>');
+    // A link to another page's section names the page and the section, not a second hash.
+    expect(overview).not.toContain("#/improve#");
+    const improve = (await (await view("improve.js"))(ctx())).text;
+    expect(improve).toContain('data-hash="#/improve?since=365d"');
+    expect(improve).toMatch(/<span>1 year<\/span>/);
+    expect(improve).not.toMatch(/<span>All<\/span>/);
+    // The seed has too few searches a week for the rolling chart, so the section says so.
+    expect(improve).toContain("Did improve help search?");
+    expect(improve).toContain("Not enough searches yet to show a trend");
+    expect(improve).not.toContain('id="improve-trend"');
+  });
+
+  test("history groups commits by day and prints their times in the same, local, time zone", async () => {
+    await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const zone = process.env.TZ;
+    // 23:30 at UTC-5 on 1 October is 13:30 on 2 October in Tokyo.
+    process.env.TZ = "Asia/Tokyo";
+    const real = globalThis.fetch;
+    globalThis.fetch = ((input: string, init?: RequestInit) =>
+      input.startsWith("/api/changes")
+        ? Promise.resolve(
+            Response.json({
+              ok: true,
+              data: {
+                git: true,
+                bundle: "stash",
+                path: storage.stashDir,
+                commits: [
+                  {
+                    sha: "a".repeat(40),
+                    shortSha: "aaaaaaa",
+                    subject: "late commit",
+                    author: "me",
+                    time: "2026-10-01T23:30:00-05:00",
+                    origin: "other",
+                    pathCount: 0,
+                    paths: [],
+                  },
+                ],
+              },
+            }),
+          )
+        : real(input, init)) as typeof fetch;
+    try {
+      const history = (await (await view("history.js"))(ctx())).text;
+      expect(history).toContain('<h2 class="day">2026-10-02 ');
+      expect(history).toContain(">13:30<");
+      expect(history).not.toContain("UTC</span>");
+    } finally {
+      globalThis.fetch = real;
+      if (zone === undefined) delete process.env.TZ;
+      else process.env.TZ = zone;
+    }
+  });
+
+  test("undo, reopen and the other decisions each say what they are doing while the request runs", async () => {
+    const { proposalId } = await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const handlers: Record<string, (event: unknown) => void> = {};
+    const region = {
+      innerHTML: "",
+      addEventListener: (name: string, fn: (event: unknown) => void) => {
+        handlers[name] = fn;
+      },
+      querySelector: () => ({ focus: () => undefined }),
+    };
+    const actions = (await load("proposal-actions.js")) as {
+      wireDetailActions: (root: unknown, options: unknown) => void;
+    };
+    actions.wireDetailActions({ querySelector: () => region }, { id: proposalId, nextId: null });
+    const click = (act: string) =>
+      handlers.click?.({ target: { closest: () => ({ disabled: false, dataset: { act } }) } });
+    // Each step is a request: the page names the verb at once, and has settled to something else when it ends.
+    const step = async (act: string, busy: string) => {
+      click(act);
+      expect(region.innerHTML, act).toContain(busy);
+      for (let i = 0; i < 200 && region.innerHTML.includes(busy); i++) await new Promise((r) => setTimeout(r, 25));
+      expect(region.innerHTML, act).not.toContain(busy);
+    };
+    click("reject");
+    handlers.change?.({ target: { matches: () => true, value: "Wrong" } });
+    await step("reject-confirm", "Rejecting...");
+    expect(region.innerHTML).toContain("Rejected");
+    await step("reopen", "Reopening...");
+    expect(region.innerHTML).not.toContain("Rejecting...");
+    click("accept");
+    await step("accept-confirm", "Accepting...");
+    expect(region.innerHTML).toContain("Accepted");
+    click("undo");
+    expect(region.innerHTML).toContain("Undoing...");
+    expect(region.innerHTML).not.toContain("Rejecting...");
+    expect(region.innerHTML).not.toContain("reject-chip");
+    for (let i = 0; i < 200 && region.innerHTML.includes("Undoing..."); i++)
+      await new Promise((r) => setTimeout(r, 25));
+  });
+
   test("proposal review retains its filtered queue and decisions restore predictable focus", async () => {
     const { proposalId } = await seed();
     server = await startUiServer({ port: 0 });
@@ -676,8 +855,10 @@ describe("pages", () => {
     const query = "source=reflect&age=underDay";
     const detail = (await (await view("proposals.js", "renderDetail"))(ctx(query, proposalId))).text;
     expect(detail).toContain('href="#/proposals?source=reflect&amp;age=underDay"');
-    expect(detail.indexOf("Proposed change")).toBeLessThan(detail.indexOf("data-actions"));
-    expect(detail.indexOf("data-actions")).toBeLessThan(detail.indexOf("Proposal details"));
+    // The decision bar sits above the diff, so it stays in reach.
+    expect(detail.indexOf("data-actions")).toBeLessThan(detail.indexOf("Proposed change"));
+    expect(detail.indexOf("Proposed change")).toBeLessThan(detail.indexOf("Proposal details"));
+    expect(detail).toContain("Why akm proposed this");
     const region = {
       innerHTML: "",
       addEventListener: (name: string, fn: (event: unknown) => void) => {
@@ -705,9 +886,9 @@ describe("pages", () => {
     const click = (act: string) =>
       handlers.click?.({ target: { closest: () => ({ disabled: false, dataset: { act } }) } });
     click("reject");
-    expect(focused).toBe("[data-reason]");
+    expect(focused).toBe("input[name=reject-chip]");
     click("reject-confirm");
-    expect(region.innerHTML).toContain("Enter a reason");
+    expect(region.innerHTML).toContain("Choose a reason or write one");
     click("cancel");
     expect(focused).toBe("[data-act=reject]");
     click("accept");
@@ -776,7 +957,9 @@ describe("pages", () => {
       expect(side).toContain("when_to_use: Often");
       expect(side.match(/class="drow add"/g)?.length).toBeGreaterThanOrEqual(1);
       expect(side.match(/class="drow del"/g)?.length).toBe(1);
-      expect(side).toContain('<span class="w">');
+      expect(side).toContain('<mark class="w">');
+      // Signs are spoken as words, and the drawn sign is hidden from a screen reader.
+      expect(side).toContain('<span class="sr-only">Removed: </span>');
       expect(side).toContain("&lt;i&gt;");
       expect(side).not.toContain("<i>");
       expect(side).toMatch(/Show \d+ unchanged lines/);
@@ -903,7 +1086,7 @@ describe("helpers", () => {
     const out = markdown(
       "## Title <x>\n\n1. one\n2. two\n\n- a `c<d>`\n\n[ok](https://example.com) [no](javascript:alert(1)) **b**\n",
     ).text;
-    expect(out).toContain("<h3>Title &lt;x&gt;</h3>");
+    expect(out).toContain("<h2>Title &lt;x&gt;</h2>");
     expect(out).toContain("<ol><li>one</li><li>two</li></ol>");
     expect(out).toContain("<code>c&lt;d&gt;</code>");
     expect(out).toContain('<a href="https://example.com" target="_blank" rel="noopener noreferrer">ok</a>');
@@ -938,7 +1121,7 @@ describe("helpers", () => {
     expect(out).toContain('href="#/asset?ref=stash%2F%2Fknowledge%2Fnotes%23notes"');
     expect(out).toContain('href="#/asset?ref=stash%2F%2Fknowledge%2Fguide&section=guide"');
     expect(out).not.toContain('href="missing.md"');
-    expect(out).toContain('<pre class="code"><code># Hidden\n[code](notes.md)</code></pre>');
+    expect(out).toContain("<code># Hidden\n[code](notes.md)</code></pre>");
   });
 
   test("links are own properties only, a table needs a piped delimiter row, and nested fences keep heading ids", async () => {

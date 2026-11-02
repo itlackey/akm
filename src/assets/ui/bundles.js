@@ -1,6 +1,5 @@
 // Bundles: one card per configured bundle with git status and asset counts, plus the index state.
 
-import { proportionBar } from "./charts.js";
 import { wireFolderBrowse } from "./folder-picker.js";
 import {
   actionForm,
@@ -11,10 +10,27 @@ import {
   fmtNum,
   fmtPct,
   html,
+  legend,
   pageHeader,
+  pathText,
   post,
+  stackedBar,
+  switchChanged,
   when,
 } from "./lib.js";
+
+const SERIES = 6;
+
+/** A stacked proportion bar with a legend listing each part's count. `counts` is { name: n }. */
+export function proportionBar(counts) {
+  const entries = Object.entries(counts)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return html`<p class="muted">No assets.</p>`;
+  const parts = entries.map(([k, n], i) => ({ n, cls: `series-${(i % SERIES) + 1}`, title: `${k}: ${n}` }));
+  return html`${stackedBar(parts, { label: entries.map(([k, n]) => `${k} ${n}`).join(", ") })}
+  ${legend(entries.map(([k, n], i) => [html`${k} <span class="num">${n}</span>`, (i % SERIES) + 1]))}`;
+}
 
 function gitBlock(git) {
   if (!git) return html`<p class="muted">Not a git repository.</p>`;
@@ -47,11 +63,11 @@ function card(bundle) {
     <header class="card-head"><h3>${bundle.name}</h3>${badge(bundle.kind, "info")}${bundle.default ? badge("default", "neutral") : ""}${bundle.enabled ? "" : badge("disabled", "warn")}${bundle.writable ? badge("writable", "ok") : badge("read-only", "neutral")}${bundle.exists ? "" : badge("missing", "fail")}</header>
     <p><a href="#/search?bundle=${encodeURIComponent(bundle.name)}">Browse assets</a></p>
     ${definitionList([
-      ["Path", bundle.path ? html`<span class="mono">${bundle.path}</span>` : html`<span class="muted">none</span>`],
+      ["Path", bundle.path ? pathText(bundle.path) : html`<span class="muted">none</span>`],
       [
         "Source",
         bundle.source?.locator === bundle.path
-          ? html`<span class="muted">${bundle.source?.kind ?? "unknown"} path</span>`
+          ? html`<span class="muted">${bundle.source?.kind === "path" ? "this folder" : (bundle.source?.kind ?? "unknown")}</span>`
           : html`<span class="mono">${bundle.source?.locator ?? ""}</span> <span class="muted">(${bundle.source?.kind ?? "unknown"})</span>`,
       ],
       ["Version", bundle.version],
@@ -80,7 +96,7 @@ function card(bundle) {
 function workingStashCard(stash) {
   return html`<article class="card">
     <header class="card-head"><h3>Working stash</h3>${badge("default", "neutral")}</header>
-    ${definitionList([["Path", html`<span class="mono">${stash.path}</span>`]])}
+    ${definitionList([["Path", pathText(stash.path)]])}
     <h4>Git</h4>${gitBlock(stash.git)}
   </article>`;
 }
@@ -119,25 +135,15 @@ export async function render(ctx) {
         bundle: form.dataset.bundle,
         ...Object.fromEntries(
           ["enabled", "writable"]
-            .filter(
-              (key) =>
-                !form.elements[key].disabled &&
-                form.elements[key].checked !== (form.elements[key].dataset.initial === "true"),
-            )
+            .filter((key) => !form.elements[key].disabled && switchChanged(form.elements[key]))
             .map((key) => [key, values.has(key)]),
         ),
         componentWritability: Object.fromEntries(
           [...form.querySelectorAll('input[name^="component:"]:not(:disabled)')]
-            .filter((input) => input.checked !== (input.dataset.initial === "true"))
+            .filter(switchChanged)
             .map((input) => [input.name.slice(10), input.checked]),
         ),
       }),
-    );
-    actionForm(root, ".bundle-defaults", (form, values) =>
-      post(
-        "/api/bundles/settings",
-        Object.fromEntries([...values].filter(([key, value]) => value !== form.elements[key].dataset.initial)),
-      ),
     );
     actionForm(root, ".bundle-add", (_form, values) =>
       post("/api/bundles/add", { ...Object.fromEntries(values), writable: values.has("writable") }),
@@ -147,27 +153,7 @@ export async function render(ctx) {
       post("/api/bundles/remove", { bundle: form.dataset.bundle, confirm: values.has("confirm") }),
     );
   });
-  const writeTargetLabel = ({ automaticWriteTarget: t, defaultBundle, workingStash }) =>
-    !t
-      ? "None (writes need a default bundle)"
-      : workingStash && t.path === workingStash.path
-        ? "Automatic (working stash)"
-        : t.name === defaultBundle
-          ? `Default bundle (${t.name})`
-          : `Automatic (${t.name})`;
-  const choices = (selected, emptyLabel) =>
-    html`<option value="">${emptyLabel}</option>${data.bundles.map((b) => html`<option value="${b.name}" ${b.name === selected ? html`selected` : ""}>${b.name}${b.enabled ? "" : " (disabled)"}</option>`)}`;
-  return html`${pageHeader("Bundles", data.defaultBundle ? html`Default bundle <span class="mono">${data.defaultBundle}</span>${data.defaultWriteTarget ? html`, writes go to <span class="mono">${data.defaultWriteTarget}</span>` : ""}.` : "")}
-    <section class="settings-section" aria-labelledby="bundles-defaults">
-      <div class="settings-intro"><h2 id="bundles-defaults">Defaults</h2><p>Which bundle akm reads first, and where new knowledge, memories and accepted proposals are written.</p></div>
-      <form class="bundle-defaults card settings-card">
-        <div class="settings-fields">
-          <div class="field"><label class="field-label" for="bd-default">Default bundle</label><select name="defaultBundle" id="bd-default" data-initial="${data.defaultBundle ?? ""}">${choices(data.defaultBundle, "Automatic (working stash)")}</select></div>
-          <div class="field"><label class="field-label" for="bd-write">Default write target</label><select name="defaultWriteTarget" id="bd-write" data-initial="${data.defaultWriteTarget ?? ""}">${choices(data.defaultWriteTarget, writeTargetLabel(data))}</select></div>
-        </div>
-        <div class="settings-footer"><span></span><div data-status class="settings-status"></div><button type="submit">Save defaults</button></div>
-      </form>
-    </section>
+  return html`${pageHeader("Bundles & index", html`Where akm reads assets from and where new ones are written. Set the default bundle and write target in <a href="#/config">Config</a>.`)}${data.defaultBundle ? html`<p class="muted">Default bundle <span class="mono">${data.defaultBundle}</span>${data.defaultWriteTarget ? html`; writes go to <span class="mono">${data.defaultWriteTarget}</span>` : ""}.</p>` : ""}
     <section class="settings-section" aria-labelledby="bundles-configured">
       <div class="settings-intro"><h2 id="bundles-configured">Configured bundles</h2><p>Every source akm indexes, with its git state and what it holds.</p></div><div class="cards cards-narrow">${data.workingStash ? workingStashCard(data.workingStash) : ""}${data.bundles.map(card)}${data.bundles.length === 0 ? emptyState("No other bundles.", html`Add one below or with <code>akm bundle add &lt;source&gt;</code>.`) : ""}</div>
     </section>

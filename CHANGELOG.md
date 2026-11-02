@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The UI's `/api/bundles/settings` no longer sets `defaultBundle` or `defaultWriteTarget`;
+  the Config page does, through `/api/config/set`.
+- `index_completed` events no longer carry `entriesByType`, and `akm metrics` no longer
+  reports `usage.searchTimed`. Nothing read either.
+
+### Fixed
+
+- Improve impact dates a reverted proposal by its accept, not its revert, and a revert
+  keeps who accepted. The Overview improve line counts reverted proposals as accepted.
+- The UI's config unset refuses a key inside an entry akm ignores, and does nothing without
+  a config file, as `akm config unset` does.
+
 ## [0.10.261103] - 2026-11-01
 
 ### Added

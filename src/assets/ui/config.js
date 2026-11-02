@@ -1,7 +1,7 @@
 // Config: an editable settings page. Each card saves its own changed fields through `/api/config/set`, which
 // validates them exactly like `akm config set`. The full effective config stays below as a read-only reference.
 
-import { actionForm, api, badge, emptyState, html, pageHeader, post, pretty, tableWrap } from "./lib.js";
+import { actionForm, api, badge, emptyState, html, pageHeader, post, pretty, switchChanged, tableWrap } from "./lib.js";
 
 const OUTPUT_FORMATS = ["json", "yaml", "text", "jsonl", "md", "html"];
 const DETAILS = ["brief", "normal", "full"];
@@ -66,12 +66,12 @@ function field(ctx, { key, label, hint = "", kind = "text", options = [], placeh
   return html`<div class="field">${head}${control}${help}</div>`;
 }
 
-function settingsCard(id, title, description, fields, footnote = "") {
+function settingsCard(id, title, description, fields) {
   return html`<section class="settings-section" aria-labelledby="${id}">
     <div class="settings-intro"><h2 id="${id}">${title}</h2><p>${description}</p></div>
     <form class="card settings-card config-form" novalidate>
       <div class="settings-fields">${fields}</div>
-      <div class="settings-footer"><span class="muted small">${footnote}</span><div data-status class="settings-status"></div><button type="submit" disabled>Save changes</button></div>
+      <div class="settings-footer"><span class="muted small"></span><div data-status class="settings-status"></div><button type="submit" disabled>Save changes</button></div>
     </form>
   </section>`;
 }
@@ -85,15 +85,17 @@ function changesOf(form) {
     const key = input.name;
     if (!key || seen.has(key)) continue;
     const kind = input.dataset.kind;
+    if (kind === "toggle") {
+      if (switchChanged(input)) set[key] = String(input.checked);
+      continue;
+    }
     let current;
-    if (kind === "toggle") current = input.checked ? "true" : "false";
-    else if (kind === "segmented") {
+    if (kind === "segmented") {
       seen.add(key);
       current = form.querySelector(`[name="${CSS.escape(key)}"]:checked`)?.value ?? "";
     } else current = input.value.trim();
-    const initial = kind === "toggle" ? (input.dataset.initial === "true" ? "true" : "false") : input.dataset.initial;
-    if (current === initial) continue;
-    if (current === "" && kind !== "toggle") unset.push(key);
+    if (current === input.dataset.initial) continue;
+    if (current === "") unset.push(key);
     else if (kind === "list")
       set[key] = JSON.stringify(
         current
@@ -125,7 +127,7 @@ function connectionCard(ctx, connection) {
   const base = `connections.${connection.name}`;
   const models = isObject(connection.models) ? connection.models : {};
   const aliasKey = (alias) => (isObject(models[alias]) ? `${base}.models.${alias}.model` : `${base}.models.${alias}`);
-  return html`<form class="card settings-card config-form connection-card" novalidate>
+  return html`<form class="card settings-card config-form" novalidate>
     <div class="connection-head"><h3 class="mono">${connection.name}</h3>${ctx.defaultConnection === connection.name ? badge("default", "info") : ""}</div>
     <div class="settings-fields settings-grid">
       ${field(ctx, { key: `${base}.endpoint`, label: "Endpoint", kind: "url", placeholder: "host:port/v1/chat/completions" })}
@@ -148,10 +150,6 @@ function newConnectionForm() {
     </form></details>`;
 }
 
-function referenceTree(value) {
-  return html`<pre class="code config-json">${pretty(value)}</pre>`;
-}
-
 export async function render(ctx) {
   const data = await api("/api/config");
   const config = data.config ?? {};
@@ -161,7 +159,23 @@ export async function render(ctx) {
     sources: new Map(data.entries.map((entry) => [entry.path, entry.source])),
     defaultConnection: data.connections.find((c) => c.default)?.name ?? data.connections[0]?.name,
   };
-  const bundleOptions = [["", "Automatic (working stash)"], ...bundles.map((name) => [name, name])];
+  const named = bundles.map((name) => [name, name]);
+  const bundleOptions = [["", "Automatic (working stash)"], ...named];
+  // An empty write target resolves to AKM_BUNDLE_DIR, then the default bundle; say which, or that there is none.
+  const t = data.automaticWriteTarget;
+  const writeOptions = [
+    [
+      "",
+      !t
+        ? "None (writes need a default bundle)"
+        : t.workingStash
+          ? "Automatic (working stash)"
+          : t.name === config.defaultBundle
+            ? `Default bundle (${t.name})`
+            : `Automatic (${t.name})`,
+    ],
+    ...named,
+  ];
   ctx.after.push((root) => {
     wireDirty(root);
     actionForm(root, ".config-form", (form) => post("/api/config/set", changesOf(form)));
@@ -209,7 +223,7 @@ export async function render(ctx) {
       "Library",
       "Where akm reads by default and where it writes new assets.",
       html`${field(page, { key: "defaultBundle", label: "Default bundle", kind: "select", options: bundleOptions })}
-        ${field(page, { key: "defaultWriteTarget", label: "Default write target", kind: "select", options: bundleOptions, hint: "New knowledge, memories and accepted proposals are written here." })}
+        ${field(page, { key: "defaultWriteTarget", label: "Default write target", kind: "select", options: writeOptions, hint: "New knowledge, memories and accepted proposals are written here." })}
         ${field(page, { key: "archiveRetentionDays", label: "Keep archived assets for", kind: "number", placeholder: "30", hint: "Days before retired assets are purged from the archive." })}
         ${field(page, { key: "feedback.requireReason", label: "Require a reason with feedback", kind: "toggle", hint: "Negative feedback always needs a reason; this asks for one on positive feedback too." })}`,
     )}
@@ -230,11 +244,11 @@ export async function render(ctx) {
         <form class="card settings-card advanced-set" novalidate><div class="settings-fields settings-grid">
           <div class="field"><label class="field-label" for="adv-key">Key</label><input id="adv-key" name="key" required placeholder="improve.processes.reflect.enabled" autocomplete="off" spellcheck="false"></div>
           <div class="field"><label class="field-label" for="adv-value">Value</label><input id="adv-value" name="value" placeholder="true" autocomplete="off" spellcheck="false"></div>
-          </div><div class="settings-footer"><label class="check-label"><input type="checkbox" role="switch" class="switch" name="unset"> Unset this key instead</label><div data-status class="settings-status"></div><button type="submit">Apply</button></div>
+          </div><div class="settings-footer"><label class="check-label"><input type="checkbox" name="unset"> Unset this key instead</label><div data-status class="settings-status"></div><button type="submit">Apply</button></div>
         </form>
-        <details class="card"><summary>Effective config <span class="muted small">(read-only, secrets redacted)</span></summary>${referenceTree(config)}</details>
-        ${data.harnesses.length ? html`<details class="card"><summary>Harnesses</summary>${tableWrap(html`<table><thead><tr><th>Name</th><th>Platform</th></tr></thead><tbody>${data.harnesses.map((h) => html`<tr><td class="mono">${h.name}</td><td class="mono">${h.platform ?? h.name}</td></tr>`)}</tbody></table>`)}</details>` : ""}
-        <details class="card"><summary>Environment <span class="muted small">(${data.env.length} AKM_* variables)</span></summary>${
+        <details><summary>Effective config <span class="muted small">(read-only, secrets redacted)</span></summary><pre class="code config-json" tabindex="0" role="group" aria-label="Configuration, scrolls sideways">${pretty(config)}</pre></details>
+        ${data.harnesses.length ? html`<details><summary>Harnesses</summary>${tableWrap(html`<table><thead><tr><th>Name</th><th>Platform</th></tr></thead><tbody>${data.harnesses.map((h) => html`<tr><td class="mono">${h.name}</td><td class="mono">${h.platform ?? h.name}</td></tr>`)}</tbody></table>`)}</details>` : ""}
+        <details><summary>Environment <span class="muted small">(${data.env.length} AKM_* variables)</span></summary>${
           data.env.length === 0
             ? html`<p class="muted">No AKM_* environment variables are set.</p>`
             : tableWrap(

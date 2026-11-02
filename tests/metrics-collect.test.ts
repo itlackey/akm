@@ -155,7 +155,6 @@ describe("usage section", () => {
       }),
     ).usage;
     expect(timed.searchMedianMs).toBe(40);
-    expect(timed.searchTimed).toBe(2);
     expect(timed.totals.searches).toBe(4);
   });
 

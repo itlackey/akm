@@ -53,6 +53,24 @@
           }
         }
       }
+    },
+    {
+      "includes": [
+        "src/assets/ui/**/*.css"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noDescendingSpecificity": "error"
+          },
+          "complexity": {
+            "noImportantStyles": "error"
+          },
+          "nursery": {
+            "noDuplicateSelectors": "error"
+          }
+        }
+      }
     }
   ]
 }

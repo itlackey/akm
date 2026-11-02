@@ -1223,7 +1223,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     expect(indexedEntry(accepted.assetPath)?.description).toBe("accepted zanzibar marker");
   });
 
-  test("accept and reject record review.decidedBy: human by default, triage when the caller says so (G3)", async () => {
+  test("accept and reject record review.decidedBy: human by default, triage when the caller says so", async () => {
     const stash = makeStashDir();
     const config = makeConfig(stash);
     const content = "---\ndescription: decider marker\nwhen_to_use: Verifying decidedBy\n---\n\nBody.\n";
@@ -1279,6 +1279,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     expect(revertedProposal.status).toBe("reverted");
     expect(revertedProposal.acceptedAt).toBe(acceptedProposal.acceptedAt);
     expect(revertedProposal.review?.decidedAt).not.toBe(acceptedProposal.acceptedAt);
+    expect(revertedProposal.review?.decidedBy).toBe("human");
     expect(indexedEntry(lessonPath)?.description).toBe("restored orchid marker");
   });
 

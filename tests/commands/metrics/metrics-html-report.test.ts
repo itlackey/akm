@@ -81,7 +81,6 @@ function fixture(overrides: Partial<AkmMetricsResult> = {}): AkmMetricsResult {
       },
       selectsPerSearch: 0.5,
       searchMedianMs: 42,
-      searchTimed: 0,
       daily: [{ day: "2026-10-01", search: 1, show: 1, curate: 0, feedback: 0 }],
       topAssets: [{ ref: "main//memories/vpn-note", shows: 1, searchHits: 1, selects: 1, positive: 0, negative: 0 }],
       topQueries: [{ query: "vpn setup", count: 1, avgResults: 2, lastAt: "2026-10-01T09:00:00.000Z" }],

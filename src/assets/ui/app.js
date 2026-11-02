@@ -2,47 +2,63 @@
 // built with the escaping `html` tag; this file only mounts it.
 
 import {
+  announce,
   api,
   errorState,
-  getMeta,
   hasUnsaved,
   html,
   initToken,
   loadingState,
   mount,
+  setRouteSignal,
   setUnsaved,
   showFlash,
 } from "./lib.js";
 
 initToken();
 
+// ---- theme: System follows the device; Light and Dark force a scheme. The choice is kept in this browser. ----
+const THEME_KEY = "akm-ui-theme";
+function storedTheme() {
+  try {
+    const value = localStorage.getItem(THEME_KEY);
+    return value === "light" || value === "dark" ? value : "system";
+  } catch {
+    return "system";
+  }
+}
+function applyTheme(value) {
+  if (value === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = value;
+  window.dispatchEvent(new Event("akm-theme"));
+}
+applyTheme(storedTheme());
+document.querySelector("[data-theme-control]")?.addEventListener("change", (event) => {
+  const value = event.target.value;
+  try {
+    if (value === "system") localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, value);
+  } catch {
+    // The choice then lasts for this visit only.
+  }
+  applyTheme(value);
+});
+{
+  const chosen = document.querySelector(`[data-theme-control] input[value="${storedTheme()}"]`);
+  if (chosen) chosen.checked = true;
+}
+
 const ROUTES = [
-  { name: "overview", label: "Overview", load: () => import("./overview.js"), render: (m, c) => m.render(c) },
-  { name: "bundles", label: "Bundles", load: () => import("./bundles.js"), render: (m, c) => m.render(c) },
-  { name: "config", label: "Config", load: () => import("./config.js"), render: (m, c) => m.render(c) },
-  {
-    name: "proposals",
-    label: "Proposals",
-    load: () => import("./proposals.js"),
-    render: (m, c) => (c.param ? m.renderDetail(c) : m.renderList(c)),
-  },
-  { name: "improve", label: "Improve impact", load: () => import("./improve.js"), render: (m, c) => m.render(c) },
-  { name: "changes", label: "History", load: () => import("./changes.js"), render: (m, c) => m.render(c) },
-  { name: "search", label: "Search", load: () => import("./search.js"), render: (m, c) => m.render(c) },
-  { name: "asset", label: "Asset", nav: "search", load: () => import("./asset.js"), render: (m, c) => m.render(c) },
-  {
-    name: "edit",
-    label: "Edit Markdown",
-    nav: "search",
-    load: () => import("./editor.js"),
-    render: (m, c) => m.render(c),
-  },
-  {
-    name: "new",
-    label: "New knowledge",
-    load: () => import("./editor.js"),
-    render: (m, c) => m.render(c),
-  },
+  { name: "overview", label: "Overview", load: () => import("./overview.js") },
+  { name: "bundles", label: "Bundles", load: () => import("./bundles.js") },
+  { name: "config", label: "Config", load: () => import("./config.js") },
+  { name: "proposals", label: "Proposals", load: () => import("./proposals.js") },
+  { name: "improve", label: "Improve impact", load: () => import("./improve.js") },
+  { name: "history", label: "History", load: () => import("./history.js") },
+  { name: "search", label: "Search", load: () => import("./search.js") },
+  { name: "asset", label: "Asset", nav: "search", load: () => import("./asset.js") },
+  { name: "edit", label: "Edit Markdown", nav: "search", load: () => import("./editor.js") },
+  { name: "new", label: "New knowledge", load: () => import("./editor.js") },
 ];
 
 const main = document.getElementById("app");
@@ -50,6 +66,8 @@ let sequence = 0;
 let shownHash = location.hash;
 let pendingHash = null;
 let cleanup = [];
+let pageRequests = null;
+let pendingAnchor = null;
 const positions = new Map();
 const unsaved = document.getElementById("unsaved");
 
@@ -66,6 +84,17 @@ function parseHash() {
   return { name, param, query: new URLSearchParams(query) };
 }
 
+/** The route name of a hash such as `#/search?q=x`. */
+function routeName(hash) {
+  return hash.replace(/^#\/?/, "").split(/[/?]/)[0] || "overview";
+}
+
+/** True when `a` and `b` are the same route and parameter, so only the query changed. */
+function sameShownPage(a, b) {
+  const path = (hash) => hash.replace(/^#\/?/, "").split("?")[0];
+  return path(a) === path(b);
+}
+
 function markNav(active) {
   for (const link of document.querySelectorAll("nav a[data-route]")) {
     if (link.dataset.route === active) link.setAttribute("aria-current", "page");
@@ -74,6 +103,15 @@ function markNav(active) {
 }
 
 async function route() {
+  const anchor = pendingAnchor;
+  pendingAnchor = null;
+  // The Changes page is History now. Replace, not push: the old address should not stay in the history.
+  if (/^#\/changes(?=[/?]|$)/.test(location.hash))
+    history.replaceState(
+      null,
+      "",
+      `${location.pathname}${location.search}${location.hash.replace("#/changes", "#/history")}`,
+    );
   if (hasUnsaved()) {
     // Keep the editor's address and ask inline; "Discard changes" repeats the navigation.
     pendingHash = location.hash;
@@ -95,22 +133,32 @@ async function route() {
   cleanup = [];
   shownHash = location.hash;
   const mine = ++sequence;
+  // Leaving a page abandons its requests: a slow answer for a page the reader has left is never drawn.
+  pageRequests?.abort();
+  pageRequests = new AbortController();
+  setRouteSignal(pageRequests.signal);
   const { name, param, query } = parseHash();
   const entry = ROUTES.find((r) => r.name === name);
   markNav(entry ? (entry.nav ?? entry.name) : "");
-  document.title = `${entry ? entry.label : "Not found"} - akm ui`;
+  document.title = `${entry ? entry.label : "Not found"} · akm ui`;
   main.setAttribute("aria-busy", "true");
+  // Focus inside the page would fall to the body when the loading state replaces it; hold it on main until the
+  // page is drawn and the control or heading below takes it back.
+  if (focus) {
+    main.tabIndex = -1;
+    main.focus({ preventScroll: true });
+  }
   mount(main, loadingState());
-  const ctx = { query, param, after: [] };
+  const ctx = { query, param, after: [], announcement: null };
   try {
     if (!entry) {
       mount(
         main,
-        html`<div class="state state-empty"><p class="state-title">No such page</p><p>Try the <a href="#/overview">overview</a>.</p></div>`,
+        html`<div class="state"><p class="state-title">No such page</p><p>Try the <a href="#/overview">overview</a>.</p></div>`,
       );
     } else {
       const page = await entry.load();
-      const markup = await entry.render(page, ctx);
+      const markup = await page.render(ctx);
       if (mine !== sequence) return;
       mount(main, markup);
       for (const fn of ctx.after) {
@@ -119,15 +167,30 @@ async function route() {
       }
       showFlash(main);
       const restored = positions.get(shownHash);
-      const wanted = restored?.focus ?? (oldHash.startsWith("#/search") && name === "search" ? focus : null);
+      // A change inside one page (a filter, the window) keeps focus on the control that caused it.
+      const wanted = restored?.focus ?? (routeName(oldHash) === name ? focus : null);
       if (wanted) {
         [...main.querySelectorAll("[name], a[href]")]
           .find((node) => (wanted.name ? node.name === wanted.name : node.getAttribute("href") === wanted.href))
           ?.focus({ preventScroll: true });
       }
       // `autofocus` only applies on a document's first load, so honour it for content mounted later.
-      if (document.activeElement === document.body) main.querySelector("[autofocus]")?.focus({ preventScroll: true });
+      if (document.activeElement === document.body || document.activeElement === main)
+        main.querySelector("[autofocus]")?.focus({ preventScroll: true });
+      // A new page takes focus at its heading, so a keyboard user starts at the top and a screen reader names the page.
+      const heading = main.querySelector("h1");
+      if (heading && (document.activeElement === main || !main.contains(document.activeElement))) {
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      }
       window.scrollTo(0, restored?.scroll ?? 0);
+      if (anchor) main.querySelector(`#${anchor}`)?.scrollIntoView();
+      const specific = heading?.textContent?.trim();
+      document.title = `${specific && specific !== entry.label ? `${specific} · ` : ""}${entry.label} · akm ui`;
+      // A page may supply its own message (Search says how many results); otherwise name the page when it changes.
+      if (ctx.announcement) announce(ctx.announcement);
+      else if (!sameShownPage(oldHash, shownHash))
+        announce(specific ? `${specific}. ${entry.label} page loaded.` : `${entry.label} page loaded.`);
     }
   } catch (error) {
     if (mine === sequence) mount(main, errorState(error));
@@ -140,7 +203,7 @@ async function showPendingCount() {
   const target = document.querySelector("[data-pending-count]");
   if (!target) return;
   try {
-    const { fullCount } = await api("/api/proposals", { status: "pending", limit: 1 });
+    const { fullCount } = await api("/api/proposals", { status: "pending", limit: 1 }, { signal: null });
     target.textContent = String(fullCount);
     target.hidden = !fullCount;
   } catch {
@@ -151,10 +214,10 @@ async function showPendingCount() {
 async function showMeta() {
   const target = document.getElementById("nav-meta");
   try {
-    const meta = await getMeta();
+    const meta = await api("/api/meta", {}, { signal: null });
     mount(
       target,
-      html`<span class="mono" data-volatile>akm ${meta.version} · ${meta.hostname}</span><span class="muted small">${meta.readOnly ? "read-only" : ""} ${meta.runtime}</span>`,
+      html`<span class="mono" data-volatile>akm ${meta.version} · ${meta.hostname}</span><span class="muted">${meta.runtime}</span>`,
     );
   } catch {
     mount(target, html``);
@@ -162,6 +225,22 @@ async function showMeta() {
 }
 
 window.addEventListener("hashchange", route);
+// The one handler for links and toggles inside a page. Pages attach nothing to <main>, which outlives them.
+main.addEventListener("click", (event) => {
+  const link = event.target.closest("a[data-anchor]");
+  if (!link) return;
+  // A link to a section of another page navigates, and the router scrolls to the section once that page is drawn.
+  if (routeName(link.getAttribute("href")) !== routeName(location.hash)) {
+    pendingAnchor = link.dataset.anchor;
+    return;
+  }
+  event.preventDefault();
+  main.querySelector(`#${link.dataset.anchor}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+main.addEventListener("change", (event) => {
+  const hash = event.target.dataset?.hash;
+  if (hash) location.hash = hash;
+});
 unsaved.addEventListener("click", (event) => {
   const act = event.target.closest("button")?.dataset.act;
   if (!act) return;
@@ -183,12 +262,10 @@ window.addEventListener("beforeunload", (event) => {
   event.preventDefault();
   event.returnValue = true; // Older browsers ask only when this is set.
 });
-document.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-    event.preventDefault();
-    if (location.hash.startsWith("#/search")) document.querySelector('input[name="q"]')?.focus();
-    else location.hash = "#/search";
-  }
+// The skip link must not change the hash: that would route to a page called "app".
+document.querySelector(".skip-link")?.addEventListener("click", (event) => {
+  event.preventDefault();
+  main.focus();
 });
 const menu = document.querySelector("[data-menu]");
 const topbar = document.querySelector(".topbar");
@@ -201,9 +278,19 @@ document.querySelector(".nav-links")?.addEventListener("click", (event) => {
   if (event.target.closest("a")) setMenu(false);
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || menu?.getAttribute("aria-expanded") !== "true") return;
-  setMenu(false);
-  menu.focus();
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    if (location.hash.startsWith("#/search")) document.querySelector('input[name="q"]')?.focus();
+    else location.hash = "#/search";
+    return;
+  }
+  if (event.key !== "Escape") return;
+  // Esc on the unsaved-changes notice means "Keep editing".
+  if (!unsaved.hidden) unsaved.querySelector("[data-act=keep]")?.click();
+  if (menu?.getAttribute("aria-expanded") === "true") {
+    setMenu(false);
+    menu.focus();
+  }
 });
 document.addEventListener("click", (event) => {
   if (menu?.getAttribute("aria-expanded") === "true" && !event.target.closest(".topbar")) setMenu(false);

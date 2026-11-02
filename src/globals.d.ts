@@ -47,17 +47,21 @@ declare module "*/assets/ui/bundles.js" {
   export default content;
 }
 
-declare module "*/assets/ui/changes.js" {
+declare module "*/assets/ui/history.js" {
   const content: string;
   export default content;
 }
 
-declare module "*/assets/ui/charts.js" {
+declare module "*/assets/ui/components.js" {
   const content: string;
   export default content;
 }
-
 declare module "*/assets/ui/folder-picker.js" {
+  const content: string;
+  export default content;
+}
+
+declare module "*/assets/ui/shortcuts.js" {
   const content: string;
   export default content;
 }
@@ -129,8 +133,34 @@ declare module "*/assets/ui/search.js" {
   export default content;
 }
 
-/** Bun text imports of the `akm ui` stylesheet: `import css from "./styles.css" with { type: "text" }` */
-declare module "*/assets/ui/styles.css" {
+/** Bun text imports of the `akm ui` stylesheets, one file per cascade layer. */
+
+declare module "*/assets/ui/tokens.css" {
+  const content: string;
+  export default content;
+}
+
+declare module "*/assets/ui/base.css" {
+  const content: string;
+  export default content;
+}
+
+declare module "*/assets/ui/layout.css" {
+  const content: string;
+  export default content;
+}
+
+declare module "*/assets/ui/components.css" {
+  const content: string;
+  export default content;
+}
+
+declare module "*/assets/ui/pages.css" {
+  const content: string;
+  export default content;
+}
+
+declare module "*/assets/ui/utilities.css" {
   const content: string;
   export default content;
 }

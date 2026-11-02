@@ -19,6 +19,8 @@ import {
   akmProposalAccept,
   akmProposalAcceptMany,
   akmProposalReject,
+  akmProposalReopen,
+  akmProposalRevert,
   type ProposalAcceptFailure,
   type ProposalAcceptResult,
 } from "../proposal/proposal";
@@ -28,12 +30,19 @@ import { type GitCommitSummary, readBundleGitStatus } from "./git-read";
 export const MAX_REJECT_REASON = 2000;
 export const MAX_BATCH_IDS = 200;
 
-export type WriteRoute = { kind: "accept"; id: string } | { kind: "reject"; id: string } | { kind: "accept-many" };
+export type WriteRoute =
+  | { kind: "accept"; id: string }
+  | { kind: "reject"; id: string }
+  | { kind: "revert"; id: string }
+  | { kind: "reopen"; id: string }
+  | { kind: "accept-many" }
+  | { kind: "reject-many" };
 
-/** The three POST paths the UI may write through; `null` for anything else. */
+/** The POST paths the UI may write proposals through; `null` for anything else. */
 export function matchWriteRoute(pathname: string): WriteRoute | null {
   if (pathname === "/api/proposals/accept") return { kind: "accept-many" };
-  const match = /^\/api\/proposals\/([^/]+)\/(accept|reject)$/.exec(pathname);
+  if (pathname === "/api/proposals/reject") return { kind: "reject-many" };
+  const match = /^\/api\/proposals\/([^/]+)\/(accept|reject|revert|reopen)$/.exec(pathname);
   if (!match) return null;
   let id: string;
   try {
@@ -41,7 +50,7 @@ export function matchWriteRoute(pathname: string): WriteRoute | null {
   } catch {
     return null;
   }
-  return { kind: match[2] as "accept" | "reject", id };
+  return { kind: match[2] as "accept" | "reject" | "revert" | "reopen", id };
 }
 
 // ── Errors ───────────────────────────────────────────────────────────────────
@@ -189,6 +198,35 @@ export async function handleWriteRequest(route: WriteRoute, body: unknown): Prom
       await assertWriteLeaseFree("ui-proposal-reject");
       const result = await akmProposalReject({ id: route.id, reason });
       return { ...result, proposal: proposalSummary(result.proposal) };
+    }
+    case "revert": {
+      await assertWriteLeaseFree("ui-proposal-revert");
+      const result = await akmProposalRevert({ id: route.id });
+      return { ...result, proposal: proposalSummary(result.proposal) };
+    }
+    case "reopen": {
+      await assertWriteLeaseFree("ui-proposal-reopen");
+      const [result] = await akmProposalReopen({ ids: [route.id] });
+      if (!result) throw new UsageError("The proposal was not reopened.");
+      return { ...result, proposal: proposalSummary(result.proposal) };
+    }
+    case "reject-many": {
+      const ids = batchIds(body);
+      const reason = rejectReason(body);
+      await assertWriteLeaseFree("ui-proposal-reject");
+      const results: Array<Record<string, unknown>> = [];
+      // One shared reason; each proposal is decided on its own, so one failure leaves the rest rejected.
+      for (const id of ids) {
+        try {
+          const result = await akmProposalReject({ id, reason });
+          results.push({ ok: true, id: result.id, ref: result.ref, proposal: proposalSummary(result.proposal) });
+        } catch (error) {
+          const { code, message } = classifyProposalError(error);
+          results.push({ ok: false, id, error: message, code });
+        }
+      }
+      const rejected = results.filter((r) => r.ok).length;
+      return { rejected, failed: results.length - rejected, results };
     }
     case "accept-many": {
       const ids = batchIds(body);

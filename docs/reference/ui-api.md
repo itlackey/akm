@@ -45,7 +45,7 @@ The limit parameters (`limit`) are positive integers capped at 200.
 
 ## `GET /api/meta`
 
-The running server and where it reads from.
+The running akm version, the machine's host name and the runtime.
 
 ```json
 {
@@ -53,21 +53,12 @@ The running server and where it reads from.
   "data": {
     "version": "0.10.261005",
     "hostname": "workstation",
-    "runtime": "bun",
-    "stashDir": "/home/me/akm",
-    "dataDir": "/home/me/.local/share/akm",
-    "configPath": "/home/me/.config/akm/config.json",
-    "stateDbPath": "/home/me/.local/share/akm/state.db",
-    "indexDbPath": "/home/me/.local/share/akm/index.db",
-    "startedAt": "2026-10-16T15:41:15.716Z",
-    "host": "127.0.0.1",
-    "port": 39829
+    "runtime": "bun"
   }
 }
 ```
 
-`runtime` is `bun` or `node`. `stashDir` is `null` when no bundle is configured yet.
-`hostname` identifies the machine running akm; `host` remains the HTTP listener address.
+`runtime` is `bun` or `node`. `hostname` identifies the machine running akm.
 
 ## `GET /api/overview`
 
@@ -75,7 +66,6 @@ Everything on the overview page in one call. Query parameters:
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `since` | `24h` | Health window start (ISO, date, epoch ms, or `24h` / `7d`). A duration also turns on the prior-window comparison, as `akm health --report --since` does. |
 | `metricsSince` | `30d` | Metrics window start, as `akm metrics --since`. |
 | `probe` | off | `1` probes whether each connection's endpoint answers and what each harness's `--version` prints, and checks for a newer akm release (network). Off by default so loading the page makes no outbound calls. |
 
@@ -94,13 +84,7 @@ Everything on the overview page in one call. Query parameters:
       "improve": {},
       "runs": [],
       "windows": [{ "name": "current", "since": "...", "until": "...", "runs": 1, "improve": {}, "metrics": {} }, { "name": "prior" }],
-      "deltas": {},
-      "report": {
-        "window": "24h",
-        "compare": "24h",
-        "pendingProposals": [{ "ref": "stash//lessons/rg", "source": "reflect", "createdAt": "..." }],
-        "acceptRateBySource": []
-      }
+      "deltas": {}
     },
     "metrics": { "schemaVersion": 1, "window": {}, "usage": {}, "feedback": {}, "utility": {}, "llm": {}, "proposals": {}, "notes": [] },
     "improveRuns": [
@@ -122,49 +106,41 @@ Everything on the overview page in one call. Query parameters:
         "triage": { "promoted": 2, "rejected": 1, "deferred": 0, "failed": 0, "skippedByCap": 0 }
       }
     ],
-    "retrieval": {
-      "daily": [{ "date": "2026-10-16", "searches": 3, "zeroResults": 1, "medianMs": 80, "latencySamples": 2 }],
-      "zeroResultQueries": [{ "date": "2026-10-16", "query": "missing guide", "count": 1 }]
-    },
-    "pendingNow": 3,
-    "taskFailures": [{ "taskId": "weekly-review", "runs": 6, "failed": 2, "medianMs": 4000, "rated": 6, "failRate": 0.3333333333333333 }]
+    "taskFailures": [{ "taskId": "weekly-review", "runs": 6, "failed": 2, "medianMs": 4000 }]
   }
 }
 ```
 
 - `health` is what `akm health --report --group-by run` returns (`--no-probe` unless `probe=1`), minus the write: the
   `state-db-round-trip` check reports itself skipped. See [CLI: health](cli.md#health) for the check list and
-  [`--format html`](cli.md#health) for how the report renders it. `windows`, `deltas` and `report.compare` are absent
-  when `since` is an absolute date.
+  [`--format html`](cli.md#health) for how the report renders it. The window is the last 24 hours, compared with the 24
+  hours before it.
 - `metrics` is what `akm metrics` returns (without `rows`); see [CLI: metrics](cli.md#metrics).
 - `improveRuns` are the last 10 real (non-dry-run) improve runs, newest first. `preRunSync`, `sync` and `triage` are `null`
   when the run did not record them; `modelCalls` is empty for runs from before the usage report existed.
 - Activity uses `metrics.usage.daily`, counting search/curate summary events rather than individual hits.
-- `retrieval` shares `metrics.window` and its user-attributed source filter. Its UTC daily latency median uses only
-  recorded nonnegative durations (`latencySamples`); no samples means `null`, not zero. Missing result counts do not
-  mean zero results. Query counts group the recorded zero-result searches by date and query.
-- `pendingNow` is the number of pending proposals in the current stash right now. It is not windowed, and equals the
-  pending count of `akm proposal list`. It is `null` when there is no stash or state is unreadable. Use it instead of
-  `metrics.proposals.byStatus.pending`, which counts only proposals last updated in the window, across all stashes.
-- `metrics.usage.searchMedianMs` and the `retrieval` daily median share one filter (`totalMs >= 0`);
-  `metrics.usage.searchTimed` is the number of searches behind the median. The daily feedback count in
-  `metrics.usage.daily` counts signed rows only, like `metrics.feedback.totals`.
-- `taskFailures` lists the tasks in `metrics.window` with at least one failed run, then limits to 20. Stuck active runs
-  count toward `rated` and `failRate` but do not add a task to the list on their own. `rated` is the number of finished runs: completed + failed + active runs started more than 6 h ago (a fresh
-  active run is neither ok nor failed and is not counted). `failRate` is `(rated - completed) / rated`, or `null` below
-  5 rated runs (plan M-25). Tasks with a rate come first, highest rate first; the rest follow by not-ok runs, then runs.
-  Nonfailed runs are not assumed successful, nor are absent runs evidence of a successful scheduled task.
+- `metrics.usage.searchMedianMs` uses recorded nonnegative durations (`totalMs >= 0`), like the daily latency median of
+  [`/api/retrieval`](#get-apiretrieval). The daily feedback
+  count in `metrics.usage.daily` counts signed rows only, like `metrics.feedback.totals`.
+- `taskFailures` lists the tasks in `metrics.window` with at least one failed run, ordered as the page's bars are:
+  failed runs over runs, highest first, then failed runs, then runs, then id, limited to 20. Nonfailed runs are not
+  assumed successful, nor are absent runs evidence of a successful scheduled task.
   Details are available from `/api/tasks/history`. Missing/unreadable state yields `null` rather than a healthy empty list.
 - Charts must retain `metrics.notes` about missing stores and retention; none of these series imply complete history.
   Improve runs remain the latest 10 across all dates, independently of the metrics window.
 - A section that fails is `null` (`[]` for `improveRuns`) and named in a top-level `errors` object
   (`{ "errors": { "metrics": "..." } }`); the others still load. `errors` is absent when nothing failed.
 
+## `GET /api/health`
+
+The `health` part of `/api/overview` on its own, with the same `probe` parameter. The Overview calls it
+with `probe=1` when you press **Run all checks**.
+
 ## `GET /api/tasks/history`
 
 Requires `taskId`; optional `since` (default `30d`, same syntax as metrics) and `limit` (default 50, maximum 200).
-Returns `{ available, taskId, window: { since, until }, totalCount, count, runs }`, newest first. Each run has
-`taskId`, recorded `status`, `startedAt`, nullable `completedAt` / `failedAt`, nullable `durationMs`, and nullable
+Returns `{ available, totalCount, count, runs }`, newest first. Each run has
+recorded `status`, `startedAt`, nullable `durationMs`, and nullable
 decoded `detail` (`reason`, `error`, `exitCode`, `runId` when recorded). Invalid/missing historical detail stays
 unknown. No log paths are returned or files read; these are existing state.db records. `available: false` means
 state.db is absent or needs migration, not that this task has never failed.
@@ -181,7 +157,6 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
     "defaultBundle": "stash",
     "defaultWriteTarget": null,
     "workingStash": null,
-    "automaticWriteTarget": { "name": "stash", "path": "/home/me/akm" },
     "bundles": [
       {
         "name": "stash",
@@ -223,14 +198,11 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
 - `workingStash` is `{ path, git }` for the directory akm reads besides the configured bundles (`AKM_BUNDLE_DIR`, or the
   platform stash when no `defaultBundle` is set). `git` has the same shape as a card's `git`. It is `null` when a
   configured bundle already covers that directory or it cannot be resolved.
-- `automaticWriteTarget` is `{ name, path }` for where a write goes when `defaultWriteTarget` is empty: `AKM_BUNDLE_DIR`
-  when set (even with a `defaultBundle`), otherwise the default bundle. It is `null` when neither exists, so writes need
-  a target.
 - `git` is `null` unless the bundle's root is itself a git repository. `upstream`, `ahead` and `behind` are `null` without an
   upstream; `branch` is `null` on a detached HEAD; `lastCommit` is `null` for a repository with no commits. `dirtyPaths`
   counts paths with uncommitted changes.
 - `index` mirrors `akm info`'s `indexStats` and `semanticSearch`. `embeddingCoverage` is embeddings over entries
-  (`null` for an empty or missing index). `links`, `unavailable` and `unreadable` appear only when `akm info` reports them.
+  (`null` for an empty or missing index). `unavailable` and `unreadable` appear only when `akm info` reports them.
 - Cards also include `enabled`, the raw `writableSetting`, `settingsSource` and existing source `components`
   (`name`, `root`, `adapter`, optional explicit `writable`, and `configured`). Disabled bundles remain visible.
   Component overrides take precedence over the bundle writable default. An implicit/detected component is shown
@@ -252,6 +224,7 @@ The effective configuration, as `akm config list` shows it, with where each valu
       "harnesses": { "claude": {} },
       "defaultBundle": "stash"
     },
+    "automaticWriteTarget": { "name": "stash", "path": "/home/me/akm", "workingStash": false },
     "entries": [
       { "path": "semanticSearchMode", "value": "off", "source": "file" },
       { "path": "output.format", "value": "json", "source": "default" }
@@ -266,6 +239,10 @@ The effective configuration, as `akm config list` shows it, with where each valu
 - `config` is the redacted effective config tree. `entries` is the same data flattened to one row per leaf (arrays are
   leaves) with `source`: `default` (no config file sets it), `file` (this install's `config.json`),
   `extends:<ref>` (a config it extends), or `null` when the key cannot be traced (a key containing a `.`).
+- `automaticWriteTarget` is `{ name, path, workingStash }` for where a write goes when `defaultWriteTarget` is empty:
+  `AKM_BUNDLE_DIR` when set (even with a `defaultBundle`), otherwise the default bundle. `workingStash` is `true` when
+  that directory is the one `/api/bundles` reports as the working stash. It is `null` when neither exists, so writes
+  need a target.
 - `connections` and `harnesses` are `config.connections` and `config.harnesses` as lists, each entry with its `name`
   and the entry's own keys (a connection's `endpoint` and `models`, a harness's `platform`, ...); keys are never
   included (`apiKey` shows as `[redacted]` or its `$VAR` reference). Reachability is a health probe, not config: use
@@ -325,13 +302,19 @@ It is a current snapshot, not a time-series of historical queue size.
 ```
 
 - `totalCount` and `bySource` count the whole selection; `proposals` holds the first `limit`.
-- `waitingSince` is the last reopen, else creation: the age to show. `gateDecision` is the drain's or quality gate's
+- `waitingSince` is the last reopen, else creation: the age to show. `decidedAt` is `null` while pending, else the
+  decision time (a reverted proposal is dated by its accept). `gateDecision` is the drain's or quality gate's
   verdict (`outcome`: `staged`, `auto-rejected`, `deferred`, ...; `reason` is a stable token). `review` is
   `{ outcome, reason?, decidedAt, decidedBy? }` on a decided proposal; `decidedBy` is `triage` or `human` and is absent
-  when the decider was not recorded (older decisions, system archives, reverts): decider unknown.
+  when the decider was not recorded (older decisions, system archives, reverts written before a revert kept its accept's
+  decider): decider unknown.
 - `retirement` is `null` unless the proposal retires an asset (`isRetire`). `continuityRisk` is
   `{ failingQueries, unverifiedQueries?, ranks }` when the continuity check flagged the pair, else `null`.
 - Refs are durable `bundle//conceptId` refs.
+
+Two further filters drill down from a chart: `week=YYYY-MM-DD` (a Monday) keeps proposals whose current decision was made
+that ISO week (UTC), and `class=judge|you|unknown|rejected|reverted` keeps one outcome class. They combine with `source`
+and `age`.
 
 ## `GET /api/proposals/:id`
 
@@ -395,8 +378,8 @@ pending one, or an asset ref (URL-encode it). Unknown: `404` `PROPOSAL_NOT_FOUND
 
 ## Deciding proposals
 
-Three `POST` routes accept or reject proposals. Each calls the function the CLI command calls (`akmProposalAccept`,
-`akmProposalReject`, `akmProposalAcceptMany`) with the arguments the CLI passes, so a decision made here is recorded
+Six `POST` routes decide proposals. Each calls the function the CLI command calls (`akmProposalAccept`,
+`akmProposalReject`, `akmProposalAcceptMany`, `akmProposalRevert`, `akmProposalReopen`) with the arguments the CLI passes, so a decision made here is recorded
 exactly like `akm proposal accept` / `reject`: the same state.db rows and events, the same asset write and the same git
 commit. No other path accepts anything but `GET`.
 
@@ -467,14 +450,13 @@ Reject one pending proposal. The body is `{"reason": "..."}`: required, a string
 }
 ```
 
-A rejection can be undone with `akm proposal reopen`.
+A rejection can be undone with `akm proposal reopen`, and an accepted change with `akm proposal revert`; both are routes below.
 
 ### `POST /api/proposals/accept`
 
 Accept several pending proposals and commit them **once** (`akmProposalAcceptMany`, the call behind
 `akm proposal accept <id> <id> ...`). The body is `{"ids": ["<id>", ...]}`: 1 to 200 non-empty strings; repeats are
-dropped. An id that fails is reported and the rest carry on; what was accepted is committed either way. There is no
-batch reject.
+dropped. An id that fails is reported and the rest carry on; what was accepted is committed either way.
 
 ```json
 {
@@ -495,6 +477,34 @@ batch reject.
   `PROPOSAL_NOT_PENDING`, `PROPOSAL_NOT_FOUND`, `ASSET_MUTATION_LEASE_HELD`, or `ACCEPT_FAILED` for anything else. The
   response is `200` even when some ids failed; a held lease fails the whole request with `409`.
 - `commit` is the single commit for the batch (`null` when nothing was accepted or the bundle is not a git repository).
+
+### `POST /api/proposals/reject`
+
+Reject several pending proposals with **one shared reason** (`{"ids": ["<id>", ...], "reason": "..."}`, the same limits as
+a single rejection and 1 to 200 ids). Each id is decided on its own through `akmProposalReject`, so a failure is reported
+and the rest are still rejected. There is no undo for the batch; each rejected proposal can be reopened on its own.
+
+```json
+{ "ok": true, "data": { "rejected": 2, "failed": 1, "results": [
+  { "ok": true, "id": "...", "ref": "stash//lessons/a", "proposal": { "status": "rejected" } },
+  { "ok": false, "id": "missing-id", "error": "Proposal \"missing-id\" not found", "code": "PROPOSAL_NOT_FOUND" }
+] } }
+```
+
+### `POST /api/proposals/:id/revert`
+
+Undo an accepted change (`akmProposalRevert`, the call behind `akm proposal revert`): the target is restored from the
+backup taken at accept, the proposal becomes `reverted`, and a target edited since acceptance is never overwritten. The
+body is empty. A proposal that created a new asset has no backup and is refused. The summary carries `revertable`
+(`true` for an accepted proposal that kept a backup) so a page can offer Undo only where it works.
+
+### `POST /api/proposals/:id/reopen`
+
+Return a rejected proposal to the pending queue (`akmProposalReopen`, the call behind `akm proposal reopen`). The body
+is empty. A proposal that is not rejected, or whose target changed since, is refused with `400`.
+
+The proposal summary gains two fields: `revertable` (above) and `decider` (`"triage"` for the judge, `"human"` for a
+person, `null` for a decision recorded before `decidedBy` existed).
 
 ## `GET /api/changes`
 
@@ -656,6 +666,82 @@ Returns `{available, commits, diff?}` using the same Git summary shape as `/api/
 History is unavailable for non-Git bundles and protected env/secret assets. Unknown Git expressions or commit IDs
 outside the returned file history are refused. No fetch, restore, rename tracking or additional version store exists.
 
+## `GET /api/asset/improve`
+
+What improve proposed for one asset and how the asset has been used since. `?ref=<bundle>//<type>/<name>` is required
+(`400` without it).
+
+- `proposals`: each proposal for the ref, newest first: `id`, `source`, `status`, `outcome` (`judge`, `you`, `unknown`,
+  `rejected`, `reverted` or `pending`), `createdAt`, `decidedAt`.
+- `usageByWeek`: the last 90 days by ISO week (Monday, UTC): `hits` (searches and shows that returned the asset),
+  `positive` and `negative` feedback.
+- `feedback`: the ten most recent signals with their reasons.
+
+## `GET /api/fs/folders`
+
+The sub-folders of one absolute folder, for the UI's folder picker. `?path=` is an absolute path or `~` (default: the home
+folder); `?hidden=1` includes dot-folders. It lists folders only, never files, and follows a symbolic link only when it
+points at a folder. A relative path or a file is `400`; a path that does not exist is `404`.
+
+```json
+{ "ok": true, "data": { "path": "/home/me/work", "parent": "/home/me",
+  "folders": [{ "name": "skills", "path": "/home/me/work/skills" }], "truncated": false } }
+```
+
+`truncated` is `true` when the folder holds more than 500 sub-folders and the list was cut.
+
+## `GET /api/improve/impact`
+
+What improve proposed and changed, week by week. `?since=90d` (default) or `365d` (one year). Each store read (`proposals`,
+`reopened`, `library`, `usage`, `cost`) stands on its own: one that fails reads as empty and is named under `errors`, and the
+rest is still returned. When the state database is unavailable the response is `{ "available": false }`.
+
+A proposal that was later reverted is dated by its accept (`acceptedAt`) in `outcomes`, `reviewFlow`, `changedAssets` and
+`summary.kept`, and keeps the decider of its accept in `judgeAndYou`. The revert itself is the `reverted` entry of `harm`.
+
+- `summary`: `kept`, `reverted` (the count of `harm` entries of that kind), `flags` (negative feedback within 14 days after a change), `tokens`, `tokenCoverage`
+  (the share of model calls that reported tokens) and `checked` (decisions in the window).
+- `outcomes`: per process (`source`), per week, the decisions by class: `judge`, `you`, `unknown`, `rejected`, `reverted`.
+- `reviewFlow`: per week, proposals `created`, `decided`, and `waiting` at the end of the week.
+- `library`: per week, the library size at the last index (`entries`, `null` before the index recorded it).
+- `harm`: the log, newest first: `reverted`, `reopened`, `risky-retirement`, `flag-after-change`.
+- `cost`: per week, model `calls`, `tokens`, `usageCalls` and calls by process.
+- `changedAssets`: for each accepted change, how often the asset was found and rated in the 28 days before and after
+  (`complete` is `false` until 28 days have passed since the change).
+- `judgeAndYou`: accepted, rejected and reverted counts by who decided.
+
+## `GET /api/overview/pulse`
+
+The last seven days against the eight weeks before them, the four-week improve line, and what needs attention.
+
+- `tiles.foundNothing`: `x` of `n` user searches found nothing; `usual` is the central 95% range of that share at this
+  sample size (`state`: `within`, `above`, `below`, or `low-data` when the baseline has fewer than 30 searches or this week
+  fewer than 10).
+- `tiles.negativeFeedback`: `count`, `assets`, `latest`, and a `usual` weekly range (`state: "low-data"` with fewer than
+  four weeks of data).
+- `tiles.runs`: improve and task runs that finished ok, and the latest failed tasks.
+- `improveLine`: proposals made in the last four weeks and what became of them.
+- `attention`: `pending` (stash-scoped, not windowed), `misses`, `failedRuns`, `harm`, and `setup` when no model
+  connection is configured.
+
+## `GET /api/retrieval`
+
+The per-day user search series (`?since=90d` by default): days inside the data's
+coverage are filled with zeros, and the first and last day are marked `partial`. Each day has `searches`, `zeroResults`,
+and `medianMs`. The median uses only recorded nonnegative durations; no samples means `null`, not
+zero. Missing result counts do not mean zero results. The queries behind `zeroResults` are listed by
+[`/api/search/misses`](#get-apisearchmisses).
+
+`weekly` is the same data by ISO week as a p-chart: per week `week`, `x` (found nothing), `n` (searches), `rate`, and the
+control limits `lower` and `upper` (centre ± 3 standard errors at that week's own n); `signal` is `true` for a week
+outside its limits. A week with no searches has `null` for all three. `centre` is the pooled share.
+
+## `GET /api/search/misses`
+
+User searches that found nothing, grouped by normalised query: `query`, `count`, `days` (distinct UTC days),
+`lastAt` and `repeated` (`true` when it came up on two or more days). `?since=30d` by default. The response also carries
+`searches` (all user searches in the window) and `foundNothing`.
+
 ## Workspace actions
 
 Every route below uses the same write guards as [proposal decisions](#deciding-proposals): token **header**, same
@@ -670,7 +756,8 @@ general config editor or command-execution endpoint.
 | `/api/bundles/add` | `{source, name?, writable?}` → `akm bundle add`, including source validation. Existing provider restrictions apply; no insecure-transport bypass is exposed. |
 | `/api/bundles/update` | `{bundle}` → `akm bundle update -- <bundle>`. Fetches/reindexes only on explicit submission. A rare update requiring destructive confirmation remains refused; the UI does not silently pass `--yes`. |
 | `/api/bundles/remove` | `{bundle, confirm: true}` → `akm bundle remove --yes -- <bundle>`. The UI requires an inline confirmation before this call. Managed installs may be deleted; local filesystem source files remain on disk. |
-| `/api/bundles/settings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}, defaultBundle?, defaultWriteTarget?}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Defaults take existing names or `""` to unset a local value; inherited values cannot be unset locally. Existing validation rejects invalid defaults, disabled targets and writable npm/website sources. |
+| `/api/bundles/settings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Existing validation rejects disabled targets and writable npm/website sources. The default bundle and write target are edited through `/api/config/set`. |
+| `/api/config/set` | `{set?: {key: string}, unset?: string[]}` → `akm config set` / `unset` on each key, in one validated, atomic write. Values are strings, as on the command line, and are coerced and checked against the schema; literal API keys and `configVersion` are refused. An unset is refused with `400 TARGET_NOT_UPDATABLE` when the key is inherited from an `extends` base or sits inside a connection or harness entry akm ignores, and an unset with no config file writes nothing (`saved: false`), all as `akm config unset` does. |
 | `/api/knowledge/create` | `{bundle, name, path?, content}` → `akm import -` with Markdown on stdin. Uses the existing writable AKM target, name/path validation, frontmatter preservation, index/Git effects, and no `--force`. Existing files are never overwritten. Fails fast with `409 ASSET_MUTATION_LEASE_HELD` while another writer holds the asset-mutation lease. |
 | `/api/asset/save` | `{ref, revision, content}` → the existing shared Markdown writer with `force` and the expected raw-content hash. Only indexed writable AKM knowledge/memory documents accepted by `/api/asset/source` can be edited. The writer takes the asset-mutation lease and compares the live source with `revision` inside it, immediately before writing. While another writer holds the lease the save fails fast with `409 ASSET_MUTATION_LEASE_HELD` instead of waiting. A stale revision returns `409 ASSET_CONTENT_CHANGED` without writing; a source deleted after it was loaded is refused (`404 ASSET_NOT_FOUND`) rather than recreated. The browser keeps the draft after a rejected save. An identical save returns `unchanged: true` without rewriting, reindexing or recording an event. Changed saves retain normal writer validation, indexing and Git effects. |
 
@@ -681,7 +768,7 @@ would write config, is refused with `400 INVALID_FLAG_VALUE` and the user is ask
 the CLI first. A settings request that changes nothing writes nothing and is not refused. It never writes
 `"[redacted]"` back as a credential. Bundle update writes only the lockfile, and feedback, knowledge creation and
 document editing do not save config, so none of them use that config-sanitizer check. Unsetting an inherited
-`defaultBundle` or `defaultWriteTarget` is refused with `400 TARGET_NOT_UPDATABLE`, as `akm config unset` refuses it.
+`defaultBundle` or `defaultWriteTarget` through `/api/config/set` is refused with `400 TARGET_NOT_UPDATABLE`, as `akm config unset` refuses it.
 
 The shared Markdown writer now participates in the existing mutation lease, including CLI import/remember callers;
 omitting the optional expected hash retains their normal write/force behavior. This serializes cooperating AKM

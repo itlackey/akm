@@ -8,20 +8,35 @@
 import { ApiError, badge, html, mount, post, proposalHref } from "./lib.js";
 
 const REASON_MAX = 2000;
+const NOOP_REASON = "No-op: the proposed content matches the current asset.";
+const REASON_CHIPS = ["Wrong", "Stale", "Duplicate", "Style", "Other"];
+
+/** The reason sent to the server: the chosen chip, then any detail. */
+function composeReason(chip, text) {
+  return [chip, text.trim()].filter(Boolean).join(": ");
+}
+
+/** Server error codes with a plainer explanation; any other code shows the server's message alone. */
+const KNOWN_ERRORS = {
+  PROPOSAL_STALE: "The asset changed since this proposal was made; it can't be accepted.",
+  PROPOSAL_NOT_PENDING: "This proposal has already been decided.",
+  PROPOSAL_NOT_FOUND: "This proposal no longer exists.",
+  ASSET_MUTATION_LEASE_HELD: "Another akm process is writing to the bundle. Try again in a moment.",
+};
 
 /** What went wrong, in words a reviewer can act on; the server's own message and code are shown beside it. */
 export function describeError(error) {
   const code = error instanceof ApiError ? error.code : "ERROR";
   const message = error instanceof Error ? error.message : String(error);
-  const known = {
-    PROPOSAL_STALE: "The asset changed since this proposal was made; it can't be accepted.",
-    PROPOSAL_NOT_PENDING: "This proposal has already been decided.",
-    PROPOSAL_NOT_FOUND: "This proposal no longer exists.",
-    ASSET_MUTATION_LEASE_HELD: "Another akm process is writing to the bundle. Try again in a moment.",
-    ACCEPT_FAILED: "",
-  };
-  return { text: known[code] ?? "", message, code };
+  return { text: KNOWN_ERRORS[code] ?? "", message, code };
 }
+
+/** The Revert and Reopen buttons of a decided proposal in the Recent table: the first click asks, the second does it. */
+export function recentButton(act, id) {
+  return html`<button type="button" class="btn-secondary" data-recent-act="${act}" data-id="${id}">${act === "revert" ? "Revert" : "Reopen"}</button>`;
+}
+
+const BUSY = { accept: "Accepting...", reject: "Rejecting...", revert: "Undoing...", reopen: "Reopening..." };
 
 function errorBlock(error) {
   const { text, message, code } = describeError(error);
@@ -40,20 +55,28 @@ function commitLine(commit) {
 
 // ---- one proposal ------------------------------------------------------------
 
-function detailView(state, nextId, query = "") {
+function detailView(state, nextId, query, noop) {
   const busy = state.mode === "busy";
   switch (state.mode) {
     case "done": {
       const { kind, result, commit } = state;
-      return html`<div class="notice notice-ok" role="status" tabindex="-1">
-          <p class="state-title">${kind === "accept" ? "Accepted" : "Rejected"}</p>
-          ${
-            kind === "accept"
-              ? html`<p>Written to <span class="mono wrap">${result.assetPath}</span>.</p><p>${commitLine(commit)}</p>`
-              : html`<p>The reason was recorded: <em>${result.reason}</em></p>`
-          }
+      const title = { accept: "Accepted", reject: "Rejected", revert: "Reverted" }[kind];
+      const detail =
+        kind === "accept"
+          ? html`<p>Written to <span class="mono wrap">${result.assetPath}</span>.</p><p>${commitLine(commit)}</p>`
+          : kind === "reject"
+            ? html`<p>The reason was recorded: <em>${result.reason}</em></p>`
+            : html`<p>Restored from the backup taken when it was accepted.</p>`;
+      const undo =
+        kind === "accept" && result.proposal?.revertable
+          ? html`<button type="button" class="btn-secondary" data-act="undo">Undo <kbd>u</kbd></button>`
+          : "";
+      const reopen =
+        kind === "reject" ? html`<button type="button" class="btn-secondary" data-act="reopen">Reopen</button>` : "";
+      return html`<div class="notice notice-ok" role="status" tabindex="-1" data-decided>
+          <p class="state-title">${title}</p>${detail}
         </div>
-        <p class="btn-row">${nextId ? html`<a class="btn" href="${proposalHref(nextId, query)}">Next pending</a>` : ""}<a class="btn btn-secondary" href="#/proposals${query ? `?${query}` : ""}">Back to queue</a></p>
+        <p class="btn-row">${undo}${reopen}${nextId ? html`<a class="btn" data-next href="${proposalHref(nextId, query)}">Next pending <kbd>n</kbd></a>` : ""}<a class="btn btn-secondary" href="#/proposals${query ? `?${query}` : ""}">Back to queue</a></p>
         ${nextId ? "" : html`<p class="muted small">No other proposal is waiting in this queue.${query ? html` <a href="#/proposals">View all proposals</a>` : ""}</p>`}`;
     }
     case "confirm-accept":
@@ -62,60 +85,91 @@ function detailView(state, nextId, query = "") {
         <p class="btn-row"><button type="button" data-act="accept-confirm">Confirm accept</button><button type="button" class="btn-secondary" data-act="cancel">Cancel</button></p>`;
     case "reject":
     case "busy":
-      if (state.mode === "busy" && state.kind === "accept") {
-        return html`<p class="btn-row"><button type="button" disabled>Accept</button><button type="button" class="btn-secondary" disabled>Reject</button></p>
-          <p class="muted" role="status">Accepting...</p>`;
+      if (state.mode === "busy" && state.kind !== "reject") {
+        // Accept's buttons stay in place and only report busy, so focus has somewhere to be.
+        return html`${state.kind === "accept" ? html`<p class="btn-row"><button type="button" aria-disabled="true">Accept</button><button type="button" class="btn-secondary" aria-disabled="true">Reject</button></p>` : ""}
+          <p class="muted" role="status" tabindex="-1">${BUSY[state.kind]}</p>`;
       }
-      return html`${state.error ? errorBlock(state.error) : ""}<label for="reject-reason"><strong>Why reject this proposal?</strong> <span class="muted small">Required, up to ${REASON_MAX} characters.</span></label>
-        <textarea id="reject-reason" data-reason rows="3" maxlength="${REASON_MAX}" required ${busy ? "disabled" : ""}>${state.reason}</textarea>
-        ${state.reasonMissing ? html`<p class="field-error" role="alert">Enter a reason before rejecting.</p>` : ""}
-        <p class="btn-row"><button type="button" class="btn-danger" data-act="reject-confirm" ${busy ? "disabled" : ""}>Confirm reject</button><button type="button" class="btn-secondary" data-act="cancel" ${busy ? "disabled" : ""}>Cancel</button></p>
-        ${busy ? html`<p class="muted" role="status">Rejecting...</p>` : ""}`;
+      return html`${state.error ? errorBlock(state.error) : ""}<fieldset class="reason-chips" role="radiogroup" aria-label="Why reject this proposal?"><legend><strong>Why reject this proposal?</strong></legend><div class="segmented">${REASON_CHIPS.map((chip) => html`<label><input type="radio" name="reject-chip" value="${chip}" ${state.chip === chip ? html`checked` : ""} ${busy ? html`disabled` : ""}><span>${chip}</span></label>`)}</div></fieldset>
+        <label for="reject-reason"><strong>Details</strong> <span class="muted small" id="reject-reason-hint">${state.chip === "Other" ? "Required for Other" : "Optional with a reason above"}, up to ${REASON_MAX} characters.</span></label>
+        <textarea id="reject-reason" data-reason rows="3" required aria-describedby="reject-reason-hint${state.reasonError ? " reject-reason-error" : ""}" ${state.reasonError ? html`aria-invalid="true"` : ""} ${busy ? "disabled" : ""}>${state.reason}</textarea>
+        ${state.reasonError ? html`<p class="field-error" id="reject-reason-error" role="alert">${state.reasonError}</p>` : ""}
+        <p class="btn-row"><button type="button" class="btn-danger" data-act="reject-confirm" ${busy ? html`aria-disabled="true"` : ""}>Confirm reject</button><button type="button" class="btn-secondary" data-act="cancel" ${busy ? html`aria-disabled="true"` : ""}>Cancel</button></p>
+        ${busy ? html`<p class="muted" role="status" tabindex="-1">${BUSY.reject}</p>` : ""}`;
     default:
+      if (noop) {
+        return html`${state.error ? errorBlock(state.error) : ""}
+          <div class="notice notice-warn"><p class="state-title">This proposal changes nothing</p><p>The proposed content matches the asset as it is, so accepting would write nothing and record no commit. Rejecting it clears it from the queue.</p></div>
+          <p class="btn-row"><button type="button" data-act="reject-noop">Reject as no-op</button><button type="button" class="btn-secondary" data-act="accept">Accept anyway</button></p>`;
+      }
       return html`${state.error ? errorBlock(state.error) : ""}
         <p class="btn-row"><button type="button" data-act="accept">Accept</button><button type="button" class="btn-secondary" data-act="reject">Reject</button></p>`;
   }
 }
 
 /** The action area of a pending proposal's page; {@link wireDetailActions} brings it to life. */
-export function detailActions(nextId, query = "") {
-  return html`<section class="actions" data-actions aria-label="Decide this proposal">${detailView({ mode: "idle" }, nextId, query)}</section>`;
+export function detailActions(nextId, query, noop) {
+  return html`<section class="actions" data-actions aria-label="Decide this proposal">${detailView({ mode: "idle" }, nextId, query, noop)}</section>`;
 }
 
 /**
  * Attach the Accept / Reject controls inside `root`. `onDecided(status)` runs after the server confirms, so the page can
  * show the new status.
  */
-export function wireDetailActions(root, { id, nextId, query = "", onDecided }) {
+export function wireDetailActions(root, { id, nextId, query = "", noop = false, onDecided }) {
   const region = root.querySelector("[data-actions]");
   if (!region) return;
-  let state = { mode: "idle", reason: "" };
+  let state = { mode: "idle", reason: "", chip: "" };
   const draw = (focus) => {
-    mount(region, detailView(state, nextId, query));
+    mount(region, detailView(state, nextId, query, noop));
     region.querySelector(focus)?.focus();
   };
 
   const run = async (kind, path, body) => {
     state = { ...state, mode: "busy", kind, error: null };
-    draw();
+    draw("[role=status]");
     try {
       const result = await post(path, body);
-      state = { mode: "done", kind, result, commit: result.commit ?? null, reason: state.reason };
+      if (kind === "reopen") {
+        state = { mode: "idle", reason: "", chip: "" };
+        draw("[data-act=accept], [data-act=reject-noop]");
+        onDecided?.("pending");
+        return;
+      }
+      state = { mode: "done", kind, result, commit: result.commit ?? null, reason: state.reason, chip: state.chip };
       draw("[role=status]");
-      onDecided?.(kind === "accept" ? "accepted" : "rejected");
+      onDecided?.({ accept: "accepted", reject: "rejected", revert: "reverted" }[kind]);
     } catch (error) {
-      state = { mode: kind === "reject" ? "reject" : "idle", reason: state.reason, error };
+      state = { mode: kind === "reject" ? "reject" : "idle", reason: state.reason, chip: state.chip, error };
       draw("[role=alert]");
     }
   };
 
+  region.addEventListener("change", (event) => {
+    if (!event.target.matches("input[name=reject-chip]")) return;
+    state.chip = event.target.value;
+    if (state.reasonError) {
+      state = { ...state, reasonError: "" };
+      draw(`input[name=reject-chip][value="${state.chip}"]`);
+    }
+  });
   region.addEventListener("input", (event) => {
     if (!event.target.matches("[data-reason]")) return;
     state.reason = event.target.value;
-    if (state.reasonMissing && state.reason.trim() !== "") {
-      state.reasonMissing = false;
+    if (state.reasonError && state.reason.trim() !== "" && state.reason.trim().length <= REASON_MAX) {
+      state.reasonError = "";
       region.querySelector(".field-error")?.remove();
+      event.target.removeAttribute("aria-invalid");
+      event.target.setAttribute("aria-describedby", "reject-reason-hint");
     }
+  });
+  // Esc backs out of a confirmation and returns focus to the control that opened it.
+  region.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || (state.mode !== "confirm-accept" && state.mode !== "reject")) return;
+    event.preventDefault();
+    const control = state.mode === "reject" ? "reject" : "accept";
+    state = { mode: "idle", reason: state.reason, chip: state.chip };
+    draw(`[data-act=${control}]`);
   });
   region.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-act]");
@@ -130,13 +184,31 @@ export function wireDetailActions(root, { id, nextId, query = "", onDecided }) {
         run("accept", `${base}/accept`, {});
         break;
       case "reject":
-        state = { mode: "reject", reason: state.reason };
-        draw("[data-reason]");
+        state = { mode: "reject", reason: state.reason, chip: state.chip };
+        draw("input[name=reject-chip]");
+        break;
+      case "reject-noop":
+        state = { mode: "reject", reason: NOOP_REASON, chip: "Other" };
+        draw("[data-act=reject-confirm]");
+        break;
+      case "undo":
+        run("revert", `${base}/revert`, {});
+        break;
+      case "reopen":
+        run("reopen", `${base}/reopen`, {});
         break;
       case "reject-confirm": {
-        const reason = state.reason.trim();
-        if (reason === "" || reason.length > REASON_MAX) {
-          state = { ...state, mode: "reject", reasonMissing: true };
+        const reason = composeReason(state.chip, state.reason);
+        const reasonError =
+          state.chip === "" && state.reason.trim() === ""
+            ? "Choose a reason or write one before rejecting."
+            : state.chip === "Other" && state.reason.trim() === ""
+              ? "Say why in the details when the reason is Other."
+              : reason.length > REASON_MAX
+                ? `The reason is ${reason.length} characters; the limit is ${REASON_MAX}. Shorten it by ${reason.length - REASON_MAX}.`
+                : "";
+        if (reasonError) {
+          state = { ...state, mode: "reject", reasonError };
           draw("[data-reason]");
           break;
         }
@@ -145,7 +217,7 @@ export function wireDetailActions(root, { id, nextId, query = "", onDecided }) {
       }
       case "cancel": {
         const control = state.mode === "reject" ? "reject" : "accept";
-        state = { mode: "idle", reason: state.reason };
+        state = { mode: "idle", reason: state.reason, chip: state.chip };
         draw(`[data-act=${control}]`);
         break;
       }
@@ -160,19 +232,24 @@ function batchView(state, count) {
     case "confirm":
       return html`<span>Accept ${state.ids.length} ${state.ids.length === 1 ? "proposal" : "proposals"}? They are written and committed together.</span>
         <span class="btn-row"><button type="button" data-act="batch-confirm">Confirm accept</button><button type="button" class="btn-secondary" data-act="batch-cancel">Cancel</button></span>`;
+    case "reject":
+      return html`<label for="batch-reason"><strong>Why reject ${state.ids.length} ${state.ids.length === 1 ? "proposal" : "proposals"}?</strong> <span class="muted small">One reason is recorded for each. Required, up to ${REASON_MAX} characters.</span></label>
+        <textarea id="batch-reason" data-batch-reason rows="2" ${state.error ? html`aria-invalid="true" aria-describedby="batch-reason-error"` : ""}>${state.reason ?? ""}</textarea>
+        ${state.error ? html`<p class="field-error" id="batch-reason-error" role="alert">${state.error}</p>` : ""}
+        <span class="btn-row"><button type="button" class="btn-danger" data-act="batch-reject-confirm">Confirm reject</button><button type="button" class="btn-secondary" data-act="batch-cancel">Cancel</button></span>`;
     case "busy":
-      return html`<span role="status">Accepting ${state.ids.length}...</span>
-        <span class="btn-row"><button type="button" disabled>Accept selected</button></span>`;
+      return html`<span role="status" tabindex="-1">${state.verb === "reject" ? "Rejecting" : "Accepting"} ${state.ids.length}...</span>
+        <span class="btn-row"><button type="button" aria-disabled="true">${state.verb === "reject" ? "Reject selected" : "Accept selected"}</button></span>`;
     case "results": {
       const { data } = state;
       return html`<div class="batch-results" role="status" tabindex="-1">
-          <p class="state-title">${data.accepted} accepted${data.failed > 0 ? html`, ${data.failed} failed` : ""}</p>
-          <p class="small">${commitLine(data.commit)}</p>
+          <p class="state-title">${data.rejected ?? data.accepted} ${state.verb === "reject" ? "rejected" : "accepted"}${data.failed > 0 ? html`, ${data.failed} failed` : ""}</p>
+          ${state.verb === "reject" ? html`<p class="small">Each rejection can be reopened from Recent.</p>` : html`<p class="small">${commitLine(data.commit)}</p>`}
           <ul class="plain">${data.results.map((r) => {
             const label = state.refs[r.id] ?? r.ref ?? r.id;
             return r.ok
-              ? html`<li>${badge("accepted", "ok")} <span class="mono wrap">${label}</span></li>`
-              : html`<li>${badge("failed", "fail")} <span class="mono wrap">${label}</span> <span class="small">${describeError(new ApiError(0, r.code, r.error)).text || r.error}</span> <code class="small muted">${r.code}</code></li>`;
+              ? html`<li>${badge(state.verb === "reject" ? "rejected" : "accepted", state.verb === "reject" ? "neutral" : "ok")} <span class="mono wrap">${label}</span></li>`
+              : html`<li>${badge("failed", "fail")} <span class="mono wrap">${label}</span> <span class="small">${KNOWN_ERRORS[r.code] || r.error}</span> <code class="small muted">${r.code}</code></li>`;
           })}</ul>
         </div>
         <span class="btn-row"><button type="button" class="btn-secondary" data-act="batch-dismiss">Dismiss</button></span>`;
@@ -183,7 +260,7 @@ function batchView(state, count) {
       return count === 0
         ? html``
         : html`<span class="num">${count} selected</span>
-          <span class="btn-row"><button type="button" data-act="batch-start">Accept selected</button><button type="button" class="btn-secondary" data-act="batch-clear">Clear</button></span>`;
+          <span class="btn-row"><button type="button" data-act="batch-start">Accept selected</button><button type="button" class="btn-secondary" data-act="batch-reject-start">Reject selected…</button><button type="button" class="btn-secondary" data-act="batch-clear">Clear</button></span>`;
   }
 }
 
@@ -228,18 +305,62 @@ export function wireBatch(root, { reload }) {
     if (state.mode === "idle") draw();
   });
 
+  // Open the confirmation (or the reason box) for the proposals ticked now.
+  const begin = (mode, focus) => {
+    const picked = chosen();
+    state = {
+      mode,
+      ids: picked.map((box) => box.value),
+      refs: Object.fromEntries(picked.map((box) => [box.value, box.dataset.ref])),
+    };
+    draw(focus);
+  };
+  // Send the batch, show what happened per proposal, and refresh the list behind it.
+  const runBatch = async (verb, path, body) => {
+    const { ids, refs } = state;
+    state = { mode: "busy", verb, ids, refs };
+    draw("[role=status]");
+    try {
+      state = { mode: "results", verb, data: await post(path, { ids, ...body }), refs };
+    } catch (error) {
+      state = { mode: "error", error };
+    }
+    try {
+      mount(list, await reload());
+    } catch {
+      // The results stay visible; the list refreshes on the next visit.
+    }
+    draw(".batch-results, [role=alert]");
+  };
+
   page.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-act]");
     if (!button || button.disabled || state.mode === "busy") return;
     switch (button.dataset.act) {
-      case "batch-start": {
-        const picked = chosen();
-        state = {
-          mode: "confirm",
-          ids: picked.map((box) => box.value),
-          refs: Object.fromEntries(picked.map((box) => [box.value, box.dataset.ref])),
-        };
-        draw("[data-act=batch-confirm]");
+      case "batch-start":
+        begin("confirm", "[data-act=batch-confirm]");
+        break;
+      case "batch-reject-start":
+        begin("reject", "[data-batch-reason]");
+        break;
+      case "batch-reject-confirm": {
+        const { ids, refs } = state;
+        const reason = bar.querySelector("[data-batch-reason]")?.value.trim() ?? "";
+        if (reason === "" || reason.length > REASON_MAX) {
+          state = {
+            mode: "reject",
+            ids,
+            refs,
+            reason,
+            error:
+              reason === ""
+                ? "Enter a reason before rejecting."
+                : `The reason is ${reason.length} characters; the limit is ${REASON_MAX}.`,
+          };
+          draw("[data-batch-reason]");
+          break;
+        }
+        await runBatch("reject", "/api/proposals/reject", { reason });
         break;
       }
       case "batch-clear":
@@ -253,24 +374,55 @@ export function wireBatch(root, { reload }) {
         draw("[data-act=batch-start]");
         if (bar.hidden) list.querySelector("input[data-select]")?.focus();
         break;
-      case "batch-confirm": {
-        const { ids, refs } = state;
-        state = { mode: "busy", ids, refs };
-        draw();
-        try {
-          const data = await post("/api/proposals/accept", { ids });
-          state = { mode: "results", data, refs };
-        } catch (error) {
-          state = { mode: "error", error };
-        }
-        try {
-          mount(list, await reload());
-        } catch {
-          // The results stay visible; the list refreshes on the next visit.
-        }
-        draw(".batch-results, [role=alert]");
+      case "batch-confirm":
+        await runBatch("accept", "/api/proposals/accept");
         break;
-      }
     }
+  });
+}
+
+// ---- the recent list: undo a decision in place ---------------------------------
+
+/** Revert and Reopen buttons in the Recent table: the first click asks, the second does it. */
+export function wireRecent(root) {
+  const table = root.querySelector("[data-recent-cell]")?.closest("table");
+  if (!table) return;
+  const labels = { revert: "Revert this change?", reopen: "Reopen this proposal?" };
+  table.addEventListener("click", async (event) => {
+    const cell = event.target.closest("[data-recent-cell]");
+    if (!cell) return;
+    const trigger = event.target.closest("[data-recent-act]");
+    // The question and its answers carry what is being asked in data attributes, so the cell holds no state of its own.
+    const cancel = event.target.closest("[data-recent-cancel]");
+    if (cancel) {
+      mount(cell, recentButton(cancel.dataset.recentCancel, cancel.dataset.id));
+      cell.querySelector("[data-recent-act]")?.focus();
+      return;
+    }
+    const go = event.target.closest("[data-recent-go]");
+    if (go) {
+      const { recentGo: act, id } = go.dataset;
+      mount(cell, html`<span role="status" tabindex="-1">Working...</span>`);
+      cell.querySelector("[role=status]")?.focus();
+      try {
+        await post(`/api/proposals/${encodeURIComponent(id)}/${act}`, {});
+        mount(
+          cell,
+          html`<span role="status" tabindex="-1" class="text-ok">${act === "revert" ? "Reverted" : "Reopened"}</span>`,
+        );
+      } catch (error) {
+        const { text, message } = describeError(error);
+        mount(cell, html`<span role="alert" tabindex="-1" class="text-fail">${text || message}</span>`);
+      }
+      cell.querySelector("[role=status], [role=alert]")?.focus();
+      return;
+    }
+    if (!trigger || trigger.disabled) return;
+    const { recentAct: act, id } = trigger.dataset;
+    mount(
+      cell,
+      html`<span class="small">${labels[act]}</span> <button type="button" class="btn-danger" data-recent-go="${act}" data-id="${id}">Confirm</button> <button type="button" class="btn-secondary" data-recent-cancel="${act}" data-id="${id}">Cancel</button>`,
+    );
+    cell.querySelector("[data-recent-go]")?.focus();
   });
 }

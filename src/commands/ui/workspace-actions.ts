@@ -5,17 +5,11 @@
 import { execFile } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
 import { parseRefInput } from "../../core/asset/resolve-ref";
-import {
-  getConfigValueSource,
-  loadConfig,
-  mutateConfig,
-  resetConfigCache,
-  sanitizeConfigForWrite,
-} from "../../core/config/config";
+import { loadConfig, mutateConfig, resetConfigCache, sanitizeConfigForWrite } from "../../core/config/config";
 import { AkmError, type AkmErrorKind, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
-import { setConfigValue, unsetConfigValue } from "../config-cli";
+import { assertUnsettable, setConfigValue, unsetConfigValue } from "../config-cli";
 import { writeMarkdownAsset } from "../read/knowledge";
 import { readDocumentSource } from "./document-source";
 import { assertWriteLeaseFree, classifyProposalError, type ProposalActionError } from "./proposal-actions";
@@ -203,21 +197,6 @@ function settings(body: Record<string, unknown>) {
         }
       }
     }
-    for (const key of ["defaultBundle", "defaultWriteTarget"] as const) {
-      if (body[key] === undefined) continue;
-      if (typeof body[key] !== "string") throw new UsageError(`${key} must be a bundle name or empty.`);
-      const name = body[key].trim();
-      if (name && !Object.hasOwn(current.bundles ?? {}, name))
-        throw new UsageError(`No configured bundle named "${name}".`);
-      const source = name ? "" : getConfigValueSource(key);
-      if (source.startsWith("extends:"))
-        throw new UsageError(
-          `Config key "${key}" is inherited from ${source} and cannot be unset here.`,
-          "TARGET_NOT_UPDATABLE",
-          `Override it locally with "akm config set ${key} <value>", or edit the base file directly.`,
-        );
-      updated = name ? setConfigValue(updated, key, name) : unsetConfigValue(updated, key);
-    }
     // Only a write can drop credentials, so a request that changes nothing is never refused.
     if (updated !== current) preserveUnrelatedConfig(current);
     return updated;
@@ -228,7 +207,7 @@ function settings(body: Record<string, unknown>) {
 /**
  * Set and unset config keys through the same validated path as `akm config set` / `unset`: each value is coerced
  * and checked against the schema, literal API keys are refused, and the whole file is validated before one atomic
- * write. A key inherited from an `extends` base cannot be unset here.
+ * write. An unset the CLI refuses (`assertUnsettable`) or skips (no config file) is refused or skipped here too.
  */
 function configChanges(body: Record<string, unknown>) {
   const set = body.set === undefined ? {} : object(body.set);
@@ -241,25 +220,25 @@ function configChanges(body: Record<string, unknown>) {
       throw new UsageError(`The value for ${key} must be a string, as on the command line.`);
   }
   if (Object.keys(set).length === 0 && unset.length === 0) return { saved: false };
-  const result = mutateConfig((current) => {
-    let updated = current;
-    for (const [key, value] of Object.entries(set)) updated = setConfigValue(updated, key, value as string);
-    for (const key of unset as string[]) {
-      const source = getConfigValueSource(key);
-      if (source.startsWith("extends:"))
-        throw new UsageError(
-          `Config key "${key}" is inherited from ${source} and cannot be unset here.`,
-          "TARGET_NOT_UPDATABLE",
-          `Override it with a value instead, or edit the base file directly.`,
-        );
-      updated = unsetConfigValue(updated, key);
-    }
-    if (updated !== current) preserveUnrelatedConfig(current);
-    return updated;
-  });
+  const result = mutateConfig(
+    (current) => {
+      let updated = current;
+      for (const [key, value] of Object.entries(set)) updated = setConfigValue(updated, key, value as string);
+      for (const key of unset as string[]) {
+        assertUnsettable(key);
+        updated = unsetConfigValue(updated, key);
+      }
+      if (updated !== current) preserveUnrelatedConfig(current);
+      return updated;
+    },
+    // With no config file there is nothing to unset; a set still has to create it.
+    { absentNoop: Object.keys(set).length === 0 },
+  );
   resetConfigCache();
   return { saved: result.written };
 }
+
+const MAX_FIX_PAIRS = 10;
 
 export async function handleWorkspaceAction(action: WorkspaceAction, value: unknown): Promise<unknown> {
   const body = object(value);
@@ -275,6 +254,26 @@ export async function handleWorkspaceAction(action: WorkspaceAction, value: unkn
         if (!Array.isArray(body.tags) || body.tags.some((tag) => typeof tag !== "string"))
           throw new UsageError("tags must be strings.");
         for (const tag of body.tags as string[]) args.push(`--tag=${tag}`);
+      }
+      // A suggested fix: up to ten replace/with pairs of equal length, passed as `--replace=` / `--with=` so a value
+      // that starts with a dash is not read as a flag.
+      if (body.replace !== undefined || body.with !== undefined) {
+        const from = body.replace;
+        const to = body.with;
+        const strings = (value: unknown) => Array.isArray(value) && value.every((item) => typeof item === "string");
+        if (
+          !strings(from) ||
+          !strings(to) ||
+          (from as string[]).length === 0 ||
+          (from as string[]).length !== (to as string[]).length
+        )
+          throw new UsageError("replace and with must be lists of the same length.");
+        if ((from as string[]).length > MAX_FIX_PAIRS)
+          throw new UsageError(`At most ${MAX_FIX_PAIRS} replace/with pairs are accepted.`);
+        (from as string[]).forEach((old, i) => {
+          args.push(`--replace=${old}`, `--with=${(to as string[])[i]}`);
+        });
+        if (typeof body.source === "string" && body.source.trim()) args.push(`--source=${body.source.trim()}`);
       }
       return command(args, undefined, true);
     }

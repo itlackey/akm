@@ -1045,6 +1045,7 @@ function persistProposalDecision(
             outcome: "rejected",
             reason: "reverted: prior content restored from backup",
             decidedAt: decision.decidedAt,
+            ...(current.review?.decidedBy ? { decidedBy: current.review.decidedBy } : {}),
           },
         };
       }
@@ -2287,7 +2288,12 @@ async function unretireProposalWithLease(
         ...current,
         status: "reverted",
         updatedAt: decidedAt,
-        review: { outcome: "rejected", reason: "reverted: archived asset restored", decidedAt },
+        review: {
+          outcome: "rejected",
+          reason: "reverted: archived asset restored",
+          decidedAt,
+          ...(current.review?.decidedBy ? { decidedBy: current.review.decidedBy } : {}),
+        },
       };
       upsertProposal(db, next, stashDir);
       recordImproveLedgerDecision(db, {

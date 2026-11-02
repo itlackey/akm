@@ -12,7 +12,7 @@ export const MAX_EDITS = 2000;
 /** Unchanged lines kept around each change. */
 export const CONTEXT = 3;
 /** An unchanged run shorter than this is shown rather than collapsed behind a control. */
-export const MIN_COLLAPSE = 4;
+const MIN_COLLAPSE = 4;
 /** Longest line (in tokens) that gets an intra-line word diff. */
 const MAX_WORD_TOKENS = 400;
 /** Below this share of matching characters a changed pair is two unrelated lines: no word highlights. */

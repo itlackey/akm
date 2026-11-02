@@ -69,7 +69,7 @@ export function countFeedbackBySignal(db: Database, entryRef: string): Record<st
   return Object.fromEntries(rows.map((row) => [row.signal, row.n]));
 }
 
-/** A `select` event; `searchId` and `source` are absent on rows written before G10. */
+/** A `select` event; `searchId` and `source` are absent on rows written before selects carried them. */
 export interface SelectEventRow {
   ts: string;
   ref: string;
@@ -146,14 +146,6 @@ export function countProposalsByStatus(db: Database, sinceIso: string, untilIso:
     )
     .all(sinceIso, untilIso) as Array<{ status: string; n: number }>;
   return Object.fromEntries(rows.map((row) => [row.status, row.n]));
-}
-
-/** Pending proposals of one stash right now: unwindowed, so it matches `akm proposal list --status pending`. */
-export function countPendingProposals(db: Database, stashDir: string): number {
-  const row = db
-    .prepare("SELECT COUNT(*) AS n FROM proposals WHERE stash_dir = ? AND status = 'pending'")
-    .get(stashDir) as { n: number };
-  return row.n;
 }
 
 /**

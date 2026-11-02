@@ -706,6 +706,7 @@ describe("akm proposal revert on a retire proposal", () => {
     const afterRevert = getProposal(storage.stashDir, proposal.id);
     expect(afterRevert.acceptedAt).toBe(accepted.acceptedAt);
     expect(afterRevert.review?.decidedAt).not.toBe(accepted.acceptedAt);
+    expect(afterRevert.review?.decidedBy).toBe("human");
     expect(fs.existsSync(filePath)).toBe(true);
     expect(fs.readFileSync(filePath, "utf8")).toBe(originalBytes);
 
