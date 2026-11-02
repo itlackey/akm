@@ -264,7 +264,7 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
     // Only a GET of a static file is open; the API, and anything that is not a GET, needs the token.
     const readMethod = req.method === "GET" || req.method === "HEAD";
     if (isApi || !readMethod) {
-      // The header only: a token in a URL ends up in history and logs, and a link can carry it (B-49).
+      // The header only: a token in a URL ends up in history and logs, and a link can carry it.
       const given = req.headers[TOKEN_HEADER];
       const provided = Array.isArray(given) ? given[0] : given;
       if (!tokenMatches(provided, token)) {
@@ -296,7 +296,7 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
           sendError(req, res, 404, "NOT_FOUND", `No such API route: ${url.pathname}`);
           return;
         }
-        // How long the handler took, for a reader looking at the network panel (B-66).
+        // How long the handler took, for a reader looking at the network panel.
         sendJson(
           req,
           res,
@@ -321,7 +321,7 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
       return;
     }
     // A strong ETag with `no-cache`: the browser keeps the file and revalidates, so a 200 KB chart library is not
-    // downloaded again on every reload, yet an upgrade is seen at once (B-65).
+    // downloaded again on every reload, yet an upgrade is seen at once.
     const etag = `"${createHash("sha1").update(asset.body).digest("hex")}"`;
     const headers = {
       ...SECURITY_HEADERS,

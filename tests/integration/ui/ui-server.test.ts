@@ -19,9 +19,11 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
+import type { Proposal } from "../../../src/commands/proposal/proposal-types";
 import { createProposal } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
 import { DIFF_SIDE_MAX_CHARS } from "../../../src/commands/ui/api";
+import { weekOf } from "../../../src/commands/ui/derive";
 import { MAX_BODY_BYTES, MAX_DOCUMENT_BODY_BYTES, startUiServer, type UiServer } from "../../../src/commands/ui/server";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { getConfigPath, getDbPath } from "../../../src/core/paths";
@@ -29,7 +31,7 @@ import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { acquireAssetMutationLease } from "../../../src/indexer/index-writer-lock";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
-import { upsertProposal } from "../../../src/storage/repositories/proposals-repository";
+import { listStateProposals, upsertProposal } from "../../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import * as akmBin from "../../../src/tasks/resolve-akm-bin";
 import { runCliCapture } from "../../_helpers/cli";
@@ -450,11 +452,9 @@ describe("endpoints", () => {
           zeroResults: 2,
           medianMs: 120,
           latencySamples: 2,
-          noResultRate: 0.5,
           partial: true,
         },
       ],
-      zeroResultQueries: [{ date: today, query: "empty result", count: 2 }],
     });
   });
 
@@ -481,7 +481,8 @@ describe("endpoints", () => {
     expect(impact.outcomes.map((o: { source: string }) => o.source)).toEqual(["reflect"]);
     expect(impact.reviewFlow.at(-1)).toMatchObject({ created: 2, decided: 1, waiting: 1 });
     expect(impact.changedAssets[0]).toMatchObject({ ref: "stash//lessons/rg", complete: false });
-    expect(impact.judgeAndYou.unknown ?? impact.judgeAndYou.you).toBeDefined();
+    // Accepted through the UI, so the decision is the person's.
+    expect(impact.judgeAndYou).toEqual({ you: { accepted: 1, rejected: 0, reverted: 0 } });
 
     const misses = await data(s, "/api/search/misses");
     expect(misses).toMatchObject({ searches: expect.any(Number), misses: expect.any(Array) });
@@ -497,6 +498,74 @@ describe("endpoints", () => {
     ).toEqual([accepted]);
     expect((await data(s, "/api/proposals?status=recent&class=rejected")).proposals).toHaveLength(0);
     expect((await api(s, "/api/proposals?status=recent&class=nope")).status).toBe(400);
+  });
+
+  test("a reverted proposal is dated and attributed by its accept, and still counts as accepted", async () => {
+    await seed();
+    const id = propose("knowledge/notes", NOTES_REWRITE);
+    const s = await start();
+    expect((await write(s, `/api/proposals/${id}/accept`, {})).status).toBe(200);
+    // Move the accept three weeks back, so the accept and the revert fall in different weeks.
+    const day = 86_400_000;
+    const acceptedAt = new Date(Date.now() - 21 * day).toISOString();
+    const db = openStateDatabase();
+    try {
+      const accepted = listStateProposals(db, { stashDir: storage.stashDir, status: "accepted" })[0] as Proposal;
+      upsertProposal(
+        db,
+        {
+          ...accepted,
+          createdAt: new Date(Date.now() - 22 * day).toISOString(),
+          updatedAt: acceptedAt,
+          acceptedAt,
+          review: { ...accepted.review, decidedAt: acceptedAt },
+        } as Proposal,
+        storage.stashDir,
+      );
+    } finally {
+      db.close();
+    }
+    expect((await write(s, `/api/proposals/${id}/revert`, {})).status).toBe(200);
+
+    const impact = await data(s, "/api/improve/impact");
+    expect(impact.changedAssets[0]).toMatchObject({ proposalId: id, outcome: "reverted", decidedAt: acceptedAt });
+    const reverted = Object.fromEntries(impact.outcomes[0].weeks.map((w: Json) => [w.week, w.reverted]));
+    expect(reverted[weekOf(acceptedAt)]).toBe(1);
+    expect(reverted[impact.weeks.at(-1)]).toBe(0);
+    // Waiting from creation until the accept, not until the revert.
+    expect(impact.reviewFlow.at(-1)).toMatchObject({ waiting: 0 });
+    expect(impact.reviewFlow.find((w: Json) => w.week === weekOf(acceptedAt))).toMatchObject({ decided: 1 });
+    // The revert kept who accepted: a person, not "unknown".
+    expect(impact.judgeAndYou).toEqual({ you: { accepted: 0, rejected: 0, reverted: 1 } });
+    expect(impact.harm.some((item: Json) => item.kind === "reverted" && item.proposalId === id)).toBe(true);
+
+    // Accepted first, so it counts as accepted, and "since reverted" is a part of that figure.
+    const pulse = await data(s, "/api/overview/pulse");
+    expect(pulse.improveLine).toMatchObject({
+      proposed: 1,
+      accepted: 1,
+      acceptedThenReverted: 1,
+      rejected: 0,
+      waiting: 0,
+    });
+    expect(pulse.attention.harm.reverted).toBe(1);
+  });
+
+  test("an unreadable proposals table degrades the impact page's proposal cards, not the page", async () => {
+    await seed();
+    const db = openStateDatabase();
+    try {
+      db.exec("DROP TABLE proposals");
+    } finally {
+      db.close();
+    }
+    const s = await start();
+    const impact = await data(s, "/api/improve/impact");
+    expect(impact.available).toBe(true);
+    expect(Object.keys(impact.errors)).toEqual(["proposals"]);
+    expect(impact.outcomes).toEqual([]);
+    expect(impact.cost).toHaveLength(impact.weeks.length);
+    expect(impact.library).toHaveLength(impact.weeks.length);
   });
 
   test("GET /api/retrieval returns the per-day search series for a longer window than the overview's", async () => {
@@ -579,9 +648,7 @@ describe("endpoints", () => {
     const s = await start();
     const overview = await data(s, "/api/overview");
     expect(overview.metrics.tasks.byTask.some((t: { taskId: string }) => t.taskId === "rare-failure")).toBe(false);
-    expect(overview.taskFailures).toEqual([
-      { taskId: "rare-failure", runs: 1, failed: 1, medianMs: 50, rated: 1, failRate: null },
-    ]);
+    expect(overview.taskFailures).toEqual([{ taskId: "rare-failure", runs: 1, failed: 1, medianMs: 50 }]);
     const detail = await data(s, "/api/tasks/history?taskId=rare-failure&limit=1");
     expect(detail).toMatchObject({
       available: true,
@@ -668,10 +735,9 @@ describe("endpoints", () => {
     const list = await data(s, "/api/proposals?limit=200");
     expect(overview.metrics.proposals.byStatus.pending ?? 0).toBeLessThan(overview.pendingNow);
     expect(overview.pendingNow).toBe(list.totalCount);
-    expect(overview.pendingNow).toBe(overview.health.report.pendingProposals.length);
   });
 
-  test("task failures rank by failure rate once a task has 5 runs, then by failures", async () => {
+  test("task failures rank in the order of the bars: failed runs over runs, then failures", async () => {
     await seed();
     const db = openStateDatabase();
     const base = Date.now() - 60_000;
@@ -688,73 +754,17 @@ describe("endpoints", () => {
         metadata_json: "{}",
       });
     try {
-      // busy: 2 of 10 failed (0.2); flaky: 3 of 5 (0.6); few: 2 of 2 (no rate, ranks after the rated tasks).
-      for (let n = 0; n < 10; n++) run("busy", n < 2 ? "failed" : "completed", n);
+      // busy: 3 of 10 failed (0.3); flaky: 3 of 5 (0.6); few: 2 of 2 (1.0); clean: no failures, so not listed.
+      for (let n = 0; n < 10; n++) run("busy", n < 3 ? "failed" : "completed", n);
       for (let n = 0; n < 5; n++) run("flaky", n < 3 ? "failed" : "completed", n);
       for (let n = 0; n < 2; n++) run("few", "failed", n);
+      run("clean", "completed", 0);
     } finally {
       db.close();
     }
     const s = await start();
     const overview = await data(s, "/api/overview");
-    expect(overview.taskFailures.map((t: { taskId: string }) => t.taskId)).toEqual(["flaky", "busy", "few"]);
-    expect(overview.taskFailures.map((t: { failRate: number | null }) => t.failRate)).toEqual([0.6, 0.2, null]);
-  });
-
-  test("task fail rate counts stale active runs as not ok and ignores fresh active runs (M-25)", async () => {
-    await seed();
-    const db = openStateDatabase();
-    const run = (taskId: string, status: string, ageMs: number) =>
-      upsertTaskHistory(db, {
-        task_id: taskId,
-        status,
-        started_at: new Date(Date.now() - ageMs).toISOString(),
-        completed_at: status === "completed" ? new Date().toISOString() : null,
-        failed_at: status === "failed" ? new Date().toISOString() : null,
-        log_path: null,
-        target_kind: null,
-        target_ref: null,
-        metadata_json: "{}",
-      });
-    try {
-      // fresh-active: 4 failed + 1 fresh active -> rated 4, no rate yet.
-      for (let n = 0; n < 4; n++) run("fresh-active", "failed", 120_000 + n * 1000);
-      run("fresh-active", "active", 600_000);
-      // stale-active: 3 completed + 1 failed + 1 active 10 h ago -> rated 5, 2 not ok = 0.4.
-      for (let n = 0; n < 3; n++) run("stale-active", "completed", 120_000 + n * 1000);
-      run("stale-active", "failed", 130_000);
-      run("stale-active", "active", 10 * 3_600_000);
-    } finally {
-      db.close();
-    }
-    const s = await start();
-    const overview = await data(s, "/api/overview");
-    const byId = Object.fromEntries(overview.taskFailures.map((t: { taskId: string }) => [t.taskId, t]));
-    expect(byId["fresh-active"]).toMatchObject({ runs: 5, rated: 4, failRate: null });
-    expect(byId["stale-active"]).toMatchObject({ runs: 5, rated: 5, failRate: 0.4 });
-  });
-
-  test("a task whose only problem is a stale active run stays out of taskFailures", async () => {
-    await seed();
-    const db = openStateDatabase();
-    try {
-      upsertTaskHistory(db, {
-        task_id: "stale-only",
-        status: "active",
-        started_at: new Date(Date.now() - 10 * 3_600_000).toISOString(),
-        completed_at: null,
-        failed_at: null,
-        log_path: null,
-        target_kind: null,
-        target_ref: null,
-        metadata_json: "{}",
-      });
-    } finally {
-      db.close();
-    }
-    const s = await start();
-    const overview = await data(s, "/api/overview");
-    expect(overview.taskFailures.map((t: { taskId: string }) => t.taskId)).not.toContain("stale-only");
+    expect(overview.taskFailures.map((t: { taskId: string }) => t.taskId)).toEqual(["few", "flaky", "busy"]);
   });
 
   test("GET /api/bundles: cards with git status and asset counts, plus the index state", async () => {
@@ -1607,6 +1617,9 @@ describe("workspace actions", () => {
     const config = loadConfig();
     writeSandboxConfig({
       ...config,
+      // A disabled bundle cannot be a default, and this route no longer edits the defaults.
+      defaultBundle: undefined,
+      defaultWriteTarget: undefined,
       bundles: {
         ...config.bundles,
         stash: {
@@ -1622,8 +1635,6 @@ describe("workspace actions", () => {
       enabled: false,
       writable: false,
       componentWritability: { main: false },
-      defaultBundle: "",
-      defaultWriteTarget: "",
       connections: { default: { apiKey: "[redacted]" } },
       unrelated: "overwrite attempt",
     });
@@ -1639,18 +1650,16 @@ describe("workspace actions", () => {
     expect(saved.unrelated).toEqual({ keep: [1, "two"] });
     const listed = await data(s, "/api/bundles");
     expect(listed.bundles.find((b: Json) => b.name === "stash")).toMatchObject({ enabled: false, writable: false });
-    expect((await write(s, "/api/bundles/settings", { defaultBundle: "missing" })).status).toBe(400);
     expect((await write(s, "/api/bundles/settings", { bundle: "constructor", enabled: true })).status).toBe(400);
     expect(
       (await write(s, "/api/bundles/settings", { bundle: "stash", componentWritability: { constructor: true } }))
         .status,
     ).toBe(400);
-    expect((await write(s, "/api/bundles/settings", { defaultWriteTarget: "" })).status).toBe(200);
+    // The defaults are edited on the Config page only; this route ignores them.
+    expect((await write(s, "/api/bundles/settings", { defaultWriteTarget: "stash" })).body.data).toEqual({
+      saved: false,
+    });
     expect(loadConfig().defaultWriteTarget).toBeUndefined();
-    expect(
-      (await write(s, "/api/bundles/settings", { bundle: "stash", enabled: true, defaultWriteTarget: "stash" })).status,
-    ).toBe(200);
-    expect(loadConfig().defaultWriteTarget).toBe("stash");
   });
 
   test("config set validates like the CLI, keeps secrets and unrelated keys, and unsets", async () => {
@@ -1684,6 +1693,32 @@ describe("workspace actions", () => {
     expect(unset.status, unset.body.error).toBe(200);
     expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).output?.detail).toBeUndefined();
     expect((await write(s, "/api/config/set", {})).body.data).toEqual({ saved: false });
+  });
+
+  test("config unset refuses an entry akm ignores, and does nothing without a config file", async () => {
+    await seed();
+    const s = await start();
+    const configPath = getConfigPath();
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ configVersion: "0.9.0", connections: { draft: { models: { fast: "m" } } } }),
+    );
+    resetConfigCache();
+    const before = fs.readFileSync(configPath, "utf8");
+    const refused = await write(s, "/api/config/set", { unset: ["connections.draft.models.fast"] });
+    expect(refused.status).toBe(400);
+    expect(refused.body.code).toBe("TARGET_NOT_UPDATABLE");
+    expect(refused.body.error).toContain('connection "draft", which akm ignores');
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+
+    fs.rmSync(configPath);
+    resetConfigCache();
+    expect((await write(s, "/api/config/set", { unset: ["output.detail"] })).body.data).toEqual({ saved: false });
+    expect(fs.existsSync(configPath)).toBe(false);
+    // A set alongside an unset still creates the file.
+    const created = await write(s, "/api/config/set", { set: { "output.detail": "full" }, unset: ["output.format"] });
+    expect(created.body.data).toEqual({ saved: true });
+    expect(fs.existsSync(configPath)).toBe(true);
   });
 
   test("bundle lifecycle uses real local-source add, update and confirmed remove operations", async () => {

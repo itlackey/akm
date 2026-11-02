@@ -3,10 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { binomialQuantile } from "../src/commands/metrics/stats";
 import type { Proposal } from "../src/commands/proposal/proposal-types";
-import { againstUsual, classifyOutcome, pChart, weekRange } from "../src/commands/ui/derive";
+import { againstUsual, classifyOutcome, decidedAt, pChart, weekRange } from "../src/commands/ui/derive";
 import { missesFromRows } from "../src/commands/ui/misses";
+import { binomialQuantile } from "../src/commands/ui/stats";
 
 const proposal = (over: Partial<Proposal>): Proposal => ({ status: "accepted", ...over }) as Proposal;
 
@@ -30,6 +30,19 @@ describe("classifyOutcome", () => {
       ),
     ).toBe("judge");
     expect(classifyOutcome(proposal({ review: review() }))).toBe("unknown");
+  });
+});
+
+describe("decidedAt", () => {
+  test("dates a reverted proposal by its accept, not the revert that overwrote the review", () => {
+    const review = { outcome: "rejected", decidedAt: "2026-10-20T00:00:00Z" } as Proposal["review"];
+    const reverted = proposal({ status: "reverted", review, updatedAt: "2026-10-20T00:00:00Z" });
+    expect(decidedAt({ ...reverted, acceptedAt: "2026-10-01T00:00:00Z" })).toBe("2026-10-01T00:00:00Z");
+    // Reverted before `acceptedAt` existed: the revert time is all there is.
+    expect(decidedAt(reverted)).toBe("2026-10-20T00:00:00Z");
+    expect(decidedAt(proposal({ review: { outcome: "accepted", decidedAt: "2026-10-02T00:00:00Z" } }))).toBe(
+      "2026-10-02T00:00:00Z",
+    );
   });
 });
 

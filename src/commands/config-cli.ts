@@ -46,6 +46,33 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
   return configUnset(config as unknown as Record<string, unknown>, key) as unknown as AkmConfig;
 }
 
+/**
+ * Refuse an unset that would do nothing. A key only an `extends` base supplies has nothing local to remove:
+ * `unsetConfigValue` would silently no-op and the value comes right back on the next load. An entry the reader drops
+ * is not in the config `unsetConfigValue` sees, so it would no-op and say ok. Refuse before mutating rather than
+ * pretend it worked.
+ */
+export function assertUnsettable(key: string): void {
+  const source = getConfigValueSource(key);
+  if (source.startsWith("extends:")) {
+    throw new UsageError(
+      `Config key "${key}" is inherited from ${source} and cannot be unset here.`,
+      "TARGET_NOT_UPDATABLE",
+      `Override it locally with "akm config set ${key} <value>", or edit the base file directly.`,
+    );
+  }
+  const ignored = unusableEntryAt(key);
+  if (ignored) {
+    throw new UsageError(
+      `Config key "${key}" is inside ${ignored.kind} "${ignored.name}", which akm ignores (${ignored.why}), so \`akm config\` cannot edit it.`,
+      "TARGET_NOT_UPDATABLE",
+      ignored.inFile
+        ? `Remove or fix the ${ignored.group}.${ignored.name} entry in ${getConfigPath()} by hand.`
+        : `${getConfigPath()} is still in the retired engines form: run \`akm migrate apply\` first, then fix or remove the entry.`,
+    );
+  }
+}
+
 export function listConfig(config: AkmConfig): Record<string, unknown> {
   // Sources live in `bundles` (spread from config); the
   // retired top-level `sources[]` array is no longer surfaced.
@@ -222,29 +249,7 @@ export const configCommand = defineGroupCommand({
         },
       },
       run({ args }) {
-        // A key only an `extends` base supplies has nothing local to remove:
-        // `unsetConfigValue` would silently no-op and the value comes right
-        // back on the next load. Refuse before mutating rather than pretend
-        // it worked.
-        const source = getConfigValueSource(args.key);
-        if (source.startsWith("extends:")) {
-          throw new UsageError(
-            `Config key "${args.key}" is inherited from ${source} and cannot be unset here.`,
-            "TARGET_NOT_UPDATABLE",
-            `Override it locally with "akm config set ${args.key} <value>", or edit the base file directly.`,
-          );
-        }
-        // An entry the reader drops is not in the config `unsetConfigValue` sees, so it would no-op and say ok.
-        const ignored = unusableEntryAt(args.key);
-        if (ignored) {
-          throw new UsageError(
-            `Config key "${args.key}" is inside ${ignored.kind} "${ignored.name}", which akm ignores (${ignored.why}), so \`akm config\` cannot edit it.`,
-            "TARGET_NOT_UPDATABLE",
-            ignored.inFile
-              ? `Remove or fix the ${ignored.group}.${ignored.name} entry in ${getConfigPath()} by hand.`
-              : `${getConfigPath()} is still in the retired engines form: run \`akm migrate apply\` first, then fix or remove the entry.`,
-          );
-        }
+        assertUnsettable(args.key);
         const result = mutateConfig((current) => unsetConfigValue(current, args.key), { absentNoop: true });
         const updated = result.config;
         if (!args.silent) {

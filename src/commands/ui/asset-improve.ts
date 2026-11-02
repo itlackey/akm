@@ -6,7 +6,7 @@
 
 import { UsageError } from "../../core/errors";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
-import { akmMetrics } from "../metrics/metrics-cli";
+import { metricsWindow, readUsageRows } from "../metrics/metrics-cli";
 import { classifyOutcome, decidedAt, weekOf, weekRange } from "./derive";
 import { tryStashDir, withReadonlyStateDb } from "./readers";
 
@@ -16,12 +16,14 @@ export async function assetImprove(query: URLSearchParams) {
   const ref = query.get("ref")?.trim();
   if (!ref) throw new UsageError("Give the asset's ref: ?ref=<bundle>//<type>/<name>.", "MISSING_REQUIRED_ARGUMENT");
   const stashDir = tryStashDir();
-  const proposals = withReadonlyStateDb(
-    (db) => (stashDir ? listStateProposals(db, { stashDir, ref, withContent: false }) : []),
-    [],
+  const window = metricsWindow("90d");
+  const { proposals, mine } = withReadonlyStateDb(
+    (db) => ({
+      proposals: stashDir ? listStateProposals(db, { stashDir, ref, withContent: false }) : [],
+      mine: readUsageRows(db, window).filter((row) => row.ref === ref),
+    }),
+    { proposals: [], mine: [] },
   );
-  const metrics = await akmMetrics({ since: "90d", indexSnapshot: false, includeRows: true });
-  const mine = (metrics.rows?.usage ?? []).filter((row) => row.ref === ref);
   const now = Date.now();
   const weeks = weekRange(
     new Date(now - 90 * DAY).toISOString().slice(0, 10),

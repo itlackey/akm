@@ -150,8 +150,6 @@ export interface AkmMetricsResult {
     selectsPerSearch: number | null;
     /** Median persisted search `totalMs`; `null` when no row in the window carries one. */
     searchMedianMs: number | null;
-    /** Searches behind `searchMedianMs`: summary rows with `totalMs >= 0`. */
-    searchTimed: number;
     daily: MetricsDailyUsage[];
     topAssets: MetricsAssetUsage[];
     topQueries: MetricsQueryCount[];

@@ -127,7 +127,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(proposalRowToProposal(withHistory([])).reviewHistory).toEqual([]);
   });
 
-  test("acceptedAt round-trips through the row codec, old-shape rows decode without it, a non-string is refused (G2)", () => {
+  test("acceptedAt round-trips through the row codec, old-shape rows decode without it, a non-string is refused", () => {
     const envelope = {
       changes: [{ path: "lessons/history.md", op: "update" }],
       proposedTarget: { source: "team", root: "/tmp/stash" },
@@ -151,7 +151,7 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(() => proposalRowToProposal(bad)).toThrow(/acceptedAt/);
   });
 
-  test("review.decidedBy round-trips, old-shape reviews decode without it, a non-string is refused (G3)", () => {
+  test("review.decidedBy round-trips, old-shape reviews decode without it, a non-string is refused", () => {
     const envelope = { changes: [{ path: "lessons/history.md", op: "update" }] };
     const review = { outcome: "accepted", decidedAt: "2026-01-02T00:00:00.000Z" };
     const row = (r: Record<string, unknown>) => ({

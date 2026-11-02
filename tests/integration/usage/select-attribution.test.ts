@@ -21,7 +21,7 @@ afterEach(() => {
   storage.cleanup();
 });
 
-describe("select attribution (G10)", () => {
+describe("select attribution", () => {
   test("each logged search gets its own searchId and the event source", async () => {
     await akmSearch({ query: "alpha", eventSource: "task" });
     await akmSearch({ query: "alpha", eventSource: "task" });
@@ -41,7 +41,7 @@ describe("select attribution (G10)", () => {
     expect(select?.metadata).toMatchObject({ searchId: "sid-1", source: "improve", rankPosition: 0 });
   });
 
-  test("a search written before G10 still yields a select, with no searchId", () => {
+  test("a search written before selects carried a source still yields a select, with no searchId", () => {
     appendEvent({ eventType: "search", metadata: { query: "deploy", resultRefs: ["main//skills/deploy"] } });
     recordShowUsage("main//skills/deploy", "skill", "deploy");
     const [select] = readEvents({ type: "select" }).events;

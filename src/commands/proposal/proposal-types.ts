@@ -92,7 +92,10 @@ export interface ProposalReview {
   outcome: "accepted" | "rejected";
   reason?: string;
   decidedAt: string;
-  /** Written by accept/reject since #1373; absent on earlier decisions, which stay unknown. */
+  /**
+   * Written by accept/reject since #1373; absent on earlier decisions, which stay unknown. A revert has no decider of
+   * its own, so it keeps the accept's.
+   */
   decidedBy?: ProposalDecider;
 }
 
@@ -281,7 +284,7 @@ export interface Proposal {
   /**
    * When the proposal was accepted (ISO). Written once at accept and kept when
    * the proposal is later reverted, which overwrites `review`. Absent on rows
-   * accepted before this field existed; readers fall back to the `promoted` event.
+   * accepted before this field existed; readers then fall back to the revert time.
    */
   acceptedAt?: string;
   /** Rejections undone by `akm proposal reopen`, oldest first; absent on a proposal never reopened. */

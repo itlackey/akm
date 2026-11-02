@@ -51,8 +51,9 @@ import {
   llmRowsFromEvents,
   type MetricsInput,
   retentionNotes,
+  toUsageRow,
 } from "./collect";
-import type { AkmMetricsResult } from "./types";
+import type { AkmMetricsResult, MetricsLlmRow, MetricsUsageRow } from "./types";
 
 const DEFAULT_SINCE = "30d";
 /** Cap on every ranked list. */
@@ -144,14 +145,37 @@ function readAcceptRate(stateDb: Database, notes: string[]): AkmMetricsResult["p
   }
 }
 
-/** Read every store and build the report. */
-export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMetricsResult> {
-  const nowMs = (options.now ?? Date.now)();
-  const sinceIso = parseHealthSince(options.since ?? DEFAULT_SINCE);
+/** The report window for `since`, ending now; refuses a start that is not earlier. */
+export function metricsWindow(since: string, nowMs: number = Date.now()): { since: string; until: string } {
+  const sinceIso = parseHealthSince(since);
   const untilIso = new Date(nowMs).toISOString();
   if (Date.parse(sinceIso) >= Date.parse(untilIso)) {
     throw new UsageError(`--since (${sinceIso}) must be earlier than now (${untilIso}).`, "INVALID_FLAG_VALUE");
   }
+  return { since: sinceIso, until: untilIso };
+}
+
+function llmEventsIn(db: Database, window: { since: string; until: string }) {
+  const untilMs = Date.parse(window.until);
+  return readEvents({ since: window.since, type: LLM_USAGE_EVENT }, { db, readOnly: true }).events.filter(
+    (event) => Date.parse(event.ts) < untilMs,
+  );
+}
+
+/** The window's usage rows as the report carries them (`rows.usage`), for a caller that needs no report. */
+export function readUsageRows(db: Database, window: { since: string; until: string }): MetricsUsageRow[] {
+  return listUsageEventRows(db, { sinceIso: window.since, untilIso: window.until, source: SOURCE }).map(toUsageRow);
+}
+
+/** The window's LLM usage rows as the report carries them (`rows.llm`). */
+export function readLlmRows(db: Database, window: { since: string; until: string }): MetricsLlmRow[] {
+  return llmRowsFromEvents(llmEventsIn(db, window));
+}
+
+/** Read every store and build the report. */
+export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMetricsResult> {
+  const nowMs = (options.now ?? Date.now)();
+  const { since: sinceIso, until: untilIso } = metricsWindow(options.since ?? DEFAULT_SINCE, nowMs);
   const notes: string[] = [];
 
   const config = readEventRetention();
@@ -224,9 +248,7 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
       acceptRateBySource: readAcceptRate(stateDb, notes),
     };
     input.workflows = summarizeWorkflowRuns(stateDb, sinceIso, untilIso);
-    const untilMs = Date.parse(untilIso);
-    const llmEvents = readEvents({ since: sinceIso, type: LLM_USAGE_EVENT }, { db: stateDb, readOnly: true }).events;
-    const inWindow = llmEvents.filter((event) => Date.parse(event.ts) < untilMs);
+    const inWindow = llmEventsIn(stateDb, { since: sinceIso, until: untilIso });
     input.llm = summarizeLlmUsage(inWindow);
     if (input.includeRows) input.llmRows = llmRowsFromEvents(inWindow);
   } finally {

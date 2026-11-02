@@ -43,13 +43,17 @@ import {
   listFeedbackEventRows,
 } from "../../storage/repositories/metrics-repository";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
-import { decodeTaskHistoryMetadata, queryTaskHistory } from "../../storage/repositories/task-history-repository";
+import {
+  decodeTaskHistoryMetadata,
+  queryTaskHistory,
+  type TaskHistoryRow,
+} from "../../storage/repositories/task-history-repository";
 import { applyReadonlyPragmas } from "../../storage/sqlite-pragmas";
 import { pkgVersion } from "../../version";
 import { listConfig } from "../config-cli";
 import { akmHealth, parseHealthSince } from "../health";
-import { rankTaskFailures } from "../metrics/collect";
-import { akmMetrics } from "../metrics/metrics-cli";
+import { buildTasks } from "../metrics/collect";
+import { akmMetrics, metricsWindow, readUsageRows } from "../metrics/metrics-cli";
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../proposal/repository";
 import { validateProposal } from "../proposal/validators/proposals";
@@ -158,6 +162,19 @@ function summarizeImproveRun(row: ReturnType<typeof listRecentImproveRuns>[numbe
   };
 }
 
+function failingTasks(rows: TaskHistoryRow[]) {
+  return buildTasks(rows.length, rows)
+    .byTask.filter((task) => task.failed > 0)
+    .sort(
+      (a, b) =>
+        b.failed / b.runs - a.failed / a.runs ||
+        b.failed - a.failed ||
+        b.runs - a.runs ||
+        a.taskId.localeCompare(b.taskId),
+    )
+    .slice(0, 20);
+}
+
 async function overview(query: Query) {
   const errors: Record<string, string> = {};
   const since = query.get("since") || "24h";
@@ -172,17 +189,7 @@ async function overview(query: Query) {
       probe: flag(query, "probe"),
       readOnly: true,
     });
-    const report = withReadonlyStateDb(
-      (db) => ({
-        window: since,
-        compare: sinceIsDuration ? since : null,
-        pendingProposals: listStateProposals(db, { stashDir: tryStashDir() ?? "", status: "pending" }).map(
-          ({ ref, source, createdAt }) => ({ ref, source, createdAt }),
-        ),
-      }),
-      null,
-    );
-    return { ...base, ...(report ? { report } : {}) };
+    return { ...base, report: { window: since, compare: sinceIsDuration ? since : null } };
   });
   const metrics = await section(errors, "metrics", () =>
     akmMetrics({ since: query.get("metricsSince") || "30d", indexSnapshot: false, includeRows: true }),
@@ -193,8 +200,8 @@ async function overview(query: Query) {
       (db) => ({
         pendingNow: stashDir ? countPendingProposals(db, stashDir) : null,
         improveRuns: listRecentImproveRuns(db, IMPROVE_RUNS_SHOWN).map(summarizeImproveRun),
-        // Rank the complete window by rate (M-25), not the metrics top-20 by volume.
-        taskFailures: metrics ? rankTaskFailures(queryTaskHistory(db, metrics.window)).slice(0, 20) : null,
+        // Rank the complete window in the order of the bars (failed runs over runs), not the metrics top-20 by volume.
+        taskFailures: metrics ? failingTasks(queryTaskHistory(db, metrics.window)) : null,
       }),
       null,
     ),
@@ -422,7 +429,7 @@ function proposals(query: Query) {
   const now = Date.now();
   return withReadonlyStateDb(
     (db) => {
-      // A list shows summaries, so the proposed content is not read (B-48).
+      // A list shows summaries, so the proposed content is not read.
       const all = listStateProposals(db, { stashDir: resolveStashDir(), withContent: false });
       const picked =
         status === "pending"
@@ -718,11 +725,14 @@ async function assetHistory(query: Query) {
 
 /** The per-day search series over a longer window than the Overview's, for the Improve impact trend. */
 async function retrievalTrend(query: Query) {
-  const metrics = await akmMetrics({ since: query.get("since") || "90d", indexSnapshot: false, includeRows: true });
-  const series = retrievalSeries(metrics.rows?.usage ?? [], metrics.window);
+  const window = metricsWindow(query.get("since") || "90d");
+  const series = retrievalSeries(
+    withReadonlyStateDb((db) => readUsageRows(db, window), []),
+    window,
+  );
   // The same days by ISO week, for a p-chart of the share that found nothing.
   const first = series.daily[0]?.date;
-  const weeks = first ? weekRange(first, metrics.window.until.slice(0, 10)) : [];
+  const weeks = first ? weekRange(first, window.until.slice(0, 10)) : [];
   const perWeek = weeks.map((week) => {
     const days = series.daily.filter((d) => weekOf(d.date) === week);
     return {

@@ -7,7 +7,7 @@
 const DAY_MS = 86_400_000;
 
 /** `YYYY-MM-DD` of an ISO timestamp or date. */
-export function utcDay(iso: string): string {
+function utcDay(iso: string): string {
   return iso.slice(0, 10);
 }
 

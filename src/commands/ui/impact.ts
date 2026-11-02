@@ -4,18 +4,18 @@
 
 /**
  * `GET /api/improve/impact`: what improve proposed and changed in the environment, week by week, and what went wrong.
- * One response feeds every section of the page; each section is computed on its own so one failing store degrades one
- * card. Nothing here writes.
+ * One response feeds every section of the page; each store read degrades on its own, so one unreadable table leaves
+ * the cards that do not depend on it. Nothing here writes.
  */
 
 import { readStateEvents } from "../../storage/repositories/events-repository";
 import { listIndexCompletedEvents } from "../../storage/repositories/metrics-repository";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
-import { akmMetrics } from "../metrics/metrics-cli";
+import { metricsWindow, readLlmRows, readUsageRows } from "../metrics/metrics-cli";
 import type { MetricsUsageRow } from "../metrics/types";
 import { isRetireProposal, type Proposal } from "../proposal/proposal-types";
-import { classifyOutcome, decidedAt, type OutcomeClass, weekOf, weekRange } from "./derive";
-import { section, tryStashDir, withReadonlyStateDb } from "./readers";
+import { classifyOutcome, decidedAt, deciderOf, weekOf, weekRange } from "./derive";
+import { tryStashDir, withReadonlyStateDb } from "./readers";
 
 const DAY = 86_400_000;
 const FLAG_DAYS = 14;
@@ -166,18 +166,9 @@ function changedAssets(proposals: Proposal[], usage: MetricsUsageRow[], now: num
 function judgeAndYou(proposals: Proposal[]) {
   const table: Record<string, { accepted: number; rejected: number; reverted: number }> = {};
   for (const p of proposals) {
-    const outcome: OutcomeClass = classifyOutcome(p);
+    const outcome = classifyOutcome(p);
     if (outcome === "pending") continue;
-    const who =
-      outcome === "judge"
-        ? "judge"
-        : outcome === "you"
-          ? "you"
-          : p.review?.decidedBy === "triage"
-            ? "judge"
-            : p.review?.decidedBy === "human"
-              ? "you"
-              : "unknown";
+    const who = deciderOf(p);
     const row = table[who] ?? { accepted: 0, rejected: 0, reverted: 0 };
     table[who] = row;
     if (outcome === "rejected") row.rejected += 1;
@@ -190,89 +181,98 @@ function judgeAndYou(proposals: Proposal[]) {
 export async function improveImpact(query: URLSearchParams) {
   const since = query.get("since") === "all" ? "365d" : "90d";
   const now = Date.now();
-  const sinceIso = new Date(now - (since === "365d" ? 365 : 90) * DAY).toISOString();
+  const window = metricsWindow(since, now);
   const errors: Record<string, string> = {};
-  const metrics = await section(errors, "metrics", () =>
-    akmMetrics({ since, indexSnapshot: false, includeRows: true }),
-  );
-  const usage = metrics?.rows?.usage ?? [];
+  // The store reads are what can fail (one malformed proposal row throws), so each degrades on its own; the
+  // derivations below are pure functions of what was read.
+  const attempt = <T>(name: string, read: () => T, fallback: T): T => {
+    try {
+      return read();
+    } catch (error) {
+      errors[name] = error instanceof Error ? error.message : String(error);
+      return fallback;
+    }
+  };
   const stashDir = tryStashDir();
   const state = withReadonlyStateDb(
     (db) => ({
-      proposals: stashDir ? listStateProposals(db, { stashDir, withContent: false }) : [],
-      reopened: readStateEvents(db, { type: "proposal_reopened", since: sinceIso }).events,
-      library: listIndexCompletedEvents(db, sinceIso, new Date(now + DAY).toISOString()),
+      proposals: attempt(
+        "proposals",
+        () => (stashDir ? listStateProposals(db, { stashDir, withContent: false }) : []),
+        [],
+      ),
+      reopened: attempt(
+        "reopened",
+        () => readStateEvents(db, { type: "proposal_reopened", since: window.since }).events,
+        [],
+      ),
+      library: attempt(
+        "library",
+        () => listIndexCompletedEvents(db, window.since, new Date(now + DAY).toISOString()),
+        [],
+      ),
+      usage: attempt("usage", () => readUsageRows(db, window), []),
+      llm: attempt("cost", () => readLlmRows(db, window), []),
     }),
     null,
   );
   if (!state) return { available: false as const, since, errors };
-  const weeks = weekRange(sinceIso.slice(0, 10), new Date(now).toISOString().slice(0, 10));
-  const proposals = state.proposals;
+  const { proposals, usage } = state;
+  const weeks = weekRange(window.since.slice(0, 10), new Date(now).toISOString().slice(0, 10));
 
-  const outcomes = await section(errors, "outcomes", () => outcomesByProcess(proposals, weeks));
-  const flow = await section(errors, "reviewFlow", () => reviewFlow(proposals, weeks));
-  const library = await section(errors, "library", () => {
-    const lastPerWeek = new Map<string, number>();
-    for (const event of state.library) {
-      try {
-        const total = (JSON.parse(event.metadata_json) as { totalEntries?: unknown }).totalEntries;
-        if (typeof total === "number") lastPerWeek.set(weekOf(event.ts), total);
-      } catch {
-        // A row that is not JSON has no size to read.
-      }
+  const lastPerWeek = new Map<string, number>();
+  for (const event of state.library) {
+    try {
+      const total = (JSON.parse(event.metadata_json) as { totalEntries?: unknown }).totalEntries;
+      if (typeof total === "number") lastPerWeek.set(weekOf(event.ts), total);
+    } catch {
+      // A row that is not JSON has no size to read.
     }
-    return weeks.map((week) => ({ week, entries: lastPerWeek.get(week) ?? null }));
-  });
-  const harm = await section(errors, "harm", () => harmLog(proposals, usage, state.reopened, sinceIso));
-  const cost = await section(errors, "cost", () => {
-    const byWeek = new Map<
-      string,
-      { calls: number; tokens: number; usageCalls: number; byProcess: Record<string, number> }
-    >();
-    for (const row of metrics?.rows?.llm ?? []) {
-      const week = weekOf(row.day);
-      const entry = byWeek.get(week) ?? { calls: 0, tokens: 0, usageCalls: 0, byProcess: {} };
-      entry.calls += row.calls;
-      entry.tokens += row.totalTokens;
-      entry.usageCalls += row.usageCalls;
-      const process = row.process ?? "other";
-      entry.byProcess[process] = (entry.byProcess[process] ?? 0) + row.calls;
-      byWeek.set(week, entry);
-    }
-    return weeks.map((week) => ({
-      week,
-      ...(byWeek.get(week) ?? { calls: 0, tokens: 0, usageCalls: 0, byProcess: {} }),
-    }));
-  });
-  const changed = await section(errors, "changedAssets", () => changedAssets(proposals, usage, now));
-  const judge = await section(errors, "judgeAndYou", () => judgeAndYou(proposals));
+  }
+  const library = weeks.map((week) => ({ week, entries: lastPerWeek.get(week) ?? null }));
 
-  const decided = proposals.filter((p) => p.status !== "pending" && decidedAt(p) >= sinceIso);
-  const kept = decided.filter((p) => p.status === "accepted").length;
-  const reverted = decided.filter((p) => p.status === "reverted").length;
-  const flags = (harm ?? []).filter((item) => item.kind === "flag-after-change").length;
-  const calls = (cost ?? []).reduce((sum, w) => sum + w.calls, 0);
-  const tokens = (cost ?? []).reduce((sum, w) => sum + w.tokens, 0);
-  const usageCalls = (cost ?? []).reduce((sum, w) => sum + w.usageCalls, 0);
+  const costByWeek = new Map<
+    string,
+    { calls: number; tokens: number; usageCalls: number; byProcess: Record<string, number> }
+  >();
+  for (const row of state.llm) {
+    const week = weekOf(row.day);
+    const entry = costByWeek.get(week) ?? { calls: 0, tokens: 0, usageCalls: 0, byProcess: {} };
+    entry.calls += row.calls;
+    entry.tokens += row.totalTokens;
+    entry.usageCalls += row.usageCalls;
+    const process = row.process ?? "other";
+    entry.byProcess[process] = (entry.byProcess[process] ?? 0) + row.calls;
+    costByWeek.set(week, entry);
+  }
+  const cost = weeks.map((week) => ({
+    week,
+    ...(costByWeek.get(week) ?? { calls: 0, tokens: 0, usageCalls: 0, byProcess: {} }),
+  }));
+  const harm = harmLog(proposals, usage, state.reopened, window.since);
+
+  const decided = proposals.filter((p) => p.status !== "pending" && decidedAt(p) >= window.since);
+  const calls = cost.reduce((sum, w) => sum + w.calls, 0);
+  const usageCalls = cost.reduce((sum, w) => sum + w.usageCalls, 0);
   return {
     available: true as const,
     since,
     weeks,
     summary: {
-      kept,
-      reverted,
-      flags,
-      tokens,
+      kept: decided.filter((p) => p.status === "accepted").length,
+      reverted: decided.filter((p) => p.status === "reverted").length,
+      flags: harm.filter((item) => item.kind === "flag-after-change").length,
+      tokens: cost.reduce((sum, w) => sum + w.tokens, 0),
       tokenCoverage: calls > 0 ? usageCalls / calls : null,
       checked: decided.length,
     },
-    outcomes,
-    reviewFlow: flow,
+    outcomes: outcomesByProcess(proposals, weeks),
+    reviewFlow: reviewFlow(proposals, weeks),
     library,
     harm,
     cost,
-    changedAssets: changed,
-    judgeAndYou: judge,
+    changedAssets: changedAssets(proposals, usage, now),
+    judgeAndYou: judgeAndYou(proposals),
     ...(Object.keys(errors).length > 0 ? { errors } : {}),
   };
 }
