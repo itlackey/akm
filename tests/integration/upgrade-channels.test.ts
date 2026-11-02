@@ -218,6 +218,41 @@ afterEach(() => cleanup());
     ]);
   });
 
+  describe("opencode.json and opencode.jsonc both name the plugin", () => {
+    const jsonText = JSON.stringify({ plugin: ["akm-opencode"], model: "keep" });
+    const cached = (tag: string) => fs.existsSync(file(`cache/opencode/packages/akm-opencode@${tag}/node_modules`));
+    const jsoncPlugin = () => (parseJsonc(read("config/opencode/opencode.jsonc")) as { plugin: unknown[] }).plugin;
+    beforeEach(() => write("config/opencode/opencode.json", jsonText));
+
+    test("--check, --channel next and --channel latest read and edit opencode.jsonc only", async () => {
+      const checked = await withEnv(env, () =>
+        runUpgrade({ ...opts, check: true, channel: "next" }, "0.10.3-beta", deps("0.10.3-beta")),
+      );
+      expect(checked.result.plugins.find((p) => p.harness === "opencode")).toMatchObject({ channel: "latest" });
+      expect(read("config/opencode/opencode.json")).toBe(jsonText);
+      expect(jsoncPlugin()[1]).toEqual(["akm-opencode", { keep: true }]);
+
+      await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps()));
+      expect(jsoncPlugin()[1]).toEqual(["akm-opencode@next", { keep: true }]);
+      expect(read("config/opencode/opencode.json")).toBe(jsonText);
+      expect(cached("next")).toBe(true);
+
+      const back = await withEnv(env, () =>
+        runUpgrade({ ...opts, channel: "latest", allowDowngrade: true }, "0.10.3-beta", deps("0.10.3-beta", "0.10.2")),
+      );
+      expect(back.mode === "upgrade" && back.failed).toBe(false);
+      expect(jsoncPlugin()[1]).toEqual(["akm-opencode", { keep: true }]);
+      expect(read("config/opencode/opencode.json")).toBe(jsonText);
+    });
+
+    test("a .jsonc plugin list that omits the package means it is not loaded: opencode.json is not edited", async () => {
+      write("config/opencode/opencode.jsonc", '{"plugin": ["other"]}');
+      const run = await withEnv(env, () => runUpgrade({ ...opts, channel: "next" }, "0.10.1", deps()));
+      expect(run.result.plugins.find((p) => p.harness === "opencode")?.outcome).toBe("skipped");
+      expect(read("config/opencode/opencode.json")).toBe(jsonText);
+    });
+  });
+
   test("Codex downgrade checks its own manifest, which can differ from Claude's", async () => {
     state({ codexTargetVersion: "0.9.0" });
     const dependency = deps();

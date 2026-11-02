@@ -656,6 +656,21 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       });
     });
 
+    test("with opencode.json and opencode.jsonc both naming the plugin, the .jsonc spec is the one reported", () => {
+      const cacheRoot = cacheRootOf();
+      cacheSpec(cacheRoot, "akm-opencode@next", "0.10.261012-beta");
+      cacheSpec(cacheRoot, "akm-opencode@latest", "0.10.261013-beta");
+      const pluginsRoot = makeTempDir("akm-plugin-opencode-both-");
+      const configDir = path.join(pluginsRoot, "opencode-config");
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(configDir, "opencode.json"), JSON.stringify({ plugin: ["akm-opencode"] }));
+      fs.writeFileSync(path.join(configDir, "opencode.jsonc"), JSON.stringify({ plugin: ["akm-opencode@next"] }));
+      const results = withEnvSync({ OPENCODE_CONFIG_DIR: configDir, OPENCODE_CONFIG: undefined }, () =>
+        collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.10.261013-beta", opencodeCacheRoot: cacheRoot }),
+      );
+      expect(results[0]?.evidence).toMatchObject({ spec: "akm-opencode@next", bundledVersion: "0.10.261012-beta" });
+    });
+
     test("@next at the running version passes", () => {
       const cacheRoot = cacheRootOf();
       cacheSpec(cacheRoot, "akm-opencode@next", "0.10.261013-beta");

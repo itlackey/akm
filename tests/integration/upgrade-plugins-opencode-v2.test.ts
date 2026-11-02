@@ -7,7 +7,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { runUpgrade, type UpgradeRunDependencies } from "../../src/commands/sources/plugin-upgrade";
+import { openCodeConfigSpec, runUpgrade, type UpgradeRunDependencies } from "../../src/commands/sources/plugin-upgrade";
+import { OPENCODE_V1, OPENCODE_V2 } from "../../src/integrations/harnesses/opencode/plugin-layout";
 import type { UpgradeCheckResponse, UpgradeResponse } from "../../src/sources/types";
 import { makeSandboxDir, withEnv } from "../_helpers/sandbox";
 
@@ -394,6 +395,17 @@ esac`,
     writeV2Cache("0.9.26");
     stubWorld({ major: 2, fresh: "0.9.27", pins: PINS });
     expect(entry(await upgrade(), "opencode-v2").outcome).toBe("updated");
+  });
+
+  test("opencode.jsonc naming OpenCode 1 under `plugin` does not hide opencode.json naming OpenCode 2 under `plugins`", async () => {
+    writeConfig({ plugin: [V1] }, "opencode.jsonc");
+    writeConfig({ plugins: [V2] });
+    const found = await withEnv(world.env, async () => ({
+      v1: openCodeConfigSpec(OPENCODE_V1),
+      v2: openCodeConfigSpec(OPENCODE_V2),
+    }));
+    expect(found.v1?.file).toBe(configFile("opencode.jsonc"));
+    expect(found.v2?.file).toBe(configFile("opencode.json"));
   });
 
   test("OPENCODE_CONFIG is not read for OpenCode 2: `plugin update` acts on the global config", async () => {

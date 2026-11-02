@@ -323,24 +323,31 @@ export function openCodeConfigSpec(
   flavor: OpenCodeFlavor,
 ): { spec: string; key: string; file: string; jsonPath: (string | number)[] } | undefined {
   const configDir = opencodeConfigDir();
+  const explicit = flavor.globalConfigOnly ? undefined : process.env.OPENCODE_CONFIG?.trim();
   const files = [
-    flavor.globalConfigOnly ? undefined : process.env.OPENCODE_CONFIG?.trim(),
-    path.join(configDir, "opencode.json"),
+    explicit,
+    // OpenCode loads opencode.jsonc after opencode.json, so its plugin list wins.
     path.join(configDir, "opencode.jsonc"),
+    path.join(configDir, "opencode.json"),
   ];
   for (const file of files) {
     if (!file) continue;
     try {
       const config = parseJsonc(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+      let setsList = false;
       for (const key of flavor.configKeys) {
         const entries = config[key];
         if (!Array.isArray(entries)) continue;
+        setsList = true;
         for (const [index, entry] of entries.entries()) {
           const spec = entrySpec(entry);
           if (spec !== undefined && namesPackage(spec, flavor.pkg))
             return { spec, key, file, jsonPath: [key, index, ...(Array.isArray(entry) ? [0] : [])] };
         }
       }
+      // OpenCode 1: a global file's plugin list replaces the earlier one, so a list that omits the package means it
+      // is not loaded. OpenCode 2's handling of `plugin`/`plugins` across files is not measured, so it keeps looking.
+      if (setsList && file !== explicit && flavor.major === 1) return undefined;
     } catch {
       // Missing or unparseable: this file names no spec.
     }
