@@ -32,7 +32,7 @@
     - search "Site search":
       - text: Search assets
       - searchbox "Search assets"
-- status: Deploy guide. Asset page loaded.
+- status
 - main:
   - paragraph:
     - link "Search":

@@ -39,8 +39,8 @@
   - group "Window":
     - radio /\d+ days/ [checked]
     - text: /\d+ days/
-    - radio "All"
-    - text: All
+    - radio "1 year"
+    - text: 1 year
   - paragraph:
     - strong: /Last \d+ days:/
     - link "6 kept":
@@ -122,35 +122,35 @@
       - listitem:
         - text: Flag after a change
         - link "stash//knowledge/deploy-guide":
-          - /url: "#/asset/stash%2F%2Fknowledge%2Fdeploy-guide"
+          - /url: "#/asset?ref=stash%2F%2Fknowledge%2Fdeploy-guide"
         - text: "negative feedback: The rollback link is wrong · 2d ago"
         - link "Proposal":
           - /url: "#/proposals/p-reverted"
       - listitem:
         - text: Retired with a risk flagged
         - link "stash//knowledge/stale-note":
-          - /url: "#/asset/stash%2F%2Fknowledge%2Fstale-note"
+          - /url: "#/asset?ref=stash%2F%2Fknowledge%2Fstale-note"
         - text: retired with a continuity risk flagged · 2d ago
         - link "Proposal":
           - /url: "#/proposals/p-retired-stale-note"
       - listitem:
         - text: Retired with a risk flagged
         - link "stash//knowledge/old-notes":
-          - /url: "#/asset/stash%2F%2Fknowledge%2Fold-notes"
+          - /url: "#/asset?ref=stash%2F%2Fknowledge%2Fold-notes"
         - text: retired with a continuity risk flagged · 2d ago
         - link "Proposal":
           - /url: "#/proposals/p-retired-old-notes"
       - listitem:
         - text: Retired with a risk flagged
         - link "stash//knowledge/old-runbook":
-          - /url: "#/asset/stash%2F%2Fknowledge%2Fold-runbook"
+          - /url: "#/asset?ref=stash%2F%2Fknowledge%2Fold-runbook"
         - text: retired with a continuity risk flagged · 2d ago
         - link "Proposal":
           - /url: "#/proposals/p-retired-old-runbook"
       - listitem:
         - text: Reverted
         - link "stash//knowledge/deploy-guide":
-          - /url: "#/asset/stash%2F%2Fknowledge%2Fdeploy-guide"
+          - /url: "#/asset?ref=stash%2F%2Fknowledge%2Fdeploy-guide"
         - text: distill change undone · 9d ago
         - link "Proposal":
           - /url: "#/proposals/p-reverted"
@@ -178,7 +178,7 @@
           - row "stash//commands/release-notes distill 2d ago 5 → 0 0 → 0 2 days so far":
             - rowheader "stash//commands/release-notes":
               - link "stash//commands/release-notes":
-                - /url: "#/asset/stash%2F%2Fcommands%2Frelease-notes"
+                - /url: "#/asset?ref=stash%2F%2Fcommands%2Frelease-notes"
             - cell "distill"
             - cell "2d ago"
             - cell "5 → 0"
@@ -187,7 +187,7 @@
           - row "stash//knowledge/deploy-guide reflect 2d ago 4 → 1 0 → 1 2 days so far":
             - rowheader "stash//knowledge/deploy-guide":
               - link "stash//knowledge/deploy-guide":
-                - /url: "#/asset/stash%2F%2Fknowledge%2Fdeploy-guide"
+                - /url: "#/asset?ref=stash%2F%2Fknowledge%2Fdeploy-guide"
             - cell "reflect"
             - cell "2d ago"
             - cell "4 → 1"
@@ -196,7 +196,7 @@
           - row "stash//lessons/rg consolidate 4d ago 4 → 1 0 → 1 4 days so far":
             - rowheader "stash//lessons/rg":
               - link "stash//lessons/rg":
-                - /url: "#/asset/stash%2F%2Flessons%2Frg"
+                - /url: "#/asset?ref=stash%2F%2Flessons%2Frg"
             - cell "consolidate"
             - cell "4d ago"
             - cell "4 → 1"
@@ -205,7 +205,7 @@
           - row "stash//knowledge/deploy-guide distill 9d ago reverted 5 → 2 0 → 1 9 days so far":
             - rowheader "stash//knowledge/deploy-guide":
               - link "stash//knowledge/deploy-guide":
-                - /url: "#/asset/stash%2F%2Fknowledge%2Fdeploy-guide"
+                - /url: "#/asset?ref=stash%2F%2Fknowledge%2Fdeploy-guide"
             - cell "distill"
             - cell "9d ago reverted"
             - cell "5 → 2"

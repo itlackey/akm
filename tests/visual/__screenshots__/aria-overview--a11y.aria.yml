@@ -44,7 +44,7 @@
     - list:
       - listitem:
         - link "1 run failed this week View runs →":
-          - /url: "#/improve"
+          - /url: "#/overview"
       - listitem:
         - link "1 health warning View →":
           - /url: "#/overview"
@@ -81,9 +81,9 @@
     - heading "Searches per week" [level=3]
     - img "Searches per week.":
       - img: /Searches 0 \d+ \d+ \d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
-    - heading "Search time" [level=3]
+    - heading /Median search time by day, last \d+ weeks/ [level=3]
     - img "Median search time by day. A gap means no timing was recorded that day.":
-      - img: /Milliseconds 0 \d+ \d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
+      - img: /Milliseconds 0 \d+ \d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+ \d+-\d+/
     - paragraph: Your own searches only. A day or week marked as partial is still filling. Found-nothing describes retrieval, not whether an answer was right.
     - group: Data and details
     - heading "Feedback and use" [level=2]
@@ -99,7 +99,7 @@
       - listitem: /triage\.judgment \d+ calls \d+,\d+ tokens · \d+ s/
     - group: Data and details
     - heading "Scheduled tasks" [level=2]
-    - paragraph: Recorded runs in this window, most failures first.
+    - paragraph: Recorded runs in this window, highest failure rate first.
     - list "Failed runs by scheduled task":
       - listitem: nightly-improve 1 of 1 failed
     - group: Run history by task

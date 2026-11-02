@@ -35,7 +35,7 @@
 - status
 - main:
   - heading "History" [level=1]
-  - paragraph: Recent commits to stash (/tmp/akm-visual-loaded/stash).
+  - paragraph: Recent commits to stash (/tmp/akm-visual-loaded/stash). Times are in your time zone.
   - search "Filter commits":
     - text: ""
     - searchbox "Filter"
@@ -46,32 +46,32 @@
       - option "improve-sync"
       - option "sync"
     - button "Filter"
-  - heading /\d+-\d+-\d+ UTC 1/ [level=2]
+  - heading /\d+-\d+-\d+ 1/ [level=2]
   - list:
     - listitem:
       - text: /\d+:\d+ improve-sync akm improve auto-sync 376a148b by visual/
       - group: 1 changed path
-  - heading /\d+-\d+-\d+ UTC 1/ [level=2]
+  - heading /\d+-\d+-\d+ 1/ [level=2]
   - list:
     - listitem:
       - text: /\d+:\d+ sync akm save d4530fc4 by visual/
       - group: 1 changed path
-  - heading /\d+-\d+-\d+ UTC 1/ [level=2]
+  - heading /\d+-\d+-\d+ 1/ [level=2]
   - list:
     - listitem:
       - text: "/\\d+:\\d+ accept akm accept: reflect 3f9a1c20 stash\\/\\/lessons\\/rg 3923e4d2 by visual/"
       - group: 1 changed path
-  - heading /\d+-\d+-\d+ UTC 1/ [level=2]
+  - heading /\d+-\d+-\d+ 1/ [level=2]
   - list:
     - listitem:
       - text: /\d+:\d+ sync akm save f16d9b4a by visual/
       - group: 1 changed path
-  - heading /\d+-\d+-\d+ UTC 1/ [level=2]
+  - heading /\d+-\d+-\d+ 1/ [level=2]
   - list:
     - listitem:
       - text: /\d+:\d+ improve-sync akm improve auto-sync 817067cb by visual/
       - group: 1 changed path
-  - heading /\d+-\d+-\d+ UTC 1/ [level=2]
+  - heading /\d+-\d+-\d+ 1/ [level=2]
   - list:
     - listitem:
       - text: /\d+:\d+ sync akm save c717bd11 by visual/

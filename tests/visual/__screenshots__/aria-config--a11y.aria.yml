@@ -72,7 +72,7 @@
       - option "stash" [selected]
     - text: Default write target set in config.json
     - combobox "Default write target":
-      - option "Automatic (working stash)"
+      - option "Default bundle (stash)"
       - option "stash" [selected]
     - paragraph: New knowledge, memories and accepted proposals are written here.
     - text: Keep archived assets for

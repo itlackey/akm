@@ -35,19 +35,12 @@
 - status
 - main:
   - heading "Bundles & index" [level=1]
-  - paragraph: Where akm reads assets from and where new ones are written.
+  - paragraph:
+    - text: Where akm reads assets from and where new ones are written. Set the default bundle and write target in
+    - link "Config":
+      - /url: "#/config"
+    - text: .
   - paragraph: Default bundle stash; writes go to stash.
-  - region "Defaults":
-    - heading "Defaults" [level=2]
-    - paragraph: Which bundle akm reads first, and where new knowledge, memories and accepted proposals are written.
-    - text: Default bundle
-    - combobox "Default bundle":
-      - option "Automatic (working stash)"
-      - option "stash" [selected]
-    - text: Default write target
-    - combobox "Default write target":
-      - option "Default bundle (stash)"
-      - option "stash" [selected]
   - region "Configured bundles":
     - heading "Configured bundles" [level=2]
     - paragraph: Every source akm indexes, with its git state and what it holds.
@@ -64,11 +57,7 @@
       - term: Assets
       - definition: "6"
       - img "knowledge 3, command 1, lesson 1, memory 1"
-      - list:
-        - listitem: knowledge 3
-        - listitem: command 1
-        - listitem: lesson 1
-        - listitem: memory 1
+      - paragraph: knowledge 3 command 1 lesson 1 memory 1
       - heading "Git" [level=4]
       - term: Branch
       - definition: main
@@ -112,11 +101,7 @@
     - term: Semantic search
     - definition: off disabled
     - img "knowledge 3, command 1, lesson 1, memory 1"
-    - list:
-      - listitem: knowledge 3
-      - listitem: command 1
-      - listitem: lesson 1
-      - listitem: memory 1
+    - paragraph: knowledge 3 command 1 lesson 1 memory 1
 - contentinfo:
   - text: akm 0.0.0 · visual-host bun
   - group "Theme":

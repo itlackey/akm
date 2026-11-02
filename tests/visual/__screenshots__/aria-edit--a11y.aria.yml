@@ -32,7 +32,7 @@
     - search "Site search":
       - text: Search assets
       - searchbox "Search assets"
-- status: Edit Markdown. Edit Markdown page loaded.
+- status
 - main:
   - heading "Edit Markdown" [level=1]
   - paragraph: stash//knowledge/deploy-guide
