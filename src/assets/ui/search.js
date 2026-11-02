@@ -1,6 +1,6 @@
 // Search: query box with type and bundle filters; results link to the asset view.
 
-import { ago, api, assetHref, badge, emptyState, fmtNum, html, pageHeader, tableWrap } from "./lib.js";
+import { ago, api, assetHref, badge, emptyState, fmtNum, html, pageHeader, tableWrap, wireFilterForm } from "./lib.js";
 
 const RESULT_LIMIT = 50;
 
@@ -83,21 +83,7 @@ export async function render(ctx) {
       .map(([key, value]) => `${key.slice(6)} ${value}`),
   ].filter(Boolean);
 
-  ctx.after.push((root) => {
-    const form = root.querySelector("form.search-form");
-    const go = () => {
-      const params = new URLSearchParams();
-      for (const [key, value] of new FormData(form)) if (value) params.set(key, String(value));
-      const next = `#/search${params.size > 0 ? `?${params}` : ""}`;
-      if (location.hash === next) window.dispatchEvent(new HashChangeEvent("hashchange"));
-      else location.hash = next;
-    };
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      go();
-    });
-    for (const select of form.querySelectorAll("select")) select.addEventListener("change", go);
-  });
+  ctx.after.push((root) => wireFilterForm(root.querySelector("form.search-form"), "search"));
 
   const groups = new Map();
   for (const h of result.hits) {

@@ -13,10 +13,11 @@ import {
   pageHeader,
   pretty,
   proposalHref,
+  stackedBar,
   tableWrap,
   when,
 } from "./lib.js";
-import { detailActions, wireBatch, wireDetailActions, wireRecent } from "./proposal-actions.js";
+import { detailActions, recentButton, wireBatch, wireDetailActions, wireRecent } from "./proposal-actions.js";
 import { registerShortcuts } from "./shortcuts.js";
 
 function listHref(status, source, age = "") {
@@ -88,10 +89,8 @@ function deciderBadge(p) {
 }
 
 function recentActions(p) {
-  if (p.status === "accepted" && p.revertable)
-    return html`<button type="button" class="btn-secondary" data-recent-act="revert" data-id="${p.id}">Revert</button>`;
-  if (p.status === "rejected")
-    return html`<button type="button" class="btn-secondary" data-recent-act="reopen" data-id="${p.id}">Reopen</button>`;
+  if (p.status === "accepted" && p.revertable) return recentButton("revert", p.id);
+  if (p.status === "rejected") return recentButton("reopen", p.id);
   return "";
 }
 
@@ -120,21 +119,16 @@ const AGE_CLASS = { underDay: "age-1", underWeek: "age-2", older: "age-3", unkno
 
 /** One source's queue by age as an inline bar: a wider, darker part is older (the ramp is ordinal, not categorical). */
 function ageBar(row) {
-  const total = Object.keys(AGE_BANDS).reduce((sum, key) => sum + (row[key] ?? 0), 0);
   const summary = Object.entries(AGE_BANDS)
     .filter(([key]) => row[key])
     .map(([key, label]) => `${row[key]} ${label.toLowerCase()}`)
     .join(", ");
-  let x = 0;
-  const parts = Object.keys(AGE_BANDS).map((key) => {
-    const width = total ? ((row[key] ?? 0) / total) * 100 : 0;
-    const part = width
-      ? html`<rect class="${AGE_CLASS[key]}" x="${Math.round(x * 10) / 10}" width="${Math.round(width * 10) / 10}" height="10"/>`
-      : "";
-    x += width;
-    return part;
-  });
-  return html`<svg class="age-bar" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="${row.source}: ${summary || "nothing waiting"}">${parts}</svg>`;
+  const parts = Object.entries(AGE_BANDS).map(([key, label]) => ({
+    n: row[key] ?? 0,
+    cls: AGE_CLASS[key],
+    title: `${label}: ${row[key] ?? 0}`,
+  }));
+  return stackedBar(parts, { label: `${row.source}: ${summary || "nothing waiting"}` });
 }
 
 function backlogTable(rows) {
@@ -143,7 +137,7 @@ function backlogTable(rows) {
   );
 }
 
-function backlog(_ctx, data) {
+function backlog(data) {
   const totals = Object.fromEntries(
     Object.keys(AGE_BANDS).map((key) => [key, data.backlog.reduce((sum, row) => sum + (row[key] ?? 0), 0)]),
   );
@@ -172,12 +166,10 @@ async function reviewPage(ctx, { detailFor = null } = {}) {
     wireBatch(root, {
       reload: async () => {
         const fresh = await api("/api/proposals", { status: "pending", source, age, limit: PENDING_LIMIT });
-        data.backlog = fresh.backlog;
         const total = root.querySelector("[data-backlog-total]");
         if (total) total.textContent = fresh.fullCount;
         const table = root.querySelector("[data-backlog-table]");
-        if (table) mount(table, backlogTable(data.backlog));
-        root.dispatchEvent(new Event("change"));
+        if (table) mount(table, backlogTable(fresh.backlog));
         return pendingView(fresh, source, query, current);
       },
     }),
@@ -221,7 +213,7 @@ async function reviewPage(ctx, { detailFor = null } = {}) {
   const pane = detail
     ? detail.markup
     : html`<div class="state state-empty"><p class="state-title">Select a proposal</p><p>Choose one from the list, or press <kbd>j</kbd> to open the first. Press <kbd>?</kbd> for every shortcut.</p></div>`;
-  return html`${head}${backlog(ctx, data)}${age ? html`<p>Waiting age: ${AGE_BANDS[age] ?? age} · <a href="${listHref("pending", source)}">Clear age filter</a></p>` : ""}
+  return html`${head}${backlog(data)}${age ? html`<p>Waiting age: ${AGE_BANDS[age] ?? age} · <a href="${listHref("pending", source)}">Clear age filter</a></p>` : ""}
     <div class="review" ${detail ? html`data-detail` : ""}>
       <div class="review-list" data-proposal-list><div data-list>${pendingView(data, source, query, current)}</div><div class="batch-bar" data-batch-bar role="region" aria-label="Selection" aria-live="polite" hidden></div><p class="muted small review-count" data-reviewed>${reviewed ? `${reviewed} reviewed this session.` : ""}</p></div>
       <div class="review-pane">${pane}</div>
@@ -318,7 +310,7 @@ export async function renderDetail(ctx) {
       const nextId = pending ? (order[at + 1] ?? order.find((id) => id !== p.id) ?? null) : null;
       const diff = data.diff ? diffSection(data.diff) : null;
       if (diff?.wire) ctx.after.push((root) => diff.wire(root));
-      // A proposal whose content equals the asset has nothing to accept (B-15).
+      // A proposal whose content equals the asset has nothing to accept.
       const noop = Boolean(pending && data.diff && !data.diff.isNew && data.diff.before === data.diff.after);
       if (pending) {
         ctx.after.push((root) =>
