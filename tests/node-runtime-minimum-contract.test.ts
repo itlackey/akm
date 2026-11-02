@@ -14,7 +14,6 @@ interface WorkflowStep {
 }
 
 interface WorkflowJob {
-  container?: { image?: string } | string;
   steps?: WorkflowStep[];
 }
 
@@ -50,12 +49,6 @@ describe("Node 22 runtime minimum contract", () => {
 
           const label = `${filename}#${jobId}`;
           coveredInstallJobs.push(label);
-          // A job inside a digest-pinned image runs that image's Node; there is no second Node to select.
-          const image = typeof job.container === "string" ? job.container : job.container?.image;
-          if (image) {
-            expect(image, `${label} must pin its container image by digest`).toMatch(/@sha256:[0-9a-f]{64}$/);
-            continue;
-          }
           const nodeSetup = [...(job.steps ?? [])]
             .slice(0, index)
             .reverse()
@@ -85,7 +78,6 @@ describe("Node 22 runtime minimum contract", () => {
       "gated-ci.yml#native-scheduler",
       "gated-ci.yml#semantic-search",
       "release.yml#release",
-      "ui-visual.yml#visual",
     ]);
   });
 });
