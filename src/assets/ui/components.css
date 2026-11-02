@@ -214,6 +214,14 @@
     margin-inline-end: var(--space-1);
   }
 
+  .marker-key {
+    display: inline-block;
+    inline-size: 1.25rem;
+    margin-inline-end: var(--space-1);
+    border-block-start: 2px solid var(--marker);
+    vertical-align: middle;
+  }
+
   .dot-ok {
     background: var(--ok);
   }

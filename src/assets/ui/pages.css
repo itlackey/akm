@@ -338,6 +338,18 @@
     margin-block-start: var(--space-3);
   }
 
+  .trend-summary {
+    margin: var(--space-3) 0;
+    font-size: var(--text-l);
+  }
+
+  .trend-figure {
+    font-size: var(--text-stat);
+    font-weight: 700;
+    letter-spacing: var(--tracking-tight);
+    line-height: var(--leading-tight);
+  }
+
   /* ---- selected states that do not rely on colour, and forced colors ---- */
   /* The underline marks a pressed .seg button, so it needs no tick. */
   .chip[aria-current]::before {

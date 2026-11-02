@@ -38,6 +38,7 @@
     --s4: light-dark(#be185d, #f472b6);
     --s5: light-dark(#7c3aed, #60a5fa);
     --s6: light-dark(#6b7280, #9a9aa6);
+    --marker: light-dark(#a16207, #fbbf24);
     --target-min: 24px;
     --topbar-h: 4rem; /* the sticky bar; offsets below it derive from this */
     --control-height: 2.75rem;
