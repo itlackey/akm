@@ -79,7 +79,8 @@ export function buildSessionSummaryPrompt(data: SessionData): string {
   return [
     "You are summarizing an agent coding session so it can be found later via semantic search.",
     "Write a DENSE 2–4 sentence summary of what was worked on, the key decisions made, and the outcomes.",
-    "Then list the concrete entities touched: files, GitHub issues/PRs, commands, concepts, and people.",
+    "Then fill key_topics with the concrete entities, by exact name: every file path and named resource the session changed or inspected (a node, an endpoint, a table or model, a document, a deployment), plus issues/PRs, commands, concepts, and people.",
+    'Example key_topics: ["src/auth/session.ts", "db-replica-2", "GET /v2/users", "token refresh"].',
     "Optimise the summary for recall — include the specific nouns an agent would search for.",
     "",
     `Harness: ${ref.harness}`,
