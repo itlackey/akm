@@ -6,8 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261104] - 2026-11-02
+
 ### Changed
 
+- The UI's disclosures are one design: section-level ones are bordered panels with a
+  chevron, small ones inside a row are compact buttons.
+- On narrow screens the UI's top bar sits at the bottom of the screen, and the menu opens
+  upward from it.
+- The UI server no longer sends ETag or Server-Timing headers, and several `/api/*`
+  responses drop fields the UI never read (see `docs/reference/ui-api.md`).
 - The UI's `/api/bundles/settings` no longer sets `defaultBundle` or `defaultWriteTarget`;
   the Config page does, through `/api/config/set`.
 - `index_completed` events no longer carry `entriesByType`, and `akm metrics` no longer
@@ -15,6 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The Improve page's "Waiting for review" chart no longer crams its axis labels together,
+  and the Bundles page's switch labels sit next to their switches.
 - Improve impact dates a reverted proposal by its accept, not its revert, and a revert
   keeps who accepted. The Overview improve line counts reverted proposals as accepted.
 - The UI's config unset refuses a key inside an entry akm ignores, and does nothing without
