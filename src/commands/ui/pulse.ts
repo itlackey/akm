@@ -120,10 +120,6 @@ export function overviewPulse() {
   };
 
   return {
-    window: {
-      current: { since: weekAgo, until: iso(now) },
-      baseline: { since: baselineStart, until: weekAgo, weeks: 8 },
-    },
     tiles: { foundNothing, negativeFeedback, runs },
     improveLine,
     attention,

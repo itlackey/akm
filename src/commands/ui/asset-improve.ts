@@ -39,7 +39,6 @@ export function assetImprove(query: URLSearchParams) {
     };
   });
   return {
-    ref,
     proposals: proposals
       .map((p) => ({
         id: p.id,
@@ -48,7 +47,6 @@ export function assetImprove(query: URLSearchParams) {
         outcome: classifyOutcome(p),
         createdAt: p.createdAt,
         decidedAt: p.status === "pending" ? null : decidedAt(p),
-        reason: p.review?.reason ?? null,
       }))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     usageByWeek,

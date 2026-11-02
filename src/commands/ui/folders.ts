@@ -21,8 +21,6 @@ export interface FolderListing {
   path: string;
   /** Its parent, or null at the filesystem root. */
   parent: string | null;
-  /** The user's home folder, where the picker starts. */
-  home: string;
   folders: Array<{ name: string; path: string }>;
   /** True when the folder holds more than {@link MAX_FOLDERS} sub-folders and the list was cut. */
   truncated: boolean;
@@ -70,7 +68,6 @@ export function listFolders(raw: string, showHidden = false): FolderListing {
   return {
     path: target,
     parent: parent === target ? null : parent,
-    home,
     folders: folders.slice(0, MAX_FOLDERS),
     truncated: folders.length > MAX_FOLDERS,
   };

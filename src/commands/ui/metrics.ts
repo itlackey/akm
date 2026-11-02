@@ -23,18 +23,12 @@ export function retrievalSeries(rows: MetricsUsageRow[], window: { since: string
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, day]) => ({
       day: date,
-      date,
       searches: day.searches,
       zeroResults: day.zeroResults,
       medianMs: day.durations.length ? computeWallTimeStats(day.durations).medianMs : null,
-      latencySamples: day.durations.length,
     }));
-  const filled = zeroFill(
-    present,
-    (day) => ({ day, date: day, searches: 0, zeroResults: 0, medianMs: null, latencySamples: 0 }),
-    window,
-  );
-  return { daily: filled.map(({ day: _day, ...row }) => row) };
+  const filled = zeroFill(present, (day) => ({ day, searches: 0, zeroResults: 0, medianMs: null }), window);
+  return { daily: filled.map(({ day, ...row }) => ({ date: day, ...row })) };
 }
 
 export const PROPOSAL_AGE_BANDS = ["underDay", "underWeek", "older", "unknown"] as const;

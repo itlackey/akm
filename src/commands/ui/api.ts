@@ -27,9 +27,7 @@ import { resolveStashDir } from "../../core/common";
 import { type AkmConfig, getConfigValueSource, loadConfig } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import { NotFoundError, UsageError } from "../../core/errors";
-import { getConfigPath, getDataDir, getDbPath } from "../../core/paths";
-import { getStateDbPath } from "../../core/state-db";
-import { DURATION_UNITS, parseDuration } from "../../core/time";
+import { getConfigPath, getDbPath } from "../../core/paths";
 import { resolveWorkingStashTarget, resolveWriteTarget } from "../../core/write-source";
 import { findSourceForPath, implicitStashDir, resolveSourceEntries } from "../../indexer/search/search-source";
 import { listRecentImproveRuns } from "../../storage/repositories/improve-runs-repository";
@@ -67,14 +65,8 @@ import { overviewPulse } from "./pulse";
 import { section, tryStashDir, withReadonlyStateDb } from "./readers";
 import { isSecretEnvName, redactForUi } from "./redact";
 
-export interface UiServerInfo {
-  startedAt: string;
-  host: string;
-  port: number;
-}
-
 type Query = URLSearchParams;
-type Handler = (query: Query, info: UiServerInfo) => unknown | Promise<unknown>;
+type Handler = (query: Query) => unknown | Promise<unknown>;
 
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
@@ -97,19 +89,11 @@ function flag(query: Query, name: string): boolean {
 
 // ── /api/meta ────────────────────────────────────────────────────────────────
 
-function meta(_query: Query, info: UiServerInfo) {
+function meta() {
   return {
     version: pkgVersion,
     hostname: os.hostname(),
     runtime: process.versions.bun ? "bun" : "node",
-    stashDir: tryStashDir(),
-    dataDir: getDataDir(),
-    configPath: getConfigPath(),
-    stateDbPath: getStateDbPath(),
-    indexDbPath: getDbPath(),
-    startedAt: info.startedAt,
-    host: info.host,
-    port: info.port,
   };
 }
 
@@ -171,15 +155,11 @@ function failingTasks(rows: TaskHistoryRow[]) {
 
 async function overview(query: Query) {
   const errors: Record<string, string> = {};
-  const since = query.get("since") || "24h";
-  // The comparison window is the report window, like `akm health --report`; an absolute `since` has no duration to compare.
-  const sinceIsDuration = parseDuration(since, DURATION_UNITS) !== null;
-
   const health = await section(errors, "health", () =>
     akmHealth({
-      since,
+      since: "24h",
       groupBy: "run",
-      windowCompare: sinceIsDuration ? since : undefined,
+      windowCompare: "24h",
       probe: flag(query, "probe"),
       readOnly: true,
     }),
@@ -297,7 +277,6 @@ async function bundles() {
       embeddingCount,
       embeddingCoverage: embeddingCount !== null && entryCount > 0 ? Math.min(1, embeddingCount / entryCount) : null,
       semanticSearch: info.semanticSearch,
-      ...(info.indexStats.links ? { links: info.indexStats.links } : {}),
       ...(info.indexStats.unavailable ? { unavailable: info.indexStats.unavailable } : {}),
       ...(info.indexStats.unreadable ? { unreadable: info.indexStats.unreadable } : {}),
     },
@@ -475,18 +454,15 @@ function taskHistory(query: Query) {
           /* Unknown historical detail stays unknown. */
         }
         return {
-          taskId: row.task_id,
           status: row.status,
           startedAt: row.started_at,
-          completedAt: row.completed_at,
-          failedAt: row.failed_at,
           durationMs: metadata?.durationMs ?? null,
           detail: metadata?.detail ?? null,
         };
       });
-      return { available: true, taskId, window, totalCount: rows.length, count: runs.length, runs };
+      return { available: true, totalCount: rows.length, count: runs.length, runs };
     },
-    { available: false, taskId, window, totalCount: 0, count: 0, runs: [] },
+    { available: false, totalCount: 0, count: 0, runs: [] },
   );
 }
 
@@ -753,8 +729,7 @@ const ROUTES: Record<string, Handler> = {
   "/api/meta": meta,
   "/api/overview": overview,
   // Health alone, so the Overview can run the network probes when asked without reloading its metrics.
-  "/api/health": (query) =>
-    akmHealth({ since: query.get("since") || "24h", groupBy: "run", probe: flag(query, "probe"), readOnly: true }),
+  "/api/health": (query) => akmHealth({ since: "24h", groupBy: "run", probe: flag(query, "probe"), readOnly: true }),
   "/api/tasks/history": taskHistory,
   "/api/bundles": bundles,
   "/api/config": config,
@@ -772,9 +747,9 @@ const PROPOSAL_ROUTE = /^\/api\/proposals\/([^/]+)$/;
 export const NO_SUCH_ROUTE = Symbol("no-such-route");
 
 /** Dispatch one `/api/...` request; handler errors propagate, an unknown route is {@link NO_SUCH_ROUTE}. */
-export async function handleApiRequest(pathname: string, query: Query, info: UiServerInfo): Promise<unknown> {
+export async function handleApiRequest(pathname: string, query: Query): Promise<unknown> {
   const route = ROUTES[pathname];
-  if (route) return route(query, info);
+  if (route) return route(query);
   const proposalMatch = PROPOSAL_ROUTE.exec(pathname);
   if (proposalMatch) return proposalDetail(decodeURIComponent(proposalMatch[1] as string));
   return NO_SUCH_ROUTE;

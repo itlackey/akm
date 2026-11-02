@@ -260,7 +260,7 @@ describe("server and guards", () => {
 
     const js = await fetch(`http://${s.host}:${s.port}/app.js`);
     expect(js.headers.get("content-type")).toContain("javascript");
-    const css = await fetch(`http://${s.host}:${s.port}/layers.css`);
+    const css = await fetch(`http://${s.host}:${s.port}/tokens.css`);
     expect(css.headers.get("content-type")).toContain("text/css");
     expect((await fetch(`http://${s.host}:${s.port}/nope.js`)).status).toBe(404);
     expect((await fetch(`http://${s.host}:${s.port}/..%2f..%2fpackage.json`)).status).toBe(404);
@@ -302,22 +302,6 @@ describe("server and guards", () => {
     expect((await requestWithHost(s, "evil.example.com", "/")).status).toBe(403);
   });
 
-  test("static files carry a strong ETag with no-cache, and a matching If-None-Match is a 304", async () => {
-    await seed();
-    const s = await start();
-    const first = await fetch(`http://${s.host}:${s.port}/app.js`);
-    expect(first.status).toBe(200);
-    const etag = first.headers.get("etag") ?? "";
-    expect(etag).toMatch(/^"[0-9a-f]{40}"$/);
-    expect(first.headers.get("cache-control")).toBe("no-cache");
-    const again = await fetch(`http://${s.host}:${s.port}/app.js`, { headers: { "If-None-Match": etag } });
-    expect(again.status).toBe(304);
-    expect(await again.text()).toBe("");
-    // The API is never cached.
-    const meta = await api(s, "/api/meta");
-    expect(meta.headers.get("cache-control")).toBe("no-store");
-  });
-
   test("an unknown API route is a 404 JSON error and close() frees the port", async () => {
     await seed();
     const s = await start();
@@ -344,7 +328,6 @@ describe("endpoints", () => {
       const listing = await data(s, `/api/fs/folders?path=${encodeURIComponent(root)}`);
       expect(listing.path).toBe(root);
       expect(listing.parent).toBe(path.dirname(root));
-      expect(listing.home).toBe(os.homedir());
       expect(listing.folders.map((f: { name: string }) => f.name)).toEqual(["Alpha", "beta", "link-to-beta"]);
       expect(listing.folders[0].path).toBe(path.join(root, "Alpha"));
       expect(listing.truncated).toBe(false);
@@ -373,11 +356,9 @@ describe("endpoints", () => {
     await seed();
     const s = await start();
     const meta = await data(s, "/api/meta");
-    expect(meta).toMatchObject({ host: "127.0.0.1", port: s.port, stashDir: storage.stashDir });
     expect(typeof meta.version).toBe("string");
     expect(meta.hostname).toBe(os.hostname());
-    expect(meta.stateDbPath).toBe(getStateDbPath());
-    expect(Date.parse(meta.startedAt)).not.toBeNaN();
+    expect(["bun", "node"]).toContain(meta.runtime);
   });
 
   test("GET /api/overview: health, metrics, last improve runs and canonical user usage", async () => {
@@ -412,7 +393,6 @@ describe("endpoints", () => {
       searches: 1,
       zeroResults: 0,
       medianMs: null,
-      latencySamples: 0,
     });
     expect(overview.taskFailures).toEqual([]);
     expect(overview.metrics.rows).toBeUndefined();
@@ -448,7 +428,6 @@ describe("endpoints", () => {
         searches: 4,
         zeroResults: 2,
         medianMs: 120,
-        latencySamples: 2,
         partial: true,
       },
     ]);
@@ -469,7 +448,6 @@ describe("endpoints", () => {
     expect(pulse.tiles.foundNothing.usual.state).toBe("low-data");
     expect(pulse.improveLine).toMatchObject({ weeks: 4, proposed: 2, accepted: 1, waiting: 1 });
     expect(pulse.attention.pending.count).toBe(1);
-    expect(Object.keys(pulse.window)).toEqual(["current", "baseline"]);
 
     const impact = await data(s, "/api/improve/impact");
     expect(impact.available).toBe(true);
@@ -524,7 +502,7 @@ describe("endpoints", () => {
     expect((await write(s, `/api/proposals/${id}/revert`, {})).status).toBe(200);
 
     const impact = await data(s, "/api/improve/impact");
-    expect(impact.changedAssets[0]).toMatchObject({ proposalId: id, outcome: "reverted", decidedAt: acceptedAt });
+    expect(impact.changedAssets[0]).toMatchObject({ outcome: "reverted", decidedAt: acceptedAt });
     const reverted = Object.fromEntries(impact.outcomes[0].weeks.map((w: Json) => [w.week, w.reverted]));
     expect(reverted[weekOf(acceptedAt)]).toBe(1);
     expect(reverted[impact.weeks.at(-1)]).toBe(0);
@@ -652,9 +630,7 @@ describe("endpoints", () => {
       available: true,
       totalCount: 1,
       count: 1,
-      runs: [
-        { taskId: "rare-failure", status: "failed", durationMs: 50, detail: { reason: "timeout", error: "Timed out" } },
-      ],
+      runs: [{ status: "failed", durationMs: 50, detail: { reason: "timeout", error: "Timed out" } }],
     });
     expect(detail.runs[0].logPath).toBeUndefined();
     expect((await data(s, "/api/tasks/history?taskId=unknown-detail")).runs[0]).toMatchObject({
@@ -1048,7 +1024,7 @@ describe("secrets and read-only guarantees", () => {
     for (const endpoint of ENDPOINTS) await api(s, endpoint);
     await api(s, "/api/search?q=deploy&type=knowledge");
     await api(s, "/api/asset?ref=knowledge/notes");
-    await api(s, "/api/overview?probe=0&since=7d");
+    await api(s, "/api/overview?probe=0");
 
     expect(countRows("usage_events")).toBe(before.usage);
     expect(countRows("events")).toBe(before.events);

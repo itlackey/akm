@@ -12,7 +12,7 @@ import { defineJsonCommand } from "../../cli/shared";
 import { UsageError } from "../../core/errors";
 import { info, warn } from "../../core/warn";
 import { openBrowser } from "./open-browser";
-import { isLoopbackBind, startUiServer } from "./server";
+import { isLoopbackHost, startUiServer } from "./server";
 
 function parsePort(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === "") return 0;
@@ -46,7 +46,7 @@ export const uiCommand = defineJsonCommand({
   async run({ args }) {
     const host = (args.host as string | undefined)?.trim() || "127.0.0.1";
     const server = await startUiServer({ host, port: parsePort(args.port as string | undefined) });
-    if (!isLoopbackBind(host)) {
+    if (!isLoopbackHost(host)) {
       warn(
         `[ui] Listening on ${host}, not just this machine: anyone who can reach it and has the token can read your data and use the UI's write actions. Keep the URL private.`,
       );

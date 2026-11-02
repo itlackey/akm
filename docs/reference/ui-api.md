@@ -45,7 +45,7 @@ The limit parameters (`limit`) are positive integers capped at 200.
 
 ## `GET /api/meta`
 
-The running server and where it reads from.
+The running akm version, the machine's host name and the runtime.
 
 ```json
 {
@@ -53,21 +53,12 @@ The running server and where it reads from.
   "data": {
     "version": "0.10.261005",
     "hostname": "workstation",
-    "runtime": "bun",
-    "stashDir": "/home/me/akm",
-    "dataDir": "/home/me/.local/share/akm",
-    "configPath": "/home/me/.config/akm/config.json",
-    "stateDbPath": "/home/me/.local/share/akm/state.db",
-    "indexDbPath": "/home/me/.local/share/akm/index.db",
-    "startedAt": "2026-10-16T15:41:15.716Z",
-    "host": "127.0.0.1",
-    "port": 39829
+    "runtime": "bun"
   }
 }
 ```
 
-`runtime` is `bun` or `node`. `stashDir` is `null` when no bundle is configured yet.
-`hostname` identifies the machine running akm; `host` remains the HTTP listener address.
+`runtime` is `bun` or `node`. `hostname` identifies the machine running akm.
 
 ## `GET /api/overview`
 
@@ -75,7 +66,6 @@ Everything on the overview page in one call. Query parameters:
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `since` | `24h` | Health window start (ISO, date, epoch ms, or `24h` / `7d`). A duration also turns on the prior-window comparison, as `akm health --report --since` does. |
 | `metricsSince` | `30d` | Metrics window start, as `akm metrics --since`. |
 | `probe` | off | `1` probes whether each connection's endpoint answers and what each harness's `--version` prints, and checks for a newer akm release (network). Off by default so loading the page makes no outbound calls. |
 
@@ -123,8 +113,8 @@ Everything on the overview page in one call. Query parameters:
 
 - `health` is what `akm health --report --group-by run` returns (`--no-probe` unless `probe=1`), minus the write: the
   `state-db-round-trip` check reports itself skipped. See [CLI: health](cli.md#health) for the check list and
-  [`--format html`](cli.md#health) for how the report renders it. `windows` and `deltas` are absent when `since` is an
-  absolute date.
+  [`--format html`](cli.md#health) for how the report renders it. The window is the last 24 hours, compared with the 24
+  hours before it.
 - `metrics` is what `akm metrics` returns (without `rows`); see [CLI: metrics](cli.md#metrics).
 - `improveRuns` are the last 10 real (non-dry-run) improve runs, newest first. `preRunSync`, `sync` and `triage` are `null`
   when the run did not record them; `modelCalls` is empty for runs from before the usage report existed.
@@ -143,14 +133,14 @@ Everything on the overview page in one call. Query parameters:
 
 ## `GET /api/health`
 
-The `health` part of `/api/overview` on its own, with the same `since` and `probe` parameters. The Overview calls it
+The `health` part of `/api/overview` on its own, with the same `probe` parameter. The Overview calls it
 with `probe=1` when you press **Run all checks**.
 
 ## `GET /api/tasks/history`
 
 Requires `taskId`; optional `since` (default `30d`, same syntax as metrics) and `limit` (default 50, maximum 200).
-Returns `{ available, taskId, window: { since, until }, totalCount, count, runs }`, newest first. Each run has
-`taskId`, recorded `status`, `startedAt`, nullable `completedAt` / `failedAt`, nullable `durationMs`, and nullable
+Returns `{ available, totalCount, count, runs }`, newest first. Each run has
+recorded `status`, `startedAt`, nullable `durationMs`, and nullable
 decoded `detail` (`reason`, `error`, `exitCode`, `runId` when recorded). Invalid/missing historical detail stays
 unknown. No log paths are returned or files read; these are existing state.db records. `available: false` means
 state.db is absent or needs migration, not that this task has never failed.
@@ -212,7 +202,7 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   upstream; `branch` is `null` on a detached HEAD; `lastCommit` is `null` for a repository with no commits. `dirtyPaths`
   counts paths with uncommitted changes.
 - `index` mirrors `akm info`'s `indexStats` and `semanticSearch`. `embeddingCoverage` is embeddings over entries
-  (`null` for an empty or missing index). `links`, `unavailable` and `unreadable` appear only when `akm info` reports them.
+  (`null` for an empty or missing index). `unavailable` and `unreadable` appear only when `akm info` reports them.
 - Cards also include `enabled`, the raw `writableSetting`, `settingsSource` and existing source `components`
   (`name`, `root`, `adapter`, optional explicit `writable`, and `configured`). Disabled bundles remain visible.
   Component overrides take precedence over the bundle writable default. An implicit/detected component is shown
@@ -682,7 +672,7 @@ What improve proposed for one asset and how the asset has been used since. `?ref
 (`400` without it).
 
 - `proposals`: each proposal for the ref, newest first: `id`, `source`, `status`, `outcome` (`judge`, `you`, `unknown`,
-  `rejected`, `reverted` or `pending`), `createdAt`, `decidedAt`, `reason`.
+  `rejected`, `reverted` or `pending`), `createdAt`, `decidedAt`.
 - `usageByWeek`: the last 90 days by ISO week (Monday, UTC): `hits` (searches and shows that returned the asset),
   `positive` and `negative` feedback.
 - `feedback`: the ten most recent signals with their reasons.
@@ -694,7 +684,7 @@ folder); `?hidden=1` includes dot-folders. It lists folders only, never files, a
 points at a folder. A relative path or a file is `400`; a path that does not exist is `404`.
 
 ```json
-{ "ok": true, "data": { "path": "/home/me/work", "parent": "/home/me", "home": "/home/me",
+{ "ok": true, "data": { "path": "/home/me/work", "parent": "/home/me",
   "folders": [{ "name": "skills", "path": "/home/me/work/skills" }], "truncated": false } }
 ```
 
@@ -738,7 +728,7 @@ The last seven days against the eight weeks before them, the four-week improve l
 
 The per-day user search series (`?since=90d` by default): days inside the data's
 coverage are filled with zeros, and the first and last day are marked `partial`. Each day has `searches`, `zeroResults`,
-`medianMs` and `latencySamples`. The median uses only recorded nonnegative durations; no samples means `null`, not
+and `medianMs`. The median uses only recorded nonnegative durations; no samples means `null`, not
 zero. Missing result counts do not mean zero results. The queries behind `zeroResults` are listed by
 [`/api/search/misses`](#get-apisearchmisses).
 
@@ -748,7 +738,7 @@ outside its limits. A week with no searches has `null` for all three. `centre` i
 
 ## `GET /api/search/misses`
 
-User searches that found nothing, grouped by normalised query: `query`, `count`, `days` (distinct UTC days), `firstAt`,
+User searches that found nothing, grouped by normalised query: `query`, `count`, `days` (distinct UTC days),
 `lastAt` and `repeated` (`true` when it came up on two or more days). `?since=30d` by default. The response also carries
 `searches` (all user searches in the window) and `foundNothing`.
 

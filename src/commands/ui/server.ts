@@ -24,7 +24,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { AkmError } from "../../core/errors";
 import { getDirname } from "../../runtime";
-import { handleApiRequest, NO_SUCH_ROUTE, type UiServerInfo } from "./api";
+import { handleApiRequest, NO_SUCH_ROUTE } from "./api";
 import { EMBEDDED_UI } from "./embedded-ui";
 import { classifyProposalError, handleWriteRequest, matchWriteRoute } from "./proposal-actions";
 import { scrubUrlCredentials } from "./redact";
@@ -56,14 +56,7 @@ const UI_DIR = path.join(getDirname(import.meta.url), "../../assets/ui");
 const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".ico": "image/x-icon",
-  ".woff2": "font/woff2",
-  ".txt": "text/plain; charset=utf-8",
 };
 
 /**
@@ -90,7 +83,9 @@ export interface UiServerOptions {
   token?: string;
 }
 
-export interface UiServer extends UiServerInfo {
+export interface UiServer {
+  host: string;
+  port: number;
   token: string;
   /** `http://<host>:<port>/?token=<token>` */
   url: string;
@@ -102,17 +97,13 @@ function isWildcardHost(host: string): boolean {
   return host === "0.0.0.0" || host === "::" || host === "[::]";
 }
 
-function isLoopbackHost(host: string): boolean {
+export function isLoopbackHost(host: string): boolean {
   return host === "localhost" || host === "::1" || host === "[::1]" || /^127\./.test(host);
 }
 
 /** `host` as it appears in a URL or a `Host` header (IPv6 literals in brackets). */
 function urlHost(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
-}
-
-export function isLoopbackBind(host: string): boolean {
-  return isLoopbackHost(host);
 }
 
 function hostAllowed(header: string | undefined, host: string, port: number): boolean {
@@ -125,7 +116,10 @@ function hostAllowed(header: string | undefined, host: string, port: number): bo
   return match !== null && Number(match[2]) === port;
 }
 
-function tokenMatches(given: string | null | undefined, expected: string): boolean {
+/** Whether the request carries the session token. The header only: a token in a URL ends up in history and logs, and a link can carry it. */
+function authorized(req: http.IncomingMessage, expected: string): boolean {
+  const header = req.headers[TOKEN_HEADER];
+  const given = Array.isArray(header) ? header[0] : header;
   if (!given) return false;
   // Hash both so the comparison is constant-time whatever the lengths.
   return timingSafeEqual(createHash("sha256").update(given).digest(), createHash("sha256").update(expected).digest());
@@ -232,9 +226,8 @@ function readUiAsset(urlPath: string): { body: string | Buffer; type: string } |
 export async function startUiServer(options: UiServerOptions = {}): Promise<UiServer> {
   const host = options.host ?? "127.0.0.1";
   const token = options.token ?? randomBytes(24).toString("base64url");
-  const startedAt = new Date().toISOString();
   // Filled in once the socket is listening; requests cannot arrive before that.
-  let info: UiServerInfo = { startedAt, host, port: 0 };
+  let boundPort = 0;
 
   const server = http.createServer((req, res) => {
     void handle(req, res).catch((error: unknown) => {
@@ -247,7 +240,7 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
   });
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    if (!hostAllowed(req.headers.host, host, info.port)) {
+    if (!hostAllowed(req.headers.host, host, boundPort)) {
       sendError(req, res, 403, "HOST_NOT_ALLOWED", "The Host header does not match the address akm ui is bound to.");
       return;
     }
@@ -264,10 +257,7 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
     // Only a GET of a static file is open; the API, and anything that is not a GET, needs the token.
     const readMethod = req.method === "GET" || req.method === "HEAD";
     if (isApi || !readMethod) {
-      // The header only: a token in a URL ends up in history and logs, and a link can carry it.
-      const given = req.headers[TOKEN_HEADER];
-      const provided = Array.isArray(given) ? given[0] : given;
-      if (!tokenMatches(provided, token)) {
+      if (!authorized(req, token)) {
         sendError(req, res, 401, "UNAUTHORIZED", "Missing or invalid session token.", {
           "WWW-Authenticate": "X-Akm-Ui-Token",
         });
@@ -290,7 +280,7 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
 
     if (isApi) {
       try {
-        const data = await handleApiRequest(url.pathname, url.searchParams, info);
+        const data = await handleApiRequest(url.pathname, url.searchParams);
         if (data === NO_SUCH_ROUTE) {
           sendError(req, res, 404, "NOT_FOUND", `No such API route: ${url.pathname}`);
           return;
@@ -310,22 +300,9 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
       sendError(req, res, 404, "NOT_FOUND", `No such file: ${url.pathname}`);
       return;
     }
-    // A strong ETag with `no-cache`: the browser keeps the file and revalidates, so a 200 KB chart library is not
-    // downloaded again on every reload, yet an upgrade is seen at once.
-    const etag = `"${createHash("sha1").update(asset.body).digest("hex")}"`;
-    const headers = {
-      ...SECURITY_HEADERS,
-      "Cache-Control": "no-cache",
-      ETag: etag,
-      "Content-Security-Policy": STATIC_CSP,
-    };
-    if (req.headers["if-none-match"] === etag) {
-      res.writeHead(304, headers);
-      res.end();
-      return;
-    }
     res.writeHead(200, {
-      ...headers,
+      ...SECURITY_HEADERS,
+      "Content-Security-Policy": STATIC_CSP,
       "Content-Type": asset.type,
       "Content-Length": Buffer.byteLength(asset.body),
     });
@@ -338,9 +315,7 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
     res: http.ServerResponse,
     route: NonNullable<ReturnType<typeof matchWriteRoute>> | { workspace: WorkspaceAction },
   ): Promise<void> {
-    // The header only: a token in the URL ends up in history and logs, and a link can carry it.
-    const given = req.headers[TOKEN_HEADER];
-    if (!tokenMatches(Array.isArray(given) ? given[0] : given, token)) {
+    if (!authorized(req, token)) {
       sendError(req, res, 401, "UNAUTHORIZED", "Writes need the session token in the X-Akm-Ui-Token header.", {
         "WWW-Authenticate": "X-Akm-Ui-Token",
       });
@@ -392,10 +367,11 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
     });
   });
   const port = (server.address() as AddressInfo).port;
-  info = { startedAt, host, port };
+  boundPort = port;
 
   return {
-    ...info,
+    host,
+    port,
     token,
     url: `http://${urlHost(host)}:${port}/?token=${token}`,
     close: () =>

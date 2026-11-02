@@ -144,12 +144,10 @@ function changedAssets(proposals: Proposal[], usage: MetricsUsageRow[], now: num
         return {
           hits: mine.filter((row) => row.eventType === "search" || row.eventType === "show").length,
           negative: mine.filter((row) => row.signal === "negative").length,
-          positive: mine.filter((row) => row.signal === "positive").length,
         };
       };
       const afterDays = Math.min(COMPARE_DAYS, Math.floor((now - at) / DAY));
       return {
-        proposalId: p.id,
         ref: p.ref,
         source: p.source,
         outcome: classifyOutcome(p),

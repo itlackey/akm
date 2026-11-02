@@ -8,7 +8,7 @@ import { describe, expect, test } from "bun:test";
 import { type ChangeOrigin, classifyCommitOrigin } from "../src/commands/ui/git-read";
 import { browserOpener } from "../src/commands/ui/open-browser";
 import { isSecretEnvName, redactForUi, scrubUrlCredentials } from "../src/commands/ui/redact";
-import { isLoopbackBind } from "../src/commands/ui/server";
+import { isLoopbackHost } from "../src/commands/ui/server";
 import { redactUrlCredentials } from "../src/core/redaction";
 
 // biome-ignore lint/suspicious/noExplicitAny: redacted trees are asserted field by field below
@@ -89,7 +89,7 @@ describe("browserOpener", () => {
   });
 });
 
-describe("isLoopbackBind", () => {
+describe("isLoopbackHost", () => {
   test.each([
     ["127.0.0.1", true],
     ["localhost", true],
@@ -97,6 +97,6 @@ describe("isLoopbackBind", () => {
     ["0.0.0.0", false],
     ["192.168.1.5", false],
   ])("%s -> %s", (host, expected) => {
-    expect(isLoopbackBind(host)).toBe(expected);
+    expect(isLoopbackHost(host)).toBe(expected);
   });
 });
