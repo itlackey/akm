@@ -595,7 +595,16 @@ async function distill(
     // The writer may have answered NONE because a lesson already states the rule (the related list says to).
     if (kind === "lesson") {
       const update = await proposeLessonUpdate(run, feedbackLines(feedback), none.reason);
-      if (update) return update;
+      if (update && "outcome" in update) return update;
+      if (update) {
+        return skipDistill(
+          run,
+          outputRef,
+          kind,
+          update.skipReason,
+          `The writer found no new lesson in ${run.inputRef}${none.reason ? `: ${none.reason}` : "."} ${update.detail}`,
+        );
+      }
     }
     return skipDistill(
       run,
@@ -732,15 +741,17 @@ async function judgeAndQueue(
       onNotices: run.notices.add,
     });
     if (!verdict.pass) {
+      let updateEnding = "";
       if (
         out.kind === "lesson" &&
         !out.promotion &&
         (verdict.criteria?.nonRedundancy ?? 5) <= LESSON_REJECT_MAX_SCORE
       ) {
         const update = await proposeLessonUpdate(run, out.feedback ?? [], verdict.reason, related);
-        if (update) return update;
+        if (update && "outcome" in update) return update;
+        if (update) updateEnding = ` ${update.detail}`;
       }
-      return rejectDistilled(run, out.ref, content, verdict.score, verdict.reason, {
+      return rejectDistilled(run, out.ref, content, verdict.score, `${verdict.reason}${updateEnding}`, {
         ...(verdict.reviewNeeded ? { reviewNeeded: true } : {}),
         ...(verdict.criteria ? { criteria: verdict.criteria } : {}),
       });
@@ -822,16 +833,17 @@ async function judgeAndQueue(
  * person to review (never staged for the drain). `finding` is what the writer (its NONE reason) or the judge said
  * about the repeat: the related lessons it names are the candidates, or the only related lesson when it names none,
  * so a lesson that merely sits among several near the memory costs no call. Nothing is proposed, and `undefined`
- * returned, when no lesson qualifies, the writer finds the memory adds
- * nothing or contradicts the lesson, the body drops or rewords a line, the judge does not pass the extended lesson,
- * or the lesson changed meanwhile. Needs the quality gate: the judge is what holds the added lines to the memory.
+ * returned, when no lesson qualifies. An update that was attempted and ended without a proposal (the writer finds
+ * the memory adds nothing or contradicts the lesson, the answer cannot be read, the body drops or rewords a line,
+ * the judge does not pass the extended lesson, or the lesson changed meanwhile) returns its `skipReason` and what
+ * happened, for the caller's result. Needs the quality gate: the judge is what holds the added lines to the memory.
  */
 async function proposeLessonUpdate(
   run: DistillRun,
   feedback: string[],
   finding: string,
   related?: RelatedAsset[],
-): Promise<AkmDistillResult | undefined> {
+): Promise<AkmDistillResult | { skipReason: string; detail: string } | undefined> {
   const memory = run.asset.content ? parseFrontmatter(run.asset.content).content.trim() : "";
   const said = finding.toLowerCase();
   if (!run.runner || !qualityGateEnabled(run) || !memory) return undefined;
@@ -866,14 +878,26 @@ async function proposeLessonUpdate(
     onNotices: run.notices.add,
   });
   const update = call.ok ? parseLessonUpdate(call.raw, candidates) : null;
-  if (!update) return undefined;
+  if (!update) {
+    const said = call.ok ? parseEmbeddedJsonResponse<Record<string, unknown>>(call.raw) : null;
+    return said?.decision === "none"
+      ? { skipReason: "update_nothing_added", detail: "An update was attempted and the writer found nothing to add." }
+      : { skipReason: "update_unparseable", detail: "An update was attempted and its answer could not be used." };
+  }
   const target = update.candidate;
   const { dropped, added } = diffLessonBody(target.body, update.body);
   if (dropped.length > 0) {
-    warnVerbose(`[akm] distill update of ${target.ref} dropped or reworded ${dropped.length} line(s); not proposed`);
-    return undefined;
+    return {
+      skipReason: "update_line_dropped",
+      detail: `An update of ${target.ref} was attempted and dropped or reworded ${dropped.length} line(s); not proposed.`,
+    };
   }
-  if (added.length === 0) return undefined;
+  if (added.length === 0) {
+    return {
+      skipReason: "update_nothing_added",
+      detail: `An update of ${target.ref} was attempted and added no line.`,
+    };
+  }
 
   // An edit is judged as the lesson it makes: the existing lesson with the lines added, as one lesson (reusable,
   // grounded in the memory or the lesson), whose added lines must each say something the lesson did not (one call).
@@ -886,14 +910,21 @@ async function proposeLessonUpdate(
     onNotices: run.notices.add,
   });
   if (!verdict.pass) {
-    warnVerbose(`[akm] distill update of ${target.ref} not proposed: ${verdict.reason}`);
-    return undefined;
+    return {
+      skipReason: "update_rejected",
+      detail: `An update of ${target.ref} was attempted and the judge rejected it: ${verdict.reason}`,
+    };
   }
 
   // The proposal's before-hash is taken at mint: a lesson edited since it was read is not what the writer extended.
   let proposal: Proposal;
   try {
-    if (fs.readFileSync(target.path, "utf8") !== target.content) return undefined;
+    if (fs.readFileSync(target.path, "utf8") !== target.content) {
+      return {
+        skipReason: "update_not_written",
+        detail: `An update of ${target.ref} was not proposed: the lesson changed meanwhile.`,
+      };
+    }
     const existing = parseFrontmatter(target.content);
     const xrefs = Array.isArray(existing.data.xrefs) ? existing.data.xrefs.map(String) : [];
     const frontmatter = { ...existing.data, xrefs: [...new Set([...xrefs, run.inputRef])] };
@@ -919,10 +950,10 @@ async function proposeLessonUpdate(
       },
     );
   } catch (error) {
-    warnVerbose(
-      `[akm] distill update of ${target.ref} not proposed: ${error instanceof Error ? error.message : error}`,
-    );
-    return undefined;
+    return {
+      skipReason: "update_not_written",
+      detail: `An update of ${target.ref} was not proposed: ${error instanceof Error ? error.message : error}`,
+    };
   }
   emitDistill(run, {
     outcome: "queued",

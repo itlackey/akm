@@ -2866,7 +2866,7 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
    */
   async function run(
     fixture: Fixture,
-    replies: { writer: string; update?: Record<string, unknown>; judge?: Array<Record<string, number>> },
+    replies: { writer: string; update?: Record<string, unknown> | string; judge?: Array<Record<string, number>> },
   ) {
     const prompts: string[] = [];
     let judged = 0;
@@ -2884,7 +2884,10 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
           const scores = replies.judge?.[judged++] ?? { reusable: 5, nonRedundancy: 5, grounding: 5 };
           return JSON.stringify({ scores, reason: "lessons/deploy-retries already states this rule." });
         }
-        if (joined.includes("Extend the existing one")) return JSON.stringify(replies.update ?? { decision: "none" });
+        if (joined.includes("Extend the existing one"))
+          return typeof replies.update === "string"
+            ? replies.update
+            : JSON.stringify(replies.update ?? { decision: "none" });
         return replies.writer;
       },
     });
@@ -3118,6 +3121,63 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
 
     expect(result).toMatchObject({ outcome: "queued", proposalRef: "lessons/deploy-retries", updatesExisting: true });
     expect(listProposals(fixture.stash)).toHaveLength(1);
+  });
+
+  // An update the writer's NONE led to, and that ended without a proposal, names how it ended (#1399, #1401).
+  describe("an attempted update that ends without a proposal says why", () => {
+    const endsAs = async (
+      update: Record<string, unknown> | string | undefined,
+      judge?: Array<Record<string, number>>,
+    ) => {
+      const fixture = setup();
+      const { result } = await run(fixture, { writer: noneNaming("lessons/deploy-retries"), update, judge });
+      expect(result.outcome).toBe("skipped");
+      expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+      const { events } = readEvents({ type: "distill_invoked" });
+      expect(events.at(-1)?.metadata).toMatchObject({ outcome: "skipped", skipReason: result.skipReason });
+      return result;
+    };
+
+    test("the judge rejects the update: update_rejected, with the judge's reason", async () => {
+      const result = await endsAs(updateWith(`${EXISTING_BODY}\n${NEW_FACT}`), [
+        { reusable: 5, nonRedundancy: 2, grounding: 5 },
+      ]);
+      expect(result.skipReason).toBe("update_rejected");
+      expect(result.message).toContain(
+        "the judge rejected it: nonRedundancy 2/5: lessons/deploy-retries already states this rule.",
+      );
+    });
+
+    test("an answer that cannot be read: update_unparseable", async () => {
+      expect((await endsAs("not json")).skipReason).toBe("update_unparseable");
+      expect((await endsAs({ ...updateWith(`${EXISTING_BODY}\n${NEW_FACT}`), new_facts: [] })).skipReason).toBe(
+        "update_unparseable",
+      );
+    });
+
+    test("a dropped or reworded line: update_line_dropped", async () => {
+      const result = await endsAs(updateWith(`Retry a failed deploy at most three times.\n${NEW_FACT}`));
+      expect(result.skipReason).toBe("update_line_dropped");
+      expect(result.message).toContain("dropped or reworded");
+    });
+
+    test("nothing added: update_nothing_added", async () => {
+      expect((await endsAs(updateWith(`${EXISTING_BODY.toUpperCase()}\n`))).skipReason).toBe("update_nothing_added");
+      expect((await endsAs({ reason: "nothing new", decision: "none", ref: "", body: "" })).skipReason).toBe(
+        "update_nothing_added",
+      );
+    });
+
+    test("a rejection after a duplicate lesson also carries how the update ended", async () => {
+      const fixture = setup();
+      const { result } = await run(fixture, {
+        writer: VALID_LESSON,
+        update: updateWith(`Retry a failed deploy at most three times.\n${NEW_FACT}`),
+        judge: [REPEAT],
+      });
+      expect(result.outcome).toBe("quality_rejected");
+      expect(result.reason).toContain("dropped or reworded");
+    });
   });
 
   test("a NONE with no related lesson stays a skip and makes no update call", async () => {
