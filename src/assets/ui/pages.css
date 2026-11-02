@@ -38,7 +38,7 @@
 
   .strip-item strong {
     font-size: var(--text-xl);
-    font-weight: 600;
+    font-weight: var(--weight-strong);
     font-variant-numeric: tabular-nums;
   }
 
@@ -146,7 +146,7 @@
     margin-block-start: var(--space-5);
     & > summary {
       margin-block-end: var(--space-2);
-      font-weight: 600;
+      font-weight: var(--weight-strong);
       text-transform: capitalize;
     }
   }

@@ -88,7 +88,7 @@
     }
     &[aria-current="page"] {
       color: var(--text);
-      font-weight: 600;
+      font-weight: var(--weight-strong);
       box-shadow: var(--edge-underline);
     }
   }
@@ -404,7 +404,7 @@
   .stack > details.card:not(.add-card) {
     padding: var(--space-4) var(--space-5);
     & > summary {
-      font-weight: 600;
+      font-weight: var(--weight-strong);
     }
     & > form {
       margin-block-start: var(--space-4);
@@ -435,7 +435,7 @@
     padding: var(--space-2) var(--space-4);
     background: var(--accent);
     color: var(--on-accent);
-    font-weight: 600;
+    font-weight: var(--weight-strong);
     text-decoration: none;
     transform: translateY(-300%);
     &:focus {

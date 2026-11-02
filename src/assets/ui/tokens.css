@@ -65,6 +65,7 @@
     --tracking-tight: -0.045em;
     --tracking-snug: -0.02em;
     --tracking-caps: 0.06em;
+    --weight-strong: 600;
     --shadow-float: 0 4px 16px rgb(0 0 0 / 0.2);
     --edge-accent: inset 3px 0 0 var(--accent);
     --edge-underline: inset 0 -3px 0 var(--accent);

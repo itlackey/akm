@@ -88,7 +88,7 @@
 
   .state-title {
     color: var(--text);
-    font-weight: 600;
+    font-weight: var(--weight-strong);
   }
 
   .state-error {
@@ -152,7 +152,7 @@
     padding: 1px var(--space-2);
     border-radius: var(--radius-pill);
     font-size: var(--text-xs);
-    font-weight: 600;
+    font-weight: var(--weight-strong);
     line-height: var(--leading-snug);
     border: 1px solid transparent;
     white-space: nowrap;
@@ -247,7 +247,7 @@
     gap: var(--space-2);
     padding: var(--space-3) var(--space-4);
     cursor: pointer;
-    font-weight: 600;
+    font-weight: var(--weight-strong);
   }
 
   .checks {
@@ -345,7 +345,7 @@
   table.fm th {
     inline-size: 1%;
     white-space: nowrap;
-    font-weight: 600;
+    font-weight: var(--weight-strong);
   }
 
   /* ---- series palette ---- */
@@ -479,7 +479,7 @@
 
   .dl.meta {
     color: var(--muted);
-    font-weight: 600;
+    font-weight: var(--weight-strong);
   }
 
   /* ---- search, asset ---- */
@@ -545,7 +545,7 @@
   .sbs-head {
     padding: var(--space-1) var(--space-4);
     font-size: var(--text-s);
-    font-weight: 600;
+    font-weight: var(--weight-strong);
     color: var(--muted);
   }
 
@@ -977,7 +977,7 @@
 
   .add-card > summary {
     padding: var(--space-4) var(--space-5);
-    font-weight: 600;
+    font-weight: var(--weight-strong);
   }
 
   .add-card[open] > summary {
@@ -1254,6 +1254,10 @@
     & .bar-name {
       overflow-wrap: anywhere;
       font-size: var(--text-s);
+
+      & .mono {
+        font-size: inherit;
+      }
     }
     & .bar-fill {
       display: block;
