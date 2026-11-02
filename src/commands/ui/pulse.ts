@@ -23,7 +23,7 @@ import { nearestRank } from "./stats";
 const DAY = 86_400_000;
 const iso = (ms: number): string => new Date(ms).toISOString();
 
-export async function overviewPulse() {
+export function overviewPulse() {
   const now = Date.now();
   const weekAgo = iso(now - 7 * DAY);
   const baselineStart = iso(now - 63 * DAY);

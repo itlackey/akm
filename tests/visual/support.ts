@@ -68,11 +68,10 @@ export async function visit(page: Page, hash: string, profile: Profile = "loaded
   await settle(page);
 }
 
-/** The gallery and the review overlay: files from this folder, served on the UI origin so its CSP holds. */
+/** The gallery: files from this folder, served on the UI origin so its CSP holds. */
 const GALLERY_FILES: Record<string, { file: string; type: string }> = {
   "/__gallery": { file: "gallery.html", type: "text/html" },
   "/__gallery.js": { file: "gallery.js", type: "text/javascript" },
-  "/__gallery-overlay.css": { file: "overlay.css", type: "text/css" },
 };
 
 const csps = new Map<string, string>();
@@ -100,19 +99,6 @@ async function serveGallery(page: Page, origin: string): Promise<void> {
   });
 }
 
-/** Draw the overlay stylesheet when the address has `overlay=1`; every page of the context gets the check. */
-async function allowOverlay(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    if (new URLSearchParams(location.search).get("overlay") !== "1") return;
-    addEventListener("DOMContentLoaded", () => {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = "/__gallery-overlay.css";
-      document.head.append(link);
-    });
-  });
-}
-
 /** The server's version and host name decide how the sidebar footer wraps, so the specs pin them. */
 async function pinMeta(page: Page): Promise<void> {
   await page.route(/\/api\/meta(\?|$)/, async (route) => {
@@ -131,13 +117,11 @@ async function pinMeta(page: Page): Promise<void> {
  */
 export async function open(page: Page, hash: string, profile: Profile = "loaded", fail?: RegExp): Promise<void> {
   const origin = `http://127.0.0.1:${PROFILES[profile]}`;
-  const overlay = process.env.VISUAL_OVERLAY === "1" ? "&overlay=1" : "";
   await page.clock.setFixedTime(FIXED_NOW);
   await serveGallery(page, origin);
-  await allowOverlay(page);
   await pinMeta(page);
   if (fail) await failApi(page, fail);
-  await page.goto(`${origin}/?token=${VISUAL_TOKEN}${overlay}${hash}`);
+  await page.goto(`${origin}/?token=${VISUAL_TOKEN}${hash}`);
 }
 
 /** The gallery page of the live server, under the product's CSP: no violation may fire. */

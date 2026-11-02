@@ -94,8 +94,7 @@ Everything on the overview page in one call. Query parameters:
       "improve": {},
       "runs": [],
       "windows": [{ "name": "current", "since": "...", "until": "...", "runs": 1, "improve": {}, "metrics": {} }, { "name": "prior" }],
-      "deltas": {},
-      "report": { "window": "24h", "compare": "24h" }
+      "deltas": {}
     },
     "metrics": { "schemaVersion": 1, "window": {}, "usage": {}, "feedback": {}, "utility": {}, "llm": {}, "proposals": {}, "notes": [] },
     "improveRuns": [
@@ -124,8 +123,8 @@ Everything on the overview page in one call. Query parameters:
 
 - `health` is what `akm health --report --group-by run` returns (`--no-probe` unless `probe=1`), minus the write: the
   `state-db-round-trip` check reports itself skipped. See [CLI: health](cli.md#health) for the check list and
-  [`--format html`](cli.md#health) for how the report renders it. `windows`, `deltas` and `report.compare` are absent
-  when `since` is an absolute date.
+  [`--format html`](cli.md#health) for how the report renders it. `windows` and `deltas` are absent when `since` is an
+  absolute date.
 - `metrics` is what `akm metrics` returns (without `rows`); see [CLI: metrics](cli.md#metrics).
 - `improveRuns` are the last 10 real (non-dry-run) improve runs, newest first. `preRunSync`, `sync` and `triage` are `null`
   when the run did not record them; `modelCalls` is empty for runs from before the usage report existed.
@@ -168,7 +167,6 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
     "defaultBundle": "stash",
     "defaultWriteTarget": null,
     "workingStash": null,
-    "automaticWriteTarget": { "name": "stash", "path": "/home/me/akm" },
     "bundles": [
       {
         "name": "stash",
@@ -210,9 +208,6 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
 - `workingStash` is `{ path, git }` for the directory akm reads besides the configured bundles (`AKM_BUNDLE_DIR`, or the
   platform stash when no `defaultBundle` is set). `git` has the same shape as a card's `git`. It is `null` when a
   configured bundle already covers that directory or it cannot be resolved.
-- `automaticWriteTarget` is `{ name, path }` for where a write goes when `defaultWriteTarget` is empty: `AKM_BUNDLE_DIR`
-  when set (even with a `defaultBundle`), otherwise the default bundle. It is `null` when neither exists, so writes need
-  a target.
 - `git` is `null` unless the bundle's root is itself a git repository. `upstream`, `ahead` and `behind` are `null` without an
   upstream; `branch` is `null` on a detached HEAD; `lastCommit` is `null` for a repository with no commits. `dirtyPaths`
   counts paths with uncommitted changes.
@@ -239,6 +234,7 @@ The effective configuration, as `akm config list` shows it, with where each valu
       "harnesses": { "claude": {} },
       "defaultBundle": "stash"
     },
+    "automaticWriteTarget": { "name": "stash", "path": "/home/me/akm", "workingStash": false },
     "entries": [
       { "path": "semanticSearchMode", "value": "off", "source": "file" },
       { "path": "output.format", "value": "json", "source": "default" }
@@ -253,6 +249,10 @@ The effective configuration, as `akm config list` shows it, with where each valu
 - `config` is the redacted effective config tree. `entries` is the same data flattened to one row per leaf (arrays are
   leaves) with `source`: `default` (no config file sets it), `file` (this install's `config.json`),
   `extends:<ref>` (a config it extends), or `null` when the key cannot be traced (a key containing a `.`).
+- `automaticWriteTarget` is `{ name, path, workingStash }` for where a write goes when `defaultWriteTarget` is empty:
+  `AKM_BUNDLE_DIR` when set (even with a `defaultBundle`), otherwise the default bundle. `workingStash` is `true` when
+  that directory is the one `/api/bundles` reports as the working stash. It is `null` when neither exists, so writes
+  need a target.
 - `connections` and `harnesses` are `config.connections` and `config.harnesses` as lists, each entry with its `name`
   and the entry's own keys (a connection's `endpoint` and `models`, a harness's `platform`, ...); keys are never
   included (`apiKey` shows as `[redacted]` or its `$VAR` reference). Reachability is a health probe, not config: use
@@ -312,7 +312,8 @@ It is a current snapshot, not a time-series of historical queue size.
 ```
 
 - `totalCount` and `bySource` count the whole selection; `proposals` holds the first `limit`.
-- `waitingSince` is the last reopen, else creation: the age to show. `gateDecision` is the drain's or quality gate's
+- `waitingSince` is the last reopen, else creation: the age to show. `decidedAt` is `null` while pending, else the
+  decision time (a reverted proposal is dated by its accept). `gateDecision` is the drain's or quality gate's
   verdict (`outcome`: `staged`, `auto-rejected`, `deferred`, ...; `reason` is a stable token). `review` is
   `{ outcome, reason?, decidedAt, decidedBy? }` on a decided proposal; `decidedBy` is `triage` or `human` and is absent
   when the decider was not recorded (older decisions, system archives, reverts written before a revert kept its accept's
@@ -701,14 +702,14 @@ points at a folder. A relative path or a file is `400`; a path that does not exi
 
 ## `GET /api/improve/impact`
 
-What improve proposed and changed, week by week. `?since=90d` (default) or `all` (one year). Each store read (`proposals`,
+What improve proposed and changed, week by week. `?since=90d` (default) or `365d` (one year). Each store read (`proposals`,
 `reopened`, `library`, `usage`, `cost`) stands on its own: one that fails reads as empty and is named under `errors`, and the
 rest is still returned. When the state database is unavailable the response is `{ "available": false }`.
 
 A proposal that was later reverted is dated by its accept (`acceptedAt`) in `outcomes`, `reviewFlow`, `changedAssets` and
-`summary`, and keeps the decider of its accept in `judgeAndYou`. The revert itself is the `reverted` entry of `harm`.
+`summary.kept`, and keeps the decider of its accept in `judgeAndYou`. The revert itself is the `reverted` entry of `harm`.
 
-- `summary`: `kept`, `reverted`, `flags` (negative feedback within 14 days after a change), `tokens`, `tokenCoverage`
+- `summary`: `kept`, `reverted` (the count of `harm` entries of that kind), `flags` (negative feedback within 14 days after a change), `tokens`, `tokenCoverage`
   (the share of model calls that reported tokens) and `checked` (decisions in the window).
 - `outcomes`: per process (`source`), per week, the decisions by class: `judge`, `you`, `unknown`, `rejected`, `reverted`.
 - `reviewFlow`: per week, proposals `created`, `decided`, and `waiting` at the end of the week.

@@ -129,7 +129,7 @@ function retrievalCard(ctx, trend, data) {
       },
       { height: "short" },
     )}
-    <h3>Search time</h3>
+    <h3>Median search time by day, last 12 weeks</h3>
     ${chart(
       ctx,
       "trend-latency",

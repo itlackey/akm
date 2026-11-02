@@ -97,7 +97,6 @@ test("bundles working-stash", async ({ page }) => {
           defaultBundle: null,
           defaultWriteTarget: null,
           workingStash: { path: stash, git: null },
-          automaticWriteTarget: { name: "stash", path: stash },
         },
       },
     });

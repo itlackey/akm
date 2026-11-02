@@ -15,7 +15,7 @@ import { metricsWindow, readLlmRows, readUsageRows } from "../metrics/metrics-cl
 import type { MetricsUsageRow } from "../metrics/types";
 import { isRetireProposal, type Proposal } from "../proposal/proposal-types";
 import { classifyOutcome, decidedAt, deciderOf, weekOf, weekRange } from "./derive";
-import { tryStashDir, withReadonlyStateDb } from "./readers";
+import { attempt, tryStashDir, withReadonlyStateDb } from "./readers";
 
 const DAY = 86_400_000;
 const FLAG_DAYS = 14;
@@ -178,41 +178,36 @@ function judgeAndYou(proposals: Proposal[]) {
   return table;
 }
 
-export async function improveImpact(query: URLSearchParams) {
-  const since = query.get("since") === "all" ? "365d" : "90d";
+export function improveImpact(query: URLSearchParams) {
+  const since = query.get("since") === "365d" ? "365d" : "90d";
   const now = Date.now();
   const window = metricsWindow(since, now);
   const errors: Record<string, string> = {};
   // The store reads are what can fail (one malformed proposal row throws), so each degrades on its own; the
   // derivations below are pure functions of what was read.
-  const attempt = <T>(name: string, read: () => T, fallback: T): T => {
-    try {
-      return read();
-    } catch (error) {
-      errors[name] = error instanceof Error ? error.message : String(error);
-      return fallback;
-    }
-  };
   const stashDir = tryStashDir();
   const state = withReadonlyStateDb(
     (db) => ({
       proposals: attempt(
+        errors,
         "proposals",
         () => (stashDir ? listStateProposals(db, { stashDir, withContent: false }) : []),
         [],
       ),
       reopened: attempt(
+        errors,
         "reopened",
         () => readStateEvents(db, { type: "proposal_reopened", since: window.since }).events,
         [],
       ),
       library: attempt(
+        errors,
         "library",
         () => listIndexCompletedEvents(db, window.since, new Date(now + DAY).toISOString()),
         [],
       ),
-      usage: attempt("usage", () => readUsageRows(db, window), []),
-      llm: attempt("cost", () => readLlmRows(db, window), []),
+      usage: attempt(errors, "usage", () => readUsageRows(db, window), []),
+      llm: attempt(errors, "cost", () => readLlmRows(db, window), []),
     }),
     null,
   );
@@ -260,7 +255,7 @@ export async function improveImpact(query: URLSearchParams) {
     weeks,
     summary: {
       kept: decided.filter((p) => p.status === "accepted").length,
-      reverted: decided.filter((p) => p.status === "reverted").length,
+      reverted: harm.filter((item) => item.kind === "reverted").length,
       flags: harm.filter((item) => item.kind === "flag-after-change").length,
       tokens: cost.reduce((sum, w) => sum + w.tokens, 0),
       tokenCoverage: calls > 0 ? usageCalls / calls : null,

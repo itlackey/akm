@@ -60,8 +60,8 @@ is waiting by age; select an age to show only those.
 
 The window is 90 days or one year. Read the page top to bottom:
 
-1. **Did improve help search?** Searches each week beside the improve changes kept that week. The chart of the share
-   that found nothing is on Overview.
+1. **Did improve help search?** The rolling share of searches that found something, with a mark on each day improve
+   changes were kept, then a table of each week's searches beside the changes kept that week.
 2. **Who decided what.** One bar per process: accepted by the judge or by you, rejected, reverted.
 3. **Is review keeping up?** Proposals waiting at the end of each week, and how many were made and decided.
 4. **Harm log.** Changes that were undone, rejections reopened, risky retirements and complaints after a change.

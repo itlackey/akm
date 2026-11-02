@@ -373,11 +373,6 @@
     background: var(--s6);
   }
 
-  .legend .series-key {
-    margin-inline-end: var(--space-2);
-    border-radius: var(--radius);
-  }
-
   .card {
     padding: var(--space-5);
     background: var(--surface);
@@ -955,7 +950,7 @@
       cursor: pointer;
     }
     & input:focus-visible + span {
-      outline: 2px solid var(--accent);
+      outline: 2px solid var(--link);
       outline-offset: 2px;
     }
     @media (forced-colors: active) {
@@ -1219,13 +1214,17 @@
     text-align: center;
   }
 
-  /* A bar track holds one fill or a stack of parts; outside a .bar-list it sits in the flow with its own margin. */
+  /* A bar track holds one fill or a stack of parts. */
   .bar-track {
     display: block;
     block-size: var(--space-3);
-    margin-block-start: var(--space-3);
     border-radius: var(--radius);
     background: var(--surface-sunk);
+  }
+
+  /* A bundle's proportion bar closes its facts list. */
+  .kv + .bar-track {
+    margin-block-start: var(--space-3);
   }
 
   .bar-stack {
@@ -1255,9 +1254,6 @@
     & .bar-name {
       overflow-wrap: anywhere;
       font-size: var(--text-s);
-    }
-    & .bar-track {
-      margin: 0;
     }
     & .bar-fill {
       display: block;

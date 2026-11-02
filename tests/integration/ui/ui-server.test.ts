@@ -387,7 +387,6 @@ describe("endpoints", () => {
     const overview = await data(s, "/api/overview");
     expect(overview.errors).toBeUndefined();
     expect(overview.health.hardChecks.length).toBeGreaterThan(0);
-    expect(overview.health.report).toMatchObject({ window: "24h", compare: "24h" });
     expect(overview.health.windows).toHaveLength(2);
     // The round-trip probe writes a row; a read-only run reports it skipped.
     const roundTrip = overview.health.hardChecks.find((c: { name: string }) => c.name === "state-db-round-trip");
@@ -536,6 +535,11 @@ describe("endpoints", () => {
     // The revert kept who accepted: a person, not "unknown".
     expect(impact.judgeAndYou).toEqual({ you: { accepted: 0, rejected: 0, reverted: 1 } });
     expect(impact.harm.some((item: Json) => item.kind === "reverted" && item.proposalId === id)).toBe(true);
+    // The summary counts the reverts the harm log lists.
+    expect(impact.summary.reverted).toBe(1);
+    // The list that drills into the week shows the accept time, the date that put it in that week.
+    const drilled = await data(s, `/api/proposals?status=recent&week=${weekOf(acceptedAt)}&class=reverted`);
+    expect(drilled.proposals[0]).toMatchObject({ id, decidedAt: acceptedAt });
 
     // Accepted first, so it counts as accepted, and "since reverted" is a part of that figure.
     const pulse = await data(s, "/api/overview/pulse");

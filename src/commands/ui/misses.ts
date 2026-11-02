@@ -54,7 +54,7 @@ export function missesFromRows(rows: MetricsUsageRow[]): Miss[] {
     );
 }
 
-export async function searchMisses(query: URLSearchParams) {
+export function searchMisses(query: URLSearchParams) {
   const window = metricsWindow(query.get("since") || "30d");
   const rows = withReadonlyStateDb((db) => readUsageRows(db, window), []);
   const misses = missesFromRows(rows);

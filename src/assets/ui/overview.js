@@ -134,10 +134,12 @@ function attentionItems(data, pulse) {
       anchor: "health",
     });
   const pending = pulse?.attention.pending;
-  if (pending?.count)
+  if (!pulse || pending.count)
     items.push({
       tone: "warn",
-      text: `${plural(pending.count, "proposal")} waiting${pending.oldest ? `, oldest ${ago(pending.oldest).replace(" ago", "")}` : ""}`,
+      text: pulse
+        ? `${plural(pending.count, "proposal")} waiting${pending.oldest ? `, oldest ${ago(pending.oldest).replace(" ago", "")}` : ""}`
+        : "Waiting proposals: unavailable",
       verb: "Review",
       href: "#/proposals",
     });

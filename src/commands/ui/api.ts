@@ -24,7 +24,7 @@ import { parseMarkdownToc, uniqueHeadingSlugs } from "../../core/asset/markdown"
 import { markdownLinkTargets } from "../../core/asset/markdown-link-targets";
 import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
-import { getConfigValueSource, loadConfig } from "../../core/config/config";
+import { type AkmConfig, getConfigValueSource, loadConfig } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { getConfigPath, getDataDir, getDbPath } from "../../core/paths";
@@ -175,16 +175,15 @@ async function overview(query: Query) {
   // The comparison window is the report window, like `akm health --report`; an absolute `since` has no duration to compare.
   const sinceIsDuration = parseDuration(since, DURATION_UNITS) !== null;
 
-  const health = await section(errors, "health", async () => {
-    const base = await akmHealth({
+  const health = await section(errors, "health", () =>
+    akmHealth({
       since,
       groupBy: "run",
       windowCompare: sinceIsDuration ? since : undefined,
       probe: flag(query, "probe"),
       readOnly: true,
-    });
-    return { ...base, report: { window: since, compare: sinceIsDuration ? since : null } };
-  });
+    }),
+  );
   const metrics = await section(errors, "metrics", () =>
     akmMetrics({ since: query.get("metricsSince") || "30d", indexSnapshot: false }),
   );
@@ -214,6 +213,30 @@ async function overview(query: Query) {
 
 // ── /api/bundles ─────────────────────────────────────────────────────────────
 
+/**
+ * The working stash is the directory akm reads besides the configured bundles (`implicitStashDir`).
+ * It is described only when no configured bundle already covers that directory.
+ */
+function workingStashDir(config: AkmConfig): string | undefined {
+  try {
+    const dir = implicitStashDir(config);
+    return dir && !bundleKeyForContentRoot(config, dir) ? dir : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Where an automatic write goes (no defaultWriteTarget): AKM_BUNDLE_DIR first, then the default bundle. */
+function automaticWriteTarget(config: AkmConfig) {
+  try {
+    const { source } = resolveWorkingStashTarget(config, { requireWritable: false });
+    const path = source.path ?? null;
+    return { name: source.name, path, workingStash: path !== null && path === workingStashDir(config) };
+  } catch {
+    return null; // No AKM_BUNDLE_DIR and no usable default bundle: writes need an explicit target.
+  }
+}
+
 async function bundles() {
   const config = loadConfig();
   const listing = await akmListSources({ stashDir: tryStashDir() ?? "" });
@@ -240,27 +263,8 @@ async function bundles() {
     })),
   );
 
-  // The working stash is the directory akm reads besides the configured bundles (`implicitStashDir`).
-  // Describe it only when no configured bundle already covers that directory.
-  let stashDir: string | undefined;
-  try {
-    stashDir = implicitStashDir(config);
-  } catch {
-    stashDir = undefined;
-  }
-  const workingStash =
-    stashDir && !bundleKeyForContentRoot(config, stashDir)
-      ? { path: stashDir, git: await readBundleGitStatus(stashDir) }
-      : null;
-
-  // Where an automatic write goes (no defaultWriteTarget): AKM_BUNDLE_DIR first, then the default bundle.
-  let automaticWriteTarget: { name: string; path: string | null } | null = null;
-  try {
-    const target = resolveWorkingStashTarget(config, { requireWritable: false });
-    automaticWriteTarget = { name: target.source.name, path: target.source.path ?? null };
-  } catch {
-    // No AKM_BUNDLE_DIR and no usable default bundle: writes need an explicit target.
-  }
+  const stashDir = workingStashDir(config);
+  const workingStash = stashDir ? { path: stashDir, git: await readBundleGitStatus(stashDir) } : null;
 
   // The default bundle is the working stash when one is configured: list it first.
   cards.sort((a, b) => Number(b.default) - Number(a.default));
@@ -285,7 +289,6 @@ async function bundles() {
     defaultWriteTarget: config.defaultWriteTarget ?? null,
     bundles: cards,
     workingStash,
-    automaticWriteTarget,
     index: {
       entryCount,
       byType: info.indexStats.byType,
@@ -331,7 +334,8 @@ function configSource(path: string[]): string | null {
 }
 
 function config() {
-  const effective = redactForUi(listConfig(loadConfig())) as Record<string, unknown>;
+  const live = loadConfig();
+  const effective = redactForUi(listConfig(live)) as Record<string, unknown>;
   const leaves: Array<{ path: string[]; value: unknown }> = [];
   configLeaves(effective, [], leaves);
   const entries: ConfigEntry[] = leaves.map(({ path, value }) => ({
@@ -353,6 +357,7 @@ function config() {
     path: configPath,
     exists: fs.existsSync(configPath),
     config: effective,
+    automaticWriteTarget: automaticWriteTarget(live),
     entries,
     connections: named(effective.connections),
     harnesses: named(effective.harnesses),
@@ -372,6 +377,8 @@ export function proposalSummary(proposal: Proposal) {
     createdAt: proposal.createdAt,
     updatedAt: proposal.updatedAt,
     waitingSince: proposalWaitingSince(proposal),
+    // A reverted proposal is dated by its accept, as the impact figures are.
+    decidedAt: proposal.status === "pending" ? null : decidedAt(proposal),
     confidence: proposal.confidence ?? null,
     gateDecision: proposal.gateDecision ?? null,
     review: proposal.review ?? null,
@@ -578,7 +585,7 @@ async function changes(query: Query) {
 
 // ── /api/search and /api/asset ───────────────────────────────────────────────
 
-async function search(query: Query) {
+function search(query: Query) {
   const type = query.get("type") || undefined;
   const bundle = query.get("bundle") || undefined;
   return akmSearch({
@@ -713,7 +720,7 @@ async function assetHistory(query: Query) {
 }
 
 /** The per-day search series over a longer window than the Overview's, for the Improve impact trend. */
-async function retrievalTrend(query: Query) {
+function retrievalTrend(query: Query) {
   const window = metricsWindow(query.get("since") || "90d");
   const series = retrievalSeries(
     withReadonlyStateDb((db) => readUsageRows(db, window), []),

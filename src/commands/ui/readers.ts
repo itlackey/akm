@@ -36,6 +36,16 @@ export function tryStashDir(): string | null {
   }
 }
 
+/** `section` for a synchronous read, where the caller needs a fallback value (a read inside an open database). */
+export function attempt<T>(errors: Record<string, string>, name: string, read: () => T, fallback: T): T {
+  try {
+    return read();
+  } catch (error) {
+    errors[name] = error instanceof Error ? error.message : String(error);
+    return fallback;
+  }
+}
+
 /** Run each section of a composite response on its own: one failing store degrades one section, not the page. */
 export async function section<T>(
   errors: Record<string, string>,

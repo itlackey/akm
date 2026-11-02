@@ -365,6 +365,44 @@ describe("pages", () => {
     expect(bundles.match(/>default</g)).toHaveLength(1);
   });
 
+  const writeSelect = (page: string) =>
+    page.match(/<select[^>]*name="defaultWriteTarget"[\s\S]*?<\/select>/)?.[0] ?? "";
+
+  test("config says writes need a default bundle when AKM_BUNDLE_DIR and defaultBundle are both unset", async () => {
+    await seed();
+    delete process.env.AKM_BUNDLE_DIR; // restored by the storage teardown
+    writeSandboxConfig({ bundles: undefined, defaultBundle: undefined, defaultWriteTarget: undefined });
+    resetConfigCache();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const config = (await (await view("config.js"))(ctx())).text;
+    expect(writeSelect(config)).toContain("None (writes need a default bundle)");
+    expect(writeSelect(config)).not.toContain("Automatic (working stash)");
+  });
+
+  test("config labels the write target as the working stash or the default bundle, whichever it is", async () => {
+    await seed();
+    writeSandboxConfig({ bundles: undefined, defaultBundle: undefined, defaultWriteTarget: undefined });
+    resetConfigCache();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const stash = (await (await view("config.js"))(ctx())).text;
+    expect(writeSelect(stash)).toContain("Automatic (working stash)");
+    expect(writeSelect(stash)).not.toContain("None (writes need");
+
+    delete process.env.AKM_BUNDLE_DIR; // restored by the storage teardown
+    writeSandboxConfig({
+      bundles: { stash: { path: storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      defaultWriteTarget: undefined,
+    });
+    resetConfigCache();
+    const bundle = (await (await view("config.js"))(ctx())).text;
+    expect(writeSelect(bundle)).toContain("Default bundle (stash)");
+  });
+
   test("overview, bundles, config, proposals, changes, search and asset render real data with hostile text escaped", async () => {
     const { proposalId } = await seed();
     server = await startUiServer({ port: 0 });
@@ -714,11 +752,12 @@ describe("pages", () => {
     // A link to another page's section names the page and the section, not a second hash.
     expect(overview).not.toContain("#/improve#");
     const improve = (await (await view("improve.js"))(ctx())).text;
-    expect(improve).toContain('data-hash="#/improve?since=all"');
+    expect(improve).toContain('data-hash="#/improve?since=365d"');
     expect(improve).toMatch(/<span>1 year<\/span>/);
     expect(improve).not.toMatch(/<span>All<\/span>/);
-    // The search section reads the server's weekly series; it does not draw a second chart of the same share.
+    // The seed has too few searches a week for the rolling chart, so the section says so.
     expect(improve).toContain("Did improve help search?");
+    expect(improve).toContain("Not enough searches yet to show a trend");
     expect(improve).not.toContain('id="improve-trend"');
   });
 

@@ -72,16 +72,6 @@
     border-block: 1px solid var(--rule);
   }
 
-  .legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-1) var(--space-4);
-    list-style: none;
-    margin: var(--space-2) 0 0;
-    padding: 0;
-    font-size: var(--text-m);
-  }
-
   /* ---- proposals, diff ---- */
   .chips {
     display: flex;

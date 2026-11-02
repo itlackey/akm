@@ -163,7 +163,23 @@ export async function render(ctx) {
     sources: new Map(data.entries.map((entry) => [entry.path, entry.source])),
     defaultConnection: data.connections.find((c) => c.default)?.name ?? data.connections[0]?.name,
   };
-  const bundleOptions = [["", "Automatic (working stash)"], ...bundles.map((name) => [name, name])];
+  const named = bundles.map((name) => [name, name]);
+  const bundleOptions = [["", "Automatic (working stash)"], ...named];
+  // An empty write target resolves to AKM_BUNDLE_DIR, then the default bundle; say which, or that there is none.
+  const t = data.automaticWriteTarget;
+  const writeOptions = [
+    [
+      "",
+      !t
+        ? "None (writes need a default bundle)"
+        : t.workingStash
+          ? "Automatic (working stash)"
+          : t.name === config.defaultBundle
+            ? `Default bundle (${t.name})`
+            : `Automatic (${t.name})`,
+    ],
+    ...named,
+  ];
   ctx.after.push((root) => {
     wireDirty(root);
     actionForm(root, ".config-form", (form) => post("/api/config/set", changesOf(form)));
@@ -211,7 +227,7 @@ export async function render(ctx) {
       "Library",
       "Where akm reads by default and where it writes new assets.",
       html`${field(page, { key: "defaultBundle", label: "Default bundle", kind: "select", options: bundleOptions })}
-        ${field(page, { key: "defaultWriteTarget", label: "Default write target", kind: "select", options: bundleOptions, hint: "New knowledge, memories and accepted proposals are written here." })}
+        ${field(page, { key: "defaultWriteTarget", label: "Default write target", kind: "select", options: writeOptions, hint: "New knowledge, memories and accepted proposals are written here." })}
         ${field(page, { key: "archiveRetentionDays", label: "Keep archived assets for", kind: "number", placeholder: "30", hint: "Days before retired assets are purged from the archive." })}
         ${field(page, { key: "feedback.requireReason", label: "Require a reason with feedback", kind: "toggle", hint: "Negative feedback always needs a reason; this asks for one on positive feedback too." })}`,
     )}

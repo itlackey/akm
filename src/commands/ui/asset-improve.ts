@@ -12,7 +12,7 @@ import { tryStashDir, withReadonlyStateDb } from "./readers";
 
 const DAY = 86_400_000;
 
-export async function assetImprove(query: URLSearchParams) {
+export function assetImprove(query: URLSearchParams) {
   const ref = query.get("ref")?.trim();
   if (!ref) throw new UsageError("Give the asset's ref: ?ref=<bundle>//<type>/<name>.", "MISSING_REQUIRED_ARGUMENT");
   const stashDir = tryStashDir();

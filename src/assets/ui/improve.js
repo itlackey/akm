@@ -233,7 +233,7 @@ function wireDrill(root) {
       if (mine !== selection) return;
       mount(
         panel,
-        html`<h3>${drill.dataset.source}, week of ${drill.dataset.week}${drill.dataset.class ? `, ${drill.dataset.class}` : ""}</h3>${proposals.length ? html`<ul class="change-list">${proposals.map((p) => html`<li><a class="mono wrap" href="${proposalHref(p.id)}">${p.ref}</a>${badge(p.status, p.status === "reverted" ? "warn" : "neutral")}<span class="muted small">${ago(p.review?.decidedAt ?? p.updatedAt)}</span></li>`)}</ul>` : html`<p>No proposals match.</p>`}`,
+        html`<h3>${drill.dataset.source}, week of ${drill.dataset.week}${drill.dataset.class ? `, ${drill.dataset.class}` : ""}</h3>${proposals.length ? html`<ul class="change-list">${proposals.map((p) => html`<li><a class="mono wrap" href="${proposalHref(p.id)}">${p.ref}</a>${badge(p.status, p.status === "reverted" ? "warn" : "neutral")}<span class="muted small">${ago(p.decidedAt)}</span></li>`)}</ul>` : html`<p>No proposals match.</p>`}`,
       );
     } catch (error) {
       if (mine !== selection) return;
@@ -402,7 +402,7 @@ const SECTIONS = [
 ];
 
 export async function render(ctx) {
-  const since = ctx.query.get("since") === "all" ? "all" : "90d";
+  const since = ctx.query.get("since") === "365d" ? "365d" : "90d";
   const [impact, retrieval] = await Promise.all([
     api("/api/improve/impact", { since }),
     api("/api/retrieval", { since: `${TREND_DAYS}d` }).catch(() => null),
@@ -418,7 +418,7 @@ export async function render(ctx) {
     current: since,
     choices: [
       ["90d", "90 days"],
-      ["all", "1 year"],
+      ["365d", "1 year"],
     ],
   });
   return html`${pageHeader("Improve impact", "What akm's improve processes did in your environment. Times are UTC.", sinceToggle)}
