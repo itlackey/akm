@@ -17,7 +17,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-5);
-    min-block-size: 4rem;
+    min-block-size: var(--topbar-h);
     max-inline-size: var(--content-max);
     margin-inline: auto;
     padding-inline: var(--space-6);
@@ -31,7 +31,7 @@
     color: var(--text);
     text-decoration: none;
     & span {
-      color: var(--accent-line);
+      color: var(--accent);
     }
   }
 
@@ -153,7 +153,6 @@
     display: none;
     align-items: center;
     gap: var(--space-2);
-    min-block-size: 2.75rem;
     margin-inline-start: auto;
   }
 
@@ -170,7 +169,6 @@
     .topbar-inner {
       flex-wrap: wrap;
       gap: var(--space-3);
-      min-block-size: 3.5rem;
       padding-inline: var(--space-4);
     }
 
@@ -185,7 +183,7 @@
       align-items: stretch;
       align-self: auto;
       gap: var(--space-4);
-      max-block-size: calc(100dvh - 3.5rem);
+      max-block-size: calc(100dvh - var(--topbar-h));
       padding-block: var(--space-2) var(--space-5);
       overflow-y: auto;
     }
@@ -234,7 +232,7 @@
 
     .nav-links a {
       inline-size: 100%;
-      min-block-size: 2.75rem;
+      min-block-size: var(--control-height);
       padding-inline: var(--space-3);
       &[aria-current="page"] {
         background: var(--accent-bg);
@@ -281,7 +279,7 @@
     display: grid;
     gap: var(--space-4);
     margin: var(--space-4) 0;
-    & label:not(.check-label, [hidden]) {
+    & label:not(.check-label) {
       display: grid;
       gap: var(--space-1);
       font-size: var(--text-s);
@@ -523,7 +521,7 @@
   .impact-toc {
     @media (width >= 64rem) {
       position: sticky;
-      inset-block-start: 5rem;
+      inset-block-start: calc(var(--topbar-h) + var(--space-4));
     }
     & ul {
       display: flex;

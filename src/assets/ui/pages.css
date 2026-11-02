@@ -20,7 +20,7 @@
     padding: var(--space-4) var(--space-5);
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-l);
+    border-radius: var(--radius);
   }
 
   .strip-main {
@@ -38,7 +38,7 @@
 
   .strip-item strong {
     font-size: var(--text-xl);
-    font-weight: var(--weight-strong);
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
 
@@ -99,38 +99,6 @@
   }
 
   /* ---- proposals, diff ---- */
-  .tabs {
-    display: flex;
-    gap: var(--space-1);
-    margin: var(--space-4) 0 var(--space-4);
-    border-block-end: 1px solid var(--border);
-  }
-
-  /* A link tab (aria-current) or a button tab (aria-selected): plain words, the current one underlined. */
-  .tab {
-    min-block-size: 0;
-    padding: var(--space-2) var(--space-4);
-    margin-block-end: -1px;
-    border: 0;
-    border-block-end: 2px solid transparent;
-    border-radius: 0;
-    background: transparent;
-    color: var(--muted);
-    font-size: inherit;
-    text-decoration: none;
-    font-weight: 500;
-    &:hover:not(:disabled) {
-      background: transparent;
-      color: var(--text);
-    }
-  }
-
-  .tab:is([aria-current], [aria-selected="true"]) {
-    color: var(--accent);
-    border-block-end-color: var(--accent);
-    font-weight: 700;
-  }
-
   .chips {
     display: flex;
     flex-wrap: wrap;
@@ -154,7 +122,7 @@
     color: var(--accent);
   }
 
-  /* ---- changes ---- */
+  /* ---- history ---- */
   .day {
     padding-block-end: var(--space-2);
     border-block-end: 1px solid var(--border);
@@ -175,8 +143,8 @@
   .commit::before {
     content: "";
     position: absolute;
-    inset-inline-start: -22px;
-    inset-block-start: 17px;
+    inset-inline-start: calc(-1 * var(--space-5) + 2px);
+    inset-block-start: calc(var(--space-4) + 1px);
     inline-size: 10px;
     block-size: 10px;
     border-radius: 50%;
@@ -214,7 +182,7 @@
     margin: 0;
     padding: 0;
     border: 1px solid var(--border);
-    border-radius: var(--radius-l);
+    border-radius: var(--radius);
     background: var(--surface);
     overflow: hidden;
   }
@@ -275,10 +243,6 @@
     box-shadow: var(--shadow-float);
   }
 
-  .batch-bar[hidden] {
-    display: none;
-  }
-
   .batch-results {
     flex: 1 1 100%;
   }
@@ -326,14 +290,10 @@
   .attention-clear,
   .improve-line {
     line-height: var(--leading-snug);
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
     margin: 0;
     padding: var(--space-4);
     border: 1px solid var(--border);
-    border-radius: var(--radius-l);
+    border-radius: var(--radius);
     background: var(--surface);
   }
 
@@ -368,8 +328,14 @@
     }
   }
 
+  .attention-clear {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
   .improve-line {
-    display: block;
     & .dot {
       margin-inline-end: var(--space-2);
       vertical-align: 0.05em;
@@ -477,7 +443,7 @@
 
   .review-bar {
     position: sticky;
-    inset-block-start: 4.25rem;
+    inset-block-start: calc(var(--topbar-h) + var(--space-1));
     z-index: 3;
     display: flex;
     flex-wrap: wrap;
@@ -487,9 +453,6 @@
     padding-block: var(--space-3);
     background: var(--bg);
     border-block-end: 1px solid var(--rule);
-    @media (width < 72rem) {
-      inset-block-start: 3.75rem;
-    }
     & h2 {
       margin: 0;
       font-size: var(--text-l);
@@ -504,12 +467,7 @@
     margin-block-start: var(--space-4);
   }
 
-  /* ---- overview: pulse and trend header ---- */
-  fieldset.trend-window {
-    margin: 0;
-    min-inline-size: 0;
-  }
-
+  /* ---- overview: attention ---- */
   .attention details {
     margin-block-start: var(--space-2);
   }

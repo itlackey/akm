@@ -5,16 +5,16 @@
 /**
  * lint-ui-css.ts
  *
- * Checks the UI stylesheets in `src/assets/ui/` against the CSS rules of the UI plan
- * (`docs/design/ui-overhaul/plan.md` §8.1). Rule numbers below match the plan:
+ * Checks the UI stylesheets in `src/assets/ui/` against the rules below. The rule numbers are stable ids that appear
+ * in findings, so a gap in the list is a rule that was dropped. `!important` is left to Biome's `noImportantStyles`.
  *
  *   1  colour, space, radius, font size and shadow come from tokens: outside `tokens.css`, margins, padding, gaps,
- *      radii and font sizes use no length other than 0, 1px or 2px, and no value uses a hex, rgb() or hsl() colour
+ *      radii, `font`, insets and scroll margins use no length other than 0, 1px or 2px, and no value uses a hex,
+ *      rgb() or hsl() colour
  *   4  no ID selectors; nesting at most 2 levels
- *   5  logical properties only (no margin-left, width, top, ...)
+ *   5  logical properties only (no margin-left, width, top, scroll-margin-top, text-align: left, ...)
  *   6  `@media` only for the layout breaks (50, 64, 72 and 90rem), reduced motion, contrast, forced colours, colour
  *      scheme and print
- *   7  `!important` only in `base.css` inside the reduced-motion block
  *   9  no `vh` (use `dvh`)
  *  10  state comes from ARIA and data attributes: no `.active` or `.selected` classes
  *  11  `box-shadow` only from a token: the edge lines (`--edge-*`), the focus halo and `--shadow-float`
@@ -35,14 +35,15 @@ export interface Finding {
 }
 
 const PHYSICAL =
-  /^(margin|padding|border)-(left|right|top|bottom)(-|$)|^(min-|max-)?(width|height)$|^(top|left|right|bottom)$|^float$/;
+  /^(margin|padding|border)-(left|right|top|bottom)(-|$)|^scroll-(margin|padding)-(left|right|top|bottom)$|^(min-|max-)?(width|height)$|^(top|left|right|bottom)$|^float$/;
 const MEDIA_OK =
   /\b(50|64|72|90)rem\b|prefers-reduced-motion|prefers-contrast|forced-colors|prefers-color-scheme|^print$/;
 const SHADOW_OK = /^(none|var\(--(edge-[\w-]+|focus-halo|shadow-float)\))$/;
 const LENGTH = /(?<![\w.#-])(\d*\.?\d+)(px|rem|em)\b/g;
 const COLOUR = /#[\da-f]{3,8}\b|\b(rgb|rgba|hsl|hsla)\(/i;
 /** Properties whose lengths must come from the space, radius and type tokens (rule 1); layout sizes are free. */
-const TOKEN_LENGTHS = /^(margin|padding|gap|row-gap|column-gap|border-radius|font-size|box-shadow|outline-offset)(-|$)/;
+const TOKEN_LENGTHS =
+  /^(margin|padding|gap|row-gap|column-gap|border-radius|font|outline-offset|inset|scroll-margin)(-|$)/;
 
 /** Every finding in one stylesheet. `file` is the name used in messages and the allowlist. */
 export function lintCss(css: string, file: string): Finding[] {
@@ -105,7 +106,6 @@ function checkDeclaration(
   if (colon < 0) return;
   const property = declaration.slice(0, colon).trim().toLowerCase();
   const value = declaration.slice(colon + 1).trim();
-  const selectors = stack.join(" ");
   if (property.startsWith("--")) {
     if (file !== "tokens.css" && COLOUR.test(value)) add(1, `${property}: ${value}`);
     return;
@@ -120,9 +120,8 @@ function checkDeclaration(
     if (lengths.length && TOKEN_LENGTHS.test(property)) add(1, `${property}: ${value}`);
     else if (COLOUR.test(value)) add(1, `${property}: ${value}`);
   }
-  if (PHYSICAL.test(property)) add(5, `${property}: ${value}`);
-  if (/!important/.test(value) && !(file === "base.css" && /prefers-reduced-motion/.test(selectors)))
-    add(7, `${property}: ${value}`);
+  if (PHYSICAL.test(property) || (property === "text-align" && /^(left|right)$/.test(value)))
+    add(5, `${property}: ${value}`);
   if (/\d(vh)\b/.test(value)) add(9, `${property}: ${value}`);
   if (property === "box-shadow" && !SHADOW_OK.test(value)) add(11, `${property}: ${value}`);
   if (property === "letter-spacing" && !/^(0|normal|var\(--tracking-[\w-]+\))$/.test(value))

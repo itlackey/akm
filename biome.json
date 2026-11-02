@@ -66,27 +66,8 @@
           "complexity": {
             "noImportantStyles": "error"
           },
-          "suspicious": {
-            "noDuplicateProperties": "error",
-            "noShorthandPropertyOverrides": "error"
-          },
-          "correctness": {
-            "noUnknownProperty": "error"
-          },
           "nursery": {
             "noDuplicateSelectors": "error"
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "src/assets/ui/base.css"
-      ],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noImportantStyles": "off"
           }
         }
       }

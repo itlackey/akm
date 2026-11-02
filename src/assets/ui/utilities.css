@@ -1,5 +1,10 @@
 /* Utilities: single-purpose helpers that must win over a component. */
 @layer utilities {
+  /* In the last layer so no component's display can show an element marked hidden. */
+  [hidden] {
+    display: none;
+  }
+
   .num,
   td.r,
   th.r {
@@ -7,7 +12,7 @@
   }
 
   .r {
-    text-align: right;
+    text-align: end;
   }
 
   .muted {
@@ -43,12 +48,7 @@
     color: var(--fail);
   }
 
-  th.r,
-  td.r {
-    text-align: right;
-  }
-
-  /* ---- proposal actions ---- */
+  /* ---- visually hidden, still read by screen readers ---- */
   .sr-only {
     position: absolute;
     inline-size: 1px;

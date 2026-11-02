@@ -12,11 +12,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .theme-control {
-    margin: 0;
-    min-inline-size: 0;
-  }
-
   .nav-open .menu-icon {
     background:
       linear-gradient(45deg, transparent 43%, currentColor 43% 57%, transparent 57%),
@@ -82,7 +77,7 @@
   .state {
     padding: var(--space-5);
     border: 1px dashed var(--border-strong);
-    border-radius: var(--radius-l);
+    border-radius: var(--radius);
     color: var(--muted);
     background: var(--surface);
   }
@@ -179,8 +174,8 @@
   }
 
   .badge[data-tone="info"] {
-    color: var(--info);
-    background: var(--info-bg);
+    color: var(--link);
+    background: var(--accent-bg);
   }
 
   .badge[data-tone="accent"] {
@@ -201,13 +196,22 @@
     margin: var(--space-2) 0 0;
   }
 
-  .dot {
+  /* The 10px marker: a status dot, or a square key for a chart series (.series-1 to .series-6 colour it). */
+  .dot,
+  .series-key {
     display: inline-block;
     inline-size: 10px;
     block-size: 10px;
+  }
+
+  .dot {
     border-radius: 50%;
     background: var(--muted);
     flex: none;
+  }
+
+  .series-key {
+    margin-inline-end: var(--space-1);
   }
 
   .dot-ok {
@@ -281,12 +285,6 @@
     gap: var(--space-1);
     padding: var(--space-4) var(--space-4) var(--space-4) 0;
     border-block-start: 1px solid var(--rule);
-    color: inherit;
-    text-decoration: none;
-  }
-
-  .tile[href]:hover {
-    border-color: var(--border-strong);
   }
 
   .tile-label {
@@ -334,9 +332,6 @@
       stroke-linejoin: round;
       stroke-linecap: round;
     }
-    & .base {
-      stroke: var(--border);
-    }
   }
 
   table.fm th {
@@ -345,53 +340,34 @@
     font-weight: 600;
   }
 
-  .runs td {
-    white-space: nowrap;
-  }
-
-  .runs td:nth-child(7),
-  .runs td:nth-child(8) {
-    white-space: normal;
-    min-inline-size: 140px;
-  }
-
-  /* ---- bundle distribution ---- */
-  .s1 {
-    fill: var(--s1);
+  /* ---- series palette ---- */
+  .series-1 {
     background: var(--s1);
   }
 
-  .s2 {
-    fill: var(--s2);
+  .series-2 {
     background: var(--s2);
   }
 
-  .s3 {
-    fill: var(--s3);
+  .series-3 {
     background: var(--s3);
   }
 
-  .s4 {
-    fill: var(--s4);
+  .series-4 {
     background: var(--s4);
   }
 
-  .s5 {
-    fill: var(--s5);
+  .series-5 {
     background: var(--s5);
   }
 
-  .s6 {
-    fill: var(--s6);
+  .series-6 {
     background: var(--s6);
   }
 
-  .swatch {
-    display: inline-block;
-    inline-size: 10px;
-    block-size: 10px;
+  .legend .series-key {
     margin-inline-end: var(--space-2);
-    border-radius: 2px;
+    border-radius: var(--radius);
   }
 
   .minibar {
@@ -414,7 +390,7 @@
     padding: var(--space-5);
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-l);
+    border-radius: var(--radius);
     min-inline-size: 0;
   }
 
@@ -467,18 +443,7 @@
     margin: 2px 0;
   }
 
-  /* ---- config tree ---- */
-  .tree.root {
-    padding: var(--space-3) var(--space-4);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-  }
-
-  .key {
-    font-weight: 600;
-  }
-
+  /* ---- config reference ---- */
   .redacted {
     color: var(--muted);
     font-style: italic;
@@ -500,7 +465,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     font-size: var(--text-s);
-    line-height: 1.5;
+    line-height: var(--leading-snug);
   }
 
   .dl {
@@ -511,12 +476,12 @@
   }
 
   .dl.add {
-    background: var(--add-bg);
+    background: var(--ok-bg);
     color: var(--ok);
   }
 
   .dl.del {
-    background: var(--del-bg);
+    background: var(--fail-bg);
     color: var(--fail);
   }
 
@@ -564,7 +529,7 @@
   }
 
   .md [id] {
-    scroll-margin-top: 20px;
+    scroll-margin-block-start: var(--space-5);
   }
 
   .task-item {
@@ -582,32 +547,6 @@
     align-items: center;
     gap: var(--space-3);
     margin: 0 0 var(--space-3);
-  }
-
-  /* The same quiet switch as .segmented, for buttons: words, the pressed one underlined. */
-  .seg {
-    display: inline-flex;
-    gap: var(--space-4);
-  }
-
-  .seg button {
-    min-block-size: 0;
-    padding: var(--space-1) 0;
-    border: 0;
-    border-block-end: 2px solid transparent;
-    border-radius: 0;
-    background: transparent;
-    color: var(--muted);
-    font-size: var(--text-s);
-    font-weight: 500;
-    &:hover {
-      background: transparent;
-      color: var(--text);
-    }
-    &[aria-pressed="true"] {
-      border-block-end-color: var(--accent);
-      color: var(--text);
-    }
   }
 
   .sbs {
@@ -628,7 +567,7 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    font: 0.85rem / 1.5 var(--mono);
+    font: var(--text-s) / var(--leading-snug) var(--mono);
   }
 
   .dcol-body {
@@ -645,9 +584,9 @@
 
   .drow .ln {
     flex: none;
-    inline-size: calc(5ch + 12px);
+    inline-size: calc(5ch + var(--space-3));
     padding: 0 var(--space-2) 0 var(--space-1);
-    text-align: right;
+    text-align: end;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
     user-select: none;
@@ -666,11 +605,11 @@
   }
 
   .drow.add {
-    background: var(--add-bg);
+    background: var(--ok-bg);
   }
 
   .drow.del {
-    background: var(--del-bg);
+    background: var(--fail-bg);
   }
 
   .drow.fill {
@@ -800,16 +739,10 @@
     background: none;
   }
 
+  /* A link drawn as a button; the rest of the look is the base button's. */
   .btn {
     display: inline-flex;
     align-items: center;
-    min-block-size: var(--control-height);
-    padding: var(--space-2) var(--space-5);
-    border: 2px solid var(--accent);
-    border-radius: var(--radius-s);
-    background: var(--accent);
-    color: var(--on-accent);
-    font-weight: 600;
     text-decoration: none;
   }
 
@@ -826,18 +759,22 @@
   .btn-danger {
     background: var(--fail);
     border-color: var(--fail);
-    color: var(--on-danger);
+    color: var(--on-accent);
     &:hover:not(:disabled) {
       background: color-mix(in srgb, var(--fail) 85%, black);
       border-color: color-mix(in srgb, var(--fail) 85%, black);
     }
   }
 
-  .btn-row {
+  .btn-row,
+  .action-links {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
+  }
+
+  .btn-row {
     margin: var(--space-2) 0 0;
   }
 
@@ -867,43 +804,8 @@
     font-size: var(--text-s);
   }
 
-  .series-key {
-    display: inline-block;
-    inline-size: 10px;
-    block-size: 10px;
-    margin-inline-end: var(--space-1);
-    background: var(--s1);
-  }
-
-  .series-1 {
-    background: var(--s1);
-  }
-
-  .series-2 {
-    background: var(--s2);
-  }
-
-  .series-3 {
-    background: var(--s3);
-  }
-
-  .series-4 {
-    background: var(--s4);
-  }
-
-  .series-5 {
-    background: var(--s5);
-  }
-
   .dot-info {
     background: var(--accent);
-  }
-
-  .action-links {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
   }
 
   .create-form,
@@ -911,7 +813,7 @@
     padding: var(--space-5);
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-l);
+    border-radius: var(--radius);
   }
 
   .field {
@@ -983,12 +885,69 @@
     }
   }
 
-  /* A quiet switch: plain words, the chosen one underlined in the accent. No box around the group. */
+  /* The quiet switch: plain words, the current one underlined in the accent, no box around the group. A .tab is a link or
+     button in a .tabs row, .seg is a group of buttons, .segmented a group of radios. */
+  .tabs {
+    display: flex;
+    gap: var(--space-1);
+    margin: var(--space-4) 0 var(--space-4);
+    border-block-end: 1px solid var(--border);
+  }
+
+  .tab,
+  .seg button,
+  .segmented span {
+    min-block-size: 0;
+    border: 0;
+    border-block-end: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  .tab {
+    padding: var(--space-2) var(--space-4);
+    margin-block-end: -1px;
+    font-size: inherit;
+  }
+
+  .seg button,
+  .segmented span {
+    padding: var(--space-1) 0;
+    font-size: var(--text-s);
+  }
+
+  .tab:hover:not(:disabled),
+  .seg button:hover,
+  .segmented label:hover span {
+    background: transparent;
+    color: var(--text);
+  }
+
+  .tab:is([aria-current], [aria-selected="true"]) {
+    color: var(--accent);
+    border-block-end-color: var(--accent);
+    font-weight: 700;
+  }
+
+  .seg button[aria-pressed="true"],
+  .segmented input:checked + span {
+    border-block-end-color: var(--accent);
+    color: var(--text);
+  }
+
+  .seg,
   .segmented {
     display: inline-flex;
-    flex-wrap: wrap;
     gap: var(--space-4);
+  }
+
+  .segmented {
+    flex-wrap: wrap;
     inline-size: fit-content;
+    min-inline-size: 0;
     margin: 0;
     padding: 0;
     border: 0;
@@ -1002,20 +961,6 @@
       inset: 0;
       margin: 0;
       cursor: pointer;
-    }
-    & span {
-      padding: var(--space-1) 0;
-      border-block-end: 2px solid transparent;
-      font-size: var(--text-s);
-      font-weight: 500;
-      color: var(--muted);
-    }
-    & label:hover span {
-      color: var(--text);
-    }
-    & input:checked + span {
-      border-block-end-color: var(--accent);
-      color: var(--text);
     }
     & input:focus-visible + span {
       outline: 2px solid var(--accent);
@@ -1056,11 +1001,9 @@
     inline-size: 10rem;
   }
 
-  button:disabled:not(.btn-secondary, .btn-danger) {
-    background: var(--surface-sunk);
-    border-color: var(--border-strong);
-    color: var(--muted);
-    opacity: 1;
+  .btn-secondary:disabled,
+  .btn-danger:disabled {
+    opacity: 0.55;
   }
 
   .check-label:has(.switch) {
@@ -1084,7 +1027,7 @@
     min-block-size: 24rem;
     padding: var(--space-4) var(--space-5);
     border: 1px solid var(--border);
-    border-radius: var(--radius-s);
+    border-radius: var(--radius);
     background: var(--surface-2);
     overflow: auto;
   }
@@ -1111,9 +1054,8 @@
     }
   }
 
-  .folder-picker {
-    inline-size: min(36rem, calc(100% - var(--space-5)));
-    max-block-size: calc(100dvh - var(--space-6));
+  .folder-picker,
+  .shortcut-help {
     padding: 0;
     border: 2px solid var(--rule);
     border-radius: var(--radius);
@@ -1122,6 +1064,15 @@
     &::backdrop {
       background: color-mix(in srgb, var(--bg) 75%, transparent);
     }
+  }
+
+  .folder-picker {
+    inline-size: min(36rem, calc(100% - var(--space-5)));
+    max-block-size: calc(100dvh - var(--space-6));
+  }
+
+  .shortcut-help {
+    inline-size: min(28rem, calc(100% - var(--space-5)));
   }
 
   .folder-picker-body {
@@ -1197,7 +1148,7 @@
       flex: none;
       inline-size: 18px;
       block-size: 18px;
-      stroke: var(--accent-line);
+      stroke: var(--accent);
       fill: none;
       stroke-width: 1.75;
       stroke-linejoin: round;
@@ -1217,7 +1168,6 @@
     }
     /* Marks that are only a background colour would vanish, so keep their colour and outline them. */
     .dot,
-    .swatch,
     .series-key,
     .propbar span,
     .minibar rect {
@@ -1242,18 +1192,6 @@
     & legend {
       margin-block-end: var(--space-2);
       padding: 0;
-    }
-  }
-
-  .shortcut-help {
-    inline-size: min(28rem, calc(100% - var(--space-5)));
-    padding: 0;
-    border: 2px solid var(--rule);
-    border-radius: var(--radius);
-    background: var(--surface);
-    color: var(--text);
-    &::backdrop {
-      background: color-mix(in srgb, var(--bg) 75%, transparent);
     }
   }
 
@@ -1315,14 +1253,14 @@
     }
     & .bar-track {
       block-size: var(--space-3);
-      border-radius: var(--radius-s);
+      border-radius: var(--radius);
       background: var(--surface-sunk);
     }
     & .bar-fill {
       display: block;
       block-size: 100%;
       inline-size: calc(var(--w) * 100%);
-      border-radius: var(--radius-s);
+      border-radius: var(--radius);
       background: var(--s1);
       &[data-tone="fail"] {
         background: var(--fail);
@@ -1333,7 +1271,7 @@
       block-size: 100%;
       inline-size: calc(var(--w) * 100%);
       overflow: hidden;
-      border-radius: var(--radius-s);
+      border-radius: var(--radius);
       & > span {
         flex: var(--w) 0 0;
       }
