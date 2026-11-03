@@ -24,5 +24,7 @@ describe("lesson judge prompt", () => {
     expect(prompt).toContain("ask only whether the added lines leave it one");
     expect(prompt).not.toContain("only records what was done");
     expect(prompt).not.toContain("a tested or measured result about a change or method");
+    expect(prompt).toContain("only records who did something, when, or what shipped");
+    expect(prompt).not.toContain("REUSABLE's question");
   });
 });
