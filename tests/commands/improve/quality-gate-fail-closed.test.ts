@@ -183,6 +183,8 @@ describe("buildReflectJudgePrompt", () => {
       "---\nname: b\ndescription: Does a.\n---\nBody\n",
       "---\nname: a\ndescription: Does a.\n---\nBody changed\n",
       "---\n---\nBody\n",
+      "---\nname: a\ndescription: Does a.\ntags: [z]\n---\nBody\n",
+      "---\nname: a\nstatus: deprecated\n---\nBody\n",
     ]) {
       expect(buildReflectJudgePrompt(candidate, source, [])).toContain("1. NEED:");
     }

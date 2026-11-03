@@ -22,7 +22,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   adds fields the source lacks (a missing `description` or `when_to_use`) and leaves
   everything else as it was. akm settles those two from its own comparison of the two
   frontmatters, tells the judge so, and the judge scores QUALITY alone. The judge had been
-  reading such a revision as rewriting a field the source already had (#1308).
+  reading such a revision as rewriting a field the source already had (#1308). The score is the
+  QUALITY score alone, so these revisions pass at 4 or more and are rejected at 3 or less; they
+  never go to human review.
 
 ### Removed
 

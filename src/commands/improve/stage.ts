@@ -424,7 +424,8 @@ function compareFields(sourceContent: string, candidateContent: string) {
 /** The fields of a revision that only adds fields the source lacks and changes nothing else: akm settles NEED and PRESERVATION from its comparison, and the judge scores QUALITY alone. */
 function addedOnly(sourceContent: string, candidateContent: string): string[] | undefined {
   const { added, changed, removed, bodyKept } = compareFields(sourceContent, candidateContent);
-  return added.length > 0 && changed.length === 0 && removed.length === 0 && bodyKept ? added : undefined;
+  const settable = added.every((key) => key === "description" || key === "when_to_use");
+  return added.length > 0 && settable && changed.length === 0 && removed.length === 0 && bodyKept ? added : undefined;
 }
 
 /** How a judge on a harness reads an asset: OpenCode has akm's `akm_show` tool; any other harness runs the CLI. */
