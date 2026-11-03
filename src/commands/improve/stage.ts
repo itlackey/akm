@@ -596,7 +596,7 @@ async function judgeQuality(
   return { outcome: "verdict", verdict: { ...verdict, score, reason, ...(criteria ? { criteria } : {}) } };
 }
 
-const QUALITY_VERDICT_SCHEMA = {
+const QUALITY_VERDICT_SHAPE = {
   type: "object",
   required: ["pass", "score", "reason"],
   additionalProperties: false,
@@ -636,7 +636,7 @@ export const reflectQualityJudge: Judge<ReflectJudgeInput, QualityJudgeResult> =
       ref: { type: "string" },
     },
   },
-  outputSchema: QUALITY_VERDICT_SCHEMA,
+  outputSchema: QUALITY_VERDICT_SHAPE,
   harnessReads: "On a harness, the asset at input.ref (akm show), to verify a fact the revision adds or alters.",
   defaultRunner: (config, run) => resolveQualityGateJudge(config, undefined, "reflect", undefined, run),
   run(input, call) {
@@ -691,7 +691,7 @@ export const lessonQualityJudge: Judge<LessonJudgeInput, QualityJudgeResult> = {
       extending: { type: "string" },
     },
   },
-  outputSchema: QUALITY_VERDICT_SCHEMA,
+  outputSchema: QUALITY_VERDICT_SHAPE,
   harnessReads: "Nothing.",
   // The gate's judge, else distill's own runner, as distill judges.
   defaultRunner: (config, run) =>

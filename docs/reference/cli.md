@@ -3228,8 +3228,8 @@ may also read the asset at `ref` with `akm show`.
 | `--list` | List the judges with their descriptions and schema versions |
 | `--schema` | Print the judge's input schema, output schema, schema version and what it may read on a harness |
 
-Output is one envelope: `{ judge, schemaVersion, runner: { kind, name, platform?, model },
-outcome, verdict?, reason? }`. `outcome` is `verdict` (with `verdict`), `error` (the call
+Output is one envelope: `{ judge, schemaVersion, runner, outcome, verdict?, reason? }`, where
+`runner` records `kind`, `name`, `platform?` and `model` of what judged. `outcome` is `verdict` (with `verdict`), `error` (the call
 failed: a timeout, a transport error, a harness that exited non-zero) or `unparseable`
 (the reply held no verdict); the last two carry a `reason`, print `ok: false` and exit 1,
 and are never a rejection. `schemaVersion` is the judge's, and changes when its input or

@@ -345,7 +345,7 @@ interface DeferNote {
   judgeReason?: string;
 }
 
-const JUDGMENT_VERDICT_SCHEMA = {
+const JUDGMENT_VERDICT_SHAPE = {
   type: "object",
   required: ["decision", "reason"],
   additionalProperties: false,
@@ -390,7 +390,7 @@ export const judgmentJudge: Judge<JudgmentInput, JudgmentVerdict> = {
       },
     },
   },
-  outputSchema: JUDGMENT_VERDICT_SCHEMA,
+  outputSchema: JUDGMENT_VERDICT_SHAPE,
   harnessReads: "Nothing.",
   defaultRunner: (config, run) =>
     resolveImproveExecution({
