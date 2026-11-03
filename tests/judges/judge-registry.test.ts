@@ -79,36 +79,6 @@ describe("a judge's prompt is the one the pipeline sent before the registry", ()
   });
 });
 
-describe("reflect.quality on a revision that only adds a missing field", () => {
-  const input = {
-    source: "---\nname: a\n---\nBody\n",
-    candidate: "---\nname: a\ndescription: Does a.\n---\nBody\n",
-  };
-  const reply = (quality: number) => async () => JSON.stringify({ scores: { quality }, reason: "r" });
-
-  test("is scored on QUALITY alone: 5 passes", async () => {
-    const result = await reflectQualityJudge.run(input, { runner: connection, chat: reply(5) });
-    expect(result).toMatchObject({
-      outcome: "verdict",
-      verdict: { pass: true, criteria: { need: 5, preservation: 5, quality: 5 } },
-    });
-  });
-
-  // akm scores NEED and PRESERVATION 5, so routing is the same as on a judge that scored all three:
-  // QUALITY 4 or 5 passes, and 1 to 3 averages to 3.67 or more, which reflect sends to review.
-  test("QUALITY 4 or 5 passes, 1 to 3 goes to review", async () => {
-    for (const quality of [5, 4, 3, 2, 1]) {
-      const result = await reflectQualityJudge.run(input, { runner: connection, chat: reply(quality) });
-      const criteria = { need: 5, preservation: 5, quality };
-      expect(result).toMatchObject({
-        outcome: "verdict",
-        verdict: quality >= 4 ? { pass: true, criteria } : { pass: false, reviewNeeded: true, criteria },
-      });
-      if (quality < 4) expect((result as { verdict: { score: number } }).verdict.score).toBeGreaterThanOrEqual(3.5);
-    }
-  });
-});
-
 describe("a failure is not a verdict", () => {
   const judges: Array<[Judge, unknown]> = [
     [reflectQualityJudge, C.REFLECT_MAINTENANCE],

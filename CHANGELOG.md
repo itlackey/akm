@@ -18,12 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- The reflect judge no longer reads the YAML to decide NEED and PRESERVATION when a revision only
-  adds fields the source lacks (a missing `description` or `when_to_use`) and leaves
-  everything else as it was. akm settles those two from its own comparison of the two
-  frontmatters, tells the judge so, and the judge scores QUALITY alone. The judge had been
-  reading such a revision as rewriting a field the source already had (#1308). NEED and PRESERVATION count as 5
-  in the verdict, so routing is unchanged: a weak QUALITY still goes to review.
+- The reflect judge's rubric says adding a field the source lacks is needed, not churn, and
+  drops nothing, so PRESERVATION is judged on the fields the source already had. The judge had
+  compared an added `description` with the source's `when_to_use`, and called the addition
+  churn, so it rejected a correct fix for a missing description (#1308).
 
 ### Removed
 

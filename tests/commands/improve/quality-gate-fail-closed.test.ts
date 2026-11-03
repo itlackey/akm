@@ -162,6 +162,12 @@ describe("buildReflectJudgePrompt", () => {
     expect(buildReflectJudgePrompt("candidate", "source", [])).toContain("This revision is maintenance");
   });
 
+  test("says a field the source lacks is needed and drops nothing", () => {
+    const prompt = buildReflectJudgePrompt("candidate", "source", []);
+    expect(prompt).toContain("Adding a field the source lacks is needed, not churn;");
+    expect(prompt).toContain("A field the source lacks has no old value to keep: adding it drops nothing,");
+  });
+
   test("keeps late changed content in bounded diff context", () => {
     const source = `${"source line\n".repeat(400)}old ending`;
     const candidate = `${"source line\n".repeat(400)}LATE_CHANGED_MARKER`;
@@ -170,24 +176,6 @@ describe("buildReflectJudgePrompt", () => {
     expect(prompt).toContain("LATE_CHANGED_MARKER");
     expect(prompt).toContain("Changed region:");
     expect(prompt.length).toBeLessThan(25_000);
-  });
-
-  test("a revision that only adds fields the source lacks is scored on QUALITY alone", () => {
-    const source = "---\nname: a\n---\nBody\n";
-    const adds = buildReflectJudgePrompt("---\nname: a\ndescription: Does a.\n---\nBody\n", source, []);
-    expect(adds).toContain("the revision adds description, which the source lacks, and changes nothing else");
-    expect(adds).not.toContain("1. NEED:");
-    expect(adds).toContain('{"scores": {"quality": <1-5 integer>}');
-
-    for (const candidate of [
-      "---\nname: b\ndescription: Does a.\n---\nBody\n",
-      "---\nname: a\ndescription: Does a.\n---\nBody changed\n",
-      "---\n---\nBody\n",
-      "---\nname: a\ndescription: Does a.\ntags: [z]\n---\nBody\n",
-      "---\nname: a\nstatus: deprecated\n---\nBody\n",
-    ]) {
-      expect(buildReflectJudgePrompt(candidate, source, [])).toContain("1. NEED:");
-    }
   });
 });
 

@@ -406,28 +406,6 @@ function buildChangedRegion(sourceContent: string, candidateContent: string): st
   return boundedDocument(`Removed or replaced:\n${removed || "(none)"}\n\nAdded or replacement:\n${added || "(none)"}`);
 }
 
-/** The fields the revision adds, changes and removes, as akm's own comparison of the two frontmatters. */
-function compareFields(sourceContent: string, candidateContent: string) {
-  const source = parseFrontmatter(sourceContent);
-  const candidate = parseFrontmatter(candidateContent);
-  const added: string[] = [];
-  const changed: string[] = [];
-  const removed: string[] = [];
-  for (const [key, value] of Object.entries(candidate.data)) {
-    if (!(key in source.data)) added.push(key);
-    else if (JSON.stringify(value) !== JSON.stringify(source.data[key])) changed.push(key);
-  }
-  for (const key of Object.keys(source.data)) if (!(key in candidate.data)) removed.push(key);
-  return { added, changed, removed, bodyKept: source.content === candidate.content };
-}
-
-/** The fields of a revision that only adds fields the source lacks and changes nothing else: akm settles NEED and PRESERVATION from its comparison, and the judge scores QUALITY alone. */
-function addedOnly(sourceContent: string, candidateContent: string): string[] | undefined {
-  const { added, changed, removed, bodyKept } = compareFields(sourceContent, candidateContent);
-  const settable = added.every((key) => key === "description" || key === "when_to_use");
-  return added.length > 0 && settable && changed.length === 0 && removed.length === 0 && bodyKept ? added : undefined;
-}
-
 /** How a judge on a harness reads an asset: OpenCode has akm's `akm_show` tool; any other harness runs the CLI. */
 type JudgeReadTool = "akm_show" | "akm show";
 
@@ -452,10 +430,7 @@ const REFLECT_JUDGE_INTRO =
 const REFLECT_JUDGE_NEGATIVE =
   "This revision answers negative feedback. It cannot change the body, so it need not resolve the feedback: judge only the fields it changes, and never fault it for a field it leaves as it was. Most negative feedback says the asset did not help with a task it was retrieved for: a retrieval miss, not a defect. It justifies changing a field only when the field claims more than the body covers (narrow it to what the body covers), or when the feedback calls the asset stale, outdated, superseded or historical (a new `when_to_use` must then name the version or date the body records). Feedback about a task the asset never claims to cover justifies no change. Repairing a missing or broken field is always needed, whatever the feedback says.";
 const REFLECT_JUDGE_MAINTENANCE =
-  "This revision is maintenance: there is no negative feedback. Only a missing or broken field needs a change; rewording a sound `description` or `when_to_use` is churn, however accurate.";
-
-const REFLECT_JUDGE_QUALITY =
-  "QUALITY: Is every new value supported by the body, without inventing, over-claiming or misdescribing? Check each new value as a claim against the body; restating the body in other words is supported. Score only values the revision adds or changes: a field it leaves as it was, however stale, is never this revision's fault. Score 1-2 when a new value says something the body does not support or the opposite of what it says, keeps a truncated or garbled fragment, or offers a dated or historical note for current work: when the feedback calls the note stale, outdated, superseded or historical, or the body records the version or date it was true for, a new `when_to_use` that does not name that version or date, or a new value that calls a dated snapshot 'current', scores 1-2.";
+  "This revision is maintenance: there is no negative feedback. Only a missing or broken field needs a change; rewording a sound `description` or `when_to_use` is churn, however accurate. Adding a field the source lacks is needed, not churn; every other change in the revision is still judged on its own.";
 
 /** Judge prompt for an in-place revision. `tools` is set when the judge runs on a harness. */
 export function buildReflectJudgePrompt(
@@ -464,25 +439,15 @@ export function buildReflectJudgePrompt(
   feedback: string[],
   tools?: { ref?: string; tool: JudgeReadTool },
 ): string {
-  const added = addedOnly(sourceContent, candidateContent);
   return [
     REFLECT_JUDGE_INTRO,
     "",
     feedback.some((line) => line.startsWith("[negative]")) ? REFLECT_JUDGE_NEGATIVE : REFLECT_JUDGE_MAINTENANCE,
     "",
-    ...(added
-      ? [
-          `akm compared the source and the revision: the revision adds ${added.join(", ")}, which the source lacks, and changes nothing else. Every change fixes a missing field and nothing the source carried is lost, so NEED and PRESERVATION are settled.`,
-          "",
-          "Score the revision on one criterion from 1 (poor) to 5 (excellent):",
-          REFLECT_JUDGE_QUALITY,
-        ]
-      : [
-          "Score this revision on each criterion from 1 (poor) to 5 (excellent):",
-          "1. NEED: Does every changed field fix a real problem? Real problems: a missing `description`, `when_to_use` or title; a broken description (a sentence split by a stray period at a line wrap, an escaped or unbalanced quote, a truncated ending, a heading fragment); and, for a revision answering negative feedback, a field that claims more than the body covers, or a stale note's `when_to_use` that does not name the version or date the body records. Replacing a stray period that splits a sentence with a comma, a word or nothing repairs a broken description, however small the change looks. Score 4-5 when every changed field fixes one. Score 1-2 when any changed field rewrites a sound field. Score NEED on the changed fields alone: leaving negative feedback about the body unresolved never lowers it.",
-          "2. PRESERVATION: Does the new description keep every fact the old one carried: names, identifiers, numbers, versions, paths, qualifiers and status words such as 'Proposal' or 'draft'? Are all other frontmatter fields unchanged? Score 1-3 when anything is dropped or changed.",
-          `3. ${REFLECT_JUDGE_QUALITY}`,
-        ]),
+    "Score this revision on each criterion from 1 (poor) to 5 (excellent):",
+    "1. NEED: Does every changed field fix a real problem? Real problems: a missing `description`, `when_to_use` or title; a broken description (a sentence split by a stray period at a line wrap, an escaped or unbalanced quote, a truncated ending, a heading fragment); and, for a revision answering negative feedback, a field that claims more than the body covers, or a stale note's `when_to_use` that does not name the version or date the body records. Replacing a stray period that splits a sentence with a comma, a word or nothing repairs a broken description, however small the change looks. Score 4-5 when every changed field fixes one. Score 1-2 when any changed field rewrites a sound field. Score NEED on the changed fields alone: leaving negative feedback about the body unresolved never lowers it.",
+    "2. PRESERVATION: Does the new description keep every fact the old one carried: names, identifiers, numbers, versions, paths, qualifiers and status words such as 'Proposal' or 'draft'? Are all other frontmatter fields unchanged? Score 1-3 when anything is dropped or changed. A field the source lacks has no old value to keep: adding it drops nothing, so judge PRESERVATION on the fields the source already had.",
+    "3. QUALITY: Is every new value supported by the body, without inventing, over-claiming or misdescribing? Check each new value as a claim against the body; restating the body in other words is supported. Score only values the revision adds or changes: a field it leaves as it was, however stale, is never this revision's fault. Score 1-2 when a new value says something the body does not support or the opposite of what it says, keeps a truncated or garbled fragment, or offers a dated or historical note for current work: when the feedback calls the note stale, outdated, superseded or historical, or the body records the version or date it was true for, a new `when_to_use` that does not name that version or date, or a new value that calls a dated snapshot 'current', scores 1-2.",
     "",
     "Feedback:",
     "```",
@@ -505,9 +470,7 @@ export function buildReflectJudgePrompt(
     "```",
     "",
     ...(tools ? [reflectJudgeToolRules(tools.ref, tools.tool), ""] : []),
-    added
-      ? 'Return ONLY valid JSON, no prose: {"scores": {"quality": <1-5 integer>}, "reason": "<one sentence>"}'
-      : 'Return ONLY valid JSON, no prose: {"scores": {"need": <1-5 integer>, "preservation": <1-5 integer>, "quality": <1-5 integer>}, "reason": "<one sentence>"}',
+    'Return ONLY valid JSON, no prose: {"scores": {"need": <1-5 integer>, "preservation": <1-5 integer>, "quality": <1-5 integer>}, "reason": "<one sentence>"}',
   ].join("\n");
 }
 
@@ -531,13 +494,11 @@ const REFLECT_JUDGE_CRITERIA = ["need", "preservation", "quality"] as const;
  * Read a judge response: the per-criterion shape (averaged here, `grounding`
  * aside; `lowest` is the lowest score in that mean) or the older `{"score"}`
  * shape. Only the expected criteria are read; any missing or out-of-range
- * (1..5) value is a parse failure, extra keys are ignored. `settled` holds criteria
- * akm scored itself: they join the mean as if the judge had scored them.
+ * (1..5) value is a parse failure, extra keys are ignored.
  */
 function parseJudgeResponse(
   raw: string,
   keys: readonly string[],
-  settled?: Record<string, number>,
 ): { score: number; lowest: number; reason: string; criteria?: Record<string, number> } | undefined {
   const parsed = parseEmbeddedJsonResponse<{ score?: unknown; scores?: unknown; reason?: unknown }>(raw);
   if (!parsed || typeof parsed.reason !== "string") return undefined;
@@ -547,7 +508,7 @@ function parseJudgeResponse(
   if (parsed.scores !== undefined) {
     if (typeof parsed.scores !== "object" || parsed.scores === null || Array.isArray(parsed.scores)) return undefined;
     const scores = parsed.scores as Record<string, unknown>;
-    const criteria: Record<string, number> = { ...settled };
+    const criteria: Record<string, number> = {};
     for (const key of keys) {
       const value = scores[key];
       if (!inRange(value)) return undefined;
@@ -598,7 +559,6 @@ async function judgeQuality(
   prompt: string,
   keys: readonly string[],
   call: JudgeCall,
-  settled?: Record<string, number>,
 ): Promise<JudgeOutcome<QualityJudgeResult>> {
   const { runner } = call;
   const outcome = await callStage({
@@ -616,11 +576,11 @@ async function judgeQuality(
       ...(call.signal ? { signal: call.signal } : {}),
       ...(call.chat ? { chat: call.chat } : {}),
     },
-    parse: (raw) => parseJudgeResponse(raw, keys, settled),
+    parse: (raw) => parseJudgeResponse(raw, keys),
     ...(call.onNotices ? { onNotices: call.onNotices } : {}),
   });
   if (!outcome.ok) return { outcome: "error", reason: outcome.error };
-  const parsed = parseJudgeResponse(outcome.raw, keys, settled);
+  const parsed = parseJudgeResponse(outcome.raw, keys);
   if (!parsed) return { outcome: "unparseable", reason: "the reply held no verdict in the expected shape" };
   const { score, lowest, reason, criteria } = parsed;
   // A lesson criterion at 2 or below is a defect the mean would hide (4 and 1 average 2.5, a review): it rejects.
@@ -686,13 +646,10 @@ export const reflectQualityJudge: Judge<ReflectJudgeInput, QualityJudgeResult> =
       runner.kind !== "connection"
         ? { ref: input.ref, tool: runner.platform === "opencode" ? ("akm_show" as const) : ("akm show" as const) }
         : undefined;
-    // An add-only revision: akm scores NEED and PRESERVATION 5 and the judge scores QUALITY, so routing is the same as a judge that scored all three.
-    const settled = addedOnly(input.source, input.candidate) !== undefined;
     return judgeQuality(
       buildReflectJudgePrompt(input.candidate, input.source, input.feedback ?? [], tools),
-      settled ? (["quality"] as const) : REFLECT_JUDGE_CRITERIA,
+      REFLECT_JUDGE_CRITERIA,
       call,
-      settled ? { need: 5, preservation: 5 } : undefined,
     );
   },
 };
