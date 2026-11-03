@@ -531,11 +531,13 @@ const REFLECT_JUDGE_CRITERIA = ["need", "preservation", "quality"] as const;
  * Read a judge response: the per-criterion shape (averaged here, `grounding`
  * aside; `lowest` is the lowest score in that mean) or the older `{"score"}`
  * shape. Only the expected criteria are read; any missing or out-of-range
- * (1..5) value is a parse failure, extra keys are ignored.
+ * (1..5) value is a parse failure, extra keys are ignored. `settled` holds criteria
+ * akm scored itself: they join the mean as if the judge had scored them.
  */
 function parseJudgeResponse(
   raw: string,
   keys: readonly string[],
+  settled?: Record<string, number>,
 ): { score: number; lowest: number; reason: string; criteria?: Record<string, number> } | undefined {
   const parsed = parseEmbeddedJsonResponse<{ score?: unknown; scores?: unknown; reason?: unknown }>(raw);
   if (!parsed || typeof parsed.reason !== "string") return undefined;
@@ -545,7 +547,7 @@ function parseJudgeResponse(
   if (parsed.scores !== undefined) {
     if (typeof parsed.scores !== "object" || parsed.scores === null || Array.isArray(parsed.scores)) return undefined;
     const scores = parsed.scores as Record<string, unknown>;
-    const criteria: Record<string, number> = {};
+    const criteria: Record<string, number> = { ...settled };
     for (const key of keys) {
       const value = scores[key];
       if (!inRange(value)) return undefined;
@@ -596,6 +598,7 @@ async function judgeQuality(
   prompt: string,
   keys: readonly string[],
   call: JudgeCall,
+  settled?: Record<string, number>,
 ): Promise<JudgeOutcome<QualityJudgeResult>> {
   const { runner } = call;
   const outcome = await callStage({
@@ -613,11 +616,11 @@ async function judgeQuality(
       ...(call.signal ? { signal: call.signal } : {}),
       ...(call.chat ? { chat: call.chat } : {}),
     },
-    parse: (raw) => parseJudgeResponse(raw, keys),
+    parse: (raw) => parseJudgeResponse(raw, keys, settled),
     ...(call.onNotices ? { onNotices: call.onNotices } : {}),
   });
   if (!outcome.ok) return { outcome: "error", reason: outcome.error };
-  const parsed = parseJudgeResponse(outcome.raw, keys);
+  const parsed = parseJudgeResponse(outcome.raw, keys, settled);
   if (!parsed) return { outcome: "unparseable", reason: "the reply held no verdict in the expected shape" };
   const { score, lowest, reason, criteria } = parsed;
   // A lesson criterion at 2 or below is a defect the mean would hide (4 and 1 average 2.5, a review): it rejects.
@@ -683,10 +686,13 @@ export const reflectQualityJudge: Judge<ReflectJudgeInput, QualityJudgeResult> =
       runner.kind !== "connection"
         ? { ref: input.ref, tool: runner.platform === "opencode" ? ("akm_show" as const) : ("akm show" as const) }
         : undefined;
+    // An add-only revision: akm scores NEED and PRESERVATION 5 and the judge scores QUALITY, so routing is the same as a judge that scored all three.
+    const settled = addedOnly(input.source, input.candidate) !== undefined;
     return judgeQuality(
       buildReflectJudgePrompt(input.candidate, input.source, input.feedback ?? [], tools),
-      addedOnly(input.source, input.candidate) ? (["quality"] as const) : REFLECT_JUDGE_CRITERIA,
+      settled ? (["quality"] as const) : REFLECT_JUDGE_CRITERIA,
       call,
+      settled ? { need: 5, preservation: 5 } : undefined,
     );
   },
 };

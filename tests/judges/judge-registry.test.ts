@@ -88,15 +88,23 @@ describe("reflect.quality on a revision that only adds a missing field", () => {
 
   test("is scored on QUALITY alone: 5 passes", async () => {
     const result = await reflectQualityJudge.run(input, { runner: connection, chat: reply(5) });
-    expect(result).toMatchObject({ outcome: "verdict", verdict: { pass: true, criteria: { quality: 5 } } });
+    expect(result).toMatchObject({
+      outcome: "verdict",
+      verdict: { pass: true, criteria: { need: 5, preservation: 5, quality: 5 } },
+    });
   });
 
-  // The score is QUALITY itself, with no settled 5s lifting it: reflect passes 4 or more and rejects 3 or less
-  // (below its 3.5 review floor), so an add-only revision never reaches human review.
-  test("the score is the QUALITY score, unlifted", async () => {
-    for (const quality of [4, 3, 2, 1]) {
+  // akm scores NEED and PRESERVATION 5, so routing is the same as on a judge that scored all three:
+  // QUALITY 4 or 5 passes, and 1 to 3 averages to 3.67 or more, which reflect sends to review.
+  test("QUALITY 4 or 5 passes, 1 to 3 goes to review", async () => {
+    for (const quality of [5, 4, 3, 2, 1]) {
       const result = await reflectQualityJudge.run(input, { runner: connection, chat: reply(quality) });
-      expect(result).toMatchObject({ outcome: "verdict", verdict: { pass: quality >= 4, score: quality } });
+      const criteria = { need: 5, preservation: 5, quality };
+      expect(result).toMatchObject({
+        outcome: "verdict",
+        verdict: quality >= 4 ? { pass: true, criteria } : { pass: false, reviewNeeded: true, criteria },
+      });
+      if (quality < 4) expect((result as { verdict: { score: number } }).verdict.score).toBeGreaterThanOrEqual(3.5);
     }
   });
 });
