@@ -225,11 +225,14 @@ temperature 0, each criterion scored 1 to 5. Content passes only on a complete
 verdict: with no runner, or when the call times out or returns an unparseable or
 incomplete reply, it does not pass and goes to review. A reflect revision changes
 only an asset's frontmatter (`description`, `when_to_use`, and a title added when
-the body has none), so the judge scores only the fields it changes, on three criteria:
+the body has none), so the judge scores only the fields it changes, on three criteria.
+A no-op or cosmetic patch (skipped as `no_change`) and a revision `findReflectDefect`
+refuses never reach the judge, and with the gate off nothing does (steps 5-6 of
+[reflect](internals/improve-workflow.md#reflect-akmreflect)). The criteria:
 
 - **need**: does every changed field fix a real problem: a missing or broken
-  `description`, `when_to_use` or title, a field that claims more than the body
-  covers, or (on negative feedback calling the note stale) a `when_to_use` that
+  `description`, `when_to_use` or title, and, on negative feedback only, a field that
+  claims more than the body covers or a stale note's `when_to_use` that
   names no version or date? A change to a sound field scores 1 or 2. Negative
   feedback about the body the revision cannot change never lowers it.
 - **preservation**: does the new description keep every fact the old one
@@ -248,8 +251,9 @@ call with no verdict (score `-1`) is queued for review (`judge-error`). On 113
 reviewed frontmatter-only proposals (lab 27B Q2, the shipped judge) the
 non-passing ones at 3.5 or more were 17 good and 9 bad, the rest 1 good and 2
 bad; on 396 labelled body rewrites a mean below 3.5 was good 6 times in 291 (the
-constant and its sources are in `src/commands/improve/stage.ts`). Distill and
-the other judges flag review from a mean of 2.5.
+constant and its sources are in `src/commands/improve/stage.ts`). Distill's lesson
+judge flags review from a mean of 2.5, subject to its lesson rule; the other judges
+have no mean or review band.
 A lesson is scored on `reusable`, `nonRedundancy`, and `grounding`;
 `grounding` is left out of the mean, and any lesson criterion at 2 or lower
 rejects whatever the mean is (see

@@ -737,11 +737,12 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
   test.each([
     ["every criterion 4 or more", { need: 4, preservation: 5, quality: 4 }, "proposal"],
     ["a mean of 3.67", { need: 3, preservation: 3, quality: 5 }, "judge-uncertain"],
-    ["a mean of 3.33", { need: 2, preservation: 4, quality: 4 }, "quality_rejected"],
+    ["a legacy score of exactly 3.5", 3.5, "judge-uncertain"],
     ["a mean of 2.67", { need: 2, preservation: 3, quality: 3 }, "quality_rejected"],
     ["a mean of 2.33", { need: 1, preservation: 3, quality: 3 }, "quality_rejected"],
   ])("%s routes to %s", async (_label, scores, route) => {
-    const result = await reflectJudgedBy(async () => JSON.stringify({ scores, reason: "stubbed" }));
+    const reply = typeof scores === "number" ? { score: scores } : { scores };
+    const result = await reflectJudgedBy(async () => JSON.stringify({ ...reply, reason: "stubbed" }));
     if (route === "proposal") {
       if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
       expect(result.proposal.gateDecision).toMatchObject({ outcome: "staged" });
