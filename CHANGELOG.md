@@ -21,6 +21,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm improve judge --strategy`: a strategy never chose where the judge ran. The command
   is now `akm judge reflect.quality` in its older input and output shape.
 
+### Fixed
+
+- Reflect no longer replaces a field with the text `null`: a patch value that is the string
+  `null` (any case, trimmed) leaves the field unchanged, as JSON `null` does (#1420).
+
 ## [0.10.261105] - 2026-11-02
 
 ### Changed

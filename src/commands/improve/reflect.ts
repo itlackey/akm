@@ -428,7 +428,7 @@ function parseReflectFrontmatterPatch(value: unknown): ReflectPatch {
   const patch: ReflectPatch = {};
   for (const field of REFLECT_PATCH_FIELDS) {
     const fieldValue = fields[field];
-    if (fieldValue === null) continue;
+    if (fieldValue === null || (typeof fieldValue === "string" && fieldValue.trim().toLowerCase() === "null")) continue;
     if (typeof fieldValue !== "string" || !fieldValue.trim() || /[\r\n]/.test(fieldValue)) {
       throw new Error(`direct reflect frontmatterPatch.${field} must be a non-empty single-line string or null`);
     }
