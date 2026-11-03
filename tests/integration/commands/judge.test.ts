@@ -88,7 +88,7 @@ describe("akm judge", () => {
       expect(JSON.parse(result.stdout)).toMatchObject({
         ok: true,
         judge: "reflect.quality",
-        schemaVersion: 1,
+        schemaVersion: 2,
         runner: { kind: "connection", name: "gate", model: "gate-model" },
         outcome: "verdict",
         verdict: { pass: true, criteria: { need: 5, preservation: 5, quality: 4 } },

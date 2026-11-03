@@ -16,6 +16,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `"unparseable"`, never a verdict. akm's own pipeline calls each judge through the same
   registry entry, so the command and the pipeline send the same prompt.
 
+### Changed
+
+- `akm judge reflect.quality` marks a non-pass `reviewNeeded` only from a mean of 3.5, the
+  route reflect takes (it queued such a revision for review and refused a lower one). The
+  floor moved from reflect into the judge's verdict, so the command and the pipeline read
+  one threshold; reflect's outcomes are unchanged. `reflect.quality`'s `schemaVersion` is 2.
+
 ### Removed
 
 - `akm improve judge --strategy`: a strategy never chose where the judge ran. The command

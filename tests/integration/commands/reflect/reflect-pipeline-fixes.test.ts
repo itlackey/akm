@@ -733,8 +733,29 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
     expect(listProposals(makeStashDir(), { status: "pending" }).map((p) => p.id)).toEqual([result.proposal.id]);
   });
 
+  // Reflect routes on the judge's verdict: the same outcomes as when reflect applied its own 3.5 floor.
+  test.each([
+    ["every criterion 4 or more", { need: 4, preservation: 5, quality: 4 }, "proposal"],
+    ["a mean of 3.67", { need: 3, preservation: 3, quality: 5 }, "judge-uncertain"],
+    ["a mean of 3.33", { need: 2, preservation: 4, quality: 4 }, "quality_rejected"],
+    ["a mean of 2.67", { need: 2, preservation: 3, quality: 3 }, "quality_rejected"],
+    ["a mean of 2.33", { need: 1, preservation: 3, quality: 3 }, "quality_rejected"],
+  ])("%s routes to %s", async (_label, scores, route) => {
+    const result = await reflectJudgedBy(async () => JSON.stringify({ scores, reason: "stubbed" }));
+    if (route === "proposal") {
+      if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
+      expect(result.proposal.gateDecision).toMatchObject({ outcome: "staged" });
+    } else if (route === "judge-uncertain") {
+      if (!result.ok) throw new Error(`expected a review, got: ${result.error}`);
+      expect(result.proposal.gateDecision).toMatchObject({ outcome: "deferred", reason: "judge-uncertain" });
+    } else {
+      if (result.ok) throw new Error("expected the quality gate to refuse the revision");
+      expect(result.reason).toBe("quality_rejected");
+    }
+  });
+
   test("a score just below the uncertain band is still refused", async () => {
-    // A mean of 3.33 (one criterion at 2, two at 4) is the judge's own review label, but short of the band.
+    // A mean of 3.33 (one criterion at 2, two at 4) is short of the band.
     const result = await reflectJudgedBy(async () =>
       JSON.stringify({ scores: { need: 2, preservation: 4, quality: 4 }, reason: "rewords a correct asset" }),
     );
