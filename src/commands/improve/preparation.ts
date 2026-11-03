@@ -33,11 +33,14 @@ import type {
 } from "../../core/improve-types";
 import { withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
-import { countUsageEventsByType, USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
+import {
+  countUsageEventsByType,
+  listZeroResultSearchQueries,
+  USAGE_EVENT_RETENTION_DAYS,
+} from "../../indexer/usage/usage-events";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import type { Database } from "../../storage/database";
-import { getZeroResultSearches } from "../../storage/repositories/index-entries-repository";
 import { getRetrievalCounts } from "../../storage/repositories/index-utility-repository";
 import { listStateProposals } from "../../storage/repositories/proposals-repository";
 import { akmLint } from "../lint/index";
@@ -965,7 +968,7 @@ async function selectLoopCandidates(
   const sorted = [...mergedRefs].sort(
     (a, b) => effectiveScore(b.ref) - effectiveScore(a.ref) || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0),
   );
-  const coverageGaps = withIndexDb(!persist, getZeroResultSearches) ?? [];
+  const coverageGaps = withRunState(eventsCtx, persist, (db) => listZeroResultSearchQueries(db)) ?? [];
   const { actionableRefs, missing } = await dropRefsMissingOnDisk(sorted, options, eventsCtx, persist);
   const selection = selectEffectiveImproveRefs({
     rankedRefs: actionableRefs,

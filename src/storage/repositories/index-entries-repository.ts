@@ -919,34 +919,6 @@ export function getEntryFilePathById(db: Database, id: number): string | undefin
 // ── Indexer-phase helpers (moved from indexer.ts) ────────────────────────────
 
 /**
- * Return distinct zero-result search queries from the `usage_events` table
- * within the given lookback window.
- *
- * Reads from `usage_events` (event_type = 'search') where the metadata JSON
- * blob contains `resultCount = 0`. The `search_events` table never existed;
- * all errors are caught and an empty array is returned so callers never need
- * to guard against DB schema differences.
- */
-export function getZeroResultSearches(db: Database, sinceDays = 30): string[] {
-  const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
-  try {
-    const rows = db
-      .prepare(
-        `SELECT DISTINCT json_extract(metadata, '$.query') AS query
-         FROM usage_events
-         WHERE event_type = 'search'
-           AND created_at >= ?
-           AND json_extract(metadata, '$.resultCount') = 0
-         ORDER BY created_at DESC LIMIT 20`,
-      )
-      .all(since) as { query: string | null }[];
-    return rows.map((r) => r.query).filter((q): q is string => q !== null);
-  } catch {
-    return []; // table may not exist in older DBs
-  }
-}
-
-/**
  * Look up an entry `id` by a new-grammar `[bundle//]conceptId` ref, resolving
  * against the canonical stored `item_ref`. Returns `{ id }` or `null`.
  */
