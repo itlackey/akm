@@ -38,12 +38,15 @@ import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString } from "../../../core/common";
 import { concurrentMap } from "../../../core/concurrent";
 import type { AkmConfig } from "../../../core/config/config";
+import { SHIPPED_ALIAS } from "../../../core/config/model-aliases";
+import { UsageError } from "../../../core/errors";
 import type { ConsolidatePairJudgeLabel, ConsolidatePairPassResult } from "../../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../../core/parse";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { warnOnce } from "../../../core/warn";
 import { sameScope, scopeFromFrontmatter } from "../../../indexer/passes/metadata";
 import type { RunnerSpec } from "../../../integrations/agent/runner";
+import type { Judge } from "../../../judges/registry";
 import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../../../llm/client";
 import { runGit } from "../../../sources/providers/git-install";
 import type { Database } from "../../../storage/database";
@@ -71,6 +74,7 @@ import {
 } from "../../proposal/repository";
 import type { AkmConsolidateOptions } from "../consolidate";
 import { contentHash, stripFrontmatterBody } from "../content-hash";
+import { resolveImproveExecution } from "../execution";
 import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "../retrieval-scope";
 import { callStage } from "../stage";
@@ -515,6 +519,14 @@ export interface PairSide {
   updatedIso: string;
 }
 
+function frontmatterOf(raw: string): Record<string, unknown> {
+  try {
+    return parseFrontmatter(raw).data;
+  } catch {
+    return {};
+  }
+}
+
 function loadSide(
   asset: PairAsset,
   gitFirstAdded: ReadonlyMap<string, number> | undefined,
@@ -526,12 +538,7 @@ function loadSide(
   } catch {
     return undefined;
   }
-  let frontmatter: Record<string, unknown>;
-  try {
-    frontmatter = parseFrontmatter(raw).data;
-  } catch {
-    frontmatter = {};
-  }
+  const frontmatter = frontmatterOf(raw);
   // B1: created is the git first-add time (mtime only when git does not know
   // the file, or the bundle has none) — frontmatter createdAt/created is not
   // consulted; too few real assets carry it to be a reliable ordering.
@@ -546,7 +553,12 @@ function loadSide(
   };
 }
 
-function sideSection(label: string, side: PairSide): string[] {
+/** What the pair prompt reads of a note. */
+type PairPromptSide = Pick<PairSide, "frontmatter" | "raw" | "createdIso" | "updatedIso"> & {
+  asset: Pick<PairAsset, "ref" | "type">;
+};
+
+function sideSection(label: string, side: PairPromptSide): string[] {
   return [
     `Asset ${label}:`,
     `Ref: ${side.asset.ref}`,
@@ -563,8 +575,8 @@ function sideSection(label: string, side: PairSide): string[] {
 }
 
 /** Lexical attention hints only: equal token sets do not prove equal claims. */
-function exclusiveTerms(side: PairSide, other: PairSide): string {
-  const tokens = (note: PairSide) =>
+function exclusiveTerms(side: PairPromptSide, other: PairPromptSide): string {
+  const tokens = (note: PairPromptSide) =>
     new Set(
       `${asNonEmptyString(note.frontmatter.description) ?? ""}\n${stripFrontmatterBody(note.raw)}`
         .split(/\s+/)
@@ -587,7 +599,7 @@ function orderByAge(x: PairSide, y: PairSide): { older: PairSide; newer: PairSid
 }
 
 /** The user message: dates decide "A (older)" / "B (newer)" (plan Appendix A), matching the calibration sample's own ordering. */
-export function buildPairUserPrompt(older: PairSide, newer: PairSide): string {
+export function buildPairUserPrompt(older: PairPromptSide, newer: PairPromptSide): string {
   // Equal dates (a batch added in one commit, notes from one file time) make neither side newer: say so, or the judge
   // reads "B (newer)" as proof that B replaces A (#1134).
   const tied = Date.parse(older.createdIso) === Date.parse(newer.createdIso);
@@ -601,6 +613,113 @@ export function buildPairUserPrompt(older: PairSide, newer: PairSide): string {
     ...(tied ? [consolidatePairSameAge] : []),
   ].join("\n");
 }
+
+/** One note of a pair, as the judge reads it. `created` and `updated` are the dates the prompt states (git first-add, frontmatter `updated`). */
+export interface PairNote {
+  ref: string;
+  type: string;
+  created: string;
+  updated: string;
+  /** The whole note file: frontmatter and body. */
+  content: string;
+}
+
+/** `a` is the older note; with equal `created` dates neither is newer. */
+export interface PairJudgeInput {
+  a: PairNote;
+  b: PairNote;
+}
+
+const NOTE_SCHEMA = {
+  type: "object",
+  required: ["ref", "type", "created", "updated", "content"],
+  additionalProperties: false,
+  properties: {
+    ref: { type: "string" },
+    type: { type: "string" },
+    created: { type: "string" },
+    updated: { type: "string" },
+    content: { type: "string" },
+  },
+};
+
+function pairNoteOf(side: PairSide): PairNote {
+  return {
+    ref: side.asset.ref,
+    type: side.asset.type,
+    created: side.createdIso,
+    updated: side.updatedIso,
+    content: side.raw,
+  };
+}
+
+function sideOfNote(note: PairNote): PairPromptSide {
+  return {
+    asset: { ref: note.ref, type: note.type },
+    frontmatter: frontmatterOf(note.content),
+    raw: note.content,
+    createdIso: note.created,
+    updatedIso: note.updated,
+  };
+}
+
+export const pairJudge: Judge<PairJudgeInput, PairJudgeVerdict> = {
+  name: "consolidate.pair",
+  description:
+    "Consolidate's pair judge: what each of two notes states that the other does not, and so the relation between them.",
+  schemaVersion: 1,
+  inputSchema: {
+    type: "object",
+    required: ["a", "b"],
+    additionalProperties: false,
+    properties: { a: NOTE_SCHEMA, b: NOTE_SCHEMA },
+  },
+  outputSchema: {
+    type: "object",
+    required: ["onlyInA", "onlyInB", "relation", "redundant", "confidence", "reason"],
+    additionalProperties: false,
+    properties: {
+      onlyInA: { type: "array", items: { type: "string" } },
+      onlyInB: { type: "array", items: { type: "string" } },
+      relation: { type: "string", enum: ["duplicate", "subsumed", "overlap"] },
+      redundant: { type: ["string", "null"], enum: ["A", "B", null] },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+      reason: { type: "string" },
+    },
+  },
+  harnessReads: "Nothing.",
+  defaultRunner: (config, run) =>
+    resolveImproveExecution({
+      config,
+      processName: "consolidate",
+      alias: SHIPPED_ALIAS.improve,
+      ...(run ? { run } : {}),
+    })?.runner,
+  async run(input, call) {
+    const a = Date.parse(input.a.created);
+    const b = Date.parse(input.b.created);
+    if (Number.isFinite(a) && Number.isFinite(b) && a > b) {
+      throw new UsageError("consolidate.pair: `a` must be the older note (its `created` is later than `b`'s).");
+    }
+    const outcome = await callStage({
+      runner: call.runner,
+      system: consolidatePairPrompt,
+      prompt: buildPairUserPrompt(sideOfNote(input.a), sideOfNote(input.b)),
+      request: {
+        responseSchema: PAIR_JUDGE_JSON_SCHEMA,
+        enableThinking: false,
+        ...(call.signal ? { signal: call.signal } : {}),
+        ...(call.chat ? { chat: call.chat } : {}),
+      },
+      parse: parsePairJudgeResponse,
+      ...(call.onNotices ? { onNotices: call.onNotices } : {}),
+    });
+    if (!outcome.ok) return { outcome: "error", reason: outcome.error };
+    const verdict = parsePairJudgeResponse(outcome.raw);
+    if (!verdict) return { outcome: "unparseable", reason: "the reply held no verdict in the expected shape" };
+    return { outcome: "verdict", verdict };
+  },
+};
 
 /** The tombstone-vocabulary reason a judge label maps to (`supersedes` -> `superseded`; the rest unchanged). */
 export function tombstoneReason(label: "duplicate" | "subsumed" | "supersedes"): Exclude<RetireReason, "promoted"> {
@@ -751,22 +870,17 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
 
   const { older, newer } = orderByAge(initiatorSide, otherSide);
 
-  const outcome = await callStage({
-    runner: ctx.llmRunner,
-    system: consolidatePairPrompt,
-    prompt: buildPairUserPrompt(older, newer),
-    request: {
-      responseSchema: PAIR_JUDGE_JSON_SCHEMA,
-      enableThinking: false,
-      signal: ctx.opts.signal,
+  const judged = await pairJudge.run(
+    { a: pairNoteOf(older), b: pairNoteOf(newer) },
+    {
+      runner: ctx.llmRunner,
+      ...(ctx.opts.signal ? { signal: ctx.opts.signal } : {}),
       ...(ctx.chat ? { chat: ctx.chat } : {}),
+      ...(ctx.opts.onNotices ? { onNotices: ctx.opts.onNotices } : {}),
     },
-    parse: parsePairJudgeResponse,
-    ...(ctx.opts.onNotices ? { onNotices: ctx.opts.onNotices } : {}),
-  });
-  if (!outcome.ok) return { failed: true };
-  const verdict = parsePairJudgeResponse(outcome.raw);
-  if (!verdict) return { failed: true };
+  );
+  if (judged.outcome !== "verdict") return { failed: true };
+  const { verdict } = judged;
 
   ctx.labelCounts[verdict.relation]++;
   if (verdict.relation === "contradicts") return { failed: false }; // counted; stays human — no proposal, no belief write

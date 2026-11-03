@@ -104,6 +104,7 @@ import "./commands/metrics/md-report";
 import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
 import { improveCommand } from "./commands/improve/improve-cli";
+import { judgeCommand } from "./commands/judge-cli";
 import { metricsCommand } from "./commands/metrics/metrics-cli";
 import { migrateCommand } from "./commands/migrate-cli";
 import { modelsCommand } from "./commands/models-cli";
@@ -548,6 +549,7 @@ const commands = {
   command: commandCommand,
   lint: lintCommand,
   improve: improveCommand,
+  judge: judgeCommand,
   proposal: proposalCommand,
   completions: completionsCommand,
   env: envCommand,
@@ -873,7 +875,7 @@ const HELP_SECTIONS: ReadonlyArray<{
     title: "ASSETS",
     commands: ["import", "clone", "bundle", "env", "secret", "sync", "proposal"],
   },
-  { title: "AUTOMATION", commands: ["improve", "agent", "command", "workflow", "task"] },
+  { title: "AUTOMATION", commands: ["improve", "judge", "agent", "command", "workflow", "task"] },
   {
     title: "SYSTEM",
     commands: [

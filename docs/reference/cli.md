@@ -2944,7 +2944,7 @@ akm improve lessons/my-lesson --show-prompt --format text # print the composed r
 akm improve report                     # LLM usage/routing report for the most recent real run
 akm improve report --run <id>          # ...for one specific improve_runs id
 akm improve report --since 7d          # ...aggregated over every real run started in the last 7 days
-akm improve judge < revision.json      # reflect's quality judge on one revision; writes nothing
+akm improve judge < revision.json      # reflect's quality judge on one revision (same as akm judge reflect.quality); writes nothing
 ```
 
 | Flag | Description |
@@ -3184,16 +3184,59 @@ support.
 
 #### improve judge
 
-`akm improve judge` (a real subcommand; `--strategy` is its only flag) runs reflect's quality judge on one revision and prints its
-verdict, for testing a judge on revisions whose right answer you know. It
-reads `{"source": "...", "candidate": "...", "feedback": "...", "ref": "..."}` JSON
-from stdin (`feedback` and `ref` are optional; `ref` names the revised asset,
-which a judge on a harness may read), judges with the connection or harness
-`improve.qualityGate` names (the default when it names none; `--strategy` picks
-the strategy whose reflect gate must be enabled), and prints `{ engine, pass,
-score, reason, criteria }` with the gate's prompt and pass rule, where `engine`
-is the name of the connection or harness that judged. A `score` of `-1` means
-the judge gave no verdict. It writes nothing.
+`akm improve judge` (a real subcommand; no flags) is `akm judge reflect.quality`
+for one revision, kept for callers that read its older shape. It reads
+`{"source": "...", "candidate": "...", "feedback": "...", "ref": "..."}` JSON from
+stdin (`feedback` and `ref` are optional; `ref` names the revised asset, which a
+judge on a harness may read), judges with the connection or harness
+`improve.qualityGate` names (the default when it names none), and prints `{ engine,
+pass, score, reason, criteria }`, where `engine` is the name of the connection or
+harness that judged. A `score` of `-1` means the judge gave no verdict. It writes
+nothing. Its `--strategy` flag is gone: a strategy never chose where a judge runs.
+
+### judge
+
+```sh
+akm judge --list                                  # the registered judges
+akm judge reflect.quality --schema                # its input schema, output schema and version
+akm judge reflect.quality < revision.json         # on the judge's default runner
+akm judge distill.lesson --connection lab < lesson.json
+akm judge consolidate.pair --harness claude --model sonnet < pair.json
+```
+
+Runs one of akm's model judges on one input and prints the verdict, so a judge can be
+measured on its own and compared across runners. It reads the input as JSON on stdin,
+checks it against the judge's input schema (an unknown field is refused, exit 2), and writes
+nothing.
+
+| Judge | Judges | Input |
+| --- | --- | --- |
+| `reflect.quality` | a revision of an asset's frontmatter (reflect's quality gate) | `source`, `candidate`, `feedback?` (lines), `ref?` |
+| `distill.lesson` | a new lesson, or with `extending` an update of one (distill's quality gate and its lesson updates) | `lesson`, `source` (the memory without its frontmatter), `feedback?`, `related?` (`{ref, content}`), `extending?` |
+| `consolidate.pair` | what each of two notes states that the other does not | `a` (the older note), `b`; each `{ref, type, created, updated, content}` |
+| `proposal.judgment` | accept, reject or defer one pending proposal (the drain's judgment tier) | `proposal` (`{ref, source, content}`), `reason`, `liveAsset?`, `siblings`, `neighbours?` |
+
+Everything a judge reads is in its input: the lookups the pipeline makes (related
+assets, the live asset, same-ref proposals, nearest notes, git dates) are input fields,
+so on a connection a call is fully determined by its input. On a harness, `reflect.quality`
+may also read the asset at `ref` with `akm show`.
+
+| Flag | Description |
+| --- | --- |
+| `--connection <name>` / `--harness <name>` | Run on this connection or harness (mutually exclusive). Without either, the judge runs on the runner akm gives it in the pipeline: the quality gate's judge for `reflect.quality` and `distill.lesson`, consolidate's for `consolidate.pair`, triage's judgment for `proposal.judgment`. |
+| `--model <alias-or-name>` | Model to run, by alias or exact name |
+| `--list` | List the judges with their descriptions and schema versions |
+| `--schema` | Print the judge's input schema, output schema, schema version and what it may read on a harness |
+
+Output is one envelope: `{ judge, schemaVersion, runner: { kind, name, platform?, model },
+outcome, verdict?, reason? }`. `outcome` is `verdict` (with `verdict`), `error` (the call
+failed: a timeout, a transport error, a harness that exited non-zero) or `unparseable`
+(the reply held no verdict); the last two carry a `reason`, print `ok: false` and exit 1,
+and are never a rejection. `schemaVersion` is the judge's, and changes when its input or
+verdict changes shape. The verdicts of `reflect.quality` and `distill.lesson` are
+`{ pass, score, reason, criteria, reviewNeeded? }`; `consolidate.pair`'s is
+`{ onlyInA, onlyInB, relation, redundant, confidence, reason }`; `proposal.judgment`'s is
+`{ decision, reason }`. The workflow gate's judge is not registered.
 
 ### proposal
 

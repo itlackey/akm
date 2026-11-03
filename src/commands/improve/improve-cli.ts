@@ -11,12 +11,13 @@ import { type AssetRef, isFullRefInput, parseRefInput } from "../../core/asset/r
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { collectCredentialValues } from "../../core/config/credentials";
-import { ConfigError, UsageError } from "../../core/errors";
+import { UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
 import { getRunLogDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { clearLogFile, setLogFile, warnOnce } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
+import { runJudge } from "../../judges/registry";
 import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/html-render";
 import { readStdin } from "../../runtime";
@@ -29,10 +30,9 @@ import {
   type TerminationReason,
 } from "./improve-result-file";
 import { runImproveSession } from "./improve-session";
-import { type ResolvedImprovePlan, resolveImprovePlan, resolveImproveStrategy } from "./improve-strategies";
+import { type ResolvedImprovePlan, resolveImprovePlan } from "./improve-strategies";
 import { formatUsageReportTable } from "./improve-usage-report";
 import { renderReflectPromptPreview } from "./reflect";
-import { resolveQualityGateJudge, runReflectQualityJudge } from "./stage";
 
 let akmImproveForRun: typeof akmImprove = akmImprove;
 
@@ -100,23 +100,18 @@ const improveReportCommand = defineJsonCommand({
 });
 
 /**
- * `akm improve judge`: reflect's quality judge on one revision, read as
- * `{"source", "candidate", "feedback"}` JSON from stdin, on the connection or harness the
- * strategy's reflect quality gate names. It writes nothing.
+ * `akm improve judge`: `akm judge reflect.quality` on one revision, read as
+ * `{"source", "candidate", "feedback", "ref"}` JSON from stdin, printed as
+ * `{engine, pass, score, reason, criteria}`. A judge that gave no verdict prints
+ * score -1, as it always has. It writes nothing.
  */
 const improveJudgeCommand = defineJsonCommand({
   meta: {
     name: "judge",
     description:
-      "Run reflect's quality judge on one revision, read as {source, candidate, feedback, ref} JSON from stdin. Writes nothing.",
+      "Run reflect's quality judge on one revision, read as {source, candidate, feedback, ref} JSON from stdin (the same as `akm judge reflect.quality`). Writes nothing.",
   },
-  args: {
-    strategy: {
-      type: "string",
-      description: "Named improve strategy whose reflect quality gate names the judge engine.",
-    },
-  },
-  async run({ args }) {
+  async run() {
     const input = process.stdin.isTTY
       ? {}
       : (JSON.parse((await readStdin()).toString("utf8")) as Record<string, unknown>);
@@ -127,25 +122,18 @@ const improveJudgeCommand = defineJsonCommand({
         "MISSING_REQUIRED_ARGUMENT",
       );
     }
-    const config = loadConfig();
-    const judge = resolveQualityGateJudge(
-      config,
-      resolveImproveStrategy(getStringArg(args, "strategy"), config).config,
-      "reflect",
-    );
-    if (!judge) {
-      throw new ConfigError(
-        "`akm improve judge` judges with the reflect quality gate's connection or harness. Set improve.qualityGate.connection.",
-        "INVALID_CONFIG_FILE",
-      );
-    }
     const notes = typeof feedback === "string" && feedback.trim() !== "" ? [feedback.trim()] : [];
-    const verdict = await runReflectQualityJudge(config, candidate, source, notes, undefined, {
-      runnerSelectionFrozen: true,
-      llmRunner: judge,
-      ...(typeof ref === "string" && ref ? { ref } : {}),
-    });
-    output("improve-judge", { engine: judge.name, ...verdict });
+    const envelope = await runJudge(
+      "reflect.quality",
+      { source, candidate, feedback: notes, ...(typeof ref === "string" && ref ? { ref } : {}) },
+      loadConfig(),
+      {},
+    );
+    const verdict =
+      envelope.outcome === "verdict"
+        ? envelope.verdict
+        : { pass: false, score: -1, reason: envelope.reason, reviewNeeded: true };
+    output("improve-judge", { engine: envelope.runner.name, ...(verdict as object) });
   },
 });
 

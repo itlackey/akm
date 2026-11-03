@@ -8,6 +8,7 @@ import {
   type DrainOptions,
   drainProposals,
   isEmptyDiff,
+  type JudgmentInput,
   type JudgmentSeams,
   type PromoteFn,
   type RejectFn,
@@ -18,6 +19,7 @@ import {
   getProposal,
   listProposals,
   type Proposal,
+  proposalContent,
   proposalContentHash,
   recordGateDecision,
 } from "../../../src/commands/proposal/repository";
@@ -122,6 +124,22 @@ function proposalFixture(source: string, content: string): Proposal {
     payload: { content },
     changes: [{ path: "lessons/fixture.md", op: "create", after: content }],
   } as Proposal;
+}
+
+/** The judgment input the drain builds for a proposal (its content, live asset, same-ref proposals and neighbours). */
+function judgmentPrompt(
+  proposal: Proposal,
+  reason: "needs-judgment" | "proactive-needs-review",
+  ctx: { liveAsset: string | undefined; siblings: Proposal[]; neighbours?: JudgmentInput["neighbours"] },
+): string {
+  const part = (p: Proposal) => ({ id: p.id, source: p.source, content: proposalContent(p) });
+  return buildJudgmentPrompt({
+    proposal: { ref: proposal.ref, source: proposal.source, content: proposalContent(proposal) },
+    reason,
+    ...(ctx.liveAsset !== undefined ? { liveAsset: ctx.liveAsset } : {}),
+    siblings: ctx.siblings.map(part),
+    ...(ctx.neighbours ? { neighbours: ctx.neighbours } : {}),
+  });
 }
 
 function baseOpts(stash: string, overrides: Partial<DrainOptions> = {}): DrainOptions {
@@ -636,7 +654,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
       [
         {
           role: "user",
-          content: buildJudgmentPrompt(deferred, "needs-judgment", { liveAsset: undefined, siblings: [] }),
+          content: judgmentPrompt(deferred, "needs-judgment", { liveAsset: undefined, siblings: [] }),
         },
       ],
       expect.anything(),
@@ -969,7 +987,7 @@ describe("buildJudgmentPrompt — fences", () => {
   const proposal = (content: string) => proposalFixture("consolidate", content);
 
   test("a note holding its own code block is wrapped in a longer fence", () => {
-    const prompt = buildJudgmentPrompt(proposal(inner), "needs-judgment", { liveAsset: undefined, siblings: [] });
+    const prompt = judgmentPrompt(proposal(inner), "needs-judgment", { liveAsset: undefined, siblings: [] });
     expect(prompt).toContain(`\n\`\`\`\`\n${inner}\n\`\`\`\`\n`);
     // the only line that could close the block is the four-backtick fence itself
     const fences = prompt.split("\n").filter((l) => /^`{4,}$/.test(l));
@@ -978,7 +996,7 @@ describe("buildJudgmentPrompt — fences", () => {
 
   test("the live asset, siblings and neighbour excerpts get the same treatment, and plain content keeps three backticks", () => {
     const six = "a ``````` run of seven";
-    const prompt = buildJudgmentPrompt(proposal(VALID_LESSON), "needs-judgment", {
+    const prompt = judgmentPrompt(proposal(VALID_LESSON), "needs-judgment", {
       liveAsset: inner,
       siblings: [proposal(six)],
       neighbours: [{ ref: "knowledge/n", description: "d", excerpt: inner }] as never,
@@ -991,7 +1009,7 @@ describe("buildJudgmentPrompt — fences", () => {
 
 describe("buildJudgmentPrompt — rubric", () => {
   const prompt = (source: string, liveAsset?: string) =>
-    buildJudgmentPrompt(proposalFixture(source, VALID_LESSON), "needs-judgment", { liveAsset, siblings: [] });
+    judgmentPrompt(proposalFixture(source, VALID_LESSON), "needs-judgment", { liveAsset, siblings: [] });
 
   test("a promotion is rejected when it is a status, a plan or a retired thing, not only when it is wrong or a duplicate", () => {
     const text = prompt("consolidate");
@@ -1019,9 +1037,7 @@ describe("drainProposals — judgment tier (agent mode)", () => {
 
     const calls = harnessCalls(judge.bin);
     expect(calls).toHaveLength(1);
-    expect(promptOf(calls[0])).toBe(
-      buildJudgmentPrompt(deferred, "needs-judgment", { liveAsset: undefined, siblings: [] }),
-    );
+    expect(promptOf(calls[0])).toBe(judgmentPrompt(deferred, "needs-judgment", { liveAsset: undefined, siblings: [] }));
     // The model comes from the runner, and a triage judgment is unattended model work: it runs confined, with no Edit.
     expect(calls[0]?.argv).toEqual(expect.arrayContaining(["--model", "provider/exact-agent-judge", "--restricted"]));
     expect(calls[0]?.argv.join(" ")).not.toContain("Edit");
