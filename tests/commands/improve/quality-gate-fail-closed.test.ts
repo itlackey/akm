@@ -162,6 +162,12 @@ describe("buildReflectJudgePrompt", () => {
     expect(buildReflectJudgePrompt("candidate", "source", [])).toContain("This revision is maintenance");
   });
 
+  test("says a field the source lacks is needed and drops nothing", () => {
+    const prompt = buildReflectJudgePrompt("candidate", "source", []);
+    expect(prompt).toContain("Adding a field the source lacks is needed, not churn;");
+    expect(prompt).toContain("A field the source lacks has no old value to keep: adding it drops nothing,");
+  });
+
   test("keeps late changed content in bounded diff context", () => {
     const source = `${"source line\n".repeat(400)}old ending`;
     const candidate = `${"source line\n".repeat(400)}LATE_CHANGED_MARKER`;

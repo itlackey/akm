@@ -18,6 +18,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The reflect judge's rubric says adding a field the source lacks is needed, not churn, and
+  drops nothing, so PRESERVATION is judged on the fields the source already had. The judge had
+  compared an added `description` with the source's `when_to_use`, and called the addition
+  churn, so it rejected a correct fix for a missing description (#1308).
+
 - `akm judge reflect.quality` marks a non-pass `reviewNeeded` only from a mean of 3.5, the
   route reflect takes (it queued such a revision for review and refused a lower one). The
   floor moved from reflect into the judge's verdict, so the command and the pipeline read
