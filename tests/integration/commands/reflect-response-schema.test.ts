@@ -344,6 +344,28 @@ describe("runReflectIteration — the reply is a patch, and a body or a malforme
     );
   });
 
+  test.each([
+    "json_schema",
+    "framed_markdown",
+  ] as const)("%s: the string null, in any case and trimmed, leaves a field unchanged like JSON null", async (mode) => {
+    const patchFor = async (frontmatterPatch: Record<string, unknown>) => {
+      const result = await runReflectIteration({
+        prompt: "test prompt",
+        runner: fakeLlmRunner(),
+        outputMode: mode,
+        targetRef: "lessons/test",
+        chat: async () =>
+          mode === "json_schema"
+            ? JSON.stringify({ confidence: 0.4, frontmatterPatch })
+            : `AKM_REFLECT_CONFIDENCE: 0.4\nAKM_REFLECT_FRONTMATTER_PATCH: ${JSON.stringify(frontmatterPatch)}`,
+      });
+      if (!result.ok) throw new Error(`expected a payload, got ${result.reason}: ${result.error}`);
+      return result.payload.patch;
+    };
+    expect(await patchFor({ description: "null", when_to_use: "NULL", title: " null " })).toEqual({});
+    expect(await patchFor({ description: "Ok.", when_to_use: "Null", title: null })).toEqual({ description: "Ok." });
+  });
+
   test("the fields of a valid patch come back trimmed, and a null one is left out", async () => {
     const result = await runReflectIteration({
       prompt: "test prompt",
