@@ -3234,7 +3234,7 @@ failed: a timeout, a transport error, a harness that exited non-zero) or `unpars
 (the reply held no verdict); the last two carry a `reason`, print `ok: false` and exit 1,
 and are never a rejection. `schemaVersion` is the judge's, and changes when its input or
 verdict changes shape. The verdicts of `reflect.quality` and `distill.lesson` are
-`{ pass, score, reason, criteria, reviewNeeded? }`; `consolidate.pair`'s is
+`{ pass, score, reason, criteria, reviewNeeded? }`, where a non-pass is `reviewNeeded` from a mean of 2.5 for `distill.lesson` and of 3.5 for `reflect.quality`, the routes the pipeline takes; `consolidate.pair`'s is
 `{ onlyInA, onlyInB, relation, redundant, confidence, reason }`; `proposal.judgment`'s is
 `{ decision, reason }`. The workflow gate's judge is not registered.
 

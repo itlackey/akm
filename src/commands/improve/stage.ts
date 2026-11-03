@@ -487,6 +487,24 @@ export function buildReflectJudgePrompt(
 const GROUNDING_CRITERION = "grounding";
 export const LESSON_REJECT_MAX_SCORE = 2;
 
+const REVIEW_MIN_SCORE = 2.5;
+
+/**
+ * The review floor of a reflect revision: a non-pass is `reviewNeeded` (reflect queues it for a person as
+ * `judge-uncertain`) only at a mean of this or more; a lower one is refused. Other judges flag review from
+ * {@link REVIEW_MIN_SCORE}, but nothing reflect labels below 3.5 is worth a person's time. Labelled runs of the judge (akm-eval judge-gate,
+ * lab 27B Q2; ~/akm/eval/judge-gate/tuning), good / bad among non-passing verdicts:
+ *   mean >= 3.5, frontmatter-only proposals Opus reviewed: 17 / 9 (shipped judge, 113 proposals),
+ *     15 / 0, 18 / 9 and 15 / 5 (earlier rubric, three runs);
+ *   mean >= 3.5, public corpus of body rewrites: 12 / 35;
+ *   mean < 3.5, 396 labelled body rewrites: 6 / 285 (Q4 judge 5 / 177, Q2 judge 1 / 108);
+ *     public corpus 3 / 37; frontmatter-only proposals: 1 / 2 (shipped judge), 5 / 1 (earlier runs).
+ * Mean 4.0 with one criterion at 2 was good 14 / 0; mean 3.67 was 3 / 8. A rule on the lowest
+ * criterion did not help: a criterion at 3 or more is rare in a non-pass, and a 2 is the usual
+ * shape of a good one.
+ */
+const REFLECT_REVIEW_MIN_SCORE = 3.5;
+
 const LESSON_JUDGE_CRITERIA = ["reusable", "nonRedundancy", GROUNDING_CRITERION] as const;
 const REFLECT_JUDGE_CRITERIA = ["need", "preservation", "quality"] as const;
 
@@ -548,7 +566,7 @@ export function judgeResponseSchema(keys: readonly string[]): Record<string, unk
  * The quality judge. An unparseable reply or a provider failure is an outcome of
  * its own, never a verdict; the pipeline's wrappers below route either to review
  * with score -1 (no verdict), for a person. Bands: every criterion in the mean
- * >= 4 passes, otherwise a mean >= 2.5 is review and a lower one reject; a
+ * >= 4 passes, otherwise a mean >= {@link REVIEW_MIN_SCORE} (reflect's: {@link REFLECT_REVIEW_MIN_SCORE}) is review and a lower one reject; a
  * lesson criterion (`grounding` included) of {@link LESSON_REJECT_MAX_SCORE}
  * or less rejects whatever the mean is.
  * Temperature is set to 0, which reduces run-to-run variation but does not
@@ -559,6 +577,7 @@ async function judgeQuality(
   prompt: string,
   keys: readonly string[],
   call: JudgeCall,
+  reviewMinScore = REVIEW_MIN_SCORE,
 ): Promise<JudgeOutcome<QualityJudgeResult>> {
   const { runner } = call;
   const outcome = await callStage({
@@ -592,7 +611,8 @@ async function judgeQuality(
         verdict: { pass: false, score, reason: `${weakest} ${low}/5: ${reason}`, criteria },
       };
   }
-  const verdict = lowest >= 4 ? { pass: true } : score >= 2.5 ? { pass: false, reviewNeeded: true } : { pass: false };
+  const verdict =
+    lowest >= 4 ? { pass: true } : score >= reviewMinScore ? { pass: false, reviewNeeded: true } : { pass: false };
   return { outcome: "verdict", verdict: { ...verdict, score, reason, ...(criteria ? { criteria } : {}) } };
 }
 
@@ -624,7 +644,7 @@ export interface ReflectJudgeInput {
 export const reflectQualityJudge: Judge<ReflectJudgeInput, QualityJudgeResult> = {
   name: "reflect.quality",
   description: "Reflect's quality judge: is a revision of an asset's frontmatter needed, faithful and supported.",
-  schemaVersion: 1,
+  schemaVersion: 2,
   inputSchema: {
     type: "object",
     required: ["source", "candidate"],
@@ -650,6 +670,7 @@ export const reflectQualityJudge: Judge<ReflectJudgeInput, QualityJudgeResult> =
       buildReflectJudgePrompt(input.candidate, input.source, input.feedback ?? [], tools),
       REFLECT_JUDGE_CRITERIA,
       call,
+      REFLECT_REVIEW_MIN_SCORE,
     );
   },
 };
