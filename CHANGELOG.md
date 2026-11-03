@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261105] - 2026-11-02
+
+### Changed
+
+- `akm improve` distill reports how an attempted lesson update ended: `update_rejected`,
+  `update_unparseable`, `update_line_dropped`, `update_nothing_added` or `update_not_written`.
+- The lesson-update judge accepts updates that add concrete facts, and rejects lines that
+  only record status (who, when, what shipped) or contradict the source.
+- Session summaries name the files and resources a session worked with in `key_topics`,
+  capped at 30 topics of 100 characters each.
+
+### Fixed
+
+- Session summaries redact secrets, including credentials from akm's config, before the
+  model sees the session.
+- The `key-`/`key_` redaction rule needs a digit or an 8-character run, so names such as
+  `key_manager.py` are no longer redacted.
+- OpenCode plugin upgrades read `opencode.jsonc` before `opencode.json`, and on OpenCode 1
+  the first global file that lists plugins wins, as OpenCode 1 does.
+- The proposal page's validation list wraps long lines instead of overflowing.
+
 ## [0.10.261104] - 2026-11-02
 
 ### Changed
