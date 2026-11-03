@@ -16,6 +16,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `"unparseable"`, never a verdict. akm's own pipeline calls each judge through the same
   registry entry, so the command and the pipeline send the same prompt.
 
+### Changed
+
+- The reflect judge no longer reads the YAML to decide NEED and PRESERVATION when a revision only
+  adds fields the source lacks (a missing `description` or `when_to_use`) and leaves
+  everything else as it was. akm settles those two from its own comparison of the two
+  frontmatters, tells the judge so, and the judge scores QUALITY alone. The judge had been
+  reading such a revision as rewriting a field the source already had (#1308).
+
 ### Removed
 
 - `akm improve judge --strategy`: a strategy never chose where the judge ran. The command

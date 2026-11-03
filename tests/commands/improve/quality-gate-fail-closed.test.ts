@@ -171,6 +171,22 @@ describe("buildReflectJudgePrompt", () => {
     expect(prompt).toContain("Changed region:");
     expect(prompt.length).toBeLessThan(25_000);
   });
+
+  test("a revision that only adds fields the source lacks is scored on QUALITY alone", () => {
+    const source = "---\nname: a\n---\nBody\n";
+    const adds = buildReflectJudgePrompt("---\nname: a\ndescription: Does a.\n---\nBody\n", source, []);
+    expect(adds).toContain("the revision adds description, which the source lacks, and changes nothing else");
+    expect(adds).not.toContain("1. NEED:");
+    expect(adds).toContain('{"scores": {"quality": <1-5 integer>}');
+
+    for (const candidate of [
+      "---\nname: b\ndescription: Does a.\n---\nBody\n",
+      "---\nname: a\ndescription: Does a.\n---\nBody changed\n",
+      "---\n---\nBody\n",
+    ]) {
+      expect(buildReflectJudgePrompt(candidate, source, [])).toContain("1. NEED:");
+    }
+  });
 });
 
 describe("runLessonQualityJudge — pinned temperature (R13)", () => {
