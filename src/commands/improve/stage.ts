@@ -9,6 +9,7 @@
  * A stage keeps only its prompt, its parse shape and its target rule.
  */
 
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
@@ -21,6 +22,7 @@ import type { NoticeSink } from "../../execution/notices";
 import type { ConfiguredExecutionSettings, UnresolvedExecutionDefaults } from "../../execution/source";
 import type { RejectedProposalContext } from "../../integrations/agent/prompts";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import type { Judge, JudgeCall, JudgeOutcome } from "../../judges/registry";
 import type { ChatCompletionConfig, ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import { isRefused, type StructuredLoopOptions, type StructuredLoopResult, structuredLoop } from "../../llm/structured";
 import { type CallStructuredRequest, callStructured, type StructuredOutcome } from "../../llm/structured-call";
@@ -543,9 +545,9 @@ export function judgeResponseSchema(keys: readonly string[]): Record<string, unk
 }
 
 /**
- * The quality judge. No runner, an unparseable verdict or a provider failure
- * never passes content: it comes back as review with score -1 (no verdict), for
- * a person. Bands: every criterion in the mean
+ * The quality judge. An unparseable reply or a provider failure is an outcome of
+ * its own, never a verdict; the pipeline's wrappers below route either to review
+ * with score -1 (no verdict), for a person. Bands: every criterion in the mean
  * >= 4 passes, otherwise a mean >= 2.5 is review and a lower one reject; a
  * lesson criterion (`grounding` included) of {@link LESSON_REJECT_MAX_SCORE}
  * or less rejects whatever the mean is.
@@ -553,11 +555,179 @@ export function judgeResponseSchema(keys: readonly string[]): Record<string, unk
  * remove it: on some servers (llama.cpp batching, for one) the same request can
  * score a point apart, so the routing rules are chosen with that margin in mind.
  */
-async function runQualityJudge(
-  feature: "lesson_quality_gate" | "proposal_quality_gate",
-  config: AkmConfig,
+async function judgeQuality(
   prompt: string,
   keys: readonly string[],
+  call: JudgeCall,
+): Promise<JudgeOutcome<QualityJudgeResult>> {
+  const { runner } = call;
+  const outcome = await callStage({
+    runner,
+    system: "Return only valid JSON. No prose.",
+    prompt,
+    request: {
+      // Off unless the judge's own connection enables thinking (a slower, separate judge, #1011).
+      enableThinking:
+        runner.kind === "connection" &&
+        thinkingSetting(effectiveRequestFields(runner.request, runner.inference)) === true,
+      temperature: 0,
+      responseSchema: judgeResponseSchema(keys),
+      ...(Object.hasOwn(call, "timeoutMs") ? { timeoutMs: call.timeoutMs } : {}),
+      ...(call.signal ? { signal: call.signal } : {}),
+      ...(call.chat ? { chat: call.chat } : {}),
+    },
+    parse: (raw) => parseJudgeResponse(raw, keys),
+    ...(call.onNotices ? { onNotices: call.onNotices } : {}),
+  });
+  if (!outcome.ok) return { outcome: "error", reason: outcome.error };
+  const parsed = parseJudgeResponse(outcome.raw, keys);
+  if (!parsed) return { outcome: "unparseable", reason: "the reply held no verdict in the expected shape" };
+  const { score, lowest, reason, criteria } = parsed;
+  // A lesson criterion at 2 or below is a defect the mean would hide (4 and 1 average 2.5, a review): it rejects.
+  if (criteria && criteria[GROUNDING_CRITERION] !== undefined) {
+    const [weakest, low] = Object.entries(criteria).sort((x, y) => x[1] - y[1])[0] as [string, number];
+    if (low <= LESSON_REJECT_MAX_SCORE)
+      return {
+        outcome: "verdict",
+        verdict: { pass: false, score, reason: `${weakest} ${low}/5: ${reason}`, criteria },
+      };
+  }
+  const verdict = lowest >= 4 ? { pass: true } : score >= 2.5 ? { pass: false, reviewNeeded: true } : { pass: false };
+  return { outcome: "verdict", verdict: { ...verdict, score, reason, ...(criteria ? { criteria } : {}) } };
+}
+
+const QUALITY_VERDICT_SHAPE = {
+  type: "object",
+  required: ["pass", "score", "reason"],
+  additionalProperties: false,
+  properties: {
+    pass: { type: "boolean" },
+    score: { type: "number", minimum: 1, maximum: 5 },
+    reason: { type: "string" },
+    reviewNeeded: { type: "boolean" },
+    criteria: { type: "object" },
+  },
+};
+
+const FEEDBACK_LINES = { type: "array", items: { type: "string" } };
+
+export interface ReflectJudgeInput {
+  /** The asset as it is. */
+  source: string;
+  /** The proposed revision. */
+  candidate: string;
+  feedback?: string[];
+  /** The ref of the asset the candidate revises, for a judge on a harness to read. */
+  ref?: string;
+}
+
+export const reflectQualityJudge: Judge<ReflectJudgeInput, QualityJudgeResult> = {
+  name: "reflect.quality",
+  description: "Reflect's quality judge: is a revision of an asset's frontmatter needed, faithful and supported.",
+  schemaVersion: 1,
+  inputSchema: {
+    type: "object",
+    required: ["source", "candidate"],
+    additionalProperties: false,
+    properties: {
+      source: { type: "string" },
+      candidate: { type: "string" },
+      feedback: FEEDBACK_LINES,
+      ref: { type: "string" },
+    },
+  },
+  outputSchema: QUALITY_VERDICT_SHAPE,
+  harnessReads: "On a harness, the asset at input.ref (akm show), to verify a fact the revision adds or alters.",
+  defaultRunner: (config, run) => resolveQualityGateJudge(config, undefined, "reflect", undefined, run),
+  run(input, call) {
+    // A judge on a harness gets the tool rules, in the spelling its harness has.
+    const { runner } = call;
+    const tools =
+      runner.kind !== "connection"
+        ? { ref: input.ref, tool: runner.platform === "opencode" ? ("akm_show" as const) : ("akm show" as const) }
+        : undefined;
+    return judgeQuality(
+      buildReflectJudgePrompt(input.candidate, input.source, input.feedback ?? [], tools),
+      REFLECT_JUDGE_CRITERIA,
+      call,
+    );
+  },
+};
+
+export interface LessonJudgeInput {
+  /** The proposed lesson (for an update, the existing lesson with the lines added). */
+  lesson: string;
+  /** The memory the lesson was written from. Its frontmatter is stripped before judging, as distill does for the writer. */
+  source: string;
+  /** The feedback lines the writer was given. */
+  feedback?: string[];
+  /** The assets nearest the lesson. Left out, the judge scores non-redundancy 5. */
+  related?: Array<{ ref: string; content: string }>;
+  /** A lesson update: the body of the existing lesson the proposed lesson extends. Judged as an edit of it, whatever `related` holds. */
+  extending?: string;
+}
+
+export const lessonQualityJudge: Judge<LessonJudgeInput, QualityJudgeResult> = {
+  name: "distill.lesson",
+  description: "Distill's lesson judge: is a new lesson (or an update of one) reusable, non-redundant and grounded.",
+  schemaVersion: 1,
+  inputSchema: {
+    type: "object",
+    required: ["lesson", "source"],
+    additionalProperties: false,
+    properties: {
+      lesson: { type: "string" },
+      source: { type: "string" },
+      feedback: FEEDBACK_LINES,
+      related: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["ref", "content"],
+          additionalProperties: false,
+          properties: { ref: { type: "string" }, content: { type: "string" } },
+        },
+      },
+      extending: { type: "string" },
+    },
+  },
+  outputSchema: QUALITY_VERDICT_SHAPE,
+  harnessReads: "Nothing.",
+  // The gate's judge, else distill's own runner, as distill judges.
+  defaultRunner: (config, run) =>
+    resolveQualityGateJudge(config, undefined, "distill", undefined, run) ??
+    resolveImproveExecution({
+      config,
+      processName: "distill",
+      alias: SHIPPED_ALIAS.improve,
+      ...(run ? { run } : {}),
+    })?.runner,
+  run: (input, call) =>
+    judgeQuality(
+      // The judge reads what the generator read: the memory's body, without its frontmatter (buildDistillPrompt).
+      buildJudgePrompt(
+        input.lesson,
+        parseFrontmatter(input.source).content.trim(),
+        input.related,
+        input.feedback,
+        input.extending,
+      ),
+      LESSON_JUDGE_CRITERIA,
+      call,
+    ),
+};
+
+/**
+ * The pipeline's way into a quality judge: the frozen runner, or the one the
+ * feature resolves to unless the caller froze selection. No runner, a provider
+ * failure or an unreadable reply never passes content: each comes back as review
+ * with score -1 (no verdict), for a person.
+ */
+async function runQualityJudge<I>(
+  judge: Judge<I, QualityJudgeResult>,
+  feature: "lesson_quality_gate" | "proposal_quality_gate",
+  config: AkmConfig,
+  input: I,
   chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions,
 ): Promise<QualityJudgeResult> {
@@ -574,38 +744,24 @@ async function runQualityJudge(
       reason: "no connection or harness configured — cannot judge, routed to review",
       reviewNeeded: true,
     };
-  const outcome = await callStage({
+  const result = await judge.run(input, {
     runner,
-    system: "Return only valid JSON. No prose.",
-    prompt,
-    request: {
-      // Off unless the judge's own connection enables thinking (a slower, separate judge, #1011).
-      enableThinking:
-        runner.kind === "connection" &&
-        thinkingSetting(effectiveRequestFields(runner.request, runner.inference)) === true,
-      temperature: 0,
-      responseSchema: judgeResponseSchema(keys),
-      ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.signal ? { signal: options.signal } : {}),
-      ...(chat ? { chat } : {}),
-    },
-    parse: (raw) => parseJudgeResponse(raw, keys),
+    ...(chat ? { chat } : {}),
+    ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
     ...(options.onNotices ? { onNotices: options.onNotices } : {}),
   });
-  if (!outcome.ok) {
-    return { pass: false, score: -1, reason: "judge timeout/error — routed to review", reviewNeeded: true };
-  }
-  const parsed = parseJudgeResponse(outcome.raw, keys);
-  if (!parsed) return { pass: false, score: -1, reason: "judge parse failed — routed to review", reviewNeeded: true };
-  const { score, lowest, reason, criteria } = parsed;
-  // A lesson criterion at 2 or below is a defect the mean would hide (4 and 1 average 2.5, a review): it rejects.
-  if (criteria && criteria[GROUNDING_CRITERION] !== undefined) {
-    const [weakest, low] = Object.entries(criteria).sort((x, y) => x[1] - y[1])[0] as [string, number];
-    if (low <= LESSON_REJECT_MAX_SCORE)
-      return { pass: false, score, reason: `${weakest} ${low}/5: ${reason}`, criteria };
-  }
-  const verdict = lowest >= 4 ? { pass: true } : score >= 2.5 ? { pass: false, reviewNeeded: true } : { pass: false };
-  return { ...verdict, score, reason, ...(criteria ? { criteria } : {}) };
+  return result.outcome === "verdict" ? result.verdict : noVerdict(result.outcome);
+}
+
+/** What the pipeline records for a judge that gave no verdict: review with score -1, for a person. */
+export function noVerdict(outcome: "error" | "unparseable"): QualityJudgeResult {
+  return {
+    pass: false,
+    score: -1,
+    reason: outcome === "error" ? "judge timeout/error — routed to review" : "judge parse failed — routed to review",
+    reviewNeeded: true,
+  };
 }
 
 /** Judge a proposed lesson (or knowledge promotion) against its source. */
@@ -616,8 +772,14 @@ export function runLessonQualityJudge(
   chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  const prompt = buildJudgePrompt(lessonContent, sourceContent, options.related, options.feedback, options.extending);
-  return runQualityJudge("lesson_quality_gate", config, prompt, LESSON_JUDGE_CRITERIA, chat, options);
+  const input: LessonJudgeInput = {
+    lesson: lessonContent,
+    source: sourceContent,
+    ...(options.feedback ? { feedback: options.feedback } : {}),
+    ...(options.related ? { related: options.related } : {}),
+    ...(options.extending !== undefined ? { extending: options.extending } : {}),
+  };
+  return runQualityJudge(lessonQualityJudge, "lesson_quality_gate", config, input, chat, options);
 }
 
 /** Judge an in-place reflect revision without new-lesson novelty criteria. */
@@ -629,12 +791,11 @@ export function runReflectQualityJudge(
   chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  // A judge on a harness gets the tool rules, in the spelling its harness has; the runner is the frozen one or none.
-  const judge = options.llmRunner;
-  const tools =
-    judge && judge.kind !== "connection"
-      ? { ref: options.ref, tool: judge.platform === "opencode" ? ("akm_show" as const) : ("akm show" as const) }
-      : undefined;
-  const prompt = buildReflectJudgePrompt(candidateContent, sourceContent, feedback, tools);
-  return runQualityJudge("proposal_quality_gate", config, prompt, REFLECT_JUDGE_CRITERIA, chat, options);
+  const input: ReflectJudgeInput = {
+    source: sourceContent,
+    candidate: candidateContent,
+    feedback,
+    ...(options.ref !== undefined ? { ref: options.ref } : {}),
+  };
+  return runQualityJudge(reflectQualityJudge, "proposal_quality_gate", config, input, chat, options);
 }

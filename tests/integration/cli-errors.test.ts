@@ -698,7 +698,7 @@ describe("S11: sectioned root help", () => {
     expect(sections).toEqual({
       "AGENT LOOP": ["curate", "search", "show", "feedback", "remember"],
       ASSETS: ["import", "clone", "bundle", "env", "secret", "sync", "proposal"],
-      AUTOMATION: ["improve", "agent", "command", "workflow", "task"],
+      AUTOMATION: ["improve", "judge", "agent", "command", "workflow", "task"],
       SYSTEM: [
         "setup",
         "index",

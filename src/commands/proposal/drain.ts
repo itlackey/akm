@@ -33,6 +33,7 @@ import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement"
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
+import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { appendEvent, type EventsContext } from "../../core/events";
 import { escapeJsonStringControls, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 import { info, warn } from "../../core/warn";
@@ -41,6 +42,7 @@ import type { LoweringNotice } from "../../execution/resolved-request";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
+import type { Judge } from "../../judges/registry";
 import { callStructured } from "../../llm/structured-call";
 import {
   NEIGHBOUR_EXCERPT_CHARS,
@@ -49,6 +51,7 @@ import {
   shingleContainment,
   wordShingles,
 } from "../improve/consolidate/coverage";
+import { resolveImproveExecution } from "../improve/execution";
 import { errMessage } from "../improve/stage";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
 import { isRetireProposal, PAIR_PASS_GATE, type ProposalDecider, STALE_TARGET_GATE_REASON } from "./proposal-types";
@@ -255,16 +258,25 @@ export function fencedBlock(text: string): string[] {
   return [fence, text, fence];
 }
 
+/**
+ * Everything the judgment reads. The drain looks up the live asset, the same-ref
+ * proposals and the nearest knowledge notes before it judges; they are input
+ * fields so that a call is fully determined by its input.
+ */
+export interface JudgmentInput {
+  proposal: { ref: string; source: string; content: string };
+  reason: DrainDeferReason;
+  /** The live asset the proposal would overwrite; absent for a new asset. */
+  liveAsset?: string;
+  /** Other pending proposals for the same ref. */
+  siblings: Array<{ id: string; source: string; content: string }>;
+  /** The knowledge notes nearest a promotion's source memory. */
+  neighbours?: Array<{ ref: string; description: string; excerpt: string }>;
+}
+
 /** The judgment prompt: the proposal, the live asset it would overwrite, same-ref siblings, and for a promotion the nearest knowledge notes. */
-export function buildJudgmentPrompt(
-  proposal: Proposal,
-  reason: DrainDeferReason,
-  ctx: {
-    liveAsset: string | undefined;
-    siblings: Proposal[];
-    neighbours?: ReturnType<typeof nearestKnowledgeNotes>;
-  },
-): string {
+export function buildJudgmentPrompt(input: JudgmentInput): string {
+  const { proposal, reason, ...ctx } = input;
   // A promotion (a memory proposed as a new knowledge note) must also be durable.
   const promotion = proposal.source === "consolidate" && ctx.liveAsset === undefined;
   const sections: string[] = [
@@ -276,7 +288,7 @@ export function buildJudgmentPrompt(
     `Left for judgment because: ${reason === "needs-judgment" ? "no quality judge has passed this content yet" : reason}`,
     "",
     "## Proposed content",
-    ...fencedBlock(proposalContent(proposal)),
+    ...fencedBlock(proposal.content),
   ];
   if (ctx.liveAsset !== undefined) {
     sections.push("", "## Current live asset (would be overwritten on accept)", ...fencedBlock(ctx.liveAsset));
@@ -286,7 +298,7 @@ export function buildJudgmentPrompt(
   if (ctx.siblings.length > 0) {
     sections.push("", "## Other pending proposals for the same ref (dedup context)");
     for (const sib of ctx.siblings) {
-      sections.push("", `### Sibling ${sib.id} (source: ${sib.source})`, ...fencedBlock(proposalContent(sib)));
+      sections.push("", `### Sibling ${sib.id} (source: ${sib.source})`, ...fencedBlock(sib.content));
     }
   }
   if (ctx.neighbours && ctx.neighbours.length > 0) {
@@ -333,24 +345,94 @@ interface DeferNote {
   judgeReason?: string;
 }
 
-/** Dispatch the judgment prompt on the frozen runner: one model call, under the model-work tool policy. */
+const JUDGMENT_VERDICT_SHAPE = {
+  type: "object",
+  required: ["decision", "reason"],
+  additionalProperties: false,
+  properties: { decision: { type: "string", enum: ["accept", "reject", "defer"] }, reason: { type: "string" } },
+};
+
+/** The drain's judgment of one pending proposal. The runner only judges; the drain performs the accept or reject. */
+export const judgmentJudge: Judge<JudgmentInput, JudgmentVerdict> = {
+  name: "proposal.judgment",
+  description: "The proposal drain's judgment: accept, reject or defer one pending proposal.",
+  schemaVersion: 1,
+  inputSchema: {
+    type: "object",
+    required: ["proposal", "reason", "siblings"],
+    additionalProperties: false,
+    properties: {
+      proposal: {
+        type: "object",
+        required: ["ref", "source", "content"],
+        additionalProperties: false,
+        properties: { ref: { type: "string" }, source: { type: "string" }, content: { type: "string" } },
+      },
+      reason: { type: "string", enum: ["needs-judgment", "proactive-needs-review"] },
+      liveAsset: { type: "string" },
+      siblings: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["id", "source", "content"],
+          additionalProperties: false,
+          properties: { id: { type: "string" }, source: { type: "string" }, content: { type: "string" } },
+        },
+      },
+      neighbours: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["ref", "description", "excerpt"],
+          additionalProperties: false,
+          properties: { ref: { type: "string" }, description: { type: "string" }, excerpt: { type: "string" } },
+        },
+      },
+    },
+  },
+  outputSchema: JUDGMENT_VERDICT_SHAPE,
+  harnessReads: "Nothing.",
+  defaultRunner: (config, run) =>
+    resolveImproveExecution({
+      config,
+      process: "triage",
+      processName: "triage-judgment",
+      alias: SHIPPED_ALIAS.judge,
+      ...(run ? { run } : {}),
+    })?.runner,
+  async run(input, call) {
+    const outcome = await callStructured({
+      runner: call.runner,
+      messages: [{ role: "user", content: buildJudgmentPrompt(input) }],
+      request: { ...(call.chat ? { chat: call.chat } : {}), ...(call.signal ? { signal: call.signal } : {}) },
+      ...(call.onNotices ? { onNotices: call.onNotices } : {}),
+    });
+    if (!outcome.ok) return { outcome: "error", reason: outcome.error };
+    const verdict = parseJudgmentVerdict(outcome.raw);
+    return verdict
+      ? { outcome: "verdict", verdict }
+      : { outcome: "unparseable", reason: "the reply held no decision of accept, reject or defer" };
+  },
+};
+
+/** Dispatch the judgment on the frozen runner: one model call, under the model-work tool policy. */
 async function dispatchJudgment(
   runner: RunnerSpec,
-  prompt: string,
+  input: JudgmentInput,
   seams: JudgmentSeams,
   signal: AbortSignal | undefined,
 ): Promise<{ verdict: JudgmentVerdict | null; notices: readonly Notice[]; error?: string }> {
   let notices: readonly Notice[] = [];
-  const outcome = await callStructured({
+  const result = await judgmentJudge.run(input, {
     runner,
-    messages: [{ role: "user", content: prompt }],
-    request: { ...(seams.chat ? { chat: seams.chat } : {}), ...(signal ? { signal } : {}) },
+    ...(seams.chat ? { chat: seams.chat } : {}),
+    ...(signal ? { signal } : {}),
     onNotices: (value) => {
       notices = value;
     },
   });
-  if (!outcome.ok) return { verdict: null, notices, error: outcome.error };
-  return { verdict: parseJudgmentVerdict(outcome.raw), notices };
+  if (result.outcome === "error") return { verdict: null, notices, error: result.reason };
+  return { verdict: result.outcome === "verdict" ? result.verdict : null, notices };
 }
 
 /**
@@ -386,15 +468,19 @@ async function runJudgmentTier(
       continue;
     }
     const liveAsset = readLiveAssetContent(opts.stashDir, proposal.ref);
-    const prompt = buildJudgmentPrompt(proposal, item.reason, {
-      liveAsset,
-      siblings: pending.filter((p) => p.ref === proposal.ref && p.id !== proposal.id),
+    const input: JudgmentInput = {
+      proposal: { ref: proposal.ref, source: proposal.source, content: proposalContent(proposal) },
+      reason: item.reason,
+      ...(liveAsset !== undefined ? { liveAsset } : {}),
+      siblings: pending
+        .filter((p) => p.ref === proposal.ref && p.id !== proposal.id)
+        .map((p) => ({ id: p.id, source: p.source, content: proposalContent(p) })),
       // A create the model otherwise judges blind: the model never sees knowledge/.
       ...(liveAsset === undefined
         ? { neighbours: promotionNeighbours(opts.stashDir, proposal, acceptedPromotions) }
         : {}),
-    });
-    const dispatch = await dispatchJudgment(opts.judgment, prompt, seams, opts.signal);
+    };
+    const dispatch = await dispatchJudgment(opts.judgment, input, seams, opts.signal);
     notices.add(dispatch.notices);
     if (dispatch.error) warn(`[triage] judgment dispatch failed for ${item.id}: ${dispatch.error}`);
     const verdict = dispatch.error ? null : dispatch.verdict;

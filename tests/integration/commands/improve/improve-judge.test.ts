@@ -86,12 +86,12 @@ describe("akm improve judge", () => {
     }
   });
 
-  test("fails when the reflect quality gate names no engine", async () => {
+  test("fails when no connection or harness is configured", async () => {
     saveConfig({ semanticSearchMode: "off" });
 
     const result = await spawnJudge(JSON.stringify({ source: "a", candidate: "b" }));
 
     expect(result.code).not.toBe(0);
-    expect(result.stdout + result.stderr).toContain("improve.qualityGate.connection");
+    expect(result.stdout + result.stderr).toContain("no connection or harness");
   });
 });

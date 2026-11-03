@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `akm judge <name>` runs one of akm's judges (`reflect.quality`, `distill.lesson`,
+  `consolidate.pair`, `proposal.judgment`) on one JSON input from stdin, on the runner
+  `--connection`, `--harness` and `--model` select (#1306). `--list` names the judges and
+  `--schema` prints one's input and output schemas. The output is one envelope that
+  records the runner; a timeout or an unreadable reply is `outcome: "error"` or
+  `"unparseable"`, never a verdict. akm's own pipeline calls each judge through the same
+  registry entry, so the command and the pipeline send the same prompt.
+
+### Removed
+
+- `akm improve judge --strategy`: a strategy never chose where the judge ran. The command
+  is now `akm judge reflect.quality` in its older input and output shape.
+
 ## [0.10.261105] - 2026-11-02
 
 ### Changed
