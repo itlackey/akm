@@ -138,9 +138,9 @@ const WIKI_INFRA_FILES = new Set(["schema.md", "index.md", "log.md"]);
  * PATH/STAT-based ONLY — never reads `file.content()`, so the bytes-never-read
  * invariant for sensitive env/secret files holds by construction. Returns `true`
  * when the `akm` adapter must ABSTAIN (recognize → null):
- *   - an `env/…` `.env` file with a sibling `.sensitive` marker;
- *   - a `secrets/` `.sensitive`/`.lock` marker, or a secret with a sibling
- *     `<name>.sensitive` marker;
+ *   - a `.env` file under any `env/` ancestor with a sibling `.sensitive` marker;
+ *   - a `.sensitive`/`.lock` marker under any `secrets/` ancestor, or a secret
+ *     there with a sibling `<name>.sensitive` marker;
  *   - a `wikis/<name>/` root-level infra file (schema.md/index.md/log.md).
  */
 function akmStashAbstains(root: string, absPath: string): boolean {
@@ -155,15 +155,19 @@ function akmStashAbstains(root: string, absPath: string): boolean {
   // and are handled by the normal typed-directory matcher policy.
   if (segments.length === 1 && segments[0]?.toLowerCase() === "readme.md") return true;
 
+  // Any ancestor directory counts, matching the directory matcher's rule, so a
+  // nested `projects/x/env/` or `projects/x/secrets/` honors its markers too.
+  const ancestorDirs = segments.slice(0, -1);
+
   // Skip env `.env` files that have a sibling `.sensitive` marker file.
-  if (segments[0] === "env" && (absPath.endsWith(".env") || path.basename(absPath) === ".env")) {
+  if (ancestorDirs.includes("env") && (absPath.endsWith(".env") || path.basename(absPath) === ".env")) {
     if (fs.existsSync(sensitiveMarkerPath(absPath, "env"))) return true;
   }
 
   // Skip secret files that are themselves a `.sensitive` marker, or that have a
   // sibling `<name>.sensitive` marker. Secrets are otherwise indexed by name
   // only (their bytes are never read for classification here).
-  if (segments[0] === "secrets") {
+  if (ancestorDirs.includes("secrets")) {
     if (absPath.endsWith(".sensitive") || absPath.endsWith(".lock")) return true;
     if (fs.existsSync(sensitiveMarkerPath(absPath, "secret"))) return true;
   }

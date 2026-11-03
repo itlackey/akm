@@ -423,6 +423,23 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
     );
   });
 
+  test("a NESTED env `.env` and secret with sibling `.sensitive` markers are abstained", () => {
+    const root = makeStashWith({
+      "projects/openpalm/env/prod.env": "API_KEY=x\n",
+      "projects/openpalm/env/prod.sensitive": "",
+      "projects/openpalm/secrets/deploy-key": "cred-value\n",
+      "projects/openpalm/secrets/deploy-key.sensitive": "",
+    });
+    const c = component({ root, id: "s", adapter: "akm" });
+    for (const rel of [
+      "projects/openpalm/env/prod.env",
+      "projects/openpalm/secrets/deploy-key",
+      "projects/openpalm/secrets/deploy-key.sensitive",
+    ]) {
+      expect(akmAdapter.recognize(c, bytesForbiddenContext(root, rel))).toBeNull();
+    }
+  });
+
   test("a `wikis/<name>/` root-level infra file (schema.md) is abstained", () => {
     const root = makeStashWith({ "wikis/team/schema.md": "# schema\n" });
     const c = component({ root, id: "s", adapter: "akm" });
