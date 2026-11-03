@@ -504,6 +504,25 @@ describe("runReflectQualityJudge — per-criterion scores (R16)", () => {
     expect(result.criteria).toEqual({ need: 4, preservation: 5, quality: 4 });
   });
 
+  test("a non-pass is reviewNeeded only at a mean of 3.5 or more: reflect's review floor", async () => {
+    const judge = (scores: Record<string, number>) =>
+      runReflectQualityJudge(configWithLlm(), "candidate content", "source content", [], async () =>
+        JSON.stringify({ scores, reason: "stubbed" }),
+      );
+    expect(await judge({ need: 4, preservation: 4, quality: 4 })).toMatchObject({ pass: true });
+    const review = await judge({ need: 3, preservation: 3, quality: 5 });
+    expect(review).toMatchObject({ pass: false, reviewNeeded: true });
+    for (const scores of [
+      { need: 2, preservation: 4, quality: 4 },
+      { need: 2, preservation: 3, quality: 3 },
+      { need: 1, preservation: 3, quality: 3 },
+    ]) {
+      const refused = await judge(scores);
+      expect(refused.pass).toBe(false);
+      expect(refused.reviewNeeded).toBeUndefined();
+    }
+  });
+
   test("a partial scores object (missing criterion key) routes to review, using its own key set", async () => {
     // Only `need` present — `preservation` and `quality` are missing.
     const result = await runReflectQualityJudge(configWithLlm(), "candidate content", "source content", [], async () =>
