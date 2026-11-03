@@ -212,6 +212,29 @@ export function listRetrievalQueries(db: Database, conceptId: string): string[] 
   return rows.map((row) => row.query);
 }
 
+/**
+ * Distinct queries of searches that returned nothing in the last `sinceDays`
+ * days, most recent first (at most 20). Reads the per-search summary row
+ * `logSearchEvent` writes: no `entry_ref`, `resultCount` in its metadata.
+ */
+export function listZeroResultSearchQueries(db: Database, sinceDays = 30): string[] {
+  const since = new Date(Date.now() - sinceDays * 86_400_000).toISOString();
+  const rows = db
+    .prepare(
+      `SELECT query, MAX(created_at) AS last_at FROM usage_events
+       WHERE event_type = 'search'
+         AND entry_ref IS NULL
+         AND query IS NOT NULL
+         AND json_extract(metadata, '$.resultCount') = 0
+         AND julianday(created_at) >= julianday(?)
+       GROUP BY query
+       ORDER BY last_at DESC
+       LIMIT 20`,
+    )
+    .all(since) as Array<{ query: string }>;
+  return rows.map((row) => row.query);
+}
+
 /** Usage events older than this many days are purged on every `akm index`. */
 export const USAGE_EVENT_RETENTION_DAYS = 90;
 
