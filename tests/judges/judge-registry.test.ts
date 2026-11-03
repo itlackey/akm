@@ -13,6 +13,7 @@ import type { AkmConfig } from "../../src/core/config/config";
 import { UsageError } from "../../src/core/errors";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { type Judge, listJudges, registerJudge, runJudge } from "../../src/judges/registry";
+import { runCliStatus } from "../_helpers/cli";
 import { harnessCalls, promptOf, writeFakeHarness } from "../_helpers/engine-stubs";
 import { makeSandboxDir } from "../_helpers/sandbox";
 import * as C from "../fixtures/judge-prompts/cases";
@@ -140,6 +141,11 @@ describe("the registry", () => {
     };
     registerJudge(fake);
     expect(listJudges().map((judge) => judge.name)).toContain("fake.echo");
+    // Through the command, with no change to it.
+    const listed = JSON.parse((await runCliStatus(["judge", "--list", "--format", "json"])).stdout);
+    expect(listed.judges).toContainEqual({ name: "fake.echo", description: "Echoes.", schemaVersion: 7 });
+    const schema = JSON.parse((await runCliStatus(["judge", "fake.echo", "--schema", "--format", "json"])).stdout);
+    expect(schema).toMatchObject({ judge: "fake.echo", schemaVersion: 7, inputSchema: fake.inputSchema });
     const config = {} as AkmConfig;
 
     expect(await runJudge("fake.echo", { text: "hi" }, config, { connection: "x" })).toEqual({
@@ -152,5 +158,16 @@ describe("the registry", () => {
     await expect(runJudge("fake.echo", { text: "hi", extra: 1 }, config, { connection: "x" })).rejects.toThrow("extra");
     await expect(runJudge("fake.echo", { text: "hi" }, config, {})).rejects.toThrow("no connection or harness");
     await expect(runJudge("fake.missing", {}, config, {})).rejects.toThrow("Unknown judge");
+  });
+});
+
+describe("distill.lesson strips the memory's frontmatter", () => {
+  test("a source with frontmatter is judged as its body", async () => {
+    const body = "The build got slower after the runner image changed.";
+    const withFrontmatter = await sent(lessonQualityJudge, {
+      lesson: "L",
+      source: `---\ndescription: d\n---\n\n${body}\n`,
+    });
+    expect(withFrontmatter).toEqual(await sent(lessonQualityJudge, { lesson: "L", source: body }));
   });
 });

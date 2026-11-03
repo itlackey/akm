@@ -33,6 +33,7 @@ import { runImproveSession } from "./improve-session";
 import { type ResolvedImprovePlan, resolveImprovePlan } from "./improve-strategies";
 import { formatUsageReportTable } from "./improve-usage-report";
 import { renderReflectPromptPreview } from "./reflect";
+import { noVerdict } from "./stage";
 
 let akmImproveForRun: typeof akmImprove = akmImprove;
 
@@ -129,10 +130,7 @@ const improveJudgeCommand = defineJsonCommand({
       loadConfig(),
       {},
     );
-    const verdict =
-      envelope.outcome === "verdict"
-        ? envelope.verdict
-        : { pass: false, score: -1, reason: envelope.reason, reviewNeeded: true };
+    const verdict = envelope.outcome === "verdict" ? envelope.verdict : noVerdict(envelope.outcome);
     output("improve-judge", { engine: envelope.runner.name, ...(verdict as object) });
   },
 });

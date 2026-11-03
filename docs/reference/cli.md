@@ -3212,8 +3212,8 @@ nothing.
 | Judge | Judges | Input |
 | --- | --- | --- |
 | `reflect.quality` | a revision of an asset's frontmatter (reflect's quality gate) | `source`, `candidate`, `feedback?` (lines), `ref?` |
-| `distill.lesson` | a new lesson, or with `extending` an update of one (distill's quality gate and its lesson updates) | `lesson`, `source` (the memory without its frontmatter), `feedback?`, `related?` (`{ref, content}`), `extending?` |
-| `consolidate.pair` | what each of two notes states that the other does not | `a` (the older note), `b`; each `{ref, type, created, updated, content}` |
+| `distill.lesson` | a new lesson, or with `extending` an update of one (distill's quality gate and its lesson updates) | `lesson`, `source` (the memory; its frontmatter is stripped before judging), `feedback?`, `related?` (`{ref, content}`), `extending?` |
+| `consolidate.pair` | what each of two notes states that the other does not | `a` (the older note), `b`; each `{ref, type, created, updated, content}`; a call whose `a` has a later `created` than `b` is refused (exit 2), equal dates are allowed and the prompt says neither is newer |
 | `proposal.judgment` | accept, reject or defer one pending proposal (the drain's judgment tier) | `proposal` (`{ref, source, content}`), `reason`, `liveAsset?`, `siblings`, `neighbours?` |
 
 Everything a judge reads is in its input: the lookups the pipeline makes (related

@@ -9,6 +9,7 @@
  * A stage keeps only its prompt, its parse shape and its target rule.
  */
 
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
@@ -656,7 +657,7 @@ export const reflectQualityJudge: Judge<ReflectJudgeInput, QualityJudgeResult> =
 export interface LessonJudgeInput {
   /** The proposed lesson (for an update, the existing lesson with the lines added). */
   lesson: string;
-  /** The memory the lesson was written from, as distill gives it to the writer: without its frontmatter. */
+  /** The memory the lesson was written from. Its frontmatter is stripped before judging, as distill does for the writer. */
   source: string;
   /** The feedback lines the writer was given. */
   feedback?: string[];
@@ -692,10 +693,25 @@ export const lessonQualityJudge: Judge<LessonJudgeInput, QualityJudgeResult> = {
   },
   outputSchema: QUALITY_VERDICT_SCHEMA,
   harnessReads: "Nothing.",
-  defaultRunner: (config, run) => resolveQualityGateJudge(config, undefined, "distill", undefined, run),
+  // The gate's judge, else distill's own runner, as distill judges.
+  defaultRunner: (config, run) =>
+    resolveQualityGateJudge(config, undefined, "distill", undefined, run) ??
+    resolveImproveExecution({
+      config,
+      processName: "distill",
+      alias: SHIPPED_ALIAS.improve,
+      ...(run ? { run } : {}),
+    })?.runner,
   run: (input, call) =>
     judgeQuality(
-      buildJudgePrompt(input.lesson, input.source, input.related, input.feedback, input.extending),
+      // The judge reads what the generator read: the memory's body, without its frontmatter (buildDistillPrompt).
+      buildJudgePrompt(
+        input.lesson,
+        parseFrontmatter(input.source).content.trim(),
+        input.related,
+        input.feedback,
+        input.extending,
+      ),
       LESSON_JUDGE_CRITERIA,
       call,
     ),
@@ -735,12 +751,15 @@ async function runQualityJudge<I>(
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.onNotices ? { onNotices: options.onNotices } : {}),
   });
-  if (result.outcome === "verdict") return result.verdict;
+  return result.outcome === "verdict" ? result.verdict : noVerdict(result.outcome);
+}
+
+/** What the pipeline records for a judge that gave no verdict: review with score -1, for a person. */
+export function noVerdict(outcome: "error" | "unparseable"): QualityJudgeResult {
   return {
     pass: false,
     score: -1,
-    reason:
-      result.outcome === "error" ? "judge timeout/error — routed to review" : "judge parse failed — routed to review",
+    reason: outcome === "error" ? "judge timeout/error — routed to review" : "judge parse failed — routed to review",
     reviewNeeded: true,
   };
 }

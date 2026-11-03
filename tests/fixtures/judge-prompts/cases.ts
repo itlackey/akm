@@ -20,7 +20,7 @@ export const REFLECT_MAINTENANCE = {
 
 export const LESSON_NEW = {
   lesson: "# Lesson\n\nPin the runner version: an unpinned runner changed the cache key and doubled build time.",
-  source: long("The build got slower after the runner image changed. ", 3400),
+  source: long("The build got slower after the runner image changed. ", 3400).trim(),
   feedback: ["[negative] too vague", "[negative] no cause given"],
   related: [
     { ref: "lesson:runner-cache", content: long("Cache keys include the runner image. ", 700) },
