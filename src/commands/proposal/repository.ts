@@ -1988,7 +1988,7 @@ async function retireProposalWithLease(
     // it only has to match the bytes it was minted against.
     if (retirement) {
       assertRetirementStillFresh(proposal.id, proposal.ref, retirement, target.source, currentBytes);
-    } else if (proposal.beforeHash !== contentHash(currentBytes.toString("utf8"))) {
+    } else if (!matchesBeforeHash(proposal, currentBytes)) {
       throw new UsageError(
         `Retire proposal ${proposal.id} target (${proposal.ref}) changed since the proposal was created.`,
         "INVALID_FLAG_VALUE",
@@ -2271,11 +2271,11 @@ async function unretireProposalWithLease(
       // A retirement with no judged pair (a person's) has only the `beforeHash` it was minted against.
       let matches = false;
       try {
-        const text = fs.readFileSync(originalAbs, "utf8");
+        const bytes = fs.readFileSync(originalAbs);
         const retirement = proposal.retirement;
         matches = retirement
-          ? contentHash(text, "body") === retirement.retiredContentHash
-          : proposal.beforeHash !== undefined && contentHash(text) === proposal.beforeHash;
+          ? contentHash(bytes, "body") === retirement.retiredContentHash
+          : matchesBeforeHash(proposal, bytes);
       } catch {
         matches = false;
       }
@@ -2668,6 +2668,17 @@ export function diffLoadedProposal(
     isNew: existing === null,
     ...(targetPath ? { targetPath } : {}),
   };
+}
+
+/**
+ * A retire proposal's `beforeHash` is the raw-byte hash of its target. Proposals minted before that hashed the
+ * UTF-8-decoded text (same value for valid UTF-8, lossy for anything else), so that form still counts.
+ */
+function matchesBeforeHash(proposal: Proposal, bytes: Buffer): boolean {
+  return (
+    proposal.beforeHash !== undefined &&
+    (proposal.beforeHash === contentHash(bytes) || proposal.beforeHash === contentHash(bytes.toString("utf8")))
+  );
 }
 
 function resolveAssetFilePathSafe(source: WriteTargetSource, ref: AssetRef): string | undefined {
