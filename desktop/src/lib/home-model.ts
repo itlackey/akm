@@ -25,7 +25,7 @@ export function homeConcerns(data: ActivityOverview | null): HomeConcern[] {
         title: check.name.replaceAll("-", " ").replace(/^./, (letter) => letter.toUpperCase()),
         description: check.message,
         action: "Inspect",
-        href: `#/overview?${new URLSearchParams({ view: "health", anchor: healthCheckAnchor(check.name) })}`,
+        href: `/activity/overview?${new URLSearchParams({ view: "health", anchor: healthCheckAnchor(check.name) })}`,
       }));
   const runs: HomeConcern[] = [];
   // metrics uses the requested seven-day window; pulse.failedTasks is only a three-row preview.
@@ -37,7 +37,7 @@ export function homeConcerns(data: ActivityOverview | null): HomeConcern[] {
       title: `${plural(failedTasks, "task run")} failed`,
       description: "Recorded in the past 7 days.",
       action: "View runs",
-      href: "#/overview?view=runs&window=7d&anchor=automation",
+      href: "/activity/overview?view=runs&window=7d&anchor=automation",
     });
   const failedImprove = data.improveRuns.filter((run) => run.ok === false).length;
   if (failedImprove)
@@ -47,7 +47,7 @@ export function homeConcerns(data: ActivityOverview | null): HomeConcern[] {
       title: `${plural(failedImprove, "improvement run")} failed`,
       description: `Among the ${data.improveRuns.length} latest records, across all time.`,
       action: "View runs",
-      href: "#/overview?view=runs&anchor=run-history",
+      href: "/activity/overview?view=runs&anchor=run-history",
     });
   return [...checkItems("fail"), ...runs, ...checkItems("warn")];
 }

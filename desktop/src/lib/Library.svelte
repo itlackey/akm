@@ -46,7 +46,7 @@
     comparisonMode = false;
   let filterDetails: HTMLDetailsElement, filterTrigger: HTMLElement;
   let lastFiles = "",
-    lastSearch = "#/search",
+    lastSearch = "/library/search",
     loadedAsset: AssetRead | null = null,
     locatedRef = "",
     localFileRevision = 0,
@@ -91,12 +91,12 @@
   $: readingHref = query.get("readingFrom") || fileQuery.get("readingFrom") || "";
   $: reviewHref = query.get("reviewFrom") || fileQuery.get("reviewFrom") || "";
   $: returnTo =
-    normalizedRoute === "new" && query.get("returnTo") === "#/home"
-      ? "#/home"
+    normalizedRoute === "new" && query.get("returnTo") === "/"
+      ? "/"
       : inFiles
         ? filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath, ref, open: !!ref }, readingHref)
         : searchHref(resultContext(query));
-  $: currentHref = "#/" + normalizedRoute + (query.size ? "?" + query : "");
+  $: currentHref = "/library/" + normalizedRoute + (query.size ? "?" + query : "");
   $: activeLocation = locatedRef === ref ? loadedAsset?.location : null;
   $: folderHref = activeLocation
     ? filesHref(
@@ -119,7 +119,7 @@
       ? returnTo
       : "";
   $: editHref = sourceHref
-    ? "#/edit?" +
+    ? "/library/edit?" +
       new URLSearchParams({
         ref: loadedAsset?.durableRef || ref,
         returnTo: withReview(sourceHref),
@@ -205,16 +205,16 @@
         }).split("?")[1],
       );
       const origin = query.get("returnTo");
-      if (origin?.startsWith("#/proposals")) destination.set("reviewFrom", origin);
-      else if (origin?.startsWith("#/search") || origin?.startsWith("#/asset")) destination.set("readingFrom", origin);
-      const href = "#/files?" + destination;
+      if (origin?.startsWith("/review")) destination.set("reviewFrom", origin);
+      else if (origin?.startsWith("/library/search") || origin?.startsWith("/library/asset")) destination.set("readingFrom", origin);
+      const href = "/library/files?" + destination;
       await navigate(
         edit
-          ? "#/edit?" +
+          ? "/library/edit?" +
               new URLSearchParams({
                 ref,
                 returnTo: href,
-                ...(origin?.startsWith("#/search") ? { readingFrom: origin } : {}),
+                ...(origin?.startsWith("/library/search") ? { readingFrom: origin } : {}),
               })
           : href,
         true,
@@ -231,7 +231,7 @@
     window.scrollTo(0, searchWindowScroll);
     const hit = result?.hits.find((hit) => matchesAssetRef(hit, previous, defaultBundle));
     const link = [...(resultList?.querySelectorAll<HTMLAnchorElement>(".library-hit-content") ?? [])].find(
-      (link) => new URLSearchParams(link.hash.split("?")[1]).get("ref") === hit?.ref,
+      (link) => new URLSearchParams(link.search).get("ref") === hit?.ref,
     );
     link?.focus({ preventScroll: true });
     if (link) pendingResultFocus = "";
@@ -260,7 +260,7 @@
     }))
       if (value) next.set(key, value);
     const href = searchHref(next);
-    if (location.hash === href) {
+    if (location.pathname + location.search === href) {
       searchParams = next;
       void search();
     } else void navigate(href);
@@ -290,6 +290,12 @@
       filterDetails.open = false;
       resetFilterInputs();
     }
+  }
+  /** Ctrl/Cmd+K returns to the search box with the results in view; the shell handles it from other sections. */
+  function searchShortcut(event: KeyboardEvent) {
+    if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") return;
+    event.preventDefault();
+    openSearch().catch((cause) => (error = (cause as Error).message));
   }
   async function search() {
     controller?.abort();
@@ -335,12 +341,12 @@
     const next = new URLSearchParams(inFiles ? query : searchParams);
     next.delete("compare");
     for (const ref of selected) next.append("compare", ref);
-    return (inFiles ? "#/files?" : "#/search?") + next;
+    return (inFiles ? "/library/files?" : "/library/search?") + next;
   }
   function closeComparison() {
     const next = new URLSearchParams(query);
     next.delete("compare");
-    return "#/" + normalizedRoute + (next.size ? "?" + next : "");
+    return "/library/" + normalizedRoute + (next.size ? "?" + next : "");
   }
   function comparisonLabel(ref: string) {
     const hit = result?.hits.find((hit) => hit.ref === ref);
@@ -390,7 +396,7 @@
     if (query.get("file")) {
       const params = new URLSearchParams((query.get("returnTo") ?? "").split("?")[1]);
       params.set("saved", unchanged ? "unchanged" : "1");
-      await navigate("#/files?" + params);
+      await navigate("/library/files?" + params);
       return;
     }
     const read = await libraryRead<AssetRead>("/asset", { ref: savedRef });
@@ -409,18 +415,18 @@
       : filesHref({ bundle: fileBundle, path: filePath, ref: savedRef, open: true }, readingHref);
     const params = new URLSearchParams(href.split("?")[1]);
     params.set("saved", unchanged ? "unchanged" : "1");
-    await navigate(withReview("#/files?" + params));
+    await navigate(withReview("/library/files?" + params));
   }
   function createHref(bundle: string, path: string, readingFrom: string, reviewFrom: string) {
     const location = new URLSearchParams(filesHref({ bundle, path }, readingFrom).split("?")[1]);
     if (reviewFrom) location.set("reviewFrom", reviewFrom);
     return (
-      "#/new?" +
-      new URLSearchParams({ bundle, path, returnTo: "#/files?" + location, ...(readingFrom ? { readingFrom } : {}) })
+      "/library/new?" +
+      new URLSearchParams({ bundle, path, returnTo: "/library/files?" + location, ...(readingFrom ? { readingFrom } : {}) })
     );
   }
   function createSensitiveHref(kind: string, bundle: string, path: string) {
-    return "#/new-sensitive?" + new URLSearchParams({ kind, bundle, returnTo: filesHref({ bundle, path }) });
+    return "/library/new-sensitive?" + new URLSearchParams({ kind, bundle, returnTo: filesHref({ bundle, path }) });
   }
   async function savedSensitive(event: CustomEvent<{ bundle: string; file: string; ref: string; warnings: string[] }>) {
     const saved = event.detail;
@@ -445,7 +451,7 @@
   });
 </script>
 
-<svelte:window on:click={dismissFilters} on:keydown={dismissFilters} />
+<svelte:window on:click={dismissFilters} on:keydown={dismissFilters} on:keydown={searchShortcut} />
 {#if !(ref && !inFiles) && !(normalizedRoute === "asset" && query.get("view") === "files")}
   <nav class="library-views" aria-label="Library views">
     <a href={lastSearch} aria-current={!inFiles ? "page" : undefined}>Search</a>
@@ -462,7 +468,7 @@
 {#if error}<p class="notice notice-warn" role="alert">
     {error}
     {#if resolvingLocation}<span>Resolving location…</span>{:else if query.get("view") === "files"}<a
-        href={"#/asset?ref=" + encodeURIComponent(ref)}>Read in Search</a
+        href={"/library/asset?ref=" + encodeURIComponent(ref)}>Read in Search</a
       >{:else}<button
         class="btn-secondary"
         on:click={() => (compareRefs.length === 2 ? compare(compareRefs) : search())}>Retry</button
@@ -581,7 +587,7 @@
             bundle={fileBundle}
             {bundles}
             on:saved={savedSensitive}
-            on:cancel={() => navigate(query.get("returnTo") || "#/files")}
+            on:cancel={() => navigate(query.get("returnTo") || "/library/files")}
           />{/key}
       {:else if editing}
         {#key normalizedRoute + ":" + ref + ":" + query.get("file")}<LibraryEditor
@@ -696,7 +702,7 @@
             <thead><tr><th>Query</th><th>Times</th><th>Days</th><th>Last seen</th><th>Next step</th></tr></thead><tbody
               >{#each misses.misses as miss}<tr
                   ><td>{miss.query}</td><td>{miss.count}</td><td>{miss.days}</td><td>{date(miss.lastAt)}</td><td
-                    ><a href={"#/new?q=" + encodeURIComponent(miss.query) + "&returnTo=" + encodeURIComponent(returnTo)}
+                    ><a href={"/library/new?q=" + encodeURIComponent(miss.query) + "&returnTo=" + encodeURIComponent(returnTo)}
                       >Write this up</a
                     ></td
                   ></tr
@@ -756,7 +762,7 @@
               type="button"
               class="btn-secondary"
               on:click={closeFilters}>Cancel</button
-            >{#if active}<a href="#/search" on:click={closeFilters}>Clear filters</a>{/if}
+            >{#if active}<a href="/library/search" on:click={closeFilters}>Clear filters</a>{/if}
           </div>
         </div>
       </details>
@@ -785,10 +791,10 @@
       {#if result && !result.hits.length}<div class="list-empty">
           <h2>No matching assets</h2>
           <p>{result.tip ?? "Try a shorter query or another bundle."}</p>
-          {#if q}<a href={"#/new?q=" + encodeURIComponent(q) + "&returnTo=" + encodeURIComponent(returnTo)}
+          {#if q}<a href={"/library/new?q=" + encodeURIComponent(q) + "&returnTo=" + encodeURIComponent(returnTo)}
               >Write this up</a
             >{/if}
-          <p><a href="#/search">Clear filters</a></p>
+          <p><a href="/library/search">Clear filters</a></p>
         </div>{/if}
       <ul class="search-results">
         {#each result?.hits ?? [] as hit (hit.ref)}<li class="search-result">

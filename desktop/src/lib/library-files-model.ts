@@ -55,10 +55,10 @@ export function filesHref(location: FileLocation, readingFrom = ""): string {
   if (location.ref) query.set("ref", location.ref);
   if (location.open || location.ref) query.set("open", "1");
   if (readingFrom) query.set("readingFrom", readingFrom);
-  return `#/files?${query}`;
+  return `/library/files?${query}`;
 }
 export function parseFilesHref(href: string | null): URLSearchParams | null {
-  return href && /^#\/files(?:\?|$)/.test(href) ? new URLSearchParams(href.split("?")[1] ?? "") : null;
+  return href && /^\/library\/files(?:\?|$)/.test(href) ? new URLSearchParams(href.split("?")[1] ?? "") : null;
 }
 export function treeNodes(bundles: string[], listings: Map<string, FileListing>, expanded: Set<string>): TreeNode[] {
   const result: TreeNode[] = [];

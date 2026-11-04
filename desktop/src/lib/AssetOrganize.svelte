@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { api } from "./client";
-  import type { Bundle, Source } from "./types";
+  import type { Bundle, CloneResponse, Retirement, Source } from "./types";
   const dispatch = createEventDispatcher<{ changed: void }>();
   export let ref: string;
   export let bundles: Bundle[];
@@ -23,14 +23,14 @@
     moved = null;
     try {
       const { revision } = await api<Source>("/desktop/file", { ref });
-      const copy = await api<{ destination: { ref?: string } }>(
+      const copy = await api<CloneResponse>(
         "/asset/copy",
         {},
         { sourceRef: ref, target: bundle, newName: name.trim() },
       );
       const destination = copy.destination.ref ?? bundle + "//" + ref.split("//")[1]!.split("/")[0] + "/" + name.trim();
       try {
-        const retired = await api<{ proposalId: string }>("/asset/retire", {}, { ref, revision });
+        const retired = await api<Retirement>("/asset/retire", {}, { ref, revision });
         moved = { ref: destination, proposalId: retired.proposalId };
       } catch (cause) {
         moved = { ref: destination, retireError: (cause as Error).message };
@@ -53,10 +53,10 @@
       </p>
     {:else}<p>
         Copied to the new name, then the original was retired. Undo the retirement from <a
-          href={"#/proposals/" + encodeURIComponent(moved.proposalId ?? "")}>Review</a
+          href={"/review/" + encodeURIComponent(moved.proposalId ?? "")}>Review</a
         >; the copy stays in place.
       </p>{/if}
-    <a class="btn" href={"#/asset?ref=" + encodeURIComponent(moved.ref)}>Open the copy</a>
+    <a class="btn" href={"/library/asset?ref=" + encodeURIComponent(moved.ref)}>Open the copy</a>
   </section>
 {:else}
   <form class="organize-form" on:submit|preventDefault={move}>

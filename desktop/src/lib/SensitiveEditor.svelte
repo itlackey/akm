@@ -3,15 +3,15 @@
   import { beforeNavigate } from "$app/navigation";
   import { api, saveContent } from "./client";
   import { navigate } from "./navigation";
-  import { setUnsaved } from "./ui/lib.js";
-  import type { Bundle } from "./types";
+  import { setUnsaved } from "./drafts";
+  import type { Bundle, SensitiveValue, SensitiveWriteResult } from "./types";
   export let bundle = "";
   export let file = "";
   export let type: "env" | "secret" = "env";
   export let creating = false;
   export let bundles: Bundle[] = [];
   const dispatch = createEventDispatcher<{
-    saved: { bundle: string; file: string; ref: string; warnings: string[] };
+    saved: SensitiveWriteResult;
     cancel: void;
   }>();
   let name = "",
@@ -79,7 +79,7 @@
       ? `${type === "env" ? "env" : "secrets"}/${name.trim()}${type === "env" && !name.trim().endsWith(".env") ? ".env" : ""}`
       : file;
     try {
-      const result = await api<{ bundle: string; file: string; ref: string; warnings: string[] }>(
+      const result = await api<SensitiveWriteResult>(
         "/desktop/sensitive/" + (creating ? "create" : "save"),
         {},
         {
@@ -110,7 +110,7 @@
       if (creating) {
         bundle = writable.find((item) => item.name === bundle)?.name ?? writable[0]?.name ?? "";
       } else {
-        const result = await api<{ content: string; revision: string }>(
+        const result = await api<SensitiveValue>(
           "/desktop/sensitive/reveal",
           {},
           { bundle, file },

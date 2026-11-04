@@ -19,7 +19,8 @@ export async function startServer() {
   } catch {
     process.env.AKM_DESKTOP_COMMIT = "development";
   }
-  // Kit 3's custom handler defaults to HTTPS. This header is server-owned,
+  // Kit 3's custom handler defaults to HTTPS, and adapter-node 6 reads the origin only from the build-time
+  // `paths.origin` (our port is chosen at run time), so the protocol comes from this header. It is server-owned,
   // overwritten for every request, never trusted from the network.
   process.env.PROTOCOL_HEADER = "x-akm-desktop-protocol";
   process.env.BODY_SIZE_LIMIT = String(8 * 1024 * 1024);

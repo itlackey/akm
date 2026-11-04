@@ -425,7 +425,7 @@
       Last {pulse.improveLine.weeks} weeks: {pulse.improveLine.proposed} proposed; {pulse.improveLine.accepted} accepted ({pulse
         .improveLine.acceptedThenReverted} since reverted), {pulse.improveLine.rejected} rejected, {pulse.improveLine
         .waiting} waiting · {pulse.improveLine.calls} model calls.
-      <a href="#/improve">Improve impact <Icon name="arrow-right" size={16} /></a>
+      <a href="/activity/improve">Improve impact <Icon name="arrow-right" size={16} /></a>
     </p>{/if}
 {:else if mode === "runs"}
   {#if pulse}<section class="run-summary" aria-label="Last seven days">

@@ -4,19 +4,12 @@
   import { api } from "./client";
   import SensitiveEditor from "./SensitiveEditor.svelte";
   import Icon from "./Icon.svelte";
+  import type { SensitiveInfo, SensitiveValue } from "./types";
   export let ref = "";
   export let bundle = "";
   export let file = "";
   const dispatch = createEventDispatcher<{ changed: void }>();
-  let info: {
-    name: string;
-    type: "env" | "secret";
-    path: string;
-    bundle: string;
-    writable: boolean;
-    revision: string;
-    location: { path: string; parent: string };
-  } | null = null;
+  let info: SensitiveInfo | null = null;
   let content: string | null = null,
     busy = false,
     error = "",
@@ -79,7 +72,7 @@
     busy = true;
     error = "";
     try {
-      const result = await api<{ content: string }>("/desktop/sensitive/reveal", {}, selector());
+      const result = await api<SensitiveValue>("/desktop/sensitive/reveal", {}, selector());
       if (generation === request) content = result.content;
     } catch (cause) {
       if (generation === request) error = (cause as Error).message;
@@ -94,7 +87,7 @@
     <p class="muted">{info.location.path}</p>
     <a
       class="btn btn-secondary"
-      href={"#/files?" + new URLSearchParams({ bundle: info.bundle, path: info.location.parent })}>Back to folder</a
+      href={"/library/files?" + new URLSearchParams({ bundle: info.bundle, path: info.location.parent })}>Back to folder</a
     >
   {:else if editing && info}<SensitiveEditor
       bundle={info.bundle}

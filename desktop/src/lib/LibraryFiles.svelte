@@ -323,7 +323,7 @@
               ? "Choose an enabled bundle in the tree, or check your bundle settings."
               : "Add or enable a bundle to browse its folders and files."}
           </p>
-          <a href="#/bundles">Bundle settings</a>
+          <a href="/settings/bundles">Bundle settings</a>
         </section>
       {:else if documentOpen}<slot
           {selectedFile}

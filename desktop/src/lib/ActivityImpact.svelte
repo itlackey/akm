@@ -32,18 +32,18 @@
   );
   $: costCalls = cost.reduce((sum, row) => sum + row.calls, 0);
   $: reportedCalls = cost.reduce((sum, row) => sum + row.usageCalls, 0);
-  const assetHref = (ref: string) => `#/asset?ref=${encodeURIComponent(ref)}`;
+  const assetHref = (ref: string) => `/library/asset?ref=${encodeURIComponent(ref)}`;
   function proposalHref(id: string, scoped = false) {
     const params = new URLSearchParams({
       status: "recent",
-      returnTo: `#/improve?since=${impact.since}&process=${encodeURIComponent(selectedProcess)}&anchor=${scoped ? "impact-drill" : "harm"}`,
+      returnTo: `/activity/improve?since=${impact.since}&process=${encodeURIComponent(selectedProcess)}&anchor=${scoped ? "impact-drill" : "harm"}`,
     });
     if (scoped && drill) {
       params.set("source", drill.source);
       params.set("week", drill.week);
       if (drill.kind) params.set("class", drill.kind);
     }
-    return `#/proposals/${encodeURIComponent(id)}?${params}`;
+    return `/review/${encodeURIComponent(id)}?${params}`;
   }
   async function closeDrill() {
     generation++;
@@ -53,7 +53,7 @@
   }
   function changeProcess(value: string) {
     selectedProcess = value;
-    void navigate(`#/improve?since=${impact.since}&process=${encodeURIComponent(value)}`);
+    void navigate(`/activity/improve?since=${impact.since}&process=${encodeURIComponent(value)}`);
   }
   function libraryOption() {
     const option = stepLine(
@@ -132,7 +132,7 @@
     </div>{/if}
   <nav class="impact-links" aria-label="Improve sections">
     {#each [["outcomes", "Outcomes"], ["search", "Retrieval after changes"], ["flow", "Review flow"], ["library", "Library"], ["harm", "Harm log"], ["cost", "Cost"], ["changed", "Changed assets"], ["judge", "Judge and you"]] as [id, label]}<a
-        href={`#/improve?since=${impact.since}&anchor=${id}`}>{label}</a
+        href={`/activity/improve?since=${impact.since}&anchor=${id}`}>{label}</a
       >{/each}
   </nav>
   <div class="impact-sections">
@@ -439,7 +439,7 @@
         Found and negatively rated in the 28 days before/after a change. Changes under 28 days old are partial. These
         are observations, not causal attribution.
       </p>
-      <div class="table-wrap">
+      <div class="table-wrap" role="region" aria-label="Changed assets, before and after" tabindex="0">
         <table>
           <caption>Changed-asset follow-up</caption><thead
             ><tr

@@ -34,22 +34,14 @@ export function rejectionError(choice: string, details: string): string {
     return "The combined rejection reason must be at most 2000 characters.";
   return "";
 }
-export function proposalId(route: string, query: URLSearchParams): string {
-  const encoded = route.replace(/^\/?proposals\/?/, "");
-  try {
-    return encoded ? decodeURIComponent(encoded) : (query.get("id") ?? "");
-  } catch {
-    return "";
-  }
-}
 export function proposalHref(id: string, query: URLSearchParams): string {
   const params = new URLSearchParams(query);
   params.delete("id");
-  return `#/proposals${id ? `/${encodeURIComponent(id)}` : ""}${params.size ? `?${params}` : ""}`;
+  return `/review${id ? `/${encodeURIComponent(id)}` : ""}${params.size ? `?${params}` : ""}`;
 }
 /** Only in-app analytics locations can be an analytics return destination. */
 export function activityReturn(value: string | null): string | null {
-  return value && /^#\/(?:improve|overview)(?:\?|$)/.test(value) ? value : null;
+  return value && /^\/activity\/(?:improve|overview)(?:\?|$)/.test(value) ? value : null;
 }
 export function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};

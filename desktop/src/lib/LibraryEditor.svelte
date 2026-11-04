@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import { api, ApiError, saveContent } from "./client";
   import { libraryRead, documentTitle } from "./library-model";
-  import { setUnsaved } from "./ui/lib.js";
+  import { clearDraft, draftKey, readDraft, setUnsaved, storeDraft } from "./drafts";
   import type { Bundle, Source, WriteResult } from "./types";
   import Markdown from "./Markdown.svelte";
   import Diff from "./Diff.svelte";
@@ -15,7 +15,7 @@
   export let bundles: Bundle[] = [];
   export let defaultWriteTarget = "";
   export let query = new URLSearchParams();
-  export let returnTo = "#/search";
+  export let returnTo = "/library/search";
   export let cancelHref = "";
   export let readingHref = "";
   export let onSaved: ((ref: string, unchanged: boolean) => void | Promise<void>) | undefined = undefined;
@@ -48,24 +48,17 @@
   $: if (file) sourceParams = { bundle: file.bundle, file: file.path };
   else sourceParams = { ref };
   $: markdown = source?.markdown !== false;
-  $: documentHref = "#/asset?ref=" + encodeURIComponent(ref) + "&returnTo=" + encodeURIComponent(returnTo);
-  $: backHref = cancelHref || (returnTo.startsWith("#/files") ? returnTo : creating ? returnTo : documentHref);
+  $: documentHref = "/library/asset?ref=" + encodeURIComponent(ref) + "&returnTo=" + encodeURIComponent(returnTo);
+  $: backHref = cancelHref || (returnTo.startsWith("/library/files") ? returnTo : creating ? returnTo : documentHref);
   $: readerHref = readingHref || query.get("readingFrom") || "";
   $: writable = bundles.filter((b) => b.enabled && b.writable && b.components.some((c) => c.adapter === "akm"));
   $: bundlePath = bundles.find((b) => b.name === bundle)?.path;
   $: root = bundlePath ? bundlePath.replace(/[\\/]+$/, "") + "/knowledge" : "";
-  const key = () => `akm-desktop-editor:${file ? file.bundle + "/" + file.path : ref || "new"}`;
+  const key = () => draftKey({ file, ref });
   function persist() {
     retained = true;
     setUnsaved(true);
-    try {
-      sessionStorage.setItem(
-        key(),
-        JSON.stringify({ draft, bundle, name, folder, baseRevision: source?.revision, baseContent: source?.content }),
-      );
-    } catch {
-      /* draft remains in memory */
-    }
+    storeDraft(key(), { draft, bundle, name, folder, baseRevision: source?.revision, baseContent: source?.content });
   }
   async function initialize() {
     busy = true;
@@ -96,21 +89,20 @@
       initialName = name;
       initialBundle = bundle;
       initialFolder = folder;
-      const saved = sessionStorage.getItem(key());
-      if (saved) {
-        const recovered = JSON.parse(saved);
-        if (typeof recovered.draft === "string") {
+      const stored = readDraft(key());
+      if (stored) {
+        if (typeof stored.draft === "string") {
           retained = true;
-          draft = recovered.draft;
-          if (typeof recovered.bundle === "string") bundle = recovered.bundle || bundle;
-          if (typeof recovered.name === "string") name = recovered.name || name;
-          if (typeof recovered.folder === "string") folder = recovered.folder;
-          if (source && typeof recovered.baseRevision === "string" && recovered.baseRevision !== source.revision) {
+          draft = stored.draft;
+          if (typeof stored.bundle === "string") bundle = stored.bundle || bundle;
+          if (typeof stored.name === "string") name = stored.name || name;
+          if (typeof stored.folder === "string") folder = stored.folder;
+          if (source && typeof stored.baseRevision === "string" && stored.baseRevision !== source.revision) {
             latest = source;
             source = {
               ...source,
-              revision: recovered.baseRevision,
-              content: typeof recovered.baseContent === "string" ? recovered.baseContent : source.content,
+              revision: stored.baseRevision,
+              content: typeof stored.baseContent === "string" ? stored.baseContent : source.content,
             };
             error = "The source changed while this draft was closed. Review the newer version before saving.";
           }
@@ -144,11 +136,7 @@
       // Leaving an in-flight writer must not redirect or clear a newer editor's unsaved state.
       if (!alive) return;
       writeCompleted = true;
-      try {
-        sessionStorage.removeItem(key());
-      } catch {
-        /* the successful core write is authoritative */
-      }
+      clearDraft(key());
       setUnsaved(false);
       retained = false;
       recovered = false;
@@ -160,12 +148,12 @@
       const savedRef = result.ref ?? ref;
       if (onSaved) await onSaved(savedRef, !!result.unchanged);
       else {
-        const params = new URLSearchParams(returnTo.startsWith("#/files") ? (returnTo.split("?")[1] ?? "") : "");
+        const params = new URLSearchParams(returnTo.startsWith("/library/files") ? (returnTo.split("?")[1] ?? "") : "");
         params.set("ref", savedRef);
         params.set("open", "1");
         params.set("saved", result.unchanged ? "unchanged" : "1");
         if (readerHref) params.set("readingFrom", readerHref);
-        await navigate(`#/files?${params}`);
+        await navigate(`/library/files?${params}`);
       }
     } catch (e) {
       error = writeCompleted
@@ -198,7 +186,7 @@
     name = initialName;
     bundle = initialBundle;
     folder = initialFolder;
-    sessionStorage.removeItem(key());
+    clearDraft(key());
     setUnsaved(false);
     retained = false;
     recovered = false;
@@ -280,7 +268,7 @@
     <a href={backHref}
       ><Icon name="arrow-left" size={16} />{creating
         ? "Cancel"
-        : backHref.startsWith("#/files")
+        : backHref.startsWith("/library/files")
           ? "Back to file"
           : "Back to document"}</a
     >

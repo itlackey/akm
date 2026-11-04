@@ -1,5 +1,6 @@
 <script lang="ts">
   import { navigate } from "./navigation";
+  import { refreshPending } from "./state/workspace.svelte";
   import { onMount, tick } from "svelte";
   import { api, date, title, toggleSelection } from "./client";
   import Diff from "./Diff.svelte";
@@ -10,7 +11,6 @@
     rejectionChoices,
     rejectionReason,
     rejectionError,
-    proposalId,
     proposalHref,
     activityReturn,
     commitOutcome,
@@ -21,7 +21,7 @@
     type ReviewProposal,
   } from "./review-model";
   import type { ProposalDetail, WriteResult } from "./types";
-  export let route = "proposals";
+  export let id = "";
   export let query = new URLSearchParams();
   let status = "pending",
     source = "",
@@ -65,7 +65,7 @@
     typeof detail.diff.before === "string" &&
     detail.diff.before === detail.diff.after
   );
-  $: if (mounted) syncRoute(route, String(query));
+  $: if (mounted) syncRoute(id, String(query));
   onMount(() => {
     mounted = true;
     return () => {
@@ -74,8 +74,8 @@
     };
   });
 
-  function syncRoute(path: string, params: string) {
-    const key = `${path}?${params}`;
+  function syncRoute(proposal: string, params: string) {
+    const key = `${proposal}?${params}`;
     if (previousRoute === key) return;
     previousRoute = key;
     const nextStatus = query.get("status") === "recent" ? "recent" : "pending";
@@ -95,22 +95,21 @@
       selected = [];
       void load();
     }
-    const id = proposalId(path, query);
-    if (id !== desiredId) {
+    if (proposal !== desiredId) {
       const previousId = desiredId;
-      desiredId = id;
+      desiredId = proposal;
       intent = "";
       error = "";
       reason = "";
       choice = "";
-      if (id) void open(id);
+      if (proposal) void open(proposal);
       else {
         ++detailGeneration;
         detail = null;
         detailError = "";
         opening = false;
       }
-      if (!id && previousId && !changed) void restoreQueueFocus(previousId);
+      if (!proposal && previousId && !changed) void restoreQueueFocus(previousId);
     }
   }
   async function load() {
@@ -157,11 +156,7 @@
   async function restoreQueueFocus(previousId: string) {
     await tick();
     [...(region?.querySelectorAll<HTMLAnchorElement>(".review-item") ?? [])]
-      .find(
-        (link) =>
-          proposalId(link.hash.replace(/^#\//, "").split("?")[0], new URLSearchParams(link.hash.split("?")[1])) ===
-          previousId,
-      )
+      .find((link) => link.dataset.id === previousId)
       ?.focus();
   }
   function select(id: string) {
@@ -231,7 +226,7 @@
         {},
         isBatch ? { ids: [...selected], ...payload } : payload,
       );
-      window.dispatchEvent(new CustomEvent("akm-proposals-changed"));
+      void refreshPending();
       receiptKind = action;
       receiptId = isBatch ? "" : targetId!;
       if (action === "accept" || action === "reject")
@@ -347,7 +342,7 @@
     <div>
       <h1>Review</h1>
       {#if analyticsReturn}<a class="return-link" href={analyticsReturn}
-          ><Icon name="arrow-left" size={16} /> Back to {analyticsReturn.startsWith("#/improve")
+          ><Icon name="arrow-left" size={16} /> Back to {analyticsReturn.startsWith("/activity/improve")
             ? "improve impact"
             : "activity"}</a
         >{/if}
@@ -425,6 +420,7 @@
                 on:change={() => (selected = toggleSelection(selected, p.id, 200))}
               />{/if}<a
               class="review-item"
+              data-id={p.id}
               title={p.ref}
               aria-current={desiredId === p.id ? "true" : undefined}
               href={proposalHref(p.id, query)}
@@ -518,7 +514,7 @@
                   >New asset</span
                 >{:else}<a
                   class="target-link"
-                  href={`#/asset?ref=${encodeURIComponent(current.ref)}&view=files&returnTo=${encodeURIComponent(proposalHref(current.id, query))}`}
+                  href={`/library/asset?ref=${encodeURIComponent(current.ref)}&view=files&returnTo=${encodeURIComponent(proposalHref(current.id, query))}`}
                   >Open in Files</a
                 >{/if}
             </div>

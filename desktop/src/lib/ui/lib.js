@@ -48,16 +48,7 @@ export function weekStart(iso) {
 }
 
 export function assetHref(ref, returnTo = "") {
-  return `#/asset?ref=${encodeURIComponent(ref)}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}`;
-}
-
-let unsaved = false;
-/** The editor marks a draft that leaving the page would lose; the router asks before discarding it. */
-export function setUnsaved(value) {
-  unsaved = value;
-}
-export function hasUnsaved() {
-  return unsaved;
+  return `/library/asset?ref=${encodeURIComponent(ref)}${returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : ""}`;
 }
 
 const round = (n) => Math.round(n * 10) / 10;

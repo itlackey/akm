@@ -50,13 +50,13 @@
       <dl class="evidence-grid">
         <dt>Retires</dt>
         <dd>
-          <a class="mono wrap" href={`#/asset?ref=${encodeURIComponent(text(retirement.retiredRef, p.ref))}`}
+          <a class="mono wrap" href={`/library/asset?ref=${encodeURIComponent(text(retirement.retiredRef, p.ref))}`}
             >{text(retirement.retiredRef, p.ref)}</a
           >
         </dd>
         {#if typeof retirement.successorRef === "string"}<dt>Successor</dt>
           <dd>
-            <a class="mono wrap" href={`#/asset?ref=${encodeURIComponent(retirement.successorRef)}`}
+            <a class="mono wrap" href={`/library/asset?ref=${encodeURIComponent(retirement.successorRef)}`}
               >{retirement.successorRef}</a
             >
           </dd>{/if}

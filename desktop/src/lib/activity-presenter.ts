@@ -18,7 +18,7 @@ export function attentionItems(data: ActivityOverview, pulse: ActivityPulse | nu
       items.push({
         tone: status,
         text: `${matches.length} ${status === "fail" ? "failing checks" : "health warnings"} · ${matches[0].name}`,
-        href: `#/overview?view=health&anchor=health-${encodeURIComponent(status)}`,
+        href: `/activity/overview?view=health&anchor=health-${encodeURIComponent(status)}`,
         action: "Inspect checks",
       });
   }
@@ -29,7 +29,7 @@ export function attentionItems(data: ActivityOverview, pulse: ActivityPulse | nu
     items.splice(checks.some((check) => check.status === "fail") ? 1 : 0, 0, {
       tone: "fail",
       text: `${failedImprove} failed improve runs in latest records · ${failedTasks} failed task runs this week`,
-      href: "#/overview?view=runs",
+      href: "/activity/overview?view=runs",
       action: "Inspect runs",
     });
   const pending = pulse?.attention?.pending;
@@ -37,28 +37,28 @@ export function attentionItems(data: ActivityOverview, pulse: ActivityPulse | nu
     items.push({
       tone: "work",
       text: `${pending.count} proposals waiting for review`,
-      href: "#/proposals",
+      href: "/review",
       action: "Review changes",
     });
   if (pulse?.attention?.misses.queries)
     items.push({
       tone: "work",
       text: `${pulse.attention.misses.queries} queries found nothing on multiple days`,
-      href: "#/overview?view=misses",
+      href: "/activity/overview?view=misses",
       action: "Inspect search gaps",
     });
   if (pulse?.attention?.harm.reverted)
     items.push({
       tone: "work",
       text: `${pulse.attention.harm.reverted} changes reverted this week`,
-      href: "#/improve?anchor=harm",
+      href: "/activity/improve?anchor=harm",
       action: "Inspect reversions",
     });
   if (pulse?.attention?.setup)
     items.push({
       tone: "work",
       text: "No model connection configured for improvement work",
-      href: "#/config?section=add-connection",
+      href: "/settings/config?section=add-connection",
       action: "Configure connection",
     });
   return items;

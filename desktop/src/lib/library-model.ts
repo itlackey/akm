@@ -42,7 +42,7 @@ export function documentTitle(asset?: Asset): string {
 export function resultContext(query: URLSearchParams): URLSearchParams {
   const returned = query.get("returnTo");
   const params =
-    returned && /^#\/search(?:\?|$)/.test(returned)
+    returned && /^\/library\/search(?:\?|$)/.test(returned)
       ? new URLSearchParams(returned.split("?")[1] ?? "")
       : new URLSearchParams(query);
   for (const key of ["ref", "section", "history", "revision", "returnTo", "compare", "saved"]) params.delete(key);
@@ -52,7 +52,7 @@ export function searchHref(params: URLSearchParams, ref?: string): string {
   const next = new URLSearchParams(params);
   if (ref) next.set("ref", ref);
   else next.delete("ref");
-  return `#/search${next.size ? `?${next}` : ""}`;
+  return `/library/search${next.size ? `?${next}` : ""}`;
 }
 export function typedLinks(
   value: Json | undefined,

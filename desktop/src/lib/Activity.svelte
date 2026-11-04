@@ -68,11 +68,11 @@
         )),
   );
   const views = [
-    { name: "Health", path: "#/overview" },
-    { name: "Runs", path: "#/overview?view=runs" },
-    { name: "Usage & retrieval", path: "#/overview?view=retrieval" },
-    { name: "Improve impact", path: "#/improve" },
-    { name: "Source history", path: "#/history" },
+    { name: "Health", path: "/activity/overview" },
+    { name: "Runs", path: "/activity/overview?view=runs" },
+    { name: "Usage & retrieval", path: "/activity/overview?view=retrieval" },
+    { name: "Improve impact", path: "/activity/improve" },
+    { name: "Source history", path: "/activity/history" },
   ];
   async function revealAnchor(anchor: string | null) {
     if (!anchor) return;
@@ -160,13 +160,13 @@
   function changeWindow(value: string) {
     const params = new URLSearchParams(query);
     params.set(route === "improve" ? "since" : "window", value);
-    void navigate(`#/${route}?${params}`);
+    void navigate(`/activity/${route}?${params}`);
   }
   function filterHistory() {
     const params = new URLSearchParams();
     if (historyFilter) params.set("q", historyFilter);
     if (historyOrigin) params.set("origin", historyOrigin);
-    void navigate(`#/history${params.size ? `?${params}` : ""}`);
+    void navigate(`/activity/history${params.size ? `?${params}` : ""}`);
   }
   onMount(() => {
     mounted = true;
@@ -295,7 +295,7 @@
             ><tbody
               >{#each misses.misses as miss}<tr
                   ><th>{miss.query}</th><td>{miss.count}</td><td>{miss.days}</td><td>{date(miss.lastAt)}</td><td
-                    ><a href={`#/search?tab=misses&q=${encodeURIComponent(miss.query)}`}>Review search gap</a></td
+                    ><a href={`/library/search?tab=misses&q=${encodeURIComponent(miss.query)}`}>Review search gap</a></td
                   ></tr
                 >{/each}</tbody
             >

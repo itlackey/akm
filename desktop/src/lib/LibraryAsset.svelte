@@ -4,7 +4,7 @@
   import { api, assetSource, date, bodyOf } from "./client";
   import { documentTitle, libraryRead, typedLinks } from "./library-model";
   import type { AssetRead, Improvement, SearchHit } from "./library-model";
-  import type { Bundle, History, Source, WriteResult } from "./types";
+  import type { Bundle, History, Retirement, Source, WriteResult } from "./types";
   import { splitFrontmatter, headingId } from "./ui/markdown.js";
   import { sparkline } from "./ui/lib.js";
   import Markdown from "./Markdown.svelte";
@@ -15,7 +15,7 @@
   import SensitiveAsset from "./SensitiveAsset.svelte";
   export let ref: string;
   export let query = new URLSearchParams();
-  export let returnTo = "#/search";
+  export let returnTo = "/library/search";
   export let bundles: Bundle[] = [];
   export let defaultWriteTarget = "";
   export let match: SearchHit | null = null;
@@ -29,7 +29,6 @@
     comparePair: string[];
     changed: void;
   }>();
-  type Retirement = { proposalId: string; ref: string; bundle: string; archiveDirs: string[]; warnings: string[] };
   let retired: Retirement | null = null,
     retireRevision = "";
   let data: AssetRead | null = null,
@@ -79,7 +78,7 @@
     )[tab] ?? "";
   $: editorHref =
     editHref ||
-    `#/edit?ref=${encodeURIComponent(canonical)}&returnTo=${encodeURIComponent(filesHref || returnTo)}&readingFrom=${encodeURIComponent(readingHref || `#/asset?ref=${encodeURIComponent(canonical)}&returnTo=${encodeURIComponent(returnTo)}`)}`;
+    `/library/edit?ref=${encodeURIComponent(canonical)}&returnTo=${encodeURIComponent(filesHref || returnTo)}&readingFrom=${encodeURIComponent(readingHref || `/library/asset?ref=${encodeURIComponent(canonical)}&returnTo=${encodeURIComponent(returnTo)}`)}`;
   $: source = assetSource(data?.asset);
   $: fields = splitFrontmatter(source).fields;
   $: openingTitle = bodyOf(source)
@@ -328,9 +327,9 @@
       params.set("ref", selected);
       params.set("open", "1");
       if (readingHref) params.set("readingFrom", readingHref);
-      return `#/files?${params}`;
+      return `/library/files?${params}`;
     }
-    return `#/asset?ref=${encodeURIComponent(selected)}&returnTo=${encodeURIComponent(returnTo)}`;
+    return `/library/asset?ref=${encodeURIComponent(selected)}&returnTo=${encodeURIComponent(returnTo)}`;
   }
   onDestroy(() => controller?.abort());
 </script>
@@ -414,7 +413,7 @@
         <button class="text-action" on:click={() => showView("Related")}
           ><Icon name="link" size={15} />Related assets</button
         >
-        {#if pending.length}<a class="pending-review" href={"#/proposals/" + encodeURIComponent(pending[0].id)}
+        {#if pending.length}<a class="pending-review" href={"/review/" + encodeURIComponent(pending[0].id)}
             >{pending.length} proposed {pending.length === 1 ? "change" : "changes"}</a
           >{/if}
       </div>
@@ -606,7 +605,7 @@
               <h3>Pending changes</h3>
               <ul>
                 {#each improve.proposals.filter((p) => p.status === "pending") as p}<li>
-                    <a href={"#/proposals/" + encodeURIComponent(p.id)}>{p.id}</a> · {p.source}
+                    <a href={"/review/" + encodeURIComponent(p.id)}>{p.id}</a> · {p.source}
                   </li>{/each}
               </ul>
             </section>{/if}
@@ -666,7 +665,7 @@
               <h4>Recent decisions</h4>
               <ul class="plain">
                 {#each improve.proposals.filter((p) => p.status !== "pending").slice(0, 5) as p}<li class="small">
-                    <a href={"#/proposals/" + encodeURIComponent(p.id)}
+                    <a href={"/review/" + encodeURIComponent(p.id)}
                       >{p.outcome === "you"
                         ? "Accepted by you"
                         : p.outcome === "judge"

@@ -70,7 +70,7 @@
         <h2 tabindex="-1" bind:this={heading}>Manage {bundle.name}</h2>
         <p class="muted">{bundle.path ?? bundle.source?.locator ?? "Source path unavailable"}</p>
       </div>
-      <a href={`#/search?bundle=${encodeURIComponent(bundle.name)}`} aria-label={`Browse ${bundle.name} assets`}
+      <a href={`/library/search?bundle=${encodeURIComponent(bundle.name)}`} aria-label={`Browse ${bundle.name} assets`}
         >Browse assets <Icon name="arrow-right" size={16} /></a
       >
     </header>
@@ -161,7 +161,7 @@
         <h3>{bundle.name}</h3>
         <a
           class="btn btn-secondary"
-          href={`#/bundles?manage=${encodeURIComponent(bundle.name)}`}
+          href={`/settings/bundles?manage=${encodeURIComponent(bundle.name)}`}
           aria-label={`Manage ${bundle.name}`}><Icon name="sliders" size={16} /> Manage</a
         >
       </div>
@@ -220,7 +220,7 @@
         </dd>
       </dl>{:else}<p class="muted">Not a Git repository.</p>{/if}
     <footer class="bundle-actions">
-      <a href={`#/search?bundle=${encodeURIComponent(bundle.name)}`} aria-label={`Browse ${bundle.name} assets`}
+      <a href={`/library/search?bundle=${encodeURIComponent(bundle.name)}`} aria-label={`Browse ${bundle.name} assets`}
         >Browse assets <Icon name="arrow-right" size={16} /></a
       >
     </footer>

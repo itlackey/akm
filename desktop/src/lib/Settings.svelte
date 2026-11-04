@@ -10,8 +10,8 @@
   import type { SettingsBundleResponse, SettingsConfig, SettingsGroup } from "./settings-presenter";
   import type { Bundle } from "./types";
   import { navigate } from "./navigation";
+  import { bundleRenamed, refreshBundles } from "./state/workspace.svelte";
   export let bundles: Bundle[] = [];
-  export let refreshBundles: () => Promise<void>;
   export let route = "bundles";
   export let query = new URLSearchParams();
   let config: SettingsConfig | null = null,
@@ -279,8 +279,8 @@
       }
       await refreshBundles();
       await load();
-      if (path === "/bundles/remove") await navigate("#/bundles");
-      if (path === "/bundles/rename" && result.newId) {
+      if (path === "/bundles/remove") await navigate("/settings/bundles");
+      if (path === "/bundles/rename" && result.oldId && result.newId) {
         receipt = `Renamed ${result.oldId} to ${result.newId}. The folder has not moved.`;
         renameNotes = [
           ...(result.contentRefs ?? []).map((file) => `Old references need review: ${file}`),
@@ -291,10 +291,8 @@
             ? ["The rename succeeded, but scheduler synchronization needs attention. Run akm task sync."]
             : []),
         ];
-        window.dispatchEvent(
-          new CustomEvent("akm-bundle-renamed", { detail: { old: result.oldId, name: result.newId } }),
-        );
-        await navigate("#/bundles?manage=" + encodeURIComponent(result.newId));
+        bundleRenamed(result.oldId, result.newId);
+        await navigate("/settings/bundles?manage=" + encodeURIComponent(result.newId));
       }
     } catch (cause) {
       error = (cause as Error).message;
@@ -338,11 +336,11 @@
     >{/if}
 </div>
 <nav class="settings-tabs" aria-label="Settings views">
-  <a href="#/bundles" class:active={route === "bundles"} aria-current={route === "bundles" ? "page" : undefined}
+  <a href="/settings/bundles" class:active={route === "bundles"} aria-current={route === "bundles" ? "page" : undefined}
     >Bundles & index</a
-  ><a href="#/config" class:active={route === "config"} aria-current={route === "config" ? "page" : undefined}
+  ><a href="/settings/config" class:active={route === "config"} aria-current={route === "config" ? "page" : undefined}
     >Configuration</a
-  ><a href="#/software" class:active={route === "software"} aria-current={route === "software" ? "page" : undefined}
+  ><a href="/settings/software" class:active={route === "software"} aria-current={route === "software" ? "page" : undefined}
     >Software</a
   >
 </nav>
@@ -366,9 +364,9 @@
   {#if loading && !config}<p role="status">Loading settings…</p>{:else if route !== "config"}
     <p class="muted" hidden={!!manageName}>
       Default bundle: <strong>{listing?.defaultBundle ?? "Not configured"}</strong>. Explicit write target:
-      <strong>{listing?.defaultWriteTarget ?? "Automatic"}</strong>. <a href="#/config">Change library defaults</a>
+      <strong>{listing?.defaultWriteTarget ?? "Automatic"}</strong>. <a href="/settings/config">Change library defaults</a>
     </p>
-    {#if manageName}<a class="bundle-back" href="#/bundles"><Icon name="arrow-left" size={16} /> Back to bundles</a
+    {#if manageName}<a class="bundle-back" href="/settings/bundles"><Icon name="arrow-left" size={16} /> Back to bundles</a
       >{/if}
     <section
       class="settings-section bundle-section"
@@ -397,7 +395,7 @@
           />{/each}{#if manageName && listing && !listing.bundles.some((bundle) => bundle.name === manageName)}<p
             class="notice"
           >
-            This bundle is no longer registered. <a href="#/bundles">View configured bundles</a>.
+            This bundle is no longer registered. <a href="/settings/bundles">View configured bundles</a>.
           </p>{:else if listing && !listing.bundles.length}<p class="empty">
             No configured bundles. Register a source below.
           </p>{/if}
@@ -489,21 +487,21 @@
       <aside class="configuration-navigation">
         <nav aria-label="Configuration sections">
           {#each groups as group}<a
-              href={`#/config?section=${group.id}`}
+              href={`/settings/config?section=${group.id}`}
               aria-current={selectedGroup === group.id ? "page" : undefined}
               >{group.title}{#if editCounts[group.id]}<span aria-label="Unsaved changes">•</span>{/if}</a
             >{/each}<a
-            href="#/config?section=add-connection"
+            href="/settings/config?section=add-connection"
             aria-current={selectedGroup === "add-connection" ? "page" : undefined}>Add connection</a
           ><a
-            href="#/config?section=advanced-settings"
+            href="/settings/config?section=advanced-settings"
             aria-current={selectedGroup === "advanced-settings" ? "page" : undefined}>Advanced</a
           >
         </nav>
         <label class="configuration-select"
           >Settings section<select
             value={selectedGroup}
-            on:change={(event) => navigate(`#/config?section=${event.currentTarget.value}`)}
+            on:change={(event) => navigate(`/settings/config?section=${event.currentTarget.value}`)}
             >{#each groups as group}<option value={group.id}>{group.title}</option>{/each}<option value="add-connection"
               >Add connection</option
             ><option value="advanced-settings">Advanced</option></select

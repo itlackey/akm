@@ -26,7 +26,7 @@ function link(text, url, context) {
   if (context.links && Object.hasOwn(context.links, url))
     return html`<a href="${assetHref(context.links[url])}">${text}</a>`;
   if (url.startsWith("#")) {
-    // A bare "#x" would be read by the hash router as a page; without an asset to anchor to, show text.
+    // A bare "#x" has no element to land on in rendered Markdown; without an asset to anchor to, show text.
     if (!context.ref) return html`${text}`;
     return html`<a href="${assetHref(context.ref)}&section=${encodeURIComponent(url.slice(1))}">${text}</a>`;
   }

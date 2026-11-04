@@ -1,35 +1,24 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount } from "svelte";
   import { api, date } from "./client";
   import Icon from "./Icon.svelte";
   import { homeConcerns, homeCoverage, taskOutcomes } from "./home-model";
+  import { refreshContext, workspace } from "./state/workspace.svelte";
   import type { ActivityOverview, ActivityPulse } from "./activity-types";
-  import type { Bundle } from "./types";
-  export let active = true;
-  export let bundles: Bundle[] = [];
-  export let bundlesReady = false;
-  export let defaultWriteTarget = "";
-  export let pendingCount: number | null = null;
-  export let refreshContext: () => Promise<void>;
-  let data: ActivityOverview | null = null,
-    pulse: ActivityPulse | null = null;
-  let mounted = false,
-    wasActive = false,
-    loading = false,
-    generation = 0;
-  let refreshedAt = "",
-    error = "";
-  $: if (mounted && active && !wasActive) {
-    wasActive = true;
-    void load();
-  }
-  $: if (!active) wasActive = false;
-  $: concerns = homeConcerns(data);
-  $: coverage = homeCoverage(data, pulse);
-  $: outcomes = taskOutcomes(data, pulse);
-  $: checks = [...(data?.health?.hardChecks ?? []), ...(data?.health?.advisories ?? [])];
-  $: passing = checks.filter((check) => check.status === "pass").length;
-  $: unknown = checks.filter((check) => check.status === "unknown").length;
+
+  let data = $state<ActivityOverview | null>(null);
+  let pulse = $state<ActivityPulse | null>(null);
+  let loading = $state(false);
+  let refreshedAt = $state("");
+  let error = $state("");
+  let generation = 0;
+
+  const concerns = $derived(homeConcerns(data));
+  const coverage = $derived(homeCoverage(data, pulse));
+  const outcomes = $derived(taskOutcomes(data, pulse));
+  const checks = $derived([...(data?.health?.hardChecks ?? []), ...(data?.health?.advisories ?? [])]);
+  const passing = $derived(checks.filter((check) => check.status === "pass").length);
+  const unknown = $derived(checks.filter((check) => check.status === "unknown").length);
   async function load() {
     const mine = ++generation;
     loading = true;
@@ -48,10 +37,8 @@
     loading = false;
   }
   onMount(() => {
-    mounted = true;
-  });
-  onDestroy(() => {
-    generation++;
+    void load();
+    return () => generation++;
   });
 </script>
 
@@ -67,7 +54,7 @@
             : "Loading your snapshot…"}
       </p>
     </div>
-    <button class="btn-secondary" disabled={loading} on:click={load} aria-describedby="home-probe-help"
+    <button class="btn-secondary" disabled={loading} onclick={load} aria-describedby="home-probe-help"
       ><Icon name="refresh" size={16} />{loading ? "Checking…" : "Check health"}</button
     >
   </div>
@@ -76,7 +63,7 @@
   >
   {#if error}<div class="notice notice-fail" role="alert">
       <p>{error}</p>
-      <button class="btn-secondary" disabled={loading} on:click={load}>Retry overview</button>
+      <button class="btn-secondary" disabled={loading} onclick={load}>Retry overview</button>
     </div>{/if}
 
   {#if !loading}
@@ -107,7 +94,7 @@
               </li>
             {/each}
           </ul>
-          {#if concerns.length > 4}<a class="home-more" href="#/overview"
+          {#if concerns.length > 4}<a class="home-more" href="/activity/overview"
               >View all health checks and activity <Icon name="arrow-right" size={16} /></a
             >{/if}
         {:else}<div class="home-empty">
@@ -120,26 +107,26 @@
                   ? `${unknown} checks have no result yet. Open health details to review coverage.`
                   : "Nothing needs attention in this snapshot."}
             </p>
-            <a href="#/overview">View health details <Icon name="arrow-right" size={16} /></a>
+            <a href="/activity/overview">View health details <Icon name="arrow-right" size={16} /></a>
           </div>{/if}
         {#if coverage.length}<div class="home-coverage" role="status">
             <strong>Incomplete snapshot</strong>
             <p>Unavailable: {coverage.join(", ")}.</p>
-            {#if !error}<button class="btn-quiet" disabled={loading} on:click={load}>Retry snapshot</button>{/if}
+            {#if !error}<button class="btn-quiet" disabled={loading} onclick={load}>Retry snapshot</button>{/if}
           </div>{/if}
       </section>
       <aside class="home-sidebar">
         <h2>Quick actions</h2>
         <nav class="home-shortcuts" aria-label="Quick actions">
-          <a href="#/search"><Icon name="search" />Find an asset<Icon name="chevron-right" size={16} /></a>
+          <a href="/library/search"><Icon name="search" />Find an asset<Icon name="chevron-right" size={16} /></a>
           <a
-            href={"#/new?" +
+            href={"/library/new?" +
               new URLSearchParams({
-                returnTo: "#/home",
-                ...(defaultWriteTarget ? { bundle: defaultWriteTarget } : {}),
+                returnTo: "/",
+                ...(workspace.defaultWriteTarget ? { bundle: workspace.defaultWriteTarget } : {}),
               })}><Icon name="plus" />Create an asset<Icon name="chevron-right" size={16} /></a
           >
-          <a href="#/bundles"><Icon name="folder" />Manage bundles<Icon name="chevron-right" size={16} /></a>
+          <a href="/settings/bundles"><Icon name="folder" />Manage bundles<Icon name="chevron-right" size={16} /></a>
         </nav>
         <div class="home-glance">
           <h3>At a glance</h3>
@@ -155,13 +142,13 @@
             <div>
               <dt>Enabled bundles</dt>
               <dd>
-                {bundlesReady
-                  ? `${bundles.filter((bundle) => bundle.enabled).length} of ${bundles.length}`
+                {workspace.bundlesReady
+                  ? `${workspace.bundles.filter((bundle) => bundle.enabled).length} of ${workspace.bundles.length}`
                   : "Unavailable"}
               </dd>
             </div>
           </dl>
-          <a href="#/overview" class="home-health-link">Health details <Icon name="arrow-right" size={16} /></a>
+          <a href="/activity/overview" class="home-health-link">Health details <Icon name="arrow-right" size={16} /></a>
         </div>
       </aside>
     </div>
@@ -169,7 +156,7 @@
       <section aria-labelledby="home-runs-title">
         <div class="home-section-title">
           <h2 id="home-runs-title">Task runs this week</h2>
-          <a href="#/overview?view=runs&window=7d" class="home-detail-link"
+          <a href="/activity/overview?view=runs&window=7d" class="home-detail-link"
             >All activity<Icon name="external" size={16} /></a
           >
         </div>
@@ -205,21 +192,21 @@
       <section class="home-review" aria-labelledby="home-review-title">
         <span class="home-kicker">Ready for your review</span>
         <h2 id="home-review-title">
-          {pendingCount === null
+          {workspace.pendingCount === null
             ? "Review queue unavailable"
-            : pendingCount === 0
+            : workspace.pendingCount === 0
               ? "No proposals waiting"
-              : `${pendingCount.toLocaleString()} proposed ${pendingCount === 1 ? "change" : "changes"}`}
+              : `${workspace.pendingCount.toLocaleString()} proposed ${workspace.pendingCount === 1 ? "change" : "changes"}`}
         </h2>
         <p>
-          {pendingCount === null
+          {workspace.pendingCount === null
             ? "Open Review to check the queue."
-            : pendingCount === 0
+            : workspace.pendingCount === 0
               ? "New suggestions will appear here."
               : "Review suggested updates to your knowledge."}
         </p>
-        <a class:btn-secondary={!pendingCount} class="btn" href="#/proposals"
-          >{pendingCount ? "Review proposals" : "Open Review"}<Icon name="arrow-right" size={16} /></a
+        <a class:btn-secondary={!workspace.pendingCount} class="btn" href="/review"
+          >{workspace.pendingCount ? "Review proposals" : "Open Review"}<Icon name="arrow-right" size={16} /></a
         >
       </section>
     </div>

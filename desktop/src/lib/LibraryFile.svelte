@@ -25,7 +25,7 @@
   <div class="actions">
     {#if folderHref}<a href={folderHref}>Back to folder</a>{/if}{#if source?.writable}<a
         class="btn btn-secondary"
-        href={"#/edit?" + new URLSearchParams({ bundle, file, returnTo })}>Edit file</a
+        href={"/library/edit?" + new URLSearchParams({ bundle, file, returnTo })}>Edit file</a
       >{/if}
   </div>
 </header>

@@ -1,3 +1,11 @@
+import type { CloneResponse, documents, SensitiveWriteResult, sensitive } from "akm-cli/workspace";
+
+// Result shapes that akm-cli/workspace types precisely come from there; the renderer's read models below are its own.
+export type { CloneResponse, SensitiveWriteResult };
+export type Retirement = Awaited<ReturnType<typeof documents.retire>>;
+export type SensitiveInfo = ReturnType<typeof sensitive.describe>;
+export type SensitiveValue = ReturnType<typeof sensitive.readValue>;
+
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json | undefined };
 export interface AssetSummary {
   ref: string;
