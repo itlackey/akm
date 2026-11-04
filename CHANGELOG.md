@@ -26,6 +26,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and every failed id of a batch decision carries its error `code`. `docs/reference/workspace.md`
   lists what each operation takes and returns. `akm-cli/api` is unchanged.
 
+- `akm-cli/workspace` gains `setup` for AKM Desktop's first run (#1423): `setup.detect` reads
+  where the library goes and which agent programs are on `PATH` (no network, no writes), and
+  `setup.apply({dir?, harness?})` runs `akm setup --yes --no-probe` for them. Setup's own
+  `--yes` enables every agent program it finds, which lets akm spend that program's model quota;
+  `setup.apply` keeps only the ones the caller names. No new command or config key.
+
 - `akm secret remove` is back, shaped like `akm env remove` (`--yes`, `--bundle`; it removes
   the file and its `.sensitive` marker). It names its file through the write-target resolver,
   as `env remove` does.

@@ -729,6 +729,23 @@ User searches that found nothing, grouped by normalised query: `query`, `count`,
 `lastAt` and `repeated` (`true` when it came up on two or more days). `since` is `30d` by default. The response also carries
 `searches` (all user searches in the window) and `foundNothing`.
 
+## `setup.detect`
+
+What first-run setup could use on this computer, read from the file system and `PATH` only: nothing is contacted and
+nothing is written. It returns `stashDir`, the library directory the config already names, else `~/akm` or another
+existing candidate, else the default (`AKM_BUNDLE_DIR`, else `~/akm`, or `Documents\akm` on Windows); and `harnesses`, the agent
+programs found on `PATH` that akm can run work on, each `{platform, path}`.
+
+```json
+{
+  "ok": true,
+  "data": {
+    "stashDir": "/home/ada/akm",
+    "harnesses": [{ "platform": "claude", "path": "/home/ada/.local/bin/claude" }]
+  }
+}
+```
+
 ## Workspace actions
 
 The other writing operations. Each takes the input shown, applies the operation named, and keeps the guards of the
@@ -738,6 +755,7 @@ retry a failed write automatically.
 | Operation | Input and existing behaviour |
 | --- | --- |
 | `feedback.record` | `{ref, signal: "positive"\|"negative", reason?, tags?: string[], fix?: [{replace, with}]}` → `akm feedback`. The ref is resolved as the CLI resolves it; tags follow existing `key:value` validation. Negative feedback requires a reason when `feedback.requireReason` is enabled. Submissions are recorded with source `user` unless `AKM_EVENT_SOURCE` is already set (for example under an improve or task run), which wins as it does for every akm child; they retain existing ranking/utility/event effects. Feedback does not save config, so it works under a config that still holds a literal API key. |
+| `setup.apply` | `{dir?, harness?: string[]}` → `akm setup --yes --no-probe [--dir=<dir>] [--harness=<list>]`: creates the library directory (made the default bundle when there is none) and the config, enabling the named agent programs. `dir` must be absolute. Nothing the config already holds changes, so a second run is a no-op. `--yes` would enable every agent program it finds when none is configured, and so let akm spend that program's model quota; `setup.apply` removes an enablement the caller did not name (`harness`), and keeps one already configured. Offline: nothing is probed or downloaded. Setup does not index; `bundles.add` does. The result is the CLI's `SetupSummary` (`configPath`, `bundleDir`, `stashCreated`, `fields`, `runs`). Other fields are ignored with one warning. |
 | `bundles.add` | `{source, name?, writable?}` → `akm bundle add`, including source validation. Existing provider restrictions apply; no insecure-transport bypass is exposed. |
 | `bundles.update` | `{bundle}` → `akm bundle update -- <bundle>`. Fetches/reindexes only on explicit submission. A rare update requiring destructive confirmation remains refused; `--yes` is never passed silently. |
 | `bundles.rename` | `{bundle, name, dryRun?: true}` → `akm bundle rename [--dry-run] -- <bundle> <name>`. The result is the CLI's rename plan (`applied` is `false` for a dry run). |

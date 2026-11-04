@@ -168,3 +168,12 @@ export namespace sensitive {
   /** Create (no `revision`; an existing file is refused) or replace (the `revision` last seen). */
   function save(input: SensitiveSelector & { content: string; revision?: string }): Promise<SensitiveWriteResult & { revision: string }>;
 }
+export namespace setup {
+  /** Apply the setup run: create the library directory and enable the named agent programs. Unknown fields are ignored with a warning. */
+  function apply(input: { dir?: string; harness?: string[] }): Promise<unknown>;
+  /** What setup could use on this computer, from the file system and PATH only (no network, no writes). */
+  function detect(): Promise<{
+    stashDir: string;
+    harnesses: Array<{ platform: string; path: string }>;
+  }>;
+}
