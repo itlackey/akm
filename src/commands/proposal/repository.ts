@@ -2070,11 +2070,18 @@ async function retireProposalWithLease(
       moveToArchive(twinPath);
   } catch (error) {
     for (const { original, record } of moved.reverse()) {
-      fs.renameSync(path.join(mutationTarget.source.path, record.archivedPath), original);
-      fs.rmSync(path.dirname(path.join(mutationTarget.source.path, record.auditPath)), {
-        recursive: true,
-        force: true,
-      });
+      // A failed undo must not hide the failure that caused it; the tombstone stays to explain the file.
+      try {
+        fs.renameSync(path.join(mutationTarget.source.path, record.archivedPath), original);
+        fs.rmSync(path.dirname(path.join(mutationTarget.source.path, record.auditPath)), {
+          recursive: true,
+          force: true,
+        });
+      } catch (undoError) {
+        warn(
+          `[retire] could not put ${original} back from ${record.archivedPath}: ${undoError instanceof Error ? undoError.message : String(undoError)}`,
+        );
+      }
     }
     throw error;
   }

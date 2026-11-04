@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   trusted desktop host: the UI read/write dispatchers, managed clone, URL redaction, the
   error classes, and the env/secret operations (`resolve*`, `write`/`remove`/`setSecret`,
   `withEnvSecretWrite`) and `indexWrittenAssets`, which refreshes the index for files a host
-  wrote itself (#1423). It exports no write primitives, leases or index readers;
+  wrote itself (#1423). It exports no other writers, leases or index readers;
   the host calls the UI API for everything else. The UI API adds `GET /api/bundle/files`
   (one directory of a registered bundle), `location` on `/api/asset`, `GET /api/asset/related`
   (the nearest stored embeddings of an asset, from the stored vectors only),

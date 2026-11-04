@@ -216,8 +216,8 @@ live under `src/commands/`. `akm-cli/api` (`src/api.ts`, which exports only
 `curate`) lets plugins recall in-process. `akm-cli/workspace` (`src/workspace.ts`)
 exposes the experimental local UI dispatchers, managed clone, URL redaction, the
 error classes and the env/secret operations to a trusted local host. It reuses
-implementations rather than duplicating domain policy and exports no write
-primitives, leases or index readers; the host owns transport authentication. It is the
+implementations rather than duplicating domain policy and exports no writers
+beyond those, no leases and no index readers; the host owns transport authentication. It is the
 seam for local hosts: its operations own all akm policy and a host owns only its
 transport and its own features. The
 `exports` map lists `./api`, `./workspace`, `./package.json` and `./dist/*`. Bun is the

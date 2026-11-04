@@ -49,14 +49,6 @@ export async function resolveWritableIndexedAsset(ref: string) {
   return { canonical, target, path: shown.path };
 }
 
-/**
- * Types retire can act on as one file: not a skill's support files, and not the protected
- * (`env`, `secret`) or generated (`session`) assets. A skill is its `SKILL.md`.
- */
-export function isSingleFileDocumentType(type: string): boolean {
-  return !["env", "secret", "session"].includes(type);
-}
-
 /** Authoring reads are limited to indexed, writable AKM knowledge/memory files, never arbitrary paths. */
 export async function akmReadDocument(ref: string): Promise<{
   ref: string;
