@@ -1,6 +1,6 @@
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from "node:crypto";
 
-export const COOKIE = 'akm_desktop_session';
+export const COOKIE = "akm_desktop_session";
 export function sameSecret(value: string | undefined | null, expected: string | undefined): boolean {
   if (!value || !expected || expected.length < 32) return false;
   const a = Buffer.from(value);

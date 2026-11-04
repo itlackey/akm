@@ -1,1 +1,1 @@
-export * from '../../../../src/assets/ui/echarts.js';
+export * from "../../../../src/assets/ui/echarts.js";

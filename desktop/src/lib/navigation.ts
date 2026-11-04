@@ -1,4 +1,4 @@
-import { goto } from '$app/navigation';
+import { goto } from "$app/navigation";
 
 /** Use Kit navigation so native Back/Forward participates in beforeNavigate.
  * Shallow history entries intentionally skip that lifecycle on popstate.

@@ -1,1 +1,1 @@
-export * from '../../../../src/assets/ui/diff.js';
+export * from "../../../../src/assets/ui/diff.js";

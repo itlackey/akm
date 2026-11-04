@@ -1,93 +1,150 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { DatabaseSync } from 'node:sqlite';
-import { chromium, expect } from '@playwright/test';
-import AxeBuilder from '@axe-core/playwright';
-import { launchFixture } from './support.mjs';
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
+import { chromium, expect } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+import { launchFixture } from "./support.mjs";
 
-test('browse connections and cosine matches, compare inline, move (copy then retire), retire and restore through the UI', { timeout: 180000 }, async t => {
-  const app = await launchFixture({ configureFixture: async fixture => {
-    await fs.writeFile(fixture.documentPath, (await fs.readFile(fixture.documentPath, 'utf8')).replace('title: Restore', 'xrefs: [shared//knowledge/shared-backup]\ntitle: Restore'));
-    execFileSync(process.execPath, [fixture.launcher, 'index', '--full', '--format=json', '-q'], { env: fixture.env, stdio: 'pipe' });
-    const db = new DatabaseSync(path.join(fixture.env.AKM_DATA_DIR, 'index.db'));
-    db.prepare("INSERT OR REPLACE INTO index_meta(key,value) VALUES('embeddingFingerprint','fixture')").run();
-    for (const [ref, vector] of [[fixture.refs.document, [1, 0]], [fixture.refs.shared, [.9, .1]]]) {
-      const row = db.prepare('SELECT id FROM entries WHERE item_ref=?').get(ref);
-      db.prepare('INSERT OR REPLACE INTO embeddings(id,embedding,model) VALUES(?,?,?)').run(row.id, Buffer.from(new Float32Array(vector).buffer), 'fixture');
-    }
-    db.close();
-  } }); t.after(() => app.stop());
-  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+test("browse connections and cosine matches, compare inline, move (copy then retire), retire and restore through the UI", {
+  timeout: 180000,
+}, async (t) => {
+  const app = await launchFixture({
+    configureFixture: async (fixture) => {
+      await fs.writeFile(
+        fixture.documentPath,
+        (await fs.readFile(fixture.documentPath, "utf8")).replace(
+          "title: Restore",
+          "xrefs: [shared//knowledge/shared-backup]\ntitle: Restore",
+        ),
+      );
+      execFileSync(process.execPath, [fixture.launcher, "index", "--full", "--format=json", "-q"], {
+        env: fixture.env,
+        stdio: "pipe",
+      });
+      const db = new DatabaseSync(path.join(fixture.env.AKM_DATA_DIR, "index.db"));
+      db.prepare("INSERT OR REPLACE INTO index_meta(key,value) VALUES('embeddingFingerprint','fixture')").run();
+      for (const [ref, vector] of [
+        [fixture.refs.document, [1, 0]],
+        [fixture.refs.shared, [0.9, 0.1]],
+      ]) {
+        const row = db.prepare("SELECT id FROM entries WHERE item_ref=?").get(ref);
+        db.prepare("INSERT OR REPLACE INTO embeddings(id,embedding,model) VALUES(?,?,?)").run(
+          row.id,
+          Buffer.from(new Float32Array(vector).buffer),
+          "fixture",
+        );
+      }
+      db.close();
+    },
+  });
+  t.after(() => app.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
   const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
   const page = await context.newPage();
-  const errors = []; page.on('pageerror', error => errors.push(error.message));
-  const shots = process.env.AKM_DESKTOP_SCREENSHOTS || '/tmp/akm-desktop-asset-management';
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const shots = process.env.AKM_DESKTOP_SCREENSHOTS || "/tmp/akm-desktop-asset-management";
   await fs.mkdir(shots, { recursive: true });
-  const check = async name => {
-    await page.screenshot({ path: path.join(shots, name + '.png'), fullPage: true });
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'no horizontal overflow');
-    const scan = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
-    assert.deepEqual(scan.violations.map(item => ({ id: item.id, description: item.description })), []);
+  const check = async (name) => {
+    await page.screenshot({ path: path.join(shots, name + ".png"), fullPage: true });
+    assert.ok(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+      "no horizontal overflow",
+    );
+    const scan = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+    assert.deepEqual(
+      scan.violations.map((item) => ({ id: item.id, description: item.description })),
+      [],
+    );
   };
   await page.goto(app.url);
-  await page.evaluate(ref => { location.hash = '#/asset?ref=' + encodeURIComponent(ref); }, app.refs.document);
-  await page.getByRole('button', { name: 'Related assets', exact: true }).click();
-  await expect(page.locator('.connection-group')).toContainText('shared-backup');
-  await check('connections');
-  await page.getByRole('button', { name: 'Similar content', exact: true }).click();
-  await expect(page.locator('.score')).toContainText('0.994');
-  await check('similar-desktop');
+  await page.evaluate((ref) => {
+    location.hash = "#/asset?ref=" + encodeURIComponent(ref);
+  }, app.refs.document);
+  await page.getByRole("button", { name: "Related assets", exact: true }).click();
+  await expect(page.locator(".connection-group")).toContainText("shared-backup");
+  await check("connections");
+  await page.getByRole("button", { name: "Similar content", exact: true }).click();
+  await expect(page.locator(".score")).toContainText("0.994");
+  await check("similar-desktop");
   await page.setViewportSize({ width: 390, height: 844 });
-  await check('similar-narrow');
+  await check("similar-narrow");
   await page.setViewportSize({ width: 1280, height: 860 });
-  await page.locator('.related-list').getByRole('button', { name: 'Compare', exact: true }).click();
-  await expect(page.locator('.dcol.inline')).toHaveCount(1);
-  await expect(page.locator('.comparison-identities')).toContainText('Shared backup');
-  await page.evaluate(ref => { location.hash = '#/files?ref=' + encodeURIComponent(ref) + '&open=1'; }, app.refs.document);
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  await page.getByRole('button', { name: 'Rename or move…', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Bundle', exact: true }).selectOption('shared');
-  await page.getByRole('textbox', { name: 'Name or folder/name', exact: true }).fill('laptop-recovery');
-  await check('move-form');
-  await page.getByRole('button', { name: 'Move', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Move completed', exact: true })).toBeVisible();
-  await check('move-result');
-  await page.getByRole('link', { name: 'Open the copy', exact: true }).click();
-  await expect(page.locator('.document-body')).toContainText('Verify the checksum');
-  const movedPath = path.join(app.root, 'shared/knowledge/laptop-recovery.md'), before = await fs.readFile(movedPath, 'utf8');
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  await page.getByRole('button', { name: 'Retire', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Asset archived', exact: true })).toBeVisible();
-  await check('retirement-receipt');
-  await assert.rejects(fs.stat(movedPath), { code: 'ENOENT' });
-  await page.getByRole('button', { name: 'Undo retirement', exact: true }).click();
-  await expect(page.locator('.operation-notice')).toContainText('Asset restored.');
-  assert.equal(await fs.readFile(movedPath, 'utf8'), before);
+  await page.locator(".related-list").getByRole("button", { name: "Compare", exact: true }).click();
+  await expect(page.locator(".dcol.inline")).toHaveCount(1);
+  await expect(page.locator(".comparison-identities")).toContainText("Shared backup");
+  await page.evaluate((ref) => {
+    location.hash = "#/files?ref=" + encodeURIComponent(ref) + "&open=1";
+  }, app.refs.document);
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("button", { name: "Rename or move…", exact: true }).click();
+  await page.getByRole("combobox", { name: "Bundle", exact: true }).selectOption("shared");
+  await page.getByRole("textbox", { name: "Name or folder/name", exact: true }).fill("laptop-recovery");
+  await check("move-form");
+  await page.getByRole("button", { name: "Move", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Move completed", exact: true })).toBeVisible();
+  await check("move-result");
+  await page.getByRole("link", { name: "Open the copy", exact: true }).click();
+  await expect(page.locator(".document-body")).toContainText("Verify the checksum");
+  const movedPath = path.join(app.root, "shared/knowledge/laptop-recovery.md"),
+    before = await fs.readFile(movedPath, "utf8");
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("button", { name: "Retire", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Asset archived", exact: true })).toBeVisible();
+  await check("retirement-receipt");
+  await assert.rejects(fs.stat(movedPath), { code: "ENOENT" });
+  await page.getByRole("button", { name: "Undo retirement", exact: true }).click();
+  await expect(page.locator(".operation-notice")).toContainText("Asset restored.");
+  assert.equal(await fs.readFile(movedPath, "utf8"), before);
   assert.deepEqual(errors, []);
 });
 
-test('a skill is copied as a package; its support files open and edit as plain files', { timeout: 120000 }, async t => {
-  const app = await launchFixture(); t.after(() => app.stop());
-  const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
+test("a skill is copied as a package; its support files open and edit as plain files", {
+  timeout: 120000,
+}, async (t) => {
+  const app = await launchFixture();
+  t.after(() => app.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
   await page.goto(app.url);
-  await page.evaluate(() => { location.hash = '#/files?' + new URLSearchParams({ bundle: 'personal', path: 'skills/backup-check/scripts', file: 'skills/backup-check/scripts/check.sh', open: '1' }); });
-  await expect(page.getByText('Synthetic only')).toBeVisible();
-  await page.getByRole('link', { name: 'Edit file', exact: true }).click();
-  await page.getByRole('textbox', { name: 'Text source', exact: true }).fill('#!/bin/sh\nprintf "Edited in Desktop\\n"\n');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-  await expect(page.getByText('Changes saved.')).toBeVisible();
-  assert.match(await fs.readFile(path.join(app.root, 'personal/skills/backup-check/scripts/check.sh'), 'utf8'), /Edited in Desktop/);
-  await page.evaluate(ref => { location.hash = '#/asset?ref=' + encodeURIComponent(ref); }, app.refs.skill);
-  await page.getByRole('button', { name: 'More', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Retire', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Rename or move…', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Copy to bundle…', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Destination bundle', exact: true }).selectOption('shared');
-  await page.getByRole('button', { name: 'Confirm copy', exact: true }).click();
-  await expect(page.locator('.operation-notice')).toContainText('Copy completed');
-  assert.match(await fs.readFile(path.join(app.root, 'shared/skills/backup-check/scripts/check.sh'), 'utf8'), /Edited in Desktop/);
+  await page.evaluate(() => {
+    location.hash =
+      "#/files?" +
+      new URLSearchParams({
+        bundle: "personal",
+        path: "skills/backup-check/scripts",
+        file: "skills/backup-check/scripts/check.sh",
+        open: "1",
+      });
+  });
+  await expect(page.getByText("Synthetic only")).toBeVisible();
+  await page.getByRole("link", { name: "Edit file", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "Text source", exact: true })
+    .fill('#!/bin/sh\nprintf "Edited in Desktop\\n"\n');
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.getByText("Changes saved.")).toBeVisible();
+  assert.match(
+    await fs.readFile(path.join(app.root, "personal/skills/backup-check/scripts/check.sh"), "utf8"),
+    /Edited in Desktop/,
+  );
+  await page.evaluate((ref) => {
+    location.hash = "#/asset?ref=" + encodeURIComponent(ref);
+  }, app.refs.skill);
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Retire", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Rename or move…", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Copy to bundle…", exact: true }).click();
+  await page.getByRole("combobox", { name: "Destination bundle", exact: true }).selectOption("shared");
+  await page.getByRole("button", { name: "Confirm copy", exact: true }).click();
+  await expect(page.locator(".operation-notice")).toContainText("Copy completed");
+  assert.match(
+    await fs.readFile(path.join(app.root, "shared/skills/backup-check/scripts/check.sh"), "utf8"),
+    /Edited in Desktop/,
+  );
 });

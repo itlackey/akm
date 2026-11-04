@@ -50,19 +50,33 @@ function emphasis(text, depth = 0) {
     const opening = /(?<![\\*])\*{1,3}(?![*\s])/g;
     opening.lastIndex = position;
     const start = opening.exec(text);
-    if (!start) { out.push(text.slice(position)); break; }
+    if (!start) {
+      out.push(text.slice(position));
+      break;
+    }
     out.push(text.slice(position, start.index));
     const size = start[0].length;
     const closing = /(?<!\\)\*+/g;
     closing.lastIndex = start.index + size;
     let end;
     while ((end = closing.exec(text))) {
-      if ((end[0].length === size || (end[0].length === 3 && size < 3)) && !/\s/.test(text[end.index - 1] ?? ' ')) break;
+      if ((end[0].length === size || (end[0].length === 3 && size < 3)) && !/\s/.test(text[end.index - 1] ?? " "))
+        break;
     }
-    if (!end) { out.push(start[0]); position = start.index + size; continue; }
+    if (!end) {
+      out.push(start[0]);
+      position = start.index + size;
+      continue;
+    }
     const endAt = end.index + end[0].length - size;
     const inner = emphasis(text.slice(start.index + size, endAt), depth + 1);
-    out.push(size === 1 ? html`<em>${inner}</em>` : size === 2 ? html`<strong>${inner}</strong>` : html`<strong><em>${inner}</em></strong>`);
+    out.push(
+      size === 1
+        ? html`<em>${inner}</em>`
+        : size === 2
+          ? html`<strong>${inner}</strong>`
+          : html`<strong><em>${inner}</em></strong>`,
+    );
     position = endAt + size;
   }
   return html`${out}`;
@@ -76,7 +90,7 @@ export function inline(text, context = {}) {
     out.push(emphasis(text.slice(last, m.index)));
     if (m[1] !== undefined) {
       let code = m[2];
-      if (code.startsWith(' ') && code.endsWith(' ') && code.trim()) code = code.slice(1, -1);
+      if (code.startsWith(" ") && code.endsWith(" ") && code.trim()) code = code.slice(1, -1);
       out.push(html`<code>${code}</code>`);
     } else if (m[3] !== undefined) {
       const [ref, label] = m[3].split("|");
@@ -136,13 +150,18 @@ export function markdown(source, context = {}) {
       continue;
     }
     if (/^ {0,3}>/.test(line) && (context.quoteDepth ?? 0) < 16) {
-      flushParagraph(); flushList();
-      const quoted = [], startLine = firstLine + i;
+      flushParagraph();
+      flushList();
+      const quoted = [],
+        startLine = firstLine + i;
       while (i < lines.length && /^ {0,3}>/.test(lines[i])) {
-        quoted.push(lines[i].replace(/^ {0,3}> ?/, '')); i++;
+        quoted.push(lines[i].replace(/^ {0,3}> ?/, ""));
+        i++;
       }
       i--;
-      blocks.push(html`<blockquote>${markdown(quoted.join('\n'), { ...context, startLine, skipTitle: undefined, quoteDepth: (context.quoteDepth ?? 0) + 1 })}</blockquote>`);
+      blocks.push(
+        html`<blockquote>${markdown(quoted.join("\n"), { ...context, startLine, skipTitle: undefined, quoteDepth: (context.quoteDepth ?? 0) + 1 })}</blockquote>`,
+      );
       continue;
     }
     const heading = /^(#{1,6})\s+(.+)$/.exec(line);

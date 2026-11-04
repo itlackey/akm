@@ -1,18 +1,23 @@
-import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = fileURLToPath(new URL('../..', import.meta.url));
-const destination = path.join(root, 'desktop', '.core');
-const packed = await mkdtemp(path.join(tmpdir(), 'akm-desktop-core-'));
-execFileSync('bun', ['run', 'build'], { cwd: root, stdio: 'inherit' });
-execFileSync('bun', ['pm', 'pack', '--filename', path.join(packed, 'core.tgz')], { cwd: root, stdio: ['ignore', 'ignore', 'inherit'] });
+const root = fileURLToPath(new URL("../..", import.meta.url));
+const destination = path.join(root, "desktop", ".core");
+const packed = await mkdtemp(path.join(tmpdir(), "akm-desktop-core-"));
+execFileSync("bun", ["run", "build"], { cwd: root, stdio: "inherit" });
+execFileSync("bun", ["pm", "pack", "--filename", path.join(packed, "core.tgz")], {
+  cwd: root,
+  stdio: ["ignore", "ignore", "inherit"],
+});
 // This directory contains generated package contents only; never mix versions.
 await rm(destination, { recursive: true, force: true });
 await mkdir(destination, { recursive: true });
-execFileSync('tar', ['-xf', path.join(packed, 'core.tgz'), '-C', destination, '--strip-components=1'], { stdio: 'inherit' });
-const manifest = JSON.parse(await readFile(path.join(destination, 'package.json'), 'utf8'));
+execFileSync("tar", ["-xf", path.join(packed, "core.tgz"), "-C", destination, "--strip-components=1"], {
+  stdio: "inherit",
+});
+const manifest = JSON.parse(await readFile(path.join(destination, "package.json"), "utf8"));
 await rm(packed, { recursive: true, force: true });
 console.log(`Desktop core: akm-cli@${manifest.version} built from this checkout.`);
