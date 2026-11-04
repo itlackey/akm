@@ -10,8 +10,8 @@ const SIX_HOURS = 6 * 60 * 60 * 1000;
 
 /**
  * Updates come from this repository's GitHub releases (electron-updater's `github` provider; the repository is
- * written into the app by package.mjs). A stable build follows stable releases; a build of a stage release (alpha, beta,
- * rc) follows prereleases, so Desktop's channel is the akm release stage it embeds.
+ * written into the app by package.mjs). A stable build follows stable releases only; a build of a stage release (alpha,
+ * beta, rc) follows prereleases and stable releases, so Desktop's channel is the akm release stage it embeds.
  *
  * macOS cannot apply an unsigned update, so there the app only reports that one exists. Signing and notarization would
  * make `canInstall` true on macOS; nothing else changes.
@@ -26,7 +26,16 @@ export function createUpdater({ autoUpdater, version, platform, supported }) {
   /** @type {UpdateStatus} */
   let status = { state: supported ? "checking" : "unsupported" };
   const canInstall = platform !== "darwin";
-  autoUpdater.allowPrerelease = /^\d+\.\d+\.\d+-/.test(version);
+  const prerelease = /^\d+\.\d+\.\d+-/.test(version);
+  autoUpdater.allowPrerelease = prerelease;
+  if (prerelease) {
+    // akm's stages are one line of releases, each with its own number. electron-updater's GitHub provider follows a
+    // stage by name: beta skips alpha, and rc follows only rc, so an rc build never reaches the next stable release.
+    // As "alpha" it takes the newest alpha, beta or stable release; rc releases are not offered. Setting a channel
+    // also allows downgrades, which this must not.
+    autoUpdater.channel = "alpha";
+    autoUpdater.allowDowngrade = false;
+  }
   autoUpdater.autoDownload = canInstall;
   autoUpdater.autoInstallOnAppQuit = canInstall;
   autoUpdater.on("update-available", (info) => {

@@ -97,10 +97,18 @@ describe("release workflow", () => {
   test("a dry run builds everything and publishes nothing", () => {
     const workflow = YAML.parse(source) as {
       on: { workflow_dispatch: { inputs: { dry_run: { type: string; default: boolean } } } };
-      jobs: Record<string, { if?: string; steps: Array<{ name?: string; if?: string; run?: string }> }>;
+      jobs: Record<
+        string,
+        { if?: string; permissions?: unknown; steps: Array<{ name?: string; if?: string; run?: string }> }
+      >;
     };
     expect(workflow.on.workflow_dispatch.inputs.dry_run).toMatchObject({ type: "boolean", default: false });
     expect(workflow.jobs.gated?.if).toContain("!inputs.dry_run");
+    // A real release goes on only after Gated CI passed; a skipped Gated CI is accepted for a dry run alone.
+    expect(workflow.jobs.release?.if).toContain(
+      "needs.gated.result == 'success' || (inputs.dry_run && needs.gated.result == 'skipped')",
+    );
+    expect(workflow.jobs.desktop?.permissions).toEqual({ contents: "write" });
     const skipped = (job: string) =>
       workflow.jobs[job]?.steps.filter((step) => step.if?.includes("!inputs.dry_run")).map((step) => step.name);
     // Everything that reads a secret, tags or waits for another run is skipped; the builds are not.

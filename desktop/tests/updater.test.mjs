@@ -30,9 +30,16 @@ const make = (overrides = {}) => {
 };
 
 test("the update channel follows the release stage of the embedded engine", () => {
-  assert.equal(make().autoUpdater.allowPrerelease, false);
-  assert.equal(make({ version: "0.10.261105-beta" }).autoUpdater.allowPrerelease, true);
-  assert.equal(make({ version: "0.10.261105-rc" }).autoUpdater.allowPrerelease, true);
+  const stable = make().autoUpdater;
+  assert.equal(stable.allowPrerelease, false);
+  assert.equal(stable.channel, undefined);
+  for (const version of ["0.10.261105-alpha", "0.10.261105-beta", "0.10.261105-rc"]) {
+    const stage = make({ version }).autoUpdater;
+    assert.equal(stage.allowPrerelease, true);
+    // electron-updater's widest prerelease channel: the newest alpha, beta or stable release, never a downgrade.
+    assert.equal(stage.channel, "alpha");
+    assert.equal(stage.allowDowngrade, false);
+  }
 });
 
 test("an unsupported run never checks; a supported one checks once at start", () => {

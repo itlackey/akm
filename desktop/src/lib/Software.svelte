@@ -128,6 +128,10 @@
           {:else if update?.state === "error"}<p role="status">
               Could not check for updates. <a href={releases}>Download a newer version</a> if you need one.
             </p>
+            {#if update.error}<details class="field-hint">
+                <summary>Details</summary>
+                <pre class="mono">{update.error}</pre>
+              </details>{/if}
           {:else}<p role="status">To update, download a newer AKM Desktop.</p>{/if}
           <p class="field-hint">Built-in AKM engine {data.engine}.</p>
         </div>

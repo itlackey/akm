@@ -143,7 +143,8 @@ test("host checks are read-only and upgrades invoke the existing CLI, not the bu
 });
 
 test("missing CLI uses official user-local installer and verifies the result", async () => {
-  const f = await hostFixture({ absent: true });
+  // A development run (unstamped 0.0.0) has no release of its own and takes the latest installer.
+  const f = await hostFixture({ absent: true, desktopVersion: "0.0.0" });
   f.manager.start("install-cli");
   await f.manager.pending;
   assert.equal(f.manager.snapshot().error, undefined);

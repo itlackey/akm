@@ -360,11 +360,9 @@ export class HostTools {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
     // The installer of Desktop's own release installs the same akm version, so host and engine start equal. A
-    // development build has no release and takes the latest.
+    // development run keeps desktop/package.json's unstamped 0.0.0, has no release and takes the latest.
     const release =
-      this.desktopVersion && /^\d+\.\d+\.\d+/.test(this.desktopVersion)
-        ? `download/v${this.desktopVersion}`
-        : "latest/download";
+      this.desktopVersion && this.desktopVersion !== "0.0.0" ? `download/v${this.desktopVersion}` : "latest/download";
     const response = await this.fetcher(`https://github.com/itlackey/akm/releases/${release}/install.sh`, {
       signal: AbortSignal.timeout(30_000),
     });

@@ -78,7 +78,8 @@ AKM Desktop ships in the same release as the akm it embeds: one version, one tag
   platforms, and the Release workflow takes a `dry_run` input that builds everything and publishes
   nothing.
 - Desktop updates itself from this repository's GitHub releases (no token, no other server): a stable
-  build follows stable releases, a stage release follows prereleases. macOS only reports that an
+  build follows stable releases, a stage build also takes alpha and beta releases (rc releases
+  are installed by hand). macOS only reports that an
   update exists until the app is signed. `AKM_DESKTOP_UPDATES=off` turns the check off.
 - Software shows the built-in engine version next to the host `akm`, says which to update when they
   differ, and holds Update CLI & plugins back while the latest release is newer than Desktop's engine.

@@ -162,6 +162,7 @@ jobs:
           path: desktop/dist/*
           retention-days: 3
           if-no-files-found: error
+          overwrite: true
 
   node-smoke:
     runs-on: ubuntu-latest

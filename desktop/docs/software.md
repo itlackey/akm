@@ -30,8 +30,9 @@ the application menu; desktop environments normally notice the new entry.
 Desktop's version is the AKM version it embeds; it is built from the released `akm-cli`
 package, in the same release. The app checks this repository's GitHub releases
 (`itlackey/akm`) when it starts and every six hours, with no token and no other server.
-A stable build follows stable releases; a build of a stage release (alpha, beta, rc)
-follows prereleases.
+A stable build follows stable releases only. A build of a stage release (alpha, beta, rc)
+takes the newest alpha, beta or stable release; rc releases are installed by hand, because
+electron-updater's GitHub provider confines an rc build to rc releases.
 
 - **Linux AppImage and Windows:** the update downloads in the background and installs when
   you quit AKM Desktop. Software shows the state. A Linux build that is not an AppImage does

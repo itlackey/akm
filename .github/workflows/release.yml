@@ -37,7 +37,8 @@ jobs:
 
   release:
     needs: gated
-    if: ${{ !cancelled() && needs.gated.result != 'failure' }}
+    # A real release needs Gated CI to pass; only a dry run goes on without it.
+    if: ${{ !cancelled() && (needs.gated.result == 'success' || (inputs.dry_run && needs.gated.result == 'skipped')) }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -130,6 +131,7 @@ jobs:
           path: artifacts/akm-cli-*.tgz
           retention-days: 7
           if-no-files-found: error
+          overwrite: true
 
       - run: npm install -g npm@latest
 
@@ -220,6 +222,9 @@ jobs:
     # A dry run skips Gated CI, and a skipped job anywhere upstream would skip this one without this condition.
     if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ${{ matrix.os }}
+    # Only the release upload needs write access; no npm provenance here.
+    permissions:
+      contents: write
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -264,6 +269,7 @@ jobs:
           path: desktop/dist/*
           retention-days: 7
           if-no-files-found: error
+          overwrite: true
 
       - name: Attach Desktop to the GitHub release
         if: ${{ !inputs.dry_run }}
