@@ -4,7 +4,7 @@
 
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -356,9 +356,13 @@ export class HostTools {
     if (text.length > 128 * 1024 || !text.startsWith("#!/usr/bin/env bash")) throw new Error("Unexpected installer.");
     const temporary = await mkdtemp(path.join(os.tmpdir(), "akm-desktop-install-"));
     const file = path.join(temporary, "install.sh");
-    await writeFile(file, text, { mode: 0o600 });
-    this.state.command = 'AKM_INSTALL_DIR="$HOME/.local/bin" bash install.sh (official release installer)';
-    await this.invoke("/bin/bash", [file], { ...env, AKM_INSTALL_DIR: directory }, 10 * 60_000);
+    try {
+      await writeFile(file, text, { mode: 0o600 });
+      this.state.command = 'AKM_INSTALL_DIR="$HOME/.local/bin" bash install.sh (official release installer)';
+      await this.invoke("/bin/bash", [file], { ...env, AKM_INSTALL_DIR: directory }, 10 * 60_000);
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
     const installed = await this.detect("akm", env);
     if (!installed.runnable) throw new Error("The installed CLI could not report a version.");
     this.state.receipt =
