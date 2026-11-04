@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import { UsageError } from "akm-cli/workspace";
 
 /** A failure Desktop itself raises, with the status and stable code its renderer reads. */

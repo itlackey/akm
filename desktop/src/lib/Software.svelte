@@ -1,3 +1,9 @@
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { api } from "./client";
@@ -9,7 +15,7 @@
     version?: string;
     path?: string;
     major?: number;
-    plugin?: { state: string; version?: string; spec?: string; note?: string };
+    plugin?: { state: string; version?: string; spec?: string; note?: string; detail?: string };
   };
   type Snapshot = {
     desktop: {
@@ -29,6 +35,7 @@
       cli: Harness | null;
       harnesses: Harness[];
       error?: string;
+      errorDetail?: string;
       receipt?: string;
       checkedAt?: string;
       command?: string;
@@ -164,7 +171,11 @@
             >{/if}
         </div>
       </div>
-      {#if data.host.error}<p class="notice notice-warn" role="alert">{data.host.error}</p>{/if}
+      {#if data.host.error}<p class="notice notice-warn" role="alert">{data.host.error}</p>
+        {#if data.host.errorDetail}<details class="field-hint">
+            <summary>Details</summary>
+            <pre class="mono">{data.host.errorDetail}</pre>
+          </details>{/if}{/if}
       {#if data.host.receipt}<p class="notice" role="status">{data.host.receipt}</p>{/if}
       <p class="field-hint">
         Updates use <code>akm upgrade</code>, including its migration checks and installed plugins. The desktop’s
@@ -209,6 +220,10 @@
                       : `AKM · ${harness.plugin?.state ?? "not checked"} ${harness.plugin?.version ?? harness.plugin?.spec ?? ""}`}
               </p>
               {#if harness.plugin?.note}<p class="field-hint">{harness.plugin.note}</p>{/if}
+              {#if harness.plugin?.detail}<details class="field-hint">
+                  <summary>Details</summary>
+                  <pre class="mono">{harness.plugin.detail}</pre>
+                </details>{/if}
             </div>
             {#if harness.plugin?.state === "missing"}<button
                 class="btn-secondary"

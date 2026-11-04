@@ -12,7 +12,7 @@
     "prepare:core": "node scripts/core.mjs && bun install --frozen-lockfile --ignore-scripts --force",
     "dev": "node scripts/dev.mjs",
     "build": "vite build",
-    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && prettier --check \"src/**/*.svelte\"",
     "test": "node --test tests/runtime.test.mjs tests/ui-helpers.test.mjs tests/editor-commands.test.mjs tests/editor-preview.test.mjs tests/library-files-model.test.mjs tests/review-model.test.mjs tests/presenters.test.mjs tests/software.test.mjs tests/menu-install.test.mjs tests/home-model.test.mjs tests/release-guard.test.mjs tests/file-edit.test.mjs tests/server-routes.test.mjs tests/server-reveal.test.mjs tests/integration-contract.test.mjs",
     "test:e2e": "node --test --test-concurrency=2 tests/e2e.test.mjs tests/navigation.test.mjs tests/software-ui.test.mjs tests/sensitive-ui.test.mjs",
     "test:electron": "node --test tests/electron.test.mjs",
@@ -22,7 +22,8 @@
     "package": "npm run prepare:core && npm run build && node scripts/package.mjs",
     "appimage": "npm run prepare:core && npm run build && node scripts/package.mjs --appimage",
     "test:host-install": "node --test tests/host-install.integration.test.mjs",
-    "test:plugin-install": "node --test tests/plugin-install.integration.test.mjs"
+    "test:plugin-install": "node --test tests/plugin-install.integration.test.mjs",
+    "format": "prettier --write \"src/**/*.svelte\""
   },
   "dependencies": {
     "akm-cli": "file:.core",

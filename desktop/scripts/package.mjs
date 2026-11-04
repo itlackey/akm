@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -49,8 +53,8 @@ const output = await packager({
   name: "AKM Desktop",
   executableName: "akm-desktop",
   out: path.join(root, "out", new Date().toISOString().replaceAll(":", "-")),
-  platform: process.platform,
-  arch: process.arch,
+  platform: /** @type {import("@electron/packager").OfficialPlatform} */ (process.platform),
+  arch: /** @type {import("@electron/packager").OfficialArch} */ (process.arch),
   electronVersion: manifest.devDependencies.electron,
   asar: false,
   prune: false,

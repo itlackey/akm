@@ -1,10 +1,14 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import { createRequire } from "node:module";
 import os from "node:os";
 import { activity, assets, bundles, config, documents, feedback, host, proposals, sensitive } from "akm-cli/workspace";
 import { readFile, saveFile } from "./features/files.js";
 import { readPreferences, saveTheme, validTheme } from "./features/preferences.js";
 import { reveal } from "./features/reveal.js";
-import { desktopApp, hostTools } from "./features/software.mjs";
+import { desktopApp, hostTools } from "./features/software.js";
 import { count, fields, flag, HttpFailure, text } from "./input.js";
 
 const require = createRequire(import.meta.url);

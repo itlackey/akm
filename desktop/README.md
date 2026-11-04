@@ -52,7 +52,7 @@ AKM version appear in the header. Nothing is copied from another machine.
 - **Settings:** full bundle management and grouped, validated settings with
   scoped saves. Changing one settings group does not discard another's edits.
   Rename a bundle through **Manage → Rename bundle** without moving its folder.
-  **Software** manages desktop updates, the host CLI and harness plugins.
+  **Software** manages the host CLI and harness plugins.
 
 Writes use AKM's normal policy: a Git-backed bundle may commit and push changes.
 Read the confirmation and operation receipt. Copy preserves the original and

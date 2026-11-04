@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// @ts-nocheck -- presentation code copied from AKM: DOM string building, not type-checked here.
 // Safe document rendering: headings, lists, quotes, tables, task items, fenced code, code spans, emphasis, links and
 // [[wikilinks]]. Link targets and heading selectors come from AKM's indexed reads.
 // It never touches raw text except through `html`, which escapes every interpolated value.

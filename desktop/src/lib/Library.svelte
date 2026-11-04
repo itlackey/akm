@@ -1,3 +1,9 @@
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
   import { afterNavigate } from "$app/navigation";
@@ -206,7 +212,8 @@
       );
       const origin = query.get("returnTo");
       if (origin?.startsWith("/review")) destination.set("reviewFrom", origin);
-      else if (origin?.startsWith("/library/search") || origin?.startsWith("/library/asset")) destination.set("readingFrom", origin);
+      else if (origin?.startsWith("/library/search") || origin?.startsWith("/library/asset"))
+        destination.set("readingFrom", origin);
       const href = "/library/files?" + destination;
       await navigate(
         edit
@@ -422,7 +429,12 @@
     if (reviewFrom) location.set("reviewFrom", reviewFrom);
     return (
       "/library/new?" +
-      new URLSearchParams({ bundle, path, returnTo: "/library/files?" + location, ...(readingFrom ? { readingFrom } : {}) })
+      new URLSearchParams({
+        bundle,
+        path,
+        returnTo: "/library/files?" + location,
+        ...(readingFrom ? { readingFrom } : {}),
+      })
     );
   }
   function createSensitiveHref(kind: string, bundle: string, path: string) {
@@ -702,8 +714,11 @@
             <thead><tr><th>Query</th><th>Times</th><th>Days</th><th>Last seen</th><th>Next step</th></tr></thead><tbody
               >{#each misses.misses as miss}<tr
                   ><td>{miss.query}</td><td>{miss.count}</td><td>{miss.days}</td><td>{date(miss.lastAt)}</td><td
-                    ><a href={"/library/new?q=" + encodeURIComponent(miss.query) + "&returnTo=" + encodeURIComponent(returnTo)}
-                      >Write this up</a
+                    ><a
+                      href={"/library/new?q=" +
+                        encodeURIComponent(miss.query) +
+                        "&returnTo=" +
+                        encodeURIComponent(returnTo)}>Write this up</a
                     ></td
                   ></tr
                 >{/each}</tbody

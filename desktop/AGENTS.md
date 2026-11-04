@@ -15,7 +15,9 @@ Desktop is a convenience tool for the human owner of an akm instance; the CLI se
 - **Desktop** owns the rest, and only here:
   - server features in `src/lib/server/features/` (plain file editing is the first);
   - main-process privilege in `electron/`;
-  - presentation and view models in `src/lib/`.
+  - presentation and view models in `src/lib/`: pages are Kit routes in `src/routes/` (`ssr = false`), shared state is
+    `lib/state/workspace.svelte.ts`, stored drafts are `lib/drafts.ts`, and the design-system code copied from AKM is
+    Desktop's own in `lib/ui/`. Svelte components use runes; convert a legacy component when you change it.
   A feature may call several AKM operations and must report a partial outcome as data. It never repairs AKM state itself.
   Preferences, native host software (`host-tools.mjs`, `software.mjs`) and the secret reveal policy live there too.
   The harness plugin-install recipe in `host-tools.mjs` stays in Desktop; `plugin-channels.ts` in akm is its source of truth.
@@ -36,7 +38,9 @@ read, and write atomically. Then ask AKM to refresh the index for that path (`in
 - Test only against generated synthetic HOME/XDG/AKM paths. Do not run manual writes, provider requests or bundle
   operations against a developer's real data.
 - Preserve user files and unrelated work. Do not clean live bundles or config.
-- Before handoff: `npm run check`, `npm run build`, `npm test`, `npm run test:e2e`, and native/package checks where
-  supported (`docs/verification.md`). Review actual screenshots; passing DOM tests alone are not a visual review.
+- Format with `bun run format` at the repo root (biome: ts/mjs/js/css/json) and `npm run format` here (prettier:
+  `.svelte`): one formatter per file type. Source files carry the MPL header; privileged JavaScript (`electron/`, `scripts/`) is type-checked.
+- Before handoff: `npm run check`, `npm run build`, `npm test`, `npm run test:e2e`, `npm run test:usability`, and
+  native/package checks where supported (`docs/verification.md`). Review actual screenshots; passing DOM tests alone are not a visual review.
 - Desktop's version is the akm version it embeds. Do not publish releases, mirror to GitHub, or add deployment secrets
   without authorization.

@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
@@ -31,6 +35,7 @@ export async function startServer() {
   // Keep TOKEN explicit so this private launch credential can never be shown.
   delete process.env.AKM_DESKTOP_SESSION;
   process.env.AKM_DESKTOP_SESSION_TOKEN = token;
+  /** @type {import("node:http").RequestListener | undefined} */
   let handler;
   const server = http.createServer((req, res) => {
     req.headers["x-akm-desktop-protocol"] = "http";
@@ -44,12 +49,14 @@ export async function startServer() {
   });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
+    server.listen(0, "127.0.0.1", () => resolve(undefined));
   });
-  const origin = `http://127.0.0.1:${server.address().port}`;
+  const address = /** @type {import("node:net").AddressInfo} */ (server.address());
+  const origin = `http://127.0.0.1:${address.port}`;
   process.env.AKM_DESKTOP_ORIGIN = origin;
   // Import after environment initialization, including for loader subprocesses.
-  ({ handler } = await import("../build/handler.js"));
+  // A computed specifier: the build output is generated and is not part of the type-checked program.
+  ({ handler } = await import(new URL("../build/handler.js", import.meta.url).href));
   const url = `${origin}/?desktop_session=${token}`;
   let closing;
   const close = () =>

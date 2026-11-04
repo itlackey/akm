@@ -1,10 +1,17 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import { execFileSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
-/** No AKM import occurs here. Apply returned env before any AKM import. */
+/**
+ * No AKM import occurs here. Apply returned env before any AKM import.
+ * @param {{ runtime?: string, index?: boolean, packageRoot?: string, assetCount?: number, git?: boolean }} [options]
+ */
 export async function createFixture({
   runtime = process.execPath,
   index = true,
@@ -55,7 +62,7 @@ export async function createFixture({
     ALL_PROXY: "http://127.0.0.1:1",
     NO_COLOR: "1",
   });
-  const put = async (relative, content) => {
+  const put = async (/** @type {string} */ relative, /** @type {string} */ content) => {
     const file = path.join(root, relative);
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, content);
@@ -71,7 +78,7 @@ export async function createFixture({
     "AKM_DATA_DIR",
     "AKM_STATE_DIR",
   ])
-    await mkdir(env[key], { recursive: true });
+    await mkdir(String(env[key]), { recursive: true });
   const bundles = Object.fromEntries(
     ["personal", "shared", "vendor"].map((name) => [
       name,
@@ -139,7 +146,7 @@ export async function createFixture({
       `---\ntitle: Reference ${n}\ndescription: Synthetic searchable maintenance reference ${n}\ntags: [maintenance, fixture]\n---\n# Reference ${n}\n\nUse the verified maintenance procedure.\n\n## Evidence\n\nRetain the measured result for reference ${n}.\n`,
     );
   if (git) {
-    const command = (args) =>
+    const command = (/** @type {string[]} */ args) =>
       execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], { cwd: env.AKM_BUNDLE_DIR, env, stdio: "pipe" });
     command(["init", "--quiet"]);
     command(["config", "user.name", "Synthetic UI test"]);

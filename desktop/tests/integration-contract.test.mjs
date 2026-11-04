@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -69,6 +73,20 @@ test("no source file reaches outside desktop/ by a relative import", async () =>
     for (const match of source.matchAll(/(?:from|import\(|@import)\s*['"](\.[^'"]*)['"]/g)) {
       const resolved = path.resolve(desktop, "src", path.dirname(file), match[1]);
       assert.ok(resolved.startsWith(desktop + path.sep), `${file}: ${match[1]}`);
+    }
+  }
+});
+
+test("every Desktop source file carries the MPL header", async () => {
+  for (const top of ["src", "electron", "scripts", "tests"]) {
+    for (const file of await readdir(path.join(desktop, top), { recursive: true })) {
+      if (!/\.(?:ts|mjs|js|svelte)$/.test(file) || file.endsWith(path.join("ui", "echarts.js"))) continue;
+      const source = await readFile(path.join(desktop, top, file), "utf8");
+      assert.match(
+        source.slice(0, 400).replace(/(?:\/\/|<!--|-->|\s)+/g, " "),
+        /Mozilla Public License, v\. 2\.0/,
+        `${top}/${file}`,
+      );
     }
   }
 });

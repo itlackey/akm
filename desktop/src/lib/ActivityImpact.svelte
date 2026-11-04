@@ -1,3 +1,9 @@
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
   import { api, date } from "./client";
@@ -439,6 +445,7 @@
         Found and negatively rated in the 28 days before/after a change. Changes under 28 days old are partial. These
         are observations, not causal attribution.
       </p>
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (This horizontally scrolling table needs keyboard access.) -->
       <div class="table-wrap" role="region" aria-label="Changed assets, before and after" tabindex="0">
         <table>
           <caption>Changed-asset follow-up</caption><thead

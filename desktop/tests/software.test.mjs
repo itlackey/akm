@@ -1,9 +1,13 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
-import { HostTools, hostEnvironment, summarizeUpgrade } from "../src/lib/server/features/host-tools.mjs";
+import { HostTools, hostEnvironment, summarizeUpgrade } from "../src/lib/server/features/host-tools.ts";
 
 const temporary = [];
 after(() => Promise.all(temporary.map((dir) => rm(dir, { recursive: true, force: true }))));
@@ -58,7 +62,11 @@ async function hostFixture({ absent = false, failure = false } = {}) {
       if (args[0] === "--version")
         return name.startsWith("opencode") ? (name === "opencode2" ? "2.1.4" : "1.18.34") : "0.10.261104";
       if (name === "akm") {
-        if (failure && !args.includes("--check")) throw Object.assign(new Error("PRIVATE-SENTINEL"), { code: 1 });
+        if (failure && !args.includes("--check"))
+          throw Object.assign(new Error("Command failed: akm upgrade"), {
+            code: 1,
+            stderr: `${"x".repeat(900)}CAUSE-SENTINEL\n`,
+          });
         return JSON.stringify({
           currentVersion: "0.10.261104",
           latestVersion: "0.10.261105",
@@ -199,13 +207,17 @@ test("OpenCode plugin detection reads config files in the order akm does", async
   assert.equal((await plugin("opencode2")).state, "missing");
 });
 
-test("failed native command is not reported as success and raw output is not exposed", async () => {
+test("a failed native command is not reported as success; its cause is bounded detail, not the user-facing message", async () => {
   const f = await hostFixture({ failure: true });
   f.manager.start("upgrade-cli");
   await f.manager.pending;
   assert.equal(f.manager.snapshot().receipt, undefined);
-  assert.match(f.manager.snapshot().error, /did not complete/);
-  assert.ok(!JSON.stringify(f.manager.snapshot()).includes("PRIVATE-SENTINEL"));
+  const snapshot = f.manager.snapshot();
+  assert.match(snapshot.error, /did not complete/);
+  assert.ok(!snapshot.error.includes("CAUSE-SENTINEL"), "the message for the person stays generic");
+  assert.match(snapshot.errorDetail, /Command failed: akm upgrade/);
+  assert.match(snapshot.errorDetail, /CAUSE-SENTINEL/, "the end of stderr is the cause");
+  assert.ok(snapshot.errorDetail.length <= 1000, "detail is bounded");
   assert.throws(() => f.manager.start("shell", "rm"), /Invalid/);
   assert.throws(() => f.manager.start("install-plugin", "other"), /Invalid/);
 });

@@ -19,11 +19,23 @@ Electron tests need a display (or Xvfb) and a working Chromium sandbox.
 Browser test files use bounded parallelism so multiple full Electron/Chromium
 workspaces do not compete with each other's startup assertions.
 
-All tests create synthetic HOME/XDG/AKM directories. They do not use real
-bundles, providers, credentials or the host's installed CLI for workspace actions.
-Browser tests exercise actual core reads and writes: asset content, proposals,
-editing/conflicts, protected-file CRUD, bundle rename, move/link repair,
-retirement/undo, navigation, metrics, settings and accessibility.
+All tests create synthetic HOME/XDG/AKM directories, removed afterwards
+(`AKM_DESKTOP_KEEP_FIXTURES=1` keeps them for diagnosis; set `AKM_DESKTOP_SCREENSHOTS`
+to keep screenshots). They do not use real bundles, providers, credentials or the
+host's installed CLI for workspace actions. Fixtures are built with the CLI:
+`akm index`, `akm proposal new` (a stand-in agent returns the proposal; no model runs),
+and `akm search`/`show`/`feedback` for usage. No test imports akm internals.
+
+| Layer | Where |
+| --- | --- |
+| Transport and wiring: every route reaches its operation; errors map to one status | `server-routes`, `server-reveal`, `file-edit`, `runtime` (`npm test`, no browser) |
+| Desktop features: host tools, menu install, reveal policy, file editing, view models | `software`, `menu-install`, `file-edit`, `*-model`, `presenters` (`npm test`) |
+| UI: one happy path and one refusal per section, navigation and drafts, protected files, Software | `e2e`, `navigation`, `sensitive-ui`, `software-ui` (`npm run test:e2e`) |
+| Accessibility, reflow and design language | `usability*`, `design-language` (`npm run test:usability`) |
+| Electron main: sandbox, isolation, navigation, lifecycle | `electron` (`npm run test:electron`, needs a display: `xvfb-run -a`) |
+
+What an operation decides (revisions, leases, staleness, write targets) is tested in akm
+(`tests/integration/workspace/`), not here.
 
 Packaging installs the local core package into a new production-only stage.
 To test the actual packaged runtime and server, use the stage and executable

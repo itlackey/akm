@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// @ts-nocheck -- presentation code copied from AKM: DOM string building, not type-checked here.
 // Line and word diffs for the proposal page. Pure functions on strings: no DOM, no markup, so the algorithm can be
 // tested on its own. diff-view.js turns the result into markup.
 //

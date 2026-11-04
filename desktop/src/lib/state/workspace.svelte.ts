@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import { api } from "../client";
 import { renameBundle } from "../drafts";
 import type { Bundle } from "../types";
@@ -67,5 +71,5 @@ export function applyTheme() {
 /** A renamed bundle keeps its drafts, and Library returns to a location that exists. */
 export function bundleRenamed(oldName: string, name: string) {
   renameBundle(oldName, name);
-  workspace.sectionHref.Library = "/library/files?" + new URLSearchParams({ bundle: name });
+  workspace.sectionHref.Library = `/library/files?${new URLSearchParams({ bundle: name })}`;
 }

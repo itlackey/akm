@@ -1,3 +1,9 @@
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
   import { api, date } from "./client";
@@ -340,8 +346,10 @@
     >Bundles & index</a
   ><a href="/settings/config" class:active={route === "config"} aria-current={route === "config" ? "page" : undefined}
     >Configuration</a
-  ><a href="/settings/software" class:active={route === "software"} aria-current={route === "software" ? "page" : undefined}
-    >Software</a
+  ><a
+    href="/settings/software"
+    class:active={route === "software"}
+    aria-current={route === "software" ? "page" : undefined}>Software</a
   >
 </nav>
 {#if route === "software"}<Software />{:else}
@@ -364,9 +372,11 @@
   {#if loading && !config}<p role="status">Loading settings…</p>{:else if route !== "config"}
     <p class="muted" hidden={!!manageName}>
       Default bundle: <strong>{listing?.defaultBundle ?? "Not configured"}</strong>. Explicit write target:
-      <strong>{listing?.defaultWriteTarget ?? "Automatic"}</strong>. <a href="/settings/config">Change library defaults</a>
+      <strong>{listing?.defaultWriteTarget ?? "Automatic"}</strong>.
+      <a href="/settings/config">Change library defaults</a>
     </p>
-    {#if manageName}<a class="bundle-back" href="/settings/bundles"><Icon name="arrow-left" size={16} /> Back to bundles</a
+    {#if manageName}<a class="bundle-back" href="/settings/bundles"
+        ><Icon name="arrow-left" size={16} /> Back to bundles</a
       >{/if}
     <section
       class="settings-section bundle-section"

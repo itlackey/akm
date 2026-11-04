@@ -1,3 +1,9 @@
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+
 <script lang="ts">
   import { onMount, onDestroy, createEventDispatcher } from "svelte";
   import { afterNavigate } from "$app/navigation";
@@ -87,7 +93,8 @@
     <p class="muted">{info.location.path}</p>
     <a
       class="btn btn-secondary"
-      href={"/library/files?" + new URLSearchParams({ bundle: info.bundle, path: info.location.parent })}>Back to folder</a
+      href={"/library/files?" + new URLSearchParams({ bundle: info.bundle, path: info.location.parent })}
+      >Back to folder</a
     >
   {:else if editing && info}<SensitiveEditor
       bundle={info.bundle}

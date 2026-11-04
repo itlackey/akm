@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// @ts-nocheck -- presentation code copied from AKM: DOM string building, not type-checked here.
 // The proposal diff on the proposal page: side by side or inline, built from diff.js's aligned rows.
 //
 // Like every page module this builds markup with `html` (so file text is escaped) and writes it with `mount`.

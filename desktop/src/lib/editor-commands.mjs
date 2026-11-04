@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /** Small textarea operations, not a Markdown parser or alternate content model. */
 export const markdownCommands = [
   { id: "bold", label: "Bold", text: "B", shortcut: "Ctrl/⌘ B" },
@@ -15,7 +19,7 @@ export function formatMarkdown(content, from, to, command) {
   let start = Math.max(0, Math.min(content.length, from));
   let end = Math.max(start, Math.min(content.length, to));
   const selected = content.slice(start, end);
-  const replace = (text, selectionStart = 0, selectionEnd = text.length) => ({
+  const replace = (/** @type {string} */ text, selectionStart = 0, selectionEnd = text.length) => ({
     content: content.slice(0, start) + text + content.slice(end),
     start: start + selectionStart,
     end: start + selectionEnd,

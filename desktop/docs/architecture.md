@@ -21,8 +21,11 @@ host CLI/harnesses strictly for explicit installation and upgrade management.
 | `src/hooks.server.ts` | Per-launch authentication and same-origin checks |
 | `src/lib/server/` and `src/routes/api/` | HTTP shell (`http.ts`: body limits, envelope, scrubbing and the one error-to-status mapping) over one route table (`routes.ts`: each route names a workspace operation and its input; unknown request fields are warned and ignored) |
 | `src/lib/server/features/` | Desktop-only features built on `akm-cli/workspace`: plain file editing, secret reveal policy, preferences, native host software orchestration |
-| `src/lib/*.svelte` | Presentation, review confirmation, retained editor drafts |
-| `src/lib/navigation.ts` | SvelteKit navigation with draft-aware Back/forward and retained section state |
+| `src/routes/` and `src/params.ts` | Page routes (`ssr = false`): `/`, `/library/[view]`, `/review/[[id]]`, `/activity/[view]`, `/settings/[section]`; `+layout.svelte` is the shell (top bar, appearance, the leave-draft guard in `beforeNavigate`) |
+| `src/lib/state/workspace.svelte.ts` | Workspace-wide state (bundles, pending count, theme, where each section was last left) and its refreshers; per-view state stays in the page |
+| `src/lib/drafts.ts` | Stored editor drafts (session storage), the unsaved flag, and re-keying drafts when a bundle is renamed |
+| `src/lib/*.svelte` | Presentation and review confirmation |
+| `src/lib/navigation.ts` | `goto` for in-app navigation, so Back/forward goes through `beforeNavigate` |
 | `src/lib/ui/` | Desktop-owned presentation: design tokens, escaped Markdown, diff and chart rendering (copied from AKM) |
 | `akm-cli/workspace` | Typed operations: reads, writes, validation, policy (revisions, leases, writability), proposals, persistence |
 
@@ -119,10 +122,13 @@ the app stops the child server. Navigation never resizes its window.
 
 ## UI behavior
 
-- The compact top bar holds Library, Review, Activity and Settings. Sections
-  mount on first visit; subsequent navigation preserves editors. Deep links,
-  Back/forward and query filters use SvelteKit navigation; leaving a dirty editor
-  is guarded before route changes. Folder expansion and focus are local state.
+- The compact top bar holds Home, Library, Review, Activity and Settings. Each is a page
+  route, so a view is addressable and reloads where it was; the bar returns to where a
+  section was last left. Query filters, Back/forward and deep links are ordinary
+  SvelteKit navigation; leaving a dirty editor is guarded in `beforeNavigate`, and a draft
+  is kept for when the editor is opened again. Folder expansion and focus are local state.
+  Page requests are served as the app shell, and the server's protocol comes from a
+  server-owned header because adapter-node 6 takes an origin only from a build-time setting.
 - Ordinary document drafts are retained per asset in session storage. Leaving an edited asset asks
   whether to stay or leave and retain the draft. Closing a window with drafts prompts; drafts
   are not durable backups. Inputs are disabled during a save.

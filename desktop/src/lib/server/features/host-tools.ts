@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { access, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
@@ -6,16 +10,54 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { parse } from "jsonc-parser";
 
+type Env = NodeJS.ProcessEnv;
+// Native CLI output is untyped JSON; each reader below checks the fields it uses.
+// biome-ignore lint/suspicious/noExplicitAny: parsed output of host commands
+type Loose = any;
+type Run = (file: string, args: string[], options: { env?: Env; home?: string; timeout?: number }) => Promise<string>;
+type Find = (name: string, env?: Env) => Promise<string | undefined>;
+export interface PluginState {
+  state: "installed" | "disabled" | "missing" | "configured" | "unknown";
+  version?: string;
+  note?: string;
+  spec?: string;
+  file?: string;
+  /** Why a plugin could not be verified: the underlying error, for the Details line. */
+  detail?: string;
+}
+export interface Detected {
+  id: string;
+  installed: boolean;
+  path?: string;
+  version?: string;
+  runnable?: boolean;
+  plugin?: PluginState;
+  major?: number;
+}
+export interface HostState {
+  phase: string;
+  cli: Detected | null;
+  harnesses: Detected[];
+  checkedAt?: string;
+  /** What went wrong, in words for the person using the app. */
+  error?: string;
+  /** The underlying cause (message and the command's stderr tail), shown under Details. */
+  errorDetail?: string;
+  receipt?: string;
+  command?: string;
+  upgrade?: Record<string, string | boolean>;
+}
+
 const exec = promisify(execFile);
 // The harness plugin-install recipe (plugin id, marketplace and channel syntax, OpenCode v1/v2 shapes) is kept here on
 // purpose, with no akm surface. The source of truth is akm's src/commands/sources/plugin-channels.ts and
 // plugin-upgrade.ts: change them together.
 const pluginId = "akm@akm-plugins";
 export const harnessIds = ["claude", "codex", "opencode", "opencode2"];
-const versionOf = (text) => text?.match(/\b\d+\.\d+\.\d+(?:-[\w.-]+)?/)?.[0];
+const versionOf = (text: string | undefined) => text?.match(/\b\d+\.\d+\.\d+(?:-[\w.-]+)?/)?.[0];
 class SoftwareError extends Error {}
 
-export async function hostEnvironment(env = process.env, home = os.homedir()) {
+export async function hostEnvironment(env: Env = process.env, home = os.homedir()) {
   const next = { ...env };
   // Electron's Node child uses a launcher for bundled workspace commands.
   // Never pass it (or the private session) to the real host CLI/harnesses.
@@ -37,7 +79,7 @@ export async function hostEnvironment(env = process.env, home = os.homedir()) {
   return next;
 }
 
-export async function findProgram(name, env) {
+export const findProgram: Find = async (name, env = process.env) => {
   for (const directory of (env.PATH ?? "").split(path.delimiter).filter((item) => path.isAbsolute(item))) {
     const file = path.join(directory, name);
     try {
@@ -48,9 +90,9 @@ export async function findProgram(name, env) {
     }
   }
   return undefined;
-}
+};
 
-export async function runHost(file, args, { env, home, timeout = 30_000 } = {}) {
+export const runHost: Run = async (file, args, { env, home, timeout = 30_000 }) => {
   const pending = exec(file, args, {
     env,
     cwd: home,
@@ -62,9 +104,9 @@ export async function runHost(file, args, { env, home, timeout = 30_000 } = {}) 
   pending.child.stdin?.end(); // Native consent must not hang on an unattended input pipe.
   const result = await pending;
   return result.stdout;
-}
+};
 
-function json(text) {
+function json(text: string): Loose {
   const value = JSON.parse(text);
   // AKM's normal JSON is the payload; tolerate an explicitly enveloped response.
   if (value?.ok === false) throw new Error("AKM reported a failed operation.");
@@ -75,7 +117,7 @@ function json(text) {
 // agree on which plugin OpenCode loads: opencode.jsonc before opencode.json, OPENCODE_CONFIG only for OpenCode 1, and
 // for OpenCode 1 the first global file that sets the list decides. Unlike akm, a file Desktop cannot read stops the
 // check (the plugin shows as unverified) rather than being skipped.
-async function openCodePlugin(env, home, major) {
+async function openCodePlugin(env: Env, home: string, major: number) {
   const directory =
     env.OPENCODE_CONFIG_DIR?.trim() || path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "opencode");
   const explicit = major === 2 ? undefined : env.OPENCODE_CONFIG?.trim();
@@ -84,15 +126,15 @@ async function openCodePlugin(env, home, major) {
   );
   const pkg = major === 2 ? "akm-opencode-v2" : "akm-opencode";
   for (const file of files) {
-    let text;
+    let text: string;
     try {
-      text = await readFile(file, "utf8");
+      text = await readFile(file as string, "utf8");
     } catch (error) {
-      if (error.code === "ENOENT") continue;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
       throw error;
     }
-    const errors = [],
-      config = parse(text, errors, { allowTrailingComma: true });
+    const errors: unknown[] = [],
+      config = parse(text, errors as never[], { allowTrailingComma: true });
     if (errors.length || !config || typeof config !== "object")
       throw new Error("OpenCode configuration could not be read.");
     let setsList = false;
@@ -110,7 +152,7 @@ async function openCodePlugin(env, home, major) {
   return undefined;
 }
 
-function errorMessage(error) {
+function errorMessage(error: Loose) {
   if (error instanceof SoftwareError) return error.message;
   if (error?.code === "EACCES" || error?.code === "EPERM")
     return "Permission denied. Use the installer that owns this CLI; Desktop will not use sudo.";
@@ -119,8 +161,26 @@ function errorMessage(error) {
   return "The native command did not complete successfully. Check the connection and use the command shown in Details for diagnostics.";
 }
 
+/** The underlying cause of a failure: its message and the end of the command's stderr, bounded. */
+export function errorDetail(error: unknown): string | undefined {
+  if (error instanceof SoftwareError) return undefined;
+  const cause = error as { message?: unknown; stderr?: unknown };
+  const parts = [cause?.message, typeof cause?.stderr === "string" ? cause.stderr.trim().slice(-500) : undefined]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .map((part) => part.trim());
+  return parts.length ? [...new Set(parts)].join("\n").slice(0, 1000) : undefined;
+}
+
 /** Host lifecycle only. All upgrades/migration/plugin writes are native commands. */
 export class HostTools {
+  home: string;
+  sourceEnv: Env;
+  run: Run;
+  find: Find;
+  fetcher: typeof fetch;
+  platform: string;
+  state: HostState;
+  pending?: Promise<void>;
   constructor({
     home = os.homedir(),
     env = process.env,
@@ -128,8 +188,13 @@ export class HostTools {
     find = findProgram,
     fetcher = fetch,
     platform = process.platform,
-  } = {}) {
-    Object.assign(this, { home, sourceEnv: env, run, find, fetcher, platform });
+  }: { home?: string; env?: Env; run?: Run; find?: Find; fetcher?: typeof fetch; platform?: string } = {}) {
+    this.home = home;
+    this.sourceEnv = env;
+    this.run = run;
+    this.find = find;
+    this.fetcher = fetcher;
+    this.platform = platform;
     this.state = {
       phase: "idle",
       cli: null,
@@ -145,10 +210,10 @@ export class HostTools {
   async environment() {
     return hostEnvironment(this.sourceEnv, this.home);
   }
-  async invoke(file, args, env, timeout) {
+  async invoke(file: string, args: string[], env: Env, timeout?: number) {
     return this.run(file, args, { env, home: this.home, timeout });
   }
-  async detect(name, env) {
+  async detect(name: string, env: Env): Promise<Detected> {
     const file = await this.find(name, env);
     if (!file) return { id: name, installed: false };
     try {
@@ -158,17 +223,17 @@ export class HostTools {
       return { id: name, installed: true, path: file, runnable: false };
     }
   }
-  async inventory(env) {
+  async inventory(env: Env) {
     const cli = await this.detect("akm", env);
     const harnesses = await Promise.all(
       harnessIds.map(async (id) => {
         const harness = await this.detect(id, env);
-        if (!harness.runnable) return harness;
+        if (!harness.runnable || !harness.path) return harness;
         try {
           if (id === "claude") {
             const list = json(await this.invoke(harness.path, ["plugin", "list", "--json"], env));
             if (!Array.isArray(list)) throw new Error("Unrecognized plugin inventory.");
-            const item = list.find((item) => item.id === pluginId && (!item.scope || item.scope === "user"));
+            const item = list.find((item: Loose) => item.id === pluginId && (!item.scope || item.scope === "user"));
             harness.plugin = item
               ? { state: item.enabled === false ? "disabled" : "installed", version: item.version }
               : { state: "missing" };
@@ -177,7 +242,7 @@ export class HostTools {
               await this.invoke(harness.path, ["plugin", "list", "--marketplace", "akm-plugins", "--json"], env),
             );
             if (!Array.isArray(list?.installed)) throw new Error("Unrecognized plugin inventory.");
-            const item = list.installed.find((item) => item.pluginId === pluginId);
+            const item = list.installed.find((item: Loose) => item.pluginId === pluginId);
             harness.plugin = item
               ? {
                   state: "installed",
@@ -186,7 +251,7 @@ export class HostTools {
                 }
               : { state: "missing" };
           } else {
-            const major = Number(harness.version.split(".")[0]);
+            const major = Number(harness.version?.split(".")[0]);
             if (![1, 2].includes(major)) throw new Error("Unsupported OpenCode major.");
             const configured = await openCodePlugin(env, this.home, major);
             harness.plugin = configured
@@ -194,10 +259,11 @@ export class HostTools {
               : { state: "missing" };
             harness.major = major;
           }
-        } catch {
+        } catch (error) {
           harness.plugin = {
             state: "unknown",
             note: "Native inventory could not verify the plugin. Review it in the harness before installing.",
+            detail: errorDetail(error),
           };
         }
         return harness;
@@ -205,10 +271,10 @@ export class HostTools {
     );
     Object.assign(this.state, { cli, harnesses });
   }
-  start(action, harness, channel = "latest") {
+  start(action: string, harness?: string, channel = "latest") {
     if (
       !["check", "install-cli", "upgrade-cli", "install-plugin"].includes(action) ||
-      (action === "install-plugin" && !harnessIds.includes(harness)) ||
+      (action === "install-plugin" && !harnessIds.includes(harness as string)) ||
       !["latest", "next"].includes(channel)
     )
       throw new Error("Invalid software action.");
@@ -216,6 +282,7 @@ export class HostTools {
     if (action !== "check" && process.send) process.send({ type: "desktop-host-operation", busy: true });
     this.state.phase = action;
     this.state.error = undefined;
+    this.state.errorDetail = undefined;
     this.state.receipt = undefined;
     this.state.command = undefined;
     this.pending = Promise.resolve()
@@ -224,7 +291,8 @@ export class HostTools {
         await this.inventory(env);
         if (action === "install-cli") await this.installCli(env);
         if (action === "upgrade-cli") {
-          if (!this.state.cli?.runnable) throw new SoftwareError("Install a working CLI first.");
+          if (!this.state.cli?.runnable || !this.state.cli.path)
+            throw new SoftwareError("Install a working CLI first.");
           this.state.command = "akm upgrade --format json";
           const result = json(
             await this.invoke(this.state.cli.path, ["upgrade", "--format", "json"], env, 30 * 60_000),
@@ -235,16 +303,16 @@ export class HostTools {
             result.migration?.status === "blocked" ||
             result.migration?.status === "failed" ||
             result.postUpgrade?.ok === false ||
-            result.plugins?.some((item) => item.outcome === "failed")
+            result.plugins?.some((item: Loose) => item.outcome === "failed")
           )
             throw new SoftwareError(
               "AKM reported a migration, indexing or plugin failure. Use akm upgrade in your terminal to review its diagnostics.",
             );
           this.state.receipt = "Native AKM upgrade completed. The bundled desktop engine is unchanged.";
         }
-        if (action === "install-plugin") await this.installPlugin(harness, channel, env);
+        if (action === "install-plugin") await this.installPlugin(harness as string, channel, env);
         await this.inventory(env);
-        if (this.state.cli?.runnable) {
+        if (this.state.cli?.runnable && this.state.cli.path) {
           this.state.command = "akm upgrade --check --format json";
           const result = json(
             await this.invoke(this.state.cli.path, ["upgrade", "--check", "--format", "json"], env, 120_000),
@@ -255,6 +323,7 @@ export class HostTools {
       })
       .catch((error) => {
         this.state.error = errorMessage(error);
+        this.state.errorDetail = errorDetail(error);
       })
       .finally(() => {
         this.state.phase = "idle";
@@ -263,7 +332,7 @@ export class HostTools {
       });
     return this.snapshot();
   }
-  async installCli(env) {
+  async installCli(env: Env) {
     if (this.state.cli?.installed) throw new SoftwareError("An existing CLI must be upgraded with its own installer.");
     if (!["linux", "darwin"].includes(this.platform))
       throw new SoftwareError("This build supports host installation on Linux and macOS.");
@@ -277,7 +346,7 @@ export class HostTools {
       await access(path.join(directory, "akm"));
       throw new SoftwareError("A CLI already exists in the install directory. No files were replaced.");
     } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
     const response = await this.fetcher("https://github.com/itlackey/akm/releases/latest/download/install.sh", {
       signal: AbortSignal.timeout(30_000),
@@ -295,23 +364,25 @@ export class HostTools {
     this.state.receipt =
       "AKM CLI installed in ~/.local/bin. Add that directory to your terminal PATH if needed; Desktop already finds it.";
   }
-  async installPlugin(id, channel, env) {
+  async installPlugin(id: string, channel: string, env: Env) {
     const harness = this.state.harnesses.find((item) => item.id === id);
-    if (!harness?.runnable || !this.state.cli?.runnable) throw new SoftwareError("Install AKM and the harness first.");
+    if (!harness?.runnable || !harness.path || !this.state.cli?.runnable)
+      throw new SoftwareError("Install AKM and the harness first.");
+    const harnessPath = harness.path;
     if (harness.plugin?.state !== "missing")
       throw new SoftwareError("The plugin is already present or could not be verified. No change was made.");
-    const command = async (args) => {
+    const command = async (args: string[]) => {
       this.state.command = [id, ...args].join(" ");
-      await this.invoke(harness.path, args, env, 180_000);
+      await this.invoke(harnessPath, args, env, 180_000);
     };
     if (id === "claude" || id === "codex") {
       if (!(await this.find("bun", env)))
         throw new SoftwareError("Install Bun first: the AKM hooks use it. No harness configuration was changed.");
       // List first: preserve an existing marketplace's source and release channel.
-      const listed = json(await this.invoke(harness.path, ["plugin", "marketplace", "list", "--json"], env));
+      const listed = json(await this.invoke(harnessPath, ["plugin", "marketplace", "list", "--json"], env));
       const list = Array.isArray(listed) ? listed : listed?.marketplaces;
       if (!Array.isArray(list)) throw new Error("Unrecognized marketplace inventory.");
-      const exists = list.some((item) => (item.name ?? item.marketplaceName) === "akm-plugins");
+      const exists = list.some((item: Loose) => (item.name ?? item.marketplaceName) === "akm-plugins");
       if (!exists)
         await command([
           "plugin",
@@ -329,7 +400,7 @@ export class HostTools {
     }
     await this.inventory(env);
     const after = this.state.harnesses.find((item) => item.id === id)?.plugin;
-    if (!["installed", "configured"].includes(after?.state))
+    if (!after || !["installed", "configured"].includes(after.state))
       throw new Error("The native installation could not be verified.");
     this.state.receipt =
       id === "codex"
@@ -338,7 +409,7 @@ export class HostTools {
   }
 }
 
-export function summarizeUpgrade(result) {
+export function summarizeUpgrade(result: Loose) {
   return Object.fromEntries(
     [
       "currentVersion",

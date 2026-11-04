@@ -1,3 +1,9 @@
+<!--
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at https://mozilla.org/MPL/2.0/.
+-->
+
 <script lang="ts">
   import { onMount, tick, type Snippet } from "svelte";
   import { afterNavigate, beforeNavigate } from "$app/navigation";
@@ -206,8 +212,8 @@
   </main>
   <footer class="desktop-footer">
     <span class="build-label" title={metadata?.commit ? `Build ${metadata.commit}` : undefined}
-      >AKM Desktop <span>{metadata?.version ?? ""}</span>{#if metadata?.commit && metadata.commit !== "development"}<span
-          class="build-commit">{metadata.commit}</span
+      >AKM Desktop <span>{metadata?.version ?? ""}</span
+      >{#if metadata?.commit && metadata.commit !== "development"}<span class="build-commit">{metadata.commit}</span
         >{/if}</span
     >
     <label class="theme-picker"

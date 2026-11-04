@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 // Adapted from fwdslsh/fhold admin-desktop.ts (MIT); see THIRD_PARTY.md.
 
 import { randomUUID } from "node:crypto";
@@ -6,10 +10,14 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export const DESKTOP_ID = "dev.fwdslsh.akm-desktop";
 
+/** @typedef {{ platform: string, packaged: boolean, home: string, appImage?: string, icon: string, dataHome?: string }} MenuEnvironment */
+
+/** @param {string} value */
 function escapeValue(value) {
   return value.replaceAll("\\", "\\\\").replaceAll("\n", "\\n").replaceAll("\r", "\\r").replaceAll("\t", "\\t");
 }
 
+/** @param {string} appImage */
 export function desktopEntry(appImage) {
   // String decoding precedes Exec quoting. There is no shell or URL/file input.
   if (!isAbsolute(appImage) || appImage.includes("="))
@@ -20,6 +28,9 @@ export function desktopEntry(appImage) {
 
 /** Explicit per-user installation; no sudo, shell launcher, AKM data or startup writes. */
 export class DesktopMenu {
+  /** @type {Promise<unknown> | undefined} */
+  pending;
+  /** @param {MenuEnvironment} environment */
   constructor(environment) {
     this.environment = environment;
     const data =
@@ -34,8 +45,9 @@ export class DesktopMenu {
   }
   async status() {
     const env = this.environment;
-    const supported = env.platform === "linux" && env.packaged && Boolean(env.appImage && isAbsolute(env.appImage));
-    const runningInstalledCopy = supported && resolve(env.appImage) === resolve(this.paths.appImage);
+    const appImage = env.appImage;
+    const supported = env.platform === "linux" && env.packaged && Boolean(appImage && isAbsolute(appImage));
+    const runningInstalledCopy = supported && resolve(String(appImage)) === resolve(this.paths.appImage);
     const [entry, image, icon] = await Promise.all([
       readFile(this.paths.entry, "utf8").catch(() => ""),
       stat(this.paths.appImage).catch(() => undefined),
@@ -56,19 +68,24 @@ export class DesktopMenu {
   busy() {
     return Boolean(this.pending);
   }
+  /** @param {() => Promise<boolean>} [confirmReplacement] */
   install(confirmReplacement = async () => false) {
     this.pending ??= this.performInstall(confirmReplacement).finally(() => {
       this.pending = undefined;
     });
     return this.pending;
   }
+  /** @param {() => Promise<boolean>} confirmReplacement */
   async performInstall(confirmReplacement) {
     const status = await this.status();
-    if (!status.supported) throw new Error("Menu installation is available in the Linux AppImage.");
+    const source = this.environment.appImage;
+    if (!status.supported || !source) throw new Error("Menu installation is available in the Linux AppImage.");
     if (status.replacesExistingCopy && !(await confirmReplacement())) return status;
     const icon = await readFile(this.environment.icon);
     const entry = desktopEntry(this.paths.appImage);
+    /** @type {{ temporary: string, destination: string }[]} */
     const staged = [];
+    /** @type {(destination: string, mode: number, write: (temporary: string) => Promise<unknown>) => Promise<void>} */
     const stage = async (destination, mode, write) => {
       await mkdir(dirname(destination), { recursive: true });
       const temporary = `${destination}.${randomUUID()}.tmp`;
@@ -78,7 +95,7 @@ export class DesktopMenu {
     };
     try {
       if (!status.runningInstalledCopy)
-        await stage(this.paths.appImage, 0o755, (temporary) => copyFile(this.environment.appImage, temporary));
+        await stage(this.paths.appImage, 0o755, (temporary) => copyFile(source, temporary));
       await stage(this.paths.icon, 0o644, (temporary) => writeFile(temporary, icon, { flag: "wx" }));
       await stage(this.paths.entry, 0o644, (temporary) => writeFile(temporary, entry, { flag: "wx" }));
       // Do not publish a menu entry before its executable and icon are ready.

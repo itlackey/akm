@@ -1,7 +1,7 @@
 {
   "extends": "$app/tsconfig",
-  "include": ["src", "tests", "electron", "scripts", "*"],
-  "exclude": ["src/service-worker"],
+  "include": ["src", "electron", "scripts", "vite.config.ts"],
+  "exclude": ["build", "out", ".core", "src/service-worker"],
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,

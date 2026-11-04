@@ -1,7 +1,11 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createFixture } from "../scripts/fixture.mjs";
-import { findProgram, HostTools, hostEnvironment, runHost } from "../src/lib/server/features/host-tools.mjs";
+import { findProgram, HostTools, hostEnvironment, runHost } from "../src/lib/server/features/host-tools.ts";
 
 test("native harness installers configure AKM only in isolated homes", {
   skip: process.env.AKM_DESKTOP_TEST_LIVE_PLUGINS !== "1",
