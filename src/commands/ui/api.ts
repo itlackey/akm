@@ -49,6 +49,8 @@ import { akmMetrics, metricsWindow, readUsageRows } from "../metrics/metrics-cli
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../proposal/repository";
 import { validateProposal } from "../proposal/validators/proposals";
+import { akmReadDocument } from "../read/document";
+import { akmRelated } from "../read/related";
 import { akmSearch, normalizeScopeFilters, parseBeliefFilterMode } from "../read/search";
 import { akmShowUnified } from "../read/show";
 import { assembleInfo } from "../sources/info";
@@ -56,7 +58,6 @@ import { akmListSources } from "../sources/installed-stashes";
 import { assetImprove } from "./asset-improve";
 import { bundleFileLocation, listBundleFiles } from "./bundle-files";
 import { classifyOutcome, decidedAt, pChart, weekOf, weekRange } from "./derive";
-import { readDocumentSource } from "./document-source";
 import { listFolders } from "./folders";
 import { readBundleGitStatus, readFileRevision, readRecentCommits } from "./git-read";
 import { improveImpact } from "./impact";
@@ -65,7 +66,6 @@ import { searchMisses } from "./misses";
 import { overviewPulse } from "./pulse";
 import { section, tryStashDir, withReadonlyStateDb } from "./readers";
 import { isSecretEnvName, redactForUi } from "./redact";
-import { relatedAssets } from "./related";
 
 type Query = URLSearchParams;
 type Handler = (query: Query) => unknown | Promise<unknown>;
@@ -668,13 +668,13 @@ async function asset(query: Query) {
   };
 }
 
-async function assetRelated(query: Query) {
+function assetRelated(query: Query) {
   const scope = query.get("scope") ?? "all";
   if (scope !== "all" && scope !== "bundle") throw new UsageError("scope must be all or bundle.");
-  const selected = await asset(query);
-  if (selected.redacted || !selected.asset?.path || !selected.bundle)
-    return { available: false, note: "This asset has no comparable indexed content.", matches: [] };
-  return relatedAssets(selected.asset.path, selected.bundle, scope);
+  const ref = (query.get("ref") ?? "").trim();
+  if (!ref)
+    throw new UsageError("An asset ref is required: /api/asset/related?ref=<ref>.", "MISSING_REQUIRED_ARGUMENT");
+  return akmRelated(ref, scope);
 }
 
 async function assetHistory(query: Query) {
@@ -753,7 +753,7 @@ const ROUTES: Record<string, Handler> = {
   "/api/asset": asset,
   "/api/asset/history": assetHistory,
   "/api/asset/related": assetRelated,
-  "/api/asset/source": (query) => readDocumentSource(query.get("ref") ?? ""),
+  "/api/asset/source": (query) => akmReadDocument(query.get("ref") ?? ""),
 };
 
 const PROPOSAL_ROUTE = /^\/api\/proposals\/([^/]+)$/;

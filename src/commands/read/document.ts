@@ -10,6 +10,7 @@ import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement"
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
 import { resolveBundleWriteTarget } from "../../core/mutation-target";
 import {
   assertAkmAssetWrite,
@@ -22,8 +23,9 @@ import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
-import { akmShowUnified } from "../read/show";
-import { redactUrlsInText } from "./redact";
+import { redactUrlsInText } from "../ui/redact";
+import { writeMarkdownAsset } from "./knowledge";
+import { akmShowUnified } from "./show";
 
 /** An indexed asset file whose bundle accepts AKM writes, found the way the UI reads it. */
 export async function resolveWritableIndexedAsset(ref: string) {
@@ -82,7 +84,7 @@ async function loadDocument(ref: string) {
 }
 
 /** Authoring reads are limited to indexed, writable AKM single-file assets, never arbitrary paths. */
-export async function readDocumentSource(ref: string): Promise<{
+export async function akmReadDocument(ref: string): Promise<{
   ref: string;
   type: string;
   content: string;
@@ -97,7 +99,7 @@ export async function readDocumentSource(ref: string): Promise<{
  * asset-mutation lease, compare the live bytes with `revision`, then write through the ordinary asset writer, commit
  * the git boundary and index the file.
  */
-export async function saveSingleFileDocument(ref: string, content: string, revision: string) {
+async function saveSingleFileDocument(ref: string, content: string, revision: string) {
   const doc = await loadDocument(ref);
   const identity = parseRefInput(doc.canonical);
   const written = await withAssetMutationLease("ui-document-save", async () => {
@@ -118,4 +120,30 @@ export async function saveSingleFileDocument(ref: string, content: string, revis
   if (!("unchanged" in written))
     await indexWrittenAssets(doc.target.source.path, [written.path], { bundleId: identity.origin });
   return written;
+}
+
+/**
+ * Save `content` over the document at `ref` if its raw SHA-256 is still `revision`. Knowledge and memory go through the
+ * Markdown writer (and record its event); every other single-file type through the ordinary asset writer.
+ */
+export async function akmSaveDocument(ref: string, content: string, revision: string) {
+  const source = await akmReadDocument(ref);
+  if (source.type !== "knowledge" && source.type !== "memory") return saveSingleFileDocument(ref, content, revision);
+  const identity = parseRefInput(source.ref);
+  const result = await writeMarkdownAsset({
+    type: source.type,
+    content,
+    name: identity.name,
+    fallbackPrefix: source.type,
+    target: identity.origin,
+    force: true,
+    expectedContentHash: revision,
+  });
+  if (!result.unchanged)
+    appendEvent({
+      eventType: source.type === "knowledge" ? "import" : "remember",
+      ref: result.ref,
+      metadata: { source: "ui", path: result.path, force: true },
+    });
+  return result;
 }
