@@ -217,19 +217,14 @@ export async function remove(input: SensitiveSelector & { revision: string }) {
   if (typeof input.revision !== "string" || !input.revision)
     throw new UsageError("Provide the file and its current revision.");
   const { revision } = input;
-  const chosen = selection(input);
-  const { absPath: file } = (chosen.type === "env" ? resolveEnvWriteTarget : resolveSecretWriteTarget)(
-    chosen.ref,
-    undefined,
-  );
-  const markerStat = fs.lstatSync(sensitiveMarkerPath(file, chosen.type), { throwIfNoEntry: false });
-  if (markerStat && !markerStat.isFile())
-    throw new UsageError("The sensitive marker is not a regular file. Resolve it before deleting this asset.");
   const { absolute: _absolute, ...result } = await write(
     input,
     "Remove",
     (target, marker) => [target, marker],
     (target, type) => {
+      const marker = fs.lstatSync(sensitiveMarkerPath(target, type), { throwIfNoEntry: false });
+      if (marker && !marker.isFile())
+        throw new UsageError("The sensitive marker is not a regular file. Resolve it before deleting this asset.");
       changedSince(target, revision);
       (type === "env" ? removeEnv : removeSecret)(target);
     },

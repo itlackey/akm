@@ -426,8 +426,10 @@ Failures from the decision itself keep the usual envelope. Codes and statuses:
 | `404` | `PROPOSAL_NOT_FOUND` | No proposal has that id (or an ambiguous or unknown prefix). |
 | `409` | `PROPOSAL_STALE` | The asset changed (or was created) after the proposal was made, so accepting would overwrite newer content. Nothing is written. |
 | `409` | `PROPOSAL_NOT_PENDING` | The proposal was already accepted, rejected or reverted. |
-| `409` | `ASSET_MUTATION_LEASE_HELD` | Another akm process (an `improve` run, the CLI) or request holds the write lease. Retry in a moment; the request does not wait. |
-| `500` | `INTERNAL_ERROR`, other akm codes | Anything else. |
+| `409` | `ASSET_MUTATION_LEASE_HELD` | Another akm process (an `improve` run, the CLI) or request holds the write lease. Retry in a moment; the request waits only a few seconds. |
+| `409` | other config codes | A config refusal the user can address. |
+| `503` | other transient codes | Other contention; retry. |
+| `500` | `INTERNAL_ERROR` | Anything that is not an akm error. |
 
 ### `POST /api/proposals/:id/accept`
 
@@ -834,7 +836,8 @@ Failures keep the `code` the operation raised (for a child command, the code in 
 | --- | --- |
 | `400` | A usage error: bad input, or a child that exits `2`. |
 | `404` | Not found: an unknown asset or a deleted source, or a child that exits `1`. |
-| `409` | A refusal the user can address: a stale revision (`ASSET_CONTENT_CHANGED`), a held asset-mutation lease (`ASSET_MUTATION_LEASE_HELD`) or another transient error (a child that exits `75`), or a config refusal such as a read-only bundle (`INVALID_CONFIG_FILE`, or a child that exits `78`). |
+| `409` | A refusal the user can address: a stale revision (`ASSET_CONTENT_CHANGED`), a held asset-mutation lease (`ASSET_MUTATION_LEASE_HELD`), or a config refusal such as a read-only bundle (`INVALID_CONFIG_FILE`, or a child that exits `78`). |
+| `503` | Other transient contention (a child that exits `75` with any other code); retry. |
 | `500` | A child that exits `70`, is killed or cannot start, any other error akm does not classify, and `INVALID_COMMAND_RESPONSE` below. |
 
 A child command that exits zero without a valid expected JSON result returns `500 INVALID_COMMAND_RESPONSE`.

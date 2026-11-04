@@ -2107,7 +2107,7 @@ describe("workspace actions", () => {
       );
     const s = await start();
     const cases: Array<[ReturnType<typeof child>, number, string]> = [
-      [child("malformed", 'process.stdout.write("not json\\n");'), 500, "INTERNAL_ERROR"],
+      [child("malformed", 'process.stdout.write("not json\\n");'), 500, "INVALID_COMMAND_RESPONSE"],
       [fail(1, "ASSET_NOT_FOUND"), 404, "ASSET_NOT_FOUND"],
       [fail(2, "INVALID_FLAG_VALUE"), 400, "INVALID_FLAG_VALUE"],
       [fail(75, "ASSET_MUTATION_LEASE_HELD"), 409, "ASSET_MUTATION_LEASE_HELD"],

@@ -24,6 +24,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { AkmError, CONFLICT_CODES } from "../../core/errors";
 import { getDirname } from "../../runtime";
+import { InvalidCommandResponse } from "../../workspace/cli-child";
 import { scrubUrlCredentials } from "../../workspace/redact";
 import { handleApiRequest, NO_SUCH_ROUTE } from "./api";
 import { EMBEDDED_UI } from "./embedded-ui";
@@ -182,10 +183,11 @@ function readBody(req: http.IncomingMessage, limit: number): Promise<string | nu
 /**
  * HTTP status for an error thrown by an operation: a conflict code is `409` whatever its kind, a config refusal (a
  * read-only bundle) is something the user can address (`409`), contention is `503`, and anything that is not an
- * `AkmError` is an internal failure (`500`).
+ * `AkmError` is an internal failure (`500`); the page locks an action that failed with `INVALID_COMMAND_RESPONSE`.
  */
 function httpError(error: unknown): { status: number; code: string; message: string } {
   const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof InvalidCommandResponse) return { status: 500, code: error.code, message };
   if (!(error instanceof AkmError)) return { status: 500, code: "INTERNAL_ERROR", message };
   const status = CONFLICT_CODES.has(error.code)
     ? 409

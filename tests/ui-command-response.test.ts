@@ -20,6 +20,7 @@ test("workspace command responses require the expected JSON result and never rep
       parseCommandResponse(stdout, "import");
     } catch (error) {
       expect((error as Error).message).toContain("Reload the view before retrying");
+      expect(error).toMatchObject({ code: "INVALID_COMMAND_RESPONSE" });
     }
   }
   // The result comes back without its envelope.

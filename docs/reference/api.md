@@ -135,7 +135,8 @@ bundle) and `transient` contention. A failure that is not an `AkmError` is an in
 
 **Leases.** Interactive writes wait at most a few seconds for another akm process holding the
 asset-mutation lease and then reject with `ASSET_MUTATION_LEASE_HELD`; they never wait the CLI's
-ten minutes. `acceptMany` and `rejectMany` are not atomic: each id is its own decision and every
+ten minutes. The operations that run the CLI as a child (below) are the exception: the child takes
+the lease itself, with the CLI's wait. `acceptMany` and `rejectMany` are not atomic: each id is its own decision and every
 failed id in the result carries its `code`.
 
 Reads open `index.db` and `state.db` read-only and never create or migrate them. Mutations keep the
@@ -147,7 +148,9 @@ Node wrapper and assets. Under Node the existing invocation resolver finds `dist
 relative to the installed package; no global `akm` is needed. `AKM_LAUNCHER_NODE` names the Node
 executable the launcher uses for those children; an Electron host using its executable for Node
 children must also set `ELECTRON_RUN_AS_NODE=1` in the child's inherited environment. Never
-automatically retry a failed mutation: a child may have changed state before its response failed.
+automatically retry a failed mutation: a child may have changed state before its response failed
+(a child that exits zero without its expected result rejects with a plain `Error` whose `code` is
+`INVALID_COMMAND_RESPONSE`).
 
 `documents.copy({sourceRef, target?, newName?})` copies an asset to a managed bundle and never
 overwrites; `documents.retire` archives one (undo is `proposals.revert` of the returned

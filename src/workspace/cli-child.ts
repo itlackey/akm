@@ -13,18 +13,28 @@ const KIND_BY_EXIT: Record<number, AkmErrorKind> = { 1: "not-found", 2: "usage",
 
 /** Preserve the CLI's error identity while crossing a process boundary. */
 class CommandError extends AkmError {
-  readonly kind: AkmErrorKind;
   constructor(
     message: string,
     readonly code: string,
-    exitCode: string | number | null | undefined,
+    readonly kind: AkmErrorKind,
   ) {
     super(message);
-    // Exit 70, a signal or a failed spawn: akm itself failed, not the request. It stays a plain internal error.
-    this.kind = (typeof exitCode === "number" ? KIND_BY_EXIT[exitCode] : undefined) ?? "config";
   }
   hint() {
     return undefined;
+  }
+}
+
+/**
+ * The child exited zero without the expected result. Not an `AkmError` (akm failed, not the request), but it keeps
+ * its own code: the action may already have happened, so a client must reload rather than repeat it.
+ */
+export class InvalidCommandResponse extends Error {
+  readonly code = "INVALID_COMMAND_RESPONSE";
+  constructor() {
+    super(
+      "AKM returned an invalid action response. State may already have changed. Reload the view before retrying; do not automatically repeat the action.",
+    );
   }
 }
 
@@ -47,9 +57,7 @@ export function parseCommandResponse(stdout: string, expectedShape: string): Rec
     const { shape: _shape, schemaVersion: _schemaVersion, ...result } = parsed;
     return redactForUi(result) as Record<string, unknown>;
   } catch {
-    throw new Error(
-      "AKM returned an invalid action response. State may already have changed. Reload the view before retrying; do not automatically repeat the action.",
-    );
+    throw new InvalidCommandResponse();
   }
 }
 
@@ -87,13 +95,9 @@ export async function runCli(args: string[], input?: string, userFeedback = fals
             /* Keep the command's readable error. */
           }
           const message = redactUrlsInText(detail.error ?? (stderr.trim() || error.message));
-          const exit = typeof error.code === "number" ? error.code : undefined;
-          // An exit the contract does not classify is akm failing, not the request: a plain Error.
-          reject(
-            exit !== undefined && KIND_BY_EXIT[exit]
-              ? new CommandError(message, detail.code ?? "COMMAND_FAILED", exit)
-              : new Error(message),
-          );
+          const kind = typeof error.code === "number" ? KIND_BY_EXIT[error.code] : undefined;
+          // Exit 70, a signal or a failed spawn is akm failing, not the request: a plain Error.
+          reject(kind ? new CommandError(message, detail.code ?? "COMMAND_FAILED", kind) : new Error(message));
           return;
         }
         try {

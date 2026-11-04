@@ -301,12 +301,6 @@ export async function reopen(input: { id: string }) {
   });
 }
 
-/** One failed id inside a batch, with the stable code of what went wrong. */
-function failure(id: string, error: unknown) {
-  const code = error instanceof AkmError ? error.code : "ACCEPT_FAILED";
-  return { ok: false as const, id, error: error instanceof Error ? error.message : String(error), code };
-}
-
 /** One shared reason; each proposal is decided on its own, so one failure leaves the rest rejected. */
 export async function rejectMany(input: { ids: string[]; reason: string }) {
   const ids = batchIds(input.ids);
@@ -318,7 +312,13 @@ export async function rejectMany(input: { ids: string[]; reason: string }) {
         const result = await akmProposalReject({ id, reason });
         results.push({ ok: true, id: result.id, ref: result.ref, proposal: summary(result.proposal) });
       } catch (error) {
-        results.push(failure(id, error));
+        const message = error instanceof Error ? error.message : String(error);
+        results.push({
+          ok: false,
+          id,
+          error: message,
+          code: error instanceof AkmError ? error.code : "INTERNAL_ERROR",
+        });
       }
     }
     const rejected = results.filter((r) => r.ok).length;

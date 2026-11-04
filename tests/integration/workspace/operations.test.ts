@@ -9,9 +9,10 @@ import path from "node:path";
 import { createProposal } from "../../../src/commands/proposal/repository";
 import { saveConfig } from "../../../src/core/config/config";
 import { CONFLICT_CODES } from "../../../src/core/errors";
+import { readEvents } from "../../../src/core/events";
 import { acquireAssetMutationLease } from "../../../src/indexer/index-writer-lock";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { documents, proposals, sensitive } from "../../../src/workspace";
+import { assets, documents, proposals, sensitive } from "../../../src/workspace";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -114,4 +115,23 @@ test("env and secret writes check the revision with the bytes they replace or re
   expect(saved.revision).toBe(sha("A=4\n"));
   expect(await sensitive.remove({ ref: created.ref, revision: saved.revision })).toMatchObject({ removed: true });
   expect(fs.existsSync(info.path)).toBe(false);
+});
+
+test("createKnowledge writes, indexes and records the import as `akm import -` does, and refuses an existing name", async () => {
+  const created = await documents.createKnowledge({
+    bundle: "stash",
+    name: "fresh",
+    content: "# Fresh\n\nNew note.\n",
+  });
+  expect(fs.readFileSync(created.path, "utf8")).toContain("New note.");
+  const shown = (await assets.show({ ref: "stash//knowledge/fresh" })) as { durableRef: string | null };
+  expect(shown.durableRef).toBe("stash//knowledge/fresh");
+  expect(readEvents({ type: "import" }).events.map((event) => event.metadata)).toContainEqual({
+    source: "-",
+    path: created.path,
+    force: false,
+  });
+  expect(await code(documents.createKnowledge({ bundle: "stash", name: "fresh", content: "Again.\n" }))).toBe(
+    "RESOURCE_ALREADY_EXISTS",
+  );
 });

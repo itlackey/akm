@@ -16,11 +16,10 @@ export function toHttpError(error: unknown): { status: number; code: string; mes
 export const fail = (status: number, code: string, message: string) => failure(status, code, scrubUrlCredentials(message) as string);
 const failed = (error: unknown) => { const { status, code, message } = toHttpError(error); return fail(status, code, message); };
 
-// akm results can carry SQLite integers; the envelope is plain JSON.
-const json = (value: unknown) => JSON.stringify(value, (_key, item: unknown) => typeof item === 'bigint' ? Number(item) : item);
-export const success = (data: unknown) => new Response(json({ ok: true, data: scrubUrlCredentials(data) }), { headers: { 'Content-Type': 'application/json' } });
+// Operations return plain JSON-safe data (no bigint, no envelope).
+export const success = (data: unknown) => Response.json({ ok: true, data: scrubUrlCredentials(data) });
 /** A response that returns literal bytes (a file's text, an explicit reveal): not scrubbed and never cached. */
-const literal = (data: unknown) => new Response(json({ ok: true, data }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+const literal = (data: unknown) => Response.json({ ok: true, data }, { headers: { 'Cache-Control': 'no-store' } });
 
 const DEFAULT_LIMIT = 65_536;
 const DOCUMENT_LIMIT = 8 * 1_048_576;
