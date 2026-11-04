@@ -2,8 +2,13 @@
 
 - Keep business logic in AKM. Import only the published `akm-cli/workspace`
   surface in application code; never copy domain logic or deep-import `dist/`.
-- Use the existing public API semantics. New moves, deletions, retirement,
-  schema changes or proposal behavior require a separate scoped design.
+  Desktop's own code is its HTTP shell, the host-software view (`host-tools.mjs`,
+  which drives the host CLI and harnesses) and the protected-file reveal policy.
+  Editing, copying, moving (copy, then retire), related content, retirement,
+  env/secret writes and bundle rename are AKM operations; if one is missing,
+  add it to AKM rather than composing write primitives here.
+- Use the existing public API semantics. New deletions, retirement, schema
+  changes or proposal behavior require a separate scoped design.
 - Keep the renderer sandboxed and the server private to the app. Test
   authentication, source conflicts and credential redaction after changes.
 - Test only against generated synthetic HOME/XDG/AKM paths. Do not run manual

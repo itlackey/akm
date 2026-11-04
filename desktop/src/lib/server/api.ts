@@ -8,9 +8,6 @@ import {
 import { failure } from './security.js';
 import { readPreferences, saveTheme, validTheme } from './preferences.js';
 import { desktopUpdate, hostTools } from './software.mjs';
-import { related } from './related.js';
-import { previewMove, applyMove } from './asset-files.js';
-import { sourceResponse, saveSource } from './asset-source.js';
 import { isSensitiveRef, sensitiveMetadata, revealSensitive, mutateSensitive } from './sensitive-assets.js';
 
 const fail = (status: number, code: string, message: string) =>
@@ -30,8 +27,6 @@ export async function dispatch(request: Request, url: URL): Promise<Response> {
         ? { hostname: os.hostname(), version: process.env.AKM_DESKTOP_VERSION ?? 'development', akmVersion: akmPackage.version, commit: process.env.AKM_DESKTOP_COMMIT }
         : path === '/api/desktop/preferences' ? await readPreferences()
         : path === '/api/desktop/software' ? { host: hostTools.snapshot(), desktop: await desktopUpdate() }
-        : path === '/api/asset/related' ? await related(url.searchParams.get('ref') ?? '', url.searchParams.get('scope') ?? 'all')
-        : path === '/api/asset/source' ? await sourceResponse(url.searchParams.get('ref') ?? '', url.searchParams.get('bundle') ?? '', url.searchParams.get('file') ?? '')
         : path === '/api/asset/sensitive' || (path === '/api/asset' && isSensitiveRef(url.searchParams.get('ref') ?? ''))
           ? sensitiveMetadata(Object.fromEntries(url.searchParams))
         : await handleApiRequest(path, url.searchParams);
@@ -55,11 +50,10 @@ export async function dispatch(request: Request, url: URL): Promise<Response> {
   const copy = path === '/api/asset/copy';
   const preferences = path === '/api/desktop/preferences';
   const software = path === '/api/desktop/software';
-  const move = path === '/api/asset/move' || path === '/api/asset/move/preview';
   const reveal = path === '/api/asset/reveal';
   const sensitiveActions: Record<string, 'create' | 'save' | 'delete'> = { '/api/asset/sensitive/create': 'create', '/api/asset/sensitive/save': 'save', '/api/asset/sensitive/delete': 'delete' };
   const sensitiveAction = sensitiveActions[path];
-  if (!workspace && !proposal && !copy && !preferences && !software && !move && !reveal && !sensitiveAction) return failure(404, 'NOT_FOUND', 'No such action.');
+  if (!workspace && !proposal && !copy && !preferences && !software && !reveal && !sensitiveAction) return failure(404, 'NOT_FOUND', 'No such action.');
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) {
     return failure(415, 'UNSUPPORTED_MEDIA_TYPE', 'Actions require application/json.');
   }
@@ -83,11 +77,8 @@ export async function dispatch(request: Request, url: URL): Promise<Response> {
     // The explicit, authenticated reveal is the sole response that returns
     // literal secret bytes. Do not run the generic URL-credential scrubber.
     if (reveal) return Response.json({ ok: true, data: revealSensitive(body) }, { headers: { 'Cache-Control': 'no-store' } });
-    if (sensitiveAction) return success(await mutateSensitive(sensitiveAction, body));
-    if (move) {
-      try { data = path.endsWith('/preview') ? await previewMove(body) : await applyMove(body); }
-      catch (error) { return fail(409, 'MOVE_REFUSED', error instanceof Error ? error.message : 'Could not move this asset.'); }
-    } else if (software) {
+    if (sensitiveAction) return success(mutateSensitive(sensitiveAction, body));
+    if (software) {
       if (!body || typeof body !== 'object' || Array.isArray(body)) return failure(400, 'INVALID_SOFTWARE_ACTION', 'A software action is required.');
       const value = body as Record<string, unknown>;
       if (Object.keys(value).some(key => !['action', 'harness', 'channel', 'settings'].includes(key)) || typeof value.action !== 'string')
@@ -120,8 +111,7 @@ export async function dispatch(request: Request, url: URL): Promise<Response> {
         return failure(400, 'INVALID_JSON_ARGUMENT', 'Provide sourceRef and optional target bundle and newName; overwriting is not supported.');
       }
       data = await akmClone({ sourceRef: value.sourceRef, target: value.target as string | undefined, newName: value.newName as string | undefined, force: false });
-    } else if (workspace === 'document-save') data = await saveSource(body);
-    else if (workspace) data = await handleWorkspaceAction(workspace, body);
+    } else if (workspace) data = await handleWorkspaceAction(workspace, body);
     else data = await handleWriteRequest(proposal!, body);
     return success(data);
   } catch (error) {

@@ -54,22 +54,30 @@ function json(text) {
   return value?.data ?? value;
 }
 
+// The same lookup as akm's `openCodeConfigSpec` (src/commands/sources/plugin-upgrade.ts), so Software and `akm upgrade`
+// agree on which plugin OpenCode loads: opencode.jsonc before opencode.json, OPENCODE_CONFIG only for OpenCode 1, and
+// for OpenCode 1 the first global file that sets the list decides. Unlike akm, a file Desktop cannot read stops the
+// check (the plugin shows as unverified) rather than being skipped.
 async function openCodePlugin(env, home, major) {
-  const directory = env.OPENCODE_CONFIG_DIR || path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'opencode');
-  const files = [...new Set([env.OPENCODE_CONFIG, path.join(directory, 'opencode.json'), path.join(directory, 'opencode.jsonc')].filter(Boolean))];
+  const directory = env.OPENCODE_CONFIG_DIR?.trim() || path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'opencode');
+  const explicit = major === 2 ? undefined : env.OPENCODE_CONFIG?.trim();
+  const files = [explicit, path.join(directory, 'opencode.jsonc'), path.join(directory, 'opencode.json')].filter(Boolean);
   const pkg = major === 2 ? 'akm-opencode-v2' : 'akm-opencode';
   for (const file of files) {
     let text;
     try { text = await readFile(file, 'utf8'); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     const errors = [], config = parse(text, errors, { allowTrailingComma: true });
     if (errors.length || !config || typeof config !== 'object') throw new Error('OpenCode configuration could not be read.');
+    let setsList = false;
     for (const key of major === 2 ? ['plugins', 'plugin'] : ['plugin']) {
       if (config[key] !== undefined && !Array.isArray(config[key])) throw new Error('OpenCode plugin configuration is not a list.');
+      if (config[key] !== undefined) setsList = true;
       for (const entry of config[key] ?? []) {
         const spec = Array.isArray(entry) ? entry[0] : entry;
         if (typeof spec === 'string' && (spec === pkg || spec.startsWith(pkg + '@'))) return { spec, file };
       }
     }
+    if (setsList && file !== explicit && major === 1) return undefined;
   }
   return undefined;
 }

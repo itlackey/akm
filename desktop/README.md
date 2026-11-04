@@ -38,8 +38,9 @@ AKM version appear in the header. Nothing is copied from another machine.
   bundle folders with a keyboard-operable tree and breadcrumbs. Edit supported
   Markdown with formatting buttons and preview, or other text as source.
   Follow recorded connections, compare stored cosine similarity, rename/move
-  single-file assets, move whole skills between bundles and edit their text
-  files. Create, compare, copy, inspect history and record feedback. Diffs start inline.
+  single-file assets (a copy, then a retirement of the original), copy whole
+  skills between bundles and edit their `SKILL.md`. Create, compare, copy,
+  inspect history and record feedback. Diffs start inline.
   Environment files and secrets open masked; use **Show / Hide** to read them.
   Create, edit and delete them directly; values and edits stay in memory only,
   never in retained drafts. Leaving unsaved edits asks before discarding them.
@@ -176,8 +177,8 @@ with filters. This v1 is a foundation for human curation, not a claim that the
 larger file-manager design is complete.
 
 Files lists actual folders, including unindexed files, without rebuilding the
-index. Supporting text files inside indexed skills can be viewed and edited;
-other unindexed files are listed but not editable.
+index. Unindexed files, including a skill's supporting files, are listed but
+neither viewed nor edited: only assets AKM indexes can be edited.
 The editor preserves Markdown source/frontmatter; its preview supports a safe
 Markdown subset, not an HTML editor or arbitrary embedded content.
 
@@ -194,20 +195,16 @@ enabled bundles or just the current one. Browsing makes no model request.
 Scores describe indexed content, not a verdict that something is a duplicate.
 Compare opens the existing inline comparison.
 
-Use **More → Rename or move** for a single-file asset, or **Move skill to bundle**
-for a complete skill. Preview shows every changed file. Supported link repairs
-cover exact qualified refs and simple Markdown relative links in indexed files.
-Package-internal links stay relative. Short refs, code, unusual syntax,
-unindexed callers and installed schedules still require review. Renaming a task
-does not change the installed scheduler; review and run `akm task sync` separately.
-Existing usage/proposal history does not transfer to a renamed identity.
-
-Move originals are retained under each affected bundle's
-`.akm/desktop-moves/<operation>/`, alongside a restore map. Individual skill or
-other source-file edits preserve their original under `.akm/desktop-edits/`.
-Neither is searchable knowledge. No destination is overwritten; stale previews,
-read-only bundles and symlink escapes are refused. Git and indexing follow AKM
-policy, including embedding-provider calls on changed content when configured.
+Use **More → Rename or move** for a single-file asset. It copies the asset to
+the chosen bundle and name (AKM's copy, which never overwrites and records the
+original in the copy's `sources`), then retires the original, so the original
+is recoverable from Review. Links and refs to the old name are not rewritten;
+`akm lint` reports them. Installed schedules are not changed: after moving a
+task, run `akm task sync`. Existing usage/proposal history does not transfer to
+the new identity. Skills can be copied (**Copy to bundle**) but not moved.
+Edits and copies follow AKM's write, Git and indexing policy, including
+embedding-provider calls on changed content when configured. Desktop keeps no
+backup copies of its own.
 
 **More → Retire** immediately retires a single-file asset. It is recorded as an
 accepted retirement, so it appears in Review and Activity and follows the same

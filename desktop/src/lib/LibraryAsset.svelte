@@ -190,9 +190,9 @@
               <button on:click={compare}>Compare with another asset</button>
               <button on:click={copyRef}><Icon name="link" size={16} />Copy ref</button>
               {#if writable.length}<button on:click={beginCopy}><Icon name="copy" size={16} />Copy to bundle…</button>{/if}
-              {#if data.asset.editable && !['env', 'secret', 'session'].includes(data.asset.type ?? '')}
-                <button on:click={() => showView('Move')}><Icon name="folder" size={16} />{data.asset.type === 'skill' ? 'Move skill to bundle…' : 'Rename or move…'}</button>
-                {#if data.asset.type !== 'skill'}<button on:click={retire} disabled={busy || !retireRevision} title="Move to the recoverable archive now"><Icon name="history" size={16} />Retire</button>{/if}
+              {#if data.asset.editable && !['env', 'secret', 'session', 'skill'].includes(data.asset.type ?? '')}
+                <button on:click={() => showView('Move')}><Icon name="folder" size={16} />Rename or move…</button>
+                <button on:click={retire} disabled={busy || !retireRevision} title="Move to the recoverable archive now"><Icon name="history" size={16} />Retire</button>
               {/if}
             </div>
           </div>
@@ -219,7 +219,7 @@
         </div>
         <div class="reading-feedback"><span>Help improve this page</span><button class="text-action" on:click={() => showView('Feedback')}>Add feedback</button>{#if data.durableRef}<button class="text-action" on:click={() => showView('Fix')}>Suggest a correction</button>{/if}</div>
       {:else if tab === 'Move'}
-        {#key canonical}<AssetOrganize ref={canonical} {bundles} type={data.asset.type ?? ''} on:changed={() => dispatch('changed')} />{/key}
+        {#key canonical}<AssetOrganize ref={canonical} {bundles} on:changed={() => dispatch('changed')} />{/key}
       {:else if tab === 'Related'}
         {#key canonical}<AssetRelated ref={canonical} links={data.asset.links} href={assetHref} on:compare={event => dispatch('comparePair', event.detail)} />{/key}
       {:else if tab === 'Source'}

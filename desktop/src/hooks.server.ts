@@ -1,9 +1,12 @@
 import type { Handle } from '@sveltejs/kit/hooks';
 import { COOKIE, failure, sameSecret } from './lib/server/security.js';
 
-// Read once and removed, so the CLI children AKM spawns do not inherit the session credential.
-const token = process.env.AKM_DESKTOP_SESSION_TOKEN;
+// Read once and removed from the environment, so the CLI children AKM spawns do not inherit the session credential.
+// Kept on globalThis because a dev server re-evaluates this module and the variable is gone by then.
+const session = globalThis as { __akmDesktopSessionToken?: string };
+session.__akmDesktopSessionToken ??= process.env.AKM_DESKTOP_SESSION_TOKEN;
 delete process.env.AKM_DESKTOP_SESSION_TOKEN;
+const token = session.__akmDesktopSessionToken;
 
 export const handle: Handle = async ({ event, resolve }) => {
   const origin = process.env.AKM_DESKTOP_ORIGIN;

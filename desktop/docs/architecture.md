@@ -25,25 +25,32 @@ host CLI/harnesses strictly for explicit installation and upgrade management.
 | `src/lib/upstream/` | Reused AKM design tokens, escaped Markdown, diff and chart presentation |
 | `akm-cli/workspace` | Existing reads/writes, validation, policy, proposals, persistence |
 
-The namespace adds exports, a Node loader entry, public types, and tests/docs.
-The v1 folder workspace also adds one read-only API to AKM itself:
-`GET /api/bundle/files`. It lists one actual directory in an enabled, registered
-bundle, resolves canonical indexed refs, and reports unindexed files honestly.
-It reuses AKM's source roots, containment rules and read-only index connection;
-it does not recursively scan, read file bodies, create an index or mutate files.
-Asset reads carry their physical bundle location for breadcrumbs. This small
-extension lives in AKM core in this repository, not a second Desktop engine.
-The copy route is a thin validated call
-to existing `akmClone`, with overwrite disabled. No raw arbitrary filesystem
-mutation is exposed by the app.
+The namespace is a small set of existing operations (dispatchers, managed clone,
+redaction, errors and the env/secret operations) with a Node loader entry and
+hand-written types. The v1 folder workspace also adds read-only APIs to AKM itself:
+`GET /api/bundle/files` lists one actual directory in an enabled, registered
+bundle, resolves canonical indexed refs, and reports unindexed files honestly
+(it reuses AKM's source roots, containment rules and read-only index connection;
+it does not recursively scan, read file bodies, create an index or mutate files),
+and `GET /api/asset/related` lists the nearest stored embeddings of an asset.
+Asset reads carry their physical bundle location for breadcrumbs. These small
+extensions live in AKM core in this repository, not a second Desktop engine. Every
+route Desktop does not own falls through to AKM's own dispatcher. The copy route
+is a thin validated call to existing `akmClone`, with overwrite disabled. No raw
+arbitrary filesystem mutation is exposed by the app.
 
-Related-content lookup calls the exported stored-vector repository, never a
-provider or a second vector store. File organization composes native source
-resolution, placement, write policy, mutation lease, indexing and lint with
-ordinary filesystem operations on registered assets. Skill moves copy the
-whole directory, verify source/destination bytes before removal, and retain
-originals. Text editing uses the existing document writer for knowledge/memory
-and the same core mutation boundaries for other file types.
+Related content is AKM's `GET /api/asset/related`, which reads only stored vectors
+(never a provider or a second vector store) through search's own entry filter.
+Editing is AKM's `GET /api/asset/source` and `POST /api/asset/save`, which cover
+every single-file asset type under the same write target, lease and revision
+checks; a skill is edited as its `SKILL.md`, and a skill's other files are shown
+in Files but are not assets, so Desktop neither reads nor edits them.
+
+A move is two AKM operations: copy (`akmClone`, which never overwrites and
+records the original in the copy's `sources`), then retire of the original.
+Links to the old name are not rewritten; `akm lint` reports them. A skill can be
+copied but not retired, so it cannot be moved. Because the retirement is a
+proposal, Undo restores the original and leaves the copy.
 
 Manual retirement is core's ordinary retire proposal, minted and accepted at
 once and guarded by the displayed source revision. It follows the same
@@ -53,14 +60,16 @@ existing proposal revert, which moves the archive back without overwriting
 newer files and removes it. Desktop adds no archive or restore logic.
 Agent-proposed retirements still use the unchanged review workflow.
 
-Protected-file CRUD reuses native env writing/removal, secret writes, atomic
-0600 writes and Git policy, resolved through the same write-target operations as
-the CLI (so a dotenv-adapter bundle is writable). Like the CLI, it does not
-touch the index. It accepts only env/secret paths inside a writable registered
-source. Save/delete check the displayed revision;
-create refuses an existing destination. Values never appear in operation
-receipts, argv, retained drafts or new recovery copies. Delete uses the exact
-confirmed path and clears its sensitive marker. Core behavior is unchanged.
+Protected-file CRUD reuses native env writing/removal, secret writes and
+removal (`akm secret remove`), atomic 0600 writes and Git policy, resolved
+through the same write-target operations as the CLI (so a dotenv-adapter bundle
+is writable). Like the CLI, it does not touch the index and takes no lease of
+its own around the revision check (the write itself holds the lease). It accepts
+only env/secret paths inside a writable registered source. Save/delete check the
+displayed revision; create refuses an existing destination. Values never appear
+in operation receipts, argv, retained drafts or recovery copies. Delete uses the
+exact confirmed path and clears its sensitive marker. A file listed in Files
+without a ref is named with core's `deriveCanonicalAssetName`.
 
 Bundle rename is core's `bundle-rename` workspace action, which runs
 `akm bundle rename` (with `--dry-run` for the preview). Desktop adds no identity

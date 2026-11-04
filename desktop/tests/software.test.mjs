@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile, writeFile, mkdir, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, mkdir, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { HostTools, hostEnvironment, summarizeUpgrade } from '../src/lib/server/host-tools.mjs';
@@ -208,6 +208,24 @@ test('all four harness paths use standard native installation commands and verif
   f.manager.start('install-plugin', 'codex'); await f.manager.pending;
   assert.match(f.manager.snapshot().error, /already present/);
   assert.ok(f.calls.slice(count).every(call => call.args.includes('--version') || call.args.includes('list')));
+});
+
+test('OpenCode plugin detection reads config files in the order akm does', async () => {
+  const f = await hostFixture();
+  const dir = path.join(f.home, '.config/opencode'); await mkdir(dir, { recursive: true });
+  const plugin = async id => { f.manager.start('check'); await f.manager.pending; return f.manager.snapshot().harnesses.find(item => item.id === id).plugin; };
+  // opencode.jsonc is read before opencode.json; OpenCode 1 stops at the first file that sets the list.
+  await writeFile(path.join(dir, 'opencode.json'), JSON.stringify({ plugin: ['akm-opencode@latest'], plugins: ['akm-opencode-v2@next'] }));
+  await writeFile(path.join(dir, 'opencode.jsonc'), '// comment\n{ "plugin": ["another-plugin"], "plugins": ["another-plugin"], }');
+  assert.equal((await plugin('opencode')).state, 'missing');
+  // OpenCode 2 keeps looking, and does not read OPENCODE_CONFIG.
+  assert.equal((await plugin('opencode2')).spec, 'akm-opencode-v2@next');
+  await rm(path.join(dir, 'opencode.json'));
+  const explicit = path.join(f.home, 'explicit.json');
+  await writeFile(explicit, JSON.stringify({ plugin: ['akm-opencode'], plugins: ['akm-opencode-v2'] }));
+  f.manager.sourceEnv.OPENCODE_CONFIG = explicit;
+  assert.equal((await plugin('opencode')).spec, 'akm-opencode');
+  assert.equal((await plugin('opencode2')).state, 'missing');
 });
 
 test('failed native command is not reported as success and raw output is not exposed', async () => {
