@@ -1912,7 +1912,7 @@ describe("workspace actions", () => {
     ).toBe(200);
     expect(fs.readFileSync(memory, "utf8")).toContain("Updated memory.");
     const refusals: Array<[string, number, string, string]> = [
-      ["env/prod", 400, "INVALID_FLAG_VALUE", "Only single-file assets support source editing in this UI."],
+      ["env/prod", 400, "INVALID_FLAG_VALUE", "Only knowledge and memory support source editing in this UI."],
       [
         "knowledge/guide#deploy-guide",
         400,

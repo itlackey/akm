@@ -95,7 +95,7 @@ covers beyond the table.
 | `akm index` | Stable | |
 | `akm health` | Evolving | Exit codes are Evolving; report *content* and rendered `md`/`html` layout are Experimental — do not script against report layout. |
 | `akm metrics` | Experimental | New in 0.9.28. Report content, JSON shape and the `html` dashboard may change. |
-| `akm ui` | Experimental | New in 0.10. The command, its flags, the page and the `/api/` JSON it reads may change in any release. Browsing is read-only; explicit actions support proposals, feedback, bundle configuration and Markdown authoring. |
+| `akm ui` | Experimental, **frozen** | Superseded by AKM Desktop and removed in a later release; it gets no new pages or routes. The command, its flags, the page and the `/api/` JSON it reads may change in any release. Browsing is read-only; explicit actions support proposals, feedback, bundle configuration and Markdown authoring. |
 | `akm info` | Stable | |
 | `akm bundle create` | Stable | |
 | `akm bundle add` | Stable | |

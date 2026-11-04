@@ -244,3 +244,19 @@ export function withAssetMutationLeaseSync<T>(purpose: string, run: () => T): T 
 export function probeAssetMutationLease() {
   return probeLock(getIndexWriterLockPath());
 }
+
+/**
+ * Fail fast when another writer holds the asset-mutation lease. The accept and
+ * reject functions would wait up to ten minutes for it, which in a browser is a
+ * hung button; the probe turns a held lease into an immediate, retryable error.
+ */
+export async function assertWriteLeaseFree(purpose: string): Promise<void> {
+  const lease = await acquireAssetMutationLease({ mode: "try", purpose });
+  if (!lease) {
+    throw new TransientError(
+      "Another akm process or request is writing to the bundle right now. Try again in a moment.",
+      "ASSET_MUTATION_LEASE_HELD",
+    );
+  }
+  lease.release();
+}

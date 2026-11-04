@@ -94,7 +94,7 @@ importing it.
 import {
   handleApiRequest, NO_SUCH_ROUTE, matchWorkspaceAction, handleWorkspaceAction,
   matchWriteRoute, handleWriteRequest, classifyWorkspaceError,
-  classifyProposalError, scrubUrlCredentials, AkmError, akmClone,
+  scrubUrlCredentials, AkmError, akmClone,
 } from "akm-cli/workspace";
 
 const result = await handleApiRequest("/api/search", new URLSearchParams({ q: "deploy", limit: "20" }));
@@ -112,7 +112,6 @@ handleWorkspaceAction(action: WorkspaceAction, body: unknown): Promise<unknown>;
 matchWriteRoute(pathname: string): WriteRoute | null;
 handleWriteRequest(route: WriteRoute, body: unknown): Promise<unknown>;
 classifyWorkspaceError(error: unknown): ProposalActionError;
-classifyProposalError(error: unknown): ProposalActionError;
 scrubUrlCredentials(value: unknown): unknown;
 akmClone(options: CloneOptions): Promise<CloneResponse>;
 ```
@@ -129,8 +128,11 @@ existing file, read side), `resolveEnvWriteTarget` / `resolveSecretWriteTarget` 
 target and file for a ref), `writeEnv`, `removeEnv`, `setSecret`, `removeSecret`,
 `withEnvSecretWrite` (the lease and git boundary around one write) and `sensitiveMarkerPath`,
 plus `deriveCanonicalAssetName` (the ref name of a bundle file, for a file that has no ref yet).
+`indexWrittenAssets(bundleRoot, files, {bundleId?})` is the one index operation: after a host edits
+files inside a bundle itself, it refreshes the index rows for exactly those files. It never
+rebuilds the index and fails open (it returns `false` when the index could not be updated).
 These are trusted local building blocks, not an authorization layer. Nothing else is exported:
-no write primitives, leases, index or vector readers, and no bundle-rename or lint operations
+no write primitives, leases or vector readers, and no bundle-rename or lint operations
 (the UI API's `bundle-rename` action and `GET /api/asset/related` cover those).
 
 The [UI API reference](ui-api.md) is the single source for route parameters,

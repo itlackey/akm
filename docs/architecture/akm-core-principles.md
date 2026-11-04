@@ -217,7 +217,9 @@ live under `src/commands/`. `akm-cli/api` (`src/api.ts`, which exports only
 exposes the experimental local UI dispatchers, managed clone, URL redaction, the
 error classes and the env/secret operations to a trusted local host. It reuses
 implementations rather than duplicating domain policy and exports no write
-primitives, leases or index readers; the host owns transport authentication. The
+primitives, leases or index readers; the host owns transport authentication. It is the
+seam for local hosts: its operations own all akm policy and a host owns only its
+transport and its own features. The
 `exports` map lists `./api`, `./workspace`, `./package.json` and `./dist/*`. Bun is the
 preferred runtime and the toolchain. Node 22 is the floor (`engines.node`):
 the npm package bootstraps through Node, and its launcher falls back to Node
