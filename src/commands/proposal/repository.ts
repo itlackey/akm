@@ -603,7 +603,7 @@ export function createRetireProposal(
         payload: { content: "" },
         changes,
         proposedTarget,
-        beforeHash: contentHash(beforeContent),
+        beforeHash: contentHash(fs.readFileSync(targetAbs)),
         beforeHashNormalized: contentHash(beforeContent, "normalized"),
         ...(confidence !== undefined ? { confidence } : {}),
         ...(input.retirement ? { retirement: input.retirement } : {}),
