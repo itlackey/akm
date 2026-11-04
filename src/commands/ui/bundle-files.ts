@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isWithin } from "../../core/common";
+import { isWithin, safeRealpath } from "../../core/common";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
@@ -47,6 +47,7 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
       throw new NotFoundError("The folder no longer exists.", "FILE_NOT_FOUND");
     throw new UsageError("This folder cannot be listed. Check its path and filesystem permissions.");
   }
+  const physicalRoot = safeRealpath(source.path);
   const rows = children
     .filter((entry) => showHidden || !entry.name.startsWith("."))
     .map((entry) => {
@@ -68,7 +69,8 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
         name: entry.name,
         path: portable(path.relative(source.path, absolute)),
         kind,
-        absolute,
+        // Keep the displayed alias, but look up the file under this bundle's indexed root.
+        absolute: path.join(source.path, path.relative(physicalRoot, safeRealpath(absolute))),
         ...(entry.isSymbolicLink() ? { symlink: true } : {}),
         ...(unavailable ? { unavailable } : {}),
       };

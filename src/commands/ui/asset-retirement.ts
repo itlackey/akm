@@ -21,6 +21,7 @@ import {
   type ResolvedWriteTarget,
   withWriteTargetMutation,
 } from "../../core/write-source";
+import { ensureIndex } from "../../indexer/ensure-index";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
@@ -163,11 +164,8 @@ export async function restoreRetiredAssets(bundle: string, archives: string[]) {
         archived = path.resolve(root, data.archivedPath);
       contained(root, original);
       contained(root, archived);
-      if (
-        !isWithin(archived, path.dirname(audit)) ||
-        original !== expectedAsset(root, data.ref) ||
-        parseRefInput(data.ref).origin !== target.source.name
-      )
+      // The archive belongs to this root; its recorded bundle name predates any rename.
+      if (!isWithin(archived, path.dirname(audit)) || original !== expectedAsset(root, data.ref))
         throw new UsageError("Archive paths do not match the recorded asset.");
       if (fs.existsSync(original))
         throw new UsageError(
@@ -200,6 +198,12 @@ export async function restoreRetiredAssets(bundle: string, archives: string[]) {
     } catch (error) {
       if (!restored.length) throw error;
       warnings.push(`Restore or Git publishing needs attention: ${toErrorMessage(error)}`);
+    }
+    try {
+      // Targeted writes intentionally skip an empty index; Undo must also work for the last retired asset.
+      if (restored.length) await ensureIndex(target.source.path);
+    } catch (error) {
+      warnings.push(`Files restored, but index initialization failed: ${toErrorMessage(error)}. Run akm index.`);
     }
     await refresh(target, restored, warnings);
     return { restored, complete: restored.length === records.length, warnings };

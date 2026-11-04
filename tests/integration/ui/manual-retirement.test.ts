@@ -6,12 +6,16 @@ import path from "node:path";
 import { purgeGracedArchive } from "../../../src/commands/improve/memory/memory-improve";
 import { createProposal, listProposals } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
+import { akmTasksSync } from "../../../src/commands/tasks/tasks";
 import { handleApiRequest } from "../../../src/commands/ui/api";
 import { restoreRetiredAssets, retireAsset } from "../../../src/commands/ui/asset-retirement";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { renameBundle } from "../../../src/core/bundle-rename";
 import { saveConfig } from "../../../src/core/config/config";
+import * as indexerModule from "../../../src/indexer/indexer";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeLockfile } from "../../../src/integrations/lockfile";
+import type { SchedulerBackend } from "../../../src/tasks/backends/types";
 import { git, makeGitRepo } from "../../_helpers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -62,6 +66,7 @@ test("direct archive and Undo retain bytes, modes, belief state and leave propos
   expect(restored.complete).toBe(true);
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
   expect(fs.statSync(file()).mode & 0o777).toBe(0o640);
+  expect(await handleApiRequest("/api/asset", new URLSearchParams({ ref }))).toMatchObject({ durableRef: ref });
   fs.appendFileSync(file(), "New work");
   expect(fs.readFileSync(archive, "utf8")).toBe(body);
   await expect(
@@ -86,6 +91,60 @@ test("memory retirement and Undo carry its derived twin without a proposal", asy
     receipt.archived.map((item) => item.auditPath),
   );
   expect(fs.existsSync(twin)).toBe(true);
+});
+
+test("a bundle rename does not strand its existing manual archives", async () => {
+  const receipt = await retireAsset(ref, hash());
+  const backend: SchedulerBackend = {
+    name: "cron",
+    list: () => [],
+    install: () => {
+      throw new Error("No task installation expected");
+    },
+    uninstall: () => {
+      throw new Error("No task removal expected");
+    },
+    setEnabled: () => {
+      throw new Error("No task toggle expected");
+    },
+  };
+  const renamed = await renameBundle(
+    "stash",
+    "renamed",
+    {},
+    {
+      backend,
+      syncTasks: (bundle, scheduler) => akmTasksSync({ backend: scheduler }, bundle),
+    },
+  );
+  expect(renamed.applied).toBe(true);
+  expect(renamed.taskSync?.ok).toBe(true);
+  const result = await restoreRetiredAssets(
+    "renamed",
+    receipt.archived.map((item) => item.auditPath),
+  );
+  expect(result.complete).toBe(true);
+  expect(fs.readFileSync(file(), "utf8")).toBe(body);
+  const shown = await handleApiRequest("/api/asset", new URLSearchParams({ ref: "renamed//memories/manual" }));
+  expect(shown).toMatchObject({ durableRef: "renamed//memories/manual" });
+});
+
+test("an index bootstrap failure preserves restored files and reports the repair needed", async () => {
+  const receipt = await retireAsset(ref, hash());
+  const bootstrap = spyOn(indexerModule, "akmIndex").mockRejectedValueOnce(new Error("synthetic index failure"));
+  try {
+    const result = await restoreRetiredAssets(
+      receipt.bundle,
+      receipt.archived.map((item) => item.auditPath),
+    );
+    expect(result.complete).toBe(true);
+    expect(result.restored).toEqual([file()]);
+    expect(result.warnings.join(" ")).toContain("index initialization failed: synthetic index failure");
+    expect(fs.readFileSync(file(), "utf8")).toBe(body);
+    expect(fs.readFileSync(path.join(receipt.root, receipt.archived[0]!.archivedPath), "utf8")).toBe(body);
+  } finally {
+    bootstrap.mockRestore();
+  }
 });
 
 test("stale content and archive symlink are refused without changing the active file", async () => {

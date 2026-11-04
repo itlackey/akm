@@ -219,6 +219,7 @@ The result is `{bundle, path, parent, indexAvailable, truncated: false, entries}
 `parent` is null at the root. Each entry has `name`, bundle-relative `path`,
 `kind` (`directory`, `file`, or `other`), `refs`, and `assets: [{ref, type}]`,
 with optional `symlink` and `unavailable`. Directories sort first, then names.
+Internal links retain their displayed path and their target's indexed refs.
 Refs come only from exact physical-file rows already in the index; absent
 indexes leave them empty. No content is read, recursive scan run, index written,
 or source refreshed. Listing does not imply editability.
@@ -774,8 +775,12 @@ The receipt contains `ref`, `bundle`, `root`, `archived` records,
 validates their native tombstones, and copies bytes back without overwriting
 occupied paths or removing recovery copies. Its receipt contains `restored`
 paths, `complete`, and `warnings`. Partial failures report completed work;
-do not retry blindly. Both operations refresh the index and retain normal Git
-publication. Task definitions do not change installed schedules until explicit
+do not retry blindly. Restore accepts the bundle's current name after a native
+bundle rename; historical names in its tombstones do not need rewriting.
+Both operations refresh the index and retain normal Git publication. Restore
+also initializes a missing or empty index, including after the last asset was
+retired; index failures appear in `warnings` without discarding the receipt.
+Task definitions do not change installed schedules until explicit
 `akm task sync`. The browser UI does not add controls for these operations.
 
 Every route below uses the same write guards as [proposal decisions](#deciding-proposals): token **header**, same

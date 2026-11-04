@@ -92,3 +92,33 @@ test("a disabled bundle cannot be browsed", () => {
   resetConfigCache();
   expect(() => listBundleFiles("other")).toThrow("disabled or unavailable");
 });
+
+test("internal folder and file links retain their indexed asset identity", async () => {
+  const guide = path.join(storage.stashDir, "knowledge", "guide.md");
+  fs.writeFileSync(guide, "---\ndescription: A guide\n---\n# A guide\n");
+  await akmIndex({ stashDir: storage.stashDir, full: true });
+  fs.symlinkSync(path.dirname(guide), path.join(storage.stashDir, "shortcut"));
+  fs.symlinkSync(guide, path.join(storage.stashDir, "guide-link.md"));
+  expect(listBundleFiles("stash", "shortcut").entries[0]).toMatchObject({
+    path: "shortcut/guide.md",
+    refs: ["stash//knowledge/guide"],
+  });
+  expect(listBundleFiles("stash").entries.find((entry) => entry.name === "guide-link.md")).toMatchObject({
+    path: "guide-link.md",
+    symlink: true,
+    refs: ["stash//knowledge/guide"],
+  });
+});
+
+test("a symlinked bundle root keeps its configured identity when browsing internal links", async () => {
+  const alias = path.join(path.dirname(storage.stashDir), "bundle-link");
+  fs.symlinkSync(storage.stashDir, alias);
+  process.env.AKM_BUNDLE_DIR = alias;
+  writeSandboxConfig({ ...makeConfig(alias), semanticSearchMode: "off" });
+  resetConfigCache();
+  fs.writeFileSync(path.join(alias, "knowledge/guide.md"), "---\ndescription: A guide\n---\n# A guide\n");
+  await akmIndex({ stashDir: alias, full: true });
+  fs.symlinkSync(path.join(storage.stashDir, "knowledge"), path.join(alias, "shortcut"));
+  expect(listBundleFiles("stash", "knowledge").entries[0]?.refs).toEqual(["stash//knowledge/guide"]);
+  expect(listBundleFiles("stash", "shortcut").entries[0]?.refs).toEqual(["stash//knowledge/guide"]);
+});
