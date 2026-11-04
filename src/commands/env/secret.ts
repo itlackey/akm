@@ -21,10 +21,9 @@
  *     process env as `VAR=<value>` (see `readValue` in `core/secret-value.ts`).
  *
  * `akm secret path <ref>` (print the file path for the Docker `/run/secrets` +
- * `_FILE` convention) was removed in 0.9.0 alongside `akm secret remove` — an
- * audit found the two resolved a ref through different stash-selection logic
- * and could silently target different files. A ref's file still lives at
- * `<stash>/secrets/<name>`; locate or delete it there directly.
+ * `_FILE` convention) was removed in 0.9.0. A ref's file still lives at
+ * `<stash>/secrets/<name>`. `akm secret remove` was removed with it and is back
+ * (0.10), resolving its target as `akm env remove` does.
  *
  * Values are stored as raw bytes (no quoting, multi-line allowed), unlike env
  * values which forbid literal newlines; they are read back trimmed (`core/secret-value.ts`).
@@ -34,6 +33,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { safeRealpath, writeFileAtomic } from "../../core/common";
+import { sensitiveMarkerPath } from "../../core/env-secret-ref";
 import {
   createLockPayload,
   type LockOwnership,
@@ -108,5 +108,16 @@ export function setSecret(secretPath: string, value: Buffer): void {
     ensureParentDir(secretPath);
     // Mode 0600: secrets must never be world-readable, even transiently.
     writeFileAtomic(secretPath, value, 0o600);
+  });
+}
+
+/** Remove a secret file (and its `.sensitive` marker, if present). Returns true if the secret existed. */
+export function removeSecret(secretPath: string): boolean {
+  return withSecretLock(secretPath, () => {
+    if (!fs.existsSync(secretPath)) return false;
+    fs.rmSync(secretPath);
+    const marker = sensitiveMarkerPath(secretPath, "secret");
+    if (fs.existsSync(marker)) fs.rmSync(marker);
+    return true;
   });
 }

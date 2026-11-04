@@ -17,11 +17,11 @@ import { assertNever } from "./assert";
 // than being imported UP from the command module that consumes this file.
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
 /**
- * Retire-proposal-caused archive reasons (0.9.17-alpha.9): the consolidate
+ * Archive reasons: explicit manual retirement, the consolidate
  * pair pass's `duplicate` / `subsumed` / `supersedes-translated-to-superseded`
  * judgements, and O1's `promoted` (a promotion retiring its source memory).
  */
-export type RetireArchiveReason = "duplicate" | "subsumed" | "superseded" | "promoted";
+export type RetireArchiveReason = "duplicate" | "subsumed" | "superseded" | "promoted" | "manual";
 export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived";
 
 export interface MemoryPruneCandidate {

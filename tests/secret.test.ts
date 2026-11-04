@@ -193,15 +193,51 @@ describe("secret list", () => {
   });
 });
 
-// `akm secret remove` was REMOVED from the CLI in 0.9.0 (R-027 / D-49): an
-// audit found it resolved a ref through a DIFFERENT stash-selection path than
-// `secret path` (also removed), so a lookup and a deletion could silently
-// target different files. The owner's ruling was to drop both subcommands
-// rather than reconcile the resolvers. The regression coverage proving the
-// removed spellings fail loudly (real-subprocess exit code, since citty's own
-// "Unknown command" CLIError is only reclassified to exit 2 in the real entry
-// point — the in-process harness used throughout this file maps it to a
-// different code) lives in tests/integration/secret-path-run.test.ts.
+// `akm secret remove` was removed in 0.9.0 (R-027 / D-49) and is back, shaped like `akm env remove`.
+describe("secret remove", () => {
+  test("removes the secret file and its .sensitive marker, and reports it", async () => {
+    const stashDir = makeStash();
+    const fp = path.join(stashDir, "secrets", "demo");
+    setSecret(fp, Buffer.from("topsecret-value"));
+    fs.writeFileSync(`${fp}.sensitive`, "");
+
+    const { stdout, status } = await runCli(["secret", "remove", "secrets/demo", "--yes", "--format", "json"], {
+      AKM_BUNDLE_DIR: stashDir,
+    });
+
+    expect(status).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({ shape: "secret-remove", removed: true });
+    expect(JSON.parse(stdout).ref).toEndWith("//secrets/demo");
+    expect(stdout).not.toContain("topsecret-value");
+    expect(fs.existsSync(fp)).toBe(false);
+    expect(fs.existsSync(`${fp}.sensitive`)).toBe(false);
+  });
+
+  test("a secret that does not exist is a not-found error and nothing else is touched", async () => {
+    const stashDir = makeStash();
+    const other = path.join(stashDir, "secrets", "other");
+    setSecret(other, Buffer.from("v"));
+
+    const { stderr, status } = await runCli(["secret", "remove", "secrets/demo", "--yes"], {
+      AKM_BUNDLE_DIR: stashDir,
+    });
+
+    expect(status).toBe(1);
+    expect(JSON.parse(stderr).code).toBe("ASSET_NOT_FOUND");
+    expect(fs.existsSync(other)).toBe(true);
+  });
+
+  test("refuses to delete without --yes when not interactive", async () => {
+    const stashDir = makeStash();
+    const fp = path.join(stashDir, "secrets", "demo");
+    setSecret(fp, Buffer.from("v"));
+
+    const { status } = await runCli(["secret", "remove", "secrets/demo"], { AKM_BUNDLE_DIR: stashDir });
+
+    expect(status).not.toBe(0);
+    expect(fs.existsSync(fp)).toBe(true);
+  });
+});
 
 describe("secret slash ref form", () => {
   test("the slash form `secrets/<name>` still resolves normally", async () => {

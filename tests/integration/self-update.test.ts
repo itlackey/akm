@@ -725,7 +725,8 @@ describe("performUpgrade", () => {
       const dir = path.join(sandboxHome().dir, "fake-bin");
       fs.mkdirSync(dir, { recursive: true });
       const argvLog = path.join(dir, "index-argv");
-      fs.writeFileSync(path.join(dir, "npm"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const npmLog = path.join(dir, "npm-argv");
+      fs.writeFileSync(path.join(dir, "npm"), `#!/bin/sh\necho "$@" > "${npmLog}"\nexit 0\n`, { mode: 0o755 });
       fs.writeFileSync(
         path.join(dir, "akm"),
         [
@@ -740,6 +741,8 @@ describe("performUpgrade", () => {
       );
       const script = `
         import { performUpgrade } from ${JSON.stringify(path.resolve("src/commands/sources/self-update.ts"))};
+        // Isolate adjacent npm lookup as well as PATH: Bun can sit beside a real npm.
+        Object.defineProperty(process, "execPath", { value: ${JSON.stringify(path.join(dir, "bun"))} });
         const result = await performUpgrade(
           { currentVersion: "0.0.13", latestVersion: "0.0.14", updateAvailable: true, installMethod: "npm" },
           undefined,
@@ -756,6 +759,7 @@ describe("performUpgrade", () => {
       expect(run.status).toBe(0);
       expect(JSON.parse(run.stdout)).toMatchObject({ ok: true, skipped: false, exitCode: 0 });
       expect(run.stderr).toContain("[index:embeddings] Embedding 3 changed entries (7 unchanged)");
+      expect(fs.readFileSync(npmLog, "utf8").trim()).toBe("install -g akm-cli@latest");
       expect(fs.readFileSync(argvLog, "utf8").trim()).toBe("index --format json");
     },
   );

@@ -13,8 +13,8 @@
  * is either a read in `api.ts` or an explicit action in `workspace-actions.ts`.
  */
 
-import { AkmError, TransientError, UsageError } from "../../core/errors";
-import { acquireAssetMutationLease } from "../../indexer/index-writer-lock";
+import { AkmError, UsageError } from "../../core/errors";
+import { assertWriteLeaseFree } from "../../indexer/index-writer-lock";
 import {
   akmProposalAccept,
   akmProposalAcceptMany,
@@ -136,22 +136,6 @@ function batchIds(body: unknown): string[] {
 }
 
 // ── Execution ────────────────────────────────────────────────────────────────
-
-/**
- * Fail fast when another writer holds the asset-mutation lease. The accept and
- * reject functions would wait up to ten minutes for it, which in a browser is a
- * hung button; the probe turns a held lease into an immediate, retryable 409.
- */
-export async function assertWriteLeaseFree(purpose: string): Promise<void> {
-  const lease = await acquireAssetMutationLease({ mode: "try", purpose });
-  if (!lease) {
-    throw new TransientError(
-      "Another akm process or request is writing to the bundle right now. Try again in a moment.",
-      "ASSET_MUTATION_LEASE_HELD",
-    );
-  }
-  lease.release();
-}
 
 type CommitSummary = GitCommitSummary & { repo: string };
 

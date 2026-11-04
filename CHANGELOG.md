@@ -16,7 +16,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `"unparseable"`, never a verdict. akm's own pipeline calls each judge through the same
   registry entry, so the command and the pipeline send the same prompt.
 
+- `akm-cli/workspace` (Experimental) re-exports a small set of existing operations for a
+  trusted desktop host: the UI read/write dispatchers, managed clone, URL redaction, the
+  error classes, and the env/secret operations (`resolve*`, `write`/`remove`/`setSecret`,
+  `withEnvSecretWrite`) and `indexWrittenAssets`, which refreshes the index for files a host
+  wrote itself (#1423). It exports no other writers, leases or index readers;
+  the host calls the UI API for everything else. The UI API adds `GET /api/bundle/files`
+  (one directory of a registered bundle), `location` on `/api/asset`, `GET /api/asset/related`
+  (the nearest stored embeddings of an asset, from the stored vectors only),
+  `POST /api/bundles/rename` (`akm bundle rename`, `dryRun` for the plan) and
+  `POST /api/asset/retire`. A retire mints and accepts an ordinary retire proposal, so it follows the
+  proposal-retire lifecycle: the archive is grace-purged and `POST /api/proposals/:id/revert`
+  is the undo. `akm-cli/api` is unchanged.
+
+- `akm secret remove` is back, shaped like `akm env remove` (`--yes`, `--bundle`; it removes
+  the file and its `.sensitive` marker). It names its file through the write-target resolver,
+  as `env remove` does.
+
 ### Changed
+
+- `akm ui` is frozen: AKM Desktop supersedes it and it will be removed in a later release. It gets
+  no new pages or routes (`STABILITY.md`, `docs/reference/ui-api.md`).
 
 - The reflect judge's rubric says adding a field the source lacks is needed, not churn, and
   drops nothing, so PRESERVATION is judged on the fields the source already had. The judge had
@@ -37,6 +57,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Reflect no longer replaces a field with the text `null`: a patch value that is the string
   `null` (any case, trimmed) leaves the field unchanged, as JSON `null` does (#1420).
+
+- `akm bundle rename` now rewrites an accepted proposal's recorded target, so `akm proposal
+  revert` still finds it (it failed with "bound to a different accepted target").
+- Accepting a retire proposal refuses an archive path that passes through a symbolic link, and
+  puts back any file it had already moved if a later step fails. Reverting a retirement that has
+  no judged pair resumes after a crashed revert, checking the file against the proposal's
+  `beforeHash`.
 
 ## [0.10.261105] - 2026-11-02
 

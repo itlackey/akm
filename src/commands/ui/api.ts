@@ -49,13 +49,15 @@ import { akmMetrics, metricsWindow, readUsageRows } from "../metrics/metrics-cli
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../proposal/repository";
 import { validateProposal } from "../proposal/validators/proposals";
+import { akmReadDocument } from "../read/document";
+import { akmRelated } from "../read/related";
 import { akmSearch, normalizeScopeFilters, parseBeliefFilterMode } from "../read/search";
 import { akmShowUnified } from "../read/show";
 import { assembleInfo } from "../sources/info";
 import { akmListSources } from "../sources/installed-stashes";
 import { assetImprove } from "./asset-improve";
+import { bundleFileLocation, listBundleFiles } from "./bundle-files";
 import { classifyOutcome, decidedAt, pChart, weekOf, weekRange } from "./derive";
-import { readDocumentSource } from "./document-source";
 import { listFolders } from "./folders";
 import { readBundleGitStatus, readFileRevision, readRecentCommits } from "./git-read";
 import { improveImpact } from "./impact";
@@ -658,11 +660,21 @@ async function asset(query: Query) {
     durableRef,
     bundle: durableRef ? parseBundleRef(durableRef).bundle : null,
     asset: shown,
+    location: shown.path ? bundleFileLocation(shown.path) : null,
     feedback: feedbackFor(durableRef),
     feedbackRequireReason: loadConfig().feedback?.requireReason !== false,
     links,
     headings: headings.map((heading, i) => ({ ...heading, slug: slugs[i] })),
   };
+}
+
+function assetRelated(query: Query) {
+  const scope = query.get("scope") ?? "all";
+  if (scope !== "all" && scope !== "bundle") throw new UsageError("scope must be all or bundle.");
+  const ref = (query.get("ref") ?? "").trim();
+  if (!ref)
+    throw new UsageError("An asset ref is required: /api/asset/related?ref=<ref>.", "MISSING_REQUIRED_ARGUMENT");
+  return akmRelated(ref, scope);
 }
 
 async function assetHistory(query: Query) {
@@ -732,13 +744,16 @@ const ROUTES: Record<string, Handler> = {
   "/api/health": (query) => akmHealth({ since: "24h", groupBy: "run", probe: flag(query, "probe"), readOnly: true }),
   "/api/tasks/history": taskHistory,
   "/api/bundles": bundles,
+  "/api/bundle/files": (query) =>
+    listBundleFiles(query.get("bundle") ?? "", query.get("path") ?? "", query.get("hidden") === "1"),
   "/api/config": config,
   "/api/proposals": proposals,
   "/api/changes": changes,
   "/api/search": search,
   "/api/asset": asset,
   "/api/asset/history": assetHistory,
-  "/api/asset/source": (query) => readDocumentSource(query.get("ref") ?? ""),
+  "/api/asset/related": assetRelated,
+  "/api/asset/source": (query) => akmReadDocument(query.get("ref") ?? ""),
 };
 
 const PROPOSAL_ROUTE = /^\/api\/proposals\/([^/]+)$/;

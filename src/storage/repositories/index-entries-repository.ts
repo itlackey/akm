@@ -837,6 +837,29 @@ export function getEntriesByDir(db: Database, dirPath: string): DbIndexedEntry[]
   return parseEntryRows(selectRowsInDirectory<EntryRow>(db, dirPath, ENTRY_COLUMNS), "getEntriesByDir");
 }
 
+/** Exact physical files for the lazy bundle browser; no descendant scan or content read. */
+export function getAssetRefsForFiles(
+  db: Database,
+  filePaths: readonly string[],
+  bundleId: string,
+): Map<string, Array<{ ref: string; type: string }>> {
+  const result = new Map<string, Array<{ ref: string; type: string }>>();
+  for (let i = 0; i < filePaths.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = filePaths.slice(i, i + SQLITE_CHUNK_SIZE);
+    const rows = db
+      .prepare(
+        `SELECT file_path, item_ref, type FROM entries WHERE bundle_id = ? AND file_path IN (${chunk.map(() => "?").join(",")}) ORDER BY item_ref`,
+      )
+      .all(bundleId, ...chunk) as Array<{ file_path: string; item_ref: string; type: string }>;
+    for (const row of rows) {
+      const assets = result.get(row.file_path) ?? [];
+      assets.push({ ref: row.item_ref, type: row.type });
+      result.set(row.file_path, assets);
+    }
+  }
+  return result;
+}
+
 /** Return every directory previously indexed for one canonical bundle. */
 export function getIndexedDirPathsByBundleId(db: Database, bundleId: string): string[] {
   const rows = db.prepare("SELECT file_path FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{

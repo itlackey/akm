@@ -4,15 +4,14 @@
 
 import { execFile } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
-import { parseRefInput } from "../../core/asset/resolve-ref";
 import { loadConfig, mutateConfig, resetConfigCache, sanitizeConfigForWrite } from "../../core/config/config";
 import { AkmError, type AkmErrorKind, UsageError } from "../../core/errors";
-import { appendEvent } from "../../core/events";
+import { assertWriteLeaseFree } from "../../indexer/index-writer-lock";
 import { resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
 import { assertUnsettable, setConfigValue, unsetConfigValue } from "../config-cli";
-import { writeMarkdownAsset } from "../read/knowledge";
-import { readDocumentSource } from "./document-source";
-import { assertWriteLeaseFree, classifyProposalError, type ProposalActionError } from "./proposal-actions";
+import { retireAsset } from "../proposal/manual-retire";
+import { akmSaveDocument } from "../read/document";
+import { classifyProposalError, type ProposalActionError } from "./proposal-actions";
 import { redactForUi, redactUrlsInText } from "./redact";
 
 export type WorkspaceAction =
@@ -20,9 +19,11 @@ export type WorkspaceAction =
   | "bundle-add"
   | "bundle-remove"
   | "bundle-update"
+  | "bundle-rename"
   | "bundle-settings"
   | "config-set"
   | "document-save"
+  | "document-retire"
   | "knowledge-create";
 
 const ROUTES: Record<string, WorkspaceAction> = {
@@ -30,10 +31,12 @@ const ROUTES: Record<string, WorkspaceAction> = {
   "/api/bundles/add": "bundle-add",
   "/api/bundles/remove": "bundle-remove",
   "/api/bundles/update": "bundle-update",
+  "/api/bundles/rename": "bundle-rename",
   "/api/bundles/settings": "bundle-settings",
   "/api/config/set": "config-set",
   "/api/knowledge/create": "knowledge-create",
   "/api/asset/save": "document-save",
+  "/api/asset/retire": "document-retire",
 };
 
 export function matchWorkspaceAction(path: string): WorkspaceAction | null {
@@ -125,6 +128,9 @@ export function classifyWorkspaceError(error: unknown): ProposalActionError {
   return error instanceof AkmError && error.kind === "config" ? { ...classified, status: 409 } : classified;
 }
 
+/** `bundle rename` is the one `bundle` subcommand whose output shape is not its name. */
+const bundleShape = (subcommand: string) => (subcommand === "rename" ? "bundle-rename" : subcommand);
+
 /** Fixed UI actions use the real CLI, including feedback's argv-dependent tag validation and bundle install audits. */
 async function command(args: string[], input?: string, userFeedback = false): Promise<unknown> {
   const [bin, ...prefix] = resolveAkmInvocation().argv;
@@ -161,7 +167,7 @@ async function command(args: string[], input?: string, userFeedback = false): Pr
           return;
         }
         try {
-          resolve(parseCommandResponse(stdout, args[0] === "bundle" ? args[1]! : args[0]!));
+          resolve(parseCommandResponse(stdout, args[0] === "bundle" ? bundleShape(args[1]!) : args[0]!));
         } catch (error) {
           reject(error);
         }
@@ -243,7 +249,8 @@ const MAX_FIX_PAIRS = 10;
 export async function handleWorkspaceAction(action: WorkspaceAction, value: unknown): Promise<unknown> {
   const body = object(value);
   // `bundle update` writes only the lockfile, so it never passes config through the sanitizer.
-  if (action === "bundle-add" || action === "bundle-remove") preserveUnrelatedConfig();
+  if (action === "bundle-add" || action === "bundle-remove" || (action === "bundle-rename" && body.dryRun !== true))
+    preserveUnrelatedConfig();
   switch (action) {
     case "feedback": {
       const signal = text(body, "signal");
@@ -296,35 +303,23 @@ export async function handleWorkspaceAction(action: WorkspaceAction, value: unkn
         throw new UsageError(`No configured bundle named "${name}".`);
       return command(["bundle", "update", "--", name]);
     }
+    case "bundle-rename": {
+      const dryRun = body.dryRun === true ? ["--dry-run"] : [];
+      return command(["bundle", "rename", ...dryRun, "--", text(body, "bundle"), text(body, "name")]);
+    }
     case "bundle-settings":
       return settings(body);
     case "config-set":
       return configChanges(body);
+    case "document-retire":
+      return retireAsset(text(body, "ref"), text(body, "revision"));
     case "document-save": {
       if (typeof body.content !== "string") throw new UsageError("Markdown content is required.");
       const content = body.content;
       const revision = text(body, "revision");
       const ref = text(body, "ref");
       await assertWriteLeaseFree("ui-document-save");
-      // The writer takes the lease and compares `revision` with the live bytes inside it.
-      const source = await readDocumentSource(ref);
-      const identity = parseRefInput(source.ref);
-      const result = await writeMarkdownAsset({
-        type: source.type,
-        content,
-        name: identity.name,
-        fallbackPrefix: source.type,
-        target: identity.origin,
-        force: true,
-        expectedContentHash: revision,
-      });
-      if (!result.unchanged)
-        appendEvent({
-          eventType: source.type === "knowledge" ? "import" : "remember",
-          ref: result.ref,
-          metadata: { source: "ui", path: result.path, force: true },
-        });
-      return result;
+      return akmSaveDocument(ref, content, revision);
     }
     case "knowledge-create": {
       if (typeof body.content !== "string" || !body.content.trim())

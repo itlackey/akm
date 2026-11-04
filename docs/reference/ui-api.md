@@ -1,5 +1,9 @@
 # `akm ui` API
 
+**Frozen.** `akm ui` is superseded by AKM Desktop and will be removed in a later release. It gets no new pages or
+routes; new operations are added to `akm-cli/workspace` only, and `akm ui` reaches one only through a route its
+existing pages already call.
+
 The JSON API behind [`akm ui`](cli.md#ui). The page that `akm ui` serves uses only this API, and everything it
 returns comes from the function the matching CLI command renders, so it never disagrees with the CLI. The API is
 read-only for browsing. Intentional writes use the finite [proposal decision](#deciding-proposals) and
@@ -207,6 +211,22 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   (`name`, `root`, `adapter`, optional explicit `writable`, and `configured`). Disabled bundles remain visible.
   Component overrides take precedence over the bundle writable default. An implicit/detected component is shown
   without creating new component configuration. Counts describe the existing index; they are not a live file catalog.
+
+## `GET /api/bundle/files`
+
+The local workspace browser lists one directory in an enabled registered bundle.
+`bundle` selects its resolved content root; `path` is relative to it (default:
+root); `hidden=1` includes dot-files. Absolute paths and symlink escapes are
+refused. Internal symbolic links can be traversed; unavailable links are labelled.
+
+The result is `{bundle, path, parent, indexAvailable, entries}`.
+`parent` is null at the root. Each entry has `name`, bundle-relative `path`,
+`kind` (`directory`, `file`, or `other`), and `assets: [{ref, type}]`,
+with optional `symlink` and `unavailable`. Directories sort first, then names.
+Internal links retain their displayed path and their target's indexed assets.
+Assets come only from exact physical-file rows already in the index; absent
+indexes leave them empty. No content is read, recursive scan run, index written,
+or source refreshed. Listing does not imply editability.
 
 ## `GET /api/config`
 
@@ -641,7 +661,8 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
   `{ "redacted": true, "type": "env", "ref": "env/prod", "note": "..." }`, with no `asset`, key names or values.
   Use `akm env list` for key names.
 
-The response also supplies `feedbackRequireReason`, the owning `bundle`, `headings` with existing AKM fragment
+The response also supplies `location` (`{bundle, path, parent}` relative to the
+resolved bundle root, or null), `feedbackRequireReason`, the owning `bundle`, `headings` with existing AKM fragment
 selectors, and a `links` map for supported relative inline Markdown links. A relative `.md` target must already be
 indexed in the same bundle. Missing/out-of-bundle paths remain text; no arbitrary-file endpoint is added. Explicit
 cross-bundle refs remain available. Relative images, uploads, universal title/alias resolution and unsupported
@@ -657,6 +678,15 @@ SHA-256 over raw source bytes, independent of the indexed hash. The same authori
 statuses of [workspace actions](#workspace-actions): a read-only bundle is `409`, not `500`.
 The UI also refuses source editing when URL redaction would change its contents, so saving never replaces hidden
 credentials with their displayed redactions. This route does not prepare a Git boundary, fetch or write anything.
+
+## `GET /api/asset/related`
+
+Query: `ref` (required), `scope` (`all`, the default, or `bundle` for the asset's own bundle). The assets whose stored
+embeddings are nearest to this asset's, best first: `{available, note, matches: [{ref, title, type, cosine}]}`, at most 20.
+Only stored vectors are read: no query is embedded and nothing leaves the machine. `available` is `false`, with a `note`,
+when there is no index, the asset has no stored embedding, or its embedding belongs to an older model than the index's
+current one (re-index first). Matches follow search's entry filter (enabled bundles, no proposed-quality entries) and never
+include the asset itself or `env`, `secret` and `session` assets. A redacted asset has no related content.
 
 ## `GET /api/asset/history`
 
@@ -744,6 +774,25 @@ User searches that found nothing, grouped by normalised query: `query`, `count`,
 
 ## Workspace actions
 
+The workspace dispatchers also accept `POST /api/asset/retire` with
+`{ref, revision}`. It retires an indexed writable AKM asset the way
+`akm feedback`'s typed fix applies a change: it mints a retire proposal (source
+`propose`, no judged pair) and accepts it at once, so the asset follows the
+ordinary proposal-retire lifecycle. Skill packages, env/secret files and
+sessions are excluded; memory retirement carries its derived twin. The
+current raw SHA-256 `revision` is required, and the accept is refused if the
+bytes changed since.
+
+The receipt is `{proposalId, ref, bundle, archiveDirs, warnings}`. Undo is
+[`POST /api/proposals/:id/revert`](#deciding-proposals) with that id: the
+archive moves back without overwriting an occupied path and its tombstone is
+removed. Like any accepted retirement, the archived bytes are purged after the
+grace period at the next `akm improve` (git-backed bundles only), and the row
+is listed in Review and Activity. If the accept is refused, the proposal is
+rejected and the request fails. Task definitions do not change installed
+schedules until explicit `akm task sync`. The browser UI does not add controls
+for this operation.
+
 Every route below uses the same write guards as [proposal decisions](#deciding-proposals): token **header**, same
 Origin, JSON content type and a body of at most 64 KiB. The two routes that carry a whole Markdown document,
 `/api/asset/save` and `/api/knowledge/create`, take a body of up to 8 MiB (8388608 bytes); a larger one is
@@ -755,6 +804,7 @@ general config editor or command-execution endpoint.
 | `/api/feedback` | `{ref, signal: "positive"\|"negative", reason?, tags?: string[]}` → `akm feedback`. The ref is passed to `akm feedback` as given, which resolves it as the CLI does; tags follow existing `key:value` validation. Negative feedback requires a reason when `feedback.requireReason` is enabled. Submissions are recorded with source `user` unless the server runs with an `AKM_EVENT_SOURCE` already set (for example under an improve or task run), which wins as it does for every akm child; they retain existing ranking/utility/event effects. Feedback does not save config, so it works under a config that still holds a literal API key. No fix, supersession or model flags are exposed. |
 | `/api/bundles/add` | `{source, name?, writable?}` → `akm bundle add`, including source validation. Existing provider restrictions apply; no insecure-transport bypass is exposed. |
 | `/api/bundles/update` | `{bundle}` → `akm bundle update -- <bundle>`. Fetches/reindexes only on explicit submission. A rare update requiring destructive confirmation remains refused; the UI does not silently pass `--yes`. |
+| `/api/bundles/rename` | `{bundle, name, dryRun?: true}` → `akm bundle rename [--dry-run] -- <bundle> <name>`. The result is the CLI's rename plan (`applied` is `false` for a dry run). |
 | `/api/bundles/remove` | `{bundle, confirm: true}` → `akm bundle remove --yes -- <bundle>`. The UI requires an inline confirmation before this call. Managed installs may be deleted; local filesystem source files remain on disk. |
 | `/api/bundles/settings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Existing validation rejects disabled targets and writable npm/website sources. The default bundle and write target are edited through `/api/config/set`. |
 | `/api/config/set` | `{set?: {key: string}, unset?: string[]}` → `akm config set` / `unset` on each key, in one validated, atomic write. Values are strings, as on the command line, and are coerced and checked against the schema; literal API keys and `configVersion` are refused. An unset is refused with `400 TARGET_NOT_UPDATABLE` when the key is inherited from an `extends` base or sits inside a connection or harness entry akm ignores, and an unset with no config file writes nothing (`saved: false`), all as `akm config unset` does. |

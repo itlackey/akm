@@ -95,7 +95,7 @@ covers beyond the table.
 | `akm index` | Stable | |
 | `akm health` | Evolving | Exit codes are Evolving; report *content* and rendered `md`/`html` layout are Experimental — do not script against report layout. |
 | `akm metrics` | Experimental | New in 0.9.28. Report content, JSON shape and the `html` dashboard may change. |
-| `akm ui` | Experimental | New in 0.10. The command, its flags, the page and the `/api/` JSON it reads may change in any release. Browsing is read-only; explicit actions support proposals, feedback, bundle configuration and Markdown authoring. |
+| `akm ui` | Experimental, **frozen** | Superseded by AKM Desktop and removed in a later release; it gets no new pages or routes. The command, its flags, the page and the `/api/` JSON it reads may change in any release. Browsing is read-only; explicit actions support proposals, feedback, bundle configuration and Markdown authoring. |
 | `akm info` | Stable | |
 | `akm bundle create` | Stable | |
 | `akm bundle add` | Stable | |
@@ -163,6 +163,7 @@ covers beyond the table.
 | `akm secret list` | Stable | Read-and-inject surface. |
 | `akm secret run` | Stable | Read-and-inject surface. |
 | `akm secret set` | Experimental | Write verb. |
+| `akm secret remove` | Experimental | Write verb; restored in 0.10 after its 0.9.0 removal. |
 | `akm task add` | Evolving | |
 | `akm task enable` | Evolving | |
 | `akm task disable` | Evolving | |
@@ -294,7 +295,7 @@ remain available across minor releases, but flag names, prompts, and
 proposal-queue shape may shift. Breaking changes will be flagged in the
 CHANGELOG with a migration note.
 
-- **Programmatic API** — `akm-cli/api` (`curate()`, for in-process recall by the akm plugins; see [`docs/reference/api.md`](docs/reference/api.md)). The export list only grows and `curate()`'s parameters and result keep their documented contract; the text it returns is `akm curate`'s agent-shaped output and changes with it. Everything else in the package remains CLI-only.
+- **Programmatic API** — `akm-cli/api` (`curate()`, for in-process recall by the akm plugins; see [`docs/reference/api.md`](docs/reference/api.md)). The recall export list only grows and `curate()`'s parameters and result keep their documented contract; the text it returns is `akm curate`'s agent-shaped output and changes with it. The separate workspace namespace is Experimental, below.
 - **Improvement loop** — `akm improve` and the proposal noun group
   `akm proposal {extract,new,list,show,diff,accept,reject,reopen,revert,drain}`
   (`extract` and `new` are the former top-level `akm extract`/`akm propose`,
@@ -387,6 +388,13 @@ CHANGELOG with a migration note.
 
 Subject to change without notice within minor releases. Not yet recommended
 for scripted use.
+
+- **Local workspace API** — `akm-cli/workspace` exposes the local UI dispatchers,
+  managed clone, URL redaction, the error classes and the env/secret operations
+  for trusted local hosts. It is not a stable SDK: exports, signatures and
+  result shapes may change in any release. Hosts own authentication and
+  transport limits.
+  See [Programmatic APIs](docs/reference/api.md#local-workspace-akm-cliworkspace).
 
 - **Workflows** — the whole `akm workflow` surface (`run`, `status`, `list`,
   `create`, `resume`, `abandon`, `plan`), the workflow asset format and the

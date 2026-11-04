@@ -212,10 +212,15 @@ Whether a statement is true of the product is held by review.
 ### 9. CLI-first, Bun-first
 
 This package is a command-line tool. `src/cli.ts` dispatches and commands
-live under `src/commands/`. The one programmatic entry point is `akm-cli/api`
-(`src/api.ts`, which exports only `curate`), so the akm plugins can recall
-in-process; the `exports` map in `package.json` lists only `./api`,
-`./package.json` and `./dist/*`, and there are no barrel exports. Bun is the
+live under `src/commands/`. `akm-cli/api` (`src/api.ts`, which exports only
+`curate`) lets plugins recall in-process. `akm-cli/workspace` (`src/workspace.ts`)
+exposes the experimental local UI dispatchers, managed clone, URL redaction, the
+error classes and the env/secret operations to a trusted local host. It reuses
+implementations rather than duplicating domain policy and exports no writers
+beyond those, no leases and no index readers; the host owns transport authentication. It is the
+seam for local hosts: its operations own all akm policy and a host owns only its
+transport and its own features. The
+`exports` map lists `./api`, `./workspace`, `./package.json` and `./dist/*`. Bun is the
 preferred runtime and the toolchain. Node 22 is the floor (`engines.node`):
 the npm package bootstraps through Node, and its launcher falls back to Node
 when no usable Bun is on `PATH`. Anything that would become another API for
@@ -223,7 +228,8 @@ other programs is a separate decision, not an incidental export.
 
 Why: an accidental API is a compatibility promise nobody agreed to make.
 
-Enforced by: `tests/contracts/api-surface.test.ts` (the export list),
+Enforced by: `tests/contracts/api-surface.test.ts` and
+`tests/contracts/workspace-surface.test.ts` (export lists and the hand-written declarations),
 `tests/integration/install/package-exports.test.ts` (the `exports` map),
 `package.json` (`engines.node`), the Node version check in the launchers and
 `src/cli.ts`, and the `node-smoke` job in `.github/workflows/ci.yml` (Node 22

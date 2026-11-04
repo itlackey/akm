@@ -47,3 +47,4 @@ The failure to avoid is treating something other than the user's stated intent a
 - Writing, placing and running tests: `docs/architecture/testing/testing-workflow.md`.
 - Config, connections, harnesses and how akm runs one, model-call defaults: `docs/reference/configuration.md`. Commands, flags, exit codes: `docs/reference/cli.md`.
 - Running from source, releases: `docs/maintainers/`.
+- AKM Desktop (`desktop/`): `desktop/AGENTS.md`.

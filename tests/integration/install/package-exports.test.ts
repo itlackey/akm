@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The package `exports` map: `akm-cli/api` (the one supported programmatic
- * entry point), `akm-cli/package.json` (plugins resolve it to find the `akm`
+ * The package `exports` map: `akm-cli/api` (recall), `akm-cli/workspace`
+ * (existing local workspace operations), `akm-cli/package.json` (plugins resolve it to find the `akm`
  * bin) and `akm-cli/dist/*` (published `akm-opencode` versions deep-import
  * `akm-cli/dist/commands/read/*.js`).
  *
@@ -37,8 +37,8 @@ function packed(): Set<string> {
 }
 
 describe("package.json exports", () => {
-  test("has exactly ./api, ./package.json and ./dist/*", () => {
-    expect(Object.keys(pkg.exports ?? {}).sort()).toEqual(["./api", "./dist/*", "./package.json"]);
+  test("has exactly ./api, ./workspace, ./package.json and ./dist/*", () => {
+    expect(Object.keys(pkg.exports ?? {}).sort()).toEqual(["./api", "./dist/*", "./package.json", "./workspace"]);
     expect(pkg.exports?.["./package.json"]).toBe("./package.json");
     expect(pkg.exports?.["./dist/*"]).toBe("./dist/*");
   });
@@ -48,6 +48,14 @@ describe("package.json exports", () => {
       types: "./dist/api.d.ts",
       bun: "./dist/api.js",
       default: "./dist/api-node.mjs",
+    });
+  });
+
+  test("./workspace has types, a bun and a node-safe default target", () => {
+    expect(pkg.exports?.["./workspace"]).toEqual({
+      types: "./dist/workspace.d.ts",
+      bun: "./dist/workspace.js",
+      default: "./dist/workspace-node.mjs",
     });
   });
 
@@ -78,6 +86,9 @@ describe("package.json exports", () => {
     // the targets when the checkout has been built.
     if (!fs.existsSync(path.join(ROOT, "dist", "api.js"))) return;
     for (const target of ["dist/api.js", "dist/api-node.mjs", "dist/api.d.ts", "dist/text-import-hook.mjs"]) {
+      expect(files.has(target)).toBe(true);
+    }
+    for (const target of ["dist/workspace.js", "dist/workspace-node.mjs", "dist/workspace.d.ts"]) {
       expect(files.has(target)).toBe(true);
     }
   });

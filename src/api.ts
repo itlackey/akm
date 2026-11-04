@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm-cli/api` — the one supported programmatic entry point. Everything else
- * in this package is CLI-only. See docs/reference/api.md for the contract.
+ * `akm-cli/api` — the supported in-process recall entry point.
+ * See docs/reference/api.md for this and the separate local workspace contract.
  *
  * Each export runs the same code path as its CLI command and computes the
  * document the CLI would print, in-process: no child process, no write to

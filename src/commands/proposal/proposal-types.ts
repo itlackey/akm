@@ -143,7 +143,8 @@ export interface ProposalGateDecision {
    * releases wrote `body-edit`, `reflect-size-ratio`, `reflect-truncation-leak`,
    * `max-diff-lines`, `min-content-lines`, `policy-accept`, `mid-band` and
    * `possible-dup`. `akm feedback` (`feedback`) stamps `manual-fix` on the
-   * exact fix a person typed, which it accepts at once.
+   * exact fix a person typed, which it accepts at once, and the workspace
+   * (`workspace`) stamps `manual-retire` on a retirement a person asked for.
    */
   reason: string;
   /** What an older threshold gate measured (e.g. the line count in "210 > 200"). */
