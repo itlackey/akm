@@ -28,57 +28,35 @@ function classified(value: unknown): string | undefined {
 }
 void [copied, read, error, symbol, classified];
 
-// Actual local-host helpers must remain usable from generated declarations,
-// without source-checkout paths or Bun ambient types.
-function organizer() {
-  const config = workspace.loadConfig();
-  const identity = workspace.parseRefInput("stash//knowledge/example");
-  const target = workspace.prepareWriteTargetForMutation(workspace.resolveBundleWriteTarget(config, "stash"));
-  workspace.assertAkmAssetWrite(target.source);
-  const file: string = workspace.assetPathForName(identity.type, target.source.path, identity.name);
-  const name: string | undefined = workspace.deriveCanonicalAssetName(identity.type, target.source.path, file);
-  const dir = workspace.stashDirFor(identity.type);
-  const contained: boolean = workspace.isWithin(file, target.source.path);
-  workspace.writeFileAtomic(file, "content");
-  workspace.withWriteTargetMutation(target, [file], { purpose: "test", message: "test" }, () => true);
-  workspace.withEnvSecretWrite(target, { type: "env", name: "example" }, "Update", [file], () => {
-    workspace.withSecretLock(file, () => workspace.writeEnv(file, "KEY=value"));
-  });
-  const removed: boolean = workspace.removeEnv(file);
-  const marker: string = workspace.sensitiveMarkerPath(file, "env");
-  void workspace.assertWriteLeaseFree("test");
-  void workspace.withAssetMutationLease("test", async () => {
-    const indexed: boolean = await workspace.indexWrittenAssets(target.source.path, [file], { bundleId: "stash" });
-    return indexed;
-  });
-  void workspace.akmLint({ dir: target.source.path, fix: false });
-  void workspace.renameBundle(
-    "stash",
-    "renamed",
-    { dryRun: true },
-    {
-      syncTasks: (bundle, backend) => workspace.akmTasksSync({ backend }, bundle),
+// The env/secret operations a host composes, usable from the declarations alone.
+function secrets() {
+  const found = workspace.resolveSecretPath("stash//secrets/example");
+  const written = workspace.resolveSecretWriteTarget("stash//secrets/example", "stash");
+  const marker: string = workspace.sensitiveMarkerPath(found.absPath, "secret");
+  const name: string | undefined = workspace.deriveCanonicalAssetName("env", "env", "env/example.env");
+  const bundle: string = written.target.source.name;
+  const removed: boolean = workspace.withEnvSecretWrite(
+    written.target,
+    { type: "secret", name: written.name },
+    "Remove",
+    [written.absPath, marker],
+    () => workspace.removeSecret(written.absPath),
+  );
+  workspace.withEnvSecretWrite(
+    written.target,
+    { type: "secret", name: written.name },
+    "Update",
+    [written.absPath],
+    () => {
+      workspace.setSecret(written.absPath, Buffer.from("value"));
+      workspace.writeEnv(workspace.resolveEnvPath("stash//env/example").absPath, "KEY=value");
+      return workspace.removeEnv(written.absPath);
     },
   );
-  const db = workspace.openReadonlyExistingDatabase();
-  if (db) {
-    const id: number | undefined = workspace.getEntryIdByFilePath(db, file);
-    const count: number = workspace.getEntryCount(db);
-    const entries = workspace.getAllEntries(db);
-    const fingerprint: string | undefined = workspace.getMeta(db, "embeddingFingerprint");
-    if (id !== undefined) {
-      const entry = workspace.getEntryById(db, id);
-      const stored: boolean = workspace.hasStoredEmbedding(db, id);
-      const missing = workspace.getAllEntriesForEmbedding(db, [id], fingerprint);
-      const neighbors = workspace.getNeighborsByEntryId(db, id, count);
-      void [entry, stored, missing, neighbors];
-    }
-    workspace.closeDatabase(db);
-    void entries;
-  }
-  const sources = workspace.resolveSourceEntries();
-  const redacted: unknown = workspace.scrubUrlCredentials(file);
-  const failure: ProposalActionError = workspace.classifyProposalError(new workspace.UsageError("test"));
-  void [name, dir, contained, removed, marker, sources, redacted, failure];
+  const redacted: unknown = workspace.scrubUrlCredentials(found.source.path);
+  const failure: ProposalActionError = workspace.classifyProposalError(
+    new workspace.UsageError("test", "RESOURCE_ALREADY_EXISTS"),
+  );
+  void [name, bundle, removed, redacted, failure];
 }
-void organizer;
+void secrets;

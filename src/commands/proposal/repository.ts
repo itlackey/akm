@@ -26,6 +26,7 @@ import {
   parseFrontmatter,
   replaceFrontmatterBlocks,
 } from "../../core/asset/frontmatter";
+import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
 import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
@@ -38,6 +39,7 @@ import { warn } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import {
   assertAkmAssetWrite,
+  assertWritePathsInsideSource,
   commitAcceptedPaths,
   commitWriteTargetBoundary,
   prepareWriteTargetForMutation,
@@ -2020,48 +2022,61 @@ async function retireProposalWithLease(
   }
 
   // Phase 2: move, idempotently — a resumed call skips whichever file a
-  // tombstone under this proposal's own id already claims.
+  // tombstone under this proposal's own id already claims. A failure undoes this
+  // call's own moves, so a refused accept leaves no asset half-retired.
   const mutationTarget = prepareWriteTargetForMutation(target);
+  assertWritePathsInsideSource(mutationTarget.source, [
+    intent.assetPath,
+    path.join(mutationTarget.source.path, MEMORY_ARCHIVE_REL, "archive-check"),
+  ]);
   const already = findRetireArchiveDirsByProposalId(mutationTarget.source.path, proposal.id) ?? [];
   const alreadyDone = alreadyArchivedOriginalPaths(mutationTarget.source.path, already);
   const archiveDirs = [...already];
   const paths: string[] = [];
+  const moved: Array<{ original: string; record: ReturnType<typeof archiveCleanupCandidate> }> = [];
   const candidate: MemoryPruneCandidate = {
     ref: proposal.ref,
     reason: working.retirement?.reason ?? "manual",
     proposalId: proposal.id,
     ...(working.retirement?.successorRef ? { successorRefs: [working.retirement.successorRef] } : {}),
   };
-  if (!alreadyDone.has(path.resolve(intent.assetPath)) && fs.existsSync(intent.assetPath)) {
-    const record = archiveCleanupCandidate(mutationTarget.source.path, candidate, intent.assetPath);
+  const moveToArchive = (original: string) => {
+    const record = archiveCleanupCandidate(mutationTarget.source.path, candidate, original);
+    moved.push({ original, record });
     archiveDirs.push(path.dirname(record.auditPath));
     paths.push(
-      intent.assetPath,
+      original,
       path.join(mutationTarget.source.path, record.archivedPath),
       path.join(mutationTarget.source.path, record.auditPath),
     );
-  }
+  };
   // The twin path is re-derived, not carried on the
   // intent — it is a pure function of assetPath and the ref's type, and the
   // tombstone scan above (`alreadyDone`) already finds one archived earlier,
   // so storing it was redundant persisted state.
   const twinPath = derivedTwinPath(intent.assetPath, ref.type);
-  if (
-    twinPath &&
-    !alreadyDone.has(path.resolve(twinPath)) &&
-    fs.existsSync(twinPath) &&
-    sameScope(
-      scopeFromFrontmatter(parseFrontmatter(fs.readFileSync(twinPath, "utf8")).data),
-      scopeFromFrontmatter(parseFrontmatter(intent.backupContent).data),
+  try {
+    if (!alreadyDone.has(path.resolve(intent.assetPath)) && fs.existsSync(intent.assetPath))
+      moveToArchive(intent.assetPath);
+    if (
+      twinPath &&
+      !alreadyDone.has(path.resolve(twinPath)) &&
+      fs.existsSync(twinPath) &&
+      sameScope(
+        scopeFromFrontmatter(parseFrontmatter(fs.readFileSync(twinPath, "utf8")).data),
+        scopeFromFrontmatter(parseFrontmatter(intent.backupContent).data),
+      )
     )
-  ) {
-    const twinRecord = archiveCleanupCandidate(mutationTarget.source.path, candidate, twinPath);
-    archiveDirs.push(path.dirname(twinRecord.auditPath));
-    paths.push(
-      twinPath,
-      path.join(mutationTarget.source.path, twinRecord.archivedPath),
-      path.join(mutationTarget.source.path, twinRecord.auditPath),
-    );
+      moveToArchive(twinPath);
+  } catch (error) {
+    for (const { original, record } of moved.reverse()) {
+      fs.renameSync(path.join(mutationTarget.source.path, record.archivedPath), original);
+      fs.rmSync(path.dirname(path.join(mutationTarget.source.path, record.auditPath)), {
+        recursive: true,
+        force: true,
+      });
+    }
+    throw error;
   }
   if (paths.length > 0) commitAccept(options.commitCollector, mutationTarget, proposal, paths);
 
@@ -2236,18 +2251,22 @@ async function unretireProposalWithLease(
     // can occupy this same path (a new memory reusing a retired one's name),
     // and the write step below would overwrite it with the retired asset's
     // pre-retire bytes. Only the primary has a recorded pre-retire hash
-    // (`retirement.retiredContentHash`) to tell the two apart; resume only
+    // (`retirement.retiredContentHash`, or `beforeHash` for a person's retirement) to tell the two apart; resume only
     // when it matches the file actually sitting there, otherwise refuse
     // exactly as the conflict case above does.
     if (originalExists && !archivedExists && path.resolve(originalAbs) === path.resolve(assetPath)) {
-      const expectedHash = proposal.retirement?.retiredContentHash;
-      let currentHash: string | undefined;
+      // A retirement with no judged pair (a person's) has only the `beforeHash` it was minted against.
+      let matches = false;
       try {
-        currentHash = contentHash(fs.readFileSync(originalAbs, "utf8"), "body");
+        const text = fs.readFileSync(originalAbs, "utf8");
+        const retirement = proposal.retirement;
+        matches = retirement
+          ? contentHash(text, "body") === retirement.retiredContentHash
+          : proposal.beforeHash !== undefined && contentHash(text) === proposal.beforeHash;
       } catch {
-        currentHash = undefined;
+        matches = false;
       }
-      if (!expectedHash || currentHash !== expectedHash) {
+      if (!matches) {
         throw new UsageError(
           `Cannot revert proposal ${proposal.id}: ${originalRel} exists but its content does not match what was retired (its path may have been reused since); refusing to overwrite it.`,
           "INVALID_FLAG_VALUE",

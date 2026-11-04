@@ -4,15 +4,17 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { purgeGracedArchive } from "../../../src/commands/improve/memory/memory-improve";
-import { akmProposalRevert } from "../../../src/commands/proposal/proposal";
+import { akmProposalAccept, akmProposalRevert } from "../../../src/commands/proposal/proposal";
 import { createProposal, getProposal, listProposals } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
 import { handleApiRequest } from "../../../src/commands/ui/api";
 import { retireAsset } from "../../../src/commands/ui/manual-retire";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { renameBundle } from "../../../src/core/bundle-rename";
 import { saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeLockfile } from "../../../src/integrations/lockfile";
+import type { SchedulerBackend } from "../../../src/tasks/backends/types";
 import { git, makeGitRepo } from "../../_helpers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -103,6 +105,77 @@ test("revert refuses to overwrite newer work at the original path", async () => 
   await expect(revert(receipt)).rejects.toThrow("already exists");
   expect(fs.readFileSync(file(), "utf8")).toBe("New work");
   expect(fs.existsSync(dir!)).toBe(true);
+});
+
+const noTasks: SchedulerBackend = {
+  name: "cron",
+  list: () => [],
+  install: () => {
+    throw new Error("No task installation expected");
+  },
+  uninstall: () => {
+    throw new Error("No task removal expected");
+  },
+  setEnabled: () => {
+    throw new Error("No task toggle expected");
+  },
+};
+const rename = () =>
+  renameBundle("stash", "renamed", {}, { backend: noTasks, syncTasks: async () => ({ ok: true }) as never });
+
+test("revert still works after the bundle is renamed, for a manual retirement and for an ordinary proposal", async () => {
+  const receipt = await retireAsset(ref, hash());
+  const edit = createProposal(storage.stashDir, {
+    ref: "stash//memories/other",
+    source: "reflect",
+    payload: { content: "---\ndescription: other\n---\nOther, revised.\n" },
+  });
+  await akmProposalAccept({ stashDir: storage.stashDir, id: edit.id });
+  expect((await rename()).applied).toBe(true);
+  expect(getProposal(storage.stashDir, receipt.proposalId).acceptedTarget?.source).toBe("renamed");
+  expect((await revert(receipt)).proposal.status).toBe("reverted");
+  expect(fs.readFileSync(file(), "utf8")).toBe(body);
+  expect((await akmProposalRevert({ id: edit.id })).proposal.status).toBe("reverted");
+  expect(fs.readFileSync(path.join(storage.stashDir, "memories/other.md"), "utf8")).toContain("Other.");
+  expect(await handleApiRequest("/api/asset", new URLSearchParams({ ref: "renamed//memories/manual" }))).toMatchObject({
+    durableRef: "renamed//memories/manual",
+  });
+});
+
+test("an archive directory that is a symbolic link is refused before anything moves", async () => {
+  const outside = path.join(path.dirname(storage.stashDir), "outside");
+  fs.mkdirSync(outside);
+  fs.mkdirSync(path.join(storage.stashDir, ".akm/memory-cleanup"), { recursive: true });
+  fs.symlinkSync(outside, path.join(storage.stashDir, ".akm/memory-cleanup/archive"));
+  await expect(retireAsset(ref, hash())).rejects.toThrow(/symbolic/);
+  expect(fs.readFileSync(file(), "utf8")).toBe(body);
+  expect(fs.readdirSync(outside)).toEqual([]);
+  expect(listProposals(storage.stashDir, { includeArchive: true })[0]?.status).toBe("rejected");
+});
+
+test("a failed archive of the derived twin puts the primary back", async () => {
+  fs.mkdirSync(file().replace(".md", ".derived.md"));
+  await expect(retireAsset(ref, hash())).rejects.toThrow();
+  expect(fs.readFileSync(file(), "utf8")).toBe(body);
+  expect(fs.readdirSync(path.join(storage.stashDir, ".akm/memory-cleanup/archive"))).toEqual([]);
+  expect(listProposals(storage.stashDir, { includeArchive: true })[0]?.status).toBe("rejected");
+});
+
+test("a revert that crashed after moving the file back resumes; a different file at the path is not overwritten", async () => {
+  const receipt = await retireAsset(ref, hash());
+  const [dir] = archived(receipt);
+  const archivedFile = path.join(dir!, "memories/manual.md");
+  fs.renameSync(archivedFile, file());
+  expect((await revert(receipt)).proposal.status).toBe("reverted");
+  expect(fs.readFileSync(file(), "utf8")).toBe(body);
+  expect(fs.existsSync(dir!)).toBe(false);
+
+  const second = await retireAsset(ref, hash());
+  const [again] = archived(second);
+  fs.rmSync(path.join(again!, "memories/manual.md"));
+  fs.writeFileSync(file(), "A new note reusing the name");
+  await expect(revert(second)).rejects.toThrow("does not match what was retired");
+  expect(fs.readFileSync(file(), "utf8")).toBe("A new note reusing the name");
 });
 
 test("a stale revision is refused without changing the active file or minting a proposal", async () => {

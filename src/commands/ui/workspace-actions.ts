@@ -11,7 +11,7 @@ import { appendEvent } from "../../core/events";
 import { resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
 import { assertUnsettable, setConfigValue, unsetConfigValue } from "../config-cli";
 import { writeMarkdownAsset } from "../read/knowledge";
-import { readDocumentSource } from "./document-source";
+import { readDocumentSource, saveSingleFileDocument } from "./document-source";
 import { retireAsset } from "./manual-retire";
 import { assertWriteLeaseFree, classifyProposalError, type ProposalActionError } from "./proposal-actions";
 import { redactForUi, redactUrlsInText } from "./redact";
@@ -321,8 +321,10 @@ export async function handleWorkspaceAction(action: WorkspaceAction, value: unkn
       const revision = text(body, "revision");
       const ref = text(body, "ref");
       await assertWriteLeaseFree("ui-document-save");
-      // The writer takes the lease and compares `revision` with the live bytes inside it.
+      // Each writer takes the lease and compares `revision` with the live bytes inside it.
       const source = await readDocumentSource(ref);
+      if (source.type !== "knowledge" && source.type !== "memory")
+        return saveSingleFileDocument(ref, content, revision);
       const identity = parseRefInput(source.ref);
       const result = await writeMarkdownAsset({
         type: source.type,

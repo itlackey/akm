@@ -221,11 +221,10 @@ export function resolveSecretPath(ref: string): {
 //
 // READS (`env run`/`show`/`path`, `secret run`) ask the one ref-to-file walk
 // (`resolveConceptOwner`) above. (`secret path` used this same read-side
-// resolver too, until it was REMOVED from the CLI in 0.9.0 alongside `secret
-// remove` — R-027 / D-49 — because `remove` resolved through the WRITE-target
-// path below instead, so the two spellings could silently name different files
-// for the same ref; `resolveSecretPath` above still exists and is still
-// exercised by `secret run`.) WRITES route
+// resolver too, until it was REMOVED from the CLI in 0.9.0 — R-027 / D-49 — with
+// `secret remove`, which resolved through the WRITE-target path below, so the two
+// could silently name different files for the same ref. `secret remove` is back
+// in 0.10, shaped like `env remove`: write-target resolution only.) WRITES route
 // through the canonical `resolveWriteTarget` selection every other write command
 // (remember/import/tasks/knowledge) shares: explicit `--bundle` wins, else
 // `defaultWriteTarget`, else the working stash, and the chosen source must be

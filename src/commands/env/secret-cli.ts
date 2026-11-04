@@ -14,17 +14,13 @@
  * are NEVER written to stdout or structured output. The only value-use path is
  * `akm secret run` (injected into a child env var).
  *
- * `secret path` and `secret remove` were REMOVED in 0.9.0 (R-027 / D-49): an
+ * `secret path` was REMOVED in 0.9.0 (R-027 / D-49) and `secret remove` with it: an
  * audit found `path` resolved the ref through the read-side, all-sources
- * resolver while `remove` resolved it through the write-target resolver, so
- * `akm secret path <ref>` and `akm secret remove <ref>` could silently name
- * two DIFFERENT files when a ref existed in more than one stash — inspect one,
- * delete the other. The owner's ruling was to drop both subcommands rather
- * than reconcile the resolvers. A ref's file lives at `<bundle>/secrets/<name>`
- * (matching the ref exactly, e.g. `secrets/deploy-key` -> `secrets/deploy-key`
- * under a bundle root — `akm bundle list` prints each configured bundle's root
- * path); locate or delete it directly, or consume its value without touching
- * disk via `akm secret run <ref> <VAR> -- <command>`.
+ * resolver while `remove` resolved it through the write-target resolver, so the
+ * two could silently name different files when a ref existed in more than one
+ * bundle. `secret remove` is back (0.10) for Desktop and the browser UI, shaped
+ * like `akm env remove`: it names its file through the write-target resolver
+ * only, and `--bundle` picks the bundle.
  */
 
 import { spawnSync } from "node:child_process";
@@ -245,17 +241,54 @@ const secretRunCommand = defineJsonCommand({
   },
 });
 
+const secretRemoveCommand = defineJsonCommand({
+  meta: { name: "remove", description: "Remove a secret file (and its .sensitive marker, if any)" },
+  args: {
+    ref: { type: "positional", description: "Secret ref", required: true },
+    yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
+    bundle: {
+      type: "string",
+      description:
+        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working bundle.",
+    },
+  },
+  async run({ args }) {
+    const { name, absPath, target, ref } = resolveSecretWriteTarget(args.ref, args.bundle);
+    const { confirmDestructive } = await import("../../cli/confirm.js");
+    const confirmed = await confirmDestructive(`Remove secret "${args.ref}"? This cannot be undone.`, {
+      yes: args.yes === true,
+    });
+    if (!confirmed) {
+      process.stderr.write("Aborted.\n");
+      return;
+    }
+    if (!fs.existsSync(absPath)) {
+      throw new NotFoundError(`Secret not found: ${ref}`);
+    }
+    const { removeSecret } = await import("./secret.js");
+    const removed = withEnvSecretWrite(
+      target,
+      { type: "secret", name },
+      "Remove",
+      [absPath, sensitiveMarkerPath(absPath, "secret")],
+      () => removeSecret(absPath),
+    );
+    output("secret-remove", { ref, removed });
+  },
+});
+
 export const secretCommand = defineGroupCommand({
   meta: {
     name: "secret",
     description:
       "Manage secrets — one standalone sensitive value per file (an API token, a PEM private key, a TLS cert).\n\n" +
-      "Names are visible; the file contents are the value and never appear in structured output. For a group of related configuration loaded together, use `akm env`. A secret's file lives at `<bundle>/secrets/<name>` (`akm bundle list` shows bundle roots) — read or delete it there directly, or consume its value without writing it anywhere via `akm secret run <ref> <VAR> -- <command>`.",
+      "Names are visible; the file contents are the value and never appear in structured output. For a group of related configuration loaded together, use `akm env`. A secret's file lives at `<bundle>/secrets/<name>` (`akm bundle list` shows bundle roots); consume its value without writing it anywhere via `akm secret run <ref> <VAR> -- <command>`.",
   },
   subCommands: {
     list: secretListCommand,
     run: secretRunCommand,
     set: secretSetCommand,
+    remove: secretRemoveCommand,
   },
   // No `defaultRun`: bare `akm secret` is a usage error (exit 2), the canonical
   // bare-group behavior — owner ruling 12. Run `akm secret list` for what the

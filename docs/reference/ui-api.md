@@ -668,12 +668,22 @@ is always escaped. Heading links use the UI router's `section` parameter.
 ## `GET /api/asset/source`
 
 Query: `ref` (required, without a fragment). Returns `{ref, type, content, revision}` for an indexed, enabled, writable
-AKM `knowledge` or `memory` file. `content` is the full live UTF-8 source, including frontmatter; `revision` is its
+AKM single-file asset: every type except `env`, `secret` and `session` (a skill is its `SKILL.md`; a skill's other files
+are not assets and are refused). `content` is the full live UTF-8 source, including frontmatter; `revision` is its
 SHA-256 over raw source bytes, independent of the indexed hash. The same authorized indexed-file resolution used by
 `show` applies. Unsupported adapters, read-only targets, stale target identities and invalid UTF-8 are refused, with the
 statuses of [workspace actions](#workspace-actions): a read-only bundle is `409`, not `500`.
 The UI also refuses source editing when URL redaction would change its contents, so saving never replaces hidden
 credentials with their displayed redactions. This route does not prepare a Git boundary, fetch or write anything.
+
+## `GET /api/asset/related`
+
+Query: `ref` (required), `scope` (`all`, the default, or `bundle` for the asset's own bundle). The assets whose stored
+embeddings are nearest to this asset's, best first: `{available, note, matches: [{ref, title, type, cosine}]}`, at most 20.
+Only stored vectors are read: no query is embedded and nothing leaves the machine. `available` is `false`, with a `note`,
+when there is no index, the asset has no stored embedding, or its embedding belongs to an older model than the index's
+current one (re-index first). Matches follow search's entry filter (enabled bundles, no proposed-quality entries) and never
+include the asset itself or `env`, `secret` and `session` assets. A redacted asset has no related content.
 
 ## `GET /api/asset/history`
 
@@ -796,7 +806,7 @@ general config editor or command-execution endpoint.
 | `/api/bundles/settings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Existing validation rejects disabled targets and writable npm/website sources. The default bundle and write target are edited through `/api/config/set`. |
 | `/api/config/set` | `{set?: {key: string}, unset?: string[]}` → `akm config set` / `unset` on each key, in one validated, atomic write. Values are strings, as on the command line, and are coerced and checked against the schema; literal API keys and `configVersion` are refused. An unset is refused with `400 TARGET_NOT_UPDATABLE` when the key is inherited from an `extends` base or sits inside a connection or harness entry akm ignores, and an unset with no config file writes nothing (`saved: false`), all as `akm config unset` does. |
 | `/api/knowledge/create` | `{bundle, name, path?, content}` → `akm import -` with Markdown on stdin. Uses the existing writable AKM target, name/path validation, frontmatter preservation, index/Git effects, and no `--force`. Existing files are never overwritten. Fails fast with `409 ASSET_MUTATION_LEASE_HELD` while another writer holds the asset-mutation lease. |
-| `/api/asset/save` | `{ref, revision, content}` → the existing shared Markdown writer with `force` and the expected raw-content hash. Only indexed writable AKM knowledge/memory documents accepted by `/api/asset/source` can be edited. The writer takes the asset-mutation lease and compares the live source with `revision` inside it, immediately before writing. While another writer holds the lease the save fails fast with `409 ASSET_MUTATION_LEASE_HELD` instead of waiting. A stale revision returns `409 ASSET_CONTENT_CHANGED` without writing; a source deleted after it was loaded is refused (`404 ASSET_NOT_FOUND`) rather than recreated. The browser keeps the draft after a rejected save. An identical save returns `unchanged: true` without rewriting, reindexing or recording an event. Changed saves retain normal writer validation, indexing and Git effects. |
+| `/api/asset/save` | `{ref, revision, content}` → the asset writer, for any asset `/api/asset/source` accepts. Knowledge and memory use the shared Markdown writer (`force`, expected raw-content hash); every other single-file type is written by the ordinary asset writer (Markdown gets its `type`/`updated` frontmatter, as on any akm write; the file mode is kept), committed on a Git bundle and indexed. The write takes the asset-mutation lease and compares the live source with `revision` inside it, immediately before writing, and refuses a path that passes through a symbolic link. While another writer holds the lease the save fails fast with `409 ASSET_MUTATION_LEASE_HELD` instead of waiting. A stale revision returns `409 ASSET_CONTENT_CHANGED` without writing; a source deleted after it was loaded is refused (`404 ASSET_NOT_FOUND`) rather than recreated. The browser keeps the draft after a rejected save. An identical save returns `unchanged: true` without rewriting, reindexing or recording an event. Changed saves retain normal writer validation, indexing and Git effects. |
 
 Configuration-affecting actions do not round-trip the redacted API configuration. Existing mutation helpers retain
 unknown/unrelated fields, local overrides and supported `$VAR`/`${ref}` credential references. If the existing

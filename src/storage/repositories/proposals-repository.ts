@@ -596,6 +596,19 @@ export function listStateProposalIdsByPrefix(db: Database, stashDir: string, idP
   return rows.map((r) => r.id);
 }
 
+/** Proposals whose proposed or accepted write target names `bundleId`. */
+function proposalTargetCount(db: Database, bundleId: string): number {
+  return (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM proposals
+         WHERE json_extract(metadata_json, '$.proposedTarget.source') = ?1
+            OR json_extract(metadata_json, '$.acceptedTarget.source') = ?1`,
+      )
+      .get(bundleId) as { n: number }
+  ).n;
+}
+
 /**
  * Preview counterpart of {@link renameProposalsBundleRef} for `akm bundle
  * rename --dry-run`: the same two `WHERE` predicates, read-only.
@@ -607,12 +620,7 @@ export function countProposalsForBundleRename(db: Database, oldBundleId: string)
       n: number;
     }
   ).n;
-  const targets = (
-    db
-      .prepare(`SELECT COUNT(*) AS n FROM proposals WHERE json_extract(metadata_json, '$.proposedTarget.source') = ?`)
-      .get(oldBundleId) as { n: number }
-  ).n;
-  return { refs, targets };
+  return { refs, targets: proposalTargetCount(db, oldBundleId) };
 }
 
 /**
@@ -637,14 +645,15 @@ export function renameProposalsBundleRef(
         .prepare(`UPDATE proposals SET ref = ? || substr(ref, length(?) + 1) WHERE substr(ref, 1, length(?)) = ?`)
         .run(newBundleId, oldBundleId, prefix, prefix).changes,
     );
-    const targets = Number(
-      db
-        .prepare(
-          `UPDATE proposals SET metadata_json = json_set(metadata_json, '$.proposedTarget.source', ?)
-           WHERE json_extract(metadata_json, '$.proposedTarget.source') = ?`,
-        )
-        .run(newBundleId, oldBundleId).changes,
-    );
+    // The write-target bundle a pending proposal would apply to, and the one an accepted proposal
+    // is bound to (revert refuses a target whose bundle name differs).
+    const targets = proposalTargetCount(db, oldBundleId);
+    for (const field of ["proposedTarget", "acceptedTarget"]) {
+      db.prepare(
+        `UPDATE proposals SET metadata_json = json_set(metadata_json, '$.${field}.source', ?)
+         WHERE json_extract(metadata_json, '$.${field}.source') = ?`,
+      ).run(newBundleId, oldBundleId);
+    }
     return { refs, targets };
   })();
 }

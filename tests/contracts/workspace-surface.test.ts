@@ -1,113 +1,74 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+/**
+ * `akm-cli/workspace` is a small set of existing operations for a trusted local host (see
+ * docs/reference/api.md). This pins its runtime export list and that the hand-written
+ * `dist/workspace.d.ts` source stays assignable to what `src/workspace.ts` really exports.
+ */
+
 import { expect, test } from "bun:test";
-import { removeEnv, writeEnv } from "../../src/commands/env/env";
-import { setSecret, withSecretLock } from "../../src/commands/env/secret";
-import { akmLint } from "../../src/commands/lint/index";
-import { akmClone } from "../../src/commands/sources/source-clone";
-import { akmTasksSync } from "../../src/commands/tasks/tasks";
-import { handleApiRequest, NO_SUCH_ROUTE } from "../../src/commands/ui/api";
-import {
-  assertWriteLeaseFree,
-  classifyProposalError,
-  handleWriteRequest,
-  matchWriteRoute,
-} from "../../src/commands/ui/proposal-actions";
-import { scrubUrlCredentials } from "../../src/commands/ui/redact";
-import {
-  classifyWorkspaceError,
-  handleWorkspaceAction,
-  matchWorkspaceAction,
-} from "../../src/commands/ui/workspace-actions";
-import { assetPathForName, deriveCanonicalAssetName, stashDirFor } from "../../src/core/asset/asset-placement";
-import { parseRefInput } from "../../src/core/asset/resolve-ref";
-import { renameBundle } from "../../src/core/bundle-rename";
-import { isWithin, writeFileAtomic } from "../../src/core/common";
-import { loadConfig } from "../../src/core/config/config";
-import {
-  resolveEnvPath,
-  resolveEnvWriteTarget,
-  resolveSecretPath,
-  resolveSecretWriteTarget,
-  sensitiveMarkerPath,
-  withEnvSecretWrite,
-} from "../../src/core/env-secret-ref";
-import { AkmError, UsageError } from "../../src/core/errors";
-import { resolveBundleWriteTarget } from "../../src/core/mutation-target";
-import {
-  assertAkmAssetWrite,
-  prepareWriteTargetForMutation,
-  withWriteTargetMutation,
-} from "../../src/core/write-source";
-import { withAssetMutationLease } from "../../src/indexer/index-writer-lock";
-import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
-import { resolveSourceEntries } from "../../src/indexer/search/search-source";
-import { closeDatabase, openReadonlyExistingDatabase } from "../../src/storage/repositories/index-connection";
-import {
-  getAllEntries,
-  getEntryById,
-  getEntryCount,
-  getEntryIdByFilePath,
-} from "../../src/storage/repositories/index-entries-repository";
-import { getMeta } from "../../src/storage/repositories/index-meta-repository";
-import {
-  getAllEntriesForEmbedding,
-  getNeighborsByEntryId,
-  hasStoredEmbedding,
-} from "../../src/storage/repositories/index-vec-repository";
+import fs from "node:fs";
+import path from "node:path";
+import type * as Declared from "../../scripts/node-runtime/workspace";
 import * as workspace from "../../src/workspace";
 
-test("workspace exports exactly the existing operations, without wrappers or new behavior", () => {
-  const existing: typeof workspace = {
-    writeEnv,
-    removeEnv,
-    setSecret,
-    withSecretLock,
-    resolveEnvPath,
-    resolveSecretPath,
-    resolveEnvWriteTarget,
-    resolveSecretWriteTarget,
-    akmTasksSync,
-    renameBundle,
-    withEnvSecretWrite,
-    sensitiveMarkerPath,
-    deriveCanonicalAssetName,
-    akmClone,
-    handleApiRequest,
-    NO_SUCH_ROUTE,
-    classifyProposalError,
-    handleWriteRequest,
-    matchWriteRoute,
-    scrubUrlCredentials,
-    classifyWorkspaceError,
-    handleWorkspaceAction,
-    matchWorkspaceAction,
-    AkmError,
-    UsageError,
-    getAllEntriesForEmbedding,
-    getMeta,
-    loadConfig,
-    resolveBundleWriteTarget,
-    assertAkmAssetWrite,
-    prepareWriteTargetForMutation,
-    withWriteTargetMutation,
-    isWithin,
-    writeFileAtomic,
-    assetPathForName,
-    stashDirFor,
-    parseRefInput,
-    withAssetMutationLease,
-    assertWriteLeaseFree,
-    indexWrittenAssets,
-    akmLint,
-    closeDatabase,
-    openReadonlyExistingDatabase,
-    getAllEntries,
-    getEntryById,
-    getEntryIdByFilePath,
-    getEntryCount,
-    getNeighborsByEntryId,
-    hasStoredEmbedding,
-    resolveSourceEntries,
-  };
-  expect(Object.keys(workspace).sort()).toEqual(Object.keys(existing).sort());
-  expect(workspace).toEqual(existing);
+const ROOT = path.resolve(import.meta.dir, "..", "..");
+
+// Compile-time (`bunx tsc --noEmit` is the gate): every real export satisfies its declaration. The one
+// opaque type, the write target, is declared as the subset a host reads, so `withEnvSecretWrite`
+// (which takes it back) can only be checked the other way: the declared function is usable as the real one.
+const sourceAsDeclared: Omit<typeof Declared, "withEnvSecretWrite"> = {} as Omit<
+  typeof workspace,
+  "withEnvSecretWrite"
+>;
+const declaredWrite: typeof workspace.withEnvSecretWrite = {} as typeof Declared.withEnvSecretWrite;
+const actions: Declared.WorkspaceAction = {} as workspace.WorkspaceAction;
+const routes: Declared.WriteRoute = {} as workspace.WriteRoute;
+const sourceActions: workspace.WorkspaceAction = {} as Declared.WorkspaceAction;
+const sourceRoutes: workspace.WriteRoute = {} as Declared.WriteRoute;
+const clone: Declared.CloneResponse = {} as workspace.CloneResponse;
+const options: workspace.CloneOptions = {} as Declared.CloneOptions;
+void [sourceAsDeclared, declaredWrite, actions, routes, sourceActions, sourceRoutes, clone, options];
+
+test("workspace exports exactly what a local host uses", () => {
+  expect(Object.keys(workspace).sort()).toEqual([
+    "AkmError",
+    "NO_SUCH_ROUTE",
+    "UsageError",
+    "akmClone",
+    "classifyProposalError",
+    "classifyWorkspaceError",
+    "deriveCanonicalAssetName",
+    "handleApiRequest",
+    "handleWorkspaceAction",
+    "handleWriteRequest",
+    "matchWorkspaceAction",
+    "matchWriteRoute",
+    "removeEnv",
+    "removeSecret",
+    "resolveEnvPath",
+    "resolveEnvWriteTarget",
+    "resolveSecretPath",
+    "resolveSecretWriteTarget",
+    "scrubUrlCredentials",
+    "sensitiveMarkerPath",
+    "setSecret",
+    "withEnvSecretWrite",
+    "writeEnv",
+  ]);
+});
+
+test("the shipped declarations list every runtime export, the Node entry re-exports them, and nothing more", () => {
+  const declared = fs.readFileSync(path.join(ROOT, "scripts", "node-runtime", "workspace.d.ts"), "utf8");
+  const names = [...declared.matchAll(/^export (?:abstract )?(?:function|class|const) (\w+)/gm)].map((m) => m[1]);
+  expect(names.sort()).toEqual(Object.keys(workspace).sort());
+  const node = fs.readFileSync(path.join(ROOT, "scripts", "node-runtime", "workspace-node.mjs"), "utf8");
+  const reexported = /^export \{([^}]*)\};/m
+    .exec(node)?.[1]
+    ?.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  expect(reexported?.sort()).toEqual(Object.keys(workspace).sort());
 });
