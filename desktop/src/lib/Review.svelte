@@ -11,7 +11,7 @@
   export let query = new URLSearchParams();
   let status = 'pending', source = '', age = '', week = '', outcome = '', queue: ReviewQueue | null = null, detail: ProposalDetail | null = null, selected: string[] = [];
   let error = '', queueError = '', detailError = '', busy = false, loading = false, opening = false, intent = '', reason = '', choice = '';
-  let receipt: WriteResult | null = null, receiptKind = '', receiptId = '', reviewed = 0, locked = false;
+  let receipt: WriteResult | null = null, receiptKind = '', receiptId = '', reviewed = 0;
   let queueGeneration = 0, detailGeneration = 0, mounted = false, previousRoute = '', desiredId = '', queuedAction = '', region: HTMLElement;
   let shortcutsEnabled = false, decisionTrigger: HTMLElement | null = null, decisionTriggerKey = '';
   let detailHeading: HTMLHeadingElement;
@@ -83,7 +83,7 @@
   }
   async function cancel() { intent = ''; await tick(); if (decisionTrigger?.isConnected) decisionTrigger.focus(); else (region?.querySelector<HTMLElement>(`[data-decision="${decisionTriggerKey}"]`) ?? region?.querySelector<HTMLElement>('[data-primary-decision]'))?.focus(); }
   async function decide() {
-    if (!intent || busy || locked) return;
+    if (!intent || busy) return;
     if (intent.includes('reject')) { error = rejectionError(choice, reason); if (error) return; }
     const isBatch = intent.startsWith('batch-'), action = intent.replace('batch-', ''), targetId = current?.id;
     if ((!isBatch && !targetId) || (isBatch && !selected.length)) return;
@@ -100,10 +100,9 @@
       await tick(); region?.querySelector<HTMLElement>('[data-receipt]')?.focus();
     } catch (e) {
       error = (e as Error).message;
-      if (record(e).code === 'INVALID_COMMAND_RESPONSE') { locked = true; error += ' State may already have changed. Reload before making another decision; do not repeat automatically.'; }
     } finally { busy = false; }
   }
-  async function refresh() { locked = false; error = ''; await load(); if (desiredId) await open(desiredId); }
+  async function refresh() { error = ''; await load(); if (desiredId) await open(desiredId); }
   function go(direction: number) {
     const proposals = queue?.proposals ?? [], index = proposals.findIndex(p => p.id === desiredId);
     const next = proposals[index < 0 ? direction > 0 ? 0 : proposals.length - 1 : (index + direction + proposals.length) % proposals.length];
@@ -115,7 +114,7 @@
     if (event.key === 'Escape' && intent && !busy) { event.preventDefault(); void cancel(); return; }
     if (!shortcutsEnabled || event.repeat || !region?.contains(target)) return;
     if (event.altKey || event.ctrlKey || event.metaKey || event.isComposing || target?.closest('input,textarea,select,[contenteditable="true"]')) return;
-    if (busy || locked) return;
+    if (busy) return;
     switch (event.key.toLowerCase()) {
       case 'j': case 'n': event.preventDefault(); go(1); break;
       case 'k': event.preventDefault(); go(-1); break;
@@ -171,12 +170,12 @@
 {#if receiptKind === 'accept'}<p>{commitOutcome(receipt.commit)}</p>{/if}
 {#if receipt.results}<ul class="plain">{#each receipt.results as r}<li><span class="badge">{r.ok ? 'Completed' : 'Failed'}</span> <a href={proposalHref(r.id, query)}>{r.ref ?? r.id}</a>{#if !r.ok} — {r.error ?? r.code} <code>{r.code ?? ''}</code>{/if}</li>{/each}</ul>{/if}
 <div class="btn-row">{#if receiptId && receiptId !== current?.id && receiptKind === 'reject'}<button class="btn-secondary" on:click={() => receiptAction('reopen')}>Reopen…</button>{/if}{#if receiptId && receiptId !== current?.id && receiptKind === 'accept' && record(receipt.proposal).revertable}<button class="btn-secondary" on:click={() => receiptAction('revert')}>Undo…</button>{/if}<button class="btn-secondary" on:click={() => receipt = null}>Dismiss</button></div></section>{/if}
-{#if selected.length && !intent}<div class="batch-bar"><strong>{selected.length} selected</strong><div class="btn-row"><button on:click={() => begin('batch-accept')} disabled={busy || locked}>Accept selected…</button><button class="btn-secondary" on:click={() => begin('batch-reject')} disabled={busy || locked}>Reject selected…</button><button class="btn-quiet" on:click={() => selected = []} disabled={busy}>Clear selection</button></div></div>{/if}
+{#if selected.length && !intent}<div class="batch-bar"><strong>{selected.length} selected</strong><div class="btn-row"><button on:click={() => begin('batch-accept')} disabled={busy}>Accept selected…</button><button class="btn-secondary" on:click={() => begin('batch-reject')} disabled={busy}>Reject selected…</button><button class="btn-quiet" on:click={() => selected = []} disabled={busy}>Clear selection</button></div></div>{/if}
 {#if intent}<section class="confirmation notice" aria-label="Confirm decision"><h2>{intent.includes('reject') ? 'Reject' : intent.includes('reopen') ? 'Reopen' : intent.includes('revert') ? 'Revert' : 'Accept'} {intent.startsWith('batch-') ? `${selected.length} selected proposals` : 'this proposal'}?</h2><p>{intent.includes('accept') ? 'Accepted content is written through AKM. Git-backed changes are committed and may be pushed. A batch can partially succeed.' : intent.includes('revert') ? 'Restore the backup retained when this proposal was accepted. AKM refuses to overwrite subsequent edits.' : intent.includes('reopen') ? 'Return this rejected proposal to the pending queue, if its target remains valid.' : 'Your reason is recorded for each rejection. Rejected proposals can be reopened if their targets remain valid.'}</p>
 {#if intent.includes('reject')}<fieldset class="reason-chips"><legend>Why reject this proposal?</legend><div class="segmented">{#each rejectionChoices as chip}<label><input type="radio" name="reject-choice" value={chip} bind:group={choice} disabled={busy} /><span>{chip}</span></label>{/each}</div></fieldset><label>Rejection reason<textarea bind:value={reason} rows="3" maxlength="2000" disabled={busy} aria-describedby="reason-hint"></textarea></label><p class="muted small" id="reason-hint">{choice && choice !== 'Other' ? 'Details optional with a reason above.' : 'Choose a reason or write details. Other requires details.'} At most 2000 characters including the selected reason.</p>{/if}
-<div class="btn-row"><button data-confirm disabled={busy || locked} on:click={decide}>{busy ? 'Recording…' : 'Confirm decision'}</button><button class="btn-secondary" disabled={busy} on:click={cancel}>Cancel</button></div></section>{/if}
+<div class="btn-row"><button data-confirm disabled={busy} on:click={decide}>{busy ? 'Recording…' : 'Confirm decision'}</button><button class="btn-secondary" disabled={busy} on:click={cancel}>Cancel</button></div></section>{/if}
 
-{#if current && !intent && !selected.length}<div class="decision-row"><div class="decision-context"><span>{current.status === 'pending' ? 'Changes follow the bundle’s Git policy.' : 'Recorded outcome'}</span></div><div class="btn-row">{#if current.status === 'pending'}<button data-primary-decision disabled={busy || locked} data-decision="accept" on:click={() => begin('accept')}>Accept…</button><button class="btn-secondary" disabled={busy || locked} data-decision="reject" on:click={() => begin('reject')}>Reject…</button>{:else if current.status === 'rejected'}<button data-primary-decision disabled={busy || locked} data-decision="reopen" on:click={() => begin('reopen')}>Reopen…</button>{:else if current.status === 'accepted' && current.revertable}<button data-primary-decision disabled={busy || locked} data-decision="revert" on:click={() => begin('revert')}>Revert accepted change…</button>{/if}<button class="btn-quiet" aria-label={status === 'pending' ? 'Next pending' : 'Next decision'} disabled={busy || !queue?.proposals.some(p => p.id !== current?.id)} on:click={() => go(1)}>Next<span class="next-context">{status === 'pending' ? ' pending' : ' decision'}</span><Icon name="arrow-right" size={16} /></button></div></div>{/if}
+{#if current && !intent && !selected.length}<div class="decision-row"><div class="decision-context"><span>{current.status === 'pending' ? 'Changes follow the bundle’s Git policy.' : 'Recorded outcome'}</span></div><div class="btn-row">{#if current.status === 'pending'}<button data-primary-decision disabled={busy} data-decision="accept" on:click={() => begin('accept')}>Accept…</button><button class="btn-secondary" disabled={busy} data-decision="reject" on:click={() => begin('reject')}>Reject…</button>{:else if current.status === 'rejected'}<button data-primary-decision disabled={busy} data-decision="reopen" on:click={() => begin('reopen')}>Reopen…</button>{:else if current.status === 'accepted' && current.revertable}<button data-primary-decision disabled={busy} data-decision="revert" on:click={() => begin('revert')}>Revert accepted change…</button>{/if}<button class="btn-quiet" aria-label={status === 'pending' ? 'Next pending' : 'Next decision'} disabled={busy || !queue?.proposals.some(p => p.id !== current?.id)} on:click={() => go(1)}>Next<span class="next-context">{status === 'pending' ? ' pending' : ' decision'}</span><Icon name="arrow-right" size={16} /></button></div></div>{/if}
 </footer>{/if}
 </section></div></div>
 <style>
