@@ -7,6 +7,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { api } from "./client";
+  import { classifyEngineSkew, hostUpgradeOutrunsDesktop } from "./engine-skew";
   import Icon from "./Icon.svelte";
   type Harness = {
     id: string;
@@ -18,8 +19,10 @@
     plugin?: { state: string; version?: string; spec?: string; note?: string; detail?: string };
   };
   type Snapshot = {
+    engine: string;
     desktop: {
       version?: string;
+      update?: { state: string; version?: string; error?: string };
       menu?: {
         supported: boolean;
         installed: boolean;
@@ -48,10 +51,11 @@
       };
     };
   };
-  let data: Snapshot | null = null,
-    error = "",
-    submitting = false,
-    channel = "latest";
+  const releases = "https://github.com/itlackey/akm/releases";
+  let data = $state<Snapshot | null>(null),
+    error = $state(""),
+    submitting = $state(false),
+    channel = $state("latest");
   let timer: ReturnType<typeof setInterval>,
     alive = true;
   const names: Record<string, string> = {
@@ -60,8 +64,12 @@
     opencode: "OpenCode",
     opencode2: "OpenCode 2",
   };
-  $: hostBusy = submitting || Boolean(data && data.host.phase !== "idle");
-  $: updateBusy = submitting || Boolean(data?.desktop.menu?.busy);
+  const hostBusy = $derived(submitting || Boolean(data && data.host.phase !== "idle"));
+  const updateBusy = $derived(submitting || Boolean(data?.desktop.menu?.busy));
+  const skew = $derived(classifyEngineSkew(data?.engine, data?.host.cli?.version));
+  const desktopBehind = $derived(hostUpgradeOutrunsDesktop(data?.engine, data?.host.upgrade?.latestVersion));
+  // Desktop's own update state, from the main process (electron-updater).
+  const update = $derived(data?.desktop.update);
   async function refresh() {
     try {
       const next = await api<Snapshot>("/desktop/software");
@@ -105,7 +113,23 @@
       <div class="software-row">
         <div>
           <h3 id="desktop-software">AKM Desktop <span class="muted mono">{data.desktop.version ?? ""}</span></h3>
-          <p role="status">To update, replace the AppImage with a newer download.</p>
+          {#if update?.state === "checking"}<p role="status">Checking for updates…</p>
+          {:else if update?.state === "current"}<p role="status">AKM Desktop is up to date.</p>
+          {:else if update?.state === "downloading"}<p role="status">
+              Downloading version {update.version}. It installs when you quit AKM Desktop.
+            </p>
+          {:else if update?.state === "downloaded"}<p role="status">
+              Version {update.version} is ready. It installs when you quit AKM Desktop.
+            </p>
+          {:else if update?.state === "available"}<p role="status">
+              Version {update.version} is available.
+              <a href="{releases}/tag/v{update.version}">Download it from the release page</a>.
+            </p>
+          {:else if update?.state === "error"}<p role="status">
+              Could not check for updates. <a href={releases}>Download a newer version</a> if you need one.
+            </p>
+          {:else}<p role="status">To update, download a newer AKM Desktop.</p>{/if}
+          <p class="field-hint">Built-in AKM engine {data.engine}.</p>
         </div>
       </div>
       {#if data.desktop.menu?.supported}
@@ -121,7 +145,7 @@
                     : "Open AKM Desktop without finding the download."}
               </p>
             </div>
-            <button class="btn-secondary" disabled={updateBusy} on:click={() => act("desktop-menu-install")}>
+            <button class="btn-secondary" disabled={updateBusy} onclick={() => act("desktop-menu-install")}>
               {data.desktop.menu.installed
                 ? data.desktop.menu.runningInstalledCopy
                   ? "Repair menu entry"
@@ -160,14 +184,15 @@
           </p>
         </div>
         <div class="btn-row">
-          <button class="btn-quiet icon-label" disabled={hostBusy} on:click={() => act("check")}
+          <button class="btn-quiet icon-label" disabled={hostBusy} onclick={() => act("check")}
             ><Icon name="refresh" />Check CLI & plugins</button
           >
-          {#if data.host.cli && !data.host.cli.installed}<button disabled={hostBusy} on:click={() => act("install-cli")}
+          {#if data.host.cli && !data.host.cli.installed}<button disabled={hostBusy} onclick={() => act("install-cli")}
               >Install AKM CLI</button
             >
-          {:else if data.host.cli?.runnable}<button disabled={hostBusy} on:click={() => act("upgrade-cli")}
-              >Update CLI & plugins</button
+          {:else if data.host.cli?.runnable}<button
+              disabled={hostBusy || desktopBehind}
+              onclick={() => act("upgrade-cli")}>Update CLI & plugins</button
             >{/if}
         </div>
       </div>
@@ -177,6 +202,17 @@
             <pre class="mono">{data.host.errorDetail}</pre>
           </details>{/if}{/if}
       {#if data.host.receipt}<p class="notice" role="status">{data.host.receipt}</p>{/if}
+      {#if desktopBehind}<p class="notice notice-warn" role="status">
+          A newer AKM is available than the one built into this app. Update AKM Desktop first, then update the CLI.
+        </p>
+      {:else if skew === "host-older"}<p class="notice" role="status">
+          Host akm {data.host.cli?.version} is older than this app's engine ({data.engine}). If the library index
+          changed, the CLI will ask you to upgrade: use Update CLI & plugins.
+        </p>
+      {:else if skew === "host-newer"}<p class="notice" role="status">
+          Host akm {data.host.cli?.version} is newer than this app's engine ({data.engine}). If AKM Desktop says the
+          library was upgraded by a newer AKM, update AKM Desktop.
+        </p>{/if}
       <p class="field-hint">
         Updates use <code>akm upgrade</code>, including its migration checks and installed plugins. The desktop’s
         bundled engine updates with the app.
@@ -228,7 +264,7 @@
             {#if harness.plugin?.state === "missing"}<button
                 class="btn-secondary"
                 disabled={hostBusy || !data.host.cli?.runnable}
-                on:click={() => act("install-plugin", { harness: harness.id, channel })}>Install AKM plugin</button
+                onclick={() => act("install-plugin", { harness: harness.id, channel })}>Install AKM plugin</button
               >{/if}
           </div>
         {/each}

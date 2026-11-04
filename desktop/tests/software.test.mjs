@@ -37,10 +37,11 @@ test("host environment finds conventional user tools without running profiles or
   assert.ok(!env.PATH.split(":").includes("."));
 });
 
-async function hostFixture({ absent = false, failure = false } = {}) {
+async function hostFixture({ absent = false, failure = false, desktopVersion } = {}) {
   const home = await mkdtemp(path.join(os.tmpdir(), "akm-host-test-"));
   temporary.push(home);
   const calls = [],
+    installerUrls = [],
     installed = new Set(),
     configured = new Set();
   let cli = !absent;
@@ -49,9 +50,10 @@ async function hostFixture({ absent = false, failure = false } = {}) {
     home,
     env,
     platform: "linux",
+    desktopVersion,
     find: async (name) => (name === "akm" && !cli ? undefined : `/fixture/bin/${name}`),
     fetcher: async (url) => {
-      assert.equal(url, "https://github.com/itlackey/akm/releases/latest/download/install.sh");
+      installerUrls.push(url);
       return { ok: true, text: async () => "#!/usr/bin/env bash\n# fixture; never executed\n" };
     },
     run: async (file, args, options) => {
@@ -112,7 +114,7 @@ async function hostFixture({ absent = false, failure = false } = {}) {
       return "{}";
     },
   });
-  return { manager, home, calls, installed, configured };
+  return { manager, home, calls, installed, configured, installerUrls };
 }
 
 test("host checks are read-only and upgrades invoke the existing CLI, not the bundled engine", async () => {
@@ -151,6 +153,15 @@ test("missing CLI uses official user-local installer and verifies the result", a
   f.manager.start("install-cli");
   await f.manager.pending;
   assert.match(f.manager.snapshot().error, /existing CLI/);
+  assert.deepEqual(f.installerUrls, ["https://github.com/itlackey/akm/releases/latest/download/install.sh"]);
+});
+
+test("the installer comes from Desktop's own release, so the host CLI starts equal to the engine", async () => {
+  const f = await hostFixture({ absent: true, desktopVersion: "0.10.261105-beta" });
+  f.manager.start("install-cli");
+  await f.manager.pending;
+  assert.equal(f.manager.snapshot().error, undefined);
+  assert.deepEqual(f.installerUrls, ["https://github.com/itlackey/akm/releases/download/v0.10.261105-beta/install.sh"]);
 });
 
 test("all four harness paths use standard native installation commands and verify afterward", async () => {

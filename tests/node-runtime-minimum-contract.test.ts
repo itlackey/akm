@@ -73,11 +73,13 @@ describe("Node 22 runtime minimum contract", () => {
     expect(coveredInstallJobs.sort()).toEqual([
       "ci.yml#check",
       "ci.yml#desktop",
+      "ci.yml#desktop-package",
       "ci.yml#node-smoke",
       "ci.yml#upgrade-rehearsal",
       "gated-ci.yml#docker-install",
       "gated-ci.yml#native-scheduler",
       "gated-ci.yml#semantic-search",
+      "release.yml#desktop",
       "release.yml#release",
     ]);
   });

@@ -154,23 +154,25 @@ the app stops the child server. Navigation never resizes its window.
 
 ## Distribution status
 
-The app is a source-integrated test build, not a public release or a claim that the larger
-asset-manager design is complete. Desktop has no version of its own: it is the
-version of the AKM it embeds, and `scripts/package.mjs --appimage` refuses a dirty
-tree or a commit not tagged `v<version>`. See `verification.md` for actual checks
-and remaining limits.
-The AppImage remains an unsigned Linux test artifact. Release
-signing, installers, macOS/Windows verification, and public distribution are
-separate distribution work. Setup builds and packs core from this checkout into
-the ignored `.core/` directory. The dependency is a local package, not a private
-tarball, source patch or registry release.
+Desktop has no version of its own: it is the version of the AKM it embeds, and it ships in
+the same release as that AKM (one version, one tag, one changelog). Setup builds and packs
+core from this checkout into the ignored `.core/` directory for development and CI.
+A distributable build (`scripts/package.mjs --release`) refuses a dirty tree and any engine
+that is not the released `akm-cli` tarball (`scripts/core.mjs --tarball`). The release workflow's
+`desktop` job runs it on Linux, macOS and Windows, after the npm publish, from the very tarball
+that was published, and attaches the installers to the same GitHub release: a Linux AppImage,
+a macOS dmg and zip (arm64), and a Windows NSIS installer (x64). They are unsigned;
+see [Software](software.md#unsigned-installers). CI packages and starts Desktop on all three
+platforms (`scripts/smoke.mjs`), so a change that breaks one is seen before a release.
 
 ## Software lifecycle
 
-Desktop does not update itself: replace the AppImage with a newer download.
-Electron main only installs the per-user application-menu entry; the server asks
-it over an allowlisted `status` / `menu-install` message, and no renderer Node or
-preload API is added. Normal close respects unsaved-work confirmation and waits
+Electron main installs the per-user application-menu entry and runs the updater
+(`electron/updater.mjs`, electron-updater's `github` provider, no token, no other feed). The
+server asks it over an allowlisted `status` / `menu-install` message, and no renderer Node or
+preload API is added. A stable build follows stable releases; a build of a stage release follows
+prereleases, so the channel is the akm release stage. The Software view compares the built-in
+engine with the host `akm` (`src/lib/engine-skew.ts`) and says which one to update. Normal close respects unsaved-work confirmation and waits
 for host mutations.
 
 Host CLI installation uses AKM's official checksum-verifying user-local

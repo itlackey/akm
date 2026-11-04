@@ -5,7 +5,9 @@
 import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, session, shell } from "electron";
+import electronUpdater from "electron-updater";
 import { DESKTOP_ID, DesktopMenu } from "./menu-install.mjs";
+import { createUpdater } from "./updater.mjs";
 
 /** @typedef {{ type?: string, busy?: boolean, id?: string, action?: string, url?: string, origin?: string }} ChildMessage */
 /** @type {import("node:child_process").ChildProcess | undefined} */
@@ -87,6 +89,16 @@ else
         dataHome: process.env.XDG_DATA_HOME,
         icon: fileURLToPath(new URL("../resources/512x512.png", import.meta.url)),
       });
+      const updater = createUpdater({
+        autoUpdater: electronUpdater.autoUpdater,
+        version: app.getVersion(),
+        platform: process.platform,
+        // electron-updater replaces a Linux AppImage in place and cannot update any other Linux layout.
+        supported:
+          app.isPackaged &&
+          process.env.AKM_DESKTOP_UPDATES !== "off" &&
+          (process.platform !== "linux" || Boolean(process.env.APPIMAGE)),
+      });
       const server = fork(fileURLToPath(new URL("./server.mjs", import.meta.url)), [], {
         execPath: process.execPath,
         execArgv: [],
@@ -135,7 +147,11 @@ else
             server.send({
               type: "desktop-response",
               id: message.id,
-              data: { version: app.getVersion(), menu: { ...(await menu.status()), error: menuError } },
+              data: {
+                version: app.getVersion(),
+                menu: { ...(await menu.status()), error: menuError },
+                update: updater.status(),
+              },
             });
         } catch (error) {
           if (server.connected)
@@ -219,6 +235,7 @@ else
       });
       await win.loadURL(String(ready.url));
       win.show();
+      updater.start();
     } catch (error) {
       dialog.showErrorBox("AKM Desktop could not start", error instanceof Error ? error.message : String(error));
       app.quit();

@@ -48,7 +48,12 @@ else {process.exitCode=1}
   await page.getByRole("link", { name: "Software", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Software", exact: true })).toBeVisible();
   await expect(page.getByText("Update available · 0.10.261105", { exact: true })).toBeVisible();
-  await expect(page.getByText("To update, replace the AppImage with a newer download.", { exact: true })).toBeVisible();
+  await expect(page.getByText("To update, download a newer AKM Desktop.", { exact: true })).toBeVisible();
+  // The fixture's host CLI (0.10.261104) is older than the built-in engine: said once, with its remedy.
+  await expect(
+    page.getByText(/Host akm 0\.10\.261104 is older than this app's engine \(0\.10\.261105\)/),
+  ).toBeVisible();
+  await expect(page.getByText("Built-in AKM engine 0.10.261105.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Add to application menu", exact: true })).toHaveCount(0);
   assert.equal((await server.call("/api/desktop/software", { action: "desktop-menu-install" })).status, 400);
   await page.getByRole("button", { name: "Install AKM plugin", exact: true }).click();

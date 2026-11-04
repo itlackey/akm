@@ -10,7 +10,8 @@ npm test
 npm run test:e2e
 npm run test:usability
 npm run test:electron
-npm run appimage
+npm run dist
+npm run smoke
 ```
 
 Build before starting tests. Install the pinned Electron runtime explicitly and
@@ -53,7 +54,11 @@ workspace access, unsaved-work protection and child-server shutdown. Inspect
 its screenshot as well as the browser workflow screenshots; passing assertions
 alone are not a visual review.
 
-Linux x64 is the current verification target. Other platforms, signed installers
-and a public release are not established by these tests.
+Packaging is proven on Linux x64, macOS arm64 and Windows x64 by CI (`desktop-package` in
+`.github/workflows/ci.yml`): each builds the installers and `npm run smoke` starts the packaged
+app headless (its own server, answering `/api/desktop` with the embedded version, and serving the
+UI). The native-window tests (`test:electron`) run on Linux under Xvfb. Signed installers and
+macOS/Windows window tests are not established by these tests. The release workflow can be
+rehearsed without publishing: `gh workflow run release.yml --ref <branch> -f version=<version> -f dry_run=true`.
 Optional network installation tests are described in
 [Software](software.md); do not count skipped opt-in tests as verified.

@@ -5,6 +5,7 @@
 import { createRequire } from "node:module";
 import os from "node:os";
 import { activity, assets, bundles, config, documents, feedback, host, proposals, sensitive } from "akm-cli/workspace";
+import { hostUpgradeOutrunsDesktop } from "../engine-skew.js";
 import { readFile, saveFile } from "./features/files.js";
 import { readPreferences, saveTheme, validTheme } from "./features/preferences.js";
 import { reveal } from "./features/reveal.js";
@@ -82,7 +83,11 @@ export const routes: Route[] = [
       throw new HttpFailure(400, "INVALID_PREFERENCE", "Choose system, light, or dark appearance.");
     return saveTheme(theme);
   }),
-  get("/api/desktop/software", async () => ({ host: hostTools.snapshot(), desktop: await desktopApp() })),
+  get("/api/desktop/software", async () => ({
+    host: hostTools.snapshot(),
+    desktop: await desktopApp(),
+    engine: akmPackage.version,
+  })),
   post("/api/desktop/software", async (value) => {
     const request = fields<{ action?: unknown; harness?: unknown; channel?: unknown }>(
       value,
@@ -95,6 +100,12 @@ export const routes: Route[] = [
       (request.channel !== undefined && typeof request.channel !== "string")
     )
       throw new HttpFailure(400, "INVALID_SOFTWARE_ACTION", "Invalid software action, harness or release channel.");
+    // A host upgrade past Desktop's engine would leave Desktop unable to read an index the host migrated.
+    if (
+      request.action === "upgrade-cli" &&
+      hostUpgradeOutrunsDesktop(akmPackage.version, hostTools.snapshot().upgrade?.latestVersion as string | undefined)
+    )
+      throw new HttpFailure(409, "DESKTOP_BEHIND", "Update AKM Desktop first. The host CLI would upgrade past it.");
     try {
       return request.action === "desktop-menu-install"
         ? await desktopApp("menu-install")

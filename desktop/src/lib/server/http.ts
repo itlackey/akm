@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { AkmError, CONFLICT_CODES, scrubUrlCredentials } from "akm-cli/workspace";
+import { NEWER_INDEX_MESSAGE } from "../engine-skew.js";
 import { HttpFailure } from "./input.js";
 import { type Route, routes } from "./routes.js";
 import { failure } from "./security.js";
@@ -12,6 +13,8 @@ export function toHttpError(error: unknown): { status: number; code: string; mes
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof HttpFailure) return { status: error.status, code: error.code, message };
   if (!(error instanceof AkmError)) return { status: 500, code: "INTERNAL_ERROR", message };
+  if (error.code === "INDEX_SCHEMA_INCOMPATIBLE")
+    return { status: 409, code: error.code, message: NEWER_INDEX_MESSAGE };
   if (CONFLICT_CODES.has(error.code)) return { status: 409, code: error.code, message };
   const status = { usage: 400, "not-found": 404, config: 409, transient: 503 }[error.kind];
   return { status, code: error.code, message };

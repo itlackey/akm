@@ -40,11 +40,27 @@ The Release workflow, on the pushed commit:
    (it does not run lint, the typecheck, the test suites or the upgrade
    rehearsal again);
 5. publishes to npm (`latest` for a stable version, `next` for a prerelease)
-   and creates the GitHub release.
+   and creates the GitHub release;
+6. builds AKM Desktop on Linux, macOS and Windows from the tarball it just
+   published and attaches the installers and update metadata to the same
+   release (`desktop` job; Desktop shares the akm version, tag and changelog,
+   and updates itself from these releases: a stage release is a GitHub
+   prerelease, so Desktop's next channel follows it). The installers are
+   unsigned, see [Software](../../desktop/docs/software.md#unsigned-installers).
 
 Push nothing else to the branch until the Release finishes: a push cancels the
 release commit's CI run (`ci.yml` cancels an in-progress run on the same ref),
 and the Release then fails.
+
+To rehearse a release without publishing anything, dispatch it with the
+`dry_run` input. It skips Gated CI, the wait for CI, the npm publish and the
+GitHub release, and builds the package, the binaries and Desktop on all three
+platforms; the files stay as workflow artifacts of the run (`akm-cli`,
+`desktop-<os>`), and nothing is tagged:
+
+```sh
+gh workflow run release.yml --ref <branch> -f version=<version> -f dry_run=true
+```
 
 If a job fails on a flake, rerun the failed jobs. If the fix needs a code
 change, commit it and release that commit. npm can take several minutes to show

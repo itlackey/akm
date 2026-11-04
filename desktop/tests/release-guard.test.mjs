@@ -6,9 +6,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { releaseRefusal } from "../scripts/release-guard.mjs";
 
-test("an AppImage is built only from a clean tree at the release tag", () => {
-  assert.equal(releaseRefusal({ version: "0.10.261105", dirty: false, tags: ["v0.10.261105", ""] }), null);
-  assert.match(releaseRefusal({ version: "0.10.261105", dirty: true, tags: ["v0.10.261105"] }), /uncommitted/);
-  assert.match(releaseRefusal({ version: "0.10.261105", dirty: false, tags: [""] }), /not tagged v0\.10\.261105/);
-  assert.match(releaseRefusal({ version: "0.10.261105", dirty: false, tags: ["v0.10.261104"] }), /not tagged/);
+test("a distributable build needs a clean tree and the released engine", () => {
+  const released = { version: "0.10.261105", source: "release" };
+  assert.equal(releaseRefusal({ dirty: false, core: released }), null);
+  assert.match(releaseRefusal({ dirty: true, core: released }), /uncommitted/);
+  assert.match(releaseRefusal({ dirty: false, core: { ...released, source: "checkout" } }), /not a release/);
+  assert.match(releaseRefusal({ dirty: false, core: null }), /--tarball/);
 });

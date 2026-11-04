@@ -14,9 +14,10 @@ const VERSION_INPUT = "$" + "{{ inputs.version }}";
 const STAGE_INPUT = "$" + "{{ inputs.stage }}";
 
 describe("release workflow", () => {
-  test("runs the gated suites, then one straightforward release job", () => {
+  test("runs the gated suites, then one straightforward release job, then Desktop", () => {
     const workflow = YAML.parse(source) as { jobs: Record<string, { uses?: string; needs?: string }> };
-    expect(Object.keys(workflow.jobs)).toEqual(["gated", "release"]);
+    expect(Object.keys(workflow.jobs)).toEqual(["gated", "release", "desktop"]);
+    expect(workflow.jobs.desktop?.needs).toBe("release");
     expect(workflow.jobs.gated?.uses).toBe("./.github/workflows/gated-ci.yml");
     expect(workflow.jobs.release?.needs).toBe("gated");
     expect(source).toContain("Require green CI on this commit");
@@ -91,6 +92,42 @@ describe("release workflow", () => {
       expect(source).toContain(artifact);
     }
     expect(source).toContain("sha256sum akm-* install.sh install.ps1");
+  });
+
+  test("a dry run builds everything and publishes nothing", () => {
+    const workflow = YAML.parse(source) as {
+      on: { workflow_dispatch: { inputs: { dry_run: { type: string; default: boolean } } } };
+      jobs: Record<string, { if?: string; steps: Array<{ name?: string; if?: string; run?: string }> }>;
+    };
+    expect(workflow.on.workflow_dispatch.inputs.dry_run).toMatchObject({ type: "boolean", default: false });
+    expect(workflow.jobs.gated?.if).toContain("!inputs.dry_run");
+    const skipped = (job: string) =>
+      workflow.jobs[job]?.steps.filter((step) => step.if?.includes("!inputs.dry_run")).map((step) => step.name);
+    // Everything that reads a secret, tags or waits for another run is skipped; the builds are not.
+    expect(skipped("release")).toEqual(["Require green CI on this commit", "Publish to npm", "Create GitHub release"]);
+    expect(skipped("desktop")).toEqual(["Attach Desktop to the GitHub release"]);
+  });
+
+  test("Desktop is built per platform from the tarball being published and attached to the same release", () => {
+    const workflow = YAML.parse(source) as {
+      jobs: { desktop: { strategy: { matrix: { os: string[] } } } };
+    };
+    expect(workflow.jobs.desktop.strategy.matrix.os).toEqual(["ubuntu-latest", "macos-latest", "windows-latest"]);
+    expect(source).toContain('node scripts/core.mjs --tarball "$RUNNER_TEMP/engine/akm-cli-$VERSION.tgz"');
+    expect(source).toContain("node scripts/package.mjs --release");
+    expect(source).toContain("node scripts/smoke.mjs");
+    expect(source).toContain('gh release upload "v$VERSION" desktop/dist/* --clobber');
+  });
+
+  test("the installers attached to a release install that release", () => {
+    expect(source).toContain('TAG=\\"\\${1:-v$CANDIDATE_VERSION}\\"');
+    expect(source).toContain('else { \\"v$CANDIDATE_VERSION\\" }');
+    const scripts = ["install.sh", "install.ps1"].map((name) =>
+      fs.readFileSync(path.resolve(import.meta.dir, "..", name), "utf8"),
+    );
+    // The lines the pinning rewrites must still exist in the repository's copies.
+    expect(scripts[0]).toContain('TAG="${1:-latest}"');
+    expect(scripts[1]).toContain('else { "latest" }');
   });
 
   test("Bun Docker source builds include the changelog runtime asset", () => {

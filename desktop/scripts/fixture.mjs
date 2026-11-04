@@ -61,6 +61,7 @@ export async function createFixture({
     HTTPS_PROXY: "http://127.0.0.1:1",
     ALL_PROXY: "http://127.0.0.1:1",
     NO_COLOR: "1",
+    AKM_DESKTOP_UPDATES: "off",
   });
   const put = async (/** @type {string} */ relative, /** @type {string} */ content) => {
     const file = path.join(root, relative);

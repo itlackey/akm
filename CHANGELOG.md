@@ -67,6 +67,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no judged pair resumes after a crashed revert, checking the file against the proposal's
   `beforeHash`.
 
+### Desktop
+
+AKM Desktop ships in the same release as the akm it embeds: one version, one tag, one changelog.
+
+- The release workflow builds Desktop on Linux, macOS and Windows from the `akm-cli` tarball it
+  publishes and attaches the installers to the GitHub release: an AppImage, a macOS dmg and zip
+  (Apple silicon) and a Windows NSIS installer, with their update metadata. They are unsigned;
+  `desktop/docs/software.md` says what that means. CI builds and starts Desktop on all three
+  platforms, and the Release workflow takes a `dry_run` input that builds everything and publishes
+  nothing.
+- Desktop updates itself from this repository's GitHub releases (no token, no other server): a stable
+  build follows stable releases, a stage release follows prereleases. macOS only reports that an
+  update exists until the app is signed. `AKM_DESKTOP_UPDATES=off` turns the check off.
+- Software shows the built-in engine version next to the host `akm`, says which to update when they
+  differ, and holds Update CLI & plugins back while the latest release is newer than Desktop's engine.
+  An index written by a newer akm now says to update Desktop.
+- The `install.sh` and `install.ps1` attached to a release install that release. Desktop's Install AKM
+  CLI uses the installer of its own release.
+
 ## [0.10.261105] - 2026-11-02
 
 ### Changed

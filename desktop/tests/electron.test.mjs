@@ -70,7 +70,8 @@ test("native Electron window preserves size, sandbox, isolated data, and server 
   if (executablePath?.endsWith(".AppImage")) {
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     await page.getByRole("link", { name: "Software", exact: true }).click();
-    await expect(page.getByText("To update, replace the AppImage with a newer download.")).toBeVisible();
+    // The fixture turns updates off (AKM_DESKTOP_UPDATES=off), so the test never reaches the network.
+    await expect(page.getByText("To update, download a newer AKM Desktop.")).toBeVisible();
     assert.deepEqual(await bounds(), initialBounds, "Software must not resize the window");
     await page
       .getByRole("navigation", { name: "Primary navigation" })

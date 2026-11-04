@@ -13,20 +13,22 @@
     "dev": "node scripts/dev.mjs",
     "build": "vite build",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && prettier --check \"src/**/*.svelte\"",
-    "test": "node --test tests/runtime.test.mjs tests/ui-helpers.test.mjs tests/editor-commands.test.mjs tests/editor-preview.test.mjs tests/drafts.test.mjs tests/library-files-model.test.mjs tests/review-model.test.mjs tests/presenters.test.mjs tests/software.test.mjs tests/menu-install.test.mjs tests/home-model.test.mjs tests/release-guard.test.mjs tests/file-edit.test.mjs tests/server-routes.test.mjs tests/server-reveal.test.mjs tests/integration-contract.test.mjs",
+    "test": "node --test tests/runtime.test.mjs tests/ui-helpers.test.mjs tests/editor-commands.test.mjs tests/editor-preview.test.mjs tests/drafts.test.mjs tests/library-files-model.test.mjs tests/review-model.test.mjs tests/presenters.test.mjs tests/software.test.mjs tests/menu-install.test.mjs tests/home-model.test.mjs tests/release-guard.test.mjs tests/engine-skew.test.mjs tests/updater.test.mjs tests/file-edit.test.mjs tests/server-routes.test.mjs tests/server-reveal.test.mjs tests/integration-contract.test.mjs",
     "test:e2e": "node --test --test-concurrency=2 tests/e2e.test.mjs tests/navigation.test.mjs tests/software-ui.test.mjs tests/sensitive-ui.test.mjs",
     "test:electron": "node --test tests/electron.test.mjs",
     "test:usability": "node --test --test-concurrency=1 tests/usability-workflows.test.mjs tests/usability.test.mjs tests/design-language.test.mjs",
     "start": "electron .",
     "start:server": "node electron/server.mjs",
     "package": "npm run prepare:core && npm run build && node scripts/package.mjs",
-    "appimage": "npm run prepare:core && npm run build && node scripts/package.mjs --appimage",
+    "dist": "npm run prepare:core && npm run build && node scripts/package.mjs --dist",
+    "smoke": "node scripts/smoke.mjs",
     "test:host-install": "node --test tests/host-install.integration.test.mjs",
     "test:plugin-install": "node --test tests/plugin-install.integration.test.mjs",
     "format": "prettier --write \"src/**/*.svelte\""
   },
   "dependencies": {
     "akm-cli": "file:.core",
+    "electron-updater": "6.8.12",
     "jsonc-parser": "3.3.1"
   },
   "devDependencies": {

@@ -27,9 +27,48 @@ the application menu; desktop environments normally notice the new entry.
 
 ## Updating Desktop
 
-Desktop does not update itself. Replace the AppImage (or the menu copy) with a
-newer download. Desktop's version is the AKM version it embeds, and a distributable
-AppImage is built only from a clean tree at that version's release tag.
+Desktop's version is the AKM version it embeds; it is built from the released `akm-cli`
+package, in the same release. The app checks this repository's GitHub releases
+(`itlackey/akm`) when it starts and every six hours, with no token and no other server.
+A stable build follows stable releases; a build of a stage release (alpha, beta, rc)
+follows prereleases.
+
+- **Linux AppImage and Windows:** the update downloads in the background and installs when
+  you quit AKM Desktop. Software shows the state. A Linux build that is not an AppImage does
+  not check for updates.
+- **macOS:** Software says a newer version is available and links to its release page.
+  macOS applies an update only to a signed app, so download and replace the app yourself.
+- Set `AKM_DESKTOP_UPDATES=off` to turn the check off.
+
+## Unsigned installers
+
+The installers (Linux AppImage, macOS dmg and zip for Apple silicon, Windows NSIS for x64) are
+not code-signed or notarized, because no signing certificate exists yet. No signing secret is
+part of the build. What users see:
+
+- **macOS** Gatekeeper blocks the first launch of a downloaded app. Control-click AKM Desktop,
+  choose Open, and confirm; or remove the quarantine flag with `xattr -dr com.apple.quarantine`
+  on the app. Intel Macs are not built.
+- **Windows** SmartScreen shows "Windows protected your PC". Choose More info, then Run anyway.
+- **Linux** has no signing prompt. Check the `.sha256` file beside the download.
+
+Signing would plug into `scripts/package.mjs`: a macOS identity and notarization settings
+(`mac.identity`, `mac.notarize`) and a Windows signing certificate (`win.signtoolOptions`), with
+their credentials supplied by the release job's environment. Once macOS is signed,
+`canInstall` in `electron/updater.mjs` becomes true there and macOS updates install in place.
+
+## Engine versions
+
+AKM Desktop runs its built-in engine; your terminal and harness plugins run the host `akm`.
+Both read the same data directory. Software shows both versions and says what to do when they
+differ:
+
+- **Host older than Desktop:** if Desktop's engine changed the index layout, the host CLI asks
+  you to upgrade. Use **Update CLI & plugins**.
+- **Host newer than Desktop:** Desktop refuses an index layout it does not know
+  (`INDEX_SCHEMA_INCOMPATIBLE`) and tells you to update AKM Desktop. Update CLI & plugins is
+  held back while the latest release is newer than Desktop's engine, so a host upgrade never
+  leaves Desktop behind.
 
 ## Host CLI and harness plugins
 
@@ -70,7 +109,7 @@ hook approval or model request.
 
 The Software UI test exercises real authenticated server actions with synthetic
 native command fixtures. It covers installation, upgrade receipts, the
-replace-the-AppImage note, accessibility and viewport overflow. Plugin tests assert each
+update and engine-version notes, accessibility and viewport overflow. Plugin tests assert each
 native command and verify its inventory afterward; they do not claim native
 hook approval, sign-in or model-backed recall from merely installing a plugin.
 

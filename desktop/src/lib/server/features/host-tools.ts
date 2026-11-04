@@ -179,6 +179,7 @@ export class HostTools {
   find: Find;
   fetcher: typeof fetch;
   platform: string;
+  desktopVersion?: string;
   state: HostState;
   pending?: Promise<void>;
   constructor({
@@ -188,13 +189,23 @@ export class HostTools {
     find = findProgram,
     fetcher = fetch,
     platform = process.platform,
-  }: { home?: string; env?: Env; run?: Run; find?: Find; fetcher?: typeof fetch; platform?: string } = {}) {
+    desktopVersion = process.env.AKM_DESKTOP_VERSION,
+  }: {
+    home?: string;
+    env?: Env;
+    run?: Run;
+    find?: Find;
+    fetcher?: typeof fetch;
+    platform?: string;
+    desktopVersion?: string;
+  } = {}) {
     this.home = home;
     this.sourceEnv = env;
     this.run = run;
     this.find = find;
     this.fetcher = fetcher;
     this.platform = platform;
+    this.desktopVersion = desktopVersion;
     this.state = {
       phase: "idle",
       cli: null,
@@ -348,7 +359,13 @@ export class HostTools {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    const response = await this.fetcher("https://github.com/itlackey/akm/releases/latest/download/install.sh", {
+    // The installer of Desktop's own release installs the same akm version, so host and engine start equal. A
+    // development build has no release and takes the latest.
+    const release =
+      this.desktopVersion && /^\d+\.\d+\.\d+/.test(this.desktopVersion)
+        ? `download/v${this.desktopVersion}`
+        : "latest/download";
+    const response = await this.fetcher(`https://github.com/itlackey/akm/releases/${release}/install.sh`, {
       signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) throw new Error("Installer download failed.");

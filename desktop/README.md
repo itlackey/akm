@@ -19,8 +19,8 @@ See [verification](docs/verification.md) for evidence and limits.
 ## Use it
 
 The packaged app includes its own AKM dependency and runtime. On Linux, launch
-the executable `.AppImage`; alternatively launch `akm-desktop` from an unpacked
-application directory. No separate Node, Bun, or global AKM installation is
+the executable `.AppImage`; on macOS open the dmg and drag AKM Desktop to Applications; on Windows
+run the installer. Alternatively launch `akm-desktop` from an unpacked application directory. No separate Node, Bun, or global AKM installation is
 required at runtime.
 
 It uses your normal local AKM configuration and bundles. Existing `AKM_*`
@@ -117,12 +117,14 @@ npm run package
 ### Linux AppImage
 
 ```sh
-npm run appimage
+npm run dist
 ```
 
-This rebuilds core and the app and creates `out/<timestamp>/AKM-Desktop-<akm version>-x86_64.AppImage`
-(architecture-specific name) with a `.sha256` checksum beside it. It refuses to build
-from a dirty tree or a commit that is not tagged with the AKM version. The output is executable: copy
+This rebuilds core and the app and creates `dist/AKM-Desktop-<akm version>-x86_64.AppImage`
+(architecture-specific name) with a `.sha256` checksum and the `latest-linux.yml` update
+metadata beside it. On macOS it builds a dmg and a zip, on Windows an NSIS installer, the same
+way. Releases come from the release workflow, not from here: `node scripts/package.mjs --release`
+refuses a dirty tree and an engine that is not the released tarball. The output is executable: copy
 it wherever you prefer and double-click it to test. No installer, global AKM,
 or background service is needed. It uses your normal AKM configuration.
 
@@ -146,8 +148,9 @@ isolated synthetic bundles and never read your normal AKM configuration.
 See [verification](docs/verification.md) for coverage and packaged-app checks.
 
 `npm run package` writes an unsigned application for the current OS/architecture
-under `out/<timestamp>/`. Keep the entire output directory together. Linux x64
-is verified; macOS/Windows packaging and signing are not yet verified.
+under `out/<timestamp>/`. Keep the entire output directory together. `npm run smoke`
+starts the newest package headless and checks that it answers with the right version.
+CI packages and starts Desktop on Linux, macOS and Windows; the installers are unsigned.
 
 `npm run dev` starts a loopback-only Vite preview and prints a private launch
 URL. It uses your configured AKM data unless you supply isolated environment
@@ -161,9 +164,9 @@ not a global CLI or a sibling checkout. Native packaging installs this same
 package and Desktop's frozen production dependency graph into a temporary stage.
 The package retains AKM's license and notices. See [architecture](docs/architecture.md).
 
-This source import is not a public Desktop release. Desktop's version is the AKM
-version it embeds; the release job and a GitHub update feed are separate
-distribution work, and no release or publishing workflow is added here.
+Desktop's version is the AKM version it embeds. The release workflow builds Desktop on
+Linux, macOS and Windows from the released tarball and attaches the installers to the AKM
+release; the app updates itself from those GitHub releases (see [Software](docs/software.md)).
 
 ## Deliberate limits
 

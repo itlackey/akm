@@ -3,6 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import assert from "node:assert/strict";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { launchFixture } from "./support.mjs";
 
@@ -115,4 +117,23 @@ test("one table maps an error to a status: conflict 409, usage 400, not found 40
     body: "{}",
   });
   assert.equal(wrongType.status, 415);
+});
+
+test("an index written by a newer akm tells the user to update Desktop, not to upgrade akm", async (t) => {
+  const app = await launchFixture({
+    configureFixture: (fixture) => {
+      // What a newer host CLI leaves behind: an index layout this engine does not understand.
+      const db = new DatabaseSync(path.join(fixture.env.AKM_DATA_DIR, "index.db"));
+      try {
+        db.prepare("UPDATE index_meta SET value = '999' WHERE key = 'version'").run();
+      } finally {
+        db.close();
+      }
+    },
+  });
+  t.after(() => app.stop());
+  const refused = await app.call("/api/search?q=restore&limit=3");
+  assert.deepEqual([refused.status, refused.body.code], [409, "INDEX_SCHEMA_INCOMPATIBLE"]);
+  assert.match(refused.body.error, /Update AKM Desktop/);
+  assert.doesNotMatch(refused.body.error, /Upgrade akm/);
 });

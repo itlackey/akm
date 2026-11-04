@@ -6,3 +6,5 @@ test-results/
 playwright-report/
 *.tgz
 .core/
+.core.json
+dist/
