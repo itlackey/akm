@@ -37,6 +37,8 @@ export function chart(ctx, id, label, options, { height, onSelect } = {}) {
     let observer;
     const scheme = matchMedia("(prefers-color-scheme: dark)");
     const retheme = () => draw();
+    // The app's Appearance choice is the root element's data-theme; redraw when it changes.
+    const appearance = new MutationObserver(retheme);
     // Texture only where colour alone is not enough: forced colours or a request for more contrast.
     const patterns = matchMedia("(forced-colors: active), (prefers-contrast: more)");
     const draw = () => {
@@ -98,7 +100,7 @@ export function chart(ctx, id, label, options, { height, onSelect } = {}) {
         observer.observe(element);
         resize();
         scheme.addEventListener("change", retheme);
-        window.addEventListener("akm-theme", retheme);
+        appearance.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
       })
       .catch(() => {
         // Say so, instead of leaving a blank box: the numbers are in the table beside it.
@@ -109,7 +111,7 @@ export function chart(ctx, id, label, options, { height, onSelect } = {}) {
       disposed = true;
       observer?.disconnect();
       scheme.removeEventListener("change", retheme);
-      window.removeEventListener("akm-theme", retheme);
+      appearance.disconnect();
       chart?.dispose();
     };
   });

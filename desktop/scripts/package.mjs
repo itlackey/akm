@@ -4,7 +4,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -97,7 +97,9 @@ if (appimage) {
     // Assert the actual archive retains our launcher when builder changes.
     const inspection = await mkdtemp(path.join(os.tmpdir(), "akm-appimage-check-"));
     execFileSync(artifact, ["--appimage-extract", "AppRun"], { cwd: inspection, stdio: "pipe" });
-    if (!Buffer.from(await readFile(path.join(inspection, "squashfs-root/AppRun"))).equals(await readFile(launcher))) {
+    const extracted = await readFile(path.join(inspection, "squashfs-root/AppRun"));
+    await rm(inspection, { recursive: true, force: true });
+    if (!extracted.equals(await readFile(launcher))) {
       throw new Error("The AppImage changed its sandbox-preserving launcher. Do not distribute it.");
     }
     const sha256 = createHash("sha256")

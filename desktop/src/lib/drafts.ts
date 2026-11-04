@@ -63,15 +63,19 @@ export function hasStoredDrafts(): boolean {
   }
 }
 
-/** Re-key every draft of a renamed bundle, so it still opens the same document. */
+/**
+ * Follow a renamed bundle: a draft that targets it (including the new document's) saves to the new name, and a draft
+ * keyed by one of its files or refs is re-keyed, so it still opens the same document.
+ */
 export function renameBundle(oldName: string, name: string) {
   try {
     const from = `${PREFIX}${oldName}/`;
-    for (const key of Object.keys(sessionStorage).filter((key) => key.startsWith(from))) {
+    for (const key of Object.keys(sessionStorage).filter((key) => key.startsWith(PREFIX))) {
       const draft = JSON.parse(sessionStorage.getItem(key) ?? "null");
       if (draft?.bundle === oldName) draft.bundle = name;
-      sessionStorage.setItem(`${PREFIX}${name}/${key.slice(from.length)}`, JSON.stringify(draft));
-      sessionStorage.removeItem(key);
+      const next = key.startsWith(from) ? `${PREFIX}${name}/${key.slice(from.length)}` : key;
+      sessionStorage.setItem(next, JSON.stringify(draft));
+      if (next !== key) sessionStorage.removeItem(key);
     }
   } catch {
     /* existing drafts remain available */

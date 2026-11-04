@@ -19,8 +19,8 @@ Desktop is a convenience tool for the human owner of an akm instance; the CLI se
     `lib/state/workspace.svelte.ts`, stored drafts are `lib/drafts.ts`, and the design-system code copied from AKM is
     Desktop's own in `lib/ui/`. Svelte components use runes; convert a legacy component when you change it.
   A feature may call several AKM operations and must report a partial outcome as data. It never repairs AKM state itself.
-  Preferences, native host software (`host-tools.mjs`, `software.mjs`) and the secret reveal policy live there too.
-  The harness plugin-install recipe in `host-tools.mjs` stays in Desktop; `plugin-channels.ts` in akm is its source of truth.
+  Preferences, native host software (`host-tools.ts`, `software.ts`) and the secret reveal policy live there too.
+  The harness plugin-install recipe in `host-tools.ts` stays in Desktop; `plugin-channels.ts` in akm is its source of truth.
 - Desktop-owned routes are under `/api/desktop/*`; every other `/api` path is AKM's. Errors become HTTP statuses in one
   place, `src/lib/server/http.ts`; every route is one line of `src/lib/server/routes.ts`, naming its workspace operation. An unknown request field is ignored with one warning, never rejected.
 
