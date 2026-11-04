@@ -16,6 +16,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `"unparseable"`, never a verdict. akm's own pipeline calls each judge through the same
   registry entry, so the command and the pipeline send the same prompt.
 
+- `akm-cli/workspace` (Experimental) re-exports existing local operations for a trusted
+  desktop host: the UI read/write dispatchers, managed clone, write-target and file-safety
+  helpers and read-only index lookups (#1423). The UI API adds `GET /api/bundle/files` (one
+  directory of a registered bundle), `location` on `/api/asset`, and manual
+  `POST /api/asset/retire` / `POST /api/asset/restore`, which archive into the existing
+  cleanup archive with `reason: manual` and restore without overwriting. No proposal is
+  created and the archive is never grace-purged. `akm-cli/api` is unchanged.
+
 ### Changed
 
 - The reflect judge's rubric says adding a field the source lacks is needed, not churn, and

@@ -39,6 +39,7 @@ const {
 } = workspace;
 assert.equal(Boolean(process.versions.bun), process.argv[2] === "bun");
 assert.equal(Object.keys(workspace).length, 45);
+for (const [name, value] of Object.entries(workspace)) assert.notEqual(value, undefined, name);
 for (const name of [
   "getNeighborsByEntryId",
   "indexWrittenAssets",

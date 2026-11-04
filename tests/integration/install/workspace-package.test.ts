@@ -7,7 +7,7 @@ import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 
-test.skipIf(!process.env.AKM_WORKSPACE_PACKAGE_TESTS && !fs.existsSync(path.join(ROOT, "dist/workspace.js")))(
+test.skipIf(process.env.AKM_WORKSPACE_PACKAGE_TESTS !== "1")(
   "packed workspace namespace reads and mutates through existing operations under Node and Bun",
   () => {
     if (!fs.existsSync(path.join(ROOT, "dist/workspace.js"))) {

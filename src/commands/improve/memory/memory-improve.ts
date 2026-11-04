@@ -591,7 +591,7 @@ function isRetireCandidate(candidate: MemoryPruneCandidate): boolean {
  * The tombstone's `previousBeliefState`. Memory cleanup's own family-prune
  * candidates keep their original reason-based inference (unchanged, so
  * existing behavior is not disturbed by this generalization). A
- * retire-proposal candidate has no such reason vocabulary to infer from, so
+ * retire-proposal or manual candidate has no such reason vocabulary to infer from, so
  * it reads the asset's ACTUAL frontmatter `beliefState` instead — more
  * correct, and available because every retire path already has the file on
  * disk right before the move.

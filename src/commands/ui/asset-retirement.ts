@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
 import { parseRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, toErrorMessage } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -27,8 +28,6 @@ import { getEntryIdByFilePath } from "../../storage/repositories/index-entries-r
 import { archiveCleanupCandidate, derivedTwinPath } from "../improve/memory/memory-improve";
 import { handleApiRequest } from "./api";
 import { assertWriteLeaseFree } from "./proposal-actions";
-
-const ARCHIVE = ".akm/memory-cleanup/archive";
 
 function expectedAsset(root: string, ref: string): string {
   const identity = parseRefInput(ref),
@@ -87,8 +86,9 @@ export async function retireAsset(ref: string, revision: string) {
       file = expectedAsset(root, shown.durableRef);
     contained(root, file);
     if (path.resolve(shown.asset.path) !== file) throw new UsageError("Refresh the index before retiring this file.");
+    if (!fs.statSync(file).isFile()) throw new UsageError("Only regular asset files can be retired here.");
     const bytes = fs.readFileSync(file);
-    if (!fs.statSync(file).isFile() || bytes.includes(0) || !Buffer.from(bytes.toString("utf8")).equals(bytes))
+    if (bytes.includes(0) || !Buffer.from(bytes.toString("utf8")).equals(bytes))
       throw new UsageError("Only text assets can be retired here.");
     if (createHash("sha256").update(bytes).digest("hex") !== revision)
       throw new UsageError("The asset changed. Reload before retiring it.", "ASSET_CONTENT_CHANGED");
@@ -98,7 +98,7 @@ export async function retireAsset(ref: string, revision: string) {
       contained(root, source);
       if (!fs.statSync(source).isFile()) throw new UsageError("Only regular asset files can be retired here.");
     }
-    contained(root, path.join(root, ARCHIVE));
+    contained(root, path.join(root, MEMORY_ARCHIVE_REL));
     const archived: ArchivedMemoryCleanupRecord[] = [],
       warnings: string[] = [];
     const paths = [...files];
@@ -148,7 +148,7 @@ export async function restoreRetiredAssets(bundle: string, archives: string[]) {
     const records = [...new Set(archives)].map((relative) => {
       const audit = path.resolve(root, relative);
       contained(root, audit);
-      if (!isWithin(audit, path.join(root, ARCHIVE)) || path.basename(audit) !== "cleanup.md")
+      if (!isWithin(audit, path.join(root, MEMORY_ARCHIVE_REL)) || path.basename(audit) !== "cleanup.md")
         throw new UsageError("Use the archive paths from a manual retirement receipt.");
       const data = parseFrontmatter(fs.readFileSync(audit, "utf8")).data;
       if (
@@ -174,7 +174,8 @@ export async function restoreRetiredAssets(bundle: string, archives: string[]) {
           "The original path is occupied. Restore will not overwrite newer work.",
           "ASSET_CONTENT_CHANGED",
         );
-      if (!fs.statSync(archived).isFile()) throw new UsageError("The archived file is missing.");
+      if (!fs.statSync(archived, { throwIfNoEntry: false })?.isFile())
+        throw new UsageError("The archived file is missing.");
       return { original, archived, ref: data.ref };
     });
     if (new Set(records.map((record) => record.original)).size !== records.length)

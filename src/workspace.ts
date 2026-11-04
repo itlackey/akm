@@ -2,10 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+// `akm-cli/workspace`: experimental re-exports of existing operations for a trusted
+// local host (see docs/reference/api.md). Transport authentication belongs to the host.
+
 export { removeEnv, writeEnv } from "./commands/env/env";
 export { withSecretLock } from "./commands/env/secret";
 export { akmLint } from "./commands/lint/index";
-/** Experimental local operations; transport authentication belongs to the host. */
 export { akmClone, type CloneOptions, type CloneResponse } from "./commands/sources/source-clone";
 export { akmTasksSync } from "./commands/tasks/tasks";
 export { handleApiRequest, NO_SUCH_ROUTE } from "./commands/ui/api";
@@ -28,7 +30,6 @@ export { assetPathForName, deriveCanonicalAssetName, stashDirFor } from "./core/
 export { parseRefInput } from "./core/asset/resolve-ref";
 export { renameBundle } from "./core/bundle-rename";
 export { isWithin, writeFileAtomic } from "./core/common";
-// Existing operations used by the desktop's small, filesystem-based organizer.
 export { loadConfig } from "./core/config/config";
 export { sensitiveMarkerPath, withEnvSecretWrite } from "./core/env-secret-ref";
 export { AkmError, type AkmErrorKind, UsageError } from "./core/errors";

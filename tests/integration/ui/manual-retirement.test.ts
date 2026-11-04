@@ -135,10 +135,14 @@ test("partial archival leaves a usable receipt and the untouched twin", async ()
 test("restore validates every tombstone before writing and never overwrites an occupied path", async () => {
   const receipt = await retireAsset(ref, hash());
   const audit = receipt.archived[0]!.auditPath;
-  await expect(restoreRetiredAssets(receipt.bundle, [audit, "../../outside/cleanup.md"])).rejects.toThrow();
+  await expect(restoreRetiredAssets(receipt.bundle, [audit, "../../outside/cleanup.md"])).rejects.toThrow("escapes");
   expect(fs.existsSync(file())).toBe(false);
+  const archived = path.join(receipt.root, receipt.archived[0]!.archivedPath);
+  fs.renameSync(archived, `${archived}.moved`);
+  await expect(restoreRetiredAssets(receipt.bundle, [audit])).rejects.toThrow("archived file is missing");
+  fs.renameSync(`${archived}.moved`, archived);
   fs.symlinkSync(path.join(storage.stashDir, "missing"), file());
-  await expect(restoreRetiredAssets(receipt.bundle, [audit])).rejects.toThrow();
+  await expect(restoreRetiredAssets(receipt.bundle, [audit])).rejects.toThrow("symbolic");
   expect(fs.lstatSync(file()).isSymbolicLink()).toBe(true);
 });
 
@@ -171,7 +175,7 @@ test("read-only bundles and skill packages cannot be retired", async () => {
     bundles: { stash: { path: storage.stashDir, writable: false } },
     defaultBundle: "stash",
   });
-  await expect(retireAsset(ref, hash())).rejects.toThrow();
+  await expect(retireAsset(ref, hash())).rejects.toThrow("not writable");
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
   saveConfig({
     semanticSearchMode: "off",
@@ -192,10 +196,15 @@ test("a newly marked nested secret remains protected without reindexing", async 
   fs.writeFileSync(secret, "planted-private-secret");
   await akmIndex({ stashDir: storage.stashDir, full: true });
   fs.writeFileSync(`${secret}.sensitive`, "");
-  const secretRef = "stash//projects/demo/secrets/token";
-  await expect(retireAsset(secretRef, hash())).rejects.toThrow();
-  await expect(handleApiRequest("/api/asset", new URLSearchParams({ ref: secretRef }))).rejects.toThrow();
+  // The ref the index really assigns, with the file's real revision, so only the protection can refuse it.
+  const secretRef = "stash//secrets/projects/demo/secrets/token.md";
+  const revision = createHash("sha256").update("planted-private-secret").digest("hex");
+  await expect(retireAsset(secretRef, revision)).rejects.toThrow("Choose an indexed local asset");
+  expect(await handleApiRequest("/api/asset", new URLSearchParams({ ref: secretRef }))).toMatchObject({
+    redacted: true,
+  });
   expect(fs.readFileSync(secret, "utf8")).toBe("planted-private-secret");
+  expect(fs.existsSync(path.join(storage.stashDir, ".akm/memory-cleanup/archive"))).toBe(false);
 });
 
 test("Git retirement commits only its paths and manual bytes survive the grace purge", async () => {
