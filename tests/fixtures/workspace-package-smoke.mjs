@@ -38,7 +38,7 @@ const {
   AkmError,
 } = workspace;
 assert.equal(Boolean(process.versions.bun), process.argv[2] === "bun");
-assert.equal(Object.keys(workspace).length, 45);
+assert.equal(Object.keys(workspace).length, 50);
 for (const [name, value] of Object.entries(workspace)) assert.notEqual(value, undefined, name);
 for (const name of [
   "getNeighborsByEntryId",
@@ -135,14 +135,12 @@ assert.ok(
   ),
 );
 const current = await read("/api/asset/source", { ref: source.ref });
-const queued = await read("/api/proposals");
 const archived = await handleWorkspaceAction("document-retire", { ref: current.ref, revision: current.revision });
-assert.equal(archived.complete, true);
 assert.equal(fs.existsSync(path.join(stash, "knowledge/desktop-note.md")), false);
-assert.deepEqual(await read("/api/proposals"), queued);
-await handleWorkspaceAction("document-restore", {
-  bundle: archived.bundle,
-  archives: archived.archived.map((item) => item.auditPath),
-});
+assert.equal((await read(`/api/proposals/${archived.proposalId}`)).proposal.status, "accepted");
+assert.ok(archived.archiveDirs.length > 0);
+const restored = await handleWriteRequest(matchWriteRoute(`/api/proposals/${archived.proposalId}/revert`), {});
+assert.equal(restored.proposal.status, "reverted");
 assert.equal(fs.readFileSync(path.join(stash, "knowledge/desktop-note.md"), "utf8"), current.content);
+for (const dir of archived.archiveDirs) assert.equal(fs.existsSync(path.join(stash, dir)), false);
 console.log(JSON.stringify({ ok: true, runtime: process.versions.bun ? "bun" : "node", version: process.version }));

@@ -8,7 +8,7 @@ import { register } from "node:module";
 register("./text-import-hook.mjs", import.meta.url);
 
 const {
-  writeEnv, removeEnv, withSecretLock, akmTasksSync, renameBundle, withEnvSecretWrite, sensitiveMarkerPath, deriveCanonicalAssetName,
+  writeEnv, removeEnv, setSecret, withSecretLock, resolveEnvPath, resolveSecretPath, resolveEnvWriteTarget, resolveSecretWriteTarget, akmTasksSync, renameBundle, withEnvSecretWrite, sensitiveMarkerPath, deriveCanonicalAssetName,
   getAllEntriesForEmbedding, getMeta,
   akmClone,
   handleApiRequest,
@@ -28,7 +28,7 @@ const {
 } = await import("./workspace.js");
 
 export {
-  writeEnv, removeEnv, withSecretLock, akmTasksSync, renameBundle, withEnvSecretWrite, sensitiveMarkerPath, deriveCanonicalAssetName,
+  writeEnv, removeEnv, setSecret, withSecretLock, resolveEnvPath, resolveSecretPath, resolveEnvWriteTarget, resolveSecretWriteTarget, akmTasksSync, renameBundle, withEnvSecretWrite, sensitiveMarkerPath, deriveCanonicalAssetName,
   getAllEntriesForEmbedding, getMeta,
   akmClone,
   handleApiRequest,

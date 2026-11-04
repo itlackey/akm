@@ -591,7 +591,7 @@ function isRetireCandidate(candidate: MemoryPruneCandidate): boolean {
  * The tombstone's `previousBeliefState`. Memory cleanup's own family-prune
  * candidates keep their original reason-based inference (unchanged, so
  * existing behavior is not disturbed by this generalization). A
- * retire-proposal or manual candidate has no such reason vocabulary to infer from, so
+ * retire-proposal candidate has no such reason vocabulary to infer from, so
  * it reads the asset's ACTUAL frontmatter `beliefState` instead — more
  * correct, and available because every retire path already has the file on
  * disk right before the move.
@@ -600,7 +600,7 @@ function resolvePreviousBeliefState(
   candidate: MemoryPruneCandidate,
   filePath: string,
 ): Exclude<MemoryBeliefState, "archived"> {
-  if (!isRetireCandidate(candidate) && candidate.reason !== "manual") return priorBeliefStateForArchive(candidate);
+  if (!isRetireCandidate(candidate)) return priorBeliefStateForArchive(candidate);
   try {
     return resolveBeliefState(parseFrontmatter(fs.readFileSync(filePath, "utf8")).data);
   } catch {
@@ -663,9 +663,7 @@ export function archiveCleanupCandidate(
         ? { successorRefs: candidate.successorRefs }
         : {}),
     },
-    candidate.reason === "manual"
-      ? "Manually archived asset. Restore from this archive; no proposal was created.\n"
-      : "Archived derived memory for recoverable cleanup.\n",
+    "Archived derived memory for recoverable cleanup.\n",
   );
   // Write the tombstone BEFORE moving the file — a
   // crash in between used to leave a file already at archivedPath with no

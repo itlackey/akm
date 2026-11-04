@@ -1716,6 +1716,23 @@ describe("workspace actions", () => {
     expect(fs.existsSync(path.join(source, "knowledge", "extra.md"))).toBe(true);
   });
 
+  test("bundle rename previews with --dry-run, then renames through the CLI", async () => {
+    await writableConfig();
+    const s = await start();
+    const preview = await write(s, "/api/bundles/rename", { bundle: "stash", name: "renamed", dryRun: true });
+    expect(preview.status, preview.body.error).toBe(200);
+    expect(preview.body.data.applied).toBe(false);
+    expect((await data(s, "/api/bundles")).bundles.map((b: Json) => b.name)).toContain("stash");
+    const renamed = await write(s, "/api/bundles/rename", { bundle: "stash", name: "renamed" });
+    expect(renamed.status, renamed.body.error).toBe(200);
+    expect(renamed.body.data.applied).toBe(true);
+    expect(renamed.body.data.newId).toBe("renamed");
+    const names = (await data(s, "/api/bundles")).bundles.map((b: Json) => b.name);
+    expect(names).toContain("renamed");
+    expect(names).not.toContain("stash");
+    expect((await write(s, "/api/bundles/rename", { bundle: "missing", name: "other" })).status).toBe(404);
+  });
+
   test("config-affecting actions refuse unrelated sanitizer changes rather than losing registry credentials", async () => {
     await seed();
     writeSandboxConfig({
@@ -1726,9 +1743,10 @@ describe("workspace actions", () => {
     const s = await start();
     const configPath = getConfigPath();
     const before = fs.readFileSync(configPath, "utf8");
-    for (const action of ["settings", "add", "remove"]) {
+    for (const action of ["settings", "add", "remove", "rename"]) {
       const result = await write(s, `/api/bundles/${action}`, {
         bundle: "stash",
+        name: "renamed",
         writable: false,
         source: storage.stashDir,
         confirm: true,
@@ -1739,6 +1757,10 @@ describe("workspace actions", () => {
       expect(result.body.error).not.toContain(PLANTED_REGISTRY_PASSWORD);
       expect(fs.readFileSync(configPath, "utf8")).toBe(before);
     }
+    // A rename preview writes nothing, so it is not refused.
+    const preview = await write(s, "/api/bundles/rename", { bundle: "stash", name: "renamed", dryRun: true });
+    expect(preview.status, preview.body.error).toBe(200);
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
     // A settings request that changes nothing writes nothing, so it is not refused.
     const noop = await write(s, "/api/bundles/settings", {});
     expect(noop.status, noop.body.error).toBe(200);
@@ -2115,6 +2137,7 @@ describe("workspace actions", () => {
       "bundles/add",
       "bundles/remove",
       "bundles/update",
+      "bundles/rename",
       "bundles/settings",
       "knowledge/create",
       "asset/save",

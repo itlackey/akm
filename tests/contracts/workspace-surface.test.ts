@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { removeEnv, writeEnv } from "../../src/commands/env/env";
-import { withSecretLock } from "../../src/commands/env/secret";
+import { setSecret, withSecretLock } from "../../src/commands/env/secret";
 import { akmLint } from "../../src/commands/lint/index";
 import { akmClone } from "../../src/commands/sources/source-clone";
 import { akmTasksSync } from "../../src/commands/tasks/tasks";
@@ -22,7 +22,14 @@ import { parseRefInput } from "../../src/core/asset/resolve-ref";
 import { renameBundle } from "../../src/core/bundle-rename";
 import { isWithin, writeFileAtomic } from "../../src/core/common";
 import { loadConfig } from "../../src/core/config/config";
-import { sensitiveMarkerPath, withEnvSecretWrite } from "../../src/core/env-secret-ref";
+import {
+  resolveEnvPath,
+  resolveEnvWriteTarget,
+  resolveSecretPath,
+  resolveSecretWriteTarget,
+  sensitiveMarkerPath,
+  withEnvSecretWrite,
+} from "../../src/core/env-secret-ref";
 import { AkmError, UsageError } from "../../src/core/errors";
 import { resolveBundleWriteTarget } from "../../src/core/mutation-target";
 import {
@@ -52,7 +59,12 @@ test("workspace exports exactly the existing operations, without wrappers or new
   const existing: typeof workspace = {
     writeEnv,
     removeEnv,
+    setSecret,
     withSecretLock,
+    resolveEnvPath,
+    resolveSecretPath,
+    resolveEnvWriteTarget,
+    resolveSecretWriteTarget,
     akmTasksSync,
     renameBundle,
     withEnvSecretWrite,

@@ -19,10 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm-cli/workspace` (Experimental) re-exports existing local operations for a trusted
   desktop host: the UI read/write dispatchers, managed clone, write-target and file-safety
   helpers and read-only index lookups (#1423). The UI API adds `GET /api/bundle/files` (one
-  directory of a registered bundle), `location` on `/api/asset`, and manual
-  `POST /api/asset/retire` / `POST /api/asset/restore`, which archive into the existing
-  cleanup archive with `reason: manual` and restore without overwriting. No proposal is
-  created and the archive is never grace-purged. `akm-cli/api` is unchanged.
+  directory of a registered bundle), `location` on `/api/asset`, `POST /api/bundles/rename`
+  (`akm bundle rename`, `dryRun` for the plan) and `POST /api/asset/retire`. A retire mints
+  and accepts an ordinary retire proposal, so it follows the proposal-retire lifecycle: the
+  archive is grace-purged and `POST /api/proposals/:id/revert` is the undo. `akm-cli/api` is
+  unchanged.
 
 ### Changed
 

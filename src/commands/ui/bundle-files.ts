@@ -106,10 +106,9 @@ export function listBundleFiles(bundle: string, relative = "", showHidden = fals
     path: current,
     parent: current ? portable(path.dirname(current)).replace(/^\.$/, "") : null,
     indexAvailable,
-    truncated: false,
     entries: rows.map(({ absolute, ...row }) => {
       const assets = refs.get(absolute) ?? [];
-      return { ...row, refs: assets.map((asset) => asset.ref), assets };
+      return { ...row, assets };
     }),
   };
 }

@@ -34,7 +34,7 @@ test("lists real immediate entries with canonical indexed refs, never contents o
   expect(result.parent).toBe("");
   expect(result.indexAvailable).toBe(true);
   expect(result.entries.map((entry) => entry.name)).toEqual(["nested", "draft.txt", "guide.md"]);
-  expect(result.entries[1]?.refs).toEqual([]);
+  expect(result.entries[1]?.assets).toEqual([]);
   expect(result.entries[2]?.assets).toEqual([{ ref: "stash//knowledge/guide", type: "knowledge" }]);
   expect(JSON.stringify(result)).not.toContain("private bytes");
   expect(fs.readFileSync(getDbPath())).toEqual(before);
@@ -53,7 +53,7 @@ test("browsing without an index remains truthful and does not create one", () =>
   fs.writeFileSync(path.join(storage.stashDir, "knowledge", "new.md"), "# New\n");
   const result = listBundleFiles("stash", "knowledge");
   expect(result.indexAvailable).toBe(false);
-  expect(result.entries[0]?.refs).toEqual([]);
+  expect(result.entries[0]?.assets).toEqual([]);
   expect(fs.existsSync(getDbPath())).toBe(false);
 });
 
@@ -101,12 +101,12 @@ test("internal folder and file links retain their indexed asset identity", async
   fs.symlinkSync(guide, path.join(storage.stashDir, "guide-link.md"));
   expect(listBundleFiles("stash", "shortcut").entries[0]).toMatchObject({
     path: "shortcut/guide.md",
-    refs: ["stash//knowledge/guide"],
+    assets: [{ ref: "stash//knowledge/guide", type: "knowledge" }],
   });
   expect(listBundleFiles("stash").entries.find((entry) => entry.name === "guide-link.md")).toMatchObject({
     path: "guide-link.md",
     symlink: true,
-    refs: ["stash//knowledge/guide"],
+    assets: [{ ref: "stash//knowledge/guide", type: "knowledge" }],
   });
 });
 
@@ -119,6 +119,10 @@ test("a symlinked bundle root keeps its configured identity when browsing intern
   fs.writeFileSync(path.join(alias, "knowledge/guide.md"), "---\ndescription: A guide\n---\n# A guide\n");
   await akmIndex({ stashDir: alias, full: true });
   fs.symlinkSync(path.join(storage.stashDir, "knowledge"), path.join(alias, "shortcut"));
-  expect(listBundleFiles("stash", "knowledge").entries[0]?.refs).toEqual(["stash//knowledge/guide"]);
-  expect(listBundleFiles("stash", "shortcut").entries[0]?.refs).toEqual(["stash//knowledge/guide"]);
+  expect(listBundleFiles("stash", "knowledge").entries[0]?.assets).toEqual([
+    { ref: "stash//knowledge/guide", type: "knowledge" },
+  ]);
+  expect(listBundleFiles("stash", "shortcut").entries[0]?.assets).toEqual([
+    { ref: "stash//knowledge/guide", type: "knowledge" },
+  ]);
 });

@@ -4,18 +4,15 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { purgeGracedArchive } from "../../../src/commands/improve/memory/memory-improve";
-import { createProposal, listProposals } from "../../../src/commands/proposal/repository";
+import { akmProposalRevert } from "../../../src/commands/proposal/proposal";
+import { createProposal, getProposal, listProposals } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
-import { akmTasksSync } from "../../../src/commands/tasks/tasks";
 import { handleApiRequest } from "../../../src/commands/ui/api";
-import { restoreRetiredAssets, retireAsset } from "../../../src/commands/ui/asset-retirement";
+import { retireAsset } from "../../../src/commands/ui/manual-retire";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
-import { renameBundle } from "../../../src/core/bundle-rename";
 import { saveConfig } from "../../../src/core/config/config";
-import * as indexerModule from "../../../src/indexer/indexer";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeLockfile } from "../../../src/integrations/lockfile";
-import type { SchedulerBackend } from "../../../src/tasks/backends/types";
 import { git, makeGitRepo } from "../../_helpers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -34,201 +31,104 @@ beforeEach(async () => {
     registries: [],
   });
   fs.writeFileSync(file(), body, { mode: 0o640 });
+  // Writes into an empty index are skipped, so keep one other asset indexed.
+  fs.writeFileSync(path.join(storage.stashDir, "memories/other.md"), "---\ndescription: other\n---\nOther.\n");
   await akmIndex({ stashDir: storage.stashDir, full: true });
 });
 afterEach(() => storage.cleanup());
 
-test("direct archive and Undo retain bytes, modes, belief state and leave proposals unchanged", async () => {
+const archived = (receipt: Awaited<ReturnType<typeof retireAsset>>) =>
+  receipt.archiveDirs.map((dir) => path.join(storage.stashDir, dir));
+const tombstone = (dir: string) => parseFrontmatter(fs.readFileSync(path.join(dir, "cleanup.md"), "utf8")).data;
+const revert = (receipt: Awaited<ReturnType<typeof retireAsset>>) => akmProposalRevert({ id: receipt.proposalId });
+
+test("retire is an accepted retire proposal; revert restores bytes, mode and belief state and removes the archive", async () => {
   const pending = createProposal(storage.stashDir, {
     ref,
     source: "reflect",
     payload: { content: `${body}Proposed change.` },
   });
-  const before = listProposals(storage.stashDir);
   const receipt = await retireAsset(ref, hash());
-  expect(receipt.complete).toBe(true);
   expect(fs.existsSync(file())).toBe(false);
-  expect(listProposals(storage.stashDir)).toEqual(before);
-  expect(before.map((row) => row.id)).toContain(pending.id);
-  const archive = path.join(receipt.root, receipt.archived[0]!.archivedPath);
-  expect(fs.readFileSync(archive, "utf8")).toBe(body);
-  const tombstone = parseFrontmatter(
-    fs.readFileSync(path.join(receipt.root, receipt.archived[0]!.auditPath), "utf8"),
-  ).data;
-  expect(tombstone.previousBeliefState).toBe("deprecated");
-  expect(tombstone.proposalId).toBeUndefined();
-  expect(tombstone.retiredAt).toBeUndefined();
+  const row = getProposal(storage.stashDir, receipt.proposalId);
+  expect(row).toMatchObject({ status: "accepted", source: "propose", ref });
+  expect(row.retirement).toBeUndefined();
+  expect(row.retiredArchive?.dirs).toEqual(receipt.archiveDirs);
+  expect(getProposal(storage.stashDir, pending.id).status).toBe("pending");
+  const [dir] = archived(receipt);
+  expect(fs.readFileSync(path.join(dir!, "memories/manual.md"), "utf8")).toBe(body);
+  const data = tombstone(dir!);
+  expect(data).toMatchObject({ reason: "manual", previousBeliefState: "deprecated", proposalId: receipt.proposalId });
+  expect(typeof data.retiredAt).toBe("string");
   expect((await akmSearch({ query: "quartz", skipLogging: true })).hits).toHaveLength(0);
-  const restored = await restoreRetiredAssets(
-    receipt.bundle,
-    receipt.archived.map((item) => item.auditPath),
-  );
-  expect(restored.complete).toBe(true);
+
+  expect((await revert(receipt)).proposal.status).toBe("reverted");
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
   expect(fs.statSync(file()).mode & 0o777).toBe(0o640);
+  expect(fs.existsSync(dir!)).toBe(false);
   expect(await handleApiRequest("/api/asset", new URLSearchParams({ ref }))).toMatchObject({ durableRef: ref });
-  fs.appendFileSync(file(), "New work");
-  expect(fs.readFileSync(archive, "utf8")).toBe(body);
-  await expect(
-    restoreRetiredAssets(
-      receipt.bundle,
-      receipt.archived.map((item) => item.auditPath),
-    ),
-  ).rejects.toThrow("occupied");
 });
 
-test("memory retirement and Undo carry its derived twin without a proposal", async () => {
+test("memory retirement and revert carry its derived twin", async () => {
   const twin = file().replace(".md", ".derived.md");
   fs.writeFileSync(twin, "---\ndescription: quartz derived\n---\nDerived quartz text.\n");
   await akmIndex({ stashDir: storage.stashDir, full: true });
   const receipt = await retireAsset(ref, hash());
-  expect(receipt.archived).toHaveLength(2);
+  expect(receipt.archiveDirs).toHaveLength(2);
   expect(fs.existsSync(twin)).toBe(false);
-  expect(listProposals(storage.stashDir)).toHaveLength(0);
   expect((await akmSearch({ query: "quartz", skipLogging: true })).hits).toHaveLength(0);
-  await restoreRetiredAssets(
-    receipt.bundle,
-    receipt.archived.map((item) => item.auditPath),
-  );
+  await revert(receipt);
   expect(fs.existsSync(twin)).toBe(true);
-});
-
-test("a bundle rename does not strand its existing manual archives", async () => {
-  const receipt = await retireAsset(ref, hash());
-  const backend: SchedulerBackend = {
-    name: "cron",
-    list: () => [],
-    install: () => {
-      throw new Error("No task installation expected");
-    },
-    uninstall: () => {
-      throw new Error("No task removal expected");
-    },
-    setEnabled: () => {
-      throw new Error("No task toggle expected");
-    },
-  };
-  const renamed = await renameBundle(
-    "stash",
-    "renamed",
-    {},
-    {
-      backend,
-      syncTasks: (bundle, scheduler) => akmTasksSync({ backend: scheduler }, bundle),
-    },
-  );
-  expect(renamed.applied).toBe(true);
-  expect(renamed.taskSync?.ok).toBe(true);
-  const result = await restoreRetiredAssets(
-    "renamed",
-    receipt.archived.map((item) => item.auditPath),
-  );
-  expect(result.complete).toBe(true);
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
-  const shown = await handleApiRequest("/api/asset", new URLSearchParams({ ref: "renamed//memories/manual" }));
-  expect(shown).toMatchObject({ durableRef: "renamed//memories/manual" });
 });
 
-test("an index bootstrap failure preserves restored files and reports the repair needed", async () => {
+test("a non-UTF-8 asset round-trips byte-exact through retire and revert", async () => {
+  const script = path.join(storage.stashDir, "scripts/latin.sh");
+  const bytes = Buffer.from([
+    0x23, 0x21, 0x2f, 0x62, 0x69, 0x6e, 0x2f, 0x73, 0x68, 0x0a, 0x65, 0x63, 0x68, 0x6f, 0x20, 0xe9, 0x0a,
+  ]);
+  fs.mkdirSync(path.dirname(script), { recursive: true });
+  fs.writeFileSync(script, bytes);
+  await akmIndex({ stashDir: storage.stashDir, full: true });
+  const receipt = await retireAsset("stash//scripts/latin.sh", createHash("sha256").update(bytes).digest("hex"));
+  expect(fs.existsSync(script)).toBe(false);
+  await revert(receipt);
+  expect(fs.readFileSync(script).equals(bytes)).toBe(true);
+});
+
+test("revert refuses to overwrite newer work at the original path", async () => {
   const receipt = await retireAsset(ref, hash());
-  const bootstrap = spyOn(indexerModule, "akmIndex").mockRejectedValueOnce(new Error("synthetic index failure"));
-  try {
-    const result = await restoreRetiredAssets(
-      receipt.bundle,
-      receipt.archived.map((item) => item.auditPath),
-    );
-    expect(result.complete).toBe(true);
-    expect(result.restored).toEqual([file()]);
-    expect(result.warnings.join(" ")).toContain("index initialization failed: synthetic index failure");
-    expect(fs.readFileSync(file(), "utf8")).toBe(body);
-    expect(fs.readFileSync(path.join(receipt.root, receipt.archived[0]!.archivedPath), "utf8")).toBe(body);
-  } finally {
-    bootstrap.mockRestore();
-  }
+  const [dir] = archived(receipt);
+  fs.writeFileSync(file(), "New work");
+  await expect(revert(receipt)).rejects.toThrow("already exists");
+  expect(fs.readFileSync(file(), "utf8")).toBe("New work");
+  expect(fs.existsSync(dir!)).toBe(true);
 });
 
-test("stale content and archive symlink are refused without changing the active file", async () => {
+test("a stale revision is refused without changing the active file or minting a proposal", async () => {
   await expect(retireAsset(ref, "stale")).rejects.toThrow("changed");
-  const outside = path.join(path.dirname(storage.stashDir), "outside");
-  fs.mkdirSync(outside);
-  fs.mkdirSync(path.join(storage.stashDir, ".akm/memory-cleanup"), { recursive: true });
-  fs.symlinkSync(outside, path.join(storage.stashDir, ".akm/memory-cleanup/archive"));
-  await expect(retireAsset(ref, hash())).rejects.toThrow(/symbolic|escapes/);
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
-  expect(fs.readdirSync(outside)).toEqual([]);
-  expect(listProposals(storage.stashDir)).toHaveLength(0);
+  expect(listProposals(storage.stashDir, { includeArchive: true })).toHaveLength(0);
 });
 
-test("a derived directory or symlink is refused before moving either asset", async () => {
-  const twin = file().replace(".md", ".derived.md");
-  fs.mkdirSync(twin);
-  await expect(retireAsset(ref, hash())).rejects.toThrow("regular");
-  expect(fs.readFileSync(file(), "utf8")).toBe(body);
-  fs.rmdirSync(twin);
-  fs.symlinkSync(file(), twin);
-  await expect(retireAsset(ref, hash())).rejects.toThrow("symbolic");
-  expect(fs.readFileSync(file(), "utf8")).toBe(body);
-});
-
-test("partial archival leaves a usable receipt and the untouched twin", async () => {
-  const twin = file().replace(".md", ".derived.md");
-  fs.writeFileSync(twin, "Derived bytes");
-  const rename = fs.renameSync;
-  const failure = spyOn(fs, "renameSync").mockImplementation((from, to) => {
-    if (from === twin) throw new Error("synthetic twin archive failure");
-    return rename(from, to);
+test("a failed accept leaves the proposal rejected and the asset in place", async () => {
+  const accept = await import("../../../src/commands/proposal/proposal");
+  const real = accept.akmProposalAccept;
+  const spy = spyOn(accept, "akmProposalAccept").mockImplementation(async (options) => {
+    fs.appendFileSync(file(), "late edit");
+    return real(options);
   });
-  const receipt = await retireAsset(ref, hash());
-  failure.mockRestore();
-  expect(receipt.complete).toBe(false);
-  expect(receipt.archived).toHaveLength(1);
-  expect(receipt.warnings.join(" ")).toContain("synthetic twin archive failure");
-  expect(fs.readFileSync(twin, "utf8")).toBe("Derived bytes");
-  await restoreRetiredAssets(
-    receipt.bundle,
-    receipt.archived.map((item) => item.auditPath),
-  );
-  expect(fs.readFileSync(file(), "utf8")).toBe(body);
+  try {
+    await expect(retireAsset(ref, hash())).rejects.toThrow("changed");
+  } finally {
+    spy.mockRestore();
+  }
+  expect(fs.readFileSync(file(), "utf8")).toBe(`${body}late edit`);
+  expect(fs.existsSync(path.join(storage.stashDir, ".akm/memory-cleanup/archive"))).toBe(false);
+  expect(listProposals(storage.stashDir, { includeArchive: true })[0]?.status).toBe("rejected");
 });
 
-test("restore validates every tombstone before writing and never overwrites an occupied path", async () => {
-  const receipt = await retireAsset(ref, hash());
-  const audit = receipt.archived[0]!.auditPath;
-  await expect(restoreRetiredAssets(receipt.bundle, [audit, "../../outside/cleanup.md"])).rejects.toThrow("escapes");
-  expect(fs.existsSync(file())).toBe(false);
-  const archived = path.join(receipt.root, receipt.archived[0]!.archivedPath);
-  fs.renameSync(archived, `${archived}.moved`);
-  await expect(restoreRetiredAssets(receipt.bundle, [audit])).rejects.toThrow("archived file is missing");
-  fs.renameSync(`${archived}.moved`, archived);
-  fs.symlinkSync(path.join(storage.stashDir, "missing"), file());
-  await expect(restoreRetiredAssets(receipt.bundle, [audit])).rejects.toThrow("symbolic");
-  expect(fs.lstatSync(file()).isSymbolicLink()).toBe(true);
-});
-
-test("partial restore reports the copied file and retains every recovery copy", async () => {
-  const twin = file().replace(".md", ".derived.md");
-  fs.writeFileSync(twin, "Derived bytes");
-  const receipt = await retireAsset(ref, hash());
-  const copy = fs.copyFileSync;
-  const failure = spyOn(fs, "copyFileSync").mockImplementation((from, to, mode) => {
-    if (to === twin) throw new Error("synthetic restore failure");
-    return copy(from, to, mode);
-  });
-  const result = await restoreRetiredAssets(
-    receipt.bundle,
-    receipt.archived.map((item) => item.auditPath),
-  );
-  failure.mockRestore();
-  expect(result.complete).toBe(false);
-  expect(result.restored).toEqual([file()]);
-  expect(result.warnings.join(" ")).toContain("synthetic restore failure");
-  expect(fs.readFileSync(file(), "utf8")).toBe(body);
-  for (const record of receipt.archived) expect(fs.existsSync(path.join(receipt.root, record.archivedPath))).toBe(true);
-  await restoreRetiredAssets(receipt.bundle, [receipt.archived[1]!.auditPath]);
-  expect(fs.readFileSync(twin, "utf8")).toBe("Derived bytes");
-});
-
-test("read-only bundles and skill packages cannot be retired", async () => {
+test("read-only bundles, skill packages and protected files cannot be retired", async () => {
   saveConfig({
     semanticSearchMode: "off",
     bundles: { stash: { path: storage.stashDir, writable: false } },
@@ -247,26 +147,16 @@ test("read-only bundles and skill packages cannot be retired", async () => {
   await akmIndex({ stashDir: storage.stashDir, full: true });
   await expect(retireAsset("stash//skills/example", hash())).rejects.toThrow("single-file");
   expect(fs.existsSync(skill)).toBe(true);
-});
-
-test("a newly marked nested secret remains protected without reindexing", async () => {
   const secret = path.join(storage.stashDir, "projects/demo/secrets/token.md");
   fs.mkdirSync(path.dirname(secret), { recursive: true });
   fs.writeFileSync(secret, "planted-private-secret");
   await akmIndex({ stashDir: storage.stashDir, full: true });
-  fs.writeFileSync(`${secret}.sensitive`, "");
-  // The ref the index really assigns, with the file's real revision, so only the protection can refuse it.
-  const secretRef = "stash//secrets/projects/demo/secrets/token.md";
-  const revision = createHash("sha256").update("planted-private-secret").digest("hex");
-  await expect(retireAsset(secretRef, revision)).rejects.toThrow("Choose an indexed local asset");
-  expect(await handleApiRequest("/api/asset", new URLSearchParams({ ref: secretRef }))).toMatchObject({
-    redacted: true,
-  });
+  await expect(retireAsset("stash//secrets/projects/demo/secrets/token.md", hash())).rejects.toThrow("single-file");
   expect(fs.readFileSync(secret, "utf8")).toBe("planted-private-secret");
-  expect(fs.existsSync(path.join(storage.stashDir, ".akm/memory-cleanup/archive"))).toBe(false);
+  expect(listProposals(storage.stashDir, { includeArchive: true })).toHaveLength(0);
 });
 
-test("Git retirement commits only its paths and manual bytes survive the grace purge", async () => {
+test("Git retirement commits only its paths and the manual archive is grace-purged like any retirement", async () => {
   makeGitRepo({ dir: storage.stashDir });
   git(storage.stashDir, ["add", "memories/manual.md"]);
   git(storage.stashDir, ["commit", "-qm", "Original note"]);
@@ -283,20 +173,21 @@ test("Git retirement commits only its paths and manual bytes survive the grace p
     },
   });
   const receipt = await retireAsset(ref, hash());
-  expect(receipt.complete).toBe(true);
   const committed = git(storage.stashDir, ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"])
     .trim()
     .split("\n");
+  const [dir] = archived(receipt);
+  const rel = (p: string) => path.relative(storage.stashDir, p);
   expect(committed.sort()).toEqual(
-    ["memories/manual.md", receipt.archived[0]!.auditPath, receipt.archived[0]!.archivedPath].sort(),
+    ["memories/manual.md", rel(path.join(dir!, "cleanup.md")), rel(path.join(dir!, "memories/manual.md"))].sort(),
   );
   expect(git(storage.stashDir, ["diff", "--cached", "--name-only"]).trim()).toBe("unrelated.txt");
-  expect(purgeGracedArchive(storage.stashDir, new Date("2100-01-01"))).toEqual({ purgedDirs: 0, purgedFiles: 0 });
-  expect(fs.readFileSync(path.join(receipt.root, receipt.archived[0]!.archivedPath), "utf8")).toBe(body);
-  await restoreRetiredAssets(
-    receipt.bundle,
-    receipt.archived.map((item) => item.auditPath),
-  );
+  expect(purgeGracedArchive(storage.stashDir, new Date("2100-01-01"))).toEqual({ purgedDirs: 1, purgedFiles: 1 });
+  expect(fs.existsSync(path.join(dir!, "memories/manual.md"))).toBe(false);
+  expect(fs.existsSync(path.join(dir!, "cleanup.md"))).toBe(true);
+  // Past the purge, revert rewrites the asset from the proposal's recorded bytes.
+  await revert(receipt);
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
+  expect(fs.existsSync(dir!)).toBe(false);
   expect(git(storage.stashDir, ["diff", "--cached", "--name-only"]).trim()).toBe("unrelated.txt");
 });
