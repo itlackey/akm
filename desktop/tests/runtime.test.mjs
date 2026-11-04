@@ -137,3 +137,28 @@ test('Electron Node child loads native SQLite and existing CLI-spawning workspac
   const missing = await app.request('/proposals/nonexistent/accept', {});
   assert.equal(missing.status, 404);
 });
+
+test('a request before the app has loaded gets the 503 error shape the renderer reads', async t => {
+  const { mkdtemp, mkdir, copyFile, writeFile, rm } = await import('node:fs/promises');
+  const os = await import('node:os');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'akm-desktop-starting-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'electron')); await mkdir(path.join(root, 'build'));
+  await copyFile(path.join(appRoot, 'electron/server.mjs'), path.join(root, 'electron/server.mjs'));
+  await copyFile(path.join(appRoot, 'package.json'), path.join(root, 'package.json'));
+  // A stand-in app that reports the listening origin, then finishes loading only when told to.
+  await writeFile(path.join(root, 'build/handler.js'), `process.send({ type: 'loading', origin: process.env.AKM_DESKTOP_ORIGIN });
+await new Promise(resolve => process.on('message', message => { if (message === 'load') resolve(); }));
+export const handler = (req, res) => res.end('loaded');
+`);
+  const child = fork(path.join(root, 'electron/server.mjs'), [], { execArgv: [], env: { ...process.env, HOME: root }, stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+  t.after(() => child.kill());
+  const loading = await new Promise(resolve => child.on('message', message => { if (message.type === 'loading') resolve(message); }));
+  const response = await fetch(loading.origin + '/api/meta');
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { ok: false, code: 'STARTING', error: 'AKM Desktop is still starting.' });
+  const ready = new Promise(resolve => child.on('message', message => { if (message.type === 'ready') resolve(); }));
+  child.send('load');
+  await ready;
+  assert.equal(await (await fetch(loading.origin + '/')).text(), 'loaded');
+});

@@ -1,21 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { UsageError, handleApiRequest, handleWorkspaceAction, indexWrittenAssets } from 'akm-cli/workspace';
+import { UsageError, handleApiRequest, indexWrittenAssets } from 'akm-cli/workspace';
 import { known } from '../http.js';
 
 /**
  * Plain file editing for the human owner: any text file inside a configured bundle (an asset, a skill's support
  * file, a file that is no asset). Desktop reads and writes the file itself and asks akm to refresh the index for it.
- * The only restrictions are real safety: stay inside the bundle root (realpath, so no link can leave it), refuse a
- * save over bytes that changed since they were read, and write atomically. Asset-level operations (retire, copy,
- * proposals, env/secret) stay akm's. Knowledge and memory documents are saved through akm's Markdown writer, which
- * records its event and commits.
+ * The only restrictions are real safety: stay inside the bundle root (realpath, so no link can leave it), write only
+ * to a bundle akm may write to (an installed bundle's update would replace the edit), refuse a save over bytes that
+ * changed since they were read, and write atomically. Asset-level operations (retire, copy, proposals, env/secret)
+ * stay akm's. The save leaves Git alone, as any editor would.
  */
 
 const MAX_BYTES = 8 * 1_048_576;
 const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
-type Bundle = { name: string; enabled: boolean; path: string | null; components: Array<{ adapter: string }> };
+type Bundle = { name: string; enabled: boolean; writable: boolean; path: string | null; components: Array<{ adapter: string }> };
 type Selector = { ref?: string; bundle?: string; file?: string };
 
 async function selection(input: Selector) {
@@ -32,7 +32,6 @@ async function selection(input: Selector) {
   const found = listing.bundles.find(entry => entry.name === bundle && entry.enabled && entry.path);
   if (!bundle || !file || !found) throw new UsageError('Choose a file in an enabled bundle.');
   if (path.isAbsolute(file) || file.includes('\0')) throw new UsageError('Use a path relative to the bundle.');
-  if (/^(?:env|secrets)(?:\/|$)/.test(file.split(path.sep).join('/'))) throw new UsageError('Protected files are shown and edited from the protected-file view.');
   const root = found.path!;
   const physicalRoot = fs.realpathSync(root);
   let real: string;
@@ -40,8 +39,11 @@ async function selection(input: Selector) {
   catch { throw new UsageError('This file is unavailable. Check its location and filesystem permissions.'); }
   const inside = path.relative(physicalRoot, real);
   if (!inside || inside.startsWith('..') || path.isAbsolute(inside)) throw new UsageError('The file must stay inside its bundle.');
+  // Checked on the real path, so neither `knowledge/../env/x.env` nor a link into env/ or secrets/ gets past it.
+  if (/^(?:env|secrets)(?:\/|$)/.test(inside.split(path.sep).join('/'))) throw new UsageError('Protected files are shown and edited from the protected-file view.');
   if (!fs.statSync(real).isFile()) throw new UsageError('Choose a file, not a folder.');
-  return { bundle, file, ref, type, real, indexable: path.join(root, inside), root, akm: found.components.some(component => component.adapter === 'akm') };
+  return { bundle, file, ref, type, real, indexable: path.join(root, inside), root, writable: found.writable === true,
+    akm: found.components.some(component => component.adapter === 'akm') };
 }
 
 function text(bytes: Buffer) {
@@ -54,7 +56,7 @@ export async function readFile(query: Selector) {
   const chosen = await selection(query);
   const bytes = fs.readFileSync(chosen.real);
   return { ref: chosen.ref, type: chosen.type, bundle: chosen.bundle, file: chosen.file, content: text(bytes), revision: digest(bytes),
-    markdown: /\.(?:md|markdown)$/i.test(chosen.real) && !['script', 'task'].includes(chosen.type ?? ''), direct: !['knowledge', 'memory'].includes(chosen.type ?? '') };
+    writable: chosen.writable, markdown: /\.(?:md|markdown)$/i.test(chosen.real) && !['script', 'task'].includes(chosen.type ?? '') };
 }
 
 export async function saveFile(body: unknown) {
@@ -63,8 +65,9 @@ export async function saveFile(body: unknown) {
     !(typeof value.ref === 'string' || (typeof value.bundle === 'string' && typeof value.file === 'string')))
     throw new UsageError('Provide the file, revision and text.');
   const chosen = await selection(value as Selector);
-  if (chosen.type === 'knowledge' || chosen.type === 'memory')
-    return handleWorkspaceAction('document-save', { ref: chosen.ref, revision: value.revision, content: value.content });
+  if (!chosen.writable) throw new UsageError(`Bundle ${chosen.bundle} is read-only: akm does not write to it, and an update would replace the edit.`);
+  // From this read to the rename everything is synchronous, so no other Desktop request can interleave. Another
+  // process could still write in that instant; akm's lease is not taken here, as an external editor would not take it.
   const live = fs.readFileSync(chosen.real);
   if (digest(live) !== value.revision)
     throw new UsageError('The file changed after it was opened. Review the newer version before saving.', 'ASSET_CONTENT_CHANGED');

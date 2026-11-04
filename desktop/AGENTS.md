@@ -17,6 +17,8 @@ Desktop is a convenience tool for the human owner of an akm instance; the CLI se
   - main-process privilege in `electron/`;
   - presentation and view models in `src/lib/`.
   A feature may call several AKM operations and must report a partial outcome as data. It never repairs AKM state itself.
+  The older server modules (`sensitive-assets.ts`, `preferences.ts`, `software.mjs`, `host-tools.mjs`) move here with the
+  typed-operations follow-up.
 - Desktop-owned routes are under `/api/desktop/*`; every other `/api` path is AKM's. Errors become HTTP statuses in one
   place, `src/lib/server/http.ts`. An unknown request field is ignored with one warning, never rejected.
 

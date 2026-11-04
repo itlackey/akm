@@ -54,8 +54,10 @@ test('a link or path that leaves the bundle is refused; protected files have the
     await fs.symlink(path.join(fixture.root, 'outside.md'), path.join(fixture.root, 'personal/knowledge/escape.md'));
     await fs.mkdir(path.join(fixture.root, 'personal/env'));
     await fs.writeFile(path.join(fixture.root, 'personal/env/prod.env'), 'TOKEN=synthetic\n');
+    await fs.symlink(path.join(fixture.root, 'personal/env/prod.env'), path.join(fixture.root, 'personal/knowledge/prod.md'));
   } }); t.after(() => app.stop());
-  for (const file of ['knowledge/escape.md', '../shared/knowledge/shared-backup.md', path.join(app.root, 'outside.md'), 'env/prod.env']) {
+  for (const file of ['knowledge/escape.md', '../shared/knowledge/shared-backup.md', path.join(app.root, 'outside.md'), 'env/prod.env',
+    'knowledge/../env/prod.env', 'knowledge/prod.md']) {
     assert.equal((await read(app, { bundle: 'personal', file })).status, 400, file);
     assert.equal((await save(app, { bundle: 'personal', file, revision: 'x', content: 'planted\n' })).status, 400, file);
   }
@@ -76,12 +78,34 @@ test('after an asset save the index finds the new text', async t => {
   assert.ok((await search()).some(found => found.endsWith('commands/check-recovery')), 'the saved text is searchable at once');
 });
 
-test('knowledge is saved through akm so its event and normalization stay akm\'s', async t => {
+test('knowledge is saved like any other file', async t => {
   const app = await launchFixture(); t.after(() => app.stop());
   const source = value(await read(app, { ref: app.refs.document }));
-  assert.equal(source.direct, false);
-  value(await save(app, { ref: app.refs.document, revision: source.revision, content: source.content + '\nChecked.\n' }));
+  assert.equal(source.writable, true);
+  assert.equal(value(await save(app, { ref: app.refs.document, revision: source.revision, content: source.content + '\nChecked.\n' })).indexed, true);
   assert.match(await fs.readFile(app.documentPath, 'utf8'), /Checked\./);
+});
+
+test('a bundle akm does not write to is readable, and a save into it is refused', async t => {
+  const app = await launchFixture(); t.after(() => app.stop());
+  const before = await fs.readFile(app.vendorPath, 'utf8');
+  const source = value(await read(app, { ref: app.refs.vendor }));
+  assert.equal(source.writable, false);
+  const refused = await save(app, { ref: app.refs.vendor, revision: source.revision, content: 'planted\n' });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /read-only/);
+  assert.equal(await fs.readFile(app.vendorPath, 'utf8'), before);
+});
+
+test('a filesystem failure is a 500 that names its cause', { skip: process.getuid?.() === 0 && 'root reads any file' }, async t => {
+  const app = await launchFixture(); t.after(() => app.stop());
+  const file = path.join(app.root, 'personal', skillFile);
+  await fs.chmod(file, 0o000);
+  t.after(() => fs.chmod(file, 0o644));
+  const failed = await read(app, { bundle: 'personal', file: skillFile });
+  assert.equal(failed.status, 500);
+  assert.equal(failed.body.code, 'INTERNAL_ERROR');
+  assert.match(failed.body.error, /EACCES/);
 });
 
 test('every status comes from one mapping, and the moved routes answer only under /api/desktop', async t => {

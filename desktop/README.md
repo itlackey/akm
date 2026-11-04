@@ -179,8 +179,9 @@ larger file-manager design is complete.
 
 Files lists actual folders, including unindexed files, without rebuilding the
 index. Any text file in an enabled bundle, including a skill's supporting files,
-can be viewed and edited with plain file operations (the edit refuses a file that
-changed since it was opened, and a link out of the bundle); `env/` and `secrets/`
+can be viewed with plain file operations, and edited in a bundle AKM writes to
+(the edit refuses a file that changed since it was opened, and a link out of the
+bundle); `env/` and `secrets/`
 have their own masked view. Saving asks AKM to refresh the index for that file.
 The editor preserves Markdown source/frontmatter; its preview supports a safe
 Markdown subset, not an HTML editor or arbitrary embedded content.

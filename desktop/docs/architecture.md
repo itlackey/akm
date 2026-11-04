@@ -47,13 +47,14 @@ files with plain file operations (`features/files.ts`, `GET /api/desktop/file`
 and `POST /api/desktop/file/save`): any UTF-8 text file inside an enabled bundle,
 including a skill's support files and files that are no asset. The only
 restrictions are real safety. The real path must stay inside the bundle root (a
-link cannot leave it), a save is refused when the file's bytes changed since they
+link cannot leave it), the bundle must be one AKM writes to (an installed
+bundle's update would replace the edit), a save is refused when the file's bytes changed since they
 were read (the revision is their SHA-256), and the write is atomic (temporary
 file, then rename, keeping the mode). Afterwards Desktop asks AKM to refresh the
 index for that file with `indexWrittenAssets`, the one index operation the
-workspace exports. `env/` and `secrets/` have their own masked view. Knowledge and
-memory documents are saved through AKM's Markdown writer, which records its event
-and commits; a plain file save does not touch Git. Asset-level operations (retire,
+workspace exports. `env/` and `secrets/` (checked on the real path) have their own
+masked view. A save does not touch Git; `akm sync` commits it like any other
+edit. Asset-level operations (retire,
 copy, proposals, env/secret, related content, bundle operations) stay AKM's.
 
 A move is two AKM operations: copy (`akmClone`, which never overwrites and

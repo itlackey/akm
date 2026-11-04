@@ -17,11 +17,11 @@
 </script>
 
 <header><h2>{file.split('/').at(-1)}</h2>
-  <div class="actions">{#if folderHref}<a href={folderHref}>Back to folder</a>{/if}{#if source}<a class="btn btn-secondary" href={'#/edit?' + new URLSearchParams({ bundle, file, returnTo })}>Edit file</a>{/if}</div>
+  <div class="actions">{#if folderHref}<a href={folderHref}>Back to folder</a>{/if}{#if source?.writable}<a class="btn btn-secondary" href={'#/edit?' + new URLSearchParams({ bundle, file, returnTo })}>Edit file</a>{/if}</div>
 </header>
 {#if error}<p role="alert">{error}</p>
 {:else if source}
-  <p class="muted small">A file in {bundle}{source.ref ? '' : ', not an indexed asset'}.</p>
+  <p class="muted small">A file in {bundle}{source.ref ? '' : ', not an indexed asset'}{source.writable ? '' : ' · Read only'}.</p>
   {#if source.markdown}<Markdown content={source.content} ref={source.ref ?? ''} />{:else}<pre class="code">{source.content}</pre>{/if}
 {:else}<p role="status">Opening file…</p>{/if}
 <style>header{display:flex;align-items:center;justify-content:space-between;gap:24px}.actions{display:flex;align-items:center;gap:16px}h2{margin:0;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style>
