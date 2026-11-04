@@ -294,7 +294,7 @@ remain available across minor releases, but flag names, prompts, and
 proposal-queue shape may shift. Breaking changes will be flagged in the
 CHANGELOG with a migration note.
 
-- **Programmatic API** — `akm-cli/api` (`curate()`, for in-process recall by the akm plugins; see [`docs/reference/api.md`](docs/reference/api.md)). The export list only grows and `curate()`'s parameters and result keep their documented contract; the text it returns is `akm curate`'s agent-shaped output and changes with it. Everything else in the package remains CLI-only.
+- **Programmatic API** — `akm-cli/api` (`curate()`, for in-process recall by the akm plugins; see [`docs/reference/api.md`](docs/reference/api.md)). The recall export list only grows and `curate()`'s parameters and result keep their documented contract; the text it returns is `akm curate`'s agent-shaped output and changes with it. The separate workspace namespace is Experimental, below.
 - **Improvement loop** — `akm improve` and the proposal noun group
   `akm proposal {extract,new,list,show,diff,accept,reject,reopen,revert,drain}`
   (`extract` and `new` are the former top-level `akm extract`/`akm propose`,
@@ -387,6 +387,13 @@ CHANGELOG with a migration note.
 
 Subject to change without notice within minor releases. Not yet recommended
 for scripted use.
+
+- **Local workspace API** — `akm-cli/workspace` exposes local UI dispatchers,
+  managed clone, file-safety, protected-file, bundle-management and read-only
+  stored-index helpers for trusted local hosts. It is not a stable SDK:
+  exports, signatures, result shapes and their supporting declaration graph
+  may change in any release. Hosts own authentication and transport limits.
+  See [Programmatic APIs](docs/reference/api.md#local-workspace-akm-cliworkspace).
 
 - **Workflows** — the whole `akm workflow` surface (`run`, `status`, `list`,
   `create`, `resume`, `abandon`, `plan`), the workflow asset format and the

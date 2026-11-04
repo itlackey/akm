@@ -600,7 +600,7 @@ function resolvePreviousBeliefState(
   candidate: MemoryPruneCandidate,
   filePath: string,
 ): Exclude<MemoryBeliefState, "archived"> {
-  if (!isRetireCandidate(candidate)) return priorBeliefStateForArchive(candidate);
+  if (!isRetireCandidate(candidate) && candidate.reason !== "manual") return priorBeliefStateForArchive(candidate);
   try {
     return resolveBeliefState(parseFrontmatter(fs.readFileSync(filePath, "utf8")).data);
   } catch {
@@ -663,7 +663,9 @@ export function archiveCleanupCandidate(
         ? { successorRefs: candidate.successorRefs }
         : {}),
     },
-    "Archived derived memory for recoverable cleanup.\n",
+    candidate.reason === "manual"
+      ? "Manually archived asset. Restore from this archive; no proposal was created.\n"
+      : "Archived derived memory for recoverable cleanup.\n",
   );
   // Write the tombstone BEFORE moving the file — a
   // crash in between used to leave a file already at archivedPath with no

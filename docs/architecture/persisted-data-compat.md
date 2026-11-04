@@ -8,6 +8,13 @@ close each format is to that contract today.
 
 ## The contract
 
+Manual workspace retirement uses the existing cleanup archive and tombstone
+format with `reason: manual`. It creates no proposal row and does not stamp a
+proposal ID or the proposal purge clock (`retiredAt`); its recovery copy is
+retained. Undo copies the recorded archived bytes back only when the original
+path is unoccupied, retaining the archive. Existing proposal acceptance/revert
+and archive encodings are unchanged.
+
 **Version floor (0.10, #1091): 0.9.15.** A 0.10 reader owes data written by
 0.9.15 or later, and nothing older. An install on an earlier release runs
 `akm migrate apply` under akm 0.9.x first, then upgrades. A reader that meets a

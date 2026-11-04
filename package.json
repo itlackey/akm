@@ -58,6 +58,11 @@
     "schemas"
   ],
   "exports": {
+    "./workspace": {
+      "types": "./dist/workspace.d.ts",
+      "bun": "./dist/workspace.js",
+      "default": "./dist/workspace-node.mjs"
+    },
     "./api": {
       "types": "./dist/api.d.ts",
       "bun": "./dist/api.js",
@@ -91,7 +96,8 @@
     "prepublishOnly": "cp .github/README.npm.md README.md && bun run build",
     "postpublish": "git checkout -- README.md",
     "build:install": "bun scripts/package-install.ts install-global",
-    "test:package": "bun scripts/package-install.ts test-package"
+    "test:package": "bun scripts/package-install.ts test-package",
+    "test:workspace-package": "AKM_WORKSPACE_PACKAGE_TESTS=1 bun test --timeout=300000 tests/integration/install/workspace-package.test.ts"
   },
   "publishConfig": {
     "access": "public"

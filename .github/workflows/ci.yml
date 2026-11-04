@@ -81,6 +81,7 @@ jobs:
           npm install --no-save "better-sqlite3@$spec"
           bun run test:node-smoke
           bun run test:node-compat
+          bun run test:workspace-package
         env:
           AKM_SMOKE_NODE: node
 

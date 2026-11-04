@@ -54,6 +54,7 @@ import { akmShowUnified } from "../read/show";
 import { assembleInfo } from "../sources/info";
 import { akmListSources } from "../sources/installed-stashes";
 import { assetImprove } from "./asset-improve";
+import { bundleFileLocation, listBundleFiles } from "./bundle-files";
 import { classifyOutcome, decidedAt, pChart, weekOf, weekRange } from "./derive";
 import { readDocumentSource } from "./document-source";
 import { listFolders } from "./folders";
@@ -658,6 +659,7 @@ async function asset(query: Query) {
     durableRef,
     bundle: durableRef ? parseBundleRef(durableRef).bundle : null,
     asset: shown,
+    location: shown.path ? bundleFileLocation(shown.path) : null,
     feedback: feedbackFor(durableRef),
     feedbackRequireReason: loadConfig().feedback?.requireReason !== false,
     links,
@@ -732,6 +734,8 @@ const ROUTES: Record<string, Handler> = {
   "/api/health": (query) => akmHealth({ since: "24h", groupBy: "run", probe: flag(query, "probe"), readOnly: true }),
   "/api/tasks/history": taskHistory,
   "/api/bundles": bundles,
+  "/api/bundle/files": (query) =>
+    listBundleFiles(query.get("bundle") ?? "", query.get("path") ?? "", query.get("hidden") === "1"),
   "/api/config": config,
   "/api/proposals": proposals,
   "/api/changes": changes,

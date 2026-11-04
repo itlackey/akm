@@ -58,6 +58,7 @@ const runtimeFiles = [
   "scripts/node-runtime/text-import-hook.mjs",
   "scripts/node-runtime/api-node.mjs",
   "scripts/node-runtime/api.d.ts",
+  "scripts/node-runtime/workspace-node.mjs",
 ];
 for (const src of runtimeFiles) {
   const dest = src.replace(/^scripts\/node-runtime\//, "dist/");

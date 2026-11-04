@@ -11,6 +11,7 @@ import { appendEvent } from "../../core/events";
 import { resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
 import { assertUnsettable, setConfigValue, unsetConfigValue } from "../config-cli";
 import { writeMarkdownAsset } from "../read/knowledge";
+import { restoreRetiredAssets, retireAsset } from "./asset-retirement";
 import { readDocumentSource } from "./document-source";
 import { assertWriteLeaseFree, classifyProposalError, type ProposalActionError } from "./proposal-actions";
 import { redactForUi, redactUrlsInText } from "./redact";
@@ -23,6 +24,8 @@ export type WorkspaceAction =
   | "bundle-settings"
   | "config-set"
   | "document-save"
+  | "document-retire"
+  | "document-restore"
   | "knowledge-create";
 
 const ROUTES: Record<string, WorkspaceAction> = {
@@ -34,6 +37,8 @@ const ROUTES: Record<string, WorkspaceAction> = {
   "/api/config/set": "config-set",
   "/api/knowledge/create": "knowledge-create",
   "/api/asset/save": "document-save",
+  "/api/asset/retire": "document-retire",
+  "/api/asset/restore": "document-restore",
 };
 
 export function matchWorkspaceAction(path: string): WorkspaceAction | null {
@@ -300,6 +305,17 @@ export async function handleWorkspaceAction(action: WorkspaceAction, value: unkn
       return settings(body);
     case "config-set":
       return configChanges(body);
+    case "document-retire":
+      return retireAsset(text(body, "ref"), text(body, "revision"));
+    case "document-restore": {
+      if (
+        !Array.isArray(body.archives) ||
+        !body.archives.length ||
+        body.archives.some((entry) => typeof entry !== "string")
+      )
+        throw new UsageError("archives must contain the retirement receipt's archive paths.");
+      return restoreRetiredAssets(text(body, "bundle"), body.archives as string[]);
+    }
     case "document-save": {
       if (typeof body.content !== "string") throw new UsageError("Markdown content is required.");
       const content = body.content;

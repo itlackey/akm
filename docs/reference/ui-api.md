@@ -208,6 +208,21 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   Component overrides take precedence over the bundle writable default. An implicit/detected component is shown
   without creating new component configuration. Counts describe the existing index; they are not a live file catalog.
 
+## `GET /api/bundle/files`
+
+The local workspace browser lists one directory in an enabled registered bundle.
+`bundle` selects its resolved content root; `path` is relative to it (default:
+root); `hidden=1` includes dot-files. Absolute paths and symlink escapes are
+refused. Internal symbolic links can be traversed; unavailable links are labelled.
+
+The result is `{bundle, path, parent, indexAvailable, truncated: false, entries}`.
+`parent` is null at the root. Each entry has `name`, bundle-relative `path`,
+`kind` (`directory`, `file`, or `other`), `refs`, and `assets: [{ref, type}]`,
+with optional `symlink` and `unavailable`. Directories sort first, then names.
+Refs come only from exact physical-file rows already in the index; absent
+indexes leave them empty. No content is read, recursive scan run, index written,
+or source refreshed. Listing does not imply editability.
+
 ## `GET /api/config`
 
 The effective configuration, as `akm config list` shows it, with where each value comes from.
@@ -641,7 +656,8 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
   `{ "redacted": true, "type": "env", "ref": "env/prod", "note": "..." }`, with no `asset`, key names or values.
   Use `akm env list` for key names.
 
-The response also supplies `feedbackRequireReason`, the owning `bundle`, `headings` with existing AKM fragment
+The response also supplies `location` (`{bundle, path, parent}` relative to the
+resolved bundle root, or null), `feedbackRequireReason`, the owning `bundle`, `headings` with existing AKM fragment
 selectors, and a `links` map for supported relative inline Markdown links. A relative `.md` target must already be
 indexed in the same bundle. Missing/out-of-bundle paths remain text; no arbitrary-file endpoint is added. Explicit
 cross-bundle refs remain available. Relative images, uploads, universal title/alias resolution and unsupported
@@ -743,6 +759,24 @@ User searches that found nothing, grouped by normalised query: `query`, `count`,
 `searches` (all user searches in the window) and `foundNothing`.
 
 ## Workspace actions
+
+The workspace dispatchers also accept `POST /api/asset/retire` with
+`{ref, revision}` and `POST /api/asset/restore` with
+`{bundle, archives: string[]}`. These are explicit manual operations, not
+proposal creation or acceptance. Retirement requires the current raw SHA-256
+revision of an indexed writable AKM single-file text asset; skill packages,
+env/secret files and sessions are excluded. Memory retirement carries its
+derived twin. It uses the native cleanup archive and `reason: manual`
+tombstone, with no proposal, successor evidence or purge clock.
+
+The receipt contains `ref`, `bundle`, `root`, `archived` records,
+`complete`, and `warnings`. Restore takes those records' `auditPath` values,
+validates their native tombstones, and copies bytes back without overwriting
+occupied paths or removing recovery copies. Its receipt contains `restored`
+paths, `complete`, and `warnings`. Partial failures report completed work;
+do not retry blindly. Both operations refresh the index and retain normal Git
+publication. Task definitions do not change installed schedules until explicit
+`akm task sync`. The browser UI does not add controls for these operations.
 
 Every route below uses the same write guards as [proposal decisions](#deciding-proposals): token **header**, same
 Origin, JSON content type and a body of at most 64 KiB. The two routes that carry a whole Markdown document,
