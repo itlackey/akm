@@ -4,7 +4,7 @@
 
 /**
  * A person retires an asset: the ordinary retire proposal, minted and accepted at once the way
- * `akm feedback`'s typed fix is. Undo is `POST /api/proposals/:id/revert`.
+ * `akm feedback`'s typed fix is. Undo is reverting that proposal.
  */
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -13,13 +13,13 @@ import { resolveStashDir, toErrorMessage } from "../../core/common";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { assertWriteLeaseFree } from "../../indexer/index-writer-lock";
-import { isSingleFileDocumentType, resolveWritableIndexedAsset } from "../read/document";
+import { resolveWritableIndexedAsset } from "../read/document";
 import { akmProposalAccept } from "./proposal";
 import { createRetireProposal, recordGateDecision, rejectProposalDurably } from "./repository";
 
 export async function retireAsset(ref: string, revision: string) {
   const identity = parseRefInput(ref);
-  if (identity.type === "skill" || !isSingleFileDocumentType(identity.type))
+  if (["skill", "env", "secret", "session"].includes(identity.type))
     throw new UsageError("Retire supports single-file assets, not skill packages or protected files.");
   await assertWriteLeaseFree("manual-retire");
   const { canonical, target, path: file } = await resolveWritableIndexedAsset(ref);

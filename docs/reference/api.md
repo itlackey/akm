@@ -132,8 +132,8 @@ plus `deriveCanonicalAssetName` (the ref name of a bundle file, for a file that 
 files inside a bundle itself, it refreshes the index rows for exactly those files. It never
 rebuilds the index and fails open (it returns `false` when the index could not be updated).
 These are trusted local building blocks, not an authorization layer. Nothing else is exported:
-no write primitives, leases or vector readers, and no bundle-rename or lint operations
-(the UI API's `bundle-rename` action and `GET /api/asset/related` cover those).
+no other writers, no leases and no index or vector readers (the UI API's `bundle-rename` action
+and `GET /api/asset/related` cover renames and related content).
 
 The [UI API reference](ui-api.md) is the single source for route parameters,
 body validation and response shapes. Dispatchers return the raw `data`, not
