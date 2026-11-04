@@ -61,7 +61,7 @@ test('loopback session bootstrap, authentication and strict write origin', async
   assert.equal((await app.request('/desktop/software', { action: 'install-plugin', harness: 'unexpected' })).status, 400);
   const software = (await (await app.request('/desktop/software')).json()).data;
   assert.equal(software.host.phase, 'idle', 'Reading status must not invoke installers or model-backed operations');
-  assert.equal(software.desktop.supported, false, 'A server without Electron must not claim it can update the app');
+  assert.equal(software.desktop.menu.supported, false, 'A server without Electron must not claim it can install a menu entry');
   const badHost = await new Promise((resolve, reject) => {
     const req = http.get(`${app.origin}/api/meta`, { headers: { Host: 'evil.example', Cookie: app.cookie } }, res => { res.resume(); resolve(res.statusCode); });
     req.once('error', reject);
@@ -83,9 +83,9 @@ test('loopback session bootstrap, authentication and strict write origin', async
   assert.equal(typeof desktop.data.hostname, 'string');
   assert.equal(typeof desktop.data.akmVersion, 'string');
   assert.equal((await (await app.request('/desktop/preferences')).json()).data.theme, 'system');
-  assert.equal((await app.request('/desktop/preferences', { theme: 'dark', unrelated: true })).status, 400);
   assert.equal((await app.request('/desktop/preferences', { theme: 'invalid' })).status, 400);
-  assert.equal((await app.request('/desktop/preferences', { theme: 'dark' })).status, 200);
+  // An unknown field is ignored (with one warning), never an error.
+  assert.equal((await app.request('/desktop/preferences', { theme: 'dark', unrelated: true })).status, 200);
   assert.equal((await (await app.request('/desktop/preferences')).json()).data.theme, 'dark');
   assert.equal(JSON.parse(await readFile(path.join(app.fixture.env.XDG_CONFIG_HOME, 'akm-desktop/preferences.json'), 'utf8')).theme, 'dark');
   const configResponse = await app.request('/config');
@@ -99,12 +99,12 @@ test('loopback session bootstrap, authentication and strict write origin', async
 
 test('existing AKM reads, revision-safe editing, creation and non-overwriting copy', async t => {
   const app = await launch(t);
-  const sourceRoute = `/asset/source?ref=${encodeURIComponent(app.fixture.refs.document)}`;
+  const sourceRoute = `/desktop/file?ref=${encodeURIComponent(app.fixture.refs.document)}`;
   const source = (await (await app.request(sourceRoute)).json()).data;
   assert.equal(source.content, app.fixture.content);
-  const saved = await app.request('/asset/save', { ref: source.ref, revision: source.revision, content: source.content + '\nA verified extra step.\n' });
+  const saved = await app.request('/desktop/file/save', { ref: source.ref, revision: source.revision, content: source.content + '\nA verified extra step.\n' });
   assert.equal(saved.status, 200, await saved.text());
-  const conflict = await app.request('/asset/save', { ref: source.ref, revision: source.revision, content: '# obsolete' });
+  const conflict = await app.request('/desktop/file/save', { ref: source.ref, revision: source.revision, content: '# obsolete' });
   assert.equal(conflict.status, 409);
   assert.equal((await conflict.json()).code, 'ASSET_CONTENT_CHANGED');
   const created = await app.request('/knowledge/create', { name: 'created-in-test', content: '# Created\n\nA synthetic new note.', bundle: 'personal' });
@@ -113,15 +113,15 @@ test('existing AKM reads, revision-safe editing, creation and non-overwriting co
   assert.equal(copied.status, 200, await copied.text());
   const repeat = await app.request('/asset/copy', { sourceRef: app.fixture.refs.vendor, target: 'personal', newName: 'vendor-copy' });
   assert.notEqual(repeat.status, 200);
-  assert.equal((await app.request('/asset/copy', { sourceRef: app.fixture.refs.vendor, force: true })).status, 400);
-  const vendor = await app.request(`/asset/source?ref=${encodeURIComponent(app.fixture.refs.vendor)}`);
-  assert.notEqual(vendor.status, 200);
+  assert.notEqual((await app.request('/asset/copy', { sourceRef: app.fixture.refs.vendor, target: 'personal', newName: 'vendor-copy', force: true })).status, 200, 'an unknown force field is ignored; a copy never overwrites');
+  const vendor = await app.request(`/desktop/file?ref=${encodeURIComponent(app.fixture.refs.vendor)}`);
+  assert.equal(vendor.status, 200, 'the owner may read any file in a configured bundle');
   const history = await app.request(`/asset/history?ref=${encodeURIComponent(app.fixture.refs.document)}`);
   assert.equal(history.status, 200);
   assert.match(await readFile(app.fixture.documentPath, 'utf8'), /verified extra step/);
-  const memory = (await (await app.request(`/asset/source?ref=${encodeURIComponent(app.fixture.refs.memory)}`)).json()).data;
+  const memory = (await (await app.request(`/desktop/file?ref=${encodeURIComponent(app.fixture.refs.memory)}`)).json()).data;
   assert.equal(memory.type, 'memory');
-  const memorySaved = await app.request('/asset/save', { ref: memory.ref, revision: memory.revision, content: memory.content + '\nVerify the copy regularly.\n' });
+  const memorySaved = await app.request('/desktop/file/save', { ref: memory.ref, revision: memory.revision, content: memory.content + '\nVerify the copy regularly.\n' });
   assert.equal(memorySaved.status, 200, await memorySaved.text());
 });
 

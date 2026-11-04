@@ -37,7 +37,7 @@
     busy = true; setUnsaved(true); error = '';
     const destination = creating ? `${type === 'env' ? 'env' : 'secrets'}/${name.trim()}${type === 'env' && !name.trim().endsWith('.env') ? '.env' : ''}` : file;
     try {
-      const result = await api<{ bundle: string; file: string; ref: string; warnings: string[] }>('/asset/sensitive/' + (creating ? 'create' : 'save'), {}, {
+      const result = await api<{ bundle: string; file: string; ref: string; warnings: string[] }>('/desktop/sensitive/' + (creating ? 'create' : 'save'), {}, {
         bundle, file: destination, content: creating ? content : saveContent(original, content), ...(creating ? {} : { revision })
       });
       if (!alive) return;
@@ -50,7 +50,7 @@
     try {
       if (creating) { bundle = writable.find(item => item.name === bundle)?.name ?? writable[0]?.name ?? ''; }
       else {
-        const result = await api<{ content: string; revision: string }>('/asset/reveal', {}, { bundle, file });
+        const result = await api<{ content: string; revision: string }>('/desktop/sensitive/reveal', {}, { bundle, file });
         if (!alive) return;
         original = result.content; content = original.replace(/\r\n?/g, '\n'); revision = result.revision;
       }

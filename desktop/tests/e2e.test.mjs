@@ -85,7 +85,7 @@ test('built desktop UI: isolated human asset and proposal workflows', { timeout:
     const saveGate = new Promise(resolve => { releaseSave = resolve; });
     let saveReturned;
     const savedResponse = new Promise(resolve => { saveReturned = resolve; });
-    await page.route('**/api/asset/save', async route => {
+    await page.route('**/api/desktop/file/save', async route => {
       const response = await route.fetch();
       saveReturned();
       await saveGate;

@@ -17,9 +17,10 @@ host CLI/harnesses strictly for explicit installation and upgrade management.
 
 | Layer | Owns |
 | --- | --- |
-| `electron/` | Window, local server lifecycle, external browser links, private desktop updater |
+| `electron/` | Window, local server lifecycle, external browser links, application-menu install |
 | `src/hooks.server.ts` | Per-launch authentication and same-origin checks |
-| `src/lib/server/` and `src/routes/api/` | HTTP validation, existing AKM API dispatch, native host software command orchestration |
+| `src/lib/server/` and `src/routes/api/` | HTTP shell (`http.ts`: the one error-to-status mapping, unknown request fields warned and ignored), existing AKM API dispatch, native host software command orchestration |
+| `src/lib/server/features/` | Desktop-only features built on `akm-cli/workspace` (plain file editing) |
 | `src/lib/*.svelte` | Presentation, review confirmation, retained editor drafts |
 | `src/lib/navigation.ts` | SvelteKit navigation with draft-aware Back/forward and retained section state |
 | `src/lib/upstream/` | Reused AKM design tokens, escaped Markdown, diff and chart presentation |
@@ -41,10 +42,19 @@ arbitrary filesystem mutation is exposed by the app.
 
 Related content is AKM's `GET /api/asset/related`, which reads only stored vectors
 (never a provider or a second vector store) through search's own entry filter.
-Editing is AKM's `GET /api/asset/source` and `POST /api/asset/save`, which cover
-every single-file asset type under the same write target, lease and revision
-checks; a skill is edited as its `SKILL.md`, and a skill's other files are shown
-in Files but are not assets, so Desktop neither reads nor edits them.
+Desktop is a convenience tool for the human owner of the instance, so it edits
+files with plain file operations (`features/files.ts`, `GET /api/desktop/file`
+and `POST /api/desktop/file/save`): any UTF-8 text file inside an enabled bundle,
+including a skill's support files and files that are no asset. The only
+restrictions are real safety. The real path must stay inside the bundle root (a
+link cannot leave it), a save is refused when the file's bytes changed since they
+were read (the revision is their SHA-256), and the write is atomic (temporary
+file, then rename, keeping the mode). Afterwards Desktop asks AKM to refresh the
+index for that file with `indexWrittenAssets`, the one index operation the
+workspace exports. `env/` and `secrets/` have their own masked view. Knowledge and
+memory documents are saved through AKM's Markdown writer, which records its event
+and commits; a plain file save does not touch Git. Asset-level operations (retire,
+copy, proposals, env/secret, related content, bundle operations) stay AKM's.
 
 A move is two AKM operations: copy (`akmClone`, which never overwrites and
 records the original in the copy's `sources`), then retire of the original.
@@ -76,6 +86,18 @@ Bundle rename is core's `bundle-rename` workspace action, which runs
 migration, scheduler or database logic. It presents native preview/results, refreshes its Library
 location and remaps retained document drafts. The physical directory is not
 renamed; authored content references are reported, not rewritten.
+
+## Desktop-only features
+
+A feature belongs in AKM when an agent or script would plausibly want it, or when
+it owns AKM data or needs AKM's invariants. Everything else is Desktop's, and
+lives in `src/lib/server/features/` (server), `electron/` (main-process
+privilege) or a renderer view model. Desktop code imports only `akm-cli/workspace`
+and `akm-cli/package.json`, never `akm-cli/dist/*` or `../../src/*`, and never
+reads or writes AKM's own data paths. A feature may call several AKM operations
+and must report a partial outcome as data. `tests/integration-contract.test.mjs`
+checks the import rule for server code. Desktop-owned routes are under
+`/api/desktop/*`; every other `/api` path is AKM's.
 
 ## Local application boundary
 
@@ -127,8 +149,10 @@ the app stops the child server. Navigation never resizes its window.
 ## Distribution status
 
 The app is a source-integrated test build, not a public release or a claim that the larger
-asset-manager design is complete. Private versions now use patch-only 0.0.x;
-see `verification.md` for actual checks and remaining limits.
+asset-manager design is complete. Desktop has no version of its own: it is the
+version of the AKM it embeds, and `scripts/package.mjs --appimage` refuses a dirty
+tree or a commit not tagged `v<version>`. See `verification.md` for actual checks
+and remaining limits.
 The AppImage remains an unsigned Linux test artifact. Release
 signing, installers, macOS/Windows verification, and public distribution are
 separate distribution work. Setup builds and packs core from this checkout into
@@ -137,13 +161,11 @@ tarball, source patch or registry release.
 
 ## Software lifecycle
 
-Electron main owns the encrypted Gitea token and electron-updater instance.
-The existing authenticated server exchanges only allowlisted update status,
-check and settings messages with main; no renderer Node or preload API is added.
-Gitea resolves the release tag. Electron-updater owns version comparison,
-artifact checksums, downloads and AppImage replacement. Downloads never quit
-the application. Normal close respects unsaved-work confirmation, waits for
-host mutations, stops the server, then installs a staged desktop update.
+Desktop does not update itself: replace the AppImage with a newer download.
+Electron main only installs the per-user application-menu entry; the server asks
+it over an allowlisted `status` / `menu-install` message, and no renderer Node or
+preload API is added. Normal close respects unsaved-work confirmation and waits
+for host mutations.
 
 Host CLI installation uses AKM's official checksum-verifying user-local
 installer. Upgrades call the detected host `akm upgrade`; they never execute the
@@ -151,4 +173,4 @@ bundled workspace dependency's updater. Harness installation calls the native
 Claude/Codex marketplace and OpenCode plugin commands. No shell-interpolated
 commands, copied config writers, hook approval or forced channel switching are
 introduced. Diagnostics expose lifecycle summaries, not raw native output.
-See [Software updates](software.md) for use and distribution.
+See [Software](software.md) for use.

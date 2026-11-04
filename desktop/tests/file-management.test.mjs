@@ -22,19 +22,19 @@ test('env and secret CRUD keeps exact bytes, permissions, stale guards, marker c
   const app = await fixture(); t.after(() => app.stop());
   for (const file of ['env/team/example.env', 'secrets/team/example-key']) {
     const selector = { bundle: 'personal', file };
-    const created = value(await app.call('/api/asset/sensitive/create', { ...selector, content: synthetic }));
+    const created = value(await app.call('/api/desktop/sensitive/create', { ...selector, content: synthetic }));
     assert.equal(created.file, file);
     assert.ok(!JSON.stringify(created).includes('fixture-private-value'));
     const disk = path.join(app.root, 'personal', file);
     assert.equal(await fs.readFile(disk, 'utf8'), synthetic);
     assert.equal((await fs.stat(disk)).mode & 0o777, 0o600);
-    assert.equal((await app.call('/api/asset/sensitive/create', { ...selector, content: 'overwrite' })).status, 400);
-    const read = value(await app.call('/api/asset/reveal', selector));
+    assert.equal((await app.call('/api/desktop/sensitive/create', { ...selector, content: 'overwrite' })).status, 400);
+    const read = value(await app.call('/api/desktop/sensitive/reveal', selector));
     const updated = synthetic + '# Updated\r\n';
-    value(await app.call('/api/asset/sensitive/save', { ...selector, content: updated, revision: read.revision }));
+    value(await app.call('/api/desktop/sensitive/save', { ...selector, content: updated, revision: read.revision }));
     assert.equal(await fs.readFile(disk, 'utf8'), updated);
-    for (const action of ['save', 'delete']) assert.equal((await app.call('/api/asset/sensitive/' + action, { ...selector, revision: read.revision, ...(action === 'save' ? { content: 'stale' } : {}) })).status, 409);
-    const masked = value(await app.call('/api/asset/sensitive?' + new URLSearchParams(selector)));
+    for (const action of ['save', 'delete']) assert.equal((await app.call('/api/desktop/sensitive/' + action, { ...selector, revision: read.revision, ...(action === 'save' ? { content: 'stale' } : {}) })).status, 409);
+    const masked = value(await app.call('/api/desktop/sensitive?' + new URLSearchParams(selector)));
     assert.equal(masked.writable, true);
     assert.ok(!JSON.stringify(masked).includes('fixture-private-value'));
     const search = value(await app.call('/api/search?' + new URLSearchParams({ q: '', type: file.startsWith('env/') ? 'env' : 'secret', bundle: 'personal' })));
@@ -42,22 +42,22 @@ test('env and secret CRUD keeps exact bytes, permissions, stale guards, marker c
     assert.ok(!JSON.stringify(search).includes('fixture-private-value'));
     const marker = file.startsWith('env/') ? disk.replace(/\.env$/, '.sensitive') : disk + '.sensitive';
     await fs.writeFile(marker, '');
-    value(await app.call('/api/asset/sensitive/delete', { ...selector, revision: masked.revision }));
+    value(await app.call('/api/desktop/sensitive/delete', { ...selector, revision: masked.revision }));
     await assert.rejects(fs.stat(disk), { code: 'ENOENT' }); await assert.rejects(fs.stat(marker), { code: 'ENOENT' });
   }
   for (const file of ['../outside', 'env/../../outside.env', 'knowledge/example.md'])
-    assert.notEqual((await app.call('/api/asset/sensitive/create', { bundle: 'personal', file, content: synthetic })).status, 200);
-  assert.notEqual((await app.call('/api/asset/sensitive/create', { bundle: 'vendor', file: 'env/readonly.env', content: synthetic })).status, 200);
+    assert.notEqual((await app.call('/api/desktop/sensitive/create', { bundle: 'personal', file, content: synthetic })).status, 200);
+  assert.notEqual((await app.call('/api/desktop/sensitive/create', { bundle: 'vendor', file: 'env/readonly.env', content: synthetic })).status, 200);
   await fs.symlink(path.join(app.root, 'shared'), path.join(app.root, 'personal/env/linked'));
-  assert.notEqual((await app.call('/api/asset/sensitive/create', { bundle: 'personal', file: 'env/linked/outside.env', content: synthetic })).status, 200);
+  assert.notEqual((await app.call('/api/desktop/sensitive/create', { bundle: 'personal', file: 'env/linked/outside.env', content: synthetic })).status, 200);
   const selector = { bundle: 'personal', file: 'secrets/marker-conflict' };
-  value(await app.call('/api/asset/sensitive/create', { ...selector, content: synthetic }));
+  value(await app.call('/api/desktop/sensitive/create', { ...selector, content: synthetic }));
   await fs.mkdir(path.join(app.root, 'personal/secrets/marker-conflict.sensitive'));
-  const read = value(await app.call('/api/asset/reveal', selector));
-  assert.notEqual((await app.call('/api/asset/sensitive/delete', { ...selector, revision: read.revision })).status, 200);
+  const read = value(await app.call('/api/desktop/sensitive/reveal', selector));
+  assert.notEqual((await app.call('/api/desktop/sensitive/delete', { ...selector, revision: read.revision })).status, 200);
   assert.equal(await fs.readFile(path.join(app.root, 'personal/secrets/marker-conflict'), 'utf8'), synthetic);
   for (const headers of [{}, { Cookie: app.cookie, Origin: 'https://outside.test' }]) {
-    const response = await fetch(app.origin + '/api/asset/sensitive/create', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ bundle: 'personal', file: 'secrets/refused', content: synthetic }) });
+    const response = await fetch(app.origin + '/api/desktop/sensitive/create', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ bundle: 'personal', file: 'secrets/refused', content: synthetic }) });
     assert.notEqual(response.status, 200);
     assert.ok(!(await response.text()).includes('fixture-private-value'));
   }

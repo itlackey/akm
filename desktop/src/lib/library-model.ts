@@ -43,6 +43,6 @@ export function typedLinks(value: Json | undefined): Array<{ direction: string; 
 export async function libraryRead<T>(path: string, params: Record<string, string>, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`/api${path}?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== ''))}`, { signal });
   const envelope = await response.json();
-  if (!response.ok) throw new ApiError(envelope.error?.message ?? envelope.message ?? (typeof envelope.error === 'string' ? envelope.error : 'Could not read AKM data.'), envelope.code ?? envelope.error?.code ?? '', response.status);
+  if (!response.ok) throw new ApiError(envelope.error ?? 'Could not read AKM data.', envelope.code ?? '', response.status);
   return (envelope.ok === true && Object.hasOwn(envelope, 'data') ? envelope.data : envelope) as T;
 }

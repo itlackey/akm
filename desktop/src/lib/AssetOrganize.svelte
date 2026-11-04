@@ -15,7 +15,7 @@
   async function move() {
     busy = true; error = ''; moved = null;
     try {
-      const { revision } = await api<Source>('/asset/source', { ref });
+      const { revision } = await api<Source>('/desktop/file', { ref });
       const copy = await api<{ destination: { ref?: string } }>('/asset/copy', {}, { sourceRef: ref, target: bundle, newName: name.trim() });
       const destination = copy.destination.ref ?? bundle + '//' + ref.split('//')[1]!.split('/')[0] + '/' + name.trim();
       try {

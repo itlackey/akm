@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { known } from './http.js';
 import { UsageError, deriveCanonicalAssetName, resolveEnvPath, resolveSecretPath, resolveEnvWriteTarget, resolveSecretWriteTarget,
   withEnvSecretWrite, writeEnv, removeEnv, setSecret, removeSecret, sensitiveMarkerPath } from 'akm-cli/workspace';
 
@@ -8,7 +9,6 @@ type Selector = { ref?: string; bundle?: string; file?: string };
 type Kind = 'env' | 'secret';
 const REF = /^(?:([^/]+)\/\/)?(env|secrets)\//;
 const digest = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
-export function isSensitiveRef(ref: string) { return REF.test(ref); }
 
 /** Reading follows no link: a symbolic link, or a path that leaves the bundle, is refused. */
 function safeFile(root: string, file: string) {
@@ -60,10 +60,8 @@ export function sensitiveMetadata(input: Selector) {
 }
 
 export function revealSensitive(input: unknown) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new UsageError('Choose a file to show.');
-  const value = input as Record<string, unknown>;
-  if (Object.keys(value).some(key => !['ref', 'bundle', 'file'].includes(key)) ||
-      Object.values(value).some(entry => typeof entry !== 'string') ||
+  const value = known(input, ['ref', 'bundle', 'file'], 'reveal');
+  if (Object.values(value).some(entry => typeof entry !== 'string') ||
       !(typeof value.ref === 'string' && value.ref || typeof value.bundle === 'string' && typeof value.file === 'string'))
     throw new UsageError('Choose a file to show.');
   const selected = locate(value as Selector);
@@ -76,10 +74,8 @@ export function revealSensitive(input: unknown) {
 
 /** Whole-file editing: keep bytes in the request, never in argv, drafts or receipts. */
 export function mutateSensitive(action: 'create' | 'save' | 'delete', input: unknown) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new UsageError('Choose a file.');
-  const value = input as Record<string, unknown>;
-  if (Object.keys(value).some(key => !['ref', 'bundle', 'file', 'content', 'revision'].includes(key)) ||
-      Object.values(value).some(entry => typeof entry !== 'string') ||
+  const value = known(input, ['ref', 'bundle', 'file', 'content', 'revision'], 'sensitive ' + action);
+  if (Object.values(value).some(entry => typeof entry !== 'string') ||
       !(value.ref || value.bundle && value.file) ||
       (action !== 'delete' && (typeof value.content !== 'string' || value.content.includes('\0'))) ||
       (action !== 'create' && typeof value.revision !== 'string')) throw new UsageError('Provide the file, text and current revision.');

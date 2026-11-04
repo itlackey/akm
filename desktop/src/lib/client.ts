@@ -8,7 +8,7 @@ export async function api<T = unknown>(path: string, query: Record<string, strin
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
   });
   const data = await response.json();
-  if (!response.ok) throw new ApiError(data.error?.message ?? data.message ?? data.error ?? 'The request failed.', data.code ?? data.error?.code ?? '', response.status);
+  if (!response.ok) throw new ApiError(data.error ?? 'The request failed.', data.code ?? '', response.status);
   return data.ok === true && Object.hasOwn(data, 'data') ? data.data : data;
 }
 export function title(asset?: AssetSummary): string {

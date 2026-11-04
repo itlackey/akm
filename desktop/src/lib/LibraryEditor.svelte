@@ -11,6 +11,7 @@
   import { navigate } from './navigation';
   import { formatMarkdown, markdownCommands } from './editor-commands.mjs';
   export let ref = '';
+  export let file: { bundle: string; path: string } | undefined = undefined;
   export let bundles: Bundle[] = [];
   export let defaultWriteTarget = '';
   export let query = new URLSearchParams();
@@ -27,16 +28,17 @@
   let initialDraft = '', initialName = '', initialBundle = '', initialFolder = '';
   let editorHeading: HTMLHeadingElement, errorBox: HTMLDivElement;
   let textarea: HTMLTextAreaElement;
-  $: creating = !ref;
-  // Scripts and task definitions are not Markdown; everything else AKM serves for editing is treated as such.
-  $: markdown = !['script', 'task'].includes(source?.type ?? '');
+  let sourceParams: Record<string, string>;
+  $: creating = !ref && !file;
+  $: if (file) sourceParams = { bundle: file.bundle, file: file.path }; else sourceParams = { ref };
+  $: markdown = source?.markdown !== false;
   $: documentHref = '#/asset?ref=' + encodeURIComponent(ref) + '&returnTo=' + encodeURIComponent(returnTo);
   $: backHref = cancelHref || (returnTo.startsWith('#/files') ? returnTo : creating ? returnTo : documentHref);
   $: readerHref = readingHref || query.get('readingFrom') || '';
   $: writable = bundles.filter((b) => b.enabled && b.writable && b.components.some((c) => c.adapter === 'akm'));
   $: bundlePath = bundles.find((b) => b.name === bundle)?.path;
   $: root = bundlePath ? bundlePath.replace(/[\\/]+$/, '') + '/knowledge' : '';
-  const key = () => `akm-desktop-editor:${ref || 'new'}`;
+  const key = () => `akm-desktop-editor:${file ? file.bundle + '/' + file.path : ref || 'new'}`;
   function persist() {
     retained = true;
     setUnsaved(true);
@@ -45,7 +47,7 @@
   async function initialize() {
     busy = true; error = ''; setUnsaved(false);
     try {
-      if (ref) { source = await libraryRead<Source>('/asset/source', { ref }, controller.signal); draft = source.content.replace(/\r\n?/g, '\n'); }
+      if (ref || file) { source = await libraryRead<Source>('/desktop/file', sourceParams, controller.signal); draft = source.content.replace(/\r\n?/g, '\n'); }
       else {
         bundle = writable.find((b) => b.name === query.get('bundle'))?.name ?? writable.find((b) => b.name === defaultWriteTarget)?.name ?? writable[0]?.name ?? '';
         const wanted = query.get('q') || 'New document'; name = query.get('name') ?? (query.get('q') ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); draft = `# ${wanted}\n\n`;
@@ -82,14 +84,14 @@
     let writeCompleted = false;
     try {
       const base = reviewed ? latest : source;
-      const result = creating ? await api<WriteResult>('/knowledge/create', {}, { bundle, name, path: folder, content: draft }) : await api<WriteResult>('/asset/save', {}, { ref, revision: base!.revision, content: saveContent(base!.content, draft) });
+      const result = creating ? await api<WriteResult>('/knowledge/create', {}, { bundle, name, path: folder, content: draft }) : await api<WriteResult>('/desktop/file/save', {}, { ...sourceParams, revision: base!.revision, content: saveContent(base!.content, draft) });
       // Leaving an in-flight writer must not redirect or clear a newer editor's unsaved state.
       if (!alive) return;
       writeCompleted = true;
       try { sessionStorage.removeItem(key()); } catch { /* the successful core write is authoritative */ }
       setUnsaved(false); retained = false; recovered = false;
       if (Array.isArray(result.warnings) && result.warnings.length) {
-        source = await libraryRead<Source>('/asset/source', { ref });
+        source = await libraryRead<Source>('/desktop/file', sourceParams);
         error = 'Saved. AKM reports: ' + result.warnings.join(' ');
         return;
       }
@@ -103,7 +105,7 @@
       }
     } catch (e) {
       error = writeCompleted ? `The write completed, but the saved document could not be opened. ${(e as Error).message}` : creating && /already exists/i.test((e as Error).message) ? 'That file name is already used in this folder. Choose a different file name; the existing asset has not been changed.' : (e as Error).message;
-      if (e instanceof ApiError && e.code === 'ASSET_CONTENT_CHANGED') { try { latest = await libraryRead<Source>('/asset/source', { ref }); } catch (e) { error += ` ${(e as Error).message}`; } }
+      if (e instanceof ApiError && e.code === 'ASSET_CONTENT_CHANGED') { try { latest = await libraryRead<Source>('/desktop/file', sourceParams); } catch (e) { error += ` ${(e as Error).message}`; } }
     } finally { busy = false; if (error && alive) { await tick(); errorBox?.focus(); } }
   }
   async function discard() {
@@ -144,10 +146,10 @@
 </script>
 
 <div class="editor-header">
-  <h2 bind:this={editorHeading} tabindex="-1">{creating ? 'New knowledge' : source ? documentTitle({ ref, content: source.content }) : 'Opening editor…'}</h2>
+  <h2 bind:this={editorHeading} tabindex="-1">{creating ? 'New knowledge' : file ? file.path.split('/').at(-1) : source ? documentTitle({ ref, content: source.content }) : 'Opening editor…'}</h2>
   <div class="editor-return"><a href={backHref}><Icon name="arrow-left" size={16} />{creating ? 'Cancel' : backHref.startsWith('#/files') ? 'Back to file' : 'Back to document'}</a></div>
 </div>
-{#if error}<div class="notice notice-warn" role="alert" tabindex="-1" bind:this={errorBox}>{error}{loaded && retained ? ' Your draft is retained.' : ''}{#if !loaded && ref}<p><a href={documentHref}>Open read-only</a> · Refresh the index if the source no longer matches.</p>{/if}</div>{/if}
+{#if error}<div class="notice notice-warn" role="alert" tabindex="-1" bind:this={errorBox}>{error}{loaded && retained ? ' Your draft is retained.' : ''}{#if !loaded && (ref || file)}<p><a href={ref ? documentHref : backHref}>Open read-only</a> · Refresh the index if the source no longer matches.</p>{/if}</div>{/if}
 {#if creating && !writable.length}<p class="state">No enabled writable AKM bundle is available. Check bundle settings.</p>
 {:else if loaded}<form class="editor-form" on:submit|preventDefault={() => save()}><fieldset class="editor-fields" disabled={busy}>
   {#if creating}<div class="settings-grid"><label>Bundle<select bind:value={bundle} on:change={persist}>{#each writable as b}<option value={b.name}>{b.name}</option>{/each}</select></label><label>File name<input bind:value={name} required on:input={persist} placeholder="recovery-guide" /></label><label>Folder under knowledge/<div class="field-control"><input bind:this={folderInput} bind:value={folder} on:input={persist} placeholder="Optional" /><button type="button" class="btn-secondary" on:click={() => picker = true}>Browse…</button></div></label></div>{/if}
@@ -155,7 +157,7 @@
     <div class="editor-tabs" role="tablist" tabindex="-1" aria-label="Editor view" on:keydown={tabKey}><button type="button" role="tab" id="editor-write-tab" aria-controls="editor-write" aria-selected={!preview} tabindex={preview ? -1 : 0} bind:this={writeTab} on:click={() => preview = false}>{markdown ? 'Markdown' : 'Source'}</button><button type="button" role="tab" id="editor-preview-tab" aria-controls="editor-preview" aria-selected={preview} tabindex={preview ? 0 : -1} bind:this={previewTab} on:click={() => preview = true}>Preview</button></div>
     <button class="save-action" disabled={busy || !!latest || (!creating && !retained)}>{busy ? 'Saving…' : creating ? 'Create knowledge' : 'Save changes'}</button>
   </div>
-  <div class="editor-status"><div><span role="status">{retained ? recovered ? 'Restored unsaved draft · kept in this window' : 'Unsaved changes · kept in this window' : 'No unsaved changes'}</span><span class="save-policy">{creating ? bundle : ref.split('//')[0]} · AKM policy may commit and push.</span></div>{#if retained}<button type="button" class="discard-action quiet" on:click={() => discarding = true}>Discard draft…</button>{/if}</div>
+  <div class="editor-status"><div><span role="status">{retained ? recovered ? 'Restored unsaved draft · kept in this window' : 'Unsaved changes · kept in this window' : 'No unsaved changes'}</span><span class="save-policy">{creating ? bundle : file?.bundle ?? ref.split('//')[0]} · {creating || source?.direct === false ? 'AKM policy may commit and push.' : 'Saved to the file; Git is not changed.'}</span></div>{#if retained}<button type="button" class="discard-action quiet" on:click={() => discarding = true}>Discard draft…</button>{/if}</div>
   {#if discarding}<div class="notice" role="alert"><p>Discard this unsaved draft? Your saved asset will not change.</p><div class="btn-row"><button type="button" class="btn-secondary" on:click={keepEditing}>Keep editing</button><button type="button" class="btn-danger" on:click={discard}>Discard draft</button></div></div>{/if}
   <div hidden={preview} role="tabpanel" id="editor-write" aria-labelledby="editor-write-tab">
     {#if markdown}<div class="formatting-tools" role="group" aria-label="Markdown formatting">{#each markdownCommands as command}<button type="button" class:bold-tool={command.id === 'bold'} class:italic-tool={command.id === 'italic'} aria-label={command.label} title={command.label + (command.shortcut ? ` (${command.shortcut})` : '')} on:mousedown|preventDefault on:click={() => format(command.id)}>{command.id === 'link' ? 'Link' : command.id === 'bullet' ? 'Bullets' : command.id === 'number' ? 'Numbers' : command.label}</button>{/each}</div>{/if}

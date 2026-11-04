@@ -69,14 +69,18 @@ test('browse connections and cosine matches, compare inline, move (copy then ret
   assert.deepEqual(errors, []);
 });
 
-test('a skill is copied as a package; its support files are listed but are not assets', { timeout: 120000 }, async t => {
+test('a skill is copied as a package; its support files open and edit as plain files', { timeout: 120000 }, async t => {
   const app = await launchFixture(); t.after(() => app.stop());
   const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
   await page.goto(app.url);
   await page.evaluate(() => { location.hash = '#/files?' + new URLSearchParams({ bundle: 'personal', path: 'skills/backup-check/scripts', file: 'skills/backup-check/scripts/check.sh', open: '1' }); });
-  await expect(page.getByText('This file is not an indexed AKM asset.')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Edit file', exact: true })).toHaveCount(0);
+  await expect(page.getByText('Synthetic only')).toBeVisible();
+  await page.getByRole('link', { name: 'Edit file', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Text source', exact: true }).fill('#!/bin/sh\nprintf "Edited in Desktop\\n"\n');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByText('Changes saved.')).toBeVisible();
+  assert.match(await fs.readFile(path.join(app.root, 'personal/skills/backup-check/scripts/check.sh'), 'utf8'), /Edited in Desktop/);
   await page.evaluate(ref => { location.hash = '#/asset?ref=' + encodeURIComponent(ref); }, app.refs.skill);
   await page.getByRole('button', { name: 'More', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Retire', exact: true })).toHaveCount(0);
@@ -85,5 +89,5 @@ test('a skill is copied as a package; its support files are listed but are not a
   await page.getByRole('combobox', { name: 'Destination bundle', exact: true }).selectOption('shared');
   await page.getByRole('button', { name: 'Confirm copy', exact: true }).click();
   await expect(page.locator('.operation-notice')).toContainText('Copy completed');
-  assert.match(await fs.readFile(path.join(app.root, 'shared/skills/backup-check/scripts/check.sh'), 'utf8'), /Synthetic only/);
+  assert.match(await fs.readFile(path.join(app.root, 'shared/skills/backup-check/scripts/check.sh'), 'utf8'), /Edited in Desktop/);
 });

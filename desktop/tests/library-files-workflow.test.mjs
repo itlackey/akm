@@ -66,7 +66,7 @@ test('Library task views use actual filesystem listings, canonical assets, and r
     await screenshot('files-mobile-folder.png');
     await page.setViewportSize({ width: 1280, height: 860 });
     await unindexed.getByRole('button', { name: 'rehearsal-notes.txt', exact: true }).click();
-    await expect(page.getByRole('region', { name: 'Asset workspace' })).toContainText('not an indexed AKM asset');
+    await expect(page.getByRole('region', { name: 'Asset workspace' })).toContainText('not an indexed asset');
     assert.equal(new URLSearchParams(page.url().split('?').at(-1)).has('ref'), false, 'unindexed entry has no invented ref');
     await page.getByRole('link', { name: 'Back to folder', exact: true }).click();
   });

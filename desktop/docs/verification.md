@@ -40,6 +40,6 @@ its screenshot as well as the browser workflow screenshots; passing assertions
 alone are not a visual review.
 
 Linux x64 is the current verification target. Other platforms, signed installers
-and a real public-feed update rehearsal are not established by these tests.
-Optional network installation/updater tests are described in
+and a public release are not established by these tests.
+Optional network installation tests are described in
 [Software](software.md); do not count skipped opt-in tests as verified.

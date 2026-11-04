@@ -16,7 +16,7 @@
   afterNavigate(() => { hide(); editing = false; deleting = false; });
   onDestroy(hide);
   async function load() {
-    try { info = await api('/asset/sensitive', selector()); }
+    try { info = await api('/desktop/sensitive', selector()); }
     catch (cause) { error = (cause as Error).message; }
   }
   onMount(load);
@@ -24,7 +24,7 @@
     if (!info) return;
     busy = true; error = '';
     try {
-      const result = await api<{ warnings: string[] }>('/asset/sensitive/delete', {}, { bundle: info.bundle, file: info.location.path, revision: info.revision });
+      const result = await api<{ warnings: string[] }>('/desktop/sensitive/delete', {}, { bundle: info.bundle, file: info.location.path, revision: info.revision });
       hide(); deleted = true; warnings = result.warnings; dispatch('changed');
     } catch (cause) { error = (cause as Error).message; } finally { busy = false; }
   }
@@ -33,7 +33,7 @@
   }
   async function show() {
     const request = ++generation; busy = true; error = '';
-    try { const result = await api<{ content: string }>('/asset/reveal', {}, selector()); if (generation === request) content = result.content; }
+    try { const result = await api<{ content: string }>('/desktop/sensitive/reveal', {}, selector()); if (generation === request) content = result.content; }
     catch (cause) { if (generation === request) error = (cause as Error).message; }
     finally { if (generation === request) busy = false; }
   }

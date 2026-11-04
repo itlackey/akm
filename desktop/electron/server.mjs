@@ -27,7 +27,10 @@ export async function startServer() {
   let handler;
   const server = http.createServer((req, res) => {
     req.headers['x-akm-desktop-protocol'] = 'http';
-    if (!handler) { res.writeHead(503).end(); return; }
+    if (!handler) {
+      res.writeHead(503, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, code: 'STARTING', error: 'AKM Desktop is still starting.' }));
+      return;
+    }
     handler(req, res);
   });
   await new Promise((resolve, reject) => {

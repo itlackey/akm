@@ -3,7 +3,7 @@ export interface AssetSummary { ref: string; name?: string; title?: string; desc
 export interface Asset extends AssetSummary { content?: string; template?: string; prompt?: string; path?: string; editable?: boolean; links?: Json; }
 export interface AssetDetail { redacted: boolean; note?: string; durableRef?: string; bundle?: string; asset: Asset; feedback?: Json; feedbackRequireReason?: boolean; links?: Record<string, string>; }
 export interface Bundle { name: string; enabled: boolean; writable: boolean; default?: boolean; source?: { kind: string; locator: string }; path?: string; kind: string; itemCount?: number; byType?: Record<string, number>; components: Array<{ adapter: string; [key: string]: Json | undefined }>; git?: Json; settingsSource?: string; }
-export interface Source { ref: string; revision: string; content: string; type: string; }
+export interface Source { ref?: string; revision: string; content: string; type?: string; markdown?: boolean; /** False when akm's own writer saves it (knowledge, memory), which also commits. */ direct?: boolean; }
 export interface TextDiff { before: string | null; after: string | null; unified?: string; truncated?: boolean; redacted?: boolean; isNew?: boolean; }
 export interface Commit { sha: string; time: string; subject: string; paths?: string[]; pathCount?: number; author?: string; origin?: string; }
 export interface History { available: boolean; commits: Commit[]; diff?: TextDiff; }

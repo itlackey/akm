@@ -72,6 +72,6 @@ test('transport unwraps the original AKM envelope once and encodes ref parameter
 test('conflict error retains structured code needed by the draft recovery flow', async (t) => {
   const original = globalThis.fetch;
   t.after(() => globalThis.fetch = original);
-  globalThis.fetch = async () => Response.json({ ok: false, error: { code: 'ASSET_CONTENT_CHANGED', message: 'Changed on disk' } }, { status: 409 });
-  await assert.rejects(api('/asset/save', {}, { content: 'draft' }), (error) => error instanceof ApiError && error.code === 'ASSET_CONTENT_CHANGED' && error.status === 409);
+  globalThis.fetch = async () => Response.json({ ok: false, code: 'ASSET_CONTENT_CHANGED', error: 'Changed on disk' }, { status: 409 });
+  await assert.rejects(api('/desktop/file/save', {}, { content: 'draft' }), (error) => error instanceof ApiError && error.code === 'ASSET_CONTENT_CHANGED' && error.status === 409);
 });

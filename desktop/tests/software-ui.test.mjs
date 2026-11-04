@@ -33,13 +33,9 @@ else {process.exitCode=1}
   await page.getByRole('link', { name: 'Software', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Software', exact: true })).toBeVisible();
   await expect(page.getByText('Update available · 0.10.261105', { exact: true })).toBeVisible();
-  await expect(page.getByText('AppImage required', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Check for update', exact: true })).toHaveCount(0);
-  await expect(page.getByLabel('Repository token', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('checkbox', { name: 'Download desktop updates automatically' })).toHaveCount(0);
+  await expect(page.getByText('To update, replace the AppImage with a newer download.', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add to application menu', exact: true })).toHaveCount(0);
   assert.equal((await server.call('/api/desktop/software', { action: 'desktop-menu-install' })).status, 400);
-  assert.equal((await server.call('/api/desktop/software', { action: 'desktop-menu-install', settings: {} })).status, 400);
   await page.getByRole('button', { name: 'Install AKM plugin', exact: true }).click();
   await expect(page.getByText('AKM installed for Codex. Review its hooks in Codex /hooks to enable automatic recall.', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Install AKM plugin', exact: true })).toHaveCount(0);

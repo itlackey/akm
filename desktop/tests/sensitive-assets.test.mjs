@@ -22,29 +22,29 @@ async function fixture() {
 test('env and secrets open as metadata; only explicit authenticated reveal returns literal bytes', async t => {
   const app = await fixture(); t.after(() => app.stop());
   for (const [ref, expected] of [['personal//env/example', env], ['personal//env/default', env], ['personal//secrets/example-key', secret]]) {
-    const masked = value(await app.call('/api/asset?ref=' + encodeURIComponent(ref)));
+    const masked = value(await app.call('/api/desktop/sensitive?ref=' + encodeURIComponent(ref)));
     assert.equal(masked.redacted, true); assert.ok(masked.asset.name); assert.ok(masked.location);
     assert.ok(!JSON.stringify(masked).includes('synthetic-password'));
-    const revealed = value(await app.call('/api/asset/reveal', { ref }));
+    const revealed = value(await app.call('/api/desktop/sensitive/reveal', { ref }));
     assert.equal(revealed.content, expected);
-    assert.notEqual((await fetch(app.origin + '/api/asset/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref }) })).status, 200);
-    const response = await fetch(app.origin + '/api/asset/reveal', { method: 'POST', headers: { 'Cookie': app.cookie, 'Origin': app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ ref }) });
+    assert.notEqual((await fetch(app.origin + '/api/desktop/sensitive/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref }) })).status, 200);
+    const response = await fetch(app.origin + '/api/desktop/sensitive/reveal', { method: 'POST', headers: { 'Cookie': app.cookie, 'Origin': app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ ref }) });
     assert.equal(response.headers.get('cache-control'), 'no-store');
-    assert.notEqual((await fetch(app.origin + '/api/asset/reveal', { method: 'POST', headers: { 'Cookie': app.cookie, 'Origin': 'https://outside.test', 'Content-Type': 'application/json' }, body: JSON.stringify({ ref }) })).status, 200);
+    assert.notEqual((await fetch(app.origin + '/api/desktop/sensitive/reveal', { method: 'POST', headers: { 'Cookie': app.cookie, 'Origin': 'https://outside.test', 'Content-Type': 'application/json' }, body: JSON.stringify({ ref }) })).status, 200);
   }
-  assert.notEqual((await app.call('/api/asset/reveal?ref=personal%2F%2Fsecrets%2Fexample-key')).status, 200, 'GET cannot reveal');
+  assert.notEqual((await app.call('/api/desktop/sensitive/reveal?ref=personal%2F%2Fsecrets%2Fexample-key')).status, 200, 'GET cannot reveal');
   // A newly created file must also open from Files before an index rebuild.
   await fs.writeFile(path.join(app.root, 'personal/env/unindexed.env'), env);
-  const unindexed = value(await app.call('/api/asset/sensitive?bundle=personal&file=env%2Funindexed.env'));
+  const unindexed = value(await app.call('/api/desktop/sensitive?bundle=personal&file=env%2Funindexed.env'));
   assert.equal(unindexed.redacted, true);
   assert.equal(unindexed.asset.name, 'unindexed.env');
-  assert.equal(value(await app.call('/api/asset/reveal', { bundle: 'personal', file: 'env/unindexed.env' })).content, env);
+  assert.equal(value(await app.call('/api/desktop/sensitive/reveal', { bundle: 'personal', file: 'env/unindexed.env' })).content, env);
   for (const file of ['../shared/knowledge/shared-backup.md', 'knowledge/restore-laptop.md', 'env/../../config/config.json'])
-    assert.notEqual((await app.call('/api/asset/reveal', { bundle: 'personal', file })).status, 200);
+    assert.notEqual((await app.call('/api/desktop/sensitive/reveal', { bundle: 'personal', file })).status, 200);
   await fs.symlink(app.documentPath, path.join(app.root, 'personal/secrets/linked'));
-  assert.notEqual((await app.call('/api/asset/reveal', { bundle: 'personal', file: 'secrets/linked' })).status, 200);
+  assert.notEqual((await app.call('/api/desktop/sensitive/reveal', { bundle: 'personal', file: 'secrets/linked' })).status, 200);
   await fs.writeFile(path.join(app.root, 'personal/secrets/binary'), Buffer.from([0, 255]));
-  assert.notEqual((await app.call('/api/asset/reveal', { bundle: 'personal', file: 'secrets/binary' })).status, 200);
+  assert.notEqual((await app.call('/api/desktop/sensitive/reveal', { bundle: 'personal', file: 'secrets/binary' })).status, 200);
   assert.ok(!app.logs().includes('synthetic-password'));
 });
 
@@ -58,11 +58,11 @@ test('a dotenv-adapter bundle accepts env and secret writes, as the CLI does, an
   } }); t.after(() => app.stop());
   for (const file of ['env/service.env', 'secrets/service-key']) {
     const selector = { bundle: 'dotenvs', file };
-    value(await app.call('/api/asset/sensitive/create', { ...selector, content: env }));
+    value(await app.call('/api/desktop/sensitive/create', { ...selector, content: env }));
     assert.equal(await fs.readFile(path.join(app.root, 'dotenvs', file), 'utf8'), env);
     assert.equal((await fs.stat(path.join(app.root, 'dotenvs', file))).mode & 0o777, 0o600);
-    const read = value(await app.call('/api/asset/reveal', selector));
-    value(await app.call('/api/asset/sensitive/save', { ...selector, content: env + '# edited\n', revision: read.revision }));
+    const read = value(await app.call('/api/desktop/sensitive/reveal', selector));
+    value(await app.call('/api/desktop/sensitive/save', { ...selector, content: env + '# edited\n', revision: read.revision }));
     assert.equal(await fs.readFile(path.join(app.root, 'dotenvs', file), 'utf8'), env + '# edited\n');
   }
 });

@@ -45,10 +45,10 @@
   $: fields = splitFrontmatter(source).fields;
   $: openingTitle = bodyOf(source).match(/^#[ \t]+([^\n]+)(?:\n|$)/)?.[1]?.trim();
   $: titleAnchor = openingTitle === documentTitle(data?.asset) && data?.headings?.[0]?.text === openingTitle ? headingId(data.headings[0].slug) : undefined;
-  $: links = typedLinks(data?.asset.links);
+  $: links = typedLinks(data?.asset?.links);
   $: usageSpark = sparkline((improve?.usageByWeek ?? []).map((week) => week.hits), 'Weekly finds and opens, last 90 days');
   $: writable = bundles.filter((b) => b.enabled && b.writable && b.components.some((c) => c.adapter === 'akm'));
-  $: sameBundle = target === (data?.bundle ?? data?.asset.origin);
+  $: sameBundle = target === (data?.bundle ?? data?.asset?.origin);
   $: copyNameInvalid = sameBundle && (!newName.trim() || newName.trim() === canonical.split('/').at(-1));
   $: if (ref && ref !== previous) { previous = ref; load(ref); }
   $: if (query.get('section') && data) revealHeading(query.get('section')!);
@@ -62,7 +62,7 @@
       if (request !== generation) return; data = read; dispatch('loaded', read);
       if (!read.redacted) {
         if (read.asset.editable && !['skill', 'secret', 'env', 'session'].includes(read.asset.type ?? ''))
-          api<Source>('/asset/source', { ref: read.durableRef ?? selected }).then(source => { if (request === generation) retireRevision = source.revision; }).catch(() => {});
+          api<Source>('/desktop/file', { ref: read.durableRef ?? selected }).then(source => { if (request === generation) retireRevision = source.revision; }).catch(() => {});
         libraryRead<Improvement>('/asset/improve', { ref: read.durableRef ?? selected }, controller.signal).then((next) => { if (request === generation) improve = next; }).catch(() => {});
         if (tab === 'History') await loadHistory();
       }

@@ -167,7 +167,7 @@ test('Library selective parity: isolated real assets, addressable workspace, and
     const submitted = `${await editor.inputValue()}\nProtected submitted draft.\n`; await editor.fill(submitted);
     let release, started;
     const inFlight = new Promise(resolve => started = resolve);
-    await page.route('**/api/asset/save', async route => { const response = await route.fetch(); started(); await new Promise(resolve => release = resolve); await route.fulfill({ response }); });
+    await page.route('**/api/desktop/file/save', async route => { const response = await route.fetch(); started(); await new Promise(resolve => release = resolve); await route.fulfill({ response }); });
     await page.getByRole('button', { name: 'Save changes', exact: true }).click(); await inFlight;
     try {
       await expect(editor).toBeDisabled();
@@ -175,7 +175,7 @@ test('Library selective parity: isolated real assets, addressable workspace, and
       assert.equal(await editor.inputValue(), submitted);
     } finally { release?.(); }
     await expect(workspace.locator('.document-body')).toContainText('Protected submitted draft.');
-    await page.unroute('**/api/asset/save');
+    await page.unroute('**/api/desktop/file/save');
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('dark');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');

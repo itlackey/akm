@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { releaseRefusal } from './release-guard.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const appimage = process.argv.includes('--appimage');
@@ -13,14 +14,19 @@ if (appimage && (process.platform !== 'linux' || !['x64', 'arm64'].includes(proc
 }
 const stage = await mkdtemp(path.join(os.tmpdir(), 'akm-desktop-package-'));
 const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
-if (!/^0\.0\.\d+$/.test(manifest.version)) throw new Error('Private desktop builds use patch-only 0.0.x versions.');
+// Desktop has no version of its own: it is the akm version it embeds.
+const version = JSON.parse(await readFile(path.join(root, '../package.json'), 'utf8')).version;
 const commit = execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim());
+if (appimage) {
+  const refusal = releaseRefusal({ version, dirty, tags: execFileSync('git', ['tag', '--points-at', 'HEAD'], { cwd: root, encoding: 'utf8' }).split('\n') });
+  if (refusal) throw new Error(refusal);
+}
 // Install the same locally packed core and frozen production dependency graph.
 await cp(path.join(root, 'build'), path.join(stage, 'build'), { recursive: true });
 await cp(path.join(root, 'electron'), path.join(stage, 'electron'), { recursive: true });
 await cp(path.join(root, 'resources'), path.join(stage, 'resources'), { recursive: true });
-await cp(path.join(root, 'package.json'), path.join(stage, 'package.json'));
+await writeFile(path.join(stage, 'package.json'), JSON.stringify({ ...manifest, version }, null, 2) + '\n');
 await cp(path.join(root, 'bun.lock'), path.join(stage, 'bun.lock'));
 await writeFile(path.join(stage, 'build-info.json'), JSON.stringify({ commit: commit + (dirty ? '-dirty' : '') }) + '\n');
 await cp(path.join(root, '.core'), path.join(stage, '.core'), { recursive: true });
@@ -50,14 +56,13 @@ if (appimage) {
     targets: Platform.LINUX.createTarget('AppImage', archFromString(process.arch)),
     publish: 'never',
     config: {
-      appId: 'dev.fwdslsh.akm-desktop', productName: 'AKM Desktop',
+      appId: 'dev.fwdslsh.akm-desktop', productName: 'AKM Desktop', extraMetadata: { version },
       artifactName: 'AKM-Desktop-${version}-${arch}.${ext}',
       directories: { output: path.dirname(output[0]) },
       linux: { executableName: 'akm-desktop', category: 'Utility', icon: path.join(root, 'resources/512x512.png'), syncDesktopName: true },
       appImage: { executableArgs: [] },
       toolsets: { appimage: '1.0.3' },
-      npmRebuild: false,
-      publish: { provider: 'generic', url: 'https://code.lab.fwdslsh.dev/fwdslsh/akm-desktop/releases/download/latest/' }
+      npmRebuild: false
     }
   });
   for (const artifact of artifacts.filter(file => file.endsWith('.AppImage'))) {

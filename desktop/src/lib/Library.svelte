@@ -9,6 +9,7 @@
   import type { Bundle } from './types';
   import LibraryAsset from './LibraryAsset.svelte';
   import LibraryEditor from './LibraryEditor.svelte';
+  import LibraryFile from './LibraryFile.svelte';
   import SensitiveAsset from './SensitiveAsset.svelte';
   import SensitiveEditor from './SensitiveEditor.svelte';
   import LibraryFiles from './LibraryFiles.svelte';
@@ -225,7 +226,7 @@
       {#if newSensitive}
         {#key query.get('kind')}<SensitiveEditor creating type={query.get('kind') === 'secret' ? 'secret' : 'env'} bundle={fileBundle} {bundles} on:saved={savedSensitive} on:cancel={() => navigate(query.get('returnTo') || '#/files')} />{/key}
       {:else if editing}
-        {#key normalizedRoute + ':' + ref}<LibraryEditor ref={normalizedRoute === 'new' ? '' : ref} {query} {bundles} {defaultWriteTarget} returnTo={withReview(returnTo)} cancelHref={withReview(returnTo)} {readingHref} onSaved={savedAsset} />{/key}
+        {#key normalizedRoute + ':' + ref + ':' + query.get('file')}<LibraryEditor ref={normalizedRoute === 'new' ? '' : ref} file={normalizedRoute === 'edit' && !ref && query.get('file') ? { bundle: fileBundle, path: query.get('file')! } : undefined} {query} {bundles} {defaultWriteTarget} returnTo={withReview(returnTo)} cancelHref={query.get('file') ? query.get('returnTo')! : withReview(returnTo)} {readingHref} onSaved={savedAsset} />{/key}
       {:else if compareRefs.length === 2}{@render comparison()}
       {:else if ref}
         {#if comparisonMode && !selected.includes(ref)}<button class="btn-secondary candidate-button" disabled={selected.length === 2} on:click={() => selected = toggleSelection(selected, ref, 2)}>Use for comparison</button>{/if}
@@ -236,7 +237,9 @@
       {:else if folderLoading}<p role="status">Checking file…</p>
       {:else if selectedFile?.unavailable}<h1>{selectedFile.name}</h1><p class="notice">{selectedFile.unavailable}</p>
       {:else if selectedFile && selectedFile.assets.length > 1}<h1>{selectedFile.name}</h1><p>This file contains multiple indexed assets. Choose the one to read.</p><ul class="asset-choices">{#each selectedFile.assets as { ref: choice }}<li><a href={withReview(filesHref({ bundle: fileBundle, path: filePath, file: selectedFile.path, ref: choice, open: true }, readingHref))}>{choice}</a></li>{/each}</ul>
-      {:else}<h1>{selectedFilePath.split('/').at(-1) || 'File'}</h1><p class="notice">{!selectedFile ? 'This file is no longer present in the folder listing.' : indexAvailable === false ? 'The index is unavailable, so this file’s asset identity could not be checked.' : 'This file is not an indexed AKM asset.'}</p>{#if selectedFile}<p>It is visible in Files, but the asset reader cannot preview arbitrary files.</p>{/if}<a href={withReview(filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath }, readingHref))}>Back to folder</a>{/if}
+      {:else if selectedFile}
+        {#key fileBundle + ':' + selectedFilePath + ':' + localFileRevision}<LibraryFile bundle={fileBundle} file={selectedFilePath} returnTo={currentHref} folderHref={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))} />{/key}
+      {:else}<h1>{selectedFilePath.split('/').at(-1) || 'File'}</h1><p class="notice">This file is no longer present in the folder listing.</p><a href={withReview(filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath }, readingHref))}>Back to folder</a>{/if}
     </section>
   </LibraryFiles>
 {:else if normalizedRoute === 'asset' && query.get('view') === 'files'}

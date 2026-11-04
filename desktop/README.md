@@ -12,7 +12,7 @@ The Attention desk Home page provides a compact starting point for those workflo
 The compact top bar and established AKM palette remain. This is
 not a pixel-for-pixel copy of `akm ui` or a claim that the larger asset-manager
 design is complete.
-Private builds use patch-only **0.0.x** versions; the commit ID is shown separately.
+Desktop's version is the version of the AKM it embeds (one version, one release); the commit ID is shown separately.
 No public release, background service, or remote-management endpoint is included.
 See [verification](docs/verification.md) for evidence and limits.
 
@@ -120,8 +120,9 @@ npm run package
 npm run appimage
 ```
 
-This rebuilds core and the app and creates `out/<timestamp>/AKM-Desktop-0.0.8-x86_64.AppImage`
-(architecture-specific name) with a `.sha256` checksum beside it. The output is executable: copy
+This rebuilds core and the app and creates `out/<timestamp>/AKM-Desktop-<akm version>-x86_64.AppImage`
+(architecture-specific name) with a `.sha256` checksum beside it. It refuses to build
+from a dirty tree or a commit that is not tagged with the AKM version. The output is executable: copy
 it wherever you prefer and double-click it to test. No installer, global AKM,
 or background service is needed. It uses your normal AKM configuration.
 
@@ -160,16 +161,16 @@ not a global CLI or a sibling checkout. Native packaging installs this same
 package and Desktop's frozen production dependency graph into a temporary stage.
 The package retains AKM's license and notices. See [architecture](docs/architecture.md).
 
-This source import is not a public Desktop release. Public GitHub installers,
-release version alignment and migration from the existing private updater feed
-are separate distribution work; no release or publishing workflow is added here.
+This source import is not a public Desktop release. Desktop's version is the AKM
+version it embeds; the release job and a GitHub update feed are separate
+distribution work, and no release or publishing workflow is added here.
 
 ## Deliberate limits
 
-See [Software updates](docs/software.md) for private desktop distribution,
-host CLI installation and harness plugin management.
+See [Software](docs/software.md) for the application menu, host CLI
+installation and harness plugin management.
 
-No arbitrary filesystem operations, bulk retirement, skill-directory renaming,
+No bulk retirement, skill-directory renaming,
 proposal amendment/rebase, remote instances, or model-backed scheduling UI.
 Secret/environment files have explicit masked viewing, create, edit and delete
 actions; generated sessions remain read-only. Large result lists expose their limit and can be narrowed
@@ -177,8 +178,10 @@ with filters. This v1 is a foundation for human curation, not a claim that the
 larger file-manager design is complete.
 
 Files lists actual folders, including unindexed files, without rebuilding the
-index. Unindexed files, including a skill's supporting files, are listed but
-neither viewed nor edited: only assets AKM indexes can be edited.
+index. Any text file in an enabled bundle, including a skill's supporting files,
+can be viewed and edited with plain file operations (the edit refuses a file that
+changed since it was opened, and a link out of the bundle); `env/` and `secrets/`
+have their own masked view. Saving asks AKM to refresh the index for that file.
 The editor preserves Markdown source/frontmatter; its preview supports a safe
 Markdown subset, not an HTML editor or arbitrary embedded content.
 
