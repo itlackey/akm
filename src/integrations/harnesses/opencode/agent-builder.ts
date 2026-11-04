@@ -24,16 +24,17 @@
  * where it would override a model the user chose. On OpenCode 2 model work also gets
  * `--standalone`, which keeps the run to one process that ends with it (the default attaches
  * to a background service that outlives the CLI, is shared across users on one port, ignores
- * inline config and replays killed sessions at every start), and `--title`, which names the
- * session and spares the second model request that would otherwise generate a title.
+ * inline config and replays killed sessions at every start). On both majors it gets `--title`,
+ * which names the session and spares the second model request that would otherwise generate a
+ * title, and `--agent`, which selects {@link MODEL_WORK_AGENT} and its one-line system prompt.
  *
  * A binary whose version cannot be read runs model work as OpenCode 1, with one warning that says so.
  *
  * Model work drops the config's `args`, keeping the model they name, as the
- * Claude and Codex shells do. On OpenCode 2 it runs as {@link MODEL_WORK_AGENT},
- * an agent defined inline for the run whose tools are limited to reading and
- * searching, added to the user's own inline config; OpenCode 1 cannot be
- * restricted and runs it unrestricted, with a one-line warning.
+ * Claude and Codex shells do. It runs as {@link MODEL_WORK_AGENT}, an agent defined
+ * inline for the run, added to the user's own inline config. On OpenCode 2 its tools
+ * are limited to reading and searching; OpenCode 1 cannot be restricted and runs it
+ * unrestricted but for the `skill` tool, with a one-line warning.
  */
 
 import { asRecord, parseJsonc } from "../../../core/common";
@@ -49,8 +50,15 @@ import {
 } from "../harness";
 import { detectOpencodeMajor, isOpencode2 } from "./version";
 
-/** The agent OpenCode 2 runs akm's model work as, limited to reading and searching; the name also marks those sessions in the user's history (`./session-log-v2.ts`). */
+/** The agent OpenCode runs akm's model work as, on OpenCode 2 limited to reading and searching; the name also marks those sessions in the user's history (`./session-log-v2.ts`). */
 export const MODEL_WORK_AGENT = "akm-model-work";
+
+/**
+ * The agent's whole system prompt. akm's own instructions travel in the message; this replaces OpenCode's coding-agent
+ * prompt (about 9,000 characters on OpenCode 1.18), which made the judge stricter than a plain connection (akm-eval#189).
+ * OpenCode 2 reads it as `system`, OpenCode 1 as `prompt`.
+ */
+const MODEL_WORK_PROMPT = "Do the task in the message. Reply with exactly what it asks for.";
 
 /**
  * The agent's definition, in OpenCode 2's native shape, passed inline so it merges over the user's config and is
@@ -62,6 +70,7 @@ export const MODEL_WORK_AGENT = "akm-model-work";
  */
 const MODEL_WORK_AGENT_DEFINITION = {
   mode: "primary",
+  system: MODEL_WORK_PROMPT,
   permissions: [
     { action: "*", resource: "*", effect: "deny" },
     ...["read", "glob", "grep", "akm_search", "akm_show", "akm_curate"].map((action) => ({
@@ -93,7 +102,7 @@ const WITHOUT_BROWSER_PLUGIN = "-opencode.browser";
  * ({@link withEnvReferences}). Content that is not valid JSONC holding an object either way is left out, with one
  * warning.
  */
-function modelWorkConfig(): string {
+function modelWorkConfig(oc2: boolean): string {
   const content = process.env[CONFIG_CONTENT_ENV]?.trim();
   const user = content ? userConfig(content) : undefined;
   if (content && !user) {
@@ -101,6 +110,15 @@ function modelWorkConfig(): string {
       "opencode-config-content",
       `${CONFIG_CONTENT_ENV} is not valid JSONC holding an object, so OpenCode model work runs without it.`,
     );
+  }
+  if (!oc2) {
+    // OpenCode 1 reads the singular `agent` map and a `prompt`; it ignores `agents`. Its `skill` tool is denied, as
+    // OpenCode 2's `*` deny denies it: OpenCode 1 then sends neither the tool nor the listing of every skill it finds.
+    const agent = {
+      ...asRecord(user?.agent),
+      [MODEL_WORK_AGENT]: { mode: "primary", prompt: MODEL_WORK_PROMPT, permission: { skill: "deny" } },
+    };
+    return JSON.stringify({ ...user, agent });
   }
   const config: Record<string, unknown> = {
     ...user,
@@ -182,10 +200,14 @@ export const opencodeBuilder: HarnessBuilder = {
       argv: [
         bin,
         "run",
-        ...(oc2 ? ["--standalone", "--title", "akm", "--agent", MODEL_WORK_AGENT] : []),
+        ...(oc2 ? ["--standalone"] : []),
+        "--title",
+        "akm",
+        "--agent",
+        MODEL_WORK_AGENT,
         ...(named ? ["--model", named] : []),
       ],
-      env: { ...NO_FREE_MODELS, ...(oc2 ? { [CONFIG_CONTENT_ENV]: modelWorkConfig() } : {}) },
+      env: { ...NO_FREE_MODELS, [CONFIG_CONTENT_ENV]: modelWorkConfig(oc2) },
       stdin: req.prompt,
     };
   },
