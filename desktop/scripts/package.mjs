@@ -120,6 +120,8 @@ if (dist) {
       npmRebuild: false,
     },
   });
+  // Builder's Windows diagnostics; not for users.
+  await rm(path.join(installers, "builder-debug.yml"), { force: true });
   const files = await readdir(installers);
   for (const file of files.filter((name) => /\.(AppImage|dmg|zip|exe)$/.test(name))) {
     const artifact = path.join(installers, file);
