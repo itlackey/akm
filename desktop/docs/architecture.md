@@ -22,7 +22,7 @@ host CLI/harnesses strictly for explicit installation and upgrade management.
 | `src/hooks.server.ts` | Per-launch authentication and same-origin checks |
 | `src/lib/server/` and `src/routes/api/` | HTTP shell (`http.ts`: body limits, envelope, scrubbing and the one error-to-status mapping) over one route table (`routes.ts`: each route names a workspace operation and its input; unknown request fields are warned and ignored) |
 | `src/lib/server/features/` | Desktop-only features built on `akm-cli/workspace`: plain file editing, secret reveal policy, preferences, native host software orchestration |
-| `src/routes/` and `src/params.ts` | Page routes (`ssr = false`): `/`, `/library/[view]`, `/review/[[id]]`, `/activity/[view]`, `/settings/[section]`; `+layout.svelte` is the shell (top bar, appearance, the leave-draft guard in `beforeNavigate`) |
+| `src/routes/` and `src/params.ts` | Page routes (`ssr = false`): `/`, `/setup`, `/library/[view]`, `/review/[[id]]`, `/activity/[view]`, `/settings/[section]`; `+layout.svelte` is the shell (top bar, appearance, the leave-draft guard in `beforeNavigate`) |
 | `src/lib/state/workspace.svelte.ts` | Workspace-wide state (bundles, pending count, theme, where each section was last left) and its refreshers; per-view state stays in the page |
 | `src/lib/drafts.ts` | Stored editor drafts (session storage), the unsaved flag, and re-keying drafts when a bundle is renamed |
 | `src/lib/*.svelte` | Presentation and review confirmation |
@@ -31,7 +31,7 @@ host CLI/harnesses strictly for explicit installation and upgrade management.
 | `akm-cli/workspace` | Typed operations: reads, writes, validation, policy (revisions, leases, writability), proposals, persistence |
 
 The namespace is a set of typed operations grouped by capability (assets, documents, proposals, bundles, config,
-feedback, sensitive, activity) with a Node loader entry and hand-written types; it exports no primitive and no
+feedback, sensitive, setup, activity) with a Node loader entry and hand-written types; it exports no primitive and no
 dispatcher. The v1 folder workspace also uses read-only operations in AKM itself:
 `assets.bundleFiles` (`GET /api/bundles/files`) lists one actual directory in an enabled, registered
 bundle, resolves canonical indexed refs, and reports unindexed files honestly

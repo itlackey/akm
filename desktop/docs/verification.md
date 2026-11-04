@@ -33,7 +33,7 @@ the databases the CLI created. No test imports akm internals.
 | --- | --- |
 | Transport and wiring: every route reaches its operation; errors map to one status | `server-routes`, `server-reveal`, `file-edit`, `runtime` (`npm test`, no browser) |
 | Desktop features: host tools, menu install, reveal policy, file editing, view models | `software`, `menu-install`, `file-edit`, `*-model`, `presenters` (`npm test`) |
-| UI: one happy path and one refusal per section, navigation and drafts, protected files, Software | `e2e`, `navigation`, `sensitive-ui`, `software-ui` (`npm run test:e2e`) |
+| UI: one happy path and one refusal per section, navigation and drafts, protected files, Software, first-run setup | `e2e`, `navigation`, `sensitive-ui`, `software-ui`, `setup-ui` (`npm run test:e2e`) |
 | Accessibility, reflow and design language | `usability*`, `design-language` (`npm run test:usability`) |
 | The web process without Electron: starts under plain Node, answers the shell and two reads | `scripts/server-guard.mjs` (`npm run test:server`, after a build) |
 | Electron main: sandbox, isolation, navigation, lifecycle | `electron` (`npm run test:electron`, needs a display: `xvfb-run -a`) |

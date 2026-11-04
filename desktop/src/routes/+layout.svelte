@@ -43,6 +43,8 @@
 
   const prefix = $derived(page.url.pathname.split("/")[1] ?? "");
   const section = $derived(sections.find((item) => item.prefix === prefix) ?? sections[0]);
+  // First-run setup is reached from Home and Settings, not from the bar, so no section is current there.
+  const current = $derived(prefix === "setup" ? undefined : section);
   const view = $derived(page.url.pathname.split("/")[2] ?? "");
   const editing = $derived(prefix === "library" && ["edit", "new"].includes(view));
   const workspaceActive = $derived(
@@ -174,7 +176,12 @@
   });
 </script>
 
-<svelte:head><title>{section.name} · AKM Desktop</title><meta name="color-scheme" content="light dark" /></svelte:head>
+<svelte:head
+  ><title>{prefix === "setup" ? "Set up" : section.name} · AKM Desktop</title><meta
+    name="color-scheme"
+    content="light dark"
+  /></svelte:head
+>
 <svelte:window onkeydown={shortcuts} onbeforeunload={unload} />
 <a
   href="#main"
@@ -189,7 +196,7 @@
     <a class="brand" href="/" aria-label="AKM home">akm<span aria-hidden="true">.</span></a>
     <nav aria-label="Primary navigation">
       {#each sections as item}
-        <a href={workspace.sectionHref[item.name]} aria-current={section === item ? "page" : undefined}
+        <a href={workspace.sectionHref[item.name]} aria-current={current === item ? "page" : undefined}
           >{item.name}{#if item.name === "Review" && workspace.pendingCount !== null && workspace.pendingCount > 0}<span
               class="nav-count"
               aria-label={workspace.pendingCount + " pending proposals"}>{workspace.pendingCount}</span

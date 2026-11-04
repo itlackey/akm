@@ -420,4 +420,36 @@
       gap: 4px 12px;
     }
   }
+
+  /* First-run setup: the steps of /setup share this shape. */
+  .setup-step {
+    padding: 28px 0;
+    border-top: 1px solid var(--border);
+  }
+  .setup-step p {
+    max-width: 68ch;
+    line-height: 1.6;
+  }
+  .setup-step code {
+    overflow-wrap: anywhere;
+  }
+  .setup-step .step-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .setup-step .step-head h2 {
+    margin: 0;
+    font-size: 18px;
+  }
+  .setup-step .field-control {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .setup-step .field-control input {
+    flex: 1 1 280px;
+    min-width: 0;
+  }
 }

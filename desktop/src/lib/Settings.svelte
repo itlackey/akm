@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
-  import { api, date, pickFolder } from "./client";
+  import { api, date, pickFolder, type ApiError } from "./client";
   import SettingsBundleCard from "./SettingsBundle.svelte";
   import SettingsFieldControl from "./SettingsField.svelte";
   import Software from "./Software.svelte";
@@ -23,6 +23,7 @@
     listing: SettingsBundleResponse | null = null,
     initialized: SettingsConfig | null = null;
   let error = "",
+    errorCode = "",
     busy = false,
     loading = true,
     receipt = "",
@@ -43,6 +44,7 @@
   let resetKeys = new Set<string>();
   let savedKeys: string[] = [];
   let renameNotes: string[] = [];
+  $: if (!error) errorCode = "";
   $: groups = buildGroups(config, listing, bundles);
   $: selectedGroup = query.get("section") || "library-settings";
   $: manageName = route === "bundles" ? (query.get("manage") ?? "") : "";
@@ -248,7 +250,10 @@
         config = nextConfig;
       }
     } catch (cause) {
-      if (mine === generation) error = (cause as Error).message;
+      if (mine === generation) {
+        error = (cause as Error).message;
+        errorCode = (cause as ApiError).code ?? "";
+      }
     } finally {
       if (mine === generation) loading = false;
     }
@@ -300,6 +305,7 @@
       }
     } catch (cause) {
       error = (cause as Error).message;
+      errorCode = (cause as ApiError).code ?? "";
     } finally {
       busy = false;
     }
@@ -353,6 +359,7 @@
 {#if route === "software"}<Software />{:else}
   {#if error}<div class="notice notice-warn" role="alert">
       {error}
+      {#if errorCode === "STASH_DIR_NOT_FOUND"}<a href="/setup">Set up akm</a>{/if}
       <p>Your entered values remain available. Review the error before retrying.</p>
     </div>{/if}
   {#each renameNotes as note}<p class="notice notice-warn">{note}</p>{/each}
@@ -371,7 +378,7 @@
     <p class="muted" hidden={!!manageName}>
       Default bundle: <strong>{listing?.defaultBundle ?? "Not configured"}</strong>. Explicit write target:
       <strong>{listing?.defaultWriteTarget ?? "Automatic"}</strong>.
-      <a href="/settings/config">Change library defaults</a>
+      <a href="/settings/config">Change library defaults</a> · <a href="/setup">Run setup again</a>
     </p>
     {#if manageName}<a class="bundle-back" href="/settings/bundles"
         ><Icon name="arrow-left" size={16} /> Back to bundles</a

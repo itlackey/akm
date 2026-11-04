@@ -33,6 +33,7 @@ test("every read route reaches its operation", async (t) => {
     "/api/meta",
     "/api/bundles",
     "/api/config",
+    "/api/setup/detect",
     "/api/changes",
     "/api/proposals",
     "/api/proposals?status=recent",
@@ -113,6 +114,7 @@ test("one table maps an error to a status: conflict 409, usage 400, not found 40
   const again = await app.call(`/api/proposals/${first}/accept`, {});
   assert.deepEqual([again.status, again.body.code], [409, "PROPOSAL_NOT_PENDING"]);
   assert.equal((await app.call("/api/asset")).status, 400);
+  assert.equal((await app.call("/api/setup/apply", { dir: "relative" })).status, 400);
   assert.equal((await app.call("/api/proposals/no-such-proposal")).status, 404);
   const readOnly = await app.call("/api/desktop/sensitive/create", {
     bundle: "vendor",

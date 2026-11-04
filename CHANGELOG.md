@@ -106,6 +106,13 @@ AKM Desktop ships in the same release as the akm it embeds: one version, one tag
   CLI uses the installer of its own release.
 - Desktop replaces `akm ui` and akm's HTML reports (both removed, see Removed above). Add bundle opens
   the operating system's folder dialog.
+- Desktop walks a new user through first-run setup at `/setup`, which Home offers on a computer with no
+  library instead of a red health failure: the library and the starter bundle (ticked, downloads from
+  GitHub), the akm CLI (installed from Desktop's own release) and one card per harness with the akm plugin
+  on Desktop's channel and its version, learning per harness (off unless ticked), Bun's official install
+  command with Copy and Check again for the Claude Code and Codex hooks. There is no stored "done"
+  flag; Settings → Bundles & index and Software have Run setup again, and an error that says the
+  library is missing links to setup.
 
 ## [0.10.261105] - 2026-11-02
 

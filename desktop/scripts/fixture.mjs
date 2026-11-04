@@ -10,7 +10,8 @@ import path from "node:path";
 
 /**
  * No AKM import occurs here. Apply returned env before any AKM import.
- * @param {{ runtime?: string, index?: boolean, packageRoot?: string, assetCount?: number, git?: boolean }} [options]
+ * @param {{ runtime?: string, index?: boolean, packageRoot?: string, assetCount?: number, git?: boolean, empty?: boolean }} [options]
+ * `empty` is a new user's machine: no config, no library and no index, and akm's default library location.
  */
 export async function createFixture({
   runtime = process.execPath,
@@ -18,6 +19,7 @@ export async function createFixture({
   packageRoot,
   assetCount = 0,
   git = false,
+  empty = false,
 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "akm-desktop-fixture-"));
   // Allow only host runtime/display basics. Never inherit credentials, agent
@@ -80,6 +82,15 @@ export async function createFixture({
     "AKM_STATE_DIR",
   ])
     await mkdir(String(env[key]), { recursive: true });
+  const require = createRequire(packageRoot ? path.join(packageRoot, "package.json") : import.meta.url);
+  const launcher = path.join(path.dirname(require.resolve("akm-cli/package.json")), "dist", "cli-node.mjs");
+  const cleanup = async () => {
+    if (!process.env.AKM_DESKTOP_KEEP_FIXTURES) await rm(root, { recursive: true, force: true });
+  };
+  if (empty) {
+    delete env.AKM_BUNDLE_DIR;
+    return { root, env, launcher, cleanup };
+  }
   const bundles = Object.fromEntries(
     ["personal", "shared", "vendor"].map((name) => [
       name,
@@ -158,8 +169,6 @@ export async function createFixture({
     command(["add", "knowledge/restore-laptop.md"]);
     command(["commit", "-qm", "Add verified recovery step"]);
   }
-  const require = createRequire(packageRoot ? path.join(packageRoot, "package.json") : import.meta.url);
-  const launcher = path.join(path.dirname(require.resolve("akm-cli/package.json")), "dist", "cli-node.mjs");
   if (index)
     execFileSync(runtime, [launcher, "index", "--full", "--format", "json", "-q"], {
       env,
@@ -182,8 +191,6 @@ export async function createFixture({
       malicious: "personal//knowledge/untrusted",
     },
     // Only the temporary directory created above; set AKM_DESKTOP_KEEP_FIXTURES=1 to keep it for diagnosis.
-    cleanup: async () => {
-      if (!process.env.AKM_DESKTOP_KEEP_FIXTURES) await rm(root, { recursive: true, force: true });
-    },
+    cleanup,
   };
 }

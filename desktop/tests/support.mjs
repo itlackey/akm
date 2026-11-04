@@ -149,9 +149,11 @@ export async function launchFixture({
   similarity = false,
   assetCount = 0,
   git = false,
+  empty = false,
+  execArgv = [],
   configureFixture,
 } = {}) {
-  const fixture = await createFixture({ assetCount, git, packageRoot: appRoot });
+  const fixture = await createFixture({ assetCount, git, empty, packageRoot: appRoot });
   if (configureFixture) await configureFixture(fixture);
   if (proposals) fixture.proposals = await seedProposals(fixture);
   if (metrics) {
@@ -161,7 +163,7 @@ export async function launchFixture({
   if (similarity) seedSimilarity(fixture);
   const child = fork(path.join(appRoot, "server/server.mjs"), [], {
     env: fixture.env,
-    execArgv: [],
+    execArgv,
     stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
   let logs = "";

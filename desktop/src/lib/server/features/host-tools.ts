@@ -37,6 +37,8 @@ export interface Detected {
 export interface HostState {
   phase: string;
   cli: Detected | null;
+  /** The Claude Code and Codex plugin hooks run on Bun (`bun akm-hook.ts`); the standalone akm CLI does not provide it. */
+  bun: (Detected & { installCommand: string }) | null;
   harnesses: Detected[];
   checkedAt?: string;
   /** What went wrong, in words for the person using the app. */
@@ -54,6 +56,9 @@ const exec = promisify(execFile);
 // plugin-upgrade.ts: change them together.
 const pluginId = "akm@akm-plugins";
 export const harnessIds = ["claude", "codex", "opencode", "opencode2"];
+/** Bun's own installer, shown for the person to run: Desktop never runs it. https://bun.sh/docs/installation */
+export const bunInstallCommand = (platform: string) =>
+  platform === "win32" ? 'powershell -c "irm bun.sh/install.ps1 | iex"' : "curl -fsSL https://bun.sh/install | bash";
 const versionOf = (text: string | undefined) => text?.match(/\b\d+\.\d+\.\d+(?:-[\w.-]+)?/)?.[0];
 class SoftwareError extends Error {}
 
@@ -209,6 +214,7 @@ export class HostTools {
     this.state = {
       phase: "idle",
       cli: null,
+      bun: null,
       harnesses: [],
       checkedAt: undefined,
       error: undefined,
@@ -236,6 +242,7 @@ export class HostTools {
   }
   async inventory(env: Env) {
     const cli = await this.detect("akm", env);
+    const bun = { ...(await this.detect("bun", env)), installCommand: bunInstallCommand(this.platform) };
     const harnesses = await Promise.all(
       harnessIds.map(async (id) => {
         const harness = await this.detect(id, env);
@@ -280,7 +287,7 @@ export class HostTools {
         return harness;
       }),
     );
-    Object.assign(this.state, { cli, harnesses });
+    Object.assign(this.state, { cli, bun, harnesses });
   }
   start(action: string, harness?: string, channel = "latest") {
     if (
@@ -395,7 +402,7 @@ export class HostTools {
       await this.invoke(harnessPath, args, env, 180_000);
     };
     if (id === "claude" || id === "codex") {
-      if (!(await this.find("bun", env)))
+      if (!this.state.bun?.installed)
         throw new SoftwareError("Install Bun first: the AKM hooks use it. No harness configuration was changed.");
       // List first: preserve an existing marketplace's source and release channel.
       const listed = json(await this.invoke(harnessPath, ["plugin", "marketplace", "list", "--json"], env));

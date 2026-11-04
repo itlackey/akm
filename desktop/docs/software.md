@@ -71,6 +71,35 @@ differ:
   held back while the latest release is newer than Desktop's engine, so a host upgrade never
   leaves Desktop behind.
 
+## First-run setup
+
+A computer with no library shows **Set up akm on this computer** on Home; **Settings → Bundles & index** and
+**Settings → Software** have **Run setup again**, and an error that says the library is missing links to `/setup`.
+Setup keeps no "done" flag: every step shows what is true now, so running it again only offers what is still missing.
+Nothing runs until you press a button.
+
+1. **Your library.** The folder where akm keeps what agents learn (`~/akm` unless you choose another) and the
+   official starter bundle (`itlackey/akm-stash`), ticked, which downloads from GitHub. Creating the library is
+   `akm setup --yes` (`setup.apply`); the starter bundle is `bundles.add`. A failed download does not undo the library;
+   **Retry** repeats it.
+2. **Connect your agents.**
+   - **akm command-line tool**, ticked when it is missing: it installs akm of Desktop's own release to
+     `~/.local/bin`, so that an agent without a plugin can use akm from a shell. When one is installed, setup shows its
+     version, and offers **Update CLI & plugins** only when it is older than the engine built into the app.
+   - One card per harness found (Claude Code, Codex, OpenCode, OpenCode 2), with the installed plugin's version. The
+     plugin installs from the channel Desktop is on: a stable Desktop installs the stable plugin, and a prerelease
+     Desktop the `next` one. Plugins share akm's major and minor version and number their builds on their own, so a
+     plugin built for another minor is flagged. OpenCode resolves its plugin's exact version when it starts, so its card
+     shows the package it configured.
+   - **Let akm use this agent for learning** is off unless you tick it, because background learning runs that agent's
+     model on your quota. `akm setup --yes` would enable every program it finds; `setup.apply` keeps only those you
+     name.
+   - **Bun.** The Claude Code and Codex hooks are TypeScript files that the harness starts with `bun`; the standalone
+     akm CLI does not provide a `bun` command, so Bun is the plugin's own runtime, not just a way to get akm. When Bun
+     is missing the card shows Bun's official install command with **Copy** and **Check again**. Desktop never runs
+     Bun's installer. OpenCode plugins carry their own akm and need no Bun from you.
+Desktop's CLI install is Linux and macOS; on Windows run the `install.ps1` of the release yourself.
+
 ## Host CLI and harness plugins
 
 1. Use **Install AKM CLI** if the host has none. The official release installer

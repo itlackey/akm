@@ -4,7 +4,7 @@
 
 import { createRequire } from "node:module";
 import os from "node:os";
-import { activity, assets, bundles, config, documents, feedback, proposals, sensitive } from "akm-cli/workspace";
+import { activity, assets, bundles, config, documents, feedback, proposals, sensitive, setup } from "akm-cli/workspace";
 import { hostUpgradeOutrunsDesktop } from "../engine-skew.js";
 import { readFile, saveFile } from "./features/files.js";
 import { readPreferences, saveTheme, validTheme } from "./features/preferences.js";
@@ -192,6 +192,7 @@ export const routes: Route[] = [
     assets.bundleFiles({ bundle: text(query, "bundle"), path: text(query, "path"), hidden: flag(query, "hidden") }),
   ),
   get("/api/config", () => config.get()),
+  get("/api/setup/detect", () => setup.detect()),
   get("/api/proposals", (query) =>
     proposals.list({
       status: text(query, "status"),
@@ -227,6 +228,7 @@ export const routes: Route[] = [
     "/api/bundles/settings",
     body(bundles.setSettings, ["bundle", "enabled", "writable", "componentWritability"], "bundle settings"),
   ),
+  post("/api/setup/apply", body(setup.apply, ["dir", "harness"], "setup apply")),
   post("/api/config/set", body(config.change, ["set", "unset"], "config")),
   post(
     "/api/knowledge/create",

@@ -75,51 +75,62 @@
   {#if !loading}
     <div class="home-columns">
       <section class="home-attention" aria-labelledby="home-attention-title">
-        <div class="home-section-title">
-          <h2 id="home-attention-title">Needs attention</h2>
-          {#if concerns.length}<span class="home-count">{concerns.length}</span>{/if}
-        </div>
-        {#if concerns.length}
-          <ul class="home-concerns">
-            {#each concerns.slice(0, 4) as item}
-              <li>
-                <span
-                  role="img"
-                  class="home-signal"
-                  class:failure={item.tone === "fail"}
-                  aria-label={item.tone === "fail" ? "Failure" : "Warning"}
-                  ><Icon name={item.tone === "fail" ? "alert" : "warning"} size={18} /></span
-                >
-                <div class="home-concern-copy">
-                  <h3>{item.title}</h3>
-                  <p>{item.description}</p>
-                </div>
-                <a href={item.href} class="home-detail-link" aria-label={`${item.action}: ${item.title}`}
-                  >{item.action}<Icon name="external" size={16} /></a
-                >
-              </li>
-            {/each}
-          </ul>
-          {#if concerns.length > 4}<a class="home-more" href="/activity/overview"
-              >View all health checks and activity <Icon name="arrow-right" size={16} /></a
-            >{/if}
-        {:else}<div class="home-empty">
-            <Icon name={coverage.length ? "warning" : "check"} size={24} />
-            <h3>{coverage.length ? "Some checks are unavailable" : "No issues in the available records"}</h3>
+        {#if workspace.unconfigured}
+          <div class="home-setup">
+            <h2 id="home-attention-title">Set up akm on this computer</h2>
             <p>
-              {coverage.length
-                ? "Missing measurements are not an all-clear."
-                : unknown
-                  ? `${unknown} checks have no result yet. Open health details to review coverage.`
-                  : "Nothing needs attention in this snapshot."}
+              Create your library, connect the agents you use, and check that they can reach it. It takes about two
+              minutes, and nothing runs until you press a button.
             </p>
-            <a href="/activity/overview">View health details <Icon name="arrow-right" size={16} /></a>
-          </div>{/if}
-        {#if coverage.length}<div class="home-coverage" role="status">
-            <strong>Incomplete snapshot</strong>
-            <p>Unavailable: {coverage.join(", ")}.</p>
-            {#if !error}<button class="btn-quiet" disabled={loading} onclick={load}>Retry snapshot</button>{/if}
-          </div>{/if}
+            <a class="btn" href="/setup">Start setup<Icon name="arrow-right" size={16} /></a>
+          </div>
+        {:else}
+          <div class="home-section-title">
+            <h2 id="home-attention-title">Needs attention</h2>
+            {#if concerns.length}<span class="home-count">{concerns.length}</span>{/if}
+          </div>
+          {#if concerns.length}
+            <ul class="home-concerns">
+              {#each concerns.slice(0, 4) as item}
+                <li>
+                  <span
+                    role="img"
+                    class="home-signal"
+                    class:failure={item.tone === "fail"}
+                    aria-label={item.tone === "fail" ? "Failure" : "Warning"}
+                    ><Icon name={item.tone === "fail" ? "alert" : "warning"} size={18} /></span
+                  >
+                  <div class="home-concern-copy">
+                    <h3>{item.title}</h3>
+                    <p>{item.description}</p>
+                  </div>
+                  <a href={item.href} class="home-detail-link" aria-label={`${item.action}: ${item.title}`}
+                    >{item.action}<Icon name="external" size={16} /></a
+                  >
+                </li>
+              {/each}
+            </ul>
+            {#if concerns.length > 4}<a class="home-more" href="/activity/overview"
+                >View all health checks and activity <Icon name="arrow-right" size={16} /></a
+              >{/if}
+          {:else}<div class="home-empty">
+              <Icon name={coverage.length ? "warning" : "check"} size={24} />
+              <h3>{coverage.length ? "Some checks are unavailable" : "No issues in the available records"}</h3>
+              <p>
+                {coverage.length
+                  ? "Missing measurements are not an all-clear."
+                  : unknown
+                    ? `${unknown} checks have no result yet. Open health details to review coverage.`
+                    : "Nothing needs attention in this snapshot."}
+              </p>
+              <a href="/activity/overview">View health details <Icon name="arrow-right" size={16} /></a>
+            </div>{/if}
+          {#if coverage.length}<div class="home-coverage" role="status">
+              <strong>Incomplete snapshot</strong>
+              <p>Unavailable: {coverage.join(", ")}.</p>
+              {#if !error}<button class="btn-quiet" disabled={loading} onclick={load}>Retry snapshot</button>{/if}
+            </div>{/if}
+        {/if}
       </section>
       <aside class="home-sidebar">
         <h2>Quick actions</h2>
@@ -241,6 +252,16 @@
     line-height: 1.45;
     font-weight: 600;
     letter-spacing: 0;
+  }
+  .home-setup {
+    display: grid;
+    gap: 16px;
+    justify-items: start;
+    padding: 8px 0;
+  }
+  .home-setup p {
+    max-width: 60ch;
+    line-height: 1.6;
   }
   .home-heading {
     display: flex;

@@ -4,6 +4,7 @@
 
 import { api } from "../client";
 import { renameBundle } from "../drafts";
+import { isUnconfigured } from "../setup-model";
 import type { Bundle } from "../types";
 
 /** Workspace-wide state the shell and the sections share. Per-view state stays in the page. */
@@ -11,6 +12,8 @@ export const workspace = $state({
   bundles: [] as Bundle[],
   defaultWriteTarget: "",
   bundlesReady: false,
+  /** Nothing is configured: no bundle and no working library, so first-run setup is what comes next. */
+  unconfigured: false,
   /** Bumped when the bundle list changes, so a view showing derived results knows to look again. */
   bundleRevision: 0,
   /** Pending proposals; null when the queue could not be read (not the same as zero). */
@@ -37,12 +40,18 @@ export async function refreshPending() {
 }
 
 export async function refreshBundles(onlyIfChanged = false) {
-  const data = await api<{ bundles: Bundle[]; defaultWriteTarget?: string; defaultBundle?: string }>("/bundles");
+  const data = await api<{
+    bundles: Bundle[];
+    workingStash: unknown | null;
+    defaultWriteTarget?: string;
+    defaultBundle?: string;
+  }>("/bundles");
   const target = data.defaultWriteTarget ?? data.defaultBundle ?? "";
   const changed =
     JSON.stringify(workspace.bundles) !== JSON.stringify(data.bundles) || workspace.defaultWriteTarget !== target;
   workspace.bundles = data.bundles;
   workspace.bundlesReady = true;
+  workspace.unconfigured = isUnconfigured(data);
   workspace.defaultWriteTarget = target;
   if (!onlyIfChanged || changed) workspace.bundleRevision++;
 }

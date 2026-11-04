@@ -5,107 +5,31 @@
 -->
 
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
-  import { api } from "./client";
+  import { onMount } from "svelte";
   import { classifyEngineSkew, hostUpgradeOutrunsDesktop } from "./engine-skew";
   import Icon from "./Icon.svelte";
-  type Harness = {
-    id: string;
-    installed: boolean;
-    runnable?: boolean;
-    version?: string;
-    path?: string;
-    major?: number;
-    plugin?: { state: string; version?: string; spec?: string; note?: string; detail?: string };
-  };
-  type Snapshot = {
-    engine: string;
-    desktop: {
-      version?: string;
-      update?: { state: string; version?: string; error?: string };
-      menu?: {
-        supported: boolean;
-        installed: boolean;
-        busy: boolean;
-        runningInstalledCopy?: boolean;
-        replacesExistingCopy?: boolean;
-        appImage?: string;
-        error?: string;
-      };
-    };
-    host: {
-      phase: string;
-      cli: Harness | null;
-      harnesses: Harness[];
-      error?: string;
-      errorDetail?: string;
-      receipt?: string;
-      checkedAt?: string;
-      command?: string;
-      upgrade?: {
-        latestVersion?: string;
-        currentVersion?: string;
-        updateAvailable?: boolean;
-        installMethod?: string;
-        channel?: string;
-      };
-    };
-  };
+  import { harnessNames as names } from "./setup-model";
+  import { actSoftware as act, software, watchSoftware } from "./state/software.svelte";
   const releases = "https://github.com/itlackey/akm/releases";
-  let data = $state<Snapshot | null>(null),
-    error = $state(""),
-    submitting = $state(false),
-    channel = $state("latest");
-  let timer: ReturnType<typeof setInterval>,
-    alive = true;
-  const names: Record<string, string> = {
-    claude: "Claude Code",
-    codex: "Codex",
-    opencode: "OpenCode",
-    opencode2: "OpenCode 2",
-  };
+  const data = $derived(software.data),
+    error = $derived(software.error),
+    submitting = $derived(software.submitting);
+  let channel = $state("latest");
   const hostBusy = $derived(submitting || Boolean(data && data.host.phase !== "idle"));
   const updateBusy = $derived(submitting || Boolean(data?.desktop.menu?.busy));
   const skew = $derived(classifyEngineSkew(data?.engine, data?.host.cli?.version));
   const desktopBehind = $derived(hostUpgradeOutrunsDesktop(data?.engine, data?.host.upgrade?.latestVersion));
   // Desktop's own update state, from the main process (electron-updater).
   const update = $derived(data?.desktop.update);
-  async function refresh() {
-    try {
-      const next = await api<Snapshot>("/desktop/software");
-      if (alive) data = next;
-    } catch (cause) {
-      if (alive) error = (cause as Error).message;
-    }
-  }
-  async function act(action: string, details: Record<string, unknown> = {}) {
-    submitting = true;
-    error = "";
-    try {
-      await api("/desktop/software", {}, { action, ...details });
-      await refresh();
-    } catch (cause) {
-      error = (cause as Error).message;
-    } finally {
-      submitting = false;
-    }
-  }
-  onMount(async () => {
-    await refresh();
-    if (!alive) return;
-    if (!data?.host.cli && data?.host.phase === "idle") await act("check");
-    timer = setInterval(() => void refresh(), 2000);
-  });
-  onDestroy(() => {
-    alive = false;
-    clearInterval(timer);
-  });
+  onMount(watchSoftware);
 </script>
 
 <div class="software">
   <div class="intro">
     <h2>Software</h2>
-    <p class="muted">Desktop, host CLI and integrations on this computer.</p>
+    <p class="muted">
+      Desktop, host CLI and integrations on this computer. <a href="/setup">Run setup again</a>
+    </p>
   </div>
   {#if error}<p class="notice notice-warn" role="alert">{error}</p>{/if}
   {#if !data}<p role="status">Loading software status…</p>{:else}

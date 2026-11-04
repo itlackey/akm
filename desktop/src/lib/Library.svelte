@@ -7,7 +7,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
   import { afterNavigate } from "$app/navigation";
-  import { assetSource, title, toggleSelection, date, matchesAssetRef } from "./client";
+  import { assetSource, title, toggleSelection, date, matchesAssetRef, type ApiError } from "./client";
   import { libraryRead, resultContext, searchHref, documentTitle } from "./library-model";
   import { filesHref, parseFilesHref } from "./library-files-model";
   import type { FileLocation, FilesViewState } from "./library-files-model";
@@ -37,6 +37,7 @@
   let result: SearchResult | null = null,
     selected: string[] = [],
     error = "",
+    errorCode = "",
     loading = false;
   let searchParams = new URLSearchParams(),
     observed = "",
@@ -145,6 +146,11 @@
     seenRevision = bundleRevision;
     if (!inFiles) void search();
   }
+  function fail(cause: unknown) {
+    error = (cause as Error).message;
+    errorCode = (cause as ApiError).code ?? "";
+  }
+  $: if (!error) errorCode = "";
   function withReview(href: string) {
     if (!reviewHref || !href) return href;
     const [base, params = ""] = href.split("?"),
@@ -227,7 +233,7 @@
         true,
       );
     } catch (cause) {
-      if (!signal.aborted) error = (cause as Error).message;
+      if (!signal.aborted) fail(cause);
     } finally {
       if (!signal.aborted) resolvingLocation = false;
     }
@@ -302,7 +308,7 @@
   function searchShortcut(event: KeyboardEvent) {
     if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") return;
     event.preventDefault();
-    openSearch().catch((cause) => (error = (cause as Error).message));
+    openSearch().catch(fail);
   }
   async function search() {
     controller?.abort();
@@ -330,7 +336,7 @@
       );
       if (!signal.aborted) result = next;
     } catch (e) {
-      if ((e as Error).name !== "AbortError") error = (e as Error).message;
+      if ((e as Error).name !== "AbortError") fail(e);
     } finally {
       if (!signal.aborted) {
         loading = false;
@@ -374,7 +380,7 @@
       const data = await Promise.all(refs.map((ref) => libraryRead<AssetRead>("/asset", { ref }, signal)));
       if (!signal.aborted) compared = data;
     } catch (e) {
-      if ((e as Error).name !== "AbortError") error = (e as Error).message;
+      if ((e as Error).name !== "AbortError") fail(e);
     } finally {
       if (!signal.aborted) compareBusy = false;
     }
@@ -479,6 +485,7 @@
 {#each writeWarnings as warning}<p class="notice notice-warn">{warning}</p>{/each}
 {#if error}<p class="notice notice-warn" role="alert">
     {error}
+    {#if errorCode === "STASH_DIR_NOT_FOUND"}<a href="/setup">Set up akm</a>{/if}
     {#if resolvingLocation}<span>Resolving location…</span>{:else if query.get("view") === "files"}<a
         href={"/library/asset?ref=" + encodeURIComponent(ref)}>Read in Search</a
       >{:else}<button
