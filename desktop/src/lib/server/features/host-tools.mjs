@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { access, readFile, readdir, mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
+import { access, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { parse } from "jsonc-parser";
 
 const exec = promisify(execFile);
@@ -102,7 +102,7 @@ async function openCodePlugin(env, home, major) {
       if (config[key] !== undefined) setsList = true;
       for (const entry of config[key] ?? []) {
         const spec = Array.isArray(entry) ? entry[0] : entry;
-        if (typeof spec === "string" && (spec === pkg || spec.startsWith(pkg + "@"))) return { spec, file };
+        if (typeof spec === "string" && (spec === pkg || spec.startsWith(`${pkg}@`))) return { spec, file };
       }
     }
     if (setsList && file !== explicit && major === 1) return undefined;
@@ -317,7 +317,7 @@ export class HostTools {
           "plugin",
           "marketplace",
           "add",
-          "itlackey/akm-plugins" + (id === "claude" && channel === "next" ? "@next" : ""),
+          `itlackey/akm-plugins${id === "claude" && channel === "next" ? "@next" : ""}`,
           ...(id === "codex" && channel === "next" ? ["--ref", "next"] : []),
         ]);
       await command(id === "claude" ? ["plugin", "install", pluginId, "--scope", "user"] : ["plugin", "add", pluginId]);

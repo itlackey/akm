@@ -1,9 +1,9 @@
 import type {
   ActivityCheck,
-  ActivityRetrieval,
   ActivityImpact,
   ActivityOverview,
   ActivityPulse,
+  ActivityRetrieval,
   ModelCount,
 } from "./activity-types";
 

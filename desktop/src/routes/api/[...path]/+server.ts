@@ -1,5 +1,5 @@
-import type { RequestHandler } from "./$types";
 import { dispatch } from "../../../lib/server/http.js";
+import type { RequestHandler } from "./$types";
 
 export const GET: RequestHandler = ({ request, url }) => dispatch(request, url);
 export const HEAD = GET;

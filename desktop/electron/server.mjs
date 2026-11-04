@@ -1,8 +1,8 @@
-import http from "node:http";
 import { randomBytes } from "node:crypto";
-import { pathToFileURL } from "node:url";
-import path from "node:path";
 import { readFile } from "node:fs/promises";
+import http from "node:http";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 /** Called only in a Node child (Electron supplies ELECTRON_RUN_AS_NODE before spawn). */
 export async function startServer() {

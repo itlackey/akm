@@ -58,8 +58,8 @@ function emphasis(text, depth = 0) {
     const size = start[0].length;
     const closing = /(?<!\\)\*+/g;
     closing.lastIndex = start.index + size;
-    let end;
-    while ((end = closing.exec(text))) {
+    let end = closing.exec(text);
+    for (; end; end = closing.exec(text)) {
       if ((end[0].length === size || (end[0].length === 3 && size < 3)) && !/\s/.test(text[end.index - 1] ?? " "))
         break;
     }

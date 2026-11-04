@@ -1,5 +1,5 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -132,7 +132,7 @@ export async function createFixture({
     command(["config", "user.email", "fixture@example.test"]);
     command(["add", "."]);
     command(["commit", "-qm", "Initial synthetic reference library"]);
-    await writeFile(documentPath, content + "\nA committed verification step.\n");
+    await writeFile(documentPath, `${content}\nA committed verification step.\n`);
     command(["add", "knowledge/restore-laptop.md"]);
     command(["commit", "-qm", "Add verified recovery step"]);
   }

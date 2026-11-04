@@ -1,8 +1,8 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import test from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 
@@ -36,7 +36,7 @@ test("env and secrets open as metadata; only explicit authenticated reveal retur
     ["personal//env/default", env],
     ["personal//secrets/example-key", secret],
   ]) {
-    const masked = value(await app.call("/api/desktop/sensitive?ref=" + encodeURIComponent(ref)));
+    const masked = value(await app.call(`/api/desktop/sensitive?ref=${encodeURIComponent(ref)}`));
     assert.ok(masked.name);
     assert.ok(masked.location);
     assert.ok(!JSON.stringify(masked).includes("synthetic-password"));
@@ -44,7 +44,7 @@ test("env and secrets open as metadata; only explicit authenticated reveal retur
     assert.equal(revealed.content, expected);
     assert.notEqual(
       (
-        await fetch(app.origin + "/api/desktop/sensitive/reveal", {
+        await fetch(`${app.origin}/api/desktop/sensitive/reveal`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ref }),
@@ -52,7 +52,7 @@ test("env and secrets open as metadata; only explicit authenticated reveal retur
       ).status,
       200,
     );
-    const response = await fetch(app.origin + "/api/desktop/sensitive/reveal", {
+    const response = await fetch(`${app.origin}/api/desktop/sensitive/reveal`, {
       method: "POST",
       headers: { Cookie: app.cookie, Origin: app.origin, "Content-Type": "application/json" },
       body: JSON.stringify({ ref }),
@@ -60,7 +60,7 @@ test("env and secrets open as metadata; only explicit authenticated reveal retur
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.notEqual(
       (
-        await fetch(app.origin + "/api/desktop/sensitive/reveal", {
+        await fetch(`${app.origin}/api/desktop/sensitive/reveal`, {
           method: "POST",
           headers: { Cookie: app.cookie, Origin: "https://outside.test", "Content-Type": "application/json" },
           body: JSON.stringify({ ref }),
@@ -125,11 +125,11 @@ test("a dotenv-adapter bundle accepts env and secret writes, as the CLI does, an
     value(
       await app.call("/api/desktop/sensitive/save", {
         ...selector,
-        content: env + "# edited\n",
+        content: `${env}# edited\n`,
         revision: read.revision,
       }),
     );
-    assert.equal(await fs.readFile(path.join(app.root, "dotenvs", file), "utf8"), env + "# edited\n");
+    assert.equal(await fs.readFile(path.join(app.root, "dotenvs", file), "utf8"), `${env}# edited\n`);
   }
 });
 
@@ -147,7 +147,7 @@ test("protected file UI masks, shows, hides and clears values on navigation with
     ["personal//secrets/example-key", "example-key"],
   ]) {
     await page.evaluate((ref) => {
-      location.hash = "#/files?ref=" + encodeURIComponent(ref) + "&open=1";
+      location.hash = `#/files?ref=${encodeURIComponent(ref)}&open=1`;
     }, ref);
     await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
     await expect(page.getByLabel("Values masked", { exact: true })).toBeVisible();
@@ -169,8 +169,7 @@ test("protected file UI masks, shows, hides and clears values on navigation with
   }
   await fs.writeFile(path.join(app.root, "personal/env/new-file.env"), env);
   await page.evaluate(() => {
-    location.hash =
-      "#/files?" + new URLSearchParams({ bundle: "personal", path: "env", file: "env/new-file.env", open: "1" });
+    location.hash = `#/files?${new URLSearchParams({ bundle: "personal", path: "env", file: "env/new-file.env", open: "1" })}`;
   });
   await expect(page.getByRole("heading", { name: "new-file.env", exact: true })).toBeVisible();
   await expect(page.getByLabel("Values masked", { exact: true })).toBeVisible();

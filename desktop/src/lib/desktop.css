@@ -337,7 +337,7 @@
     background: var(--surface-2);
   }
   [hidden] {
-    display: none !important;
+    display: none;
   }
   @media (width > 850px) {
     .desktop-shell.workspace-active {

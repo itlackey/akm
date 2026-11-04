@@ -1,10 +1,10 @@
-import { packager } from "@electron/packager";
 import { execFileSync } from "node:child_process";
-import { cp, mkdtemp, mkdir, readFile, chmod, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { chmod, cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { packager } from "@electron/packager";
 import { releaseRefusal } from "./release-guard.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -30,11 +30,11 @@ if (appimage) {
 await cp(path.join(root, "build"), path.join(stage, "build"), { recursive: true });
 await cp(path.join(root, "electron"), path.join(stage, "electron"), { recursive: true });
 await cp(path.join(root, "resources"), path.join(stage, "resources"), { recursive: true });
-await writeFile(path.join(stage, "package.json"), JSON.stringify({ ...manifest, version }, null, 2) + "\n");
+await writeFile(path.join(stage, "package.json"), `${JSON.stringify({ ...manifest, version }, null, 2)}\n`);
 await cp(path.join(root, "bun.lock"), path.join(stage, "bun.lock"));
 await writeFile(
   path.join(stage, "build-info.json"),
-  JSON.stringify({ commit: commit + (dirty ? "-dirty" : "") }) + "\n",
+  `${JSON.stringify({ commit: commit + (dirty ? "-dirty" : "") })}\n`,
 );
 await cp(path.join(root, ".core"), path.join(stage, ".core"), { recursive: true });
 await cp(path.join(root, "THIRD_PARTY.md"), path.join(stage, "THIRD_PARTY.md"));
@@ -76,6 +76,8 @@ if (appimage) {
       appId: "dev.fwdslsh.akm-desktop",
       productName: "AKM Desktop",
       extraMetadata: { version },
+      // electron-builder expands these macros itself.
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: builder macros, not a template
       artifactName: "AKM-Desktop-${version}-${arch}.${ext}",
       directories: { output: path.dirname(output[0]) },
       linux: {

@@ -1,11 +1,11 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
-import { createRequire } from "node:module";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
+import { createRequire } from "node:module";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { createFixture } from "../scripts/fixture.mjs";
 
 const appRoot = process.env.AKM_DESKTOP_TEST_APP_ROOT ?? fileURLToPath(new URL("..", import.meta.url));
@@ -161,7 +161,7 @@ test("existing AKM reads, revision-safe editing, creation and non-overwriting co
   const saved = await app.request("/desktop/file/save", {
     ref: source.ref,
     revision: source.revision,
-    content: source.content + "\nA verified extra step.\n",
+    content: `${source.content}\nA verified extra step.\n`,
   });
   assert.equal(saved.status, 200, await saved.text());
   const conflict = await app.request("/desktop/file/save", {
@@ -212,7 +212,7 @@ test("existing AKM reads, revision-safe editing, creation and non-overwriting co
   const memorySaved = await app.request("/desktop/file/save", {
     ref: memory.ref,
     revision: memory.revision,
-    content: memory.content + "\nVerify the copy regularly.\n",
+    content: `${memory.content}\nVerify the copy regularly.\n`,
   });
   assert.equal(memorySaved.status, 200, await memorySaved.text());
 });
@@ -258,7 +258,7 @@ export const handler = (req, res) => res.end('loaded');
       if (message.type === "loading") resolve(message);
     }),
   );
-  const response = await fetch(loading.origin + "/api/meta");
+  const response = await fetch(`${loading.origin}/api/meta`);
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { ok: false, code: "STARTING", error: "AKM Desktop is still starting." });
   const ready = new Promise((resolve) =>
@@ -268,5 +268,5 @@ export const handler = (req, res) => res.end('loaded');
   );
   child.send("load");
   await ready;
-  assert.equal(await (await fetch(loading.origin + "/")).text(), "loaded");
+  assert.equal(await (await fetch(`${loading.origin}/`)).text(), "loaded");
 });

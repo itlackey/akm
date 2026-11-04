@@ -1,7 +1,7 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import test from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 
@@ -32,7 +32,7 @@ test("Library task views use actual filesystem listings, canonical assets, and r
     page.evaluate((value) => {
       location.hash = value;
     }, value);
-  await page.goto(server.url + "#/search");
+  await page.goto(`${server.url}#/search`);
   const screenshot = async (name) => {
     if (!process.env.AKM_DESKTOP_SCREENSHOTS) return;
     await mkdir(process.env.AKM_DESKTOP_SCREENSHOTS, { recursive: true });
@@ -245,9 +245,9 @@ test("Library task views use actual filesystem listings, canonical assets, and r
     await page.getByRole("link", { name: "Edit page", exact: true }).click();
     const editor = page.getByRole("textbox", { name: "Markdown source, including optional frontmatter", exact: true });
     const before = await editor.inputValue();
-    await editor.fill(before + "\nUnsaved reload fixture.\n");
+    await editor.fill(`${before}\nUnsaved reload fixture.\n`);
     await page.reload();
-    await expect(editor).toHaveValue(before + "\nUnsaved reload fixture.\n");
+    await expect(editor).toHaveValue(`${before}\nUnsaved reload fixture.\n`);
     await page.getByRole("button", { name: "Discard draft…", exact: true }).click();
     await page.getByRole("button", { name: "Discard draft", exact: true }).click();
     await page.getByRole("link", { name: "Back to file", exact: true }).click();
@@ -261,7 +261,7 @@ test("Library task views use actual filesystem listings, canonical assets, and r
 
   await t.test("Review return uses its full context; narrow Files is a single workspace", async () => {
     const back = "#/proposals?status=pending&source=feedback&age=30d";
-    await hash("#/asset?" + new URLSearchParams({ ref: server.refs.document, view: "files", returnTo: back }));
+    await hash(`#/asset?${new URLSearchParams({ ref: server.refs.document, view: "files", returnTo: back })}`);
     await expect(page.locator(".document-body")).toContainText("Verify the checksum");
     await expect(page.getByRole("link", { name: "Back to review", exact: true })).toHaveAttribute("href", back);
     await page.setViewportSize({ width: 390, height: 844 });

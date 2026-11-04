@@ -1,9 +1,9 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chromium, expect } from "@playwright/test";
+import test from "node:test";
 import AxeBuilder from "@axe-core/playwright";
+import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 
 const value = (result) => {
@@ -43,13 +43,13 @@ test("env and secret CRUD keeps exact bytes, permissions, stale guards, marker c
     assert.equal((await fs.stat(disk)).mode & 0o777, 0o600);
     assert.equal((await app.call("/api/desktop/sensitive/create", { ...selector, content: "overwrite" })).status, 400);
     const read = value(await app.call("/api/desktop/sensitive/reveal", selector));
-    const updated = synthetic + "# Updated\r\n";
+    const updated = `${synthetic}# Updated\r\n`;
     value(await app.call("/api/desktop/sensitive/save", { ...selector, content: updated, revision: read.revision }));
     assert.equal(await fs.readFile(disk, "utf8"), updated);
     for (const action of ["save", "delete"])
       assert.equal(
         (
-          await app.call("/api/desktop/sensitive/" + action, {
+          await app.call(`/api/desktop/sensitive/${action}`, {
             ...selector,
             revision: read.revision,
             ...(action === "save" ? { content: "stale" } : {}),
@@ -57,7 +57,7 @@ test("env and secret CRUD keeps exact bytes, permissions, stale guards, marker c
         ).status,
         409,
       );
-    const masked = value(await app.call("/api/desktop/sensitive?" + new URLSearchParams(selector)));
+    const masked = value(await app.call(`/api/desktop/sensitive?${new URLSearchParams(selector)}`));
     assert.equal(masked.writable, true);
     assert.ok(!JSON.stringify(masked).includes("fixture-private-value"));
     const search = value(
@@ -68,7 +68,7 @@ test("env and secret CRUD keeps exact bytes, permissions, stale guards, marker c
     );
     // Like the CLI, env/secret writes do not touch the index; the file opens by path and appears in search after `akm index`.
     assert.ok(!JSON.stringify(search).includes("fixture-private-value"));
-    const marker = file.startsWith("env/") ? disk.replace(/\.env$/, ".sensitive") : disk + ".sensitive";
+    const marker = file.startsWith("env/") ? disk.replace(/\.env$/, ".sensitive") : `${disk}.sensitive`;
     await fs.writeFile(marker, "");
     value(await app.call("/api/desktop/sensitive/delete", { ...selector, revision: masked.revision }));
     await assert.rejects(fs.stat(disk), { code: "ENOENT" });
@@ -110,7 +110,7 @@ test("env and secret CRUD keeps exact bytes, permissions, stale guards, marker c
   );
   assert.equal(await fs.readFile(path.join(app.root, "personal/secrets/marker-conflict"), "utf8"), synthetic);
   for (const headers of [{}, { Cookie: app.cookie, Origin: "https://outside.test" }]) {
-    const response = await fetch(app.origin + "/api/desktop/sensitive/create", {
+    const response = await fetch(`${app.origin}/api/desktop/sensitive/create`, {
       method: "POST",
       headers: { ...headers, "Content-Type": "application/json" },
       body: JSON.stringify({ bundle: "personal", file: "secrets/refused", content: synthetic }),
@@ -142,7 +142,7 @@ test("bundle rename previews and applies core identity migration without moving 
   assert.equal(config.bundles["my-library"].path, path.join(app.root, "personal"));
   assert.equal(config.bundles.personal, undefined);
   assert.equal(await fs.readFile(app.documentPath, "utf8"), before);
-  const read = value(await app.call("/api/asset?ref=" + encodeURIComponent("my-library//knowledge/restore-laptop")));
+  const read = value(await app.call(`/api/asset?ref=${encodeURIComponent("my-library//knowledge/restore-laptop")}`));
   assert.equal(read.location.bundle, "my-library");
   const after = value(await app.call("/api/proposals?status=pending"));
   assert.equal(after.fullCount, queue.fullCount);
@@ -210,7 +210,7 @@ test("human can create, edit, cancel, protect an unsaved secret, delete it, then
       );
     }
     await page.setViewportSize({ width: 1280, height: 860 });
-    await page.screenshot({ path: path.join(shots, "edit-" + file + ".png"), fullPage: true });
+    await page.screenshot({ path: path.join(shots, `edit-${file}.png`), fullPage: true });
     await page.getByRole("button", { name: "Save changes", exact: true }).click();
     await expect(page.getByLabel("Values masked", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Edit", exact: true }).click();

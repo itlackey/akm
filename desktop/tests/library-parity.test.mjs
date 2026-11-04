@@ -1,8 +1,8 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import test from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 
@@ -25,7 +25,7 @@ test("Library selective parity: isolated real assets, addressable workspace, and
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const failures = [];
   page.on("pageerror", (e) => failures.push(e.stack ?? e.message));
-  await page.goto(server.url + "#/search");
+  await page.goto(`${server.url}#/search`);
   const hash = async (value) => {
     await page.evaluate((value) => {
       location.hash = value;

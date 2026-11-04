@@ -1,9 +1,9 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, stat, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { DesktopMenu, DESKTOP_ID, desktopEntry } from "../electron/menu-install.mjs";
+import test from "node:test";
+import { DESKTOP_ID, DesktopMenu, desktopEntry } from "../electron/menu-install.mjs";
 
 async function fixture() {
   const home = await mkdtemp(join(tmpdir(), "akm-menu-"));

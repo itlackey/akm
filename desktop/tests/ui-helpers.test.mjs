@@ -1,6 +1,6 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import test from "node:test";
 import ts from "typescript";
 
 const source = await readFile(new URL("../src/lib/client.ts", import.meta.url), "utf8");

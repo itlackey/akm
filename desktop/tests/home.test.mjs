@@ -1,9 +1,9 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { chromium, expect } from "@playwright/test";
+import test from "node:test";
 import AxeBuilder from "@axe-core/playwright";
+import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 
 test("Attention desk is the default, preserves deep links, and uses recorded read-only measurements", {
@@ -116,7 +116,7 @@ test("Attention desk is the default, preserves deep links, and uses recorded rea
   await page.getByRole("link", { name: "Cancel", exact: true }).click();
   await expect(home.getByRole("heading", { name: "Needs attention" })).toBeVisible();
   await expect(page).toHaveURL(/#\/home$/);
-  await page.goto(server.origin + "/#/search");
+  await page.goto(`${server.origin}/#/search`);
   await expect(page.getByRole("searchbox", { name: "Search library" })).toBeVisible();
   await nav("Home").click();
   await page.keyboard.press("Control+k");

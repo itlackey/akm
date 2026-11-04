@@ -1,13 +1,13 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
+import test from "node:test";
 import { launchFixture } from "./support.mjs";
 
 // A copy records where it came from in `sources`; everything else is the original's bytes.
-const withoutProvenance = (text) => text.replace(/sources:\n(?:  - [^\n]*\n)+/, "");
+const withoutProvenance = (text) => text.replace(/sources:\n(?: {2}- [^\n]*\n)+/, "");
 const index = (fixture) =>
   execFileSync(process.execPath, [fixture.launcher, "index", "--full", "--format=json", "-q"], {
     env: fixture.env,
@@ -15,7 +15,7 @@ const index = (fixture) =>
   });
 // A move is AKM's copy, then AKM's retire of the original (revertable from Review).
 async function move(app, ref, newName, target = "shared") {
-  const source = value(await app.call("/api/desktop/file?ref=" + encodeURIComponent(ref)));
+  const source = value(await app.call(`/api/desktop/file?ref=${encodeURIComponent(ref)}`));
   const copied = value(await app.call("/api/asset/copy", { sourceRef: ref, target, newName }));
   const receipt = value(await app.call("/api/asset/retire", { ref, revision: source.revision }));
   return { source, copied, receipt };
@@ -47,23 +47,23 @@ test("stored cosine is exact, scoped, model-compatible and read-only", async (t)
     },
   });
   t.after(() => app.stop());
-  const result = value(await app.call("/api/asset/related?ref=" + encodeURIComponent(app.refs.document)));
+  const result = value(await app.call(`/api/asset/related?ref=${encodeURIComponent(app.refs.document)}`));
   assert.equal(result.available, true);
   assert.equal(result.matches[0].ref, app.refs.shared);
   assert.ok(Math.abs(result.matches[0].cosine - 0.9938837347) < 0.000001);
   assert.ok(!result.matches.some((match) => match.ref === app.refs.document || match.ref === app.refs.vendor));
-  const scoped = value(await app.call("/api/asset/related?scope=bundle&ref=" + encodeURIComponent(app.refs.document)));
+  const scoped = value(await app.call(`/api/asset/related?scope=bundle&ref=${encodeURIComponent(app.refs.document)}`));
   assert.deepEqual(
     scoped.matches.map((match) => match.ref),
     [app.refs.memory],
   );
-  const old = value(await app.call("/api/asset/related?ref=" + encodeURIComponent(app.refs.vendor)));
+  const old = value(await app.call(`/api/asset/related?ref=${encodeURIComponent(app.refs.vendor)}`));
   assert.equal(old.available, false);
   assert.match(old.note, /older model/);
-  const missing = value(await app.call("/api/asset/related?ref=" + encodeURIComponent(app.refs.skill)));
+  const missing = value(await app.call(`/api/asset/related?ref=${encodeURIComponent(app.refs.skill)}`));
   assert.equal(missing.available, false);
   assert.match(missing.note, /No stored embedding/);
-  const unauthorized = await fetch(app.origin + "/api/asset/related?ref=" + app.refs.document);
+  const unauthorized = await fetch(`${app.origin}/api/asset/related?ref=${app.refs.document}`);
   assert.notEqual(unauthorized.status, 200);
 });
 
@@ -74,22 +74,22 @@ test("a move copies to the new name, retires the original, and the retirement re
   const { copied, receipt } = await move(app, app.refs.document, "recovery/restore");
   assert.equal(copied.destination.ref, "shared//knowledge/recovery/restore");
   const copy = await fs.readFile(path.join(app.root, "shared/knowledge/recovery/restore.md"), "utf8");
-  assert.match(copy, /sources:\n  - personal\/\/knowledge\/restore-laptop\n/);
+  assert.match(copy, /sources:\n {2}- personal\/\/knowledge\/restore-laptop\n/);
   assert.equal(withoutProvenance(copy), original);
   await assert.rejects(fs.stat(app.documentPath), { code: "ENOENT" });
-  assert.equal((await app.call("/api/asset?ref=" + encodeURIComponent(copied.destination.ref))).status, 200);
+  assert.equal((await app.call(`/api/asset?ref=${encodeURIComponent(copied.destination.ref)}`)).status, 200);
   const listing = value(await app.call("/api/search?q=personal%2F%2Fknowledge%2F&belief=all"));
   assert.ok(!listing.hits.some((hit) => hit.ref === app.refs.document));
   // No link was rewritten, and nothing but the AKM operations touched the bundle: no Desktop backup store.
   await assert.rejects(fs.stat(path.join(app.root, "personal/.akm/desktop-moves")), { code: "ENOENT" });
-  value(await app.call("/api/proposals/" + receipt.proposalId + "/revert", {}));
+  value(await app.call(`/api/proposals/${receipt.proposalId}/revert`, {}));
   assert.equal(await fs.readFile(app.documentPath, "utf8"), original);
 });
 
 test("a move never overwrites, and is refused for escapes and read-only sources", async (t) => {
   const app = await launchFixture();
   t.after(() => app.stop());
-  const source = value(await app.call("/api/desktop/file?ref=" + encodeURIComponent(app.refs.document)));
+  const source = value(await app.call(`/api/desktop/file?ref=${encodeURIComponent(app.refs.document)}`));
   for (const body of [
     { sourceRef: app.refs.document, target: "shared", newName: "shared-backup" },
     { sourceRef: app.refs.document, target: "shared", newName: "../escape" },
@@ -111,23 +111,23 @@ test("a move never overwrites, and is refused for escapes and read-only sources"
 test("manual retirement is an accepted retire proposal; revert restores exact bytes and removes the archive", async (t) => {
   const app = await launchFixture();
   t.after(() => app.stop());
-  const source = value(await app.call("/api/desktop/file?ref=" + encodeURIComponent(app.refs.document)));
+  const source = value(await app.call(`/api/desktop/file?ref=${encodeURIComponent(app.refs.document)}`));
   const receipt = value(await app.call("/api/asset/retire", { ref: app.refs.document, revision: source.revision }));
   const [archive] = receipt.archiveDirs.map((dir) => path.join(app.root, "personal", dir));
   assert.equal(await fs.readFile(path.join(archive, "knowledge/restore-laptop.md"), "utf8"), source.content);
   await assert.rejects(fs.stat(app.documentPath), { code: "ENOENT" });
-  const row = value(await app.call("/api/proposals/" + receipt.proposalId));
+  const row = value(await app.call(`/api/proposals/${receipt.proposalId}`));
   assert.equal(row.proposal.status, "accepted");
   assert.equal(row.proposal.isRetire, true);
   const db = new DatabaseSync(path.join(app.env.AKM_DATA_DIR, "index.db"));
   assert.equal(db.prepare("SELECT count(*) AS n FROM entries WHERE item_ref=?").get(app.refs.document).n, 0);
   db.close();
-  const reverted = value(await app.call("/api/proposals/" + receipt.proposalId + "/revert", {}));
+  const reverted = value(await app.call(`/api/proposals/${receipt.proposalId}/revert`, {}));
   assert.equal(reverted.proposal.status, "reverted");
   assert.equal(await fs.readFile(app.documentPath, "utf8"), source.content);
   await assert.rejects(fs.stat(archive), { code: "ENOENT" });
-  assert.equal((await app.call("/api/asset?ref=" + encodeURIComponent(app.refs.document))).status, 200);
-  value(await app.call("/api/proposals/" + receipt.proposalId + "/revert", {}));
+  assert.equal((await app.call(`/api/asset?ref=${encodeURIComponent(app.refs.document)}`)).status, 200);
+  value(await app.call(`/api/proposals/${receipt.proposalId}/revert`, {}));
   assert.equal(await fs.readFile(app.documentPath, "utf8"), source.content, "a second revert changes nothing");
 });
 
@@ -147,7 +147,7 @@ test("retiring a memory carries its derived twin", async (t) => {
   await assert.rejects(fs.stat(path.join(app.root, "personal/memories/backup-preference.derived.md")), {
     code: "ENOENT",
   });
-  value(await app.call("/api/proposals/" + receipt.proposalId + "/revert", {}));
+  value(await app.call(`/api/proposals/${receipt.proposalId}/revert`, {}));
   assert.ok((await fs.stat(path.join(app.root, "personal/memories/backup-preference.derived.md"))).isFile());
 });
 
@@ -159,7 +159,7 @@ test("retirement rejects stale source, read-only assets, unsupported packages an
       (await app.call("/api/asset/retire", { ref, revision: "invalid", reason: "Obsolete" })).status,
       200,
     );
-  const source = value(await app.call("/api/desktop/file?ref=" + encodeURIComponent(app.refs.document)));
+  const source = value(await app.call(`/api/desktop/file?ref=${encodeURIComponent(app.refs.document)}`));
   assert.notEqual(
     (await app.call("/api/asset/retire", { ref: app.refs.document, revision: "stale", reason: "Obsolete" })).status,
     200,
@@ -197,13 +197,13 @@ test("commands, workflows, scripts and tasks retain their native file formats wh
     ["tasks/check", "tasks/check.yml", "renamed-task", "tasks/renamed-task.yml"],
     ["scripts/check.sh", "scripts/check.sh", "renamed-script.sh", "scripts/renamed-script.sh"],
   ]) {
-    const ref = "personal//" + old,
-      source = value(await app.call("/api/desktop/file?ref=" + encodeURIComponent(ref)));
+    const ref = `personal//${old}`,
+      source = value(await app.call(`/api/desktop/file?ref=${encodeURIComponent(ref)}`));
     value(
       await app.call("/api/desktop/file/save", {
         ref,
         revision: source.revision,
-        content: source.content + "\n# edited\n",
+        content: `${source.content}\n# edited\n`,
       }),
     );
     const edited = await fs.readFile(path.join(app.root, "personal", from), "utf8");
@@ -212,17 +212,17 @@ test("commands, workflows, scripts and tasks retain their native file formats wh
     assert.equal(withoutProvenance(await fs.readFile(path.join(app.root, "shared", file), "utf8")), edited);
     if (file.endsWith(".sh")) assert.equal((await fs.stat(path.join(app.root, "shared", file))).mode & 0o777, 0o755);
     await assert.rejects(fs.stat(path.join(app.root, "personal", from)), { code: "ENOENT" });
-    const moved = value(await app.call("/api/desktop/file?ref=" + encodeURIComponent(copied.destination.ref)));
+    const moved = value(await app.call(`/api/desktop/file?ref=${encodeURIComponent(copied.destination.ref)}`));
     assert.equal(withoutProvenance(moved.content), edited);
     const copyBytes = await fs.readFile(path.join(app.root, "shared", file), "utf8");
     const retired = value(
       await app.call("/api/asset/retire", { ref: copied.destination.ref, revision: moved.revision }),
     );
     await assert.rejects(fs.stat(path.join(app.root, "shared", file)), { code: "ENOENT" });
-    value(await app.call("/api/proposals/" + retired.proposalId + "/revert", {}));
+    value(await app.call(`/api/proposals/${retired.proposalId}/revert`, {}));
     assert.equal(await fs.readFile(path.join(app.root, "shared", file), "utf8"), copyBytes);
     if (file.endsWith(".sh")) assert.equal((await fs.stat(path.join(app.root, "shared", file))).mode & 0o777, 0o755);
-    value(await app.call("/api/proposals/" + receipt.proposalId + "/revert", {}));
+    value(await app.call(`/api/proposals/${receipt.proposalId}/revert`, {}));
     assert.equal(await fs.readFile(path.join(app.root, "personal", from), "utf8"), edited);
   }
 });
@@ -230,12 +230,12 @@ test("commands, workflows, scripts and tasks retain their native file formats wh
 test("a skill copies as a package and is not retired or moved; its SKILL.md saves like any asset", async (t) => {
   const app = await launchFixture();
   t.after(() => app.stop());
-  const source = value(await app.call("/api/desktop/file?ref=" + encodeURIComponent(app.refs.skill)));
+  const source = value(await app.call(`/api/desktop/file?ref=${encodeURIComponent(app.refs.skill)}`));
   value(
     await app.call("/api/desktop/file/save", {
       ref: app.refs.skill,
       revision: source.revision,
-      content: source.content + "\nEdited.\n",
+      content: `${source.content}\nEdited.\n`,
     }),
   );
   assert.match(await fs.readFile(path.join(app.root, "personal/skills/backup-check/SKILL.md"), "utf8"), /Edited\./);

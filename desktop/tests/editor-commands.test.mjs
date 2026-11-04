@@ -1,5 +1,5 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 import { formatMarkdown } from "../src/lib/editor-commands.mjs";
 
 test("inline formatting wraps only the selection and toggles without rewriting metadata", () => {

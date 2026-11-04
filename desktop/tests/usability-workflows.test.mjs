@@ -1,6 +1,6 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import test from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 
@@ -63,7 +63,7 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
   });
   await t.test("unsaved drafts are explicit, survive reload and can be discarded without saving", async () => {
     await workspace.getByRole("link", { name: "Edit page", exact: true }).click();
-    const draft = original + "\nUnsaved review fixture.\n";
+    const draft = `${original}\nUnsaved review fixture.\n`;
     await editor.fill(draft);
     await expect(workspace.getByRole("status")).toContainText("Unsaved changes");
     // Session-only draft survives a renderer reload; no live source writes.

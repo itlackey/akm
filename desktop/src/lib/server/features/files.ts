@@ -1,7 +1,7 @@
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { createHash, randomUUID } from "node:crypto";
-import { UsageError, assets, bundles, indexWrittenAssets } from "akm-cli/workspace";
+import { assets, bundles, indexWrittenAssets, UsageError } from "akm-cli/workspace";
 import { fields } from "../input.js";
 
 /**

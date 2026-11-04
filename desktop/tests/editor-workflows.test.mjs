@@ -1,7 +1,7 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import test from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 

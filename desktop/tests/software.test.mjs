@@ -1,8 +1,8 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, mkdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import test from "node:test";
 import { HostTools, hostEnvironment, summarizeUpgrade } from "../src/lib/server/features/host-tools.mjs";
 
 test("host environment finds conventional user tools without running profiles or leaking desktop/launcher state", async () => {
@@ -40,7 +40,7 @@ async function hostFixture({ absent = false, failure = false } = {}) {
     home,
     env,
     platform: "linux",
-    find: async (name) => (name === "akm" && !cli ? undefined : "/fixture/bin/" + name),
+    find: async (name) => (name === "akm" && !cli ? undefined : `/fixture/bin/${name}`),
     fetcher: async (url) => {
       assert.equal(url, "https://github.com/itlackey/akm/releases/latest/download/install.sh");
       return { ok: true, text: async () => "#!/usr/bin/env bash\n# fixture; never executed\n" };

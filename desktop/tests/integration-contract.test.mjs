@@ -1,8 +1,8 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
+import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -28,7 +28,7 @@ test("application code uses only the approved workspace namespace and package me
     if (!/\.(?:ts|mjs|js|svelte)$/.test(file)) continue;
     const source = await readFile(path.join(desktop, "src", file), "utf8");
     for (const match of source.matchAll(/['"](akm-cli[^'"]*)['"]/g))
-      assert.ok(["akm-cli/workspace", "akm-cli/package.json"].includes(match[1]), file + ": " + match[1]);
+      assert.ok(["akm-cli/workspace", "akm-cli/package.json"].includes(match[1]), `${file}: ${match[1]}`);
   }
 });
 
@@ -42,12 +42,12 @@ test("server code imports only akm-cli/workspace, Node, Electron and Desktop's o
       if (specifier.startsWith("."))
         assert.ok(
           path.resolve(server, path.dirname(file), specifier).startsWith(desktop + path.sep),
-          file + ": " + specifier,
+          `${file}: ${specifier}`,
         );
       else
         assert.ok(
           !specifier.startsWith("akm-cli") || ["akm-cli/workspace", "akm-cli/package.json"].includes(specifier),
-          file + ": " + specifier,
+          `${file}: ${specifier}`,
         );
     }
   }
@@ -55,9 +55,9 @@ test("server code imports only akm-cli/workspace, Node, Electron and Desktop's o
 
 test("the renderer imports akm-cli only as types", async () => {
   for (const file of await readdir(path.join(desktop, "src/lib"), { recursive: true })) {
-    if (!/\.(?:ts|js|svelte)$/.test(file) || file.startsWith("server" + path.sep)) continue;
+    if (!/\.(?:ts|js|svelte)$/.test(file) || file.startsWith(`server${path.sep}`)) continue;
     const source = await readFile(path.join(desktop, "src/lib", file), "utf8");
     for (const match of source.matchAll(/^\s*import\s+(?!type\b)[^;]*?from\s*['"]akm-cli[^'"]*['"]/gm))
-      assert.fail(file + ": " + match[0]);
+      assert.fail(`${file}: ${match[0]}`);
   }
 });

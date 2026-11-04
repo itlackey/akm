@@ -1,7 +1,7 @@
-import { readFile, mkdir, writeFile, rename } from "node:fs/promises";
-import path from "node:path";
-import os from "node:os";
 import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 // Desktop presentation only. This must never modify AKM's own configuration.
 const file = path.join(
@@ -24,7 +24,7 @@ export async function readPreferences() {
 export async function saveTheme(theme: "system" | "light" | "dark") {
   await mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${randomUUID()}.tmp`;
-  await writeFile(temporary, JSON.stringify({ theme }) + "\n", { mode: 0o600 });
+  await writeFile(temporary, `${JSON.stringify({ theme })}\n`, { mode: 0o600 });
   await rename(temporary, file);
   return { theme };
 }

@@ -7,6 +7,7 @@ export class ApiError extends Error {
     super(message);
   }
 }
+
 import type { Asset, AssetSummary } from "./types";
 export async function api<T = unknown>(path: string, query: Record<string, string> = {}, body?: unknown): Promise<T> {
   const params = new URLSearchParams(Object.entries(query).filter(([, v]) => v !== ""));
@@ -35,7 +36,7 @@ export function bodyOf(content: string): string {
 }
 /** Match a search hit to a durable URL without conflating identical paths in different bundles. */
 export function matchesAssetRef(hit: AssetSummary, ref: string, defaultBundle: string): boolean {
-  const qualify = (value: string, bundle: string) => (value.includes("//") || !bundle ? value : bundle + "//" + value);
+  const qualify = (value: string, bundle: string) => (value.includes("//") || !bundle ? value : `${bundle}//${value}`);
   return qualify(hit.ref, hit.origin || defaultBundle) === qualify(ref, defaultBundle);
 }
 /** Same display contract as akm ui: documents, command templates, and agent prompts. */

@@ -1,22 +1,22 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, fork } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { chromium, expect } from "@playwright/test";
-import { launchFixture } from "./support.mjs";
-import { buildDiff } from "../src/lib/upstream/diff.js";
-import { diffSection } from "../src/lib/upstream/diff-view.js";
 import {
-  rejectionError,
-  rejectionReason,
-  proposalId,
-  proposalHref,
   activityReturn,
   commitOutcome,
   conceptLocation,
+  proposalHref,
+  proposalId,
+  rejectionError,
+  rejectionReason,
 } from "../src/lib/review-model.ts";
+import { buildDiff } from "../src/lib/upstream/diff.js";
+import { diffSection } from "../src/lib/upstream/diff-view.js";
+import { launchFixture } from "./support.mjs";
 
 test("review helpers preserve route filters and bound composed rejection reasons", () => {
   const params = new URLSearchParams("source=reflect&age=older&id=ignored");

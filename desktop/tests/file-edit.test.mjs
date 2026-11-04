@@ -1,14 +1,14 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
+import test from "node:test";
 import { launchFixture } from "./support.mjs";
 
 const value = (result) => {
   assert.equal(result.status, 200, JSON.stringify(result.body));
   return result.body.data;
 };
-const read = (app, query) => app.call("/api/desktop/file?" + new URLSearchParams(query));
+const read = (app, query) => app.call(`/api/desktop/file?${new URLSearchParams(query)}`);
 const save = (app, body) => app.call("/api/desktop/file/save", body);
 const skillFile = "skills/backup-check/scripts/check.sh";
 
@@ -25,7 +25,7 @@ test("a skill support file is read and saved with plain file operations; the mod
       bundle: "personal",
       file: skillFile,
       revision: source.revision,
-      content: source.content + "# edited\n",
+      content: `${source.content}# edited\n`,
     }),
   );
   assert.equal(saved.unchanged, false);
@@ -124,13 +124,12 @@ test("after an asset save the index finds the new text", async (t) => {
   t.after(() => app.stop());
   const ref = "personal//commands/check-recovery",
     marker = "zirconmarker";
-  const search = async () =>
-    value(await app.call("/api/search?q=" + marker + "&belief=all")).hits.map((hit) => hit.ref);
+  const search = async () => value(await app.call(`/api/search?q=${marker}&belief=all`)).hits.map((hit) => hit.ref);
   assert.deepEqual(await search(), []);
   const source = value(await read(app, { ref }));
   assert.equal(source.ref, ref);
   assert.equal(
-    value(await save(app, { ref, revision: source.revision, content: source.content + "\nThe " + marker + " step.\n" }))
+    value(await save(app, { ref, revision: source.revision, content: `${source.content}\nThe ${marker} step.\n` }))
       .indexed,
     true,
   );
@@ -147,7 +146,7 @@ test("knowledge is saved like any other file", async (t) => {
   assert.equal(source.writable, true);
   assert.equal(
     value(
-      await save(app, { ref: app.refs.document, revision: source.revision, content: source.content + "\nChecked.\n" }),
+      await save(app, { ref: app.refs.document, revision: source.revision, content: `${source.content}\nChecked.\n` }),
     ).indexed,
     true,
   );
@@ -200,7 +199,7 @@ test("every status comes from one mapping, and the moved routes answer only unde
     "/api/asset/sensitive/delete",
   ])
     assert.equal((await app.call(old, selector)).status, 404, old);
-  assert.equal((await app.call("/api/asset/sensitive?" + new URLSearchParams(selector))).status, 404);
+  assert.equal((await app.call(`/api/asset/sensitive?${new URLSearchParams(selector)}`)).status, 404);
   assert.equal(
     (await app.call("/api/desktop/sensitive/reveal", selector)).status,
     404,

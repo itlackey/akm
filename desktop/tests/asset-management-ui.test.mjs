@@ -1,11 +1,11 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
-import { chromium, expect } from "@playwright/test";
+import test from "node:test";
 import AxeBuilder from "@axe-core/playwright";
+import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 
 test("browse connections and cosine matches, compare inline, move (copy then retire), retire and restore through the UI", {
@@ -50,7 +50,7 @@ test("browse connections and cosine matches, compare inline, move (copy then ret
   const shots = process.env.AKM_DESKTOP_SCREENSHOTS || "/tmp/akm-desktop-asset-management";
   await fs.mkdir(shots, { recursive: true });
   const check = async (name) => {
-    await page.screenshot({ path: path.join(shots, name + ".png"), fullPage: true });
+    await page.screenshot({ path: path.join(shots, `${name}.png`), fullPage: true });
     assert.ok(
       await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
       "no horizontal overflow",
@@ -63,7 +63,7 @@ test("browse connections and cosine matches, compare inline, move (copy then ret
   };
   await page.goto(app.url);
   await page.evaluate((ref) => {
-    location.hash = "#/asset?ref=" + encodeURIComponent(ref);
+    location.hash = `#/asset?ref=${encodeURIComponent(ref)}`;
   }, app.refs.document);
   await page.getByRole("button", { name: "Related assets", exact: true }).click();
   await expect(page.locator(".connection-group")).toContainText("shared-backup");
@@ -78,7 +78,7 @@ test("browse connections and cosine matches, compare inline, move (copy then ret
   await expect(page.locator(".dcol.inline")).toHaveCount(1);
   await expect(page.locator(".comparison-identities")).toContainText("Shared backup");
   await page.evaluate((ref) => {
-    location.hash = "#/files?ref=" + encodeURIComponent(ref) + "&open=1";
+    location.hash = `#/files?ref=${encodeURIComponent(ref)}&open=1`;
   }, app.refs.document);
   await page.getByRole("button", { name: "More", exact: true }).click();
   await page.getByRole("button", { name: "Rename or move…", exact: true }).click();
@@ -134,7 +134,7 @@ test("a skill is copied as a package; its support files open and edit as plain f
     /Edited in Desktop/,
   );
   await page.evaluate((ref) => {
-    location.hash = "#/asset?ref=" + encodeURIComponent(ref);
+    location.hash = `#/asset?ref=${encodeURIComponent(ref)}`;
   }, app.refs.skill);
   await page.getByRole("button", { name: "More", exact: true }).click();
   await expect(page.getByRole("button", { name: "Retire", exact: true })).toHaveCount(0);

@@ -1,20 +1,20 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
 import { fork } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { chromium, expect } from "@playwright/test";
-import { launchFixture } from "./support.mjs";
 import {
-  healthGroup,
-  tokens,
-  duration,
-  percent,
   attentionItems,
+  duration,
+  healthGroup,
+  percent,
   rollingSearch,
+  tokens,
 } from "../src/lib/activity-presenter.ts";
 import { configurationChanges } from "../src/lib/settings-presenter.ts";
+import { launchFixture } from "./support.mjs";
 
 test("activity/settings presentation keeps measured zero separate from missing observations", () => {
   assert.equal(duration(0), "0 ms");

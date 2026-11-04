@@ -1,7 +1,7 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 
@@ -65,7 +65,7 @@ test("built desktop UI: isolated human asset and proposal workflows", { timeout:
   const editor = () => page.getByRole("textbox", { name: "Markdown source, including optional frontmatter" });
 
   await t.test("starts with real data, hostname/version, and responsive readable layout", async () => {
-    await page.goto(server.url + "#/search");
+    await page.goto(`${server.url}#/search`);
     await expect(page.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
     assert.equal(requests.includes("/api/overview"), false, "Activity is loaded only when visited");
     assert.equal(requests.includes("/api/config"), false, "Settings is loaded only when visited");
@@ -175,7 +175,7 @@ test("built desktop UI: isolated human asset and proposal workflows", { timeout:
     await expect(page.getByRole("status").filter({ hasText: "Copy completed" })).toBeVisible();
     assert.equal(await readFile(sourcePath, "utf8"), sourceBefore);
     const copiedSkill = await readFile(path.join(server.root, "shared/skills/backup-check/SKILL.md"), "utf8");
-    assert.match(copiedSkill, /sources:\n  - personal\/\/skills\/backup-check/);
+    assert.match(copiedSkill, /sources:\n {2}- personal\/\/skills\/backup-check/);
     assert.equal(copiedSkill.replace("sources:\n  - personal//skills/backup-check\n", ""), sourceBefore);
     for (const file of ["references/checklist.md", "scripts/check.sh"]) {
       assert.equal(

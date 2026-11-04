@@ -1,6 +1,7 @@
 // Adapted from fwdslsh/fhold admin-desktop.ts (MIT); see THIRD_PARTY.md.
-import { copyFile, chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+
 import { randomUUID } from "node:crypto";
+import { chmod, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export const DESKTOP_ID = "dev.fwdslsh.akm-desktop";

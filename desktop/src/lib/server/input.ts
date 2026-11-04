@@ -21,8 +21,8 @@ export function fields<T = Record<string, unknown>>(body: unknown, keys: readonl
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(body)) {
     if (keys.includes(key)) result[key] = value;
-    else if (!warned.has(where + " " + key)) {
-      warned.add(where + " " + key);
+    else if (!warned.has(`${where} ${key}`)) {
+      warned.add(`${where} ${key}`);
       console.warn(`[desktop] ${where}: ignoring unknown field "${key}".`);
     }
   }

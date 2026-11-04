@@ -1,7 +1,7 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import test from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 
@@ -21,7 +21,7 @@ test("representative workspace: large library, local Git, navigation, drafts and
     page
       .getByRole("navigation", { name: "Primary navigation" })
       .getByRole("link", { name: new RegExp(`^${name}(?:\\s|$)`) });
-  await page.goto(server.url + "#/search");
+  await page.goto(`${server.url}#/search`);
   await expect(page.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
   assert.equal(requests.includes("/api/overview"), false);
   assert.equal(requests.includes("/api/config"), false);
@@ -77,7 +77,7 @@ test("representative workspace: large library, local Git, navigation, drafts and
   await page.getByRole("combobox", { name: "Appearance" }).selectOption("dark");
   await saved;
   const other = await browser.newPage({ viewport: { width: 1280, height: 860 } });
-  await other.goto(server.url + "#/search");
+  await other.goto(`${server.url}#/search`);
   await expect(other.locator("html")).toHaveAttribute("data-theme", "dark");
   await other.getByRole("searchbox", { name: "Search library" }).fill("restore-laptop");
   await other.getByRole("button", { name: "Search", exact: true }).click();

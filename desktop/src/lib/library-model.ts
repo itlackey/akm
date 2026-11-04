@@ -1,4 +1,4 @@
-import { assetSource, title, ApiError } from "./client";
+import { ApiError, assetSource, title } from "./client";
 import type { Asset, AssetDetail, AssetSummary, Json } from "./types";
 export interface SearchHit extends AssetSummary {
   score?: number;

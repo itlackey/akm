@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { fork, execFileSync } from "node:child_process";
+import { execFileSync, fork } from "node:child_process";
 import { once } from "node:events";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createFixture } from "../scripts/fixture.mjs";
 
 export const root = fileURLToPath(new URL("..", import.meta.url));

@@ -66,7 +66,7 @@ export function treeNodes(bundles: string[], listings: Map<string, FileListing>,
     result.push(node);
     if (node.kind !== "directory" || !expanded.has(node.key)) return;
     const children = listings.get(node.key)?.entries ?? [];
-    children.forEach((entry, i) =>
+    children.forEach((entry, i) => {
       visit({
         ...entry,
         bundle: node.bundle,
@@ -75,10 +75,10 @@ export function treeNodes(bundles: string[], listings: Map<string, FileListing>,
         parentKey: node.key,
         position: i + 1,
         size: children.length,
-      }),
-    );
+      });
+    });
   }
-  bundles.forEach((bundle, i) =>
+  bundles.forEach((bundle, i) => {
     visit({
       bundle,
       name: bundle,
@@ -91,7 +91,7 @@ export function treeNodes(bundles: string[], listings: Map<string, FileListing>,
       root: true,
       position: i + 1,
       size: bundles.length,
-    }),
-  );
+    });
+  });
   return result;
 }

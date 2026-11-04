@@ -1,6 +1,6 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { homeConcerns, homeCoverage, taskOutcomes, healthCheckAnchor } from "../src/lib/home-model.ts";
+import test from "node:test";
+import { healthCheckAnchor, homeConcerns, homeCoverage, taskOutcomes } from "../src/lib/home-model.ts";
 
 const overview = () => ({
   health: { status: "pass", hardChecks: [], advisories: [] },

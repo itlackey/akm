@@ -1,11 +1,11 @@
-import os from "node:os";
 import { createRequire } from "node:module";
+import os from "node:os";
 import { activity, assets, bundles, config, documents, feedback, host, proposals, sensitive } from "akm-cli/workspace";
-import { HttpFailure, count, fields, flag, text } from "./input.js";
+import { readFile, saveFile } from "./features/files.js";
 import { readPreferences, saveTheme, validTheme } from "./features/preferences.js";
 import { reveal } from "./features/reveal.js";
 import { desktopApp, hostTools } from "./features/software.mjs";
-import { readFile, saveFile } from "./features/files.js";
+import { count, fields, flag, HttpFailure, text } from "./input.js";
 
 const require = createRequire(import.meta.url);
 const akmPackage = require("akm-cli/package.json") as { version: string };
@@ -27,8 +27,8 @@ export type Route =
       run: (body: unknown, params: Params) => unknown;
     };
 
-const exact = (path: string) => new RegExp("^" + path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$");
-const pattern = (path: string) => new RegExp("^" + path.replace(/:(\w+)/g, "(?<$1>[^/]+)") + "$");
+const exact = (path: string) => new RegExp(`^${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+const pattern = (path: string) => new RegExp(`^${path.replace(/:(\w+)/g, "(?<$1>[^/]+)")}$`);
 const get = (path: string, run: (query: URLSearchParams, params: Params) => unknown, literal = false): Route => ({
   method: "GET",
   path: path.includes(":") ? pattern(path) : exact(path),
@@ -144,7 +144,7 @@ export const routes: Route[] = [
       type: query.get("type") || undefined,
       bundle: query.get("bundle") || undefined,
       belief: query.get("belief") || undefined,
-      scope: Object.fromEntries(["user", "agent", "run", "channel"].map((key) => [key, text(query, "scope_" + key)])),
+      scope: Object.fromEntries(["user", "agent", "run", "channel"].map((key) => [key, text(query, `scope_${key}`)])),
       limit: count(query, "limit"),
     }),
   ),

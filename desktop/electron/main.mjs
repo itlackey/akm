@@ -1,7 +1,7 @@
-import { app, BrowserWindow, dialog, session, shell } from "electron";
 import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { DesktopMenu, DESKTOP_ID } from "./menu-install.mjs";
+import { app, BrowserWindow, dialog, session, shell } from "electron";
+import { DESKTOP_ID, DesktopMenu } from "./menu-install.mjs";
 
 let child;
 let window;

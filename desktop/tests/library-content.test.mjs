@@ -1,7 +1,7 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import test from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 
@@ -13,7 +13,7 @@ test("page actions escape the reader scroll container and retain native dismissa
   const browser = await chromium.launch();
   t.after(() => browser.close());
   const page = await browser.newPage();
-  await page.goto(server.url + "#/search");
+  await page.goto(`${server.url}#/search`);
   for (const [width, height] of [
     [900, 620],
     [1250, 700],
@@ -138,7 +138,7 @@ test("search reordering preserves the identity of an existing result link", { ti
   const browser = await chromium.launch();
   t.after(() => browser.close());
   const page = await browser.newPage();
-  await page.goto(server.url + "#/search");
+  await page.goto(`${server.url}#/search`);
   const results = page.getByRole("region", { name: "Search results" });
   const originalLink = await results.getByRole("link", { name: "restore laptop", exact: true }).elementHandle();
   assert.ok(originalLink);
@@ -168,7 +168,7 @@ test("Library renders every AKM body field already supported by akm ui", { timeo
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage();
-  await page.goto(server.url + "#/search");
+  await page.goto(`${server.url}#/search`);
   for (const [name, type, field, body] of [
     ["restore-laptop", "knowledge", "content", "Verify the checksum before restoring a backup."],
     ["check-recovery", "command", "template", "Review the recovery evidence for $ARGUMENTS before proceeding."],

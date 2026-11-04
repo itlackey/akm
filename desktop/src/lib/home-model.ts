@@ -25,7 +25,7 @@ export function homeConcerns(data: ActivityOverview | null): HomeConcern[] {
         title: check.name.replaceAll("-", " ").replace(/^./, (letter) => letter.toUpperCase()),
         description: check.message,
         action: "Inspect",
-        href: "#/overview?" + new URLSearchParams({ view: "health", anchor: healthCheckAnchor(check.name) }),
+        href: `#/overview?${new URLSearchParams({ view: "health", anchor: healthCheckAnchor(check.name) })}`,
       }));
   const runs: HomeConcern[] = [];
   // metrics uses the requested seven-day window; pulse.failedTasks is only a three-row preview.

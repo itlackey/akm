@@ -1,9 +1,9 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { chromium, expect } from "@playwright/test";
+import test from "node:test";
 import AxeBuilder from "@axe-core/playwright";
+import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 
 test("Software uses authenticated native actions, shows receipts, preserves the workspace and fits the established UI", {

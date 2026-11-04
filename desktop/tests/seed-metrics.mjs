@@ -2,6 +2,7 @@
 // as AKM's own UI integration tests. Never import AKM before asserting isolation.
 import assert from "node:assert/strict";
 import path from "node:path";
+
 const root = process.env.AKM_DESKTOP_TEST_ROOT;
 assert.ok(root && path.basename(root).startsWith("akm-desktop-fixture-"));
 assert.equal(process.env.AKM_BUNDLE_DIR, path.join(root, "personal"));

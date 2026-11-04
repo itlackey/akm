@@ -1,9 +1,9 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { chromium, expect } from "@playwright/test";
+import test from "node:test";
 import AxeBuilder from "@axe-core/playwright";
+import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 
 // Automated floor, not a substitute for independent task/keyboard/visual review.

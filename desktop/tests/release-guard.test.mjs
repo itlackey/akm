@@ -1,5 +1,5 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 import { releaseRefusal } from "../scripts/release-guard.mjs";
 
 test("an AppImage is built only from a clean tree at the release tag", () => {
