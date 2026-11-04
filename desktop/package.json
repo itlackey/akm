@@ -38,6 +38,8 @@
     "@types/node": "26.6.6",
     "electron": "45.2.1",
     "electron-builder": "26.18.0",
+    "prettier": "3.8.3",
+    "prettier-plugin-svelte": "4.1.1",
     "svelte": "5.57.3",
     "svelte-check": "4.7.8",
     "typescript": "6.0.3",

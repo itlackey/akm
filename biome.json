@@ -27,7 +27,17 @@
       "!src/assets/ui/echarts.js",
       "!tests/fixtures/goldens/**/*.json",
       "!tests/fixtures/format-family-goldens/**/*.json",
-      "!.claude/**"
+      "!.claude/**",
+      "desktop/**",
+      "!desktop/**/*.svelte",
+      "!desktop/node_modules",
+      "!desktop/.core",
+      "!desktop/.svelte-kit",
+      "!desktop/build",
+      "!desktop/out",
+      "!desktop/test-results",
+      "!desktop/playwright-report",
+      "!desktop/src/lib/ui/echarts.js"
     ],
     "experimentalScannerIgnores": [
       ".claude"
