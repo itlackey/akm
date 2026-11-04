@@ -4,14 +4,11 @@
 
 import { execFile } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
-import { parseRefInput } from "../../core/asset/resolve-ref";
 import { loadConfig, mutateConfig, resetConfigCache, sanitizeConfigForWrite } from "../../core/config/config";
 import { AkmError, type AkmErrorKind, UsageError } from "../../core/errors";
-import { appendEvent } from "../../core/events";
 import { resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
 import { assertUnsettable, setConfigValue, unsetConfigValue } from "../config-cli";
 import { akmSaveDocument } from "../read/document";
-import { writeMarkdownAsset } from "../read/knowledge";
 import { retireAsset } from "./manual-retire";
 import { assertWriteLeaseFree, classifyProposalError, type ProposalActionError } from "./proposal-actions";
 import { redactForUi, redactUrlsInText } from "./redact";
