@@ -7,9 +7,10 @@ import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, session, shell } from "electron";
 import electronUpdater from "electron-updater";
 import { DESKTOP_ID, DesktopMenu } from "./menu-install.mjs";
+import { createFolderPicker } from "./pick-folder.mjs";
 import { createUpdater } from "./updater.mjs";
 
-/** @typedef {{ type?: string, busy?: boolean, id?: string, action?: string, url?: string, origin?: string }} ChildMessage */
+/** @typedef {{ type?: string, busy?: boolean, id?: string, action?: string, start?: string, url?: string, origin?: string }} ChildMessage */
 /** @type {import("node:child_process").ChildProcess | undefined} */
 let child;
 /** @type {import("electron").BrowserWindow | undefined} */
@@ -99,6 +100,7 @@ else
           process.env.AKM_DESKTOP_UPDATES !== "off" &&
           (process.platform !== "linux" || Boolean(process.env.APPIMAGE)),
       });
+      const pickFolder = createFolderPicker({ dialog, window: () => window });
       const server = fork(fileURLToPath(new URL("./server.mjs", import.meta.url)), [], {
         execPath: process.execPath,
         execArgv: [],
@@ -118,8 +120,13 @@ else
         }
         if (message?.type !== "desktop-request" || typeof message.id !== "string") return;
         try {
-          if (!message.action || !["status", "menu-install"].includes(message.action))
+          if (!message.action || !["status", "menu-install", "pick-folder"].includes(message.action))
             throw new Error("Unknown software action.");
+          if (message.action === "pick-folder") {
+            const folder = await pickFolder(message.start);
+            if (server.connected) server.send({ type: "desktop-response", id: message.id, data: folder });
+            return;
+          }
           if (message.action === "menu-install") {
             if (menu.busy()) throw new Error("Wait for menu installation to finish.");
             menuError = undefined;

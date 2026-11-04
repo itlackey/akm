@@ -113,7 +113,6 @@ are ignored) and returns plain JSON-safe data without a CLI envelope; failures r
 | `feedback` | `record` |
 | `sensitive` | `describe`, `readValue`, `save`, `remove` (env files and secrets; only `readValue` returns a value) |
 | `activity` | `overview`, `pulse`, `health`, `retrievalTrend`, `improveImpact`, `taskHistory`, `meta` |
-| `host` | `folders` (a host directory listing for a folder picker; not akm data) |
 
 Also exported: `AkmError`, `UsageError`, `NotFoundError`, `ConfigError`, `TransientError`, the
 `AkmErrorKind` type, `CONFLICT_CODES`, `scrubUrlCredentials` and `indexWrittenAssets(bundleRoot,
@@ -157,8 +156,7 @@ overwrites; `documents.retire` archives one (undo is `proposals.revert` of the r
 `proposalId`). A move is a copy followed by a retire of the original, composed by the host; there
 is no transaction across the two.
 
-The [UI API reference](ui-api.md) lists the frozen `akm ui` routes, which are thin adapters over
-the same operations.
+The [workspace reference](workspace.md) lists what each operation returns and accepts.
 
 The package maps this namespace to `dist/workspace.js` under Bun and
 `dist/workspace-node.mjs` under Node. The Node entry registers the existing

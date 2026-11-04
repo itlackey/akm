@@ -99,3 +99,12 @@ export function treeNodes(bundles: string[], listings: Map<string, FileListing>,
   });
   return result;
 }
+
+/** The folder `chosen` relative to `root` ("" for `root` itself), or null when it is outside `root`. */
+export function folderUnder(root: string, chosen: string): string | null {
+  const clean = (path: string) => path.replace(/[\\/]+$/, "").replaceAll("\\", "/");
+  const base = clean(root);
+  const target = clean(chosen);
+  if (target === base) return "";
+  return target.startsWith(`${base}/`) ? target.slice(base.length + 1) : null;
+}

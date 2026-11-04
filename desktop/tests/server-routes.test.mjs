@@ -39,7 +39,6 @@ test("every read route reaches its operation", async (t) => {
     "/api/search/misses",
     "/api/search?q=restore&limit=3",
     `/api/bundles/files${q({ bundle: "personal" })}`,
-    `/api/fs/folders${q({ path: app.root })}`,
     `/api/asset${q({ ref })}`,
     `/api/asset/history${q({ ref })}`,
     `/api/asset/related${q({ ref })}`,
@@ -52,6 +51,17 @@ test("every read route reaches its operation", async (t) => {
   assert.equal(ok(await app.call(`/api/proposals/${id}`)).proposal.id, id);
   assert.equal(ok(await app.call(`/api/asset/source${q({ ref })}`)).type, "knowledge");
   assert.equal((await app.call("/api/bundle/files?bundle=personal")).status, 404, "the old singular path is gone");
+  assert.equal((await app.call("/api/fs/folders")).status, 404, "akm no longer lists host folders");
+});
+
+test("the folder dialog belongs to the Electron main process: outside it the route says so", async (t) => {
+  const app = await launchFixture();
+  t.after(() => app.stop());
+  const outside = await app.call("/api/desktop/pick-folder", { start: "/tmp" });
+  assert.deepEqual([outside.status, outside.body.code], [400, "FOLDER_DIALOG_FAILED"]);
+  assert.match(outside.body.error, /AKM Desktop app/);
+  const invalid = await app.call("/api/desktop/pick-folder", { start: 3 });
+  assert.deepEqual([invalid.status, invalid.body.code], [400, "INVALID_FOLDER_DIALOG"]);
 });
 
 test("writes reach their operations and unknown fields are ignored", async (t) => {

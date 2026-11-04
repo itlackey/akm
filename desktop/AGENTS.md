@@ -1,7 +1,7 @@
 # Working on AKM Desktop
 
 Desktop is a convenience tool for the human owner of an akm instance; the CLI serves agents.
-`akm ui` and akm's HTML output are frozen and will be removed once Desktop builds for Linux, macOS and Windows.
+Desktop replaces `akm ui` and akm's HTML output, which are removed; the CLI keeps `--format json|jsonl|yaml|text|md`.
 
 ## Where code goes
 

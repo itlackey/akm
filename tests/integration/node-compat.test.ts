@@ -599,14 +599,6 @@ describe("output format parity", () => {
     expect(r.stdout.trim().length).toBeGreaterThan(0);
   });
 
-  test.skipIf(!ENABLED)("health --format html produces <html> on Node", () => {
-    setupStorage();
-    const r = nodeRun(["health", "--format", "html"], { ...nodeEnv, AKM_OUTPUT: "html" });
-    assertNoBoundaryLeak(r, "health-html");
-    expect([0, 4]).toContain(r.status);
-    expect(r.stdout).toContain("<html");
-  });
-
   test.skipIf(!ENABLED)(
     "show --format text and --format json produce structurally same data on Bun and Node",
     async () => {

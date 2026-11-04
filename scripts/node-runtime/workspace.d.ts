@@ -133,9 +133,6 @@ export namespace feedback {
     source?: string;
   }): Promise<unknown>;
 }
-export namespace host {
-  function folders(input: { path: string; hidden?: boolean }): unknown;
-}
 export namespace proposals {
   function accept(input: { id: string }): Promise<unknown>;
   function acceptMany(input: { ids: string[] }): Promise<unknown>;

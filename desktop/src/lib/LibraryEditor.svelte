@@ -6,13 +6,13 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
-  import { api, ApiError, saveContent } from "./client";
+  import { api, ApiError, pickFolder, saveContent } from "./client";
   import { libraryRead, documentTitle } from "./library-model";
+  import { folderUnder } from "./library-files-model";
   import { clearDraft, draftKey, readDraft, setUnsaved, storeDraft } from "./drafts";
   import type { Bundle, Source, WriteResult } from "./types";
   import Markdown from "./Markdown.svelte";
   import Diff from "./Diff.svelte";
-  import FolderPicker from "./LibraryFolderPicker.svelte";
   import Icon from "./Icon.svelte";
   import { navigate } from "./navigation";
   import { formatMarkdown, markdownCommands } from "./editor-commands.mjs";
@@ -35,7 +35,6 @@
   let bundle = "",
     name = "",
     folder = "",
-    picker = false,
     folderInput: HTMLInputElement;
   let writeTab: HTMLButtonElement, previewTab: HTMLButtonElement;
   let controller = new AbortController();
@@ -212,9 +211,23 @@
     await tick();
     (preview ? previewTab : writeTab).focus();
   }
-  function closePicker() {
-    picker = false;
-    tick().then(() => folderInput?.focus());
+  async function browse() {
+    error = "";
+    try {
+      const chosen = await pickFolder(root);
+      if (chosen !== null) {
+        const inside = folderUnder(root, chosen);
+        if (inside === null) error = `Choose a folder inside ${root}.`;
+        else {
+          folder = inside;
+          persist();
+        }
+      }
+    } catch (e) {
+      error = (e as Error).message;
+    }
+    await tick();
+    folderInput?.focus();
   }
   async function format(command: string) {
     if (busy || preview || !textarea) return;
@@ -302,7 +315,7 @@
               <input bind:this={folderInput} bind:value={folder} on:input={persist} placeholder="Optional" /><button
                 type="button"
                 class="btn-secondary"
-                on:click={() => (picker = true)}>Browse…</button
+                on:click={browse}>Browse…</button
               >
             </div></label
           >
@@ -409,15 +422,6 @@
       on:click={() => save(true)}>Save reviewed version</button
     >
   </section>{/if}
-{#if picker}<FolderPicker
-    {root}
-    on:choose={(e) => {
-      folder = e.detail;
-      persist();
-      closePicker();
-    }}
-    on:close={closePicker}
-  />{/if}
 
 <style>
   .editor-header {

@@ -64,24 +64,20 @@ const SOURCE = "user";
 export interface AkmMetricsOptions {
   /** Window start: `24h` / `7d` / ISO / epoch ms. Default `30d`. */
   since?: string;
-  /** Attach the raw window rows (`--format html` and `--detail full`). */
+  /** Attach the raw window rows (`--detail full`). */
   includeRows?: boolean;
   now?: () => number;
   /**
    * Resolve refs through a disposable copy of index.db (default) or, when false, a plain read-only open of it.
-   * `akm ui` passes false: the copy retries for seconds while another process writes the index, and a plain
+   * The workspace passes false: the copy retries for seconds while another process writes the index, and a plain
    * read-only open is enough for a page that only reads.
    */
   indexSnapshot?: boolean;
 }
 
-/**
- * Whether the report carries the raw window rows: the HTML dashboard
- * re-aggregates from them client-side, so `--format html` always includes
- * them, and `--detail full` includes them for any other format.
- */
-export function metricsIncludeRows(mode: Pick<OutputMode, "format" | "detail">): boolean {
-  return mode.format === "html" || mode.detail === "full";
+/** Whether the report carries the raw window rows: `--detail full` includes them. */
+export function metricsIncludeRows(mode: Pick<OutputMode, "detail">): boolean {
+  return mode.detail === "full";
 }
 
 /**
@@ -262,7 +258,7 @@ export const metricsCommand = defineJsonCommand({
   meta: {
     name: "metrics",
     description:
-      "Experimental: report asset usage, feedback, utility, LLM usage, tasks, proposals and workflow spend from local records. Read-only. --format html writes a self-contained dashboard.",
+      "Experimental: report asset usage, feedback, utility, LLM usage, tasks, proposals and workflow spend from local records. Read-only.",
   },
   args: {
     since: {

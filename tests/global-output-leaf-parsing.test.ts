@@ -28,9 +28,9 @@ describe("space-separated global output flags on raw command leaves", () => {
   });
 
   test("proposal new preserves both positionals after the format flag", () => {
-    const args = parseLeaf(proposeCommand, ["--format", "html", "skill", "foo", "--task", "draft the skill"]);
+    const args = parseLeaf(proposeCommand, ["--format", "yaml", "skill", "foo", "--task", "draft the skill"]);
 
-    expect(args.format).toBe("html");
+    expect(args.format).toBe("yaml");
     expect(args.type).toBe("skill");
     expect(args.name).toBe("foo");
   });

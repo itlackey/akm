@@ -39,17 +39,7 @@ const {
 } = workspace;
 assert.equal(Boolean(process.versions.bun), process.argv[2] === "bun");
 for (const [name, value] of Object.entries(workspace)) assert.notEqual(value, undefined, name);
-for (const name of [
-  "activity",
-  "assets",
-  "bundles",
-  "config",
-  "documents",
-  "feedback",
-  "host",
-  "proposals",
-  "sensitive",
-])
+for (const name of ["activity", "assets", "bundles", "config", "documents", "feedback", "proposals", "sensitive"])
   assert.equal(typeof workspace[name], "object", name);
 for (const name of [
   "UsageError",

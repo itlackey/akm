@@ -1,7 +1,8 @@
 # Third-party notices
 
 `src/lib/ui/echarts.js` is the vendored Apache ECharts renderer (Apache 2.0 / BSD); its notices are embedded in the
-file. The npm dependency graph retains each dependency's original license in `node_modules`.
+file. It is the ECharts 6.1.0 bar, line and scatter subset with the SVG renderer, bundled once from the npm package
+and checked in; to update it, bundle those parts again and keep the notices. The npm dependency graph retains each dependency's original license in `node_modules`.
 
 ## fhold menu integration
 

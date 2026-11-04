@@ -19,8 +19,8 @@ import type { DeltaEntry, WindowResult } from "./types-windows";
  * The extra dataset `akm health --report` adds over the plain check: the
  * report parameters as the user spelled them, plus the pending proposal queue.
  * A DATA field, not presentation — its presence is what lets the registered
- * md/html report renderers stay pure functions of the result, and it is what
- * makes the full report reachable in every `--format`, not just `html`.
+ * md report renderer stays a pure function of the result, and it is what
+ * makes the full report reachable in every `--format`.
  */
 export interface HealthReportContext {
   /** Window label as the user typed it (`--since`), e.g. "24h". */

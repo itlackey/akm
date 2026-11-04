@@ -55,8 +55,6 @@ where.
   11434, 1234 and 8080) with one `GET /v1/models` each, and asks the endpoint
   you give it (and the embedding endpoint, if you pick another) for its model
   list. `--no-probe` contacts none of them.
-- **HTML reports** (`akm health --format html`, `akm metrics --format html`)
-  load ECharts from `cdn.jsdelivr.net` in the browser that opens them.
 
 ## Where akm stores data
 

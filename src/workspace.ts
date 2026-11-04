@@ -24,7 +24,6 @@ export * as bundles from "./workspace/bundles";
 export * as config from "./workspace/config";
 export * as documents from "./workspace/documents";
 export * as feedback from "./workspace/feedback";
-export * as host from "./workspace/host";
 export * as proposals from "./workspace/proposals";
 export { scrubUrlCredentials } from "./workspace/redact";
 export * as sensitive from "./workspace/sensitive";

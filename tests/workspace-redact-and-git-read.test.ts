@@ -2,11 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** Pure helpers behind `akm ui`: config redaction, commit origin, the browser opener and loopback detection. */
+/** Pure helpers behind the workspace operations: config redaction and commit origin. */
 
 import { describe, expect, test } from "bun:test";
-import { browserOpener } from "../src/commands/ui/open-browser";
-import { isLoopbackHost } from "../src/commands/ui/server";
 import { redactUrlCredentials } from "../src/core/redaction";
 import { type ChangeOrigin, classifyCommitOrigin } from "../src/workspace/git-read";
 import { isSecretEnvName, redactForUi, scrubUrlCredentials } from "../src/workspace/redact";
@@ -78,25 +76,5 @@ describe("classifyCommitOrigin", () => {
     ["retire 16 junk assets", "other"],
   ])("%s -> %s", (subject, origin) => {
     expect(classifyCommitOrigin(subject)).toBe(origin);
-  });
-});
-
-describe("browserOpener", () => {
-  test("uses the platform's opener", () => {
-    expect(browserOpener("http://x", "linux")).toEqual(["xdg-open", ["http://x"]]);
-    expect(browserOpener("http://x", "darwin")).toEqual(["open", ["http://x"]]);
-    expect(browserOpener("http://x", "win32")).toEqual(["cmd", ["/c", "start", '""', "http://x"]]);
-  });
-});
-
-describe("isLoopbackHost", () => {
-  test.each([
-    ["127.0.0.1", true],
-    ["localhost", true],
-    ["::1", true],
-    ["0.0.0.0", false],
-    ["192.168.1.5", false],
-  ])("%s -> %s", (host, expected) => {
-    expect(isLoopbackHost(host)).toBe(expected);
   });
 });

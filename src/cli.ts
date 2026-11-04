@@ -118,7 +118,6 @@ import { renderMigrationHelp } from "./commands/sources/migration-help";
 import { cloneCommand, syncCommand, upgradeCommand } from "./commands/sources/sources-cli";
 import { importKnowledgeCommand, indexCommand, infoCommand } from "./commands/sources/stash-cli";
 import { taskCommand } from "./commands/tasks/tasks-cli";
-import { uiCommand } from "./commands/ui/ui-cli";
 import { workflowCommand } from "./commands/workflow-cli";
 import { DEFAULT_CONFIG, loadConfig } from "./core/config/config";
 import { UsageError, type UsageErrorCode } from "./core/errors";
@@ -358,7 +357,7 @@ const healthCommand = defineCommand({
     report: {
       type: "boolean",
       description:
-        "Fetch the full report dataset: per-run rows, trend deltas vs the prior window, and the pending proposal queue. Renders as the rich report under --format md/html and as complete data under any other format.",
+        "Fetch the full report dataset: per-run rows, trend deltas vs the prior window, and the pending proposal queue. Renders as the rich report under --format md and as complete data under any other format.",
       default: false,
     },
     // #914: citty strips any `--no-X` argument and treats it as negating `X`
@@ -390,8 +389,8 @@ const healthCommand = defineCommand({
 
       // `--report` is a DATA flag: it selects the richer read (per-run rows +
       // window-compare deltas + the proposal queue) and nothing about the read
-      // depends on --format. The registered md/html renderers are pure
-      // functions of the result — a report-shaped result renders as the rich
+      // depends on --format. The registered md renderer is a pure
+      // function of the result — a report-shaped result renders as the rich
       // report, any other shape falls through to the generic rendering.
       //
       // The compare window defaults to the report's own `--since` window so the
@@ -527,7 +526,6 @@ const commands = {
   index: indexCommand,
   health: healthCommand,
   metrics: metricsCommand,
-  ui: uiCommand,
   info: infoCommand,
   bundle: bundleCommand,
   upgrade: upgradeCommand,
@@ -884,7 +882,6 @@ const HELP_SECTIONS: ReadonlyArray<{
       "lint",
       "health",
       "metrics",
-      "ui",
       "config",
       "models",
       "registry",
@@ -1112,7 +1109,7 @@ export async function runCli(): Promise<void> {
 
   const commandPath = resolveCittyCommandPath(main, process.argv.slice(2));
 
-  // Every command that renders through output() honours all six --format
+  // Every command that renders through output() honours all five --format
   // values. The declared exempt set (src/output/format-exempt.ts) does not
   // render an envelope at all, so warn rather than pretend: silently ignoring
   // the flag makes the behaviour hard to discover. A warning, not an error, because the flag is harmless here and scripts that

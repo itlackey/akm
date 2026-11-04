@@ -246,7 +246,7 @@ export function getLatestImproveRun(db: Database): ImproveRunRow | undefined {
     .get() as ImproveRunRow | undefined;
 }
 
-/** The `limit` most recent real (non-dry-run) improve runs, newest first (`akm ui`'s run list). */
+/** The `limit` most recent real (non-dry-run) improve runs, newest first (the workspace's run list). */
 export function listRecentImproveRuns(db: Database, limit: number): ImproveRunSummaryRow[] {
   return db
     .prepare(

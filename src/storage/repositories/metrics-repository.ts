@@ -46,7 +46,7 @@ export function listUsageEventRows(db: Database, filter: MetricsQueryFilter): Us
     .all(filter.sinceIso, untilBound, ...sourceParams) as UsageEventRow[];
 }
 
-/** One asset's feedback rows (`entry_ref` is the durable `bundle//conceptId`), newest first (`akm ui`'s asset view). */
+/** One asset's feedback rows (`entry_ref` is the durable `bundle//conceptId`), newest first (the workspace's asset view). */
 export function listFeedbackEventRows(db: Database, entryRef: string, limit: number): UsageEventRow[] {
   return db
     .prepare(
@@ -58,7 +58,7 @@ export function listFeedbackEventRows(db: Database, entryRef: string, limit: num
     .all(entryRef, limit) as UsageEventRow[];
 }
 
-/** Feedback counts by signal for one asset, all sources (`akm ui`'s asset view). */
+/** Feedback counts by signal for one asset, all sources (the workspace's asset view). */
 export function countFeedbackBySignal(db: Database, entryRef: string): Record<string, number> {
   const rows = db
     .prepare(

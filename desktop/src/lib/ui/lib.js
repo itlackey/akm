@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // @ts-nocheck -- presentation code copied from AKM: DOM string building, not type-checked here.
-// Presentation helpers owned by Desktop, copied from AKM's design system (src/assets/ui, MPL-2.0).
+// Presentation helpers owned by Desktop, originally from `akm ui`'s client (MPL-2.0).
 //
 // Every string that reaches the DOM goes through `html` (a tagged template that escapes each interpolated value) and
 // `mount` (the only place that writes markup into the page), so reading this file is enough to audit how page content

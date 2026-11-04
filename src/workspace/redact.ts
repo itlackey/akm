@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Redaction for `akm ui`'s config view. Starts from `listConfig` (which already
+ * Redaction for the workspace's config view. Starts from `listConfig` (which already
  * drops literal `apiKey` values and normalises registry URLs) and then masks
  * anything secret-like by key name, because the UI shows config the CLI's
  * `config list` never had to defend against a browser leaking.

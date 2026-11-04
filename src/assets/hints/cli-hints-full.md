@@ -22,7 +22,7 @@ akm search "team-catalog//"                   # List every item in one bundle
 | `--type` | free-form. Built-ins: `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `lesson`, `task`, `session`, `fact`, `env`, `secret`, `instruction` — plus any adapter-defined type (`website`, `wiki-source`, a wiki `pageKind`). Exact match; an unknown type returns no hits. | `any` |
 | `--from` | `local`, `registry`, `all`, or a configured bundle name | `local` |
 | `--limit` | number | `20` |
-| `--format` | `json`, `jsonl`, `text`, `yaml`, `md`, `html` | `json` |
+| `--format` | `json`, `jsonl`, `text`, `yaml`, `md` | `json` |
 | `--detail` | `brief`, `normal`, `full`, `agent` (`agent`: search, curate and show only) | `brief` |
 
 Ref-prefix queries (a conceptId prefix ending in `/`, optionally bundle-qualified)
@@ -411,7 +411,6 @@ akm health                                     # Runtime diagnostics, connection
 akm health --report                            # Adds accept-rate metrics
 akm metrics                                    # Usage, feedback, utility, LLM tokens, tasks, workflows (last 30d, read-only)
 akm metrics --since 7d                         # Narrow the window
-akm metrics --format html --output metrics.html # Self-contained dashboard with the window's rows (filter, sort, export CSV)
 akm log                                        # Append-only event stream (mutations, feedback, indexing)
 akm log --ref <ref>                            # One asset's event trail
 akm log --since @offset:<id>                   # Durable row-id cursor — poll this to follow the stream
@@ -427,7 +426,6 @@ Result-envelope commands accept `--format` and `--detail` flags:
 - `--format text` — human-readable plain text
 - `--format yaml` — YAML output
 - `--format md` — Markdown output
-- `--format html` — HTML output
 - `--detail brief` (default) — compact output
 - `--detail normal` — adds tags, refs, origins
 - `--detail full` — includes scores, paths, timing, debug info

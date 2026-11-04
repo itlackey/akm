@@ -26,11 +26,11 @@ host CLI/harnesses strictly for explicit installation and upgrade management.
 | `src/lib/drafts.ts` | Stored editor drafts (session storage), the unsaved flag, and re-keying drafts when a bundle is renamed |
 | `src/lib/*.svelte` | Presentation and review confirmation |
 | `src/lib/navigation.ts` | `goto` for in-app navigation, so Back/forward goes through `beforeNavigate` |
-| `src/lib/ui/` | Desktop-owned presentation: design tokens, escaped Markdown, diff and chart rendering (copied from AKM) |
+| `src/lib/ui/` | Desktop-owned presentation: design tokens, escaped Markdown, diff and chart rendering |
 | `akm-cli/workspace` | Typed operations: reads, writes, validation, policy (revisions, leases, writability), proposals, persistence |
 
 The namespace is a set of typed operations grouped by capability (assets, documents, proposals, bundles, config,
-feedback, sensitive, activity, host) with a Node loader entry and hand-written types; it exports no primitive and no
+feedback, sensitive, activity) with a Node loader entry and hand-written types; it exports no primitive and no
 dispatcher. The v1 folder workspace also uses read-only operations in AKM itself:
 `assets.bundleFiles` (`GET /api/bundles/files`) lists one actual directory in an enabled, registered
 bundle, resolves canonical indexed refs, and reports unindexed files honestly
@@ -169,7 +169,8 @@ platforms (`scripts/smoke.mjs`), so a change that breaks one is seen before a re
 
 Electron main installs the per-user application-menu entry and runs the updater
 (`electron/updater.mjs`, electron-updater's `github` provider, no token, no other feed). The
-server asks it over an allowlisted `status` / `menu-install` message, and no renderer Node or
+server asks it over an allowlisted `status` / `menu-install` / `pick-folder` message (the last opens the
+operating system's folder dialog for adding a bundle, `electron/pick-folder.mjs`), and no renderer Node or
 preload API is added. A stable build follows stable releases; a build of a stage release follows
 prereleases, so the channel is the akm release stage. The Software view compares the built-in
 engine with the host `akm` (`src/lib/engine-skew.ts`) and says which one to update. Normal close respects unsaved-work confirmation and waits

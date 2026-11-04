@@ -8,7 +8,7 @@
  * Mirrors `src/output/text/registry.ts`: a command may register a bespoke
  * Markdown renderer, and anything unregistered falls back to the generic
  * rendering of its shaped envelope (`./generic-render`). The fallback is what
- * makes all six `--format` values universal; the registry is what lets a
+ * makes all five `--format` values universal; the registry is what lets a
  * command that has something better to say — `akm health` and its report
  * tables — say it without the output pipeline knowing that command exists.
  *
@@ -25,12 +25,6 @@
  * text/shape registries (dozens of commands, assembled in bulk via
  * `registerAll`), `akm health` is the only caller this one ever holds, and
  * only `register`/`get` are used.
- *
- * `--format html` has no such registry: `akm health` and `akm metrics` are its
- * only bespoke HTML renderers, so `cli/shared.ts` calls `renderHealthHtml`
- * (`../commands/health/renderers.ts`) and `renderMetricsHtml`
- * (`../commands/metrics/html-report.ts`) directly instead of looking them up
- * through a registry with two possible registrants.
  */
 
 import type { DetailLevel } from "./context";

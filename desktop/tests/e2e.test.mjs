@@ -229,5 +229,23 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     assert.equal(config.bundles.shared.enabled, false);
     assert.deepEqual(errors, []);
   });
+  await t.test(
+    "Settings: Browse folders asks the app's folder dialog; outside the app it says so and typing still works",
+    async () => {
+      await go(page, "/settings/bundles");
+      const source = page.getByLabel("Source", { exact: true });
+      await source.fill("/tmp/typed-by-hand");
+      const dialogRequest = page.waitForResponse((r) => r.url().endsWith("/api/desktop/pick-folder"));
+      await page.getByRole("button", { name: "Browse folders…", exact: true }).click();
+      const response = await dialogRequest;
+      assert.equal(response.status(), 400);
+      assert.equal((await response.json()).code, "FOLDER_DIALOG_FAILED");
+      await expect(
+        page.getByRole("alert").filter({ hasText: "folder dialog is available in the AKM Desktop app" }),
+      ).toBeVisible();
+      await expect(source).toHaveValue("/tmp/typed-by-hand");
+      await expect(source).toBeFocused();
+    },
+  );
   console.log(`Screenshots: ${screenshots}`);
 });

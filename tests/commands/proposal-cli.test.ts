@@ -514,17 +514,15 @@ describe("akm proposal diff — a retire proposal (#997)", () => {
     expect(diffLines.indexOf(flaggedLines[0] as string)).toBeLessThan(diffLines.findIndex((l) => l.startsWith("--- ")));
   });
 
-  test("md and html renderings carry the same retirement fields", async () => {
+  test("the md rendering carries the retirement fields", async () => {
     const stash = makeStashDir();
     const proposal = seedRetireProposal(stash);
-    for (const format of ["md", "html"]) {
-      const result = await runCli(["proposal", "diff", proposal.id, `--format=${format}`], { stashDir: stash });
-      expect({ format, status: result.status }).toEqual({ format, status: 0 });
-      // The judge's text and label live only in the `retirement` block, never in the unified diff.
-      expect(result.stdout).toContain("judgeReason");
-      expect(result.stdout).toContain("Same durable facts, B adds nothing new.");
-      expect(result.stdout).toContain("judgeLabel");
-    }
+    const result = await runCli(["proposal", "diff", proposal.id, "--format=md"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    // The judge's text and label live only in the `retirement` block, never in the unified diff.
+    expect(result.stdout).toContain("judgeReason");
+    expect(result.stdout).toContain("Same durable facts, B adds nothing new.");
+    expect(result.stdout).toContain("judgeLabel");
   });
 
   test("an ordinary proposal still renders `update` / `new asset`", async () => {

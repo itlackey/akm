@@ -11,15 +11,13 @@
 
 import { type ArgsDef, type CommandContext, type CommandDef, defineCommand } from "citty";
 import { stringify as yamlStringify } from "yaml";
-import { renderHealthHtml } from "../commands/health/renderers";
-import { renderMetricsHtml } from "../commands/metrics/html-report";
 import { assertNever } from "../core/assert";
 import { AkmError, UsageError } from "../core/errors";
 import { getOutputMode, type OutputFormat, type OutputMode } from "../output/context";
-import { renderGenericHtml, renderGenericMarkdown, renderGenericText } from "../output/generic-render";
-import { deliverRendered } from "../output/html-render";
+import { renderGenericMarkdown, renderGenericText } from "../output/generic-render";
 import { getMdRendererHandler } from "../output/render-registry";
 import { shapeForCommand } from "../output/shapes";
+import { deliverRendered } from "../output/stdout";
 import { formatPlain, outputJsonl } from "../output/text";
 import { parseAllFlagValues } from "./invocation";
 import { hasSubcommand } from "./parse-args";
@@ -172,7 +170,7 @@ export type JsonCommandDef<T extends ArgsDef = ArgsDef> = Omit<CommandDef<T>, "r
  * overrides at the root; the description text itself is never duplicated.
  */
 export const GLOBAL_OUTPUT_ARGS = {
-  format: { type: "string", description: "Output format: json|jsonl|yaml|text|md|html (global flag)" },
+  format: { type: "string", description: "Output format: json|jsonl|yaml|text|md (global flag)" },
   detail: {
     type: "string",
     description:
@@ -319,7 +317,7 @@ export function defineGroupCommand<const T extends ArgsDef = ArgsDef>(def: {
 
 /**
  * Render a command result according to the active output mode
- * (json/jsonl/yaml/text/md/html). When `--output <path>` is set, the rendered
+ * (json/jsonl/yaml/text/md). When `--output <path>` is set, the rendered
  * document is written to that file instead of stdout (jsonl excepted — it is
  * a line-streaming protocol and always goes to stdout).
  */
@@ -373,14 +371,6 @@ export function renderOutput(command: string, result: unknown, mode: DocumentOut
       // D7 — registry first, generic rendering second; no command emits JSON
       // under `--format md`.
       return getMdRendererHandler(command)?.(shaped, mode.detail) ?? renderGenericMarkdown(command, shaped);
-    case "html":
-      // `akm health` and `akm metrics` are the only commands with a bespoke
-      // HTML report, so they are called directly rather than through a
-      // registry with two possible registrants (see `output/render-registry.ts`).
-      return (
-        (command === "health" ? renderHealthHtml(shaped) : command === "metrics" ? renderMetricsHtml(shaped) : null) ??
-        renderGenericHtml(command, shaped)
-      );
   }
 }
 

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Read-only git queries for `akm ui`: a bundle's branch, ahead/behind and last
+ * Read-only git queries for the workspace: a bundle's branch, ahead/behind and last
  * commit, and the write-target stash's recent commits.
  *
  * Nothing here fetches, and nothing takes a lock: `GIT_OPTIONAL_LOCKS=0` keeps

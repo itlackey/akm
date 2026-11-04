@@ -116,7 +116,7 @@ export async function akmShowUnified(input: {
   /** Internal nested reads can render without recording a second user consumption row. */
   skipLogging?: boolean;
   /**
-   * Read without side effects (`akm ui`): no usage events, no index refresh and
+   * Read without side effects (the workspace): no usage events, no index refresh and
    * no workflow-run lookup, so the show never counts as demand and never writes
    * `index.db` or `state.db`. Implies `skipLogging`.
    */

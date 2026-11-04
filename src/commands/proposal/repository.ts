@@ -691,7 +691,7 @@ export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: Propo
   return withProposalsDb(ctx, (db) => resolveProposalIdIn(db, stashDir, idOrRef));
 }
 
-/** {@link resolveProposalId} over a connection the caller holds (`akm ui` reads state.db read-only). */
+/** {@link resolveProposalId} over a connection the caller holds (the workspace reads state.db read-only). */
 export function resolveProposalIdIn(db: Database, stashDir: string, idOrRef: string): Proposal {
   const exact = getStateProposal(db, idOrRef, stashDir);
   if (exact) return exact;
@@ -2635,7 +2635,7 @@ export function diffProposal(
   return diffLoadedProposal(config, getProposal(stashDir, id, ctx), options);
 }
 
-/** {@link diffProposal} for a proposal the caller already read (`akm ui` reads state.db read-only). */
+/** {@link diffProposal} for a proposal the caller already read (the workspace reads state.db read-only). */
 export function diffLoadedProposal(
   config: AkmConfig,
   proposal: Proposal,

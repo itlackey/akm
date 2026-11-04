@@ -22,9 +22,7 @@
       "src/**",
       "tests/**",
       "scripts/*.ts",
-      "!src/assets/templates/html",
       "!src/vendor/**",
-      "!src/assets/ui/echarts.js",
       "!tests/fixtures/goldens/**/*.json",
       "!tests/fixtures/format-family-goldens/**/*.json",
       "!.claude/**",
@@ -32,6 +30,7 @@
       "!desktop/**/*.svelte",
       "!desktop/node_modules",
       "!desktop/.core",
+      "!desktop/.core.json",
       "!desktop/.svelte-kit",
       "!desktop/build",
       "!desktop/out",
@@ -66,7 +65,7 @@
     },
     {
       "includes": [
-        "src/assets/ui/**/*.css"
+        "desktop/src/lib/ui/**/*.css"
       ],
       "linter": {
         "rules": {

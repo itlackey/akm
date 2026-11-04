@@ -3,7 +3,7 @@
 
 /* Design tokens: colour (a light-dark() pair per token), space, type, radius and layout vocabulary. */
 @layer tokens {
-  /* akm ui. Colours, space, type, radius and elevation are tokens on :root; each colour is a light-dark() pair, so the system scheme picks one and the Theme control can force either. */
+  /* Desktop design tokens. Colours, space, type, radius and elevation are tokens on :root; each colour is a light-dark() pair, so the system scheme picks one and the Theme control can force either. */
   :root {
     color-scheme: light dark;
     accent-color: var(--accent);

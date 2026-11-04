@@ -18,22 +18,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `akm-cli/workspace` (Experimental) is a set of typed application operations for a trusted
   desktop host (#1423): `assets`, `documents`, `proposals`, `bundles`, `config`, `feedback`,
-  `sensitive` (env and secrets), `activity` and `host`, each taking one typed input and returning
+  `sensitive` (env and secrets) and `activity`, each taking one typed input and returning
   plain data, plus the error classes, `CONFLICT_CODES`, URL redaction and `indexWrittenAssets`.
   The operations own the policy: revisions are the sha256 of the raw bytes and are checked inside
   the write lease (a manual retire mints its proposal from exactly the bytes the caller saw),
   interactive writes fail fast with `ASSET_MUTATION_LEASE_HELD` instead of waiting ten minutes,
-  and every failed id of a batch decision carries its error `code`. `akm ui`'s routes are thin
-  adapters over the same operations. `akm-cli/api` is unchanged.
+  and every failed id of a batch decision carries its error `code`. `docs/reference/workspace.md`
+  lists what each operation takes and returns. `akm-cli/api` is unchanged.
 
 - `akm secret remove` is back, shaped like `akm env remove` (`--yes`, `--bundle`; it removes
   the file and its `.sensitive` marker). It names its file through the write-target resolver,
   as `env remove` does.
 
 ### Changed
-
-- `akm ui` is frozen: AKM Desktop supersedes it and it will be removed in a later release. It gets
-  no new pages or routes (`STABILITY.md`, `docs/reference/ui-api.md`).
 
 - The reflect judge's rubric says adding a field the source lacks is needed, not churn, and
   drops nothing, so PRESERVATION is judged on the fields the source already had. The judge had
@@ -54,6 +51,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `akm improve judge --strategy`: a strategy never chose where the judge ran. The command
   is now `akm judge reflect.quality` in its older input and output shape.
+
+- `akm ui` and the `/api/` server behind it, and `--format html` (`akm health --report`, `akm metrics`
+  and the generic rendering of every other command). AKM Desktop replaces both. `--format html` is now
+  a usage error (exit 2) that names AKM Desktop and `--format md`; `output.format: html` in config
+  warns once and is ignored, so the default format applies. `--format json|jsonl|yaml|text|md` are
+  unchanged, and `akm health`, `--window-compare` and `akm metrics --detail full` still give the
+  same data. The `html` value is gone from the config schema and shell completions.
+  `docs/reference/ui-api.md` is now `docs/reference/workspace.md`.
 
 ### Fixed
 
@@ -86,6 +91,8 @@ AKM Desktop ships in the same release as the akm it embeds: one version, one tag
   An index written by a newer akm now says to update Desktop.
 - The `install.sh` and `install.ps1` attached to a release install that release. Desktop's Install AKM
   CLI uses the installer of its own release.
+- Desktop replaces `akm ui` and akm's HTML reports (both removed, see Removed above). Add bundle opens
+  the operating system's folder dialog.
 
 ## [0.10.261105] - 2026-11-02
 

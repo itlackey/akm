@@ -330,7 +330,7 @@ describe("error class hints", () => {
       "Pick one of: local, registry, all, or a configured source name.",
     );
     expect(new UsageError("bad format", "INVALID_FORMAT_VALUE").hint()).toBe(
-      "Pick one of: json, jsonl, yaml, text, md, html.",
+      "Pick one of: json, jsonl, yaml, text, md.",
     );
     expect(new UsageError("bad detail", "INVALID_DETAIL_VALUE").hint()).toBe(
       "Pick one of: brief, normal, full, agent.",
@@ -705,7 +705,6 @@ describe("S11: sectioned root help", () => {
         "lint",
         "health",
         "metrics",
-        "ui",
         "config",
         "models",
         "registry",

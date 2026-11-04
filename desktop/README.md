@@ -9,9 +9,8 @@ Linux development build. The task-first v1 includes:
 website-like search and reading, a bundle-folder workspace for curation, a focused
 proposal review desk, and separate technical views for health and metrics.
 The Attention desk Home page provides a compact starting point for those workflows.
-The compact top bar and established AKM palette remain. This is
-not a pixel-for-pixel copy of `akm ui` or a claim that the larger asset-manager
-design is complete.
+The compact top bar and established AKM palette remain. This does not claim
+that the larger asset-manager design is complete.
 Desktop's version is the version of the AKM it embeds (one version, one release); the commit ID is shown separately.
 No public release, background service, or remote-management endpoint is included.
 See [verification](docs/verification.md) for evidence and limits.

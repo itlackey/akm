@@ -6,8 +6,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
-  import { api, date } from "./client";
-  import LibraryFolderPicker from "./LibraryFolderPicker.svelte";
+  import { api, date, pickFolder } from "./client";
   import SettingsBundleCard from "./SettingsBundle.svelte";
   import SettingsFieldControl from "./SettingsField.svelte";
   import Software from "./Software.svelte";
@@ -27,8 +26,7 @@
     busy = false,
     loading = true,
     receipt = "",
-    generation = 0,
-    picker = false;
+    generation = 0;
   let sourceInput: HTMLInputElement,
     source = "",
     name = "",
@@ -310,14 +308,14 @@
     await refreshBundles();
     await load();
   }
-  async function pick(path: string) {
-    source = path;
-    picker = false;
-    await tick();
-    sourceInput.focus();
-  }
-  async function closePicker() {
-    picker = false;
+  async function browse() {
+    error = "";
+    try {
+      const folder = await pickFolder(source.startsWith("/") || source.startsWith("~") ? source : "");
+      if (folder !== null) source = folder;
+    } catch (cause) {
+      error = (cause as Error).message;
+    }
     await tick();
     sourceInput.focus();
   }
@@ -435,7 +433,7 @@
                   required
                   placeholder="Local folder, Git source, npm package or docs URL"
                   autocomplete="off"
-                /><button class="btn-secondary" type="button" on:click={() => (picker = true)}>Browse folders…</button>
+                /><button class="btn-secondary" type="button" on:click={browse}>Browse folders…</button>
               </div>
             </div>
             <label class="field">Name (optional)<input bind:value={name} /></label><label class="check-label"
@@ -662,12 +660,6 @@
       </div>
     </div>
   {/if}
-  {#if picker}<LibraryFolderPicker
-      root={null}
-      start={source.startsWith("/") || source.startsWith("~") ? source : ""}
-      on:choose={(event) => pick(event.detail)}
-      on:close={closePicker}
-    />{/if}
 {/if}
 
 <style>

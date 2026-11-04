@@ -8,6 +8,7 @@ import {
   ancestorPaths,
   directoryKey,
   filesHref,
+  folderUnder,
   parentPath,
   parseFilesHref,
   treeNodes,
@@ -97,4 +98,12 @@ test("tree only presents expanded immediate directory responses and keeps bundle
   assert.equal(visible[3].position, 2);
   assert.equal(visible[3].size, 2);
   assert.equal(visible[3].parentKey, folder);
+});
+
+test("a chosen folder is a path under the root, with either separator, or nothing", () => {
+  assert.equal(folderUnder("/lib/personal/knowledge", "/lib/personal/knowledge"), "");
+  assert.equal(folderUnder("/lib/personal/knowledge/", "/lib/personal/knowledge/runbooks/backup/"), "runbooks/backup");
+  assert.equal(folderUnder("C:\\lib\\knowledge", "C:\\lib\\knowledge\\runbooks"), "runbooks");
+  assert.equal(folderUnder("/lib/personal/knowledge", "/lib/personal/knowledge-other"), null);
+  assert.equal(folderUnder("/lib/personal/knowledge", "/elsewhere"), null);
 });

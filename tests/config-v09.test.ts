@@ -71,6 +71,22 @@ describe("0.9 config contract", () => {
     }
   });
 
+  test("output.format html is named once, ignored for the default, and the rest of the config still loads", () => {
+    writeConfig({ output: { format: "html", detail: "full" }, semanticSearchMode: "off" });
+    const warnings = captureWarnings(() => {
+      const config = loadUserConfig();
+      expect(config.output?.format).toBe("json");
+      expect(config.output?.detail).toBe("full");
+      expect(config.semanticSearchMode).toBe("off");
+      resetConfigCache();
+      loadUserConfig();
+    });
+    const named = warnings.filter((w) => w.includes('output.format "html"'));
+    expect(named).toHaveLength(1);
+    expect(named[0]).toContain("AKM Desktop");
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).output.format).toBe("html");
+  });
+
   test("akm migrate apply's config step writes configVersion 0.9.0 back", () => {
     writeConfig({ configVersion: "0.8.0", engines: {} });
     const preview = normalizeConfigFile(getConfigPath(), { apply: false });

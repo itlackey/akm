@@ -257,7 +257,7 @@ export const COMPOSITION_INVALID_MULTI_JOB_HINT =
 const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   INVALID_FLAG_VALUE: "Run `akm <command> --help` to see accepted values.",
   INVALID_SOURCE_VALUE: "Pick one of: local, registry, all, or a configured source name.",
-  INVALID_FORMAT_VALUE: "Pick one of: json, jsonl, yaml, text, md, html.",
+  INVALID_FORMAT_VALUE: "Pick one of: json, jsonl, yaml, text, md.",
   INVALID_DETAIL_VALUE: "Pick one of: brief, normal, full, agent.",
   INVALID_JSON_CONFIG_VALUE:
     'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.',

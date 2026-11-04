@@ -206,7 +206,7 @@ describe("akm metrics", () => {
     expect(never.result.notes.filter((note) => note.includes("keeps"))).toHaveLength(1);
   });
 
-  test("rows ride along with --detail full and --format html, not by default", async () => {
+  test("rows ride along with --detail full, not by default", async () => {
     const at = sqliteTs(Date.now() - HOUR);
     seedUsage([{ type: "search", at, query: "needle-query", metadata: { resultCount: 1 } }]);
     appendEvent(
@@ -222,9 +222,6 @@ describe("akm metrics", () => {
     expect(full.rows?.usage[0]).toMatchObject({ eventType: "search", query: "needle-query", resultCount: 1 });
     expect(full.rows?.usage[0]?.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/);
     expect(full.rows?.llm).toHaveLength(1);
-    const html = await runCliStatus(["metrics", "--format", "html"]);
-    expect(html.status).toBe(0);
-    expect(html.stdout).toContain("needle-query");
   });
 
   test("utility, outcomes and ref resolution read index.db and state.db", async () => {

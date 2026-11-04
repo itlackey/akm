@@ -29,6 +29,10 @@ export async function api<T = unknown>(path: string, query: Record<string, strin
   if (!response.ok) throw new ApiError(data.error ?? "The request failed.", data.code ?? "", response.status);
   return data.ok === true && Object.hasOwn(data, "data") ? data.data : data;
 }
+/** The folder the person picks in the operating system's dialog (AKM Desktop app only), or null when they cancel. */
+export async function pickFolder(start = ""): Promise<string | null> {
+  return (await api<{ path: string | null }>("/desktop/pick-folder", {}, start ? { start } : {})).path;
+}
 export function title(asset?: AssetSummary): string {
   const explicit = asset?.title ?? asset?.metadata?.title ?? asset?.frontmatter?.title;
   return typeof explicit === "string" && explicit
@@ -43,7 +47,7 @@ export function matchesAssetRef(hit: AssetSummary, ref: string, defaultBundle: s
   const qualify = (value: string, bundle: string) => (value.includes("//") || !bundle ? value : `${bundle}//${value}`);
   return qualify(hit.ref, hit.origin || defaultBundle) === qualify(ref, defaultBundle);
 }
-/** Same display contract as akm ui: documents, command templates, and agent prompts. */
+/** The display contract for documents, command templates, and agent prompts. */
 export function assetSource(asset?: Partial<Asset> | null): string {
   return asset?.content || asset?.template || asset?.prompt || "";
 }

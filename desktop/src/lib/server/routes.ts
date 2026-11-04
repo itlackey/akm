@@ -4,7 +4,7 @@
 
 import { createRequire } from "node:module";
 import os from "node:os";
-import { activity, assets, bundles, config, documents, feedback, host, proposals, sensitive } from "akm-cli/workspace";
+import { activity, assets, bundles, config, documents, feedback, proposals, sensitive } from "akm-cli/workspace";
 import { hostUpgradeOutrunsDesktop } from "../engine-skew.js";
 import { readFile, saveFile } from "./features/files.js";
 import { readPreferences, saveTheme, validTheme } from "./features/preferences.js";
@@ -118,6 +118,20 @@ export const routes: Route[] = [
       );
     }
   }),
+  post("/api/desktop/pick-folder", async (value) => {
+    const { start } = fields<{ start?: unknown }>(value, ["start"], "folder dialog");
+    if (start !== undefined && typeof start !== "string")
+      throw new HttpFailure(400, "INVALID_FOLDER_DIALOG", "The folder dialog start must be a path.");
+    try {
+      return { path: await desktopApp("pick-folder", start === undefined ? {} : { start }) };
+    } catch (error) {
+      throw new HttpFailure(
+        400,
+        "FOLDER_DIALOG_FAILED",
+        error instanceof Error ? error.message : "The folder dialog failed.",
+      );
+    }
+  }),
   get("/api/desktop/file", (query) => readFile(Object.fromEntries(query)), true),
   post("/api/desktop/file/save", (value) => saveFile(value), { limit: "document" }),
   get("/api/desktop/sensitive", (query) => sensitive.describe(Object.fromEntries(query))),
@@ -178,7 +192,6 @@ export const routes: Route[] = [
     assets.bundleFiles({ bundle: text(query, "bundle"), path: text(query, "path"), hidden: flag(query, "hidden") }),
   ),
   get("/api/config", () => config.get()),
-  get("/api/fs/folders", (query) => host.folders({ path: text(query, "path"), hidden: flag(query, "hidden") })),
   get("/api/proposals", (query) =>
     proposals.list({
       status: text(query, "status"),

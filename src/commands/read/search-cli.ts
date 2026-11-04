@@ -23,7 +23,7 @@ import { UsageError } from "../../core/errors";
 import { isoDay } from "../../core/time";
 import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { getOutputMode, type OutputMode } from "../../output/context";
-import { deliverRendered } from "../../output/html-render";
+import { deliverRendered } from "../../output/stdout";
 import type { FragmentContextMode, ShowDetailLevel } from "../../sources/types";
 import { akmCurate, type CuratePackResult, type CurateResponse, packCuratedHits } from "./curate";
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./search";

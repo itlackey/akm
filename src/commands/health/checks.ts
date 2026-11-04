@@ -365,10 +365,9 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     run: (ctx) => semanticSearchCheck(ctx.semanticSearch),
   },
   {
-    // C2 (13-bus-factor): the cron task-failure rate was computed and rendered
-    // in the HTML report but never surfaced as an advisory, so a sustained
-    // 15–16% fail rate stayed invisible on `akm health`. Warn at/above the SAME
-    // 5% threshold the html-report badge uses (see TASK_FAIL_RATE_WARN).
+    // C2 (13-bus-factor): the cron task-failure rate was computed but never
+    // surfaced as an advisory, so a sustained 15–16% fail rate stayed
+    // invisible on `akm health`. Warn at/above TASK_FAIL_RATE_WARN (5%).
     //
     // Item 6: the aggregate can hide a single consistently-failing task inside
     // a large, mostly-healthy population (e.g. 1 flaky task at 100 rows total

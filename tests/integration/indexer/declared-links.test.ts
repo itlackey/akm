@@ -18,13 +18,13 @@ import path from "node:path";
 import { akmCurate } from "../../../src/commands/read/curate";
 import { akmShowUnified } from "../../../src/commands/read/show";
 import { assembleInfo } from "../../../src/commands/sources/info";
-import { handleApiRequest } from "../../../src/commands/ui/api";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getConfigPath, getDbPath } from "../../../src/core/paths";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { rekeyEntryInPlace, renameEntriesBundleId } from "../../../src/storage/repositories/index-entries-repository";
+import { assets } from "../../../src/workspace";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -165,13 +165,13 @@ describe("declared links", () => {
       ]);
       expect((await akmShowUnified({ ref: source })).links?.outgoing?.links_to?.refs).toEqual([harbor, mooring]);
       expect((await akmShowUnified({ ref: harbor })).links?.incoming?.links_to?.refs).toEqual([source]);
-      const uiLinks = async (ref: string) => {
-        const detail = (await handleApiRequest("/api/asset", new URLSearchParams({ ref }))) as {
+      const workspaceLinks = async (ref: string) => {
+        const detail = (await assets.show({ ref })) as {
           asset: Awaited<ReturnType<typeof akmShowUnified>>;
         };
         return detail.asset.links;
       };
-      expect((await uiLinks(source))?.outgoing?.links_to?.refs).toEqual([harbor, mooring]);
+      expect((await workspaceLinks(source))?.outgoing?.links_to?.refs).toEqual([harbor, mooring]);
       expect((await akmShowUnified({ ref: "knowledge/harbor" })).links).toBeUndefined();
       const support = async () => {
         const item = (await akmCurate({ query: "zeppelin rollout", limit: 1 })).items[0];
@@ -194,8 +194,8 @@ describe("declared links", () => {
       });
       expect((await akmShowUnified({ ref: harbor })).links).toBeUndefined();
       expect(await support()).toBeUndefined();
-      expect((await uiLinks(source))?.unresolved?.links_to?.refs).toEqual(["pages/mooring"]);
-      expect(await uiLinks(harbor)).toBeUndefined();
+      expect((await workspaceLinks(source))?.unresolved?.links_to?.refs).toEqual(["pages/mooring"]);
+      expect(await workspaceLinks(harbor)).toBeUndefined();
       const incremental = storedLinks();
       await akmIndex({ stashDir: storage.stashDir, full: true });
       expect(storedLinks()).toEqual(incremental);

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm metrics` result shape (schemaVersion 1). Every renderer (text, md, html) is a pure
+ * `akm metrics` result shape (schemaVersion 1). Every renderer (text, md) is a pure
  * function of this envelope.
  */
 
@@ -180,8 +180,7 @@ export interface AkmMetricsResult {
   workflows: { runs: number; byStatus: Record<string, number>; tokens: number; byModel: Record<string, number> };
   /**
    * Window rows: usage rows as recorded, LLM calls summed per day and
-   * dimension. Present when `--format html` or `--detail full`; the HTML
-   * dashboard re-aggregates from these client-side.
+   * dimension. Present when `--detail full`.
    */
   rows?: { usage: MetricsUsageRow[]; llm: MetricsLlmRow[] };
   notes: string[];

@@ -19,7 +19,7 @@ import { clearLogFile, setLogFile, warnOnce } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { runJudge } from "../../judges/registry";
 import { getOutputMode } from "../../output/context";
-import { deliverRendered } from "../../output/html-render";
+import { deliverRendered } from "../../output/stdout";
 import { readStdin } from "../../runtime";
 import { akmImprove, IMPROVE_TARGET_FLAG, resolveImproveReadSource } from "./improve";
 import { runImproveReportQuery } from "./improve-report";

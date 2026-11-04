@@ -1040,7 +1040,7 @@
     overflow: auto;
   }
 
-  /* ---- input with an action, and the folder picker ---- */
+  /* ---- input with an action ---- */
   .field-control {
     display: flex;
     min-inline-size: 0;
@@ -1054,8 +1054,8 @@
     }
   }
 
-  .folder-picker,
   .shortcut-help {
+    inline-size: min(28rem, calc(100% - var(--space-5)));
     padding: 0;
     border: 2px solid var(--rule);
     border-radius: var(--radius);
@@ -1063,95 +1063,6 @@
     color: var(--text);
     &::backdrop {
       background: color-mix(in srgb, var(--bg) 75%, transparent);
-    }
-  }
-
-  .folder-picker {
-    inline-size: min(36rem, calc(100% - var(--space-5)));
-    max-block-size: calc(100dvh - var(--space-6));
-  }
-
-  .shortcut-help {
-    inline-size: min(28rem, calc(100% - var(--space-5)));
-  }
-
-  .folder-picker-body {
-    display: flex;
-    flex-direction: column;
-    max-block-size: calc(100dvh - var(--space-6));
-    & > header,
-    & > footer,
-    & > .folder-path {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: var(--space-3);
-      padding: var(--space-3) var(--space-4);
-    }
-    & > header {
-      justify-content: space-between;
-      border-block-end: 1px solid var(--rule);
-      & h2 {
-        margin: 0;
-      }
-    }
-    & > footer {
-      justify-content: flex-end;
-      border-block-start: 1px solid var(--border);
-      background: var(--surface-2);
-      & .check-label {
-        margin-inline-end: auto;
-      }
-    }
-    & > .folder-path {
-      border-block-end: 1px solid var(--border);
-      & code {
-        overflow-wrap: anywhere;
-      }
-    }
-    & > .notice {
-      margin: var(--space-3) var(--space-4) 0;
-    }
-  }
-
-  .folder-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    min-block-size: 8rem;
-    overflow-y: auto;
-  }
-
-  .folder-empty {
-    padding: var(--space-4);
-  }
-
-  .folder-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    inline-size: 100%;
-    padding: var(--space-2) var(--space-4);
-    border: 0;
-    border-block-end: 1px solid var(--border);
-    border-radius: 0;
-    background: transparent;
-    color: var(--text);
-    font-weight: 500;
-    text-align: start;
-    overflow-wrap: anywhere;
-    &:hover:not(:disabled) {
-      background: var(--surface-2);
-      border-color: var(--border);
-    }
-    & svg {
-      flex: none;
-      inline-size: 18px;
-      block-size: 18px;
-      stroke: var(--accent);
-      fill: none;
-      stroke-width: 1.75;
-      stroke-linejoin: round;
     }
   }
 
