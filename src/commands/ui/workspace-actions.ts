@@ -10,8 +10,8 @@ import { AkmError, type AkmErrorKind, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
 import { assertUnsettable, setConfigValue, unsetConfigValue } from "../config-cli";
+import { akmSaveDocument } from "../read/document";
 import { writeMarkdownAsset } from "../read/knowledge";
-import { readDocumentSource, saveSingleFileDocument } from "./document-source";
 import { retireAsset } from "./manual-retire";
 import { assertWriteLeaseFree, classifyProposalError, type ProposalActionError } from "./proposal-actions";
 import { redactForUi, redactUrlsInText } from "./redact";
@@ -321,27 +321,7 @@ export async function handleWorkspaceAction(action: WorkspaceAction, value: unkn
       const revision = text(body, "revision");
       const ref = text(body, "ref");
       await assertWriteLeaseFree("ui-document-save");
-      // Each writer takes the lease and compares `revision` with the live bytes inside it.
-      const source = await readDocumentSource(ref);
-      if (source.type !== "knowledge" && source.type !== "memory")
-        return saveSingleFileDocument(ref, content, revision);
-      const identity = parseRefInput(source.ref);
-      const result = await writeMarkdownAsset({
-        type: source.type,
-        content,
-        name: identity.name,
-        fallbackPrefix: source.type,
-        target: identity.origin,
-        force: true,
-        expectedContentHash: revision,
-      });
-      if (!result.unchanged)
-        appendEvent({
-          eventType: source.type === "knowledge" ? "import" : "remember",
-          ref: result.ref,
-          metadata: { source: "ui", path: result.path, force: true },
-        });
-      return result;
+      return akmSaveDocument(ref, content, revision);
     }
     case "knowledge-create": {
       if (typeof body.content !== "string" || !body.content.trim())

@@ -602,10 +602,10 @@ function proposalTargetCount(db: Database, bundleId: string): number {
     db
       .prepare(
         `SELECT COUNT(*) AS n FROM proposals
-         WHERE json_extract(metadata_json, '$.proposedTarget.source') = ?1
-            OR json_extract(metadata_json, '$.acceptedTarget.source') = ?1`,
+         WHERE json_extract(metadata_json, '$.proposedTarget.source') = ?
+            OR json_extract(metadata_json, '$.acceptedTarget.source') = ?`,
       )
-      .get(bundleId) as { n: number }
+      .get(bundleId, bundleId) as { n: number }
   ).n;
 }
 

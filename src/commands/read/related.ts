@@ -3,32 +3,45 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
+import { parseBundleRef } from "../../core/asset/asset-ref";
+import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { applyEntryFilters } from "../../indexer/search/db-search";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
-import { getEntriesByIds, getEntryIdByFilePath } from "../../storage/repositories/index-entries-repository";
+import {
+  getEntriesByIds,
+  getEntryIdByFilePath,
+  getItemRefById,
+} from "../../storage/repositories/index-entries-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import {
   getAllEntriesForEmbedding,
   getNeighborsByEntryId,
   hasStoredEmbedding,
 } from "../../storage/repositories/index-vec-repository";
+import { akmShowUnified } from "./show";
 
 const RELATED_LIMIT = 20;
 
+export type RelatedScope = "all" | "bundle";
+
 /**
- * The indexed assets whose stored embeddings are nearest to one asset's, with no query embedding and no network.
- * Search's own entry filter keeps the matches to enabled bundles, and `scope: "bundle"` to the asset's bundle;
+ * The indexed assets whose stored embeddings are nearest to those of the asset at `ref`, with no query embedding and
+ * no network. Search's own entry filter keeps the matches to enabled bundles, and scope `bundle` to the asset's bundle;
  * protected and generated assets are never listed.
  */
-export function relatedAssets(file: string, bundle: string, scope: "all" | "bundle") {
+export async function akmRelated(ref: string, scope: RelatedScope = "all") {
   const unavailable = (note: string) => ({ available: false, note, matches: [] });
+  const type = typeNameFromConceptId(parseBundleRef(ref).conceptId)?.type;
+  if (type === "env" || type === "secret") return unavailable("This asset has no comparable indexed content.");
+  const file = (await akmShowUnified({ ref, readOnly: true })).path;
   const db = openReadonlyExistingDatabase();
   if (!db) return unavailable("No index is available. Build the AKM index to compare stored embeddings.");
   try {
-    const id = getEntryIdByFilePath(db, file);
-    if (id === undefined || !hasStoredEmbedding(db, id))
+    const id = file ? getEntryIdByFilePath(db, file) : undefined;
+    const bundle = id === undefined ? undefined : parseBundleRef(getItemRefById(db, id) ?? "").bundle;
+    if (id === undefined || !bundle || !hasStoredEmbedding(db, id))
       return unavailable(
         "No stored embedding for this asset. Run AKM indexing with embeddings enabled; browsing here never calls a provider.",
       );
