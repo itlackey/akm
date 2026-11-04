@@ -58,9 +58,10 @@ test("server code imports only akm-cli/workspace, Node, Electron and Desktop's o
 });
 
 test("the renderer imports akm-cli only as types", async () => {
-  for (const file of await readdir(path.join(desktop, "src/lib"), { recursive: true })) {
-    if (!/\.(?:ts|js|svelte)$/.test(file) || file.startsWith(`server${path.sep}`)) continue;
-    const source = await readFile(path.join(desktop, "src/lib", file), "utf8");
+  const serverSide = [`lib${path.sep}server${path.sep}`, `routes${path.sep}api${path.sep}`, "hooks.server.ts"];
+  for (const file of await readdir(path.join(desktop, "src"), { recursive: true })) {
+    if (!/\.(?:ts|js|svelte)$/.test(file) || serverSide.some((prefix) => file.startsWith(prefix))) continue;
+    const source = await readFile(path.join(desktop, "src", file), "utf8");
     for (const match of source.matchAll(/^\s*import\s+(?!type\b)[^;]*?from\s*['"]akm-cli[^'"]*['"]/gm))
       assert.fail(`${file}: ${match[0]}`);
   }

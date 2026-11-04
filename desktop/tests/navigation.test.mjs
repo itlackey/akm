@@ -60,6 +60,15 @@ test("pages are addressable; history, unsaved drafts and appearance survive navi
     await page.reload();
     await expect(page.locator("main")).toContainText("Restored unsaved draft");
     assert.equal(await editor.inputValue(), draft);
+    // Back asks too; staying keeps the editor, leaving completes the same history step.
+    await page.goBack();
+    await expect(leave).toBeVisible();
+    await leave.getByRole("button", { name: "Stay in editor", exact: true }).click();
+    await expect(page).toHaveURL(/\/library\/edit/);
+    assert.equal(await editor.inputValue(), draft);
+    await page.goBack();
+    await leave.getByRole("button", { name: "Leave and keep draft", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
   });
 
   await t.test("the chosen appearance is saved and applied again after a reload", async () => {

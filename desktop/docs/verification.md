@@ -24,7 +24,9 @@ All tests create synthetic HOME/XDG/AKM directories, removed afterwards
 to keep screenshots). They do not use real bundles, providers, credentials or the
 host's installed CLI for workspace actions. Fixtures are built with the CLI:
 `akm index`, `akm proposal new` (a stand-in agent returns the proposal; no model runs),
-and `akm search`/`show`/`feedback` for usage. No test imports akm internals.
+and `akm search`/`show`/`feedback` for usage. Recorded task and improve runs and stored
+embeddings, which no command makes without a scheduler or a model, are inserted with SQL into
+the databases the CLI created. No test imports akm internals.
 
 | Layer | Where |
 | --- | --- |

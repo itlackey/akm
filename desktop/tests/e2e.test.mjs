@@ -12,7 +12,7 @@ import { go, launchFixture, open } from "./support.mjs";
 // Wiring only: each section shows what its operations return, reaches them, and shows a refusal. What the operations
 // decide (revisions, leases, staleness, write targets) is akm's and is tested there.
 test("built desktop UI: each section's happy path and one refusal", { timeout: 240000 }, async (t) => {
-  const server = await launchFixture({ proposals: true, metrics: true });
+  const server = await launchFixture({ proposals: true, metrics: true, similarity: true });
   t.after(() => server.stop());
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
@@ -56,6 +56,18 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     await page.getByRole("button", { name: "Retry overview", exact: true }).click();
     await expect(page.getByRole("alert")).toHaveCount(0);
   });
+
+  await t.test(
+    "Library: related assets list a stored-embedding match with its score (before any edit re-indexes it)",
+    async () => {
+      await go(page, `/library/asset?ref=${encodeURIComponent(server.refs.document)}`);
+      await page.getByRole("button", { name: "Related assets", exact: true }).click();
+      await page.getByRole("button", { name: "Similar content", exact: true }).click();
+      await expect(page.locator(".related-list")).toContainText("Shared backup");
+      await expect(page.locator(".score")).toContainText("0.994");
+      await go(page, "/library/search");
+    },
+  );
 
   await t.test("Library: search, read, edit and save; a concurrent change keeps the draft", async () => {
     await nav("Library").click();
@@ -167,6 +179,35 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
     await refuse("**/api/improve/impact*", 500, "INTERNAL_ERROR", "Impact could not be read.");
     await page.reload();
     await expect(page.getByText("Impact could not be read.")).toBeVisible();
+  });
+
+  await t.test("Activity: a recorded task run and an improve run open in place; Back returns focus", async () => {
+    await go(page, "/activity/overview?view=runs");
+    await page.getByRole("button", { name: "synthetic-failure", exact: true }).click();
+    const task = page.getByRole("region", { name: "Task run details", exact: true });
+    await expect(task).toBeFocused();
+    await expect(task).toContainText("failed");
+    await task.getByText("timeout", { exact: true }).click();
+    await expect(task).toContainText("Synthetic timeout");
+    const inspect = page.getByRole("button", { name: "Inspect run synthetic-improve", exact: true });
+    await inspect.click();
+    const run = page.getByRole("region", { name: "Improve run details", exact: true });
+    await expect(run.getByRole("table", { name: "Run calls by process" })).toContainText("reflect");
+    await run.getByRole("button", { name: "Back to run records", exact: true }).click();
+    await expect(inspect).toBeFocused();
+  });
+
+  await t.test("Activity: charts follow the chosen appearance", async () => {
+    await go(page, "/activity/overview?view=retrieval");
+    const label = page.locator("#activity-operations svg text").first();
+    await expect(label).toBeVisible();
+    const appearance = page.getByRole("combobox", { name: "Appearance" });
+    await appearance.selectOption("light");
+    await expect.poll(() => label.getAttribute("fill")).toBeTruthy();
+    const light = await label.getAttribute("fill");
+    await appearance.selectOption("dark");
+    await expect.poll(() => label.getAttribute("fill")).not.toBe(light);
+    await appearance.selectOption("system");
   });
 
   await t.test("Settings: a bundle setting persists; a refused save keeps the form", async () => {

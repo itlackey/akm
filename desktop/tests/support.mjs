@@ -7,6 +7,7 @@ import { execFileSync, fork } from "node:child_process";
 import { once } from "node:events";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { createFixture } from "../scripts/fixture.mjs";
 
@@ -67,6 +68,64 @@ function seedUsage(fixture) {
 }
 
 /**
+ * Recorded runs, which no CLI command creates without a scheduler or a model: one failed task run and one improve run,
+ * written into the state database the CLI made.
+ */
+function seedRuns(fixture) {
+  const db = new DatabaseSync(path.join(fixture.env.AKM_DATA_DIR, "state.db"));
+  const at = (minutesAgo) => new Date(Date.now() - minutesAgo * 60000).toISOString();
+  try {
+    db.prepare(
+      "INSERT INTO task_history (task_id, status, started_at, failed_at, target_kind, target_ref, metadata_json) VALUES (?, 'failed', ?, ?, 'agent', ?, ?)",
+    ).run(
+      "synthetic-failure",
+      at(10),
+      at(9),
+      "personal//agents/recovery-reviewer",
+      JSON.stringify({
+        metadataVersion: 2,
+        durationMs: 60000,
+        detail: { reason: "timeout", error: "Synthetic timeout: no network request was made.", exitCode: 1 },
+      }),
+    );
+    db.prepare(
+      "INSERT INTO improve_runs (id, started_at, completed_at, stash_dir, scope_mode, ok, strategy, result_json) VALUES (?, ?, ?, ?, 'all', 1, 'default', ?)",
+    ).run(
+      "synthetic-improve",
+      at(30),
+      at(29),
+      fixture.env.AKM_BUNDLE_DIR,
+      JSON.stringify({
+        usageReport: { byProcessEngineModel: [{ process: "reflect", calls: 3, failures: 0 }] },
+        triage: { promoted: 2, rejected: 1, failed: 0 },
+      }),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+/** Stored embeddings for two documents, so Similar content has a match to score (no embedding model runs). */
+function seedSimilarity(fixture) {
+  const db = new DatabaseSync(path.join(fixture.env.AKM_DATA_DIR, "index.db"));
+  try {
+    db.prepare("INSERT OR REPLACE INTO index_meta (key, value) VALUES ('embeddingFingerprint', 'fixture')").run();
+    for (const [ref, vector] of [
+      [fixture.refs.document, [1, 0]],
+      [fixture.refs.shared, [0.9, 0.1]],
+    ]) {
+      const { id } = db.prepare("SELECT id FROM entries WHERE item_ref = ?").get(ref);
+      db.prepare("INSERT OR REPLACE INTO embeddings (id, embedding, model) VALUES (?, ?, 'fixture')").run(
+        id,
+        Buffer.from(new Float32Array(vector).buffer),
+      );
+    }
+  } finally {
+    db.close();
+  }
+}
+
+/**
  * Open the app the way the launcher does (the one-time session URL sets the cookie), then optionally go to a route.
  * `go` navigates inside the running app, so drafts and in-memory state survive, as a click on a link would.
  */
@@ -87,6 +146,7 @@ export function go(page, href) {
 export async function launchFixture({
   proposals = false,
   metrics = false,
+  similarity = false,
   assetCount = 0,
   git = false,
   configureFixture,
@@ -94,7 +154,11 @@ export async function launchFixture({
   const fixture = await createFixture({ assetCount, git, packageRoot: appRoot });
   if (configureFixture) await configureFixture(fixture);
   if (proposals) fixture.proposals = await seedProposals(fixture);
-  if (metrics) seedUsage(fixture);
+  if (metrics) {
+    seedUsage(fixture);
+    seedRuns(fixture);
+  }
+  if (similarity) seedSimilarity(fixture);
   const child = fork(path.join(appRoot, "electron/server.mjs"), [], {
     env: fixture.env,
     execArgv: [],
