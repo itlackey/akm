@@ -72,6 +72,7 @@ const PASSTHROUGH_COMMANDS = [
   "registry-remove",
   "remember",
   "remove",
+  "secret-remove",
   "secret-set",
   "setup",
   "sync",

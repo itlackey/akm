@@ -14,12 +14,12 @@ import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { akmProposalAccept } from "../proposal/proposal";
 import { createRetireProposal, recordGateDecision, rejectProposalDurably } from "../proposal/repository";
-import { resolveWritableIndexedAsset } from "./document-source";
+import { isSingleFileDocumentType, resolveWritableIndexedAsset } from "./document-source";
 import { assertWriteLeaseFree } from "./proposal-actions";
 
 export async function retireAsset(ref: string, revision: string) {
   const identity = parseRefInput(ref);
-  if (["skill", "secret", "env", "session"].includes(identity.type))
+  if (identity.type === "skill" || !isSingleFileDocumentType(identity.type))
     throw new UsageError("Retire supports single-file assets, not skill packages or protected files.");
   await assertWriteLeaseFree("manual-retire");
   const { canonical, target, path: file } = await resolveWritableIndexedAsset(ref);

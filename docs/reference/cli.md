@@ -2639,15 +2639,15 @@ Subcommands:
 | `list` | List all secrets across all bundles by name (contents never shown) |
 | `set <ref>` | Create/overwrite a secret — value from stdin (default), `--from-file`, or `--from-env` |
 | `run <ref> <VAR> -- <command>` | Run a command with the secret value injected into `$VAR` in the child only |
+| `remove <ref>` | Remove a secret file (and its `.sensitive` marker). `--yes` skips the prompt; `--bundle` picks the write target |
 
-> **Removed in 0.9.0: `secret path` and `secret remove`.** The two resolved a
-> ref through *different* bundle-selection logic — `path` through the read-side,
-> all-sources resolver and `remove` through the write-target resolver — so for a
-> ref present in more than one bundle they could silently name different files:
-> you could inspect one secret and delete another. Both now exit 2 with
-> `Unknown command`. A ref's file lives at `<bundle>/secrets/<name>` (run
-> `akm bundle list` for bundle roots); locate or delete it there directly, or
-> use `akm secret run` to consume the value without touching disk.
+> **Removed in 0.9.0: `secret path`.** It exits 2 with `Unknown command`. A ref's
+> file lives at `<bundle>/secrets/<name>` (run `akm bundle list` for bundle
+> roots); use `akm secret run` to consume the value without touching disk.
+> `secret remove`, removed with it, is back as of 0.10. Like `akm env remove`,
+> it names its file through the write-target resolver only (`--bundle`, then
+> `defaultWriteTarget`, then the working bundle), so for a ref present in more
+> than one bundle name the bundle with `--bundle`.
 
 #### secret set
 

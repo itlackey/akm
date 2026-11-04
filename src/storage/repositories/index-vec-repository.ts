@@ -186,14 +186,21 @@ export function searchVec(
  * no re-embedding, no network. Returns [] when the entry has no stored
  * vector. Unscoped, the entry itself is typically returned with distance ~0;
  * callers filter it out by id. A `scope` confines the neighbours to one
- * bundle's entries of one type (see {@link searchVec}).
+ * bundle's entries of one type, and `filterCandidates` keeps only the entries it
+ * accepts (see {@link searchVec}).
  */
-export function getNeighborsByEntryId(db: Database, id: number, k: number, scope?: VecScope): DbVecResult[] {
+export function getNeighborsByEntryId(
+  db: Database,
+  id: number,
+  k: number,
+  scope?: VecScope,
+  filterCandidates?: CandidateFilter,
+): DbVecResult[] {
   const row = db.prepare("SELECT embedding FROM embeddings WHERE id = ?").get(id) as
     | { embedding: Uint8Array }
     | undefined;
   if (!row || row.embedding.byteLength % 4 !== 0) return [];
-  return searchVec(db, new Float32Array(row.embedding.slice().buffer), k, scope);
+  return searchVec(db, new Float32Array(row.embedding.slice().buffer), k, scope, filterCandidates);
 }
 
 /** Whether the entry has a stored vector (what {@link getNeighborsByEntryId} reads). */

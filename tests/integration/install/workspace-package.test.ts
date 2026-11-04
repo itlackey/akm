@@ -26,8 +26,7 @@ test.skipIf(process.env.AKM_WORKSPACE_PACKAGE_TESTS !== "1")(
       run("tar", ["-xzf", tarball, "--strip-components=1", "-C", installed]);
       // Reuse only dependencies, never checkout AKM code or a live/global installation.
       fs.symlinkSync(path.join(ROOT, "node_modules"), path.join(installed, "node_modules"), "junction");
-      // A Node TypeScript consumer supplies Node's ambient types; the generated
-      // workspace declarations now expose real Buffer/filesystem helper types.
+      // A Node TypeScript consumer supplies Node's ambient types (the declarations use Buffer).
       fs.symlinkSync(path.join(ROOT, "node_modules/@types"), path.join(scratch, "node_modules/@types"), "junction");
       const fixture = path.join(scratch, "smoke.mjs");
       fs.copyFileSync(path.join(ROOT, "tests/fixtures/workspace-package-smoke.mjs"), fixture);

@@ -536,7 +536,7 @@ function lstatOrNull(filePath: string): fs.Stats | null {
  * symbolic link below it (a linked directory would redirect the write out of
  * the bundle). The source root itself may be a symlink.
  */
-function assertWritePathsInsideSource(source: WriteTargetSource, filePaths: readonly string[]): void {
+export function assertWritePathsInsideSource(source: WriteTargetSource, filePaths: readonly string[]): void {
   const lexicalRoot = path.resolve(source.path);
   const canonicalRoot = fs.realpathSync(lexicalRoot);
   for (const filePath of filePaths) {

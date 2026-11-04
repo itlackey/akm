@@ -163,6 +163,7 @@ covers beyond the table.
 | `akm secret list` | Stable | Read-and-inject surface. |
 | `akm secret run` | Stable | Read-and-inject surface. |
 | `akm secret set` | Experimental | Write verb. |
+| `akm secret remove` | Experimental | Write verb; restored in 0.10 after its 0.9.0 removal. |
 | `akm task add` | Evolving | |
 | `akm task enable` | Evolving | |
 | `akm task disable` | Evolving | |
@@ -388,11 +389,11 @@ CHANGELOG with a migration note.
 Subject to change without notice within minor releases. Not yet recommended
 for scripted use.
 
-- **Local workspace API** — `akm-cli/workspace` exposes local UI dispatchers,
-  managed clone, file-safety, protected-file, bundle-management and read-only
-  stored-index helpers for trusted local hosts. It is not a stable SDK:
-  exports, signatures, result shapes and their supporting declaration graph
-  may change in any release. Hosts own authentication and transport limits.
+- **Local workspace API** — `akm-cli/workspace` exposes the local UI dispatchers,
+  managed clone, URL redaction, the error classes and the env/secret operations
+  for trusted local hosts. It is not a stable SDK: exports, signatures and
+  result shapes may change in any release. Hosts own authentication and
+  transport limits.
   See [Programmatic APIs](docs/reference/api.md#local-workspace-akm-cliworkspace).
 
 - **Workflows** — the whole `akm workflow` surface (`run`, `status`, `list`,

@@ -65,6 +65,7 @@ import { searchMisses } from "./misses";
 import { overviewPulse } from "./pulse";
 import { section, tryStashDir, withReadonlyStateDb } from "./readers";
 import { isSecretEnvName, redactForUi } from "./redact";
+import { relatedAssets } from "./related";
 
 type Query = URLSearchParams;
 type Handler = (query: Query) => unknown | Promise<unknown>;
@@ -667,6 +668,15 @@ async function asset(query: Query) {
   };
 }
 
+async function assetRelated(query: Query) {
+  const scope = query.get("scope") ?? "all";
+  if (scope !== "all" && scope !== "bundle") throw new UsageError("scope must be all or bundle.");
+  const selected = await asset(query);
+  if (selected.redacted || !selected.asset?.path || !selected.bundle)
+    return { available: false, note: "This asset has no comparable indexed content.", matches: [] };
+  return relatedAssets(selected.asset.path, selected.bundle, scope);
+}
+
 async function assetHistory(query: Query) {
   const selected = await asset(query);
   if (selected.redacted || !selected.asset?.path) return { available: false, commits: [] };
@@ -742,6 +752,7 @@ const ROUTES: Record<string, Handler> = {
   "/api/search": search,
   "/api/asset": asset,
   "/api/asset/history": assetHistory,
+  "/api/asset/related": assetRelated,
   "/api/asset/source": (query) => readDocumentSource(query.get("ref") ?? ""),
 };
 

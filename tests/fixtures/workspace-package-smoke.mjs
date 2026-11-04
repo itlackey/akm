@@ -38,18 +38,14 @@ const {
   AkmError,
 } = workspace;
 assert.equal(Boolean(process.versions.bun), process.argv[2] === "bun");
-assert.equal(Object.keys(workspace).length, 50);
+assert.equal(Object.keys(workspace).length, 23);
 for (const [name, value] of Object.entries(workspace)) assert.notEqual(value, undefined, name);
 for (const name of [
-  "getNeighborsByEntryId",
-  "indexWrittenAssets",
-  "withWriteTargetMutation",
   "UsageError",
   "writeEnv",
   "removeEnv",
-  "withSecretLock",
-  "renameBundle",
-  "akmTasksSync",
+  "setSecret",
+  "removeSecret",
   "withEnvSecretWrite",
   "sensitiveMarkerPath",
   "deriveCanonicalAssetName",
@@ -134,6 +130,36 @@ assert.ok(
     "planted-credential",
   ),
 );
+// Another single-file type saves through the same route; related content reports honestly without embeddings.
+fs.mkdirSync(path.join(stash, "scripts"), { recursive: true });
+fs.writeFileSync(path.join(stash, "scripts", "tool.sh"), "#!/bin/sh\necho one\n");
+execFileSync(process.execPath, [cli, "index", "--format=json"], { env: process.env, stdio: "pipe" });
+const script = await read("/api/asset/source", { ref: "stash//scripts/tool.sh" });
+await handleWorkspaceAction("document-save", {
+  ref: script.ref,
+  revision: script.revision,
+  content: "#!/bin/sh\necho two\n",
+});
+assert.equal(fs.readFileSync(path.join(stash, "scripts", "tool.sh"), "utf8"), "#!/bin/sh\necho two\n");
+assert.equal((await read("/api/asset/related", { ref: source.ref })).available, false);
+// The env/secret operations the CLI uses.
+const written = workspace.resolveSecretWriteTarget("secrets/smoke", "stash");
+workspace.withEnvSecretWrite(written.target, { type: "secret", name: written.name }, "Update", [written.absPath], () =>
+  workspace.setSecret(written.absPath, Buffer.from("synthetic")),
+);
+assert.equal(fs.readFileSync(written.absPath, "utf8"), "synthetic");
+assert.equal(workspace.resolveSecretPath("stash//secrets/smoke").absPath, written.absPath);
+assert.equal(
+  workspace.withEnvSecretWrite(
+    written.target,
+    { type: "secret", name: written.name },
+    "Remove",
+    [written.absPath],
+    () => workspace.removeSecret(written.absPath),
+  ),
+  true,
+);
+assert.equal(fs.existsSync(written.absPath), false);
 const current = await read("/api/asset/source", { ref: source.ref });
 const archived = await handleWorkspaceAction("document-retire", { ref: current.ref, revision: current.revision });
 assert.equal(fs.existsSync(path.join(stash, "knowledge/desktop-note.md")), false);

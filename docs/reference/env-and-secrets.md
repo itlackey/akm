@@ -170,7 +170,7 @@ need the index.
 
 ## Write-target resolution
 
-Env and secret mutations (`env create`, `env remove`, `secret set`) choose their
+Env and secret mutations (`env create`, `env remove`, `secret set`, `secret remove`) choose their
 destination like every other write command: an explicit `--bundle <source>`,
 else `defaultWriteTarget`, else the working bundle. The chosen source must be
 writable, or the command fails with a `ConfigError` before anything is written;
@@ -181,7 +181,7 @@ sources.
 ## Stability
 
 `env list`, `env path`, `env export`, `env run`, `secret list` and `secret run`
-are Stable. `env create`, `env remove` and `secret set` are Experimental. See
+are Stable. `env create`, `env remove`, `secret set` and `secret remove` are Experimental. See
 [STABILITY.md](../../STABILITY.md).
 
 ## See also

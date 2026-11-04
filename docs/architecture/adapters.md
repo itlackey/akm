@@ -171,7 +171,7 @@ The default allowlist is `["akm"]`. Two command families widen it explicitly:
 
 | Command | Allowlist adds |
 | --- | --- |
-| `akm env create` / `env remove` / `secret set` | `dotenv` |
+| `akm env create` / `env remove` / `secret set` / `secret remove` | `dotenv` |
 | `akm workflow create` | `akm-workflow` |
 
 Every other adapter (`agent-skills`, `claude`, `opencode`, `akm-task`,

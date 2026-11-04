@@ -85,10 +85,10 @@ returns is the CLI's agent-shaped output and changes whenever that does.
 
 ## Local workspace (`akm-cli/workspace`)
 
-This experimental namespace reuses core implementations instead of introducing
-a second storage policy. Use it server-side
-in a trusted local process, never in a renderer or remote/public service.
-Configure HOME/XDG and any AKM directory overrides before importing it.
+This experimental namespace re-exports a small set of existing operations instead of
+introducing a second storage policy. Use it server-side in a trusted local process, never in a
+renderer or remote/public service. Configure HOME/XDG and any AKM directory overrides before
+importing it.
 
 ```ts
 import {
@@ -119,18 +119,19 @@ akmClone(options: CloneOptions): Promise<CloneResponse>;
 
 `WorkspaceAction`, `WriteRoute`, `ProposalActionError`, `CloneOptions`,
 `CloneResponse` and `AkmErrorKind` are exported types. `AkmError` is the existing
-runtime error base (`kind`, `code`, `message`, `hint()`); classifiers return
-`{status, code, message}`. Unknown reads return the exported `NO_SUCH_ROUTE`
+runtime error base (`kind`, `code`, `message`, `hint()`) and `UsageError` its usage subclass;
+classifiers return `{status, code, message}`. Unknown reads return the exported `NO_SUCH_ROUTE`
 symbol; unknown write paths return `null`. Handler failures reject.
 
-The namespace also re-exports the existing configuration and write-target
-resolvers; asset path/ref and containment/atomic-file helpers; mutation leases,
-write boundaries, indexing and lint; environment/secret write helpers and
-marker paths; bundle rename and task synchronization; URL redaction and errors;
-and read-only index entry, stored-vector and metadata repository operations.
-These are trusted local building blocks, not an authorization layer. Their
-generated declarations are authoritative; none of these helpers or supporting
-types inherits the evolving recall API's compatibility promise.
+The namespace also exports the env/secret operations the CLI's `env` and `secret` commands call,
+for a host that shows and edits those files itself: `resolveEnvPath` / `resolveSecretPath` (an
+existing file, read side), `resolveEnvWriteTarget` / `resolveSecretWriteTarget` (the write
+target and file for a ref), `writeEnv`, `removeEnv`, `setSecret`, `removeSecret`,
+`withEnvSecretWrite` (the lease and git boundary around one write) and `sensitiveMarkerPath`,
+plus `deriveCanonicalAssetName` (the ref name of a bundle file, for a file that has no ref yet).
+These are trusted local building blocks, not an authorization layer. Nothing else is exported:
+no write primitives, leases, index or vector readers, and no bundle-rename or lint operations
+(the UI API's `bundle-rename` action and `GET /api/asset/related` cover those).
 
 The [UI API reference](ui-api.md) is the single source for route parameters,
 body validation and response shapes. Dispatchers return the raw `data`, not
@@ -158,14 +159,15 @@ a configured managed bundle; omission uses normal write-target resolution.
 `force` and `dest`. `CloneResponse` contains `source: {path, registryId?}`,
 `destination: {path, ref?}`, `overwritten`, and optional `remoteFetched` metadata.
 Clone retains the same writable-target validation and Git/index effects as
-the CLI; it is not a move or rename.
+the CLI; it is not a move or rename. A move is a copy followed by a retire of the original.
 
 The package maps this namespace to `dist/workspace.js` under Bun and
 `dist/workspace-node.mjs` under Node. The Node entry registers the existing
 embedded-text loader before importing the graph. `dist/workspace.d.ts` is
-generated from the implementations and checked by a strict Node TypeScript
-consumer of the tarball. The declaration graph is an implementation detail,
-not a stable API for deep imports. The existing `akm-cli/api` contract is unchanged.
+hand-written (the build emits no declarations), copied like `dist/api.d.ts`, and
+`tests/contracts/workspace-surface.test.ts` keeps it in step with `src/workspace.ts`; a strict
+Node TypeScript consumer of the tarball checks it too. The existing `akm-cli/api` contract is
+unchanged.
 
 After `bun run build`, `bun run test:workspace-package` runs
 `tests/integration/install/workspace-package.test.ts`, which packs

@@ -62,7 +62,7 @@ function rewriteSpec(spec: string, fromFileDir: string): string {
 let filesChanged = 0;
 let specsRewritten = 0;
 
-const glob = new Bun.Glob(`${DIST}/**/*.{js,d.ts}`);
+const glob = new Bun.Glob(`${DIST}/**/*.js`);
 for await (const file of glob.scan(".")) {
   const fromDir = dirname(file);
   const src = await readFile(file, "utf8");

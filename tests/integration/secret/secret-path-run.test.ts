@@ -3,17 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Secret `path`/`remove` removal (D-49) and `run` validation (in-process).
+ * Secret `path` removal (D-49) and `run` validation (in-process).
  *
- *   - `secret path` and `secret remove` were REMOVED from the CLI in 0.9.0
- *     (R-027 / D-49): an audit found `path` resolved a ref through the
- *     read-side, all-sources resolver while `remove` resolved it through the
- *     write-target resolver, so the two spellings could silently name
- *     DIFFERENT files for the same ref. The owner's ruling was to drop both
- *     subcommands rather than reconcile the resolvers (src/commands/env/secret-cli.ts).
- *     The regression tests below prove the removed spellings fail LOUDLY —
+ *   - `secret path` was REMOVED from the CLI in 0.9.0 (R-027 / D-49), with
+ *     `secret remove` (back in 0.10, see tests/secret.test.ts): an audit found
+ *     `path` resolved a ref through the read-side, all-sources resolver while
+ *     `remove` resolved it through the write-target resolver. The regression
+ *     test below proves the removed spelling fails LOUDLY —
  *     exit 2, citty's "Unknown command" — via a REAL subprocess. citty's own
- *     CLIError (thrown because "path"/"remove" are no longer keys in
+ *     CLIError (thrown because "path" is no longer a key in
  *     secretCommand.subCommands) is only reclassified from exit 1 to the
  *     documented exit 2 in the real entry point (`src/cli.ts`'s
  *     `import.meta.main`-gated startup block, R-032); the in-process harness
@@ -89,7 +87,7 @@ async function runCli(
   });
 }
 
-describe("secret path / secret remove — removed in 0.9.0", () => {
+describe("secret path — removed in 0.9.0", () => {
   test("`akm secret path <ref>` fails loudly: exit 2, citty's Unknown command, no path printed", () => {
     const stashDir = makeStash();
     const fp = path.join(stashDir, "secrets", "demo");
@@ -104,21 +102,6 @@ describe("secret path / secret remove — removed in 0.9.0", () => {
     expect(stdout).not.toContain(fp);
     expect(stdout).not.toContain("super-secret-token-value");
     expect(stderr).not.toContain("super-secret-token-value");
-  });
-
-  test("`akm secret remove <ref>` fails loudly: exit 2, citty's Unknown command, secret left untouched", () => {
-    const stashDir = makeStash();
-    const fp = path.join(stashDir, "secrets", "demo");
-    setSecret(fp, Buffer.from("v"));
-
-    const { stderr, status } = spawnCli(["secret", "remove", "secrets/demo", "--yes"], { AKM_BUNDLE_DIR: stashDir });
-
-    expect(status).toBe(2);
-    expect(stderr).toContain("Unknown command");
-    expect(stderr).toContain("remove");
-    // Not a silent no-op: the file must still exist — a removed verb must
-    // never fall through to some other mutation path.
-    expect(fs.existsSync(fp)).toBe(true);
   });
 });
 
