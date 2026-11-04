@@ -3,18 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `GET /api/overview/pulse`: the last seven days against the eight weeks before them (three tiles), the four-week improve
+ * The last seven days against the eight weeks before them (three tiles), the four-week improve
  * line, and what needs attention. Every figure is derived from the same stores `akm metrics` and `akm health` read, and a
  * range is only claimed when there is enough data to have a usual.
  */
 
-import { loadConfig } from "../../core/config/config";
-import { queryImproveRuns } from "../../storage/repositories/improve-runs-repository";
-import { listStateProposals } from "../../storage/repositories/proposals-repository";
-import { queryTaskHistory } from "../../storage/repositories/task-history-repository";
-import { metricsWindow, readLlmRows, readUsageRows } from "../metrics/metrics-cli";
-import type { MetricsUsageRow } from "../metrics/types";
-import { proposalWaitingSince } from "../proposal/proposal-types";
+import { metricsWindow, readLlmRows, readUsageRows } from "../commands/metrics/metrics-cli";
+import type { MetricsUsageRow } from "../commands/metrics/types";
+import { proposalWaitingSince } from "../commands/proposal/proposal-types";
+import { loadConfig } from "../core/config/config";
+import { queryImproveRuns } from "../storage/repositories/improve-runs-repository";
+import { listStateProposals } from "../storage/repositories/proposals-repository";
+import { queryTaskHistory } from "../storage/repositories/task-history-repository";
 import { againstUsual, classifyOutcome } from "./derive";
 import { isUserSearch, missesFromRows } from "./misses";
 import { tryStashDir, withReadonlyStateDb } from "./readers";

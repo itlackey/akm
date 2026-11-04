@@ -16,7 +16,7 @@
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
-import { NotFoundError } from "../../core/errors";
+import { AkmError, NotFoundError } from "../../core/errors";
 import type { ResolvedWriteTarget } from "../../core/write-source";
 import { resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
@@ -227,6 +227,8 @@ export interface ProposalAcceptFailure {
   ok: false;
   id: string;
   error: string;
+  /** The stable code of what went wrong, when it was an `AkmError`. */
+  code?: string;
 }
 
 /**
@@ -250,6 +252,7 @@ export async function akmProposalAcceptMany(
           ok: false,
           id,
           error: error instanceof Error ? error.message : String(error),
+          ...(error instanceof AkmError ? { code: error.code } : {}),
         });
       }
     }

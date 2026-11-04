@@ -3,32 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Proposal writes `akm ui` makes: accept and reject a proposal, and accept
- * several at once. Each handler calls the function `akm proposal accept` /
- * `reject` calls, with the arguments the CLI passes, so a UI decision is
- * recorded exactly like a CLI one (same state.db rows, events and commit).
- *
- * The server decides whether a request may reach this module (token header,
- * Origin, content type, body size); see `server.ts`. Everything else in the UI
- * is either a read in `api.ts` or an explicit action in `workspace-actions.ts`.
+ * The proposal decisions `akm ui` makes: a table from path to the workspace operation (`src/workspace/proposals.ts`)
+ * that accepts, rejects, reverts or reopens one proposal, or decides several. Each only turns a JSON body into that
+ * operation's input. Frozen with the rest of `akm ui`.
  */
 
-import { AkmError, UsageError } from "../../core/errors";
-import { assertWriteLeaseFree } from "../../indexer/index-writer-lock";
-import {
-  akmProposalAccept,
-  akmProposalAcceptMany,
-  akmProposalReject,
-  akmProposalReopen,
-  akmProposalRevert,
-  type ProposalAcceptFailure,
-  type ProposalAcceptResult,
-} from "../proposal/proposal";
-import { proposalSummary } from "./api";
-import { type GitCommitSummary, readBundleGitStatus } from "./git-read";
-
-export const MAX_REJECT_REASON = 2000;
-export const MAX_BATCH_IDS = 200;
+import { UsageError } from "../../core/errors";
+import { proposals } from "../../workspace";
 
 export type WriteRoute =
   | { kind: "accept"; id: string }
@@ -53,176 +34,29 @@ export function matchWriteRoute(pathname: string): WriteRoute | null {
   return { kind: match[2] as "accept" | "reject" | "revert" | "reopen", id };
 }
 
-// ── Errors ───────────────────────────────────────────────────────────────────
-
-const STALE_MESSAGE =
-  /target (?:changed after|was created after) proposal|^Retire proposal \S+ (?:target \(.*\) no longer exists|is stale )/;
-const NOT_PENDING_MESSAGE = /is not pending \(current status/;
-const LEASE_MESSAGE = /timed out waiting for asset mutation lease/;
-const NOT_FOUND_MESSAGE = /^Proposal ".*" not found|^No proposal found for ref/;
-
-export interface ProposalActionError {
-  status: number;
-  code: string;
-  message: string;
-}
-
-/** A stable code for an error the accept path reports only as text (a failed id inside a batch). */
-function codeForMessage(message: string): string | null {
-  if (STALE_MESSAGE.test(message)) return "PROPOSAL_STALE";
-  if (NOT_PENDING_MESSAGE.test(message)) return "PROPOSAL_NOT_PENDING";
-  if (LEASE_MESSAGE.test(message)) return "ASSET_MUTATION_LEASE_HELD";
-  if (NOT_FOUND_MESSAGE.test(message)) return "PROPOSAL_NOT_FOUND";
-  return null;
-}
-
-/** HTTP status and code for an error thrown by an accept or reject: 409 stale, not pending or lease held; 404; 400. */
-export function classifyProposalError(error: unknown): ProposalActionError {
-  const message = error instanceof Error ? error.message : String(error);
-  const byMessage = codeForMessage(message);
-  if (error instanceof AkmError) {
-    if (error.code === "ASSET_CONTENT_CHANGED") return { status: 409, code: error.code, message };
-    if (byMessage === "PROPOSAL_STALE" || byMessage === "PROPOSAL_NOT_PENDING") {
-      return { status: 409, code: byMessage, message };
-    }
-    switch (error.kind) {
-      case "transient":
-        return { status: 409, code: error.code, message };
-      case "not-found":
-        return { status: 404, code: error.code, message };
-      case "usage":
-        return { status: 400, code: error.code, message };
-      default:
-        return { status: 500, code: error.code, message };
-    }
-  }
-  if (byMessage === "ASSET_MUTATION_LEASE_HELD") return { status: 409, code: byMessage, message };
-  return { status: 500, code: "INTERNAL_ERROR", message };
-}
-
-// ── Input ────────────────────────────────────────────────────────────────────
-
-function bodyObject(body: unknown): Record<string, unknown> {
+/** The body as an object; an empty body is no fields. */
+function bodyFields(body: unknown): { reason?: string; ids?: string[] } {
   if (body === undefined || body === null) return {};
   if (typeof body !== "object" || Array.isArray(body)) {
     throw new UsageError("The request body must be a JSON object.", "INVALID_JSON_ARGUMENT");
   }
-  return body as Record<string, unknown>;
+  return body as { reason?: string; ids?: string[] };
 }
 
-function rejectReason(body: unknown): string {
-  const reason = bodyObject(body).reason;
-  if (typeof reason !== "string" || reason.trim() === "") {
-    throw new UsageError('A rejection needs a reason: {"reason": "..."}.', "MISSING_REQUIRED_ARGUMENT");
-  }
-  const trimmed = reason.trim();
-  if (trimmed.length > MAX_REJECT_REASON) {
-    throw new UsageError(`The reason is too long (${trimmed.length} characters; at most ${MAX_REJECT_REASON}).`);
-  }
-  return trimmed;
-}
-
-function batchIds(body: unknown): string[] {
-  const ids = bodyObject(body).ids;
-  if (!Array.isArray(ids) || ids.length === 0 || ids.length > MAX_BATCH_IDS) {
-    throw new UsageError(`"ids" must be a list of 1 to ${MAX_BATCH_IDS} proposal ids.`, "MISSING_REQUIRED_ARGUMENT");
-  }
-  for (const id of ids) {
-    if (typeof id !== "string" || id.trim() === "" || id.length > 200) {
-      throw new UsageError('Every entry of "ids" must be a non-empty proposal id string.');
-    }
-  }
-  return [...new Set((ids as string[]).map((id) => id.trim()))];
-}
-
-// ── Execution ────────────────────────────────────────────────────────────────
-
-type CommitSummary = GitCommitSummary & { repo: string };
-
-/**
- * The commit an accept just made, if any. The accept functions do not return it,
- * so read the head commit of each accepted proposal's repository and keep one
- * that carries akm's accept subject and is newer than the request. `null` for a
- * bundle that is not a git repository (nothing was committed).
- */
-async function acceptCommit(accepted: ProposalAcceptResult[], startedMs: number): Promise<CommitSummary | null> {
-  const roots = new Set<string>();
-  for (const result of accepted) {
-    const root = result.proposal.acceptedTarget?.root;
-    if (root) roots.add(root);
-  }
-  for (const root of roots) {
-    const last = (await readBundleGitStatus(root))?.lastCommit;
-    if (!last || !/^akm (?:proposal )?accept:/.test(last.subject)) continue;
-    if (Date.parse(last.time) < startedMs - 2000) continue;
-    return { ...last, repo: root };
-  }
-  return null;
-}
-
-function acceptedView(result: ProposalAcceptResult) {
-  return { ...result, proposal: proposalSummary(result.proposal) };
-}
-
-function failedView(failure: ProposalAcceptFailure) {
-  return { ...failure, code: codeForMessage(failure.error) ?? "ACCEPT_FAILED" };
-}
-
-/** Run one of the three write routes; errors propagate for the server to classify with {@link classifyProposalError}. */
 export async function handleWriteRequest(route: WriteRoute, body: unknown): Promise<unknown> {
-  const startedMs = Date.now();
+  const { reason, ids } = bodyFields(body);
   switch (route.kind) {
-    case "accept": {
-      await assertWriteLeaseFree("ui-proposal-accept");
-      const result = await akmProposalAccept({ id: route.id });
-      return { ...acceptedView(result), commit: await acceptCommit([result], startedMs) };
-    }
-    case "reject": {
-      const reason = rejectReason(body);
-      await assertWriteLeaseFree("ui-proposal-reject");
-      const result = await akmProposalReject({ id: route.id, reason });
-      return { ...result, proposal: proposalSummary(result.proposal) };
-    }
-    case "revert": {
-      await assertWriteLeaseFree("ui-proposal-revert");
-      const result = await akmProposalRevert({ id: route.id });
-      return { ...result, proposal: proposalSummary(result.proposal) };
-    }
-    case "reopen": {
-      await assertWriteLeaseFree("ui-proposal-reopen");
-      const [result] = await akmProposalReopen({ ids: [route.id] });
-      if (!result) throw new UsageError("The proposal was not reopened.");
-      return { ...result, proposal: proposalSummary(result.proposal) };
-    }
-    case "reject-many": {
-      const ids = batchIds(body);
-      const reason = rejectReason(body);
-      await assertWriteLeaseFree("ui-proposal-reject");
-      const results: Array<Record<string, unknown>> = [];
-      // One shared reason; each proposal is decided on its own, so one failure leaves the rest rejected.
-      for (const id of ids) {
-        try {
-          const result = await akmProposalReject({ id, reason });
-          results.push({ ok: true, id: result.id, ref: result.ref, proposal: proposalSummary(result.proposal) });
-        } catch (error) {
-          const { code, message } = classifyProposalError(error);
-          results.push({ ok: false, id, error: message, code });
-        }
-      }
-      const rejected = results.filter((r) => r.ok).length;
-      return { rejected, failed: results.length - rejected, results };
-    }
-    case "accept-many": {
-      const ids = batchIds(body);
-      await assertWriteLeaseFree("ui-proposal-accept");
-      const results = await akmProposalAcceptMany({ ids });
-      const accepted = results.filter((r): r is ProposalAcceptResult => r.ok);
-      return {
-        accepted: accepted.length,
-        failed: results.length - accepted.length,
-        results: results.map((r) => (r.ok ? acceptedView(r) : failedView(r))),
-        commit: accepted.length > 0 ? await acceptCommit(accepted, startedMs) : null,
-      };
-    }
+    case "accept":
+      return proposals.accept({ id: route.id });
+    case "reject":
+      return proposals.reject({ id: route.id, reason: reason as string });
+    case "revert":
+      return proposals.revert({ id: route.id });
+    case "reopen":
+      return proposals.reopen({ id: route.id });
+    case "accept-many":
+      return proposals.acceptMany({ ids: ids as string[] });
+    case "reject-many":
+      return proposals.rejectMany({ ids: ids as string[], reason: reason as string });
   }
 }

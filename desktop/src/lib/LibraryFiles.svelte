@@ -39,7 +39,7 @@
     loading = new Set([...loading, id]); errors.delete(id); errors = new Map(errors);
     const request = (async () => {
       try {
-        const result = await libraryRead<FileListing>('/bundle/files', { bundle, path: directory, ...(showHidden ? { hidden: '1' } : {}) }, signal);
+        const result = await libraryRead<FileListing>('/bundles/files', { bundle, path: directory, ...(showHidden ? { hidden: '1' } : {}) }, signal);
         if (signal.aborted || requestGeneration !== generation) return;
         listings = new Map(listings).set(id, result);
       } catch (cause) {

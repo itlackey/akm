@@ -12,8 +12,8 @@
  * where a credential comes from without being one.
  */
 
-import { isApiKeyReference } from "../../core/config/schema/primitives";
-import { REDACTED, redactUrlCredentials } from "../../core/redaction";
+import { isApiKeyReference } from "../core/config/schema/primitives";
+import { REDACTED, redactUrlCredentials } from "../core/redaction";
 
 /** Key names whose string values are credentials, or sit in a bag of them. */
 const SECRET_KEY = /(api[-_]?key|token|password|passwd|secret|credential|authorization|bearer|private[-_]?key)/i;

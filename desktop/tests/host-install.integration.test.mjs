@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { access } from 'node:fs/promises';
 import { createFixture } from '../scripts/fixture.mjs';
-import { HostTools } from '../src/lib/server/host-tools.mjs';
+import { HostTools } from '../src/lib/server/features/host-tools.mjs';
 
 test('official AKM installer creates and verifies a standalone CLI in an isolated home', {
   skip: process.env.AKM_DESKTOP_TEST_LIVE_INSTALL !== '1', timeout: 660000

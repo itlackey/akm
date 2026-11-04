@@ -3,17 +3,17 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `GET /api/improve/impact`: what improve proposed and changed in the environment, week by week, and what went wrong.
+ * What improve proposed and changed in the environment, week by week, and what went wrong.
  * One response feeds every section of the page; each store read degrades on its own, so one unreadable table leaves
  * the cards that do not depend on it. Nothing here writes.
  */
 
-import { readStateEvents } from "../../storage/repositories/events-repository";
-import { listIndexCompletedEvents } from "../../storage/repositories/metrics-repository";
-import { listStateProposals } from "../../storage/repositories/proposals-repository";
-import { metricsWindow, readLlmRows, readUsageRows } from "../metrics/metrics-cli";
-import type { MetricsUsageRow } from "../metrics/types";
-import { isRetireProposal, type Proposal } from "../proposal/proposal-types";
+import { metricsWindow, readLlmRows, readUsageRows } from "../commands/metrics/metrics-cli";
+import type { MetricsUsageRow } from "../commands/metrics/types";
+import { isRetireProposal, type Proposal } from "../commands/proposal/proposal-types";
+import { readStateEvents } from "../storage/repositories/events-repository";
+import { listIndexCompletedEvents } from "../storage/repositories/metrics-repository";
+import { listStateProposals } from "../storage/repositories/proposals-repository";
 import { classifyOutcome, decidedAt, deciderOf, weekOf, weekRange } from "./derive";
 import { attempt, tryStashDir, withReadonlyStateDb } from "./readers";
 
@@ -176,8 +176,8 @@ function judgeAndYou(proposals: Proposal[]) {
   return table;
 }
 
-export function improveImpact(query: URLSearchParams) {
-  const since = query.get("since") === "365d" ? "365d" : "90d";
+export function improveImpact(input: { since?: string } = {}) {
+  const since = input.since === "365d" ? "365d" : "90d";
   const now = Date.now();
   const window = metricsWindow(since, now);
   const errors: Record<string, string> = {};

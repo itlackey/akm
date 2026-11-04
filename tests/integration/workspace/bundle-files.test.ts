@@ -6,11 +6,11 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { handleApiRequest } from "../../../src/commands/ui/api";
-import { bundleFileLocation, listBundleFiles } from "../../../src/commands/ui/bundle-files";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { assets } from "../../../src/workspace";
+import { bundleFileLocation, listBundleFiles } from "../../../src/workspace/bundle-files";
 import { makeConfig } from "../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
@@ -43,7 +43,7 @@ test("lists real immediate entries with canonical indexed refs, never contents o
     path: "knowledge/guide.md",
     parent: "knowledge",
   });
-  const asset = (await handleApiRequest("/api/asset", new URLSearchParams({ ref: "stash//knowledge/guide" }))) as {
+  const asset = (await assets.show({ ref: "stash//knowledge/guide" })) as {
     location: unknown;
   };
   expect(asset.location).toEqual(bundleFileLocation(path.join(dir, "guide.md")));

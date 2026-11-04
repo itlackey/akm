@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createFixture } from '../scripts/fixture.mjs';
-import { HostTools, findProgram, hostEnvironment, runHost } from '../src/lib/server/host-tools.mjs';
+import { HostTools, findProgram, hostEnvironment, runHost } from '../src/lib/server/features/host-tools.mjs';
 
 test('native harness installers configure AKM only in isolated homes', {
   skip: process.env.AKM_DESKTOP_TEST_LIVE_PLUGINS !== '1', timeout: 600000

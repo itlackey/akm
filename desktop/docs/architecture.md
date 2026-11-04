@@ -19,28 +19,27 @@ host CLI/harnesses strictly for explicit installation and upgrade management.
 | --- | --- |
 | `electron/` | Window, local server lifecycle, external browser links, application-menu install |
 | `src/hooks.server.ts` | Per-launch authentication and same-origin checks |
-| `src/lib/server/` and `src/routes/api/` | HTTP shell (`http.ts`: the one error-to-status mapping, unknown request fields warned and ignored), existing AKM API dispatch, native host software command orchestration |
-| `src/lib/server/features/` | Desktop-only features built on `akm-cli/workspace` (plain file editing) |
+| `src/lib/server/` and `src/routes/api/` | HTTP shell (`http.ts`: body limits, envelope, scrubbing and the one error-to-status mapping) over one route table (`routes.ts`: each route names a workspace operation and its input; unknown request fields are warned and ignored) |
+| `src/lib/server/features/` | Desktop-only features built on `akm-cli/workspace`: plain file editing, secret reveal policy, preferences, native host software orchestration |
 | `src/lib/*.svelte` | Presentation, review confirmation, retained editor drafts |
 | `src/lib/navigation.ts` | SvelteKit navigation with draft-aware Back/forward and retained section state |
 | `src/lib/upstream/` | Reused AKM design tokens, escaped Markdown, diff and chart presentation |
-| `akm-cli/workspace` | Existing reads/writes, validation, policy, proposals, persistence |
+| `akm-cli/workspace` | Typed operations: reads, writes, validation, policy (revisions, leases, writability), proposals, persistence |
 
-The namespace is a small set of existing operations (dispatchers, managed clone,
-redaction, errors and the env/secret operations) with a Node loader entry and
-hand-written types. The v1 folder workspace also adds read-only APIs to AKM itself:
-`GET /api/bundle/files` lists one actual directory in an enabled, registered
+The namespace is a set of typed operations grouped by capability (assets, documents, proposals, bundles, config,
+feedback, sensitive, activity, host) with a Node loader entry and hand-written types; it exports no primitive and no
+dispatcher. The v1 folder workspace also uses read-only operations in AKM itself:
+`assets.bundleFiles` (`GET /api/bundles/files`) lists one actual directory in an enabled, registered
 bundle, resolves canonical indexed refs, and reports unindexed files honestly
 (it reuses AKM's source roots, containment rules and read-only index connection;
 it does not recursively scan, read file bodies, create an index or mutate files),
-and `GET /api/asset/related` lists the nearest stored embeddings of an asset.
-Asset reads carry their physical bundle location for breadcrumbs. These small
-extensions live in AKM core in this repository, not a second Desktop engine. Every
-route Desktop does not own falls through to AKM's own dispatcher. The copy route
-is a thin validated call to existing `akmClone`, with overwrite disabled. No raw
-arbitrary filesystem mutation is exposed by the app.
+and `assets.related` lists the nearest stored embeddings of an asset.
+Asset reads carry their physical bundle location for breadcrumbs. These operations
+live in AKM core in this repository, not a second Desktop engine. Copy is
+`documents.copy`, with overwrite disabled. No raw
+arbitrary filesystem mutation is exposed by the app beyond plain file editing inside a bundle.
 
-Related content is AKM's `GET /api/asset/related`, which reads only stored vectors
+Related content is AKM's `assets.related`, which reads only stored vectors
 (never a provider or a second vector store) through search's own entry filter.
 Desktop is a convenience tool for the human owner of the instance, so it edits
 files with plain file operations (`features/files.ts`, `GET /api/desktop/file`

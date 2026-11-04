@@ -2,10 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** `GET /api/search/misses`: what people searched for and akm found nothing, grouped by query. */
+/** What people searched for and akm found nothing, grouped by query. */
 
-import { metricsWindow, readUsageRows } from "../metrics/metrics-cli";
-import type { MetricsUsageRow } from "../metrics/types";
+import { metricsWindow, readUsageRows } from "../commands/metrics/metrics-cli";
+import type { MetricsUsageRow } from "../commands/metrics/types";
 import { withReadonlyStateDb } from "./readers";
 
 export interface Miss {
@@ -49,8 +49,8 @@ export function missesFromRows(rows: MetricsUsageRow[]): Miss[] {
     );
 }
 
-export function searchMisses(query: URLSearchParams) {
-  const window = metricsWindow(query.get("since") || "30d");
+export function searchMisses(input: { since?: string } = {}) {
+  const window = metricsWindow(input.since || "30d");
   const rows = withReadonlyStateDb((db) => readUsageRows(db, window), []);
   const misses = missesFromRows(rows);
   return {

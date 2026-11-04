@@ -25,68 +25,75 @@ fs.writeFileSync(
 
 const workspace = await import("akm-cli/workspace");
 const {
-  akmClone,
-  handleApiRequest,
-  NO_SUCH_ROUTE,
-  handleWorkspaceAction,
-  matchWorkspaceAction,
-  matchWriteRoute,
-  handleWriteRequest,
-  classifyWorkspaceError,
-  scrubUrlCredentials,
+  activity,
+  assets,
+  bundles,
+  config,
+  documents,
+  feedback,
+  proposals,
+  sensitive,
   AkmError,
+  CONFLICT_CODES,
+  scrubUrlCredentials,
 } = workspace;
 assert.equal(Boolean(process.versions.bun), process.argv[2] === "bun");
-assert.equal(Object.keys(workspace).length, 23);
 for (const [name, value] of Object.entries(workspace)) assert.notEqual(value, undefined, name);
 for (const name of [
+  "activity",
+  "assets",
+  "bundles",
+  "config",
+  "documents",
+  "feedback",
+  "host",
+  "proposals",
+  "sensitive",
+])
+  assert.equal(typeof workspace[name], "object", name);
+for (const name of [
   "UsageError",
-  "writeEnv",
-  "removeEnv",
-  "setSecret",
-  "removeSecret",
-  "withEnvSecretWrite",
-  "sensitiveMarkerPath",
-  "deriveCanonicalAssetName",
+  "NotFoundError",
+  "ConfigError",
+  "TransientError",
   "indexWrittenAssets",
+  "scrubUrlCredentials",
 ])
   assert.equal(typeof workspace[name], "function", name);
-assert.equal(await handleApiRequest("/not-a-route", new URLSearchParams()), NO_SUCH_ROUTE);
-assert.equal(matchWorkspaceAction("/api/knowledge/create"), "knowledge-create");
-assert.equal(matchWorkspaceAction("/unknown"), null);
-assert.equal(matchWriteRoute("/unknown"), null);
+for (const gone of ["handleApiRequest", "writeEnv", "withEnvSecretWrite", "akmClone"])
+  assert.equal(workspace[gone], undefined, gone);
 
 const pkg = fileURLToPath(import.meta.resolve("akm-cli/package.json"));
 const cli = path.join(path.dirname(pkg), "dist", process.versions.bun ? "cli.js" : "cli-node.mjs");
 execFileSync(process.execPath, [cli, "index", "--format=json"], { env: process.env, stdio: "pipe" });
-const read = (route, params = {}) => handleApiRequest(route, new URLSearchParams(params));
-assert.ok((await read("/api/bundles")).bundles.length === 2);
-const created = await handleWorkspaceAction("knowledge-create", {
+assert.ok((await bundles.list()).bundles.length === 2);
+const created = await documents.createKnowledge({
   name: "desktop-note",
   bundle: "stash",
   content: "# Desktop note\nSynthetic workspace evidence.\n",
 });
 assert.ok(created);
+assert.equal(created.shape, undefined);
 assert.ok(
   fs.readFileSync(path.join(stash, "knowledge", "desktop-note.md"), "utf8").includes("Synthetic workspace evidence"),
 );
-assert.ok((await read("/api/search", { q: "Synthetic", bundle: "stash" })).hits.length > 0);
-const source = await read("/api/asset/source", { ref: "stash//knowledge/desktop-note" });
+assert.ok((await assets.search({ q: "Synthetic", bundle: "stash" })).hits.length > 0);
+const source = await documents.readSource({ ref: "stash//knowledge/desktop-note" });
 assert.equal(source.type, "knowledge");
 assert.equal(source.revision.length, 64);
 const content = source.content.replace("Synthetic workspace evidence", "Revised workspace evidence");
-await handleWorkspaceAction("document-save", { ref: source.ref, revision: source.revision, content });
+await documents.save({ ref: source.ref, revision: source.revision, content });
 assert.ok(
   fs.readFileSync(path.join(stash, "knowledge", "desktop-note.md"), "utf8").includes("Revised workspace evidence"),
 );
 try {
-  await handleWorkspaceAction("document-save", { ref: source.ref, revision: source.revision, content: source.content });
+  await documents.save({ ref: source.ref, revision: source.revision, content: source.content });
   assert.fail("stale revision should fail");
 } catch (error) {
   assert.ok(error instanceof AkmError);
-  assert.equal(classifyWorkspaceError(error).status, 409);
+  assert.ok(CONFLICT_CODES.has(error.code));
 }
-const copied = await akmClone({
+const copied = await documents.copy({
   sourceRef: "catalog//knowledge/reference",
   target: "stash",
   newName: "copied-reference",
@@ -94,36 +101,33 @@ const copied = await akmClone({
 assert.equal(copied.overwritten, false);
 assert.ok(fs.readFileSync(copied.destination.path, "utf8").includes("Synthetic catalog content"));
 await assert.rejects(
-  akmClone({ sourceRef: "catalog//knowledge/reference", target: "stash", newName: "copied-reference" }),
+  documents.copy({ sourceRef: "catalog//knowledge/reference", target: "stash", newName: "copied-reference" }),
 );
-await assert.rejects(akmClone({ sourceRef: source.ref, target: "catalog" }));
-await assert.rejects(read("/api/asset/source", { ref: "catalog//knowledge/reference" }));
-assert.deepEqual((await read("/api/proposals")).proposals, []);
-const corrected = await handleWorkspaceAction("feedback", {
+await assert.rejects(documents.copy({ sourceRef: source.ref, target: "catalog" }));
+await assert.rejects(documents.readSource({ ref: "catalog//knowledge/reference" }));
+assert.deepEqual((await proposals.list()).proposals, []);
+const corrected = await feedback.record({
   ref: source.ref,
   signal: "negative",
   reason: "Verified synthetic correction",
   source: "fixture",
-  replace: ["Revised workspace evidence"],
-  with: ["Reviewed workspace evidence"],
+  fix: [{ replace: "Revised workspace evidence", with: "Reviewed workspace evidence" }],
 });
 assert.ok(corrected.fix.proposalId);
-const proposal = await read(`/api/proposals/${corrected.fix.proposalId}`);
+const proposal = await proposals.get({ id: corrected.fix.proposalId });
 assert.equal(proposal.proposal.status, "accepted");
-const reverted = await handleWriteRequest(matchWriteRoute(`/api/proposals/${corrected.fix.proposalId}/revert`), {});
+const reverted = await proposals.revert({ id: corrected.fix.proposalId });
 assert.equal(reverted.proposal.status, "reverted");
 assert.ok(
   fs.readFileSync(path.join(stash, "knowledge", "desktop-note.md"), "utf8").includes("Revised workspace evidence"),
 );
-await handleWorkspaceAction("config-set", { set: { "output.format": "text" } });
-assert.equal((await read("/api/config")).config.output.format, "text");
-const missing = matchWriteRoute("/api/proposals/nonexistent/accept");
-assert.ok(missing);
+await config.change({ set: { "output.format": "text" } });
+assert.equal(config.get().config.output.format, "text");
 try {
-  await handleWriteRequest(missing, {});
+  await proposals.accept({ id: "nonexistent" });
   assert.fail("missing proposal should fail");
 } catch (error) {
-  assert.equal(classifyWorkspaceError(error).status, 404);
+  assert.equal(error.kind, "not-found");
 }
 assert.ok(
   !JSON.stringify(scrubUrlCredentials({ url: "https://example.test/?token=planted-credential" })).includes(
@@ -139,32 +143,29 @@ assert.equal(
   await workspace.indexWrittenAssets(stash, [path.join(stash, "scripts", "tool.sh")], { bundleId: "stash" }),
   true,
 );
-assert.equal((await read("/api/asset/related", { ref: source.ref })).available, false);
-// The env/secret operations the CLI uses.
-const written = workspace.resolveSecretWriteTarget("secrets/smoke", "stash");
-workspace.withEnvSecretWrite(written.target, { type: "secret", name: written.name }, "Update", [written.absPath], () =>
-  workspace.setSecret(written.absPath, Buffer.from("synthetic")),
+assert.equal((await assets.related({ ref: source.ref })).available, false);
+// Env and secret operations: create, describe, stale revision, replace, remove.
+const made = await sensitive.save({ ref: "stash//secrets/smoke", content: "synthetic" });
+assert.equal(made.ref, "stash//secrets/smoke");
+await assert.rejects(sensitive.save({ ref: made.ref, content: "again" }));
+const info = sensitive.describe({ ref: made.ref });
+assert.equal(info.revision, made.revision);
+assert.equal(sensitive.readValue({ ref: made.ref }).content, "synthetic");
+await assert.rejects(sensitive.save({ ref: made.ref, content: "x", revision: "0".repeat(64) }), (error) =>
+  CONFLICT_CODES.has(error.code),
 );
-assert.equal(fs.readFileSync(written.absPath, "utf8"), "synthetic");
-assert.equal(workspace.resolveSecretPath("stash//secrets/smoke").absPath, written.absPath);
-assert.equal(
-  workspace.withEnvSecretWrite(
-    written.target,
-    { type: "secret", name: written.name },
-    "Remove",
-    [written.absPath],
-    () => workspace.removeSecret(written.absPath),
-  ),
-  true,
-);
-assert.equal(fs.existsSync(written.absPath), false);
-const current = await read("/api/asset/source", { ref: source.ref });
-const archived = await handleWorkspaceAction("document-retire", { ref: current.ref, revision: current.revision });
+const replaced = await sensitive.save({ ref: made.ref, content: "replaced", revision: made.revision });
+assert.notEqual(replaced.revision, made.revision);
+await sensitive.remove({ ref: made.ref, revision: replaced.revision });
+assert.equal(fs.existsSync(info.path), false);
+const current = await documents.readSource({ ref: source.ref });
+const archived = await documents.retire({ ref: current.ref, revision: current.revision });
 assert.equal(fs.existsSync(path.join(stash, "knowledge/desktop-note.md")), false);
-assert.equal((await read(`/api/proposals/${archived.proposalId}`)).proposal.status, "accepted");
+assert.equal((await proposals.get({ id: archived.proposalId })).proposal.status, "accepted");
 assert.ok(archived.archiveDirs.length > 0);
-const restored = await handleWriteRequest(matchWriteRoute(`/api/proposals/${archived.proposalId}/revert`), {});
+const restored = await proposals.revert({ id: archived.proposalId });
 assert.equal(restored.proposal.status, "reverted");
 assert.equal(fs.readFileSync(path.join(stash, "knowledge/desktop-note.md"), "utf8"), current.content);
 for (const dir of archived.archiveDirs) assert.equal(fs.existsSync(path.join(stash, dir)), false);
+assert.equal(typeof activity.meta().version, "string");
 console.log(JSON.stringify({ ok: true, runtime: process.versions.bun ? "bun" : "node", version: process.version }));

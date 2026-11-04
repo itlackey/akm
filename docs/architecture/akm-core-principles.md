@@ -214,10 +214,10 @@ Whether a statement is true of the product is held by review.
 This package is a command-line tool. `src/cli.ts` dispatches and commands
 live under `src/commands/`. `akm-cli/api` (`src/api.ts`, which exports only
 `curate`) lets plugins recall in-process. `akm-cli/workspace` (`src/workspace.ts`)
-exposes the experimental local UI dispatchers, managed clone, URL redaction, the
-error classes and the env/secret operations to a trusted local host. It reuses
-implementations rather than duplicating domain policy and exports no writers
-beyond those, no leases and no index readers; the host owns transport authentication. It is the
+exposes experimental typed operations (`src/workspace/*`, grouped by capability), URL
+redaction and the error classes to a trusted local host. They sit on the domain
+functions rather than duplicating policy and export no primitive (writers, leases,
+index readers); the host owns transport authentication. It is the
 seam for local hosts: its operations own all akm policy and a host owns only its
 transport and its own features. The
 `exports` map lists `./api`, `./workspace`, `./package.json` and `./dist/*`. Bun is the

@@ -7,6 +7,9 @@ import path from 'node:path';
 import { parse } from 'jsonc-parser';
 
 const exec = promisify(execFile);
+// The harness plugin-install recipe (plugin id, marketplace and channel syntax, OpenCode v1/v2 shapes) is kept here on
+// purpose, with no akm surface. The source of truth is akm's src/commands/sources/plugin-channels.ts and
+// plugin-upgrade.ts: change them together.
 const pluginId = 'akm@akm-plugins';
 export const harnessIds = ['claude', 'codex', 'opencode', 'opencode2'];
 const versionOf = text => text?.match(/\b\d+\.\d+\.\d+(?:-[\w.-]+)?/)?.[0];

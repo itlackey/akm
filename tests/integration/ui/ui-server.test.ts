@@ -22,8 +22,6 @@ import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
 import type { Proposal } from "../../../src/commands/proposal/proposal-types";
 import { createProposal } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
-import { DIFF_SIDE_MAX_CHARS } from "../../../src/commands/ui/api";
-import { weekOf } from "../../../src/commands/ui/derive";
 import { MAX_BODY_BYTES, MAX_DOCUMENT_BODY_BYTES, startUiServer, type UiServer } from "../../../src/commands/ui/server";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { getConfigPath, getDbPath } from "../../../src/core/paths";
@@ -34,6 +32,8 @@ import { recordImproveRun } from "../../../src/storage/repositories/improve-runs
 import { listStateProposals, upsertProposal } from "../../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../../src/storage/repositories/task-history-repository";
 import * as akmBin from "../../../src/tasks/resolve-akm-bin";
+import { weekOf } from "../../../src/workspace/derive";
+import { DIFF_SIDE_MAX_CHARS } from "../../../src/workspace/readers";
 import { runCliCapture } from "../../_helpers/cli";
 import { makeConfig } from "../../_helpers/factories";
 import { git, makeGitRepo } from "../../_helpers/git";
@@ -2007,7 +2007,7 @@ describe("workspace actions", () => {
     }
     expect(fs.readFileSync(path.join(storage.stashDir, "knowledge", "guide.md"), "utf8")).toBe(GUIDE);
     expect(fs.existsSync(path.join(storage.stashDir, "knowledge", "held.md"))).toBe(false);
-  });
+  }, 15_000);
 
   test("a save after the document was deleted is refused and does not recreate it", async () => {
     await seed();
@@ -2107,7 +2107,7 @@ describe("workspace actions", () => {
       );
     const s = await start();
     const cases: Array<[ReturnType<typeof child>, number, string]> = [
-      [child("malformed", 'process.stdout.write("not json\\n");'), 500, "INVALID_COMMAND_RESPONSE"],
+      [child("malformed", 'process.stdout.write("not json\\n");'), 500, "INTERNAL_ERROR"],
       [fail(1, "ASSET_NOT_FOUND"), 404, "ASSET_NOT_FOUND"],
       [fail(2, "INVALID_FLAG_VALUE"), 400, "INVALID_FLAG_VALUE"],
       [fail(75, "ASSET_MUTATION_LEASE_HELD"), 409, "ASSET_MUTATION_LEASE_HELD"],

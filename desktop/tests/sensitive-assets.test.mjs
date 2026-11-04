@@ -23,7 +23,7 @@ test('env and secrets open as metadata; only explicit authenticated reveal retur
   const app = await fixture(); t.after(() => app.stop());
   for (const [ref, expected] of [['personal//env/example', env], ['personal//env/default', env], ['personal//secrets/example-key', secret]]) {
     const masked = value(await app.call('/api/desktop/sensitive?ref=' + encodeURIComponent(ref)));
-    assert.equal(masked.redacted, true); assert.ok(masked.asset.name); assert.ok(masked.location);
+    assert.ok(masked.name); assert.ok(masked.location);
     assert.ok(!JSON.stringify(masked).includes('synthetic-password'));
     const revealed = value(await app.call('/api/desktop/sensitive/reveal', { ref }));
     assert.equal(revealed.content, expected);
@@ -36,8 +36,7 @@ test('env and secrets open as metadata; only explicit authenticated reveal retur
   // A newly created file must also open from Files before an index rebuild.
   await fs.writeFile(path.join(app.root, 'personal/env/unindexed.env'), env);
   const unindexed = value(await app.call('/api/desktop/sensitive?bundle=personal&file=env%2Funindexed.env'));
-  assert.equal(unindexed.redacted, true);
-  assert.equal(unindexed.asset.name, 'unindexed.env');
+  assert.equal(unindexed.name, 'unindexed.env');
   assert.equal(value(await app.call('/api/desktop/sensitive/reveal', { bundle: 'personal', file: 'env/unindexed.env' })).content, env);
   for (const file of ['../shared/knowledge/shared-backup.md', 'knowledge/restore-laptop.md', 'env/../../config/config.json'])
     assert.notEqual((await app.call('/api/desktop/sensitive/reveal', { bundle: 'personal', file })).status, 200);

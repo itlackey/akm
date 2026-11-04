@@ -12,7 +12,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { NotFoundError, UsageError } from "../../core/errors";
+import { NotFoundError, UsageError } from "../core/errors";
 
 const MAX_FOLDERS = 500;
 

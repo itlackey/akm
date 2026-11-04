@@ -5,11 +5,11 @@
 /** Pure helpers behind `akm ui`: config redaction, commit origin, the browser opener and loopback detection. */
 
 import { describe, expect, test } from "bun:test";
-import { type ChangeOrigin, classifyCommitOrigin } from "../src/commands/ui/git-read";
 import { browserOpener } from "../src/commands/ui/open-browser";
-import { isSecretEnvName, redactForUi, scrubUrlCredentials } from "../src/commands/ui/redact";
 import { isLoopbackHost } from "../src/commands/ui/server";
 import { redactUrlCredentials } from "../src/core/redaction";
+import { type ChangeOrigin, classifyCommitOrigin } from "../src/workspace/git-read";
+import { isSecretEnvName, redactForUi, scrubUrlCredentials } from "../src/workspace/redact";
 
 // biome-ignore lint/suspicious/noExplicitAny: redacted trees are asserted field by field below
 type Json = Record<string, any>;

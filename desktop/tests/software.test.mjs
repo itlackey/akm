@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, mkdir, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { HostTools, hostEnvironment, summarizeUpgrade } from '../src/lib/server/host-tools.mjs';
+import { HostTools, hostEnvironment, summarizeUpgrade } from '../src/lib/server/features/host-tools.mjs';
 
 test('host environment finds conventional user tools without running profiles or leaking desktop/launcher state', async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'akm-host-env-'));

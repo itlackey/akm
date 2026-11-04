@@ -86,6 +86,10 @@ export type UsageErrorCode =
   | "RESOURCE_ALREADY_EXISTS"
   /** A conditional Markdown write was based on an older or removed source. */
   | "ASSET_CONTENT_CHANGED"
+  /** A proposal's target changed (or is gone) since the proposal was made. */
+  | "PROPOSAL_STALE"
+  /** A decision was asked of a proposal that is no longer pending. */
+  | "PROPOSAL_NOT_PENDING"
   | "TASK_SCHEMA_VERSION_UNSUPPORTED"
   | "INVALID_PROPOSAL"
   | "NON_INTERACTIVE_REQUIRES_YES"
@@ -344,6 +348,17 @@ export abstract class AkmError extends Error {
   /** Actionable hint string, or undefined when none applies. */
   abstract hint(): string | undefined;
 }
+
+/**
+ * Codes that mean "the world moved under this request; reload and decide again", whatever their kind. A host maps
+ * them to one conflict status (HTTP 409) instead of the status of the kind they are thrown as.
+ */
+export const CONFLICT_CODES: ReadonlySet<string> = new Set([
+  "ASSET_CONTENT_CHANGED",
+  "PROPOSAL_STALE",
+  "PROPOSAL_NOT_PENDING",
+  "ASSET_MUTATION_LEASE_HELD",
+]);
 
 /** Raised when configuration or environment is invalid or missing. */
 export class ConfigError extends AkmError {

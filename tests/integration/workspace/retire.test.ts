@@ -4,17 +4,21 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { purgeGracedArchive } from "../../../src/commands/improve/memory/memory-improve";
-import { retireAsset } from "../../../src/commands/proposal/manual-retire";
 import { akmProposalAccept, akmProposalRevert } from "../../../src/commands/proposal/proposal";
-import { createProposal, getProposal, listProposals } from "../../../src/commands/proposal/repository";
+import {
+  createProposal,
+  createRetireProposal,
+  getProposal,
+  listProposals,
+} from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
-import { handleApiRequest } from "../../../src/commands/ui/api";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import { renameBundle } from "../../../src/core/bundle-rename";
 import { saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeLockfile } from "../../../src/integrations/lockfile";
 import type { SchedulerBackend } from "../../../src/tasks/backends/types";
+import { assets, documents } from "../../../src/workspace";
 import { git, makeGitRepo } from "../../_helpers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -39,6 +43,7 @@ beforeEach(async () => {
 });
 afterEach(() => storage.cleanup());
 
+const retireAsset = (ref: string, revision: string) => documents.retire({ ref, revision });
 const archived = (receipt: Awaited<ReturnType<typeof retireAsset>>) =>
   receipt.archiveDirs.map((dir) => path.join(storage.stashDir, dir));
 const tombstone = (dir: string) => parseFrontmatter(fs.readFileSync(path.join(dir, "cleanup.md"), "utf8")).data;
@@ -68,7 +73,7 @@ test("retire is an accepted retire proposal; revert restores bytes, mode and bel
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
   expect(fs.statSync(file()).mode & 0o777).toBe(0o640);
   expect(fs.existsSync(dir!)).toBe(false);
-  expect(await handleApiRequest("/api/asset", new URLSearchParams({ ref }))).toMatchObject({ durableRef: ref });
+  expect(await assets.show({ ref })).toMatchObject({ durableRef: ref });
 });
 
 test("memory retirement and revert carry its derived twin", async () => {
@@ -137,7 +142,7 @@ test("revert still works after the bundle is renamed, for a manual retirement an
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
   expect((await akmProposalRevert({ id: edit.id })).proposal.status).toBe("reverted");
   expect(fs.readFileSync(path.join(storage.stashDir, "memories/other.md"), "utf8")).toContain("Other.");
-  expect(await handleApiRequest("/api/asset", new URLSearchParams({ ref: "renamed//memories/manual" }))).toMatchObject({
+  expect(await assets.show({ ref: "renamed//memories/manual" })).toMatchObject({
     durableRef: "renamed//memories/manual",
   });
 });
@@ -182,6 +187,16 @@ test("a stale revision is refused without changing the active file or minting a 
   await expect(retireAsset(ref, "stale")).rejects.toThrow("changed");
   expect(fs.readFileSync(file(), "utf8")).toBe(body);
   expect(listProposals(storage.stashDir, { includeArchive: true })).toHaveLength(0);
+});
+
+test("a retire proposal is minted only from the bytes whose revision the caller saw", () => {
+  const target = { source: "stash", root: storage.stashDir };
+  expect(() =>
+    createRetireProposal(storage.stashDir, { ref, source: "propose", target, expectedRevision: "0".repeat(64) }),
+  ).toThrow(expect.objectContaining({ code: "ASSET_CONTENT_CHANGED" }));
+  expect(listProposals(storage.stashDir, { includeArchive: true })).toHaveLength(0);
+  const minted = createRetireProposal(storage.stashDir, { ref, source: "propose", target, expectedRevision: hash() });
+  expect(minted.beforeHash).toBeDefined();
 });
 
 test("a failed accept leaves the proposal rejected and the asset in place", async () => {

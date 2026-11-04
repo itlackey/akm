@@ -2,9 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { computeWallTimeStats } from "../health/improve-metrics";
-import type { MetricsDailyUsage, MetricsUsageRow } from "../metrics/types";
-import { type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
+import { computeWallTimeStats } from "../commands/health/improve-metrics";
+import type { MetricsDailyUsage, MetricsUsageRow } from "../commands/metrics/types";
+import { type Proposal, proposalWaitingSince } from "../commands/proposal/proposal-types";
 import { zeroFill } from "./stats";
 
 /** Drill-down over the same user-attributed summary rows that `akm metrics` counts. */

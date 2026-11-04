@@ -4,9 +4,9 @@
 
 import { describe, expect, test } from "bun:test";
 import type { Proposal } from "../src/commands/proposal/proposal-types";
-import { againstUsual, classifyOutcome, decidedAt, pChart, weekRange } from "../src/commands/ui/derive";
-import { missesFromRows } from "../src/commands/ui/misses";
-import { binomialQuantile } from "../src/commands/ui/stats";
+import { againstUsual, classifyOutcome, decidedAt, pChart, weekRange } from "../src/workspace/derive";
+import { missesFromRows } from "../src/workspace/misses";
+import { binomialQuantile } from "../src/workspace/stats";
 
 const proposal = (over: Partial<Proposal>): Proposal => ({ status: "accepted", ...over }) as Proposal;
 

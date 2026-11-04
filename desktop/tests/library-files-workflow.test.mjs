@@ -14,7 +14,7 @@ test('Library task views use actual filesystem listings, canonical assets, and r
   const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
   const failures = [], listings = [];
   page.on('pageerror', error => failures.push(error.message));
-  page.on('request', request => { if (request.url().includes('/api/bundle/files?')) listings.push(new URL(request.url()).searchParams); });
+  page.on('request', request => { if (request.url().includes('/api/bundles/files?')) listings.push(new URL(request.url()).searchParams); });
   const hash = async value => page.evaluate(value => { location.hash = value; }, value);
   await page.goto(server.url + '#/search');
   const screenshot = async name => {

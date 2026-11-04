@@ -6,7 +6,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { handleApiRequest } from "../../../src/commands/ui/api";
 import { resetConfigCache, saveConfig } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { akmIndex } from "../../../src/indexer/indexer";
@@ -14,13 +13,14 @@ import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositor
 import { getEntryIdByFilePath } from "../../../src/storage/repositories/index-entries-repository";
 import { setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
+import { assets } from "../../../src/workspace";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 let other: string;
 const page = (name: string) => `---\ndescription: ${name} page\n---\n# ${name}\nSynthetic ${name} text.\n`;
 const related = (ref: string, scope?: string) =>
-  handleApiRequest("/api/asset/related", new URLSearchParams({ ref, ...(scope ? { scope } : {}) })) as Promise<{
+  assets.related({ ref, ...(scope ? { scope: scope as "all" | "bundle" } : {}) }) as Promise<{
     available: boolean;
     note: string;
     matches: Array<{ ref: string; title: string; type: string; cosine: number }>;

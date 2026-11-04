@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { dayRange, isoWeekStart, nearestRank, zeroFill } from "../src/commands/ui/stats";
+import { dayRange, isoWeekStart, nearestRank, zeroFill } from "../src/workspace/stats";
 
 describe("dashboard stats", () => {
   test("dayRange is inclusive and empty when reversed", () => {

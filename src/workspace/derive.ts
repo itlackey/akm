@@ -7,7 +7,7 @@
  * and the p-chart limits for a weekly proportion. No I/O, so each is tested on its own.
  */
 
-import type { Proposal } from "../proposal/proposal-types";
+import type { Proposal } from "../commands/proposal/proposal-types";
 import { binomialQuantile, dayRange, isoWeekStart } from "./stats";
 
 export type OutcomeClass = "judge" | "you" | "unknown" | "rejected" | "reverted" | "pending";

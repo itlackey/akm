@@ -2,35 +2,29 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// `akm-cli/workspace`: experimental re-exports of existing operations for a trusted
-// local host (see docs/reference/api.md). Transport authentication belongs to the host.
+// `akm-cli/workspace`: typed application operations for a trusted local host such as akm Desktop (see
+// docs/reference/api.md). Each namespace groups the operations of one capability; every operation takes one typed
+// input and returns plain JSON-safe data, and throws an `AkmError` with a stable `code`. Transport (authentication,
+// HTTP, status codes) belongs to the host.
 // Declarations: scripts/node-runtime/workspace.d.ts, kept in step by tests/contracts/workspace-surface.test.ts.
 
-export { removeEnv, writeEnv } from "./commands/env/env";
-export { removeSecret, setSecret } from "./commands/env/secret";
-export { akmClone, type CloneOptions, type CloneResponse } from "./commands/sources/source-clone";
-export { handleApiRequest, NO_SUCH_ROUTE } from "./commands/ui/api";
 export {
-  handleWriteRequest,
-  matchWriteRoute,
-  type ProposalActionError,
-  type WriteRoute,
-} from "./commands/ui/proposal-actions";
-export { scrubUrlCredentials } from "./commands/ui/redact";
-export {
-  classifyWorkspaceError,
-  handleWorkspaceAction,
-  matchWorkspaceAction,
-  type WorkspaceAction,
-} from "./commands/ui/workspace-actions";
-export { deriveCanonicalAssetName } from "./core/asset/asset-placement";
-export {
-  resolveEnvPath,
-  resolveEnvWriteTarget,
-  resolveSecretPath,
-  resolveSecretWriteTarget,
-  sensitiveMarkerPath,
-  withEnvSecretWrite,
-} from "./core/env-secret-ref";
-export { AkmError, type AkmErrorKind, UsageError } from "./core/errors";
+  AkmError,
+  type AkmErrorKind,
+  CONFLICT_CODES,
+  ConfigError,
+  NotFoundError,
+  TransientError,
+  UsageError,
+} from "./core/errors";
 export { indexWrittenAssets } from "./indexer/index-written-assets";
+export * as activity from "./workspace/activity";
+export * as assets from "./workspace/assets";
+export * as bundles from "./workspace/bundles";
+export * as config from "./workspace/config";
+export * as documents from "./workspace/documents";
+export * as feedback from "./workspace/feedback";
+export * as host from "./workspace/host";
+export * as proposals from "./workspace/proposals";
+export { scrubUrlCredentials } from "./workspace/redact";
+export * as sensitive from "./workspace/sensitive";

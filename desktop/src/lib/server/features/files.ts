@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { UsageError, handleApiRequest, indexWrittenAssets } from 'akm-cli/workspace';
-import { known } from '../http.js';
+import { UsageError, assets, bundles, indexWrittenAssets } from 'akm-cli/workspace';
+import { fields } from '../input.js';
 
 /**
  * Plain file editing for the human owner: any text file inside a configured bundle (an asset, a skill's support
@@ -19,10 +19,10 @@ type Bundle = { name: string; enabled: boolean; writable: boolean; path: string 
 type Selector = { ref?: string; bundle?: string; file?: string };
 
 async function selection(input: Selector) {
-  const listing = await handleApiRequest('/api/bundles', new URLSearchParams()) as { bundles: Bundle[] };
+  const listing = await bundles.list() as { bundles: Bundle[] };
   let bundle = input.bundle, file = input.file, ref: string | undefined, type: string | undefined;
   if (input.ref) {
-    const shown = await handleApiRequest('/api/asset', new URLSearchParams({ ref: input.ref })) as
+    const shown = await assets.show({ ref: input.ref }) as
       { redacted?: boolean; durableRef?: string; asset?: { type?: string }; location?: { bundle: string; path: string } | null };
     if (shown.redacted) throw new UsageError('Protected files are shown and edited from the protected-file view.');
     if (!shown.location) throw new UsageError('This asset has no file in a local bundle.');
@@ -60,7 +60,7 @@ export async function readFile(query: Selector) {
 }
 
 export async function saveFile(body: unknown) {
-  const value = known(body, ['ref', 'bundle', 'file', 'revision', 'content'], 'file save');
+  const value = fields(body, ['ref', 'bundle', 'file', 'revision', 'content'], 'file save');
   if (typeof value.content !== 'string' || typeof value.revision !== 'string' || value.content.includes('\0') ||
     !(typeof value.ref === 'string' || (typeof value.bundle === 'string' && typeof value.file === 'string')))
     throw new UsageError('Provide the file, revision and text.');

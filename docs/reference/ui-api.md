@@ -4,7 +4,9 @@
 routes; new operations are added to `akm-cli/workspace` only, and `akm ui` reaches one only through a route its
 existing pages already call.
 
-The JSON API behind [`akm ui`](cli.md#ui). The page that `akm ui` serves uses only this API, and everything it
+The JSON API behind [`akm ui`](cli.md#ui). Each route is a thin adapter over an operation of
+[`akm-cli/workspace`](api.md#local-workspace-akm-cliworkspace), which owns the behaviour, so this page lists
+transport shapes only. The page that `akm ui` serves uses only this API, and everything it
 returns comes from the function the matching CLI command renders, so it never disagrees with the CLI. The API is
 read-only for browsing. Intentional writes use the finite [proposal decision](#deciding-proposals) and
 [workspace action](#workspace-actions) routes below.
@@ -31,8 +33,8 @@ release, and nothing outside the page should script against them. Use the CLI's 
 
   Errors raised by akm keep their stable `code` (`PROPOSAL_NOT_FOUND`, `ASSET_NOT_FOUND`, `INVALID_FLAG_VALUE`, ...).
   Status codes: `400` usage error (bad parameter), `401` token, `403` host or origin, `404` not found, `405` method,
-  `409` conflict (writes, and the editor's `/api/asset/source` read), `413` body too large, `415` content type, `503`
-  transient (another akm process holds a lock; retry), `500` anything else. Codes the server itself raises: `UNAUTHORIZED`, `HOST_NOT_ALLOWED`,
+  `409` conflict (`ASSET_CONTENT_CHANGED`, `PROPOSAL_STALE`, `PROPOSAL_NOT_PENDING`, `ASSET_MUTATION_LEASE_HELD`, and a config refusal such as a read-only bundle), `413` body too large, `415` content type, `503`
+  other transient contention (retry), `500` anything else. Codes the server itself raises: `UNAUTHORIZED`, `HOST_NOT_ALLOWED`,
   `ORIGIN_NOT_ALLOWED`, `METHOD_NOT_ALLOWED`, `UNSUPPORTED_MEDIA_TYPE`, `BODY_TOO_LARGE`, `INVALID_JSON_ARGUMENT`,
   `NOT_FOUND`, `INTERNAL_ERROR`.
 - **Redaction.** Config values under secret-like keys (`apiKey`, `token`, `password`, `secret`, `credential`,

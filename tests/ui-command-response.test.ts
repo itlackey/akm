@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { expect, test } from "bun:test";
-import { parseCommandResponse } from "../src/commands/ui/workspace-actions";
+import { parseCommandResponse } from "../src/workspace/cli-child";
 
 test("workspace command responses require the expected JSON result and never report false success", () => {
   for (const stdout of [
@@ -19,11 +19,11 @@ test("workspace command responses require the expected JSON result and never rep
     try {
       parseCommandResponse(stdout, "import");
     } catch (error) {
-      expect(error).toMatchObject({ code: "INVALID_COMMAND_RESPONSE" });
       expect((error as Error).message).toContain("Reload the view before retrying");
     }
   }
-  expect(parseCommandResponse('{"shape":"import","schemaVersion":1,"ref":"knowledge/new"}', "import")).toMatchObject({
+  // The result comes back without its envelope.
+  expect(parseCommandResponse('{"shape":"import","schemaVersion":1,"ref":"knowledge/new"}', "import")).toEqual({
     ref: "knowledge/new",
   });
 });

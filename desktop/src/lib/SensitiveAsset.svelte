@@ -8,7 +8,7 @@
   export let bundle = '';
   export let file = '';
   const dispatch = createEventDispatcher<{ changed: void }>();
-  let info: { asset: { name: string; type: 'env' | 'secret'; path: string }; bundle: string; writable: boolean; revision: string; location: { path: string; parent: string } } | null = null;
+  let info: { name: string; type: 'env' | 'secret'; path: string; bundle: string; writable: boolean; revision: string; location: { path: string; parent: string } } | null = null;
   let content: string | null = null, busy = false, error = '', generation = 0;
   let editing = false, deleting = false, deleted = false, notice = '', warnings: string[] = [];
   const selector = (): Record<string, string> => ref ? { ref } : { bundle, file };
@@ -41,15 +41,15 @@
 
 <section class="sensitive-reader" aria-label="Protected file">
   {#if deleted && info}<h2>File deleted</h2><p class="muted">{info.location.path}</p><a class="btn btn-secondary" href={'#/files?' + new URLSearchParams({ bundle: info.bundle, path: info.location.parent })}>Back to folder</a>
-  {:else if editing && info}<SensitiveEditor bundle={info.bundle} file={info.location.path} type={info.asset.type} on:saved={saved} on:cancel={() => { editing = false; hide(); }} />
+  {:else if editing && info}<SensitiveEditor bundle={info.bundle} file={info.location.path} type={info.type} on:saved={saved} on:cancel={() => { editing = false; hide(); }} />
   {:else if info}
-    <header><div><h2>{info.asset.name}</h2><p class="muted small">{info.bundle} · {info.asset.type === 'env' ? 'Environment file' : 'Secret'}</p></div>
+    <header><div><h2>{info.name}</h2><p class="muted small">{info.bundle} · {info.type === 'env' ? 'Environment file' : 'Secret'}</p></div>
       <div class="file-actions">
       <button class="btn-secondary" disabled={busy} aria-pressed={content !== null} on:click={() => content === null ? show() : hide()}>{busy ? 'Opening…' : content === null ? 'Show' : 'Hide'}</button>
       {#if info.writable}<button class="btn-secondary" disabled={busy} on:click={() => { hide(); editing = true; notice = ''; }}><Icon name="edit" size={16} />Edit</button><button class="btn-secondary" disabled={busy} on:click={() => { hide(); deleting = true; }}>Delete…</button>{/if}
       </div>
     </header>
-    {#if deleting}<section class="notice" aria-label="Delete file"><h3>Delete this file?</h3><p class="mono wrap">{info.asset.path}</p><p>This removes the file and its sensitive marker. There is no Undo; existing Git history is unchanged.</p><div class="btn-row"><button class="btn-secondary" disabled={busy} on:click={() => deleting = false}>Keep file</button><button class="btn-danger" disabled={busy} on:click={remove}>Delete file</button></div></section>{/if}
+    {#if deleting}<section class="notice" aria-label="Delete file"><h3>Delete this file?</h3><p class="mono wrap">{info.path}</p><p>This removes the file and its sensitive marker. There is no Undo; existing Git history is unchanged.</p><div class="btn-row"><button class="btn-secondary" disabled={busy} on:click={() => deleting = false}>Keep file</button><button class="btn-danger" disabled={busy} on:click={remove}>Delete file</button></div></section>{/if}
     {#if notice}<p role="status">{notice}</p>{/if}
     {#if content === null}<div class="masked" aria-label="Values masked">••••••••</div><p class="muted small">Values stay hidden until you choose Show.</p>
     {:else}<pre class="code secret-content">{content}</pre>{/if}

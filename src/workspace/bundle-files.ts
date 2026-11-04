@@ -4,11 +4,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isWithin, safeRealpath } from "../../core/common";
-import { NotFoundError, UsageError } from "../../core/errors";
-import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
-import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
-import { getAssetRefsForFiles } from "../../storage/repositories/index-entries-repository";
+import { isWithin, safeRealpath } from "../core/common";
+import { NotFoundError, UsageError } from "../core/errors";
+import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
+import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
+import { getAssetRefsForFiles } from "../storage/repositories/index-entries-repository";
 
 export interface BundleFileLocation {
   bundle: string;

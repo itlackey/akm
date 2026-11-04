@@ -389,9 +389,9 @@ CHANGELOG with a migration note.
 Subject to change without notice within minor releases. Not yet recommended
 for scripted use.
 
-- **Local workspace API** — `akm-cli/workspace` exposes the local UI dispatchers,
-  managed clone, URL redaction, the error classes and the env/secret operations
-  for trusted local hosts. It is not a stable SDK: exports, signatures and
+- **Local workspace API** — `akm-cli/workspace` exposes typed operations (assets,
+  documents, proposals, bundles, config, feedback, env/secrets, activity), URL
+  redaction and the error classes for trusted local hosts. It is not a stable SDK: exports, signatures and
   result shapes may change in any release. Hosts own authentication and
   transport limits.
   See [Programmatic APIs](docs/reference/api.md#local-workspace-akm-cliworkspace).

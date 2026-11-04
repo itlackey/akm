@@ -22,18 +22,13 @@ import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { AkmError } from "../../core/errors";
+import { AkmError, CONFLICT_CODES } from "../../core/errors";
 import { getDirname } from "../../runtime";
+import { scrubUrlCredentials } from "../../workspace/redact";
 import { handleApiRequest, NO_SUCH_ROUTE } from "./api";
 import { EMBEDDED_UI } from "./embedded-ui";
-import { classifyProposalError, handleWriteRequest, matchWriteRoute } from "./proposal-actions";
-import { scrubUrlCredentials } from "./redact";
-import {
-  classifyWorkspaceError,
-  handleWorkspaceAction,
-  matchWorkspaceAction,
-  type WorkspaceAction,
-} from "./workspace-actions";
+import { handleWriteRequest, matchWriteRoute } from "./proposal-actions";
+import { handleWorkspaceAction, matchWorkspaceAction, type WorkspaceAction } from "./workspace-actions";
 
 export const TOKEN_HEADER = "x-akm-ui-token";
 
@@ -184,19 +179,18 @@ function readBody(req: http.IncomingMessage, limit: number): Promise<string | nu
   });
 }
 
-/** HTTP status for an error thrown by an API handler: the CLI's error classes, mapped. */
-function statusFor(error: unknown): number {
-  if (!(error instanceof AkmError)) return 500;
-  switch (error.kind) {
-    case "usage":
-      return 400;
-    case "not-found":
-      return 404;
-    case "transient":
-      return 503;
-    default:
-      return 500;
-  }
+/**
+ * HTTP status for an error thrown by an operation: a conflict code is `409` whatever its kind, a config refusal (a
+ * read-only bundle) is something the user can address (`409`), contention is `503`, and anything that is not an
+ * `AkmError` is an internal failure (`500`).
+ */
+function httpError(error: unknown): { status: number; code: string; message: string } {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!(error instanceof AkmError)) return { status: 500, code: "INTERNAL_ERROR", message };
+  const status = CONFLICT_CODES.has(error.code)
+    ? 409
+    : { usage: 400, "not-found": 404, config: 409, transient: 503 }[error.kind];
+  return { status, code: error.code, message };
 }
 
 /** The file `urlPath` names under the UI directory, or the embedded copy; `null` when there is none. */
@@ -287,10 +281,8 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
         }
         sendJson(req, res, 200, { ok: true, data: scrubUrlCredentials(data) });
       } catch (error) {
-        const code = error instanceof AkmError ? error.code : "INTERNAL_ERROR";
-        // The editor's source read refuses what a save would refuse, with the same status.
-        const status = url.pathname === "/api/asset/source" ? classifyWorkspaceError(error).status : statusFor(error);
-        sendError(req, res, status, code, error instanceof Error ? error.message : String(error));
+        const { status, code, message } = httpError(error);
+        sendError(req, res, status, code, message);
       }
       return;
     }
@@ -353,8 +345,7 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
           : await handleWriteRequest(route, body);
       sendJson(req, res, 200, { ok: true, data: scrubUrlCredentials(data) });
     } catch (error) {
-      const { status, code, message } =
-        "workspace" in route ? classifyWorkspaceError(error) : classifyProposalError(error);
+      const { status, code, message } = httpError(error);
       sendError(req, res, status, code, message);
     }
   }

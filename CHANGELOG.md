@@ -16,18 +16,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `"unparseable"`, never a verdict. akm's own pipeline calls each judge through the same
   registry entry, so the command and the pipeline send the same prompt.
 
-- `akm-cli/workspace` (Experimental) re-exports a small set of existing operations for a
-  trusted desktop host: the UI read/write dispatchers, managed clone, URL redaction, the
-  error classes, and the env/secret operations (`resolve*`, `write`/`remove`/`setSecret`,
-  `withEnvSecretWrite`) and `indexWrittenAssets`, which refreshes the index for files a host
-  wrote itself (#1423). It exports no other writers, leases or index readers;
-  the host calls the UI API for everything else. The UI API adds `GET /api/bundle/files`
-  (one directory of a registered bundle), `location` on `/api/asset`, `GET /api/asset/related`
-  (the nearest stored embeddings of an asset, from the stored vectors only),
-  `POST /api/bundles/rename` (`akm bundle rename`, `dryRun` for the plan) and
-  `POST /api/asset/retire`. A retire mints and accepts an ordinary retire proposal, so it follows the
-  proposal-retire lifecycle: the archive is grace-purged and `POST /api/proposals/:id/revert`
-  is the undo. `akm-cli/api` is unchanged.
+- `akm-cli/workspace` (Experimental) is a set of typed application operations for a trusted
+  desktop host (#1423): `assets`, `documents`, `proposals`, `bundles`, `config`, `feedback`,
+  `sensitive` (env and secrets), `activity` and `host`, each taking one typed input and returning
+  plain data, plus the error classes, `CONFLICT_CODES`, URL redaction and `indexWrittenAssets`.
+  The operations own the policy: revisions are the sha256 of the raw bytes and are checked inside
+  the write lease (a manual retire mints its proposal from exactly the bytes the caller saw),
+  interactive writes fail fast with `ASSET_MUTATION_LEASE_HELD` instead of waiting ten minutes,
+  and every failed id of a batch decision carries its error `code`. `akm ui`'s routes are thin
+  adapters over the same operations. `akm-cli/api` is unchanged.
 
 - `akm secret remove` is back, shaped like `akm env remove` (`--yes`, `--bundle`; it removes
   the file and its `.sensitive` marker). It names its file through the write-target resolver,
@@ -47,6 +44,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   route reflect takes (it queued such a revision for review and refused a lower one). The
   floor moved from reflect into the judge's verdict, so the command and the pipeline read
   one threshold; reflect's outcomes are unchanged. `reflect.quality`'s `schemaVersion` is 2.
+
+- `akm proposal accept` and `reject` report `code: "PROPOSAL_STALE"` (the target changed or is
+  gone since the proposal was made) or `"PROPOSAL_NOT_PENDING"` (already decided) instead of
+  `INVALID_FLAG_VALUE` for those cases; exit codes are unchanged. A failed id in a multi-id
+  accept also carries its `code`.
 
 ### Removed
 
