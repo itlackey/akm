@@ -1726,7 +1726,7 @@ export async function lookupBundleRefWithResolution(ref: BundleRef): Promise<Bun
 }
 
 /**
- * {@link lookupBundleRefWithResolution} on a plain read-only connection (`akm ui`): a read-write one can checkpoint
+ * {@link lookupBundleRefWithResolution} on a plain read-only connection (the workspace): a read-write one can checkpoint
  * the WAL into the main file when it closes, changing the file although nothing was written.
  */
 export async function lookupBundleRefWithResolutionReadonly(ref: BundleRef): Promise<BundleRefLookupResolution> {

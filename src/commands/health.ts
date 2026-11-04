@@ -102,7 +102,7 @@ export interface AkmHealthOptions {
    */
   probe?: boolean;
   /**
-   * Read-only run (`akm ui`): state.db is opened read-only and never created
+   * Read-only run (the workspace): state.db is opened read-only and never created
    * or migrated (missing or behind on migrations is reported as a failing
    * check instead), and the append/read round-trip probe is skipped because it
    * writes a row.
@@ -868,4 +868,4 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
 }
 
 // Markdown renderers (renderRunsDetailMd / renderWindowCompareMd) live in
-// health/md-report.ts, mirroring the HTML extraction in health/html-report.ts.
+// health/md-report.ts.

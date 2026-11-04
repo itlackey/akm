@@ -145,11 +145,12 @@ for t in "${tmps[@]}"; do
   # undiagnosable).
   if [ "${f:-0}" != "0" ] || ! grep -qE '[0-9]+ pass' "$t"; then
     grep -E "\(fail\)|^error:|panic" "$t" | head -10 || true
-    # Every assertion diff, wherever it sits in the log: bun prints the
-    # `error:` block at the point of failure, which the tail alone misses in
-    # a long shard (see scripts/test-unit.sh).
+    # Every failure's output, wherever it sits in the log: bun prints it just
+    # before the `(fail)` line, which the tail alone misses in a long shard.
+    # A thrown named error prints as `UsageError: ...`, not `error:`, so the
+    # context is taken from the `(fail)` line (see scripts/test-unit.sh).
     echo "── failure details: ${t} ──"
-    grep -n -B4 -A30 -E "^error:|panic" "$t" | head -400 || true
+    grep -n -B60 -E "^\(fail\)|panic" "$t" | head -400 || true
     echo "── shard log tail (last 80 lines): ${t} ──"
     tail -80 "$t"
   fi

@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+# AppImage sets APPDIR. The fallback also supports an extracted AppDir.
+app_dir=${APPDIR:-$(dirname "$(readlink -f "$0")")}
+export LD_LIBRARY_PATH="$app_dir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$app_dir/akm-desktop" "$@"

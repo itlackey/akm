@@ -43,10 +43,9 @@ import type { TaskRunResult, TaskRunStatus } from "./task-result";
  * Six hours is deliberately generous rather than tight: the abort is graceful
  * (the engine breaks at the next step boundary and the run stays resumable), so
  * the cost of over-waiting is bounded while the cost of cutting a legitimate
- * long run short is a lost step. It matches the 6h idle window `akm health`
- * already uses to call a run stale (`commands/health/report-view-model.ts`),
- * and it lands well inside a `@daily` cadence, so a wedged run can never still
- * be holding the lease when the next day's firing arrives.
+ * long run short is a lost step. It lands well inside a `@daily` cadence, so
+ * a wedged run can never still be holding the lease when the next day's firing
+ * arrives.
  *
  * An explicit `timeoutMs:` in the task file always wins; `timeoutMs: null` is
  * the explicit opt-out back to unbounded.

@@ -5,7 +5,7 @@
 /**
  * Improve-pipeline metric shapes for `akm health`: the window-level
  * {@link ImproveHealthMetrics} accumulator. Every field here is rendered by
- * the md/html report, read per window by the Discord health script
+ * the md report, read per window by the Discord health script
  * (`improve.coverage.distinctRefs`), or diffed by `--window-compare`. A
  * counter nothing renders does not belong here.
  */

@@ -190,7 +190,7 @@ export interface SearchLocalInput {
   includeExcludedTypes?: boolean;
   /**
    * Serve the index as it is: skip the inline bootstrap build `ensureIndex`
-   * would run for a stash the index cannot serve yet (`akm ui` never writes).
+   * would run for a stash the index cannot serve yet (the workspace never writes).
    */
   readOnly?: boolean;
 }
@@ -237,7 +237,7 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     };
   }
 
-  // A read-only search (`akm ui`) must not open the index for write: closing a
+  // A read-only search (the workspace) must not open the index for write: closing a
   // read-write connection can checkpoint the WAL into the main file, which
   // changes it even though nothing was written.
   const db = input.readOnly ? (openReadonlyExistingDatabase(dbPath) as Database) : openExistingDatabase(dbPath);

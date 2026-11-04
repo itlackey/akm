@@ -6,10 +6,9 @@ import { upsertTaskHistory } from "../../../src/storage/repositories/task-histor
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // C2 (13-bus-factor): a live 15–16% cron task-failure rate was invisible —
-// taskFailRate was computed + rendered in the HTML report but never surfaced as
-// a health advisory. This pins the new `task-fail-rate` advisory: it fires
-// (warn) at/above the 5% threshold the html-report already uses and stays
-// `pass` below it.
+// taskFailRate was computed but never surfaced as a health advisory. This pins
+// the `task-fail-rate` advisory: it fires (warn) at/above the 5% threshold and
+// stays `pass` below it.
 
 let storage: IsolatedAkmStorage;
 

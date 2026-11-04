@@ -18,7 +18,7 @@
 
 import { UsageError } from "../core/errors";
 
-export type OutputFormat = "json" | "yaml" | "text" | "jsonl" | "md" | "html";
+export type OutputFormat = "json" | "yaml" | "text" | "jsonl" | "md";
 /** Verbosity axis. */
 export type DetailLevel = "brief" | "normal" | "full";
 /**
@@ -43,7 +43,7 @@ export interface OutputDefaults {
   detail?: DetailLevel | "brief" | "normal" | "full";
 }
 
-const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl", "md", "html"];
+const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl", "md"];
 /** What `--detail` accepts: a verbosity level, or `agent` for the agent projection. */
 export type DetailValue = DetailLevel | "agent";
 const DETAIL_VALUES: DetailValue[] = ["brief", "normal", "full", "agent"];
@@ -51,6 +51,12 @@ const DETAIL_VALUES: DetailValue[] = ["brief", "normal", "full", "agent"];
 function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
   if (!value) return undefined;
   if ((OUTPUT_FORMATS as string[]).includes(value)) return value as OutputFormat;
+  if (value === "html") {
+    throw new UsageError(
+      "--format html is no longer supported: HTML reports moved to AKM Desktop. Use --format md for a report as text.",
+      "INVALID_FORMAT_VALUE",
+    );
+  }
   throw new UsageError(
     `Invalid value for --format: ${value}. Expected one of: ${OUTPUT_FORMATS.join("|")}`,
     "INVALID_FORMAT_VALUE",

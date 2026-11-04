@@ -5,7 +5,7 @@
 /**
  * Commands whose output is not an envelope, and therefore not formattable (D7).
  *
- * D7 makes all six `--format` values work on every command that renders through
+ * D7 makes all five `--format` values work on every command that renders through
  * `output()`. A small set does not render an envelope at all: they emit a shell
  * script, drive an interactive prompt, hand stdout to a child process, or print
  * a document that IS the payload. Passing `--format` to one of those cannot do
@@ -13,7 +13,7 @@
  *
  * The point of declaring the set here is that the exemption stops being
  * implicit. Before D7 you discovered it by getting JSON when you asked for
- * Markdown, or an exit 2 when you asked for HTML. Now the list is one grep away,
+ * Markdown, or an exit 2 when you asked for a format it lacked. Now the list is one grep away,
  * it is documented in `STABILITY.md`, and asking for a format on an exempt
  * command warns instead of silently doing something else.
  *
@@ -43,9 +43,6 @@ const EXEMPT_COMMANDS: ReadonlySet<string> = new Set([
   "help",
   // Embedded agent guide document (`src/output/cli-hints.ts`).
   "hints",
-  // Prints the URL it is serving and then runs until interrupted; the data is
-  // the web UI's own JSON API, not a result envelope.
-  "ui",
 ]);
 
 /**

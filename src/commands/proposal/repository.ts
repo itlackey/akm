@@ -52,6 +52,7 @@ import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { deriveInstallations } from "../../indexer/installations";
 import { sameScope, scopeFromFrontmatter } from "../../indexer/passes/metadata";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { sha256Hex } from "../../runtime";
 import type { Database } from "../../storage/database";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
 import {
@@ -527,6 +528,8 @@ export interface CreateRetireProposalInput {
   confidence?: number;
   /** Absent for a human retirement; the judged pair pass always sets it. */
   retirement?: RetirementMetadata;
+  /** Raw-bytes sha256 the caller last saw; the proposal is minted only from exactly those bytes. */
+  expectedRevision?: string;
 }
 
 /**
@@ -579,7 +582,10 @@ export function createRetireProposal(
     throw new UsageError(`Retire proposal target "${input.ref}" does not exist at ${targetAbs}.`, "INVALID_PROPOSAL");
   }
   const targetRelPath = path.relative(targetRoot, targetAbs);
-  const beforeContent = fs.readFileSync(targetAbs, "utf8");
+  const beforeBytes = fs.readFileSync(targetAbs);
+  if (input.expectedRevision !== undefined && sha256Hex(beforeBytes) !== input.expectedRevision)
+    throw new UsageError("The asset changed. Reload before retiring it.", "ASSET_CONTENT_CHANGED");
+  const beforeContent = beforeBytes.toString("utf8");
   const changes: FileChange[] = [{ path: targetRelPath, op: "delete" }];
   const proposedTarget = { source: proposalTarget.source, root: targetRoot };
   const confidence =
@@ -685,7 +691,7 @@ export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: Propo
   return withProposalsDb(ctx, (db) => resolveProposalIdIn(db, stashDir, idOrRef));
 }
 
-/** {@link resolveProposalId} over a connection the caller holds (`akm ui` reads state.db read-only). */
+/** {@link resolveProposalId} over a connection the caller holds (the workspace reads state.db read-only). */
 export function resolveProposalIdIn(db: Database, stashDir: string, idOrRef: string): Proposal {
   const exact = getStateProposal(db, idOrRef, stashDir);
   if (exact) return exact;
@@ -770,7 +776,7 @@ export function archiveProposal(
       if (existing.status !== "pending") {
         throw new UsageError(
           `Proposal ${id} is not pending (current status: ${existing.status}). Only pending proposals can be ${status}.`,
-          "INVALID_FLAG_VALUE",
+          "PROPOSAL_NOT_PENDING",
         );
       }
       const decidedAt = nowIso(ctx);
@@ -1469,13 +1475,13 @@ export function readFreshProposalTarget(
     if (!fresh && !alreadyPublished) {
       throw new UsageError(
         `Proposal target changed after proposal ${proposal.id} was created; refusing to overwrite newer content.`,
-        "INVALID_FLAG_VALUE",
+        "PROPOSAL_STALE",
       );
     }
   } else if (current !== undefined && proposal.changes.some((change) => change.op === "create")) {
     throw new UsageError(
       `Proposal target was created after proposal ${proposal.id}; refusing to overwrite newer content.`,
-      "INVALID_FLAG_VALUE",
+      "PROPOSAL_STALE",
     );
   }
   return current;
@@ -1672,7 +1678,7 @@ async function promoteProposalWithLease(
   if (proposal.status !== "pending") {
     throw new UsageError(
       `Proposal ${id} is not pending (current status: ${proposal.status}). Only pending proposals can be accepted.`,
-      "INVALID_FLAG_VALUE",
+      "PROPOSAL_NOT_PENDING",
     );
   }
   const preflight = preflightProposalPromotion(config, proposal, { ...options, queueTarget: target }, ctx);
@@ -1882,7 +1888,7 @@ function assertRetirementStillFresh(
   if (!judgedScope || typeof judgedScope !== "object" || Array.isArray(judgedScope)) {
     throw new UsageError(
       `Retire proposal ${proposalId} is stale — judged scope cannot be established; reject it and reassess the pair before acceptance.`,
-      "INVALID_FLAG_VALUE",
+      "PROPOSAL_STALE",
     );
   }
   if (
@@ -1892,7 +1898,7 @@ function assertRetirementStillFresh(
   ) {
     throw new UsageError(
       `Retire proposal ${proposalId} is stale — scope changed since judging; reject and reassess.`,
-      "INVALID_FLAG_VALUE",
+      "PROPOSAL_STALE",
     );
   }
   const retiredFresh = contentHash(retiredCurrentBytes, "body") === retirement.retiredContentHash;
@@ -1903,7 +1909,7 @@ function assertRetirementStillFresh(
       `Retire proposal ${proposalId} is stale — successor ${retirement.successorRef} ` +
         `${successorBytes === undefined ? "no longer exists" : !successorFresh ? "changed" : `and ${proposalRef} changed`} ` +
         "since judging; refusing to retire.",
-      "INVALID_FLAG_VALUE",
+      "PROPOSAL_STALE",
     );
   }
 }
@@ -1959,7 +1965,7 @@ async function retireProposalWithLease(
   if (proposal.status !== "pending") {
     throw new UsageError(
       `Proposal ${proposal.id} is not pending (current status: ${proposal.status}). Only pending proposals can be accepted.`,
-      "INVALID_FLAG_VALUE",
+      "PROPOSAL_NOT_PENDING",
     );
   }
   const assetPath = resolveAssetFilePathSafe(target.source, ref);
@@ -1972,7 +1978,7 @@ async function retireProposalWithLease(
     if (!fs.existsSync(assetPath)) {
       throw new UsageError(
         `Retire proposal ${proposal.id} target (${proposal.ref}) no longer exists — it may already have been retired, promoted away, or removed by another proposal.`,
-        "INVALID_FLAG_VALUE",
+        "PROPOSAL_STALE",
       );
     }
     const currentBytes = fs.readFileSync(assetPath);
@@ -1982,7 +1988,7 @@ async function retireProposalWithLease(
     // it only has to match the bytes it was minted against.
     if (retirement) {
       assertRetirementStillFresh(proposal.id, proposal.ref, retirement, target.source, currentBytes);
-    } else if (proposal.beforeHash !== contentHash(currentBytes.toString("utf8"))) {
+    } else if (!matchesBeforeHash(proposal, currentBytes)) {
       throw new UsageError(
         `Retire proposal ${proposal.id} target (${proposal.ref}) changed since the proposal was created.`,
         "INVALID_FLAG_VALUE",
@@ -2094,7 +2100,7 @@ async function retireProposalWithLease(
     // nothing.
     throw new UsageError(
       `Retire proposal ${proposal.id} target (${proposal.ref}) no longer exists and was not archived by this proposal — refusing to accept.`,
-      "INVALID_FLAG_VALUE",
+      "PROPOSAL_STALE",
     );
   }
 
@@ -2265,11 +2271,11 @@ async function unretireProposalWithLease(
       // A retirement with no judged pair (a person's) has only the `beforeHash` it was minted against.
       let matches = false;
       try {
-        const text = fs.readFileSync(originalAbs, "utf8");
+        const bytes = fs.readFileSync(originalAbs);
         const retirement = proposal.retirement;
         matches = retirement
-          ? contentHash(text, "body") === retirement.retiredContentHash
-          : proposal.beforeHash !== undefined && contentHash(text) === proposal.beforeHash;
+          ? contentHash(bytes, "body") === retirement.retiredContentHash
+          : matchesBeforeHash(proposal, bytes);
       } catch {
         matches = false;
       }
@@ -2629,7 +2635,7 @@ export function diffProposal(
   return diffLoadedProposal(config, getProposal(stashDir, id, ctx), options);
 }
 
-/** {@link diffProposal} for a proposal the caller already read (`akm ui` reads state.db read-only). */
+/** {@link diffProposal} for a proposal the caller already read (the workspace reads state.db read-only). */
 export function diffLoadedProposal(
   config: AkmConfig,
   proposal: Proposal,
@@ -2662,6 +2668,17 @@ export function diffLoadedProposal(
     isNew: existing === null,
     ...(targetPath ? { targetPath } : {}),
   };
+}
+
+/**
+ * A retire proposal's `beforeHash` is the raw-byte hash of its target. Proposals minted before that hashed the
+ * UTF-8-decoded text (same value for valid UTF-8, lossy for anything else), so that form still counts.
+ */
+function matchesBeforeHash(proposal: Proposal, bytes: Buffer): boolean {
+  return (
+    proposal.beforeHash !== undefined &&
+    (proposal.beforeHash === contentHash(bytes) || proposal.beforeHash === contentHash(bytes.toString("utf8")))
+  );
 }
 
 function resolveAssetFilePathSafe(source: WriteTargetSource, ref: AssetRef): string | undefined {

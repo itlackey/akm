@@ -93,9 +93,8 @@ covers beyond the table.
 | --- | --- | --- |
 | `akm setup` | Stable | The answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10; `--config` and `--probe` are gone (see the table above). |
 | `akm index` | Stable | |
-| `akm health` | Evolving | Exit codes are Evolving; report *content* and rendered `md`/`html` layout are Experimental — do not script against report layout. |
-| `akm metrics` | Experimental | New in 0.9.28. Report content, JSON shape and the `html` dashboard may change. |
-| `akm ui` | Experimental, **frozen** | Superseded by AKM Desktop and removed in a later release; it gets no new pages or routes. The command, its flags, the page and the `/api/` JSON it reads may change in any release. Browsing is read-only; explicit actions support proposals, feedback, bundle configuration and Markdown authoring. |
+| `akm health` | Evolving | Exit codes are Evolving; report *content* and rendered `md` layout are Experimental — do not script against report layout. |
+| `akm metrics` | Experimental | New in 0.9.28. Report content and JSON shape may change. |
 | `akm info` | Stable | |
 | `akm bundle create` | Stable | |
 | `akm bundle add` | Stable | |
@@ -233,14 +232,14 @@ covers beyond the table.
   present on every classified failure (exit 1 / 2 / 78) and absent only on
   unexpected internal errors (exit 70); `hint` is best-effort and may be absent. Prefer
   `code` over matching on `error` prose. Plus the exit-code table below.
-  **All six** `--format` values (`json|jsonl|yaml|text|md|html`) are available
+  **All five** `--format` values (`json|jsonl|yaml|text|md`) are available
   on every non-exempt command. `json`, `jsonl`, and `yaml` serialize the
-  envelope; `text`, `md`, and `html` render it. A command may register a bespoke
+  envelope; `text` and `md` render it. A command may register a bespoke
   renderer for a document format — `akm health` does, for its per-run and
-  window-compare tables and its full HTML report — and anything unregistered
+  window-compare tables — and anything unregistered
   falls back to a generic rendering derived from the envelope's own shape. No
   command emits one format's bytes when another was asked for, none rejects a
-  format outright, and **no command reads `--format` to decide what data to
+  supported format outright (`html` was removed with `akm ui` and is refused with a usage error naming AKM Desktop and `--format md`), and **no command reads `--format` to decide what data to
   fetch**: a registered renderer fires on the shape of the result (`akm health
   --report` carries the report dataset in the envelope, so the same data is
   available as JSON), never on the format alone.
@@ -259,7 +258,7 @@ covers beyond the table.
   NOT in the exempt set: `src/commands/migrate-cli.ts` parses the child's
   final JSON result line and renders it through the same `output()` pipeline
   (registered shape `src/output/shapes/migrate.ts`, text renderer
-  `src/output/text/migrate.ts`), so all six `--format` values work on them
+  `src/output/text/migrate.ts`), so all five `--format` values work on them
   like any other command. Any progress-event lines the child prints during a
   real `apply` (content migration, proposal-ref repair) still print verbatim,
   ahead of the formatted result — those are operational logging, not part of
@@ -382,16 +381,16 @@ CHANGELOG with a migration note.
   `--fail-on-flagged` CI contract and the exit codes are stable.
 - **Health** — `akm health` and its exit codes (0 pass / 4 warn / 1 fail) are
   Evolving; the *content* of the report (metrics, advisories) and the rendered
-  `md` / `html` layouts are Experimental — do not script against report layout.
+  `md` layout is Experimental — do not script against report layout.
 
 ## Experimental
 
 Subject to change without notice within minor releases. Not yet recommended
 for scripted use.
 
-- **Local workspace API** — `akm-cli/workspace` exposes the local UI dispatchers,
-  managed clone, URL redaction, the error classes and the env/secret operations
-  for trusted local hosts. It is not a stable SDK: exports, signatures and
+- **Local workspace API** — `akm-cli/workspace` exposes typed operations (assets,
+  documents, proposals, bundles, config, feedback, env/secrets, activity), URL
+  redaction and the error classes for trusted local hosts. It is not a stable SDK: exports, signatures and
   result shapes may change in any release. Hosts own authentication and
   transport limits.
   See [Programmatic APIs](docs/reference/api.md#local-workspace-akm-cliworkspace).
@@ -416,16 +415,7 @@ for scripted use.
   | exec units (`unit.exec`), `budget`, `unit.retry`, `map`, `gate.max_loops` | Kept in the 0.10 trim |
   | child workflows (`unit.workflow`, `unit.with`) | Experimental: least settled |
 - **`akm metrics`** — new in 0.9.28. What it reports, its JSON shape and the
-  `--format html` dashboard may change in any release; do not script against
-  them.
-- **`akm ui`** — new in 0.10. A local web UI over the same data
-  `akm health`, `akm metrics`, `akm config`, `akm proposal`, `akm search` and
-  `akm show` report. Browsing is read-only. Explicit feedback, bundle/configuration,
-  knowledge-creation, revision-checked knowledge/memory editing and proposal-decision actions reuse existing AKM operations.
-  Historical restore remains unavailable. The command's flags, the page, and the `/api/` JSON the
-  page reads (documented in `docs/reference/ui-api.md`) may change in any
-  release; do not script against the API. The CLI's JSON output remains the
-  scriptable surface.
+  report layout may change in any release; do not script against them.
 - **`lesson` asset type** — schema (`when_to_use`, `description`) is
   stable, but lesson-distillation triggers and ranking are tuning targets.
 - **`--detail agent`** — the agent projection, implemented on `search`, `show`,

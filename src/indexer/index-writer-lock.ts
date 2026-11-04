@@ -170,7 +170,11 @@ export async function acquireAssetMutationLease(
 }
 
 /** Asset writes share one lease so two concurrent writers cannot both pass preflight before either commits. */
-export async function withAssetMutationLease<T>(purpose: string, run: () => Promise<T>): Promise<T> {
+export async function withAssetMutationLease<T>(
+  purpose: string,
+  run: () => Promise<T>,
+  options: { maxWaitMs?: number } = {},
+): Promise<T> {
   const lockPath = getIndexWriterLockPath();
   const inherited = leaseContext.getStore();
   if (inherited?.has(lockPath)) return run();
@@ -179,6 +183,7 @@ export async function withAssetMutationLease<T>(purpose: string, run: () => Prom
   const execute = async (): Promise<T> => {
     const lease = await acquireAssetMutationLease({
       purpose,
+      maxWaitMs: options.maxWaitMs,
       // #956: say who is in the way instead of waiting silently, as the sync path does.
       onWait: ({ waitedMs }) =>
         warn(`waiting for ${describeAssetMutationHolder(lockPath)} — ${Math.round(waitedMs / 1000)}s`),
@@ -243,20 +248,4 @@ export function withAssetMutationLeaseSync<T>(purpose: string, run: () => T): T 
 
 export function probeAssetMutationLease() {
   return probeLock(getIndexWriterLockPath());
-}
-
-/**
- * Fail fast when another writer holds the asset-mutation lease. The accept and
- * reject functions would wait up to ten minutes for it, which in a browser is a
- * hung button; the probe turns a held lease into an immediate, retryable error.
- */
-export async function assertWriteLeaseFree(purpose: string): Promise<void> {
-  const lease = await acquireAssetMutationLease({ mode: "try", purpose });
-  if (!lease) {
-    throw new TransientError(
-      "Another akm process or request is writing to the bundle right now. Try again in a moment.",
-      "ASSET_MUTATION_LEASE_HELD",
-    );
-  }
-  lease.release();
 }

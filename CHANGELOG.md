@@ -16,27 +16,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `"unparseable"`, never a verdict. akm's own pipeline calls each judge through the same
   registry entry, so the command and the pipeline send the same prompt.
 
-- `akm-cli/workspace` (Experimental) re-exports a small set of existing operations for a
-  trusted desktop host: the UI read/write dispatchers, managed clone, URL redaction, the
-  error classes, and the env/secret operations (`resolve*`, `write`/`remove`/`setSecret`,
-  `withEnvSecretWrite`) and `indexWrittenAssets`, which refreshes the index for files a host
-  wrote itself (#1423). It exports no other writers, leases or index readers;
-  the host calls the UI API for everything else. The UI API adds `GET /api/bundle/files`
-  (one directory of a registered bundle), `location` on `/api/asset`, `GET /api/asset/related`
-  (the nearest stored embeddings of an asset, from the stored vectors only),
-  `POST /api/bundles/rename` (`akm bundle rename`, `dryRun` for the plan) and
-  `POST /api/asset/retire`. A retire mints and accepts an ordinary retire proposal, so it follows the
-  proposal-retire lifecycle: the archive is grace-purged and `POST /api/proposals/:id/revert`
-  is the undo. `akm-cli/api` is unchanged.
+- `akm-cli/workspace` (Experimental) is a set of typed application operations for a trusted
+  desktop host (#1423): `assets`, `documents`, `proposals`, `bundles`, `config`, `feedback`,
+  `sensitive` (env and secrets) and `activity`, each taking one typed input and returning
+  plain data, plus the error classes, `CONFLICT_CODES`, URL redaction and `indexWrittenAssets`.
+  The operations own the policy: revisions are the sha256 of the raw bytes and are checked inside
+  the write lease (a manual retire mints its proposal from exactly the bytes the caller saw),
+  interactive writes fail fast with `ASSET_MUTATION_LEASE_HELD` instead of waiting ten minutes,
+  and every failed id of a batch decision carries its error `code`. `docs/reference/workspace.md`
+  lists what each operation takes and returns. `akm-cli/api` is unchanged.
 
 - `akm secret remove` is back, shaped like `akm env remove` (`--yes`, `--bundle`; it removes
   the file and its `.sensitive` marker). It names its file through the write-target resolver,
   as `env remove` does.
 
 ### Changed
-
-- `akm ui` is frozen: AKM Desktop supersedes it and it will be removed in a later release. It gets
-  no new pages or routes (`STABILITY.md`, `docs/reference/ui-api.md`).
 
 - The reflect judge's rubric says adding a field the source lacks is needed, not churn, and
   drops nothing, so PRESERVATION is judged on the fields the source already had. The judge had
@@ -48,10 +42,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   floor moved from reflect into the judge's verdict, so the command and the pipeline read
   one threshold; reflect's outcomes are unchanged. `reflect.quality`'s `schemaVersion` is 2.
 
+- `akm proposal accept` and `reject` report `code: "PROPOSAL_STALE"` (the target changed or is
+  gone since the proposal was made) or `"PROPOSAL_NOT_PENDING"` (already decided) instead of
+  `INVALID_FLAG_VALUE` for those cases; exit codes are unchanged. A failed id in a multi-id
+  accept also carries its `code`.
+
 ### Removed
 
 - `akm improve judge --strategy`: a strategy never chose where the judge ran. The command
   is now `akm judge reflect.quality` in its older input and output shape.
+
+- `akm ui` and the `/api/` server behind it, and `--format html` (`akm health --report`, `akm metrics`
+  and the generic rendering of every other command). AKM Desktop replaces both. `--format html` is now
+  a usage error (exit 2) that names AKM Desktop and `--format md`; `output.format: html` in config
+  warns once and is ignored, so the default format applies. `--format json|jsonl|yaml|text|md` are
+  unchanged, and `akm health`, `--window-compare` and `akm metrics --detail full` still give the
+  same data. The `html` value is gone from the config schema and shell completions.
+  `docs/reference/ui-api.md` is now `docs/reference/workspace.md`.
 
 ### Fixed
 
@@ -64,6 +71,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   puts back any file it had already moved if a later step fails. Reverting a retirement that has
   no judged pair resumes after a crashed revert, checking the file against the proposal's
   `beforeHash`.
+
+### Desktop
+
+AKM Desktop ships in the same release as the akm it embeds: one version, one tag, one changelog.
+
+- The release workflow builds Desktop on Linux, macOS and Windows from the `akm-cli` tarball it
+  publishes and attaches the installers to the GitHub release: an AppImage, a macOS dmg and zip
+  (Apple silicon) and a Windows NSIS installer, with their update metadata. They are unsigned;
+  `desktop/docs/software.md` says what that means. CI builds and starts Desktop on all three
+  platforms, and the Release workflow takes a `dry_run` input that builds everything and publishes
+  nothing.
+- Desktop updates itself from this repository's GitHub releases (no token, no other server): a stable
+  build follows stable releases, a stage build also takes alpha and beta releases (rc releases
+  are installed by hand). macOS only reports that an
+  update exists until the app is signed. `AKM_DESKTOP_UPDATES=off` turns the check off.
+- Software shows the built-in engine version next to the host `akm`, says which to update when they
+  differ, and holds Update CLI & plugins back while the latest release is newer than Desktop's engine.
+  An index written by a newer akm now says to update Desktop.
+- The `install.sh` and `install.ps1` attached to a release install that release. Desktop's Install AKM
+  CLI uses the installer of its own release.
+- Desktop replaces `akm ui` and akm's HTML reports (both removed, see Removed above). Add bundle opens
+  the operating system's folder dialog.
 
 ## [0.10.261105] - 2026-11-02
 

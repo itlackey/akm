@@ -971,10 +971,11 @@ dropped with a warning. The built-in providers send no credentials and
 
 ## Output defaults
 
-`output.format` (one of `json`\|`yaml`\|`text`\|`jsonl`\|`md`\|`html`,
+`output.format` (one of `json`\|`yaml`\|`text`\|`jsonl`\|`md`,
 default `json`) and `output.detail` (`brief`\|`normal`\|`full`, default
 `brief`) set the CLI's default `--format`/`--detail` when the flags are
-omitted. Per-command flags always override these.
+omitted. Per-command flags always override these. A config that still says `output.format: html` (retired with
+akm's HTML output) loads: one warning names it and the default format applies.
 
 ## Setup-derived recommendations
 

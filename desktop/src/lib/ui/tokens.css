@@ -1,0 +1,100 @@
+/* The cascade order. A rule in a later layer wins over an earlier one whatever its specificity. */
+@layer tokens, base, layout, components, pages, utilities;
+
+/* Design tokens: colour (a light-dark() pair per token), space, type, radius and layout vocabulary. */
+@layer tokens {
+  /* Desktop design tokens. Colours, space, type, radius and elevation are tokens on :root; each colour is a light-dark() pair, so the system scheme picks one and the Theme control can force either. */
+  :root {
+    color-scheme: light dark;
+    accent-color: var(--accent);
+    --bg: light-dark(#f6f6f9, #0a0a0c);
+    --surface: light-dark(#ffffff, #111115);
+    --surface-2: light-dark(#efeff4, #17171c);
+    --surface-sunk: light-dark(#e8e8ef, #0d0d10);
+    --border: light-dark(#dcdce4, #26262d);
+    --border-strong: light-dark(#767684, #6b6b78);
+    --rule: light-dark(#0f0f14, #52525e);
+    --text: light-dark(#0f0f14, #ededf0);
+    --muted: light-dark(#4a4a57, #b4b4be);
+    --faint: light-dark(#5d5d6a, #9a9aa6);
+    --accent: light-dark(#6d28d9, #9b72fa);
+    --accent-hover: light-dark(#5b21b6, #b79bfc);
+    --accent-bg: light-dark(#f0eafe, #1b1530);
+    --on-accent: light-dark(#ffffff, #0a0a0c);
+    --ok: light-dark(#17753a, #34d399);
+    --ok-bg: light-dark(#e3f4e9, #0f2a20);
+    --warn: light-dark(#8a5a00, #fbbf24);
+    --warn-bg: light-dark(#fcf0d3, #2b2210);
+    --fail: light-dark(#c4202c, #f87171);
+    --fail-bg: light-dark(#fde6e8, #2d1416);
+    --add-strong: light-dark(#a8e0bb, #1d6b49);
+    --del-strong: light-dark(#f5b3b9, #7f2a2f);
+    --hunk-bg: light-dark(#f3efff, #16162b);
+    --link: light-dark(#5b21b6, #c4b5fd);
+    --age-1: light-dark(#8f7bd1, #6a58b0);
+    --age-2: light-dark(#6d4fc0, #8f7bdc);
+    --age-3: light-dark(#4a2a9c, #c4b5fd);
+    --age-unknown: light-dark(#767684, #8a8a96);
+    --s1: light-dark(#2f64d0, #c4b5fd);
+    --s2: light-dark(#b45309, #fbbf24);
+    --s3: light-dark(#0f766e, #34d399);
+    --s4: light-dark(#be185d, #f472b6);
+    --s5: light-dark(#7c3aed, #60a5fa);
+    --s6: light-dark(#6b7280, #9a9aa6);
+    --marker: light-dark(#a16207, #fbbf24);
+    --target-min: 24px;
+    --topbar-h: 4rem; /* the sticky bar; offsets below it derive from this */
+    /* The bar sits at the top on wide screens and at the bottom on narrow ones. */
+    --top-inset: var(--topbar-h);
+    --bottom-inset: 0px;
+    --control-height: 2.75rem;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --space-7: 48px;
+    --radius: 2px;
+    --radius-pill: 999px;
+    --text-xs: 0.75rem;
+    --text-s: 0.8125rem;
+    --text-m: 0.9375rem;
+    --text-l: 1.125rem;
+    --text-xl: 1.375rem;
+    --text-2xl: clamp(2rem, 1.3rem + 2.6vw, 3.25rem);
+    --text-stat: clamp(2rem, 1.5rem + 1.6vw, 2.75rem);
+    --content-max: 82rem;
+    --leading: 1.55;
+    --leading-tight: 1.05;
+    --leading-snug: 1.5;
+    --tracking-tight: -0.045em;
+    --tracking-snug: -0.02em;
+    --tracking-caps: 0.06em;
+    --weight-strong: 600;
+    --shadow-float: 0 4px 16px rgb(0 0 0 / 0.2);
+    --edge-accent: inset 3px 0 0 var(--accent);
+    --edge-underline: inset 0 -3px 0 var(--accent);
+    --edge-warn: inset 3px 0 0 var(--warn);
+    --edge-fail: inset 3px 0 0 var(--fail);
+    --focus-halo: 0 0 0 3px color-mix(in srgb, var(--link) 30%, transparent);
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+  }
+
+  @media (width < 72rem) {
+    :root {
+      --topbar-h: 3.5rem;
+      --top-inset: 0px;
+      --bottom-inset: calc(var(--topbar-h) + env(safe-area-inset-bottom, 0px));
+    }
+  }
+}

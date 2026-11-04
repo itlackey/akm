@@ -519,8 +519,7 @@
             "yaml",
             "text",
             "jsonl",
-            "md",
-            "html"
+            "md"
           ]
         },
         "detail": {
@@ -1992,8 +1991,7 @@
                 "yaml",
                 "text",
                 "jsonl",
-                "md",
-                "html"
+                "md"
               ]
             },
             "detail": {

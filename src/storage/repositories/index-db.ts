@@ -16,7 +16,7 @@ export const TELEMETRY_BUSY_TIMEOUT_MS = 250;
 
 export interface WithIndexDbOptions {
   /**
-   * Open the index read-only (`akm ui`): a read-write connection can checkpoint the WAL into the main file on
+   * Open the index read-only (the workspace): a read-write connection can checkpoint the WAL into the main file on
    * close, which changes the file even when nothing was written.
    */
   readOnly?: boolean;
