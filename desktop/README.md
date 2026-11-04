@@ -75,7 +75,7 @@ Appearance (System / Light / Dark) is saved separately from AKM settings in
 
 ## Build from source
 
-Use Bun (the repository build toolchain), Node 22.17+ (Node 24 LTS tested),
+Use Bun 1.3.14 (the CI-pinned toolchain), Node 22.17+ (Node 24 LTS tested),
 and tar. Desktop is an optional, isolated package in this repository; installing
 the CLI does not install Electron or Svelte. No published workspace package or
 private repository access is required.
@@ -101,7 +101,8 @@ downloads the pinned development runtime; nothing is downloaded at app startup.
 Rerun `bun run desktop:setup` from the repository root after changing core.
 It rebuilds and packs this checkout, then installs that package using Desktop's
 own frozen Bun lockfile. Change dependencies with Bun in the relevant package;
-do not edit lockfiles by hand. Core dependency changes may also require refreshing
+use the CI-pinned Bun when regenerating the lockfile so CI can read its format.
+Do not edit lockfiles by hand. Core dependency changes may also require refreshing
 `desktop/bun.lock` with `bun install --ignore-scripts` after packing.
 
 ```sh
