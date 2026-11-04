@@ -34,7 +34,7 @@
  * Claude and Codex shells do. It runs as {@link MODEL_WORK_AGENT}, an agent defined
  * inline for the run, added to the user's own inline config. On OpenCode 2 its tools
  * are limited to reading and searching; OpenCode 1 cannot be restricted and runs it
- * unrestricted, with a one-line warning.
+ * unrestricted but for the `skill` tool, with a one-line warning.
  */
 
 import { asRecord, parseJsonc } from "../../../core/common";
@@ -50,7 +50,7 @@ import {
 } from "../harness";
 import { detectOpencodeMajor, isOpencode2 } from "./version";
 
-/** The agent OpenCode 2 runs akm's model work as, limited to reading and searching; the name also marks those sessions in the user's history (`./session-log-v2.ts`). */
+/** The agent OpenCode runs akm's model work as, on OpenCode 2 limited to reading and searching; the name also marks those sessions in the user's history (`./session-log-v2.ts`). */
 export const MODEL_WORK_AGENT = "akm-model-work";
 
 /**
@@ -112,8 +112,12 @@ function modelWorkConfig(oc2: boolean): string {
     );
   }
   if (!oc2) {
-    // OpenCode 1 reads the singular `agent` map and a `prompt`; it ignores `agents`.
-    const agent = { ...asRecord(user?.agent), [MODEL_WORK_AGENT]: { mode: "primary", prompt: MODEL_WORK_PROMPT } };
+    // OpenCode 1 reads the singular `agent` map and a `prompt`; it ignores `agents`. Its `skill` tool is denied, as
+    // OpenCode 2's `*` deny denies it: OpenCode 1 then sends neither the tool nor the listing of every skill it finds.
+    const agent = {
+      ...asRecord(user?.agent),
+      [MODEL_WORK_AGENT]: { mode: "primary", prompt: MODEL_WORK_PROMPT, permission: { skill: "deny" } },
+    };
     return JSON.stringify({ ...user, agent });
   }
   const config: Record<string, unknown> = {

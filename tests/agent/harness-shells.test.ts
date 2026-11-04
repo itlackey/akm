@@ -262,7 +262,8 @@ describe("model work", () => {
     await withOpencodeOnPath(1, async () => {
       const built = build("opencode", { prompt: PROMPT, modelWork: true }, authored);
       // The agent is selected and the title is given, so there is no title request; the inline config carries the
-      // agent's one-line prompt in OpenCode 1's singular `agent` map, with no tool rules (it cannot restrict).
+      // agent's one-line prompt in OpenCode 1's singular `agent` map, with only the `skill` tool denied (it cannot be
+      // restricted to reading tools; the skill tool would list every skill on the machine in the system prompt).
       expect(built.argv).toEqual([
         "opencode",
         "run",
@@ -280,6 +281,7 @@ describe("model work", () => {
           "akm-model-work": {
             mode: "primary",
             prompt: "Do the task in the message. Reply with exactly what it asks for.",
+            permission: { skill: "deny" },
           },
         },
       });

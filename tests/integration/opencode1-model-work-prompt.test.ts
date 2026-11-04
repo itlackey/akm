@@ -5,8 +5,8 @@
 // Integration: runs the real OpenCode 1 CLI as a child process, against a loopback model.
 //
 // Gate: `AKM_TEST_OPENCODE1_BIN=/path/to/opencode` (an OpenCode 1). Without it the suite is one skipped test. Model work
-// on OpenCode 1 must reach the model with akm's one-line system prompt in place of OpenCode's coding prompt, and make no
-// session-title request; only the real CLI says whether it reads the agent the way the builder writes it. The run is
+// on OpenCode 1 must reach the model with akm's one-line system prompt in place of OpenCode's coding prompt, without the
+// `skill` tool and its listing, and make no session-title request; only the real CLI says whether it reads the agent the way the builder writes it. The run is
 // sandboxed: HOME, the XDG directories and the working directory are temporary, and the only provider is the loopback fake.
 
 import { afterEach, beforeAll, expect, test } from "bun:test";
@@ -25,20 +25,27 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
 });
 
-/** An OpenAI-compatible endpoint on loopback that answers `PROBE_OK` and records each request's system and user text. */
+/** An OpenAI-compatible endpoint on loopback that answers `PROBE_OK` and records each request's system and user text and tools. */
 function fakeModel() {
-  const requests: Array<{ system: string; user: string }> = [];
+  const requests: Array<{ system: string; user: string; tools: string[] }> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     async fetch(req) {
-      const body = (await req.json()) as { messages?: Array<{ role: string; content?: unknown }> };
+      const body = (await req.json()) as {
+        messages?: Array<{ role: string; content?: unknown }>;
+        tools?: Array<{ function?: { name?: string } }>;
+      };
       const text = (role: string): string =>
         (body.messages ?? [])
           .filter((message) => message.role === role)
           .map((message) => (typeof message.content === "string" ? message.content : JSON.stringify(message.content)))
           .join("\n");
-      requests.push({ system: text("system"), user: text("user") });
+      requests.push({
+        system: text("system"),
+        user: text("user"),
+        tools: (body.tools ?? []).map((tool) => tool.function?.name ?? ""),
+      });
       const chunk = (delta: unknown, finish: string | null): string =>
         `data: ${JSON.stringify({
           id: "compat",
@@ -63,7 +70,7 @@ function registerSuite(bin: string): void {
     _setOpencodeVersionProbeForTests(undefined);
   });
 
-  test("model work sends akm's one-line system prompt and no title request", async () => {
+  test("model work sends akm's one-line system prompt, no skill listing and no title request", async () => {
     const sb = makeSandboxDir("akm-oc1-prompt");
     cleanups.push(sb.cleanup);
     const at = (name: string): string => {
@@ -72,6 +79,13 @@ function registerSuite(bin: string): void {
       return dir;
     };
     const model = fakeModel();
+    // A skill OpenCode 1 finds under HOME, which its `skill` tool would list in the system prompt.
+    const skill = path.join(at("home"), ".claude", "skills", "fixture-skill");
+    fs.mkdirSync(skill, { recursive: true });
+    fs.writeFileSync(
+      path.join(skill, "SKILL.md"),
+      "---\nname: fixture-skill\ndescription: FIXTURE_SKILL_LISTED\n---\nbody\n",
+    );
     // The user's own provider arrives in OPENCODE_CONFIG_CONTENT, which model work merges its agent into.
     const userConfig = {
       model: "fixture/fake-model",
@@ -116,6 +130,8 @@ function registerSuite(bin: string): void {
     expect(model.requests).toHaveLength(1);
     expect(model.requests[0]?.system).toStartWith("Do the task in the message. Reply with exactly what it asks for.");
     expect(model.requests[0]?.system).not.toContain("You are opencode");
+    expect(model.requests[0]?.system).not.toContain("FIXTURE_SKILL_LISTED");
+    expect(model.requests[0]?.tools).not.toContain("skill");
     expect(model.requests[0]?.user).toContain("probe");
   }, 90_000);
 }

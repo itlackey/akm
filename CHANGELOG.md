@@ -57,7 +57,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - OpenCode model work now sends akm's one-line system prompt instead of OpenCode's coding-agent
   prompt, and OpenCode 1 runs it as the `akm-model-work` agent with `--title akm` (so no title
-  request) rather than as OpenCode's default agent. On the lab 35B the system prompt falls from
+  request) rather than as OpenCode's default agent, with its `skill` tool denied as on OpenCode 2
+  (so no listing of every skill on the machine). On the lab 35B the system prompt falls from
   8,911 to 447 characters and a third fewer prompt tokens go out per call, and the harness judge
   no longer passes far fewer proposals than the same judge on a connection (#1426).
 
