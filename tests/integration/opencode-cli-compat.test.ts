@@ -66,6 +66,8 @@ interface ModelRequest {
   readonly model: string | undefined;
   readonly tools: readonly string[];
   readonly toolResults: readonly string[];
+  /** The system messages the request carries, joined. */
+  readonly system: string;
 }
 
 interface FakeModel {
@@ -132,6 +134,10 @@ function fakeModel(behaviour: { callTool?: string; callArguments?: string; stall
         model: body.model,
         tools: (body.tools ?? []).map((tool) => tool.function?.name ?? ""),
         toolResults,
+        system: messages
+          .filter((message) => message.role === "system")
+          .map((message) => (typeof message.content === "string" ? message.content : JSON.stringify(message.content)))
+          .join("\n"),
       });
       if (behaviour.stall) {
         req.signal.addEventListener("abort", () => {
@@ -343,6 +349,19 @@ function registerSuite(bin: string): void {
       expect(isOpencode2(bin)).toBe(true);
     });
   }, 30_000);
+
+  test("model work's system prompt is akm's one line, in place of OpenCode's", async () => {
+    const box = sandbox();
+    const model = fakeModel();
+    writeConfig(box, providerConfig(model, { model: "fixture/fake-model" }));
+
+    const result = await runOpencode(box, { prompt: "probe", modelWork: true });
+
+    expect(result.ok).toBe(true);
+    expect(model.requests).toHaveLength(1);
+    expect(model.requests[0]?.system).toStartWith("Do the task in the message. Reply with exactly what it asks for.");
+    expect(model.requests[0]?.system).not.toContain("coding agent");
+  }, 60_000);
 
   describe("model work is limited to reading and searching", () => {
     test("a plugin's writing tool is neither offered nor callable, and nothing is written", async () => {

@@ -261,13 +261,46 @@ describe("model work", () => {
     const authored = ["run", "--agent", "build", "--attach", "http://elsewhere", "--model", "from-args"];
     await withOpencodeOnPath(1, async () => {
       const built = build("opencode", { prompt: PROMPT, modelWork: true }, authored);
-      expect(built).toEqual({ argv: ["opencode", "run", "--model", "from-args"], env: NO_FREE_MODELS, stdin: PROMPT });
+      // The agent is selected and the title is given, so there is no title request; the inline config carries the
+      // agent's one-line prompt in OpenCode 1's singular `agent` map, with no tool rules (it cannot restrict).
+      expect(built.argv).toEqual([
+        "opencode",
+        "run",
+        "--title",
+        "akm",
+        "--agent",
+        "akm-model-work",
+        "--model",
+        "from-args",
+      ]);
+      expect(built.stdin).toBe(PROMPT);
+      expect(built.env).toMatchObject(NO_FREE_MODELS);
+      expect(JSON.parse(built.env?.OPENCODE_CONFIG_CONTENT ?? "")).toEqual({
+        agent: {
+          "akm-model-work": {
+            mode: "primary",
+            prompt: "Do the task in the message. Reply with exactly what it asks for.",
+          },
+        },
+      });
       expect(build("opencode", { prompt: PROMPT, modelWork: true, model: "m-1" }, authored).argv).toEqual([
         "opencode",
         "run",
+        "--title",
+        "akm",
+        "--agent",
+        "akm-model-work",
         "--model",
         "m-1",
       ]);
+      // The user's own inline config stays, with the agent added to its `agent` map.
+      const user = { model: "mine/fast", agent: { reviewer: { mode: "subagent" } } };
+      const merged = withEnvSync({ OPENCODE_CONFIG_CONTENT: JSON.stringify(user) }, () =>
+        build("opencode", { prompt: PROMPT, modelWork: true }),
+      );
+      const content = JSON.parse(merged.env?.OPENCODE_CONFIG_CONTENT ?? "");
+      expect(content.model).toBe("mine/fast");
+      expect(Object.keys(content.agent)).toEqual(["reviewer", "akm-model-work"]);
     });
     expect(warnings.filter((line) => line.includes("OpenCode 1 cannot restrict"))).toHaveLength(1);
   });
@@ -332,6 +365,7 @@ describe("opencode by major", () => {
         agents: {
           "akm-model-work": {
             mode: "primary",
+            system: "Do the task in the message. Reply with exactly what it asks for.",
             permissions: [
               { action: "*", resource: "*", effect: "deny" },
               allow("read"),
@@ -523,7 +557,14 @@ describe("opencode by major", () => {
         expect(build("opencode", { prompt: PROMPT }).argv).toEqual(["opencode", "run"]);
         build("opencode", {});
         expect(warnings.filter((line) => line.includes("Could not read the version"))).toHaveLength(0);
-        expect(build("opencode", { prompt: PROMPT, modelWork: true }).argv).toEqual(["opencode", "run"]);
+        expect(build("opencode", { prompt: PROMPT, modelWork: true }).argv).toEqual([
+          "opencode",
+          "run",
+          "--title",
+          "akm",
+          "--agent",
+          "akm-model-work",
+        ]);
       },
       { exclusive: true },
     );
