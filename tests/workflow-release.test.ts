@@ -106,6 +106,8 @@ describe("release workflow", () => {
     // Everything that reads a secret, tags or waits for another run is skipped; the builds are not.
     expect(skipped("release")).toEqual(["Require green CI on this commit", "Publish to npm", "Create GitHub release"]);
     expect(skipped("desktop")).toEqual(["Attach Desktop to the GitHub release"]);
+    // Gated CI is skipped, and a skipped job upstream would skip Desktop unless it says it runs after a good release.
+    expect(workflow.jobs.desktop?.if).toContain("needs.release.result == 'success'");
   });
 
   test("Desktop is built per platform from the tarball being published and attached to the same release", () => {

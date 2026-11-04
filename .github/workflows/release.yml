@@ -217,6 +217,8 @@ jobs:
   # installers are unsigned (desktop/docs/software.md). A dry run keeps the files as workflow artifacts instead.
   desktop:
     needs: release
+    # A dry run skips Gated CI, and a skipped job anywhere upstream would skip this one without this condition.
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
