@@ -97,7 +97,7 @@ export function provenance(source: string | null | undefined): string {
       ? "Set in config.json"
       : source?.startsWith("extends:")
         ? `Inherited from ${source.slice(8)}`
-        : (source ?? "Source not recorded");
+        : (source ?? "Not set yet");
 }
 export function configurationChanges(
   fields: SettingsField[],

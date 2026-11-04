@@ -161,7 +161,7 @@
                   ? target.workingStash
                     ? "Automatic (working stash)"
                     : `Automatic (${target.name})`
-                  : "None (writes need an explicit target)",
+                  : "None (create a library first)",
               ],
               ...names.map(
                 (name) =>
@@ -376,8 +376,8 @@
     </div>{/if}
   {#if loading && !config}<p role="status">Loading settings…</p>{:else if route !== "config"}
     <p class="muted" hidden={!!manageName}>
-      Default bundle: <strong>{listing?.defaultBundle ?? "Not configured"}</strong>. Explicit write target:
-      <strong>{listing?.defaultWriteTarget ?? "Automatic"}</strong>.
+      Default bundle: <strong>{listing?.defaultBundle ?? "none yet"}</strong>. New content goes to:
+      <strong>{listing?.defaultWriteTarget ?? "a bundle chosen automatically"}</strong>.
       <a href="/settings/config">Change library defaults</a> · <a href="/setup">Run setup again</a>
     </p>
     {#if manageName}<a class="bundle-back" href="/settings/bundles"

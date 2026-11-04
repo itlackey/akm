@@ -218,6 +218,7 @@
       <button disabled={hostBusy || work === 0} onclick={run}
         >{busy ? "Working…" : work ? `Install ${work} selected` : "Nothing selected"}</button
       >
+      <a href="#setup-try">Skip this step</a>
     </div>
     {#each outcomes as outcome}
       {#if outcome.error}

@@ -9,6 +9,7 @@
   import { api } from "./client";
   import SetupAgents from "./SetupAgents.svelte";
   import SetupLibrary from "./SetupLibrary.svelte";
+  import SetupTryIt from "./SetupTryIt.svelte";
   import { agentCards } from "./setup-model";
   import { refreshBundles } from "./state/workspace.svelte";
   import { software, watchSoftware } from "./state/software.svelte";
@@ -25,6 +26,7 @@
   }
   const akmSees = $derived(detected?.harnesses.map((harness) => harness.platform) ?? []);
   const cards = $derived(software.data ? agentCards(software.data.host, software.data.engine, akmSees, enabled) : []);
+  const connected = $derived(cards.filter((card) => card.state === "connected"));
 
   onMount(() => {
     const stop = watchSoftware();
@@ -47,6 +49,7 @@
   {#if !detected}<p role="status">Looking at this computer…</p>{:else}
     <SetupLibrary stashDir={detected.stashDir} />
     <SetupAgents {cards} engine={software.data?.engine} onconfigured={refreshEnabled} />
+    <SetupTryIt {connected} />
   {/if}
 </div>
 

@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect } from "@playwright/test";
-import { launchFixture } from "./support.mjs";
+import { akm, launchFixture } from "./support.mjs";
 
 const ENGINE = JSON.parse(await readFile(new URL("../.core/package.json", import.meta.url), "utf8")).version;
 const PLUGIN = "0.10.261020";
@@ -51,7 +51,7 @@ const commands = async (server) =>
     .filter(Boolean)
     .map((line) => JSON.parse(line));
 
-test("first run on an empty computer ends with a library, the CLI, a connected agent", {
+test("first run on an empty computer ends with a library, the CLI, a connected agent and a search akm saw", {
   timeout: 240000,
 }, async (t) => {
   let starter;
@@ -153,6 +153,19 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   const enabled = JSON.parse(await readFile(path.join(server.env.AKM_CONFIG_DIR, "config.json"), "utf8"));
   assert.ok(enabled.harnesses?.claude, "the ticked harness is in akm's config");
 
+  // 3. Try it: a real search, and the agent check, which claims nothing until akm's count rises.
+  await expect(page.getByRole("searchbox", { name: "Search your library" })).toHaveValue(/\w/);
+  await page.getByRole("searchbox", { name: "Search your library" }).fill("deploy");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page.getByRole("list", { name: "Search results" }).getByText("Deploy checklist")).toBeVisible();
+  await expect(page.getByText("/akm-search deploy")).toBeVisible();
+  await expect(page.getByText("Waiting for a search from an agent")).toBeVisible();
+  await expect(page.getByText(/A search reached akm/)).toHaveCount(0);
+  await shot("setup-05-try");
+  akm(server, ["search", "deploy"]);
+  await expect(page.getByText(/A search reached akm at/)).toBeVisible({ timeout: 15000 });
+  await shot("setup-06-observed");
+
   // Setup is derived, not remembered: it can be run again from Settings and shows what is true now.
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await page.getByRole("link", { name: "Software", exact: true }).click();
@@ -176,6 +189,9 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   }
   await page.setViewportSize({ width: 1280, height: 900 });
   await shot("setup-07-rerun");
+  await page.goto(server.origin);
+  await expect(page.getByRole("heading", { name: "Set up akm on this computer" })).toHaveCount(0);
+  await shot("setup-08-home-after");
   assert.deepEqual(errors, []);
 });
 
@@ -194,7 +210,7 @@ async function withHostTools(fixture, { akmVersion = "0.10.261104" } = {}) {
   fixture.env.PATH = bin;
 }
 
-test("run again on an existing machine shows live state and offers the CLI update only when it is older", {
+test("run again on an existing machine shows live state, offers the CLI update only when it is older, and tips after two minutes", {
   timeout: 120000,
 }, async (t) => {
   const server = await launchFixture({ configureFixture: (fixture) => withHostTools(fixture) });
@@ -203,6 +219,9 @@ test("run again on an existing machine shows live state and offers the CLI updat
   t.after(() => browser.close());
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
+  const screenshots = process.env.AKM_DESKTOP_SCREENSHOTS || path.join(server.root, "screenshots");
+  await mkdir(screenshots, { recursive: true });
+  await page.clock.install();
   await page.goto(server.url);
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   // Settings → Bundles links back to setup.
@@ -212,9 +231,16 @@ test("run again on an existing machine shows live state and offers the CLI updat
   await expect(page.getByText(`✓ AKM plugin ${PLUGIN}`)).toBeVisible();
   // The host akm is one build behind the engine: said once, with the update offered.
   await expect(page.getByText(/This akm is older than the engine built into this app/)).toBeVisible();
+  await page.screenshot({ path: path.join(screenshots, "existing-machine-setup.png"), fullPage: true });
   await page.getByRole("button", { name: "Update CLI & plugins" }).click();
   await expect(page.getByText(/Native AKM upgrade completed/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Nothing selected" })).toBeDisabled();
+  // No agent has searched: nothing is claimed, and after two minutes the page offers what to check.
+  await expect(page.getByText("Waiting. Nothing has been seen yet.")).toBeVisible();
+  await expect(page.getByText(/A search reached akm/)).toHaveCount(0);
+  await page.clock.fastForward(125_000);
+  await expect(page.getByText("No search has reached akm yet. Things to check:")).toBeVisible();
+  await expect(page.getByText(/A search reached akm/)).toHaveCount(0);
 });
 
 test("a machine with the same akm as the app is not offered an update", { timeout: 120000 }, async (t) => {
@@ -231,7 +257,14 @@ test("a machine with the same akm as the app is not offered an update", { timeou
 });
 
 test("errors that say the library is missing lead to setup", { timeout: 120000 }, async (t) => {
-  const server = await launchFixture({ empty: true });
+  const server = await launchFixture({
+    empty: true,
+    // Nothing on PATH, so that no akm, harness or Bun of the machine running the test is found.
+    configureFixture: async (fixture) => {
+      await mkdir(path.join(fixture.root, "bin"));
+      fixture.env.PATH = path.join(fixture.root, "bin");
+    },
+  });
   t.after(() => server.stop());
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
@@ -250,4 +283,9 @@ test("errors that say the library is missing lead to setup", { timeout: 120000 }
   await page.getByRole("textbox", { name: "Source" }).fill(server.root);
   await page.getByRole("button", { name: "Register bundle" }).click();
   await expect(page.getByRole("alert").getByRole("link", { name: "Set up akm" })).toBeVisible();
+  await page.screenshot({ path: path.join(screenshots, "settings-register-no-library.png"), fullPage: true });
+  await page.goto(`${server.origin}/settings/software`);
+  await expect(page.getByRole("link", { name: "Run setup again" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Install AKM CLI" })).toBeVisible();
+  await page.screenshot({ path: path.join(screenshots, "software-nothing-installed.png"), fullPage: true });
 });

@@ -109,3 +109,14 @@ export function agentCards(
       };
     });
 }
+
+/** The prompt to paste into a harness so that it searches akm, written for each harness's own surface. */
+export function checkPrompt(id: string, query: string): string {
+  if (id === "claude") return `/akm-search ${query}`;
+  if (id === "codex") return `Use the akm-search skill to search akm for "${query}".`;
+  return `Use the akm_search tool to search akm for "${query}".`;
+}
+
+/** The searches recorded in a retrieval series (`activity.retrievalTrend`). */
+export const searchCount = (series: { daily?: Array<{ searches: number }> } | null | undefined) =>
+  (series?.daily ?? []).reduce((sum, day) => sum + day.searches, 0);

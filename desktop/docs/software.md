@@ -98,6 +98,11 @@ Nothing runs until you press a button.
      akm CLI does not provide a `bun` command, so Bun is the plugin's own runtime, not just a way to get akm. When Bun
      is missing the card shows Bun's official install command with **Copy** and **Check again**. Desktop never runs
      Bun's installer. OpenCode plugins carry their own akm and need no Bun from you.
+3. **Try it.** A real search of the new library, then one line per connected harness to paste into it. Desktop counts
+   the searches akm records for today and says so only when that count rises; it cannot tell which program searched, so
+   check one harness at a time. After two minutes without a search it lists what to check (restart the harness, trust
+   the Codex hooks, Bun on the harness's PATH).
+
 Desktop's CLI install is Linux and macOS; on Windows run the `install.ps1` of the release yourself.
 
 ## Host CLI and harness plugins

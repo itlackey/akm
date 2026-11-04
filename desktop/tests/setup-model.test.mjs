@@ -4,7 +4,15 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { agentCards, hasStarter, isUnconfigured, pluginChannel, pluginMatches } from "../src/lib/setup-model.ts";
+import {
+  agentCards,
+  checkPrompt,
+  hasStarter,
+  isUnconfigured,
+  pluginChannel,
+  pluginMatches,
+  searchCount,
+} from "../src/lib/setup-model.ts";
 
 test("plugins follow Desktop's release stage and match on akm's major and minor", () => {
   assert.equal(pluginChannel("0.10.261105"), "latest");
@@ -64,4 +72,12 @@ test("a harness that cannot say what is installed is not offered an install", ()
   );
   assert.equal(card.state, "unverified");
   assert.equal(card.needsBun, false);
+});
+
+test("each harness gets a prompt for its own surface, and searches are counted across days", () => {
+  assert.equal(checkPrompt("claude", "deploy"), "/akm-search deploy");
+  assert.match(checkPrompt("codex", "deploy"), /akm-search skill/);
+  assert.match(checkPrompt("opencode2", "deploy"), /akm_search tool/);
+  assert.equal(searchCount({ daily: [{ searches: 2 }, { searches: 3 }] }), 5);
+  assert.equal(searchCount(null), 0);
 });
