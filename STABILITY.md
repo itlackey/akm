@@ -258,7 +258,7 @@ covers beyond the table.
   NOT in the exempt set: `src/commands/migrate-cli.ts` parses the child's
   final JSON result line and renders it through the same `output()` pipeline
   (registered shape `src/output/shapes/migrate.ts`, text renderer
-  `src/output/text/migrate.ts`), so all six `--format` values work on them
+  `src/output/text/migrate.ts`), so all five `--format` values work on them
   like any other command. Any progress-event lines the child prints during a
   real `apply` (content migration, proposal-ref repair) still print verbatim,
   ahead of the formatted result — those are operational logging, not part of

@@ -21,8 +21,9 @@ that.
   such as a read-only bundle) are exported as `CONFLICT_CODES`.
 - **Redaction.** Config values under secret-like keys (`apiKey`, `token`, `password`, `secret`, `credential`,
   `authorization`, anything under `env` or `secrets`) are `"[redacted]"`; symbolic references (`$VAR`, `${secrets/name}`)
-  are kept. Credentials inside any URL in any result (userinfo, `token=`, `api_key=`, `sig=`, ...) are masked. Env and
-  secret assets are never read; see `assets.show`.
+  are kept. Env and secret assets are never read; see `assets.show`. A host passes every result and error message
+  through the exported `scrubUrlCredentials` before showing it, which masks credentials inside any URL (userinfo,
+  `token=`, `api_key=`, `sig=`, ...); Desktop does this on every response.
 - **Timestamps** are ISO 8601 UTC unless noted. Counts that cannot be computed are `null`, never `NaN`.
 - **Reads.** A read operation opens `state.db` and `index.db` read-only and never creates or migrates them: a missing or
   behind-on-migrations `state.db` makes the sections that need it empty (and `health` report it as a failing check), not

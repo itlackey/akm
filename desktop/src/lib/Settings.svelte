@@ -190,7 +190,7 @@
             kind: "select",
             options: [
               ["", "Automatic (CLI default)"],
-              ...["json", "yaml", "text", "jsonl", "md", "html"].map((value) => [value, value] as [string, string]),
+              ...["json", "yaml", "text", "jsonl", "md"].map((value) => [value, value] as [string, string]),
             ],
           },
           {
@@ -311,7 +311,7 @@
   async function browse() {
     error = "";
     try {
-      const folder = await pickFolder(source.startsWith("/") || source.startsWith("~") ? source : "");
+      const folder = await pickFolder(source);
       if (folder !== null) source = folder;
     } catch (cause) {
       error = (cause as Error).message;
