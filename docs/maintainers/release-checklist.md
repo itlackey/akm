@@ -46,7 +46,7 @@ The Release workflow, on the pushed commit:
    release (`desktop` job; Desktop shares the akm version, tag and changelog,
    and updates itself from these releases: a stage release is a GitHub
    prerelease, so Desktop's next channel follows it). The installers are
-   unsigned, see [Software](../../desktop/docs/software.md#unsigned-installers).
+   unsigned, see [Software](https://github.com/itlackey/akm/blob/main/desktop/docs/software.md#unsigned-installers).
 
 Push nothing else to the branch until the Release finishes: a push cancels the
 release commit's CI run (`ci.yml` cancels an in-progress run on the same ref),

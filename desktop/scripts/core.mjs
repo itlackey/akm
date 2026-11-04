@@ -24,8 +24,9 @@ if (!tarball) {
 // This directory contains generated package contents only; never mix versions.
 await rm(destination, { recursive: true, force: true });
 await mkdir(destination, { recursive: true });
-// Name the archive relative to its folder: GNU tar reads "C:\\..." as a remote host (Git's tar on Windows).
-execFileSync("tar", ["-xf", path.basename(archive), "-C", destination, "--strip-components=1"], {
+// Name the archive relative to its folder and use forward slashes: Git's GNU tar on Windows reads "C:\\..." as a
+// remote host and unescapes the backslashes.
+execFileSync("tar", ["-xf", path.basename(archive), "-C", destination.replaceAll("\\", "/"), "--strip-components=1"], {
   cwd: path.dirname(archive),
   stdio: "inherit",
 });
