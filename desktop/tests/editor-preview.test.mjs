@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { formatMarkdown } from "../src/lib/editor-commands.mjs";
-import { inline, markdown, splitFrontmatter } from "../src/lib/upstream/markdown.js";
+import { inline, markdown, splitFrontmatter } from "../src/lib/ui/markdown.js";
 
 test("preview renders basic and nested emphasis without treating unmatched markers as markup", () => {
   for (const [source, expected] of [

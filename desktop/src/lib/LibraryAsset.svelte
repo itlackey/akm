@@ -5,8 +5,8 @@
   import { documentTitle, libraryRead, typedLinks } from "./library-model";
   import type { AssetRead, Improvement, SearchHit } from "./library-model";
   import type { Bundle, History, Source, WriteResult } from "./types";
-  import { splitFrontmatter, headingId } from "./upstream/markdown.js";
-  import { sparkline } from "./upstream/lib.js";
+  import { splitFrontmatter, headingId } from "./ui/markdown.js";
+  import { sparkline } from "./ui/lib.js";
   import Markdown from "./Markdown.svelte";
   import Diff from "./Diff.svelte";
   import Icon from "./Icon.svelte";

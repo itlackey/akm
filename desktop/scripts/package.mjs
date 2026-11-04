@@ -38,8 +38,6 @@ await writeFile(
 );
 await cp(path.join(root, ".core"), path.join(stage, ".core"), { recursive: true });
 await cp(path.join(root, "THIRD_PARTY.md"), path.join(stage, "THIRD_PARTY.md"));
-await cp(path.join(root, "src/lib/upstream"), path.join(stage, "third-party/akm-ui"), { recursive: true });
-await cp(path.join(root, "../src/assets/ui"), path.join(stage, "third-party/akm-ui/core"), { recursive: true });
 await cp(path.join(root, "../LICENSE"), path.join(stage, "LICENSE"));
 execFileSync("bun", ["install", "--frozen-lockfile", "--production", "--ignore-scripts"], {
   cwd: stage,

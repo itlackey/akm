@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { diffSection } from "./upstream/diff-view.js";
-  import { mount } from "./upstream/lib.js";
+  import { diffSection } from "./ui/diff-view.js";
+  import { mount } from "./ui/lib.js";
   // Preserve AKM's reviewed diff algorithm, escaped markup and keyboard-operable controls.
   export let before: string | null = "";
   export let after: string | null = "";

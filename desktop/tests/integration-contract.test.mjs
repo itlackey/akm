@@ -61,3 +61,14 @@ test("the renderer imports akm-cli only as types", async () => {
       assert.fail(`${file}: ${match[0]}`);
   }
 });
+
+test("no source file reaches outside desktop/ by a relative import", async () => {
+  for (const file of await readdir(path.join(desktop, "src"), { recursive: true })) {
+    if (!/\.(?:ts|mjs|js|svelte|css)$/.test(file)) continue;
+    const source = await readFile(path.join(desktop, "src", file), "utf8");
+    for (const match of source.matchAll(/(?:from|import\(|@import)\s*['"](\.[^'"]*)['"]/g)) {
+      const resolved = path.resolve(desktop, "src", path.dirname(file), match[1]);
+      assert.ok(resolved.startsWith(desktop + path.sep), `${file}: ${match[1]}`);
+    }
+  }
+});

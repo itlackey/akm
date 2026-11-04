@@ -3,7 +3,7 @@
   import { beforeNavigate } from "$app/navigation";
   import { api, saveContent } from "./client";
   import { navigate } from "./navigation";
-  import { setUnsaved } from "./upstream/lib.js";
+  import { setUnsaved } from "./ui/lib.js";
   import type { Bundle } from "./types";
   export let bundle = "";
   export let file = "";

@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import { api, ApiError, saveContent } from "./client";
   import { libraryRead, documentTitle } from "./library-model";
-  import { setUnsaved } from "./upstream/lib.js";
+  import { setUnsaved } from "./ui/lib.js";
   import type { Bundle, Source, WriteResult } from "./types";
   import Markdown from "./Markdown.svelte";
   import Diff from "./Diff.svelte";

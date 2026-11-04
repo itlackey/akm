@@ -3,7 +3,7 @@
   import { api, date } from "./client";
   import { navigate } from "./navigation";
   import ActivityChart from "./ActivityChart.svelte";
-  import { verticalBars, lines, stepLine } from "./upstream/chart-view.js";
+  import { verticalBars, lines, stepLine } from "./ui/chart-view.js";
   import { number, percent, rollingSearch, outcomeClasses } from "./activity-presenter";
   import type { ActivityImpact, ActivityRetrieval } from "./activity-types";
   import type { Proposal } from "./types";

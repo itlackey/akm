@@ -4,8 +4,8 @@
   import ActivityChart from "./ActivityChart.svelte";
   import Icon from "./Icon.svelte";
   import { healthCheckAnchor } from "./home-model";
-  import { verticalBars, lines, pChartLine, eventStrip } from "./upstream/chart-view.js";
-  import { weekStart } from "./upstream/lib.js";
+  import { verticalBars, lines, pChartLine, eventStrip } from "./ui/chart-view.js";
+  import { weekStart } from "./ui/lib.js";
   import { number, percent, duration, tokens, healthGroup, attentionItems } from "./activity-presenter";
   import type {
     ActivityOverview,

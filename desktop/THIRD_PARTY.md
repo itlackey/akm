@@ -1,33 +1,7 @@
-# Reused AKM presentation code
+# Third-party notices
 
-`src/lib/upstream/` imports the shared styles, DOM helpers, diff algorithm and
-charts directly from this repository's `src/assets/ui/`. Only the modified
-`diff-view.js` and `markdown.js` remain Desktop-owned adaptations of that code
-(original source: `c3bb055`). Domain operations delegate to `akm-cli/workspace`.
-
-Desktop modifies `diff-view.js` to accept optional display labels for
-comparisons between unrelated assets, and to start every diff inline. A
-side-by-side choice lasts for the open diff, not future diffs or other workflows.
-Proposal diffs retain the upstream Current/Proposed labels and the same
-alignment, escaping and safety behavior.
-
-Desktop also extends `markdown.js` to render the Markdown editor's asterisk
-emphasis, explicit block quotes, and matching-length backtick code spans. It
-retains AKM's escaped-HTML construction, restricted link destinations, indexed
-heading/link context, and source-only storage. The renderer is a deliberately
-limited Markdown presentation subset, not a full CommonMark implementation;
-unsupported syntax remains text. These additions and their security regression
-tests must be considered when syncing the upstream helper.
-
-The copied AKM files are covered by the Mozilla Public License 2.0; its text is
-included at `src/lib/upstream/LICENSE`. The vendored ECharts renderer retains its
-embedded Apache 2.0 / BSD notices. Review upstream presentation changes before
-syncing these copies; do not replace Desktop's task-specific Svelte workflows
-wholesale.
-
-The application package includes these notices and source files so the license
-and provenance remain available outside this checkout. The npm dependency graph
-also retains each dependency's original license in `node_modules`.
+`src/lib/ui/echarts.js` is the vendored Apache ECharts renderer (Apache 2.0 / BSD); its notices are embedded in the
+file. The npm dependency graph retains each dependency's original license in `node_modules`.
 
 ## fhold menu integration
 

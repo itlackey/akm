@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { chart } from "./upstream/chart-view.js";
-  import { mount } from "./upstream/lib.js";
+  import { chart } from "./ui/chart-view.js";
+  import { mount } from "./ui/lib.js";
   export let id: string;
   export let heading: string;
   export let description = "";

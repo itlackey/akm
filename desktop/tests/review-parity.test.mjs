@@ -14,8 +14,8 @@ import {
   rejectionError,
   rejectionReason,
 } from "../src/lib/review-model.ts";
-import { buildDiff } from "../src/lib/upstream/diff.js";
-import { diffSection } from "../src/lib/upstream/diff-view.js";
+import { buildDiff } from "../src/lib/ui/diff.js";
+import { diffSection } from "../src/lib/ui/diff-view.js";
 import { launchFixture } from "./support.mjs";
 
 test("review helpers preserve route filters and bound composed rejection reasons", () => {

@@ -1,0 +1,317 @@
+/* Base: the element defaults every page builds on. */
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    /* The sticky top bar must not cover a focused control. */
+    scroll-padding-block: calc(var(--top-inset) + var(--space-4)) calc(var(--bottom-inset) + var(--space-4));
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: var(--text-m) / var(--leading) var(--font);
+    -webkit-font-smoothing: antialiased;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--link);
+    outline-offset: 2px;
+    border-radius: var(--radius);
+  }
+
+  /* One disclosure everywhere: a chevron that turns down when open, in place of the browser's triangle. */
+  summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-block-size: var(--target-min);
+    padding-block: var(--space-1);
+    list-style: none;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+    &::-webkit-details-marker {
+      display: none;
+    }
+    &::before {
+      content: "";
+      flex: none;
+      inline-size: 0.4em;
+      block-size: 0.4em;
+      border-block-end: 2px solid var(--muted);
+      border-inline-end: 2px solid var(--muted);
+      transform: rotate(-45deg);
+    }
+    &:hover::before {
+      border-color: var(--text);
+    }
+  }
+
+  details[open] > summary {
+    margin-block-end: var(--space-2);
+    &::before {
+      transform: rotate(45deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    summary::before {
+      transition: transform 120ms;
+    }
+  }
+
+  a {
+    color: var(--link);
+    text-underline-offset: 2px;
+  }
+
+  code,
+  pre,
+  .mono {
+    font-family: var(--mono);
+    font-size: 0.92em;
+  }
+
+  main {
+    min-inline-size: 0;
+    max-inline-size: var(--content-max);
+    inline-size: 100%;
+    margin-inline: auto;
+    padding: var(--space-6) var(--space-6) var(--space-7);
+    /* main holds focus only for a moment while a page redraws; it shows no ring. */
+    &:focus {
+      outline: none;
+    }
+  }
+
+  /* ---- type ---- */
+  h1 {
+    margin: 0;
+    font-size: var(--text-2xl);
+    font-weight: 700;
+    line-height: var(--leading-tight);
+    letter-spacing: var(--tracking-tight);
+  }
+
+  h2 {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-l);
+    font-weight: 700;
+    letter-spacing: var(--tracking-snug);
+  }
+
+  h3 {
+    margin: 0;
+    font-size: var(--text-m);
+    font-weight: var(--weight-strong);
+  }
+
+  h4 {
+    margin: var(--space-4) 0 var(--space-2);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-caps);
+    color: var(--muted);
+  }
+
+  section {
+    margin-block-start: var(--space-6);
+  }
+
+  section > h3 {
+    margin: var(--space-5) 0 var(--space-2);
+  }
+
+  p {
+    margin: 0 0 var(--space-3);
+  }
+
+  /* Unsaved-draft guard: floats over the page so the editor underneath stays mounted. */
+  .unsaved-bar {
+    position: fixed;
+    inset-block-start: var(--space-4);
+    inset-inline-end: var(--space-4);
+    z-index: 10;
+    max-inline-size: min(420px, calc(100vw - var(--space-6)));
+    margin: 0;
+    box-shadow: var(--shadow-float);
+    & p {
+      margin: 0 0 var(--space-2);
+    }
+  }
+
+  table {
+    inline-size: 100%;
+    border-collapse: collapse;
+  }
+
+  th,
+  td {
+    padding: var(--space-2) var(--space-4);
+    text-align: start;
+    vertical-align: top;
+    border-block-end: 1px solid var(--border);
+  }
+
+  thead th {
+    background: var(--surface-2);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    letter-spacing: var(--tracking-caps);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  tr:last-child > td,
+  tr:last-child > th {
+    border-block-end: 0;
+  }
+
+  tbody tr:hover > * {
+    background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  }
+
+  :where(:has(> .kv)) {
+    container-type: inline-size;
+  }
+
+  pre {
+    margin: 0;
+    overflow-x: auto;
+  }
+
+  input[type="search"],
+  input[type="text"],
+  input[type="url"],
+  input[type="number"],
+  input[type="email"],
+  input[type="password"],
+  input:not([type]),
+  textarea,
+  select {
+    font: inherit;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: var(--space-2) var(--space-3);
+    &:focus-visible {
+      outline: none;
+      border-color: var(--link);
+      box-shadow: var(--focus-halo);
+    }
+  }
+
+  button,
+  .btn {
+    font: inherit;
+    font-size: var(--text-m);
+    min-block-size: var(--control-height);
+    padding: var(--space-2) var(--space-5);
+    border: 2px solid var(--accent);
+    border-radius: var(--radius);
+    background: var(--accent);
+    color: var(--on-accent);
+    font-weight: var(--weight-strong);
+    cursor: pointer;
+    @media (forced-colors: active) {
+      border-color: ButtonText;
+      background: ButtonFace;
+      color: ButtonText;
+    }
+    &:hover:not(:disabled) {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+  }
+
+  /* A native box at text size; the margin keeps the click target at least 24px (WCAG 2.5.8). */
+  input[type="checkbox"] {
+    inline-size: 1rem;
+    block-size: 1rem;
+    margin: var(--space-1);
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    font: inherit;
+    color: inherit;
+  }
+
+  input[type="search"] {
+    flex: 1 1 260px;
+    min-inline-size: 0;
+  }
+
+  button:disabled {
+    background: var(--surface-sunk);
+    border-color: var(--border-strong);
+    color: var(--muted);
+    cursor: not-allowed;
+  }
+
+  :where(td, th, .hit-head) a {
+    text-decoration: none;
+    font-weight: 500;
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    :where(button, a.btn, input, select, textarea) {
+      transition:
+        background-color 120ms,
+        border-color 120ms,
+        box-shadow 120ms;
+    }
+  }
+
+  :where(h1, .crumbs) .mono {
+    font-size: inherit;
+  }
+
+  /* ---- form system ---- */
+  :where(input:not([type="checkbox"], [type="radio"]), select) {
+    min-block-size: var(--control-height);
+  }
+
+  select {
+    appearance: none;
+    padding-inline-end: var(--space-6);
+    /* Two half-squares make the chevron, so it takes the text colour token in both schemes. */
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+      linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-repeat: no-repeat;
+    background-size: 5px 5px;
+    background-position:
+      right calc(var(--space-4) + 5px) center,
+      right var(--space-4) center;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--faint);
+  }
+
+  kbd {
+    padding: 0 var(--space-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    font-family: var(--mono);
+    font-size: var(--text-xs);
+  }
+
+  /* A heading focused by the router is a landmark for the reader, not a control: it needs no ring. */
+  h1[tabindex="-1"]:focus {
+    outline: none;
+  }
+}

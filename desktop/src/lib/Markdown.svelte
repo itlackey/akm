@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { markdown, splitFrontmatter } from "./upstream/markdown.js";
+  import { markdown, splitFrontmatter } from "./ui/markdown.js";
   export let content = "";
   // Reuse AKM's title suppression only when the body opens with the displayed title.
   export let omitHeading = "";

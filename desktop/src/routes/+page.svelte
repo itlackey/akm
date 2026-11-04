@@ -8,15 +8,15 @@
   import Activity from "../lib/Activity.svelte";
   import Settings from "../lib/Settings.svelte";
   import { api } from "../lib/client";
-  import { hasUnsaved } from "../lib/upstream/lib.js";
+  import { hasUnsaved } from "../lib/ui/lib.js";
   import { navigate } from "../lib/navigation";
   import type { Bundle } from "../lib/types";
-  import "../lib/upstream/tokens.css";
-  import "../lib/upstream/base.css";
-  import "../lib/upstream/layout.css";
-  import "../lib/upstream/components.css";
-  import "../lib/upstream/pages.css";
-  import "../lib/upstream/utilities.css";
+  import "../lib/ui/tokens.css";
+  import "../lib/ui/base.css";
+  import "../lib/ui/layout.css";
+  import "../lib/ui/components.css";
+  import "../lib/ui/pages.css";
+  import "../lib/ui/utilities.css";
   import "../lib/desktop.css";
 
   const sections = ["Home", "Library", "Review", "Activity", "Settings"] as const;

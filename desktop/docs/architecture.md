@@ -23,7 +23,7 @@ host CLI/harnesses strictly for explicit installation and upgrade management.
 | `src/lib/server/features/` | Desktop-only features built on `akm-cli/workspace`: plain file editing, secret reveal policy, preferences, native host software orchestration |
 | `src/lib/*.svelte` | Presentation, review confirmation, retained editor drafts |
 | `src/lib/navigation.ts` | SvelteKit navigation with draft-aware Back/forward and retained section state |
-| `src/lib/upstream/` | Reused AKM design tokens, escaped Markdown, diff and chart presentation |
+| `src/lib/ui/` | Desktop-owned presentation: design tokens, escaped Markdown, diff and chart rendering (copied from AKM) |
 | `akm-cli/workspace` | Typed operations: reads, writes, validation, policy (revisions, leases, writability), proposals, persistence |
 
 The namespace is a set of typed operations grouped by capability (assets, documents, proposals, bundles, config,
