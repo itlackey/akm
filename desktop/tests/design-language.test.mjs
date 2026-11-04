@@ -14,15 +14,15 @@ test("desktop chrome and action groups share one readable control language", { t
   await page.goto(app.url);
   await expect(page.locator(".home-attention")).toBeVisible();
   const routes = [
-    ["#/home", ".home-attention"],
-    ["#/search", ".library-hit-content"],
-    [`#/search?ref=${encodeURIComponent(app.refs.document)}`, ".markdown"],
-    [`#/edit?ref=${encodeURIComponent(app.refs.document)}`, 'textarea[name="content"]'],
-    [`#/proposals/${app.proposals.fresh}`, ".change-preview"],
-    ["#/config", "#library-settings"],
+    ["/", ".home-attention"],
+    ["/library/search", ".library-hit-content"],
+    [`/library/search?ref=${encodeURIComponent(app.refs.document)}`, ".markdown"],
+    [`/library/edit?ref=${encodeURIComponent(app.refs.document)}`, 'textarea[name="content"]'],
+    [`/review/${app.proposals.fresh}`, ".change-preview"],
+    ["/settings/config", "#library-settings"],
   ];
   for (const [route, ready] of routes) {
-    await page.goto(`${app.origin}/${route}`);
+    await page.goto(`${app.origin}${route}`);
     await expect(page.locator(ready).first()).toBeVisible();
     const result = await page.evaluate(() => {
       const visible = (e) => Boolean(e.getClientRects().length) && !e.closest("[hidden]");

@@ -66,9 +66,7 @@ test("native Electron window preserves size, sandbox, isolated data, and server 
   if (executablePath?.endsWith(".AppImage")) {
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     await page.getByRole("link", { name: "Software", exact: true }).click();
-    await expect(page.getByLabel("Repository token", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Connect updates", exact: true })).toBeDisabled();
-    await expect(page.getByRole("checkbox", { name: "Download desktop updates automatically" })).toBeVisible();
+    await expect(page.getByText("To update, replace the AppImage with a newer download.")).toBeVisible();
     assert.deepEqual(await bounds(), initialBounds, "Software must not resize the window");
     await page
       .getByRole("navigation", { name: "Primary navigation" })
@@ -108,9 +106,14 @@ test("native Electron window preserves size, sandbox, isolated data, and server 
   );
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.locator(".document-body")).toContainText("An unsaved native-close check.");
-  await page.evaluate(() => {
-    location.hash = "#/new-sensitive?kind=secret&bundle=personal&returnTo=%23%2Ffiles%3Fbundle%3Dpersonal";
-  });
+  // Navigate inside the running app, as a link click would, so the open draft state is not reloaded.
+  await page.evaluate((href) => {
+    const link = document.createElement("a");
+    link.href = href;
+    document.body.append(link);
+    link.click();
+    link.remove();
+  }, "/library/new-sensitive?kind=secret&bundle=personal&returnTo=%2Flibrary%2Ffiles%3Fbundle%3Dpersonal");
   const secretEditor = page.getByRole("textbox", { name: "File contents", exact: true });
   await secretEditor.fill("synthetic-native-close-secret");
   assert.ok(
@@ -150,6 +153,7 @@ test("AppImage installs a real per-user menu copy, confirms replacements, and la
 }, async (t) => {
   const runtime = process.env.AKM_DESKTOP_TEST_RUNTIME;
   const fixture = await createFixture({ packageRoot: process.env.AKM_DESKTOP_TEST_APP_ROOT });
+  t.after(() => fixture.cleanup());
   const stable = path.join(fixture.env.HOME, ".local/bin/akm-desktop.AppImage");
   const entryPath = path.join(fixture.env.XDG_DATA_HOME, `applications/${DESKTOP_ID}.desktop`);
   let app;

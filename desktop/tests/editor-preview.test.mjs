@@ -57,7 +57,7 @@ test("all new formatting preserves escaped HTML and the existing URL policy", ()
   assert.ok(rendered.includes('href="https://example.com/" target="_blank" rel="noopener noreferrer"'));
   assert.equal(
     inline("[[knowledge/example|<unsafe>]]", { bundle: "personal" }).text,
-    '<a href="#/asset?ref=personal%2F%2Fknowledge%2Fexample"><code>&lt;unsafe&gt;</code></a>',
+    '<a href="/library/asset?ref=personal%2F%2Fknowledge%2Fexample"><code>&lt;unsafe&gt;</code></a>',
   );
 });
 

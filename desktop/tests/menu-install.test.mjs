@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { DESKTOP_ID, DesktopMenu, desktopEntry } from "../electron/menu-install.mjs";
+
+const temporary = [];
+after(() => Promise.all(temporary.map((dir) => rm(dir, { recursive: true, force: true }))));
 
 async function fixture() {
   const home = await mkdtemp(join(tmpdir(), "akm-menu-"));
+  temporary.push(home);
   const env = {
     platform: "linux",
     packaged: true,

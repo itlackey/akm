@@ -1,31 +1,29 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
-import ts from "typescript";
-
-const source = await readFile(new URL("../src/lib/library-files-model.ts", import.meta.url), "utf8");
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-}).outputText;
-const { directoryKey, ancestorPaths, parentPath, filesHref, parseFilesHref, treeNodes } = await import(
-  `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`
-);
+import {
+  ancestorPaths,
+  directoryKey,
+  filesHref,
+  parentPath,
+  parseFilesHref,
+  treeNodes,
+} from "../src/lib/library-files-model.ts";
 
 test("file navigation round trips actual paths and canonical refs without deriving one from the other", () => {
   const ref = "team//concepts/recovery:step-two";
   const href = filesHref(
     { bundle: "team", path: "notes/Backups & recovery", file: "notes/Backups & recovery/guide #2.md", ref, open: true },
-    "#/search?q=backup&bundle=team",
+    "/library/search?q=backup&bundle=team",
   );
   const query = parseFilesHref(href);
   assert.equal(query.get("ref"), ref);
   assert.equal(query.get("file"), "notes/Backups & recovery/guide #2.md");
-  assert.equal(query.get("readingFrom"), "#/search?q=backup&bundle=team");
+  assert.equal(query.get("readingFrom"), "/library/search?q=backup&bundle=team");
   assert.equal(query.get("open"), "1");
   const folder = parseFilesHref(filesHref({ bundle: "team", path: "notes", file: "notes/guide.md" }));
   assert.equal(folder.has("ref"), false);
   assert.equal(folder.has("open"), false);
-  assert.equal(parseFilesHref("#/search?bundle=team"), null);
+  assert.equal(parseFilesHref("/library/search?bundle=team"), null);
 });
 
 test("physical breadcrumbs use directory segments, not concept categories", () => {

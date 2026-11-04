@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { HostTools, hostEnvironment, summarizeUpgrade } from "../src/lib/server/features/host-tools.mjs";
+
+const temporary = [];
+after(() => Promise.all(temporary.map((dir) => rm(dir, { recursive: true, force: true }))));
 
 test("host environment finds conventional user tools without running profiles or leaking desktop/launcher state", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "akm-host-env-"));
+  temporary.push(home);
   await mkdir(path.join(home, ".nvm/versions/node/v24.18.0"), { recursive: true });
   const env = await hostEnvironment(
     {
@@ -31,6 +35,7 @@ test("host environment finds conventional user tools without running profiles or
 
 async function hostFixture({ absent = false, failure = false } = {}) {
   const home = await mkdtemp(path.join(os.tmpdir(), "akm-host-test-"));
+  temporary.push(home);
   const calls = [],
     installed = new Set(),
     configured = new Set();

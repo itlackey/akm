@@ -1,12 +1,85 @@
 import assert from "node:assert/strict";
 import { execFileSync, fork } from "node:child_process";
 import { once } from "node:events";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFixture } from "../scripts/fixture.mjs";
 
 export const root = fileURLToPath(new URL("..", import.meta.url));
 const appRoot = process.env.AKM_DESKTOP_TEST_APP_ROOT ?? root;
+const read = (file) => readFile(file, "utf8");
+/** Run the CLI against a fixture; returns its JSON result. */
+export function akm(fixture, args, extraEnv = {}) {
+  const stdout = execFileSync(process.execPath, [fixture.launcher, ...args, "--format", "json", "-q"], {
+    env: { ...fixture.env, ...extraEnv },
+    encoding: "utf8",
+    timeout: 60000,
+  });
+  return JSON.parse(stdout);
+}
+
+/** Queue a pending proposal through the CLI. A stand-in agent returns `content`; no model runs. */
+async function propose(fixture, name, content) {
+  const reply = path.join(fixture.root, `reply-${name}.json`);
+  await writeFile(reply, JSON.stringify({ ref: `knowledge/${name}`, content }));
+  return akm(fixture, ["proposal", "new", "knowledge", name, "--task", "synthetic", "--harness", "fake"], {
+    AKM_FIXTURE_REPLY: reply,
+  }).proposal.id;
+}
+
+const document = (title, body) =>
+  `---\ntitle: ${title}\ndescription: Synthetic desktop acceptance test guidance\n---\n# ${title}\n\n${body}\n`;
+
+async function seedProposals(fixture) {
+  const note = await read(fixture.documentPath);
+  return {
+    stale: await propose(fixture, "restore-laptop", note.replace("checksum", "checksum and available space")),
+    fresh: await propose(
+      fixture,
+      "recovery-checklist",
+      document(
+        "Recovery checklist",
+        "Confirm the intended target disk before restoring. Preserve the original backup and verify its checksum. After restoring, verify that the new system boots and that the restored files can be opened. Record any failures before retrying.",
+      ),
+    ),
+    reject: await propose(
+      fixture,
+      "review-example",
+      document(
+        "Review example",
+        "This document is a synthetic proposal used to test manual rejection and reopening. Its contents have no authority over any real installation. A reviewer can inspect the proposed source, reject it with a reason, and reopen it without changing another document.",
+      ),
+    ),
+  };
+}
+
+/** Real usage events from the CLI: searches (one with no result), a show, and feedback in both directions. */
+function seedUsage(fixture) {
+  for (const query of ["backup", "backup", "backup", "missing restore steps"]) akm(fixture, ["search", query]);
+  akm(fixture, ["show", fixture.refs.document]);
+  akm(fixture, ["feedback", fixture.refs.document, "--positive"]);
+  akm(fixture, ["feedback", fixture.refs.memory, "--negative", "--reason", "Synthetic review evidence"]);
+}
+
+/**
+ * Open the app the way the launcher does (the one-time session URL sets the cookie), then optionally go to a route.
+ * `go` navigates inside the running app, so drafts and in-memory state survive, as a click on a link would.
+ */
+export async function open(page, server, route) {
+  await page.goto(server.url);
+  if (route && route !== "/") await page.goto(server.origin + route);
+}
+export function go(page, href) {
+  return page.evaluate((href) => {
+    const link = document.createElement("a");
+    link.href = href;
+    document.body.append(link);
+    link.click();
+    link.remove();
+  }, href);
+}
+
 export async function launchFixture({
   proposals = false,
   metrics = false,
@@ -16,20 +89,8 @@ export async function launchFixture({
 } = {}) {
   const fixture = await createFixture({ assetCount, git, packageRoot: appRoot });
   if (configureFixture) await configureFixture(fixture);
-  if (proposals) {
-    const output = execFileSync(process.execPath, [fileURLToPath(new URL("./seed-proposals.mjs", import.meta.url))], {
-      env: { ...fixture.env, AKM_DESKTOP_TEST_ROOT: fixture.root },
-      encoding: "utf8",
-      timeout: 60000,
-    });
-    fixture.proposals = JSON.parse(output.trim().split("\n").at(-1));
-  }
-  if (metrics)
-    execFileSync(process.execPath, [fileURLToPath(new URL("./seed-metrics.mjs", import.meta.url))], {
-      env: { ...fixture.env, AKM_DESKTOP_TEST_ROOT: fixture.root },
-      encoding: "utf8",
-      timeout: 60000,
-    });
+  if (proposals) fixture.proposals = await seedProposals(fixture);
+  if (metrics) seedUsage(fixture);
   const child = fork(path.join(appRoot, "electron/server.mjs"), [], {
     env: fixture.env,
     execArgv: [],

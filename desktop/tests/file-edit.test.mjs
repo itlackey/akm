@@ -169,10 +169,11 @@ test("a filesystem failure is a 500 that names its cause", {
   skip: process.getuid?.() === 0 && "root reads any file",
 }, async (t) => {
   const app = await launchFixture();
-  t.after(() => app.stop());
   const file = path.join(app.root, "personal", skillFile);
-  await fs.chmod(file, 0o000);
+  // Hooks run in the order registered: restore the mode before the fixture is removed.
   t.after(() => fs.chmod(file, 0o644));
+  t.after(() => app.stop());
+  await fs.chmod(file, 0o000);
   const failed = await read(app, { bundle: "personal", file: skillFile });
   assert.equal(failed.status, 500);
   assert.equal(failed.body.code, "INTERNAL_ERROR");

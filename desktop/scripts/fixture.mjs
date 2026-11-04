@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -78,10 +78,20 @@ export async function createFixture({
       { path: path.join(root, name), writable: name !== "vendor" },
     ]),
   );
+  // A stand-in agent, so tests can queue proposals through the CLI (`akm proposal new --harness fake`) with no model:
+  // it prints the reply file the test chose. Nothing else uses it.
+  const fakeAgent = await put("fake-agent", '#!/bin/sh\ncat "$AKM_FIXTURE_REPLY"\n');
+  await chmod(fakeAgent, 0o755);
   await put(
     "config/config.json",
     JSON.stringify(
-      { semanticSearchMode: "off", defaultBundle: "personal", defaultWriteTarget: "personal", bundles },
+      {
+        semanticSearchMode: "off",
+        defaultBundle: "personal",
+        defaultWriteTarget: "personal",
+        bundles,
+        harnesses: { fake: { platform: "aider", bin: fakeAgent } },
+      },
       null,
       2,
     ),
@@ -100,6 +110,10 @@ export async function createFixture({
   await put(
     "personal/agents/recovery-reviewer.md",
     "---\ndescription: Synthetic recovery reviewer\nmode: subagent\n---\n# Recovery reviewer\n\nExplain which recovery checks are incomplete.\n",
+  );
+  await put(
+    "personal/knowledge/review-example.md",
+    "---\ntitle: Review example\ndescription: Synthetic desktop acceptance test guidance\n---\n# Review example\n\nOriginal review guidance retained for the rollback check. Keep the source evidence alongside proposed changes and verify it before accepting an update.\n",
   );
   await put(
     "shared/knowledge/shared-backup.md",
@@ -159,7 +173,9 @@ export async function createFixture({
       skill: "personal//skills/backup-check",
       malicious: "personal//knowledge/untrusted",
     },
-    // Retained synthetic fixtures aid failure diagnosis; never remove source or live data.
-    cleanup: async () => {},
+    // Only the temporary directory created above; set AKM_DESKTOP_KEEP_FIXTURES=1 to keep it for diagnosis.
+    cleanup: async () => {
+      if (!process.env.AKM_DESKTOP_KEEP_FIXTURES) await rm(root, { recursive: true, force: true });
+    },
   };
 }

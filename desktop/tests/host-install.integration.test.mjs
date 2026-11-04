@@ -8,8 +8,9 @@ import { HostTools } from "../src/lib/server/features/host-tools.mjs";
 test("official AKM installer creates and verifies a standalone CLI in an isolated home", {
   skip: process.env.AKM_DESKTOP_TEST_LIVE_INSTALL !== "1",
   timeout: 660000,
-}, async () => {
+}, async (t) => {
   const fixture = await createFixture({ index: false });
+  t.after(() => fixture.cleanup());
   const env = { ...fixture.env };
   for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]) delete env[key];
   const installed = path.join(env.HOME, ".local/bin/akm");

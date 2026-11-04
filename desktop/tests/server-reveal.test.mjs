@@ -3,7 +3,6 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
 
 const secret =
@@ -99,84 +98,4 @@ test("env and secrets open as metadata; only explicit authenticated reveal retur
     200,
   );
   assert.ok(!app.logs().includes("synthetic-password"));
-});
-
-test("a dotenv-adapter bundle accepts env and secret writes, as the CLI does, and writes are not indexed", async (t) => {
-  const app = await launchFixture({
-    configureFixture: async (fixture) => {
-      const file = path.join(fixture.env.AKM_CONFIG_DIR, "config.json");
-      const config = JSON.parse(await fs.readFile(file, "utf8"));
-      await fs.mkdir(path.join(fixture.root, "dotenvs"));
-      config.bundles.dotenvs = {
-        path: path.join(fixture.root, "dotenvs"),
-        writable: true,
-        components: { main: { root: ".", adapter: "dotenv", writable: true } },
-      };
-      await fs.writeFile(file, JSON.stringify(config));
-    },
-  });
-  t.after(() => app.stop());
-  for (const file of ["env/service.env", "secrets/service-key"]) {
-    const selector = { bundle: "dotenvs", file };
-    value(await app.call("/api/desktop/sensitive/create", { ...selector, content: env }));
-    assert.equal(await fs.readFile(path.join(app.root, "dotenvs", file), "utf8"), env);
-    assert.equal((await fs.stat(path.join(app.root, "dotenvs", file))).mode & 0o777, 0o600);
-    const read = value(await app.call("/api/desktop/sensitive/reveal", selector));
-    value(
-      await app.call("/api/desktop/sensitive/save", {
-        ...selector,
-        content: `${env}# edited\n`,
-        revision: read.revision,
-      }),
-    );
-    assert.equal(await fs.readFile(path.join(app.root, "dotenvs", file), "utf8"), `${env}# edited\n`);
-  }
-});
-
-test("protected file UI masks, shows, hides and clears values on navigation without HTML execution", async (t) => {
-  const app = await fixture();
-  t.after(() => app.stop());
-  const browser = await chromium.launch({ headless: true });
-  t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
-  const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(app.url);
-  for (const [ref, name] of [
-    ["personal//env/example", "example.env"],
-    ["personal//secrets/example-key", "example-key"],
-  ]) {
-    await page.evaluate((ref) => {
-      location.hash = `#/files?ref=${encodeURIComponent(ref)}&open=1`;
-    }, ref);
-    await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
-    await expect(page.getByLabel("Values masked", { exact: true })).toBeVisible();
-    assert.ok(!(await page.content()).includes("synthetic-password"));
-    await page.getByRole("button", { name: "Show", exact: true }).click();
-    await expect(page.locator(".secret-content")).toContainText("synthetic-password");
-    assert.equal(await page.evaluate(() => window.__secretExecuted), undefined);
-    await page.getByRole("button", { name: "Hide", exact: true }).click();
-    await expect(page.locator(".secret-content")).toHaveCount(0);
-    await page.getByRole("button", { name: "Show", exact: true }).click();
-    await expect(page.locator(".secret-content")).toBeVisible();
-    await page
-      .getByRole("navigation", { name: "Primary navigation" })
-      .getByRole("link", { name: "Settings", exact: true })
-      .click();
-    await expect(page.locator(".secret-content")).toHaveCount(0);
-    await page.goBack();
-    await expect(page.getByLabel("Values masked", { exact: true })).toBeVisible();
-  }
-  await fs.writeFile(path.join(app.root, "personal/env/new-file.env"), env);
-  await page.evaluate(() => {
-    location.hash = `#/files?${new URLSearchParams({ bundle: "personal", path: "env", file: "env/new-file.env", open: "1" })}`;
-  });
-  await expect(page.getByRole("heading", { name: "new-file.env", exact: true })).toBeVisible();
-  await expect(page.getByLabel("Values masked", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Show", exact: true }).click();
-  await expect(page.locator(".secret-content")).toContainText("synthetic-password");
-  await page.getByRole("button", { name: "Hide", exact: true }).click();
-  await fs.mkdir("/tmp/akm-desktop-asset-management", { recursive: true });
-  await page.screenshot({ path: "/tmp/akm-desktop-asset-management/secret-masked.png", fullPage: true });
-  assert.deepEqual(errors, []);
 });

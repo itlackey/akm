@@ -13,8 +13,8 @@
     "dev": "node scripts/dev.mjs",
     "build": "vite build",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test": "node --test tests/runtime.test.mjs tests/ui-helpers.test.mjs tests/editor-commands.test.mjs tests/editor-preview.test.mjs tests/library-files-model.test.mjs tests/software.test.mjs tests/menu-install.test.mjs tests/home-model.test.mjs tests/release-guard.test.mjs tests/file-edit.test.mjs tests/integration-contract.test.mjs",
-    "test:e2e": "node --test --test-concurrency=2 tests/e2e.test.mjs tests/library-content.test.mjs tests/library-parity.test.mjs tests/review-parity.test.mjs tests/activity-settings-parity.test.mjs tests/workspace.test.mjs tests/editor-workflows.test.mjs tests/library-files-workflow.test.mjs tests/navigation-startup.test.mjs tests/software-ui.test.mjs tests/asset-management.test.mjs tests/asset-management-ui.test.mjs tests/sensitive-assets.test.mjs tests/file-management.test.mjs tests/home.test.mjs tests/server-routes.test.mjs",
+    "test": "node --test tests/runtime.test.mjs tests/ui-helpers.test.mjs tests/editor-commands.test.mjs tests/editor-preview.test.mjs tests/library-files-model.test.mjs tests/review-model.test.mjs tests/presenters.test.mjs tests/software.test.mjs tests/menu-install.test.mjs tests/home-model.test.mjs tests/release-guard.test.mjs tests/file-edit.test.mjs tests/server-routes.test.mjs tests/server-reveal.test.mjs tests/integration-contract.test.mjs",
+    "test:e2e": "node --test --test-concurrency=2 tests/e2e.test.mjs tests/navigation.test.mjs tests/software-ui.test.mjs tests/sensitive-ui.test.mjs",
     "test:electron": "node --test tests/electron.test.mjs",
     "test:usability": "node --test --test-concurrency=1 tests/usability-workflows.test.mjs tests/usability.test.mjs tests/design-language.test.mjs",
     "start": "electron .",
@@ -46,22 +46,6 @@
     "vite": "8.3.5"
   },
   "engines": {
-    "node": ">=22.17"
-  },
-  "pinNotes": {
-    "electron@45.2.1": "Preserved from the verified private build. Recheck native sandbox, SQLite, fixed window size, shutdown and packaged AppImage before changing.",
-    "@electron/packager@20.3.0": "Preserved native packaging tool. Recheck packaged production dependencies and Electron runtime.",
-    "electron-builder@26.18.0": "Preserved AppImage toolchain. Recheck sandbox-preserving AppRun before changing.",
-    "@sveltejs/adapter-node@6.0.1": "Preserved server adapter. Recheck loopback authentication, origin handling and packaged server startup.",
-    "@sveltejs/kit@3.1.1": "Preserved SvelteKit 3 routing/config contract. Run type, build, navigation and browser suites.",
-    "@sveltejs/vite-plugin-svelte@7.3.1": "Preserved SvelteKit build toolchain. Upgrade together after type/build/browser verification.",
-    "svelte@5.57.3": "Preserved UI runtime; run editor, draft retention and navigation regression tests.",
-    "svelte-check@4.7.8": "Preserved Svelte type checker; rerun check and build before changing.",
-    "vite@8.3.5": "Preserved build toolchain; verify CSP, shared presentation imports and adapter output.",
-    "typescript@6.0.3": "Preserved Desktop compiler, independent of CLI compiler. Verify workspace declarations and Svelte check.",
-    "@types/node@26.6.6": "Preserved private build types. Runtime floor remains Node 22.17; verify on that supported major.",
-    "@playwright/test@1.64.1": "Preserved browser/Electron test driver; rerun complete workflows and review screenshots.",
-    "@axe-core/playwright@4.14.0": "Preserved accessibility assertions; review changed findings rather than silently disabling rules.",
-    "jsonc-parser@3.3.1": "Preserved host plugin configuration reader; verify plugin installation commands and fixtures."
+    "node": ">=22.18"
   }
 }

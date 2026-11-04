@@ -76,7 +76,7 @@ Appearance (System / Light / Dark) is saved separately from AKM settings in
 
 ## Build from source
 
-Use Bun 1.3.14 (the CI-pinned toolchain), Node 22.17+ (Node 24 LTS tested),
+Use Bun 1.3.14 (the CI-pinned toolchain), Node 22.18+ (Node 24 LTS tested),
 and tar. Desktop is an optional, isolated package in this repository; installing
 the CLI does not install Electron or Svelte. No published workspace package or
 private repository access is required.

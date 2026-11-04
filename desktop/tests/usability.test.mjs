@@ -19,19 +19,19 @@ test("populated workspace accessibility and reflow across both themes", { timeou
   await mkdir(output, { recursive: true });
   const ref = encodeURIComponent(app.refs.document);
   const states = [
-    { id: "home", route: "#/home", ready: ".home-attention" },
-    { id: "library", route: "#/search", ready: ".library-hit-content" },
-    { id: "asset", route: `#/search?ref=${ref}`, ready: ".markdown" },
-    { id: "files", route: "#/files?bundle=personal&path=knowledge", ready: '[role="tree"]' },
-    { id: "editor", route: `#/edit?ref=${ref}`, ready: 'textarea[name="content"]' },
-    { id: "create", route: "#/new", ready: 'textarea[name="content"]' },
-    { id: "review-queue", route: "#/proposals", ready: '[aria-label="Queue summary"]' },
-    { id: "review-detail", route: `#/proposals/${app.proposals.stale}`, ready: ".change-preview" },
-    { id: "activity", route: "#/overview", ready: "#attention-title" },
-    { id: "retrieval", route: "#/overview?view=retrieval", ready: "#activity-retrieval-rate svg" },
-    { id: "impact", route: "#/improve", ready: ".impact-links" },
-    { id: "bundles", route: "#/bundles", ready: "#configured-bundles" },
-    { id: "config", route: "#/config", ready: "#library-settings" },
+    { id: "home", route: "/", ready: ".home-attention" },
+    { id: "library", route: "/library/search", ready: ".library-hit-content" },
+    { id: "asset", route: `/library/search?ref=${ref}`, ready: ".markdown" },
+    { id: "files", route: "/library/files?bundle=personal&path=knowledge", ready: '[role="tree"]' },
+    { id: "editor", route: `/library/edit?ref=${ref}`, ready: 'textarea[name="content"]' },
+    { id: "create", route: "/library/new", ready: 'textarea[name="content"]' },
+    { id: "review-queue", route: "/review", ready: '[aria-label="Queue summary"]' },
+    { id: "review-detail", route: `/review/${app.proposals.stale}`, ready: ".change-preview" },
+    { id: "activity", route: "/activity/overview", ready: "#attention-title" },
+    { id: "retrieval", route: "/activity/overview?view=retrieval", ready: "#activity-retrieval-rate svg" },
+    { id: "impact", route: "/activity/improve", ready: ".impact-links" },
+    { id: "bundles", route: "/settings/bundles", ready: "#configured-bundles" },
+    { id: "config", route: "/settings/config", ready: "#library-settings" },
   ];
   const observations = [],
     failures = [],
@@ -40,7 +40,7 @@ test("populated workspace accessibility and reflow across both themes", { timeou
   await page.goto(app.url);
   for (const theme of ["light", "dark"]) {
     for (const state of states) {
-      await page.goto(`${app.origin}/${state.route}`);
+      await page.goto(`${app.origin}${state.route}`);
       await expect(page.locator(state.ready).first()).toBeVisible();
       await page.getByRole("combobox", { name: "Appearance" }).selectOption(theme);
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme);

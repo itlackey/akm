@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { launchFixture } from "./support.mjs";
+import { go, launchFixture } from "./support.mjs";
 
 test("reviewed human workflows prevent dead ends and preserve focus and source", { timeout: 180000 }, async (t) => {
   const app = await launchFixture({ proposals: true, metrics: true });
@@ -13,16 +13,13 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(app.url);
-  const navigate = (hash) =>
-    page.evaluate((hash) => {
-      location.hash = hash;
-    }, hash);
+  const navigate = (href) => go(page, href);
   const workspace = page.getByRole("region", { name: "Asset workspace", exact: true });
   const editor = page.getByRole("textbox", { name: "Markdown source, including optional frontmatter" });
   const original = await readFile(app.documentPath, "utf8");
 
   await t.test("narrow browsing moves focus into content and back to the same result", async () => {
-    await navigate("#/search?q=backup");
+    await navigate("/library/search?q=backup");
     const result = page.locator(".library-hit-content").filter({ hasText: "restore laptop" });
     await result.focus();
     await page.keyboard.press("Enter");
@@ -82,13 +79,13 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     assert.equal(await readFile(app.documentPath, "utf8"), original);
     await workspace.getByRole("link", { name: "Back to file", exact: true }).click();
     await expect(workspace.locator(".document-body")).toContainText("Verify the checksum");
-    await expect(page).toHaveURL(/#\/files\?/);
+    await expect(page).toHaveURL(/\/library\/files\?/);
     await page.getByRole("link", { name: "Back to reading", exact: true }).click();
     await workspace.getByRole("link", { name: /Search results/ }).click();
     await expect(page.locator(".library-hit-content").filter({ hasText: "restore laptop" })).toBeFocused();
   });
   await t.test("duplicate creation keeps the draft and provides a usable recovery action", async () => {
-    await navigate("#/new");
+    await navigate("/library/new");
     await page.getByRole("textbox", { name: "File name", exact: true }).fill("restore-laptop");
     await editor.fill("# Synthetic duplicate\n\nKeep this draft.\n");
     await page.getByRole("button", { name: "Create knowledge", exact: true }).click();
@@ -104,7 +101,7 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
   await t.test(
     "narrow review focuses selected detail and returns to queue; new files have no broken link",
     async () => {
-      await navigate("#/proposals");
+      await navigate("/review");
       const item = page.locator(".review-item").filter({ hasText: "recovery checklist" });
       await item.focus();
       await page.keyboard.press("Enter");
@@ -117,19 +114,14 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     },
   );
   await t.test("read-only bundles are not selectable write targets", async () => {
-    await navigate("#/config");
+    await navigate("/settings/config");
     const target = page.getByRole("combobox", { name: "Default write target", exact: true });
     await expect(target.locator('option[value="vendor"]')).toBeDisabled();
     await expect(target.locator('option[value="shared"]')).toBeEnabled();
   });
-  await t.test("task drill-in focuses the actual result; usage charts are directly visible", async () => {
+  await t.test("usage charts are directly visible", async () => {
     await page.setViewportSize({ width: 1280, height: 860 });
-    await navigate("#/overview?view=runs");
-    await page.getByRole("button", { name: "synthetic-failure", exact: true }).click();
-    const panel = page.getByRole("region", { name: "Task run details", exact: true });
-    await expect(panel).toBeFocused();
-    await expect(panel).toContainText("failed");
-    await navigate("#/overview?view=retrieval");
+    await navigate("/activity/overview?view=retrieval");
     await expect(page.locator("#activity-retrieval-rate svg")).toBeVisible();
   });
   assert.deepEqual(errors, []);

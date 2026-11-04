@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
-import ts from "typescript";
-
-const source = await readFile(new URL("../src/lib/client.ts", import.meta.url), "utf8");
-const compiled = ts.transpileModule(source, {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-}).outputText;
-const { title, bodyOf, assetSource, saveContent, toggleSelection, countAxis, matchesAssetRef, api, ApiError } =
-  await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+import {
+  ApiError,
+  api,
+  assetSource,
+  bodyOf,
+  countAxis,
+  matchesAssetRef,
+  saveContent,
+  title,
+  toggleSelection,
+} from "../src/lib/client.ts";
 
 test("Library selection matches canonical refs but never the same path in another bundle", () => {
   const local = { ref: "knowledge/guide", origin: "personal" };

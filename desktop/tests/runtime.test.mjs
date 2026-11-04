@@ -14,6 +14,7 @@ const electron = process.env.AKM_DESKTOP_TEST_RUNTIME ?? require("electron");
 
 async function launch(t, { runtime = process.execPath, electronMode = false } = {}) {
   const fixture = await createFixture({ packageRoot: appRoot });
+  t.after(() => fixture.cleanup());
   const child = fork(path.join(appRoot, "electron/server.mjs"), [], {
     execPath: runtime,
     execArgv: [],

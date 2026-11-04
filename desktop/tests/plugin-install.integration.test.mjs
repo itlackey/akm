@@ -19,6 +19,7 @@ test("native harness installers configure AKM only in isolated homes", {
   for (const id of ["claude", "codex", "opencode", "opencode2"])
     await t.test(id, { skip: !found[id] }, async () => {
       const fixture = await createFixture({ index: false });
+      t.after(() => fixture.cleanup());
       const env = { ...fixture.env };
       for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]) delete env[key];
       const host = new HostTools({
