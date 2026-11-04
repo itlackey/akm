@@ -215,12 +215,12 @@ The local workspace browser lists one directory in an enabled registered bundle.
 root); `hidden=1` includes dot-files. Absolute paths and symlink escapes are
 refused. Internal symbolic links can be traversed; unavailable links are labelled.
 
-The result is `{bundle, path, parent, indexAvailable, truncated: false, entries}`.
+The result is `{bundle, path, parent, indexAvailable, entries}`.
 `parent` is null at the root. Each entry has `name`, bundle-relative `path`,
-`kind` (`directory`, `file`, or `other`), `refs`, and `assets: [{ref, type}]`,
+`kind` (`directory`, `file`, or `other`), and `assets: [{ref, type}]`,
 with optional `symlink` and `unavailable`. Directories sort first, then names.
-Internal links retain their displayed path and their target's indexed refs.
-Refs come only from exact physical-file rows already in the index; absent
+Internal links retain their displayed path and their target's indexed assets.
+Assets come only from exact physical-file rows already in the index; absent
 indexes leave them empty. No content is read, recursive scan run, index written,
 or source refreshed. Listing does not imply editability.
 
@@ -762,26 +762,23 @@ User searches that found nothing, grouped by normalised query: `query`, `count`,
 ## Workspace actions
 
 The workspace dispatchers also accept `POST /api/asset/retire` with
-`{ref, revision}` and `POST /api/asset/restore` with
-`{bundle, archives: string[]}`. These are explicit manual operations, not
-proposal creation or acceptance. Retirement requires the current raw SHA-256
-revision of an indexed writable AKM single-file text asset; skill packages,
-env/secret files and sessions are excluded. Memory retirement carries its
-derived twin. It uses the native cleanup archive and `reason: manual`
-tombstone, with no proposal, successor evidence or purge clock.
+`{ref, revision}`. It retires an indexed writable AKM single-file asset the way
+`akm feedback`'s typed fix applies a change: it mints a retire proposal (source
+`propose`, no judged pair) and accepts it at once, so the asset follows the
+ordinary proposal-retire lifecycle. Skill packages, env/secret files and
+sessions are excluded; memory retirement carries its derived twin. The
+current raw SHA-256 `revision` is required, and the accept is refused if the
+bytes changed since.
 
-The receipt contains `ref`, `bundle`, `root`, `archived` records,
-`complete`, and `warnings`. Restore takes those records' `auditPath` values,
-validates their native tombstones, and copies bytes back without overwriting
-occupied paths or removing recovery copies. Its receipt contains `restored`
-paths, `complete`, and `warnings`. Partial failures report completed work;
-do not retry blindly. Restore accepts the bundle's current name after a native
-bundle rename; historical names in its tombstones do not need rewriting.
-Both operations refresh the index and retain normal Git publication. Restore
-also initializes a missing or empty index, including after the last asset was
-retired; index failures appear in `warnings` without discarding the receipt.
-Task definitions do not change installed schedules until explicit
-`akm task sync`. The browser UI does not add controls for these operations.
+The receipt is `{proposalId, ref, bundle, archiveDirs, warnings}`. Undo is
+[`POST /api/proposals/:id/revert`](#deciding-proposals) with that id: the
+archive moves back without overwriting an occupied path and its tombstone is
+removed. Like any accepted retirement, the archived bytes are purged after the
+grace period at the next `akm improve` (git-backed bundles only), and the row
+is listed in Review and Activity. If the accept is refused, the proposal is
+rejected and the request fails. Task definitions do not change installed
+schedules until explicit `akm task sync`. The browser UI does not add controls
+for this operation.
 
 Every route below uses the same write guards as [proposal decisions](#deciding-proposals): token **header**, same
 Origin, JSON content type and a body of at most 64 KiB. The two routes that carry a whole Markdown document,
@@ -794,6 +791,7 @@ general config editor or command-execution endpoint.
 | `/api/feedback` | `{ref, signal: "positive"\|"negative", reason?, tags?: string[]}` → `akm feedback`. The ref is passed to `akm feedback` as given, which resolves it as the CLI does; tags follow existing `key:value` validation. Negative feedback requires a reason when `feedback.requireReason` is enabled. Submissions are recorded with source `user` unless the server runs with an `AKM_EVENT_SOURCE` already set (for example under an improve or task run), which wins as it does for every akm child; they retain existing ranking/utility/event effects. Feedback does not save config, so it works under a config that still holds a literal API key. No fix, supersession or model flags are exposed. |
 | `/api/bundles/add` | `{source, name?, writable?}` → `akm bundle add`, including source validation. Existing provider restrictions apply; no insecure-transport bypass is exposed. |
 | `/api/bundles/update` | `{bundle}` → `akm bundle update -- <bundle>`. Fetches/reindexes only on explicit submission. A rare update requiring destructive confirmation remains refused; the UI does not silently pass `--yes`. |
+| `/api/bundles/rename` | `{bundle, name, dryRun?: true}` → `akm bundle rename [--dry-run] -- <bundle> <name>`. The result is the CLI's rename plan (`applied` is `false` for a dry run). |
 | `/api/bundles/remove` | `{bundle, confirm: true}` → `akm bundle remove --yes -- <bundle>`. The UI requires an inline confirmation before this call. Managed installs may be deleted; local filesystem source files remain on disk. |
 | `/api/bundles/settings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Existing validation rejects disabled targets and writable npm/website sources. The default bundle and write target are edited through `/api/config/set`. |
 | `/api/config/set` | `{set?: {key: string}, unset?: string[]}` → `akm config set` / `unset` on each key, in one validated, atomic write. Values are strings, as on the command line, and are coerced and checked against the schema; literal API keys and `configVersion` are refused. An unset is refused with `400 TARGET_NOT_UPDATABLE` when the key is inherited from an `extends` base or sits inside a connection or harness entry akm ignores, and an unset with no config file writes nothing (`saved: false`), all as `akm config unset` does. |

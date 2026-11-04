@@ -16,16 +16,9 @@ import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories
 import { akmShowUnified } from "../read/show";
 import { redactUrlsInText } from "./redact";
 
-/** Authoring reads are limited to indexed, writable AKM knowledge/memory files, never arbitrary paths. */
-export async function readDocumentSource(ref: string): Promise<{
-  ref: string;
-  type: "knowledge" | "memory";
-  content: string;
-  revision: string;
-}> {
+/** An indexed asset file whose bundle accepts AKM writes, found the way the UI reads it. */
+export async function resolveWritableIndexedAsset(ref: string) {
   const parsed = parseRefInput(ref);
-  if (parsed.type !== "knowledge" && parsed.type !== "memory")
-    throw new UsageError("Only knowledge and memory support source editing in this UI.");
   const shown = await akmShowUnified({ ref, readOnly: true });
   if (!shown.path) throw new UsageError("The document has no local source file.");
   const db = openReadonlyExistingDatabase();
@@ -51,7 +44,21 @@ export async function readDocumentSource(ref: string): Promise<{
     throw new UsageError(
       "The indexed source no longer matches the writable document target. Refresh the index before editing.",
     );
-  const raw = fs.readFileSync(shown.path);
+  return { canonical, target, path: shown.path };
+}
+
+/** Authoring reads are limited to indexed, writable AKM knowledge/memory files, never arbitrary paths. */
+export async function readDocumentSource(ref: string): Promise<{
+  ref: string;
+  type: "knowledge" | "memory";
+  content: string;
+  revision: string;
+}> {
+  const parsed = parseRefInput(ref);
+  if (parsed.type !== "knowledge" && parsed.type !== "memory")
+    throw new UsageError("Only knowledge and memory support source editing in this UI.");
+  const { canonical, path: file } = await resolveWritableIndexedAsset(ref);
+  const raw = fs.readFileSync(file);
   const content = raw.toString("utf8");
   if (!Buffer.from(content, "utf8").equals(raw))
     throw new UsageError("This source is not valid UTF-8; edit it outside the UI.");

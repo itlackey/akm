@@ -523,7 +523,8 @@ export interface CreateRetireProposalInput {
   target?: { source: string; root: string };
   /** The pair judge's confidence in [0, 1]; anything else is dropped. */
   confidence?: number;
-  retirement: RetirementMetadata;
+  /** Absent for a human retirement; the judged pair pass always sets it. */
+  retirement?: RetirementMetadata;
 }
 
 /**
@@ -603,7 +604,7 @@ export function createRetireProposal(
         beforeHash: contentHash(beforeContent),
         beforeHashNormalized: contentHash(beforeContent, "normalized"),
         ...(confidence !== undefined ? { confidence } : {}),
-        retirement: input.retirement,
+        ...(input.retirement ? { retirement: input.retirement } : {}),
       };
       upsertProposal(db, proposal, stashDir);
       return proposal;
@@ -1974,13 +1975,17 @@ async function retireProposalWithLease(
     }
     const currentBytes = fs.readFileSync(assetPath);
     const retirement = proposal.retirement;
-    if (!retirement) {
-      // createRetireProposal always sets this — a row without one is corrupt, not merely stale.
-      throw new Error(`Retire proposal ${proposal.id} has no retirement metadata.`);
-    }
     // B2 (this is the durable half of the chain guard; the same-run half is
-    // `retiredThisRun` in pair-pass.ts):
-    assertRetirementStillFresh(proposal.id, proposal.ref, retirement, target.source, currentBytes);
+    // `retiredThisRun` in pair-pass.ts). A human retirement has no judged pair, so
+    // it only has to match the bytes it was minted against.
+    if (retirement) {
+      assertRetirementStillFresh(proposal.id, proposal.ref, retirement, target.source, currentBytes);
+    } else if (proposal.beforeHash !== contentHash(currentBytes.toString("utf8"))) {
+      throw new UsageError(
+        `Retire proposal ${proposal.id} target (${proposal.ref}) changed since the proposal was created.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
     assertAkmAssetWrite(target.source);
     // Phase 1: record intent BEFORE any move, and BEFORE the supersede edge:
     // `backupContent` is `currentBytes`, read
@@ -1990,7 +1995,7 @@ async function retireProposalWithLease(
     // the original.
     intent = { assetPath, backupContent: currentBytes.toString("utf8") };
     working = recordRetireAcceptIntent(stashDir, proposal.id, intent, ctx);
-    if (retirement.judgeLabel === "supersedes") {
+    if (retirement?.judgeLabel === "supersedes") {
       try {
         writeSupersededEdge(assetPath, retirement.successorRef);
       } catch (error) {
@@ -2023,7 +2028,7 @@ async function retireProposalWithLease(
   const paths: string[] = [];
   const candidate: MemoryPruneCandidate = {
     ref: proposal.ref,
-    reason: working.retirement?.reason ?? "duplicate",
+    reason: working.retirement?.reason ?? "manual",
     proposalId: proposal.id,
     ...(working.retirement?.successorRef ? { successorRefs: [working.retirement.successorRef] } : {}),
   };
@@ -2275,8 +2280,14 @@ async function unretireProposalWithLease(
   // removeSupersededEdge mutation runs here — one that could not tell "the
   // edge accept wrote" from "an edge a person had already written" apart,
   // and would delete either.
+  // Skipped when the restored bytes already decode to `backupContent`: that leaves a
+  // non-UTF-8 asset byte-exact, since `backupContent` is only its lossy text. After the
+  // grace purge (`fromBackup`) the text is all that is left; git history keeps the bytes.
   if (primaryOriginalAbs && proposal.backupContent !== undefined) {
-    writeProposalAssetFile(primaryOriginalAbs, proposal.backupContent);
+    const restoredFromBackup = pending.some((p) => p.fromBackup && p.originalAbs === primaryOriginalAbs);
+    if (restoredFromBackup || fs.readFileSync(primaryOriginalAbs, "utf8") !== proposal.backupContent) {
+      writeProposalAssetFile(primaryOriginalAbs, proposal.backupContent);
+    }
   }
   commitWriteTargetBoundary(target, `Revert ${proposal.ref}`, { paths: restoredPaths });
   const decidedAt = nowIso(ctx);

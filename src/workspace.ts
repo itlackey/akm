@@ -6,7 +6,7 @@
 // local host (see docs/reference/api.md). Transport authentication belongs to the host.
 
 export { removeEnv, writeEnv } from "./commands/env/env";
-export { withSecretLock } from "./commands/env/secret";
+export { setSecret, withSecretLock } from "./commands/env/secret";
 export { akmLint } from "./commands/lint/index";
 export { akmClone, type CloneOptions, type CloneResponse } from "./commands/sources/source-clone";
 export { akmTasksSync } from "./commands/tasks/tasks";
@@ -31,7 +31,14 @@ export { parseRefInput } from "./core/asset/resolve-ref";
 export { renameBundle } from "./core/bundle-rename";
 export { isWithin, writeFileAtomic } from "./core/common";
 export { loadConfig } from "./core/config/config";
-export { sensitiveMarkerPath, withEnvSecretWrite } from "./core/env-secret-ref";
+export {
+  resolveEnvPath,
+  resolveEnvWriteTarget,
+  resolveSecretPath,
+  resolveSecretWriteTarget,
+  sensitiveMarkerPath,
+  withEnvSecretWrite,
+} from "./core/env-secret-ref";
 export { AkmError, type AkmErrorKind, UsageError } from "./core/errors";
 export { resolveBundleWriteTarget } from "./core/mutation-target";
 export { assertAkmAssetWrite, prepareWriteTargetForMutation, withWriteTargetMutation } from "./core/write-source";
