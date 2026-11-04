@@ -114,7 +114,7 @@ export async function akmSearch(input: {
    */
   skipLogging?: boolean;
   /**
-   * Read without side effects (`akm ui`): no usage events and no inline index
+   * Read without side effects (the workspace): no usage events and no inline index
    * build, so the search never counts as demand and never writes `index.db`
    * or `state.db`. Implies `skipLogging`.
    */

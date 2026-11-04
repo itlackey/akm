@@ -1,7 +1,7 @@
 # CLI Reference
 
 The CLI is called `akm` (Agent Knowledge Manager). Commands default to structured
-JSON at `--detail brief`. Use `--format json|jsonl|yaml|text|md|html`,
+JSON at `--detail brief`. Use `--format json|jsonl|yaml|text|md`,
 `--detail brief|normal|full|agent` when you want a
 different presentation. Errors include `error` and `hint` fields.
 
@@ -17,7 +17,7 @@ These flags are accepted by all commands:
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--format` | `json`, `jsonl`, `yaml`, `text`, `md`, `html` | `json` | Output format |
+| `--format` | `json`, `jsonl`, `yaml`, `text`, `md` | `json` | Output format |
 | `--output` | path | _(none)_ | Write rendered output to a file instead of stdout (all formats except `jsonl`) |
 | `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output **verbosity** level, or the `agent` projection |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
@@ -35,22 +35,22 @@ Outputs one JSON object per line. For `search` (including `--from registry`),
 each hit is a separate line. For other commands, the entire result is a single line.
 Useful for streaming consumption by scripts or agents.
 
-### `--format md` and `--format html`
+### `--format md`
 
-`json`, `jsonl`, and `yaml` serialize the result envelope; `text`, `md`, and
-`html` render it. Every result-envelope command supports all six.
+`json`, `jsonl`, and `yaml` serialize the result envelope; `text` and `md` render it. Every result-envelope command
+supports all five.
 
 A command may register a renderer for a document format when it has something
 better to say than the generic one: `akm health --group-by run --format md`
-emits its per-run table, and `akm health --report --format html` renders the
-full report with KPI cards, charts, and advisories. `akm metrics` always carries
-its window rows under `--format html`. The renderers are
+emits its per-run table. The renderers are
 data-driven — they fire when the result carries the report dataset, never on
 the format alone, so the same dataset is available as JSON too. Every other command falls back to a
 generic rendering derived from its own envelope — headings for the top-level
-keys, a table for an array of uniform objects, lists otherwise. HTML output is a
-self-contained document with no external references, so it can be redirected to
-a file and opened directly.
+keys, a table for an array of uniform objects, lists otherwise.
+
+`--format html` was removed with `akm ui`: AKM Desktop shows what the HTML reports showed. The flag is refused with
+a usage error (exit 2) that names Desktop and `--format md`, and `output.format: html` in config warns once and is
+ignored (the default format applies).
 
 A small set of commands is **format-exempt** because their output is not a
 result envelope at all — `completions`, child-process passthrough (`env run`
@@ -61,7 +61,7 @@ break `$(akm env path <ref>)` substitutions). Passing `--format` to one of
 those **warns on stderr** and is otherwise ignored; the exempt set is declared
 in `src/output/format-exempt.ts`. `migrate status`/`apply` invoke the packaged
 task migrator but are NOT exempt: the CLI parses its task plan and renders it
-through the normal `--format` pipeline, so `text`/`md`/`html`/`yaml` genuinely
+through the normal `--format` pipeline, so `text`/`md`/`yaml` genuinely
 reformat it.
 
 Scripted `setup` modes emit a normal format-aware result. Interactive `setup`
@@ -414,15 +414,15 @@ akm health
 akm health --since 24h
 akm health --since 7d --format text
 akm health --since 2026-05-01T00:00:00Z
-akm health --report --format html         # full report: per-run rows, trends, proposal queue
+akm health --report --format md           # full report: per-run rows, trends, proposal queue
 akm health --report --format json         # the same dataset as data
-akm health --report --window-compare 7d --format html
+akm health --report --window-compare 7d --format md
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--since` | Rolling window start for task-history, improve, and advisory metrics. Accepts ISO 8601, `YYYY-MM-DD`, epoch milliseconds, or shorthand like `24h` / `7d`. Default: last 24 hours. |
-| `--report` | Fetch the full report dataset: per-run rows, trend deltas vs the prior window (default: the `--since` window, so deltas are like-for-like), and the pending proposal queue. A **data** flag — the same dataset comes back in every `--format`; `md`/`html` render it as the rich report. |
+| `--report` | Fetch the full report dataset: per-run rows, trend deltas vs the prior window (default: the `--since` window, so deltas are like-for-like), and the pending proposal queue. A **data** flag — the same dataset comes back in every `--format`; `md` renders it as the rich report. |
 | `--window-compare` | Compare the current window against the prior window of the same duration (e.g. `24h`, `7d`). With `--report`, overrides the default trend window. |
 | `--group-by` | Group rows by `run` (one row per `improve_runs` entry). Omit for the default summary. |
 | `--windows` | Explicit comparison window(s) as `name=...,since=ISO,until=ISO` (repeatable, up to 4). Mutually exclusive with `--window-compare`. |
@@ -491,8 +491,7 @@ the first index. Search never reads this record: a query still
 tries semantic search and falls back to keyword search on its own. A fix shows
 here after the next `akm index`. `evidence` carries the recorded `status`,
 `unavailable` (`platform` or `load`), `provider`, `runtime`, `reason`, the index's `builtAt`, `entryCount` and
-`embeddingCount`. `akm health --report --format html` shows it as the Semantic
-Search line: `OK`, `OFF`, `BLOCKED`, `UNAVAILABLE` or `UNKNOWN`.
+`embeddingCount`.
 
 `cli-version` compares the installed akm-cli version against the latest
 GitHub release — the same source `akm upgrade` trusts — and `warn`s with the
@@ -526,7 +525,7 @@ recorded.
 akm metrics
 akm metrics --since 7d
 akm metrics --since 2026-05-01 --format yaml
-akm metrics --format html --output metrics.html
+akm metrics --since 30d --format md --output metrics.md
 ```
 
 | Flag | Description |
@@ -535,8 +534,7 @@ akm metrics --format html --output metrics.html
 
 The window always ends now. Only `user`-source usage rows are counted (matching
 utility and retrieval counts), and every ranked list holds its top 20. For a
-narrower view, open the HTML dashboard and filter by date, bundle, source and
-event type in the browser.
+narrower view, use `--since` or AKM Desktop's metrics view.
 
 Result sections (`schemaVersion: 1`):
 
@@ -556,9 +554,7 @@ A rate whose denominator is 0 is `null`, never `NaN`. A missing `state.db`
 gives an empty report and a missing `index.db` an empty `utility` section, each
 with a `notes` entry, and the exit code stays 0.
 
-`rows` is present with `--format html` (the dashboard re-aggregates from it in
-the browser) and with `--detail full` in any other format; it is absent
-otherwise.
+`rows` is present with `--detail full`; it is absent otherwise.
 
 Notes you may see:
 
@@ -570,66 +566,6 @@ Notes you may see:
   date. From then on a select counts once per search id and ref, and only when
   its source matches the counted source. Earlier selects have neither field, so
   they are counted as recorded, for every source.
-
-### ui
-
-**Experimental** (see [STABILITY.md](../../STABILITY.md)): the command, the page and the API it reads may change in any
-release.
-
-Serve a local web UI over your whole akm environment and open it in your browser: health and metrics, bundles
-(with git status and asset counts), the effective config with where each value comes from, the proposal queue with
-diffs, recent changes to the write-target stash, and search with an asset view. Every page reads through the functions
-the matching CLI commands use, so the UI and the CLI report the same numbers.
-
-| Page | Shows |
-| --- | --- |
-| Overview | Health counts and expandable diagnostics; activity, retrieval latency/no-result queries, model utilization, failed-task history and recent improve-run durations. Metrics share a selectable 24h/7d/30d window; health remains 24h and the latest ten improve runs are all-time. Each chart has exact counts and keyboard-accessible details. |
-| Bundles | Cards including disabled bundles, source, component writability, settings origin, Git and index state. Explicit add, update, confirmed removal, enabled/writable settings and default-bundle/write-target controls use existing AKM operations. |
-| Config | The effective config as a collapsible tree with a `default` / `file` / `extends:<ref>` source badge on every key, the connections and harnesses tables and the `AKM_*` environment. |
-| Proposals | The full pending backlog by source and waiting age, with queue filters applied before the list limit. Review leads with the change and preserves source/age context through Next and Back. Accept retains its inline confirmation, Reject requires a reason, and Accept selected applies a batch in one commit. Recent decisions and retirement judgments remain available. |
-| Changes | Recent stash commits as a timeline by day, each tagged by origin (`improve-sync`, `accept`, `remember`, `sync`, `other`) with its changed paths. |
-| Search | Search or browse the existing index grouped by path, with type/bundle, current/all/historical and user/agent/run/channel scope controls. Asset detail includes safe Markdown tables/tasks, indexed relative links, heading navigation, source, per-file Git history/diffs and explicit feedback with reasons/tags. New knowledge supports Markdown source and preview through `akm import`, without overwriting existing files. |
-
-The pages are plain HTML, CSS and JavaScript modules in `src/assets/ui/`, with no framework or runtime build step.
-The serving hostname appears beside the version, including in the compact mobile navigation. Charts use a local
-SVG-only ECharts subset, loaded on chart pages, with no request beyond the local server. The subset is included in
-the package and standalone binary; maintainers regenerate its checked-in asset with `bun scripts/build-ui-charts.ts`
-after changing the ECharts dependency or imports. API text is escaped before it reaches the page.
-
-```sh
-akm ui
-akm ui --port 8123 --no-open
-```
-
-| Flag | Description |
-| --- | --- |
-| `--port <n>` | Port to listen on. Default: a random free port. |
-| `--host <addr>` | Address to bind. Default `127.0.0.1`. Anything else is reachable from other machines and prints a warning. |
-| `--no-open` | Print the URL without opening a browser. A failed open also falls back to printing it. |
-
-The command prints `akm ui: http://127.0.0.1:<port>/?token=<token>` and keeps serving until Ctrl-C (SIGINT or SIGTERM).
-Each launch generates a new random token. Every `/api/` request must send it as the `X-Akm-Ui-Token` header or a `token`
-query parameter, otherwise it gets a 401; the page keeps it in `sessionStorage`. The `Host` header must be the address
-the server is bound to, which stops a web page from reaching it through DNS rebinding.
-
-Browsing is read-only: `state.db` and `index.db` are opened read-only and never created or migrated, searching and
-showing in the UI record no usage events (so browsing is never counted as demand) and build no index, and nothing is
-written to a bundle or to config. Refresh reloads existing data; it does not build an index or fetch sources.
-Explicit actions accept/reject proposals, submit user feedback, manage bundles/configuration, create knowledge and
-edit existing writable AKM knowledge/memory Markdown. They use the existing operations and their validation, indexing
-and Git effects. Editing loads the complete live source and rejects a save if its raw-content revision changed;
-an unchanged save leaves source bytes and modification time alone and records no event. Documents whose URL credentials are
-hidden by the UI must be edited outside it. Historical restore remains unavailable.
-Search results retain query, filters and return position through reading and editing. The Markdown editor keeps
-Save and Preview beside its heading and confirms a successful save on the document. A conflicting edit keeps the
-draft and displays a comparison with the newer disk version. Ordinary Save never becomes overwrite permission:
-only **Overwrite with my draft** uses the reviewed newer revision, and another external edit is still refused.
-All write routes need the token in the
-`X-Akm-Ui-Token` header (not the query string), a JSON content type and an `Origin` equal to the server's own address.
-A read is short and the server holds no lock between requests, so browsing never blocks `akm improve`, `akm index` or
-`akm sync`; proposal decisions, document saves and knowledge creation take the same write lease the CLI takes and answer `409` at once if another process holds it. Secrets are redacted: config values under secret-like keys and URL credentials
-are masked, and env and secret assets are shown as a stub, never with their values. The endpoints are documented in
-[ui-api.md](ui-api.md). `--format` has no effect on this command.
 
 ### search
 
@@ -727,7 +663,7 @@ it.
 | `--since` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or after this day: the `observed` date, else `updated`. Assets with neither are dropped. Applies before the candidate budgets, like `--filter`. Search only; registry hits are unaffected. |
 | `--until` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or before this day, by the same date. |
 | `--include-sessions` | flag | `false` | Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
-| `--format` | `json`, `jsonl`, `yaml`, `text`, `md`, `html` | `json` | Output format |
+| `--format` | `json`, `jsonl`, `yaml`, `text`, `md` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output verbosity level, or the `agent` projection |
 
 `--filter` flags AND-join: every supplied key must match the entry's

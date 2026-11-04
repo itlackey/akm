@@ -17,6 +17,16 @@ bun install
 
 ## Changing Dependencies
 
+### Optional Desktop package
+
+Desktop lives in [desktop/](../desktop/README.md), with its own dependency graph
+and lockfile. After the root install, `bun run desktop:setup` builds and packs
+this checkout's CLI and installs it into Desktop; no private package is needed.
+Run the Desktop README's type, browser and native tests when changing it. The
+normal CLI build and npm package do not include Desktop or its dependencies.
+
+### Dependency updates
+
 Change dependencies with Bun's own commands only: `bun add <package>`,
 `bun remove <package>` or `bun update <package>`. Never edit `bun.lock` by hand,
 and commit it in the same commit as the `package.json` change it belongs to.

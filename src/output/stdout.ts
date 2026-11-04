@@ -2,6 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import fs from "node:fs";
+import path from "node:path";
+
 /**
  * The single stdout writer for result documents.
  *
@@ -27,4 +30,17 @@ export function writeStdout(document: string): void {
 /** The exact bytes {@link writeStdout} writes for `document`; in-process callers return this instead of writing. */
 export function stdoutText(document: string): string {
   return `${document}\n`;
+}
+
+/**
+ * Deliver a rendered document: write to `outputPath` when set (`--output`),
+ * otherwise print to stdout.
+ */
+export function deliverRendered(content: string, outputPath: string | undefined): void {
+  if (outputPath) {
+    fs.mkdirSync(path.dirname(path.resolve(outputPath)), { recursive: true });
+    fs.writeFileSync(outputPath, content.endsWith("\n") ? content : `${content}\n`);
+    return;
+  }
+  writeStdout(content);
 }

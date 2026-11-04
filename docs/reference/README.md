@@ -8,7 +8,7 @@ Reference documentation for the akm CLI, configuration and data. Run
 - [CLI](cli.md) -- Every command, the global flags, the output envelope and the exit codes
 - [Configuration](configuration.md) -- `config.json`: connections, harnesses, improve strategies, bundles, registries, output defaults and environment variables
 - [Programmatic API](api.md) -- `akm-cli/api`: in-process `curate()` for the akm plugins
-- [UI API](ui-api.md) -- The read-only JSON API behind `akm ui`
+- [Workspace](workspace.md) -- The operations of `akm-cli/workspace` and the JSON they return
 - [Data and telemetry](data-and-telemetry.md) -- What akm stores and where, and what it sends over the network
 
 ## Assets and bundles

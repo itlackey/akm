@@ -3,12 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * D7 — all six `--format` values work on every non-exempt command.
+ * D7 — every `--format` value works on every non-exempt command.
  *
  * Before D7 there were three inconsistent failure modes on a contract
  * `STABILITY.md` calls Stable: `md` silently emitted the JSON envelope
- * everywhere except `akm health`, `html` threw `INVALID_FLAG_VALUE` everywhere
- * except `akm health`, and `akm health` reached neither through `output()`
+ * everywhere except `akm health`, and `akm health` did not reach `output()`
  * because it intercepted the format itself.
  *
  * This suite is deliberately table-driven over real commands rather than over
@@ -29,13 +28,12 @@ import {
   sandboxXdgDataHome,
 } from "./_helpers/sandbox";
 
-const FORMATS = ["json", "jsonl", "yaml", "text", "md", "html"] as const;
+const FORMATS = ["json", "jsonl", "yaml", "text", "md"] as const;
 
 /**
  * Read-only commands exercised in every format. Each must be safe to run
  * against an empty-ish stash and must reach `output()` — that is the contract
- * under test. Mutating commands are covered by the html-does-not-block case
- * below rather than by running them six times each.
+ * under test.
  */
 const READ_COMMANDS: readonly (readonly string[])[] = [
   ["search", "alias"],
@@ -80,11 +78,6 @@ describe("every --format value produces real output on every read command", () =
         expect([0, 4]).toContain(result.code);
         expect(result.stdout.trim().length).toBeGreaterThan(0);
 
-        if (format === "html") {
-          expect(result.stdout).toContain("<html");
-          // The retired JSON-in-<pre> fallback is not an acceptable rendering.
-          expect(result.stdout).not.toMatch(/<pre>\s*\{/);
-        }
         if (format === "md") {
           // Must not be the JSON envelope wearing a markdown flag — that silent
           // wrong-format output is exactly what D7 removed.
@@ -116,50 +109,29 @@ describe("every --format value produces real output on every read command", () =
   }
 });
 
-describe("html is no longer health-only", () => {
-  test("a non-health read command renders html instead of exiting 2", async () => {
+describe("--format html is refused", () => {
+  test("a read command exits 2 and names AKM Desktop and --format md", async () => {
     const result = await runCliCapture(["bundle", "list", "--format=html"]);
 
-    expect(result.code).toBe(0);
-    expect(result.stdout).toContain("<!doctype html>");
+    expect(result.code).toBe(2);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/AKM Desktop/);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/--format md/);
   });
 
-  test("a mutating command completes its write under --format html", async () => {
-    // The pre-D7 ordering hazard inverted: `html` used to be rejected at
-    // startup, so this exited 2 without writing. It must now both write and
-    // render — and the earlier bug where it wrote and THEN threw must not
-    // return either.
+  test("a mutating command is refused before it writes", async () => {
     const result = await runCliCapture(["remember", "html format probe", "--format=html"]);
 
-    expect(result.code).toBe(0);
-    expect(result.stdout).toContain("<html");
-    const memories = fs.readdirSync(path.join(stashDir, "memories"));
-    expect(memories.some((f) => f !== "alias-note.md")).toBe(true);
+    expect(result.code).toBe(2);
+    expect(fs.readdirSync(path.join(stashDir, "memories"))).toEqual(["alias-note.md"]);
   });
 });
 
-describe("akm health keeps its bespoke reports through the registry", () => {
-  test("--report --format html renders the report template, not the generic fallback", async () => {
-    const result = await runCliCapture(["health", "--report", "--format=html"]);
-
-    expect([0, 4]).toContain(result.code);
-    // The report template carries content the generic renderer never emits.
-    expect(result.stdout).toContain("<html");
-    expect(result.stdout).not.toContain("<h1>akm health</h1>");
-  });
-
+describe("akm health keeps its bespoke report through the registry", () => {
   test("--format md renders the per-run table for a run-grouped read", async () => {
     const result = await runCliCapture(["health", "--group-by=run", "--format=md"]);
 
     expect([0, 4]).toContain(result.code);
     expect(result.stdout.trim().length).toBeGreaterThan(0);
     expect(result.stdout.trimStart().startsWith("{")).toBe(false);
-  });
-
-  test("the renderers are data-driven: plain health under html falls to the generic rendering", async () => {
-    const result = await runCliCapture(["health", "--format=html"]);
-
-    expect([0, 4]).toContain(result.code);
-    expect(result.stdout).toContain("<h1>akm health</h1>");
   });
 });

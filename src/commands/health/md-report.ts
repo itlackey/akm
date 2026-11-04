@@ -4,8 +4,7 @@
 
 /**
  * `akm health` Markdown renderers — the `--group-by run` detail table and the
- * `--window-compare` side-by-side table. Mirrors the HTML extraction in
- * `health/html-report.ts`; the shared metric/type surface lives in `./types`.
+ * `--window-compare` side-by-side table. The shared metric/type surface lives in `./types`.
  *
  * Pure functions: no I/O, no clock, no globals — output is a function of the
  * input rows alone, so the tables are byte-identical for identical inputs.

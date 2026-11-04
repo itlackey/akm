@@ -613,7 +613,7 @@ describe("validation failure", () => {
 // ── #284 GAP-HIGH backfill ───────────────────────────────────────────────────
 
 describe("akmProposalReject — non-pending status (#284 HIGH 4)", () => {
-  test("rejecting an already-archived proposal → UsageError with .code INVALID_FLAG_VALUE", async () => {
+  test("rejecting an already-archived proposal → UsageError with .code PROPOSAL_NOT_PENDING", async () => {
     const stash = makeStashDir();
     const createdResult3 = createProposal(stash, {
       ref: "lessons/once",
@@ -633,7 +633,7 @@ describe("akmProposalReject — non-pending status (#284 HIGH 4)", () => {
     expect(thrown).toBeInstanceOf(Error);
     const e = thrown as Error & { code?: string; name: string };
     expect(e.name).toBe("UsageError");
-    expect(e.code).toBe("INVALID_FLAG_VALUE");
+    expect(e.code).toBe("PROPOSAL_NOT_PENDING");
     expect(e.message).toMatch(/not pending|already/i);
   });
 });

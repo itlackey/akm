@@ -39,7 +39,7 @@ interface FlagValueRule {
 }
 
 const FLAG_VALUES: Record<string, FlagValueRule[]> = {
-  "--format": [{ values: ["json", "jsonl", "yaml", "text", "md", "html"] }],
+  "--format": [{ values: ["json", "jsonl", "yaml", "text", "md"] }],
   "--detail": [{ values: ["brief", "normal", "full", "agent"] }],
   "--type": [{ values: () => [...placementTypes(), "any"] }],
   "--shell": [{ values: ["bash"] }],

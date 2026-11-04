@@ -359,6 +359,22 @@ function readConfigVersion(raw: Record<string, unknown>, sourcePath?: string): R
 }
 
 /**
+ * `output.format: html` is retired with akm's HTML output (AKM Desktop replaces it). The value is safely
+ * ignorable, so the config keeps loading, the format falls back to the default, and one warning says why.
+ * A read does not rewrite the file.
+ */
+function dropRetiredOutputFormat(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
+  const output = raw.output;
+  if (!isPlainConfigObject(output) || output.format !== "html") return raw;
+  warnOnce(
+    `config:output-format-html:${sourcePath ?? "inline"}`,
+    `output.format "html" is no longer supported${sourcePath ? ` (${sourcePath})` : ""}: HTML reports moved to AKM Desktop. Using the default format; set output.format to json, jsonl, yaml, text or md.`,
+  );
+  const { format: _html, ...rest } = output;
+  return { ...raw, output: rest };
+}
+
+/**
  * Resolve a local file's `extends` chain and validate the merged result
  * (deep-merged under `DEFAULT_CONFIG`) via Zod ({@link AkmConfigSchema}).
  * `liftedLocalRaw` must already be through {@link runConfigFilePipeline}.
@@ -369,7 +385,10 @@ function readConfigVersion(raw: Record<string, unknown>, sourcePath?: string): R
  * keeps around, instead of only getting the final merged `AkmConfig` back.
  */
 function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePath?: string): AkmConfig {
-  const chained = dropUnusableEntries(resolveExtendsChain(liftedLocalRaw, sourcePath), sourcePath);
+  const chained = dropRetiredOutputFormat(
+    dropUnusableEntries(resolveExtendsChain(liftedLocalRaw, sourcePath), sourcePath),
+    sourcePath,
+  );
   // Writing an `embedding` block says semantic search is wanted: a config that names no mode reads as "auto".
   const withExtends =
     chained.embedding !== undefined && chained.semanticSearchMode === undefined

@@ -1,0 +1,423 @@
+/* Desktop-specific layout; the AKM design tokens and proven components remain the base. */
+@layer desktop {
+  :root {
+    --content-max: 100rem;
+    --top-inset: 4rem;
+    --bottom-inset: 0px;
+    --control-height: 2.5rem;
+    --workspace-height: calc(100dvh - 158px);
+    --radius: 8px;
+    --radius-small: 6px;
+    --bg: light-dark(#f7f7fa, #15151a);
+    --surface: light-dark(#ffffff, #1c1c23);
+    --surface-2: light-dark(#f0f0f5, #25252e);
+    --surface-sunk: light-dark(#e9e9f0, #191920);
+    --border: light-dark(#e2e2ea, #363640);
+    --border-strong: light-dark(#81818f, #858594);
+    --rule: var(--border);
+    --text: light-dark(#23232e, #ececf2);
+    --muted: light-dark(#5c5c6d, #b8b8c7);
+    --faint: light-dark(#696979, #aaaaba);
+    --accent: light-dark(#6741c4, #b59aee);
+    --accent-hover: light-dark(#5432a5, #ccb8fa);
+    --accent-bg: light-dark(#eeebf8, #332b47);
+    --link: light-dark(#5936ad, #c9b4f6);
+    --on-accent: light-dark(#ffffff, #20182d);
+    --text-s: 0.875rem;
+    --text-xs: 0.8125rem;
+    --shadow-float: 0 8px 28px rgb(24 24 40 / 0.12);
+  }
+  /* Chrome uses a native app face. Monospace belongs to source, paths and IDs,
+     not field labels, navigation, or ordinary metadata. */
+  .desktop-shell :is(h4, .field-label, .tile-label, thead th) {
+    font-family: var(--font);
+    font-size: var(--text-s);
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .desktop-shell :is(button, a.btn) {
+    border-width: 1px;
+    border-radius: var(--radius-small);
+  }
+  .desktop-shell :is(button, a.btn):has(> svg) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .desktop-shell .btn-secondary {
+    border-color: var(--border);
+    background: var(--surface);
+  }
+  .desktop-shell .btn-secondary:hover:not(:disabled) {
+    border-color: var(--border-strong);
+    background: var(--surface-2);
+  }
+  .desktop-shell :is(.btn-quiet, button.quiet) {
+    background: transparent;
+    border-color: transparent;
+    color: var(--muted);
+  }
+  .desktop-shell :is(.btn-quiet, button.quiet):hover:not(:disabled) {
+    background: var(--surface-2);
+    border-color: transparent;
+    color: var(--text);
+  }
+  .desktop-shell :is(button, a.btn):disabled {
+    border-color: transparent;
+    background: var(--surface-2);
+    color: var(--faint);
+  }
+  .desktop-shell .icon-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .desktop-shell .badge {
+    border: 0;
+    border-radius: 4px;
+    padding: 2px 6px;
+    background: var(--surface-2);
+    font-weight: 500;
+  }
+  .desktop-shell .nav-count {
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  /* A disclosure is supporting information, not another boxed card. */
+  .desktop-shell details:not(.add-card, .notice) {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .desktop-shell details:not(.add-card, .notice) > summary {
+    border: 0;
+    border-radius: var(--radius-small);
+    padding: 8px 0;
+    color: var(--muted);
+  }
+  .desktop-shell details:not(.add-card, .notice) > summary:hover {
+    color: var(--text);
+    background: transparent;
+  }
+  .desktop-shell details:not(.add-card, .notice) > :not(summary) {
+    margin-inline: 0;
+  }
+  .desktop-shell .settings-footer {
+    background: transparent;
+    padding-inline: 0;
+    border-top: 1px solid var(--border);
+  }
+  .desktop-shell .notice {
+    border: 0;
+    border-radius: var(--radius);
+    padding: 16px 20px;
+  }
+  .desktop-shell .card {
+    border: 0;
+    border-radius: var(--radius);
+  }
+  .desktop-shell .settings-card {
+    background: transparent;
+  }
+  .desktop-shell :is(.tabs, .settings-tabs, .library-mode-tabs) {
+    border-bottom: 0;
+  }
+  .desktop-shell {
+    min-block-size: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+  .desktop-shell > main {
+    flex: 1;
+    inline-size: 100%;
+    padding: var(--space-5) var(--space-6) var(--space-6);
+  }
+  .desktop-shell > main,
+  .desktop-shell > main > div,
+  .desktop-shell section {
+    min-inline-size: 0;
+  }
+  .desktop-shell .chart-card > div {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+  .desktop-shell h1 {
+    font-size: 1.75rem;
+    line-height: 1.25;
+    margin: 0;
+    letter-spacing: -0.02em;
+  }
+  .desktop-shell .page-head,
+  .desktop-shell .page-header,
+  .desktop-shell .page-heading {
+    margin-block-end: var(--space-4);
+  }
+  .desktop-topbar {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 10;
+    min-block-size: 4rem;
+    padding: 0 var(--space-6);
+    display: flex;
+    gap: var(--space-6);
+    align-items: center;
+    border-block-end: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .desktop-topbar nav {
+    display: flex;
+    gap: var(--space-2);
+    flex: 1;
+  }
+  .desktop-topbar nav > a {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    color: var(--muted);
+    text-decoration: none;
+    font-weight: 550;
+    min-block-size: 40px;
+    padding: 8px 16px;
+    border-radius: var(--radius-small);
+  }
+  .desktop-topbar nav > a:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  .desktop-topbar nav > a[aria-current="page"] {
+    color: var(--text);
+    background: var(--surface-2);
+    font-weight: 650;
+  }
+  .host {
+    display: flex;
+    gap: var(--space-3);
+    align-items: center;
+    color: var(--muted);
+    font-size: var(--text-xs);
+    overflow-wrap: anywhere;
+  }
+  .version {
+    font-family: var(--mono);
+    border-inline-start: 1px solid var(--border);
+    padding-inline-start: var(--space-3);
+  }
+  .desktop-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-4);
+    padding: 8px var(--space-6);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .theme-picker {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .theme-picker select {
+    font-size: 12px;
+    min-block-size: 32px;
+    border-color: transparent;
+    background-color: transparent;
+  }
+  .leave-editor-dialog {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: var(--space-5);
+    max-inline-size: min(32rem, calc(100vw - 2rem));
+  }
+  dialog::backdrop {
+    background: rgb(0 0 0 / 0.55);
+  }
+  .page-heading {
+    display: flex;
+    gap: var(--space-4);
+    justify-content: space-between;
+    align-items: center;
+    margin-block-end: var(--space-5);
+  }
+  .page-heading p {
+    margin-block-start: var(--space-2);
+  }
+  .eyebrow {
+    color: var(--muted);
+    font-size: var(--text-xs);
+    letter-spacing: var(--tracking-caps);
+    text-transform: uppercase;
+  }
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: center;
+    margin-block: var(--space-3);
+  }
+  .toolbar > label {
+    display: grid;
+    gap: var(--space-1);
+  }
+  .section-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    margin-block: 16px;
+  }
+  .section-links a {
+    padding-block: 8px;
+  }
+  .trend-disclosure,
+  .optional-settings {
+    margin-block: 16px;
+  }
+  .trend-disclosure > summary,
+  .optional-settings > summary {
+    padding: 12px 0;
+    background: transparent;
+    border: 0;
+  }
+  .trend-disclosure[open] > summary,
+  .optional-settings[open] > summary {
+    margin-bottom: 16px;
+  }
+  .chart-grid,
+  .impact-sections,
+  .impact-sections > section {
+    min-inline-size: 0;
+  }
+  .raw-source {
+    font: var(--text-s) / 1.65 var(--mono);
+    background: var(--surface-2);
+    padding: var(--space-4);
+    border: 0;
+    border-radius: var(--radius);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .message {
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    margin-block: var(--space-3);
+    background: var(--surface-2);
+  }
+  .message.error {
+    color: var(--fail);
+    background: var(--fail-bg);
+    border-color: var(--fail);
+  }
+  .message.success {
+    color: var(--ok);
+    background: var(--ok-bg);
+  }
+  .quiet-empty {
+    color: var(--muted);
+    padding-block: var(--space-4);
+  }
+  .tabs button {
+    background: transparent;
+    color: var(--muted);
+    border: 0;
+    border-block-end: 2px solid transparent;
+    padding-inline: var(--space-3);
+  }
+  .tabs button.current,
+  .tabs button[aria-selected="true"],
+  .tabs button[aria-current="page"] {
+    border-block-end-color: var(--accent);
+    color: var(--text);
+  }
+  .tabs button:hover:not(:disabled) {
+    background: var(--surface-2);
+  }
+  [hidden] {
+    display: none;
+  }
+  @media (width > 850px) {
+    .desktop-shell.workspace-active {
+      block-size: 100dvh;
+      min-block-size: 620px;
+    }
+    .desktop-shell.workspace-active > main {
+      display: flex;
+      flex-direction: column;
+      min-block-size: 0;
+    }
+    .workspace-active .library-page,
+    .review-page-shell {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-block-size: 0;
+    }
+  }
+  @media (width < 48rem) {
+    :root {
+      --top-inset: 7rem;
+      --workspace-height: calc(100dvh - 190px);
+      --control-height: 2.75rem;
+    }
+    .desktop-topbar {
+      gap: var(--space-4);
+      padding-inline: var(--space-4);
+      flex-wrap: wrap;
+    }
+    .desktop-topbar nav {
+      order: 3;
+      flex: 1 0 100%;
+      justify-content: space-between;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .desktop-topbar > .brand {
+      padding-block-start: var(--space-3);
+    }
+    .desktop-topbar .host {
+      margin-inline-start: auto;
+      padding-block-start: var(--space-3);
+    }
+    .desktop-shell > main {
+      padding: var(--space-4);
+    }
+    .desktop-footer {
+      padding-inline: var(--space-4);
+    }
+    .host {
+      font-size: 12px;
+      gap: var(--space-2);
+    }
+    .version {
+      padding-inline-start: var(--space-2);
+    }
+  }
+  @media (width < 26rem) {
+    .desktop-topbar nav {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 4px;
+      min-width: 0;
+    }
+    .desktop-topbar nav > a {
+      justify-content: center;
+      gap: 4px;
+      padding-inline: 2px;
+      font-size: 13px;
+      min-width: 0;
+    }
+    .desktop-topbar .nav-count {
+      font-size: 11px;
+      min-width: 14px;
+      padding: 0 2px;
+    }
+    .desktop-footer {
+      flex-wrap: wrap;
+      gap: 4px 12px;
+    }
+  }
+}

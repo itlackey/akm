@@ -85,88 +85,83 @@ returns is the CLI's agent-shaped output and changes whenever that does.
 
 ## Local workspace (`akm-cli/workspace`)
 
-This experimental namespace re-exports a small set of existing operations instead of
-introducing a second storage policy. Use it server-side in a trusted local process, never in a
-renderer or remote/public service. Configure HOME/XDG and any AKM directory overrides before
-importing it.
+This experimental namespace is a set of typed application operations for a trusted local host such
+as akm Desktop. Each operation owns its policy (writability, revision checks, the write lease,
+credential redaction); the host owns transport (authentication, HTTP, status codes). Use it
+server-side in a trusted local process, never in a renderer or remote/public service. Configure
+HOME/XDG and any AKM directory overrides before importing it.
 
 ```ts
-import {
-  handleApiRequest, NO_SUCH_ROUTE, matchWorkspaceAction, handleWorkspaceAction,
-  matchWriteRoute, handleWriteRequest, classifyWorkspaceError,
-  scrubUrlCredentials, AkmError, akmClone,
-} from "akm-cli/workspace";
+import { assets, documents, proposals, CONFLICT_CODES, AkmError } from "akm-cli/workspace";
 
-const result = await handleApiRequest("/api/search", new URLSearchParams({ q: "deploy", limit: "20" }));
-if (result !== NO_SUCH_ROUTE) {
-  const envelope = { ok: true, data: scrubUrlCredentials(result) };
-}
+const found = await assets.search({ q: "deploy", limit: 20 });
+const source = await documents.readSource({ ref: "stash//knowledge/runbook" });
+await documents.save({ ref: source.ref, content: "...", revision: source.revision });
 ```
 
-The dispatcher and clone signatures include:
+Operations are grouped by capability. Every operation takes one typed input object (unknown fields
+are ignored) and returns plain JSON-safe data without a CLI envelope; failures reject with an
+`AkmError`.
 
-```ts
-handleApiRequest(pathname: string, query: URLSearchParams): Promise<unknown>;
-matchWorkspaceAction(path: string): WorkspaceAction | null;
-handleWorkspaceAction(action: WorkspaceAction, body: unknown): Promise<unknown>;
-matchWriteRoute(pathname: string): WriteRoute | null;
-handleWriteRequest(route: WriteRoute, body: unknown): Promise<unknown>;
-classifyWorkspaceError(error: unknown): ProposalActionError;
-scrubUrlCredentials(value: unknown): unknown;
-akmClone(options: CloneOptions): Promise<CloneResponse>;
-```
+| Namespace | Operations |
+| --- | --- |
+| `assets` | `search`, `searchMisses`, `show`, `history`, `related`, `improvement`, `bundleFiles` |
+| `documents` | `readSource`, `save`, `createKnowledge`, `copy`, `retire` |
+| `proposals` | `list`, `get`, `recentChanges`, `accept`, `reject`, `revert`, `reopen`, `acceptMany`, `rejectMany` |
+| `bundles` | `list`, `add`, `remove`, `update`, `rename`, `setSettings` |
+| `config` | `get`, `change` |
+| `feedback` | `record` |
+| `sensitive` | `describe`, `readValue`, `save`, `remove` (env files and secrets; only `readValue` returns a value) |
+| `activity` | `overview`, `pulse`, `health`, `retrievalTrend`, `improveImpact`, `taskHistory`, `meta` |
 
-`WorkspaceAction`, `WriteRoute`, `ProposalActionError`, `CloneOptions`,
-`CloneResponse` and `AkmErrorKind` are exported types. `AkmError` is the existing
-runtime error base (`kind`, `code`, `message`, `hint()`) and `UsageError` its usage subclass;
-classifiers return `{status, code, message}`. Unknown reads return the exported `NO_SUCH_ROUTE`
-symbol; unknown write paths return `null`. Handler failures reject.
+Also exported: `AkmError`, `UsageError`, `NotFoundError`, `ConfigError`, `TransientError`, the
+`AkmErrorKind` type, `CONFLICT_CODES`, `scrubUrlCredentials` and `indexWrittenAssets(bundleRoot,
+files, {bundleId?})`, which refreshes the index rows for files a host edited inside a bundle itself
+(it never rebuilds the index and fails open, returning `false`). No primitive is exported: the
+env/secret, lease, write-target and dispatcher functions stay inside the operations.
 
-The namespace also exports the env/secret operations the CLI's `env` and `secret` commands call,
-for a host that shows and edits those files itself: `resolveEnvPath` / `resolveSecretPath` (an
-existing file, read side), `resolveEnvWriteTarget` / `resolveSecretWriteTarget` (the write
-target and file for a ref), `writeEnv`, `removeEnv`, `setSecret`, `removeSecret`,
-`withEnvSecretWrite` (the lease and git boundary around one write) and `sensitiveMarkerPath`,
-plus `deriveCanonicalAssetName` (the ref name of a bundle file, for a file that has no ref yet).
-`indexWrittenAssets(bundleRoot, files, {bundleId?})` is the one index operation: after a host edits
-files inside a bundle itself, it refreshes the index rows for exactly those files. It never
-rebuilds the index and fails open (it returns `false` when the index could not be updated).
-These are trusted local building blocks, not an authorization layer. Nothing else is exported:
-no other writers, no leases and no index or vector readers (the UI API's `bundle-rename` action
-and `GET /api/asset/related` cover renames and related content).
+**Revisions.** A `revision` is the sha256 hex of the raw file bytes, for every single-file asset,
+env file and secret. Every confirmed write (`documents.save`, `documents.retire`, `sensitive.save`
+over an existing file, `sensitive.remove`) takes the revision the caller last saw, and the check
+runs inside the write lease against the bytes the operation then replaces. A retire proposal is
+minted only from exactly those bytes.
 
-The [UI API reference](ui-api.md) is the single source for route parameters,
-body validation and response shapes. Dispatchers return the raw `data`, not
-the HTTP envelope. They do not authenticate requests or apply the server's
-final `scrubUrlCredentials` pass. A host must enforce per-launch authorization,
-same-origin writes, method/content-type/body limits and response redaction
-before exposing them over HTTP. Browser markdown is untrusted.
+**Errors.** Errors carry a stable `code`. `CONFLICT_CODES` (`ASSET_CONTENT_CHANGED`,
+`PROPOSAL_STALE`, `PROPOSAL_NOT_PENDING`, `ASSET_MUTATION_LEASE_HELD`) mean "reload and decide
+again"; a host maps them to one conflict status whatever their `kind`. Otherwise `usage` is a bad
+request, `not-found` a missing resource, `config` a refusal the user can address (a read-only
+bundle) and `transient` contention. A failure that is not an `AkmError` is an internal error.
 
-Reads retain the UI's read-only behavior, existing search cap and honest
-unavailable states. Mutations retain write leases, revision checks, auditing,
-indexing, Git commits and possible pushes. Some workspace actions deliberately
-spawn the packaged CLI; ship the complete package including its launcher,
-Node wrapper and assets. Under Node the existing invocation resolver finds
-`dist/cli-node.mjs` relative to the installed package; no global `akm` is needed.
-An Electron host using its executable for Node children must establish
-`ELECTRON_RUN_AS_NODE=1` in the child's inherited environment before dispatch.
-Unlike `curate`, workspace calls make no promise of silent in-process-only
-execution. Never automatically retry a failed mutation: a subprocess may have
-changed state before its response failed.
+**Leases.** Interactive writes wait at most a few seconds for another akm process holding the
+asset-mutation lease and then reject with `ASSET_MUTATION_LEASE_HELD`; they never wait the CLI's
+ten minutes. The operations that run the CLI as a child (below) are the exception: the child takes
+the lease itself, with the CLI's wait. `acceptMany` and `rejectMany` are not atomic: each id is its own decision and every
+failed id in the result carries its `code`.
 
-`CloneOptions` is `{sourceRef, newName?, target?, force?, dest?}`. `target` is
-a configured managed bundle; omission uses normal write-target resolution.
-`dest` is the existing unmanaged path escape hatch and cannot accompany
-`target`. A desktop copy operation should use a managed target and omit
-`force` and `dest`. `CloneResponse` contains `source: {path, registryId?}`,
-`destination: {path, ref?}`, `overwritten`, and optional `remoteFetched` metadata.
-Clone retains the same writable-target validation and Git/index effects as
-the CLI; it is not a move or rename. A move is a copy followed by a retire of the original.
+Reads open `index.db` and `state.db` read-only and never create or migrate them. Mutations keep the
+write leases, auditing, indexing, Git commits and possible pushes of the CLI. `feedback.record` and
+the `bundles` actions `add`, `remove`, `update` and `rename` run the packaged CLI as a child
+process (their validation lives in the command bodies, and `add` and `update` do network and git
+work that would block a single-threaded host); ship the complete package including its launcher,
+Node wrapper and assets. Under Node the existing invocation resolver finds `dist/cli-node.mjs`
+relative to the installed package; no global `akm` is needed. `AKM_LAUNCHER_NODE` names the Node
+executable the launcher uses for those children; an Electron host using its executable for Node
+children must also set `ELECTRON_RUN_AS_NODE=1` in the child's inherited environment. Never
+automatically retry a failed mutation: a child may have changed state before its response failed
+(a child that exits zero without its expected result rejects with a plain `Error` whose `code` is
+`INVALID_COMMAND_RESPONSE`).
+
+`documents.copy({sourceRef, target?, newName?})` copies an asset to a managed bundle and never
+overwrites; `documents.retire` archives one (undo is `proposals.revert` of the returned
+`proposalId`). A move is a copy followed by a retire of the original, composed by the host; there
+is no transaction across the two.
+
+The [workspace reference](workspace.md) lists what each operation returns and accepts.
 
 The package maps this namespace to `dist/workspace.js` under Bun and
 `dist/workspace-node.mjs` under Node. The Node entry registers the existing
 embedded-text loader before importing the graph. `dist/workspace.d.ts` is
-hand-written (the build emits no declarations), copied like `dist/api.d.ts`, and
+hand-written (the build emits no declarations; read models are declared `unknown`), copied like `dist/api.d.ts`, and
 `tests/contracts/workspace-surface.test.ts` keeps it in step with `src/workspace.ts`; a strict
 Node TypeScript consumer of the tarball checks it too. The existing `akm-cli/api` contract is
 unchanged.
@@ -177,7 +172,7 @@ and extracts the real tarball, reuses only checkout dependencies offline,
 and imports the public namespace under genuine Node and Bun. Every fixture
 has isolated HOME/XDG/AKM paths before import; it exercises reads, subprocess
 creation, conditional save/conflict, feedback/proposal revert, configuration,
-managed clone and manual retire/revert without a live bundle or model endpoint.
+env/secret writes, managed clone and manual retire/revert without a live bundle or model endpoint.
 Set `AKM_TEST_NODE_BIN` to a real Node >=22 executable if `node` on PATH is
 a Bun compatibility shim. The test is skipped unless
 `AKM_WORKSPACE_PACKAGE_TESTS=1` (the target sets it); it fails on a missing

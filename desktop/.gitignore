@@ -1,0 +1,10 @@
+node_modules/
+.svelte-kit/
+build/
+out/
+test-results/
+playwright-report/
+*.tgz
+.core/
+.core.json
+dist/

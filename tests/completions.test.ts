@@ -140,7 +140,7 @@ describe("completions command", () => {
 
   test("contains flag value completions for --format", () => {
     expect(script).toContain("--format)");
-    expect(script).toContain("json jsonl yaml text md html");
+    expect(script).toContain("json jsonl yaml text md");
   });
 
   test("contains flag value completions for --detail", () => {

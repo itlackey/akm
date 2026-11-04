@@ -3,18 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * D7 — generic `md` / `html` rendering of a shaped output envelope.
+ * D7 — generic `md` rendering of a shaped output envelope.
  *
- * These are the fallbacks that make all six `--format` values work on every
+ * This is the fallback that makes every `--format` value work on every
  * command: before D7, `md` silently emitted the JSON envelope everywhere
- * except `akm health` and `html` threw everywhere except `akm health`. A
- * command with no registered renderer must now still produce a real rendering
- * of its own envelope — not JSON wearing a `.md` extension, and not a throw.
+ * except `akm health`. A command with no registered renderer must now still
+ * produce a real rendering of its own envelope — not JSON wearing a `.md`
+ * extension, and not a throw.
  *
  * The bar these pin is deliberately behavioural rather than cosmetic: every
  * RESULT value present in the envelope must be present in the output, arrays
  * of uniform objects must render as a table rather than as an opaque blob,
- * and the HTML must escape rather than interpolate. The one narrowing: root
+ * The one narrowing: root
  * `shape`/`schemaVersion` are envelope transport metadata, not a result, and
  * are dropped — see `ENVELOPE_META_KEYS` in `src/output/generic-render.ts`.
  * That filter is root-only, so a per-entry `schemaVersion` one level down
@@ -22,7 +22,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { renderGenericHtml, renderGenericMarkdown } from "../src/output/generic-render";
+import { renderGenericMarkdown } from "../src/output/generic-render";
 
 describe("renderGenericMarkdown", () => {
   test("renders scalar fields as a definition list under a command heading", () => {
@@ -106,74 +106,5 @@ describe("renderGenericMarkdown", () => {
     // root-only filter must not eat it.
     expect(md).toContain("| id | schemaVersion |");
     expect(md).toContain("| evt-1 | 2 |");
-  });
-});
-
-describe("renderGenericHtml", () => {
-  test("produces a self-contained document carrying the envelope's values", () => {
-    const html = renderGenericHtml("show", { ref: "knowledge/guide", type: "knowledge" });
-
-    expect(html).toContain("<!doctype html>");
-    expect(html).toContain("</html>");
-    expect(html).toContain("knowledge/guide");
-    expect(html).toContain("knowledge");
-  });
-
-  test("renders an array of uniform objects as a real table element", () => {
-    const html = renderGenericHtml("search", {
-      hits: [
-        { ref: "memories/a", score: 2 },
-        { ref: "memories/b", score: 1 },
-      ],
-    });
-
-    expect(html).toContain("<table");
-    expect(html).toContain("<th");
-    expect(html).toContain("memories/a");
-    // Not the retired JSON-in-<pre> fallback wearing an HTML wrapper.
-    expect(html).not.toMatch(/<pre>\s*\{/);
-  });
-
-  test("escapes markup in values instead of interpolating it", () => {
-    const html = renderGenericHtml("show", { ref: "<script>alert(1)</script>" });
-
-    expect(html).not.toContain("<script>alert(1)</script>");
-    expect(html).toContain("&lt;script&gt;");
-  });
-
-  test("never returns an empty document, even for an empty envelope", () => {
-    expect(renderGenericHtml("noop", {}).trim().length).toBeGreaterThan(0);
-    expect(renderGenericHtml("noop", null).trim().length).toBeGreaterThan(0);
-  });
-
-  test("drops root-level shape/schemaVersion envelope metadata as sections (F3)", () => {
-    const html = renderGenericHtml("secret-list", {
-      shape: "sentinel-shape-value",
-      schemaVersion: 424242,
-      items: ["a"],
-    });
-
-    expect(html).not.toContain("<h2>shape</h2>");
-    expect(html).not.toContain("<h2>schemaVersion</h2>");
-    expect(html).not.toContain("sentinel-shape-value");
-    expect(html).not.toContain("424242");
-    expect(html).toContain("<h2>items</h2>");
-  });
-
-  test("keeps a per-entry schemaVersion one level down (e.g. log list's events[])", () => {
-    const html = renderGenericHtml("log-list", {
-      shape: "log-list",
-      schemaVersion: 1,
-      events: [{ id: "evt-1", schemaVersion: 2 }],
-    });
-
-    expect(html).not.toContain("<h2>shape</h2>");
-    expect(html).toContain("<h2>events</h2>");
-    // Nested `schemaVersion` is per-entry content (a table column, since
-    // `events` is a uniform-object array) — the root-only filter must not
-    // eat it.
-    expect(html).toContain('<th scope="col">schemaVersion</th>');
-    expect(html).toContain("<td>evt-1</td>");
-    expect(html).toContain("<td>2</td>");
   });
 });

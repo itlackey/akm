@@ -86,6 +86,10 @@ export type UsageErrorCode =
   | "RESOURCE_ALREADY_EXISTS"
   /** A conditional Markdown write was based on an older or removed source. */
   | "ASSET_CONTENT_CHANGED"
+  /** A proposal's target changed (or is gone) since the proposal was made. */
+  | "PROPOSAL_STALE"
+  /** A decision was asked of a proposal that is no longer pending. */
+  | "PROPOSAL_NOT_PENDING"
   | "TASK_SCHEMA_VERSION_UNSUPPORTED"
   | "INVALID_PROPOSAL"
   | "NON_INTERACTIVE_REQUIRES_YES"
@@ -253,7 +257,7 @@ export const COMPOSITION_INVALID_MULTI_JOB_HINT =
 const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   INVALID_FLAG_VALUE: "Run `akm <command> --help` to see accepted values.",
   INVALID_SOURCE_VALUE: "Pick one of: local, registry, all, or a configured source name.",
-  INVALID_FORMAT_VALUE: "Pick one of: json, jsonl, yaml, text, md, html.",
+  INVALID_FORMAT_VALUE: "Pick one of: json, jsonl, yaml, text, md.",
   INVALID_DETAIL_VALUE: "Pick one of: brief, normal, full, agent.",
   INVALID_JSON_CONFIG_VALUE:
     'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.',
@@ -344,6 +348,17 @@ export abstract class AkmError extends Error {
   /** Actionable hint string, or undefined when none applies. */
   abstract hint(): string | undefined;
 }
+
+/**
+ * Codes that mean "the world moved under this request; reload and decide again", whatever their kind. A host maps
+ * them to one conflict status (HTTP 409) instead of the status of the kind they are thrown as.
+ */
+export const CONFLICT_CODES: ReadonlySet<string> = new Set([
+  "ASSET_CONTENT_CHANGED",
+  "PROPOSAL_STALE",
+  "PROPOSAL_NOT_PENDING",
+  "ASSET_MUTATION_LEASE_HELD",
+]);
 
 /** Raised when configuration or environment is invalid or missing. */
 export class ConfigError extends AkmError {
