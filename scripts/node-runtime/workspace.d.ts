@@ -80,9 +80,10 @@ export function handleWorkspaceAction(action: WorkspaceAction, value: unknown): 
 export function matchWriteRoute(pathname: string): WriteRoute | null;
 export function handleWriteRequest(route: WriteRoute, body: unknown): Promise<unknown>;
 export function classifyWorkspaceError(error: unknown): ProposalActionError;
-export function classifyProposalError(error: unknown): ProposalActionError;
 export function scrubUrlCredentials(value: unknown): unknown;
 export function akmClone(options: CloneOptions): Promise<CloneResponse>;
+/** Refresh the existing index for files just written inside a bundle; fail-open, `false` when the index could not be updated. */
+export function indexWrittenAssets(stashDir: string, filePaths: string[], options?: { bundleId?: string }): Promise<boolean>;
 
 export function deriveCanonicalAssetName(assetType: string, typeRoot: string, filePath: string): string | undefined;
 export function sensitiveMarkerPath(filePath: string, type: "env" | "secret"): string;

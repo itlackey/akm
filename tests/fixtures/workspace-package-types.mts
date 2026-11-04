@@ -54,7 +54,7 @@ function secrets() {
     },
   );
   const redacted: unknown = workspace.scrubUrlCredentials(found.source.path);
-  const failure: ProposalActionError = workspace.classifyProposalError(
+  const failure: ProposalActionError = workspace.classifyWorkspaceError(
     new workspace.UsageError("test", "RESOURCE_ALREADY_EXISTS"),
   );
   void [name, bundle, removed, redacted, failure];

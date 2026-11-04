@@ -19,14 +19,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm-cli/workspace` (Experimental) re-exports a small set of existing operations for a
   trusted desktop host: the UI read/write dispatchers, managed clone, URL redaction, the
   error classes, and the env/secret operations (`resolve*`, `write`/`remove`/`setSecret`,
-  `withEnvSecretWrite`) (#1423). It exports no write primitives, leases or index readers;
+  `withEnvSecretWrite`) and `indexWrittenAssets`, which refreshes the index for files a host
+  wrote itself (#1423). It exports no write primitives, leases or index readers;
   the host calls the UI API for everything else. The UI API adds `GET /api/bundle/files`
   (one directory of a registered bundle), `location` on `/api/asset`, `GET /api/asset/related`
   (the nearest stored embeddings of an asset, from the stored vectors only),
   `POST /api/bundles/rename` (`akm bundle rename`, `dryRun` for the plan) and
-  `POST /api/asset/retire`. `GET /api/asset/source` and `POST /api/asset/save` now cover every
-  single-file asset type (a skill is its `SKILL.md`; env, secret and session files are
-  refused). A retire mints and accepts an ordinary retire proposal, so it follows the
+  `POST /api/asset/retire`. A retire mints and accepts an ordinary retire proposal, so it follows the
   proposal-retire lifecycle: the archive is grace-purged and `POST /api/proposals/:id/revert`
   is the undo. `akm-cli/api` is unchanged.
 
@@ -35,6 +34,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   as `env remove` does.
 
 ### Changed
+
+- `akm ui` is frozen: AKM Desktop supersedes it and it will be removed in a later release. It gets
+  no new pages or routes (`STABILITY.md`, `docs/reference/ui-api.md`).
 
 - The reflect judge's rubric says adding a field the source lacks is needed, not churn, and
   drops nothing, so PRESERVATION is judged on the fields the source already had. The judge had

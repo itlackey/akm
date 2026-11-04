@@ -33,7 +33,6 @@ const {
   matchWriteRoute,
   handleWriteRequest,
   classifyWorkspaceError,
-  classifyProposalError,
   scrubUrlCredentials,
   AkmError,
 } = workspace;
@@ -49,6 +48,7 @@ for (const name of [
   "withEnvSecretWrite",
   "sensitiveMarkerPath",
   "deriveCanonicalAssetName",
+  "indexWrittenAssets",
 ])
   assert.equal(typeof workspace[name], "function", name);
 assert.equal(await handleApiRequest("/not-a-route", new URLSearchParams()), NO_SUCH_ROUTE);
@@ -123,24 +123,22 @@ try {
   await handleWriteRequest(missing, {});
   assert.fail("missing proposal should fail");
 } catch (error) {
-  assert.equal(classifyProposalError(error).status, 404);
+  assert.equal(classifyWorkspaceError(error).status, 404);
 }
 assert.ok(
   !JSON.stringify(scrubUrlCredentials({ url: "https://example.test/?token=planted-credential" })).includes(
     "planted-credential",
   ),
 );
-// Another single-file type saves through the same route; related content reports honestly without embeddings.
+// A host that edits a bundle file itself refreshes the index for it, and related content reports honestly without embeddings.
 fs.mkdirSync(path.join(stash, "scripts"), { recursive: true });
 fs.writeFileSync(path.join(stash, "scripts", "tool.sh"), "#!/bin/sh\necho one\n");
 execFileSync(process.execPath, [cli, "index", "--format=json"], { env: process.env, stdio: "pipe" });
-const script = await read("/api/asset/source", { ref: "stash//scripts/tool.sh" });
-await handleWorkspaceAction("document-save", {
-  ref: script.ref,
-  revision: script.revision,
-  content: "#!/bin/sh\necho two\n",
-});
-assert.equal(fs.readFileSync(path.join(stash, "scripts", "tool.sh"), "utf8"), "#!/bin/sh\necho two\n");
+fs.writeFileSync(path.join(stash, "scripts", "tool.sh"), "#!/bin/sh\necho two\n");
+assert.equal(
+  await workspace.indexWrittenAssets(stash, [path.join(stash, "scripts", "tool.sh")], { bundleId: "stash" }),
+  true,
+);
 assert.equal((await read("/api/asset/related", { ref: source.ref })).available, false);
 // The env/secret operations the CLI uses.
 const written = workspace.resolveSecretWriteTarget("secrets/smoke", "stash");

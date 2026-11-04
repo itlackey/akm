@@ -1,5 +1,9 @@
 # `akm ui` API
 
+**Frozen.** `akm ui` is superseded by AKM Desktop and will be removed in a later release. It gets no new pages or
+routes; new operations are added to `akm-cli/workspace` only, and `akm ui` reaches one only through a route its
+existing pages already call.
+
 The JSON API behind [`akm ui`](cli.md#ui). The page that `akm ui` serves uses only this API, and everything it
 returns comes from the function the matching CLI command renders, so it never disagrees with the CLI. The API is
 read-only for browsing. Intentional writes use the finite [proposal decision](#deciding-proposals) and
@@ -668,8 +672,7 @@ is always escaped. Heading links use the UI router's `section` parameter.
 ## `GET /api/asset/source`
 
 Query: `ref` (required, without a fragment). Returns `{ref, type, content, revision}` for an indexed, enabled, writable
-AKM single-file asset: every type except `env`, `secret` and `session` (a skill is its `SKILL.md`; a skill's other files
-are not assets and are refused). `content` is the full live UTF-8 source, including frontmatter; `revision` is its
+AKM `knowledge` or `memory` file. `content` is the full live UTF-8 source, including frontmatter; `revision` is its
 SHA-256 over raw source bytes, independent of the indexed hash. The same authorized indexed-file resolution used by
 `show` applies. Unsupported adapters, read-only targets, stale target identities and invalid UTF-8 are refused, with the
 statuses of [workspace actions](#workspace-actions): a read-only bundle is `409`, not `500`.
@@ -772,7 +775,7 @@ User searches that found nothing, grouped by normalised query: `query`, `count`,
 ## Workspace actions
 
 The workspace dispatchers also accept `POST /api/asset/retire` with
-`{ref, revision}`. It retires an indexed writable AKM single-file asset the way
+`{ref, revision}`. It retires an indexed writable AKM asset the way
 `akm feedback`'s typed fix applies a change: it mints a retire proposal (source
 `propose`, no judged pair) and accepts it at once, so the asset follows the
 ordinary proposal-retire lifecycle. Skill packages, env/secret files and
@@ -806,7 +809,7 @@ general config editor or command-execution endpoint.
 | `/api/bundles/settings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Existing validation rejects disabled targets and writable npm/website sources. The default bundle and write target are edited through `/api/config/set`. |
 | `/api/config/set` | `{set?: {key: string}, unset?: string[]}` → `akm config set` / `unset` on each key, in one validated, atomic write. Values are strings, as on the command line, and are coerced and checked against the schema; literal API keys and `configVersion` are refused. An unset is refused with `400 TARGET_NOT_UPDATABLE` when the key is inherited from an `extends` base or sits inside a connection or harness entry akm ignores, and an unset with no config file writes nothing (`saved: false`), all as `akm config unset` does. |
 | `/api/knowledge/create` | `{bundle, name, path?, content}` → `akm import -` with Markdown on stdin. Uses the existing writable AKM target, name/path validation, frontmatter preservation, index/Git effects, and no `--force`. Existing files are never overwritten. Fails fast with `409 ASSET_MUTATION_LEASE_HELD` while another writer holds the asset-mutation lease. |
-| `/api/asset/save` | `{ref, revision, content}` → the asset writer, for any asset `/api/asset/source` accepts. Knowledge and memory use the shared Markdown writer (`force`, expected raw-content hash); every other single-file type is written by the ordinary asset writer (Markdown gets its `type`/`updated` frontmatter, as on any akm write; the file mode is kept), committed on a Git bundle and indexed. The write takes the asset-mutation lease and compares the live source with `revision` inside it, immediately before writing, and refuses a path that passes through a symbolic link. While another writer holds the lease the save fails fast with `409 ASSET_MUTATION_LEASE_HELD` instead of waiting. A stale revision returns `409 ASSET_CONTENT_CHANGED` without writing; a source deleted after it was loaded is refused (`404 ASSET_NOT_FOUND`) rather than recreated. The browser keeps the draft after a rejected save. An identical save returns `unchanged: true` without rewriting, reindexing or recording an event. Changed saves retain normal writer validation, indexing and Git effects. |
+| `/api/asset/save` | `{ref, revision, content}` → the existing shared Markdown writer with `force` and the expected raw-content hash. Only indexed writable AKM knowledge/memory documents accepted by `/api/asset/source` can be edited. The writer takes the asset-mutation lease and compares the live source with `revision` inside it, immediately before writing. While another writer holds the lease the save fails fast with `409 ASSET_MUTATION_LEASE_HELD` instead of waiting. A stale revision returns `409 ASSET_CONTENT_CHANGED` without writing; a source deleted after it was loaded is refused (`404 ASSET_NOT_FOUND`) rather than recreated. The browser keeps the draft after a rejected save. An identical save returns `unchanged: true` without rewriting, reindexing or recording an event. Changed saves retain normal writer validation, indexing and Git effects. |
 
 Configuration-affecting actions do not round-trip the redacted API configuration. Existing mutation helpers retain
 unknown/unrelated fields, local overrides and supported `$VAR`/`${ref}` credential references. If the existing

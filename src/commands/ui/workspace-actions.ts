@@ -6,11 +6,12 @@ import { execFile } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
 import { loadConfig, mutateConfig, resetConfigCache, sanitizeConfigForWrite } from "../../core/config/config";
 import { AkmError, type AkmErrorKind, UsageError } from "../../core/errors";
+import { assertWriteLeaseFree } from "../../indexer/index-writer-lock";
 import { resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
 import { assertUnsettable, setConfigValue, unsetConfigValue } from "../config-cli";
+import { retireAsset } from "../proposal/manual-retire";
 import { akmSaveDocument } from "../read/document";
-import { retireAsset } from "./manual-retire";
-import { assertWriteLeaseFree, classifyProposalError, type ProposalActionError } from "./proposal-actions";
+import { classifyProposalError, type ProposalActionError } from "./proposal-actions";
 import { redactForUi, redactUrlsInText } from "./redact";
 
 export type WorkspaceAction =

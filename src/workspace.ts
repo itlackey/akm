@@ -11,7 +11,6 @@ export { removeSecret, setSecret } from "./commands/env/secret";
 export { akmClone, type CloneOptions, type CloneResponse } from "./commands/sources/source-clone";
 export { handleApiRequest, NO_SUCH_ROUTE } from "./commands/ui/api";
 export {
-  classifyProposalError,
   handleWriteRequest,
   matchWriteRoute,
   type ProposalActionError,
@@ -34,3 +33,4 @@ export {
   withEnvSecretWrite,
 } from "./core/env-secret-ref";
 export { AkmError, type AkmErrorKind, UsageError } from "./core/errors";
+export { indexWrittenAssets } from "./indexer/index-written-assets";

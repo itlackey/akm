@@ -12,10 +12,10 @@ import { parseRefInput } from "../../core/asset/resolve-ref";
 import { resolveStashDir, toErrorMessage } from "../../core/common";
 import { UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
-import { akmProposalAccept } from "../proposal/proposal";
-import { createRetireProposal, recordGateDecision, rejectProposalDurably } from "../proposal/repository";
+import { assertWriteLeaseFree } from "../../indexer/index-writer-lock";
 import { isSingleFileDocumentType, resolveWritableIndexedAsset } from "../read/document";
-import { assertWriteLeaseFree } from "./proposal-actions";
+import { akmProposalAccept } from "./proposal";
+import { createRetireProposal, recordGateDecision, rejectProposalDurably } from "./repository";
 
 export async function retireAsset(ref: string, revision: string) {
   const identity = parseRefInput(ref);
