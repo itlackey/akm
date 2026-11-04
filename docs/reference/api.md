@@ -111,7 +111,7 @@ are ignored) and returns plain JSON-safe data without a CLI envelope; failures r
 | `bundles` | `list`, `add`, `remove`, `update`, `rename`, `setSettings` |
 | `config` | `get`, `change` |
 | `feedback` | `record` |
-| `setup` | `detect`, `apply` (first-run setup: where the library goes and which agent programs exist; `akm setup --yes`) |
+| `setup` | `detect`, `apply` (first-run setup: the library, and the agent programs akm may use; `akm bundle create`, `akm setup --yes --harness`) |
 | `sensitive` | `describe`, `readValue`, `save`, `remove` (env files and secrets; only `readValue` returns a value) |
 | `activity` | `overview`, `pulse`, `health`, `retrievalTrend`, `improveImpact`, `taskHistory`, `meta` |
 

@@ -80,11 +80,11 @@ Nothing runs until you press a button.
 
 1. **Your library.** The folder where akm keeps what agents learn (`~/akm` unless you choose another) and the
    official starter bundle (`itlackey/akm-stash`), ticked, which downloads from GitHub. Creating the library is
-   `akm setup --yes` (`setup.apply`); the starter bundle is `bundles.add`. A failed download does not undo the library;
+   `akm bundle create` (`setup.apply`); the starter bundle is `bundles.add`. A failed download does not undo the library;
    **Retry** repeats it.
 2. **Connect your agents.**
    - **akm command-line tool**, ticked when it is missing: it installs akm of Desktop's own release to
-     `~/.local/bin`, so that an agent without a plugin can use akm from a shell. When one is installed, setup shows its
+     `~/.local/bin` (`%LOCALAPPDATA%\akm` on Windows), so that an agent without a plugin can use akm from a shell. When one is installed, setup shows its
      version, and offers **Update CLI & plugins** only when it is older than the engine built into the app.
    - One card per harness found (Claude Code, Codex, OpenCode, OpenCode 2), with the installed plugin's version. The
      plugin installs from the channel Desktop is on: a stable Desktop installs the stable plugin, and a prerelease
@@ -92,8 +92,10 @@ Nothing runs until you press a button.
      plugin built for another minor is flagged. OpenCode resolves its plugin's exact version when it starts, so its card
      shows the package it configured.
    - **Let akm use this agent for learning** is off unless you tick it, because background learning runs that agent's
-     model on your quota. `akm setup --yes` would enable every program it finds; `setup.apply` keeps only those you
-     name.
+     model on your quota. Ticking it runs `akm setup --yes --harness=<agent>` (`setup.apply`), which makes that agent
+     akm's default. akm's model calls run in one place (a connection when there is one, else the default agent when akm
+     can limit it to reading and searching), so a card shows learning as on only where akm says they run, and the
+     result says where that is.
    - **Bun.** The Claude Code and Codex hooks are TypeScript files that the harness starts with `bun`; the standalone
      akm CLI does not provide a `bun` command, so Bun is the plugin's own runtime, not just a way to get akm. When Bun
      is missing the card shows Bun's official install command with **Copy** and **Check again**. Desktop never runs
@@ -103,13 +105,14 @@ Nothing runs until you press a button.
    check one harness at a time. After two minutes without a search it lists what to check (restart the harness, trust
    the Codex hooks, Bun on the harness's PATH).
 
-Desktop's CLI install is Linux and macOS; on Windows run the `install.ps1` of the release yourself.
-
 ## Host CLI and harness plugins
 
 1. Use **Install AKM CLI** if the host has none. The official release installer
-   verifies checksums and installs to `~/.local/bin`, without sudo. Add this
-   directory to your terminal PATH if absent; Desktop already searches it.
+   verifies checksums and installs without sudo or an administrator: `install.sh` to
+   `~/.local/bin` on Linux and macOS (add it to your terminal PATH if absent; Desktop
+   already searches it), and on Windows `install.ps1`, run as
+   `powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1`, to `%LOCALAPPDATA%\akm`,
+   which it adds to your user PATH.
 2. Use **Check CLI & plugins**, then **Update CLI & plugins**. These run
    `akm upgrade --check` and `akm upgrade`, including AKM's migration and
    compatibility handling. Desktop does not switch an existing installation's

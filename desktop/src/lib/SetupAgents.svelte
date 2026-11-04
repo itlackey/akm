@@ -8,7 +8,7 @@
   import { api } from "./client";
   import { classifyEngineSkew, hostUpgradeOutrunsDesktop } from "./engine-skew";
   import Icon from "./Icon.svelte";
-  import { akmPlatform, pluginChannel, type AgentCard } from "./setup-model";
+  import { akmPlatform, pluginChannel, type AgentCard, type Detected } from "./setup-model";
   import { actSoftware, runSoftware, software, type Outcome } from "./state/software.svelte";
   import { workspace } from "./state/workspace.svelte";
 
@@ -16,7 +16,11 @@
     cards,
     engine,
     onconfigured,
-  }: { cards: AgentCard[]; engine: string | undefined; onconfigured: () => Promise<void> } = $props();
+  }: {
+    cards: AgentCard[];
+    engine: string | undefined;
+    onconfigured: (detected: Detected) => void;
+  } = $props();
 
   // A box is ticked unless the person has said otherwise; learning is the reverse, because it spends model quota.
   let installCli = $state<boolean | undefined>(undefined),
@@ -65,12 +69,14 @@
       if (learnable.length) {
         const platforms = [...new Set(learnable.map((card) => akmPlatform(card.id)))];
         try {
-          await api("/setup/apply", {}, { harness: platforms });
-          outcomes.push({ label: "Learning", receipt: `akm may now use ${learnable.map((c) => c.name).join(", ")}.` });
+          // akm says where its model calls run now; that, not the ticked boxes, is what the receipt reports.
+          const detected = await api<Detected>("/setup/apply", {}, { harness: platforms });
+          onconfigured(detected);
+          learning = {};
+          outcomes.push({ label: "Learning", receipt: `akm's model calls: ${detected.modelCalls.description}.` });
         } catch (cause) {
           outcomes.push({ label: "Learning", error: (cause as Error).message });
         }
-        await onconfigured();
       }
     } finally {
       busy = false;
@@ -115,11 +121,11 @@
       {#if cliMissing}
         <label class="check-label">
           <input type="checkbox" checked={wantsCli} onchange={(event) => (installCli = event.currentTarget.checked)} />
-          Install {release} to <code>~/.local/bin</code>
+          Install {release} to <code>{host?.cliDirectory}</code>
         </label>
         <p class="field-hint">
-          Uses the official release installer, which checks its download. No administrator password. Add that folder to
-          your terminal's PATH if it is not there; Desktop finds it either way.
+          Uses the official release installer, which checks its download. No administrator password. Desktop finds akm
+          there; your terminal needs that folder on its PATH.
         </p>
       {:else if cli?.installed && cli.runnable}
         <p><span class="badge" data-tone="ok">✓ Installed</span> akm {cli.version} at <code>{cli.path}</code></p>
@@ -150,6 +156,10 @@
         </h3>
         {#if card.state === "stopped"}
           <p class="notice notice-warn">This program is installed but did not start, so nothing was changed.</p>
+        {:else if card.state === "disabled"}
+          <p class="notice notice-warn">
+            The akm plugin is installed in {card.name} but turned off. Turn it on there (<code>/plugin</code>).
+          </p>
         {:else if card.state === "unverified"}
           <p class="notice notice-warn">
             {card.name} could not say whether the akm plugin is installed, so nothing was installed over it. Check it in Settings
@@ -201,7 +211,7 @@
           </label>
           <p class="field-hint">
             {card.learning.enabled
-              ? "akm may run background learning on this agent."
+              ? "akm's own model calls (learning) run on this agent."
               : !card.learning.available
                 ? "akm could not find this program on its own PATH, so it cannot use it."
                 : !library

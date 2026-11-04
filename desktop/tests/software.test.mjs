@@ -37,7 +37,7 @@ test("host environment finds conventional user tools without running profiles or
   assert.ok(!env.PATH.split(":").includes("."));
 });
 
-async function hostFixture({ absent = false, failure = false, desktopVersion, bun = true } = {}) {
+async function hostFixture({ absent = false, failure = false, desktopVersion, bun = true, platform = "linux" } = {}) {
   const home = await mkdtemp(path.join(os.tmpdir(), "akm-host-test-"));
   temporary.push(home);
   const calls = [],
@@ -46,22 +46,28 @@ async function hostFixture({ absent = false, failure = false, desktopVersion, bu
     configured = new Set();
   let cli = !absent;
   let hasBun = bun;
-  const env = { HOME: home, PATH: "/fixture/bin", XDG_CONFIG_HOME: path.join(home, ".config") };
+  const env = {
+    HOME: home,
+    PATH: "/fixture/bin",
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+    LOCALAPPDATA: path.join(home, "AppData", "Local"),
+  };
   const manager = new HostTools({
     home,
     env,
-    platform: "linux",
+    platform,
     desktopVersion,
     find: async (name) =>
       (name === "akm" && !cli) || (name === "bun" && !hasBun) ? undefined : `/fixture/bin/${name}`,
     fetcher: async (url) => {
       installerUrls.push(url);
-      return { ok: true, text: async () => "#!/usr/bin/env bash\n# fixture; never executed\n" };
+      const first = url.endsWith(".ps1") ? "#Requires -Version 5.1" : "#!/usr/bin/env bash";
+      return { ok: true, text: async () => `${first}\n# fixture; never executed\n` };
     },
     run: async (file, args, options) => {
       assert.equal(options.home, home);
       assert.equal(options.env.AKM_LAUNCHER_NODE, undefined);
-      calls.push({ file, args });
+      calls.push({ file, args, installDir: options.env.AKM_INSTALL_DIR });
       const name = path.basename(file);
       if (args[0] === "--version")
         return name.startsWith("opencode") ? (name === "opencode2" ? "2.1.4" : "1.18.34") : "0.10.261104";
@@ -79,7 +85,7 @@ async function hostFixture({ absent = false, failure = false, desktopVersion, bu
           migration: { status: "current" },
         });
       }
-      if (name === "bash") {
+      if (name === "bash" || name === "powershell.exe") {
         cli = true;
         return "installed";
       }
@@ -165,6 +171,23 @@ test("the installer comes from Desktop's own release, so the host CLI starts equ
   await f.manager.pending;
   assert.equal(f.manager.snapshot().error, undefined);
   assert.deepEqual(f.installerUrls, ["https://github.com/itlackey/akm/releases/download/v0.10.261105-beta/install.sh"]);
+});
+
+test("on Windows the CLI installs through install.ps1 of Desktop's release, into %LOCALAPPDATA%\\akm", async () => {
+  const f = await hostFixture({ absent: true, desktopVersion: "0.10.261105", platform: "win32" });
+  assert.equal(f.manager.snapshot().cliDirectory, "%LOCALAPPDATA%\\akm");
+  f.manager.start("install-cli");
+  await f.manager.pending;
+  assert.equal(f.manager.snapshot().error, undefined);
+  assert.deepEqual(f.installerUrls, ["https://github.com/itlackey/akm/releases/download/v0.10.261105/install.ps1"]);
+  const [install] = f.calls.filter((call) => call.file === "powershell.exe");
+  assert.deepEqual(install.args.slice(0, -1), ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]);
+  assert.equal(path.basename(install.args.at(-1)), "install.ps1");
+  assert.equal(install.installDir, path.join(f.home, "AppData", "Local", "akm"));
+  assert.ok(!f.calls.some((call) => call.file === "/bin/bash"));
+  assert.match(f.manager.snapshot().receipt, /installed in %LOCALAPPDATA%\\akm/);
+  const env = await hostEnvironment({ PATH: "", LOCALAPPDATA: "/la" }, f.home, "win32");
+  assert.ok(env.PATH.split(path.delimiter).includes(path.join("/la", "akm")), "Desktop finds what it installed");
 });
 
 test("all four harness paths use standard native installation commands and verify afterward", async () => {

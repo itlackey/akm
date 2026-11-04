@@ -23,6 +23,7 @@ export interface SoftwareSnapshot {
   };
   host: HostSnapshot & {
     phase: string;
+    cliDirectory: string;
     harnesses: Harness[];
     error?: string;
     errorDetail?: string;

@@ -9,6 +9,13 @@ import type { Bundle } from "./types";
 /** The official starter bundle: a git source, so adding it downloads from GitHub. */
 export const STARTER = "github:itlackey/akm-stash";
 
+/** What `setup.detect` reports, and `setup.apply` returns once it has run. */
+export interface Detected {
+  stashDir: string;
+  harnesses: Array<{ platform: string; path: string }>;
+  modelCalls: { platform: string | null; description: string };
+}
+
 export interface HostHarness {
   id: string;
   installed: boolean;
@@ -62,22 +69,28 @@ export interface AgentCard {
   id: string;
   name: string;
   version?: string;
-  /** `ready`: the plugin can be installed. `unverified`: the harness could not say, so nothing is installed over it. */
-  state: "stopped" | "unverified" | "ready" | "connected";
+  /**
+   * `ready`: the plugin can be installed. `disabled`: it is installed and turned off in the harness. `unverified`: the
+   * harness could not say, so nothing is installed over it.
+   */
+  state: "stopped" | "unverified" | "disabled" | "ready" | "connected";
   /** The plugin as the harness reports it, for the card's version line. */
   plugin?: { text: string; mismatch: boolean };
   /** The plugin cannot be installed until Bun is. */
   needsBun: boolean;
-  /** Whether akm may use this harness for learning, and whether the config already lets it. */
+  /** Whether akm can use this harness for learning, and whether akm's model calls run on it now. */
   learning: { available: boolean; enabled: boolean };
 }
 
-/** One card per harness Desktop found. A harness that is not installed is not offered. */
+/**
+ * One card per harness Desktop found. A harness that is not installed is not offered. `akmSees` are the platforms akm
+ * finds on its PATH; `learningOn` is the one akm's own model calls run on (`setup.detect`), if any.
+ */
 export function agentCards(
   host: HostSnapshot,
   engine: string | undefined,
   akmSees: string[],
-  enabled: string[],
+  learningOn: string | null,
 ): AgentCard[] {
   return host.harnesses
     .filter((harness) => harness.installed)
@@ -89,7 +102,9 @@ export function agentCards(
           ? "connected"
           : harness.plugin?.state === "missing"
             ? "ready"
-            : "unverified";
+            : harness.plugin?.state === "disabled"
+              ? "disabled"
+              : "unverified";
       const version = harness.plugin?.version;
       return {
         id: harness.id,
@@ -105,7 +120,7 @@ export function agentCards(
             }
           : {}),
         needsBun: ["claude", "codex"].includes(harness.id) && host.bun?.installed === false,
-        learning: { available: akmSees.includes(platform), enabled: enabled.includes(platform) },
+        learning: { available: akmSees.includes(platform), enabled: platform === learningOn },
       };
     });
 }
@@ -113,7 +128,7 @@ export function agentCards(
 /** The prompt to paste into a harness so that it searches akm, written for each harness's own surface. */
 export function checkPrompt(id: string, query: string): string {
   if (id === "claude") return `/akm-search ${query}`;
-  if (id === "codex") return `Use the akm-search skill to search akm for "${query}".`;
+  if (id === "codex") return `Use the akm skill to search akm for "${query}".`;
   return `Use the akm_search tool to search akm for "${query}".`;
 }
 

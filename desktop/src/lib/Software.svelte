@@ -149,7 +149,7 @@
         <summary>Installation details</summary>
         <dl>
           <dt>CLI path</dt>
-          <dd class="mono">{data.host.cli?.path ?? "~/.local/bin/akm (new installations)"}</dd>
+          <dd class="mono">{data.host.cli?.path ?? `${data.host.cliDirectory} (new installations)`}</dd>
           <dt>Installer</dt>
           <dd>{data.host.upgrade?.installMethod ?? "Official AKM release installer"}</dd>
           <dt>Last command</dt>

@@ -142,7 +142,10 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await learning.check();
   await page.getByRole("button", { name: "Install 2 selected" }).click();
   await expect(page.getByText("AKM plugin installed. Restart the harness to load it.")).toBeVisible();
-  await expect(page.getByText("akm may now use Claude Code.")).toBeVisible();
+  // The receipt is where akm says its model calls run now, not the ticked box.
+  await expect(page.getByText(/akm's model calls: harness "claude"/)).toBeVisible();
+  await expect(learning).toBeChecked();
+  await expect(learning).toBeDisabled();
   await expect(page.getByText(`✓ AKM plugin ${PLUGIN}`)).toBeVisible();
   await expect(page.getByText("Restart Claude Code")).toBeVisible();
   await shot("setup-04-agents-after");

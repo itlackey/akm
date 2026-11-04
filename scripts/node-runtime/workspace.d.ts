@@ -169,11 +169,14 @@ export namespace sensitive {
   function save(input: SensitiveSelector & { content: string; revision?: string }): Promise<SensitiveWriteResult & { revision: string }>;
 }
 export namespace setup {
-  /** Apply the setup run: create the library directory and enable the named agent programs. Unknown fields are ignored with a warning. */
-  function apply(input: { dir?: string; harness?: string[] }): Promise<unknown>;
-  /** What setup could use on this computer, from the file system and PATH only (no network, no writes). */
-  function detect(): Promise<{
+  interface Detected {
     stashDir: string;
     harnesses: Array<{ platform: string; path: string }>;
-  }>;
+    /** Where akm's own model calls run, in setup's words, and the harness platform when they run on one. */
+    modelCalls: { platform: string | null; description: string };
+  }
+  /** Create the library, or with `harness` enable those agent programs; returns `detect()` afterwards. Unknown fields are ignored with a warning. */
+  function apply(input: { dir?: string; harness?: string[] }): Promise<Detected>;
+  /** What setup could use on this computer, from the file system, PATH and config only (no network, no writes). */
+  function detect(): Promise<Detected>;
 }

@@ -47,7 +47,7 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
     ]),
     "0.10.261105",
     ["claude", "opencode"],
-    ["opencode"],
+    "opencode",
   );
   assert.deepEqual(
     cards.map((card) => [card.id, card.state, card.needsBun, card.learning]),
@@ -61,22 +61,28 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
   assert.deepEqual(cards[2].plugin, { text: "AKM plugin akm-opencode@next", mismatch: false });
 });
 
-test("a harness that cannot say what is installed is not offered an install", () => {
-  const [card] = agentCards(
+test("a plugin that is turned off, or that the harness cannot report, is not offered an install", () => {
+  const cards = agentCards(
     host({ installed: true, installCommand: "x" }, [
       { id: "claude", installed: true, runnable: true, plugin: { state: "unknown" } },
+      { id: "codex", installed: true, runnable: true, plugin: { state: "disabled", version: "0.10.1" } },
     ]),
     "0.10.261105",
     [],
-    [],
+    null,
   );
-  assert.equal(card.state, "unverified");
-  assert.equal(card.needsBun, false);
+  assert.deepEqual(
+    cards.map((card) => [card.state, card.needsBun]),
+    [
+      ["unverified", false],
+      ["disabled", false],
+    ],
+  );
 });
 
 test("each harness gets a prompt for its own surface, and searches are counted across days", () => {
   assert.equal(checkPrompt("claude", "deploy"), "/akm-search deploy");
-  assert.match(checkPrompt("codex", "deploy"), /akm-search skill/);
+  assert.match(checkPrompt("codex", "deploy"), /akm skill/);
   assert.match(checkPrompt("opencode2", "deploy"), /akm_search tool/);
   assert.equal(searchCount({ daily: [{ searches: 2 }, { searches: 3 }] }), 5);
   assert.equal(searchCount(null), 0);

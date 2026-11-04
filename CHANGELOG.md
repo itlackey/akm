@@ -27,10 +27,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lists what each operation takes and returns. `akm-cli/api` is unchanged.
 
 - `akm-cli/workspace` gains `setup` for AKM Desktop's first run (#1423): `setup.detect` reads
-  where the library goes and which agent programs are on `PATH` (no network, no writes), and
-  `setup.apply({dir?, harness?})` runs `akm setup --yes --no-probe` for them. Setup's own
-  `--yes` enables every agent program it finds, which lets akm spend that program's model quota;
-  `setup.apply` keeps only the ones the caller names. No new command or config key.
+  where the library goes, which agent programs are on `PATH` and where akm's model calls run (no
+  network, no writes), and `setup.apply({dir?, harness?})` creates the library (`akm bundle create`)
+  or enables the named agent programs (`akm setup --yes --no-probe --harness`), each in one config
+  write. It never runs a bare `akm setup --yes`, which enables every agent program it finds and so
+  lets akm spend their model quota. No new command or config key.
 
 - `akm secret remove` is back, shaped like `akm env remove` (`--yes`, `--bundle`; it removes
   the file and its `.sensitive` marker). It names its file through the write-target resolver,
@@ -108,8 +109,9 @@ AKM Desktop ships in the same release as the akm it embeds: one version, one tag
   the operating system's folder dialog.
 - Desktop walks a new user through first-run setup at `/setup`, which Home offers on a computer with no
   library instead of a red health failure: the library and the starter bundle (ticked, downloads from
-  GitHub), the akm CLI (installed from Desktop's own release) and one card per harness with the akm plugin
-  on Desktop's channel and its version, learning per harness (off unless ticked), Bun's official install
+  GitHub), the akm CLI (installed from Desktop's own release, on Windows through its `install.ps1`),
+  one card per harness with the akm plugin on Desktop's channel and its version, learning per harness
+  (off unless ticked; the card and receipt say where akm's model calls run), Bun's official install
   command with Copy and Check again for the Claude Code and Codex hooks, and a search akm is seen to
   receive. There is no stored "done" flag; Settings → Bundles & index and Software have Run setup again,
   and an error that says the library is missing links to setup.

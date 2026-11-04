@@ -28,8 +28,8 @@
     try {
       if (workspace.unconfigured) {
         try {
-          const result = await api<{ bundleDir: string }>("/setup/apply", {}, { dir: dir || stashDir });
-          outcomes.push({ ok: true, text: `Library created at ${result.bundleDir}.` });
+          const result = await api<{ stashDir: string }>("/setup/apply", {}, { dir: dir || stashDir });
+          outcomes.push({ ok: true, text: `Library created at ${result.stashDir}.` });
         } catch (cause) {
           outcomes.push({ ok: false, text: `The library could not be created. ${message(cause)}` });
           return;

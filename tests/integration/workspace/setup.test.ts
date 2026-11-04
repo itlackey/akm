@@ -40,32 +40,41 @@ function claudeOnPath() {
   };
 }
 
+type Detected = Awaited<ReturnType<typeof setup.detect>>;
+
 describe("setup.apply", () => {
   test("creates the library and the config, and a second run changes nothing", async () => {
     const dir = library();
-    const first = (await setup.apply({ dir })) as { bundleDir: string; stashCreated: boolean };
-    expect(first).toMatchObject({ bundleDir: dir, stashCreated: true });
+    const first = (await setup.apply({ dir })) as Detected;
+    expect(first.stashDir).toBe(dir);
     expect(fs.existsSync(path.join(dir, "knowledge"))).toBe(true);
     const config = savedConfig();
-    expect(Object.values(config.bundles)).toContainEqual({ path: dir, writable: true });
+    expect(Object.values(config.bundles)).toContainEqual(expect.objectContaining({ path: dir, writable: true }));
     expect(config.defaultBundle).toBeDefined();
 
     const before = fs.readFileSync(getConfigPath(), "utf8");
-    const second = (await setup.apply({ dir })) as { stashCreated: boolean };
-    expect(second.stashCreated).toBe(false);
+    await setup.apply({ dir });
     expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
   });
 
-  test("a named harness lands in the config", async () => {
-    await setup.apply({ dir: library(), harness: ["claude"] });
-    expect(savedConfig().harnesses).toHaveProperty("claude");
-  });
-
-  test("an agent program that setup would enable by default is not enabled unless named", async () => {
+  test("a named harness lands in the config and takes akm's model calls", async () => {
     const restore = claudeOnPath();
     try {
-      await setup.apply({ dir: library() });
+      const after = await setup.apply({ dir: library(), harness: ["claude"] });
+      expect(savedConfig().harnesses).toHaveProperty("claude");
+      expect(after.modelCalls.platform).toBe("claude");
+    } finally {
+      restore();
+    }
+  });
+
+  test("an agent program on PATH is not enabled unless named, in one write", async () => {
+    const restore = claudeOnPath();
+    try {
+      const after = await setup.apply({ dir: library() });
       expect(savedConfig().harnesses).toBeUndefined();
+      expect(after.modelCalls.platform).toBeNull();
+      expect(after.harnesses.map((item) => item.platform)).toContain("claude");
     } finally {
       restore();
     }
@@ -73,8 +82,9 @@ describe("setup.apply", () => {
 
   test("a harness already configured is left as it is", async () => {
     await setup.apply({ dir: library(), harness: ["claude"] });
+    const before = fs.readFileSync(getConfigPath(), "utf8");
     await setup.apply({ dir: library() });
-    expect(savedConfig().harnesses).toHaveProperty("claude");
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
   });
 
   test("an unknown field is ignored with one warning", async () => {

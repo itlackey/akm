@@ -37,6 +37,8 @@ export interface Detected {
 export interface HostState {
   phase: string;
   cli: Detected | null;
+  /** Where Install AKM CLI puts akm, as the person would write it. */
+  cliDirectory: string;
   /** The Claude Code and Codex plugin hooks run on Bun (`bun akm-hook.ts`); the standalone akm CLI does not provide it. */
   bun: (Detected & { installCommand: string }) | null;
   harnesses: Detected[];
@@ -59,10 +61,23 @@ export const harnessIds = ["claude", "codex", "opencode", "opencode2"];
 /** Bun's own installer, shown for the person to run: Desktop never runs it. https://bun.sh/docs/installation */
 export const bunInstallCommand = (platform: string) =>
   platform === "win32" ? 'powershell -c "irm bun.sh/install.ps1 | iex"' : "curl -fsSL https://bun.sh/install | bash";
+/**
+ * Where the release installer puts akm for Desktop: `~/.local/bin` on Linux and macOS, and on Windows install.ps1's own
+ * default, `%LOCALAPPDATA%\akm`, which it also adds to the user's PATH.
+ */
+function cliDirectory(platform: string, env: Env, home: string) {
+  return platform === "win32"
+    ? { path: path.join(env.LOCALAPPDATA || path.join(home, "AppData", "Local"), "akm"), shown: "%LOCALAPPDATA%\\akm" }
+    : { path: path.join(home, ".local/bin"), shown: "~/.local/bin" };
+}
 const versionOf = (text: string | undefined) => text?.match(/\b\d+\.\d+\.\d+(?:-[\w.-]+)?/)?.[0];
 class SoftwareError extends Error {}
 
-export async function hostEnvironment(env: Env = process.env, home = os.homedir()) {
+export async function hostEnvironment(
+  env: Env = process.env,
+  home = os.homedir(),
+  platform: string = process.platform,
+) {
   const next = { ...env };
   // Electron's Node child uses a launcher for bundled workspace commands.
   // Never pass it (or the private session) to the real host CLI/harnesses.
@@ -71,6 +86,7 @@ export async function hostEnvironment(env: Env = process.env, home = os.homedir(
       delete next[key];
   const paths = (next.PATH ?? "").split(path.delimiter).filter((item) => path.isAbsolute(item));
   const extra = [".local/bin", ".bun/bin", ".opencode/bin"].map((item) => path.join(home, item));
+  if (platform === "win32") extra.push(cliDirectory(platform, next, home).path);
   try {
     const nvm = path.join(next.NVM_DIR || path.join(home, ".nvm"), "versions/node");
     const versions = (await readdir(nvm))
@@ -85,13 +101,16 @@ export async function hostEnvironment(env: Env = process.env, home = os.homedir(
 }
 
 export const findProgram: Find = async (name, env = process.env) => {
+  // Windows programs carry their extension; akm and Bun install as .exe there.
+  const names = process.platform === "win32" ? [`${name}.exe`, name] : [name];
   for (const directory of (env.PATH ?? "").split(path.delimiter).filter((item) => path.isAbsolute(item))) {
-    const file = path.join(directory, name);
-    try {
-      await access(file, constants.X_OK);
-      return file;
-    } catch {
-      /* keep looking */
+    for (const file of names.map((item) => path.join(directory, item))) {
+      try {
+        await access(file, constants.X_OK);
+        return file;
+      } catch {
+        /* keep looking */
+      }
     }
   }
   return undefined;
@@ -214,6 +233,7 @@ export class HostTools {
     this.state = {
       phase: "idle",
       cli: null,
+      cliDirectory: cliDirectory(platform, env, home).shown,
       bun: null,
       harnesses: [],
       checkedAt: undefined,
@@ -225,7 +245,7 @@ export class HostTools {
     return structuredClone(this.state);
   }
   async environment() {
-    return hostEnvironment(this.sourceEnv, this.home);
+    return hostEnvironment(this.sourceEnv, this.home, this.platform);
   }
   async invoke(file: string, args: string[], env: Env, timeout?: number) {
     return this.run(file, args, { env, home: this.home, timeout });
@@ -352,16 +372,18 @@ export class HostTools {
   }
   async installCli(env: Env) {
     if (this.state.cli?.installed) throw new SoftwareError("An existing CLI must be upgraded with its own installer.");
-    if (!["linux", "darwin"].includes(this.platform))
-      throw new SoftwareError("This build supports host installation on Linux and macOS.");
+    if (!["linux", "darwin", "win32"].includes(this.platform))
+      throw new SoftwareError("This build supports host installation on Linux, macOS and Windows.");
+    const windows = this.platform === "win32";
     // The official installer verifies the release checksum and installs a
     // standalone binary. No Node/Bun prerequisite, npm-global shadow copy or sudo.
-    const directory = path.join(this.home, ".local/bin");
+    const target = cliDirectory(this.platform, env, this.home);
+    const directory = target.path;
     await mkdir(directory, { recursive: true });
     await access(directory, constants.W_OK);
     // Refuse an existing off-PATH binary too; never overwrite an unknown install.
     try {
-      await access(path.join(directory, "akm"));
+      await access(path.join(directory, windows ? "akm.exe" : "akm"));
       throw new SoftwareError("A CLI already exists in the install directory. No files were replaced.");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -370,25 +392,43 @@ export class HostTools {
     // development run keeps desktop/package.json's unstamped 0.0.0, has no release and takes the latest.
     const release =
       this.desktopVersion && this.desktopVersion !== "0.0.0" ? `download/v${this.desktopVersion}` : "latest/download";
-    const response = await this.fetcher(`https://github.com/itlackey/akm/releases/${release}/install.sh`, {
+    const script = windows ? "install.ps1" : "install.sh";
+    const response = await this.fetcher(`https://github.com/itlackey/akm/releases/${release}/${script}`, {
       signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) throw new Error("Installer download failed.");
     const text = await response.text();
-    if (text.length > 128 * 1024 || !text.startsWith("#!/usr/bin/env bash")) throw new Error("Unexpected installer.");
+    if (text.length > 128 * 1024 || !text.startsWith(windows ? "#Requires" : "#!/usr/bin/env bash"))
+      throw new Error("Unexpected installer.");
     const temporary = await mkdtemp(path.join(os.tmpdir(), "akm-desktop-install-"));
-    const file = path.join(temporary, "install.sh");
+    const file = path.join(temporary, script);
     try {
       await writeFile(file, text, { mode: 0o600 });
-      this.state.command = 'AKM_INSTALL_DIR="$HOME/.local/bin" bash install.sh (official release installer)';
-      await this.invoke("/bin/bash", [file], { ...env, AKM_INSTALL_DIR: directory }, 10 * 60_000);
+      const installEnv = { ...env, AKM_INSTALL_DIR: directory };
+      if (windows) {
+        // A downloaded script is blocked by the default execution policy; Bypass applies to this one process only.
+        this.state.command =
+          "powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 (official release installer)";
+        await this.invoke(
+          "powershell.exe",
+          ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file],
+          installEnv,
+          10 * 60_000,
+        );
+      } else {
+        this.state.command = 'AKM_INSTALL_DIR="$HOME/.local/bin" bash install.sh (official release installer)';
+        await this.invoke("/bin/bash", [file], installEnv, 10 * 60_000);
+      }
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
     const installed = await this.detect("akm", env);
     if (!installed.runnable) throw new Error("The installed CLI could not report a version.");
-    this.state.receipt =
-      "AKM CLI installed in ~/.local/bin. Add that directory to your terminal PATH if needed; Desktop already finds it.";
+    this.state.receipt = `AKM CLI installed in ${target.shown}. ${
+      windows
+        ? "The installer added it to your PATH; open a new terminal to use it."
+        : "Add that directory to your terminal PATH if needed; Desktop already finds it."
+    }`;
   }
   async installPlugin(id: string, channel: string, env: Env) {
     const harness = this.state.harnesses.find((item) => item.id === id);
