@@ -1,0 +1,70 @@
+{
+  "name": "akm-desktop",
+  "version": "0.0.8",
+  "private": true,
+  "license": "MPL-2.0",
+  "description": "A local workspace for reviewing and maintaining agent knowledge.",
+  "desktopName": "dev.fwdslsh.akm-desktop.desktop",
+  "author": "fwdslsh",
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "prepare:core": "node scripts/core.mjs && bun install --frozen-lockfile --ignore-scripts --force",
+    "dev": "node scripts/dev.mjs",
+    "build": "vite build",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test": "node --test tests/runtime.test.mjs tests/ui-helpers.test.mjs tests/editor-commands.test.mjs tests/editor-preview.test.mjs tests/library-files-model.test.mjs tests/software.test.mjs tests/menu-install.test.mjs tests/home-model.test.mjs tests/integration-contract.test.mjs",
+    "test:e2e": "node --test --test-concurrency=2 tests/e2e.test.mjs tests/library-content.test.mjs tests/library-parity.test.mjs tests/review-parity.test.mjs tests/activity-settings-parity.test.mjs tests/workspace.test.mjs tests/editor-workflows.test.mjs tests/library-files-workflow.test.mjs tests/navigation-startup.test.mjs tests/software-ui.test.mjs tests/asset-management.test.mjs tests/asset-management-ui.test.mjs tests/sensitive-assets.test.mjs tests/file-management.test.mjs tests/home.test.mjs",
+    "test:electron": "node --test tests/electron.test.mjs",
+    "test:usability": "node --test --test-concurrency=1 tests/usability-workflows.test.mjs tests/usability.test.mjs tests/design-language.test.mjs",
+    "start": "electron .",
+    "start:server": "node electron/server.mjs",
+    "package": "npm run prepare:core && npm run build && node scripts/package.mjs",
+    "appimage": "npm run prepare:core && npm run build && node scripts/package.mjs --appimage",
+    "test:updater": "node --test tests/updater-integration.test.mjs",
+    "test:host-install": "node --test tests/host-install.integration.test.mjs",
+    "test:plugin-install": "node --test tests/plugin-install.integration.test.mjs"
+  },
+  "dependencies": {
+    "akm-cli": "file:.core",
+    "electron-updater": "6.8.12",
+    "jsonc-parser": "3.3.1"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@electron/packager": "20.3.0",
+    "@playwright/test": "1.64.1",
+    "@sveltejs/adapter-node": "6.0.1",
+    "@sveltejs/kit": "3.1.1",
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@types/node": "26.6.6",
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0",
+    "js-yaml": "5.5.0",
+    "svelte": "5.57.3",
+    "svelte-check": "4.7.8",
+    "typescript": "6.0.3",
+    "vite": "8.3.5"
+  },
+  "engines": {
+    "node": ">=22.17"
+  },
+  "pinNotes": {
+    "electron@45.2.1": "Preserved from the verified private build. Recheck native sandbox, SQLite, fixed window size, shutdown and packaged AppImage before changing.",
+    "electron-updater@6.8.12": "Preserved private updater protocol. Run updater and unsaved-work shutdown tests before changing.",
+    "@electron/packager@20.3.0": "Preserved native packaging tool. Recheck packaged production dependencies and Electron runtime.",
+    "electron-builder@26.18.0": "Preserved AppImage toolchain. Recheck sandbox-preserving AppRun and updater metadata.",
+    "@sveltejs/adapter-node@6.0.1": "Preserved server adapter. Recheck loopback authentication, origin handling and packaged server startup.",
+    "@sveltejs/kit@3.1.1": "Preserved SvelteKit 3 routing/config contract. Run type, build, navigation and browser suites.",
+    "@sveltejs/vite-plugin-svelte@7.3.1": "Preserved SvelteKit build toolchain. Upgrade together after type/build/browser verification.",
+    "svelte@5.57.3": "Preserved UI runtime; run editor, draft retention and navigation regression tests.",
+    "svelte-check@4.7.8": "Preserved Svelte type checker; rerun check and build before changing.",
+    "vite@8.3.5": "Preserved build toolchain; verify CSP, shared presentation imports and adapter output.",
+    "typescript@6.0.3": "Preserved Desktop compiler, independent of CLI compiler. Verify workspace declarations and Svelte check.",
+    "@types/node@26.6.6": "Preserved private build types. Runtime floor remains Node 22.17; verify on that supported major.",
+    "@playwright/test@1.64.1": "Preserved browser/Electron test driver; rerun complete workflows and review screenshots.",
+    "@axe-core/playwright@4.14.0": "Preserved accessibility assertions; review changed findings rather than silently disabling rules.",
+    "js-yaml@5.5.0": "Preserved test-only updater metadata reader; rerun update integration test.",
+    "jsonc-parser@3.3.1": "Preserved host plugin configuration reader; verify plugin installation commands and fixtures."
+  }
+}

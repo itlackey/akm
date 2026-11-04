@@ -49,6 +49,18 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: bun run build
+      - name: Build repository-backed Desktop
+        run: bun run desktop:setup
+      - name: Verify Desktop workflows
+        working-directory: desktop
+        run: |
+          node node_modules/electron/install.js
+          node node_modules/@playwright/test/cli.js install --with-deps chromium
+          npm run check
+          npm run build
+          npm test
+          npm run test:e2e
+          npm run test:usability
 
   node-smoke:
     runs-on: ubuntu-latest

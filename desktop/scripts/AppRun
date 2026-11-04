@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+# electron-updater invokes the new image once to finish an on-quit install.
+# Its normal integration launcher exits here; ours must honor the same contract.
+[ "${APPIMAGE_EXIT_AFTER_INSTALL:-}" != "true" ] || exit 0
+# AppImage sets APPDIR. The fallback also supports an extracted AppDir.
+app_dir=${APPDIR:-$(dirname "$(readlink -f "$0")")}
+export LD_LIBRARY_PATH="$app_dir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$app_dir/akm-desktop" "$@"
