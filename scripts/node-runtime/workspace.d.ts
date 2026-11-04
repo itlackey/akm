@@ -86,8 +86,8 @@ export function akmClone(options: CloneOptions): Promise<CloneResponse>;
 
 export function deriveCanonicalAssetName(assetType: string, typeRoot: string, filePath: string): string | undefined;
 export function sensitiveMarkerPath(filePath: string, type: "env" | "secret"): string;
-export function resolveEnvPath(ref: string): { name: string; absPath: string; source: { path: string } };
-export function resolveSecretPath(ref: string): { name: string; absPath: string; source: { path: string } };
+export function resolveEnvPath(ref: string): { name: string; absPath: string; source: { path: string; registryId?: string } };
+export function resolveSecretPath(ref: string): { name: string; absPath: string; source: { path: string; registryId?: string } };
 export function resolveEnvWriteTarget(
   ref: string,
   writeTarget: string | undefined,
