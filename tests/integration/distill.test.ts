@@ -14,6 +14,7 @@ import path from "node:path";
 import { akmDistill, buildDistillPrompt, deriveLessonRef } from "../../src/commands/improve/distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../../src/commands/improve/distill-promotion-policy";
 import { getAssetSalience } from "../../src/commands/improve/salience";
+import { lessonQualityJudge } from "../../src/commands/improve/stage";
 import { drainProposals } from "../../src/commands/proposal/drain";
 import type { akmProposalAccept } from "../../src/commands/proposal/proposal";
 import { archiveProposal, createProposal, listProposals } from "../../src/commands/proposal/repository";
@@ -25,6 +26,7 @@ import {
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { type AkmConfig, saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
+import { validateJsonSchemaSubset } from "../../src/core/json-schema";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
@@ -2911,6 +2913,31 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     decision: "update",
     ref: "lessons/deploy-retries",
     body,
+  });
+
+  test("the input distill hands the judge validates against the judge's input schema, `path` stripped (#1422)", async () => {
+    const fixture = setup();
+    const inputs: unknown[] = [];
+    const realRun = lessonQualityJudge.run;
+    lessonQualityJudge.run = (input, call) => {
+      inputs.push(input);
+      return realRun(input, call);
+    };
+    try {
+      await run(fixture, {
+        writer: VALID_LESSON,
+        update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+        judge: [REPEAT, ADDITION_OK],
+      });
+    } finally {
+      lessonQualityJudge.run = realRun;
+    }
+    expect(fixture.related[0]?.path).toBeDefined();
+    const withRelated = inputs.filter((i) => (i as { related?: unknown }).related);
+    expect(withRelated.length).toBeGreaterThan(0);
+    for (const input of withRelated) {
+      expect(validateJsonSchemaSubset(input, lessonQualityJudge.inputSchema)).toEqual([]);
+    }
   });
 
   test("a repeat with a new fact becomes a pending update of the existing lesson: old lines kept, new line added", async () => {

@@ -732,7 +732,8 @@ async function judgeAndQueue(
   if (qualityGateEnabled(run)) {
     const related = await run.related(content.slice(0, 500), RELATED_COUNT);
     const verdict = await runLessonQualityJudge(run.config, content, out.source ?? "", run.options.chat, {
-      ...(related.length > 0 ? { related } : {}),
+      // The judge's input schema is `{ref, content}`; `path` is for the update step below.
+      ...(related.length > 0 ? { related: related.map(({ ref, content }) => ({ ref, content })) } : {}),
       ...(out.feedback && out.feedback.length > 0 ? { feedback: out.feedback } : {}),
       ...((run.judgeRunner ?? run.runner) ? { llmRunner: run.judgeRunner ?? run.runner } : {}),
       ...(run.options.signal ? { signal: run.options.signal } : {}),
