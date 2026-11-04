@@ -209,14 +209,15 @@ Neither is searchable knowledge. No destination is overwritten; stale previews,
 read-only bundles and symlink escapes are refused. Git and indexing follow AKM
 policy, including embedding-provider calls on changed content when configured.
 
-**More → Retire** immediately archives a single-file asset and refreshes the
-index. There is no proposal queue, reason form or approval. **Undo retirement**
-restores the exact files without overwriting newer work. The receipt shows the
-native `.akm/memory-cleanup/archive/` location for later recovery; these manual
-archives are retained, including after Undo. Memory parents carry their derived
-twin. Existing links, pending proposals and installed schedules are not silently
-rewritten or approved. Agent-proposed retirements still require review.
-Skills cannot be retired piecemeal.
+**More → Retire** immediately retires a single-file asset. It is recorded as an
+accepted retirement, so it appears in Review and Activity and follows the same
+lifecycle as an agent-proposed one: the archive is purged after the grace
+period at the next improve run (git-backed bundles). There is no reason form or
+approval step. **Undo retirement** reverts that proposal, moving the exact files
+back without overwriting newer work; you can also revert it later from Review.
+Memory parents carry their derived twin. Existing links, pending proposals and
+installed schedules are not silently rewritten or approved. Agent-proposed
+retirements still require review. Skills cannot be retired piecemeal.
 
 ### Environment files, secrets and bundle names
 
@@ -226,7 +227,7 @@ then create it. Open an existing file to **Edit** or **Delete** it, including
 files not yet indexed. Env files use `.env`; secrets are files under `secrets/`.
 Saving preserves existing newlines, uses private file permissions and follows
 AKM's Git policy. Deletes confirm the exact path, remove its sensitive marker
-and refresh the index. They have no Undo; existing Git history is unchanged.
+and leave the index to `akm index`, as the CLI does. They have no Undo; existing Git history is unchanged.
 Protected-file editing creates no recovery copies or browser-storage drafts.
 
 In **Settings → Bundles & index → Manage**, choose **Rename bundle**, enter

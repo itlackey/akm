@@ -62,7 +62,6 @@ test('browse connections and cosine matches, compare inline, move, retire and re
   await page.getByRole('button', { name: 'More', exact: true }).click();
   await page.getByRole('button', { name: 'Retire', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Asset archived', exact: true })).toBeVisible();
-  assert.ok(!page.url().includes('/proposals/'));
   await check('retirement-receipt');
   await assert.rejects(fs.stat(movedPath), { code: 'ENOENT' });
   await page.getByRole('button', { name: 'Undo retirement', exact: true }).click();

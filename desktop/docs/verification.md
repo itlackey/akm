@@ -23,7 +23,7 @@ All tests create synthetic HOME/XDG/AKM directories. They do not use real
 bundles, providers, credentials or the host's installed CLI for workspace actions.
 Browser tests exercise actual core reads and writes: asset content, proposals,
 editing/conflicts, protected-file CRUD, bundle rename, move/link repair,
-retirement/restore, navigation, metrics, settings and accessibility.
+retirement/undo, navigation, metrics, settings and accessibility.
 
 Packaging installs the local core package into a new production-only stage.
 To test the actual packaged runtime and server, use the stage and executable

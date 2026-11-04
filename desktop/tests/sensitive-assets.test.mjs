@@ -48,6 +48,25 @@ test('env and secrets open as metadata; only explicit authenticated reveal retur
   assert.ok(!app.logs().includes('synthetic-password'));
 });
 
+test('a dotenv-adapter bundle accepts env and secret writes, as the CLI does, and writes are not indexed', async t => {
+  const app = await launchFixture({ configureFixture: async fixture => {
+    const file = path.join(fixture.env.AKM_CONFIG_DIR, 'config.json');
+    const config = JSON.parse(await fs.readFile(file, 'utf8'));
+    await fs.mkdir(path.join(fixture.root, 'dotenvs'));
+    config.bundles.dotenvs = { path: path.join(fixture.root, 'dotenvs'), writable: true, components: { main: { root: '.', adapter: 'dotenv', writable: true } } };
+    await fs.writeFile(file, JSON.stringify(config));
+  } }); t.after(() => app.stop());
+  for (const file of ['env/service.env', 'secrets/service-key']) {
+    const selector = { bundle: 'dotenvs', file };
+    value(await app.call('/api/asset/sensitive/create', { ...selector, content: env }));
+    assert.equal(await fs.readFile(path.join(app.root, 'dotenvs', file), 'utf8'), env);
+    assert.equal((await fs.stat(path.join(app.root, 'dotenvs', file))).mode & 0o777, 0o600);
+    const read = value(await app.call('/api/asset/reveal', selector));
+    value(await app.call('/api/asset/sensitive/save', { ...selector, content: env + '# edited\n', revision: read.revision }));
+    assert.equal(await fs.readFile(path.join(app.root, 'dotenvs', file), 'utf8'), env + '# edited\n');
+  }
+});
+
 test('protected file UI masks, shows, hides and clears values on navigation without HTML execution', async t => {
   const app = await fixture(); t.after(() => app.stop());
   const browser = await chromium.launch({ headless: true }); t.after(() => browser.close());

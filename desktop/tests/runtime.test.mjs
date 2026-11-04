@@ -93,7 +93,7 @@ test('loopback session bootstrap, authentication and strict write origin', async
   const token = new URL(app.url).searchParams.get('desktop_session');
   assert.ok(!configText.includes(token), 'The session credential must never be returned by AKM config inspection');
   const config = JSON.parse(configText).data;
-  assert.equal(config.env.find(item => item.name === 'AKM_DESKTOP_SESSION_TOKEN')?.value, '[redacted]');
+  assert.equal(config.env.find(item => item.name === 'AKM_DESKTOP_SESSION_TOKEN'), undefined, 'the credential is removed from the server environment');
   assert.ok(!config.env.some(item => item.name === 'AKM_DESKTOP_SESSION'));
 });
 

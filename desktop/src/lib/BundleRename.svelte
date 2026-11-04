@@ -7,7 +7,7 @@
   let plan: { index: { entries: number }; contentRefs: string[]; activeWorkflowRuns: Array<{ id: string }>; nativeSchedulerRows: string[] } | null = null;
   async function preview() {
     busy = true; error = ''; plan = null;
-    try { plan = await api('/bundles/rename/preview', {}, { bundle, name: name.trim() }); }
+    try { plan = await api('/bundles/rename', {}, { bundle, name: name.trim(), dryRun: true }); }
     catch (cause) { error = (cause as Error).message; } finally { busy = false; }
   }
 </script>

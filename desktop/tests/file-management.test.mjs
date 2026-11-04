@@ -38,14 +38,12 @@ test('env and secret CRUD keeps exact bytes, permissions, stale guards, marker c
     assert.equal(masked.writable, true);
     assert.ok(!JSON.stringify(masked).includes('fixture-private-value'));
     const search = value(await app.call('/api/search?' + new URLSearchParams({ q: '', type: file.startsWith('env/') ? 'env' : 'secret', bundle: 'personal' })));
-    assert.ok(search.hits.some(hit => hit.ref === created.ref || created.ref.endsWith('//' + hit.ref)));
+    // Like the CLI, env/secret writes do not touch the index; the file opens by path and appears in search after `akm index`.
     assert.ok(!JSON.stringify(search).includes('fixture-private-value'));
     const marker = file.startsWith('env/') ? disk.replace(/\.env$/, '.sensitive') : disk + '.sensitive';
     await fs.writeFile(marker, '');
     value(await app.call('/api/asset/sensitive/delete', { ...selector, revision: masked.revision }));
     await assert.rejects(fs.stat(disk), { code: 'ENOENT' }); await assert.rejects(fs.stat(marker), { code: 'ENOENT' });
-    const after = value(await app.call('/api/search?' + new URLSearchParams({ q: '', type: file.startsWith('env/') ? 'env' : 'secret', bundle: 'personal' })));
-    assert.ok(!after.hits.some(hit => hit.ref === created.ref || created.ref.endsWith('//' + hit.ref)));
   }
   for (const file of ['../outside', 'env/../../outside.env', 'knowledge/example.md'])
     assert.notEqual((await app.call('/api/asset/sensitive/create', { bundle: 'personal', file, content: synthetic })).status, 200);
@@ -71,7 +69,7 @@ test('bundle rename previews and applies core identity migration without moving 
   const oldConfig = await fs.readFile(path.join(app.env.AKM_CONFIG_DIR, 'config.json'), 'utf8');
   const before = await fs.readFile(app.documentPath, 'utf8');
   const queue = value(await app.call('/api/proposals?status=pending'));
-  const plan = value(await app.call('/api/bundles/rename/preview', { bundle: 'personal', name: 'my-library' }));
+  const plan = value(await app.call('/api/bundles/rename', { bundle: 'personal', name: 'my-library', dryRun: true }));
   assert.equal(plan.applied, false); assert.ok(plan.index.entries > 0);
   assert.equal(await fs.readFile(path.join(app.env.AKM_CONFIG_DIR, 'config.json'), 'utf8'), oldConfig);
   for (const name of ['shared', 'Invalid Name', '../outside', 'personal'])

@@ -1,6 +1,6 @@
 /** Presentation of AKM-owned directory listings. No source traversal lives here. */
-export interface FileEntry { name: string; path: string; kind: 'directory' | 'file' | 'other'; refs: string[]; assets?: Array<{ ref: string; type: string }>; symlink?: true; unavailable?: string; }
-export interface FileListing { bundle: string; path: string; parent: string | null; entries: FileEntry[]; truncated: boolean; indexAvailable: boolean; }
+export interface FileEntry { name: string; path: string; kind: 'directory' | 'file' | 'other'; assets: Array<{ ref: string; type: string }>; symlink?: true; unavailable?: string; }
+export interface FileListing { bundle: string; path: string; parent: string | null; entries: FileEntry[]; indexAvailable: boolean; }
 export interface FileLocation { bundle: string; path: string; file?: string; ref?: string; open?: boolean; }
 export interface FilesViewState { listings?: Map<string, FileListing>; expanded?: Set<string>; focused?: string; showHidden?: boolean; location?: string; scroll?: number; revision?: number; }
 export interface TreeNode extends FileEntry { bundle: string; key: string; level: number; parentKey: string | null; root?: boolean; position: number; size: number; }
@@ -26,6 +26,6 @@ export function treeNodes(bundles: string[], listings: Map<string, FileListing>,
     const children = listings.get(node.key)?.entries ?? [];
     children.forEach((entry, i) => visit({ ...entry, bundle: node.bundle, key: directoryKey(node.bundle, entry.path), level: node.level + 1, parentKey: node.key, position: i + 1, size: children.length }));
   }
-  bundles.forEach((bundle, i) => visit({ bundle, name: bundle, path: '', refs: [], kind: 'directory', key: directoryKey(bundle, ''), level: 1, parentKey: null, root: true, position: i + 1, size: bundles.length }));
+  bundles.forEach((bundle, i) => visit({ bundle, name: bundle, path: '', assets: [], kind: 'directory', key: directoryKey(bundle, ''), level: 1, parentKey: null, root: true, position: i + 1, size: bundles.length }));
   return result;
 }

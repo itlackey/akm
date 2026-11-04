@@ -12,7 +12,6 @@ import { related } from './related.js';
 import { previewMove, applyMove } from './asset-files.js';
 import { sourceResponse, saveSource } from './asset-source.js';
 import { isSensitiveRef, sensitiveMetadata, revealSensitive, mutateSensitive } from './sensitive-assets.js';
-import { rename } from './bundle-rename.js';
 
 const fail = (status: number, code: string, message: string) =>
   failure(status, code, scrubUrlCredentials(message) as string);
@@ -60,8 +59,7 @@ export async function dispatch(request: Request, url: URL): Promise<Response> {
   const reveal = path === '/api/asset/reveal';
   const sensitiveActions: Record<string, 'create' | 'save' | 'delete'> = { '/api/asset/sensitive/create': 'create', '/api/asset/sensitive/save': 'save', '/api/asset/sensitive/delete': 'delete' };
   const sensitiveAction = sensitiveActions[path];
-  const bundleRename = path === '/api/bundles/rename' || path === '/api/bundles/rename/preview';
-  if (!workspace && !proposal && !copy && !preferences && !software && !move && !reveal && !sensitiveAction && !bundleRename) return failure(404, 'NOT_FOUND', 'No such action.');
+  if (!workspace && !proposal && !copy && !preferences && !software && !move && !reveal && !sensitiveAction) return failure(404, 'NOT_FOUND', 'No such action.');
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) {
     return failure(415, 'UNSUPPORTED_MEDIA_TYPE', 'Actions require application/json.');
   }
@@ -86,7 +84,6 @@ export async function dispatch(request: Request, url: URL): Promise<Response> {
     // literal secret bytes. Do not run the generic URL-credential scrubber.
     if (reveal) return Response.json({ ok: true, data: revealSensitive(body) }, { headers: { 'Cache-Control': 'no-store' } });
     if (sensitiveAction) return success(await mutateSensitive(sensitiveAction, body));
-    if (bundleRename) return success(await rename(body, path.endsWith('/preview')));
     if (move) {
       try { data = path.endsWith('/preview') ? await previewMove(body) : await applyMove(body); }
       catch (error) { return fail(409, 'MOVE_REFUSED', error instanceof Error ? error.message : 'Could not move this asset.'); }

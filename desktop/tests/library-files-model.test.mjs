@@ -29,15 +29,15 @@ test('physical breadcrumbs use directory segments, not concept categories', () =
 test('tree only presents expanded immediate directory responses and keeps bundle identity distinct', () => {
   const root = directoryKey('team', ''), folder = directoryKey('team', 'knowledge');
   const listings = new Map([
-    [root, { bundle: 'team', path: '', entries: [{ name: 'knowledge', path: 'knowledge', kind: 'directory', refs: [] }], indexAvailable: true }],
-    [folder, { bundle: 'team', path: 'knowledge', entries: [{ name: 'notes.txt', path: 'knowledge/notes.txt', kind: 'file', refs: [] }, { name: 'source.md', path: 'knowledge/source.md', kind: 'file', refs: ['team//a', 'team//b'] }], indexAvailable: true }]
+    [root, { bundle: 'team', path: '', entries: [{ name: 'knowledge', path: 'knowledge', kind: 'directory', assets: [] }], indexAvailable: true }],
+    [folder, { bundle: 'team', path: 'knowledge', entries: [{ name: 'notes.txt', path: 'knowledge/notes.txt', kind: 'file', assets: [] }, { name: 'source.md', path: 'knowledge/source.md', kind: 'file', assets: [{ ref: 'team//a', type: 'knowledge' }, { ref: 'team//b', type: 'knowledge' }] }], indexAvailable: true }]
   ]);
   assert.deepEqual(treeNodes(['team', 'other'], listings, new Set()).map(node => node.name), ['team', 'other']);
   assert.deepEqual(treeNodes(['team', 'other'], listings, new Set([root])).map(node => node.name), ['team', 'knowledge', 'other']);
   const visible = treeNodes(['team', 'other'], listings, new Set([root, folder]));
   assert.deepEqual(visible.map(node => node.level), [1, 2, 3, 3, 1]);
-  assert.deepEqual(visible[3].refs, ['team//a', 'team//b']);
-  assert.equal(visible[2].refs.length, 0, 'unindexed text remains visible without an invented identity');
+  assert.deepEqual(visible[3].assets.map(asset => asset.ref), ['team//a', 'team//b']);
+  assert.equal(visible[2].assets.length, 0, 'unindexed text remains visible without an invented identity');
   assert.notEqual(directoryKey('team', 'knowledge'), directoryKey('other', 'knowledge'));
   assert.equal(visible[3].position, 2);
   assert.equal(visible[3].size, 2);

@@ -24,7 +24,7 @@
   export let editHref = '';
   export let readingHref = '';
   const dispatch = createEventDispatcher<{ loaded: AssetRead; compare: string; comparePair: string[]; changed: void }>();
-  type Retirement = { bundle: string; root: string; ref: string; complete: boolean; warnings: string[]; archived: Array<{ auditPath: string; archivedPath: string }> };
+  type Retirement = { proposalId: string; ref: string; bundle: string; archiveDirs: string[]; warnings: string[] };
   let retired: Retirement | null = null, retireRevision = '';
   let data: AssetRead | null = null, improve: Improvement | null = null, history: History | null = null;
   let error = '', loading = false, tab = 'Read', busy = false, notice = '';
@@ -98,9 +98,8 @@
     if (!retired || busy) return;
     busy = true; error = '';
     try {
-      const result = await api<{ complete: boolean; warnings: string[] }>('/asset/restore', {}, { bundle: retired.bundle, archives: retired.archived.map(entry => entry.auditPath) });
-      if (result.complete) { await load(ref); notice = ['Asset restored.', ...result.warnings].join(' '); }
-      else error = result.warnings.join(' ');
+      await api('/proposals/' + encodeURIComponent(retired.proposalId) + '/revert', {}, {});
+      await load(ref); notice = 'Asset restored.';
       dispatch('changed');
     } catch (cause) { error = (cause as Error).message; } finally { busy = false; }
   }
@@ -161,12 +160,12 @@
 {#if loading}<p class="state" role="status">Loading asset…</p>
 {:else if retired}
   <section class="retirement-receipt" aria-label="Retirement receipt">
-    <h2>{retired.complete ? 'Asset archived' : 'Archiving needs attention'}</h2>
-    <p>The archived files are recoverable. No proposal or approval was created.</p>
-    <div class="page-actions"><button on:click={undoRetirement} disabled={busy || !retired.archived.length}>{busy ? 'Restoring…' : 'Undo retirement'}</button><a class="btn btn-secondary" href={returnTo}>Back to {mode === 'files' ? 'folder' : 'results'}</a></div>
+    <h2>Asset archived</h2>
+    <p>Recorded as an accepted retirement. Undo it here, or revert it later from Review.</p>
+    <div class="page-actions"><button on:click={undoRetirement} disabled={busy}>{busy ? 'Restoring…' : 'Undo retirement'}</button><a class="btn btn-secondary" href={returnTo}>Back to {mode === 'files' ? 'folder' : 'results'}</a></div>
     {#each retired.warnings as warning}<p class="notice notice-warn">{warning}</p>{/each}
     <h3>Archive location</h3>
-    {#each retired.archived as entry}<p class="mono wrap small">{retired.root}/{entry.archivedPath}</p>{/each}
+    {#each retired.archiveDirs as dir}<p class="mono wrap small">{retired.bundle}: {dir}</p>{/each}
   </section>
 {:else if data}
   {#if data.redacted}{#key canonical}<SensitiveAsset ref={canonical} on:changed={() => dispatch('changed')} />{/key}

@@ -45,24 +45,26 @@ whole directory, verify source/destination bytes before removal, and retain
 originals. Text editing uses the existing document writer for knowledge/memory
 and the same core mutation boundaries for other file types.
 
-Manual retirement is the separately approved core behavior change: an immediate
-archive operation guarded by the displayed source revision, followed by native
-index maintenance. It creates no proposal and needs no approval or successor.
-It reuses core's archive/tombstone format. Undo restores from that tombstone
-without overwriting newer files; the archive remains a recovery copy. Manual
-archives are not subject to proposal-retirement purging. Agent-proposed
-retirements still use the unchanged review workflow.
+Manual retirement is core's ordinary retire proposal, minted and accepted at
+once and guarded by the displayed source revision. It follows the same
+lifecycle as an agent-proposed retirement: the row appears in Review and
+Activity, the archive is grace-purged on the same schedule, and Undo is the
+existing proposal revert, which moves the archive back without overwriting
+newer files and removes it. Desktop adds no archive or restore logic.
+Agent-proposed retirements still use the unchanged review workflow.
 
-Protected-file CRUD reuses native env writing/removal, secret locks, atomic
-0600 writes, Git policy and targeted indexing. It accepts only env/secret paths
-inside a writable registered source. Save/delete check the displayed revision;
+Protected-file CRUD reuses native env writing/removal, secret writes, atomic
+0600 writes and Git policy, resolved through the same write-target operations as
+the CLI (so a dotenv-adapter bundle is writable). Like the CLI, it does not
+touch the index. It accepts only env/secret paths inside a writable registered
+source. Save/delete check the displayed revision;
 create refuses an existing destination. Values never appear in operation
 receipts, argv, retained drafts or new recovery copies. Delete uses the exact
 confirmed path and clears its sensitive marker. Core behavior is unchanged.
 
-Bundle rename is a thin call to the existing `renameBundle` operation and the
-same `akmTasksSync` callback used by the CLI. Desktop adds no identity migration
-or database logic. It presents native preview/results, refreshes its Library
+Bundle rename is core's `bundle-rename` workspace action, which runs
+`akm bundle rename` (with `--dry-run` for the preview). Desktop adds no identity
+migration, scheduler or database logic. It presents native preview/results, refreshes its Library
 location and remaps retained document drafts. The physical directory is not
 renamed; authored content references are reported, not rewritten.
 

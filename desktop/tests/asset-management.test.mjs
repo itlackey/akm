@@ -78,21 +78,24 @@ test('cross-bundle moves repair portable refs and reject stale previews, collisi
   await assert.rejects(fs.stat(app.documentPath), { code: 'ENOENT' });
 });
 
-test('manual retirement immediately archives and unindexes, creates no proposal, and restores exact bytes', async t => {
+test('manual retirement is an accepted retire proposal; revert restores exact bytes and removes the archive', async t => {
   const app = await launchFixture(); t.after(() => app.stop());
   const source = value(await app.call('/api/asset/source?ref=' + encodeURIComponent(app.refs.document)));
-  const queueBefore = value(await app.call('/api/proposals'));
   const receipt = value(await app.call('/api/asset/retire', { ref: app.refs.document, revision: source.revision }));
-  assert.equal(receipt.complete, true);
-  assert.equal(await fs.readFile(path.join(receipt.root, receipt.archived[0].archivedPath), 'utf8'), source.content);
+  const [archive] = receipt.archiveDirs.map(dir => path.join(app.root, 'personal', dir));
+  assert.equal(await fs.readFile(path.join(archive, 'knowledge/restore-laptop.md'), 'utf8'), source.content);
   await assert.rejects(fs.stat(app.documentPath), { code: 'ENOENT' });
-  assert.deepEqual(value(await app.call('/api/proposals')), queueBefore, 'no queue row was added or changed');
+  const row = value(await app.call('/api/proposals/' + receipt.proposalId));
+  assert.equal(row.proposal.status, 'accepted'); assert.equal(row.proposal.isRetire, true);
   const db = new DatabaseSync(path.join(app.env.AKM_DATA_DIR, 'index.db'));
   assert.equal(db.prepare('SELECT count(*) AS n FROM entries WHERE item_ref=?').get(app.refs.document).n, 0); db.close();
-  value(await app.call('/api/asset/restore', { bundle: receipt.bundle, archives: receipt.archived.map(item => item.auditPath) }));
+  const reverted = value(await app.call('/api/proposals/' + receipt.proposalId + '/revert', {}));
+  assert.equal(reverted.proposal.status, 'reverted');
   assert.equal(await fs.readFile(app.documentPath, 'utf8'), source.content);
+  await assert.rejects(fs.stat(archive), { code: 'ENOENT' });
   assert.equal((await app.call('/api/asset?ref=' + encodeURIComponent(app.refs.document))).status, 200);
-  assert.notEqual((await app.call('/api/asset/restore', { bundle: receipt.bundle, archives: receipt.archived.map(item => item.auditPath) })).status, 200, 'never overwrite a restored file');
+  value(await app.call('/api/proposals/' + receipt.proposalId + '/revert', {}));
+  assert.equal(await fs.readFile(app.documentPath, 'utf8'), source.content, 'a second revert changes nothing');
 });
 
 test('memory moves carry the derived twin and its parent ref even with optional link repair off', async t => {
@@ -117,8 +120,6 @@ test('retirement rejects stale source, read-only assets, unsupported packages an
   value(await app.call('/api/asset/retire', request));
   assert.notEqual((await app.call('/api/asset/retire', request)).status, 200);
   await assert.rejects(fs.stat(app.documentPath), { code: 'ENOENT' });
-  for (const archives of [['../outside/cleanup.md'], ['knowledge/restore-laptop.md']])
-    assert.notEqual((await app.call('/api/asset/restore', { bundle: 'personal', archives })).status, 200);
 });
 
 test('commands, workflows, scripts and tasks retain their native file formats when edited, moved and retired', async t => {
@@ -140,7 +141,7 @@ test('commands, workflows, scripts and tasks retain their native file formats wh
     const moved = value(await app.call('/api/asset/source?ref=' + encodeURIComponent(result.ref)));
     const receipt = value(await app.call('/api/asset/retire', { ref: result.ref, revision: moved.revision }));
     await assert.rejects(fs.stat(path.join(app.root, 'shared', file)), { code: 'ENOENT' });
-    value(await app.call('/api/asset/restore', { bundle: receipt.bundle, archives: receipt.archived.map(item => item.auditPath) }));
+    value(await app.call('/api/proposals/' + receipt.proposalId + '/revert', {}));
     assert.equal(await fs.readFile(path.join(app.root, 'shared', file), 'utf8'), source.content + '\n');
     if (file.endsWith('.sh')) assert.equal((await fs.stat(path.join(app.root, 'shared', file))).mode & 0o777, 0o755);
   }

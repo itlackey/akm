@@ -28,7 +28,7 @@
   $: selectedFile = listing?.entries.find(entry => entry.path === file);
   $: locationError = !names.length ? 'No enabled bundles are available in Files.' : bundleName && !names.includes(bundleName) ? 'This bundle is disabled or no longer configured.' : '';
   $: visibleEntries = (listing?.entries ?? []).filter(entry => !filter || entry.name.toLocaleLowerCase().includes(filter.toLocaleLowerCase()));
-  $: showStatus = listing?.entries.some(entry => entry.unavailable || (entry.kind !== 'directory' && (!listing.indexAvailable || entry.refs.length !== 1))) ?? false;
+  $: showStatus = listing?.entries.some(entry => entry.unavailable || (entry.kind !== 'directory' && (!listing.indexAvailable || entry.assets.length !== 1))) ?? false;
   $: if (mounted && seenRevision !== revision) { seenRevision = revision; invalidate(); }
   $: if (mounted && `${bundleName}\n${path}\n${file}` !== seen) { seen = `${bundleName}\n${path}\n${file}`; filter = ''; void revealLocation(); }
   async function load(bundle: string, directory: string, force = false) {
@@ -91,12 +91,12 @@
   }
   function open(bundle: string, entry: FileEntry) {
     showTree = false;
-    dispatch('navigate', entry.kind === 'directory' && !entry.unavailable ? { bundle, path: entry.path } : { bundle, path: parentPath(entry.path), file: entry.path, open: true, ...(entry.refs.length === 1 && !entry.unavailable ? { ref: entry.refs[0] } : {}) });
+    dispatch('navigate', entry.kind === 'directory' && !entry.unavailable ? { bundle, path: entry.path } : { bundle, path: parentPath(entry.path), file: entry.path, open: true, ...(entry.assets.length === 1 && !entry.unavailable ? { ref: entry.assets[0].ref } : {}) });
   }
   function entryKind(entry: FileEntry) {
     if (entry.kind === 'directory') return 'Folder';
     if (entry.kind === 'other') return 'Other';
-    const types = [...new Set((entry.assets ?? []).map(asset => asset.type).filter(Boolean))];
+    const types = [...new Set(entry.assets.map(asset => asset.type).filter(Boolean))];
     return types.length === 1 ? types[0][0].toUpperCase() + types[0].slice(1) : entry.name.endsWith('.md') ? 'Markdown' : 'File';
   }
   async function treeKey(event: KeyboardEvent, node: TreeNode) {
@@ -163,12 +163,11 @@
         {#if listing && !listing.indexAvailable}<p class="notice">The index is unavailable. Files are listed, but asset identities cannot be checked.</p>{/if}
         <table class="folder-table" class:with-status={showStatus}><thead><tr><th>Name</th><th>Kind</th>{#if showStatus}<th>Status</th>{/if}</tr></thead><tbody>
           {#each visibleEntries as entry (entry.path)}<tr class:selected={entry.path === file}><td><div class="entry-name">
-            {#if comparisonMode && entry.refs.length === 1}<input type="checkbox" aria-label={`Compare ${entry.name}`} checked={selectedCompare.includes(entry.refs[0])} disabled={selectedCompare.length === 2 && !selectedCompare.includes(entry.refs[0])} on:change={() => dispatch('select', entry.refs[0])} />{/if}
+            {#if comparisonMode && entry.assets.length === 1}<input type="checkbox" aria-label={`Compare ${entry.name}`} checked={selectedCompare.includes(entry.assets[0].ref)} disabled={selectedCompare.length === 2 && !selectedCompare.includes(entry.assets[0].ref)} on:change={() => dispatch('select', entry.assets[0].ref)} />{/if}
             <button class="file-link" on:click={() => open(bundleName, entry)}><Icon name={entry.kind === 'directory' ? 'folder' : 'file'} size={16} /><span>{entry.name}</span>{#if entry.symlink}<Icon name="external" size={14} />{/if}</button></div>
-          </td><td>{entryKind(entry)}</td>{#if showStatus}<td class="entry-status">{#if entry.unavailable}Unavailable{:else if entry.kind !== 'directory'}{#if !listing?.indexAvailable}Not checked{:else if entry.refs.length > 1}{entry.refs.length} assets{:else if !entry.refs.length}Not indexed{:else}<span class="sr-only">Indexed</span>{/if}{/if}</td>{/if}</tr>{/each}
+          </td><td>{entryKind(entry)}</td>{#if showStatus}<td class="entry-status">{#if entry.unavailable}Unavailable{:else if entry.kind !== 'directory'}{#if !listing?.indexAvailable}Not checked{:else if entry.assets.length > 1}{entry.assets.length} assets{:else if !entry.assets.length}Not indexed{:else}<span class="sr-only">Indexed</span>{/if}{/if}</td>{/if}</tr>{/each}
         </tbody></table>
         {#if !visibleEntries.length}<p class="muted">{filter ? 'No files match this filter.' : 'This folder is empty.'}</p>{/if}
-        {#if listing?.truncated}<p class="notice">This listing is incomplete. Not every entry is shown.</p>{/if}
       </section>{/if}
     </div>
   </div>

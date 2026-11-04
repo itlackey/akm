@@ -1,8 +1,11 @@
 import type { Handle } from '@sveltejs/kit/hooks';
 import { COOKIE, failure, sameSecret } from './lib/server/security.js';
 
+// Read once and removed, so the CLI children AKM spawns do not inherit the session credential.
+const token = process.env.AKM_DESKTOP_SESSION_TOKEN;
+delete process.env.AKM_DESKTOP_SESSION_TOKEN;
+
 export const handle: Handle = async ({ event, resolve }) => {
-  const token = process.env.AKM_DESKTOP_SESSION_TOKEN;
   const origin = process.env.AKM_DESKTOP_ORIGIN;
   if (!token || !origin) return failure(503, 'SESSION_UNAVAILABLE', 'Start AKM Desktop using its application launcher.');
   if (event.url.origin !== origin || event.request.headers.get('host') !== new URL(origin).host) {
