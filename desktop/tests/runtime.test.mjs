@@ -19,7 +19,7 @@ const electron = process.env.AKM_DESKTOP_TEST_RUNTIME ?? require("electron");
 async function launch(t, { runtime = process.execPath, electronMode = false } = {}) {
   const fixture = await createFixture({ packageRoot: appRoot });
   t.after(() => fixture.cleanup());
-  const child = fork(path.join(appRoot, "electron/server.mjs"), [], {
+  const child = fork(path.join(appRoot, "server/server.mjs"), [], {
     execPath: runtime,
     execArgv: [],
     env: { ...fixture.env, ...(electronMode ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
@@ -240,9 +240,9 @@ test("a request before the app has loaded gets the 503 error shape the renderer 
   const os = await import("node:os");
   const root = await mkdtemp(path.join(os.tmpdir(), "akm-desktop-starting-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await mkdir(path.join(root, "electron"));
+  await mkdir(path.join(root, "server"));
   await mkdir(path.join(root, "build"));
-  await copyFile(path.join(appRoot, "electron/server.mjs"), path.join(root, "electron/server.mjs"));
+  await copyFile(path.join(appRoot, "server/server.mjs"), path.join(root, "server/server.mjs"));
   await copyFile(path.join(appRoot, "package.json"), path.join(root, "package.json"));
   // A stand-in app that reports the listening origin, then finishes loading only when told to.
   await writeFile(
@@ -252,7 +252,7 @@ await new Promise(resolve => process.on('message', message => { if (message === 
 export const handler = (req, res) => res.end('loaded');
 `,
   );
-  const child = fork(path.join(root, "electron/server.mjs"), [], {
+  const child = fork(path.join(root, "server/server.mjs"), [], {
     execArgv: [],
     env: { ...process.env, HOME: root },
     stdio: ["ignore", "ignore", "inherit", "ipc"],

@@ -173,11 +173,11 @@ See [Software](docs/software.md) for the application menu, host CLI
 installation and harness plugin management.
 
 No bulk retirement, skill-directory renaming,
-proposal amendment/rebase, remote instances, or model-backed scheduling UI.
+proposal amendment/rebase, or model-backed scheduling UI.
 Secret/environment files have explicit masked viewing, create, edit and delete
 actions; generated sessions remain read-only. Large result lists expose their limit and can be narrowed
 with filters. This v1 is a foundation for human curation, not a claim that the
-larger file-manager design is complete.
+larger file-manager design is complete. Remote instances are not supported yet.
 
 Files lists actual folders, including unindexed files, without rebuilding the
 index. Any text file in an enabled bundle, including a skill's supporting files,

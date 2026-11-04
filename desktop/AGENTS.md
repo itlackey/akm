@@ -14,7 +14,8 @@ Desktop replaces `akm ui` and akm's HTML output, which are removed; the CLI keep
   operations; if one is missing, add it to AKM rather than composing write primitives here.
 - **Desktop** owns the rest, and only here:
   - server features in `src/lib/server/features/` (plain file editing is the first);
-  - main-process privilege in `electron/`;
+  - main-process privilege in `electron/` (the only place that imports `electron` or `electron-updater`; `server/` is the
+    runtime-neutral web process and must run on plain Node);
   - presentation and view models in `src/lib/`: pages are Kit routes in `src/routes/` (`ssr = false`), shared state is
     `lib/state/workspace.svelte.ts`, stored drafts are `lib/drafts.ts`, and the design-system code copied from AKM is
     Desktop's own in `lib/ui/`. Svelte components use runes; convert a legacy component when you change it.
@@ -23,6 +24,12 @@ Desktop replaces `akm ui` and akm's HTML output, which are removed; the CLI keep
   The harness plugin-install recipe in `host-tools.ts` stays in Desktop; `plugin-channels.ts` in akm is its source of truth.
 - Desktop-owned routes are under `/api/desktop/*`; every other `/api` path is AKM's. Errors become HTTP statuses in one
   place, `src/lib/server/http.ts`; every route is one line of `src/lib/server/routes.ts`, naming its workspace operation. An unknown request field is ignored with one warning, never rejected.
+
+## Dependencies
+
+`electron-updater` is imported only by `electron/main.mjs`, and the web process (`server/`, `src/`) never needs it.
+It stays in `dependencies` anyway: the packager stages a production-only install, so a devDependency would be missing
+from the packaged app. A distribution of the web process alone would leave it out of its own manifest.
 
 ## Editing files
 
@@ -39,7 +46,7 @@ read, and write atomically. Then ask AKM to refresh the index for that path (`in
   operations against a developer's real data.
 - Preserve user files and unrelated work. Do not clean live bundles or config.
 - Format with `bun run format` at the repo root (biome: ts/mjs/js/css/json) and `npm run format` here (prettier:
-  `.svelte`): one formatter per file type. Source files carry the MPL header; privileged JavaScript (`electron/`, `scripts/`) is type-checked.
+  `.svelte`): one formatter per file type. Source files carry the MPL header; privileged JavaScript (`electron/`, `server/`, `scripts/`) is type-checked.
 - Before handoff: `npm run check`, `npm run build`, `npm test`, `npm run test:e2e`, `npm run test:usability`, and
   native/package checks where supported (`docs/verification.md`). Review actual screenshots; passing DOM tests alone are not a visual review.
 - Desktop's version is the akm version it embeds. Do not publish releases, mirror to GitHub, or add deployment secrets

@@ -159,7 +159,7 @@ export async function launchFixture({
     seedRuns(fixture);
   }
   if (similarity) seedSimilarity(fixture);
-  const child = fork(path.join(appRoot, "electron/server.mjs"), [], {
+  const child = fork(path.join(appRoot, "server/server.mjs"), [], {
     env: fixture.env,
     execArgv: [],
     stdio: ["ignore", "pipe", "pipe", "ipc"],

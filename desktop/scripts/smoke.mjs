@@ -28,7 +28,7 @@ const executable = mac
 const expected = JSON.parse(await readFile(path.join(root, ".core/package.json"), "utf8")).version;
 
 const fixture = await createFixture({ index: false, packageRoot: appRoot });
-const child = fork(path.join(appRoot, "electron/server.mjs"), [], {
+const child = fork(path.join(appRoot, "server/server.mjs"), [], {
   execPath: executable,
   execArgv: [],
   env: { ...fixture.env, ELECTRON_RUN_AS_NODE: "1" },

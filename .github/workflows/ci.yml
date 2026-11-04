@@ -102,6 +102,10 @@ jobs:
           npm test
           npm run test:e2e
           npm run test:usability
+      - name: Verify the web process runs without Electron
+        if: steps.scope.outputs.run == 'true'
+        working-directory: desktop
+        run: npm run test:server
       - name: Verify the Electron shell
         if: steps.scope.outputs.run == 'true'
         working-directory: desktop

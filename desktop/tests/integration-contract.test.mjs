@@ -78,8 +78,19 @@ test("no source file reaches outside desktop/ by a relative import", async () =>
   }
 });
 
+test("only electron/ imports electron or electron-updater", async () => {
+  for (const top of ["server", "src"]) {
+    for (const file of await readdir(path.join(desktop, top), { recursive: true })) {
+      if (!/\.(?:ts|mjs|js|svelte)$/.test(file)) continue;
+      const source = await readFile(path.join(desktop, top, file), "utf8");
+      for (const match of source.matchAll(/(?:from|import\()\s*['"]([^'"]+)['"]/g))
+        assert.ok(!/^electron(?:-updater)?(?:\/|$)/.test(match[1]), `${top}/${file}: ${match[1]}`);
+    }
+  }
+});
+
 test("every Desktop source file carries the MPL header", async () => {
-  for (const top of ["src", "electron", "scripts", "tests"]) {
+  for (const top of ["src", "electron", "server", "scripts", "tests"]) {
     for (const file of await readdir(path.join(desktop, top), { recursive: true })) {
       if (!/\.(?:ts|mjs|js|svelte)$/.test(file) || file.endsWith(path.join("ui", "echarts.js"))) continue;
       const source = await readFile(path.join(desktop, top, file), "utf8");

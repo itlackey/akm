@@ -30,6 +30,7 @@ if (release) {
 // Install the same locally packed core and frozen production dependency graph.
 await cp(path.join(root, "build"), path.join(stage, "build"), { recursive: true });
 await cp(path.join(root, "electron"), path.join(stage, "electron"), { recursive: true });
+await cp(path.join(root, "server"), path.join(stage, "server"), { recursive: true });
 await cp(path.join(root, "resources"), path.join(stage, "resources"), { recursive: true });
 await writeFile(path.join(stage, "package.json"), `${JSON.stringify({ ...manifest, version }, null, 2)}\n`);
 await cp(path.join(root, "bun.lock"), path.join(stage, "bun.lock"));

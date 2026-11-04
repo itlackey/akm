@@ -17,7 +17,8 @@ host CLI/harnesses strictly for explicit installation and upgrade management.
 
 | Layer | Owns |
 | --- | --- |
-| `electron/` | Window, local server lifecycle, external browser links, application-menu install |
+| `electron/` | The privileged shell only: window, local server lifecycle, external browser links, application-menu install |
+| `server/` | The web process (`server.mjs`): per-launch token, loopback HTTP listener, the built app. Runs on plain Node or Bun; imports nothing from Electron |
 | `src/hooks.server.ts` | Per-launch authentication and same-origin checks |
 | `src/lib/server/` and `src/routes/api/` | HTTP shell (`http.ts`: body limits, envelope, scrubbing and the one error-to-status mapping) over one route table (`routes.ts`: each route names a workspace operation and its input; unknown request fields are warned and ignored) |
 | `src/lib/server/features/` | Desktop-only features built on `akm-cli/workspace`: plain file editing, secret reveal policy, preferences, native host software orchestration |

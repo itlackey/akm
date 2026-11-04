@@ -101,7 +101,7 @@ else
           (process.platform !== "linux" || Boolean(process.env.APPIMAGE)),
       });
       const pickFolder = createFolderPicker({ dialog, window: () => window });
-      const server = fork(fileURLToPath(new URL("./server.mjs", import.meta.url)), [], {
+      const server = fork(fileURLToPath(new URL("../server/server.mjs", import.meta.url)), [], {
         execPath: process.execPath,
         execArgv: [],
         env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", AKM_DESKTOP_NATIVE: "1" },

@@ -18,10 +18,11 @@
     "test:electron": "node --test tests/electron.test.mjs",
     "test:usability": "node --test --test-concurrency=1 tests/usability-workflows.test.mjs tests/usability.test.mjs tests/design-language.test.mjs",
     "start": "electron .",
-    "start:server": "node electron/server.mjs",
+    "start:server": "node server/server.mjs",
     "package": "npm run prepare:core && npm run build && node scripts/package.mjs",
     "dist": "npm run prepare:core && npm run build && node scripts/package.mjs --dist",
     "smoke": "node scripts/smoke.mjs",
+    "test:server": "node scripts/server-guard.mjs",
     "test:host-install": "node --test tests/host-install.integration.test.mjs",
     "test:plugin-install": "node --test tests/plugin-install.integration.test.mjs",
     "format": "prettier --write \"src/**/*.svelte\""
