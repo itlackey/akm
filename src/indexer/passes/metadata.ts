@@ -29,6 +29,9 @@ export type {
 
 export const SCOPE_KEYS: readonly ScopeKey[] = ["user", "agent", "run", "channel"] as const;
 
+/** Every frontmatter key that carries scope: the flat `scope_*` keys and a legacy nested `scope:`. */
+export const SCOPE_FRONTMATTER_KEYS: readonly string[] = ["scope", ...SCOPE_KEYS.map((key) => `scope_${key}`)];
+
 export interface StashFile {
   entries: IndexDocument[];
   warnings?: string[];
@@ -256,9 +259,6 @@ export function scopeFromFrontmatter(fm: Record<string, unknown>): StashEntrySco
   applyScopeFrontmatter(entry, fm);
   return entry.scope ?? {};
 }
-
-/** The frontmatter keys that hold a scope: the flat `scope_*` keys and the legacy nested `scope`. */
-export const SCOPE_FRONTMATTER_KEYS: readonly string[] = ["scope", ...SCOPE_KEYS.map((key) => `scope_${key}`)];
 
 /**
  * Frontmatter with its scope keys ({@link SCOPE_FRONTMATTER_KEYS}) replaced by `scope`'s flat keys, or removed when
