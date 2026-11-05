@@ -217,6 +217,18 @@ export function resolveStandaloneExtractPlan(
 ): ResolvedExtractPlan {
   const selected = resolveImproveStrategy(selection.strategy, config);
   const process = cloneAndFreeze(getImproveProcessConfig("extract", selected.config) ?? {});
+  // The built-in strategies turn the improve-stage extract off because sessions are extracted when they end, so only
+  // the person's own `enabled: false` for this strategy stops the standalone run. Nothing then resolves a runner.
+  if (config.improve?.strategies?.[selected.name]?.processes?.extract?.enabled === false) {
+    return Object.freeze({
+      strategy: selected.name,
+      engine: "",
+      enabled: false,
+      process,
+      runner: null,
+      embeddingConfig: cloneAndFreeze(config.embedding),
+    });
+  }
   const resolved = resolveImproveExecution({
     config,
     current: {
@@ -239,7 +251,6 @@ export function resolveStandaloneExtractPlan(
   return Object.freeze({
     strategy: selected.name,
     engine: runner.name,
-    // An explicit `akm extract` runs regardless of the strategy's improve-stage toggle.
     enabled: true,
     process,
     runner: cloneAndFreeze(runner),
@@ -1170,7 +1181,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       ok: true,
       dryRun,
       type: options.type,
-      warning: "extract is disabled by the selected improve strategy",
+      warning: "extract is turned off by improve.strategies.<strategy>.processes.extract.enabled in your config",
       startMs,
     });
   }

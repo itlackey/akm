@@ -256,3 +256,23 @@ export function propose(ref: string, content: string = LESSON): string {
 export const commitCount = (): number => Number(git(ctx.storage.stashDir, ["rev-list", "--count", "HEAD"]).trim());
 export const lastSubject = (): string => git(ctx.storage.stashDir, ["log", "-1", "--format=%s"]).trim();
 export const lessonFile = (name: string): string => path.join(ctx.storage.stashDir, "lessons", `${name}.md`);
+
+/** A `crontab` on PATH that keeps the table in a file of the sandbox: the OS scheduler is never touched. */
+export function fakeCrontab() {
+  const bin = path.join(ctx.storage.root, "cronbin");
+  const file = path.join(ctx.storage.root, "crontab.txt");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(
+    path.join(bin, "crontab"),
+    `#!/bin/sh\ncase "$1" in -l) [ -f "${file}" ] && cat "${file}" || exit 1;; -) cat > "${file}";; esac\n`,
+    { mode: 0o755 },
+  );
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${before}`;
+  return {
+    file,
+    restore: () => {
+      process.env.PATH = before;
+    },
+  };
+}

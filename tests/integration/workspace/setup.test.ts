@@ -7,11 +7,14 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { akmExtract, resolveStandaloneExtractPlan } from "../../../src/commands/improve/extract";
+import { loadConfig } from "../../../src/core/config/config";
+import { IMPROVE_ENGINE_PROCESSES } from "../../../src/core/config/engine-semantics";
 import { getConfigPath } from "../../../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
-import { setup } from "../../../src/workspace";
+import { setup, tasks } from "../../../src/workspace";
 import { change } from "../../../src/workspace/config";
-import { ctx, expectUsage, useSandbox } from "./workspace-behaviour-helpers";
+import { ctx, expectUsage, fakeCrontab, useSandbox } from "./workspace-behaviour-helpers";
 
 useSandbox();
 // Detection reads the home directory, which is the machine's own unless a test gives it another.
@@ -41,6 +44,8 @@ function claudeOnPath() {
   };
 }
 
+const PROCESSES = IMPROVE_ENGINE_PROCESSES;
+
 type Detected = Awaited<ReturnType<typeof setup.detect>>;
 
 describe("setup.apply", () => {
@@ -58,53 +63,139 @@ describe("setup.apply", () => {
     expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
   });
 
-  test("a named harness is enabled, and akm's model calls stay off it unless learning names it", async () => {
+  test("learning off switches every learning process off, disables the improve task, and routes nothing", async () => {
     const restore = claudeOnPath();
+    const cron = fakeCrontab();
     try {
-      const after = await setup.apply({ dir: library(), harness: ["claude"] });
-      expect(savedConfig().harnesses.claude.modelWork).toBe(false);
-      expect(savedConfig().improve?.harness).toBeUndefined();
-      expect(after.modelCalls.platform).toBeNull();
-      expect(after.modelCalls.description).toStartWith("off: no connection is configured");
+      const after = await setup.apply({ dir: library(), harness: ["claude"], learning: { on: false } });
+      const config = savedConfig();
+      for (const name of PROCESSES) expect(config.improve.strategies.default.processes[name].enabled).toBe(false);
+      expect(config.improve.connection).toBeUndefined();
+      expect(config.improve.harness).toBeUndefined();
+      expect(config.harnesses.claude.modelWork).toBeUndefined();
       expect(after.enabled).toEqual(["claude"]);
-      expect(after.harnesses[0]?.modelWorkNote).toBeString();
+      expect(after.learning).toEqual({ on: false, agent: null });
+      expect(tasks.list().tasks).toEqual([]);
+      expect(fs.existsSync(cron.file)).toBe(false);
     } finally {
+      cron.restore();
       restore();
     }
   });
 
-  test("learning on an enabled agent runs akm's model calls there, even with a connection", async () => {
-    const restore = claudeOnPath();
+  test("a standalone extract makes no model call while learning is off", async () => {
+    await setup.apply({ dir: library(), learning: { on: false } });
+    change({
+      set: { "connections.lab.endpoint": "http://localhost:1/v1", "connections.lab.models.fast": "m" },
+      unset: [],
+    });
+    const plan = resolveStandaloneExtractPlan(loadConfig(), {});
+    expect(plan).toMatchObject({ enabled: false, runner: null });
+    const fetched = spyOn(globalThis, "fetch");
+    const result = await akmExtract({ type: "claude", config: loadConfig(), resolvedPlan: plan, dryRun: true });
+    expect(result).toMatchObject({ ok: true, sessionsProcessed: 0, sessionsSkipped: 0 });
+    expect(fetched).not.toHaveBeenCalled();
+    fetched.mockRestore();
+  });
+
+  test("learning on through akm itself writes the connection, clears the switches and enables the improve task", async () => {
+    const cron = fakeCrontab();
     try {
-      const after = await setup.apply({ dir: library(), harness: ["claude"], learning: "claude" });
-      expect(savedConfig().harnesses.claude.modelWork).toBeUndefined();
-      expect(after.modelCalls.platform).toBe("claude");
-      change({
-        set: { "connections.lab.endpoint": "http://localhost:1/v1", "connections.lab.models.fast": "m" },
-        unset: [],
+      await setup.apply({ dir: library(), learning: { on: false } });
+      const after = await setup.apply({
+        dir: library(),
+        connection: { endpoint: "http://localhost:1234", model: "qwen", apiKeyEnv: "LAB_KEY" },
+        learning: { on: true },
       });
-      expect((await setup.detect()).modelCalls.platform).toBe("claude");
-      const back = await setup.apply({ dir: library(), harness: ["claude"] });
-      expect(back.modelCalls.platform).toBeNull();
-      expect(back.modelCalls.description).toContain('connection "lab"');
-      expect(savedConfig().improve?.harness).toBeUndefined();
+      const config = savedConfig();
+      expect(config.connections.default).toMatchObject({
+        endpoint: "http://localhost:1234/v1",
+        apiKey: "$LAB_KEY",
+        models: { fast: "qwen", balanced: "qwen", reasoning: "qwen" },
+      });
+      expect(config.improve.connection).toBe("default");
+      expect(config.improve.harness).toBeUndefined();
+      expect(JSON.stringify(config.improve.strategies ?? {})).not.toContain("false");
+      expect(config.scheduler.enabled).toEqual([expect.stringMatching(/\/\/tasks\/improve$/)]);
+      expect(fs.readFileSync(cron.file, "utf8")).toContain("improve");
+      expect(after.learning).toEqual({ on: true, agent: null });
+      expect(after.connection).toBe("default");
+      expect(after.modelCalls.description).toContain('connection "default"');
+      expect(tasks.list().tasks).toEqual([expect.objectContaining({ id: "improve", enabled: true })]);
+
+      // Off again disables the task and switches the processes off; the connection stays.
+      const off = await setup.apply({ dir: library(), learning: { on: false } });
+      expect(off.learning.on).toBe(false);
+      expect(tasks.list().tasks[0]?.enabled).toBe(false);
+      expect(savedConfig().connections.default.apiKey).toBe("$LAB_KEY");
     } finally {
-      restore();
+      cron.restore();
     }
   });
 
-  test("several agents leave one default harness, and learning may name any of them", async () => {
+  test("learning on an enabled agent writes improve.harness to its entry and no connection", async () => {
     const restore = claudeOnPath();
     fs.writeFileSync(path.join(ctx.storage.root, "bin", "codex"), "#!/bin/sh\necho 1\n", { mode: 0o755 });
+    const cron = fakeCrontab();
     try {
-      const after = await setup.apply({ dir: library(), harness: ["claude", "codex"], learning: "codex" });
+      const after = await setup.apply({
+        dir: library(),
+        harness: ["claude", "codex"],
+        connection: { endpoint: "http://localhost:1/v1", model: "m" },
+        learning: { on: true, agent: "codex" },
+      });
+      // Several agents leave one default harness, named `default`; the other keeps its platform name.
       expect(Object.keys(savedConfig().harnesses).sort()).toEqual(["codex", "default"]);
       expect(savedConfig().harnesses.default.platform).toBe("claude");
       expect(savedConfig().improve.harness).toBe("codex");
+      expect(savedConfig().improve.connection).toBeUndefined();
+      expect(after.learning).toEqual({ on: true, agent: "codex" });
       expect(after.modelCalls.platform).toBe("codex");
-      expect(after.enabled.sort()).toEqual(["claude", "codex"]);
     } finally {
+      cron.restore();
       restore();
+    }
+  });
+
+  test("turning learning on clears the switches off wrote, in the active strategy only", async () => {
+    const cron = fakeCrontab();
+    try {
+      await setup.apply({ dir: library() });
+      change({
+        set: {
+          "connections.lab.endpoint": "http://localhost:1/v1",
+          "improve.strategy": "mine",
+          "improve.strategies.consolidate.processes.reflect.enabled": "false",
+          "improve.strategies.mine.processes.reflect.limit": "7",
+        },
+        unset: [],
+      });
+      await setup.apply({ dir: library(), learning: { on: false } });
+      expect(savedConfig().improve.strategies.mine.processes.reflect).toEqual({ enabled: false, limit: 7 });
+      await setup.apply({ dir: library(), learning: { on: true } });
+      const strategies = savedConfig().improve.strategies;
+      // The person's own limit stays, and so does another strategy's switch.
+      expect(strategies.mine.processes.reflect).toEqual({ limit: 7 });
+      expect(strategies.consolidate.processes.reflect.enabled).toBe(false);
+      expect(strategies.default).toBeUndefined();
+    } finally {
+      cron.restore();
+    }
+  });
+
+  test("learning on with no connection and no agent stays off, with one warning", async () => {
+    const warned: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warned.push(String(args[0]));
+    });
+    const cron = fakeCrontab();
+    try {
+      const after = await setup.apply({ dir: library(), learning: { on: true } });
+      expect(after.learning.on).toBe(false);
+      expect(warned.some((line) => line.includes("no connection to learn through"))).toBe(true);
+      expect(tasks.list().tasks).toEqual([]);
+    } finally {
+      cron.restore();
     }
   });
 
@@ -114,13 +205,35 @@ describe("setup.apply", () => {
       if (level === "warn") warned.push(String(args[0]));
     });
     const restore = claudeOnPath();
+    const cron = fakeCrontab();
     try {
-      const after = await setup.apply({ dir: library(), harness: ["claude"], learning: "codex" });
-      expect(after.modelCalls.platform).toBeNull();
+      const after = await setup.apply({ dir: library(), harness: ["claude"], learning: { on: true, agent: "codex" } });
+      expect(after.learning.on).toBe(false);
+      expect(savedConfig().improve.harness).toBeUndefined();
       expect(warned.some((line) => line.includes("codex is not enabled"))).toBe(true);
     } finally {
+      cron.restore();
       restore();
     }
+  });
+
+  test("a key is only ever the name of a variable", async () => {
+    await expectUsage(
+      () =>
+        setup.apply({
+          dir: library(),
+          connection: { endpoint: "http://localhost:1/v1", model: "m", apiKeyEnv: "sk-abc-123456" },
+          learning: { on: true },
+        }),
+      undefined,
+      "variable",
+    );
+    await expectUsage(
+      () => setup.apply({ dir: library(), connection: { endpoint: "ftp://x", model: "m" } }),
+      undefined,
+      "http",
+    );
+    expect(fs.existsSync(getConfigPath()) ? JSON.stringify(savedConfig()) : "").not.toContain("sk-abc");
   });
 
   test("an agent program on PATH is not enabled unless named, in one write", async () => {

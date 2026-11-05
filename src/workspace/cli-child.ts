@@ -102,7 +102,12 @@ export async function runCli(args: string[], input?: string, userFeedback = fals
           return;
         }
         try {
-          resolve(parseCommandResponse(stdout, args[0] === "bundle" ? bundleShape(args[1]!) : args[0]!));
+          resolve(
+            parseCommandResponse(
+              stdout,
+              args[0] === "bundle" ? bundleShape(args[1]!) : args[0] === "task" ? `task-${args[1]}` : args[0]!,
+            ),
+          );
         } catch (error) {
           reject(error);
         }

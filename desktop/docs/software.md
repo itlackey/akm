@@ -93,14 +93,18 @@ Nothing runs until you press a button.
      shows the package it configured.
    - **Let akm use this agent** (ticked) enables the agent in akm's config (`akm setup --yes --harness=<agents>` through
      `setup.apply`) so that `akm agent` and tasks can run on it. The first agent enabled is the default harness, so
-     several never leave the default ambiguous. Enabling does not let akm spend the agent's model quota: every enabled
-     agent is set `modelWork: false`.
+     several never leave the default ambiguous. Enabling does not turn learning on.
    - **Let akm learn in the background** is a separate choice, off unless you turn it on, because learning (improve,
-     judging, extraction) uses model quota. Turned on, it asks where to run: **akm itself** (the default: a model
-     reached through a connection, not an agent program) or any enabled agent, with akm's own note on whether that
-     agent can be limited to reading and searching (a warning when it cannot). An agent is `improve.harness`; akm
-     itself is the default connection. With no connection configured, akm itself runs nothing, and the result says
-     so (`akm setup --endpoint URL` adds one). The result always reports where akm says its model calls run.
+     judging, extraction) uses model quota. Off means every model-calling improve process is switched off in the active
+     strategy (`enabled: false`, which also stops the plugins' end-of-session `akm proposal extract`) and the scheduled
+     `improve` task is disabled. Turned on, it removes those switches (so the strategy's own defaults apply again),
+     enables the `improve` task (adding it from akm's template when the library has none) and asks where to run:
+     **akm itself** (the default: a model reached through a connection, not an agent program; `improve.connection`) or
+     any enabled agent (`improve.harness`), with akm's own note on whether that agent can be limited to reading and
+     searching (a warning when it cannot). akm itself needs a connection: enter its endpoint, model and the NAME of the
+     variable holding its key (never the key); with none configured and none entered it cannot be chosen. Turning
+     learning on removes every `enabled: false` of those processes, a person's own included, because the config does not
+     say who wrote it. The result reports what akm says afterwards.
    - **Bun.** The Claude Code and Codex hooks are TypeScript files that the harness starts with `bun`; the standalone
      akm CLI does not provide a `bun` command, so Bun is the plugin's own runtime, not just a way to get akm. When Bun
      is missing the card shows Bun's official install command with **Copy** and **Check again**. Desktop never runs

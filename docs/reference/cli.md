@@ -3205,8 +3205,10 @@ authenticates its root; it never falls back to an ambient write target.
 Extract durable insights from native coding-agent session files (claude-code,
 codex, opencode) and queue them as proposals. This is the standalone
 entrypoint for session extraction — it replaces the legacy session-checkpoint
-hook and runs independently of the improve-stage extract toggle (see `improve`
-above).
+hook and runs independently of the built-in strategies' improve-stage extract toggle
+(see `improve` above). Only your own `improve.strategies.<active>.processes.extract.enabled:
+false` stops it: the run then makes no model call, resolves no connection or harness, and
+returns `ok: true` with no sessions and a warning that says so.
 
 ```sh
 akm proposal extract --type claude --session-id <id>

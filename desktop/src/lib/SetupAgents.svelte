@@ -8,7 +8,8 @@
   import { api } from "./client";
   import { classifyEngineSkew, hostUpgradeOutrunsDesktop } from "./engine-skew";
   import Icon from "./Icon.svelte";
-  import { akmPlatform, pluginChannel, type AgentCard, type Detected } from "./setup-model";
+  import SetupLearning from "./SetupLearning.svelte";
+  import { akmPlatform, learnPlan, learnReceipt, pluginChannel, type AgentCard, type Detected } from "./setup-model";
   import { actSoftware, runSoftware, software, type Outcome } from "./state/software.svelte";
   import { workspace } from "./state/workspace.svelte";
 
@@ -30,6 +31,9 @@
     use = $state<Record<string, boolean>>({}),
     learn = $state<boolean | undefined>(undefined),
     where = $state<string | undefined>(undefined),
+    endpoint = $state(""),
+    model = $state(""),
+    keyEnv = $state(""),
     busy = $state(false),
     outcomes = $state<Array<Outcome & { label: string }>>([]),
     copied = $state(false);
@@ -50,21 +54,16 @@
     // Agents akm may use: those already enabled, and those ticked that akm can run.
     usable = $derived(cards.filter((card) => card.state !== "stopped" && card.learning.available)),
     enabling = $derived(usable.filter((card) => library && !card.learning.enabled && (use[card.id] ?? true))),
-    allowed = $derived(usable.filter((card) => card.learning.enabled || enabling.includes(card)).map((c) => c)),
-    learning = $derived(learn ?? detected.modelCalls.platform !== null),
-    // The one place akm's own model calls run: akm itself, or one allowed agent. Absent while learning is off.
-    agent = $derived(
-      learning
-        ? allowed.find((card) => akmPlatform(card.id) === (where ?? detected.modelCalls.platform ?? ""))
-        : undefined,
+    allowed = $derived(usable.filter((card) => card.learning.enabled || enabling.includes(card))),
+    plan = $derived(
+      learnPlan(
+        detected,
+        allowed.map((card) => akmPlatform(card.id)),
+        { learn, where, endpoint, model, keyEnv },
+      ),
     ),
-    // Only a change the person made moves learning: akm may be running it somewhere this page does not list.
-    moves = $derived(
-      library &&
-        allowed.length > 0 &&
-        (learn !== undefined || where !== undefined) &&
-        (agent ? akmPlatform(agent.id) : null) !== detected.modelCalls.platform,
-    ),
+    agent = $derived(allowed.find((card) => akmPlatform(card.id) === plan.learning?.agent)),
+    moves = $derived(library && plan.changed),
     work = $derived((cliMissing && wantsCli ? 1 : 0) + pending.length + enabling.length + (moves ? 1 : 0)),
     hostBusy = $derived(busy || Boolean(host && host.phase !== "idle"));
 
@@ -87,29 +86,28 @@
       }
       if (enabling.length || moves) {
         const enabled = new Set([...detected.enabled, ...enabling.map((card) => akmPlatform(card.id))]);
+        const { learning, connection } = plan;
+        const agentName = agent?.name;
         try {
-          // akm says where its model calls run now; that, not the ticked boxes, is what the receipt reports.
+          // akm says what is true afterwards; that, not the ticked boxes, is what the receipt reports.
           const next = await api<Detected>(
             "/setup/apply",
             {},
-            { harness: [...enabled], ...(agent ? { learning: akmPlatform(agent.id) } : {}) },
+            {
+              harness: [...enabled],
+              ...(connection ? { connection } : {}),
+              ...(learning ? { learning } : {}),
+            },
           );
+          const wantedOn = learning?.on ?? next.learning.on;
           onconfigured(next);
           use = {};
           where = undefined;
           learn = undefined;
-          const runs = `akm's model calls: ${next.modelCalls.description.replace(/\.$/, "")}.`;
+          endpoint = model = keyEnv = "";
           outcomes.push({
             label: "Agents and learning",
-            receipt: agent
-              ? `${agent.name} is enabled and runs background learning. ${runs}`
-              : `${[...enabled].length} agent${enabled.size === 1 ? " is" : "s are"} enabled for akm. ${
-                  learning
-                    ? next.modelCalls.description.startsWith("off")
-                      ? "Learning uses akm itself, and none will run until a connection is configured."
-                      : "Learning uses akm itself."
-                    : "No agent runs akm's model calls."
-                } ${runs}`,
+            receipt: `${enabled.size} agent${enabled.size === 1 ? " is" : "s are"} enabled for akm. ${learnReceipt(next, wantedOn, agentName)}`,
           });
         } catch (cause) {
           outcomes.push({ label: "Agents and learning", error: (cause as Error).message });
@@ -261,52 +259,8 @@
       <p class="muted">No agent program (Claude Code, Codex or OpenCode) was found on this computer.</p>
     {/each}
 
-    {#if allowed.length || learning}
-      <div class="item">
-        <h3>Background learning</h3>
-        <label class="check-label">
-          <input
-            type="checkbox"
-            checked={learning}
-            disabled={!library}
-            onchange={(event) => (learn = event.currentTarget.checked)}
-          />
-          Let akm learn in the background
-        </label>
-        <p class="field-hint">
-          Off unless you turn it on. Learning is akm's own model calls (improving assets, judging, extraction), and it
-          uses model quota. Now: {detected.modelCalls.description.replace(/\.$/, "")}.
-        </p>
-        {#if learning}
-          <fieldset class="learn-where">
-            <legend>Where should it run?</legend>
-            <label class="check-label">
-              <input type="radio" name="learn-where" checked={!agent} onchange={() => (where = "internal")} />
-              akm itself (default)
-            </label>
-            <p class="field-hint">
-              akm calls a model through a connection, not through an agent program. With a connection it runs there;
-              with none configured it does not run until you add one (<code>akm setup --endpoint URL</code>).
-            </p>
-            {#each allowed as card (card.id)}
-              <label class="check-label">
-                <input
-                  type="radio"
-                  name="learn-where"
-                  checked={agent?.id === card.id}
-                  onchange={() => (where = akmPlatform(card.id))}
-                />
-                {card.name}
-              </label>
-              <p class="field-hint">
-                akm runs {card.name} for this: {card.learning.note}.{card.learning.note.includes("cannot be restricted")
-                  ? " Choose it only if you accept that."
-                  : ""}
-              </p>
-            {/each}
-          </fieldset>
-        {/if}
-      </div>
+    {#if allowed.length || detected.learning.on || plan.on}
+      <SetupLearning {detected} {plan} {library} {allowed} bind:learn bind:where bind:endpoint bind:model bind:keyEnv />
     {/if}
 
     <div class="btn-row">
@@ -362,11 +316,6 @@
     flex: 1 1 280px;
     min-width: 0;
     overflow-wrap: anywhere;
-  }
-  .learn-where {
-    margin: 12px 0 0;
-    padding: 0;
-    border: 0;
   }
   .btn-row {
     display: flex;

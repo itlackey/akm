@@ -736,9 +736,12 @@ nothing is written. It returns `stashDir`, the library directory the config alre
 existing candidate, else the default (`AKM_BUNDLE_DIR`, else `~/akm`, or `Documents\akm` on Windows); `harnesses`, the agent
 programs found on `PATH` that akm can run work on, each `{platform, path, modelWorkNote}` (akm's words for whether its
 model calls on that program can be limited to reading and searching); `enabled`, the platforms the config already
-enables; and `modelCalls`, where akm's own model calls
+enables; `modelCalls`, where akm's own model calls
 (improve, judging, extraction) run: `description` in the words of `akm setup`'s summary, and `platform` when they run on
-a harness (else `null`).
+a harness (else `null`); `connection`, the name of the connection that takes them when no agent does (`null` when there is
+none); and `learning`, background learning: `on` when the scheduled `improve` task is enabled and the config switches off
+none of the model-calling improve processes of the active strategy, and `agent`, the platform `improve.harness` names
+(`null` when improve runs on akm itself).
 
 ```json
 {
@@ -746,7 +749,9 @@ a harness (else `null`).
   "data": {
     "stashDir": "/home/ada/akm",
     "harnesses": [{ "platform": "claude", "path": "/home/ada/.local/bin/claude" }],
-    "modelCalls": { "platform": null, "description": "off: no connection or harness is configured" }
+    "modelCalls": { "platform": null, "description": "off: no connection or harness is configured" },
+    "connection": null,
+    "learning": { "on": false, "agent": null }
   }
 }
 ```
@@ -760,7 +765,10 @@ retry a failed write automatically.
 | Operation | Input and existing behaviour |
 | --- | --- |
 | `feedback.record` | `{ref, signal: "positive"\|"negative", reason?, tags?: string[], fix?: [{replace, with}]}` → `akm feedback`. The ref is resolved as the CLI resolves it; tags follow existing `key:value` validation. Negative feedback requires a reason when `feedback.requireReason` is enabled. Submissions are recorded with source `user` unless `AKM_EVENT_SOURCE` is already set (for example under an improve or task run), which wins as it does for every akm child; they retain existing ranking/utility/event effects. Feedback does not save config, so it works under a config that still holds a literal API key. |
-| `setup.apply` | `{dir?, harness?: string[], learning?: string}`. With `harness`: `akm setup --yes --no-probe [--dir=<dir>] --harness=<list>`, which enables the named agent programs (the first becomes the default harness, so several never leave the default ambiguous) and creates the library when there is none; then one more config write says where akm's own model calls run: `learning`, one of the enabled platforms, sets `improve.harness` to it (and clears `modelWork` on it); otherwise every enabled harness is set `modelWork: false` and `improve.harness` is cleared, so the calls run on the default connection if there is one and nowhere if there is not. A `learning` that is not enabled is ignored with a warning. Without it: `akm bundle create --dir=<dir>` (`dir` defaults to the configured library, else the default location), made the default bundle when there is none. `akm setup --yes` alone would enable every agent program it finds and so let akm spend that program's model quota, which a host asks for per program. `dir` must be absolute. A second run is a no-op. Offline: nothing is probed or downloaded, and nothing is indexed (`bundles.add` indexes). Returns `setup.detect` as it reads afterwards. Other fields are ignored with one warning. |
+| `setup.apply` | `{dir?, harness?: string[], connection?: {endpoint, model, apiKeyEnv?}, learning?: {on, agent?}}`. With `harness`: `akm setup --yes --no-probe [--dir=<dir>] --harness=<list>`, which enables the named agent programs (the first becomes the default harness, so several never leave the default ambiguous) and creates the library when there is none. Without it: `akm bundle create --dir=<dir>` (`dir` defaults to the configured library, else the default location), made the default bundle when there is none. `akm setup --yes` alone would enable every agent program it finds and so let akm spend that program's model quota, which a host asks for per program. `dir` must be absolute. Then one config write (`config.change`): `connection` writes the default connection, or the one that is default (the endpoint as `akm setup` stores it, `apiKey: "$<apiKeyEnv>"`, never a key, and `model` for the `fast`, `balanced` and `reasoning` aliases); `learning: {on: false}` sets `improve.strategies.<active>.processes.<p>.enabled: false` for each model-calling improve process (`IMPROVE_ENGINE_PROCESSES`, extract included, so `akm proposal extract` from a session-end hook makes no model call) and disables the scheduled `improve` task; `{on: true}` removes those `enabled: false` (so the strategy's own defaults apply again), sets `improve.harness` to the enabled `agent`'s entry, or else `improve.connection` to the default connection (clearing the other), and enables the `improve` task, adding it from akm's `core/improve` template when the library has none. The config does not say who wrote an `enabled: false`, so turning learning on removes any of them, a person's own included; `true` values and every other setting stay. A `learning` that cannot be honoured (an agent that is not enabled, or no connection for akm itself) leaves learning off and warns. The task is added, enabled and disabled through `akm task` (`tasks.enable`), which writes the OS scheduler. A second run is a no-op. Offline: nothing is probed or downloaded, and nothing is indexed (`bundles.add` indexes). Returns `setup.detect` as it reads afterwards. Other fields are ignored with one warning. |
+| `tasks.list` | `{}` → `{tasks: [{id, schedule, enabled, description?}]}`: the default bundle's tasks that have a schedule, and whether this host has each enabled (`scheduler.enabled`). Reads only. |
+| `tasks.enable` | `{task}` → `akm task enable --bundle=<default bundle> -- <task>`: schedules the task in this host's scheduler and syncs the OS scheduler (cron, launchd or Task Scheduler). Returns `{ref, enabled, changed, sync}`. An unknown task is `not-found`. |
+| `tasks.disable` | `{task}` → `akm task disable --bundle=<default bundle> -- <task>`: the reverse. |
 | `bundles.add` | `{source, name?, writable?}` → `akm bundle add`, including source validation. Existing provider restrictions apply; no insecure-transport bypass is exposed. |
 | `bundles.update` | `{bundle}` → `akm bundle update -- <bundle>`. Fetches/reindexes only on explicit submission. A rare update requiring destructive confirmation remains refused; `--yes` is never passed silently. |
 | `bundles.rename` | `{bundle, name, dryRun?: true}` → `akm bundle rename [--dry-run] -- <bundle> <name>`. The result is the CLI's rename plan (`applied` is `false` for a dry run). |

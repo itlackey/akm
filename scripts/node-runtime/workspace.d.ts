@@ -177,12 +177,42 @@ export namespace setup {
     enabled: string[];
     /** Where akm's own model calls run, in setup's words, and the harness platform when they run on one. */
     modelCalls: { platform: string | null; description: string };
+    /** The connection that takes akm's model calls when no agent does, or `null` when none is configured. */
+    connection: string | null;
+    /**
+     * Background learning: `on` when the scheduled improve task is enabled and the config switches none of the
+     * learning processes off; `agent` is the platform improve runs on (`improve.harness`), `null` for akm itself.
+     */
+    learning: { on: boolean; agent: string | null };
   }
   /**
-   * Create the library, or with `harness` enable those agent programs and, with `learning` (one of them), run akm's own
-   * model calls on it; returns `detect()` afterwards. Unknown fields are ignored with a warning.
+   * Create the library, or with `harness` enable those agent programs. `connection` writes the default connection
+   * (the variable's name, never a key). `learning` turns background learning off (each learning process switched off
+   * in the active strategy, the scheduled improve task disabled) or on (those switches cleared, improve sent to
+   * `agent` or else the connection, the task enabled). Returns `detect()` afterwards. Unknown fields are ignored with a warning.
    */
-  function apply(input: { dir?: string; harness?: string[]; learning?: string }): Promise<Detected>;
+  function apply(input: {
+    dir?: string;
+    harness?: string[];
+    connection?: { endpoint: string; model: string; apiKeyEnv?: string };
+    learning?: { on: boolean; agent?: string };
+  }): Promise<Detected>;
   /** What setup could use on this computer, from the file system, PATH and config only (no network, no writes). */
   function detect(): Promise<Detected>;
+}
+export namespace tasks {
+  interface Task {
+    id: string;
+    schedule: string;
+    schedules?: readonly string[];
+    /** This host has the task in its scheduler configuration. */
+    enabled: boolean;
+    description?: string;
+  }
+  /** The default bundle's scheduled tasks and whether this host has each enabled. Nothing is written. */
+  function list(): { tasks: Task[] };
+  /** `akm task enable`: schedule the task in this host's scheduler. The OS scheduler is written. */
+  function enable(input: { task: string }): Promise<Record<string, unknown>>;
+  /** `akm task disable`: take the task out of this host's scheduler. */
+  function disable(input: { task: string }): Promise<Record<string, unknown>>;
 }

@@ -16,6 +16,10 @@ export interface Detected {
   /** The platforms akm's config already enables. */
   enabled: string[];
   modelCalls: { platform: string | null; description: string };
+  /** The connection that takes akm's model calls when no agent does; null when none is configured. */
+  connection: string | null;
+  /** Background learning is on, and the platform it runs on (null: akm itself). */
+  learning: { on: boolean; agent: string | null };
 }
 
 export interface HostHarness {
@@ -81,15 +85,15 @@ export interface AgentCard {
   /** The plugin cannot be installed until Bun is. */
   needsBun: boolean;
   /**
-   * Whether akm can use this harness (it finds the program on its own PATH), whether it is enabled in akm's config, and
-   * whether akm's model calls (learning) run on it now, with akm's words for what those calls could do there.
+   * Whether akm can use this harness (it finds the program on its own PATH) and whether it is enabled in akm's config,
+   * with akm's words for what its model calls could do there.
    */
-  learning: { available: boolean; enabled: boolean; active: boolean; note: string };
+  learning: { available: boolean; enabled: boolean; note: string };
 }
 
 /**
  * One card per harness Desktop found. A harness that is not installed is not offered. `detected` is `setup.detect`:
- * the programs akm finds on its PATH, those its config enables, and the one its own model calls run on, if any.
+ * the programs akm finds on its PATH and those its config enables.
  */
 export function agentCards(host: HostSnapshot, engine: string | undefined, detected: Detected): AgentCard[] {
   return host.harnesses
@@ -124,11 +128,79 @@ export function agentCards(host: HostSnapshot, engine: string | undefined, detec
         learning: {
           available: seen !== undefined,
           enabled: detected.enabled.includes(platform),
-          active: platform === detected.modelCalls.platform,
           note: seen?.modelWorkNote ?? "",
         },
       };
     });
+}
+
+/** What the person typed or chose for background learning; `undefined` is untouched. */
+export interface LearnInput {
+  learn?: boolean;
+  /** `internal` (akm itself) or the platform of an agent akm may use. */
+  where?: string;
+  endpoint: string;
+  model: string;
+  keyEnv: string;
+}
+
+export interface LearnPlan {
+  on: boolean;
+  where: string;
+  /** Applying the plan would change what akm reports now. */
+  changed: boolean;
+  /** What `setup.apply` is sent for the connection and for learning; absent when there is nothing to write. */
+  connection?: { endpoint: string; model: string; apiKeyEnv?: string };
+  learning?: { on: boolean; agent?: string };
+  /** Learning is wanted but nowhere to run: the one line that says why. */
+  problem?: string;
+}
+
+/**
+ * Background learning from `setup.detect` and the form. Learning is off unless the person turns it on, so whenever
+ * setup applies anything it also writes the off state while learning is off; an on state is rewritten only when the
+ * person changed it. `agents` are the platforms akm may use (enabled, or ticked now).
+ */
+export function learnPlan(detected: Detected, agents: string[], input: LearnInput): LearnPlan {
+  const on = input.learn ?? detected.learning.on;
+  const wanted = input.where ?? detected.learning.agent ?? "internal";
+  const where = wanted === "internal" || agents.includes(wanted) ? wanted : "internal";
+  const endpoint = input.endpoint.trim(),
+    model = input.model.trim(),
+    keyEnv = input.keyEnv.trim();
+  const connection = endpoint && model ? { endpoint, model, ...(keyEnv ? { apiKeyEnv: keyEnv } : {}) } : undefined;
+  const problem =
+    on && where === "internal" && detected.connection === null && !connection
+      ? "akm itself needs a model connection: enter an endpoint and a model below, or choose an agent."
+      : undefined;
+  const target = on && where !== "internal" ? where : null;
+  const changed =
+    connection !== undefined ||
+    (!problem && (on !== detected.learning.on || (on && target !== detected.learning.agent)));
+  const learning = problem
+    ? undefined
+    : !on
+      ? { on: false }
+      : changed
+        ? { on: true, ...(target ? { agent: target } : {}) }
+        : undefined;
+  return {
+    on,
+    where,
+    changed,
+    ...(connection ? { connection } : {}),
+    ...(learning ? { learning } : {}),
+    ...(problem ? { problem } : {}),
+  };
+}
+
+/** What setup says after turning learning on or off: only what `setup.detect` reports afterwards. */
+export function learnReceipt(next: Detected, wantedOn: boolean, agentName: string | undefined): string {
+  if (!next.learning.on) {
+    return wantedOn ? "Background learning stays off." : "Background learning is off.";
+  }
+  const where = next.learning.agent ? (agentName ?? next.learning.agent) : "akm itself";
+  return `Background learning is on and runs on ${where}: ${next.modelCalls.description.replace(/\.$/, "")}.`;
 }
 
 /** The prompt to paste into a harness so that it searches akm, written for each harness's own surface. */
