@@ -85,7 +85,7 @@ export namespace assets {
     type?: string;
     bundle?: string;
     belief?: string;
-    scope?: Partial<Record<"user" | "agent" | "run" | "channel", string>>;
+    scope?: Partial<Record<"user" | "agent" | "run" | "channel", string | string[]>>;
     limit?: number;
   }): Promise<unknown>;
   function searchMisses(input?: { since?: string }): unknown;

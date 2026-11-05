@@ -53,7 +53,7 @@ import { searchFts } from "../../storage/repositories/index-fts-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
 import { ensureIndex } from "../ensure-index";
-import { type IndexDocument, isProposedQuality, type StashEntryScope } from "../passes/metadata";
+import { type IndexDocument, isProposedQuality, type ScopeFilters, scopeMatchesFilters } from "../passes/metadata";
 import { countFeedbackSignalsByRef } from "../usage/usage-events";
 import { ftsQueryTokens, parseRefPrefixQuery } from "./fts-query";
 import {
@@ -149,10 +149,11 @@ export interface SearchLocalInput {
   config: AkmConfig;
   /**
    * Optional scope filter (`user`, `agent`, `run`, `channel`). When present,
-   * only entries whose `entry.scope` satisfies every supplied key contribute
+   * only entries whose `entry.scope` satisfies every supplied key (any of a
+   * key's values, when it has several) contribute
    * to the channels before their candidate budgets.
    */
-  filters?: StashEntryScope;
+  filters?: ScopeFilters;
   /**
    * Inclusive `YYYY-MM-DD` bounds on an entry's date: `observed`, else
    * `updated`. Applied with the other eligibility filters, before candidate
@@ -575,7 +576,7 @@ export interface EntryFilterOptions {
   db: Database;
   sources: SearchSource[];
   restrictToSources: boolean;
-  filters?: StashEntryScope;
+  filters?: ScopeFilters;
   since?: string;
   until?: string;
   includeProposed: boolean;
@@ -608,7 +609,7 @@ export function applyEntryFilters<T extends { id: number; entry: IndexDocument; 
   // Scope filter: drop entries whose stored scope does not satisfy every
   // supplied key.
   const scopeFiltered = filters
-    ? sourceFiltered.filter((item) => entryMatchesScope(item.entry.scope, filters))
+    ? sourceFiltered.filter((item) => scopeMatchesFilters(item.entry.scope, filters))
     : sourceFiltered;
   // Date filter: keep entries dated within the inclusive range; undated
   // entries cannot satisfy a bound.
@@ -872,18 +873,4 @@ function deduplicateByPath<T extends { filePath: string }>(items: T[]): T[] {
     seen.add(item.filePath);
     return true;
   });
-}
-
-/**
- * Exact-match scope filter check. Entries without a `scope` object only
- * match when no filter is supplied — which is what the caller guards on
- * before invoking this helper.
- */
-function entryMatchesScope(scope: StashEntryScope | undefined, filters: StashEntryScope): boolean {
-  for (const key of ["user", "agent", "run", "channel"] as const) {
-    const expected = filters[key];
-    if (expected === undefined) continue;
-    if (!scope || scope[key] !== expected) return false;
-  }
-  return true;
 }

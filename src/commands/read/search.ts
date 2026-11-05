@@ -18,7 +18,7 @@ import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
-import type { StashEntryScope } from "../../indexer/passes/metadata";
+import { SCOPE_KEYS, type ScopeFilters } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
 import { searchLocal } from "../../indexer/search/db-search";
 import {
@@ -83,7 +83,7 @@ export async function akmSearch(input: {
    *
    * Eligibility is applied before each channel's candidate budget.
    */
-  filters?: StashEntryScope;
+  filters?: ScopeFilters;
   /** Inclusive `YYYY-MM-DD` bounds on the hit's `observed` date, else `updated`. Local hits only. */
   since?: string;
   until?: string;
@@ -513,32 +513,36 @@ export function parseBeliefFilterMode(value: string | undefined): BeliefFilterMo
 }
 
 /**
- * Strip empty / non-string values from a scope filter object. Returns
- * `undefined` when nothing meaningful remains, so callers don't pay for an
- * empty-filter post-walk in `searchLocal`.
+ * Normalise scope filters to per-key value lists: strings are trimmed, and
+ * empty / non-string values and duplicates are dropped. Returns `undefined`
+ * when nothing meaningful remains, so callers don't pay for an empty-filter
+ * post-walk in `searchLocal`.
  */
-export function normalizeScopeFilters(raw: StashEntryScope | undefined): StashEntryScope | undefined {
+export function normalizeScopeFilters(raw: ScopeFilters | undefined): ScopeFilters | undefined {
   if (!raw) return undefined;
-  const out: StashEntryScope = {};
-  for (const key of ["user", "agent", "run", "channel"] as const) {
-    const value = raw[key];
-    if (typeof value === "string" && value.trim()) {
-      out[key] = value.trim();
+  const out: Record<string, string[]> = {};
+  for (const key of SCOPE_KEYS) {
+    const given = raw[key];
+    const values = new Set<string>();
+    for (const value of Array.isArray(given) ? given : [given]) {
+      if (typeof value === "string" && value.trim()) values.add(value.trim());
     }
+    if (values.size > 0) out[key] = [...values];
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
  * Parse repeated `--filter k=v` argv tokens into a
- * `StashEntryScope`. Throws a {@link UsageError} for malformed tokens
+ * `ScopeFilters`: a repeated key collects all its values (matched as OR; see
+ * `scopeMatchesFilters`). Throws a {@link UsageError} for malformed tokens
  * (missing `=`, unknown key) so callers don't see ambiguous misses.
  *
  * Used by `akm search --filter` and `akm curate --filter`.
  */
-export function parseScopeFilterFlags(values: string[], flagName = "--filter"): StashEntryScope | undefined {
+export function parseScopeFilterFlags(values: string[], flagName = "--filter"): ScopeFilters | undefined {
   if (values.length === 0) return undefined;
-  const out: StashEntryScope = {};
+  const out: Record<string, string[]> = {};
   for (const raw of values) {
     const eq = raw.indexOf("=");
     if (eq <= 0) {
@@ -552,7 +556,7 @@ export function parseScopeFilterFlags(values: string[], flagName = "--filter"): 
     if (!value) {
       throw new UsageError(`${flagName} ${key}=… requires a non-empty value.`);
     }
-    out[key] = value;
+    out[key] = [...(out[key] ?? []), value];
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }
