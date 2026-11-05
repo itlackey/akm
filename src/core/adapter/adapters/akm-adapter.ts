@@ -265,15 +265,16 @@ function indexDocumentFromEntry(
 }
 
 /**
- * True for a Markdown file under `raw/` of an LLM Wiki nested in the bundle (an
- * ancestor holding a root `schema.md` plus `pages/`, the llm-wiki adapter's own
- * probe). Such an immutable ingested snapshot is a `wiki-source`, as it is when
- * the wiki is a bundle of its own; its ref stays the bundle-relative path.
+ * True for a Markdown file under `raw/` of an LLM Wiki in the bundle (the bundle
+ * root or an ancestor holding a root `schema.md` plus `pages/`, the llm-wiki
+ * adapter's own probe). Such an immutable ingested snapshot is a `wiki-source`,
+ * as it is when the wiki is a bundle of its own; its ref stays the
+ * bundle-relative path.
  */
-function isNestedWikiRaw(c: BundleComponent, file: FileContext): boolean {
+function isWikiRaw(c: BundleComponent, file: FileContext): boolean {
   if (file.ext !== ".md") return false;
   const dirs = file.ancestorDirs;
-  for (let i = 1; i < dirs.length; i++) {
+  for (let i = 0; i < dirs.length; i++) {
     if (dirs[i] === "raw" && llmWikiAdapter.looksLikeRoot?.(path.join(c.root, ...dirs.slice(0, i))) === true) {
       return true;
     }
@@ -334,7 +335,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
       // hash doc comment) — an opaque digest, not indexed content.
       hash: hashContent(file.content()),
       adapterId: "akm",
-      type: isNestedWikiRaw(c, file) ? "wiki-source" : match.type,
+      type: isWikiRaw(c, file) ? "wiki-source" : match.type,
     },
     match.renderer,
   );
@@ -468,7 +469,7 @@ export const akmAdapter: BundleAdapter = {
   id: "akm",
   // Bump when a change to the matchers (or `recognize`) can retype or re-ref a
   // file that has not changed, or when the document records new fields from it
-  // (0.9.4: frontmatter dates, #1228; 0.9.5: path refs, #1432; 0.9.6: nested wiki raw/ is wiki-source): the version is
+  // (0.9.4: frontmatter dates, #1228; 0.9.5: path refs, #1432; 0.9.6: a wiki's raw/ is wiki-source): the version is
   // folded into each directory's freshness, so the next incremental `akm index`
   // re-drains it and re-files those rows, including old command refs inferred
   // from body placeholders and loose files' type-folder refs. Vectors are kept

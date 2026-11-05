@@ -460,6 +460,15 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
     expect(recognize("notes/raw/y.md")?.type).toBe("knowledge");
   });
 
+  test("raw/ of a bundle whose root is itself a wiki is `wiki-source`", () => {
+    const root = makeStashWith({ "schema.md": "# schema\n", "pages/p.md": "# page\n", "raw/x.md": "# raw\n" });
+    const c = component({ root, id: "s", adapter: "akm" });
+    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "raw/x.md")))).toMatchObject({
+      type: "wiki-source",
+      ref: "s//raw/x",
+    });
+  });
+
   test("bytes-never-read: the sensitive/vaults abstention never calls content() or frontmatter()", () => {
     const root = makeStashWith({
       "env/ci.env": "API_KEY=secret\n",
