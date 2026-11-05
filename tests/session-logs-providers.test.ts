@@ -687,6 +687,31 @@ describe("OpenCodeProvider.listSessions (opencode.db)", () => {
     });
   });
 
+  test("leaves akm's own model-work sessions out when the store records the agent", async () => {
+    const base = makeTempDir("akm-opencode-db-model-work-");
+    const mk = (id: string, updated: number) => ({
+      id,
+      title: id,
+      directory: "/d",
+      created: updated - 1000,
+      updated,
+      messages: [],
+    });
+    const dbPath = writeOpenCodeDb(base, [
+      mk("ses_user", 1700001000000),
+      mk("ses_work", 1700002000000),
+      mk("ses_none", 1700003000000),
+    ]);
+    const db = openDatabase(dbPath);
+    db.exec("ALTER TABLE session ADD COLUMN agent TEXT");
+    db.run("UPDATE session SET agent = 'build' WHERE id = 'ses_user'");
+    db.run("UPDATE session SET agent = 'akm-model-work' WHERE id = 'ses_work'");
+    db.close();
+
+    const sessions = await new OpenCodeProvider().listSessions({ location: base });
+    expect(sessions.map((s) => s.sessionId)).toEqual(["ses_none", "ses_user"]);
+  });
+
   test("uses the sole opencode.db session store", async () => {
     const base = makeTempDir("akm-opencode-db-only-");
     writeOpenCodeDb(base, [

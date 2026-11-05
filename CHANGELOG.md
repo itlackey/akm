@@ -23,6 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rendering them, and `--from <name>` narrows curate's checks by the rule search uses.
   `akm search --detail full` hits carry `itemRef`, the durable `bundle//conceptId`.
 
+- OpenCode 1 model work is limited to reading and searching, as on OpenCode 2 (#1428): its
+  `akm-model-work` agent denies every tool but `read`, `glob` and `grep`, and the akm plugin's
+  `akm_search`, `akm_show` and `akm_curate`. OpenCode 1 refuses a call to a denied tool, not only
+  leaves it out (measured on 1.18.25 for a built-in, a plugin's and an MCP server's tool), and the
+  tool schemas sent per call fall from about 20,300 to 4,000 characters. The "OpenCode 1 cannot
+  restrict its tools" warning is gone, and `akm setup --yes` hands model calls to OpenCode 1 as it
+  does to OpenCode 2 instead of saving it as `modelWork: false`.
+
+### Fixed
+
+- improve and `akm proposal extract` leave akm's own OpenCode 1 model-work sessions out of the
+  sessions they read, as they do for OpenCode 2, where OpenCode 1 records the session's agent
+  (#1428).
+
 ## [0.10.261106] - 2026-11-04
 
 ### Added

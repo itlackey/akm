@@ -325,17 +325,6 @@ describe("akm setup --yes defaults", () => {
     });
   });
 
-  test("OpenCode 1 cannot be restricted: it is saved as off for model calls, and the summary says what that means", async () => {
-    installed("opencode");
-
-    const summary = await withOpencodeOnPath(1, () => run());
-
-    expect(written().harnesses).toEqual({ opencode: { modelWork: false } });
-    expect(summary.runs.modelCalls).toContain('harness "opencode" is set not to take model calls');
-    expect(summary.runs.agentWork).toContain('harness "opencode"');
-    expect(summary.runs.agentWork).not.toContain("limited to reading and searching");
-  });
-
   test("OpenCode 2 can be restricted: it takes the model calls, its tools limited, and is not marked", async () => {
     installed("opencode");
 
@@ -343,28 +332,6 @@ describe("akm setup --yes defaults", () => {
 
     expect(written().harnesses).toEqual({ opencode: {} });
     expect(summary.runs.modelCalls).toBe('harness "opencode", limited to reading and searching');
-  });
-
-  test("the configured bin decides, not the opencode on PATH: OpenCode 1 there is saved as off for model calls, OpenCode 2 there takes them", async () => {
-    installed("opencode");
-    const pathHas = (major: 1 | 2, configured: 1 | 2) =>
-      fakeOpencodeMajor((bin) =>
-        (bin === "/opt/opencode-configured" ? configured : major) === 1 ? "1.19.4" : "opencode v2.1.4",
-      );
-
-    pathHas(2, 1);
-    writeSandboxConfig({ semanticSearchMode: "off", harnesses: { opencode: { bin: "/opt/opencode-configured" } } });
-    resetConfigCache();
-    const unrestricted = await run();
-    expect(written().harnesses).toEqual({ opencode: { bin: "/opt/opencode-configured", modelWork: false } });
-    expect(unrestricted.runs.modelCalls).toContain('harness "opencode" is set not to take model calls');
-
-    pathHas(1, 2);
-    writeSandboxConfig({ semanticSearchMode: "off", harnesses: { opencode: { bin: "/opt/opencode-configured" } } });
-    resetConfigCache();
-    const restricted = await run();
-    expect(written().harnesses).toEqual({ opencode: { bin: "/opt/opencode-configured" } });
-    expect(restricted.runs.modelCalls).toBe('harness "opencode", limited to reading and searching');
   });
 
   test("a second run over that config changes nothing, and the hand-written setting is kept", async () => {

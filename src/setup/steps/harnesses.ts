@@ -38,8 +38,8 @@ export interface HarnessStepInput {
   interactive: boolean;
 }
 
-function readOnlyNote(platform: string, bin?: string): string {
-  return runsReadOnly(platform, bin)
+function readOnlyNote(platform: string): string {
+  return runsReadOnly(platform)
     ? "model calls are limited to reading and searching"
     : "model calls cannot be restricted to read-only";
 }
@@ -52,12 +52,6 @@ function configuredPlatforms(current: AkmConfig): string[] {
 function currentDefaultPlatform(current: AkmConfig): string | undefined {
   const found = defaultHarness(current);
   return found ? (found.harness.platform ?? found.name) : undefined;
-}
-
-/** The `bin` the config sets for the first entry of `platform`, if it sets one: the program setup will judge. */
-function configuredBin(current: AkmConfig, platform: string): string | undefined {
-  return Object.entries(current.harnesses ?? {}).find(([name, harness]) => (harness.platform ?? name) === platform)?.[1]
-    .bin;
 }
 
 /** The harness agent work runs on once `answer` is applied: the entry the config will hold, with its own `bin`. */
@@ -99,7 +93,7 @@ export async function stepHarnesses(input: HarnessStepInput): Promise<HarnessSte
     return result(false);
   }
   const defaultPlatform = selected.harness.platform ?? selected.name;
-  const readOnly = runsReadOnly(defaultPlatform, selected.harness.bin);
+  const readOnly = runsReadOnly(defaultPlatform);
   // A saved `modelWork: false` is the user's choice: only the question's "yes" changes it, never a default.
   const declined = selected.harness.modelWork === false;
   if (!input.interactive) return declined ? result(false, false) : result(readOnly, readOnly);
@@ -134,7 +128,7 @@ async function askHarnesses(
       options: candidates.map((platform) => ({
         value: platform,
         label: getHarness(platform)?.displayName ?? platform,
-        hint: `${installed.find((harness) => harness.platform === platform)?.path ?? "not found on PATH"}; ${readOnlyNote(platform, configuredBin(current, platform))}`,
+        hint: `${installed.find((harness) => harness.platform === platform)?.path ?? "not found on PATH"}; ${readOnlyNote(platform)}`,
       })),
       initialValues: configured.length > 0 ? [...configured] : installedPlatforms,
       required: false,

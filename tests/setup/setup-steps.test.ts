@@ -107,131 +107,29 @@ describe("stepHarnesses", () => {
     expect(prompts.of("confirm")[1]?.message).toContain("Model calls are limited to reading and searching.");
   });
 
-  test("OpenCode 1 cannot be restricted, whatever the platform table says: the hint, the question, the note beside the answer and --yes all say so", async () => {
-    await withOpencodeOnPath(1, async () => {
-      prompts.answers.multiselect.push(["opencode"]);
-      prompts.answers.confirm.push(true);
+  test("OpenCode can, on either major: the hint and the question say its tools are limited, no note is added, and --yes hands it model calls", async () => {
+    for (const major of [1, 2] as const) {
+      await withOpencodeOnPath(major, async () => {
+        prompts.answers.multiselect.push(["opencode"]);
+        prompts.answers.confirm.push(true);
 
-      const result = await stepHarnesses(input({ installed: installed("opencode") }));
+        const result = await stepHarnesses(input({ installed: installed("opencode") }));
 
-      expect(prompts.of("multiselect")[0]?.options[0]?.hint).toContain("cannot be restricted to read-only");
-      expect(prompts.of("confirm")[0]?.message).toContain(
-        "Model work on opencode cannot be restricted: it can edit files and run commands.",
-      );
-      expect(prompts.of("confirm")[0]?.message).not.toContain("Model calls are limited to reading and searching.");
-      expect(prompts.output).toContain(
-        "Model work on opencode cannot be restricted: it can edit files and run commands.",
-      );
-      expect(result).toEqual({
-        answer: { platforms: ["opencode"], default: "opencode" },
-        modelCallsOnHarness: true,
-        modelWork: true,
-      });
+        expect(prompts.of("multiselect").at(-1)?.options[0]?.hint).toContain(
+          "model calls are limited to reading and searching",
+        );
+        expect(prompts.of("confirm").at(-1)?.message).toContain("Model calls are limited to reading and searching.");
+        expect(prompts.output.filter((line) => line.includes("cannot be restricted"))).toEqual([]);
+        expect(result.modelWork).toBe(true);
 
-      // --yes does not hand model calls to it.
-      const yes = await stepHarnesses(input({ interactive: false, installed: installed("opencode") }));
-      expect(yes).toEqual({
-        answer: { platforms: ["opencode"], default: "opencode" },
-        modelCallsOnHarness: false,
-        modelWork: false,
-      });
-    });
-  });
-
-  test("OpenCode 2 can: the hint and the question say its tools are limited, no note is added, and --yes hands it model calls", async () => {
-    await withOpencodeOnPath(2, async () => {
-      prompts.answers.multiselect.push(["opencode"]);
-      prompts.answers.confirm.push(true);
-
-      const result = await stepHarnesses(input({ installed: installed("opencode") }));
-
-      expect(prompts.of("multiselect")[0]?.options[0]?.hint).toContain(
-        "model calls are limited to reading and searching",
-      );
-      expect(prompts.of("confirm")[0]?.message).toContain("Model calls are limited to reading and searching.");
-      expect(prompts.output.filter((line) => line.includes("cannot be restricted"))).toEqual([]);
-      expect(result.modelWork).toBe(true);
-
-      const yes = await stepHarnesses(input({ interactive: false, installed: installed("opencode") }));
-      expect(yes).toEqual({
-        answer: { platforms: ["opencode"], default: "opencode" },
-        modelCallsOnHarness: true,
-        modelWork: true,
-      });
-    });
-  });
-
-  // The configured `bin` is OpenCode `configured`, the `opencode` on PATH is the other major.
-  const opencodeBin = (configured: 1 | 2) =>
-    fakeOpencodeMajor((bin) => {
-      const major = bin === "/opt/opencode-configured" ? configured : configured === 1 ? 2 : 1;
-      return major === 1 ? "1.19.4" : "opencode v2.1.4";
-    });
-  const configuredOpencode = () => cfg({ harnesses: { opencode: { bin: "/opt/opencode-configured" } } });
-
-  test("the configured bin is the one judged: OpenCode 1 there, 2 on PATH: --yes does not hand it model calls", async () => {
-    opencodeBin(1);
-
-    const yes = await stepHarnesses(
-      input({ interactive: false, current: configuredOpencode(), installed: installed("opencode") }),
-    );
-
-    expect(yes).toEqual({ modelCallsOnHarness: false, modelWork: false });
-  });
-
-  test("the configured bin is the one judged: OpenCode 2 there, 1 on PATH: --yes hands it model calls", async () => {
-    opencodeBin(2);
-
-    const yes = await stepHarnesses(
-      input({ interactive: false, current: configuredOpencode(), installed: installed("opencode") }),
-    );
-
-    expect(yes).toEqual({ modelCallsOnHarness: true, modelWork: true });
-  });
-
-  test("the configured bin is the one judged, interactively: the hint, the question and the note follow it, whichever major PATH has", async () => {
-    for (const [configured, restricted] of [
-      [1, false],
-      [2, true],
-    ] as const) {
-      opencodeBin(configured);
-      prompts.answers.multiselect.push(["opencode"]);
-      prompts.answers.confirm.push(true);
-
-      const result = await stepHarnesses(input({ current: configuredOpencode(), installed: installed("opencode") }));
-
-      const hint = prompts.of("multiselect").at(-1)?.options[0]?.hint;
-      const question = prompts.of("confirm").at(-1)?.message;
-      expect(hint).toContain(
-        restricted ? "model calls are limited to reading and searching" : "cannot be restricted to read-only",
-      );
-      expect(question).toContain(
-        restricted
-          ? "Model calls are limited to reading and searching."
-          : "Model work on opencode cannot be restricted",
-      );
-      expect(result).toEqual({
-        answer: { platforms: ["opencode"], default: "opencode" },
-        modelCallsOnHarness: true,
-        modelWork: true,
+        const yes = await stepHarnesses(input({ interactive: false, installed: installed("opencode") }));
+        expect(yes).toEqual({
+          answer: { platforms: ["opencode"], default: "opencode" },
+          modelCallsOnHarness: true,
+          modelWork: true,
+        });
       });
     }
-  });
-
-  test("the bin an enabled entry sets is judged when an answer makes it the default among several", async () => {
-    opencodeBin(1);
-    prompts.answers.multiselect.push(["claude", "opencode"]);
-    prompts.answers.select.push("opencode");
-    prompts.answers.confirm.push(true);
-
-    await stepHarnesses(
-      input({
-        current: cfg({ harnesses: { claude: {}, opencode: { bin: "/opt/opencode-configured" } } }),
-        installed: installed("claude", "opencode"),
-      }),
-    );
-
-    expect(prompts.of("confirm")[0]?.message).toContain("Model work on opencode cannot be restricted");
   });
 
   test("a saved modelWork: false is not a default to reset: --yes keeps it, and the question starts at No", async () => {
