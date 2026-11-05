@@ -22,6 +22,7 @@ function curate(
   options?: {
     limit?: number; type?: string; source?: string;
     filters?: { user?: string; agent?: string; run?: string; channel?: string };
+    prefer?: { user?: string; agent?: string; run?: string; channel?: string };
     belief?: "all" | "current" | "historical";
     format?: "text" | "json";
   },
@@ -37,7 +38,9 @@ function curate(
 - **Recall controls.** `source` is CLI `--from` (local, registry, all, or a named
   bundle); `filters` uses the same scope keys and rule
   as repeated CLI `--filter key=value`: each key takes a value or a list, a list
-  matches any of its values, and different keys must all match. `belief` defaults to `"current"`, keeping
+  matches any of its values, and different keys must all match. `prefer` takes
+  the same shape as CLI `--prefer`: matching hits rank slightly higher and
+  nothing is dropped or admitted. `belief` defaults to `"current"`, keeping
   unflagged reference knowledge and active/asserted assets. These labels do not
   prove factual truth. Explicit `"all"` and `"historical"` support investigations.
   The policy also applies to derived surfaces, support refs and content reads;

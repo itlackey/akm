@@ -229,6 +229,7 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
   const recall: RecallOptions = {
     source: options.source ?? "local",
     filters: normalizeScopeFilters(options.filters),
+    prefer: normalizeScopeFilters(options.prefer),
     belief: parseBeliefFilterMode(options.belief ?? "current"),
   };
   const nonTask = nonTaskInput(trimmedQuery);
@@ -256,6 +257,7 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
       limit: Math.max(limit, rerankTopN(loadConfig())),
       source,
       filters: recall.filters,
+      prefer: recall.prefer,
       belief: recall.belief,
       skipLogging: true,
     }));

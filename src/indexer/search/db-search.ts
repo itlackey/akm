@@ -58,6 +58,7 @@ import { countFeedbackSignalsByRef } from "../usage/usage-events";
 import { ftsQueryTokens, parseRefPrefixQuery } from "./fts-query";
 import {
   applyFeedback,
+  applyPrefer,
   applyRecency,
   type FeedbackCounts,
   type FusedCandidate,
@@ -154,6 +155,12 @@ export interface SearchLocalInput {
    * to the channels before their candidate budgets.
    */
   filters?: ScopeFilters;
+  /**
+   * Optional scope preference, matched like `filters`. It never drops or admits
+   * an entry: matching hits rank first (a score boost when scored, a stable
+   * reorder when browsing).
+   */
+  prefer?: ScopeFilters;
   /**
    * Inclusive `YYYY-MM-DD` bounds on an entry's date: `observed`, else
    * `updated`. Applied with the other eligibility filters, before candidate
@@ -279,7 +286,7 @@ async function searchDatabase(
   semanticWarning?: string;
   feedbackWarning?: string;
 }> {
-  const { query, searchType, limit, stashDir, sources, config, filters } = input;
+  const { query, searchType, limit, stashDir, sources, config, filters, prefer } = input;
   const filterOptions = {
     db,
     sources,
@@ -311,6 +318,7 @@ async function searchDatabase(
       hits: await enumerateEntries({
         ...filterOptions,
         limit,
+        prefer,
         stashDir,
         config,
         excludeTypes: [],
@@ -328,6 +336,7 @@ async function searchDatabase(
       hits: await enumerateEntries({
         ...filterOptions,
         limit,
+        prefer,
         stashDir,
         config,
         typeFilter: searchType === "any" ? undefined : searchType,
@@ -355,7 +364,11 @@ async function searchDatabase(
   const vectorCandidates = vector.neighbors ? keepAllowedTypes(db, vector.neighbors, typeFilter, defaultExcludes) : [];
   const rrf = reciprocalRankFusion([lexical, vectorCandidates]);
   const feedback = readFeedback(rrf);
-  const fused = applyRecency(applyFeedback(rrf, feedback.counts), readEntryDays(db, rrf));
+  const feedbackRanked = applyFeedback(rrf, feedback.counts);
+  const fused = applyRecency(
+    prefer ? applyPrefer(feedbackRanked, readPreferred(db, feedbackRanked, prefer)) : feedbackRanked,
+    readEntryDays(db, rrf),
+  );
   const selected = selectFusedEntries(db, fused, limit, filterOptions);
   const rankMs = Date.now() - tRank0;
 
@@ -403,6 +416,18 @@ function readFeedback(fused: readonly FusedCandidate[]): { counts: Map<string, F
     };
   }
   return { counts };
+}
+
+/** The `itemRef`s of the fused candidates whose scope matches the preference. */
+function readPreferred(db: Database, fused: readonly FusedCandidate[], prefer: ScopeFilters): Set<string> {
+  const preferred = new Set<string>();
+  for (const { itemRef, entry } of getEntriesByIds(
+    db,
+    fused.map((candidate) => candidate.id),
+  )) {
+    if (scopeMatchesFilters(entry.scope, prefer)) preferred.add(itemRef);
+  }
+  return preferred;
 }
 
 /** The date of each fused candidate that has one, by entry id. */
@@ -499,7 +524,8 @@ const EMPTY_RESULT_TIP = "No matching stash assets were found. Try a different q
  * `bundle//`, `bundle//skills/`). Applies the same filters as the scored
  * path (source narrowing, scope, proposed-quality, belief) before the limit
  * slice. Hits carry the fixed browse score 1 in type-then-name order — this is
- * a deterministic listing, not a relevance ranking.
+ * a deterministic listing, not a relevance ranking. A preference moves its
+ * matches to the front of that order, before the limit slice.
  */
 async function enumerateEntries(
   opts: EntryFilterOptions & {
@@ -520,6 +546,7 @@ async function enumerateEntries(
      */
     bundle?: string;
     limit: number;
+    prefer?: ScopeFilters;
     stashDir: string;
     config: AkmConfig;
   },
@@ -552,7 +579,15 @@ async function enumerateEntries(
   // Deduplicate by file path — multiple entries can share the same file.
   // Filtering happens BEFORE the limit slice so a restrictive filter still
   // returns up to `limit` results.
-  const selected = applyEntryFilters(deduplicateByPath(prefixFiltered), opts).slice(0, opts.limit);
+  const eligible = applyEntryFilters(deduplicateByPath(prefixFiltered), opts);
+  const { prefer } = opts;
+  const ordered = prefer
+    ? [
+        ...eligible.filter((ie) => scopeMatchesFilters(ie.entry.scope, prefer)),
+        ...eligible.filter((ie) => !scopeMatchesFilters(ie.entry.scope, prefer)),
+      ]
+    : eligible;
+  const selected = ordered.slice(0, opts.limit);
   return Promise.all(
     selected.map((ie) =>
       buildDbHit({
