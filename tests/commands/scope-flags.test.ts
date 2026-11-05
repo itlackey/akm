@@ -5,20 +5,20 @@
  *   - `akm remember --user --agent --run --channel` writes the canonical
  *     `scope_*` top-level frontmatter keys.
  *   - `akm search --filter k=v` narrows results without changing ranking.
- *   - `akm show --filter k=v` resolves to scoped assets and rejects
- *     out-of-scope ones with NotFoundError.
+ *   - `akm show` reads a scoped asset whatever the caller's scope, and
+ *     rejects `--filter` as an unknown flag.
  *   - Legacy memories without scope keys still match unfiltered queries.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmSearch, entryMatchesScopeFilters, parseScopeFilterFlags } from "../../src/commands/read/search";
+import { akmSearch, parseScopeFilterFlags } from "../../src/commands/read/search";
 import { akmShowUnified } from "../../src/commands/read/show";
 import { buildMemoryFrontmatter } from "../../src/commands/remember";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { saveConfig } from "../../src/core/config/config";
-import { NotFoundError, UsageError } from "../../src/core/errors";
+import { UsageError } from "../../src/core/errors";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { runCliCapture } from "../_helpers/cli";
@@ -129,24 +129,6 @@ describe("parseScopeFilterFlags", () => {
   });
 });
 
-describe("entryMatchesScopeFilters", () => {
-  test("returns true when no filter supplied (legacy entries match)", () => {
-    expect(entryMatchesScopeFilters(undefined, undefined)).toBe(true);
-    expect(entryMatchesScopeFilters({ user: "alice" }, undefined)).toBe(true);
-  });
-
-  test("returns false when entry lacks the filtered key", () => {
-    expect(entryMatchesScopeFilters(undefined, { user: "alice" })).toBe(false);
-    expect(entryMatchesScopeFilters({ agent: "claude" }, { user: "alice" })).toBe(false);
-  });
-
-  test("AND-joins multiple filter keys", () => {
-    const scope = { user: "alice", agent: "claude" };
-    expect(entryMatchesScopeFilters(scope, { user: "alice", agent: "claude" })).toBe(true);
-    expect(entryMatchesScopeFilters(scope, { user: "alice", agent: "other" })).toBe(false);
-  });
-});
-
 // ── End-to-end via akmIndex + akmSearch / akmShow ─────────────────────────
 
 describe("akm search --filter narrows by scope", () => {
@@ -224,69 +206,22 @@ describe("akm search --filter narrows by scope", () => {
   });
 });
 
-describe("akm show --filter narrows resolution", () => {
-  test("returns the asset when scope matches", async () => {
+describe("akm show is a direct reader and never filters", () => {
+  test("shows a scoped asset whatever the caller's scope", async () => {
     const stashDir = tmpStash();
     saveConfig({ semanticSearchMode: "off" });
-
     writeFile(
       path.join(stashDir, "memories", "scoped.md"),
-      "---\ntags: [scoped]\nscope_user: alice\nscope_agent: claude\n---\nAlice's note\n",
+      "---\ntags: [scoped]\nscope_user: alice\n---\nAlice's note\n",
     );
-
-    await akmIndex({ stashDir, full: true });
-
-    const result = await akmShowUnified({
-      ref: "memories/scoped",
-      scope: { user: "alice" },
-    });
-    expect(result.name).toBe("scoped");
-  });
-
-  test("throws NotFoundError when scope does not match and body content is not leaked", async () => {
-    const stashDir = tmpStash();
-    saveConfig({ semanticSearchMode: "off" });
-
-    const SECRET_BODY = "ALICE_SECRET_DEPLOY_TOKEN_XYZ123";
-    writeFile(
-      path.join(stashDir, "memories", "scoped.md"),
-      `---\ntags: [scoped]\nscope_user: alice\n---\n${SECRET_BODY}\n`,
-    );
-
-    await akmIndex({ stashDir, full: true });
-
-    let thrown: unknown;
-    let returned: unknown;
-    try {
-      returned = await akmShowUnified({ ref: "memories/scoped", scope: { user: "bob" } });
-    } catch (err) {
-      thrown = err;
-    }
-    expect(returned).toBeUndefined();
-    expect(thrown).toBeInstanceOf(NotFoundError);
-    // Crucial leak-prevention guarantee: the out-of-scope body must NOT appear
-    // anywhere in the thrown error's message, name, or stack.
-    const err = thrown as Error;
-    expect(err.message).not.toContain(SECRET_BODY);
-    expect(err.name).not.toContain(SECRET_BODY);
-    expect(String(err.stack ?? "")).not.toContain(SECRET_BODY);
-    expect(JSON.stringify({ ok: false, error: err.message })).not.toContain(SECRET_BODY);
-  });
-
-  test("throws NotFoundError when asset has no scope but a scope filter is supplied", async () => {
-    const stashDir = tmpStash();
-    saveConfig({ semanticSearchMode: "off" });
-
     writeFile(path.join(stashDir, "memories", "legacy.md"), "---\ntags: [legacy]\n---\nLegacy\n");
-
     await akmIndex({ stashDir, full: true });
 
-    await expect(akmShowUnified({ ref: "memories/legacy", scope: { user: "alice" } })).rejects.toBeInstanceOf(
-      NotFoundError,
-    );
+    expect((await akmShowUnified({ ref: "memories/scoped" })).name).toBe("scoped");
+    expect((await akmShowUnified({ ref: "memories/legacy" })).name).toBe("legacy");
   });
 
-  test("the CLI spelling is --filter, and the removed --scope fails loudly", async () => {
+  test("the CLI shows a scoped asset, and --filter and the removed --scope are unknown flags", async () => {
     const stashDir = tmpStash();
     saveConfig({ semanticSearchMode: "off" });
     writeFile(
@@ -295,16 +230,13 @@ describe("akm show --filter narrows resolution", () => {
     );
     await akmIndex({ stashDir, full: true });
 
-    const filtered = await runCliCapture(["show", "memories/cli-scoped", "--filter", "user=alice", "--format", "json"]);
-    expect(filtered.code).toBe(0);
+    const shown = await runCliCapture(["show", "memories/cli-scoped", "--format", "json"]);
+    expect(shown.code).toBe(0);
 
-    const mismatch = await runCliCapture(["show", "memories/cli-scoped", "--filter", "user=bob", "--format", "json"]);
-    expect(mismatch.code).toBe(1);
+    const filtered = await runCliCapture(["show", "memories/cli-scoped", "--filter", "user=bob", "--format", "json"]);
+    expect(filtered.code).toBe(2);
+    expect(filtered.stderr).toContain('Unknown flag "--filter"');
 
-    // `--scope` was removed with no alias (R-047 ruling). citty treats the
-    // unknown flag as a boolean, its value lands in the positional slot, and
-    // the extra-positional guard rejects it — a loud usage error, not a silent
-    // un-narrowed resolution.
     const removed = await runCliCapture(["show", "memories/cli-scoped", "--scope", "user=alice", "--format", "json"]);
     expect(removed.code).toBe(2);
   });

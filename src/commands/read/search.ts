@@ -163,7 +163,7 @@ export async function akmSearch(input: {
   // `resolveSourceEntries` sets `registryId` to `entry.name` for each config source.
   if (namedSourceName !== undefined) {
     const ns = namedSourceName;
-    allSources = allSources.filter((s) => s.registryId === ns || s.path === ns);
+    allSources = narrowSourcesToName(allSources, ns);
     // allSources may still be empty if the configured source dir doesn't exist on
     // disk (resolveSourceEntries skips non-existent dirs). Fall through to the
     // zero-sources guard below which emits a friendly warning.
@@ -309,6 +309,11 @@ function maybeLogSearchEvent(
 ): void {
   if (input.skipLogging || input.readOnly) return;
   logSearchEvent(query, response, mode, input.eventSource, input.attributionProjection);
+}
+
+/** The sources a named `--from <name>` selects: matched on `registryId` or path. */
+export function narrowSourcesToName<T extends { registryId?: string; path: string }>(sources: T[], name: string): T[] {
+  return sources.filter((s) => s.registryId === name || s.path === name);
 }
 
 /**
@@ -529,8 +534,7 @@ export function normalizeScopeFilters(raw: StashEntryScope | undefined): StashEn
  * `StashEntryScope`. Throws a {@link UsageError} for malformed tokens
  * (missing `=`, unknown key) so callers don't see ambiguous misses.
  *
- * Used by both `akm search --filter` and `akm show --filter` — the two
- * commands share one spelling for the scope-narrowing axis.
+ * Used by `akm search --filter` and `akm curate --filter`.
  */
 export function parseScopeFilterFlags(values: string[], flagName = "--filter"): StashEntryScope | undefined {
   if (values.length === 0) return undefined;
@@ -551,27 +555,4 @@ export function parseScopeFilterFlags(values: string[], flagName = "--filter"): 
     out[key] = value;
   }
   return Object.keys(out).length > 0 ? out : undefined;
-}
-
-/**
- * Returns true iff `entry.scope` (when present) satisfies every key in
- * `filters`. A missing `entry.scope` only matches when `filters` is empty or
- * undefined.
- *
- * Filter semantics:
- *   - No filter passed → all entries match.
- *   - `filters.user = "alice"` → entry must have `scope.user === "alice"`.
- *   - Multiple keys → AND-joined; every supplied key must match.
- */
-export function entryMatchesScopeFilters(
-  scope: StashEntryScope | undefined,
-  filters: StashEntryScope | undefined,
-): boolean {
-  if (!filters) return true;
-  for (const key of ["user", "agent", "run", "channel"] as const) {
-    const expected = filters[key];
-    if (expected === undefined) continue;
-    if (!scope || scope[key] !== expected) return false;
-  }
-  return true;
 }

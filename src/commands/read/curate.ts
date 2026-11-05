@@ -18,7 +18,9 @@
  * drive `curateSearchResults` with a fixture search response.
  */
 
+import fs from "node:fs";
 import { parseBundleRef } from "../../core/asset/asset-ref";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
@@ -26,7 +28,15 @@ import { appendEvent } from "../../core/events";
 import { nonTaskInput } from "../../core/non-task-input";
 import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
-import { matchBeliefFilter, searchHitContent } from "../../indexer/search/db-search";
+import { lookupBundleRef } from "../../indexer/indexer";
+import { applyCuratedFrontmatter } from "../../indexer/passes/metadata";
+import { resolveReadSources } from "../../indexer/read-preflight";
+import {
+  applyEntryFilters,
+  type EntryFilterOptions,
+  matchBeliefFilter,
+  searchHitContent,
+} from "../../indexer/search/db-search";
 import {
   type AttributionProjection,
   copySearchHitAttribution,
@@ -46,12 +56,14 @@ import type {
   SourceSearchHit,
 } from "../../sources/types";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
+import { findEntryIdByRef, getEntryById, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import {
-  findEntryIdByRef,
-  getEntryIdByFilePath,
-  getItemRefById,
-} from "../../storage/repositories/index-entries-repository";
-import { akmSearch, normalizeScopeFilters, parseBeliefFilterMode, parseSearchSource } from "./search";
+  akmSearch,
+  narrowSourcesToName,
+  normalizeScopeFilters,
+  parseBeliefFilterMode,
+  parseSearchSource,
+} from "./search";
 import { akmShowUnified } from "./show";
 
 export type CurateSupportRef = {
@@ -132,8 +144,8 @@ export interface CurateOptions extends RecallOptions {
   skipLogging?: boolean;
 }
 
-// Keep the effective policy with the result through packing without changing JSON.
-const recallPolicies = new WeakMap<CurateResponse, RecallOptions>();
+/** The run's explicit filters, built once in {@link akmCurate} and checked against every hit and link. */
+type EvidencePolicy = Omit<EntryFilterOptions, "db">;
 const DEFAULT_CURATE_LIMIT = 4;
 const MAX_CURATE_SUPPORT_REFS = 2;
 /** Fused candidates the reranker reorders when `search.curateRerank.topN` is unset. */
@@ -216,7 +228,6 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
   }
 
   const recall: RecallOptions = {
-    type: options.type,
     source: options.source ?? "local",
     filters: normalizeScopeFilters(options.filters),
     belief: parseBeliefFilterMode(options.belief ?? "current"),
@@ -255,13 +266,56 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
     limit,
     options.type,
     options.eventSource,
-    options.searchResponse ? undefined : recall,
+    options.searchResponse || source === "registry" ? undefined : evidencePolicy(recall),
   );
-  recallPolicies.set(result, recall);
   if (!options.skipLogging) {
     logCurateEvent(options.query, result, options.eventSource, options.attributionProjection);
   }
   return result;
+}
+
+function evidencePolicy(recall: RecallOptions): EvidencePolicy {
+  const allSources = resolveReadSources().sources;
+  const named = recall.source && !["local", "all"].includes(recall.source) ? recall.source : undefined;
+  return {
+    sources: named === undefined ? allSources : narrowSourcesToName(allSources, named),
+    restrictToSources: true,
+    filters: recall.filters,
+    includeProposed: false,
+    beliefFilter: recall.belief ?? "current",
+  };
+}
+
+/**
+ * Whether a ref still satisfies the run's filters, judged on the indexed row
+ * with the live file's frontmatter laid over it (scope cleared first, so a
+ * scope or belief changed after indexing is not restored from the index). Gives
+ * the durable ref to show and the belief state; undefined when the entry or its
+ * file is gone or no longer eligible. Callers drop such a hit, never show it
+ * unfiltered.
+ */
+function eligibleEvidence(ref: string, policy: EvidencePolicy): { itemRef: string; beliefState?: string } | undefined {
+  return withIndexDb((db) => {
+    const id = findEntryIdByRef(db, ref);
+    const row = id === undefined ? undefined : getEntryById(db, id);
+    if (!row || id === undefined) return undefined;
+    let raw: string;
+    try {
+      raw = fs.readFileSync(row.filePath, "utf8");
+    } catch {
+      return undefined;
+    }
+    const entry = { ...row.entry, scope: undefined };
+    applyCuratedFrontmatter(entry, parseFrontmatter(raw).data);
+    const kept = applyEntryFilters([{ ...row, id, entry }], { ...policy, db });
+    return kept.length > 0 ? { itemRef: row.itemRef, beliefState: entry.beliefState } : undefined;
+  });
+}
+
+/** `ref`'s fragment, if any, on the durable `itemRef`. */
+function withFragmentOf(itemRef: string, ref: string): string {
+  const fragment = parseBundleRef(ref).fragment;
+  return fragment ? `${itemRef}#${fragment}` : itemRef;
 }
 
 export async function curateSearchResults(
@@ -270,7 +324,7 @@ export async function curateSearchResults(
   limit: number,
   selectedType?: string,
   eventSource?: UsageEventSource,
-  recall?: RecallOptions,
+  policy?: EvidencePolicy,
 ): Promise<CurateResponse> {
   const allStashHits = result.hits.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
   const registryHits = result.registryHits ?? [];
@@ -288,21 +342,12 @@ export async function curateSearchResults(
   // at a bare literal 2 — the remaining slots after stash hits ARE the cap.
   const selectedRegistryHits =
     selectedStashHits.length >= limit ? [] : registryHits.slice(0, limit - selectedStashHits.length);
-  const selectedRefs = new Set(
-    selectedStashHits.flatMap((hit) => {
-      if (!recall) return [hit.ref];
-      try {
-        return [hit.ref, evidenceRef(hit)];
-      } catch {
-        return [hit.ref]; // no longer indexed: enrichCuratedStashHit drops it
-      }
-    }),
-  );
+  const selectedRefs = new Set(selectedStashHits.flatMap((hit) => (hit.itemRef ? [hit.ref, hit.itemRef] : [hit.ref])));
 
   const items = [
     ...(
       await Promise.all(
-        selectedStashHits.map((hit) => enrichCuratedStashHit(query, hit, selectedRefs, eventSource, recall)),
+        selectedStashHits.map((hit) => enrichCuratedStashHit(query, hit, selectedRefs, eventSource, policy)),
       )
     ).filter((item): item is CuratedStashItem => item !== undefined),
     ...selectedRegistryHits.map((hit) => buildCuratedRegistryItem(query, hit)),
@@ -353,19 +398,16 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
   let used = 0;
 
   for (const item of stashItems) {
-    let shown: ShowResponse | undefined;
+    // The items are the ones curate just validated, so they are shown as they are.
+    let shown: ShowResponse;
     try {
-      shown = await akmShowUnified({
-        ref: evidenceRef(item),
-        skipLogging: true,
-        recall: recallPolicies.get(result) ?? { belief: "current" },
-      });
+      shown = await akmShowUnified({ ref: item.ref, skipLogging: true });
     } catch {
       continue;
     }
-    const historical = matchBeliefFilter(shown.beliefState, "historical");
+    const historical = matchBeliefFilter(item.beliefState, "historical");
     const context = {
-      ...(shown.beliefState ? { beliefState: shown.beliefState } : {}),
+      ...(item.beliefState ? { beliefState: item.beliefState } : {}),
       ...(historical ? { reason: "Historical context; not current supporting authority." } : {}),
     };
     const content = shown.content ?? shown.template ?? shown.prompt ?? "";
@@ -391,38 +433,32 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
   return { query: result.query, budget: budgetTokens, tokens: used, items: packed };
 }
 
-function evidenceRef(item: { ref: string; path: string }): string {
-  return withIndexDb((db) => {
-    const id = getEntryIdByFilePath(db, item.path);
-    const ref = id === undefined ? undefined : getItemRefById(db, id);
-    if (!ref) {
-      if (item.path) throw new UsageError(`Indexed asset no longer available: ${item.ref}`);
-      return item.ref;
-    }
-    const fragment = parseBundleRef(item.ref).fragment;
-    return fragment ? `${ref}#${fragment}` : ref;
-  });
-}
-
 async function enrichCuratedStashHit(
   query: string,
   hit: SourceSearchHit,
   selectedRefs: Set<string>,
   eventSource?: UsageEventSource,
-  recall?: RecallOptions,
+  policy?: EvidencePolicy,
 ): Promise<CuratedStashItem | undefined> {
+  const evidence = policy ? eligibleEvidence(hit.itemRef ?? hit.ref, policy) : undefined;
+  if (policy && !evidence) return undefined;
   let shown: ShowResponse | undefined;
   try {
-    shown = await akmShowUnified({ ref: recall ? evidenceRef(hit) : hit.ref, eventSource, skipLogging: true, recall });
+    shown = await akmShowUnified({
+      ref: evidence ? withFragmentOf(evidence.itemRef, hit.ref) : hit.ref,
+      eventSource,
+      skipLogging: true,
+    });
   } catch {
-    if (recall) return undefined;
+    if (policy) return undefined;
     shown = undefined;
   }
+  const beliefState = evidence?.beliefState;
 
   const ref = shown?.selectedRef ?? shown?.ref ?? hit.ref;
   const description = shown?.description ?? hit.description;
   const preview = buildCuratedPreview(shown, hit);
-  const supportRefs = await buildCurateSupportRefs(shown?.links, selectedRefs, ref, recall);
+  const supportRefs = await buildCurateSupportRefs(shown?.links, selectedRefs, ref, policy);
 
   const item: CuratedStashItem = {
     source: "local",
@@ -441,8 +477,8 @@ async function enrichCuratedStashHit(
     ...(shown?.run ? { run: shown.run } : {}),
     ...(supportRefs.length > 0 ? { supportRefs } : {}),
     followUp: `akm show ${ref}`,
-    ...(shown?.beliefState ? { beliefState: shown.beliefState } : {}),
-    reason: `${matchBeliefFilter(shown?.beliefState, "historical") ? "Historical context. " : ""}${buildCuratedReason(query, shown?.type ?? hit.type)}`,
+    ...(beliefState ? { beliefState } : {}),
+    reason: `${matchBeliefFilter(beliefState, "historical") ? "Historical context. " : ""}${buildCuratedReason(query, shown?.type ?? hit.type)}`,
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
   copySearchHitAttribution(hit, item, item.description);
@@ -557,7 +593,7 @@ async function buildCurateSupportRefs(
   links: ShowResponse["links"],
   selectedRefs: Set<string>,
   ownerRef: string,
-  recall?: RecallOptions,
+  policy?: EvidencePolicy,
 ): Promise<CurateSupportRef[]> {
   const supportRefs: CurateSupportRef[] = [];
   for (const [part, direction] of [
@@ -567,22 +603,17 @@ async function buildCurateSupportRefs(
     for (const [kind, group] of Object.entries(links?.[part] ?? {})) {
       for (const ref of group.refs) {
         if (ref === ownerRef || selectedRefs.has(ref) || supportRefs.some((existing) => existing.ref === ref)) continue;
-        let shown: ShowResponse | undefined;
-        if (recall) {
-          try {
-            // A support ref is a link, not a hit: `--type` narrows the hits only.
-            const { type: _type, ...linkRecall } = recall;
-            shown = await akmShowUnified({ ref, recall: linkRecall, skipLogging: true });
-          } catch {
-            continue;
-          }
-        }
-        const historical = matchBeliefFilter(shown?.beliefState, "historical");
+        // A support ref is a link, not a hit: `--type` narrows the hits only. A short link ref
+        // is checked on the asset `akm show <ref>` resolves, not another bundle's same conceptId.
+        const itemRef = policy ? (await lookupBundleRef(parseBundleRef(ref)).catch(() => null))?.itemRef : undefined;
+        const evidence = policy && itemRef ? eligibleEvidence(itemRef, policy) : undefined;
+        if (policy && !evidence) continue;
+        const historical = matchBeliefFilter(evidence?.beliefState, "historical");
         const type = supportRefType(ref);
         supportRefs.push({
           ref,
           ...(type ? { type } : {}),
-          ...(shown?.beliefState ? { beliefState: shown.beliefState } : {}),
+          ...(evidence?.beliefState ? { beliefState: evidence.beliefState } : {}),
           reason: `${historical ? "Historical context; " : ""}Declared link (${kind}) ${direction} this asset.`,
         });
         if (supportRefs.length >= MAX_CURATE_SUPPORT_REFS) return supportRefs;
