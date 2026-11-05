@@ -303,6 +303,13 @@ describe("akm feedback --superseded-by / --outdated", () => {
     expect(text.endsWith("---\n# OpenCode\n\nThe server listens on port 8000 by default.\n")).toBe(true);
   });
 
+  test("--superseded-by takes the successor in the old type-folder spelling (#1439)", async () => {
+    await indexFiles({ "knowledge/opencode-server.md": OLD, "WORK/new-note.md": NEW });
+    const { code, json } = await feedback([...REASON, ...SOURCE, "--superseded-by", "knowledge/WORK/new-note"]);
+    expect(code).toBe(0);
+    expect(json.fix).toMatchObject({ supersededBy: "stash//WORK/new-note" });
+  });
+
   test("repeating it on an asset that already says so changes nothing and records nothing more", async () => {
     await indexPair();
     const args = [...REASON, ...SOURCE, "--superseded-by", "knowledge/new-note"];

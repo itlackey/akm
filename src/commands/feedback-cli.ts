@@ -22,18 +22,14 @@ import { getStateDbPath, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
 import { withWriteTargetMutation } from "../core/write-source";
 import { recomputeUtilityScores } from "../indexer/indexer";
+import { findEntryIdByRefOrLegacy } from "../indexer/legacy-refs";
 import { resolveWriteAddress } from "../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
-import {
-  findEntryIdByRef,
-  getEntryById,
-  getEntryFilePathById,
-  getItemRefById,
-} from "../storage/repositories/index-entries-repository";
+import { getEntryById, getEntryFilePathById, getItemRefById } from "../storage/repositories/index-entries-repository";
 import { getUtilityScore } from "../storage/repositories/index-utility-repository";
 import { contentHash } from "./improve/content-hash";
 import { readEdgeList } from "./improve/memory/memory-belief";
@@ -88,20 +84,21 @@ function appendLessonStrength(
   origin: string | undefined,
   feedbackRef: string,
 ): { ref: string; strength: number } | null {
-  // `findEntryIdByRef` keys on the stored `item_ref`; the lesson's type is the one its entry records.
-  const { conceptId } = parseBundleRef(raw);
+  // `findEntryIdByRefOrLegacy` keys on the stored `item_ref`; the lesson's type is the one its entry records.
+  let { conceptId } = parseBundleRef(raw);
   const config = loadConfig();
   let filePath: string | undefined;
   let bundleId: string | undefined;
   let type: string | undefined;
   const db = openExistingDatabase();
   try {
-    const entryId = findEntryIdByRef(db, makeBundleRef(origin, conceptId));
+    const entryId = findEntryIdByRefOrLegacy(db, makeBundleRef(origin, conceptId));
     if (entryId !== undefined) {
       const itemRef = getItemRefById(db, entryId);
       const parsedItemRef = itemRef ? parseBundleRef(itemRef) : undefined;
       filePath = getEntryFilePathById(db, entryId) ?? undefined;
       bundleId = parsedItemRef?.bundle;
+      if (parsedItemRef) conceptId = parsedItemRef.conceptId;
       type = getEntryById(db, entryId)?.entry.type;
     }
   } finally {
@@ -374,7 +371,7 @@ type HistoryMark = { supersededBy: string } | { outdated: true };
  */
 function resolveSuccessorRef(db: Database, input: string, itemRef: string): string {
   const parsed = parseBundleRef(input);
-  const id = findEntryIdByRef(db, makeBundleRef(parsed.bundle, parsed.conceptId), parsed.bundle);
+  const id = findEntryIdByRefOrLegacy(db, makeBundleRef(parsed.bundle, parsed.conceptId), parsed.bundle);
   const successor = id === undefined ? null : getItemRefById(db, id);
   if (!successor) {
     throw new UsageError(
@@ -727,7 +724,7 @@ export const feedbackCommand = defineJsonCommand({
         throw new UsageError(`Source "${parsedRef.bundle}" is not configured.`, "INVALID_FLAG_VALUE");
       }
       const lookupRef = makeBundleRef(parsedRef.bundle, parsedRef.conceptId);
-      const entryId = findEntryIdByRef(db, lookupRef, parsedRef.bundle);
+      const entryId = findEntryIdByRefOrLegacy(db, lookupRef, parsedRef.bundle);
       if (entryId === undefined) {
         // NotFoundError (exit 1), not UsageError (exit 2): the flags parsed
         // fine, the asset just isn't there. The documented exit-code table
