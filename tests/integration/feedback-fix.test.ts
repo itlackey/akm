@@ -420,6 +420,7 @@ describe("a fix for an asset outside its type's folder", () => {
       "skills/deploy/references/symptom-map/SKILL.md",
     ],
     ["a loose note", "reports/opencode.md", "reports/opencode", "knowledge/reports/opencode.md"],
+    ["a note at the bundle root", "opencode.md", "opencode", "knowledge/opencode.md"],
   ])("%s is fixed in place, and revert restores it", async (_label, rel, ref, placementFile) => {
     const original = "---\ndescription: Notes\n---\n# Notes\n\nThe server listens on port 8000 by default.\n";
     await indexFiles({ "skills/deploy/SKILL.md": "---\ndescription: Deploy\n---\n# Deploy\n", [rel]: original });

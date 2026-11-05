@@ -512,6 +512,24 @@ describe("akmDistill — feature gate", () => {
   });
 });
 
+describe("akmDistill — an input at the bundle root (#1432)", () => {
+  test("is addressed by its path ref and typed by its file", async () => {
+    const stash = makeStashDir();
+    const inputPath = path.join(stash, "release.md");
+    fs.writeFileSync(inputPath, "---\ndescription: Release notes\n---\n\nTag before you publish.\n");
+    const result = await akmDistill({
+      ref: "release",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: async () => inputPath,
+      readEventsFn: emptyEvents,
+    });
+    expect(result.proposalRef).toBe("lessons/knowledge-release-lesson");
+    expect(result.outcome).not.toBe("llm_failed");
+  });
+});
+
 // ── Acceptance: LLM throws ──────────────────────────────────────────────────
 
 describe("akmDistill — LLM error paths", () => {

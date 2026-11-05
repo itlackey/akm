@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { conceptIdFromTypeName, parsePlacementRef, resolveRef } from "../../core/asset/resolve-ref";
+import { type AssetRef, conceptIdFromTypeName, parsePlacementRef, resolveRef } from "../../core/asset/resolve-ref";
 import { closestMatch } from "../../core/closest-match";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -96,7 +96,7 @@ function unreadableSnapshot(readOnly: boolean, error: unknown): ImproveIndexSnap
   return undefined;
 }
 
-export function resolveImproveScope(scope: string | undefined): Scope {
+export function resolveImproveScope(scope: string | undefined, isIndexedRef?: (ref: string) => boolean): Scope {
   const trimmed = scope?.trim();
   if (!trimmed) return { mode: "all" };
   try {
@@ -104,10 +104,31 @@ export function resolveImproveScope(scope: string | undefined): Scope {
     return { mode: "ref", value: trimmed };
   } catch (err) {
     // A bare word is a `--scope <type>` filter (an unknown type matches
-    // nothing); a ref-shaped value that fails to parse is a real error.
-    if (!/[/:#]/.test(trimmed)) return { mode: "type", value: trimmed };
+    // nothing), unless it is no type and an indexed asset has it as its ref (a
+    // file at the bundle root): then it names that asset, the way a missed ref
+    // is retried. A ref-shaped value that fails to parse is a real error.
+    if (!/[/:#]/.test(trimmed)) {
+      const asRef = !(KNOWN_TYPES as readonly string[]).includes(trimmed) && isIndexedRef?.(trimmed) === true;
+      return { mode: asRef ? "ref" : "type", value: trimmed };
+    }
     const message = err instanceof Error ? err.message : String(err);
     throw new UsageError(`Invalid --scope "${trimmed}": ${message}`, "INVALID_FLAG_VALUE");
+  }
+}
+
+/** Whether `word` is an indexed asset's ref and no indexed asset's type: a `--scope` naming a file at the bundle root. */
+export function namesIndexedRootAsset(word: string): boolean {
+  let db: Database | undefined;
+  try {
+    db = openReadonlyExistingDatabase();
+    if (!db) return false;
+    const entries = getAllEntries(db);
+    return entries.some((e) => e.conceptId === word) && !entries.some((e) => e.entry.type === word);
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    return false;
+  } finally {
+    if (db) closeDatabase(db);
   }
 }
 
@@ -324,8 +345,8 @@ function warnUnmatchedTypeScope(value: string, indexed: ReturnType<typeof getAll
 /** The parent memory a `--scope <memory ref>` cleanup is restricted to. */
 export function memoryCleanupParentRef(scope: Scope, stashDir?: string): string | undefined {
   if (scope.mode !== "ref" || !scope.value) return undefined;
-  const parsed = parsePlacementRef(scope.value);
-  if (parsed.type !== "memory") return undefined;
+  const parsed = scopePlacement(scope.value);
+  if (parsed?.type !== "memory") return undefined;
   if (!parsed.name.endsWith(".derived")) return conceptIdFromTypeName(parsed.type, parsed.name);
   for (const source of resolveSourceEntries(stashDir)) {
     const candidate = path.join(source.path, "memories", `${parsed.name}.md`);
@@ -360,7 +381,16 @@ export function shouldAnalyzeMemoryCleanup(
   if (!primaryStashDir || eligibleMemories === 0) return false;
   if (scope.mode === "all") return true;
   if (scope.mode === "type") return scope.value === "memory";
-  return scope.value ? parsePlacementRef(scope.value).type === "memory" : false;
+  return scope.value ? scopePlacement(scope.value)?.type === "memory" : false;
+}
+
+/** The placement a `--scope` ref spells; undefined for a bundle-root ref, which no type folder heads. */
+function scopePlacement(value: string): AssetRef | undefined {
+  try {
+    return parsePlacementRef(value);
+  } catch {
+    return undefined;
+  }
 }
 
 export function buildUtilityMap(refs: ImproveEligibleRef[], readOnly = false): Map<string, number> {

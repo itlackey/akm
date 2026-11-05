@@ -28,8 +28,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   command reads an asset's type from its ref's first folder any more, so improve, proposals,
   `feedback --fix` and retire act on such a file in place (they used to skip it, refuse it or
   write a second file under the type folder), and a secret outside `secrets/` injects its
-  value. The old spelling still resolves in refs, links and `improve` `excludeRefPrefixes`; a
-  ref or prefix in it warns once. The first `akm index` after the upgrade re-drains every directory and
+  value. A file at the bundle root has a one-word ref (`release`), and `akm improve --scope
+  release` names it when no type is called that. The old spelling still resolves in refs, links
+  and `improve` `excludeRefPrefixes`; a ref or prefix in it warns once. The first `akm index` after the upgrade re-drains every directory and
   moves the history stored under an old ref (usage, proposals, events, task history, improve
   ledger, salience, outcomes) to the new one.
 

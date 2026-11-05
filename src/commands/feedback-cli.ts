@@ -7,10 +7,10 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
-import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
+import { type BundleRef, makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
-import { type AssetRef, parsePlacementRef } from "../core/asset/resolve-ref";
+import type { AssetRef } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
@@ -85,7 +85,7 @@ function validateFeedbackTags(raw: string[]): string[] {
  */
 function appendLessonStrength(
   raw: string,
-  refInput: AssetRef,
+  origin: string | undefined,
   feedbackRef: string,
 ): { ref: string; strength: number } | null {
   // `findEntryIdByRef` keys on the stored `item_ref`; the lesson's type is the one its entry records.
@@ -96,7 +96,7 @@ function appendLessonStrength(
   let type: string | undefined;
   const db = openExistingDatabase();
   try {
-    const entryId = findEntryIdByRef(db, makeBundleRef(refInput.origin, conceptId));
+    const entryId = findEntryIdByRef(db, makeBundleRef(origin, conceptId));
     if (entryId !== undefined) {
       const itemRef = getItemRefById(db, entryId);
       const parsedItemRef = itemRef ? parseBundleRef(itemRef) : undefined;
@@ -108,7 +108,7 @@ function appendLessonStrength(
     closeDatabase(db);
   }
 
-  const requestedRef = makeBundleRef(refInput.origin, conceptId);
+  const requestedRef = makeBundleRef(origin, conceptId);
   if (type !== undefined && type !== "lesson") {
     warn(
       `[feedback] --applied-to ${requestedRef} was ignored: it resolves to a "${type}" asset, ` +
@@ -121,7 +121,7 @@ function appendLessonStrength(
     return null;
   }
 
-  const resolved = resolveMutationTarget(config, { ...refInput, origin: bundleId });
+  const resolved = resolveMutationTarget(config, { type: "lesson", name: conceptId, origin: bundleId });
   if (!isWithin(filePath, resolved.target.source.path)) {
     throw new UsageError(`Resolved lesson ${requestedRef} is outside bundle "${bundleId}".`);
   }
@@ -758,7 +758,10 @@ export const feedbackCommand = defineJsonCommand({
         if (!filePath || !fs.existsSync(filePath)) {
           throw new NotFoundError(`The file for ${itemRef} is missing on disk.`, "ASSET_NOT_FOUND");
         }
-        const assetRef = parsePlacementRef(itemRef);
+        // The existing asset is written where it is: its bundle picks the target, and
+        // assertProposalWritesFile checks its write address is this file.
+        const { bundle, conceptId } = parseBundleRef(itemRef);
+        const assetRef: AssetRef = { type: entryType ?? "", name: conceptId, origin: bundle };
         const resolved = resolveMutationTarget(config, assetRef, undefined, { requireWritable: true });
         if (!isWithin(filePath, resolved.target.source.path)) {
           throw new UsageError(`${itemRef} is outside bundle "${resolved.target.source.name}".`);
@@ -882,14 +885,14 @@ export const feedbackCommand = defineJsonCommand({
     const appliedToRaw = (args["applied-to"] as string | undefined)?.trim();
     let appliedToResult: { lessonRef: string; strength: number } | null = null;
     if (appliedToRaw && signal === "positive") {
-      let parsedApplied: AssetRef | undefined;
+      let appliedOrigin: BundleRef | undefined;
       try {
-        parsedApplied = parsePlacementRef(appliedToRaw);
+        appliedOrigin = parseBundleRef(appliedToRaw);
       } catch (err) {
         warn(`[feedback] --applied-to failed for ${appliedToRaw}: ${err instanceof Error ? err.message : String(err)}`);
       }
-      if (parsedApplied) {
-        const updated = appendLessonStrength(appliedToRaw, parsedApplied, durableRef);
+      if (appliedOrigin) {
+        const updated = appendLessonStrength(appliedToRaw, appliedOrigin.bundle, durableRef);
         if (updated) {
           appliedToResult = { lessonRef: updated.ref, strength: updated.strength };
         }

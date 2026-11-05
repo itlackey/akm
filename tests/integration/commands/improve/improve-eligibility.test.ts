@@ -17,7 +17,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { inspectConsolidationPool } from "../../../../src/commands/improve/consolidate";
-import { collectEligibleRefs, dedupeRefs, resolveImproveScope } from "../../../../src/commands/improve/eligibility";
+import {
+  collectEligibleRefs,
+  dedupeRefs,
+  namesIndexedRootAsset,
+  resolveImproveScope,
+} from "../../../../src/commands/improve/eligibility";
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import { stateKey } from "../../../../src/commands/improve/ledger";
 import { buildSnapshotManifest } from "../../../../src/commands/improve/preparation";
@@ -200,6 +205,28 @@ test("skips a malformed indexed ref without discarding valid candidates", async 
   expect(result.plannedRefs[0]?.itemRef).toBe("stash//memories/valid");
   expect(result.memorySummary).toEqual({ eligible: 1, derived: 0 });
   expect(result.strategyFilteredRefs).toEqual([]);
+});
+
+describe("a bare-word scope that names a file at the bundle root (#1432)", () => {
+  test("is that asset's ref when no type has the name, and a type scope otherwise", async () => {
+    const stash = makeTempDir("akm-elig-root-scope-");
+    fs.writeFileSync(path.join(stash, "release.md"), "---\ndescription: Release notes\n---\n# Release\n");
+    fs.writeFileSync(path.join(stash, "memory.md"), "---\ndescription: A note called memory\n---\n# Memory\n");
+    writeMemory(stash, "valid", "Valid memory.");
+    await buildIndex(stash);
+
+    const scope = resolveImproveScope("release", namesIndexedRootAsset);
+    expect(scope).toEqual({ mode: "ref", value: "release" });
+    const result = await collectEligibleRefs(scope, stash, {});
+    expect(result.plannedRefs).toMatchObject([{ ref: "release", type: "knowledge", reason: "scope-ref" }]);
+
+    // A type name stays a type scope; an unknown word with no such ref stays a (warned) type scope.
+    expect(resolveImproveScope("memory", namesIndexedRootAsset)).toEqual({ mode: "type", value: "memory" });
+    expect(resolveImproveScope("memorys", namesIndexedRootAsset)).toEqual({ mode: "type", value: "memorys" });
+
+    const run = await akmImprove({ stashDir: stash, scope: "release", dryRun: true });
+    expect(run.plannedRefs?.map((planned) => planned.ref)).toEqual(["release"]);
+  });
 });
 
 describe("a scope that matches no asset warns on stderr", () => {

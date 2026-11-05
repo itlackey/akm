@@ -2,9 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, readFrontmatterDate } from "../../core/asset/frontmatter";
-import { parsePlacementRef } from "../../core/asset/resolve-ref";
 
 export interface PromotionFeedbackEvent {
   metadata?: Record<string, unknown>;
@@ -102,8 +102,8 @@ function deriveDescription(body: string, description: string | undefined): strin
 }
 
 export function deriveKnowledgeRef(inputRef: string): string {
-  const parsed = parsePlacementRef(inputRef);
-  const leaf = parsed.name.split("/").filter(Boolean).at(-1) ?? parsed.name;
+  const { conceptId } = parseBundleRef(inputRef);
+  const leaf = conceptId.split("/").filter(Boolean).at(-1) ?? conceptId;
   const safe = leaf
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")

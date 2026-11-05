@@ -23,7 +23,7 @@ import { parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
-import { conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -40,7 +40,7 @@ import { warn, warnVerbose } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import { type NoticeSet, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
-import { resolveOwnedType } from "../../indexer/lookup/adapter-concept-owner";
+import { resolveOwnedType, resolveWriteAddress } from "../../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -141,9 +141,8 @@ interface RelatedAsset {
   path?: string;
 }
 
-/** Derive the proposed lesson ref from the input ref. */
-export function deriveLessonRef(inputRef: string): string {
-  const parsed = parsePlacementRef(inputRef);
+/** Derive the proposed lesson ref from the input ref and, for an existing input, its write address. */
+export function deriveLessonRef(inputRef: string, parsed: AssetRef = parsePlacementRef(inputRef)): string {
   const parts = parsed.name.split("/");
   const scope = parts.length > 1 ? parts.shift() : undefined;
   const clean = (value: string): string =>
@@ -468,13 +467,15 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   if (!inputRef) {
     throw new UsageError("Asset ref is required. Usage: akm distill <ref>", "MISSING_REQUIRED_ARGUMENT");
   }
-  const parsedInputRef = parsePlacementRef(inputRef);
   const config = options.config ?? loadConfig();
+  const stash = options.stashDir ?? resolveStashDir();
+  // An existing input is addressed where its file is; only a ref no file owns is read by placement.
+  const address = resolveWriteAddress(stash, inputRef);
   const profile = options.improveProfile ?? resolveImproveStrategy(undefined, config).config;
   options = { ...options, improveProfile: profile };
   const targetKind = options.proposalKind ?? "lesson";
   const kind: DistillKind = targetKind === "knowledge" ? "knowledge" : "lesson";
-  const outputRef = kind === "knowledge" ? deriveKnowledgeRef(inputRef) : deriveLessonRef(inputRef);
+  const outputRef = kind === "knowledge" ? deriveKnowledgeRef(inputRef) : deriveLessonRef(inputRef, address);
   if (!resolveProcessEnabled("distill", profile)) {
     return {
       schemaVersion: 1,
@@ -494,10 +495,10 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     resolveOwnedType(parseBundleRef(inputRef), resolveSourceEntries(options.stashDir, config), {
       mode: "read",
       includeSensitive: true,
-    }) ?? parsedInputRef.type;
+    }) ?? address.type;
   if (isDistillRefusedInputType(inputType)) {
     const secret = inputType === "env" || inputType === "secret";
-    const proposalRef = secret ? inputRef : conceptIdFromTypeName("lesson", parsedInputRef.name);
+    const proposalRef = secret ? inputRef : conceptIdFromTypeName("lesson", address.name);
     const skipReason = secret ? "refused_secret_input" : "recursive_lesson_input";
     const message = secret
       ? `Distill refuses ${inputType} inputs — secret material must never be sent to the LLM.`
@@ -506,7 +507,6 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     return { schemaVersion: 1, ok: true, outcome: "skipped", inputRef, proposalRef, skipReason, message };
   }
 
-  const stash = options.stashDir ?? resolveStashDir();
   const notices = noticeSet();
   const lookup = options.lookupFn ?? ((ref: string) => defaultLookup(ref, stash));
   const asset = await loadInput(lookup, inputRef);
