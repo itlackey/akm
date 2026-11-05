@@ -12,6 +12,7 @@
  */
 
 import { placementTypes, stashDirFor } from "../../../src/core/asset/asset-placement";
+import { legacyRefMove } from "../../../src/indexer/legacy-refs";
 
 /** One recognized asset: its type and its ref (`refForFile`). */
 export interface RefDocument {
@@ -47,12 +48,12 @@ function splitRun(run: string): { readonly stem: string; readonly tail: string; 
   return { stem: md ? stem.slice(0, -".md".length) : stem, tail: run.slice(stem.length), md };
 }
 
-/** The old spelling of every ref that moved: `<type folder>/<ref>` for an asset outside its type's folder. */
-function movedRefs(documents: readonly RefDocument[]): Map<string, string> {
+/** The old spelling of every ref that moved ({@link legacyRefMove}), without its bundle: old spelling -> ref. */
+function movedRefs(bundleId: string, documents: readonly RefDocument[]): Map<string, string> {
   const moved = new Map<string, string>();
   for (const { type, ref } of documents) {
-    const folder = stashDirFor(type);
-    if (folder !== undefined && !ref.startsWith(`${folder}/`)) moved.set(`${folder}/${ref}`, ref);
+    const move = legacyRefMove(bundleId, type, ref);
+    if (move) moved.set(move.oldItemRef.slice(`${bundleId}//`.length), ref);
   }
   return moved;
 }
@@ -67,7 +68,7 @@ export function contentRefRewriter(bundles: ReadonlyMap<string, readonly RefDocu
   const anywhere = new Map<string, string>();
   for (const [bundleId, documents] of bundles) {
     const own = new Map<string, string>();
-    for (const [from, to] of movedRefs(documents)) {
+    for (const [from, to] of movedRefs(bundleId, documents)) {
       if (live.get(bundleId)?.has(from)) {
         shadowed.push({ bundleId, from, to });
         continue;

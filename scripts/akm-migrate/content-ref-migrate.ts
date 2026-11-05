@@ -53,20 +53,17 @@ export interface ContentRefsMigrationStatus {
   assetContentRefs: ContentRefsSummary;
 }
 
-/** The files whose refs are read and rewritten; the rest of a bundle (binaries, databases, VCS and dependency trees) is not content. */
+/** The files whose refs are read and rewritten; the rest of a bundle (binaries, databases) is not content. */
 const TEXT_EXTENSIONS = new Set([".md", ".yml", ".yaml", ".sh", ".ts", ".js", ".json", ".txt", ".py", ".mjs", ".jsonc", ".toml", ""]);
-const SKIPPED_DIRECTORIES = new Set([".git", "node_modules", "worktrees"]);
 
-function textFiles(directory: string, out: string[] = []): string[] {
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const file = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      if (!SKIPPED_DIRECTORIES.has(entry.name)) textFiles(file, out);
-    } else if (entry.isFile() && TEXT_EXTENSIONS.has(path.extname(entry.name))) {
-      out.push(file);
-    }
-  }
-  return out;
+/**
+ * The text files of a root, by the runtime's own walk (git-ignored files and, outside git, dot directories are not
+ * content). A link is left alone: it may lead anywhere, and a write would replace it with a file.
+ */
+function textFiles(root: string): string[] {
+  return walkStashFlat(root)
+    .filter((file) => TEXT_EXTENSIONS.has(file.ext) && fs.lstatSync(file.absPath).isFile())
+    .map((file) => file.absPath);
 }
 
 /** Every asset the `akm` adapter recognizes in each `akm` bundle, by bundle: the refs that exist now. */

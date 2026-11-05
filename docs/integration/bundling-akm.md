@@ -54,7 +54,7 @@ In order, every run applies (or, under `status`/`--dry-run`, plans):
    commands, agents, workflows and task sources rewritten to `connection:` or
    `harness:` by what the name is now, under one backup directory per run. A
    bundle akm may not change is skipped.
-5. **Content refs** (`assetContentRefs`): refs in the text files of writable
+5. **Content refs** (`assetContentRefs`): refs in the text files akm indexes in writable
    bundles that still use the pre-#1432 spelling (`knowledge/WORK/x`, now
    `WORK/x`), in frontmatter and body, rewritten under one backup directory per
    run. An old spelling that is now another file's ref is listed in `shadowed`

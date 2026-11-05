@@ -63,6 +63,7 @@ describe("the step", () => {
         "Qualified: primary//knowledge/WORK/note.",
         "Shadowed stays: wiki:b and knowledge/wikis/b.",
         "A URL https://example.com/knowledge/WORK/note and a longer path knowledge/WORK/note/deeper stay.",
+        "So do a sibling knowledge/WORK/notes and primary//knowledge/WORK/notes.",
         "",
       ].join("\n"),
     );
@@ -78,6 +79,7 @@ describe("the step", () => {
     "Qualified: primary//WORK/note.",
     "Shadowed stays: wiki:b and knowledge/wikis/b.",
     "A URL https://example.com/knowledge/WORK/note and a longer path knowledge/WORK/note/deeper stay.",
+    "So do a sibling knowledge/WORK/notes and primary//knowledge/WORK/notes.",
     "",
   ].join("\n");
 
@@ -121,6 +123,20 @@ describe("the step", () => {
     expect(again.assetContentRefs).toMatchObject({ changed: 0, refs: 0, shadowed: [{ from: "knowledge/wikis/b" }] });
     expect(again.assetContentRefs?.backupPath).toBeUndefined();
     expect(fs.readFileSync(links, "utf8")).toBe(REWRITTEN);
+  });
+
+  test("only the files the runtime walks are read, and a link is left a link", async () => {
+    configure();
+    const links = seed();
+    const hidden = write(".scratch/notes.md", "See knowledge/WORK/note.\n");
+    const link = path.join(stash(), "knowledge/link.md");
+    fs.symlinkSync(links, link);
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.assetContentRefs?.files.map((file) => file.filePath)).toEqual([links]);
+    expect(fs.readFileSync(hidden, "utf8")).toBe("See knowledge/WORK/note.\n");
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
   });
 
   test("a bundle akm may not write is left as written", async () => {
