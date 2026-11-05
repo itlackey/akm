@@ -193,9 +193,7 @@ The wizard asks, in order:
 1. **Agent programs.** Which installed agent programs (Claude Code, Codex,
    OpenCode, ...) akm may use; each is shown with whether akm can limit it to
    reading and searching for its own model calls. With several, you pick the
-   default. For OpenCode, setup asks the program the harness will run (its `bin`,
-   else `opencode` on `PATH`) for `--version` and treats a version it cannot read
-   as OpenCode 1. When a harness that cannot be restricted is enabled for akm's
+   default. When a harness that cannot be restricted is enabled for akm's
    model calls, setup says "Model work on `<name>` cannot be restricted: it can
    edit files and run commands." where you choose, and in its summary line.
 2. **Model calls.** Whether the default agent program also takes akm's own
@@ -3251,8 +3249,9 @@ platform) and akm's own runtime's `opencode.db` (under
 `opencode.db`). Runs of the `opencode` harness are in OpenCode's own file. It
 reads both OpenCode 2 and OpenCode 1 files. Of an OpenCode 2 file it lists only
 top-level sessions, leaving out subagent sessions and akm's own model work,
-which ran as the `akm-model-work` agent; OpenCode 1 keeps no such marker, so its
-model-work sessions are listed like any other. A file it cannot read is named in
+which ran as the `akm-model-work` agent. Of an OpenCode 1 file it leaves out
+akm's own model work the same way, from the OpenCode 1 release that records the
+agent on a session (May 2026). A file it cannot read is named in
 a warning, never taken for an empty history.
 
 There is no `akm proposal extract --watch`/`--debounce-ms` either (0.9.0:

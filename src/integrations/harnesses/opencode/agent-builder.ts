@@ -32,9 +32,8 @@
  *
  * Model work drops the config's `args`, keeping the model they name, as the
  * Claude and Codex shells do. It runs as {@link MODEL_WORK_AGENT}, an agent defined
- * inline for the run, added to the user's own inline config. On OpenCode 2 its tools
- * are limited to reading and searching; OpenCode 1 cannot be restricted and runs it
- * unrestricted but for the `skill` tool, with a one-line warning.
+ * inline for the run, added to the user's own inline config. On both majors its tools
+ * are limited to reading and searching.
  */
 
 import { asRecord, parseJsonc } from "../../../core/common";
@@ -50,7 +49,7 @@ import {
 } from "../harness";
 import { detectOpencodeMajor, isOpencode2 } from "./version";
 
-/** The agent OpenCode runs akm's model work as, on OpenCode 2 limited to reading and searching; the name also marks those sessions in the user's history (`./session-log-v2.ts`). */
+/** The agent OpenCode runs akm's model work as, limited to reading and searching; the name also marks those sessions in the user's history (`./session-log-v2.ts`). */
 export const MODEL_WORK_AGENT = "akm-model-work";
 
 /**
@@ -61,24 +60,28 @@ export const MODEL_WORK_AGENT = "akm-model-work";
 const MODEL_WORK_PROMPT = "Do the task in the message. Reply with exactly what it asks for.";
 
 /**
- * The agent's definition, in OpenCode 2's native shape, passed inline so it merges over the user's config and is
- * never written anywhere. Its permission rules are default-deny with the reading tools allowed after it (the last
- * matching rule wins; measured on OpenCode 2.1.2): `*` denied removes every tool, one a plugin registers that akm has
- * never heard of included, and the allows give back `read`, `glob` and `grep` and, when the akm plugin is installed,
- * `akm_search`, `akm_show` and `akm_curate`. Nothing else is allowed. This limits the tools; a plugin's own `setup`
- * and hooks still run.
+ * The tools model work may use: `read`, `glob` and `grep` and, when the akm plugin is installed, `akm_search`,
+ * `akm_show` and `akm_curate`. Both majors' permission rules are default-deny with these allowed after it (the last
+ * matching rule wins; measured on OpenCode 2.1.2 and 1.18.25): `*` denied removes every tool, one a plugin or an MCP
+ * server registers that akm has never heard of included, and a call to a denied tool is refused, not run. This limits
+ * the tools; a plugin's own `setup` and hooks still run.
  */
+const MODEL_WORK_TOOLS = ["read", "glob", "grep", "akm_search", "akm_show", "akm_curate"];
+
+/** The agent's definition, in OpenCode 2's native shape, passed inline so it merges over the user's config and is never written anywhere. */
 const MODEL_WORK_AGENT_DEFINITION = {
   mode: "primary",
   system: MODEL_WORK_PROMPT,
   permissions: [
     { action: "*", resource: "*", effect: "deny" },
-    ...["read", "glob", "grep", "akm_search", "akm_show", "akm_curate"].map((action) => ({
-      action,
-      resource: "*",
-      effect: "allow",
-    })),
+    ...MODEL_WORK_TOOLS.map((action) => ({ action, resource: "*", effect: "allow" })),
   ],
+};
+
+/** The same rules in OpenCode 1's shape: a `permission` map, whose key order is the rule order. */
+const MODEL_WORK_AGENT_PERMISSION = {
+  "*": "deny",
+  ...Object.fromEntries(MODEL_WORK_TOOLS.map((tool) => [tool, "allow"])),
 };
 
 const CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
@@ -112,11 +115,11 @@ function modelWorkConfig(oc2: boolean): string {
     );
   }
   if (!oc2) {
-    // OpenCode 1 reads the singular `agent` map and a `prompt`; it ignores `agents`. Its `skill` tool is denied, as
-    // OpenCode 2's `*` deny denies it: OpenCode 1 then sends neither the tool nor the listing of every skill it finds.
+    // OpenCode 1 reads the singular `agent` map and a `prompt`; it ignores `agents`. The `*` deny sends neither the
+    // denied tools nor, with `skill` among them, the listing of every skill it finds.
     const agent = {
       ...asRecord(user?.agent),
-      [MODEL_WORK_AGENT]: { mode: "primary", prompt: MODEL_WORK_PROMPT, permission: { skill: "deny" } },
+      [MODEL_WORK_AGENT]: { mode: "primary", prompt: MODEL_WORK_PROMPT, permission: MODEL_WORK_AGENT_PERMISSION },
     };
     return JSON.stringify({ ...user, agent });
   }
@@ -186,13 +189,7 @@ export const opencodeBuilder: HarnessBuilder = {
     if (!oc2 && detectOpencodeMajor(bin).reportedMajor === undefined) {
       warnOnce(
         `opencode-version-unreadable:${bin}`,
-        `Could not read the version of ${bin}, so akm runs its model work as OpenCode 1: no --standalone (an OpenCode 2 would attach to its shared background service) and unrestricted. Check \`${bin} --version\`.`,
-      );
-    }
-    if (!oc2) {
-      warnOnce(
-        "opencode-1-model-work",
-        "OpenCode 1 cannot restrict its tools, so model work on it runs unrestricted, in a scratch directory. OpenCode 2 limits its tools to reading and searching.",
+        `Could not read the version of ${bin}, so akm runs its model work as OpenCode 1: no --standalone (an OpenCode 2 would attach to its shared background service). Check \`${bin} --version\`.`,
       );
     }
     const named = req.model ?? modelFromArgs(args);

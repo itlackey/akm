@@ -1043,11 +1043,11 @@ function buildSourceScanPlans(
         walkComplete: false,
       };
     }
+    const adapter = adapterForId(component.adapter);
     const walked = walkStashFlatWithStatus(currentStashDir, {
-      includeAllDirectories: component.adapter === "okf",
+      includeAllDirectories: adapter?.walkMode === "all-directories",
     });
     const dirGroups = groupFileContextsByDir(walked.files);
-    const adapter = adapterForId(component.adapter);
     if (adapter) warnIfAdapterSkipsAkmContent(component, walked.files, adapter);
     return {
       currentStashDir,

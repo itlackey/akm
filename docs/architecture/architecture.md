@@ -195,7 +195,7 @@ User-facing item refs are path-identified:
   default bundle and qualifies every non-default bundle
 - optional `bundle//` narrows input lookup to a configured bundle
 - refs are parsed by `parseBundleRef` in `src/core/asset/asset-ref.ts`
-- markdown-backed items strip `.md` from canonical names
+- markdown-backed items strip `.md` from canonical names (the `code-project` adapter strips nothing: its refs are the file's path, extension included)
 - `#fragment` is input-only and never stored, and `akm show` is the only command
   that accepts one: on markdown-document items the core resolves it as a
   section selector (`knowledge/api-guide#authentication`); on any other item

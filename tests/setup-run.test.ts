@@ -375,27 +375,6 @@ describe("runSetupWizard", () => {
     });
   });
 
-  test("OpenCode 1 asked about model calls: the question says it cannot be restricted, and the summary repeats it for a yes", async () => {
-    installSetupSeams();
-    installHarness("opencode");
-
-    promptState.multiselects.push(["opencode"], [...DEFAULT_REGISTRY_URLS], [], []);
-    promptState.confirms.push(true, true, false);
-    promptState.texts.push("");
-    promptState.selects.push("default", "off", "done", "json", "brief");
-
-    await withOpencodeOnPath(1, () => runSetupWizard());
-
-    expect(promptState.trace.find((line) => line.startsWith("[confirm] Use opencode"))).toContain(
-      "Model work on opencode cannot be restricted: it can edit files and run commands.",
-    );
-    expect(readSavedConfig().harnesses).toEqual({ opencode: {} });
-    const summary = promptState.notes.find((note) => note.startsWith("Configuration Summary")) ?? "";
-    expect(summary).toContain(
-      'Model calls:      harness "opencode". Model work on "opencode" cannot be restricted: it can edit files and run commands.',
-    );
-  });
-
   test("OpenCode 1 asked about model calls, answered no: saved as off, and no connection follows", async () => {
     installSetupSeams();
     installHarness("opencode");

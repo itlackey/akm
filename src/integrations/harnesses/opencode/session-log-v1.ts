@@ -12,6 +12,7 @@
 import type { Database } from "../../../storage/database";
 import { extractInlineRefMentions } from "../../session-logs/inline-refs";
 import type { InlineRefMention, SessionEvent } from "../../session-logs/types";
+import { MODEL_WORK_AGENT } from "./agent-builder";
 
 /** Per-session metadata a store adapter hands back to the provider (no harness stamp yet). */
 export interface OpenCodeSessionMeta {
@@ -52,11 +53,23 @@ export function toMeta(r: Partial<SessionRow>, sessionId: string): OpenCodeSessi
 /** Listing needs only `session`; reading a session needs `message` and `part`, and fails loudly without them. */
 export const V1_TABLES = ["session"] as const;
 
-/** Every V1 session updated at or after `sinceMs`, newest first. Throws on an incompatible schema. */
+/**
+ * Sessions that are not akm's model work. OpenCode 1 records the agent on the `session` row from the release that added
+ * its `agent` column (May 2026); an older file has no column, and its sessions are all listed.
+ */
+function userSessionsFilter(db: Database): string {
+  const hasAgent = db
+    .prepare<{ name: string }>("PRAGMA table_info(session)")
+    .all()
+    .some((c) => c.name === "agent");
+  return hasAgent ? `(agent IS NULL OR agent != '${MODEL_WORK_AGENT}')` : "1";
+}
+
+/** Every V1 session that is not akm's model work, updated at or after `sinceMs`, newest first. Throws on an incompatible schema. */
 export function listV1Sessions(db: Database, sinceMs: number): OpenCodeSessionMeta[] {
   const rows = db
     .prepare<SessionRow>(
-      "SELECT id, title, directory, time_created, time_updated FROM session WHERE time_updated >= ? ORDER BY time_updated DESC",
+      `SELECT id, title, directory, time_created, time_updated FROM session WHERE ${userSessionsFilter(db)} AND time_updated >= ? ORDER BY time_updated DESC`,
     )
     .all(sinceMs);
   return rows.map((r) => toMeta(r, r.id));

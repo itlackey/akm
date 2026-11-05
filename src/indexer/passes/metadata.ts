@@ -861,7 +861,7 @@ function isFrontmatterShaped(lines: string[], block: { open: number; close: numb
   return true;
 }
 
-function truncateUnicodeSafe(text: string, maxChars: number): string {
+export function truncateUnicodeSafe(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
   let cut = text.slice(0, maxChars);
   const lastCode = cut.charCodeAt(cut.length - 1);

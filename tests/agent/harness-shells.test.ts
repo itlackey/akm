@@ -252,7 +252,7 @@ describe("model work", () => {
     ]);
   });
 
-  test("opencode on OpenCode 1: unrestricted, in the scratch directory dispatch makes, with one warning; the config's args left out, their model kept", async () => {
+  test("opencode on OpenCode 1: limited to reading and searching like OpenCode 2, no warning; the config's args left out, their model kept", async () => {
     _resetWarnOnceForTests();
     const warnings: string[] = [];
     overrideSeam(_setWarnSinkForTests, (level, args) => {
@@ -262,8 +262,8 @@ describe("model work", () => {
     await withOpencodeOnPath(1, async () => {
       const built = build("opencode", { prompt: PROMPT, modelWork: true }, authored);
       // The agent is selected and the title is given, so there is no title request; the inline config carries the
-      // agent's one-line prompt in OpenCode 1's singular `agent` map, with only the `skill` tool denied (it cannot be
-      // restricted to reading tools; the skill tool would list every skill on the machine in the system prompt).
+      // agent's one-line prompt in OpenCode 1's singular `agent` map, with every tool denied but the reading ones
+      // (the last matching rule wins, so the `*` deny comes first).
       expect(built.argv).toEqual([
         "opencode",
         "run",
@@ -281,10 +281,20 @@ describe("model work", () => {
           "akm-model-work": {
             mode: "primary",
             prompt: "Do the task in the message. Reply with exactly what it asks for.",
-            permission: { skill: "deny" },
+            permission: {
+              "*": "deny",
+              read: "allow",
+              glob: "allow",
+              grep: "allow",
+              akm_search: "allow",
+              akm_show: "allow",
+              akm_curate: "allow",
+            },
           },
         },
       });
+      const rules = JSON.parse(built.env?.OPENCODE_CONFIG_CONTENT ?? "").agent["akm-model-work"].permission;
+      expect(Object.keys(rules)[0]).toBe("*");
       expect(build("opencode", { prompt: PROMPT, modelWork: true, model: "m-1" }, authored).argv).toEqual([
         "opencode",
         "run",
@@ -304,7 +314,7 @@ describe("model work", () => {
       expect(content.model).toBe("mine/fast");
       expect(Object.keys(content.agent)).toEqual(["reviewer", "akm-model-work"]);
     });
-    expect(warnings.filter((line) => line.includes("OpenCode 1 cannot restrict"))).toHaveLength(1);
+    expect(warnings.filter((line) => line.includes("restrict"))).toEqual([]);
   });
 
   test("a harness akm cannot confine says so: it is not confinable, so it runs the request as given", () => {
@@ -574,7 +584,6 @@ describe("opencode by major", () => {
     expect(unreadable).toHaveLength(1);
     expect(unreadable[0]).toContain("OpenCode 1");
     expect(unreadable[0]).toContain("no --standalone");
-    expect(unreadable[0]).toContain("unrestricted");
     expect(unreadable[0]).toContain("`opencode --version`");
   });
 });

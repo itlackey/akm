@@ -23,9 +23,8 @@ import { hasV2Tables, listV2Sessions, readV2Session } from "./session-log-v2";
  *
  *   - OpenCode 2 (`session_v2` and `session_message`): `session-log-v2.ts`.
  *     Only top-level sessions; akm's model-work sessions are left out.
- *   - OpenCode 1 only (`session` table): `session-log-v1.ts`. Model work on
- *     OpenCode 1 runs with no marker (`./agent-builder.ts`), so it is read like
- *     any other session.
+ *   - OpenCode 1 only (`session` table): `session-log-v1.ts`. akm's model-work
+ *     sessions are left out where the file records the agent.
  *   - Neither: an unsupported layout, reported, never presented as empty.
  */
 

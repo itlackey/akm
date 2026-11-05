@@ -91,11 +91,6 @@ export interface AkmHarness extends LowerTarget {
   readonly setupDetectionDir?: string;
   readonly profile: HarnessProfileDefaults;
   /**
-   * Whether the program `bin` can run model work with its tools limited to reading and searching, for a harness whose
-   * `confinable` depends on the install (OpenCode: only version 2). Setup asks it; absent, `confinable` is the answer.
-   */
-  readonly confinableInstalled?: (bin: string) => boolean;
-  /**
    * The aliases (`fast`, `balanced`, `reasoning`) this harness's models answer
    * to, which a `harnesses.<name>.models` entry overrides. Absent: no model is
    * passed for an alias and the harness picks its own.
