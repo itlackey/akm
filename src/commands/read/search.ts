@@ -526,7 +526,7 @@ export function parseBeliefFilterMode(value: string | undefined): BeliefFilterMo
  */
 export function normalizeScopeFilters(raw: ScopeFilters | undefined): ScopeFilters | undefined {
   if (!raw) return undefined;
-  const out: Record<string, string[]> = {};
+  const out: Record<string, string[]> = Object.create(null);
   for (const [key, given] of Object.entries(raw)) {
     const values = new Set<string>();
     for (const value of Array.isArray(given) ? given : [given]) {
@@ -547,7 +547,7 @@ export function normalizeScopeFilters(raw: ScopeFilters | undefined): ScopeFilte
  */
 export function parseScopeFilterFlags(values: string[], flagName = "--filter"): ScopeFilters | undefined {
   if (values.length === 0) return undefined;
-  const out: Record<string, string[]> = {};
+  const out: Record<string, string[]> = Object.create(null);
   for (const raw of values) {
     const eq = raw.indexOf("=");
     if (eq <= 0) {
@@ -555,6 +555,9 @@ export function parseScopeFilterFlags(values: string[], flagName = "--filter"): 
     }
     const key = raw.slice(0, eq).trim();
     const value = raw.slice(eq + 1).trim();
+    if (!key) {
+      throw new UsageError(`Invalid ${flagName} value "${raw}". Expected key=value (e.g. team=platform).`);
+    }
     if (!value) {
       throw new UsageError(`${flagName} ${key}=… requires a non-empty value.`);
     }

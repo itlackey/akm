@@ -113,6 +113,11 @@ describe("parseScopeFilterFlags", () => {
 
   test("rejects malformed tokens", () => {
     expect(() => parseScopeFilterFlags(["nope"], "--filter")).toThrow(/Expected key=value/);
+    expect(() => parseScopeFilterFlags([" =x"], "--filter")).toThrow(/Expected key=value/);
+  });
+
+  test("a key named like an Object member is just a key", () => {
+    expect(Object.entries(parseScopeFilterFlags(["__proto__=x"], "--filter") ?? {})).toEqual([["__proto__", ["x"]]]);
   });
 
   test("rejects empty values", () => {

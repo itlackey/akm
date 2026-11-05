@@ -672,8 +672,8 @@ it.
 `--filter` flags AND-join: every supplied key must match the entry for it
 to appear in the result set. Entries without a supplied key are excluded as
 soon as a filter is supplied. Keys other than the scope keys are read from the
-indexed frontmatter; run `akm index --full` once after upgrading to index them
-for existing files. Their values are used only for selection: never searched,
+indexed frontmatter; the first `akm index` after upgrading indexes them for
+existing files. Their values are used only for selection: never searched,
 embedded or shown. With no `--filter` (the
 default), unfiltered queries continue to surface all entries — including
 legacy memories that pre-date the scope contract.
