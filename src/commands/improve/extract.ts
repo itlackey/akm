@@ -1181,7 +1181,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       ok: true,
       dryRun,
       type: options.type,
-      warning: "extract is turned off by improve.strategies.<strategy>.processes.extract.enabled in your config",
+      warning: "extract is disabled by improve.strategies.<strategy>.processes.extract.enabled: false in your config",
       startMs,
     });
   }
