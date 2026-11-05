@@ -5,9 +5,11 @@
 // Integration: runs the real OpenCode 1 CLI as a child process, against a loopback model.
 //
 // Gate: `AKM_TEST_OPENCODE1_BIN=/path/to/opencode` (an OpenCode 1.x). Without it the suite is one skipped test. Only
-// a real OpenCode 1 can say whether the permission map akm gives its model-work agent hides a tool and also refuses a
-// call to it (`opencode-cli-compat.test.ts` does the same for OpenCode 2). OpenCode 1 fetches the provider package it
-// does not bundle (`@ai-sdk/openai-compatible`) into its sandboxed cache on first use, so the run needs the network.
+// a real OpenCode 1 says whether it reads akm's model-work agent the way the builder writes it: akm's one-line system
+// prompt in place of OpenCode's coding prompt, no session-title request, and a permission map that hides a tool and
+// also refuses a call to it (`opencode-cli-compat.test.ts` does the same for OpenCode 2). OpenCode 1 fetches the
+// provider package it does not bundle (`@ai-sdk/openai-compatible`) into its sandboxed cache on first use, so the run
+// needs the network.
 //
 // Every run is sandboxed: HOME, the XDG directories and every OPENCODE_* variable point inside a temporary directory
 // or are blanked, and the model is a loopback fake, so no real account, key or OpenCode file is opened.
@@ -28,6 +30,8 @@ afterEach(() => {
 });
 
 interface ModelRequest {
+  readonly system: string;
+  readonly user: string;
   readonly tools: readonly string[];
   readonly toolResults: readonly string[];
 }
@@ -43,12 +47,13 @@ function fakeModel(callTool?: string, callArguments = "{}") {
         messages?: Array<{ role: string; content?: unknown }>;
         tools?: Array<{ function?: { name?: string } }>;
       };
-      const toolResults = (body.messages ?? [])
-        .filter((message) => message.role === "tool")
-        .map((message) => (typeof message.content === "string" ? message.content : JSON.stringify(message.content)));
+      const texts = (role: string): string[] =>
+        (body.messages ?? [])
+          .filter((message) => message.role === role)
+          .map((message) => (typeof message.content === "string" ? message.content : JSON.stringify(message.content)));
       const tools = (body.tools ?? []).map((tool) => tool.function?.name ?? "");
-      // OpenCode's title request carries no tools; the run's own requests do.
-      if (tools.length > 0) requests.push({ tools, toolResults });
+      const toolResults = texts("tool");
+      requests.push({ system: texts("system").join("\n"), user: texts("user").join("\n"), tools, toolResults });
       const calling = callTool !== undefined && toolResults.length === 0 && tools.length > 0;
       const delta = calling
         ? {
@@ -75,7 +80,10 @@ function fakeModel(callTool?: string, callArguments = "{}") {
   return { url: `http://127.0.0.1:${server.port}/v1`, requests };
 }
 
-/** Model work through akm's own spawn path, in a sandbox whose project directory holds a plugin registering `pluginTools`. */
+/**
+ * Model work through akm's own spawn path, in a sandbox whose project directory holds a plugin registering
+ * `pluginTools` and whose HOME holds a Claude Code skill, which OpenCode's `skill` tool would list in the system prompt.
+ */
 async function runModelWork(model: ReturnType<typeof fakeModel>, pluginTools: readonly string[] = []) {
   const sb = makeSandboxDir("akm-oc1-compat");
   cleanups.push(sb.cleanup);
@@ -86,6 +94,12 @@ async function runModelWork(model: ReturnType<typeof fakeModel>, pluginTools: re
   };
   const work = at("work");
   const marker = path.join(sb.dir, "marker.txt");
+  const skill = path.join(at("home"), ".claude", "skills", "fixture-skill");
+  fs.mkdirSync(skill, { recursive: true });
+  fs.writeFileSync(
+    path.join(skill, "SKILL.md"),
+    "---\nname: fixture-skill\ndescription: FIXTURE_SKILL_LISTED\n---\nbody\n",
+  );
   if (pluginTools.length > 0) {
     fs.mkdirSync(path.join(work, ".opencode", "plugin"), { recursive: true });
     const tools = pluginTools
@@ -99,6 +113,7 @@ async function runModelWork(model: ReturnType<typeof fakeModel>, pluginTools: re
       `export const Fixture = async () => ({ tool: { ${tools} } });\n`,
     );
   }
+  // The user's own provider arrives in OPENCODE_CONFIG_CONTENT, which model work merges its agent into.
   const userConfig = {
     model: "fixture/fake-model",
     disabled_providers: ["opencode"],
@@ -143,10 +158,10 @@ async function runModelWork(model: ReturnType<typeof fakeModel>, pluginTools: re
   return { result, work, marker };
 }
 
-if (!BIN) {
-  test.skip("OpenCode 1 CLI compatibility (set AKM_TEST_OPENCODE1_BIN to run)", () => {});
+if (!BIN || process.platform === "win32") {
+  test.skip("OpenCode 1 CLI compatibility (set AKM_TEST_OPENCODE1_BIN to run; not run on Windows)", () => {});
 } else {
-  describe("OpenCode 1 model work is limited to reading and searching", () => {
+  describe("OpenCode 1 model work", () => {
     beforeAll(() => {
       _setOpencodeVersionProbeForTests(undefined);
     });
@@ -154,6 +169,19 @@ if (!BIN) {
     test("the named binary is OpenCode 1", () => {
       expect(isOpencode2(BIN)).toBe(false);
     });
+
+    test("sends akm's one-line system prompt, no skill listing and no title request", async () => {
+      const model = fakeModel();
+      const { result } = await runModelWork(model);
+
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain("PROBE_OK");
+      expect(model.requests).toHaveLength(1);
+      expect(model.requests[0]?.system).toStartWith("Do the task in the message. Reply with exactly what it asks for.");
+      expect(model.requests[0]?.system).not.toContain("You are opencode");
+      expect(model.requests[0]?.system).not.toContain("FIXTURE_SKILL_LISTED");
+      expect(model.requests[0]?.user).toContain("probe");
+    }, 120_000);
 
     test("only the reading tools are offered, and a call to a tool the agent denies is refused and runs nothing", async () => {
       for (const callTool of ["bash", "review_note"]) {

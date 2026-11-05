@@ -12,7 +12,6 @@ import { describe, expect, test } from "bun:test";
 import { type ProcessRow, targetRows } from "../../src/commands/targets";
 import type { AkmConfig } from "../../src/core/config/config";
 import { describeRuns } from "../../src/setup/summary";
-import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 
 const cfg = (partial: Partial<AkmConfig> = {}): AkmConfig => ({ semanticSearchMode: "off", ...partial });
 const MODELS = { fast: "small", balanced: "mid", reasoning: "big" };
