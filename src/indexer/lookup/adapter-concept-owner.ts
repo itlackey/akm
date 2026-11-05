@@ -299,7 +299,7 @@ export function currentConceptId(ref: BundleRef, sources: readonly SearchSource[
  * links, memories, scripts and stored proposals. A ref that misses is retried
  * without that head: this is the head-less ref, or undefined when it has none.
  */
-function withoutTypeHead(conceptId: string): string | undefined {
+export function withoutTypeHead(conceptId: string): string | undefined {
   const slash = conceptId.indexOf("/");
   if (slash <= 0 || !stashDirNames().includes(conceptId.slice(0, slash))) return undefined;
   return conceptId.slice(slash + 1);

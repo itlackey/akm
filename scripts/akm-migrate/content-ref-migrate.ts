@@ -5,7 +5,7 @@
 /**
  * The `assetContentRefs` step: a ref that names an asset by its pre-#1432 spelling (`knowledge/WORK/x`, now `WORK/x`)
  * in a writable bundle's text files is rewritten to the new one, under one backup directory per run. The old to new
- * map comes from the files themselves (`refForFile` of each recognized asset), so no index is needed. A spelling that
+ * map comes from the files themselves (each recognized asset's ref), so no index is needed. A spelling that
  * is now another file's live ref is left as written and listed ({@link ShadowedRef}). The pure rewrite is
  * `./migrate/content-ref-planner.ts`.
  */
@@ -13,14 +13,14 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
+import { adapterForId } from "../../src/core/adapter/registry";
 import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
 import { getDataDir } from "../../src/core/paths";
 import { walkStashFlat } from "../../src/indexer/walk/walker";
 import { type BundleRoot, bundleRoots } from "./bundle-roots";
-import { type ContentRefRewriter, contentRefRewriter, type RefDocument, type ShadowedRef } from "./migrate/content-ref-planner";
+import { type ContentRefRewriter, contentRefRewriter, type ShadowedRef } from "./migrate/content-ref-planner";
 import { type FileReplacement, replaceFilesWithBackups } from "./migrate/task-files";
 
 export interface ContentRefFileSummary {
@@ -66,17 +66,22 @@ function textFiles(root: string): string[] {
     .map((file) => file.absPath);
 }
 
-/** Every asset the `akm` adapter recognizes in each `akm` bundle, by bundle: the refs that exist now. */
-function bundleDocuments(roots: readonly BundleRoot[]): Map<string, RefDocument[]> {
-  const bundles = new Map<string, RefDocument[]>();
+/**
+ * Every asset each bundle's adapter recognizes, by bundle: the refs that exist now. Every bundle counts, as it does
+ * for the resolver, so a spelling another adapter's bundle holds is live and never rewritten.
+ */
+function bundleDocuments(roots: readonly BundleRoot[]): Map<string, string[]> {
+  const bundles = new Map<string, string[]>();
   for (const root of roots) {
-    if ((root.adapter ?? detectAdapterId(root.root)) !== "akm") continue;
-    const component = { id: root.bundleId, adapter: "akm", root: root.root, writable: root.writable };
-    const documents = walkStashFlat(root.root).flatMap((file): RefDocument[] => {
-      const doc = akmAdapter.recognize(component, file);
-      return doc?.conceptId ? [{ type: doc.type, ref: doc.conceptId }] : [];
+    const adapterId = root.adapter ?? detectAdapterId(root.root);
+    const adapter = adapterForId(adapterId);
+    if (!adapter) continue;
+    const component = { id: root.bundleId, adapter: adapterId, root: root.root, writable: root.writable };
+    const documents = walkStashFlat(root.root).flatMap((file): string[] => {
+      const doc = adapter.recognize(component, file);
+      return doc?.conceptId ? [doc.conceptId] : [];
     });
-    bundles.set(root.bundleId, documents);
+    bundles.set(root.bundleId, [...(bundles.get(root.bundleId) ?? []), ...documents]);
   }
   return bundles;
 }
