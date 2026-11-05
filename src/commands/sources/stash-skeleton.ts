@@ -4,9 +4,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { SCRATCH_DIR } from "../../core/asset/scratch";
 import { getDirname } from "../../runtime";
 
 const SKELETON_DIR = path.join(getDirname(import.meta.url), "../../assets/stash-skeleton");
+const SCRATCH_README = path.join(getDirname(import.meta.url), "../../assets/scratch-readme.md");
 
 /**
  * Copy the default stash skeleton into a stash directory.
@@ -72,6 +74,38 @@ export function scaffoldStashMeta(stashDir: string): void {
     // Non-fatal — stash is usable without the .meta orientation doc
   }
 }
+
+/**
+ * Scaffold the bundle-root `.scratch/README.md`. Written only when absent; the
+ * directory's other contents are never touched. The template lives outside
+ * `stash-skeleton/` because the build-time asset glob excludes dot-directories.
+ */
+export function scaffoldScratch(stashDir: string): void {
+  const readmePath = path.join(stashDir, SCRATCH_DIR, "README.md");
+  if (fs.existsSync(readmePath)) return;
+  try {
+    fs.mkdirSync(path.dirname(readmePath), { recursive: true });
+    fs.copyFileSync(SCRATCH_README, readmePath);
+  } catch {
+    // Non-fatal — the bundle is usable without the scratch scaffold.
+  }
+}
+
+/** Add the root-scoped scratch ignore rule unless present. Independent of the secret-ignore block and its opt-out. */
+export function ensureScratchGitignore(stashDir: string): void {
+  try {
+    const gitignorePath = path.join(stashDir, ".gitignore");
+    const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
+    // `.scratch`, `/.scratch`, `.scratch/` and `/.scratch/` all already ignore the root directory.
+    if (existing.split(/\r?\n/).some((line) => line.trim().replace(/^\/|\/$/g, "") === SCRATCH_DIR)) return;
+    const gap = existing.length === 0 ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
+    fs.writeFileSync(gitignorePath, `${existing}${gap}# Local scratch material\n${SCRATCH_GITIGNORE_RULE}\n`);
+  } catch {
+    // Non-fatal — the bundle is usable without the ignore scaffold.
+  }
+}
+
+const SCRATCH_GITIGNORE_RULE = `/${SCRATCH_DIR}/`;
 
 /** Marks the akm-authored block in a stash `.gitignore` (idempotency anchor). */
 const STASH_GITIGNORE_MARKER = "# akm: keep secret material out of git by default";

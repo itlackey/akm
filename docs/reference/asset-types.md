@@ -48,6 +48,7 @@ my-bundle/
   tasks/          # Task source v4 scheduled or on-demand automation (.yml only)
   sessions/       # Machine-placed indexed session summaries (.md)
   .meta/          # Optional bundle orientation, not indexed (see "Bundle orientation" below)
+  .scratch/       # Temporary working material, never indexed (see "Scratch space" below)
 ```
 
 LLM Wikis are a related but separate concept: a wiki is its own installable
@@ -116,6 +117,29 @@ does not currently resolve even for an installed bundle — origin resolution
 matches only derived installation ids, not raw install refs. Use `akm//meta`
 for the primary bundle, or the bundle key you gave it in `bundles`
 (`config.json`), not the original install ref.
+
+### Scratch space: the `.scratch/` convention
+
+The root `.scratch/` directory of a bundle holds temporary drafts,
+investigation notes, experiments, generated artifacts and intermediate
+outputs. Every file beneath it is excluded from indexing regardless of
+extension, adapter or Git state (tracked and force-added files included), and
+it never influences adapter or bundle-root detection. The reservation is
+root-scoped: a nested `.scratch/` is ordinary content, and the existing
+`workspace/` directory keeps its indexable-content semantics.
+
+`akm bundle create` (and `akm setup`, which reuses it) creates
+`.scratch/README.md` and adds `/.scratch/` to `.gitignore`. Re-running it
+restores a missing README or rule without touching existing scratch files or a
+customized README; the Git ignore rule is added even when the secret-ignore
+block or its track-secrets opt-out is present. Existing bundles work without
+the directory, and reads never create it. Index exclusion is independent of Git
+tracking: ignoring `.scratch/` does not untrack files already committed.
+
+AKM never cleans `.scratch/`. Remove your own files when the work is done, move
+reusable findings into indexed content, and never keep the only copy of
+anything important there. Entries indexed before a file moved into `.scratch/`
+are removed on the next index pass.
 
 ## Script execution (ExecHints)
 

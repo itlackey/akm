@@ -127,6 +127,35 @@ describe("indexWrittenAssets", () => {
     expect(idx.ftsCount).toBeGreaterThan(0);
   });
 
+  test("a file under the root .scratch/ is not indexed (#1435)", async () => {
+    const filePath = path.join(stashDir, ".scratch", "memories", "draft-note.md");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, "---\ndescription: draft\n---\n\n# draft-note\n", "utf8");
+    await indexWrittenAssets(stashDir, [filePath]);
+    expect(queryIndex().entryNames).not.toContain("draft-note");
+  });
+
+  test("moving an indexed file into .scratch/ removes it on an incremental and a full index, and back restores it (#1435)", async () => {
+    const filePath = writeMemory("travelling-note", "Body.");
+    await akmIndex({ stashDir });
+    expect(queryIndex().entryNames).toContain("travelling-note");
+
+    const scratchPath = path.join(stashDir, ".scratch", "memories", "travelling-note.md");
+    fs.mkdirSync(path.dirname(scratchPath), { recursive: true });
+    fs.renameSync(filePath, scratchPath);
+    await akmIndex({ stashDir });
+    expect(queryIndex().entryNames).not.toContain("travelling-note");
+    expect(queryIndex().entryNames).toContain("seed-memory");
+
+    fs.renameSync(scratchPath, filePath);
+    await akmIndex({ stashDir });
+    expect(queryIndex().entryNames).toContain("travelling-note");
+
+    fs.renameSync(filePath, scratchPath);
+    await akmIndex({ stashDir, full: true });
+    expect(queryIndex().entryNames).not.toContain("travelling-note");
+  });
+
   test("re-indexing an edited file updates its entry (idempotent upsert)", async () => {
     const filePath = writeMemory("evolving-note", "Original body.");
     await indexWrittenAssets(stashDir, [filePath]);

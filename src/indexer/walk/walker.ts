@@ -13,6 +13,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isRelevantAssetFile } from "../../core/asset/asset-placement";
+import { isScratchPath } from "../../core/asset/scratch";
 import { WORKFLOW_EXTENSIONS } from "../../core/recognition-util";
 import { spawnSync } from "../../runtime";
 import { buildFileContext, type FileContext } from "./file-context";
@@ -87,7 +88,8 @@ export function walkStash(typeRoot: string, assetType: string): DirectoryGroup[]
  * except that (unless `includeAllDirectories`) git-ignored files under `env/`
  * and `secrets/` are still walked.
  * Otherwise falls back to a manual walk that skips .git, node_modules, bin,
- * .cache, dot-directories, and the legacy metadata sidecar.
+ * .cache, dot-directories, and the legacy metadata sidecar. Both walks skip the
+ * root `.scratch/` directory, even for all-directories adapters.
  */
 export function walkStashFlat(stashRoot: string, options: WalkStashFlatOptions = {}): FileContext[] {
   return walkStashFlatWithStatus(stashRoot, options).files;
@@ -155,6 +157,7 @@ function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkSta
     .filter((f) => f.length > 0)
     .filter((f) => !deletedFiles.has(f))
     .filter((f) => !f.startsWith("..") && !path.isAbsolute(f))
+    .filter((f) => !isScratchPath(f))
     .filter((f) => {
       const dirParts = path
         .dirname(f)
@@ -276,6 +279,7 @@ function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): Walk
     for (const entry of entries) {
       if (entry.name === ".stash.json") continue;
       const fullPath = path.join(current, entry.name);
+      if (isScratchPath(path.relative(stashRoot, fullPath))) continue;
       if (entry.isSymbolicLink()) {
         // A file symlink is indexed like any other file; a directory symlink
         // is never descended (no cycles).
