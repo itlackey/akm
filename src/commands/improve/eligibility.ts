@@ -275,8 +275,9 @@ async function collectEligibleRefsFromIndex(
     let memoryDerived = 0;
     for (const indexed of entries) {
       const ref = indexed.conceptId;
+      // A ref that does not parse back to itself (a file named `a#b.md`) cannot be addressed.
       try {
-        parseBundleRef(ref);
+        if (parseBundleRef(ref).conceptId !== ref) continue;
       } catch (error) {
         if (error instanceof UsageError || error instanceof NotFoundError) continue;
         throw error;

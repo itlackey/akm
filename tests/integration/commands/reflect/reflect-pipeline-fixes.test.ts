@@ -220,7 +220,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
 
 // ── 1b. File guard — a proposal must write the file reflect read ─────────────────
 
-describe("Reflect file guard — refuses an asset whose file a proposal would not write (#1052)", () => {
+describe("Reflect writes the file an asset is in (#1052, #1432)", () => {
   const NOTE = "---\ndescription: Reference A.\n---\n# Reference A\n\nBody.\n";
 
   function writeInStash(stash: string, rel: string, content: string): string {
@@ -230,55 +230,23 @@ describe("Reflect file guard — refuses an asset whose file a proposal would no
     return file;
   }
 
-  test("a skill's references/*.md is refused before the model runs, so no second file is proposed", async () => {
+  test("a file outside its type's folder is reflected as an update of that file, under its path ref or the old spelling (#1432)", async () => {
     const stash = makeStashDir();
     writeInStash(stash, "skills/demo/SKILL.md", "---\nname: demo\ndescription: Demo skill.\n---\n# Demo\n");
-    const file = writeInStash(stash, "skills/demo/references/a.md", NOTE);
-    const bin = agent([reflectReply({ description: "Reference A, revised." })]);
-
-    // The index names this file `knowledge/skills/demo/references/a`; a proposal for that ref writes
-    // `knowledge/skills/demo/references/a.md`, where nothing is.
-    const result = await akmReflect({
-      ref: "knowledge/skills/demo/references/a",
-      stashDir: stash,
-      config: quietQualityGateConfig(bin),
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("expected failure");
-    // The improve loop records this reason as a skip, not as a failed reflect.
-    expect(result.reason).toBe("unsupported_type");
-    expect(result.error).toBe(
-      `Reflect refused: the file for knowledge/skills/demo/references/a is ${fs.realpathSync(file)}, but a proposal would write ${path.join(stash, "knowledge", "skills", "demo", "references", "a.md")}. Edit the file directly.`,
-    );
-    expect(harnessCalls(bin)).toHaveLength(0);
-    expect(listProposals(stash)).toHaveLength(0);
-    expect(fs.existsSync(path.join(stash, "knowledge", "skills"))).toBe(false);
-    const completed = readEvents({ type: "reflect_completed" }).events;
-    expect(completed).toHaveLength(1);
-    expect(completed[0]?.metadata).toMatchObject({
-      ok: false,
-      reason: "unsupported_type",
-      subreason: "file_outside_layout",
-    });
-  });
-
-  test("a note outside every type directory is refused the same way", async () => {
-    const stash = makeStashDir();
+    writeInStash(stash, "skills/demo/references/a.md", NOTE);
     writeInStash(stash, "docs/guide.md", NOTE);
-    const bin = agent([reflectReply({ description: "Guide, revised." })]);
 
-    const result = await akmReflect({
-      ref: "knowledge/docs/guide",
-      stashDir: stash,
-      config: quietQualityGateConfig(bin),
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("expected failure");
-    expect(result.reason).toBe("unsupported_type");
-    expect(harnessCalls(bin)).toHaveLength(0);
-    expect(listProposals(stash)).toHaveLength(0);
+    for (const [ref, file] of [
+      ["skills/demo/references/a", "skills/demo/references/a.md"],
+      ["docs/guide", "docs/guide.md"],
+      ["knowledge/docs/guide", "docs/guide.md"],
+    ] as const) {
+      const bin = agent([reflectReply({ description: `${ref}, revised.` })]);
+      const result = await akmReflect({ ref, stashDir: stash, config: quietQualityGateConfig(bin) });
+      if (!result.ok) throw new Error(`expected ${ref} to be reflected, got: ${result.error}`);
+      expect(result.proposal.changes).toMatchObject([{ path: file, op: "update" }]);
+    }
+    expect(fs.readdirSync(path.join(stash, "knowledge"), { recursive: true })).toEqual([]);
   });
 
   test("assets in the bundle's layout are still reflected, as an update of their own file", async () => {
