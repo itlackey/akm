@@ -18,13 +18,9 @@ export interface SetupRuns {
   embeddings: string;
 }
 
-/**
- * Whether akm can run this platform's program with its tools limited to reading and searching for model calls:
- * `bin` when the harness sets one, else the platform's own.
- */
-export function runsReadOnly(platform: string, bin?: string): boolean {
-  const harness = getHarness(platform);
-  return harness !== undefined && (harness.confinableInstalled?.(bin ?? harness.profile.bin) ?? harness.confinable);
+/** Whether akm can run this platform's program with its tools limited to reading and searching for model calls. */
+export function runsReadOnly(platform: string): boolean {
+  return getHarness(platform)?.confinable === true;
 }
 
 /** What setup says, wherever it names a harness that takes akm's model calls and cannot be restricted. */
@@ -46,7 +42,7 @@ function describeWork(row: ProcessRow, rows: readonly TargetRow[], modelWork: bo
     const platform = rows.find((r) => r.type === "harness" && r.name === row.target);
     const restriction =
       modelWork && platform?.type === "harness"
-        ? runsReadOnly(platform.platform, platform.bin)
+        ? runsReadOnly(platform.platform)
           ? ", limited to reading and searching"
           : `. ${unrestrictedModelWorkNote(`"${row.target}"`)}`
         : "";

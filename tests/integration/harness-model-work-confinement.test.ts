@@ -12,8 +12,9 @@
 // stands for each CLI and edits outside its working directory unless that
 // restriction is on the command line it is handed. The same stub, run as agent
 // work, does edit, so a pass is the restriction and not a stub that never writes.
-// It says nothing of what the real program then permits: for OpenCode 2 that is
-// `opencode-cli-compat.test.ts`, which runs the real CLI when one is named.
+// It says nothing of what the real program then permits: for OpenCode that is
+// `opencode-cli-compat.test.ts`, which runs the real CLI when one is named. OpenCode's
+// restriction also rides in its inline config, a default-deny rule on both majors.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -57,9 +58,9 @@ interface Stub {
   readonly cwd: () => string;
 }
 
-function stubFor(platform: string): Stub {
-  // OpenCode's builder asks the binary its major; the stub answers 2, the one that can be confined.
-  if (platform === "opencode") fakeOpencodeMajor(2);
+function stubFor(platform: string, opencodeMajor: 1 | 2 = 2): Stub {
+  // OpenCode's builder asks the binary its major; the stub answers as the major under test.
+  if (platform === "opencode") fakeOpencodeMajor(opencodeMajor);
   const dir = path.join(root, platform);
   fs.mkdirSync(dir);
   const outside = path.join(dir, "outside.txt");
@@ -75,6 +76,14 @@ function stubFor(platform: string): Stub {
       `  ${RESTRICTION[platform]}) ;;`,
       `  *) echo changed > '${outside}' ;;`,
       "esac",
+      ...(platform === "opencode"
+        ? [
+            'case "$OPENCODE_CONFIG_CONTENT" in',
+            `  *'"*":"deny"'*|*'"action":"*","resource":"*","effect":"deny"'*) ;;`,
+            `  *) echo changed > '${outside}' ;;`,
+            "esac",
+          ]
+        : []),
       "echo done",
       "",
     ].join("\n"),
@@ -100,12 +109,17 @@ async function run(runner: HarnessRunner, modelWork: boolean) {
 }
 
 const stubbed = Object.keys(RESTRICTION);
+/** Each harness, OpenCode on both majors. */
+const cases: ReadonlyArray<readonly [label: string, platform: string, major: 1 | 2]> = [
+  ...stubbed.map((platform) => [platform, platform, 2] as const),
+  ["opencode 1", "opencode", 1],
+];
 
 describe("model work on a CLI harness advertised as confinable", () => {
-  for (const platform of stubbed) {
-    describe(platform, () => {
+  for (const [label, platform, major] of cases) {
+    describe(label, () => {
       test("is started in a scratch directory with the restriction on its command line, whatever its authored args say", async () => {
-        const stub = stubFor(platform);
+        const stub = stubFor(platform, major);
         const result = await run(stub.runner, true);
         expect(result.ok).toBe(true);
         expect(fs.existsSync(stub.outside)).toBe(false);
@@ -116,7 +130,7 @@ describe("model work on a CLI harness advertised as confinable", () => {
       });
 
       test("the same program, run as agent work, does edit (the check is not vacuous)", async () => {
-        const stub = stubFor(platform);
+        const stub = stubFor(platform, major);
         const result = await run({ ...stub.runner, args: [] }, false);
         expect(result.ok).toBe(true);
         expect(fs.existsSync(stub.outside)).toBe(true);

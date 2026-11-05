@@ -50,17 +50,6 @@ describe("describeRuns", () => {
     );
   });
 
-  test("an OpenCode harness is restricted by the major of its configured bin, not of the opencode on PATH", () => {
-    // Every binary but the harness's own is OpenCode 1, as the one on PATH is.
-    fakeOpencodeMajor((bin) => (bin === "/opt/oc2/opencode" ? "opencode v2.0.26" : "1.18.34"));
-    expect(describeRuns(cfg({ harnesses: { opencode: { bin: "/opt/oc2/opencode" } } })).modelCalls).toContain(
-      ", limited to reading and searching",
-    );
-    expect(describeRuns(cfg({ harnesses: { opencode: {} } })).modelCalls).toContain(
-      'Model work on "opencode" cannot be restricted',
-    );
-  });
-
   test("nothing configured is off, and a connection with no model yet is not nothing", () => {
     expect(describeRuns(cfg())).toEqual({
       modelCalls: "off: no connection or harness is configured",
