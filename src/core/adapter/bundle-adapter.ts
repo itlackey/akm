@@ -60,6 +60,13 @@ export interface BundleAdapter {
   readonly version: string;
   /** Recognized extensions; longest-match stripping + collision priority. */
   readonly extensions: readonly string[];
+  /**
+   * How the core walk enumerates this adapter's bundle. Omitted: the akm-bundle
+   * walk (skips dot-directories, `bin/`, `.cache/`; lists git-ignored `env/` and
+   * `secrets/` files). `"all-directories"`: every directory except `.git` and
+   * `node_modules`, with no special `env/`/`secrets/` listing.
+   */
+  readonly walkMode?: "all-directories";
 
   // REQUIRED — the single-file recognition primitive; replaces the matcher
   // stack (matchers.ts:151-305; file-context.ts:242-265).

@@ -318,6 +318,7 @@ export const okfAdapter: BundleAdapter = {
   id: "okf",
   version: "0.9.0",
   extensions: [".md"],
+  walkMode: "all-directories",
 
   recognize,
   validate,

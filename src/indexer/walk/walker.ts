@@ -17,11 +17,15 @@ import { WORKFLOW_EXTENSIONS } from "../../core/recognition-util";
 import { spawnSync } from "../../runtime";
 import { buildFileContext, type FileContext } from "./file-context";
 
-const ALWAYS_SKIP_DIRS = new Set([".git"]);
-const AKM_SKIP_DIRS = new Set(["node_modules", "bin", ".cache"]);
+const ALWAYS_SKIP_DIRS = new Set([".git", "node_modules"]);
+const AKM_SKIP_DIRS = new Set(["bin", ".cache"]);
 
 export interface WalkStashFlatOptions {
-  /** Let the owning adapter see every directory except VCS internals. */
+  /**
+   * Let the owning adapter see every directory except VCS internals and
+   * `node_modules`, and treat the tree as ordinary content: the akm-bundle
+   * `env/` and `secrets/` listing below does not apply.
+   */
   includeAllDirectories?: boolean;
 }
 
@@ -80,7 +84,8 @@ export function walkStash(typeRoot: string, assetType: string): DirectoryGroup[]
  * live under type-specific directories. Matchers decide what each file is.
  *
  * If the directory is a git repo, uses `git ls-files` to respect .gitignore,
- * except that git-ignored files under `env/` and `secrets/` are still walked.
+ * except that (unless `includeAllDirectories`) git-ignored files under `env/`
+ * and `secrets/` are still walked.
  * Otherwise falls back to a manual walk that skips .git, node_modules, bin,
  * .cache, dot-directories, and the legacy metadata sidecar.
  */
@@ -101,7 +106,7 @@ export function walkStashFlatWithStatus(stashRoot: string, options: WalkStashFla
 
 /**
  * Walk using `git ls-files` to respect .gitignore (ignored `env/` and
- * `secrets/` files excepted).
+ * `secrets/` files excepted, unless `includeAllDirectories`).
  * Returns null if the directory is not a git repo or git fails.
  */
 function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkStashFlatResult | null {
@@ -127,14 +132,19 @@ function walkStashGit(stashRoot: string, options: WalkStashFlatOptions): WalkSta
   // `akm bundle create` git-ignores `env/` and `secrets/` so credentials are
   // never committed, but they are still bundle assets. List the ignored files
   // under those two directories as well; the adapters index key names only.
-  const ignoredResult = spawnSync(
-    ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "env/", "secrets/"],
-    { cwd: stashRoot },
-  );
-  if (!ignoredResult.success) return null;
-  const ignoredStdout = Buffer.isBuffer(ignoredResult.stdout)
-    ? ignoredResult.stdout.toString("utf8")
-    : String(ignoredResult.stdout ?? "");
+  // Not for an all-directories walk (okf, code-project): in an ordinary
+  // repository those are exactly the files the repository chose to hide.
+  let ignoredStdout = "";
+  if (!options.includeAllDirectories) {
+    const ignoredResult = spawnSync(
+      ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "env/", "secrets/"],
+      { cwd: stashRoot },
+    );
+    if (!ignoredResult.success) return null;
+    ignoredStdout = Buffer.isBuffer(ignoredResult.stdout)
+      ? ignoredResult.stdout.toString("utf8")
+      : String(ignoredResult.stdout ?? "");
+  }
 
   // Data-hygiene filename skips: the legacy metadata sidecar (never indexed as
   // content) plus git dot-files.

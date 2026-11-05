@@ -378,8 +378,9 @@ describe("walkStashFlat — symlink escape", () => {
 
 // ── includeAllDirectories (the walk mode the okf adapter uses) ───────────────
 //
-// Pinned BEFORE the walk-mode refactor: this is what an all-directories walk
-// returns today, in a non-git directory and in a git repo.
+// An all-directories walk (the okf and code-project adapters) sees dot-directories
+// and `bin/`, never `.git` or `node_modules`, and does not force-list ignored
+// `env/`/`secrets/` files.
 
 describe("walkStashFlat — includeAllDirectories", () => {
   function layout(root: string) {
@@ -396,7 +397,7 @@ describe("walkStashFlat — includeAllDirectories", () => {
       .files.map((f) => f.relPath)
       .sort();
 
-  test("non-git: walks dot-directories, bin and node_modules; never .git", () => {
+  test("non-git: walks dot-directories and bin; never .git or node_modules", () => {
     const root = tmpDir();
     layout(root);
     writeFile(path.join(root, ".git", "HEAD"), "ref: x\n");
@@ -406,11 +407,10 @@ describe("walkStashFlat — includeAllDirectories", () => {
       ".github/AGENTS.md",
       "bin/tool.md",
       "docs/guide.md",
-      "node_modules/pkg/readme.md",
     ]);
   });
 
-  test("git: walks dot-directories, bin and node_modules, honours .gitignore", () => {
+  test("git: walks dot-directories and bin, skips node_modules, honours .gitignore", () => {
     const root = tmpDir();
     layout(root);
     writeFile(path.join(root, ".gitignore"), "ignored/\n");
@@ -422,17 +422,32 @@ describe("walkStashFlat — includeAllDirectories", () => {
       ".github/AGENTS.md",
       "bin/tool.md",
       "docs/guide.md",
-      "node_modules/pkg/readme.md",
     ]);
   });
 
-  test("git: still force-lists git-ignored env/ and secrets/ files", () => {
+  test("git: does not force-list git-ignored env/ and secrets/ files", () => {
     const root = tmpDir();
     writeFile(path.join(root, ".gitignore"), "env/\nsecrets/\n");
     writeFile(path.join(root, "env", "a.env"), "A=1\n");
     writeFile(path.join(root, "secrets", "b.env"), "B=1\n");
     writeFile(path.join(root, "docs", "guide.md"), "# Guide\n");
     expect(spawnSync("git", ["init"], { cwd: root }).status).toBe(0);
-    expect(relPaths(root)).toEqual(["docs/guide.md", "env/a.env", "secrets/b.env"]);
+    expect(relPaths(root)).toEqual(["docs/guide.md"]);
+  });
+});
+
+describe("walkStashFlat — default mode keeps its env/ and secrets/ listing", () => {
+  test("git: lists git-ignored env/ and secrets/ files, skips node_modules", () => {
+    const root = tmpDir();
+    writeFile(path.join(root, ".gitignore"), "env/\nsecrets/\n");
+    writeFile(path.join(root, "env", "a.env"), "A=1\n");
+    writeFile(path.join(root, "secrets", "b.env"), "B=1\n");
+    writeFile(path.join(root, "node_modules", "p", "x.md"), "# x\n");
+    expect(spawnSync("git", ["init"], { cwd: root }).status).toBe(0);
+    expect(
+      walkStashFlat(root)
+        .map((f) => f.relPath)
+        .sort(),
+    ).toEqual(["env/a.env", "secrets/b.env"]);
   });
 });
