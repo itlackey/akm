@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Markdown under `raw/` of an LLM Wiki nested in a bundle (a folder with a root `schema.md` and `pages/`) is now type `wiki-source`, as it is when the wiki is a bundle of its own. Refs do not change. The first `akm index` after the upgrade re-files those rows; `improve` reflect skips the type by default.
+
+### Removed
+
+- `improve.strategies.*.processes.reflect.excludeRefPrefixes` is removed; reflect's default `allowedTypes` already excludes `wiki-source`. A config that still has the key warns once and the key is ignored.
+
 ## [0.10.261107] - 2026-11-05
 
 ### Added

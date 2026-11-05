@@ -3043,7 +3043,7 @@ connection or harness it resolved to), its `model` and `engineKind`
 (`connection` or `harness`), this process's own lowering `notices`, and — for
 reflect/distill/consolidate only — `eligibleRefs`, the count of this run's
 `effectiveRefs` the process would act on (`shouldSkipRef`'s
-allowedTypes/excludeRefPrefixes (reflect only)/process-disabled check; a count,
+allowedTypes/process-disabled check; a count,
 not a per-ref matrix, to keep the envelope bounded). A row whose process has no
 connection or harness carries `unavailable: {configKey, reason}` — the same data
 behind `skippedProcesses` above, reshaped per process. Wherever a result says

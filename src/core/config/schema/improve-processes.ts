@@ -47,16 +47,6 @@ const IMPROVE_PROCESS_BASE_FIELDS = {
 const allowedTypesField = z.array(z.string().min(1)).optional();
 
 /**
- * Reflect only (R12): conceptId prefixes to exclude, matched after stripping
- * an optional `bundle//` from both the ref and each prefix (see
- * improve-strategies.ts shouldSkipRef). `allowedTypes` is type-only and can't
- * exclude a subset of one type, e.g. raw wiki-ingest snapshots indexed as
- * `knowledge/wikis/articles/raw/*`. distill/consolidate are memory-only and
- * never read this field.
- */
-const excludeRefPrefixesField = z.array(z.string().min(1)).optional();
-
-/**
  * Consolidate process: hard cap on memories processed per pass.
  * Reflect: max refs processed (same as profile-level `limit`).
  */
@@ -141,7 +131,6 @@ const triageJudgmentField = z
 
 const REFLECT_PROCESS_FIELDS = {
   allowedTypes: allowedTypesField,
-  excludeRefPrefixes: excludeRefPrefixesField,
   limit: processLimitField,
   qualityGate: qualityGateField,
   defectFilter: defectFilterField,
@@ -209,17 +198,6 @@ const PROACTIVE_MAINTENANCE_PROCESS_FIELDS = {
   maxPerRun: positiveInt.optional(),
 };
 
-/** distill/consolidate are memory-only and never read `excludeRefPrefixes` (reflect only, R12). */
-function rejectExcludeRefPrefixesOutsideReflect(value: Record<string, unknown>, ctx: z.RefinementCtx): void {
-  if ("excludeRefPrefixes" in value) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["excludeRefPrefixes"],
-      message: "excludeRefPrefixes is only valid on the reflect process",
-    });
-  }
-}
-
 export const ImproveProcessConfigSchema = z
   .object({
     ...IMPROVE_PROCESS_BASE_FIELDS,
@@ -241,14 +219,12 @@ export const ReflectProcessConfigSchema = z
 /** `processes.distill` — narrow per-process schema (WI-9.6). */
 export const DistillProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...DISTILL_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(rejectExcludeRefPrefixesOutsideReflect);
+  .passthrough();
 
 /** `processes.consolidate` — narrow per-process schema (WI-9.6). */
 export const ConsolidateProcessConfigSchema = z
   .object({ ...IMPROVE_PROCESS_BASE_FIELDS, ...CONSOLIDATE_PROCESS_FIELDS })
-  .passthrough()
-  .superRefine(rejectExcludeRefPrefixesOutsideReflect);
+  .passthrough();
 
 /** `processes.memoryInference` — narrow per-process schema (WI-9.6). */
 export const MemoryInferenceProcessConfigSchema = z

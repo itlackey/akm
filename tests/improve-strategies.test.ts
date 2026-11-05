@@ -153,92 +153,13 @@ describe("resolveImproveStrategy", () => {
   });
 });
 
-// WIKI (R12): reflect's excludeRefPrefixes filter keeps raw wiki-ingest
-// snapshots (type `knowledge`, so allowedTypes alone can't exclude them) out
-// of reflect without affecting distill/consolidate.
-describe("shouldSkipRef excludeRefPrefixes (reflect only)", () => {
-  function strategyWithExcluded(excludeRefPrefixes: string[]) {
-    return resolveImproveStrategy("default", {
-      semanticSearchMode: "off",
-      improve: { strategies: { default: { processes: { reflect: { excludeRefPrefixes } } } } },
-    }).config;
-  }
-
-  test("skips a ref under an excluded prefix with reason exclude-filter", () => {
-    const strategy = strategyWithExcluded(["knowledge/wikis/articles/raw"]);
-    expect(
-      shouldSkipRef({ ref: "knowledge/wikis/articles/raw/some-page", type: "knowledge" }, "reflect", strategy),
-    ).toEqual({
+describe("shouldSkipRef wiki-source", () => {
+  test("reflect skips a raw wiki snapshot by type, with no config", () => {
+    const strategy = resolveImproveStrategy("default", { semanticSearchMode: "off" }).config;
+    expect(shouldSkipRef({ ref: "wikis/articles/raw/some-page", type: "wiki-source" }, "reflect", strategy)).toEqual({
       skip: true,
-      reason: "exclude-filter",
+      reason: "type-filter",
     });
-  });
-
-  test("matches both bundle-qualified and short forms", () => {
-    const strategy = strategyWithExcluded(["stash//knowledge/wikis/articles/raw"]);
-    expect(
-      shouldSkipRef({ ref: "knowledge/wikis/articles/raw/some-page", type: "knowledge" }, "reflect", strategy).skip,
-    ).toBe(true);
-    expect(
-      shouldSkipRef({ ref: "stash//knowledge/wikis/articles/raw/some-page", type: "knowledge" }, "reflect", strategy)
-        .skip,
-    ).toBe(true);
-  });
-
-  test("a trailing slash on the prefix still excludes both short and bundle-qualified refs", () => {
-    const strategy = strategyWithExcluded(["knowledge/wikis/articles/raw/"]);
-    expect(
-      shouldSkipRef({ ref: "knowledge/wikis/articles/raw/some-page", type: "knowledge" }, "reflect", strategy).skip,
-    ).toBe(true);
-    expect(
-      shouldSkipRef({ ref: "stash//knowledge/wikis/articles/raw/some-page", type: "knowledge" }, "reflect", strategy)
-        .skip,
-    ).toBe(true);
-  });
-
-  test("a partial-segment prefix does not match a longer segment", () => {
-    const strategy = strategyWithExcluded(["knowledge/wikis/articles/ra"]);
-    expect(
-      shouldSkipRef({ ref: "knowledge/wikis/articles/raw/some-page", type: "knowledge" }, "reflect", strategy).skip,
-    ).toBe(false);
-  });
-
-  test("a prefix in the type-folder spelling still excludes the loose files of its type it named (#1432)", () => {
-    const strategy = strategyWithExcluded(["knowledge/wikis/articles/raw/"]);
-    expect(shouldSkipRef({ ref: "wikis/articles/raw/some-page", type: "knowledge" }, "reflect", strategy).skip).toBe(
-      true,
-    );
-    expect(shouldSkipRef({ ref: "wikis/articles/raw/some-page", type: "lesson" }, "reflect", strategy).skip).toBe(
-      false,
-    );
-  });
-
-  test("leaves other refs unaffected", () => {
-    const strategy = strategyWithExcluded(["knowledge/wikis/articles/raw"]);
-    const result = shouldSkipRef({ ref: "knowledge/guides/http-caching", type: "knowledge" }, "reflect", strategy);
-    expect(result.skip).toBe(false);
-  });
-
-  test("does not apply the filter to distill", () => {
-    const strategy = resolveImproveStrategy("default", {
-      semanticSearchMode: "off",
-      improve: {
-        strategies: {
-          default: {
-            processes: {
-              distill: { allowedTypes: ["memory", "knowledge"] },
-              reflect: { excludeRefPrefixes: ["knowledge/wikis/articles/raw"] },
-            },
-          },
-        },
-      },
-    }).config;
-    const result = shouldSkipRef(
-      { ref: "knowledge/wikis/articles/raw/some-page", type: "knowledge" },
-      "distill",
-      strategy,
-    );
-    expect(result.skip).toBe(false);
   });
 });
 

@@ -173,7 +173,7 @@ A strategy is `improve.strategies.<name>` (config) or a built-in under `src/asse
 
 | Process | Does | Particular fields |
 |---|---|---|
-| `reflect` | Revises an asset's `description`, `when_to_use`, and title from negative feedback | `allowedTypes`, `excludeRefPrefixes`, `limit`, `qualityGate`, `defectFilter` |
+| `reflect` | Revises an asset's `description`, `when_to_use`, and title from negative feedback | `allowedTypes`, `limit`, `qualityGate`, `defectFilter` |
 | `distill` | Turns a memory and its feedback into a lesson or knowledge proposal | `allowedTypes`, `qualityGate`, `requirePlannedRefs`, `cls` |
 | `consolidate` | Promote pass and pair pass over memories | `allowedTypes`, `limit`, `maxChunkSize` |
 | `memoryInference` | Writes derived memories and marks parents (`inferenceProcessed`); gated by `experimental.improveAutonomy` | `minPendingCount` |

@@ -346,7 +346,11 @@ describe("0.9 config contract", () => {
         stalenessDetection: { enabled: true },
         memory: { connection: "main", endpoint: "https://example.test" },
       },
-      improve: { strategies: { mine: { processes: { feedbackDistillation: { enabled: true } } } } },
+      improve: {
+        strategies: {
+          mine: { processes: { feedbackDistillation: { enabled: true }, reflect: { excludeRefPrefixes: ["raw"] } } },
+        },
+      },
     });
 
     const warnings = captureWarnings(() => {
@@ -358,6 +362,7 @@ describe("0.9 config contract", () => {
       "index.stalenessDetection",
       "index.memory.endpoint",
       "improve.strategies.mine.processes.feedbackDistillation",
+      "improve.strategies.mine.processes.reflect.excludeRefPrefixes",
     ]) {
       const named = warnings.filter((w) => w.includes(`Unknown config key "${key}"`));
       expect(named).toHaveLength(1);
