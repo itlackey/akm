@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261109] - 2026-11-05
+
+### Added
+
+- A bundle-root `.scratch/` folder is reserved for temporary working material: it is never indexed and is ignored by adapter and bundle-root detection. `akm init` (and so `bundle create` and `setup`) writes `.scratch/README.md` and adds `/.scratch/` to `.gitignore`.
+
+### Changed
+
+- `--filter` with a repeated key now matches any of its values (OR within a key); different keys must all match (AND across keys). `--filter user=alice --filter user=bob` returns both users' assets (before: only bob's). The `akm-cli/api` `filters` option accepts a string or a list per key.
+- `akm remember` with a body that starts with a frontmatter block merges that block's keys under akm's own: the block's `description` is used when `--description` is absent, its other keys are kept, and scope keys in it are ignored (scope comes only from the scope flags). Overridden keys warn once.
+- `distill` stamps its output with the input memory's scope, so a scoped memory yields scoped lessons and knowledge, and it skips merging into an existing lesson or knowledge doc of another scope. Model-written scope keys in distill and `proposal new` output are replaced or removed with one warning.
+
+### Fixed
+
+- `akm migrate` content-ref step rewrites old spellings of assets whose type changed, including nested-wiki `raw/` files (`wiki-source`), the way the resolver resolves them, and counts refs held by bundles of every adapter as live.
+
 ## [0.10.261108] - 2026-11-05
 
 ### Changed
