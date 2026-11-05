@@ -23,7 +23,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../core/adapter/adapters/akm-adapter";
-import { isScratchPath } from "../core/asset/scratch";
 import { loadConfig } from "../core/config/config";
 import { isDataDirUnreadableError } from "../core/errors";
 import { probeLock } from "../core/file-lock";
@@ -111,7 +110,7 @@ export async function indexWrittenAssets(
     // below), not a path pre-filter.
     const files = filePaths.filter((f) => {
       const rel = path.relative(stashDir, f);
-      return !isScratchPath(rel) && !rel.split(/[\\/]+/).some((segment) => segment.startsWith("."));
+      return !rel.split(/[\\/]+/).some((segment) => segment.startsWith("."));
     });
     if (files.length === 0) return true;
 

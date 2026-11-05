@@ -155,6 +155,15 @@ describe("akmInit (akm bundle create)", () => {
     }
   });
 
+  test("an existing equivalent scratch ignore line is not duplicated (#1435)", () => {
+    for (const line of [".scratch", "/.scratch", ".scratch/", "/.scratch/"]) {
+      const stashDir = makeTempDir("akm-init-scratch-equiv-");
+      fs.writeFileSync(path.join(stashDir, ".gitignore"), `${line}\n`);
+      ensureScratchGitignore(stashDir);
+      expect(fs.readFileSync(path.join(stashDir, ".gitignore"), "utf8")).toBe(`${line}\n`);
+    }
+  });
+
   test("re-running on an existing stash is idempotent and keeps lessons/", async () => {
     const stashDir = makeTempDir("akm-init-stash-2-");
     await akmInit({ dir: stashDir });

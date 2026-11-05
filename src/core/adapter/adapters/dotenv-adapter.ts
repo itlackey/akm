@@ -32,7 +32,7 @@
 import fs from "node:fs";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { assetPathCandidatesForName } from "../../asset/asset-placement";
-import { SCRATCH_DIR } from "../../asset/scratch";
+import { isScratchPath } from "../../asset/scratch";
 import { scanEnvKeyNames, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import { sensitiveMarkerPath } from "../../sensitive-marker-path";
@@ -197,7 +197,7 @@ export const dotenvAdapter: BundleAdapter = {
     } catch {
       return false;
     }
-    const dirs = entries.filter((e) => e.isDirectory() && e.name !== SCRATCH_DIR).map((e) => e.name);
+    const dirs = entries.filter((e) => e.isDirectory() && !isScratchPath(e.name)).map((e) => e.name);
     if (dirs.length === 0) return false;
     if (!dirs.every((d) => d === ENV_DIR || d === SECRETS_DIR)) return false;
     return dirs.includes(ENV_DIR) || dirs.includes(SECRETS_DIR);

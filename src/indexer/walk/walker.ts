@@ -13,7 +13,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isRelevantAssetFile } from "../../core/asset/asset-placement";
-import { isScratchPath, SCRATCH_DIR } from "../../core/asset/scratch";
+import { isScratchPath } from "../../core/asset/scratch";
 import { WORKFLOW_EXTENSIONS } from "../../core/recognition-util";
 import { spawnSync } from "../../runtime";
 import { buildFileContext, type FileContext } from "./file-context";
@@ -278,8 +278,8 @@ function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): Walk
     }
     for (const entry of entries) {
       if (entry.name === ".stash.json") continue;
-      if (current === stashRoot && entry.name === SCRATCH_DIR) continue;
       const fullPath = path.join(current, entry.name);
+      if (isScratchPath(path.relative(stashRoot, fullPath))) continue;
       if (entry.isSymbolicLink()) {
         // A file symlink is indexed like any other file; a directory symlink
         // is never descended (no cycles).

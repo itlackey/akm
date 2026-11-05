@@ -96,7 +96,8 @@ export function ensureScratchGitignore(stashDir: string): void {
   try {
     const gitignorePath = path.join(stashDir, ".gitignore");
     const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
-    if (existing.split(/\r?\n/).some((line) => line.trim() === SCRATCH_GITIGNORE_RULE)) return;
+    // `.scratch`, `/.scratch`, `.scratch/` and `/.scratch/` all already ignore the root directory.
+    if (existing.split(/\r?\n/).some((line) => line.trim().replace(/^\/|\/$/g, "") === SCRATCH_DIR)) return;
     const gap = existing.length === 0 ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
     fs.writeFileSync(gitignorePath, `${existing}${gap}# Local scratch material\n${SCRATCH_GITIGNORE_RULE}\n`);
   } catch {

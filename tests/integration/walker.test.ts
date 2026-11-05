@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isScratchPath } from "../../src/core/asset/scratch";
 import { walkStash, walkStashFlat, walkStashFlatWithStatus } from "../../src/indexer/walk/walker";
 
 const createdTmpDirs: string[] = [];
@@ -437,6 +438,19 @@ describe("walkStashFlat — includeAllDirectories", () => {
 });
 
 describe("walkStashFlat — root .scratch/ (#1435)", () => {
+  test("isScratchPath is root-scoped and separator-agnostic", () => {
+    for (const p of [".scratch", ".scratch/README.md", ".scratch\\deep\\n.md"]) expect(isScratchPath(p)).toBe(true);
+    for (const p of [
+      "sub/.scratch/a.md",
+      "sub\\.scratch\\a.md",
+      ".scratchy/a.md",
+      "../.scratch/a.md",
+      "scratch/a.md",
+    ]) {
+      expect(isScratchPath(p)).toBe(false);
+    }
+  });
+
   function layout(root: string) {
     writeFile(path.join(root, "docs", "guide.md"), "# Guide\n");
     writeFile(path.join(root, ".scratch", "README.md"), "# Scratch\n");
