@@ -47,10 +47,8 @@ import {
   applyProvenanceFrontmatter,
   type IndexDocument,
   projectMarkdownFragmentContent,
-  type StashEntryScope,
 } from "../../indexer/passes/metadata";
 import { ensurePrimaryIndexForRead, resolveReadSources } from "../../indexer/read-preflight";
-import { applyEntryFilters } from "../../indexer/search/db-search";
 import {
   buildEditHint,
   findSourceForPath,
@@ -68,15 +66,8 @@ import {
   type MatchResult,
 } from "../../indexer/walk/file-context";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
-import type {
-  FragmentContextMode,
-  RecallOptions,
-  ShowDetailLevel,
-  ShowLinkGroup,
-  ShowResponse,
-} from "../../sources/types";
+import type { FragmentContextMode, ShowDetailLevel, ShowLinkGroup, ShowResponse } from "../../sources/types";
 import { withIndexDb } from "../../storage/repositories/index-db";
-import { getEntryById, getEntryIdByFilePath } from "../../storage/repositories/index-entries-repository";
 import { getIndexedMarkdownFragment } from "../../storage/repositories/index-fts-repository";
 import { readEntryLinks } from "../../storage/repositories/index-links-repository";
 import { buildWorkflowAction } from "../../workflows/renderer";
@@ -97,16 +88,6 @@ export async function akmShowUnified(input: {
   contextMode?: FragmentContextMode;
   /** Hard character budget for contextual fragment presentation. */
   maxContextChars?: number;
-  /**
-   * Optional scope filter. When supplied, the resolved asset's frontmatter
-   * `scope_user`/`scope_agent`/`scope_run`/`scope_channel` keys must match
-   * every supplied filter value. A mismatch (or no scope on disk) raises a
-   * {@link NotFoundError} so callers can distinguish "asset exists but is
-   * out of scope" from "asset truly absent" via the standard error envelope.
-   */
-  scope?: StashEntryScope;
-  /** Internal task-evidence eligibility; direct show has no belief default. */
-  recall?: RecallOptions;
   /**
    * Event source for usage logging. Defaults to `"user"`. Set to
    * `"improve"` when called from improve's reflect/distill agents
@@ -146,13 +127,6 @@ export async function akmShowUnified(input: {
 
   // Try local filesystem (FTS5 index lookup)
   const result = await showLocal(input);
-  // Scope filter narrows resolution: if a scope filter was supplied, the
-  // asset's frontmatter scope must satisfy every supplied key. We re-read the
-  // file (cheap — already on the show hot path) so we don't have to thread
-  // scope through the renderer chain just for one verification step.
-  if (input.scope && hasAnyScopeKey(input.scope) && result.path) {
-    enforceScopeOrThrow(result.path, ref, input.scope);
-  }
   // Count prior shows of this ref before logging the current one.
   if (!input.skipLogging && !input.readOnly) {
     const consumedRef = result.ref ?? makeBundleRef(undefined, parseBundleRef(ref).conceptId);
@@ -211,10 +185,6 @@ async function showStashMeta(metaRef: MetaRef, readOnly = false): Promise<ShowRe
   );
 }
 
-function hasAnyScopeKey(scope: StashEntryScope): boolean {
-  return Boolean(scope.user || scope.agent || scope.run || scope.channel);
-}
-
 function validateFragmentContextRequest(input: {
   ref: string;
   contextMode?: FragmentContextMode;
@@ -266,45 +236,11 @@ function enforceSensitiveFragmentPolicy(
   );
 }
 
-/**
- * Read the asset file's frontmatter and verify its `scope_*` keys satisfy
- * every supplied filter. Throws a {@link NotFoundError} on mismatch so the
- * caller surfaces a uniform "not found in this scope" envelope rather than
- * leaking out-of-scope content.
- */
-function enforceScopeOrThrow(filePath: string, ref: string, scope: StashEntryScope): void {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(filePath, "utf8");
-  } catch {
-    // The file path was just resolved by the indexer/disk-walk — a read
-    // failure here means the on-disk state moved out from under us. Treat
-    // that as "not found in this scope" so the caller does not learn the
-    // file's prior contents.
-    throw new NotFoundError(`Asset not found for scope filter: ${ref}`);
-  }
-  const fm = parseFrontmatter(raw).data;
-  const expected: Array<[keyof StashEntryScope, string | undefined]> = [
-    ["user", scope.user],
-    ["agent", scope.agent],
-    ["run", scope.run],
-    ["channel", scope.channel],
-  ];
-  for (const [key, expectedValue] of expected) {
-    if (expectedValue === undefined) continue;
-    const actual = asNonEmptyString(fm[`scope_${key}`]);
-    if (actual !== expectedValue) {
-      throw new NotFoundError(`Asset "${ref}" exists but is out of scope (expected scope_${key}="${expectedValue}").`);
-    }
-  }
-}
-
 /** @internal Use akmShowUnified() for all external callers. */
 export async function showLocal(input: {
   ref: string;
   detail?: ShowDetailLevel;
   stashDir?: string;
-  recall?: RecallOptions;
   contextMode?: FragmentContextMode;
   maxContextChars?: number;
   readOnly?: boolean;
@@ -376,36 +312,6 @@ export async function showLocal(input: {
   }
 
   const fileCtx = buildFileContext(sourceStashDir, assetPath);
-  let beliefState: string | undefined;
-  if (input.recall) {
-    const policy = input.recall;
-    const sources =
-      policy.source && !["local", "all"].includes(policy.source)
-        ? resolveSourcesForOrigin(policy.source, allSources)
-        : allSources;
-    const eligible = withIndexDb(
-      (db) => {
-        const id = getEntryIdByFilePath(db, assetPath);
-        const row = id === undefined ? undefined : getEntryById(db, id);
-        if (!row || id === undefined) return false;
-        // Source-live show must not restore a belief/scope changed after indexing.
-        const entry = { ...row.entry, scope: undefined };
-        applyCuratedFrontmatter(entry, parseFrontmatter(fileCtx.content()).data);
-        const allowed = applyEntryFilters([{ ...row, id, entry }], {
-          db,
-          sources,
-          restrictToSources: true,
-          filters: policy.filters,
-          includeProposed: false,
-          beliefFilter: policy.belief ?? "current",
-        });
-        beliefState = entry.beliefState;
-        return allowed.length > 0 && (!policy.type || policy.type === "any" || entry.type === policy.type);
-      },
-      { readOnly: input.readOnly === true },
-    );
-    if (!eligible) throw new NotFoundError(`Asset not found for recall filters: ${input.ref}`);
-  }
   const presentedName = indexedEntry.name;
   const opaqueFragmentSelector = parsed.fragment?.startsWith("akm-fragment-") === true;
   // Friendly heading selectors retain the source-live exact response contract.
@@ -466,7 +372,6 @@ export async function showLocal(input: {
   } catch (error) {
     throwIndexedPathNotFound(error, input.ref);
   }
-  if (beliefState) response.beliefState = beliefState;
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
   const isPrimaryStash = source?.isDefault === true;

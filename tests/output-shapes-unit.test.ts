@@ -108,6 +108,7 @@ describe("shapeSearchHit — local stash hits", () => {
     name: "deploy",
     description: "Deploy the app",
     ref: "skills/deploy",
+    itemRef: "team//skills/deploy",
     action: "akm show skills/deploy",
     score: 0.42,
     estimatedTokens: 120,
@@ -140,10 +141,12 @@ describe("shapeSearchHit — local stash hits", () => {
     });
     expect(out).not.toHaveProperty("origin");
     expect(out).not.toHaveProperty("tags");
+    expect(out).not.toHaveProperty("itemRef");
   });
 
-  test("full passes the hit through verbatim", () => {
+  test("full passes the hit through verbatim, including the durable itemRef", () => {
     expect(shapeSearchHit(fullHit, "full")).toEqual(fullHit);
+    expect(shapeSearchHit(fullHit, "full")).toHaveProperty("itemRef", "team//skills/deploy");
   });
 });
 
