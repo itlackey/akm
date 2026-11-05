@@ -170,10 +170,9 @@ jobs:
           echo "CI has not passed on $GITHUB_SHA within 25 minutes; last status: ${run:-no push or manual CI run yet}" >&2
           exit 1
 
+      # npm trusted publishing: the job's OIDC token (id-token: write) authenticates; no npm token is stored.
       - name: Publish to npm
         if: ${{ !inputs.dry_run }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if npm view "akm-cli@$CANDIDATE_VERSION" version >/dev/null 2>&1; then
             echo "akm-cli@$CANDIDATE_VERSION is already published"
