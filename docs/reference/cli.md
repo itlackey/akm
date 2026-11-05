@@ -1783,6 +1783,9 @@ akm sync my-skills -m "Update"     # Sync named bundle with message
 | `--no-push` | Commit only; never push even when the bundle is writable with a remote configured |
 | `--format` | Output format (any of the six global values). Both `--format json` and `--format=json` are accepted |
 
+A `code-project` bundle is refused (exit 2): it is a source repository akm only reads, so
+akm never commits or pushes there.
+
 If no positional selector is provided, `akm sync --format json` still targets
 the primary bundle. If a positional selector is provided, it wins even when the
 value also looks like a format token.
