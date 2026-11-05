@@ -32,7 +32,7 @@ import { akmShowUnified } from "./show";
 const scopeFilterArg = {
   type: "string",
   description:
-    "Scope filter (repeatable): --filter user=<id> --filter agent=<id> --filter run=<id> --filter channel=<name>. Narrows results without changing ranking.",
+    "Scope filter (repeatable): --filter user=<id> --filter agent=<id> --filter run=<id> --filter channel=<name>. Repeating a key keeps only its last value. Narrows results without changing ranking.",
 } as const;
 const beliefArg = {
   type: "string",

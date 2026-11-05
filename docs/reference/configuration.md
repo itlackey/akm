@@ -943,7 +943,7 @@ non-empty scope value; string values). This is not a config-file setting —
 it is documented here because it is the multi-tenant/multi-agent contract
 that `akm search --filter` and `akm curate --filter` read back:
 `--filter user=<id>` / `--filter agent=<id>` / `--filter run=<id>` /
-`--filter channel=<name>` (repeatable) narrow results to assets
+`--filter channel=<name>` (repeatable; a repeated key keeps its last value) narrow results to assets
 whose frontmatter scope matches; search applies them before ranking. A memory
 with only scope flags and no tags is valid — the tag-required check is
 independent of scope. `--scope` was removed in 0.9.0 with no alias; use
