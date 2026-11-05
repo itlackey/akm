@@ -71,6 +71,7 @@ import { walkMarkdownFiles } from "../walk/walker";
 import {
   applyProvenanceFrontmatter,
   type IndexDocument,
+  SCOPE_FRONTMATTER_KEYS,
   SCOPE_KEYS,
   type StashEntryScope,
   sameScope,
@@ -915,7 +916,6 @@ function markParentProcessed(parent: MemoryRecord): void {
  */
 function syncDerivedChildScopes(drifts: readonly ScopeDrift[]): number {
   let synced = 0;
-  const scopeKeys = ["scope", ...SCOPE_KEYS.map((key) => `scope_${key}`)];
   for (const drift of drifts) {
     try {
       const raw = fs.readFileSync(drift.childPath, "utf8");
@@ -924,9 +924,9 @@ function syncDerivedChildScopes(drifts: readonly ScopeDrift[]): number {
       const flat: Record<string, unknown> = {};
       for (const key of SCOPE_KEYS) if (drift.scope[key] !== undefined) flat[`scope_${key}`] = drift.scope[key];
       const lines = Object.keys(flat).length > 0 ? serializeFrontmatter(flat).split("\n") : [];
-      const next = replaceFrontmatterBlocks(raw, scopeKeys, lines);
+      const next = replaceFrontmatterBlocks(raw, SCOPE_FRONTMATTER_KEYS, lines);
       const expected: Record<string, unknown> = { ...data };
-      for (const key of scopeKeys) delete expected[key];
+      for (const key of SCOPE_FRONTMATTER_KEYS) delete expected[key];
       Object.assign(expected, flat);
       if (next === null || !isDeepStrictEqual(parseFrontmatter(next).data, expected)) {
         warn(`memory inference: scope of ${drift.childPath} differs from its parent but cannot be rewritten in place`);

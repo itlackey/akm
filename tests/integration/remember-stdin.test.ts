@@ -92,4 +92,30 @@ describe("remember stdin", () => {
     expect(fs.readFileSync(json.path, "utf8")).toContain("stdin body");
     expect(fs.readFileSync(json.path, "utf8")).not.toContain("\njson");
   });
+
+  test("a stdin body with its own frontmatter merges under akm's keys (#1447)", () => {
+    const input =
+      "---\ncaptureMode: background\nscope_user: mallory\ndescription: VPN rule\ncustom: kept\n---\nDeployment needs VPN access";
+    const { result } = spawnRunCli(["remember", "--tag", "ops"], { input });
+    expect(result.status).toBe(0);
+    const json = JSON.parse(result.stdout) as { path: string };
+    const content = fs.readFileSync(json.path, "utf8");
+    expect(content.match(/^---$/gm)?.length).toBe(2);
+    const parsed = parseFrontmatter(content);
+    expect(parsed.data.captureMode).toBe("hot");
+    expect(parsed.data.scope_user).toBeUndefined();
+    expect(parsed.data.custom).toBe("kept");
+    expect(parsed.data.description).toBe("VPN rule");
+    expect(parsed.content.trim()).toBe("Deployment needs VPN access");
+    expect(result.stderr).toContain("captureMode, scope_user.");
+  });
+
+  test("--description beats the body block's description (#1447)", () => {
+    const input = "---\ndescription: VPN rule\n---\nDeployment needs VPN access";
+    const { result } = spawnRunCli(["remember", "--tag", "ops", "--description", "From the flag"], { input });
+    expect(result.status).toBe(0);
+    const json = JSON.parse(result.stdout) as { path: string };
+    expect(parseFrontmatter(fs.readFileSync(json.path, "utf8")).data.description).toBe("From the flag");
+    expect(result.stderr).toContain("description.");
+  });
 });
