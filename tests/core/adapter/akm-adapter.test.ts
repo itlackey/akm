@@ -63,7 +63,7 @@ function allTypesContexts(): FileContext[] {
 describe("akm adapter — metadata (§7)", () => {
   test("id / version", () => {
     expect(akmAdapter.id).toBe("akm");
-    expect(akmAdapter.version).toBe("0.9.5");
+    expect(akmAdapter.version).toBe("0.9.6");
   });
 
   test("extensions cover the matcher-accepted set (`.md`, `.yaml`/`.yml`, `.env`, script exts)", () => {
@@ -444,6 +444,29 @@ describe("akm adapter — recognize abstains on AKM-stash sensitive/infra files"
     const root = makeStashWith({ "wikis/team/schema.md": "# schema\n" });
     const c = component({ root, id: "s", adapter: "akm" });
     expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "wikis/team/schema.md")))).toBeNull();
+  });
+
+  test("raw/ of a wiki nested in the bundle is `wiki-source` with the bundle-relative ref; pages and plain raw/ dirs are unchanged", () => {
+    const root = makeStashWith({
+      "wikis/team/schema.md": "# schema\n",
+      "wikis/team/pages/p.md": "# page\n",
+      "wikis/team/raw/x.md": "# raw\n",
+      "notes/raw/y.md": "# not a wiki\n",
+    });
+    const c = component({ root, id: "s", adapter: "akm" });
+    const recognize = (rel: string) => akmAdapter.recognize(c, buildFileContext(root, path.join(root, rel)));
+    expect(recognize("wikis/team/raw/x.md")).toMatchObject({ type: "wiki-source", ref: "s//wikis/team/raw/x" });
+    expect(recognize("wikis/team/pages/p.md")?.type).toBe("knowledge");
+    expect(recognize("notes/raw/y.md")?.type).toBe("knowledge");
+  });
+
+  test("raw/ of a bundle whose root is itself a wiki is `wiki-source`", () => {
+    const root = makeStashWith({ "schema.md": "# schema\n", "pages/p.md": "# page\n", "raw/x.md": "# raw\n" });
+    const c = component({ root, id: "s", adapter: "akm" });
+    expect(akmAdapter.recognize(c, buildFileContext(root, path.join(root, "raw/x.md")))).toMatchObject({
+      type: "wiki-source",
+      ref: "s//raw/x",
+    });
   });
 
   test("bytes-never-read: the sensitive/vaults abstention never calls content() or frontmatter()", () => {

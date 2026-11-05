@@ -62,6 +62,11 @@ as an `llm-wiki` component. From there:
 - `xrefs:` frontmatter becomes cross-reference edges; `sources:`
   frontmatter becomes citation edges back to raw files.
 
+A wiki kept inside an ordinary akm bundle (for example `wikis/articles/`,
+with its own `schema.md` and `pages/`) is indexed by the akm adapter: its
+`raw/**.md` files are `wiki-source` too, at their bundle-relative ref
+(`bundle//wikis/articles/raw/<slug>`), and its pages keep their akm type.
+
 ## Working with a wiki
 
 ```sh
