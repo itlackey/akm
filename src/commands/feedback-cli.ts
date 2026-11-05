@@ -22,8 +22,8 @@ import { getStateDbPath, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
 import { withWriteTargetMutation } from "../core/write-source";
 import { recomputeUtilityScores } from "../indexer/indexer";
-import { resolveWriteAddress } from "../indexer/lookup/adapter-concept-owner";
-import { resolveSourceEntries } from "../indexer/search/search-source";
+import { currentConceptId, resolveWriteAddress } from "../indexer/lookup/adapter-concept-owner";
+import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
 import { insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
@@ -89,8 +89,8 @@ function appendLessonStrength(
   feedbackRef: string,
 ): { ref: string; strength: number } | null {
   // `findEntryIdByRef` keys on the stored `item_ref`; the lesson's type is the one its entry records.
-  const { conceptId } = parseBundleRef(raw);
   const config = loadConfig();
+  const conceptId = currentConceptId(parseBundleRef(raw), resolveSourceEntries(undefined, config));
   let filePath: string | undefined;
   let bundleId: string | undefined;
   let type: string | undefined;
@@ -372,9 +372,9 @@ type HistoryMark = { supersededBy: string } | { outdated: true };
  * The durable ref of the asset `--superseded-by` names. It must be indexed and
  * must not be the asset itself, or nothing is recorded.
  */
-function resolveSuccessorRef(db: Database, input: string, itemRef: string): string {
+function resolveSuccessorRef(db: Database, input: string, itemRef: string, sources: SearchSource[]): string {
   const parsed = parseBundleRef(input);
-  const id = findEntryIdByRef(db, makeBundleRef(parsed.bundle, parsed.conceptId), parsed.bundle);
+  const id = findEntryIdByRef(db, makeBundleRef(parsed.bundle, currentConceptId(parsed, sources)), parsed.bundle);
   const successor = id === undefined ? null : getItemRefById(db, id);
   if (!successor) {
     throw new UsageError(
@@ -726,7 +726,7 @@ export const feedbackCommand = defineJsonCommand({
       if (parsedRef.bundle && !requestedSource) {
         throw new UsageError(`Source "${parsedRef.bundle}" is not configured.`, "INVALID_FLAG_VALUE");
       }
-      const lookupRef = makeBundleRef(parsedRef.bundle, parsedRef.conceptId);
+      const lookupRef = makeBundleRef(parsedRef.bundle, currentConceptId(parsedRef, sources));
       const entryId = findEntryIdByRef(db, lookupRef, parsedRef.bundle);
       if (entryId === undefined) {
         // NotFoundError (exit 1), not UsageError (exit 2): the flags parsed
@@ -777,7 +777,7 @@ export const feedbackCommand = defineJsonCommand({
           }
           mark =
             supersededBy !== undefined
-              ? { supersededBy: resolveSuccessorRef(db, supersededBy.trim(), itemRef) }
+              ? { supersededBy: resolveSuccessorRef(db, supersededBy.trim(), itemRef, sources) }
               : { outdated: true };
         }
         const before = fs.readFileSync(filePath, "utf8");

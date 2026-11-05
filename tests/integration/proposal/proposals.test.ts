@@ -36,7 +36,7 @@ import { UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
 import { getDbPath, getIndexRebuildLockPath, getIndexWriterLockPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
-import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
@@ -362,6 +362,29 @@ describe("ref-filter parse failures are LOUD (D-R3)", () => {
     expect(matched).toHaveLength(1);
     const none = listProposals(stash, { ref: "lessons/does-not-exist" });
     expect(none).toHaveLength(0);
+  });
+
+  test("a ref filter in the old type-folder spelling matches the asset's proposals, with one warning (#1439)", () => {
+    _resetWarnOnceForTests();
+    const stash = makeStashDir();
+    fs.mkdirSync(path.join(stash, "WORK"), { recursive: true });
+    fs.writeFileSync(path.join(stash, "WORK", "plan.md"), "---\ndescription: plan\n---\nThe plan.\n", "utf8");
+    const created = createProposal(stash, {
+      ref: "WORK/plan",
+      source: "reflect",
+      payload: { content: "---\ndescription: plan\n---\nThe better plan.\n" },
+    });
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      expect(listProposals(stash, { ref: "knowledge/WORK/plan" }).map((p) => p.id)).toEqual([created.id]);
+      expect(resolveProposalId(stash, "knowledge/WORK/plan").id).toBe(created.id);
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(warnings.filter((w) => w.includes('"knowledge/WORK/plan" is outdated'))).toHaveLength(1);
   });
 
   test("resolveProposalId with a legacy ref throws UsageError instead of silently falling through", () => {

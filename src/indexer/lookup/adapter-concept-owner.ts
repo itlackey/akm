@@ -285,6 +285,15 @@ export function resolveConceptOwner(
 }
 
 /**
+ * The conceptId `ref` names now, for a lookup of stored rows: the owning
+ * file's, so an old spelling maps to the asset's ref with one warning; as
+ * written when no file owns it.
+ */
+export function currentConceptId(ref: BundleRef, sources: readonly SearchSource[]): string {
+  return resolveConceptOwner(ref, sources, { mode: "read" })?.owner.conceptId ?? ref.conceptId;
+}
+
+/**
  * Releases before path refs prefixed a loose file's ref with its type folder
  * (`knowledge/reports/x` for `reports/x.md`), and that spelling is still in
  * links, memories, scripts and stored proposals. A ref that misses is retried
