@@ -39,6 +39,12 @@ the one exception to the `[bundle//]conceptId` ref grammar. See
 [Reference: Asset Types](../reference/asset-types.md) for the `.meta/` layout
 and an example `index.md`.
 
+Use the root `.scratch/` directory for temporary drafts, notes and experiments.
+It is never indexed (regardless of extension or Git tracking), `akm bundle create`
+scaffolds it with a README and a `/.scratch/` `.gitignore` rule, and AKM does not
+clean it: remove your own files when finished and move reusable material into
+indexed bundle content. See [Reference: Asset Types](../reference/asset-types.md).
+
 ## Write Metadata for Discovery
 
 Metadata is not documentation for humans skimming your repo: search matches

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isScratchPath } from "../../src/core/asset/scratch";
 import { walkStash, walkStashFlat, walkStashFlatWithStatus } from "../../src/indexer/walk/walker";
 
 const createdTmpDirs: string[] = [];
@@ -433,6 +434,70 @@ describe("walkStashFlat — includeAllDirectories", () => {
     writeFile(path.join(root, "docs", "guide.md"), "# Guide\n");
     expect(spawnSync("git", ["init"], { cwd: root }).status).toBe(0);
     expect(relPaths(root)).toEqual(["docs/guide.md"]);
+  });
+});
+
+describe("walkStashFlat — root .scratch/ (#1435)", () => {
+  test("isScratchPath is root-scoped and separator-agnostic", () => {
+    for (const p of [".scratch", ".scratch/README.md", ".scratch\\deep\\n.md"]) expect(isScratchPath(p)).toBe(true);
+    for (const p of [
+      "sub/.scratch/a.md",
+      "sub\\.scratch\\a.md",
+      ".scratchy/a.md",
+      "../.scratch/a.md",
+      "scratch/a.md",
+    ]) {
+      expect(isScratchPath(p)).toBe(false);
+    }
+  });
+
+  function layout(root: string) {
+    writeFile(path.join(root, "docs", "guide.md"), "# Guide\n");
+    writeFile(path.join(root, ".scratch", "README.md"), "# Scratch\n");
+    writeFile(path.join(root, ".scratch", "deep", "n.md"), "# n\n");
+    writeFile(path.join(root, ".scratch", "run.sh"), "echo\n");
+    writeFile(path.join(root, "sub", ".scratch", "keep.md"), "# keep\n");
+  }
+  const rel = (root: string, includeAllDirectories: boolean) =>
+    walkStashFlatWithStatus(root, { includeAllDirectories })
+      .files.map((f) => f.relPath)
+      .sort();
+
+  for (const includeAll of [false, true]) {
+    const expected = includeAll ? ["docs/guide.md", "sub/.scratch/keep.md"] : ["docs/guide.md"];
+
+    test(`non-git, includeAllDirectories=${includeAll}: root scratch excluded, nested scratch is ordinary`, () => {
+      const root = tmpDir();
+      layout(root);
+      expect(rel(root, includeAll)).toEqual(expected);
+    });
+
+    test(`git, includeAllDirectories=${includeAll}: excludes tracked, force-added and untracked scratch files`, () => {
+      const root = tmpDir();
+      layout(root);
+      writeFile(path.join(root, ".gitignore"), "/.scratch/\n");
+      expect(spawnSync("git", ["init"], { cwd: root }).status).toBe(0);
+      expect(spawnSync("git", ["add", "-f", ".scratch/README.md", ".scratch/deep/n.md"], { cwd: root }).status).toBe(0);
+      expect(rel(root, includeAll)).toEqual(expected);
+    });
+  }
+
+  test("a root reached through a symlink alias applies the same exclusion", () => {
+    if (process.platform === "win32") return;
+    const real = tmpDir();
+    layout(real);
+    const alias = path.join(tmpDir(), "alias");
+    fs.symlinkSync(real, alias);
+    expect(rel(alias, true)).toEqual(["docs/guide.md", "sub/.scratch/keep.md"]);
+  });
+
+  test("a git root nested in a larger repository is scoped to its own .scratch/", () => {
+    const outer = tmpDir();
+    expect(spawnSync("git", ["init"], { cwd: outer }).status).toBe(0);
+    const root = path.join(outer, "bundle");
+    layout(root);
+    writeFile(path.join(outer, ".scratch", "outer.md"), "# outer\n");
+    expect(rel(root, true)).toEqual(["docs/guide.md", "sub/.scratch/keep.md"]);
   });
 });
 

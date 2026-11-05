@@ -26,6 +26,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { agentSkillsAdapter } from "../../../src/core/adapter/adapters";
 import { detectAdapterId } from "../../../src/core/adapter/detect-adapter";
@@ -53,5 +55,47 @@ describe("detectAdapterId — mixed-layout superset detection (#908)", () => {
     // workflows/, scripts/, workspace/ from the index (#908's 73-document
     // loss). GREEN on the fix: the superset wins.
     expect(detectAdapterId(AGENT_SKILLS_MIXED_ROOT)).toBe("akm");
+  });
+});
+
+describe("detectAdapterId — root .scratch/ never influences detection (#1435)", () => {
+  function root(files: Record<string, string>): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-scratch-detect-"));
+    for (const [rel, body] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), body);
+    }
+    return dir;
+  }
+
+  test("a dotenv-only root stays dotenv with a scratch dir", () => {
+    const dir = root({ "env/a.env": "A=1\n", ".scratch/README.md": "x" });
+    try {
+      expect(detectAdapterId(dir)).toBe("dotenv");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("scratch SKILL.md and typed concepts do not make a root agent-skills or okf", () => {
+    const dir = root({
+      ".scratch/SKILL.md": "---\nname: s\n---\n",
+      ".scratch/pkg/SKILL.md": "---\nname: s\n---\n",
+      ".scratch/c.md": "---\ntype: concept\n---\n",
+    });
+    try {
+      expect(detectAdapterId(dir)).toBe("akm");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a nested typed concept still makes an index-less root okf", () => {
+    const dir = root({ "docs/c.md": "---\ntype: concept\n---\n", ".scratch/README.md": "x" });
+    try {
+      expect(detectAdapterId(dir)).toBe("okf");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

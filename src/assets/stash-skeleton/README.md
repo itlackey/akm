@@ -48,6 +48,13 @@ assets:
 Per-type nuances live in `facts/conventions/assets/<type>.md`. All of these are
 soft guidance — edit them to match how your stash is queried.
 
+## Scratch space
+
+`.scratch/` at the stash root is for temporary drafts, investigation notes,
+experiments and intermediate outputs. AKM never indexes it and Git ignores it.
+Clean up your own files when the work is finished, and move anything reusable
+into an indexed directory above.
+
 ## For agents: how to access this stash
 
 All assets in this stash are searchable via the `akm` CLI. Use these commands to
