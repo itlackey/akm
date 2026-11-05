@@ -3378,6 +3378,32 @@ describe("akmDistill — scope of the output (#1446)", () => {
     expect(warnings).toEqual([]);
   });
 
+  test("a scoped memory is not promoted into a knowledge doc of another scope", async () => {
+    const stash = makeStashDir();
+    const memoryFile = path.join(stash, "memories", "deploy-fact.md");
+    fs.writeFileSync(
+      memoryFile,
+      "---\ndescription: VPN required before deploy\nsource: skill:deploy\nobserved_at: 2026-04-20\nconfidence: 0.95\ntags: [deploy, ops]\nscope_user: alice\n---\n\nAlways connect the VPN before starting production deploys.\n",
+      "utf8",
+    );
+    const docFile = path.join(stash, "knowledge", "deploy-fact.md");
+    const doc = "---\ndescription: General deploy guidance\n---\n\nDeploys run from CI.\n";
+    fs.mkdirSync(path.dirname(docFile), { recursive: true });
+    fs.writeFileSync(docFile, doc, "utf8");
+    const result = await akmDistill({
+      ref: "memories/deploy-fact",
+      proposalKind: "auto",
+      config: configAbsentFeature(stash),
+      stashDir: stash,
+      chat: async () => JSON.stringify({ action: "ADD", content: "---\ndescription: Merged\n---\n\nMerged.\n" }),
+      lookupFn: async (ref) => (ref === "knowledge/deploy-fact" ? docFile : memoryFile),
+      readEventsFn: eventsFor("memories/deploy-fact", ["positive", "positive"]),
+    });
+    expect(result).toMatchObject({ outcome: "skipped", skipReason: "scope_differs" });
+    expect(listProposals(stash)).toEqual([]);
+    expect(fs.readFileSync(docFile, "utf8")).toBe(doc);
+  });
+
   test("a scope the model wrote is replaced by the memory's, with one warning", async () => {
     const written = VALID_LESSON.replace("---\n\n", "scope_user: mallory\nscope_run: r1\nscope:\n  agent: x\n---\n\n");
     const data = await distillFrom("scope_user: alice\n", written, "lesson");
@@ -3385,6 +3411,8 @@ describe("akmDistill — scope of the output (#1446)", () => {
     expect(data.scope_run).toBeUndefined();
     expect(data.scope).toBeUndefined();
     expect(warnings).toHaveLength(1);
+    // The scope may come from an existing doc, not the model, so the warning does not name its author.
+    expect(warnings[0]).not.toContain("model");
   });
 
   test("a scope the model wrote is removed when the memory has none, with one warning", async () => {
