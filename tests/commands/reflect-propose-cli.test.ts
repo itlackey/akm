@@ -18,6 +18,8 @@ import os from "node:os";
 import path from "node:path";
 import { akmReflect } from "../../src/commands/improve/reflect";
 import { akmPropose } from "../../src/commands/proposal/propose";
+import { parseFrontmatter } from "../../src/core/asset/frontmatter";
+import { _setWarnSinkForTests } from "../../src/core/warn";
 import { durableItemRef } from "../_helpers/durable-ref";
 import { type FakeHarnessOptions, harnessCalls, writeFakeHarness } from "../_helpers/engine-stubs";
 import { quietQualityGateConfig, reflectReply } from "../_helpers/factories";
@@ -229,6 +231,33 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
     expect(result.proposal.ref).toBe(durableItemRef(stash, "skill", "hello"));
+  });
+
+  test("a scope the model wrote is removed, with one warning (#1446)", async () => {
+    const stash = makeStashDir();
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn" && String(args[0]).includes("ignored scope")) warnings.push(String(args[0]));
+    });
+    try {
+      const reply = JSON.stringify({
+        ref: "skills/hello",
+        content: "---\ndescription: Say hi\nscope_user: mallory\n---\n\nSay hi politely.\n",
+        frontmatter: { description: "Say hi", scope_user: "mallory" },
+      });
+      const result = await akmPropose({
+        ...coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi" }),
+        stashDir: stash,
+        agentConfig: quietQualityGateConfig(fakeAgent([reply])),
+      });
+      if (!result.ok) throw new Error("expected ok");
+      expect(parseFrontmatter(result.proposal.payload.content).data.scope_user).toBeUndefined();
+      expect(result.proposal.payload.frontmatter?.scope_user).toBeUndefined();
+      expect(parseFrontmatter(result.proposal.payload.content).data.description).toBe("Say hi");
+      expect(warnings).toHaveLength(1);
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
   });
 
   test("parse_error: agent returns malformed JSON", async () => {

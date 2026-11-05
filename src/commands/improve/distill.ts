@@ -41,6 +41,7 @@ import { recordWrittenPath } from "../../core/write-provenance";
 import { type NoticeSet, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
 import { resolveOwnedType, resolveWriteAddress } from "../../indexer/lookup/adapter-concept-owner";
+import { sameScope, scopeFromFrontmatter, stampScope } from "../../indexer/passes/metadata";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -773,15 +774,24 @@ async function judgeAndQueue(
     judged = verdict;
   }
 
+  // The output's scope is its input's, never the model's: a scoped memory must not become general by omission.
+  const parsed = parseFrontmatter(content);
+  const inherited = scopeFromFrontmatter(parseFrontmatter(run.asset.content ?? "").data);
+  const stamped = stampScope(parsed.data, inherited);
+  if (stamped.replaced) {
+    warn(`[akm] distill: ignored scope set by the model for ${out.ref}; using the scope of ${run.inputRef}.`);
+  }
   let frontmatter: Record<string, unknown> | undefined;
   if (out.promotion) {
-    const data = parseFrontmatter(content).data;
-    if (Object.keys(data).length > 0) frontmatter = data;
+    if (Object.keys(stamped.data).length > 0) frontmatter = stamped.data;
+    // Promotion content stays as written unless its scope changed.
+    if (!sameScope(scopeFromFrontmatter(parsed.data), inherited) || stamped.replaced) {
+      content = assembleAsset(stamped.data, parsed.content);
+    }
   } else {
     // Canonical provenance goes into the content promotion writes.
-    const parsed = parseFrontmatter(content);
-    const xrefs = Array.isArray(parsed.data.xrefs) ? parsed.data.xrefs.map(String) : [];
-    frontmatter = { ...parsed.data, xrefs: [...new Set([...xrefs, run.inputRef])] };
+    const xrefs = Array.isArray(stamped.data.xrefs) ? stamped.data.xrefs.map(String) : [];
+    frontmatter = { ...stamped.data, xrefs: [...new Set([...xrefs, run.inputRef])] };
     delete frontmatter.sources;
     content = assembleAsset(frontmatter, parsed.content);
   }
@@ -860,11 +870,14 @@ async function proposeLessonUpdate(
   const memory = run.asset.content ? parseFrontmatter(run.asset.content).content.trim() : "";
   const said = finding.toLowerCase();
   if (!run.runner || !qualityGateEnabled(run) || !memory) return undefined;
+  const memoryScope = scopeFromFrontmatter(parseFrontmatter(run.asset.content ?? "").data);
   const lessons: Array<UpdateCandidate & { path: string; content: string }> = [];
   for (const asset of related ?? (await run.related(memory.slice(0, 500), RELATED_COUNT))) {
     if (asset.type !== "lesson" || !asset.path || !isWithin(asset.path, run.stash)) continue;
     try {
       const content = fs.readFileSync(asset.path, "utf8");
+      // A memory is never merged into a lesson of another scope.
+      if (!sameScope(memoryScope, scopeFromFrontmatter(parseFrontmatter(content).data))) continue;
       const { conceptId: ref } = parseBundleRef(asset.ref);
       lessons.push({ ref, path: asset.path, content, body: parseFrontmatter(content).content.trim() });
     } catch {

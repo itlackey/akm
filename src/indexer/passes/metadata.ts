@@ -257,6 +257,27 @@ export function scopeFromFrontmatter(fm: Record<string, unknown>): StashEntrySco
   return entry.scope ?? {};
 }
 
+/**
+ * Frontmatter with its scope keys (`scope_*` and legacy nested `scope`) replaced by `scope`, or removed when `scope`
+ * is empty. `replaced` is true when the input carried a scope other than `scope`, so a caller can warn once.
+ */
+export function stampScope(
+  data: Record<string, unknown>,
+  scope: StashEntryScope,
+): { data: Record<string, unknown>; replaced: boolean } {
+  const out: Record<string, unknown> = {};
+  let present = false;
+  for (const [key, value] of Object.entries(data)) {
+    if (key === "scope" || key.startsWith("scope_")) present = true;
+    else out[key] = value;
+  }
+  for (const key of SCOPE_KEYS) {
+    const value = scope[key];
+    if (value !== undefined) out[`scope_${key}`] = value;
+  }
+  return { data: out, replaced: present && !sameScope(scopeFromFrontmatter(data), scope) };
+}
+
 /** Exact maintenance equality: absence is a value, never a wildcard. */
 export function sameScope(a: StashEntryScope, b: StashEntryScope): boolean {
   return SCOPE_KEYS.every((key) => a[key] === b[key]);
