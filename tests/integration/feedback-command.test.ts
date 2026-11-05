@@ -7,6 +7,7 @@ import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
+import { _resetWarnOnceForTests } from "../../src/core/warn";
 import { akmIndex, recomputeUtilityScores } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
@@ -142,6 +143,45 @@ describe("akm feedback", () => {
     const raw = fs.readFileSync(path.join(stashDir, "lessons", "deploy-lesson.md"), "utf8");
     const strength = parseFrontmatter(raw).data.lessonStrength;
     expect(Array.isArray(strength) ? strength : []).toContain("stash//memories/deploy-note");
+  });
+
+  test("a ref in the old type-folder spelling is recorded under the new ref, with one warning (#1439)", async () => {
+    _resetWarnOnceForTests();
+    writeFile(path.join(stashDir, "WORK", "plan.md"), "---\ndescription: plan\n---\nThe plan.\n");
+    await buildIndex();
+
+    const result = await runCli(["feedback", "knowledge/WORK/plan", "--positive", "--format=json"]);
+    expect(result.status).toBe(0);
+    expect(result.stderr.match(/"knowledge\/WORK\/plan" is outdated.*"WORK\/plan"/g)).toHaveLength(1);
+    const db = openStateDatabase();
+    try {
+      const rows = db.prepare("SELECT entry_ref FROM usage_events WHERE event_type = 'feedback'").all() as Array<{
+        entry_ref: string;
+      }>;
+      expect(rows.map((row) => row.entry_ref)).toEqual(["stash//WORK/plan"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("--applied-to resolves the old type-folder spelling too (#1439)", async () => {
+    writeFile(
+      path.join(stashDir, "memories", "deploy-note.md"),
+      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+    );
+    writeFile(path.join(stashDir, "WORK", "plan.md"), "---\ndescription: plan\n---\nThe plan.\n");
+    await buildIndex();
+
+    const result = await runCli([
+      "feedback",
+      "memories/deploy-note",
+      "--positive",
+      "--applied-to",
+      "knowledge/WORK/plan",
+      "--format=json",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('--applied-to WORK/plan was ignored: it resolves to a "knowledge" asset');
   });
 
   test("--applied-to looks a bundle-root ref up by its path ref, like any other (#1432)", async () => {
