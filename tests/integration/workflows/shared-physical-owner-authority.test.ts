@@ -141,13 +141,13 @@ describe("shared adapter physical-owner authority", () => {
     const laterPath = write(later.root, "commands/same.md", getWorkflowTemplate());
     configure(early, later);
     await akmIndex({ stashDir: early.root, full: true });
-    mutateEntry("early//commands/same", state, path.join(early.root, "stale", "same.md"));
+    mutateEntry("early//same", state, path.join(early.root, "stale", "same.md"));
 
-    const found = await lookupBundleRef(parseBundleRef("commands/same"));
-    if (state === "complete") expect(found).toMatchObject({ filePath: earlyPath, conceptId: "commands/same" });
+    const found = await lookupBundleRef(parseBundleRef("same"));
+    if (state === "complete") expect(found).toMatchObject({ filePath: earlyPath, conceptId: "same" });
     else expect(found).toBeNull();
-    if (state === "complete") expect((await showLocal({ ref: "commands/same" })).path).toBe(earlyPath);
-    else await expect(showLocal({ ref: "commands/same" })).rejects.toThrow(/not found/i);
+    if (state === "complete") expect((await showLocal({ ref: "same" })).path).toBe(earlyPath);
+    else await expect(showLocal({ ref: "same" })).rejects.toThrow(/not found/i);
     expect(await lookupBundleRef(parseBundleRef("later//commands/same"))).toMatchObject({ filePath: laterPath });
   });
 
@@ -224,7 +224,7 @@ describe("shared adapter physical-owner authority", () => {
     const laterPath = write(later.root, "commands/same.md", getWorkflowTemplate());
     configure(early, later);
     await akmIndex({ stashDir: early.root, full: true });
-    mutateEntry("early//commands/same", state, path.join(early.root, "stale", "same.md"));
+    mutateEntry("early//same", state, path.join(early.root, "stale", "same.md"));
     await listWorkflowRuns();
     const stateBefore = stateDbSnapshot();
     let dispatches = 0;
@@ -233,11 +233,11 @@ describe("shared adapter physical-owner authority", () => {
     try {
       const operation =
         surface === "load"
-          ? loadWorkflowAsset("commands/same")
+          ? loadWorkflowAsset("same")
           : surface === "start"
-            ? startWorkflowRun("commands/same")
+            ? startWorkflowRun("same")
             : runWorkflowSteps({
-                target: "commands/same",
+                target: "same",
                 summaryJudge: null,
                 dispatcher: async () => {
                   dispatches++;

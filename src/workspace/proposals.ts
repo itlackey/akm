@@ -4,6 +4,7 @@
 
 /** Proposals: the review queue, one proposal with its capped diff, the decisions, and the recent changes. */
 
+import path from "node:path";
 import {
   akmProposalAccept,
   akmProposalAcceptMany,
@@ -15,12 +16,12 @@ import {
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../commands/proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../commands/proposal/repository";
 import { validateProposal } from "../commands/proposal/validators/proposals";
-import { parseBundleRef } from "../core/asset/asset-ref";
-import { typeNameFromConceptId } from "../core/asset/resolve-ref";
 import { resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { AkmError, NotFoundError, UsageError } from "../core/errors";
 import { resolveWriteTarget } from "../core/write-source";
+import { buildFileContext } from "../indexer/walk/file-context";
+import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
 import { classifyOutcome, decidedAt, weekOf } from "./derive";
 import { type GitCommitSummary, readBundleGitStatus, readRecentCommits } from "./git-read";
@@ -135,12 +136,9 @@ export function list(input: ListInput = {}) {
 
 /** True when the proposal's target is an env or secret asset, whose content never leaves the machine's files via the UI. */
 function targetsSensitiveAsset(proposal: Proposal): boolean {
-  try {
-    const type = typeNameFromConceptId(parseBundleRef(proposal.ref).conceptId)?.type;
-    return type === "env" || type === "secret";
-  } catch {
-    return false;
-  }
+  const file = proposal.changes[0]?.path;
+  const type = file === undefined ? undefined : declaredTypeForPath(buildFileContext("/", path.posix.join("/", file)));
+  return type === "env" || type === "secret";
 }
 
 /**

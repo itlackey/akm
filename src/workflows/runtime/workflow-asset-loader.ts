@@ -27,13 +27,6 @@ export type WorkflowAsset = {
   sourceHash: string;
 };
 
-/**
- * Build the canonical `workflow_runs.workflow_ref` for an AKM workflow asset.
- */
-export function canonicalWorkflowRunRef(bundle: string | undefined, canonicalName: string): string {
-  return makeBundleRef(bundle, `workflows/${canonicalName}`);
-}
-
 /** Parse a workflow ref using the canonical `[bundle//]conceptId` grammar. */
 export function parseWorkflowRefInput(ref: string): BundleRef {
   const parsed = parseBundleRef(ref.trim());
@@ -91,10 +84,7 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   // Canonicalize the stored ref: `workflows/foo.md` and `workflows/foo` resolve
   // to the same file, so they MUST share one run identity.
   const canonicalName = canonicalizeWorkflowName(owner.workflowSource.canonicalName);
-  const fullRef =
-    adapterId === "akm-workflow"
-      ? makeBundleRef(bundleId, canonicalName)
-      : canonicalWorkflowRunRef(bundleId, canonicalName);
+  const fullRef = makeBundleRef(bundleId, canonicalName);
 
   return { assetPath: owner.path, sourcePath: source.path, adapterId, canonicalName, fullRef };
 }

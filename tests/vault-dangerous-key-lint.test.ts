@@ -20,7 +20,7 @@ import {
   isDangerousEnvKey as isDangerousVaultKey,
 } from "../src/commands/lint/env-key-rules";
 import { akmLint } from "../src/commands/lint/index";
-import { typeNameFromConceptId } from "../src/core/asset/resolve-ref";
+import { parsePlacementRef } from "../src/core/asset/resolve-ref";
 import type { AkmConfig } from "../src/core/config/config";
 
 // ── Temp dir helpers ──────────────────────────────────────────────────────────
@@ -411,11 +411,9 @@ describe("akmLint dangerous-vault-key integration", () => {
       for (const finding of findings) {
         const ref = refOf(finding.detail);
         expect(ref).toBeDefined();
-        // `typeNameFromConceptId` returns undefined for the retired colon
-        // grammar — a defined type is what makes the ref usable in `akm show`.
-        const parts = typeNameFromConceptId(ref as string);
-        expect(parts).toBeDefined();
-        expect(["env", "secret"]).toContain(parts?.type ?? "<unparseable>");
+        // The retired colon grammar does not parse as a placement ref; a path ref does.
+        const parts = parsePlacementRef(ref as string);
+        expect(["env", "secret"]).toContain(parts.type);
       }
     });
   });

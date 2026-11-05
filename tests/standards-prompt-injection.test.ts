@@ -139,7 +139,7 @@ describe("standards prompt injection", () => {
       "---\ndescription: skill conventions\n---\n\nSkills should be concise.\n",
     );
 
-    const standardsContext = resolveStandardsContext("skills/foo", stashDir);
+    const standardsContext = resolveStandardsContext("skill", stashDir);
     expect(standardsContext).not.toMatch(/(^|[^a-zA-Z0-9_-])fact:/);
     expect(standardsContext).toContain("facts/conventions/naming");
     expect(standardsContext).toContain("facts/conventions/assets/skill");

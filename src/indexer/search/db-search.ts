@@ -116,16 +116,8 @@ export function buildLocalAction(type: string, ref: string): string {
   return presentationFor(type).action?.(ref) ?? `akm show ${ref}`;
 }
 
-function resolveSearchHitRef(entry: IndexDocument, provenance: IndexedProvenance, defaultBundleId?: string): string {
-  return displayRef(
-    {
-      type: entry.type,
-      name: entry.name,
-      conceptId: provenance.conceptId,
-      bundleId: provenance.bundleId,
-    },
-    defaultBundleId,
-  );
+function resolveSearchHitRef(provenance: IndexedProvenance, defaultBundleId?: string): string {
+  return displayRef({ conceptId: provenance.conceptId, bundleId: provenance.bundleId }, defaultBundleId);
 }
 
 // ── Main search entrypoint ───────────────────────────────────────────────────
@@ -812,7 +804,7 @@ export async function buildDbHit(input: {
     (source && path.resolve(source.path) === path.resolve(input.defaultStashDir)
       ? (input.bundleId ?? undefined)
       : undefined);
-  const ref = resolveSearchHitRef(input.entry, input, defaultBundleId);
+  const ref = resolveSearchHitRef(input, defaultBundleId);
   const editable = isEditable(absolutePath, input.config, input.sources);
   const estimatedTokens = typeof input.entry.fileSize === "number" ? Math.round(input.entry.fileSize / 4) : undefined;
 
@@ -852,6 +844,7 @@ export async function buildDbHit(input: {
     type: input.entry.type,
     stashDir: entryStashDir,
     bundleId: input.bundleId,
+    conceptId: input.conceptId,
     defaultBundleId,
     descriptionSource: input.entry.source,
     db: input.db,

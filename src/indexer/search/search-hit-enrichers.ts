@@ -15,6 +15,8 @@ export interface SearchHitContext {
   type: string;
   stashDir: string;
   bundleId: string;
+  /** The hit's stored conceptId. */
+  conceptId: string;
   defaultBundleId?: string;
   /** Existing indexed metadata provenance; filename text is only a fallback. */
   descriptionSource?: IndexDocument["source"];
@@ -55,11 +57,9 @@ function surfaceDerivedMemory(hit: SourceSearchHit, db: Database, ctx: SearchHit
   // it untouched also avoids `<parent>.derived.derived` chains.
   if (hit.name.toLowerCase().endsWith(".derived")) return;
 
-  // Parent ref shape: the 0.9.0 `memories/<name>` conceptId. Re-build from the
-  // entry's name so we don't depend on whatever wiki/registry prefix `hit.ref`
-  // carries. INTERNAL lookup key into `getDerivedForParent`: the `derived_from`
-  // column stores this same conceptId grammar.
-  const derived = getDerivedForParent(db, `memories/${hit.name}`, ctx.bundleId);
+  // INTERNAL lookup key into `getDerivedForParent`: the `derived_from` column
+  // stores the parent's conceptId.
+  const derived = getDerivedForParent(db, ctx.conceptId, ctx.bundleId);
   if (!derived || (ctx.eligible && !ctx.eligible(derived))) return;
 
   // Fields fall back independently. Preserve authored qualifications and tags
@@ -80,7 +80,7 @@ function surfaceDerivedMemory(hit: SourceSearchHit, db: Database, ctx: SearchHit
     surfaceFields.push("tags");
   }
   // Retain the parent's bundle qualification so expansion resolves the same child.
-  hit.expandTo = displayRef({ type: "memory", name: derived.entry.name, bundleId: ctx.bundleId }, ctx.defaultBundleId);
+  hit.expandTo = displayRef({ conceptId: derived.conceptId, bundleId: ctx.bundleId }, ctx.defaultBundleId);
   const childRef = getItemRefById(db, derived.id);
   if (childRef && surfaceFields.length > 0) {
     attachSearchHitAttribution(hit, {

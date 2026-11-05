@@ -6,9 +6,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { placementSpecFor } from "../../core/asset/asset-placement";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { conceptIdFromTypeName, parseRefInput, resolveRef, typeNameFromConceptId } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, parsePlacementRef, resolveRef } from "../../core/asset/resolve-ref";
 import { closestMatch } from "../../core/closest-match";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -37,9 +38,14 @@ import { parseMemoryRef } from "./memory/derived-ref";
 
 type Scope = { mode: "all" | "type" | "ref"; value?: string };
 
-/** The asset type of a short or bundle-qualified conceptId (`""` when unknown). */
+/** The asset type a short or bundle-qualified ref is placed under (`""` when it is under no type's folder). Improve works on assets by placement. */
 export function assetTypeOf(ref: string): string {
-  return typeNameFromConceptId(ref.includes("//") ? ref.slice(ref.indexOf("//") + 2) : ref)?.type ?? "";
+  try {
+    const { type } = parsePlacementRef(ref);
+    return placementSpecFor(type) ? type : "";
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -105,7 +111,7 @@ export function resolveImproveScope(scope: string | undefined): Scope {
   const trimmed = scope?.trim();
   if (!trimmed) return { mode: "all" };
   try {
-    parseRefInput(trimmed);
+    parsePlacementRef(trimmed);
     return { mode: "ref", value: trimmed };
   } catch (err) {
     // A bare word is a `--scope <type>` filter (an unknown type matches
@@ -273,9 +279,9 @@ async function collectEligibleRefsFromIndex(
     let memoryEligible = 0;
     let memoryDerived = 0;
     for (const indexed of entries) {
-      const ref = conceptIdFromTypeName(indexed.entry.type, indexed.entry.name);
+      const ref = indexed.conceptId;
       try {
-        parseRefInput(ref);
+        parsePlacementRef(ref);
       } catch (error) {
         if (error instanceof UsageError || error instanceof NotFoundError) continue;
         throw error;
@@ -322,7 +328,7 @@ function warnUnmatchedTypeScope(value: string, indexed: ReturnType<typeof getAll
 /** The parent memory a `--scope <memory ref>` cleanup is restricted to. */
 export function memoryCleanupParentRef(scope: Scope, stashDir?: string): string | undefined {
   if (scope.mode !== "ref" || !scope.value) return undefined;
-  const parsed = parseRefInput(scope.value);
+  const parsed = parsePlacementRef(scope.value);
   if (parsed.type !== "memory") return undefined;
   if (!parsed.name.endsWith(".derived")) return conceptIdFromTypeName(parsed.type, parsed.name);
   for (const source of resolveSourceEntries(stashDir)) {
@@ -336,18 +342,18 @@ export function memoryCleanupParentRef(scope: Scope, stashDir?: string): string 
 }
 
 export function isLessonCandidate(ref: string): boolean {
-  return parseRefInput(ref).type === "lesson";
+  return parsePlacementRef(ref).type === "lesson";
 }
 
 /** Should this ref enter the distill queue? Types distill refuses never do. */
 export function isDistillCandidateRef(ref: string, stashDir?: string): boolean {
-  if (isDistillRefusedInputType(parseRefInput(ref).type)) return false;
+  if (isDistillRefusedInputType(parsePlacementRef(ref).type)) return false;
   return shouldDistillMemoryRef(ref, stashDir);
 }
 
 /** A non-derived memory that is not marked `quality: proposed`. */
 export function shouldDistillMemoryRef(ref: string, stashDir?: string): boolean {
-  const parsed = parseRefInput(ref);
+  const parsed = parsePlacementRef(ref);
   if (parsed.type !== "memory") return false;
   for (const source of resolveSourceEntries(stashDir)) {
     const candidate = `${source.path}/memories/${parsed.name}.md`;
@@ -366,7 +372,7 @@ export function shouldAnalyzeMemoryCleanup(
   if (!primaryStashDir || eligibleMemories === 0) return false;
   if (scope.mode === "all") return true;
   if (scope.mode === "type") return scope.value === "memory";
-  return scope.value ? parseRefInput(scope.value).type === "memory" : false;
+  return scope.value ? parsePlacementRef(scope.value).type === "memory" : false;
 }
 
 export function buildUtilityMap(refs: ImproveEligibleRef[], readOnly = false): Map<string, number> {
@@ -376,7 +382,7 @@ export function buildUtilityMap(refs: ImproveEligibleRef[], readOnly = false): M
   withIndexDb(readOnly, (db) => {
     const idToRef = new Map<number, string>();
     for (const indexed of getAllEntries(db)) {
-      const ref = conceptIdFromTypeName(indexed.entry.type, indexed.entry.name);
+      const ref = indexed.conceptId;
       if (refSet.has(ref)) idToRef.set(indexed.id, ref);
     }
     if (idToRef.size === 0) return;

@@ -19,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { recognizeMatch } from "../../core/adapter/recognize-match";
-import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
+import { deriveCanonicalAssetNameFromStashRoot, stashDirFor } from "../../core/asset/asset-placement";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { extractSection, markdownFragmentSlugs, markdownToc } from "../../core/asset/markdown";
@@ -28,7 +28,7 @@ import {
   fragmentForSelector,
   MARKDOWN_FRAGMENT_CONTEXT_DEFAULT_MAX_CHARS,
 } from "../../core/asset/markdown-fragments";
-import { displayRef, displayRefForConceptId, typeNameFromConceptId } from "../../core/asset/resolve-ref";
+import { displayRef, displayRefForConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
 import { asNonEmptyString, isContainedResolvedPath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -133,12 +133,6 @@ export async function akmShowUnified(input: {
     const metaRef = parseMetaRef(ref);
     if (metaRef) return showStashMeta(metaRef, input.readOnly === true);
   }
-
-  // Env/secret bodies have no safe fragment surface, and a fragment cannot
-  // widen what the env/secret renderers expose: both always omit the body
-  // (env — key names only; secret — never rendered), fragment or not. Warn
-  // and ignore the fragment rather than refusing the whole show.
-  warnSensitiveFragmentUnsupported(parseBundleRef(ref));
 
   // An opaque fragment selector is an indexed revision handle. Do not refresh
   // it away between search and show if disk changed concurrently; the stored
@@ -247,10 +241,29 @@ function validateFragmentContextRequest(input: {
   if (!parsed.fragment) {
     throw new UsageError("--context lead requires a fragment-qualified ref.", "INVALID_FLAG_VALUE");
   }
-  const type = typeNameFromConceptId(parsed.conceptId)?.type;
-  if (type === "env" || type === "secret") {
+}
+
+/**
+ * Env/secret bodies have no safe fragment surface, and a fragment cannot widen
+ * what the env/secret renderers expose: both always omit the body (env — key
+ * names only; secret — never rendered), fragment or not. The entry's type
+ * decides. `--context lead` refuses them; a plain fragment is warned about and
+ * ignored rather than refusing the whole show.
+ */
+function enforceSensitiveFragmentPolicy(
+  type: string,
+  ref: BundleRef,
+  contextMode: FragmentContextMode | undefined,
+): void {
+  if (type !== "env" && type !== "secret") return;
+  if (contextMode === "lead") {
     throw new UsageError(`--context lead is unavailable for sensitive ${type} assets.`, "INVALID_FLAG_VALUE");
   }
+  if (ref.fragment === undefined) return;
+  warnOnce(
+    `sensitive-fragment:${makeBundleRef(ref.bundle, ref.conceptId)}#${ref.fragment}`,
+    `Fragment "#${ref.fragment}" was ignored: sensitive ${type} assets do not expose body fragments. Showing ${makeBundleRef(ref.bundle, ref.conceptId)} in full.`,
+  );
 }
 
 /**
@@ -298,8 +311,6 @@ export async function showLocal(input: {
 }): Promise<ShowResponse> {
   validateFragmentContextRequest(input);
   const parsed = parseBundleRef(input.ref);
-  warnSensitiveFragmentUnsupported(parsed);
-  const assetParts = typeNameFromConceptId(parsed.conceptId);
   const config = loadConfig();
   const allSources = resolveSourceEntries(input.stashDir);
   const searchSources = resolveSourcesForOrigin(parsed.bundle, allSources);
@@ -322,7 +333,7 @@ export async function showLocal(input: {
   }
 
   if (!indexedEntry && !resolution.owner) {
-    const unrecognized = findUnrecognizedScriptSource(assetParts, searchSources);
+    const unrecognized = findUnrecognizedScriptSource(parsed.conceptId, searchSources);
     if (unrecognized) {
       const displayExtension = unrecognized.extension || "no extension";
       warn(
@@ -334,7 +345,7 @@ export async function showLocal(input: {
         const match: MatchResult = { type: "script", specificity: 0, renderer: "script-source" };
         const renderCtx = buildRenderContext(fileCtx, match, allSourceDirs);
         const response = renderer.buildShowResponse(renderCtx);
-        response.name = assetParts?.name ?? response.name;
+        response.name = unrecognized.name;
         return response;
       }
     }
@@ -346,6 +357,7 @@ export async function showLocal(input: {
         "Check the name with `akm search` or verify the asset exists in your stash.",
     );
   }
+  enforceSensitiveFragmentPolicy(indexedEntry.type, parsed, input.contextMode);
 
   try {
     fs.accessSync(assetPath, fs.constants.R_OK);
@@ -460,12 +472,7 @@ export async function showLocal(input: {
   const isPrimaryStash = source?.isDefault === true;
   const displayDefaultBundle = config.defaultBundle ?? (isPrimaryStash ? indexedEntry.bundleId : undefined);
   const canonicalRef = displayRef(
-    {
-      type: indexedEntry.type,
-      name: presentedName,
-      conceptId: indexedEntry.conceptId,
-      bundleId: indexedEntry.bundleId,
-    },
+    { conceptId: indexedEntry.conceptId, bundleId: indexedEntry.bundleId },
     displayDefaultBundle,
   );
   if (parsed.fragment && indexedFragment) {
@@ -594,23 +601,6 @@ function groupLinks(
 }
 
 /**
- * Warn and ignore body fragments for namespaces whose authored bytes are
- * sensitive. `warnOnce`-keyed on the exact ref: `akmShowUnified` calls this
- * before delegating to `showLocal`, which calls it again as its own
- * defense-in-depth for callers that use `showLocal` directly — a single
- * request must not print the same warning twice.
- */
-function warnSensitiveFragmentUnsupported(ref: BundleRef): void {
-  if (ref.fragment === undefined) return;
-  const type = typeNameFromConceptId(ref.conceptId)?.type;
-  if (type !== "env" && type !== "secret") return;
-  warnOnce(
-    `sensitive-fragment:${makeBundleRef(ref.bundle, ref.conceptId)}#${ref.fragment}`,
-    `Fragment "#${ref.fragment}" was ignored: sensitive ${type} assets do not expose body fragments. Showing ${makeBundleRef(ref.bundle, ref.conceptId)} in full.`,
-  );
-}
-
-/**
  * Return the unsupported extension only when the exact canonical AKM script
  * path exists as a contained regular file. Physical owner arbitration runs
  * first; this is a diagnostic for its miss, never an alternate owner or
@@ -618,31 +608,33 @@ function warnSensitiveFragmentUnsupported(ref: BundleRef): void {
  */
 interface UnrecognizedScriptSource {
   extension: string;
+  name: string;
   path: string;
   sourceRoot: string;
 }
 
 function findUnrecognizedScriptSource(
-  assetParts: ReturnType<typeof typeNameFromConceptId>,
+  conceptId: string,
   sources: readonly SearchSource[],
 ): UnrecognizedScriptSource | undefined {
-  if (assetParts?.type !== "script") return undefined;
-  const extension = path.extname(assetParts.name);
+  const extension = path.extname(conceptId);
   if (SCRIPT_EXTENSIONS.has(extension.toLowerCase())) return undefined;
 
-  const scriptDir = stashDirFor("script");
-  if (!scriptDir) return undefined;
   for (const source of sources) {
     try {
       if ((source.adapterId ?? detectAdapterId(source.path)) !== "akm") continue;
       const sourceRoot = path.resolve(source.path);
-      const candidate = path.resolve(assetPathForName("script", path.join(sourceRoot, scriptDir), assetParts.name));
+      // A script's ref is its path, so the candidate is the ref itself.
+      const candidate = path.resolve(sourceRoot, conceptId);
       if (!isContainedResolvedPath(candidate, sourceRoot)) continue;
+      // Only a file in a scripts directory is a script whose extension is the problem.
+      if (!buildFileContext(sourceRoot, candidate).ancestorDirs.includes(stashDirFor("script") ?? "scripts")) continue;
       const authoredStat = fs.lstatSync(candidate);
       if (!authoredStat.isFile() && !authoredStat.isSymbolicLink()) continue;
       const realCandidate = fs.realpathSync(candidate);
       if (!fs.statSync(realCandidate).isFile()) continue;
-      return { extension, path: realCandidate, sourceRoot: fs.realpathSync(sourceRoot) };
+      const name = deriveCanonicalAssetNameFromStashRoot("script", sourceRoot, candidate) ?? conceptId;
+      return { extension, name, path: realCandidate, sourceRoot: fs.realpathSync(sourceRoot) };
     } catch {
       // Missing, unreadable, dangling, or otherwise unsafe paths remain normal
       // not-found misses; this diagnostic never widens physical ownership.

@@ -4,7 +4,7 @@
 
 /** The one implementation of "is this a derived memory, and what is its parent?" (R12), keyed on the memory name. */
 
-import { conceptIdFromTypeName, parseRefInput } from "../../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, parsePlacementRef } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString } from "../../../core/common";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 
@@ -19,7 +19,7 @@ export function parseMemoryName(value: string | undefined): string | undefined {
   const trimmed = value.trim();
   if (trimmed.startsWith("memory:")) return trimmed.slice("memory:".length) || undefined;
   try {
-    const parsed = parseRefInput(trimmed);
+    const parsed = parsePlacementRef(trimmed);
     return parsed.type === "memory" && parsed.name.length > 0 ? parsed.name : undefined;
   } catch {
     return undefined;
@@ -30,7 +30,7 @@ export function parseMemoryName(value: string | undefined): string | undefined {
 export function parseMemoryRef(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
-    const parsed = parseRefInput(value.trim());
+    const parsed = parsePlacementRef(value.trim());
     return parsed.type === "memory" ? conceptIdFromTypeName("memory", parsed.name) : undefined;
   } catch {
     return undefined;

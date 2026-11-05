@@ -10,7 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
+import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
 import { collectCredentialValues } from "../../core/config/credentials";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
@@ -482,7 +482,7 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
   };
   // --limit, then the reflect process limit, then the profile limit.
   const effectiveLimit = options.limit ?? improveProfile?.processes?.reflect?.limit ?? improveProfile.limit;
-  const scopedRef = scope.mode === "ref" && scope.value ? parseRefInput(scope.value) : undefined;
+  const scopedRef = scope.mode === "ref" && scope.value ? parsePlacementRef(scope.value) : undefined;
   const readSource = options.dryRun
     ? options.writeTarget
       ? { selector: options.writeTarget.selector, source: options.writeTarget.source }

@@ -19,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { parseRefInput } from "../../core/asset/resolve-ref";
+import { parsePlacementRef } from "../../core/asset/resolve-ref";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -132,7 +132,7 @@ async function classifySchemaRepairs(args: {
       const standardsSection = standardsContext.trim()
         ? `\n\nStandards to follow (the rulebook for this target):\n${standardsContext.trim()}`
         : "";
-      const assetType = parseRefInput(failure.ref).type;
+      const assetType = parsePlacementRef(failure.ref).type;
       const authoringRules = authoringRulesForType(assetType);
       const authoringRulesSection = authoringRules ? `\n\n${authoringRules}` : "";
       eligibleRepairs.push({
@@ -316,7 +316,7 @@ export async function runSchemaRepairPass(
 
 function defaultIsLessonCandidate(ref: string): boolean {
   try {
-    const parsed = parseRefInput(ref);
+    const parsed = parsePlacementRef(ref);
     return parsed.type === "lesson";
   } catch {
     return false;

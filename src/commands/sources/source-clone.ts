@@ -12,7 +12,7 @@ import { placementSpecFor, stashDirFor } from "../../core/asset/asset-placement"
 import { isBundleSlug } from "../../core/asset/asset-ref";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
-import { conceptIdFromTypeName, displayRef, parseQualifiedRefInput } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, displayRef, parseQualifiedPlacementRef } from "../../core/asset/resolve-ref";
 import { isWithin, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -68,7 +68,10 @@ function destinationRef(
   name: string,
 ): string | undefined {
   if (!config || !target) return undefined;
-  return displayRef({ type, name, bundleId: target.source.name }, defaultBundleForTarget(config));
+  return displayRef(
+    { conceptId: conceptIdFromTypeName(type, name), bundleId: target.source.name },
+    defaultBundleForTarget(config),
+  );
 }
 
 export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
@@ -79,13 +82,13 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   }
 
   // F1b/F4b: accept the 0.9.0 conceptId spelling (`akm clone scripts/deploy.sh`).
-  // F5 origin split (parseQualifiedRefInput): `akm clone` also accepts a NON-slug
+  // F5 origin split (parseQualifiedPlacementRef): `akm clone` also accepts a NON-slug
   // clone SOURCE as the `origin//conceptId` prefix — a registry ref
   // (`npm:@scope/pkg`), a bare path, or a URL — resolved by
   // resolveSourcesForOrigin's registry-id / path matching + the remote-fetch
   // fallback below (the strict new-grammar parser rejects such origins as they
   // are not bundle slugs).
-  const parsed = parseQualifiedRefInput(options.sourceRef);
+  const parsed = parseQualifiedPlacementRef(options.sourceRef);
   const config = hasUnmanagedDest ? undefined : loadConfig();
   const resolvedWriteTarget = config ? resolveWriteTarget(config, options.target, { flag: "--bundle" }) : undefined;
   const writeTarget = resolvedWriteTarget ? prepareWriteTargetForMutation(resolvedWriteTarget) : undefined;

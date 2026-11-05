@@ -253,12 +253,12 @@ describe("declared links", () => {
 
     expect(storedLinks()).toEqual([
       "stash//knowledge/release-guide superseded_by stash//knowledge/release-guide-v2 -> stash//knowledge/release-guide-v2",
-      "stash//knowledge/wikis/notes/pages/release-train cites raw/train-source.md -> stash//knowledge/wikis/notes/raw/train-source",
       "stash//memories/deploy-window contradicted_by memory:deploy-window-moved -> stash//memories/deploy-window-moved",
       "stash//memories/deploy-window xref memories/release-checklist -> null",
-      "stash//memories/deploy-window xref wiki:notes/pages/release-train -> stash//knowledge/wikis/notes/pages/release-train",
+      "stash//memories/deploy-window xref wiki:notes/pages/release-train -> stash//wikis/notes/pages/release-train",
       "stash//memories/deploy-window-moved.derived derived_from memories/deploy-window-moved -> stash//memories/deploy-window-moved",
       "stash//tasks/nightly-release uses workflows/release -> stash//workflows/release",
+      "stash//wikis/notes/pages/release-train cites raw/train-source.md -> stash//wikis/notes/raw/train-source",
       "stash//workflows/release uses workflows/cut-release -> stash//workflows/cut-release",
     ]);
 
@@ -281,7 +281,7 @@ describe("declared links", () => {
     expect(citer.links).toEqual({
       outgoing: {
         contradicted_by: { total: 1, refs: ["memories/deploy-window-moved"] },
-        xref: { total: 1, refs: ["knowledge/wikis/notes/pages/release-train"] },
+        xref: { total: 1, refs: ["wikis/notes/pages/release-train"] },
       },
       unresolved: { xref: { total: 1, refs: ["memories/release-checklist"] } },
     });

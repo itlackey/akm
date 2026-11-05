@@ -5,13 +5,13 @@
 /**
  * Q-07 (D11) — the ref-parser seam accepts opaque adapter conceptIds.
  *
- * `parseRefInput` used to throw whenever a conceptId's leading path segment
+ * `parsePlacementRef` used to throw whenever a conceptId's leading path segment
  * was not one of AKM's OWN placement stash-subdirs (`resolve-ref.ts`'s
  * `typeNameFromConceptId` D-R2 reverse table). That rejected perfectly valid
  * adapter-emitted conceptIds — an OKF item under a bundle-owned directory
  * (`tables/customers`), a website page, a wiki pageKind, an adapter
  * `instruction` doc — in every ref-consuming command EXCEPT `show` (which
- * bypasses `parseRefInput` entirely via its indexed-projection path, landed
+ * bypasses `parsePlacementRef` entirely via its indexed-projection path, landed
  * separately). D11 requires the ref-consuming commands (tasks, improve,
  * proposals, utility repo, indexer walk) to accept these refs too.
  *
@@ -94,7 +94,7 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
     await akmIndex({ stashDir: storage.stashDir, full: true });
     // Before the fix this fell through to `{ mode: "type", value: "tables/customers" }`
     // — a type-filter string that would silently match zero entries — because
-    // `parseRefInput` threw and the catch treated any non-colon value as a bare
+    // `parsePlacementRef` threw and the catch treated any non-colon value as a bare
     // type filter attempt.
     expect(resolveImproveScope("tables/customers")).toEqual({ mode: "ref", value: "tables/customers" });
     expect(resolveImproveScope("adversarial//tables/customers")).toEqual({

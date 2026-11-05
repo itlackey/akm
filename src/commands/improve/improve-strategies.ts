@@ -4,7 +4,7 @@
 
 import consolidate from "../../assets/improve-strategies/consolidate.json" with { type: "json" };
 import defaultStrategy from "../../assets/improve-strategies/default.json" with { type: "json" };
-import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
 import {
   type AkmConfig,
   ambiguousDefaultAdvice,
@@ -64,7 +64,7 @@ export function shouldSkipRef(
   const process = strategy.processes?.[processName];
   if (process?.enabled === false) return { skip: true, reason: "process-disabled" };
 
-  const parsed = parseRefInput(ref);
+  const parsed = parsePlacementRef(ref);
   const allowed = process?.allowedTypes ?? DEFAULT_ALLOWED_TYPES[processName];
   if (!allowed.includes(parsed.type)) return { skip: true, reason: "type-filter" };
 

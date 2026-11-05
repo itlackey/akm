@@ -15,7 +15,7 @@
  */
 
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
-import { parseRefInput } from "../../../core/asset/resolve-ref";
+import { parsePlacementRef } from "../../../core/asset/resolve-ref";
 import {
   DESCRIPTION_MAX_CHARS,
   DESCRIPTION_MIN_CHARS,
@@ -36,7 +36,7 @@ import type { ProposalValidator } from "../proposal-types";
 
 /** The asset name a ref names, lower-cased — what the "just restates the ref" checks compare. */
 function refNameTail(inputRef: string): string {
-  return parseRefInput(inputRef).name.toLowerCase();
+  return parsePlacementRef(inputRef).name.toLowerCase();
 }
 
 // ── Description / when_to_use shape ─────────────────────────────────────────

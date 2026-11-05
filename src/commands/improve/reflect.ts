@@ -19,7 +19,7 @@ import path from "node:path";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
+import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { isWithin, resolveStashDir, safeRealpath } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -175,7 +175,7 @@ function buildSchemaHints(type: string, content: string | undefined): string[] {
 function lenientRefType(ref: string | undefined): string {
   if (!ref) return "";
   try {
-    return parseRefInput(ref).type;
+    return parsePlacementRef(ref).type;
   } catch {
     return "";
   }
@@ -732,7 +732,7 @@ async function resolveReflectSource(
   emitFailed: ReflectRun["emitFailed"],
 ): Promise<{ assetContent: string | undefined; parsedRef: AssetRef | undefined } | { failure: AkmReflectResult }> {
   if (!options.ref) return { assetContent: undefined, parsedRef: undefined };
-  const parsedRef = parseRefInput(options.ref);
+  const parsedRef = parsePlacementRef(options.ref);
   // A secret's content is never read, whatever it looks like.
   if (REFLECT_REFUSED_TYPES.has(parsedRef.type)) {
     return unsupportedTypeFailure(
@@ -751,7 +751,7 @@ async function resolveReflectSource(
       if (localFilePath && fs.existsSync(localFilePath)) {
         assetFile = localFilePath;
       } else {
-        const entry = await lookup(parseRefInput(qualifiedRef));
+        const entry = await lookup(parsePlacementRef(qualifiedRef));
         if (entry?.filePath && fs.existsSync(entry.filePath)) assetFile = entry.filePath;
       }
       if (assetFile !== undefined) assetContent = fs.readFileSync(assetFile, "utf8");

@@ -48,7 +48,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { refToRelPath } from "../src/commands/lint/base-linter";
-import { conceptIdFromTypeName, parseRefInput } from "../src/core/asset/resolve-ref";
+import { conceptIdFromTypeName, parsePlacementRef } from "../src/core/asset/resolve-ref";
 import { resolveStashDir } from "../src/core/common";
 import { loadConfig } from "../src/core/config/config";
 import { appendEvent } from "../src/core/events";
@@ -230,8 +230,8 @@ export function rekeyAssetRef(
   const dryRun = options?.dryRun === true;
   const warnings: string[] = [];
 
-  const from = parseRefInput(oldRefInput);
-  const to = parseRefInput(newRefInput);
+  const from = parsePlacementRef(oldRefInput);
+  const to = parsePlacementRef(newRefInput);
   if (from.origin !== to.origin) {
     fail(
       `Cross-bundle re-key refused (${from.origin ?? "<working stash>"} -> ${to.origin ?? "<working stash>"}): ` +

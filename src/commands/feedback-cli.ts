@@ -11,7 +11,7 @@ import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
-import { type AssetRef, conceptIdFromTypeName, parseRefInput, typeNameFromConceptId } from "../core/asset/resolve-ref";
+import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
@@ -30,6 +30,7 @@ import type { Database } from "../storage/database";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import {
   findEntryIdByRef,
+  getEntryById,
   getEntryFilePathById,
   getItemRefById,
 } from "../storage/repositories/index-entries-repository";
@@ -257,9 +258,8 @@ function recordFeedbackUsage(
  * Reflect compares it with the asset's current body to tell feedback given on
  * an earlier version of the text. An env or secret file is never read.
  */
-function judgedTextHash(itemRef: string, filePath: string | undefined): string | undefined {
+function judgedTextHash(type: string | undefined, filePath: string | undefined): string | undefined {
   try {
-    const type = typeNameFromConceptId(parseBundleRef(itemRef).conceptId)?.type;
     if (!filePath || type === "env" || type === "secret") return undefined;
     return contentHash(fs.readFileSync(filePath, "utf8"), "body");
   } catch {
@@ -345,7 +345,7 @@ function assertFrontmatterStillParses(before: string, after: string, file: strin
  * the proposal would create a second file and leave the real one unfixed.
  */
 export function assertProposalWritesFile(itemRef: string, root: string, filePath: string): void {
-  const { type, name } = parseRefInput(itemRef);
+  const { type, name } = parsePlacementRef(itemRef);
   const typeDir = stashDirFor(type);
   const writes =
     typeDir === undefined ? undefined : assetPathForName(type, path.join(path.resolve(root), typeDir), name);
@@ -743,14 +743,14 @@ export const feedbackCommand = defineJsonCommand({
       if (!itemRef) throw new UsageError(`Indexed ref "${ref}" has no durable item ref.`, "INVALID_PROPOSAL");
       durableRef = itemRef;
       const filePath = getEntryFilePathById(db, entryId);
-      const textHash = judgedTextHash(itemRef, filePath);
+      const textHash = judgedTextHash(getEntryById(db, entryId)?.entry.type, filePath);
       if (textHash) metadataObj.contentHash = textHash;
       if (fixPairs.length > 0 || hasMark) {
         // Checked before anything is recorded, so a fix that does not apply leaves no trace.
         if (!filePath || !fs.existsSync(filePath)) {
           throw new NotFoundError(`The file for ${itemRef} is missing on disk.`, "ASSET_NOT_FOUND");
         }
-        const assetRef = parseRefInput(itemRef);
+        const assetRef = parsePlacementRef(itemRef);
         const resolved = resolveMutationTarget(config, assetRef, undefined, { requireWritable: true });
         if (!isWithin(filePath, resolved.target.source.path)) {
           throw new UsageError(`${itemRef} is outside bundle "${resolved.target.source.name}".`);
@@ -876,7 +876,7 @@ export const feedbackCommand = defineJsonCommand({
     if (appliedToRaw && signal === "positive") {
       let parsedApplied: AssetRef | undefined;
       try {
-        parsedApplied = parseRefInput(appliedToRaw);
+        parsedApplied = parsePlacementRef(appliedToRaw);
       } catch (err) {
         warn(`[feedback] --applied-to failed for ${appliedToRaw}: ${err instanceof Error ? err.message : String(err)}`);
       }

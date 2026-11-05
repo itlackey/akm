@@ -17,7 +17,7 @@
 
 import type { SelectionFlags } from "../../cli/selection";
 import { placementTypes, stashDirFor } from "../../core/asset/asset-placement";
-import { parseRefInput } from "../../core/asset/resolve-ref";
+import { parsePlacementRef } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
@@ -240,7 +240,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   // 2. Build terminal user content.
   // Standards "rulebook" for this target — wiki schema (wiki page) or stash
   // convention/meta facts (non-wiki asset); empty when neither fires.
-  const standardsContext = resolveStandardsContext(`${options.type}:${options.name}`, stash);
+  const standardsContext = resolveStandardsContext(options.type, stash);
 
   const prompt = buildProposePrompt({
     type: options.type,
@@ -307,9 +307,9 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   const expectedRef = proposeItemRef(target.source, options.type, options.name);
   let ref = expectedRef;
   if (payload.ref) {
-    let parsedRef: ReturnType<typeof parseRefInput>;
+    let parsedRef: ReturnType<typeof parsePlacementRef>;
     try {
-      parsedRef = parseRefInput(payload.ref);
+      parsedRef = parsePlacementRef(payload.ref);
     } catch (err) {
       return {
         schemaVersion: 2,

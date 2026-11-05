@@ -30,9 +30,8 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
-import { assetPathCandidatesForName, typeForStashDir } from "../../asset/asset-placement";
+import { assetPathCandidatesForName } from "../../asset/asset-placement";
 import { scanEnvKeyNames, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import { sensitiveMarkerPath } from "../../sensitive-marker-path";
@@ -160,28 +159,22 @@ export const dotenvAdapter: BundleAdapter = {
   validate,
 
   /**
-   * Closed-form owner candidates (#857): `env`/`secret` are always authored
-   * directly under their own stash subdir (`classify` requires it — no
-   * off-canonical loose placement exists for this adapter), so there is no
-   * loose-fallback class to enumerate here, unlike `akm-adapter`.
-   * `assetPathCandidatesForName` expands `env`'s `.env`/`<name>.env` duality;
-   * the sensitive-marker sibling spellings are then layered on each.
+   * Closed-form owner candidates (#857): the ref is the file's path under the
+   * component root (`conceptIdForPath`), so it is inverted for the two types
+   * this adapter recognizes. `assetPathCandidatesForName` expands `env`'s
+   * `.env`/`<name>.env` duality; the sensitive-marker sibling spellings are then
+   * layered on each. `recognize` decides which candidate really owns the ref.
    */
   readCandidates(c: BundleComponent, conceptId: string) {
     const posix = toPosix(conceptId);
-    const slash = posix.indexOf("/");
-    if (slash <= 0) return [];
-    const head = posix.slice(0, slash);
-    const rest = posix.slice(slash + 1);
-    const type = typeForStashDir(head);
-    if ((type !== "env" && type !== "secret") || rest.length === 0) return [];
-    const primaries = assetPathCandidatesForName(type, path.join(c.root, head), rest);
-    const expanded = primaries.flatMap((primary) =>
-      type === "env"
-        ? [primary, sensitiveMarkerPath(primary, "env")]
-        : [primary, sensitiveMarkerPath(primary, "secret"), `${primary}.lock`],
+    const expanded = (["env", "secret"] as const).flatMap((type) =>
+      assetPathCandidatesForName(type, c.root, posix).flatMap((primary) =>
+        type === "env"
+          ? [primary, sensitiveMarkerPath(primary, "env")]
+          : [primary, sensitiveMarkerPath(primary, "secret"), `${primary}.lock`],
+      ),
     );
-    return expanded.map((candidatePath) => ({ path: candidatePath, conceptId: posix }));
+    return [...new Set(expanded)].map((candidatePath) => ({ path: candidatePath, conceptId: posix }));
   },
 
   /** The dotenv bundle owns its `env/` + `secrets/` dirs. */

@@ -120,7 +120,7 @@ describe("workflow source canonical-ref collisions", () => {
       expect(owner, ref).toMatchObject({
         path: sourcePath,
         conceptId: canonicalConceptId,
-        workflowSource: { path: sourcePath, canonicalName: "collision" },
+        workflowSource: { path: sourcePath, canonicalName: canonicalConceptId },
       });
       await expect(loadWorkflowAsset(ref), ref).resolves.toMatchObject({
         ref: fixture.canonicalRef,
@@ -141,16 +141,17 @@ describe("workflow source canonical-ref collisions", () => {
     expect(fs.existsSync(getDbPath())).toBe(false);
   });
 
-  test("ordinary load rejects a canonical workflow source colliding with a loose smart-Markdown peer", async () => {
+  test("ordinary load rejects a workflow source colliding with another file that inverts to the same ref", async () => {
     const fixture = configure("ordinary");
     const canonicalPath = path.join(fixture.ownedDir, "collision.md");
-    const loosePath = path.join(fixture.root, "collision.md");
+    const peerPath = path.join(fixture.ownedDir, "collision", "SKILL.md");
+    fs.mkdirSync(path.dirname(peerPath), { recursive: true });
     fs.writeFileSync(canonicalPath, markdownWorkflow("canonical"));
-    fs.writeFileSync(loosePath, markdownWorkflow("loose"));
+    fs.writeFileSync(peerPath, "---\ndescription: peer skill\n---\n# Peer\n");
 
     await expect(loadWorkflowAsset(`${fixture.canonicalRef}.MD`)).rejects.toMatchObject({
       code: "RESOURCE_ALREADY_EXISTS",
-      message: expect.stringMatching(/multiple physical owners.*collision\.md.*workflows\/collision\.md/is),
+      message: expect.stringMatching(/multiple physical owners.*collision\.md.*collision\/SKILL\.md/is),
     });
     expect(fs.existsSync(getDbPath())).toBe(false);
   });

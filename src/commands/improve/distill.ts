@@ -22,7 +22,7 @@ import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement"
 import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
-import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -138,7 +138,7 @@ interface RelatedAsset {
 
 /** Derive the proposed lesson ref from the input ref. */
 export function deriveLessonRef(inputRef: string): string {
-  const parsed = parseRefInput(inputRef);
+  const parsed = parsePlacementRef(inputRef);
   const parts = parsed.name.split("/");
   const scope = parts.length > 1 ? parts.shift() : undefined;
   const clean = (value: string): string =>
@@ -461,7 +461,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   if (!inputRef) {
     throw new UsageError("Asset ref is required. Usage: akm distill <ref>", "MISSING_REQUIRED_ARGUMENT");
   }
-  const parsedInputRef = parseRefInput(inputRef);
+  const parsedInputRef = parsePlacementRef(inputRef);
   const config = options.config ?? loadConfig();
   const profile = options.improveProfile ?? resolveImproveStrategy(undefined, config).config;
   options = { ...options, improveProfile: profile };
@@ -550,7 +550,7 @@ async function distill(
     eventType: event.eventType,
     ...(event.metadata !== undefined ? { metadata: event.metadata } : {}),
   }));
-  const { system, prompt } = await buildDistillMessages(run, feedback, kind, outputRef);
+  const { system, prompt } = await buildDistillMessages(run, feedback, kind);
   const call = run.runner
     ? await callStage({
         runner: run.runner,
@@ -642,7 +642,7 @@ function feedbackLines(feedback: BuildPromptInput["feedback"]): string[] {
 
 /** Whether a file already holds the lesson `ref` in the stash the proposal would be filed in. */
 function lessonExists(run: DistillRun, ref: string): boolean {
-  const { type, name } = parseRefInput(ref);
+  const { type, name } = parsePlacementRef(ref);
   const typeDir = stashDirFor(type);
   if (!typeDir) return false;
   try {
@@ -848,7 +848,7 @@ async function proposeLessonUpdate(
   if (!run.runner || !qualityGateEnabled(run) || !memory) return undefined;
   const lessons: Array<UpdateCandidate & { path: string; content: string }> = [];
   for (const asset of related ?? (await run.related(memory.slice(0, 500), RELATED_COUNT))) {
-    const parsed = parseRefInput(asset.ref);
+    const parsed = parsePlacementRef(asset.ref);
     if (parsed.type !== "lesson" || !asset.path || !isWithin(asset.path, run.stash)) continue;
     try {
       const content = fs.readFileSync(asset.path, "utf8");
@@ -1246,7 +1246,7 @@ function stampInputSalience(run: DistillRun): void {
   const { content, path: filePath } = run.asset;
   if (!content || !filePath) return;
   try {
-    const type = parseRefInput(run.inputRef).type;
+    const type = parsePlacementRef(run.inputRef).type;
     let revisionCount = 0;
     try {
       // Revisions so far: every proposal raised against this ref.
@@ -1288,7 +1288,7 @@ function stampInputSalience(run: DistillRun): void {
  */
 function persistOutputEncodingSalience(run: DistillRun, ref: string, body: string): void {
   try {
-    const type = parseRefInput(ref).type;
+    const type = parsePlacementRef(ref).type;
     const scored = scoreEncodingSalience({ body, type, existingRefVocabulary: run.vocabulary, revisionCount: 0 });
     withStateDb((stateDb) =>
       upsertAssetSalience(
@@ -1335,7 +1335,6 @@ async function buildDistillMessages(
   run: DistillRun,
   feedback: BuildPromptInput["feedback"],
   kind: DistillKind,
-  outputRef: string,
 ): Promise<{ system: string; prompt: string }> {
   const rejectedProposals = rejectedProposalContext(run.stash, run.inputRef, run.options.ctx, run.options.eventsCtx);
   // CLS interleaving (default on): show the related lessons, knowledge notes and skills, so the writer neither repeats nor overwrites them.
@@ -1350,7 +1349,7 @@ async function buildDistillMessages(
       // CLS context is supplemental.
     }
   }
-  const standardsContext = resolveStandardsContext(outputRef, run.stash);
+  const standardsContext = resolveStandardsContext(kind, run.stash);
   const prompt = buildDistillPrompt({
     inputRef: run.inputRef,
     assetContent: run.asset.content,

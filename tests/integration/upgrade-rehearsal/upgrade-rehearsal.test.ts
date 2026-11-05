@@ -26,6 +26,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { gte as semverGte } from "semver";
+import { openDatabase } from "../../../src/storage/database";
 import { resolveCandidateTarball } from "./candidate";
 import { requireUpgradeRehearsalCapabilities } from "./gate";
 import {
@@ -60,6 +61,19 @@ requireUpgradeRehearsalCapabilities({
   candidateTarballProvided: Boolean(process.env.AKM_CANDIDATE_TARBALL?.trim()),
   distCliExists: fs.existsSync(path.join(REPO_ROOT, "dist", "cli.js")),
 });
+
+/** The first file called `name` under `dir`, or undefined. */
+function findFile(dir: string, name: string): string | undefined {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isFile() && entry.name === name) return full;
+    if (entry.isDirectory()) {
+      const found = findFile(full, name);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
 
 function candidatePackageVersion(): string {
   const raw = fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8");
@@ -469,6 +483,35 @@ for (const origin of ["previous", "0.9.32"] as const) {
       const envelope = JSON.parse(result.stderr) as { ok?: boolean; code?: string };
       expect(envelope.ok).toBe(false);
       expect(envelope.code).toBe("LLM_NOT_CONFIGURED");
+    });
+
+    test("10b. a file outside its type folder takes its path as its ref, keeps the feedback recorded under the old spelling, and the old spelling still shows it", async () => {
+      const indexed = await runLauncher(candidateLauncher, ["index"], home.env);
+      expect(indexed.status, indexed.stderr).toBe(0);
+      const byPath = await runLauncher(candidateLauncher, ["show", `reports/${home.looseName}`], home.env);
+      expect(byPath.status, byPath.stderr).toBe(0);
+      const bySpelling = await runLauncher(
+        candidateLauncher,
+        ["show", `knowledge/reports/${home.looseName}`],
+        home.env,
+      );
+      expect(bySpelling.status, bySpelling.stderr).toBe(0);
+      expect(bySpelling.stderr).toMatch(/outdated/);
+
+      const stateDb = findFile(home.env.XDG_DATA_HOME ?? "", "state.db");
+      expect(stateDb).toBeDefined();
+      const db = openDatabase(stateDb as string, { readonly: true });
+      try {
+        const refs = (
+          db.prepare("SELECT DISTINCT entry_ref AS ref FROM usage_events WHERE signal = 'positive'").all() as {
+            ref: string;
+          }[]
+        ).map((row) => row.ref);
+        expect(refs).toContain(`stash//reports/${home.looseName}`);
+        expect(refs).not.toContain(`stash//knowledge/reports/${home.looseName}`);
+      } finally {
+        db.close();
+      }
     });
 
     test("11. read-back: the OLD launcher still works against the candidate-written home", async () => {

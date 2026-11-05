@@ -44,13 +44,13 @@ describe("bulk workflow source ownership deduplicates authored paths", () => {
   test("an exact duplicate absolute path remains one owner with point-lookup parity", () => {
     const root = fixtureRoot("akm-workflow-source-bulk-exact-");
     const file = workflow(root, "exact.md");
-    const point = resolveUniqueWorkflowSource(root, "akm", "exact");
+    const point = resolveUniqueWorkflowSource(root, "akm", "workflows/exact");
 
     const domains = resolveWorkflowSourceDomains(root, "akm", [file, file]);
 
     expect(domains).toHaveLength(1);
     expect(domains[0]).toEqual({
-      canonicalName: "exact",
+      canonicalName: "workflows/exact",
       sourcePaths: ["workflows/exact.md"],
       source: point,
     });
@@ -65,7 +65,7 @@ describe("bulk workflow source ownership deduplicates authored paths", () => {
 
     expect(domains).toHaveLength(1);
     expect(domains[0]?.sourcePaths).toEqual(["workflows/lexical.md"]);
-    expect(domains[0]?.source).toEqual(resolveUniqueWorkflowSource(root, "akm", "lexical.md"));
+    expect(domains[0]?.source).toEqual(resolveUniqueWorkflowSource(root, "akm", "workflows/lexical.md"));
     expect(domains[0]?.rejection).toBeUndefined();
   });
 
@@ -81,26 +81,30 @@ describe("bulk workflow source ownership deduplicates authored paths", () => {
     expect(forward).toEqual(reverse);
     expect(forward).toEqual([
       {
-        canonicalName: "alpha",
+        canonicalName: "workflows/alpha",
         sourcePaths: ["workflows/alpha.md"],
         source: "workflows/alpha.md",
         rejection: undefined,
       },
       {
-        canonicalName: "beta",
+        canonicalName: "workflows/beta",
         sourcePaths: ["workflows/beta.md"],
         source: "workflows/beta.md",
         rejection: undefined,
       },
     ]);
-    expect(resolveUniqueWorkflowSource(root, "akm", "alpha")).toMatchObject({ relativePath: forward[0]?.source });
-    expect(resolveUniqueWorkflowSource(root, "akm", "beta")).toMatchObject({ relativePath: forward[1]?.source });
+    expect(resolveUniqueWorkflowSource(root, "akm", "workflows/alpha")).toMatchObject({
+      relativePath: forward[0]?.source,
+    });
+    expect(resolveUniqueWorkflowSource(root, "akm", "workflows/beta")).toMatchObject({
+      relativePath: forward[1]?.source,
+    });
   });
 
   test("a duplicated nested-suffix path resolves as one valid domain with point-lookup parity", () => {
     const root = fixtureRoot("akm-workflow-source-bulk-invalid-");
     const file = workflow(root, "hostile.md.md");
-    const point = resolveUniqueWorkflowSource(root, "akm", "hostile.md.md");
+    const point = resolveUniqueWorkflowSource(root, "akm", "workflows/hostile.md.md");
 
     const domains = resolveWorkflowSourceDomains(root, "akm", [file, lexicalDotPath(file), file]);
 

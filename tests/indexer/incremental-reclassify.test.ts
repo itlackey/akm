@@ -45,8 +45,8 @@ afterEach(() => storage.cleanup());
 
 /** The variant the build before the fix stamped on every directory it indexed. */
 const PREVIOUS_VARIANT = "akm@0.9.0";
-const NEW_REF = "primary//knowledge/skills/demo/references/setup";
-const OLD_REF = "primary//commands/skills/demo/references/setup";
+// A ref is the file's path, so re-typing the file leaves its ref where it was.
+const REF = "primary//skills/demo/references/setup";
 
 test("an incremental index re-files an unchanged file the older matcher typed as a command", async () => {
   const refs = path.join(storage.stashDir, "skills", "demo", "references");
@@ -65,11 +65,11 @@ test("an incremental index re-files an unchanged file the older matcher typed as
   const db = openIndexDatabase(getDbPath());
   let oldId: number;
   try {
-    const row = db.prepare("SELECT id FROM entries WHERE item_ref = ?").get(NEW_REF) as { id: number };
+    const row = db.prepare("SELECT id FROM entries WHERE item_ref = ?").get(REF) as { id: number };
     oldId = row.id;
     db.prepare(
-      "UPDATE entries SET item_ref = ?, concept_id = ?, type = ?, document_json = json_set(document_json, '$.type', 'command') WHERE id = ?",
-    ).run(OLD_REF, "commands/skills/demo/references/setup", "command", oldId);
+      "UPDATE entries SET type = ?, document_json = json_set(document_json, '$.type', 'command') WHERE id = ?",
+    ).run("command", oldId);
     db.prepare("INSERT INTO embeddings (id, embedding, model) VALUES (?, ?, ?)").run(oldId, new Uint8Array(4), "m");
     db.prepare("INSERT INTO utility_scores (entry_id, utility) VALUES (?, 1)").run(oldId);
     // The directory fingerprint folds the variant in: stamp each directory as the old build did.
@@ -84,15 +84,14 @@ test("an incremental index re-files an unchanged file the older matcher typed as
   } finally {
     db.close();
   }
-  expect(
-    await lookupBundleRef({ bundle: "primary", conceptId: "commands/skills/demo/references/setup" }),
-  ).not.toBeNull();
+  expect((await lookupBundleRef({ bundle: "primary", conceptId: "skills/demo/references/setup" }))?.type).toBe(
+    "command",
+  );
 
   // Nothing on disk changes.
   await akmIndex({ stashDir: storage.stashDir });
 
-  expect(await lookupBundleRef({ bundle: "primary", conceptId: "commands/skills/demo/references/setup" })).toBeNull();
-  const filed = await lookupBundleRef({ bundle: "primary", conceptId: "knowledge/skills/demo/references/setup" });
+  const filed = await lookupBundleRef({ bundle: "primary", conceptId: "skills/demo/references/setup" });
   expect(filed?.type).toBe("knowledge");
 
   const check = openIndexDatabase(getDbPath());
@@ -100,8 +99,7 @@ test("an incremental index re-files an unchanged file the older matcher typed as
     const refsNow = (
       check.prepare("SELECT item_ref FROM entries ORDER BY item_ref").all() as { item_ref: string }[]
     ).map((r) => r.item_ref);
-    expect(refsNow).toContain(NEW_REF);
-    expect(refsNow).not.toContain(OLD_REF);
+    expect(refsNow).toContain(REF);
     expect(refsNow.filter((r) => r.includes("references/setup"))).toHaveLength(1);
     // Nothing keyed by the old row survives it.
     for (const table of ["embeddings", "utility_scores", "asset_links"]) {
@@ -111,8 +109,9 @@ test("an incremental index re-files an unchanged file the older matcher typed as
         .get() as { n: number };
       expect(orphans.n).toBe(0);
     }
-    expect(check.prepare("SELECT count(*) AS n FROM embeddings WHERE id = ?").get(oldId) as { n: number }).toEqual({
-      n: 0,
+    // The file keeps its row: only its type changed.
+    expect(check.prepare("SELECT id FROM entries WHERE item_ref = ?").get(REF) as { id: number }).toEqual({
+      id: oldId,
     });
     const variants = check.prepare("SELECT DISTINCT index_variant AS v FROM index_dir_state").all() as { v: string }[];
     expect(variants.map((v) => v.v)).toEqual([`akm@${akmAdapter.version}+content${CONTENT_PROJECTION_VERSION}`]);

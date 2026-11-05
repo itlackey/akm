@@ -19,13 +19,13 @@
  */
 
 import { parseBundleRef } from "../../core/asset/asset-ref";
-import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { nonTaskInput } from "../../core/non-task-input";
 import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
+import { lookupBundleRefReadonly } from "../../indexer/indexer";
 import { matchBeliefFilter, searchHitContent } from "../../indexer/search/db-search";
 import {
   type AttributionProjection,
@@ -578,7 +578,7 @@ async function buildCurateSupportRefs(
           }
         }
         const historical = matchBeliefFilter(shown?.beliefState, "historical");
-        const type = supportRefType(ref);
+        const type = shown?.type ?? (await supportRefType(ref));
         supportRefs.push({
           ref,
           ...(type ? { type } : {}),
@@ -592,10 +592,10 @@ async function buildCurateSupportRefs(
   return supportRefs;
 }
 
-/** The asset type a ref's conceptId names (`memories/x` → `memory`), when it names one. */
-function supportRefType(ref: string): string | undefined {
+/** The type the index records for the asset a ref names, when it names an indexed one. */
+async function supportRefType(ref: string): Promise<string | undefined> {
   try {
-    return typeNameFromConceptId(parseBundleRef(ref).conceptId)?.type;
+    return (await lookupBundleRefReadonly(parseBundleRef(ref)))?.type;
   } catch {
     return undefined;
   }

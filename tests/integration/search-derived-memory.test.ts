@@ -196,7 +196,14 @@ for (const bundleId of ["stash", "team"]) {
         deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, "memory", child.name),
       );
       const hit: SourceSearchHit = { name: "parent", type: "memory", path: "/unread/parent.md", ref: "wiki:parent" };
-      await enrichSearchHit(hit, { type: "memory", stashDir, bundleId, defaultBundleId: "stash", db });
+      await enrichSearchHit(hit, {
+        type: "memory",
+        stashDir,
+        bundleId,
+        conceptId: "memories/parent",
+        defaultBundleId: "stash",
+        db,
+      });
       expect(hit.ref).toBe("wiki:parent");
       expect(hit.expandTo).toBe(`${bundleId === "stash" ? "" : "team//"}memories/parent.derived`);
     } finally {

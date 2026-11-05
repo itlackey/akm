@@ -8,20 +8,17 @@ import type { AdapterReadCandidate, BundleAdapter } from "../../core/adapter/bun
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
 import type { BundleComponent } from "../../core/adapter/types";
+import { stashDirNames } from "../../core/asset/asset-placement";
 import type { BundleRef } from "../../core/asset/asset-ref";
 import { compareCodePoints, hasErrnoCode } from "../../core/common";
 import { ConfigError, UsageError } from "../../core/errors";
-import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { sensitiveMarkerPath } from "../../core/sensitive-marker-path";
 import { warnOnce } from "../../core/warn";
-import {
-  resolveUniqueWorkflowSource,
-  type WorkflowSourceFile,
-  workflowNameForConceptId,
-} from "../../workflows/source-files";
+import { resolveUniqueWorkflowSource, type WorkflowSourceFile } from "../../workflows/source-files";
 import { deriveInstallations } from "../installations";
 import type { SearchSource } from "../search/search-source";
 import { buildFileContext, type FileContext } from "../walk/file-context";
+import { declaredTypeForPath } from "../walk/matchers";
 
 const CONTENT_READ_REQUIRED = Symbol("adapter ownership probe requires content");
 
@@ -154,10 +151,10 @@ export interface ResolveAdapterConceptOwnerOptions {
 }
 
 /** True for an env/secret file that a sibling `.sensitive` marker hides from the index. */
-function isMarkedSensitive(owner: AdapterConceptOwner): boolean {
-  const head = owner.conceptId.split("/")[0];
-  if (head !== "env" && head !== "secrets") return false;
-  const marker = sensitiveMarkerPath(owner.path, head === "env" ? "env" : "secret");
+function isMarkedSensitive(sourcePath: string, owner: AdapterConceptOwner): boolean {
+  const type = declaredTypeForPath(buildFileContext(sourcePath, owner.path));
+  if (type !== "env" && type !== "secret") return false;
+  const marker = sensitiveMarkerPath(owner.path, type);
   return marker !== owner.path && fs.existsSync(marker);
 }
 
@@ -191,25 +188,17 @@ export function resolveAdapterConceptOwner(
   const component = componentFor(sourcePath, adapterId);
   const ownersByIdentity = new Map<string, AdapterConceptOwner>();
 
-  const workflowName = workflowNameForConceptId(adapterId, normalized);
-  const resolutionConceptId =
-    workflowName === undefined
-      ? normalized
-      : adapterId === "akm"
-        ? `workflows/${canonicalizeWorkflowName(workflowName)}`
-        : canonicalizeWorkflowName(workflowName);
-  if (workflowName !== undefined) {
-    const workflowSource = resolveUniqueWorkflowSource(sourcePath, adapterId, workflowName);
-    if (workflowSource) {
-      const workflowOwner = {
-        path: workflowSource.path,
-        realPath: workflowSource.realPath,
-        conceptId: resolutionConceptId,
-        adapterId,
-        workflowSource,
-      };
-      ownersByIdentity.set(`${path.resolve(workflowOwner.path)}\0${resolutionConceptId}`, workflowOwner);
-    }
+  const workflowSource = resolveUniqueWorkflowSource(sourcePath, adapterId, normalized);
+  const resolutionConceptId = workflowSource ? workflowSource.canonicalName : normalized;
+  if (workflowSource) {
+    const workflowOwner = {
+      path: workflowSource.path,
+      realPath: workflowSource.realPath,
+      conceptId: resolutionConceptId,
+      adapterId,
+      workflowSource,
+    };
+    ownersByIdentity.set(`${path.resolve(workflowOwner.path)}\0${resolutionConceptId}`, workflowOwner);
   }
 
   // Closed-form candidate set (#857): `readCandidates` inverts the conceptId
@@ -236,7 +225,7 @@ export function resolveAdapterConceptOwner(
     if (ownersByIdentity.has(identity)) continue;
     if (
       claimsWithoutContent(adapter, component, candidate) ||
-      (options?.includeSensitive && isMarkedSensitive(candidate))
+      (options?.includeSensitive && isMarkedSensitive(sourcePath, candidate))
     ) {
       ownersByIdentity.set(identity, candidate);
     }
@@ -282,6 +271,29 @@ export interface ConceptOwnerMatch {
  * index-free: it never opens a database, so a caller may use it at dispatch.
  */
 export function resolveConceptOwner(
+  ref: BundleRef,
+  sources: readonly SearchSource[],
+  options?: ResolveAdapterConceptOwnerOptions,
+): ConceptOwnerMatch | undefined {
+  const found = ownerAmong(ref, sources, options);
+  if (found) return found;
+  // Releases before path refs prefixed a loose file's ref with its type folder
+  // (`knowledge/reports/x` for `reports/x.md`), and that spelling is still in
+  // links, memories and scripts. Accept it once the ref itself misses.
+  const slash = ref.conceptId.indexOf("/");
+  if (slash <= 0 || !stashDirNames().includes(ref.conceptId.slice(0, slash))) return undefined;
+  const current = ref.conceptId.slice(slash + 1);
+  const legacy = ownerAmong({ ...ref, conceptId: current }, sources, options);
+  if (legacy) {
+    warnOnce(
+      `outdated-ref:${ref.conceptId}`,
+      `Ref "${ref.conceptId}" is outdated: refs are the path inside the bundle, so it is now "${current}". Resolved it to that asset.`,
+    );
+  }
+  return legacy;
+}
+
+function ownerAmong(
   ref: BundleRef,
   sources: readonly SearchSource[],
   options?: ResolveAdapterConceptOwnerOptions,

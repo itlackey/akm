@@ -408,20 +408,21 @@ describe("a fix for a file a proposal would not write", () => {
   // An asset indexed outside its type's directory: the path the proposal would
   // write does not exist, so accepting it would create a duplicate and fix nothing.
   test.each([
-    ["a bundle's tasks/README", "tasks/README.md", "knowledge/tasks/README"],
+    ["a bundle's tasks/README", "tasks/README.md", "tasks/README", "tasks/README.yml"],
     [
       "a skill's reference file",
       "skills/deploy/references/symptom-map.md",
-      "knowledge/skills/deploy/references/symptom-map",
+      "skills/deploy/references/symptom-map",
+      "skills/deploy/references/symptom-map/SKILL.md",
     ],
-  ])("%s is refused, and nothing is recorded", async (_label, rel, ref) => {
+  ])("%s is refused, and nothing is recorded", async (_label, rel, ref, writes) => {
     await indexFiles({
       "skills/deploy/SKILL.md": "---\ndescription: Deploy\n---\n# Deploy\n",
       [rel]: "---\ndescription: Notes\n---\n# Notes\n\nThe server listens on port 8000 by default.\n",
     });
     const { code, json } = await feedback(FIX, ref);
     expect(code).not.toBe(0);
-    const wouldWrite = path.join(stashDir, `${ref}.md`);
+    const wouldWrite = path.join(stashDir, writes);
     expect(json.error).toBe(
       `akm cannot queue a fix for stash//${ref}: its file is ${path.join(stashDir, rel)}, but a proposal would write ${wouldWrite}. Edit the file directly.`,
     );
@@ -432,7 +433,7 @@ describe("a fix for a file a proposal would not write", () => {
 
   test("plain negative feedback on such an asset is still recorded", async () => {
     await indexFiles({ "tasks/README.md": "---\ndescription: Tasks\n---\n# Tasks\n" });
-    const { code } = await feedback(["--reason", "The page is out of date."], "knowledge/tasks/README");
+    const { code } = await feedback(["--reason", "The page is out of date."], "tasks/README");
     expect(code).toBe(0);
     expect(feedbackEvents()).toBe(1);
   });

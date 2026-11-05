@@ -17,7 +17,7 @@ import { akmShowUnified } from "../commands/read/show";
 import { akmClone, type CloneResponse } from "../commands/sources/source-clone";
 import { assertFlatAssetName } from "../core/asset/asset-create";
 import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
-import { parseRefInput } from "../core/asset/resolve-ref";
+import { parseBundleRef } from "../core/asset/asset-ref";
 import { resolveStashDir, toErrorMessage } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
@@ -32,7 +32,13 @@ import { redactUrlsInText } from "./redact";
 
 /** An indexed asset file whose bundle accepts AKM writes, found the way the UI reads it. */
 async function resolveWritableIndexedAsset(ref: string) {
-  const parsed = parseRefInput(ref);
+  const { fragment } = parseBundleRef(ref);
+  if (fragment !== undefined) {
+    throw new UsageError(
+      `Export fragment "#${fragment}" is not accepted here — drop it from "${ref.trim()}".`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
   const shown = await akmShowUnified({ ref, readOnly: true });
   if (!shown.path) throw new UsageError("The document has no local source file.");
   const db = openReadonlyExistingDatabase();
@@ -46,19 +52,9 @@ async function resolveWritableIndexedAsset(ref: string) {
     }
   }
   if (!canonical) throw new UsageError("Only indexed documents can be edited.");
-  const identity = parseRefInput(canonical);
-  const target = resolveBundleWriteTarget(loadConfig(), identity.origin!);
+  const target = resolveBundleWriteTarget(loadConfig(), parseBundleRef(canonical).bundle!);
   assertAkmAssetWrite(target.source);
-  const expectedPath = assetPathForName(
-    parsed.type,
-    path.join(target.source.path, stashDirFor(parsed.type)!),
-    identity.name,
-  );
-  if (path.resolve(expectedPath) !== path.resolve(shown.path))
-    throw new UsageError(
-      "The indexed source no longer matches the writable document target. Refresh the index before editing.",
-    );
-  return { canonical, target, path: shown.path };
+  return { canonical, target, path: shown.path, type: shown.type, name: shown.name };
 }
 
 /** Source reads are limited to indexed, writable AKM knowledge/memory files, never arbitrary paths. */
@@ -68,11 +64,29 @@ export async function readSource(input: { ref: string }): Promise<{
   content: string;
   revision: string;
 }> {
-  const { ref } = input;
-  const parsed = parseRefInput(ref);
-  if (parsed.type !== "knowledge" && parsed.type !== "memory")
-    throw new UsageError("Only knowledge and memory support source editing in this UI.");
+  const { name: _name, ...source } = await loadSource(input.ref);
+  return source;
+}
+
+async function loadSource(ref: string): Promise<{
+  ref: string;
+  type: "knowledge" | "memory";
+  name: string;
+  content: string;
+  revision: string;
+}> {
   const found = await resolveWritableIndexedAsset(ref);
+  if (found.type !== "knowledge" && found.type !== "memory")
+    throw new UsageError("Only knowledge and memory support source editing in this UI.");
+  // The writers place a document by its type and name, so a document sitting
+  // anywhere else cannot be saved through them.
+  const typeDir = stashDirFor(found.type);
+  if (!typeDir) throw new UsageError("Only indexed documents can be edited.");
+  const expectedPath = assetPathForName(found.type, path.join(found.target.source.path, typeDir), found.name);
+  if (path.resolve(expectedPath) !== path.resolve(found.path))
+    throw new UsageError(
+      "The indexed source no longer matches the writable document target. Refresh the index before editing.",
+    );
   const raw = fs.readFileSync(found.path);
   const content = raw.toString("utf8");
   if (!Buffer.from(content, "utf8").equals(raw))
@@ -83,7 +97,8 @@ export async function readSource(input: { ref: string }): Promise<{
     );
   return {
     ref: found.canonical,
-    type: parsed.type,
+    type: found.type,
+    name: found.name,
     content,
     revision: createHash("sha256").update(raw).digest("hex"),
   };
@@ -94,14 +109,13 @@ export async function readSource(input: { ref: string }): Promise<{
  * shared Markdown writer (and record its event).
  */
 async function saveLocked(ref: string, content: string, revision: string) {
-  const source = await readSource({ ref });
-  const identity = parseRefInput(source.ref);
+  const source = await loadSource(ref);
   const result = await writeMarkdownAsset({
     type: source.type,
     content,
-    name: identity.name,
+    name: source.name,
     fallbackPrefix: source.type,
-    target: identity.origin,
+    target: parseBundleRef(source.ref).bundle,
     force: true,
     expectedContentHash: revision,
   });
@@ -166,11 +180,10 @@ export async function copy(input: { sourceRef: string; target?: string; newName?
 export async function retire(input: { ref: string; revision: string }) {
   const ref = required(input.ref, "ref");
   const revision = required(input.revision, "revision");
-  const identity = parseRefInput(ref);
-  if (["skill", "env", "secret", "session"].includes(identity.type))
-    throw new UsageError("Retire supports single-file assets, not skill packages or protected files.");
   return interactive("manual-retire", async () => {
-    const { canonical, target } = await resolveWritableIndexedAsset(ref);
+    const { canonical, target, type } = await resolveWritableIndexedAsset(ref);
+    if (["skill", "env", "secret", "session"].includes(type))
+      throw new UsageError("Retire supports single-file assets, not skill packages or protected files.");
     const stashDir = resolveStashDir();
     const minted = createRetireProposal(stashDir, {
       ref: canonical,
@@ -195,8 +208,7 @@ export async function retire(input: { ref: string; revision: string }) {
       ref: canonical,
       bundle: target.source.name,
       archiveDirs: accepted.retiredArchive?.dirs ?? [],
-      warnings:
-        identity.type === "task" ? ["Installed schedules are not changed. Run akm task sync to reconcile them."] : [],
+      warnings: type === "task" ? ["Installed schedules are not changed. Run akm task sync to reconcile them."] : [],
     };
   });
 }

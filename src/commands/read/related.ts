@@ -4,7 +4,6 @@
 
 import fs from "node:fs";
 import { parseBundleRef } from "../../core/asset/asset-ref";
-import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { applyEntryFilters } from "../../indexer/search/db-search";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
@@ -33,9 +32,10 @@ export type RelatedScope = "all" | "bundle";
  */
 export async function akmRelated(ref: string, scope: RelatedScope = "all") {
   const unavailable = (note: string) => ({ available: false, note, matches: [] });
-  const type = typeNameFromConceptId(parseBundleRef(ref).conceptId)?.type;
-  if (type === "env" || type === "secret") return unavailable("This asset has no comparable indexed content.");
-  const file = (await akmShowUnified({ ref, readOnly: true })).path;
+  const shown = await akmShowUnified({ ref, readOnly: true });
+  if (shown.type === "env" || shown.type === "secret")
+    return unavailable("This asset has no comparable indexed content.");
+  const file = shown.path;
   const db = openReadonlyExistingDatabase();
   if (!db) return unavailable("No index is available. Build the AKM index to compare stored embeddings.");
   try {

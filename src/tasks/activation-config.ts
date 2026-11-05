@@ -16,10 +16,8 @@
  * 0.9.17-alpha `{kind, ref, sourceId}` entry is read as its `ref`.
  */
 import fs from "node:fs";
-import path from "node:path";
-import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
+import { filesForRef } from "../core/asset/asset-placement";
 import { bundleRefToString, makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
-import { typeNameFromConceptId } from "../core/asset/resolve-ref";
 import { type AkmConfig, mutateConfig, schedulerSourceIdFor } from "../core/config/config";
 import { bundleComponentConfig, bundleContentRoots, isBundleEnabled } from "../core/config/config-sources";
 import { UsageError } from "../core/errors";
@@ -147,15 +145,10 @@ function installedEntryRef(entry: InstalledSchedulerBinding, config: AkmConfig):
 }
 
 function hasBackingFile(config: AkmConfig, bundle: string, conceptId: string): boolean {
-  const parts = typeNameFromConceptId(conceptId);
-  if (!parts) return true;
-  const typeDir = stashDirFor(parts.type);
-  if (!typeDir) return true;
   const contentRoot = bundleContentRoots(config).find((entry) => entry.id === bundle)?.contentRoot;
   if (!contentRoot) return true;
   try {
-    const target = assetPathForName(parts.type, path.join(contentRoot, typeDir), parts.name);
-    return fs.existsSync(target) && fs.statSync(target).isFile();
+    return filesForRef(contentRoot, conceptId).some((file) => fs.existsSync(file) && fs.statSync(file).isFile());
   } catch {
     return false;
   }

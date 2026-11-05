@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { parseRefInput } from "../../../src/core/asset/resolve-ref";
+import { parsePlacementRef } from "../../../src/core/asset/resolve-ref";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import {
   commitWriteTargetBoundary,
@@ -197,7 +197,7 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
     await writeAssetToSource(
       target.source,
       target.config,
-      parseRefInput("memories/operation-owned"),
+      parsePlacementRef("memories/operation-owned"),
       "---\ndescription: Operation-owned memory\n---\n\nAsset body.\n",
     );
     commitWriteTargetBoundary(target, "exact operation paths", { push: false });

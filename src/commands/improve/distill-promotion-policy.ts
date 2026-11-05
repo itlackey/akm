@@ -4,7 +4,7 @@
 
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, readFrontmatterDate } from "../../core/asset/frontmatter";
-import { parseRefInput } from "../../core/asset/resolve-ref";
+import { parsePlacementRef } from "../../core/asset/resolve-ref";
 
 export interface PromotionFeedbackEvent {
   metadata?: Record<string, unknown>;
@@ -100,7 +100,7 @@ function deriveDescription(body: string, description: string | undefined): strin
 }
 
 export function deriveKnowledgeRef(inputRef: string): string {
-  const parsed = parseRefInput(inputRef);
+  const parsed = parsePlacementRef(inputRef);
   const leaf = parsed.name.split("/").filter(Boolean).at(-1) ?? parsed.name;
   const safe = leaf
     .toLowerCase()
@@ -119,7 +119,7 @@ function collectPromotionFeatures(input: PromotionPolicyInput): {
   observedAt?: string;
   source?: string;
 } {
-  const parsed = parseRefInput(input.inputRef);
+  const parsed = parsePlacementRef(input.inputRef);
   const blockedBy: string[] = [];
 
   if (parsed.type !== "memory") {

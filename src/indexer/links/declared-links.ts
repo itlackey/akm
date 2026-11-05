@@ -126,7 +126,7 @@ function legacyConceptId(body: string, ownerConceptId: string): string | undefin
     const type = stripped.slice(0, colon);
     const name = stripped.slice(colon + 1);
     if (!name || name.includes(":")) return;
-    if (type === "wiki") return `knowledge/wikis/${name}`;
+    if (type === "wiki") return `wikis/${name}`;
     const stashDir = stashDirFor(type);
     return stashDir === undefined ? undefined : `${stashDir}/${name}`;
   }

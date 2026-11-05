@@ -9,11 +9,10 @@ import {
   conceptIdFromTypeName,
   displayRef,
   isFullRefInput,
-  parseRefInput,
+  parsePlacementRef,
   type RefContext,
   type RefResolutionBundle,
   resolveRef,
-  typeNameFromConceptId,
 } from "../src/core/asset/resolve-ref";
 import { NotFoundError, UsageError } from "../src/core/errors";
 
@@ -108,31 +107,18 @@ describe("resolveRef", () => {
   });
 });
 
-describe("typeNameFromConceptId", () => {
-  test("projects known stash subdirectories into type/name values", () => {
-    expect(typeNameFromConceptId("skills/code-review")).toEqual({ type: "skill", name: "code-review" });
-    expect(typeNameFromConceptId("scripts/db/migrate/run.sh")).toEqual({ type: "script", name: "db/migrate/run.sh" });
-    expect(typeNameFromConceptId("workflows/release")).toEqual({ type: "workflow", name: "release" });
-  });
+// ── parsePlacementRef (F1b input-boundary parser) ───────────────────────────────
 
-  test("typeNameFromConceptId → undefined for a bare/unknown leading segment", () => {
-    expect(typeNameFromConceptId("no-slash-here")).toBeUndefined();
-    expect(typeNameFromConceptId("notatype/thing")).toBeUndefined();
-  });
-});
-
-// ── parseRefInput (F1b input-boundary parser) ───────────────────────────────
-
-describe("parseRefInput", () => {
+describe("parsePlacementRef", () => {
   test("bare concept ids project to type/name values", () => {
-    expect(parseRefInput("skills/code-review")).toEqual({ type: "skill", name: "code-review" });
-    expect(parseRefInput("knowledge/guide")).toEqual({ type: "knowledge", name: "guide" });
-    expect(parseRefInput("scripts/db/migrate/run.sh")).toEqual({ type: "script", name: "db/migrate/run.sh" });
-    expect(parseRefInput("workflows/release")).toEqual({ type: "workflow", name: "release" });
+    expect(parsePlacementRef("skills/code-review")).toEqual({ type: "skill", name: "code-review" });
+    expect(parsePlacementRef("knowledge/guide")).toEqual({ type: "knowledge", name: "guide" });
+    expect(parsePlacementRef("scripts/db/migrate/run.sh")).toEqual({ type: "script", name: "db/migrate/run.sh" });
+    expect(parsePlacementRef("workflows/release")).toEqual({ type: "workflow", name: "release" });
   });
 
   test("new-grammar bundle-qualified → bundle becomes the AssetRef origin", () => {
-    expect(parseRefInput("mycatalog//skills/review")).toEqual({
+    expect(parsePlacementRef("mycatalog//skills/review")).toEqual({
       type: "skill",
       name: "review",
       origin: "mycatalog",
@@ -148,13 +134,17 @@ describe("parseRefInput", () => {
   // "notatype/thing" — and is UPDATED here to pin the corrected D11 behavior:
   // a well-formed `<segment>/<rest>` conceptId is accepted as opaque data.
   test("new-grammar conceptId with an unknown-but-well-formed prefix → accepted as opaque data (D11)", () => {
-    expect(parseRefInput("notatype/thing")).toEqual({ type: "notatype", name: "notatype/thing", origin: undefined });
-    expect(parseRefInput("tables/customers")).toEqual({
+    expect(parsePlacementRef("notatype/thing")).toEqual({
+      type: "notatype",
+      name: "notatype/thing",
+      origin: undefined,
+    });
+    expect(parsePlacementRef("tables/customers")).toEqual({
       type: "tables",
       name: "tables/customers",
       origin: undefined,
     });
-    expect(parseRefInput("adversarial//tables/customers")).toEqual({
+    expect(parsePlacementRef("adversarial//tables/customers")).toEqual({
       type: "tables",
       name: "tables/customers",
       origin: "adversarial",
@@ -167,7 +157,7 @@ describe("parseRefInput", () => {
     // `type`/`name` via conceptIdFromTypeName must reproduce the exact input
     // conceptId, not just its tail.
     for (const conceptId of ["notatype/thing", "tables/customers", "sub/duplicate-b", "a/b/c/d"]) {
-      const parsed = parseRefInput(conceptId);
+      const parsed = parsePlacementRef(conceptId);
       expect(conceptIdFromTypeName(parsed.type, parsed.name)).toBe(conceptId);
     }
   });
@@ -191,36 +181,36 @@ describe("parseRefInput", () => {
       "fact",
     ]) {
       const conceptId = `${key}/foo`;
-      const parsed = parseRefInput(conceptId);
+      const parsed = parsePlacementRef(conceptId);
       expect(conceptIdFromTypeName(parsed.type, parsed.name)).toBe(conceptId);
     }
   });
 
   test("D11 does NOT loosen acceptance of a bare (no-slash) name — still the caller's bare-name-to-qualify job", () => {
-    expect(() => parseRefInput("notatype")).toThrow(NotFoundError);
-    expect(() => parseRefInput("prod")).toThrow(NotFoundError);
+    expect(() => parsePlacementRef("notatype")).toThrow(NotFoundError);
+    expect(() => parsePlacementRef("prod")).toThrow(NotFoundError);
   });
 
   test("a qualified root-level opaque conceptId is a complete parseable ref", () => {
-    expect(parseRefInput("catalog//readme")).toEqual({ type: "readme", name: "readme", origin: "catalog" });
+    expect(parsePlacementRef("catalog//readme")).toEqual({ type: "readme", name: "readme", origin: "catalog" });
     expect(isFullRefInput("catalog//readme")).toBe(true);
   });
 
   test("D11 does NOT re-accept the retired colon `type:name` grammar (Q-02)", () => {
     // No slash at all after the colon — already rejected pre-D11 too.
-    expect(() => parseRefInput("skill:code-review")).toThrow(NotFoundError);
-    expect(() => parseRefInput("knowledge:guide.md")).toThrow(NotFoundError);
+    expect(() => parsePlacementRef("skill:code-review")).toThrow(NotFoundError);
+    expect(() => parsePlacementRef("knowledge:guide.md")).toThrow(NotFoundError);
     // A slash appears in the NAME after the colon — this is exactly the shape
     // the naive "accept any well-formed <segment>/<rest>" fallback would have
     // wrongly re-admitted (the leading segment "script:db" / "workflow:release"
     // would fail the AKM-placement lookup and fall into the opaque branch).
     // The colon-in-leading-segment guard must still refuse these.
-    expect(() => parseRefInput("script:db/migrate/run.sh")).toThrow(NotFoundError);
-    expect(() => parseRefInput("workflow:release/train")).toThrow(NotFoundError);
+    expect(() => parsePlacementRef("script:db/migrate/run.sh")).toThrow(NotFoundError);
+    expect(() => parsePlacementRef("workflow:release/train")).toThrow(NotFoundError);
   });
 
   test("an export #fragment is rejected at the input boundary", () => {
-    expect(() => parseRefInput("skills/review#usage")).toThrow(UsageError);
+    expect(() => parsePlacementRef("skills/review#usage")).toThrow(UsageError);
   });
 });
 
@@ -246,49 +236,34 @@ describe("isFullRefInput", () => {
 });
 
 describe("displayRef (F4b output-spelling rule)", () => {
-  test("default/primary bundle (no bundleId) → SHORT conceptId, derived from type/name", () => {
-    expect(displayRef({ type: "knowledge", name: "http-caching" })).toBe("knowledge/http-caching");
-    expect(displayRef({ type: "skill", name: "code-review" })).toBe("skills/code-review");
-    expect(displayRef({ type: "memory", name: "claude-prefs" })).toBe("memories/claude-prefs");
-    expect(displayRef({ type: "memory", name: "claude-prefs.derived" })).toBe("memories/claude-prefs.derived");
+  test("default/primary bundle (no bundleId) → the SHORT conceptId", () => {
+    expect(displayRef({ conceptId: "knowledge/http-caching" })).toBe("knowledge/http-caching");
+    expect(displayRef({ conceptId: "reports/q3" })).toBe("reports/q3");
   });
 
   test("bundleId equal to defaultBundleId → SHORT conceptId", () => {
-    expect(displayRef({ type: "knowledge", name: "guide", bundleId: "core" }, "core")).toBe("knowledge/guide");
+    expect(displayRef({ conceptId: "knowledge/guide", bundleId: "core" }, "core")).toBe("knowledge/guide");
   });
 
   test("non-default bundles named local or stash remain qualified", () => {
-    expect(displayRef({ type: "knowledge", name: "guide", bundleId: "local" }, "primary")).toBe(
-      "local//knowledge/guide",
-    );
-    expect(displayRef({ type: "knowledge", name: "guide", bundleId: "stash" }, "primary")).toBe(
-      "stash//knowledge/guide",
-    );
+    expect(displayRef({ conceptId: "knowledge/guide", bundleId: "local" }, "primary")).toBe("local//knowledge/guide");
+    expect(displayRef({ conceptId: "knowledge/guide", bundleId: "stash" }, "primary")).toBe("stash//knowledge/guide");
   });
 
-  test("explicit conceptId wins over type/name derivation for the short form", () => {
-    expect(displayRef({ type: "knowledge", name: "guide.md", conceptId: "knowledge/guide" })).toBe("knowledge/guide");
-  });
-
-  test("slug-clean non-default bundle → fully-qualified bundle//conceptId", () => {
-    expect(displayRef({ type: "knowledge", name: "guide", bundleId: "team-catalog" })).toBe(
-      "team-catalog//knowledge/guide",
+  test("non-default bundle → bundle//conceptId, a non-slug bundle id emitted verbatim", () => {
+    expect(displayRef({ conceptId: "team/notes/auth", bundleId: "team-catalog" })).toBe(
+      "team-catalog//team/notes/auth",
     );
-    expect(
-      displayRef({ type: "workflow", name: "release", conceptId: "workflows/release", bundleId: "team-catalog" }),
-    ).toBe("team-catalog//workflows/release");
-  });
-
-  test("non-default bundle → bundle//conceptId (WI-8.5c: always the new grammar)", () => {
-    // Post-Chunk-8 the config migration assigned every source a legal slug bundle
-    // id, so a non-default bundle always displays as the new `bundle//conceptId`
-    // grammar — the legacy `origin//type:name` arm is retired. A raw non-slug
-    // registryId reaching here (edge case) is emitted verbatim as the bundle.
-    expect(displayRef({ type: "agent", name: "helper", bundleId: "github:evil/pack" })).toBe(
+    expect(displayRef({ conceptId: "agents/helper", bundleId: "github:evil/pack" })).toBe(
       "github:evil/pack//agents/helper",
     );
-    expect(displayRef({ type: "script", name: "deploy.sh", bundleId: "npm:@scope/pkg" })).toBe(
-      "npm:@scope/pkg//scripts/deploy.sh",
-    );
+  });
+});
+
+describe("conceptIdFromTypeName (placement of a new asset)", () => {
+  test("prefixes the type's stash folder; a type with no folder keeps the bare name", () => {
+    expect(conceptIdFromTypeName("skill", "code-review")).toBe("skills/code-review");
+    expect(conceptIdFromTypeName("memory", "claude-prefs.derived")).toBe("memories/claude-prefs.derived");
+    expect(conceptIdFromTypeName("tables", "customers")).toBe("customers");
   });
 });

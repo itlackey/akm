@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
+import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { lookup } from "../indexer";
 import { deriveInstallations } from "../installations";
 import { resolveConceptOwner } from "../lookup/adapter-concept-owner";
@@ -17,7 +17,7 @@ export interface ResolveAssetPathOptions {
 
 function normalizeRef(ref: string | AssetRef): AssetRef {
   // String inputs use the current `[bundle//]conceptId` grammar.
-  return typeof ref === "string" ? parseRefInput(ref) : ref;
+  return typeof ref === "string" ? parsePlacementRef(ref) : ref;
 }
 
 async function resolveViaIndex(ref: AssetRef): Promise<string | null> {

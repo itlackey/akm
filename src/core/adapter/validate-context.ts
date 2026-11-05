@@ -29,7 +29,7 @@
  * ── resolveRef ──
  *
  * A bare (unqualified) `conceptId` is resolved as BOTH:
- *   1. the AKM placement-derived path (`typeNameFromConceptId` + `stashDirFor`
+ *   1. the AKM placement-derived paths (`filesForRef`
  *      + `assetPathForName` — the exact derivation `commands/lint/base-linter.ts
  *      #refToRelPath` already uses for the akm-native `missing-ref` check); and
  *   2. the DIRECT component-relative spelling (`<conceptId>.md`, and the bare
@@ -46,8 +46,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { assetPathForName, stashDirFor } from "../asset/asset-placement";
-import { typeNameFromConceptId } from "../asset/resolve-ref";
+import { filesForRef } from "../asset/asset-placement";
 import { toPosix } from "../common";
 import type { FileChange } from "../file-change";
 import type { ValidateContext } from "./types";
@@ -110,22 +109,14 @@ function refEscapesBundle(conceptId: string): boolean {
 }
 
 /**
- * Every on-disk relative path a bare `conceptId` might resolve to: the AKM
- * placement-derived path (when the leading segment names a known placement
- * stash-subdir) and the direct component-relative spellings every non-akm
+ * Every on-disk relative path a bare `conceptId` might resolve to: the files
+ * any placement spec could give the ref (a ref is the file's path minus its
+ * type's suffix) and the direct component-relative spellings every non-akm
  * adapter's own conceptId already uses. Order doesn't matter — the caller
  * checks all of them.
  */
 function candidateRelPaths(conceptId: string): string[] {
-  const candidates: string[] = [];
-  const parts = typeNameFromConceptId(conceptId);
-  if (parts !== undefined) {
-    const typeDir = stashDirFor(parts.type);
-    if (typeDir !== undefined) candidates.push(assetPathForName(parts.type, typeDir, parts.name));
-  }
-  candidates.push(`${conceptId}.md`);
-  candidates.push(conceptId);
-  return candidates;
+  return [...filesForRef("", conceptId), `${conceptId}.md`, conceptId];
 }
 
 /** Strip an optional `#fragment` (export selector) — never part of the on-disk identity. */

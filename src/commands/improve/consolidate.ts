@@ -29,7 +29,7 @@ import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md"
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { conceptIdFromTypeName, displayRef, parseRefInput } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
@@ -352,8 +352,8 @@ export function loadExistingKnowledgeBodyHashes(targetRoot: string): Set<string>
 /** A provenance ref in its canonical display spelling. */
 function canonicalXref(ref: string): string {
   try {
-    const p = parseRefInput(ref);
-    return displayRef({ type: p.type, name: p.name, bundleId: p.origin });
+    const p = parsePlacementRef(ref);
+    return displayRef({ conceptId: conceptIdFromTypeName(p.type, p.name), bundleId: p.origin });
   } catch {
     return ref;
   }
@@ -979,7 +979,7 @@ function bodyHashOf(memory: MemoryEntry | undefined): { contentHash?: string } {
 /** The conceptId a ref maps to, or undefined for an invalid ref. */
 function conceptIdForRef(ref: string): string | undefined {
   try {
-    const p = parseRefInput(ref);
+    const p = parsePlacementRef(ref);
     return conceptIdFromTypeName(p.type, p.name);
   } catch {
     return undefined;
@@ -989,7 +989,7 @@ function conceptIdForRef(ref: string): string | undefined {
 /** A slug with dates, counters and word order folded away, for spotting variants. */
 function normalizeSlugForDedup(ref: string): string {
   const monthRe = /(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i;
-  return parseRefInput(ref)
+  return parsePlacementRef(ref)
     .name.toLowerCase()
     .split("-")
     .filter((tok) => tok.length > 0 && !/^\d+$/.test(tok) && !monthRe.test(tok))
@@ -1033,7 +1033,7 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
     .replace(/^-|-$/g, "")
     .toLowerCase();
   const knowledgeRef = conceptIdFromTypeName("knowledge", slug);
-  const parsedKnowledgeRef = parseRefInput(knowledgeRef);
+  const parsedKnowledgeRef = parsePlacementRef(knowledgeRef);
   if (knowledgeRef !== op.knowledgeRef)
     warnings.push(`Normalized generated ref "${op.knowledgeRef}" → "${knowledgeRef}"`);
   const pending = listProposals(stashDir, { status: "pending" });

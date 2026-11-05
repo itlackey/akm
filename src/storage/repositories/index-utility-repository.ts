@@ -10,7 +10,7 @@
  * `recomputeUtilityScores` (`indexer/indexer.ts`); this repo only reads/writes.
  */
 
-import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
 import type { Database, SqlValue } from "../database";
 import type { RetrievalCountOptions, UtilityScoreData, UtilityScoreRow } from "./index-entry-types";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
@@ -126,7 +126,7 @@ function bareRef(ref: string): string {
  */
 function bareRefCandidates(ref: string): string[] {
   const bare = bareRef(ref.trim());
-  const parsed = parseRefInput(bare);
+  const parsed = parsePlacementRef(bare);
   return [conceptIdFromTypeName(parsed.type, parsed.name)];
 }
 

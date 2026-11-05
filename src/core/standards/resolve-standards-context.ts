@@ -15,37 +15,23 @@
  * throws.
  */
 
-import { typeNameFromConceptId } from "../asset/resolve-ref";
 import { resolveStashStandards } from "./resolve-stash-standards";
 import { resolveTypeConventions, typeConventionRef } from "./resolve-type-conventions";
 
 /**
- * Extract the asset type from a write-target ref without throwing. Returns
- * `undefined` for refs that carry no recognizable type. Kept local and lenient —
- * the per-type resolver validates the result against `placementTypes()`, so a
- * bogus prefix here simply yields no convention.
- */
-function refType(ref: string | undefined): string | undefined {
-  if (!ref) return undefined;
-  const body = ref.includes("//") ? ref.slice(ref.indexOf("//") + 2) : ref;
-  // 0.9.0 conceptId `<stash-subdir>/<name>`: delegate to the D-R2 reverse table
-  // so the leading stash subdir maps back to its asset type (the canonical path).
-  return typeNameFromConceptId(body)?.type;
-}
-
-/**
- * Resolve the standards context for a write target identified by its asset ref.
+ * Resolve the standards context for a write target of the given asset type.
  *
- * @param ref       Canonical asset ref of the write target (e.g. `skills/foo`).
- *                  When undefined, the target is a general authoring flow.
+ * @param type      The write target's asset type, from its indexed entry or the
+ *                  command that names it. When undefined, the target is a general
+ *                  authoring flow. The per-type resolver validates it against
+ *                  `placementTypes()`, so a bogus type simply yields no convention.
  * @param stashRoot Stash root directory.
  */
-export function resolveStandardsContext(ref: string | undefined, stashRoot: string): string {
+export function resolveStandardsContext(type: string | undefined, stashRoot: string): string {
   // General stash standards plus the per-type SOFT conventions layer (#646),
   // type-scoped to the write target.
   const general = resolveStashStandards(stashRoot);
 
-  const type = refType(ref);
   // A non-empty body here guarantees `type` is a `placementTypes()`-validated
   // string (the resolver returns "" otherwise).
   const typeConventions = type ? resolveTypeConventions(stashRoot, type) : "";

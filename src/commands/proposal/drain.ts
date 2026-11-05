@@ -31,7 +31,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { parseRefInput } from "../../core/asset/resolve-ref";
+import { parsePlacementRef } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -586,7 +586,7 @@ function promotionNeighbours(
 ): ReturnType<typeof nearestKnowledgeNotes> {
   if (!isPromotionProposal(proposal) || proposal.promotionSource === undefined) return [];
   try {
-    const parsed = parseRefInput(proposal.promotionSource);
+    const parsed = parsePlacementRef(proposal.promotionSource);
     const typeDir = stashDirFor(parsed.type);
     if (!typeDir) return [];
     const memoryPath = assetPathForName(parsed.type, path.join(stashDir, typeDir), parsed.name);
@@ -618,7 +618,7 @@ function promotionNeighbours(
 /** The live asset a proposal would overwrite, if any. */
 function readLiveAssetContent(stashDir: string, ref: string): string | undefined {
   try {
-    const parsed = parseRefInput(ref);
+    const parsed = parsePlacementRef(ref);
     const typeDir = stashDirFor(parsed.type);
     if (!typeDir) return undefined;
     const assetPath = assetPathForName(parsed.type, path.join(stashDir, typeDir), parsed.name);

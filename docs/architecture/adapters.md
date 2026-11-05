@@ -125,12 +125,13 @@ physical-owner decision. Each candidate carries its canonical concept identity,
 so a byte-denying ownership probe never has to infer identity from the query.
 Path-derived recognition (`toCanonicalName`/`toAssetPath`, `src/core/asset/asset-placement.ts`)
 is a deterministic function of a file's path, so its inverse — every physical
-spelling that could own one conceptId — is computable in closed form:
-the canonical placement under the type's own bundle subdir, the loose
-off-canonical placement (an authored path elsewhere in the bundle, keyed off
-its full path relative to the bundle root instead of the type subdir — this
-is what `readCandidates` returns for it), and any type-specific duality (for
-example `env`'s `.env`/`<name>.env` spellings for the "default" alias).
+spelling that could own one conceptId — is computable in closed form. A ref is
+the file's path relative to the bundle root minus the type's own suffix
+(`refForFile`), wherever in the bundle the file sits; `filesForRef` inverts it
+over every placement spec, including type-specific dualities (for example
+`env`'s `.env`/`<name>.env` spellings for the "default" alias). A ref names no
+type, so every spec contributes its spelling and the adapter's recognition
+decides which file owns the ref.
 `readCandidates` enumerates the complete closed-form set directly from the
 conceptId; no bundle walk is needed, so no scan bound applies. The shared
 authority (`src/indexer/lookup/adapter-concept-owner.ts`) still probes every

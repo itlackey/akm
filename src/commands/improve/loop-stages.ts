@@ -5,7 +5,7 @@
 /** The improve loop (reflect + distill per ref), the post-loop checks and the maintenance passes. */
 
 import fs from "node:fs";
-import { parseRefInput } from "../../core/asset/resolve-ref";
+import { parsePlacementRef } from "../../core/asset/resolve-ref";
 import { daysToMs } from "../../core/common";
 import { type AkmConfig, type ImproveProfileConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -179,7 +179,7 @@ export async function processImproveLoopRef(planned: ImproveEligibleRef, env: Im
   };
   try {
     const isDistillOnly = env.distillOnlyRefSet.has(planned.ref);
-    const parsed = parseRefInput(planned.ref);
+    const parsed = parsePlacementRef(planned.ref);
     if (!isDistillOnly) await runLoopReflectPass(planned, env, tally);
     await runLoopDistillPass(planned, parsed.type, isDistillOnly, env, tally);
   } catch (err) {
@@ -439,7 +439,7 @@ export async function runImprovePostLoopStage(args: {
       const knowledgeEntries = actionableRefs
         .filter((r) => {
           try {
-            return parseRefInput(r.ref).type === "knowledge";
+            return parsePlacementRef(r.ref).type === "knowledge";
           } catch {
             return false;
           }

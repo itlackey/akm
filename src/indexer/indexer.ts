@@ -79,6 +79,7 @@ import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
+import { type LegacyRefMove, legacyRefMove, rekeyLegacyEntry, rewriteLegacyStateRefs } from "./legacy-refs";
 import { type AdapterConceptOwner, indexedPathMatchesOwner, resolveConceptOwner } from "./lookup/adapter-concept-owner";
 import { type EmbeddingGenerationResult, embeddingInputCap, generateEmbeddingsForDb } from "./materialize-embeddings";
 import {
@@ -1361,6 +1362,7 @@ function persistDirRecords(
   maxInputTokens: number,
 ): void {
   const deletedUsageEntryIds = new Set<number>();
+  const legacyMoves: LegacyRefMove[] = [];
   const findPersisted = db.prepare("SELECT id, content_hash, file_path, adapter_id FROM entries WHERE item_ref = ?");
 
   const insertTransaction = db.transaction(() => {
@@ -1484,6 +1486,11 @@ function persistDirRecords(
             continue;
           }
 
+          const legacy = legacyRefMove(bundle.bundleId, entry.type, provenance.conceptId);
+          if (legacy) {
+            rekeyLegacyEntry(db, legacy, provenance.conceptId, entryPath);
+            legacyMoves.push(legacy);
+          }
           upsertEntry(db, entryPath, withFileSize(entry, entryPath), provenance, contentHash, maxInputTokens);
         }
       }
@@ -1539,6 +1546,11 @@ function persistDirRecords(
 
   insertTransaction();
   deleteUsageEventsByEntryIds([...deletedUsageEntryIds]);
+  try {
+    rewriteLegacyStateRefs(legacyMoves);
+  } catch (error) {
+    warn(`[index] could not carry over the history of ${legacyMoves.length} re-keyed asset(s): ${String(error)}`);
+  }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

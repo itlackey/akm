@@ -53,6 +53,26 @@ so the first `//` unambiguously bounds the bundle.
 
 ### AKM concept ids and adapter layouts
 
+A ref is the item's path inside its bundle minus the type's own file suffix
+(`.md`, `/SKILL.md`, `.env`, `.yml`; scripts and secrets keep their name). That
+holds for a file under its type's folder and for one anywhere else:
+`knowledge/auth.md` is `knowledge/auth`, `tools/agents/foo.md` is
+`tools/agents/foo`, `projects/openpalm/knowledge/auth.md` is
+`projects/openpalm/knowledge/auth`, and `reports/data.js` is `reports/data.js`.
+The type folder is where akm *places* a new asset, not part of how it names an
+existing one: an existing asset's type is the one its index entry records, never
+read from the ref's first folder. (`akm remember`, `akm import --type` and the
+other commands that create an asset still pick its folder from the type you
+name.) Two files that give the same ref (`tasks/x.md` and `tasks/x.yml`) are
+reported as a collision.
+
+Earlier releases gave a file outside its type's folder the ref
+`<type folder>/<its path>` (`reports/x.md` was `knowledge/reports/x`). That
+spelling is still in links, memories and scripts, so a ref that misses is tried
+once without its first folder when that folder is a type folder, resolves to the
+asset, and warns once that the ref is outdated. The first `akm index` after the
+upgrade carries the history stored under the old spelling to the new one.
+
 The subdirectory prefix is the item's placement directory:
 
 | Subdir | Holds | Example conceptId |

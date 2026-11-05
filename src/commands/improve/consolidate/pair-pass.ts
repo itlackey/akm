@@ -33,8 +33,8 @@ import consolidatePairPrompt from "../../../assets/prompts/consolidate-pair.md" 
 import consolidatePairCheckPrompt from "../../../assets/prompts/consolidate-pair-check.md" with { type: "text" };
 import consolidatePairSameAge from "../../../assets/prompts/consolidate-pair-same-age.md" with { type: "text" };
 import consolidatePairTerms from "../../../assets/prompts/consolidate-pair-terms.md" with { type: "text" };
+import { stashDirFor } from "../../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
-import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString } from "../../../core/common";
 import { concurrentMap } from "../../../core/concurrent";
 import type { AkmConfig } from "../../../core/config/config";
@@ -193,6 +193,11 @@ export function isOwnTwinOrParent(a: PairAsset, b: PairAsset): boolean {
   return a.name === `${b.name}${DERIVED_SUFFIX}` || b.name === `${a.name}${DERIVED_SUFFIX}`;
 }
 
+/** The pair pass retires assets through proposals, which address an asset by placement: under its type's stash folder. */
+function isPlaced(conceptId: string, type: string): boolean {
+  return conceptId.startsWith(`${stashDirFor(type)}/`);
+}
+
 /**
  * Every asset eligible to be a pair-pass initiator or candidate: memory (any
  * depth), flat knowledge, or a lesson. @internal exported for unit tests.
@@ -200,9 +205,9 @@ export function isOwnTwinOrParent(a: PairAsset, b: PairAsset): boolean {
 export function loadPairPassPool(db: Database, bundleId: string): PairAsset[] {
   const assets: PairAsset[] = [];
   for (const e of getAllEntries(db, "memory")) {
-    if (e.bundleId !== bundleId || !fs.existsSync(e.filePath)) continue;
+    if (e.bundleId !== bundleId || !isPlaced(e.conceptId, "memory") || !fs.existsSync(e.filePath)) continue;
     assets.push({
-      ref: conceptIdFromTypeName("memory", e.entry.name),
+      ref: e.conceptId,
       type: "memory",
       name: e.entry.name,
       filePath: e.filePath,
@@ -210,9 +215,15 @@ export function loadPairPassPool(db: Database, bundleId: string): PairAsset[] {
     });
   }
   for (const e of getAllEntries(db, "knowledge")) {
-    if (e.bundleId !== bundleId || !isFlatName(e.entry.name) || !fs.existsSync(e.filePath)) continue;
+    if (
+      e.bundleId !== bundleId ||
+      !isPlaced(e.conceptId, "knowledge") ||
+      !isFlatName(e.entry.name) ||
+      !fs.existsSync(e.filePath)
+    )
+      continue;
     assets.push({
-      ref: conceptIdFromTypeName("knowledge", e.entry.name),
+      ref: e.conceptId,
       type: "knowledge",
       name: e.entry.name,
       filePath: e.filePath,
@@ -220,9 +231,9 @@ export function loadPairPassPool(db: Database, bundleId: string): PairAsset[] {
     });
   }
   for (const e of getAllEntries(db, "lesson")) {
-    if (e.bundleId !== bundleId || !fs.existsSync(e.filePath)) continue;
+    if (e.bundleId !== bundleId || !isPlaced(e.conceptId, "lesson") || !fs.existsSync(e.filePath)) continue;
     assets.push({
-      ref: conceptIdFromTypeName("lesson", e.entry.name),
+      ref: e.conceptId,
       type: "lesson",
       name: e.entry.name,
       filePath: e.filePath,
@@ -485,9 +496,9 @@ export function selectCandidates(
       if (!entry || entry.bundleId !== bundleId) continue;
       if (entry.entry.type !== "memory" && entry.entry.type !== "knowledge" && entry.entry.type !== "lesson") continue;
       if (entry.entry.type === "knowledge" && !isFlatName(entry.entry.name)) continue;
-      if (!fs.existsSync(entry.filePath)) continue;
+      if (!isPlaced(entry.conceptId, entry.entry.type) || !fs.existsSync(entry.filePath)) continue;
       const other: PairAsset = {
-        ref: conceptIdFromTypeName(entry.entry.type, entry.entry.name),
+        ref: entry.conceptId,
         type: entry.entry.type,
         name: entry.entry.name,
         filePath: entry.filePath,

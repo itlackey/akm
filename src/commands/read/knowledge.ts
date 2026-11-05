@@ -20,7 +20,7 @@ import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
+import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -171,14 +171,14 @@ interface ParsedWriteRef {
 
 /**
  * Parse a `--xref` / `--supersedes` value through the new-grammar input parser
- * (`parseRefInput`, the `[bundle//]conceptId` grammar) so malformed values get a
+ * (`parsePlacementRef`, the `[bundle//]conceptId` grammar) so malformed values get a
  * structured error instead of a misleading "did not resolve". Bundle qualifiers
  * are retained for exact source membership checks.
  */
 function parseWriteRef(raw: string, flag: "--xref" | "--supersedes"): ParsedWriteRef {
   let parsed: AssetRef;
   try {
-    parsed = parseRefInput(raw);
+    parsed = parsePlacementRef(raw);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new UsageError(
