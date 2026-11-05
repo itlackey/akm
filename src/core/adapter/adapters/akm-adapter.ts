@@ -213,6 +213,8 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
   // `OkfProvenance` doc). Carried so the akm adapter rereads what it wrote and
   // `akm show` surfaces it, exactly like every other field in this list.
   "provenance",
+  // #1453: the other frontmatter keys, read only by `--filter` / `--prefer`.
+  "frontmatter",
 ] as const satisfies readonly (keyof IndexDocument)[];
 
 /**

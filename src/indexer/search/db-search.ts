@@ -425,7 +425,7 @@ function readPreferred(db: Database, fused: readonly FusedCandidate[], prefer: S
     db,
     fused.map((candidate) => candidate.id),
   )) {
-    if (scopeMatchesFilters(entry.scope, prefer)) preferred.add(itemRef);
+    if (scopeMatchesFilters(entry, prefer)) preferred.add(itemRef);
   }
   return preferred;
 }
@@ -583,8 +583,8 @@ async function enumerateEntries(
   const { prefer } = opts;
   const ordered = prefer
     ? [
-        ...eligible.filter((ie) => scopeMatchesFilters(ie.entry.scope, prefer)),
-        ...eligible.filter((ie) => !scopeMatchesFilters(ie.entry.scope, prefer)),
+        ...eligible.filter((ie) => scopeMatchesFilters(ie.entry, prefer)),
+        ...eligible.filter((ie) => !scopeMatchesFilters(ie.entry, prefer)),
       ]
     : eligible;
   const selected = ordered.slice(0, opts.limit);
@@ -644,7 +644,7 @@ export function applyEntryFilters<T extends { id: number; entry: IndexDocument; 
   // Scope filter: drop entries whose stored scope does not satisfy every
   // supplied key.
   const scopeFiltered = filters
-    ? sourceFiltered.filter((item) => scopeMatchesFilters(item.entry.scope, filters))
+    ? sourceFiltered.filter((item) => scopeMatchesFilters(item.entry, filters))
     : sourceFiltered;
   // Date filter: keep entries dated within the inclusive range; undated
   // entries cannot satisfy a bound.
