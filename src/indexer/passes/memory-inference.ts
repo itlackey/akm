@@ -72,10 +72,10 @@ import {
   applyProvenanceFrontmatter,
   type IndexDocument,
   SCOPE_FRONTMATTER_KEYS,
-  SCOPE_KEYS,
   type StashEntryScope,
   sameScope,
   scopeFromFrontmatter,
+  stampScope,
 } from "./metadata";
 import type { PassContext } from "./pass-context";
 
@@ -921,13 +921,10 @@ function syncDerivedChildScopes(drifts: readonly ScopeDrift[]): number {
       const raw = fs.readFileSync(drift.childPath, "utf8");
       const data = parseFrontmatter(raw).data;
       if (!isDerivedChildOf(data, drift.parentName) || sameScope(scopeFromFrontmatter(data), drift.scope)) continue;
-      const flat: Record<string, unknown> = {};
-      for (const key of SCOPE_KEYS) if (drift.scope[key] !== undefined) flat[`scope_${key}`] = drift.scope[key];
+      const flat = stampScope({}, drift.scope).data;
       const lines = Object.keys(flat).length > 0 ? serializeFrontmatter(flat).split("\n") : [];
       const next = replaceFrontmatterBlocks(raw, SCOPE_FRONTMATTER_KEYS, lines);
-      const expected: Record<string, unknown> = { ...data };
-      for (const key of SCOPE_FRONTMATTER_KEYS) delete expected[key];
-      Object.assign(expected, flat);
+      const expected = stampScope(data, drift.scope).data;
       if (next === null || !isDeepStrictEqual(parseFrontmatter(next).data, expected)) {
         warn(`memory inference: scope of ${drift.childPath} differs from its parent but cannot be rewritten in place`);
         continue;
