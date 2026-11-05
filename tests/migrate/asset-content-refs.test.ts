@@ -149,4 +149,44 @@ describe("the step", () => {
     expect(plan.assetContentRefs).toMatchObject({ changed: 0, refs: 0 });
     expect(fs.readFileSync(links, "utf8")).toBe(before);
   });
+
+  test("a nested wiki's raw files, retyped wiki-source, are rewritten from the wiki: form", async () => {
+    configure();
+    write("wikis/articles/schema.md", "---\ntitle: schema\n---\nSchema.\n");
+    write("wikis/articles/pages/a.md", "---\ntitle: a\n---\nPage.\n");
+    write("wikis/articles/raw/one.md", "---\ntitle: one\n---\nRaw.\n");
+    const page = write(
+      "wikis/articles/pages/b.md",
+      "---\ntitle: page\nxrefs: [wiki:articles/raw/one]\n---\nSee wiki:articles/raw/one.md and knowledge/wikis/articles/raw/one.\n",
+    );
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.assetContentRefs).toMatchObject({ changed: 1, refs: 3 });
+    expect(fs.readFileSync(page, "utf8")).toBe(
+      "---\ntitle: page\nxrefs: [wikis/articles/raw/one]\n---\nSee wikis/articles/raw/one.md and wikis/articles/raw/one.\n",
+    );
+    resetConfigCache();
+    expect((await runMigration({ apply: false })).assetContentRefs).toMatchObject({ changed: 0, refs: 0 });
+  });
+
+  test("a spelling another adapter's bundle holds is live there, so it stays as written", async () => {
+    const other = path.join(path.dirname(stash()), "other");
+    fs.mkdirSync(path.join(other, "skills/review"), { recursive: true });
+    fs.writeFileSync(path.join(other, "skills/review/SKILL.md"), "---\nname: review\ndescription: r\n---\nSkill.\n");
+    write("review.md", "---\ntitle: review\n---\nRoot.\n");
+    const notes = write("notes.md", "---\ntitle: notes\n---\nSee skills/review.\n");
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: {
+        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
+        other: { path: other, writable: false, components: { main: { root: ".", adapter: "agent-skills" } } },
+      },
+    });
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.assetContentRefs).toMatchObject({ changed: 0, refs: 0 });
+    expect(fs.readFileSync(notes, "utf8")).toBe("---\ntitle: notes\n---\nSee skills/review.\n");
+  });
 });
