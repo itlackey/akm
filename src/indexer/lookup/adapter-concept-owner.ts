@@ -8,8 +8,9 @@ import type { AdapterReadCandidate, BundleAdapter } from "../../core/adapter/bun
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
 import type { BundleComponent } from "../../core/adapter/types";
-import { stashDirNames } from "../../core/asset/asset-placement";
-import type { BundleRef } from "../../core/asset/asset-ref";
+import { assetPathForName, stashDirFor, stashDirNames } from "../../core/asset/asset-placement";
+import { type BundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { compareCodePoints, hasErrnoCode } from "../../core/common";
 import { ConfigError, UsageError } from "../../core/errors";
 import { sensitiveMarkerPath } from "../../core/sensitive-marker-path";
@@ -277,20 +278,29 @@ export function resolveConceptOwner(
 ): ConceptOwnerMatch | undefined {
   const found = ownerAmong(ref, sources, options);
   if (found) return found;
-  // Releases before path refs prefixed a loose file's ref with its type folder
-  // (`knowledge/reports/x` for `reports/x.md`), and that spelling is still in
-  // links, memories and scripts. Accept it once the ref itself misses.
-  const slash = ref.conceptId.indexOf("/");
-  if (slash <= 0 || !stashDirNames().includes(ref.conceptId.slice(0, slash))) return undefined;
-  const current = ref.conceptId.slice(slash + 1);
-  const legacy = ownerAmong({ ...ref, conceptId: current }, sources, options);
-  if (legacy) {
-    warnOnce(
-      `outdated-ref:${ref.conceptId}`,
-      `Ref "${ref.conceptId}" is outdated: refs are the path inside the bundle, so it is now "${current}". Resolved it to that asset.`,
-    );
-  }
+  const current = withoutTypeHead(ref.conceptId);
+  const legacy = current === undefined ? undefined : ownerAmong({ ...ref, conceptId: current }, sources, options);
+  if (legacy) warnOutdatedRef(ref.conceptId, current!);
   return legacy;
+}
+
+/**
+ * Releases before path refs prefixed a loose file's ref with its type folder
+ * (`knowledge/reports/x` for `reports/x.md`), and that spelling is still in
+ * links, memories, scripts and stored proposals. A ref that misses is retried
+ * without that head: this is the head-less ref, or undefined when it has none.
+ */
+function withoutTypeHead(conceptId: string): string | undefined {
+  const slash = conceptId.indexOf("/");
+  if (slash <= 0 || !stashDirNames().includes(conceptId.slice(0, slash))) return undefined;
+  return conceptId.slice(slash + 1);
+}
+
+function warnOutdatedRef(outdated: string, current: string): void {
+  warnOnce(
+    `outdated-ref:${outdated}`,
+    `Ref "${outdated}" is outdated: refs are the path inside the bundle, so it is now "${current}". Resolved it to that asset.`,
+  );
 }
 
 function ownerAmong(
@@ -316,4 +326,71 @@ export function indexedPathMatchesOwner(indexedPath: string, owner: AdapterConce
   } catch {
     return false;
   }
+}
+
+/**
+ * The type of the asset a match owns, from its file: what the owner's adapter
+ * recognizes it as, else what its location declares (a `.sensitive` env or
+ * secret is not recognized). An existing asset's type is never read from its
+ * ref's first folder.
+ */
+export function ownedAssetType(
+  match: Pick<ConceptOwnerMatch, "owner" | "adapterId"> & { root: string },
+): string | undefined {
+  const file = buildFileContext(match.root, match.owner.path);
+  return (
+    adapterForId(match.adapterId)?.recognize(componentFor(match.root, match.adapterId), file)?.type ??
+    declaredTypeForPath(file)
+  );
+}
+
+/** The type of the asset a ref names, from the file that owns it among `sources`; undefined when none does. */
+export function resolveOwnedType(
+  ref: BundleRef,
+  sources: readonly SearchSource[],
+  options?: ResolveAdapterConceptOwnerOptions,
+): string | undefined {
+  const match = resolveConceptOwner(ref, sources, options);
+  return match && ownedAssetType({ root: match.source.path, owner: match.owner, adapterId: match.adapterId });
+}
+
+/** Where a write to an asset goes: its type and name, its ref, and its file. */
+export interface WriteAddress extends AssetRef {
+  conceptId: string;
+  /** Undefined only for a new asset of a type that places nowhere. */
+  path: string | undefined;
+}
+
+/**
+ * The address a write to `raw` uses in the akm bundle at `root`. An asset that
+ * exists is addressed by its ref, the path, wherever its file sits, and takes
+ * its type from that file; its ref in the outdated type-folder spelling finds
+ * it too, with a warning. Only a new asset is placed: its ref's first folder
+ * names the type whose folder it goes in.
+ */
+export function resolveWriteAddress(root: string, raw: string): WriteAddress {
+  const { bundle, conceptId: asWritten, fragment } = parseBundleRef(raw);
+  let conceptId = asWritten;
+  let owner = fragment === undefined ? resolveAdapterConceptOwner(root, "akm", conceptId, { mode: "read" }) : undefined;
+  const current = fragment === undefined && !owner ? withoutTypeHead(asWritten) : undefined;
+  if (current !== undefined) {
+    owner = resolveAdapterConceptOwner(root, "akm", current, { mode: "read" });
+    if (owner) {
+      warnOutdatedRef(asWritten, current);
+      conceptId = current;
+    }
+  }
+  const type = owner && ownedAssetType({ root, owner, adapterId: "akm" });
+  if (owner && type) {
+    const typeDir = stashDirFor(type);
+    const name = conceptId.startsWith(`${typeDir}/`) ? conceptId.slice(`${typeDir}/`.length) : conceptId;
+    return { type, name, origin: bundle, conceptId, path: owner.path };
+  }
+  const placed = parsePlacementRef(raw);
+  const typeDir = stashDirFor(placed.type);
+  return {
+    ...placed,
+    conceptId,
+    path: typeDir === undefined ? undefined : assetPathForName(placed.type, path.join(root, typeDir), placed.name),
+  };
 }

@@ -31,7 +31,6 @@ import reflectLlmFramedContract from "../../assets/prompts/reflect-llm-framed-co
 import reflectLlmSchemaContract from "../../assets/prompts/reflect-llm-schema-contract.md" with { type: "text" };
 import reflectOutputRepair from "../../assets/prompts/reflect-output-repair.md" with { type: "text" };
 import { placementTypes } from "../../core/asset/asset-placement";
-import { parsePlacementRef } from "../../core/asset/resolve-ref";
 import {
   authoringRulesForType,
   DESCRIPTION_MAX_CHARS,
@@ -344,7 +343,7 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
   }
 
   {
-    const resolvedType = input.type ?? (input.ref ? parsePlacementRef(input.ref).type : "");
+    const resolvedType = input.type ?? "";
     const authoringRules = resolvedType ? authoringRulesForType(resolvedType) : "";
     if (authoringRules) {
       sections.push(authoringRules);

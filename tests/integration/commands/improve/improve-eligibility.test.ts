@@ -55,10 +55,12 @@ describe("dedupeRefs durable identity", () => {
   test("dedupes by itemRef while preserving the first display ref", () => {
     expect(
       dedupeRefs([
-        { ref: "lessons/first-display", itemRef: "stash//lessons/shared", reason: "scope-type" },
-        { ref: "lessons/second-display", itemRef: "stash//lessons/shared", reason: "scope-type" },
+        { ref: "lessons/first-display", type: "lesson", itemRef: "stash//lessons/shared", reason: "scope-type" },
+        { ref: "lessons/second-display", type: "lesson", itemRef: "stash//lessons/shared", reason: "scope-type" },
       ]),
-    ).toEqual([{ ref: "lessons/first-display", itemRef: "stash//lessons/shared", reason: "scope-type" }]);
+    ).toEqual([
+      { ref: "lessons/first-display", type: "lesson", itemRef: "stash//lessons/shared", reason: "scope-type" },
+    ]);
   });
 });
 
@@ -355,7 +357,7 @@ describe("durable eligibility keys", () => {
     );
 
     const snapshot = buildSnapshotManifest({
-      postCleanupRefs: [{ ref: "memories/auth-tips", reason: "scope-type" }],
+      postCleanupRefs: [{ ref: "memories/auth-tips", type: "memory", reason: "scope-type" }],
       validationFailureRefs: new Set(),
     });
     expect(snapshot.latestFeedbackTs).toEqual(new Map([["memories/auth-tips", new Date(NEWER_MS).toISOString()]]));

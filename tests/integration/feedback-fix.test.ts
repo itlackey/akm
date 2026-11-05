@@ -134,7 +134,12 @@ describe("akm feedback --replace/--with/--source", () => {
     expect(code).toBe(0);
     const manifest = buildSnapshotManifest({
       postCleanupRefs: [
-        { ref: "knowledge/opencode-server", itemRef: "stash//knowledge/opencode-server", reason: "scope-type" },
+        {
+          ref: "knowledge/opencode-server",
+          type: "knowledge",
+          itemRef: "stash//knowledge/opencode-server",
+          reason: "scope-type",
+        },
       ],
       validationFailureRefs: new Set(),
       stashDir,
@@ -404,9 +409,8 @@ describe("akm feedback --superseded-by / --outdated", () => {
   });
 });
 
-describe("a fix for a file a proposal would not write", () => {
-  // An asset indexed outside its type's directory: the path the proposal would
-  // write does not exist, so accepting it would create a duplicate and fix nothing.
+describe("a fix for an asset outside its type's folder", () => {
+  // The ref is the file's path, so the proposal writes that file: no refusal and no second file.
   test.each([
     ["a bundle's tasks/README", "tasks/README.md", "tasks/README", "tasks/README.yml"],
     [
@@ -415,20 +419,23 @@ describe("a fix for a file a proposal would not write", () => {
       "skills/deploy/references/symptom-map",
       "skills/deploy/references/symptom-map/SKILL.md",
     ],
-  ])("%s is refused, and nothing is recorded", async (_label, rel, ref, writes) => {
-    await indexFiles({
-      "skills/deploy/SKILL.md": "---\ndescription: Deploy\n---\n# Deploy\n",
-      [rel]: "---\ndescription: Notes\n---\n# Notes\n\nThe server listens on port 8000 by default.\n",
-    });
+    ["a loose note", "reports/opencode.md", "reports/opencode", "knowledge/reports/opencode.md"],
+  ])("%s is fixed in place, and revert restores it", async (_label, rel, ref, placementFile) => {
+    const original = "---\ndescription: Notes\n---\n# Notes\n\nThe server listens on port 8000 by default.\n";
+    await indexFiles({ "skills/deploy/SKILL.md": "---\ndescription: Deploy\n---\n# Deploy\n", [rel]: original });
     const { code, json } = await feedback(FIX, ref);
-    expect(code).not.toBe(0);
-    const wouldWrite = path.join(stashDir, writes);
-    expect(json.error).toBe(
-      `akm cannot queue a fix for stash//${ref}: its file is ${path.join(stashDir, rel)}, but a proposal would write ${wouldWrite}. Edit the file directly.`,
-    );
-    expect(feedbackEvents()).toBe(0);
-    expect(listProposals(stashDir, { status: "pending" })).toHaveLength(0);
-    expect(fs.existsSync(wouldWrite)).toBe(false);
+    expect(code).toBe(0);
+    const id = (json.fix as { proposalId: string }).proposalId;
+    const proposal = getProposal(stashDir, id);
+    expect(proposal).toMatchObject({ status: "accepted", ref: `stash//${ref}` });
+    expect(proposal.changes.map((change) => change.path)).toEqual([rel]);
+    const file = path.join(stashDir, rel);
+    expect(fs.readFileSync(file, "utf8")).toContain("port 4096");
+    expect(fs.existsSync(path.join(stashDir, placementFile))).toBe(false);
+
+    const reverted = await runCliCapture(["proposal", "revert", id, "--format=json"]);
+    expect(reverted.code).toBe(0);
+    expect(fs.readFileSync(file, "utf8")).toBe(original);
   });
 
   test("plain negative feedback on such an asset is still recorded", async () => {

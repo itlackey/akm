@@ -15,6 +15,7 @@ import {
   selectProactiveMaintenanceRefs,
 } from "../../../src/commands/improve/proactive-maintenance";
 import { computeSalience, DEFAULT_TYPE_ENCODING_WEIGHTS } from "../../../src/commands/improve/salience";
+import { typeForStashDir } from "../../../src/core/asset/asset-placement";
 import type { ImproveEligibleRef } from "../../../src/core/improve-types";
 
 const NOW = Date.parse("2026-06-14T00:00:00.000Z");
@@ -26,7 +27,7 @@ function isoDaysAgo(days: number): string {
 }
 
 function ref(r: string, filePath = `/stash/${r}.md`): ImproveEligibleRef {
-  return { ref: r, reason: "scope-type", filePath };
+  return { ref: r, type: typeForStashDir(r.split("/")[0] ?? "") ?? "", reason: "scope-type", filePath };
 }
 
 describe("selectProactiveMaintenanceRefs — due gating", () => {

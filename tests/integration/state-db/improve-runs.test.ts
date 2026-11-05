@@ -245,9 +245,9 @@ describe("recordImproveRun", () => {
       const result = buildMinimalResult({
         triage: { promoted: 1, rejected: 0, deferred: 0, failed: 0, skippedByCap: 0 },
         plannedRefs: [
-          { ref: "lessons/a", reason: "scope-type" },
-          { ref: "lessons/b", reason: "scope-type" },
-          { ref: "lessons/c", reason: "scope-type" },
+          { ref: "lessons/a", type: "lesson", reason: "scope-type" },
+          { ref: "lessons/b", type: "lesson", reason: "scope-type" },
+          { ref: "lessons/c", type: "lesson", reason: "scope-type" },
         ],
         actions: [
           { ref: "lessons/a", mode: "reflect", result: { ok: true } as never },
@@ -297,7 +297,7 @@ describe("recordImproveRun", () => {
     // corrected total: the guard rejection now contributes to rejectedCount.
     const metrics = computeImproveRunMetrics(
       buildMinimalResult({
-        plannedRefs: [{ ref: "lessons/a", reason: "scope-type" }],
+        plannedRefs: [{ ref: "lessons/a", type: "lesson", reason: "scope-type" }],
         actions: [
           { ref: "lessons/a", mode: "reflect", result: { ok: true } as never },
           {
@@ -316,7 +316,7 @@ describe("recordImproveRun", () => {
 
   test("computeImproveRunMetrics is a pure helper consistent with recorded metrics", () => {
     const result = buildMinimalResult({
-      plannedRefs: [{ ref: "lessons/a", reason: "scope-type" }],
+      plannedRefs: [{ ref: "lessons/a", type: "lesson", reason: "scope-type" }],
       actions: [{ ref: "lessons/a", mode: "reflect", result: { ok: true } as never }],
     });
     const metrics = computeImproveRunMetrics(result);
@@ -336,7 +336,7 @@ describe("recordImproveRun", () => {
   // metric total must still be counted from the aggregate, NOT from per-ref rows.
   test("counts distillSkipped aggregate into skippedCount and actionsCount", () => {
     const result = buildMinimalResult({
-      plannedRefs: [{ ref: "lessons/a", reason: "scope-type" }],
+      plannedRefs: [{ ref: "lessons/a", type: "lesson", reason: "scope-type" }],
       actions: [{ ref: "lessons/a", mode: "reflect", result: { ok: true } as never }],
       distillSkipped: {
         total: 13000,

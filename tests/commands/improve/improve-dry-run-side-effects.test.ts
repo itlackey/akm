@@ -155,7 +155,7 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
           dryRun: true,
           ensureIndexFn,
           collectEligibleRefsFn: (async () => ({
-            plannedRefs: [{ ref: "lessons/broken", reason: "scope-type", filePath: lessonPath }],
+            plannedRefs: [{ ref: "lessons/broken", type: "lesson", reason: "scope-type", filePath: lessonPath }],
             memorySummary: { eligible: 0, derived: 0 },
             strategyFilteredRefs: [],
           })) as never,

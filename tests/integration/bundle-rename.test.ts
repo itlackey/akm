@@ -516,7 +516,9 @@ describe("akm bundle rename — applied", () => {
     await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
 
     const manifest = buildSnapshotManifest({
-      postCleanupRefs: [{ ref: "knowledge/hello", itemRef: "renamed//knowledge/hello", reason: "scope-type" }],
+      postCleanupRefs: [
+        { ref: "knowledge/hello", type: "knowledge", itemRef: "renamed//knowledge/hello", reason: "scope-type" },
+      ],
       validationFailureRefs: new Set(),
       stashDir: storage.stashDir,
     });

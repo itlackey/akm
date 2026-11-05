@@ -64,6 +64,7 @@ async function promote(reply: Pick<ConsolidatePromoteOp, "description" | "confid
         op.ref,
         {
           name: "release-check",
+          ref: "memories/release-check",
           filePath: path.join(stash, "memories", "release-check.md"),
           description: "Run the release check on a clean checkout.",
           tags: [],

@@ -7,11 +7,10 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
-import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
-import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../core/asset/resolve-ref";
+import { type AssetRef, parsePlacementRef } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
@@ -23,6 +22,7 @@ import { getStateDbPath, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
 import { withWriteTargetMutation } from "../core/write-source";
 import { recomputeUtilityScores } from "../indexer/indexer";
+import { resolveWriteAddress } from "../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../indexer/search/search-source";
 import { insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
@@ -83,13 +83,17 @@ function validateFeedbackTags(raw: string[]): string[] {
  * an existing asset — the same pattern memory-inference uses for
  * `inferenceProcessed`.
  */
-function appendLessonStrength(refInput: AssetRef, feedbackRef: string): { ref: string; strength: number } | null {
-  // Canonical conceptId (`lessons/<name>`, D-R3): `findEntryIdByRef` keys on
-  // the stored `item_ref`.
-  const conceptId = conceptIdFromTypeName(refInput.type, refInput.name);
+function appendLessonStrength(
+  raw: string,
+  refInput: AssetRef,
+  feedbackRef: string,
+): { ref: string; strength: number } | null {
+  // `findEntryIdByRef` keys on the stored `item_ref`; the lesson's type is the one its entry records.
+  const { conceptId } = parseBundleRef(raw);
   const config = loadConfig();
   let filePath: string | undefined;
   let bundleId: string | undefined;
+  let type: string | undefined;
   const db = openExistingDatabase();
   try {
     const entryId = findEntryIdByRef(db, makeBundleRef(refInput.origin, conceptId));
@@ -98,12 +102,20 @@ function appendLessonStrength(refInput: AssetRef, feedbackRef: string): { ref: s
       const parsedItemRef = itemRef ? parseBundleRef(itemRef) : undefined;
       filePath = getEntryFilePathById(db, entryId) ?? undefined;
       bundleId = parsedItemRef?.bundle;
+      type = getEntryById(db, entryId)?.entry.type;
     }
   } finally {
     closeDatabase(db);
   }
 
   const requestedRef = makeBundleRef(refInput.origin, conceptId);
+  if (type !== undefined && type !== "lesson") {
+    warn(
+      `[feedback] --applied-to ${requestedRef} was ignored: it resolves to a "${type}" asset, ` +
+        "not a lesson. Only lesson refs can be credited via --applied-to.",
+    );
+    return null;
+  }
   if (!filePath || !bundleId || !fs.existsSync(filePath)) {
     warn(`[feedback] --applied-to: lesson ${requestedRef} is not in the index or is missing on disk.`);
     return null;
@@ -338,17 +350,12 @@ function assertFrontmatterStillParses(before: string, after: string, file: strin
 }
 
 /**
- * Refuse a fix that a proposal could not apply to the asset's file. A proposal
- * writes the file `createProposal` computes from the ref's type and name under
- * the bundle's root. For an asset indexed anywhere else (a git bundle's
- * `tasks/README.md` is `knowledge/tasks/README`) nothing is there: accepting
- * the proposal would create a second file and leave the real one unfixed.
+ * Refuse a fix that a proposal could not apply to the asset's file: the file
+ * `createProposal` writes for the ref in the bundle (the file that owns it) is
+ * not the indexed one, so accepting the proposal would leave the real one unfixed.
  */
 export function assertProposalWritesFile(itemRef: string, root: string, filePath: string): void {
-  const { type, name } = parsePlacementRef(itemRef);
-  const typeDir = stashDirFor(type);
-  const writes =
-    typeDir === undefined ? undefined : assetPathForName(type, path.join(path.resolve(root), typeDir), name);
+  const { type, path: writes } = resolveWriteAddress(path.resolve(root), itemRef);
   if (writes !== undefined && safeRealpath(writes) === safeRealpath(filePath)) return;
   throw new UsageError(
     `akm cannot queue a fix for ${itemRef}: its file is ${filePath}, but a proposal would write ${writes ?? `no file (akm has no directory for "${type}" assets)`}. Edit the file directly.`,
@@ -743,7 +750,8 @@ export const feedbackCommand = defineJsonCommand({
       if (!itemRef) throw new UsageError(`Indexed ref "${ref}" has no durable item ref.`, "INVALID_PROPOSAL");
       durableRef = itemRef;
       const filePath = getEntryFilePathById(db, entryId);
-      const textHash = judgedTextHash(getEntryById(db, entryId)?.entry.type, filePath);
+      const entryType = getEntryById(db, entryId)?.entry.type;
+      const textHash = judgedTextHash(entryType, filePath);
       if (textHash) metadataObj.contentHash = textHash;
       if (fixPairs.length > 0 || hasMark) {
         // Checked before anything is recorded, so a fix that does not apply leaves no trace.
@@ -758,7 +766,7 @@ export const feedbackCommand = defineJsonCommand({
         assertProposalWritesFile(itemRef, resolved.target.source.path, filePath);
         let mark: HistoryMark | undefined;
         if (hasMark) {
-          if (assetRef.type === "env" || assetRef.type === "secret" || !filePath.toLowerCase().endsWith(".md")) {
+          if (entryType === "env" || entryType === "secret" || !filePath.toLowerCase().endsWith(".md")) {
             throw new UsageError(
               `--superseded-by and --outdated mark the frontmatter of a markdown asset, and ${itemRef} is not one.`,
               "INVALID_FLAG_VALUE",
@@ -881,16 +889,9 @@ export const feedbackCommand = defineJsonCommand({
         warn(`[feedback] --applied-to failed for ${appliedToRaw}: ${err instanceof Error ? err.message : String(err)}`);
       }
       if (parsedApplied) {
-        if (parsedApplied.type === "lesson") {
-          const updated = appendLessonStrength(parsedApplied, durableRef);
-          if (updated) {
-            appliedToResult = { lessonRef: updated.ref, strength: updated.strength };
-          }
-        } else {
-          warn(
-            `[feedback] --applied-to ${appliedToRaw} was ignored: it resolves to a "${parsedApplied.type}" asset, ` +
-              "not a lesson. Only `lessons/<name>` refs can be credited via --applied-to.",
-          );
+        const updated = appendLessonStrength(appliedToRaw, parsedApplied, durableRef);
+        if (updated) {
+          appliedToResult = { lessonRef: updated.ref, strength: updated.strength };
         }
       }
     } else if (appliedToRaw && signal !== "positive") {

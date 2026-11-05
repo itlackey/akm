@@ -72,7 +72,7 @@ describe("improve plan boundaries", () => {
       const result = await runImprovePreparationStage({
         scope: { mode: "all" },
         options: { config, stashDir: stash.dir, repairValidationFailures: false },
-        plannedRefs: [{ ref: "lessons/broken", reason: "scope-type", filePath }],
+        plannedRefs: [{ ref: "lessons/broken", type: "lesson", reason: "scope-type", filePath }],
         primaryStashDir: stash.dir,
         memorySummary: { eligible: 0, derived: 0 },
         reindexFn: async () => undefined,
@@ -108,7 +108,7 @@ describe("improve plan boundaries", () => {
       };
       const resolvedPlan = resolveImprovePlan("repair", config);
       const result = await runValidationAndRepairPass({
-        postCleanupRefs: [{ ref: "lessons/queued", reason: "scope-type", filePath }],
+        postCleanupRefs: [{ ref: "lessons/queued", type: "lesson", reason: "scope-type", filePath }],
         options: { config, stashDir: stash.dir },
         startMs: Date.now(),
         budgetMs: 60_000,
@@ -261,7 +261,7 @@ describe("improve plan boundaries", () => {
             proposalRef: "lessons/source-lesson",
           };
         },
-        loopRefs: [{ ref: "memories/source", reason: "scope-ref" }],
+        loopRefs: [{ ref: "memories/source", type: "memory", reason: "scope-ref" }],
         actions: [],
         signalBearingSet: new Set(),
         distillCooledRefs: new Set(),

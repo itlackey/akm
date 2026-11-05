@@ -19,6 +19,7 @@ import path from "node:path";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
@@ -39,6 +40,8 @@ import { warn, warnVerbose } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import { type NoticeSet, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
+import { resolveOwnedType } from "../../indexer/lookup/adapter-concept-owner";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { chatCompletion } from "../../llm/client";
@@ -132,6 +135,8 @@ export interface AkmDistillOptions {
 /** An asset near a query; `path` is its file when the search knows it. */
 interface RelatedAsset {
   ref: string;
+  /** The asset type the search hit carries. */
+  type: string;
   content: string;
   path?: string;
 }
@@ -393,6 +398,8 @@ type DistillKind = "lesson" | "knowledge";
 interface DistillRun {
   options: AkmDistillOptions;
   inputRef: string;
+  /** The input asset's type, from its file. */
+  inputType: string;
   /** Durable key for events, feedback and the ledger: the planner's item_ref, else the conceptId. */
   ledgerRef: string;
   stash: string;
@@ -482,12 +489,18 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
 
   const ledgerRef = options.itemRef ?? inputRef;
   const eligMeta = options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {};
-  if (isDistillRefusedInputType(parsedInputRef.type)) {
-    const secret = parsedInputRef.type === "env" || parsedInputRef.type === "secret";
+  // The input's type is its file's; the ref's first folder names it only for a ref no file owns.
+  const inputType =
+    resolveOwnedType(parseBundleRef(inputRef), resolveSourceEntries(options.stashDir, config), {
+      mode: "read",
+      includeSensitive: true,
+    }) ?? parsedInputRef.type;
+  if (isDistillRefusedInputType(inputType)) {
+    const secret = inputType === "env" || inputType === "secret";
     const proposalRef = secret ? inputRef : conceptIdFromTypeName("lesson", parsedInputRef.name);
     const skipReason = secret ? "refused_secret_input" : "recursive_lesson_input";
     const message = secret
-      ? `Distill refuses ${parsedInputRef.type} inputs — secret material must never be sent to the LLM.`
+      ? `Distill refuses ${inputType} inputs — secret material must never be sent to the LLM.`
       : "Distill refuses lesson inputs — lessons are the distilled form, not a source.";
     emitDistill({ ledgerRef, eligMeta, options }, { outcome: "skipped", proposalRef, message, skipReason });
     return { schemaVersion: 1, ok: true, outcome: "skipped", inputRef, proposalRef, skipReason, message };
@@ -502,6 +515,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     inputRef,
     ledgerRef,
     stash,
+    inputType,
     config,
     profile,
     runner: stageRunner(options, config, "distill", notices.add),
@@ -848,11 +862,10 @@ async function proposeLessonUpdate(
   if (!run.runner || !qualityGateEnabled(run) || !memory) return undefined;
   const lessons: Array<UpdateCandidate & { path: string; content: string }> = [];
   for (const asset of related ?? (await run.related(memory.slice(0, 500), RELATED_COUNT))) {
-    const parsed = parsePlacementRef(asset.ref);
-    if (parsed.type !== "lesson" || !asset.path || !isWithin(asset.path, run.stash)) continue;
+    if (asset.type !== "lesson" || !asset.path || !isWithin(asset.path, run.stash)) continue;
     try {
       const content = fs.readFileSync(asset.path, "utf8");
-      const ref = conceptIdFromTypeName("lesson", parsed.name);
+      const { conceptId: ref } = parseBundleRef(asset.ref);
       lessons.push({ ref, path: asset.path, content, body: parseFrontmatter(content).content.trim() });
     } catch {
       // A lesson that cannot be read cannot be extended.
@@ -1246,7 +1259,7 @@ function stampInputSalience(run: DistillRun): void {
   const { content, path: filePath } = run.asset;
   if (!content || !filePath) return;
   try {
-    const type = parsePlacementRef(run.inputRef).type;
+    const type = run.inputType;
     let revisionCount = 0;
     try {
       // Revisions so far: every proposal raised against this ref.
@@ -1395,7 +1408,7 @@ async function fetchRelatedAssets(query: string, n: number): Promise<RelatedAsse
         } catch {
           // best-effort
         }
-        return { ref: h.ref, content, ...(h.path ? { path: h.path } : {}) };
+        return { ref: h.ref, type: h.type, content, ...(h.path ? { path: h.path } : {}) };
       });
   } catch {
     return [];

@@ -17,9 +17,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { parsePlacementRef } from "../../core/asset/resolve-ref";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { ConfigError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -27,6 +27,8 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { info } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
+import { resolveOwnedType } from "../../indexer/lookup/adapter-concept-owner";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { ChatMessage, chatCompletion } from "../../llm/client";
@@ -76,8 +78,6 @@ export interface SchemaRepairOptions {
   stashDir?: string;
   /** Override the asset file-path resolver (test seam). */
   findFilePath?: (ref: string, stashDir?: string) => Promise<string | null> | string | null;
-  /** Whether a given ref is a lesson candidate (affects which fields to repair). */
-  isLessonCandidateFn?: (ref: string) => boolean;
   /** Override the LLM chat function (test seam). Production leaves it absent. */
   chatFn?: typeof chatCompletion;
 }
@@ -98,10 +98,9 @@ async function classifySchemaRepairs(args: {
   budgetMs: number;
   stashDir: string;
   findFilePath: NonNullable<SchemaRepairOptions["findFilePath"]>;
-  isLessonCandidateFn: NonNullable<SchemaRepairOptions["isLessonCandidateFn"]>;
   repairs: SchemaRepairRecord[];
 }): Promise<{ eligibleRepairs: EligibleSchemaRepair[]; pendingErrors: SchemaRepairRecord[] }> {
-  const { failures, startMs, budgetMs, stashDir, findFilePath, isLessonCandidateFn, repairs } = args;
+  const { failures, startMs, budgetMs, stashDir, findFilePath, repairs } = args;
   const eligibleRepairs: EligibleSchemaRepair[] = [];
   const pendingErrors: SchemaRepairRecord[] = [];
   const ledger = loadLedgerSnapshot(undefined, stashDir, [SCHEMA_REPAIR_SOURCE]);
@@ -120,19 +119,21 @@ async function classifySchemaRepairs(args: {
     try {
       const raw = fs.readFileSync(filePath, "utf8");
       const frontmatter = parseFrontmatter(raw);
+      // The asset's type is its file's (which fields to repair, and the type's standards and rules).
+      const assetType =
+        resolveOwnedType(parseBundleRef(failure.ref), resolveSourceEntries(stashDir), { mode: "read" }) ?? "";
       const missingFields: string[] = [];
       if (!frontmatter.data.description) missingFields.push("description");
-      if (isLessonCandidateFn(failure.ref) && !frontmatter.data.when_to_use) missingFields.push("when_to_use");
+      if (assetType === "lesson" && !frontmatter.data.when_to_use) missingFields.push("when_to_use");
       if (missingFields.length === 0) {
         repairs.push({ ref: failure.ref, reason: failure.reason, outcome: "skipped" });
         continue;
       }
       const fieldList = missingFields.join(" and ");
-      const standardsContext = resolveStandardsContext(failure.ref, stashDir);
+      const standardsContext = resolveStandardsContext(assetType, stashDir);
       const standardsSection = standardsContext.trim()
         ? `\n\nStandards to follow (the rulebook for this target):\n${standardsContext.trim()}`
         : "";
-      const assetType = parsePlacementRef(failure.ref).type;
       const authoringRules = authoringRulesForType(assetType);
       const authoringRulesSection = authoringRules ? `\n\n${authoringRules}` : "";
       eligibleRepairs.push({
@@ -174,14 +175,7 @@ export async function runSchemaRepairPass(
   const repairs: SchemaRepairRecord[] = [];
   const repairedRefs = new Set<string>();
 
-  const {
-    startMs,
-    budgetMs,
-    stashDir,
-    findFilePath = defaultFindFilePath,
-    isLessonCandidateFn = defaultIsLessonCandidate,
-    chatFn,
-  } = options;
+  const { startMs, budgetMs, stashDir, findFilePath = defaultFindFilePath, chatFn } = options;
   const llmRunner = options.llmRunner ?? null;
   if (!llmRunner) throw new Error("runSchemaRepairPass requires a resolved runner");
 
@@ -198,7 +192,6 @@ export async function runSchemaRepairPass(
     budgetMs,
     stashDir,
     findFilePath,
-    isLessonCandidateFn,
     repairs,
   });
 
@@ -313,15 +306,6 @@ export async function runSchemaRepairPass(
 }
 
 // ── Default seam implementations ─────────────────────────────────────────────
-
-function defaultIsLessonCandidate(ref: string): boolean {
-  try {
-    const parsed = parsePlacementRef(ref);
-    return parsed.type === "lesson";
-  } catch {
-    return false;
-  }
-}
 
 async function defaultFindFilePath(ref: string, stashDir?: string): Promise<string | null> {
   return resolveAssetPath(ref, {

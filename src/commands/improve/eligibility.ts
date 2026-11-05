@@ -6,7 +6,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { placementSpecFor } from "../../core/asset/asset-placement";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, parsePlacementRef, resolveRef } from "../../core/asset/resolve-ref";
@@ -37,16 +36,6 @@ import { isStrategyFilteredForAllPasses } from "./improve-strategies";
 import { parseMemoryRef } from "./memory/derived-ref";
 
 type Scope = { mode: "all" | "type" | "ref"; value?: string };
-
-/** The asset type a short or bundle-qualified ref is placed under (`""` when it is under no type's folder). Improve works on assets by placement. */
-export function assetTypeOf(ref: string): string {
-  try {
-    const { type } = parsePlacementRef(ref);
-    return placementSpecFor(type) ? type : "";
-  } catch {
-    return "";
-  }
-}
 
 /**
  * Run `fn` against index.db — the live index, or a non-mutating snapshot for
@@ -259,7 +248,13 @@ async function collectEligibleRefsFromIndex(
       const isMemory = indexed.entry.type === "memory";
       return {
         plannedRefs: [
-          { ref: indexed.conceptId, itemRef: indexed.itemRef, reason: "scope-ref", filePath: indexed.filePath },
+          {
+            ref: indexed.conceptId,
+            type: indexed.entry.type,
+            itemRef: indexed.itemRef,
+            reason: "scope-ref",
+            filePath: indexed.filePath,
+          },
         ],
         memorySummary: {
           eligible: isMemory ? 1 : 0,
@@ -281,7 +276,7 @@ async function collectEligibleRefsFromIndex(
     for (const indexed of entries) {
       const ref = indexed.conceptId;
       try {
-        parsePlacementRef(ref);
+        parseBundleRef(ref);
       } catch (error) {
         if (error instanceof UsageError || error instanceof NotFoundError) continue;
         throw error;
@@ -289,8 +284,8 @@ async function collectEligibleRefsFromIndex(
       const isDerived = indexed.entry.name.endsWith(".derived");
       // `.derived` memories skip reflect; cleanup inspects them on its own.
       if (!isDerived && !planned.has(ref) && !strategyFiltered.has(ref)) {
-        const candidate = { ref, filePath: indexed.filePath, itemRef: indexed.itemRef };
-        if (improveProfile && isStrategyFilteredForAllPasses(ref, improveProfile)) {
+        const candidate = { ref, type: indexed.entry.type, filePath: indexed.filePath, itemRef: indexed.itemRef };
+        if (improveProfile && isStrategyFilteredForAllPasses(candidate, improveProfile)) {
           strategyFiltered.set(ref, { ...candidate, reason: "strategy_filtered_all_passes" });
         } else {
           const reason = scope.mode !== "type" && indexed.entry.type === "memory" ? "memory-cleanup" : "scope-type";
@@ -341,27 +336,19 @@ export function memoryCleanupParentRef(scope: Scope, stashDir?: string): string 
   return conceptIdFromTypeName("memory", parsed.name.slice(0, -".derived".length));
 }
 
-export function isLessonCandidate(ref: string): boolean {
-  return parsePlacementRef(ref).type === "lesson";
-}
-
 /** Should this ref enter the distill queue? Types distill refuses never do. */
-export function isDistillCandidateRef(ref: string, stashDir?: string): boolean {
-  if (isDistillRefusedInputType(parsePlacementRef(ref).type)) return false;
-  return shouldDistillMemoryRef(ref, stashDir);
+export function isDistillCandidateRef(planned: Pick<ImproveEligibleRef, "ref" | "type" | "filePath">): boolean {
+  if (isDistillRefusedInputType(planned.type)) return false;
+  return shouldDistillMemoryRef(planned);
 }
 
 /** A non-derived memory that is not marked `quality: proposed`. */
-export function shouldDistillMemoryRef(ref: string, stashDir?: string): boolean {
-  const parsed = parsePlacementRef(ref);
-  if (parsed.type !== "memory") return false;
-  for (const source of resolveSourceEntries(stashDir)) {
-    const candidate = `${source.path}/memories/${parsed.name}.md`;
-    if (!fs.existsSync(candidate)) continue;
-    if (parseFrontmatter(fs.readFileSync(candidate, "utf8")).data.quality === "proposed") return false;
-    break;
+export function shouldDistillMemoryRef(planned: Pick<ImproveEligibleRef, "ref" | "type" | "filePath">): boolean {
+  if (planned.type !== "memory") return false;
+  if (planned.filePath && fs.existsSync(planned.filePath)) {
+    if (parseFrontmatter(fs.readFileSync(planned.filePath, "utf8")).data.quality === "proposed") return false;
   }
-  return !parsed.name.endsWith(".derived");
+  return !planned.ref.endsWith(".derived");
 }
 
 export function shouldAnalyzeMemoryCleanup(

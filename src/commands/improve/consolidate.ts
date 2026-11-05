@@ -27,6 +27,7 @@ import fs from "node:fs";
 import path from "node:path";
 import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md" with { type: "text" };
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { refForFile } from "../../core/asset/asset-placement";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
@@ -66,6 +67,8 @@ import { callStage, mintProposal, stageRunner } from "./stage";
 
 export interface MemoryEntry {
   name: string;
+  /** Its ref: the index's conceptId, the path inside the bundle. */
+  ref: string;
   filePath: string;
   description: string;
   tags: string[];
@@ -559,7 +562,7 @@ export function inspectConsolidationPool(
   if (ledger.size > 0) {
     const nowIso = new Date().toISOString();
     memories = memories.filter((memory) => {
-      const row = ledger.get(ledgerKey("consolidate", conceptIdFromTypeName("memory", memory.name)));
+      const row = ledger.get(ledgerKey("consolidate", memory.ref));
       if (!row) return true;
       if (isContentDrivenRow(row)) {
         let bodyHash: string | undefined;
@@ -594,9 +597,7 @@ export function inspectConsolidationPool(
   // Only what retrieval returned or new material improve never processed (#986).
   const retrievalScope = loadRetrievalScope({ proposalsCtx: opts.proposalsCtx, readOnly }, stashDir);
   const beforeScope = memories.length;
-  memories = memories.filter((memory) =>
-    isInRetrievalScope(retrievalScope, conceptIdFromTypeName("memory", memory.name), memory.filePath),
-  );
+  memories = memories.filter((memory) => isInRetrievalScope(retrievalScope, memory.ref, memory.filePath));
   const outsideRetrievalScope = beforeScope - memories.length;
   const dedupPoolSize = memories.length;
   if (opts.limit === undefined && memories.length > 150) {
@@ -657,7 +658,7 @@ async function judgeConsolidationChunks(args: {
 }): Promise<ConsolidatePromoteOp[][]> {
   const { chunks, opts, warnings, acc } = args;
   const llmRunner = opts.llmRunner ?? undefined;
-  const memRef = (m: MemoryEntry) => conceptIdFromTypeName("memory", m.name);
+  const memRef = (m: MemoryEntry) => m.ref;
   const failChunk = (message: string, chunk: MemoryEntry[]) => {
     warn(message);
     warnings.push(message);
@@ -897,7 +898,7 @@ async function consolidate(
     sourceRun: opts.sourceRun ?? `consolidate-${startMs}`,
     proposalsCtx: opts.proposalsCtx,
     target: opts.writeTarget as ResolvedWriteTarget,
-    memoryByRef: new Map(memories.map((memory) => [conceptIdFromTypeName("memory", memory.name), memory])),
+    memoryByRef: new Map(memories.map((memory) => [memory.ref, memory])),
     promoted: [],
     promotedSourceRefs: new Set<string>(),
     existingKnowledgeBodyHashes,
@@ -1177,6 +1178,7 @@ function loadMemoriesForSource(
       .filter((e) => isConsolidationEligibleMemoryName(e.entry.name) && fs.existsSync(e.filePath))
       .map((e) => ({
         name: e.entry.name,
+        ref: e.conceptId,
         filePath: e.filePath,
         description: e.entry.description ?? "",
         tags: e.entry.tags ?? [],
@@ -1202,7 +1204,8 @@ function loadMemoriesForSource(
         if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
         const name = path.relative(memoriesDir, filePath).replace(/\.md$/, "").split(path.sep).join("/");
         if (isConsolidationEligibleMemoryName(name)) {
-          memories.push({ name, filePath, description: "", tags: [], stashDir: source.sourceRoot });
+          const ref = refForFile("memory", source.sourceRoot, filePath) ?? name;
+          memories.push({ name, ref, filePath, description: "", tags: [], stashDir: source.sourceRoot });
         }
       }
     }

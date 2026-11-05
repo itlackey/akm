@@ -4,7 +4,7 @@
 
 import consolidate from "../../assets/improve-strategies/consolidate.json" with { type: "json" };
 import defaultStrategy from "../../assets/improve-strategies/default.json" with { type: "json" };
-import { conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import {
   type AkmConfig,
   ambiguousDefaultAdvice,
@@ -21,6 +21,7 @@ import {
 } from "../../core/config/engine-semantics";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
+import type { ImproveEligibleRef } from "../../core/improve-types";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -57,23 +58,22 @@ function stripBundlePrefix(value: string): string {
 }
 
 export function shouldSkipRef(
-  ref: string,
+  { ref, type }: Pick<ImproveEligibleRef, "ref" | "type">,
   processName: "reflect" | "distill" | "consolidate",
   strategy: ImproveProfileConfig,
 ): { skip: boolean; reason: string } {
   const process = strategy.processes?.[processName];
   if (process?.enabled === false) return { skip: true, reason: "process-disabled" };
 
-  const parsed = parsePlacementRef(ref);
   const allowed = process?.allowedTypes ?? DEFAULT_ALLOWED_TYPES[processName];
-  if (!allowed.includes(parsed.type)) return { skip: true, reason: "type-filter" };
+  if (!allowed.includes(type)) return { skip: true, reason: "type-filter" };
 
   // R12: reflect only — raw wiki-ingest snapshots are type `knowledge`, so
   // allowedTypes alone can't exclude them (distill/consolidate are memory-only).
   if (processName === "reflect") {
     const excludePrefixes = strategy.processes?.reflect?.excludeRefPrefixes;
     if (excludePrefixes && excludePrefixes.length > 0) {
-      const conceptId = conceptIdFromTypeName(parsed.type, parsed.name);
+      const { conceptId } = parseBundleRef(ref);
       const excluded = excludePrefixes.some((prefix) => {
         const stripped = stripBundlePrefix(prefix);
         return conceptId === stripped || conceptId.startsWith(`${stripped}/`);
@@ -89,17 +89,20 @@ const REF_SCOPED_PROCESSES = new Set(["reflect", "distill", "consolidate"]);
 
 /** How many refs a ref-scoped process would act on (`undefined` for any other process). */
 export function eligibleRefCount(
-  refs: readonly { ref: string }[],
+  refs: readonly Pick<ImproveEligibleRef, "ref" | "type">[],
   process: string,
   strategy: ImproveProfileConfig,
 ): number | undefined {
   if (!REF_SCOPED_PROCESSES.has(process)) return undefined;
   const name = process as "reflect" | "distill" | "consolidate";
-  return refs.filter((entry) => !shouldSkipRef(entry.ref, name, strategy).skip).length;
+  return refs.filter((entry) => !shouldSkipRef(entry, name, strategy).skip).length;
 }
 
-export function isStrategyFilteredForAllPasses(ref: string, strategy: ImproveProfileConfig): boolean {
-  return shouldSkipRef(ref, "reflect", strategy).skip && shouldSkipRef(ref, "distill", strategy).skip;
+export function isStrategyFilteredForAllPasses(
+  asset: Pick<ImproveEligibleRef, "ref" | "type">,
+  strategy: ImproveProfileConfig,
+): boolean {
+  return shouldSkipRef(asset, "reflect", strategy).skip && shouldSkipRef(asset, "distill", strategy).skip;
 }
 
 const BUILTIN_STRATEGIES: Record<string, Record<string, unknown>> = {

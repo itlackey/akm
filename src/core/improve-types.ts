@@ -126,6 +126,8 @@ export interface ArchivedMemoryCleanupRecord {
 
 export interface ImproveEligibleRef {
   ref: string;
+  /** The asset type its index entry records, resolved with `filePath` at planning time. Never read from the ref. */
+  type: string;
   reason: "scope-ref" | "scope-type" | "memory-cleanup" | "strategy_filtered_all_passes";
   /**
    * Absolute path on disk, pre-resolved from the index at planning time (#591).

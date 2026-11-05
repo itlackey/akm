@@ -126,6 +126,7 @@ async function offer(knowledgeSlug = KNOWLEDGE_SLUG) {
         REF,
         {
           name: NAME,
+          ref: `memories/${NAME}`,
           filePath: path.join(stash, "memories", `${NAME}.md`),
           description: "",
           tags: [],

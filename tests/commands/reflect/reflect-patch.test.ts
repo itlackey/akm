@@ -28,7 +28,7 @@ describe("applyReflectPatch — the body is kept byte for byte", () => {
     ],
     ["an indented code block first", "---\ndescription: Old description text\n---\n\n    indented code\n\nBody.\n"],
   ])("a description-only patch changes only the description: %s", (_name, source) => {
-    const patched = applyReflectPatch({ description: NEW_DESCRIPTION }, source, REF);
+    const patched = applyReflectPatch({ description: NEW_DESCRIPTION }, source, REF, "knowledge");
 
     if (!patched) throw new Error("expected the patch to change the asset");
     expect(splitFrontmatter(patched.content).body).toBe(splitFrontmatter(source).body);
@@ -51,7 +51,12 @@ describe("applyReflectPatch — the body is kept byte for byte", () => {
       "",
     ].join("\n");
 
-    const patched = applyReflectPatch({ when_to_use: "When a release branch is cut for production" }, source, REF);
+    const patched = applyReflectPatch(
+      { when_to_use: "When a release branch is cut for production" },
+      source,
+      REF,
+      "knowledge",
+    );
 
     if (!patched) throw new Error("expected the patch to change the asset");
     const { data } = parseFrontmatter(patched.content);
@@ -67,7 +72,7 @@ describe("applyReflectPatch — the body is kept byte for byte", () => {
   test("a source with no frontmatter gains a block with one blank line, and its body is untouched", () => {
     const source = "# Heading\n\nBody without any frontmatter.\n";
 
-    const patched = applyReflectPatch({ description: NEW_DESCRIPTION }, source, REF);
+    const patched = applyReflectPatch({ description: NEW_DESCRIPTION }, source, REF, "knowledge");
 
     expect(patched?.content).toBe(`---\ndescription: ${NEW_DESCRIPTION}\n---\n\n${source}`);
   });
@@ -86,16 +91,16 @@ describe("applyReflectPatch — a patch that changes nothing creates nothing", (
     ],
     ["a title for a body that already has a level-1 heading", { title: "A different title" }],
   ])("%s", (_name, patch) => {
-    expect(applyReflectPatch(patch, source, REF)).toBeUndefined();
+    expect(applyReflectPatch(patch, source, REF, "knowledge")).toBeUndefined();
   });
 
   test("a source with no content has nothing to patch", () => {
-    expect(applyReflectPatch({ description: NEW_DESCRIPTION }, "", REF)).toBeUndefined();
-    expect(applyReflectPatch({ description: NEW_DESCRIPTION }, "\n  \n", REF)).toBeUndefined();
+    expect(applyReflectPatch({ description: NEW_DESCRIPTION }, "", REF, "knowledge")).toBeUndefined();
+    expect(applyReflectPatch({ description: NEW_DESCRIPTION }, "\n  \n", REF, "knowledge")).toBeUndefined();
   });
 
   test("a source with no frontmatter and an empty patch stays as it is", () => {
-    expect(applyReflectPatch({}, "# Heading\n\nBody.\n", REF)).toBeUndefined();
+    expect(applyReflectPatch({}, "# Heading\n\nBody.\n", REF, "knowledge")).toBeUndefined();
   });
 });
 
@@ -103,13 +108,18 @@ describe("applyReflectPatch — a title is a level-1 heading, added only to a bo
   const frontmatter = "---\ndescription: Old description text\n---\n";
 
   test("it is prepended with one blank line after it", () => {
-    const patched = applyReflectPatch({ title: "Release runbook" }, `${frontmatter}\nSome prose.\n`, REF);
+    const patched = applyReflectPatch({ title: "Release runbook" }, `${frontmatter}\nSome prose.\n`, REF, "knowledge");
 
     expect(patched?.content).toBe(`${frontmatter}\n# Release runbook\n\nSome prose.\n`);
   });
 
   test("a body with only lower-level headings has no level-1 heading", () => {
-    const patched = applyReflectPatch({ title: "Release runbook" }, `${frontmatter}\n## Steps\n\nSome prose.\n`, REF);
+    const patched = applyReflectPatch(
+      { title: "Release runbook" },
+      `${frontmatter}\n## Steps\n\nSome prose.\n`,
+      REF,
+      "knowledge",
+    );
 
     expect(patched?.content).toBe(`${frontmatter}\n# Release runbook\n\n## Steps\n\nSome prose.\n`);
   });
@@ -117,7 +127,12 @@ describe("applyReflectPatch — a title is a level-1 heading, added only to a bo
   test("a body that has one ignores the title, and the rest of the patch still applies", () => {
     const source = `${frontmatter}\n# Existing title\n\nSome prose.\n`;
 
-    const patched = applyReflectPatch({ title: "Release runbook", description: NEW_DESCRIPTION }, source, REF);
+    const patched = applyReflectPatch(
+      { title: "Release runbook", description: NEW_DESCRIPTION },
+      source,
+      REF,
+      "knowledge",
+    );
 
     expect(patched?.content).toBe(`---\ndescription: ${NEW_DESCRIPTION}\n---\n\n# Existing title\n\nSome prose.\n`);
   });
@@ -127,6 +142,7 @@ describe("applyReflectPatch — a title is a level-1 heading, added only to a bo
       { title: "Release runbook", description: NEW_DESCRIPTION },
       `${frontmatter}\nSome prose.\n`,
       REF,
+      "knowledge",
     );
 
     expect(patched?.content).toBe(`---\ndescription: ${NEW_DESCRIPTION}\n---\n\n# Release runbook\n\nSome prose.\n`);
@@ -134,20 +150,20 @@ describe("applyReflectPatch — a title is a level-1 heading, added only to a bo
 
   test("the body's leading blank lines are kept, with the heading after them (#1183)", () => {
     const body = "\n\n\nSome prose.\n\n  indented\n";
-    const patched = applyReflectPatch({ title: "Release runbook" }, `${frontmatter}${body}`, REF);
+    const patched = applyReflectPatch({ title: "Release runbook" }, `${frontmatter}${body}`, REF, "knowledge");
 
     expect(patched?.content).toBe(`${frontmatter}\n\n\n# Release runbook\n\nSome prose.\n\n  indented\n`);
   });
 
   test("a body that starts right after the fence is not given an extra blank line before the heading", () => {
-    const patched = applyReflectPatch({ title: "Release runbook" }, `${frontmatter}Some prose.\n`, REF);
+    const patched = applyReflectPatch({ title: "Release runbook" }, `${frontmatter}Some prose.\n`, REF, "knowledge");
 
     expect(patched?.content).toBe(`${frontmatter}# Release runbook\n\nSome prose.\n`);
   });
 
   test("a CRLF body gets a CRLF heading and keeps every other byte", () => {
     const source = "---\r\ndescription: Old description text\r\n---\r\n\r\nLine one.\r\n\r\nLine two.\r\n";
-    const patched = applyReflectPatch({ title: "Release runbook" }, source, REF);
+    const patched = applyReflectPatch({ title: "Release runbook" }, source, REF, "knowledge");
 
     expect(splitFrontmatter(patched?.content ?? "").body).toBe(
       "\r\n# Release runbook\r\n\r\nLine one.\r\n\r\nLine two.\r\n",
@@ -155,7 +171,7 @@ describe("applyReflectPatch — a title is a level-1 heading, added only to a bo
   });
 
   test("a source with no frontmatter gets the heading and no frontmatter block", () => {
-    const patched = applyReflectPatch({ title: "Release runbook" }, "Some prose.\n", REF);
+    const patched = applyReflectPatch({ title: "Release runbook" }, "Some prose.\n", REF, "knowledge");
 
     expect(patched?.content).toBe("# Release runbook\n\nSome prose.\n");
     expect(patched?.frontmatter).toBeUndefined();
@@ -164,17 +180,19 @@ describe("applyReflectPatch — a title is a level-1 heading, added only to a bo
 
 describe("applyReflectPatch — a description a required type lacks is derived from the asset's own text (#636)", () => {
   test("a source with frontmatter but no description gets one, even from a patch of nulls", () => {
-    const patched = applyReflectPatch({}, "---\ntitle: Release notes\n---\n\nBody.\n", REF);
+    const patched = applyReflectPatch({}, "---\ntitle: Release notes\n---\n\nBody.\n", REF, "knowledge");
 
     expect(patched?.frontmatter).toEqual({ title: "Release notes", description: "Reference notes on Release notes." });
   });
 
   test("a source with no frontmatter at all gets no block injected", () => {
-    expect(applyReflectPatch({}, "# Release notes\n\nBody.\n", REF)).toBeUndefined();
+    expect(applyReflectPatch({}, "# Release notes\n\nBody.\n", REF, "knowledge")).toBeUndefined();
   });
 
   test("a type that does not require a description is left alone", () => {
-    expect(applyReflectPatch({}, "---\ntitle: Release notes\n---\n\nBody.\n", "scripts/release")).toBeUndefined();
+    expect(
+      applyReflectPatch({}, "---\ntitle: Release notes\n---\n\nBody.\n", "scripts/release", "script"),
+    ).toBeUndefined();
   });
 });
 
@@ -194,7 +212,7 @@ describe("applyReflectPatch — frontmatter the parser reads only in part", () =
       "Body.",
       "",
     ].join("\n");
-    const patched = applyReflectPatch({ description: NEW_DESCRIPTION }, source, REF);
+    const patched = applyReflectPatch({ description: NEW_DESCRIPTION }, source, REF, "knowledge");
 
     if (!patched) throw new Error("expected the patch to change the asset");
     const lines = patched.content.split("\n");
@@ -211,6 +229,6 @@ describe("applyReflectPatch — frontmatter the parser reads only in part", () =
   test("a fence fused onto the last value gets no proposal, rather than a second block above the first", () => {
     const source = "---\ndescription: A note about deployment steps\nsource: memories/note.derived---\n\nBody.\n";
 
-    expect(applyReflectPatch({ when_to_use: "When deploying." }, source, REF)).toBeUndefined();
+    expect(applyReflectPatch({ when_to_use: "When deploying." }, source, REF, "knowledge")).toBeUndefined();
   });
 });

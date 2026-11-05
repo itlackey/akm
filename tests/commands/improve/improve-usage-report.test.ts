@@ -17,6 +17,7 @@ import {
   deriveNoCallReason,
   formatUsageReportTable,
 } from "../../../src/commands/improve/improve-usage-report";
+import { typeForStashDir } from "../../../src/core/asset/asset-placement";
 import { IMPROVE_PROCESS_NAMES } from "../../../src/core/config/engine-semantics";
 import type { ImproveActionResult, ImproveEligibleRef } from "../../../src/core/improve-types";
 
@@ -79,7 +80,7 @@ function crossTabRow(
 }
 
 function eligibleRef(ref: string): ImproveEligibleRef {
-  return { ref, reason: "scope-type" };
+  return { ref, type: typeForStashDir(ref.split("/")[0] ?? "") ?? "", reason: "scope-type" };
 }
 
 describe("deriveNoCallReason (#944, single decision point per #953/#957/#947/#944 batch review)", () => {

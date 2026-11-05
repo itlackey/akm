@@ -16,10 +16,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
+import type { AssetRef } from "../../core/asset/resolve-ref";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { isWithin, resolveStashDir, safeRealpath } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -36,7 +36,9 @@ import type { Parsed } from "../../core/structured";
 import { warnOnce } from "../../core/warn";
 import { type Notice, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
-import { lookup } from "../../indexer/indexer";
+import { lookupBundleRef } from "../../indexer/indexer";
+import { resolveOwnedType, resolveWriteAddress, type WriteAddress } from "../../indexer/lookup/adapter-concept-owner";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { AgentFailureReason } from "../../integrations/agent";
 import {
   buildReflectOutputRepairPrompt,
@@ -171,16 +173,6 @@ function buildSchemaHints(type: string, content: string | undefined): string[] {
   return lintLessonContent(content, "reflect").findings.map((f) => `[${f.kind}] ${f.message}`);
 }
 
-/** The asset type of a maybe-ref, or `""` when it does not parse. */
-function lenientRefType(ref: string | undefined): string {
-  if (!ref) return "";
-  try {
-    return parsePlacementRef(ref).type;
-  } catch {
-    return "";
-  }
-}
-
 /**
  * A description derived from existing metadata (title, first heading, first
  * prose sentence) that passes `isValidDescription`, or `undefined`. Never
@@ -248,6 +240,7 @@ export function applyReflectPatch(
   patch: ReflectPatch,
   sourceContent: string,
   targetRef: string,
+  refType: string,
 ): { content: string; frontmatter?: Record<string, unknown> } | undefined {
   if (!sourceContent.trim()) return undefined;
   const { fmText, body: sourceBody } = splitFrontmatter(sourceContent);
@@ -263,7 +256,6 @@ export function applyReflectPatch(
 
   // Only a source that already has frontmatter but no description gets one:
   // injecting a whole block, or overwriting an authored one, is out of scope.
-  const refType = lenientRefType(targetRef);
   const desc = changes.description ?? sourceFm.description;
   if (
     refType &&
@@ -702,9 +694,8 @@ function unsupportedTypeFailure(
 }
 
 /**
- * A proposal writes the file derived from the ref's type and name under the bundle's root. An asset indexed
- * anywhere else (a skill's `references/a.md` is `knowledge/skills/<name>/references/a`) has nothing there, so the
- * proposal would be a `create` and accepting it would add a second file for the ref (#1052).
+ * A proposal writes the file that owns the ref in the proposal's bundle. When the indexed file is another one,
+ * accepting the proposal would leave the indexed file as it is (#1052).
  */
 function fileOutsideLayoutFailure(
   ref: string,
@@ -732,7 +723,15 @@ async function resolveReflectSource(
   emitFailed: ReflectRun["emitFailed"],
 ): Promise<{ assetContent: string | undefined; parsedRef: AssetRef | undefined } | { failure: AkmReflectResult }> {
   if (!options.ref) return { assetContent: undefined, parsedRef: undefined };
-  const parsedRef = parsePlacementRef(options.ref);
+  // A proposal writes the file that owns the ref in the proposal's own bundle; the type is that of
+  // the file that owns it wherever it is (a file in another bundle is `createProposal`'s to refuse, #1000).
+  const root = path.resolve(options.target?.root ?? stash);
+  const address = resolveWriteAddress(root, options.ref);
+  const ownedType = resolveOwnedType(parseBundleRef(options.itemRef ?? options.ref), resolveSourceEntries(stash), {
+    mode: "read",
+    includeSensitive: true,
+  });
+  const parsedRef: WriteAddress = { ...address, type: ownedType ?? address.type };
   // A secret's content is never read, whatever it looks like.
   if (REFLECT_REFUSED_TYPES.has(parsedRef.type)) {
     return unsupportedTypeFailure(
@@ -751,7 +750,7 @@ async function resolveReflectSource(
       if (localFilePath && fs.existsSync(localFilePath)) {
         assetFile = localFilePath;
       } else {
-        const entry = await lookup(parsePlacementRef(qualifiedRef));
+        const entry = await lookupBundleRef(parseBundleRef(qualifiedRef));
         if (entry?.filePath && fs.existsSync(entry.filePath)) assetFile = entry.filePath;
       }
       if (assetFile !== undefined) assetContent = fs.readFileSync(assetFile, "utf8");
@@ -766,12 +765,9 @@ async function resolveReflectSource(
     return unsupportedTypeFailure(options.ref, parsedRef.type, "its content is not frontmatter + markdown", emitFailed);
   }
   // A file in another bundle is `createProposal`'s to refuse (#1000); this one is in the proposal's own bundle.
-  const root = path.resolve(options.target?.root ?? stash);
-  const typeDir = stashDirFor(parsedRef.type);
-  if (assetFile !== undefined && typeDir !== undefined && isWithin(assetFile, root)) {
-    const writes = assetPathForName(parsedRef.type, path.join(root, typeDir), parsedRef.name);
-    if (safeRealpath(writes) !== safeRealpath(assetFile)) {
-      return fileOutsideLayoutFailure(options.ref, assetFile, writes, emitFailed);
+  if (assetFile !== undefined && address.path !== undefined && isWithin(assetFile, root)) {
+    if (safeRealpath(address.path) !== safeRealpath(assetFile)) {
+      return fileOutsideLayoutFailure(options.ref, assetFile, address.path, emitFailed);
     }
   }
   return { assetContent, parsedRef };
@@ -864,7 +860,7 @@ function gatherReflectPromptSources(
     ),
     schemaHints: buildSchemaHints(parsedRef?.type ?? "", assetContent),
     rejectedProposals: rejectedProposalContext(stash, options.ref, options.ctx, options.eventsCtx),
-    standardsContext: resolveStandardsContext(options.ref, stash),
+    standardsContext: resolveStandardsContext(parsedRef?.type, stash),
   };
 }
 
@@ -952,11 +948,13 @@ async function finalizeReflectProposal(args: {
   dispatch: Pick<Extract<ReflectIteration, { ok: true }>, "durationMs" | "telemetry">;
   judge: { enabled: boolean; skippedNoJudge: boolean; runner: RunnerSpec | undefined };
   feedback: string[];
+  /** The asset's type (from its file). */
+  type: string;
 }): Promise<AkmReflectResult> {
   const { run, payload, assetContent, dispatch, judge, feedback } = args;
   const { options } = run;
   const { telemetry } = dispatch;
-  const patched = applyReflectPatch(payload.patch, assetContent, payload.ref);
+  const patched = applyReflectPatch(payload.patch, assetContent, payload.ref, args.type);
   // A patch that changes nothing leaves the asset as it is: an empty diff.
   const content = patched?.content ?? assetContent;
 
@@ -1178,7 +1176,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   }
   // An unscoped reply names its asset only now: read it as a targeted run read its own before dispatch.
   const target = options.ref
-    ? { assetContent }
+    ? { assetContent, parsedRef }
     : await resolveReflectSource({ ...options, ref: payload.ref }, stash, emitFailed);
   if ("failure" in target) return target.failure;
   return finalizeReflectProposal({
@@ -1188,5 +1186,6 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     dispatch: iteration,
     judge: { enabled: judgeWanted && !skippedNoJudge, skippedNoJudge, runner: judgeRunner },
     feedback: sources.feedback,
+    type: target.parsedRef?.type ?? "",
   });
 }

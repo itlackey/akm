@@ -1635,7 +1635,6 @@ function verifyIndexState(
 // ── lookup ─────────────────────────────────────────────────────────────────
 
 import { type BundleRef, makeBundleRef } from "../core/asset/asset-ref";
-import { type AssetRef, conceptIdFromTypeName } from "../core/asset/resolve-ref";
 
 export interface IndexEntry {
   /** Absolute path of the indexed file on disk. */
@@ -1837,19 +1836,6 @@ function readLookupEntry(db: Database, id: number, fallbackConceptId: string, so
     bundleId: row.bundleId,
     conceptId: row.conceptId,
   };
-}
-
-/**
- * Look up a single asset by ref. `akm show` queries this and
- * reads the file from disk. The index is the source of truth for which
- * file corresponds to which ref; the indexer walks `provider.path()` for
- * every configured source, so this query covers all source kinds.
- *
- * Returns `null` when no row matches — callers translate that into a
- * `NotFoundError` with their own messaging.
- */
-export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
-  return lookupBundleRef({ bundle: ref.origin, conceptId: conceptIdFromTypeName(ref.type, ref.name) });
 }
 
 // ── Utility score recomputation ──────────────────────────────────────────────
