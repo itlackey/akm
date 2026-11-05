@@ -5,7 +5,7 @@
 /**
  * Plain-text rendering of the combined migration plan: the config file's moved
  * keys and notes, the task-file section and the
- * assets' `engine:` keys.
+ * assets' `engine:` keys and old-spelling refs in content.
  */
 
 import type { TextFormatterEntry } from "./registry";
@@ -16,6 +16,12 @@ interface MigrationPlanResult {
   configFile?: { credentials?: string[]; notes?: string[] };
   taskFiles?: { changed: number; skipped: number; blocked: number };
   assetEngineKeys?: { changed: number; skipped: number; notes?: string[] };
+  assetContentRefs?: {
+    changed: number;
+    skipped: number;
+    refs: number;
+    shadowed?: { bundleId: string; from: string; to: string }[];
+  };
   backupPath?: string;
   applied?: number;
 }
@@ -51,6 +57,12 @@ export function formatMigratePlain(result: unknown): string | null {
       `    asset engine keys: ${plan.assetEngineKeys.changed} change, ${plan.assetEngineKeys.skipped} skipped`,
     );
   }
+  if (plan.assetContentRefs) {
+    const refs = plan.assetContentRefs;
+    lines.push(
+      `    asset content refs: ${refs.refs} in ${refs.changed} file(s) change, ${refs.skipped} skipped, ${refs.shadowed?.length ?? 0} shadowed`,
+    );
+  }
 
   if (plan.blockers?.length) {
     lines.push("", "blockers:", ...plan.blockers.map((blocker) => `  - ${blocker}`));
@@ -61,6 +73,14 @@ export function formatMigratePlain(result: unknown): string | null {
 
   if (plan.assetEngineKeys?.notes?.length) {
     lines.push("", "engine name notes:", ...plan.assetEngineKeys.notes.map((note) => `  - ${note}`));
+  }
+
+  if (plan.assetContentRefs?.shadowed?.length) {
+    lines.push(
+      "",
+      "shadowed refs (another file holds the old spelling as its ref; not rewritten, resolve them by hand):",
+      ...plan.assetContentRefs.shadowed.map((ref) => `  - ${ref.bundleId}: ${ref.from} (now ${ref.to})`),
+    );
   }
 
   if (plan.backupPath) {

@@ -2201,7 +2201,13 @@ in order:
    rewritten every such key it can reach forgets the old engine names and adds one
    note to `assetEngineKeys.notes` listing each renamed engine and the flag that
    replaces it (see [The `engines` form](configuration.md#the-engines-form));
-5. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
+5. refs in the text files of writable bundles that still use the spelling from
+   before refs became bundle paths (`knowledge/WORK/x`, now `WORK/x`; #1432),
+   in frontmatter and body: `[bundle//]<folder>/<path>[.md]`, `<type>:<path>`
+   and `wiki:<path>`, rewritten (`assetContentRefs`) under one backup directory
+   per run. An old spelling that is now another file's ref is not rewritten
+   and is listed in `assetContentRefs.shadowed`;
+6. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
    the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
    version-stamp files older releases kept under `$DATA`, `$STATE` and
    `$CONFIG`.

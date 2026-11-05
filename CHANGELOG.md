@@ -32,7 +32,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   release` names it when no type is called that. The old spelling still resolves in refs, links
   and `improve` `excludeRefPrefixes`; a ref or prefix in it warns once. The first `akm index` after the upgrade re-drains every directory and
   moves the history stored under an old ref (usage, proposals, events, task history, improve
-  ledger, salience, outcomes) to the new one.
+  ledger, salience, outcomes) to the new one. `akm migrate status` lists the refs in your
+  bundle files that still use the old spelling and `akm migrate apply` rewrites them, in
+  frontmatter and body (`knowledge/WORK/x`, `script:x`, `wiki:x` become `WORK/x`...), in
+  writable bundles under one backup directory; a spelling that is now another file's ref is
+  listed, not rewritten.
 
 - `akm curate` checks each selected hit and each support ref against the run's filters itself,
   on the indexed row with the live file's frontmatter laid over it, before it shows or packs

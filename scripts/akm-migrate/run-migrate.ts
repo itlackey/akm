@@ -5,7 +5,7 @@
 /**
  * The whole migration, in order, as one plan: config.json in its current
  * shape, pending state.db migrations, task files to task source v4, assets'
- * retired `engine:` keys, then the residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
+ * retired `engine:` keys, refs in content that use the pre-#1432 spelling, then the residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
  * this; `akm migrate` and `akm upgrade` spawn that executable and re-emit
  * it. Every historical shape lives here or under `./migrate/`, so the CLI
  * proper only ever reads current schemas.
@@ -35,6 +35,11 @@ import {
   type EngineKeysMigrationStatus,
   inspectEngineKeysMigration,
 } from "./engine-key-migrate";
+import {
+  applyContentRefsMigration,
+  type ContentRefsMigrationStatus,
+  inspectContentRefsMigration,
+} from "./content-ref-migrate";
 import { applyTaskFilesMigration, inspectTaskFilesMigration, type TaskFilesMigrationStatus } from "./task-migrate";
 
 export type MigrationStatus = "current" | "ready" | "blocked";
@@ -70,6 +75,8 @@ export interface CombinedMigrationPlan {
   taskFiles?: TaskFilesMigrationStatus["taskFiles"];
   /** Assets whose retired `engine:` key becomes `connection:` or `harness:`. */
   assetEngineKeys?: EngineKeysMigrationStatus["assetEngineKeys"];
+  /** Refs in writable bundles' files that still use the pre-#1432 spelling (`knowledge/WORK/x`, now `WORK/x`). */
+  assetContentRefs?: ContentRefsMigrationStatus["assetContentRefs"];
   /** Present after a real apply that rewrote at least one task file: the run's backup directory. */
   backupPath?: string;
   applied?: number;
@@ -195,6 +202,13 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
         () => (apply ? applyEngineKeysMigration(engineTargets) : inspectEngineKeysMigration(engineTargets)),
         apply ? () => inspectEngineKeysMigration(engineTargets) : undefined,
       );
+  // After the engine keys, so a file is read once in its final shape; the map of old spellings needs no state.
+  const assetContentRefs = await migrationStep(
+    failedSteps,
+    "assetContentRefs",
+    () => (apply ? applyContentRefsMigration() : inspectContentRefsMigration()),
+    apply ? () => inspectContentRefsMigration() : undefined,
+  );
   // Resolving the stash dir runs as its own step: a config that fails to
   // load here is this step's own failure, not an uncaught throw out of
   // `runMigration`.
@@ -212,10 +226,11 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     stateMigrations && "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
   const configFileStatus: MigrationStatus = configFile?.changed && !configFile.applied ? "ready" : "current";
   const engineKeysStatus: MigrationStatus = assetEngineKeys?.status ?? "current";
+  const contentRefsStatus: MigrationStatus = assetContentRefs?.status ?? "current";
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
-      worstStatus(worstStatus(worstStatus(taskFiles?.status ?? "blocked", stateStatus), configFileStatus), engineKeysStatus),
+      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus].reduce(worstStatus, taskFiles?.status ?? "blocked"),
       failedSteps,
     ),
     blockers: [...(taskFiles?.blockers ?? []), ...failedStepBlockers(failedSteps)],
@@ -226,6 +241,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     ...(taskFiles?.backupPath !== undefined ? { backupPath: taskFiles.backupPath } : {}),
     ...(taskFiles?.applied !== undefined ? { applied: taskFiles.applied } : {}),
     ...(assetEngineKeys !== undefined ? { assetEngineKeys: assetEngineKeys.assetEngineKeys } : {}),
+    ...(assetContentRefs !== undefined ? { assetContentRefs: assetContentRefs.assetContentRefs } : {}),
     ...(deadResidue !== undefined ? { deadResidue } : {}),
   };
 }

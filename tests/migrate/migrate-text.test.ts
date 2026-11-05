@@ -31,3 +31,18 @@ test("the plain plan lists the notes of the run that forgot the old engine names
   expect(text).toContain("engine name notes:");
   expect(text).toContain("  - --engine lab is now --connection default");
 });
+
+test("the plain plan counts the content refs and lists the shadowed ones", () => {
+  const text = formatMigratePlain({
+    status: "ready",
+    assetContentRefs: {
+      changed: 2,
+      skipped: 0,
+      refs: 5,
+      shadowed: [{ bundleId: "primary", from: "knowledge/wikis/b", to: "wikis/b" }],
+    },
+  });
+
+  expect(text).toContain("asset content refs: 5 in 2 file(s) change, 0 skipped, 1 shadowed");
+  expect(text).toContain("  - primary: knowledge/wikis/b (now wikis/b)");
+});
