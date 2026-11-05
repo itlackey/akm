@@ -13,8 +13,8 @@ const SIX_HOURS = 6 * 60 * 60 * 1000;
  * written into the app by package.mjs). A stable build follows stable releases only; a build of a stage release (alpha,
  * beta, rc) follows prereleases and stable releases, so Desktop's channel is the akm release stage it embeds.
  *
- * macOS cannot apply an unsigned update, so there the app only reports that one exists. Signing and notarization would
- * make `canInstall` true on macOS; nothing else changes.
+ * macOS cannot apply an unsigned update, and akm does not sign its macOS packages, so there the app only reports that
+ * one exists.
  * @param {{
  *   autoUpdater: import("electron-updater").AppUpdater,
  *   version: string,

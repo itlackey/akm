@@ -44,8 +44,8 @@ electron-updater's GitHub provider confines an rc build to rc releases.
 ## Unsigned installers
 
 The installers (Linux AppImage, macOS dmg and zip for Apple silicon, Windows NSIS for x64) are
-not code-signed or notarized, because no signing certificate exists yet. No signing secret is
-part of the build. What users see:
+not code-signed or notarized, and akm does not plan to sign or notarize the macOS or Windows
+packages. No signing secret is part of the build. What users see:
 
 - **macOS** Gatekeeper blocks the first launch of a downloaded app. Control-click AKM Desktop,
   choose Open, and confirm; or remove the quarantine flag with `xattr -dr com.apple.quarantine`
@@ -53,10 +53,8 @@ part of the build. What users see:
 - **Windows** SmartScreen shows "Windows protected your PC". Choose More info, then Run anyway.
 - **Linux** has no signing prompt. Check the `.sha256` file beside the download.
 
-Signing would plug into `scripts/package.mjs`: a macOS identity and notarization settings
-(`mac.identity`, `mac.notarize`) and a Windows signing certificate (`win.signtoolOptions`), with
-their credentials supplied by the release job's environment. Once macOS is signed,
-`canInstall` in `electron/updater.mjs` becomes true there and macOS updates install in place.
+Because macOS applies an update only to a signed app, Desktop on macOS reports a new version
+and links to its release page; download and replace the app yourself.
 
 ## Engine versions
 

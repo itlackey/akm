@@ -103,8 +103,9 @@ AKM Desktop ships in the same release as the akm it embeds: one version, one tag
 
 - The release workflow builds Desktop on Linux, macOS and Windows from the `akm-cli` tarball it
   publishes and attaches the installers to the GitHub release: an AppImage, a macOS dmg and zip
-  (Apple silicon) and a Windows NSIS installer, with their update metadata. They are unsigned;
-  `desktop/docs/software.md` says what that means. CI builds and starts Desktop on all three
+  (Apple silicon) and a Windows NSIS installer, with their update metadata. They are unsigned,
+  and akm does not plan to sign the macOS or Windows packages; `desktop/docs/software.md` says
+  what that means. CI builds and starts Desktop on all three
   platforms, and the Release workflow takes a `dry_run` input that builds everything and publishes
   nothing.
 - Desktop updates itself from this repository's GitHub releases (no token, no other server): a stable

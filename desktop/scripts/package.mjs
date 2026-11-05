@@ -63,8 +63,7 @@ console.log(JSON.stringify({ output, stage }));
 if (dist) {
   const { build, Platform, archFromString } = await import("electron-builder");
   const arch = archFromString(process.arch);
-  // Installers are unsigned (see docs/software.md): no identity, no secrets. Signing would be `mac.identity`,
-  // `win.signtoolOptions` and notarization here, with their credentials from the release job.
+  // Installers are unsigned, and akm does not plan to sign them (see docs/software.md): no identity, no secrets.
   const platforms = {
     linux: { target: Platform.LINUX.createTarget("AppImage", arch) },
     // The zip is what electron-updater downloads on macOS; the dmg is what a person opens.
