@@ -2,7 +2,7 @@
  * #1454: the improve processes keep the frontmatter keys they do not own.
  *
  * An asset's ranking and scope ride on keys such as `team`, `project` and `scope_*`. Each test runs one process over
- * an asset carrying them, with a stubbed model, and reads the content the process queued: those keys must be there.
+ * an asset carrying them, with a stubbed model, accepts what it queued and reads the written asset: those keys must be there.
  * Consolidate's pair pass only mints delete proposals (no content), so promotion is the consolidate path under test.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -11,6 +11,7 @@ import path from "node:path";
 import { emitPromotionProposal } from "../../src/commands/improve/consolidate";
 import { akmDistill } from "../../src/commands/improve/distill";
 import { akmReflect } from "../../src/commands/improve/reflect";
+import { akmProposalAccept } from "../../src/commands/proposal/proposal";
 import { listProposals } from "../../src/commands/proposal/repository";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
@@ -32,6 +33,18 @@ const FOREIGN_DATA = { team: "platform", project: "atlas", scope_user: "alice", 
 
 function expectForeign(content: string): void {
   expect(parseFrontmatter(content).data).toMatchObject(FOREIGN_DATA);
+}
+
+/** Accept the one queued proposal and return the asset it wrote. */
+async function acceptedContent(stash: string): Promise<string> {
+  const config = {
+    semanticSearchMode: "off",
+    bundles: { stash: { path: stash, writable: true } },
+    defaultBundle: "stash",
+    defaultWriteTarget: "stash",
+  } as AkmConfig;
+  const { assetPath } = await akmProposalAccept({ stashDir: stash, config, id: listProposals(stash)[0]!.id });
+  return fs.readFileSync(assetPath, "utf8");
 }
 
 function distillConfig(stash: string, qualityGate: boolean): AkmConfig {
@@ -80,7 +93,7 @@ describe("improve keeps the frontmatter it does not own (#1454)", () => {
       config: quietQualityGateConfig(bin),
     });
     expect(result.ok).toBe(true);
-    const content = listProposals(stash)[0]!.payload.content;
+    const content = await acceptedContent(stash);
     expect(parseFrontmatter(content).data.description).toBe("Use ripgrep before grep");
     expectForeign(content);
   });
@@ -126,7 +139,7 @@ describe("improve keeps the frontmatter it does not own (#1454)", () => {
         pushSkipReason: () => {},
       },
     );
-    expectForeign(listProposals(stash)[0]!.payload.content);
+    expectForeign(await acceptedContent(stash));
   });
 
   test("distill lesson update", async () => {
@@ -173,7 +186,7 @@ describe("improve keeps the frontmatter it does not own (#1454)", () => {
       },
     });
     expect(result).toMatchObject({ outcome: "queued", updatesExisting: true });
-    const content = listProposals(stash)[0]!.payload.content;
+    const content = await acceptedContent(stash);
     expect(content).toContain(newFact);
     expectForeign(content);
   });
@@ -201,8 +214,9 @@ describe("improve keeps the frontmatter it does not own (#1454)", () => {
         JSON.stringify({ action: "UPDATE", content: "---\ndescription: Auth guide v2\n---\nMerged auth content.\n" }),
     });
     expect(result.outcome).toBe("queued");
-    const content = listProposals(stash)[0]!.payload.content;
+    const content = await acceptedContent(stash);
     expect(content).toContain("Merged auth content");
+    expect(parseFrontmatter(content).data.description).toBe("Auth guide v2");
     expect(parseFrontmatter(content).data.updated).not.toBe("2020-01-01");
     expectForeign(content);
   });
