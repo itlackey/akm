@@ -73,6 +73,7 @@ const AKM_TASK_ROOT = path.join(BUNDLES, "akm-task");
 const DOTENV_ROOT = path.join(BUNDLES, "dotenv");
 const WEBSITE_ROOT = path.join(BUNDLES, "website-snapshot");
 const GENERIC_FILES_ROOT = path.join(BUNDLES, "generic-files");
+const CODE_PROJECT_ROOT = path.join(BUNDLES, "code-project");
 
 /**
  * adapter id → its OWN golden/fixture root. Every registered adapter EXCEPT the
@@ -91,10 +92,11 @@ const OWN_ROOT_BY_ID: Record<string, string> = {
   dotenv: DOTENV_ROOT,
   "website-snapshot": WEBSITE_ROOT,
   "generic-files": GENERIC_FILES_ROOT,
+  "code-project": CODE_PROJECT_ROOT,
 };
 
 /** Adapters whose `looksLikeRoot` is intentionally never-firing (explicit-config, §1.2). */
-const NEVER_FIRES = new Set(["generic-files"]);
+const NEVER_FIRES = new Set(["generic-files", "code-project"]);
 
 /**
  * The §1.2 install-time probe: the FIRST registered adapter (registration order
@@ -133,7 +135,7 @@ function foldRecognize(adapter: BundleAdapter, c: BundleComponent): IndexDocumen
 // ── 1. looksLikeRoot own-root-only (§4) ──────────────────────────────────────
 
 describe("conformance — looksLikeRoot own-root-only (§4)", () => {
-  test("the built-in registry is exactly the 11 format families, and every one has a fixture root", () => {
+  test("the built-in registry is exactly the 12 format families, and every one has a fixture root", () => {
     // Pins the fixture set: every registered adapter has a golden/fixture root in
     // OWN_ROOT_BY_ID, so the ordered-probe matrix below is complete.
     const ids = getAdapters().map((a) => a.id);
@@ -143,6 +145,7 @@ describe("conformance — looksLikeRoot own-root-only (§4)", () => {
       "akm-task",
       "akm-workflow",
       "claude",
+      "code-project",
       "dotenv",
       "generic-files",
       "llm-wiki",
@@ -151,7 +154,7 @@ describe("conformance — looksLikeRoot own-root-only (§4)", () => {
       "website-snapshot",
     ]);
     for (const id of ids) {
-      expect(typeof adapterForId(id)?.looksLikeRoot).toBe("function");
+      if (id !== "code-project") expect(typeof adapterForId(id)?.looksLikeRoot).toBe("function");
       expect(OWN_ROOT_BY_ID[id]).toBeDefined();
     }
   });

@@ -1,0 +1,11 @@
+{
+  "scenario": "code-project adapter recognize(component, file) for the eligible files in tests/fixtures/bundles/code-project/. Explicit-config ONLY; refs are the bundle-relative path, extension included.",
+  "byRelPath": {
+    "README.md": { "type": "doc", "ref": "sample-project//README.md", "name": "README.md" },
+    "src/auth/oauth.ts": { "type": "source", "ref": "sample-project//src/auth/oauth.ts", "name": "src/auth/oauth.ts", "tags": ["typescript"] },
+    "src/tool.py": { "type": "source", "ref": "sample-project//src/tool.py", "name": "src/tool.py", "tags": ["python"] },
+    "tests/oauth.test.ts": { "type": "source", "ref": "sample-project//tests/oauth.test.ts", "name": "tests/oauth.test.ts", "tags": ["typescript"] },
+    "package.json": { "type": "config", "ref": "sample-project//package.json", "name": "package.json" },
+    ".github/AGENTS.md": { "type": "doc", "ref": "sample-project//.github/AGENTS.md", "name": ".github/AGENTS.md" }
+  }
+}

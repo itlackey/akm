@@ -1,0 +1,2 @@
+# Sample project
+Authentication service.

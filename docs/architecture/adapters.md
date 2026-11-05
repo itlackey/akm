@@ -47,6 +47,7 @@ llm-wiki           -- root schema.md + pages/
 akm                -- .stash marker, or 2+ native subdirs, or fallback
 okf                -- root index.md, or any .md with frontmatter type
 generic-files      -- never auto-selected; explicit config only
+code-project       -- never auto-selected; explicit config only
 ```
 
 The rationale for the ordering:

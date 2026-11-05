@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `code-project` adapter: `akm bundle add . --adapter code-project` indexes a coding repository (source, Markdown docs, a few named config files) into the global index, one document per file, read-only (#1411). Explicit `--adapter` only; a fixed allowlist skips binaries, lockfiles, `.env*`, keys and generated or vendored directories. With a remote embedding endpoint, indexed source code leaves the machine.
+
+### Changed
+
+- The walk mode is declared by the adapter (`walkMode`) instead of an `okf` id check. `node_modules` is now skipped by every walk, and the git-ignored `env/`/`secrets/` listing applies only to the default (akm/dotenv) walk, so it no longer applies to `okf` bundles.
+- One content bound (`MARKDOWN_CONTENT_MAX_CHARS`) now applies to every adapter's indexed document, not only the akm Markdown path; a longer body is cut and flagged `contentTruncated`.
+
+### Removed
+
+- The unused `BundleAdapter.index()` and `affectedItems()` hooks.
+
 ## [0.10.261106] - 2026-11-04
 
 ### Added

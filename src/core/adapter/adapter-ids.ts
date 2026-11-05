@@ -31,6 +31,7 @@ export const ADAPTER_ID_TABLE: readonly string[] = [
   "akm",
   "okf",
   "generic-files",
+  "code-project",
 ] as const;
 
 /** The dependency-free counterpart of `./registry.ts`'s `getAdapters().map(a => a.id)`. */

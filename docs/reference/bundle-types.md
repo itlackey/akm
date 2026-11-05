@@ -9,9 +9,9 @@ write allowlists — live at
 
 - [Supported Formats](supported-formats.md) — the format-by-format table:
   what AKM indexes, the auto-detection marker, current read/write support,
-  and typical use, for all 11 built-in formats (`akm` native, `okf`,
+  and typical use, for all 12 built-in formats (`akm` native, `okf`,
   `llm-wiki`, `claude`, `opencode`, `agent-skills`, `dotenv`,
-  `akm-workflow`, `akm-task`, `website-snapshot`, `generic-files`).
+  `akm-workflow`, `akm-task`, `website-snapshot`, `generic-files`, `code-project`).
 - [Architecture → Adapters](../architecture/adapters.md) — how AKM picks an
   adapter for a bundle, the `BundleAdapter` interface contract, the write allowlists that actually gate
   `akm remember`/`import`/`proposal accept`/etc., and per-adapter
