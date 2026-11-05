@@ -13,8 +13,8 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { akmAdapter } from "../../src/core/adapter/adapters/akm-adapter";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
+import { adapterForId } from "../../src/core/adapter/registry";
 import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { withConfigLock } from "../../src/core/config/config-io";
 import { getDataDir } from "../../src/core/paths";
@@ -66,17 +66,22 @@ function textFiles(root: string): string[] {
     .map((file) => file.absPath);
 }
 
-/** Every asset the `akm` adapter recognizes in each `akm` bundle, by bundle: the refs that exist now. */
+/**
+ * Every asset each bundle's adapter recognizes, by bundle: the refs that exist now. Every bundle counts, as it does
+ * for the resolver, so a spelling another adapter's bundle holds is live and never rewritten.
+ */
 function bundleDocuments(roots: readonly BundleRoot[]): Map<string, string[]> {
   const bundles = new Map<string, string[]>();
   for (const root of roots) {
-    if ((root.adapter ?? detectAdapterId(root.root)) !== "akm") continue;
-    const component = { id: root.bundleId, adapter: "akm", root: root.root, writable: root.writable };
+    const adapterId = root.adapter ?? detectAdapterId(root.root);
+    const adapter = adapterForId(adapterId);
+    if (!adapter) continue;
+    const component = { id: root.bundleId, adapter: adapterId, root: root.root, writable: root.writable };
     const documents = walkStashFlat(root.root).flatMap((file): string[] => {
-      const doc = akmAdapter.recognize(component, file);
+      const doc = adapter.recognize(component, file);
       return doc?.conceptId ? [doc.conceptId] : [];
     });
-    bundles.set(root.bundleId, documents);
+    bundles.set(root.bundleId, [...(bundles.get(root.bundleId) ?? []), ...documents]);
   }
   return bundles;
 }

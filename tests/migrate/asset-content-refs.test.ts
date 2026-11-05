@@ -169,4 +169,24 @@ describe("the step", () => {
     resetConfigCache();
     expect((await runMigration({ apply: false })).assetContentRefs).toMatchObject({ changed: 0, refs: 0 });
   });
+
+  test("a spelling another adapter's bundle holds is live there, so it stays as written", async () => {
+    const other = path.join(path.dirname(stash()), "other");
+    fs.mkdirSync(path.join(other, "skills/review"), { recursive: true });
+    fs.writeFileSync(path.join(other, "skills/review/SKILL.md"), "---\nname: review\ndescription: r\n---\nSkill.\n");
+    write("review.md", "---\ntitle: review\n---\nRoot.\n");
+    const notes = write("notes.md", "---\ntitle: notes\n---\nSee skills/review.\n");
+    writeSandboxConfig({
+      defaultBundle: "primary",
+      bundles: {
+        primary: { path: stash(), writable: true, components: { main: { root: ".", adapter: "akm" } } },
+        other: { path: other, writable: false, components: { main: { root: ".", adapter: "agent-skills" } } },
+      },
+    });
+
+    const plan = await runMigration({ apply: true });
+
+    expect(plan.assetContentRefs).toMatchObject({ changed: 0, refs: 0 });
+    expect(fs.readFileSync(notes, "utf8")).toBe("---\ntitle: notes\n---\nSee skills/review.\n");
+  });
 });
