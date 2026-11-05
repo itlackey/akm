@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- A ref is the file's path inside its bundle minus the type's own suffix, wherever the file
+  sits (#1432). A file outside its type's folder changes ref: `reports/x.md` was
+  `knowledge/reports/x` and is now `reports/x`; refs under a type folder do not change. No
+  command reads an asset's type from its ref's first folder any more, so improve, proposals,
+  `feedback --fix` and retire act on such a file in place (they used to skip it, refuse it or
+  write a second file under the type folder), and a secret outside `secrets/` injects its
+  value. The old spelling still resolves in refs, links and `improve` `excludeRefPrefixes`; a
+  ref or prefix in it warns once. The first `akm index` after the upgrade re-drains every directory and
+  moves the history stored under an old ref (usage, proposals, events, task history, improve
+  ledger, salience, outcomes) to the new one.
+
 - `akm curate` checks each selected hit and each support ref against the run's filters itself,
   on the indexed row with the live file's frontmatter laid over it, before it shows or packs
   them. A hit or link that fails is dropped, never shown unfiltered. `--pack` packs the items
