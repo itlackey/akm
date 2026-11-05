@@ -82,14 +82,6 @@ interface BundleAdapter {
   // REQUIRED — single-file recognition primitive.
   recognize(c: BundleComponent, file: FileContext): IndexDocument | null;
 
-  // OPTIONAL — full-component scan for non-per-file layouts (website
-  // snapshots, llm-wiki multi-file semantics). Absent -> the core walk
-  // (git-aware, symlink-safe, skip-dirs) drives recognize() per file.
-  index?(inst: BundleInstallation, c: BundleComponent): AsyncIterable<IndexDocument>;
-
-  // OPTIONAL — item-scoped incrementality. Default: identity (one file = one item).
-  affectedItems?(c: BundleComponent, changedPaths: string[]): string[];
-
   // REQUIRED — native validation (change-transaction pre-commit + lint --fix).
   // Adapters do not write and do not read the live filesystem: ctx serves
   // a run snapshot with pending changes overlaid, plus a read-only
@@ -111,12 +103,10 @@ interface BundleAdapter {
 }
 ```
 
-`recognize` and `validate` are required on every adapter; `index`,
-`affectedItems`, `renderExecutionSource`, `readCandidates`, `directoryList`, and
-`looksLikeRoot` are optional capability methods. An adapter overriding `index()` must keep
-`recognize()` coherent with it (conformance: `index()` == fold of
-`recognize()` over the core walk) or declare component-level
-incrementality.
+`recognize` and `validate` are required on every adapter; `renderExecutionSource`,
+`readCandidates`, `directoryList`, and `looksLikeRoot` are optional capability
+methods. The core walk drives `recognize()` once per file; incrementality comes
+from the indexer's per-directory fingerprints.
 
 `readCandidates` is intentionally distinct from `extensions`: extensions are
 non-exhaustive walk hints. Read candidates preserve canonical directory

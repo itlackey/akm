@@ -9,8 +9,6 @@
  *
  *   id, version, extensions .......... REQUIRED (readonly fields)
  *   recognize ......................... REQUIRED
- *   index .............................. optional
- *   affectedItems ....................... optional
  *   validate .......................... REQUIRED
  *   readCandidates / directoryList / looksLikeRoot ... optional
  *
@@ -48,7 +46,7 @@ import type { AdapterRenderedExecutionSource } from "../../execution/source";
 // WI's test does).
 import type { FileContext } from "../../indexer/walk/file-context";
 import type { FileChange } from "../file-change";
-import type { BundleComponent, BundleInstallation, Diagnostic, IndexDocument, ValidateContext } from "./types";
+import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "./types";
 
 export interface AdapterReadCandidate {
   path: string;
@@ -66,21 +64,6 @@ export interface BundleAdapter {
   // REQUIRED — the single-file recognition primitive; replaces the matcher
   // stack (matchers.ts:151-305; file-context.ts:242-265).
   recognize(c: BundleComponent, file: FileContext): IndexDocument | null;
-
-  // OPTIONAL — full-component scan for non-per-file layouts (website
-  // snapshots, llm-wiki multi-file semantics). When absent, the CORE scans:
-  //   the live indexer's per-dir walk (git-aware, symlink-safe, skip-dirs;
-  //   `walkStashFlat`) × adapter.recognize per file, drained by
-  //   `drainDirDocuments`.
-  // The core walk is ONE implementation carrying the security policy;
-  // adapters never reimplement it. An adapter overriding index() MUST keep
-  // recognize() coherent (conformance: index() == fold of recognize() over
-  // the walk) or declare component-level incrementality (§4).
-  index?(inst: BundleInstallation, c: BundleComponent): AsyncIterable<IndexDocument>;
-
-  // OPTIONAL — item-scoped incrementality (§4). Default: identity (one file
-  // = one item).
-  affectedItems?(c: BundleComponent, changedPaths: string[]): string[];
 
   // REQUIRED — native validation (change-transaction pre-commit + lint
   // --fix); adapter MUST NOT write and MUST NOT read the live filesystem:

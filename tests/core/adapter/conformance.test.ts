@@ -27,18 +27,11 @@
  * fixtures were needed. Neither the frozen `all-types` stash nor any golden is
  * touched.
  *
- * ── 2. `index() == fold(recognize)` (§12.3) ──
+ * ── 2. fold(recognize) over the walk ──
  *
- * The optional `index()` capability, when present, MUST equal folding
- * `recognize()` over the core walk (adapter-spec §2's `index?` JSDoc /
- * normative §14.2). NEITHER `okf` NOR `akm` overrides `index()`, so the
- * conformance is VACUOUSLY satisfied — the core walk × `recognize` IS the index
- * for these adapters. We first assert every registered adapter leaves `index`
- * undefined (documenting the vacuous-true §12.3 shape), then exercise the
- * equality CONCRETELY over each golden root by folding `recognize` over the
- * `walkStashFlat(root)` files directly (the walk×recognize mapping the live
- * indexer drains) — the per-adapter recognize-over-walk coverage that the retired
- * `scanComponent` module used to carry (owner ruling 2026-07-21).
+ * The core walk × `recognize` IS the index. We exercise it concretely over each
+ * golden root by folding `recognize` over the `walkStashFlat(root)` files
+ * directly (the walk×recognize mapping the live indexer drains).
  */
 
 import { describe, expect, spyOn, test } from "bun:test";
@@ -195,20 +188,9 @@ describe("conformance — looksLikeRoot own-root-only (§4)", () => {
   });
 });
 
-// ── 2. index() == fold(recognize) (§12.3) ────────────────────────────────────
+// ── 2. fold(recognize) over the walk ─────────────────────────────────────────
 
-describe("conformance — index() == fold(recognize) (§12.3)", () => {
-  test("no built-in adapter overrides index() — the conformance is vacuously satisfied", () => {
-    // §12.3: an adapter overriding index() MUST keep it == fold(recognize).
-    // None of the built-ins override it, so the core walk × recognize IS the
-    // index; the equality holds vacuously.
-    expect(okfAdapter.index).toBeUndefined();
-    expect(akmAdapter.index).toBeUndefined();
-    expect(llmWikiAdapter.index).toBeUndefined();
-    // Documented over the whole registry, not just the named handles.
-    for (const adapter of getAdapters()) expect(adapter.index).toBeUndefined();
-  });
-
+describe("conformance — fold(recognize) over the walk", () => {
   // fold(recognize) over the golden walk is the live indexer's scan engine
   // (drainDirDocuments × adapter.recognize). These assertions pin each adapter's
   // recognize-over-walk behavior directly (owner ruling 2026-07-21 — the

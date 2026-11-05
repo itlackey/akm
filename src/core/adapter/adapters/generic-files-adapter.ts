@@ -27,11 +27,10 @@ import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
-import type { FileChange } from "../../file-change";
 import { SCRIPT_EXTENSIONS } from "../../recognition-util";
 import type { BundleAdapter } from "../bundle-adapter";
-import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { hashContent, nonEmptyString, RESERVED_FILES, readTags, runBaseValidateChecks } from "./shared";
+import type { BundleComponent, IndexDocument } from "../types";
+import { hashContent, nonEmptyString, RESERVED_FILES, readTags, validateChangesWithBaseChecks } from "./shared";
 
 /** A generic-files bundle is single-component; its one component is `main`. */
 const COMPONENT_ID = "main";
@@ -84,18 +83,6 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   return doc;
 }
 
-async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
-  const diagnostics: Diagnostic[] = [];
-  for (const change of changes) {
-    if (change.op === "delete") continue;
-    const raw = change.after ?? (await ctx.readFile(change.path));
-    if (typeof raw !== "string") continue;
-    // No type-specific validators — base checks only.
-    diagnostics.push(...(await runBaseValidateChecks(toPosix(change.path), parseFrontmatter(raw), c.root, ctx)));
-  }
-  return diagnostics;
-}
-
 export const genericFilesAdapter: BundleAdapter = {
   id: "generic-files",
   version: "0.9.0",
@@ -104,7 +91,7 @@ export const genericFilesAdapter: BundleAdapter = {
   extensions: [".md", ".txt"],
 
   recognize,
-  validate,
+  validate: validateChangesWithBaseChecks,
 
   readCandidates(c: BundleComponent, conceptId: string) {
     const posix = toPosix(conceptId);
