@@ -395,7 +395,10 @@ export async function writeAssetToSource(
         "These make the stash non-portable and leak the local username — prefer $HOME or ~ relative references.",
     );
   }
-  return { path: filePath, ref: displayRef({ type: ref.type, name: ref.name, bundleId: ref.origin }) };
+  return {
+    path: filePath,
+    ref: displayRef({ conceptId: conceptIdFromTypeName(ref.type, ref.name), bundleId: ref.origin }),
+  };
 }
 
 /** Delete the asset at `ref` from `source`. Same gates as {@link writeAssetToSource}, no commit. */
@@ -418,7 +421,10 @@ export async function deleteAssetFromSource(
   fs.unlinkSync(filePath);
   recordWriteTargetPath(source, filePath);
   recordWrittenPath(filePath);
-  return { path: filePath, ref: displayRef({ type: ref.type, name: ref.name, bundleId: ref.origin }) };
+  return {
+    path: filePath,
+    ref: displayRef({ conceptId: conceptIdFromTypeName(ref.type, ref.name), bundleId: ref.origin }),
+  };
 }
 
 function ensureWritable(source: WriteTargetSource, config: SourceConfigEntry): void {

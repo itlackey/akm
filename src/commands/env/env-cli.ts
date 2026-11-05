@@ -187,11 +187,11 @@ const envExportCommand = defineJsonCommand({
         "MISSING_REQUIRED_ARGUMENT",
       );
     }
-    const { name, absPath, source } = resolveEnvPath(args.ref);
+    const { conceptId, absPath, source } = resolveEnvPath(args.ref);
     const { buildShellExportScript } = await import("./env.js");
     const resolvedOut = path.resolve(outPath);
     writeFileAtomic(resolvedOut, buildShellExportScript(absPath), 0o600);
-    output("env-export", { ref: makeEnvRef(name, source), out: resolvedOut });
+    output("env-export", { ref: makeEnvRef(conceptId, source), out: resolvedOut });
   },
 });
 

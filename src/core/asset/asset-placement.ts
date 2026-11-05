@@ -256,24 +256,44 @@ export function deriveCanonicalAssetName(assetType: string, typeRoot: string, fi
   return PLACEMENT_SPECS[assetType]?.toCanonicalName(typeRoot, filePath);
 }
 
+/**
+ * The asset's NAME: its canonical name relative to the type folder when the
+ * file sits under it, else its path from the bundle root. This is the search
+ * text (`entry.name`), not the ref; {@link refForFile} is the ref.
+ */
 export function deriveCanonicalAssetNameFromStashRoot(
   assetType: string,
   stashRoot: string,
   filePath: string,
 ): string | undefined {
   const relPath = toPosix(path.relative(stashRoot, filePath));
-  const segments = relPath.split("/").filter(Boolean);
-  const firstSegment = segments[0];
-  // When the first segment matches the canonical type dir (e.g. "agents"),
-  // use it as the type root so canonical names are relative to it.
-  // Otherwise fall back to stashRoot — this preserves the full relative path
-  // as the canonical name, which is correct for installed stashes that live
-  // under custom directories (e.g. "tools/agents/svelte-file-editor").
+  const firstSegment = relPath.split("/").filter(Boolean)[0];
   const typeRoot =
     firstSegment !== undefined && firstSegment === stashDirFor(assetType)
       ? path.join(stashRoot, firstSegment)
       : stashRoot;
   return deriveCanonicalAssetName(assetType, typeRoot, filePath);
+}
+
+/**
+ * The ref of a file: its path inside the bundle minus the type's own suffix
+ * (`.md`, `/SKILL.md`, `.env`; scripts keep their extension). The placement
+ * spec applied with the bundle root as the type root, so it holds for a file
+ * under a type folder and anywhere else alike. `skills/SKILL.md` and
+ * `skills/x.md` sit directly in the type folder and name no skill.
+ */
+export function refForFile(assetType: string, bundleRoot: string, filePath: string): string | undefined {
+  const ref = deriveCanonicalAssetName(assetType, bundleRoot, filePath);
+  return assetType === "skill" && ref === stashDirFor("skill") ? undefined : ref;
+}
+
+/**
+ * Inverse of {@link refForFile}: every file that could own `ref`, whichever
+ * type placed it. The type is not part of a ref, so every placement spec
+ * contributes its spelling; the indexer's recognition decides which one owns.
+ */
+export function filesForRef(bundleRoot: string, ref: string): string[] {
+  return [...new Set(placementTypes().flatMap((type) => assetPathCandidatesForName(type, bundleRoot, ref)))];
 }
 
 export function assetPathForName(assetType: string, typeRoot: string, name: string): string {

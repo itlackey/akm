@@ -21,7 +21,6 @@ import { describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmAdapter } from "../../../src/core/adapter/adapters/akm-adapter";
-import { dotenvAdapter } from "../../../src/core/adapter/adapters/dotenv-adapter";
 import {
   AdapterConceptCollisionError,
   resolveAdapterConceptOwner,
@@ -73,11 +72,11 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
           stat: () => fs.statSync(target),
         },
       );
-      expect(document?.conceptId).toBe("commands/vendor/tools/deploy");
+      expect(document?.conceptId).toBe("vendor/tools/deploy");
 
       const readdirSpy = spyOn(fs, "readdirSync");
       try {
-        const owner = resolveAdapterConceptOwner(root, "akm", "commands/vendor/tools/deploy");
+        const owner = resolveAdapterConceptOwner(root, "akm", "vendor/tools/deploy");
         expect(owner?.path).toBe(target);
       } finally {
         readdirSpy.mockRestore();
@@ -113,23 +112,21 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       const loose = path.join(root, "misc", "greet.md");
       fs.mkdirSync(path.dirname(loose), { recursive: true });
       fs.writeFileSync(loose, "Use $ARGUMENTS exactly.\n");
-      const owner = resolveAdapterConceptOwner(root, "akm", "commands/misc/greet");
+      const owner = resolveAdapterConceptOwner(root, "akm", "misc/greet");
       expect(owner?.path).toBe(loose);
     } finally {
       sandbox.cleanup();
     }
   });
 
-  test("canonical and loose placements for the same conceptId collide (default: write)", () => {
+  test("two files that invert to the same ref collide (default: write)", () => {
     const sandbox = sandboxStashDir();
     try {
       const root = path.join(sandbox.dir, "akm");
-      const loose = path.join(root, "same.md");
-      const canonical = path.join(root, "commands", "same.md");
-      fs.mkdirSync(path.dirname(canonical), { recursive: true });
-      fs.writeFileSync(loose, "Use $ARGUMENTS exactly.\n");
-      fs.writeFileSync(canonical, "# Same command\n");
-      expect(() => resolveAdapterConceptOwner(root, "akm", "commands/same")).toThrow(AdapterConceptCollisionError);
+      fs.mkdirSync(path.join(root, "tasks"), { recursive: true });
+      fs.writeFileSync(path.join(root, "tasks", "same.md"), "# Same note\n");
+      fs.writeFileSync(path.join(root, "tasks", "same.yml"), "name: same\n");
+      expect(() => resolveAdapterConceptOwner(root, "akm", "tasks/same")).toThrow(AdapterConceptCollisionError);
     } finally {
       sandbox.cleanup();
     }
@@ -139,14 +136,13 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
     const sandbox = sandboxStashDir();
     try {
       const root = path.join(sandbox.dir, "akm");
-      const loose = path.join(root, "same.md");
-      const canonical = path.join(root, "commands", "same.md");
-      fs.mkdirSync(path.dirname(canonical), { recursive: true });
-      fs.writeFileSync(loose, "Use $ARGUMENTS exactly.\n");
-      fs.writeFileSync(canonical, "# Same command\n");
+      fs.mkdirSync(path.join(root, "tasks"), { recursive: true });
+      const first = path.join(root, "tasks", "same.md");
+      fs.writeFileSync(first, "# Same note\n");
+      fs.writeFileSync(path.join(root, "tasks", "same.yml"), "name: same\n");
 
-      const owner = resolveAdapterConceptOwner(root, "akm", "commands/same", { mode: "read" });
-      expect(owner?.path).toBe(canonical);
+      const owner = resolveAdapterConceptOwner(root, "akm", "tasks/same", { mode: "read" });
+      expect(owner?.path).toBe(first);
     } finally {
       sandbox.cleanup();
     }
@@ -259,9 +255,7 @@ describe("resolveAdapterConceptOwner — closed-form candidates (#857)", () => {
       fs.mkdirSync(root, { recursive: true });
       const loose = path.join(root, "prod.env");
       fs.writeFileSync(loose, "TOKEN=hidden\n");
-      expect(
-        dotenvAdapter.readCandidates?.({ id: "dotenv", adapter: "dotenv", root, writable: false }, "prod"),
-      ).toEqual([]);
+      expect(resolveAdapterConceptOwner(root, "dotenv", "prod")).toBeUndefined();
     } finally {
       sandbox.cleanup();
     }

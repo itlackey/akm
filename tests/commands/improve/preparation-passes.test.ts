@@ -26,6 +26,7 @@ import {
   partitionBySignalDelta,
 } from "../../../src/commands/improve/preparation";
 import { archiveProposal, createProposal } from "../../../src/commands/proposal/repository";
+import { typeForStashDir } from "../../../src/core/asset/asset-placement";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { appendEvent } from "../../../src/core/events";
 import type { ImproveEligibleRef } from "../../../src/core/improve-types";
@@ -48,7 +49,7 @@ function freshStash(): string {
 }
 
 function ref(r: string, extra: Partial<ImproveEligibleRef> = {}): ImproveEligibleRef {
-  return { ref: r, reason: "scope-type", ...extra };
+  return { ref: r, type: typeForStashDir(r.split("/")[0] ?? "") ?? "", reason: "scope-type", ...extra };
 }
 
 /**

@@ -84,7 +84,7 @@ describe("createProposal validation", () => {
       caught = err as { code?: string; message?: string };
     }
     expect(caught?.code).toBe("INVALID_PROPOSAL");
-    // Post-Chunk-5/8 ref-grammar flip: `parseRefInput` is new-grammar only, so
+    // Post-Chunk-5/8 ref-grammar flip: `parsePlacementRef` is new-grammar only, so
     // a legacy `type:name` conceptId (`bogusType:foo` — no `<stash-subdir>/`
     // segment) fails at the parse boundary with a not-found ("has no known
     // asset-type prefix"), which createProposal wraps as INVALID_PROPOSAL. Same

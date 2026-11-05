@@ -28,10 +28,7 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
-import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { appendEvent, type EventsContext } from "../../core/events";
@@ -39,6 +36,7 @@ import { escapeJsonStringControls, stripCodeFences, stripThinkBlocks } from "../
 import { info, warn } from "../../core/warn";
 import { type Notice, noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
+import { resolveWriteAddress } from "../../indexer/lookup/adapter-concept-owner";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
@@ -586,10 +584,8 @@ function promotionNeighbours(
 ): ReturnType<typeof nearestKnowledgeNotes> {
   if (!isPromotionProposal(proposal) || proposal.promotionSource === undefined) return [];
   try {
-    const parsed = parseRefInput(proposal.promotionSource);
-    const typeDir = stashDirFor(parsed.type);
-    if (!typeDir) return [];
-    const memoryPath = assetPathForName(parsed.type, path.join(stashDir, typeDir), parsed.name);
+    const memoryPath = resolveWriteAddress(stashDir, proposal.promotionSource).path;
+    if (!memoryPath) return [];
     const existing = nearestKnowledgeNotes(memoryPath);
     const source = fs.readFileSync(memoryPath, "utf8");
     const shingles = wordShingles(source);
@@ -618,11 +614,8 @@ function promotionNeighbours(
 /** The live asset a proposal would overwrite, if any. */
 function readLiveAssetContent(stashDir: string, ref: string): string | undefined {
   try {
-    const parsed = parseRefInput(ref);
-    const typeDir = stashDirFor(parsed.type);
-    if (!typeDir) return undefined;
-    const assetPath = assetPathForName(parsed.type, path.join(stashDir, typeDir), parsed.name);
-    return fs.existsSync(assetPath) ? fs.readFileSync(assetPath, "utf8") : undefined;
+    const assetPath = resolveWriteAddress(stashDir, ref).path;
+    return assetPath && fs.existsSync(assetPath) ? fs.readFileSync(assetPath, "utf8") : undefined;
   } catch {
     return undefined;
   }

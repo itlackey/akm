@@ -7,7 +7,7 @@ import { defineCommand } from "citty";
 import { findCittyTopLevelCommandIndex, getStringArg, hasSubcommand, parsePositiveIntFlag } from "../../cli/parse-args";
 import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
-import { type AssetRef, isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
+import { type AssetRef, isFullRefInput, parsePlacementRef } from "../../core/asset/resolve-ref";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { collectCredentialValues } from "../../core/config/credentials";
@@ -250,7 +250,7 @@ export const improveCommand = defineCommand({
       const run = selectionFromArgs(args);
       const effectiveConfig = loadConfig();
       const scopeArg = getStringArg(args, "scope");
-      const scopeRef = scopeArg && isFullRefInput(scopeArg) ? parseRefInput(scopeArg) : undefined;
+      const scopeRef = scopeArg && isFullRefInput(scopeArg) ? parsePlacementRef(scopeArg) : undefined;
       const writeTarget = dryRun
         ? undefined
         : scopeRef

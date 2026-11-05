@@ -144,6 +144,27 @@ describe("akm feedback", () => {
     expect(Array.isArray(strength) ? strength : []).toContain("stash//memories/deploy-note");
   });
 
+  test("--applied-to looks a bundle-root ref up by its path ref, like any other (#1432)", async () => {
+    writeFile(
+      path.join(stashDir, "memories", "deploy-note.md"),
+      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+    );
+    writeFile(path.join(stashDir, "deploy-notes.md"), "---\ndescription: deploy notes\n---\nCheck the VPN first.\n");
+    await buildIndex();
+
+    const result = await runCli([
+      "feedback",
+      "memories/deploy-note",
+      "--positive",
+      "--applied-to",
+      "deploy-notes",
+      "--format=json",
+    ]);
+    expect(result.status).toBe(0);
+    // Found in the index and typed by its entry; it used to fail to parse as a ref.
+    expect(result.stderr).toContain('--applied-to deploy-notes was ignored: it resolves to a "knowledge" asset');
+  });
+
   test("--applied-to preserves a qualified lesson bundle and never falls back", async () => {
     const teamDir = path.join(storage.root, "team-stash");
     const primaryLesson = path.join(stashDir, "lessons", "shared.md");

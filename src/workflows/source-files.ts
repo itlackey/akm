@@ -16,6 +16,8 @@ import { compareCodePoints, toPosix } from "../core/common";
 import { UsageError, type UsageErrorCode } from "../core/errors";
 import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../core/recognition-util";
 import { warnOnce } from "../core/warn";
+import { buildFileContext } from "../indexer/walk/file-context";
+import { declaredTypeForPath } from "../indexer/walk/matchers";
 
 export interface WorkflowSourceFile {
   /** Path with its authored filename/extension spelling. */
@@ -124,13 +126,15 @@ export class WorkflowSourceLinkResolutionError extends WorkflowSourceRejectionEr
   }
 }
 
-/** Convert an adapter-owned concept id into its extensionless workflow name. */
-export function workflowNameForConceptId(adapterId: string, conceptId: string): string | undefined {
-  if (adapterId === "akm-workflow") return conceptId;
-  if (adapterId !== "akm") return undefined;
-  const prefix = "workflows/";
-  if (!conceptId.startsWith(prefix) || conceptId.length === prefix.length) return undefined;
-  return conceptId.slice(prefix.length);
+/**
+ * Does `absPath` belong to the workflow domain of `adapterId`? An `akm-workflow`
+ * bundle is all workflows; in an `akm` bundle a file is a workflow when its
+ * location declares it (the same directory rule the indexer applies), wherever
+ * in the bundle it sits.
+ */
+function ownsWorkflowFile(sourceRoot: string, adapterId: string, absPath: string): boolean {
+  if (adapterId === "akm-workflow") return true;
+  return adapterId === "akm" && declaredTypeForPath(buildFileContext(sourceRoot, absPath)) === "workflow";
 }
 
 /** Derive the once-canonicalizable workflow name from an adapter-owned authored path. */
@@ -142,11 +146,9 @@ export function workflowNameForSourcePath(
   if (adapterId !== "akm" && adapterId !== "akm-workflow") return undefined;
   const relativePath = toPosix(path.relative(path.resolve(sourceRoot), path.resolve(sourcePath)));
   if (!isSafeRelativeName(relativePath)) return undefined;
-  const ownedPath = adapterId === "akm" ? relativePath.replace(/^workflows\//, "") : relativePath;
-  if (adapterId === "akm" && ownedPath === relativePath) return undefined;
-  const extension = path.posix.extname(ownedPath);
+  const extension = path.posix.extname(relativePath);
   if (!(WORKFLOW_EXTENSIONS as readonly string[]).includes(extension.toLowerCase())) return undefined;
-  return ownedPath;
+  return ownsWorkflowFile(sourceRoot, adapterId, path.resolve(sourcePath)) ? relativePath : undefined;
 }
 
 /**
@@ -169,8 +171,7 @@ export function listWorkflowSourceFiles(sourceRoot: string, adapterId: string, n
   } catch {
     return [];
   }
-  const ownershipRoot = adapterId === "akm" ? path.join(authoredRoot, "workflows") : authoredRoot;
-  const parent = path.join(ownershipRoot, path.dirname(canonicalName));
+  const parent = path.join(authoredRoot, path.dirname(canonicalName));
   if (!isWithinResolved(parent, authoredRoot)) {
     throw new UsageError("Workflow ref resolves outside the bundle root.", "PATH_ESCAPE_VIOLATION");
   }
@@ -192,6 +193,7 @@ export function listWorkflowSourceFiles(sourceRoot: string, adapterId: string, n
     if (entry.name.slice(0, -extension.length) !== basename) continue;
 
     const candidatePath = path.join(parent, entry.name);
+    if (!ownsWorkflowFile(authoredRoot, adapterId, candidatePath)) continue;
     candidates.push({
       path: candidatePath,
       relativePath: toPosix(path.relative(authoredRoot, candidatePath)),
@@ -266,7 +268,7 @@ export function resolveWorkflowSourceDomains(
     resolutions.push({
       canonicalName,
       sourcePaths,
-      source: pickWorkflowSource(adapterId, canonicalName, sources),
+      source: pickWorkflowSource(canonicalName, sources),
     });
   }
   return resolutions;
@@ -292,17 +294,15 @@ function inspectWorkflowSourceDomain(
 }
 
 function pickWorkflowSource(
-  adapterId: string,
   canonicalName: string,
   sources: readonly WorkflowSourceFile[],
 ): WorkflowSourceFile | undefined {
   if (sources.length <= 1) return sources[0];
   const winner = sources[0];
   const shadowed = sources.filter((source) => source !== winner);
-  const displayName = adapterId === "akm" ? `workflows/${canonicalName}` : canonicalName;
   warnOnce(
-    `workflow-source-collision:${displayName}`,
-    `Workflow "${displayName}" has several sources (${shadowed
+    `workflow-source-collision:${canonicalName}`,
+    `Workflow "${canonicalName}" has several sources (${shadowed
       .map((source) => source.relativePath)
       .join(", ")} shadowed by ${winner?.relativePath}); using ${winner?.relativePath}. Remove the shadowed ` +
       "sibling to silence this warning.",
@@ -369,7 +369,7 @@ export function resolveUniqueWorkflowSource(
 ): WorkflowSourceFile | undefined {
   const sources = listWorkflowSourceFiles(sourceRoot, adapterId, name);
   const canonicalName = sources[0]?.canonicalName ?? canonicalizeWorkflowName(normalizeName(name));
-  return pickWorkflowSource(adapterId, canonicalName, sources);
+  return pickWorkflowSource(canonicalName, sources);
 }
 
 /** Compare an indexed path with the single authoritative on-disk source. */

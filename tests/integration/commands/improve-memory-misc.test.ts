@@ -341,7 +341,6 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
       stashDir,
       llmRunner: testLlmRunner({ endpoint: "http://localhost/v1/chat", model: "test" }),
       findFilePath: async () => memFile,
-      isLessonCandidateFn: () => false,
       chatFn: async () => JSON.stringify({ description: "Authentication guide for the service." }),
     });
 
@@ -379,7 +378,6 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
         stashDir,
         llmRunner: testLlmRunner({ endpoint: "http://localhost/v1/chat", model: "test" }),
         findFilePath: async () => memFile,
-        isLessonCandidateFn: () => false,
         chatFn: async () => {
           chatCalls += 1;
           return JSON.stringify({ description: "Cadence guide." });
@@ -424,7 +422,6 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
             apiKey: "$AKM_SCHEMA_BATCH_KEY",
           },
           findFilePath: async (ref) => files.get(ref) ?? null,
-          isLessonCandidateFn: () => false,
           chatFn: async (connection) => {
             observed.push(connection.apiKey);
             if (observed.length === 1) mutateScopedEnv("AKM_SCHEMA_BATCH_KEY", rotated);
@@ -455,7 +452,6 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
         budgetMs: 30_000,
         llmRunner: testLlmRunner({ endpoint: "http://localhost/v1/chat", model: "test" }),
         findFilePath: async () => memFile,
-        isLessonCandidateFn: () => false,
         chatFn: async () => JSON.stringify({ description: "Auth content description." }),
       }),
     ).rejects.toThrow(/requires stashDir/);

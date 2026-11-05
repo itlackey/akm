@@ -27,9 +27,10 @@ import fs from "node:fs";
 import path from "node:path";
 import consolidateSystemPrompt from "../../assets/prompts/consolidate-system.md" with { type: "text" };
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { refForFile } from "../../core/asset/asset-placement";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { conceptIdFromTypeName, displayRef, parseRefInput } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, displayRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
@@ -66,6 +67,8 @@ import { callStage, mintProposal, stageRunner } from "./stage";
 
 export interface MemoryEntry {
   name: string;
+  /** Its ref: the index's conceptId, the path inside the bundle. */
+  ref: string;
   filePath: string;
   description: string;
   tags: string[];
@@ -352,8 +355,8 @@ export function loadExistingKnowledgeBodyHashes(targetRoot: string): Set<string>
 /** A provenance ref in its canonical display spelling. */
 function canonicalXref(ref: string): string {
   try {
-    const p = parseRefInput(ref);
-    return displayRef({ type: p.type, name: p.name, bundleId: p.origin });
+    const p = parsePlacementRef(ref);
+    return displayRef({ conceptId: conceptIdFromTypeName(p.type, p.name), bundleId: p.origin });
   } catch {
     return ref;
   }
@@ -559,7 +562,7 @@ export function inspectConsolidationPool(
   if (ledger.size > 0) {
     const nowIso = new Date().toISOString();
     memories = memories.filter((memory) => {
-      const row = ledger.get(ledgerKey("consolidate", conceptIdFromTypeName("memory", memory.name)));
+      const row = ledger.get(ledgerKey("consolidate", memory.ref));
       if (!row) return true;
       if (isContentDrivenRow(row)) {
         let bodyHash: string | undefined;
@@ -594,9 +597,7 @@ export function inspectConsolidationPool(
   // Only what retrieval returned or new material improve never processed (#986).
   const retrievalScope = loadRetrievalScope({ proposalsCtx: opts.proposalsCtx, readOnly }, stashDir);
   const beforeScope = memories.length;
-  memories = memories.filter((memory) =>
-    isInRetrievalScope(retrievalScope, conceptIdFromTypeName("memory", memory.name), memory.filePath),
-  );
+  memories = memories.filter((memory) => isInRetrievalScope(retrievalScope, memory.ref, memory.filePath));
   const outsideRetrievalScope = beforeScope - memories.length;
   const dedupPoolSize = memories.length;
   if (opts.limit === undefined && memories.length > 150) {
@@ -657,7 +658,7 @@ async function judgeConsolidationChunks(args: {
 }): Promise<ConsolidatePromoteOp[][]> {
   const { chunks, opts, warnings, acc } = args;
   const llmRunner = opts.llmRunner ?? undefined;
-  const memRef = (m: MemoryEntry) => conceptIdFromTypeName("memory", m.name);
+  const memRef = (m: MemoryEntry) => m.ref;
   const failChunk = (message: string, chunk: MemoryEntry[]) => {
     warn(message);
     warnings.push(message);
@@ -897,7 +898,7 @@ async function consolidate(
     sourceRun: opts.sourceRun ?? `consolidate-${startMs}`,
     proposalsCtx: opts.proposalsCtx,
     target: opts.writeTarget as ResolvedWriteTarget,
-    memoryByRef: new Map(memories.map((memory) => [conceptIdFromTypeName("memory", memory.name), memory])),
+    memoryByRef: new Map(memories.map((memory) => [memory.ref, memory])),
     promoted: [],
     promotedSourceRefs: new Set<string>(),
     existingKnowledgeBodyHashes,
@@ -979,7 +980,7 @@ function bodyHashOf(memory: MemoryEntry | undefined): { contentHash?: string } {
 /** The conceptId a ref maps to, or undefined for an invalid ref. */
 function conceptIdForRef(ref: string): string | undefined {
   try {
-    const p = parseRefInput(ref);
+    const p = parsePlacementRef(ref);
     return conceptIdFromTypeName(p.type, p.name);
   } catch {
     return undefined;
@@ -989,7 +990,7 @@ function conceptIdForRef(ref: string): string | undefined {
 /** A slug with dates, counters and word order folded away, for spotting variants. */
 function normalizeSlugForDedup(ref: string): string {
   const monthRe = /(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i;
-  return parseRefInput(ref)
+  return parsePlacementRef(ref)
     .name.toLowerCase()
     .split("-")
     .filter((tok) => tok.length > 0 && !/^\d+$/.test(tok) && !monthRe.test(tok))
@@ -1033,7 +1034,7 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
     .replace(/^-|-$/g, "")
     .toLowerCase();
   const knowledgeRef = conceptIdFromTypeName("knowledge", slug);
-  const parsedKnowledgeRef = parseRefInput(knowledgeRef);
+  const parsedKnowledgeRef = parsePlacementRef(knowledgeRef);
   if (knowledgeRef !== op.knowledgeRef)
     warnings.push(`Normalized generated ref "${op.knowledgeRef}" → "${knowledgeRef}"`);
   const pending = listProposals(stashDir, { status: "pending" });
@@ -1177,6 +1178,7 @@ function loadMemoriesForSource(
       .filter((e) => isConsolidationEligibleMemoryName(e.entry.name) && fs.existsSync(e.filePath))
       .map((e) => ({
         name: e.entry.name,
+        ref: e.conceptId,
         filePath: e.filePath,
         description: e.entry.description ?? "",
         tags: e.entry.tags ?? [],
@@ -1202,7 +1204,8 @@ function loadMemoriesForSource(
         if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
         const name = path.relative(memoriesDir, filePath).replace(/\.md$/, "").split(path.sep).join("/");
         if (isConsolidationEligibleMemoryName(name)) {
-          memories.push({ name, filePath, description: "", tags: [], stashDir: source.sourceRoot });
+          const ref = refForFile("memory", source.sourceRoot, filePath) ?? name;
+          memories.push({ name, ref, filePath, description: "", tags: [], stashDir: source.sourceRoot });
         }
       }
     }

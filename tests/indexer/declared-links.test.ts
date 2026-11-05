@@ -75,11 +75,9 @@ describe("declaredLinks", () => {
   test("a wiki page's raw/ and pages/ tokens resolve against its own wiki root", () => {
     const links = declaredLinks(
       { name: "wikis/notes/pages/release-train", type: "knowledge", sources: ["raw/train-source.md"] },
-      { bundleId: "stash", conceptId: "knowledge/wikis/notes/pages/release-train" },
+      { bundleId: "stash", conceptId: "wikis/notes/pages/release-train" },
     );
-    expect(links).toEqual([
-      { kind: "cites", raw: "raw/train-source.md", conceptId: "knowledge/wikis/notes/raw/train-source" },
-    ]);
+    expect(links).toEqual([{ kind: "cites", raw: "raw/train-source.md", conceptId: "wikis/notes/raw/train-source" }]);
   });
 
   test("an llm-wiki or OKF bundle's resolved links and raw citations stay in the owner's bundle", () => {

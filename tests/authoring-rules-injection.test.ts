@@ -48,23 +48,6 @@ describe("authoring-rules injection", () => {
     });
   });
 
-  describe("buildReflectPrompt (lesson type, type derived from ref prefix)", () => {
-    // input.type is undefined — type must be derived from ref prefix "lesson"
-    const rendered = buildReflectPrompt({
-      ref: "lessons/foo-lesson",
-      // type intentionally omitted
-      assetContent: "Some lesson body content here.",
-    }).prompt;
-
-    test("contains FRONTMATTER_BODY_RULES snippet even when type is derived from ref", () => {
-      expect(rendered).toContain(HARD_RULE_FRONTMATTER);
-    });
-
-    test("contains when_to_use REQUIRED rule even when type is derived from ref", () => {
-      expect(rendered).toContain(HARD_RULE_WHEN_TO_USE);
-    });
-  });
-
   describe("buildProposePrompt (lesson type)", () => {
     const rendered = buildProposePrompt({
       type: "lesson",

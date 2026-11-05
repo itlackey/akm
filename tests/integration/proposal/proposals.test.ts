@@ -257,6 +257,7 @@ describe("createProposal / listProposals / getProposal", () => {
       { description, when_to_use: "When tuning improve cooldowns" },
       "---\ndescription: Improve cooldowns\n---\n\nUseful body.\n",
       "lessons/folded-description",
+      "lesson",
     );
     if (!patched) throw new Error("expected the patch to change the asset");
     const { content } = patched;

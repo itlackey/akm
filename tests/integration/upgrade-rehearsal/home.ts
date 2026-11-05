@@ -77,6 +77,8 @@ export interface UpgradeHome {
   readonly bundles: UpgradeHomeBundles;
   readonly searchTerm: string;
   readonly rememberedTerm: string;
+  /** A file at `reports/<looseName>.md`, outside its type folder, with feedback recorded by the previous release. */
+  readonly looseName: string;
   readonly modelConfig: {
     readonly commandFile: string;
     readonly taskFile: string;
@@ -217,6 +219,13 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
   fs.writeFileSync(
     path.join(stashDir, "knowledge", "widget-maintenance.md"),
     "---\ndescription: Widget maintenance notes\n---\n\n# Widget maintenance\n\nInspect seals monthly.\n",
+  );
+  // A file outside its type folder: the previous release spells its ref `knowledge/reports/<name>`.
+  const looseName = "upgrade-rehearsal-loose";
+  fs.mkdirSync(path.join(stashDir, "reports"), { recursive: true });
+  fs.writeFileSync(
+    path.join(stashDir, "reports", `${looseName}.md`),
+    "---\ndescription: A report kept outside the knowledge folder\n---\n\n# Loose report\n",
   );
   fs.mkdirSync(path.join(stashDir, "skills", "upgrade-rehearsal-skill"), { recursive: true });
   fs.writeFileSync(
@@ -433,6 +442,7 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
     env,
   );
   await runStep("search", oldLauncher, ["search", searchTerm], env);
+  await runStep("feedback loose", oldLauncher, ["feedback", `knowledge/reports/${looseName}`, "--positive"], env);
   await runStep("task run manual", oldLauncher, ["task", "run", `stash//tasks/${taskIds.manual}`], env);
   // akm proposal new needs an engine — skipped per the brief.
 
@@ -461,6 +471,7 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
     bundles: { stash: "stash", secondFs: "second-fs", git: "git-bundle", website: "site", npm: npmBundleName },
     searchTerm,
     rememberedTerm,
+    looseName,
     modelConfig: {
       commandFile,
       taskFile: path.join(stashDir, "tasks", "engine-task.yml"),

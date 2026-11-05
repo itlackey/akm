@@ -14,8 +14,9 @@
  * body that does not grow is never expansion, however long its source.
  */
 
+import { typeForStashDir } from "../../../core/asset/asset-placement";
+import { parseBundleRef } from "../../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
-import { parseRefInput } from "../../../core/asset/resolve-ref";
 import {
   DESCRIPTION_MAX_CHARS,
   DESCRIPTION_MIN_CHARS,
@@ -36,7 +37,10 @@ import type { ProposalValidator } from "../proposal-types";
 
 /** The asset name a ref names, lower-cased — what the "just restates the ref" checks compare. */
 function refNameTail(inputRef: string): string {
-  return parseRefInput(inputRef).name.toLowerCase();
+  const { conceptId } = parseBundleRef(inputRef);
+  const slash = conceptId.indexOf("/");
+  const underTypeFolder = slash > 0 && typeForStashDir(conceptId.slice(0, slash)) !== undefined;
+  return (underTypeFolder ? conceptId.slice(slash + 1) : conceptId).toLowerCase();
 }
 
 // ── Description / when_to_use shape ─────────────────────────────────────────

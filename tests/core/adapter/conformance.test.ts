@@ -304,7 +304,7 @@ describe("conformance — read candidates and recognition are two-way canonical 
       expect(dotenvAdapter.recognize(dotenvComponent, buildFileContext(dotenvRoot, defaultEnv))?.conceptId).toBe(
         "env/default",
       );
-      expect(dotenvAdapter.readCandidates?.(dotenvComponent, "env/default")[0]).toEqual({
+      expect(dotenvAdapter.readCandidates?.(dotenvComponent, "env/default")).toContainEqual({
         path: defaultEnv,
         conceptId: "env/default",
       });
@@ -425,15 +425,15 @@ describe("conformance — read candidates and recognition are two-way canonical 
     }
   });
 
-  test("a loose smart-Markdown owner collides with its canonical AKM placement without reading either file", () => {
+  test("two files that invert to one ref collide without reading either file", () => {
     const sandbox = sandboxStashDir();
     try {
       const root = path.join(sandbox.dir, "akm");
-      const loose = path.join(root, "same.md");
-      const canonical = path.join(root, "commands", "same.md");
+      const loose = path.join(root, "tasks", "same.md");
+      const canonical = path.join(root, "tasks", "same.yml");
       fs.mkdirSync(path.dirname(canonical), { recursive: true });
       fs.writeFileSync(loose, "Use $ARGUMENTS exactly.\n");
-      fs.writeFileSync(canonical, "# Same command\n");
+      fs.writeFileSync(canonical, "name: same\n");
       const originalRead = fs.readFileSync;
       const readSpy = spyOn(fs, "readFileSync").mockImplementation(((candidate, options) => {
         if ([loose, canonical].some((entry) => path.resolve(entry) === path.resolve(String(candidate)))) {
@@ -442,10 +442,10 @@ describe("conformance — read candidates and recognition are two-way canonical 
         return originalRead(candidate, options as never);
       }) as typeof fs.readFileSync);
       try {
-        expect(() => resolveAdapterConceptOwner(root, "akm", "commands/same")).toThrow(AdapterConceptCollisionError);
+        expect(() => resolveAdapterConceptOwner(root, "akm", "tasks/same")).toThrow(AdapterConceptCollisionError);
 
-        const owner = resolveAdapterConceptOwner(root, "akm", "commands/same", { mode: "read" });
-        expect(owner?.path).toBe(canonical);
+        const owner = resolveAdapterConceptOwner(root, "akm", "tasks/same", { mode: "read" });
+        expect(owner?.path).toBe(loose);
       } finally {
         readSpy.mockRestore();
       }

@@ -10,7 +10,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
+import { parseBundleRef } from "../../core/asset/asset-ref";
+import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
 import { collectCredentialValues } from "../../core/config/credentials";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
@@ -62,6 +63,7 @@ import {
   collectEligibleRefs,
   collectEligibleRefsReadOnly,
   memoryCleanupParentRef,
+  namesIndexedRootAsset,
   resolveImproveScope,
   shouldAnalyzeMemoryCleanup,
 } from "./eligibility";
@@ -465,7 +467,7 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
     enumerable: false,
     configurable: true,
   });
-  const scope: ImproveScope = resolveImproveScope(options.scope);
+  const scope: ImproveScope = resolveImproveScope(options.scope, namesIndexedRootAsset);
   const config = options.config ?? loadConfig();
   const configuredImproveProfile = resolveImproveStrategy(options.strategy, config).config;
   const resolvedPlan =
@@ -482,7 +484,11 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
   };
   // --limit, then the reflect process limit, then the profile limit.
   const effectiveLimit = options.limit ?? improveProfile?.processes?.reflect?.limit ?? improveProfile.limit;
-  const scopedRef = scope.mode === "ref" && scope.value ? parseRefInput(scope.value) : undefined;
+  // Only a bundle-qualified scope picks the bundle; parse it then (a bare bundle-root ref has no placement).
+  const scopedRef =
+    scope.mode === "ref" && scope.value && parseBundleRef(scope.value).bundle !== undefined
+      ? parsePlacementRef(scope.value)
+      : undefined;
   const readSource = options.dryRun
     ? options.writeTarget
       ? { selector: options.writeTarget.selector, source: options.writeTarget.source }

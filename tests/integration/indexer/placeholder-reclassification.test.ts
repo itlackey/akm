@@ -38,7 +38,6 @@ test("ordinary incremental indexing repairs unchanged $ARGUMENTS knowledge and m
         content,
         type,
         conceptId: `${dir}/guide`,
-        oldConceptId: `commands/${dir}/guide`,
         stat: fs.statSync(filePath, { bigint: true }),
       };
     });
@@ -51,8 +50,8 @@ test("ordinary incremental indexing repairs unchanged $ARGUMENTS knowledge and m
     try {
       for (const file of files) {
         db.prepare(
-          "UPDATE entries SET item_ref = ?, concept_id = ?, type = 'command', document_json = json_set(document_json, '$.type', 'command') WHERE file_path = ?",
-        ).run(`fixture//${file.oldConceptId}`, file.oldConceptId, file.filePath);
+          "UPDATE entries SET type = 'command', document_json = json_set(document_json, '$.type', 'command') WHERE file_path = ?",
+        ).run(file.filePath);
       }
       for (const { dir_path } of db.prepare("SELECT dir_path FROM index_dir_state").all() as { dir_path: string }[]) {
         const paths = fs
@@ -69,7 +68,7 @@ test("ordinary incremental indexing repairs unchanged $ARGUMENTS knowledge and m
       db.close();
     }
     for (const file of files) {
-      expect((await lookupBundleRef({ bundle: "fixture", conceptId: file.oldConceptId }))?.type).toBe("command");
+      expect((await lookupBundleRef({ bundle: "fixture", conceptId: file.conceptId }))?.type).toBe("command");
     }
     const before = await akmHealth({ since: "7d" });
     const advisory = before.advisories.find((check) => check.name === "type-directory-disagreement");
@@ -79,7 +78,6 @@ test("ordinary incremental indexing repairs unchanged $ARGUMENTS knowledge and m
     await akmIndex({ stashDir: storage.stashDir });
 
     for (const file of files) {
-      expect(await lookupBundleRef({ bundle: "fixture", conceptId: file.oldConceptId })).toBeNull();
       expect((await lookupBundleRef({ bundle: "fixture", conceptId: file.conceptId }))?.type).toBe(file.type);
       const shown = await akmShowUnified({ ref: `fixture//${file.conceptId}` });
       expect(shown.type).toBe(file.type);

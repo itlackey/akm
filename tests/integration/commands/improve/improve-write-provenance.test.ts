@@ -28,7 +28,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmImprove, resolveSyncPathSet } from "../../../../src/commands/improve/improve";
 import { RETIRE_GRACE_DAYS } from "../../../../src/commands/improve/memory/memory-improve";
-import { parseRefInput } from "../../../../src/core/asset/resolve-ref";
+import { parsePlacementRef } from "../../../../src/core/asset/resolve-ref";
 import type { AkmConfig, SourceConfigEntry } from "../../../../src/core/config/config";
 import { getStateDir } from "../../../../src/core/paths";
 import { recordWrittenPath } from "../../../../src/core/write-provenance";
@@ -103,7 +103,7 @@ function writeSource(): { source: WriteTargetSource; config: SourceConfigEntry }
 /** Write an asset through the production write path (which journals it). */
 async function writeAsset(ref: string, body: string): Promise<void> {
   const target = writeSource();
-  await writeAssetToSource(target.source, target.config, parseRefInput(ref), `---\ntype: memory\n---\n\n${body}\n`);
+  await writeAssetToSource(target.source, target.config, parsePlacementRef(ref), `---\ntype: memory\n---\n\n${body}\n`);
 }
 
 /** Names touched by the newest commit, relative to its parent. */
@@ -310,7 +310,7 @@ test("auto-sync stages a deletion the run performed", async () => {
 
   const result = await runImprove(async () => {
     const target = writeSource();
-    await deleteAssetFromSource(target.source, target.config, parseRefInput("memories/human"));
+    await deleteAssetFromSource(target.source, target.config, parsePlacementRef("memories/human"));
   });
 
   expect(result.sync?.committed).toBe(true);
@@ -379,7 +379,7 @@ test("a path written then removed again during the run produces no commit", asyn
     const target = writeSource();
     await writeAsset("memories/scratch", "Transient.");
     // A downstream pass reverts the write (proposal rollback / orphan purge).
-    await deleteAssetFromSource(target.source, target.config, parseRefInput("memories/scratch"));
+    await deleteAssetFromSource(target.source, target.config, parsePlacementRef("memories/scratch"));
   });
 
   // Journaled, but the final on-disk state is identical to HEAD — the exact-path

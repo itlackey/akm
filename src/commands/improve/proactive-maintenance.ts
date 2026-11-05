@@ -14,7 +14,6 @@
  */
 
 import type { ImproveEligibleRef } from "../../core/improve-types";
-import { assetTypeOf } from "./eligibility";
 import { computeSalience } from "./salience";
 
 const DAY_MS = 86_400_000;
@@ -93,7 +92,7 @@ export function selectProactiveMaintenanceRefs(params: ProactiveSelectorParams):
 
   const scored: ProactiveScoredRef[] = params.candidates.map((candidate) => {
     const ref = candidate.ref;
-    const type = assetTypeOf(ref);
+    const type = candidate.type;
     const retrievalFreq = params.retrievalCounts.get(ref) ?? 0;
     let sizeBytes = params.sizeBytesOf?.(candidate) ?? 0;
     if (!sizeBytes || sizeBytes < 0) sizeBytes = SIZE_FLOOR_BYTES;

@@ -2,9 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, readFrontmatterDate } from "../../core/asset/frontmatter";
-import { parseRefInput } from "../../core/asset/resolve-ref";
 
 export interface PromotionFeedbackEvent {
   metadata?: Record<string, unknown>;
@@ -12,6 +12,8 @@ export interface PromotionFeedbackEvent {
 
 export interface PromotionPolicyInput {
   inputRef: string;
+  /** The input asset's type, from its file or index entry (never read from the ref). */
+  inputType: string;
   assetContent: string | null;
   feedbackEvents: readonly PromotionFeedbackEvent[];
 }
@@ -100,8 +102,8 @@ function deriveDescription(body: string, description: string | undefined): strin
 }
 
 export function deriveKnowledgeRef(inputRef: string): string {
-  const parsed = parseRefInput(inputRef);
-  const leaf = parsed.name.split("/").filter(Boolean).at(-1) ?? parsed.name;
+  const { conceptId } = parseBundleRef(inputRef);
+  const leaf = conceptId.split("/").filter(Boolean).at(-1) ?? conceptId;
   const safe = leaf
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
@@ -119,14 +121,13 @@ function collectPromotionFeatures(input: PromotionPolicyInput): {
   observedAt?: string;
   source?: string;
 } {
-  const parsed = parseRefInput(input.inputRef);
   const blockedBy: string[] = [];
 
-  if (parsed.type !== "memory") {
+  if (input.inputType !== "memory") {
     return { blockedBy: ["not-memory"] };
   }
 
-  if (parsed.name.endsWith(".derived")) {
+  if (input.inputRef.endsWith(".derived")) {
     return { blockedBy: ["derived-memory"] };
   }
 

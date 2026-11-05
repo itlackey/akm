@@ -17,13 +17,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { type ConceptOwnerMatch, resolveConceptOwner } from "../indexer/lookup/adapter-concept-owner";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
+import { buildFileContext } from "../indexer/walk/file-context";
+import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { isFileOrFileSymlink } from "../indexer/walk/walker";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
-import { assetPathForName, deriveCanonicalAssetName } from "./asset/asset-placement";
+import { assetPathForName, refForFile, stashDirFor } from "./asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import type { AssetRef } from "./asset/resolve-ref";
-import { conceptIdFromTypeName, displayRef, parseRefInput, typeNameFromConceptId } from "./asset/resolve-ref";
+import { conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import { isWithin } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
@@ -65,13 +67,13 @@ export function listEnvsRecursive(
         }
         if (!entry.isFile() && !(entry.isSymbolicLink() && isFileOrFileSymlink(full))) continue;
         if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
-        const canonical = deriveCanonicalAssetName("env", root, full);
-        if (!canonical) continue;
+        const conceptId = refForFile("env", source.path, full);
+        if (!conceptId) continue;
         // Skip sensitive envs: a sibling .sensitive marker file suppresses listing.
         const markerPath = sensitiveMarkerPath(full, "env");
         if (fs.existsSync(markerPath)) continue;
         const { keys } = listKeysFn(full);
-        result.push({ ref: makeEnvRef(canonical, source, config), path: full, keys });
+        result.push({ ref: makeEnvRef(conceptId, source, config), path: full, keys });
       }
     };
     walk(root);
@@ -84,29 +86,61 @@ export function parseEnvRef(ref: string): AssetRef {
 }
 
 /**
- * Parse `ref` as a `[bundle//]conceptId` of the given asset type. There is no
- * bare-name form: `prod` is a usage error that also names the ref it probably
- * meant (`env/prod`), as text only — the suggestion is never resolved or accepted.
+ * Parse `ref` as the placement address of a NEW (or canonically placed) asset of
+ * the type the command names: `[bundle//]<type folder>/<name>`. The type is the
+ * command's, not read from the ref. There is no bare-name form: `prod` is a
+ * usage error that also names the ref it probably meant (`env/prod`), as text
+ * only — the suggestion is never resolved or accepted.
  */
 function parseTypedRef(ref: string, type: "env" | "secret", form: string): AssetRef {
-  let parsed: AssetRef | undefined;
-  try {
-    parsed = parseRefInput(ref);
-  } catch (error) {
-    if (!(error instanceof NotFoundError)) throw error;
-  }
-  if (parsed?.type !== type) {
-    const bare = parseBundleRef(ref);
+  const parsed = parseBundleRef(ref);
+  const prefix = `${stashDirFor(type)}/`;
+  if (parsed.fragment !== undefined || !parsed.conceptId.startsWith(prefix) || parsed.conceptId === prefix) {
     const hint =
-      typeNameFromConceptId(bare.conceptId) === undefined
-        ? ` Did you mean "${makeBundleRef(bare.bundle, conceptIdFromTypeName(type, bare.conceptId))}"?`
+      parsed.fragment === undefined && !parsed.conceptId.includes("/")
+        ? ` Did you mean "${makeBundleRef(parsed.bundle, conceptIdFromTypeName(type, parsed.conceptId))}"?`
         : "";
     throw new UsageError(
       `Expected ${type === "env" ? "an" : "a"} ${type} ref (${form} or <bundle>//${form}); got "${ref}". Write the full ref.${hint}`,
       "INVALID_FLAG_VALUE",
     );
   }
-  return parsed;
+  return { type, name: parsed.conceptId.slice(prefix.length), origin: parsed.bundle };
+}
+
+/**
+ * The type of the asset a match owns, from where its file sits (the indexer's
+ * directory rules, path only): sensitive files have no index row to ask, and the
+ * owner walk must stay index-free.
+ */
+function ownedType(match: ConceptOwnerMatch): string | undefined {
+  return declaredTypeForPath(buildFileContext(match.source.path, match.owner.path));
+}
+
+/**
+ * The owner of a read ref of the given type. The ref is the file's path inside
+ * its bundle, so it may sit anywhere: what makes it an env or a secret is the
+ * owning file, not the ref's first folder.
+ */
+function ownerOfType(
+  ref: string,
+  type: "env" | "secret",
+  form: string,
+): { match: ConceptOwnerMatch; conceptId: string } {
+  const parsed = parseBundleRef(ref);
+  const match = parsed.fragment === undefined ? findEnvSecretOwner(parsed.bundle, parsed.conceptId) : undefined;
+  if (!match) {
+    // Not owned: a typed placement address reads as "not found", anything else as the wrong kind of ref.
+    parseTypedRef(ref, type, form);
+    throw new NotFoundError(`${type === "env" ? "Env" : "Secret"} not found: ${ref}`);
+  }
+  if (ownedType(match) !== type) {
+    throw new UsageError(
+      `Expected ${type === "env" ? "an" : "a"} ${type} ref (${form} or <bundle>//${form}); got "${ref}". Write the full ref.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  return { match, conceptId: match.owner.conceptId };
 }
 
 /** The bundle and file that own an env or secret ref right now, or undefined. Sensitive files resolve too. */
@@ -127,7 +161,7 @@ export function resolveRefOwner(ref: string): { absPath: string; type: string | 
   return (
     match && {
       absPath: match.owner.path,
-      type: typeNameFromConceptId(conceptId)?.type,
+      type: ownedType(match),
       ref: makeBundleRef(match.bundleId, conceptId),
     }
   );
@@ -154,10 +188,10 @@ export function isInstalledBundle(bundle: string): boolean {
  * get walked — otherwise this would silently fall back to reading the real config a
  * second time even when the walk itself honoured an injected one.
  */
-export function makeEnvRef(name: string, source?: IndexSearchSource, config: AkmConfig = loadConfig()): string {
+export function makeEnvRef(conceptId: string, source?: IndexSearchSource, config: AkmConfig = loadConfig()): string {
   // F4b output-spelling flip: `env/name` in the primary stash, `bundle//env/name`
   // for a slug-clean named source.
-  return displayRef({ type: "env", name, bundleId: source?.registryId }, displayDefaultBundle(source, config));
+  return displayRef({ conceptId, bundleId: source?.registryId }, displayDefaultBundle(source, config));
 }
 
 /**
@@ -167,36 +201,26 @@ export function makeEnvRef(name: string, source?: IndexSearchSource, config: Akm
  * {@link resolveEnvWriteTarget}.
  */
 export function resolveEnvPath(ref: string): {
-  name: string;
+  /** The env's ref (conceptId), as the owning bundle spells it. */
+  conceptId: string;
   absPath: string;
   source: IndexSearchSource;
   /** The bundle that owns the env file. */
   bundleId: string;
-  parsedRef: AssetRef;
   dir: "env";
 } {
-  const parsed = parseEnvRef(ref);
-  const conceptId = conceptIdFromTypeName("env", parsed.name);
-  const match = findEnvSecretOwner(parsed.origin, conceptId);
-  if (!match) throw new NotFoundError(`Env not found: ${makeBundleRef(parsed.origin, conceptId)}`);
-  return {
-    name: parsed.name,
-    absPath: match.owner.path,
-    source: match.source,
-    bundleId: match.bundleId,
-    parsedRef: parsed,
-    dir: "env",
-  };
+  const { match, conceptId } = ownerOfType(ref, "env", "env/<name>");
+  return { conceptId, absPath: match.owner.path, source: match.source, bundleId: match.bundleId, dir: "env" };
 }
 
 export function parseSecretRef(ref: string): AssetRef {
   return parseTypedRef(ref, "secret", "secrets/<name>");
 }
 
-export function makeSecretRef(name: string, source?: IndexSearchSource): string {
+export function makeSecretRef(conceptId: string, source?: IndexSearchSource): string {
   // F4b output-spelling flip: `secrets/name` in the primary stash,
   // `bundle//secrets/name` for a slug-clean named source.
-  return displayRef({ type: "secret", name, bundleId: source?.registryId }, displayDefaultBundle(source));
+  return displayRef({ conceptId, bundleId: source?.registryId }, displayDefaultBundle(source));
 }
 
 function displayDefaultBundle(source?: IndexSearchSource, config: AkmConfig = loadConfig()): string | undefined {
@@ -206,15 +230,12 @@ function displayDefaultBundle(source?: IndexSearchSource, config: AkmConfig = lo
 }
 
 export function resolveSecretPath(ref: string): {
-  name: string;
+  conceptId: string;
   absPath: string;
   source: IndexSearchSource;
 } {
-  const parsed = parseSecretRef(ref);
-  const conceptId = conceptIdFromTypeName("secret", parsed.name);
-  const match = findEnvSecretOwner(parsed.origin, conceptId);
-  if (!match) throw new NotFoundError(`Secret not found: ${makeBundleRef(parsed.origin, conceptId)}`);
-  return { name: parsed.name, absPath: match.owner.path, source: match.source };
+  const { match, conceptId } = ownerOfType(ref, "secret", "secrets/<name>");
+  return { conceptId, absPath: match.owner.path, source: match.source };
 }
 
 // ── Write-target resolution (env/secret mutations) ───────────────────────────

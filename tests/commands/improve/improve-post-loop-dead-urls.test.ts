@@ -44,7 +44,7 @@ describe("runImprovePostLoopStage dead-URL scan coverage (#892)", () => {
       for (let i = 0; i < REF_COUNT; i++) {
         const filePath = path.join(stash.dir, "knowledge", `doc-${i}.md`);
         fs.writeFileSync(filePath, `See https://example.com/doc-${i} for details.`);
-        actionableRefs.push({ ref: `knowledge/doc-${i}.md`, reason: "scope-type", filePath });
+        actionableRefs.push({ ref: `knowledge/doc-${i}.md`, type: "knowledge", reason: "scope-type", filePath });
       }
 
       const config: AkmConfig = {

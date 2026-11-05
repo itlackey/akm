@@ -5,7 +5,7 @@
 import path from "node:path";
 import { deriveInstallations } from "../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
-import { type AssetRef, displayRef } from "./asset/resolve-ref";
+import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import type { AkmConfig } from "./config/config";
 import { UsageError } from "./errors";
 import {
@@ -131,7 +131,10 @@ export function resolveMutationTarget(
   return {
     target,
     ref: stableRef,
-    displayRef: displayRef({ type: stableRef.type, name: stableRef.name, bundleId: stableRef.origin }, defaultBundle),
+    displayRef: displayRef(
+      { conceptId: conceptIdFromTypeName(stableRef.type, stableRef.name), bundleId: stableRef.origin },
+      defaultBundle,
+    ),
   };
 }
 

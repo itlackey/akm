@@ -47,6 +47,7 @@ function makeMemoryEntry(
   fs.writeFileSync(filePath, body, "utf8");
   return {
     name,
+    ref: `memories/${name}`,
     filePath,
     description: opts.description ?? `Description for ${name}`,
     tags: opts.tags ?? [],
@@ -104,6 +105,7 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
     fs.writeFileSync(filePath, "---\ncaptureMode: hot\n---\nHot body.", "utf8");
     const memory: MemoryEntry = {
       name: "hot-memory",
+      ref: "memories/hot-memory",
       filePath,
       description: "user-explicit",
       tags: [],
@@ -125,8 +127,15 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
     const prompt = buildChunkPrompt(
       "/test/stash",
       [
-        { name: "bg-memory", filePath: f1, description: "", tags: [], stashDir: tempDir },
-        { name: "plain-memory", filePath: f2, description: "", tags: [], stashDir: tempDir },
+        { name: "bg-memory", ref: "memories/bg-memory", filePath: f1, description: "", tags: [], stashDir: tempDir },
+        {
+          name: "plain-memory",
+          ref: "memories/plain-memory",
+          filePath: f2,
+          description: "",
+          tags: [],
+          stashDir: tempDir,
+        },
       ],
       0,
       1,
@@ -148,6 +157,7 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
     fs.writeFileSync(filePath, "---\ndescription: dup\n---\nIdentical body text.", "utf8");
     const memory: MemoryEntry = {
       name: "dup-memory",
+      ref: "memories/dup-memory",
       filePath,
       description: "dup",
       tags: [],
@@ -169,6 +179,7 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
     fs.writeFileSync(filePath, "---\ncaptureMode: hot\n---\nBoth flags body.", "utf8");
     const memory: MemoryEntry = {
       name: "hot-dup",
+      ref: "memories/hot-dup",
       filePath,
       description: "",
       tags: [],
@@ -186,7 +197,7 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
     fs.writeFileSync(f, "Plain body, no flags.", "utf8");
     const prompt = buildChunkPrompt(
       "/test/stash",
-      [{ name: "plain", filePath: f, description: "", tags: [], stashDir: tempDir }],
+      [{ name: "plain", ref: "memories/plain", filePath: f, description: "", tags: [], stashDir: tempDir }],
       0,
       1,
       500,
@@ -199,6 +210,7 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
     fs.writeFileSync(filePath, "Vanilla memory.", "utf8");
     const memory: MemoryEntry = {
       name: "vanilla",
+      ref: "memories/vanilla",
       filePath,
       description: "",
       tags: [],
@@ -443,6 +455,7 @@ describe("empty response detection in chunk prompt", () => {
   it("an unreadable file path produces (unreadable) marker rather than throwing", () => {
     const entry: MemoryEntry = {
       name: "ghost-memory",
+      ref: "memories/ghost-memory",
       filePath: path.join(tempDir, "does-not-exist.md"),
       description: "ghost",
       tags: [],

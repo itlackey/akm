@@ -56,15 +56,7 @@ import {
 } from "./consolidate";
 import { computeSafeChunkSize, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
 import { contentHash } from "./content-hash";
-import {
-  assetTypeOf,
-  buildUtilityMap,
-  dedupeRefs,
-  findAssetFilePath,
-  isDistillCandidateRef,
-  isLessonCandidate,
-  withIndexDb,
-} from "./eligibility";
+import { buildUtilityMap, dedupeRefs, findAssetFilePath, isDistillCandidateRef, withIndexDb } from "./eligibility";
 import { akmExtract, countNewExtractCandidates, type ResolvedExtractPlan } from "./extract";
 import { computeValenceScore } from "./feedback-valence";
 import type {
@@ -436,7 +428,7 @@ export async function runValidationAndRepairPass(args: {
           : await findAssetFilePath(candidate.ref, options.stashDir);
       if (!filePath) return "file not found on disk";
       if (path.extname(filePath).toLowerCase() !== ".md") return undefined;
-      if (isLessonCandidate(candidate.ref) && !parseFrontmatter(fs.readFileSync(filePath, "utf8")).data.description) {
+      if (candidate.type === "lesson" && !parseFrontmatter(fs.readFileSync(filePath, "utf8")).data.description) {
         return "missing description";
       }
       return undefined;
@@ -467,7 +459,6 @@ export async function runValidationAndRepairPass(args: {
         // The resolved source path, not the raw `--stash-dir` flag.
         stashDir: args.primaryStashDir,
         findFilePath: findAssetFilePath,
-        isLessonCandidateFn: isLessonCandidate,
       }),
     );
     schemaRepairs = result.repairs;
@@ -881,7 +872,7 @@ export function partitionBySignalDelta(args: {
     if (reflectOk) {
       if (!distillOk) out.distillCooledRefs.add(r.ref);
       out.eligibleRefs.push(r);
-    } else if (distillOk && isDistillCandidateRef(r.ref, args.options.stashDir)) {
+    } else if (distillOk && isDistillCandidateRef(r)) {
       out.distillOnlyRefs.push(r);
     } else if (
       !latestFeedbackTs.has(r.ref) &&
@@ -1187,7 +1178,7 @@ function scoreSalience(
       r.ref,
       computeSalience({
         ref: r.ref,
-        type: assetTypeOf(r.ref),
+        type: r.type,
         ...(encoding !== undefined ? { encodingSalience: encoding } : {}),
         retrievalFreq: retrievalCounts.get(r.ref) ?? 0,
         lastUseMs: lastUseMsByRef.get(r.ref),

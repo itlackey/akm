@@ -342,7 +342,14 @@ describe("existing knowledge body dedup", () => {
       memoryByRef: new Map([
         [
           "memories/source",
-          { name: "source", filePath: memoryPath, description: "Source memory", tags: [], stashDir: stash },
+          {
+            name: "source",
+            ref: "memories/source",
+            filePath: memoryPath,
+            description: "Source memory",
+            tags: [],
+            stashDir: stash,
+          },
         ],
       ]),
       promoted,
@@ -397,7 +404,14 @@ describe("existing knowledge body dedup", () => {
       memoryByRef: new Map([
         [
           "memories/source",
-          { name: "source", filePath: memoryPath, description: "Source memory", tags: [], stashDir: stash },
+          {
+            name: "source",
+            ref: "memories/source",
+            filePath: memoryPath,
+            description: "Source memory",
+            tags: [],
+            stashDir: stash,
+          },
         ],
       ]),
       promoted,

@@ -23,6 +23,7 @@ import {
   processImproveLoopRef,
 } from "../../../src/commands/improve/loop-stages";
 import type { Proposal } from "../../../src/commands/proposal/repository";
+import { typeForStashDir } from "../../../src/core/asset/asset-placement";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../src/core/events";
@@ -48,7 +49,7 @@ function freshSandbox(): { stashDir: string; eventsDbPath: string } {
 }
 
 function eligibleRef(ref: string): ImproveEligibleRef {
-  return { ref, reason: "scope-type" };
+  return { ref, type: typeForStashDir(ref.split("/")[0] ?? "") ?? "", reason: "scope-type" };
 }
 
 function reflectOk(ref: string): AkmReflectResult {

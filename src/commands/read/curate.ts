@@ -21,7 +21,6 @@
 import fs from "node:fs";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -605,11 +604,11 @@ async function buildCurateSupportRefs(
         if (ref === ownerRef || selectedRefs.has(ref) || supportRefs.some((existing) => existing.ref === ref)) continue;
         // A support ref is a link, not a hit: `--type` narrows the hits only. A short link ref
         // is checked on the asset `akm show <ref>` resolves, not another bundle's same conceptId.
-        const itemRef = policy ? (await lookupBundleRef(parseBundleRef(ref)).catch(() => null))?.itemRef : undefined;
-        const evidence = policy && itemRef ? eligibleEvidence(itemRef, policy) : undefined;
+        const entry = await lookupBundleRef(parseBundleRef(ref)).catch(() => null);
+        const evidence = policy && entry ? eligibleEvidence(entry.itemRef, policy) : undefined;
         if (policy && !evidence) continue;
         const historical = matchBeliefFilter(evidence?.beliefState, "historical");
-        const type = supportRefType(ref);
+        const type = entry?.type;
         supportRefs.push({
           ref,
           ...(type ? { type } : {}),
@@ -621,13 +620,4 @@ async function buildCurateSupportRefs(
     }
   }
   return supportRefs;
-}
-
-/** The asset type a ref's conceptId names (`memories/x` → `memory`), when it names one. */
-function supportRefType(ref: string): string | undefined {
-  try {
-    return typeNameFromConceptId(parseBundleRef(ref).conceptId)?.type;
-  } catch {
-    return undefined;
-  }
 }

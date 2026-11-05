@@ -34,27 +34,21 @@
  * presentation can be wired via `TYPE_PRESENTATION` without a new
  * `IndexDocument` field.
  *
- * ── conceptId: the QUALIFIED spelling ──
+ * ── conceptId: the bundle-relative path ──
  *
- * conceptId = `<stash-subdir>/<canonical-name>` — the placement stash-subdir
- * (`stashDirFor(type)`) followed by the winning type's canonical name
- * (`deriveCanonicalAssetNameFromStashRoot`: skill = its dir, script keeps its
- * extension, Markdown strips `.md`, workflow strips its `.md`
- * extension, env/task strip their ext, and secret/session keep the natural
- * path). For Markdown types this IS the OKF concept ID (path − `.md`); it is
- * the same spelling `readCandidates` consumes, so
- * recognize/read share one identity. The
- * `type` is carried separately on `IndexDocument.type` (type ≠
- * identity), and `entry.name` keeps the BARE canonical name for FTS parity.
+ * conceptId = the file's path inside the bundle minus the winning type's own
+ * suffix (`refForFile`: skill = its dir, script keeps its extension, Markdown
+ * strips `.md`, env/task strip their ext, secret/session keep the natural
+ * path). For Markdown types this IS the OKF concept ID (path - `.md`). It is
+ * the same for a file under its type folder and for one placed anywhere else,
+ * and `readCandidates` inverts it. The `type` is carried separately on
+ * `IndexDocument.type` (type != identity), and `entry.name` keeps the canonical
+ * name relative to the type folder for FTS parity.
  *
- * ── readCandidates / directoryList / looksLikeRoot: type-driven placement ──
+ * ── readCandidates / directoryList / looksLikeRoot ──
  *
- * Placement is type-driven (`path-resolver.ts#buildDiskCandidates`: the primary
- * candidate is `assetPathForName(ref.type, join(root, stashDirFor(ref.type)),
- * ref.name)`). A ref carries no `type`, so `readCandidates` recovers
- * it from the conceptId's LEADING path segment — the qualified `<stash-subdir>/
- * <name>` form — reverse-mapping that segment against the placement
- * stash-subdir map and then delegating to `assetPathCandidatesForName`.
+ * `readCandidates` inverts the ref into every file any placement spec could
+ * give it (`filesForRef`); recognition then decides which one owns.
  *
  * ── validate ──
  *
@@ -88,13 +82,15 @@ import {
   hasMarkdownFragmentContent,
   setMarkdownFragmentContent,
 } from "../../../indexer/passes/metadata";
-import type { FileContext } from "../../../indexer/walk/file-context";
+import { buildFileContext, type FileContext } from "../../../indexer/walk/file-context";
+import { declaredTypeForPath } from "../../../indexer/walk/matchers";
 import {
   assetPathCandidatesForName,
   deriveCanonicalAssetNameFromStashRoot,
   placementTypes,
-  stashDirFor,
+  refForFile,
   stashDirNames,
+  typeForStashDir,
 } from "../../asset/asset-placement";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import type { FileChange } from "../../file-change";
@@ -178,14 +174,6 @@ function akmStashAbstains(root: string, absPath: string): boolean {
   if (wikisIdx < 0 || wikisIdx + 1 >= segments.length) return false;
   const wikiRelativeSegments = segments.slice(wikisIdx + 2);
   return wikiRelativeSegments.length === 1 && WIKI_INFRA_FILES.has(wikiRelativeSegments[0]!);
-}
-
-/** Reverse the placement map (stash subdir → akm type). Built per call so a runtime-registered custom type is honored (live-delegation, not a snapshot). */
-function stashDirToType(stashDir: string): string | undefined {
-  for (const type of placementTypes()) {
-    if (stashDirFor(type) === stashDir) return type;
-  }
-  return undefined;
 }
 
 /**
@@ -275,13 +263,6 @@ function indexDocumentFromEntry(
   return doc;
 }
 
-function conceptIdForRecognizedType(root: string, filePath: string, type: string): string | undefined {
-  const canonicalName = deriveCanonicalAssetNameFromStashRoot(type, root, filePath);
-  if (canonicalName === undefined) return undefined;
-  const stashDir = stashDirFor(type);
-  return stashDir !== undefined ? `${stashDir}/${canonicalName}` : canonicalName;
-}
-
 function recognize(c: BundleComponent, file: FileContext): IndexDocument | null {
   // `index.md` / `log.md` are OKF reserved structural files at
   // every depth — never items. Excluded BEFORE classification so a directory
@@ -293,21 +274,13 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   if (akmStashAbstains(c.root, file.absPath)) return null;
   const match = recognizeMatch(file);
   if (match === null) return null;
-  // Canonical name = the winning type's per-type canonical name (§5.1).
-  // Invalid placements are not projected onto a different identity.
-  const conceptId = conceptIdForRecognizedType(c.root, file.absPath, match.type);
-  if (conceptId === undefined) return null;
-  const stashDir = stashDirFor(match.type);
-  const canonicalName = stashDir !== undefined ? conceptId.slice(stashDir.length + 1) : conceptId;
-  // conceptId = the QUALIFIED `<stash-subdir>/<canonical-name>` spelling
-  // (ref-grammar decision D-R2): the same form `readCandidates` consumes; Markdown
-  // types use the OKF concept ID (path − .md), while workflows strip either
-  // peer source extension. Both branches feed a
-  // BARE canonicalName (the abstain fallback is the basename, above), so the
-  // stash-subdir is prefixed uniformly — a flat `skills/x.md` yields
-  // `skills/x`, never the un-prefixed `x` or the double-prefixed
-  // `skills/skills/x`. `entry.name` below keeps the BARE canonical name —
-  // identity ≠ search text.
+  // The ref is the file's bundle-relative path minus the type's own suffix;
+  // `entry.name` below keeps the canonical name relative to the type folder
+  // (identity != search text). Invalid placements are not projected onto a
+  // different identity.
+  const conceptId = refForFile(match.type, c.root, file.absPath);
+  const canonicalName = deriveCanonicalAssetNameFromStashRoot(match.type, c.root, file.absPath);
+  if (conceptId === undefined || canonicalName === undefined) return null;
   const dirPath = path.dirname(file.absPath);
 
   // recognize carries the FULL index-time metadata surface,
@@ -477,11 +450,12 @@ export const akmAdapter: BundleAdapter = {
   id: "akm",
   // Bump when a change to the matchers (or `recognize`) can retype or re-ref a
   // file that has not changed, or when the document records new fields from it
-  // (0.9.4: frontmatter dates, #1228): the version is folded into each
-  // directory's freshness, so the next incremental `akm index` re-drains it and
-  // re-files those rows, including old command refs inferred from body
-  // placeholders. Vectors are kept when the search text is unchanged.
-  version: "0.9.4",
+  // (0.9.4: frontmatter dates, #1228; 0.9.5: path refs, #1432): the version is
+  // folded into each directory's freshness, so the next incremental `akm index`
+  // re-drains it and re-files those rows, including old command refs inferred
+  // from body placeholders and loose files' type-folder refs. Vectors are kept
+  // when the search text is unchanged.
+  version: "0.9.5",
   // Recognized-extension HINT, derived from what the matchers accept (§6):
   // `.md` (Markdown types + workflow peer), `.yml` (task and workflow YAML),
   // `.yaml` (task near-miss diagnostics), `.env` (env files), and the 16
@@ -518,29 +492,25 @@ export const akmAdapter: BundleAdapter = {
 
   /**
    * Closed-form owner candidates (#857): every physical path spelling that
-   * could claim `conceptId` without walking the bundle. `deriveCanonicalAssetNameFromStashRoot`
-   * (recognize's own conceptId derivation) is a pure function of (type,
-   * filePath); this is its inverse, enumerated for the two placements that
-   * function can produce for one conceptId — CANONICAL (authored under the
-   * type's own stash subdir) and the LOOSE FALLBACK (authored anywhere else
-   * in the bundle, so the canonical name is the file's full path relative to
-   * the bundle root instead of the stash subdir). `assetPathCandidatesForName`
-   * additionally expands `env`'s `.env`/`<name>.env` duality on each.
+   * could claim `conceptId` without walking the bundle. A ref is the file's
+   * bundle-relative path minus the type's suffix, so this is `refForFile`
+   * inverted over every placement spec (`env`'s `.env`/`<name>.env` duality
+   * included). A spec's spelling is dropped when the file's location declares
+   * a different type (`workflows/x.yml` is a workflow, not the task `x`): that
+   * type spells the file's ref itself. `recognize` decides which candidate
+   * really owns the ref.
    */
   readCandidates(c: BundleComponent, conceptId: string) {
     const posix = conceptId.replace(/\\/g, "/");
-    const slash = posix.indexOf("/");
-    if (slash <= 0) return [{ path: path.join(c.root, `${posix}.md`), conceptId: posix }];
-    const head = posix.slice(0, slash);
-    const rest = posix.slice(slash + 1);
-    const type = stashDirToType(head);
-    if (type === undefined || rest.length === 0) return [];
-    const canonical = assetPathCandidatesForName(type, path.join(c.root, head), rest);
-    const loose = assetPathCandidatesForName(type, c.root, rest);
-    return [...new Set([...canonical, ...loose])].map((candidatePath) => ({
-      path: candidatePath,
-      conceptId: posix,
-    }));
+    const paths = placementTypes().flatMap((type) =>
+      assetPathCandidatesForName(type, c.root, posix).filter((candidate) => {
+        const declared = declaredTypeForPath(buildFileContext(c.root, candidate));
+        return (
+          declared === undefined || declared === type || (type === "skill" && path.basename(candidate) === "SKILL.md")
+        );
+      }),
+    );
+    return [...new Set(paths)].map((candidatePath) => ({ path: candidatePath, conceptId: posix }));
   },
 
   /** The AKM workspace's owned stash subdirs (§7): the placement stash-subdir names, feeding git exact-path staging. */
@@ -574,7 +544,7 @@ export const akmAdapter: BundleAdapter = {
     if (ownedDirs.length >= 2) return true;
     const only = ownedDirs[0];
     if (!only) return false;
-    const expectedType = stashDirToType(only.name);
+    const expectedType = typeForStashDir(only.name);
     try {
       const markdown = fs
         .readdirSync(path.join(root, only.name), { withFileTypes: true })

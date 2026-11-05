@@ -70,8 +70,8 @@ export interface ResolveEnvBindingOptions {
  */
 export function resolveEnvBinding(target: string, options: ResolveEnvBindingOptions = {}): ResolvedEnvBinding {
   const warn = options.warn ?? ((message: string) => process.stderr.write(`warning: ${message}\n`));
-  const { name, absPath, source, bundleId } = resolveEnvPath(target);
-  const envRef = makeEnvRef(name, source);
+  const { conceptId, absPath, source, bundleId } = resolveEnvPath(target);
+  const envRef = makeEnvRef(conceptId, source);
 
   const allValues = loadEnv(absPath);
 

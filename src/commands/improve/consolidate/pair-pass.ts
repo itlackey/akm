@@ -34,7 +34,6 @@ import consolidatePairCheckPrompt from "../../../assets/prompts/consolidate-pair
 import consolidatePairSameAge from "../../../assets/prompts/consolidate-pair-same-age.md" with { type: "text" };
 import consolidatePairTerms from "../../../assets/prompts/consolidate-pair-terms.md" with { type: "text" };
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
-import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString } from "../../../core/common";
 import { concurrentMap } from "../../../core/concurrent";
 import type { AkmConfig } from "../../../core/config/config";
@@ -202,7 +201,7 @@ export function loadPairPassPool(db: Database, bundleId: string): PairAsset[] {
   for (const e of getAllEntries(db, "memory")) {
     if (e.bundleId !== bundleId || !fs.existsSync(e.filePath)) continue;
     assets.push({
-      ref: conceptIdFromTypeName("memory", e.entry.name),
+      ref: e.conceptId,
       type: "memory",
       name: e.entry.name,
       filePath: e.filePath,
@@ -212,7 +211,7 @@ export function loadPairPassPool(db: Database, bundleId: string): PairAsset[] {
   for (const e of getAllEntries(db, "knowledge")) {
     if (e.bundleId !== bundleId || !isFlatName(e.entry.name) || !fs.existsSync(e.filePath)) continue;
     assets.push({
-      ref: conceptIdFromTypeName("knowledge", e.entry.name),
+      ref: e.conceptId,
       type: "knowledge",
       name: e.entry.name,
       filePath: e.filePath,
@@ -222,7 +221,7 @@ export function loadPairPassPool(db: Database, bundleId: string): PairAsset[] {
   for (const e of getAllEntries(db, "lesson")) {
     if (e.bundleId !== bundleId || !fs.existsSync(e.filePath)) continue;
     assets.push({
-      ref: conceptIdFromTypeName("lesson", e.entry.name),
+      ref: e.conceptId,
       type: "lesson",
       name: e.entry.name,
       filePath: e.filePath,
@@ -487,7 +486,7 @@ export function selectCandidates(
       if (entry.entry.type === "knowledge" && !isFlatName(entry.entry.name)) continue;
       if (!fs.existsSync(entry.filePath)) continue;
       const other: PairAsset = {
-        ref: conceptIdFromTypeName(entry.entry.type, entry.entry.name),
+        ref: entry.conceptId,
         type: entry.entry.type,
         name: entry.entry.name,
         filePath: entry.filePath,

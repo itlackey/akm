@@ -10,6 +10,7 @@
  * declares one.
  */
 
+import { refForFile } from "../core/asset/asset-placement";
 import { displayRef } from "../core/asset/resolve-ref";
 import { isInstalledBundle, resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
@@ -217,7 +218,8 @@ export const workflowMdRenderer: AssetRenderer = {
     // primary/default-bundle workflow renders the SHORT conceptId
     // (`workflows/<name>`); a named source qualifies it as
     // (`<bundle>//workflows/<name>`).
-    const ref = displayRef({ type: "workflow", name, bundleId: ctx.origin }, ctx.defaultBundle);
+    const conceptId = refForFile("workflow", ctx.stashRoot, ctx.absPath) ?? name;
+    const ref = displayRef({ conceptId, bundleId: ctx.origin }, ctx.defaultBundle);
     const parameters = projectParameters(plan);
     return {
       type: "workflow",

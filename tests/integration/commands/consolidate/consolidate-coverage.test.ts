@@ -259,6 +259,7 @@ describe("emitPromotionProposal with the coverage gate", () => {
             `memories/${name}`,
             {
               name,
+              ref: `memories/${name}`,
               filePath: path.join(stash, "memories", `${name}.md`),
               description: `${name} memory`,
               tags: [],

@@ -5,7 +5,6 @@
 /** The improve loop (reflect + distill per ref), the post-loop checks and the maintenance passes. */
 
 import fs from "node:fs";
-import { parseRefInput } from "../../core/asset/resolve-ref";
 import { daysToMs } from "../../core/common";
 import { type AkmConfig, type ImproveProfileConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -179,9 +178,8 @@ export async function processImproveLoopRef(planned: ImproveEligibleRef, env: Im
   };
   try {
     const isDistillOnly = env.distillOnlyRefSet.has(planned.ref);
-    const parsed = parseRefInput(planned.ref);
     if (!isDistillOnly) await runLoopReflectPass(planned, env, tally);
-    await runLoopDistillPass(planned, parsed.type, isDistillOnly, env, tally);
+    await runLoopDistillPass(planned, planned.type, isDistillOnly, env, tally);
   } catch (err) {
     if (err instanceof UsageError) {
       recordLoopAttempt(planned, env, "distill", "failed", err.message);
@@ -204,7 +202,7 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
     recordSkip(tally, planned.ref, "derived-memory-reflect-skipped", { env, reason: "derived_memory_reflect_skipped" });
     return;
   }
-  const reflectSkip = shouldSkipRef(planned.ref, "reflect", improveProfile);
+  const reflectSkip = shouldSkipRef(planned, "reflect", improveProfile);
   if (reflectSkip.skip) {
     tally.actions.push({ ref: planned.ref, mode: "reflect-skipped", result: { ok: true, reason: reflectSkip.reason } });
     return;
@@ -296,7 +294,7 @@ async function runLoopDistillPass(
   tally: LoopRefTally,
 ) {
   const { options, primaryStashDir, improveProfile, resolvedPlan } = env;
-  const distillSkip = shouldSkipRef(planned.ref, "distill", improveProfile);
+  const distillSkip = shouldSkipRef(planned, "distill", improveProfile);
   if (distillSkip.skip) return recordSkip(tally, planned.ref, distillSkip.reason);
   if (env.skipDistillDueToRequirePlannedRefs && isDistillOnly) {
     return recordSkip(tally, planned.ref, "require_planned_refs");
@@ -311,7 +309,7 @@ async function runLoopDistillPass(
     });
   }
   // The ledger holds cooled refs; an explicit `--scope` ref overrides it.
-  if (!isDistillCandidateRef(planned.ref, options.stashDir)) return;
+  if (!isDistillCandidateRef(planned)) return;
   if (env.distillCooledRefs.has(planned.ref) && !explicitRefScope) return;
   // A memory flagged wrong and not edited since is no source for a lesson. The attempt goes in the
   // ledger so the ref waits for newer feedback; an explicit `--scope` ref still runs.
@@ -437,13 +435,7 @@ export async function runImprovePostLoopStage(args: {
       // Every actionable knowledge ref is scanned; checkDeadUrls bounds the
       // network concurrency (#892).
       const knowledgeEntries = actionableRefs
-        .filter((r) => {
-          try {
-            return parseRefInput(r.ref).type === "knowledge";
-          } catch {
-            return false;
-          }
-        })
+        .filter((r) => r.type === "knowledge")
         .map((r) => {
           let body = "";
           if (r.filePath) {

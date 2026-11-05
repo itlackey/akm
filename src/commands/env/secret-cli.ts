@@ -29,7 +29,7 @@ import path from "node:path";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
-import { deriveCanonicalAssetName } from "../../core/asset/asset-placement";
+import { refForFile } from "../../core/asset/asset-placement";
 import { loadConfig } from "../../core/config/config";
 import {
   makeSecretRef,
@@ -71,9 +71,9 @@ function listSecretsRecursive(): Array<{ ref: string; path: string }> {
         if (entry.name.endsWith(".lock") || entry.name.endsWith(".sensitive")) continue;
         // A sibling `<name>.sensitive` marker suppresses listing.
         if (fs.existsSync(sensitiveMarkerPath(full, "secret"))) continue;
-        const canonical = deriveCanonicalAssetName("secret", secretsDir, full);
-        if (!canonical) continue;
-        result.push({ ref: makeSecretRef(canonical, source), path: full });
+        const conceptId = refForFile("secret", source.path, full);
+        if (!conceptId) continue;
+        result.push({ ref: makeSecretRef(conceptId, source), path: full });
       }
     };
     walk(secretsDir);
@@ -191,7 +191,7 @@ const secretRunCommand = defineJsonCommand({
       throw new UsageError("Missing command. Usage: akm secret run <ref> <VAR> -- <command>");
     }
 
-    const { name, absPath, source } = resolveSecretPath(args.ref);
+    const { conceptId, absPath, source } = resolveSecretPath(args.ref);
 
     const { readValue } = await import("../../core/secret-value.js");
 
@@ -204,7 +204,7 @@ const secretRunCommand = defineJsonCommand({
     // Audit trail: record access by ref + var name only — never the value.
     appendEvent({
       eventType: "secret_access",
-      ref: makeSecretRef(name, source),
+      ref: makeSecretRef(conceptId, source),
       metadata: { var: varName },
     });
 

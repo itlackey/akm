@@ -19,10 +19,11 @@ import path from "node:path";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
-import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
+import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { authoringRulesForType } from "../../core/authoring-rules";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -39,6 +40,8 @@ import { warn, warnVerbose } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import { type NoticeSet, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
+import { resolveOwnedType, resolveWriteAddress } from "../../indexer/lookup/adapter-concept-owner";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { chatCompletion } from "../../llm/client";
@@ -132,13 +135,14 @@ export interface AkmDistillOptions {
 /** An asset near a query; `path` is its file when the search knows it. */
 interface RelatedAsset {
   ref: string;
+  /** The asset type the search hit carries. */
+  type: string;
   content: string;
   path?: string;
 }
 
-/** Derive the proposed lesson ref from the input ref. */
-export function deriveLessonRef(inputRef: string): string {
-  const parsed = parseRefInput(inputRef);
+/** Derive the proposed lesson ref from the input ref and, for an existing input, its write address. */
+export function deriveLessonRef(inputRef: string, parsed: AssetRef = parsePlacementRef(inputRef)): string {
   const parts = parsed.name.split("/");
   const scope = parts.length > 1 ? parts.shift() : undefined;
   const clean = (value: string): string =>
@@ -393,6 +397,8 @@ type DistillKind = "lesson" | "knowledge";
 interface DistillRun {
   options: AkmDistillOptions;
   inputRef: string;
+  /** The input asset's type, from its file. */
+  inputType: string;
   /** Durable key for events, feedback and the ledger: the planner's item_ref, else the conceptId. */
   ledgerRef: string;
   stash: string;
@@ -461,13 +467,15 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
   if (!inputRef) {
     throw new UsageError("Asset ref is required. Usage: akm distill <ref>", "MISSING_REQUIRED_ARGUMENT");
   }
-  const parsedInputRef = parseRefInput(inputRef);
   const config = options.config ?? loadConfig();
+  const stash = options.stashDir ?? resolveStashDir();
+  // An existing input is addressed where its file is; only a ref no file owns is read by placement.
+  const address = resolveWriteAddress(stash, inputRef);
   const profile = options.improveProfile ?? resolveImproveStrategy(undefined, config).config;
   options = { ...options, improveProfile: profile };
   const targetKind = options.proposalKind ?? "lesson";
   const kind: DistillKind = targetKind === "knowledge" ? "knowledge" : "lesson";
-  const outputRef = kind === "knowledge" ? deriveKnowledgeRef(inputRef) : deriveLessonRef(inputRef);
+  const outputRef = kind === "knowledge" ? deriveKnowledgeRef(inputRef) : deriveLessonRef(inputRef, address);
   if (!resolveProcessEnabled("distill", profile)) {
     return {
       schemaVersion: 1,
@@ -482,18 +490,23 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
 
   const ledgerRef = options.itemRef ?? inputRef;
   const eligMeta = options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {};
-  if (isDistillRefusedInputType(parsedInputRef.type)) {
-    const secret = parsedInputRef.type === "env" || parsedInputRef.type === "secret";
-    const proposalRef = secret ? inputRef : conceptIdFromTypeName("lesson", parsedInputRef.name);
+  // The input's type is its file's; the ref's first folder names it only for a ref no file owns.
+  const inputType =
+    resolveOwnedType(parseBundleRef(inputRef), resolveSourceEntries(options.stashDir, config), {
+      mode: "read",
+      includeSensitive: true,
+    }) ?? address.type;
+  if (isDistillRefusedInputType(inputType)) {
+    const secret = inputType === "env" || inputType === "secret";
+    const proposalRef = secret ? inputRef : conceptIdFromTypeName("lesson", address.name);
     const skipReason = secret ? "refused_secret_input" : "recursive_lesson_input";
     const message = secret
-      ? `Distill refuses ${parsedInputRef.type} inputs — secret material must never be sent to the LLM.`
+      ? `Distill refuses ${inputType} inputs — secret material must never be sent to the LLM.`
       : "Distill refuses lesson inputs — lessons are the distilled form, not a source.";
     emitDistill({ ledgerRef, eligMeta, options }, { outcome: "skipped", proposalRef, message, skipReason });
     return { schemaVersion: 1, ok: true, outcome: "skipped", inputRef, proposalRef, skipReason, message };
   }
 
-  const stash = options.stashDir ?? resolveStashDir();
   const notices = noticeSet();
   const lookup = options.lookupFn ?? ((ref: string) => defaultLookup(ref, stash));
   const asset = await loadInput(lookup, inputRef);
@@ -502,6 +515,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     inputRef,
     ledgerRef,
     stash,
+    inputType,
     config,
     profile,
     runner: stageRunner(options, config, "distill", notices.add),
@@ -550,7 +564,7 @@ async function distill(
     eventType: event.eventType,
     ...(event.metadata !== undefined ? { metadata: event.metadata } : {}),
   }));
-  const { system, prompt } = await buildDistillMessages(run, feedback, kind, outputRef);
+  const { system, prompt } = await buildDistillMessages(run, feedback, kind);
   const call = run.runner
     ? await callStage({
         runner: run.runner,
@@ -642,7 +656,7 @@ function feedbackLines(feedback: BuildPromptInput["feedback"]): string[] {
 
 /** Whether a file already holds the lesson `ref` in the stash the proposal would be filed in. */
 function lessonExists(run: DistillRun, ref: string): boolean {
-  const { type, name } = parseRefInput(ref);
+  const { type, name } = parsePlacementRef(ref);
   const typeDir = stashDirFor(type);
   if (!typeDir) return false;
   try {
@@ -848,11 +862,10 @@ async function proposeLessonUpdate(
   if (!run.runner || !qualityGateEnabled(run) || !memory) return undefined;
   const lessons: Array<UpdateCandidate & { path: string; content: string }> = [];
   for (const asset of related ?? (await run.related(memory.slice(0, 500), RELATED_COUNT))) {
-    const parsed = parseRefInput(asset.ref);
-    if (parsed.type !== "lesson" || !asset.path || !isWithin(asset.path, run.stash)) continue;
+    if (asset.type !== "lesson" || !asset.path || !isWithin(asset.path, run.stash)) continue;
     try {
       const content = fs.readFileSync(asset.path, "utf8");
-      const ref = conceptIdFromTypeName("lesson", parsed.name);
+      const { conceptId: ref } = parseBundleRef(asset.ref);
       lessons.push({ ref, path: asset.path, content, body: parseFrontmatter(content).content.trim() });
     } catch {
       // A lesson that cannot be read cannot be extended.
@@ -1113,6 +1126,7 @@ async function planPromotion(
 ): Promise<PromotionPlan | null> {
   const assessment = assessMemoryKnowledgePromotionCandidate({
     inputRef: run.inputRef,
+    inputType: run.inputType,
     assetContent: run.asset.content,
     feedbackEvents,
   });
@@ -1246,7 +1260,7 @@ function stampInputSalience(run: DistillRun): void {
   const { content, path: filePath } = run.asset;
   if (!content || !filePath) return;
   try {
-    const type = parseRefInput(run.inputRef).type;
+    const type = run.inputType;
     let revisionCount = 0;
     try {
       // Revisions so far: every proposal raised against this ref.
@@ -1288,7 +1302,7 @@ function stampInputSalience(run: DistillRun): void {
  */
 function persistOutputEncodingSalience(run: DistillRun, ref: string, body: string): void {
   try {
-    const type = parseRefInput(ref).type;
+    const type = parsePlacementRef(ref).type;
     const scored = scoreEncodingSalience({ body, type, existingRefVocabulary: run.vocabulary, revisionCount: 0 });
     withStateDb((stateDb) =>
       upsertAssetSalience(
@@ -1335,7 +1349,6 @@ async function buildDistillMessages(
   run: DistillRun,
   feedback: BuildPromptInput["feedback"],
   kind: DistillKind,
-  outputRef: string,
 ): Promise<{ system: string; prompt: string }> {
   const rejectedProposals = rejectedProposalContext(run.stash, run.inputRef, run.options.ctx, run.options.eventsCtx);
   // CLS interleaving (default on): show the related lessons, knowledge notes and skills, so the writer neither repeats nor overwrites them.
@@ -1350,7 +1363,7 @@ async function buildDistillMessages(
       // CLS context is supplemental.
     }
   }
-  const standardsContext = resolveStandardsContext(outputRef, run.stash);
+  const standardsContext = resolveStandardsContext(kind, run.stash);
   const prompt = buildDistillPrompt({
     inputRef: run.inputRef,
     assetContent: run.asset.content,
@@ -1396,7 +1409,7 @@ async function fetchRelatedAssets(query: string, n: number): Promise<RelatedAsse
         } catch {
           // best-effort
         }
-        return { ref: h.ref, content, ...(h.path ? { path: h.path } : {}) };
+        return { ref: h.ref, type: h.type, content, ...(h.path ? { path: h.path } : {}) };
       });
   } catch {
     return [];

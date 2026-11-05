@@ -51,7 +51,7 @@
 
 import { detectAdapterId } from "../core/adapter/detect-adapter";
 import type { BundleInstallation } from "../core/adapter/types";
-import { stashDirFor } from "../core/asset/asset-placement";
+import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
 import { deriveBundleId, deriveBundleIds, slugForPath } from "../core/bundle-id";
 import { isSourceWriteActivated } from "../core/write-source";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
@@ -128,9 +128,8 @@ export function deriveWritableBundleIds(sources: SearchSource[]): Set<string> {
 
 /**
  * Derive the durable `EntryProvenance` for an indexed entry (Chunk-5 flip
- * §14.4): `conceptId` is the D-R2 qualified `<stash-subdir>/<name>` spelling
- * (`stashDirFor(type)` prefix; a foreign type with no placement stash-subdir
- * keeps the bare name), and `item_ref` is `<bundle>//<conceptId>` — the exact
+ * §14.4): `conceptId` is the owning adapter's, else the one a new asset of this
+ * type and name is placed under (`conceptIdFromTypeName`), and `item_ref` is `<bundle>//<conceptId>` — the exact
  * spelling `recognize` emits as `IndexDocument.ref`. Shared by the full-index
  * diff-persist writer and the write-path `indexWrittenAssets` fast path so both
  * populate item_ref identically (F4a M-core-2 item 5 — no NULL-item_ref rows).
@@ -147,8 +146,7 @@ export function deriveEntryProvenance(
    */
   adapterConceptId?: string,
 ): EntryProvenance {
-  const typeStashDir = stashDirFor(type);
-  const conceptId = adapterConceptId ?? (typeStashDir !== undefined ? `${typeStashDir}/${name}` : name);
+  const conceptId = adapterConceptId ?? conceptIdFromTypeName(type, name);
   return {
     itemRef: `${bundle.bundleId}//${conceptId}`,
     bundleId: bundle.bundleId,

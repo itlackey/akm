@@ -11,8 +11,8 @@ import { akmShowUnified } from "../commands/read/show";
 import { parseBundleRef } from "../core/asset/asset-ref";
 import { parseMarkdownToc, uniqueHeadingSlugs } from "../core/asset/markdown";
 import { markdownLinkTargets } from "../core/asset/markdown-link-targets";
-import { typeNameFromConceptId } from "../core/asset/resolve-ref";
 import { loadConfig } from "../core/config/config";
+import { resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
 import { getDbPath } from "../core/paths";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
@@ -90,8 +90,7 @@ function feedbackFor(durableRef: string | null) {
 export async function show(input: { ref: string }) {
   const ref = (input.ref ?? "").trim();
   if (!ref) throw new UsageError("An asset ref is required.", "MISSING_REQUIRED_ARGUMENT");
-  const parsed = parseBundleRef(ref);
-  const type = typeNameFromConceptId(parsed.conceptId)?.type;
+  const type = resolveRefOwner(ref)?.type;
   if (type === "env" || type === "secret") {
     // Values never leave the machine's own files through the UI, whatever the renderers would show.
     return { redacted: true, type, ref, note: "Env and secret values are never shown in the UI." };

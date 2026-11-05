@@ -18,6 +18,7 @@
  * child after the parent is pruned.
  */
 
+import { stashDirFor, stashDirNames } from "../../core/asset/asset-placement";
 import { type DeclaredLink, declaredLinks } from "../../indexer/links/declared-links";
 import type { IndexDocument } from "../../indexer/passes/metadata";
 import type { Database } from "../database";
@@ -104,11 +105,22 @@ export function rebuildAllEntryLinks(db: Database): void {
  * (for a memory) its `.derived` child, never the declaring entry itself.
  * Expects `l` (the link) and `o` (its owner) in scope.
  */
+const LEGACY_HEADS = stashDirNames()
+  .map((dir) => `'${dir}'`)
+  .join(",");
 const TARGET_ID_SQL = `COALESCE(
     (SELECT id FROM entries WHERE item_ref = COALESCE(l.dst_bundle, o.bundle_id) || '//' || l.dst_concept),
     (SELECT id FROM entries
       WHERE item_ref = COALESCE(l.dst_bundle, o.bundle_id) || '//' || l.dst_concept || '.derived'
-        AND substr(l.dst_concept, 1, 9) = 'memories/' AND id <> o.id))`;
+        AND substr(l.dst_concept, 1, 9) = 'memories/' AND id <> o.id),
+    (SELECT id FROM entries
+      WHERE item_ref = COALESCE(l.dst_bundle, o.bundle_id) || '//' || substr(l.dst_concept, instr(l.dst_concept, '/') + 1)
+        AND substr(l.dst_concept, 1, instr(l.dst_concept, '/') - 1) IN (${LEGACY_HEADS})))`;
+
+/** The spelling releases before path refs gave a ref: the type folder prefixed to it. Links authored then still name it. */
+function legacyConceptId(type: string, conceptId: string): string {
+  return `${stashDirFor(type) ?? ""}/${conceptId}`;
+}
 
 /** One link read back for an entry: the other end's identity, or the authored token when it does not resolve. */
 export interface EntryLinkRow {
@@ -129,8 +141,8 @@ export interface EntryLinkRow {
  */
 export function readEntryLinks(db: Database, itemRef: string): { outgoing: EntryLinkRow[]; incoming: EntryLinkRow[] } {
   if (!tableExists(db, "asset_links")) return { outgoing: [], incoming: [] };
-  const owner = db.prepare("SELECT id, bundle_id, concept_id FROM entries WHERE item_ref = ?").get(itemRef) as
-    | { id: number; bundle_id: string; concept_id: string }
+  const owner = db.prepare("SELECT id, bundle_id, concept_id, type FROM entries WHERE item_ref = ?").get(itemRef) as
+    | { id: number; bundle_id: string; concept_id: string; type: string }
     | undefined
     | null;
   if (!owner) return { outgoing: [], incoming: [] };
@@ -161,11 +173,19 @@ export function readEntryLinks(db: Database, itemRef: string): { outgoing: Entry
       `SELECT l.kind AS kind, o.bundle_id AS bundleId, o.concept_id AS conceptId, o.type AS type
          FROM asset_links l
          JOIN entries o ON o.id = l.entry_id
-        WHERE l.dst_concept IN (?, ?) AND COALESCE(l.dst_bundle, o.bundle_id) = ? AND o.id <> ?
+        WHERE l.dst_concept IN (?, ?, ?, ?) AND COALESCE(l.dst_bundle, o.bundle_id) = ? AND o.id <> ?
           AND ${TARGET_ID_SQL} = ?
         ORDER BY l.kind, o.item_ref`,
     )
-    .all(owner.concept_id, parentConcept, owner.bundle_id, owner.id, owner.id) as Array<{
+    .all(
+      owner.concept_id,
+      parentConcept,
+      legacyConceptId(owner.type, owner.concept_id),
+      legacyConceptId(owner.type, parentConcept),
+      owner.bundle_id,
+      owner.id,
+      owner.id,
+    ) as Array<{
     kind: string;
     bundleId: string;
     conceptId: string;

@@ -12,7 +12,7 @@ import {
 import type { ImproveEligibleRef } from "../../../src/core/improve-types";
 
 function ref(name: string, eligibilitySource: ImproveEligibleRef["eligibilitySource"]): ImproveEligibleRef {
-  return { ref: `memories/${name}`, reason: "scope-type", eligibilitySource };
+  return { ref: `memories/${name}`, type: "memory", reason: "scope-type", eligibilitySource };
 }
 
 describe("selectEffectiveImproveRefs", () => {

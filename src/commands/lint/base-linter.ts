@@ -36,7 +36,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isScalar, parseDocument } from "yaml";
-import { assetPathCandidatesForName, assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
+import {
+  assetPathCandidatesForName,
+  assetPathForName,
+  filesForRef,
+  stashDirFor,
+  stashDirNames,
+} from "../../core/asset/asset-placement";
 import { BUNDLE_REF_RE } from "../../core/asset/asset-ref";
 import {
   removeFrontmatterListValues,
@@ -45,7 +51,7 @@ import {
 } from "../../core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../core/asset/frontmatter-lint";
 import { isArchivedRelPath } from "../../core/asset/memory-archive";
-import { conceptIdFromTypeName, typeNameFromConceptId } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { localDateStamp } from "../../core/common";
 import { containsRedactedContent, REDACTED_CONTENT_MARKER } from "../../core/content-safety";
 import { DERIVED_SUFFIX } from "../../core/recognition-util";
@@ -332,10 +338,8 @@ function localRefMissingRelPath(refType: string, refName: string, allRoots: stri
 /**
  * 0.9.0 grammar recognition: fully-qualified `bundle//conceptId` body-refs
  * (`BUNDLE_REF_RE`, the anchored prose form). The conceptId is
- * reverse-translated to its legacy `type`/`name` via the static table
- * (`typeNameFromConceptId`) so the SAME on-disk existence
- * check applies; a conceptId whose leading segment names no known stash-subdir
- * is not a local asset ref and is skipped (foreign-adapter / cross-bundle prose).
+ * is checked on disk by {@link classifyConceptRef}; a conceptId whose leading
+ * segment names no known stash-subdir is not a local asset ref and is skipped (foreign-adapter / cross-bundle prose).
  */
 function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: string; resolvedRelPath: string }> {
   const missing: Array<{ ref: string; resolvedRelPath: string }> = [];
@@ -354,25 +358,41 @@ function scanBundleRefs(scanBody: string, allRoots: string[]): Array<{ ref: stri
 }
 
 /**
- * Map a bare 0.9.0 conceptId (`<stash-subdir>/<name>`, e.g. `memories/foo`) to
- * its legacy `type`/`name` and run the shared existence check. Returns the
- * missing relPath, or `null` when it resolves or is not a known local
- * asset-type prefix. Drops a trailing `#fragment` (export selector) before
- * mapping.
+ * Run the existence check for a bare conceptId. Returns the missing relPath, or
+ * `null` when it resolves or does not read as a local asset ref. A ref is the
+ * file's path inside its bundle minus the type's suffix, so any placement spec's
+ * spelling of it satisfies it, and so does the type-folder-prefixed spelling
+ * earlier releases wrote for a loose file. A conceptId that does not lead with a
+ * stash folder is foreign-adapter / cross-bundle prose and is skipped. Drops a
+ * trailing `#fragment` (export selector) before mapping.
  */
 function classifyConceptRef(rawConceptId: string, allRoots: string[]): string | null {
   const conceptId = rawConceptId.split("#", 1)[0]!;
-  const parts = typeNameFromConceptId(conceptId) ?? legacyTypeSlugParts(conceptId);
-  if (parts === undefined) return null; // foreign type / not a local asset ref
-  return localRefMissingRelPath(parts.type, parts.name, allRoots);
+  const legacy = legacyTypeSlugParts(conceptId);
+  if (legacy !== undefined) return localRefMissingRelPath(legacy.type, legacy.name, allRoots);
+  const slash = conceptId.indexOf("/");
+  if (slash <= 0 || !stashDirNames().includes(conceptId.slice(0, slash))) return null;
+  if (isNonRefName(conceptId.slice(slash + 1))) return null;
+  const spellings = [conceptId, conceptId.slice(slash + 1)];
+  // A memory's `<name>.derived.md` child also reaches an edge to its parent (#882).
+  const candidates = spellings.flatMap((id) => [
+    ...filesForRef("", id),
+    ...(id.endsWith(DERIVED_SUFFIX) ? [] : filesForRef("", `${id}${DERIVED_SUFFIX}`)),
+  ]);
+  for (const root of allRoots) {
+    for (const candidate of candidates) {
+      if (fs.existsSync(path.join(root, candidate)) || isArchivedRelPath(candidate, root)) return null;
+    }
+  }
+  return `${conceptId}.md`;
 }
 
 /**
  * Read-only fallback for the retired `type:slug` xref grammar (see
  * resolve-ref.ts Q-02 — the write boundary no longer emits or accepts it).
  * Stash content written before that retirement still carries it in frontmatter
- * `xrefs:` lists, and `typeNameFromConceptId` (conceptId-only) returns
- * `undefined` for it, so without this it was silently skipped rather than
+ * `xrefs:` lists, and the conceptId check returns
+ * `null` for it, so without this it was silently skipped rather than
  * validated (#882). `refToRelPath`/`refExistsInAnyStash` already key off a bare
  * `(type, slug)` pair — the same shape `type:slug` already is — so this only
  * needs to split the token; no new resolution logic.

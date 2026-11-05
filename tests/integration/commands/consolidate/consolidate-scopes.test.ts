@@ -38,7 +38,14 @@ function setup() {
     memoryByRef: new Map([
       [
         "memories/source",
-        { name: "source", filePath: file, description: "Larch recovery", tags: [], stashDir: storage.stashDir },
+        {
+          name: "source",
+          ref: "memories/source",
+          filePath: file,
+          description: "Larch recovery",
+          tags: [],
+          stashDir: storage.stashDir,
+        },
       ],
     ]),
     promoted: [],

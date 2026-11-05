@@ -512,6 +512,24 @@ describe("akmDistill — feature gate", () => {
   });
 });
 
+describe("akmDistill — an input at the bundle root (#1432)", () => {
+  test("is addressed by its path ref and typed by its file", async () => {
+    const stash = makeStashDir();
+    const inputPath = path.join(stash, "release.md");
+    fs.writeFileSync(inputPath, "---\ndescription: Release notes\n---\n\nTag before you publish.\n");
+    const result = await akmDistill({
+      ref: "release",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: async () => inputPath,
+      readEventsFn: emptyEvents,
+    });
+    expect(result.proposalRef).toBe("lessons/knowledge-release-lesson");
+    expect(result.outcome).not.toBe("llm_failed");
+  });
+});
+
 // ── Acceptance: LLM throws ──────────────────────────────────────────────────
 
 describe("akmDistill — LLM error paths", () => {
@@ -1262,6 +1280,7 @@ describe("akmDistill — queued proposal", () => {
   test("scored promotion can still pass without curated quality when the fixture is strongly reinforced", () => {
     const assessment = assessMemoryKnowledgePromotionCandidate({
       inputRef: "memories/deploy-fact",
+      inputType: "memory",
       assetContent: [
         "---",
         "description: VPN required before deploy",
@@ -2781,7 +2800,9 @@ describe("akmDistill — the writer finds no lesson", () => {
 // A lesson, a knowledge note or a skill that already states the rule is the commonest reason a reviewer rejected a
 // distilled lesson after it restated its memory.
 describe("akmDistill — the writer sees what the library already holds", () => {
-  const RELATED = [{ ref: "skills/deploy", content: "Deploy rule: connect the VPN before production deploys." }];
+  const RELATED = [
+    { ref: "skills/deploy", type: "skill", content: "Deploy rule: connect the VPN before production deploys." },
+  ];
 
   async function promptFor(stash: string, distill: Record<string, unknown>, related = RELATED) {
     let user = "";
@@ -2845,7 +2866,7 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
   interface Fixture {
     stash: string;
     lessonPath: string;
-    related: Array<{ ref: string; content: string; path?: string }>;
+    related: Array<{ ref: string; type: string; content: string; path?: string }>;
   }
 
   function setup(): Fixture {
@@ -2859,7 +2880,11 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
       memory,
       `---\ndescription: deploy retries\n---\n\nRetry a deploy at most three times with doubling waits. Never retry a 4xx: the request is wrong.\n`,
     );
-    return { stash, lessonPath, related: [{ ref: "lessons/deploy-retries", content: EXISTING, path: lessonPath }] };
+    return {
+      stash,
+      lessonPath,
+      related: [{ ref: "lessons/deploy-retries", type: "lesson", content: EXISTING, path: lessonPath }],
+    };
   }
 
   /**
@@ -3095,7 +3120,7 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     const foreign = path.join(other, "lessons", "deploy-retries.md");
     fs.mkdirSync(path.dirname(foreign), { recursive: true });
     fs.writeFileSync(foreign, EXISTING);
-    fixture.related = [{ ref: "lessons/deploy-retries", content: EXISTING, path: foreign }];
+    fixture.related = [{ ref: "lessons/deploy-retries", type: "lesson", content: EXISTING, path: foreign }];
     const { result, prompts } = await run(fixture, {
       writer: VALID_LESSON,
       update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
@@ -3219,7 +3244,7 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
   function addSecondLesson(fixture: Fixture): void {
     const other = path.join(fixture.stash, "lessons", "other-lesson.md");
     fs.writeFileSync(other, "---\ndescription: Another rule\nwhen_to_use: Another trigger\n---\n\nSomething else.\n");
-    fixture.related.push({ ref: "lessons/other-lesson", content: "Something else.", path: other });
+    fixture.related.push({ ref: "lessons/other-lesson", type: "lesson", content: "Something else.", path: other });
   }
 
   test("a NONE whose reason names no lesson, with several lessons near, makes no update call", async () => {

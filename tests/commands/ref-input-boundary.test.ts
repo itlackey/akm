@@ -4,7 +4,7 @@
 
 /**
  * Chunk-5 flip F1b (ref-grammar decision D-R1/D-R4): the CLI/API input
- * boundaries route raw refs through `parseRefInput`, which accepts the
+ * boundaries route raw refs through `parsePlacementRef`, which accepts the
  * `[bundle//]conceptId` grammar. The pre-0.9.0 `[origin//]type:name` colon
  * grammar is retired (owner ruling 5, Q-02) — it is NOT accepted here, and it
  * must never be re-accepted by any parser.

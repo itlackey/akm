@@ -103,7 +103,17 @@ async function promote(name: string) {
     sourceRun: "consolidate-test",
     target: resolveWriteTarget(config),
     memoryByRef: new Map([
-      [op.ref, { name, filePath: memoryPath(name), description: `${name} memory`, tags: [], stashDir: stash }],
+      [
+        op.ref,
+        {
+          name,
+          ref: `memories/${name}`,
+          filePath: memoryPath(name),
+          description: `${name} memory`,
+          tags: [],
+          stashDir: stash,
+        },
+      ],
     ]),
     promoted: [],
     promotedSourceRefs: new Set(),

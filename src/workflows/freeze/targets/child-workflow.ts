@@ -7,7 +7,6 @@
  */
 
 import { createHash } from "node:crypto";
-import { parseBundleRef } from "../../../core/asset/asset-ref";
 import { UsageError } from "../../../core/errors";
 import type { TaskInputBinding } from "../../../execution/input-contract";
 import { workflowParamContract } from "../../ir/params";
@@ -50,21 +49,12 @@ function childWorkflowContentHash(fields: {
     .digest("hex");
 }
 
-/** A workflow entry of a composition `refPath`. */
-function isWorkflowRef(ref: string): boolean {
-  try {
-    return parseBundleRef(ref).conceptId.startsWith("workflows/");
-  } catch {
-    return false;
-  }
-}
-
 function compositionPath(refPath: readonly string[], childRef: string): string {
   return [...refPath, childRef].join(" -> ");
 }
 
 function assertNoCompositionCycle(stepId: string, childRef: string, refPath: readonly string[]): void {
-  if (!refPath.filter(isWorkflowRef).includes(childRef)) return;
+  if (!refPath.includes(childRef)) return;
   throw new UsageError(
     `Workflow step ${stepId} cannot compose ${childRef}: that would create a composition cycle. ` +
       `Path: ${compositionPath(refPath, childRef)}.`,

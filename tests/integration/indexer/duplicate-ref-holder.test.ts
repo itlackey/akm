@@ -3,9 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Two files of one source can claim one ref: a skill's `references/a.md` and a
- * note at `knowledge/skills/x/references/a.md` are both
- * `knowledge/skills/x/references/a`. The index holds one row for the ref, and
+ * Two files of one source can claim one ref: a note `notes/demo.md` and a skill
+ * `notes/demo/SKILL.md` are both `notes/demo`. The index holds one row for the ref, and
  * the file with the smaller path holds it, whichever directories a run drains
  * and in whatever order the walk met them (#1050). Before, the first file the
  * run persisted held it, so a full build followed the filesystem's listing
@@ -24,9 +23,10 @@ import { git } from "../../_helpers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 import { overrideSeam } from "../../_helpers/seams";
 
-const REF = "knowledge/skills/demo/references/a";
-const IN_KNOWLEDGE = "knowledge/skills/demo/references/a.md";
-const IN_SKILLS = "skills/demo/references/a.md";
+const REF = "notes/demo";
+const IN_KNOWLEDGE = "notes/demo.md";
+const IN_SKILLS = "notes/demo/SKILL.md";
+const OTHER = "notes/demo/b.md";
 
 let storage: IsolatedAkmStorage;
 
@@ -75,7 +75,7 @@ describe("a ref that two files claim", () => {
   test("is held by the file with the smaller path, and the first incremental run leaves the row alone", async () => {
     write(IN_KNOWLEDGE, "from knowledge");
     write(IN_SKILLS, "from skills");
-    write("skills/demo/references/b.md", "only in skills");
+    write(OTHER, "only in skills");
 
     const full = await akmIndex({ stashDir: storage.stashDir, full: true });
     const afterFull = holder();
@@ -98,7 +98,7 @@ describe("a ref that two files claim", () => {
 
   test("goes to a file with a smaller path that appears later, as a full index would give it", async () => {
     write(IN_SKILLS, "from skills");
-    write("skills/demo/references/b.md", "only in skills");
+    write(OTHER, "only in skills");
     await akmIndex({ stashDir: storage.stashDir, full: true });
     expect(holder()?.file).toBe(IN_SKILLS);
 
@@ -131,7 +131,7 @@ describe("a ref that two files claim", () => {
     git(storage.stashDir, ["init", "-q"]);
     write(IN_KNOWLEDGE, "from knowledge");
     write(IN_SKILLS, "from skills");
-    write("skills/demo/references/b.md", "only in skills");
+    write(OTHER, "only in skills");
 
     await akmIndex({ stashDir: storage.stashDir, full: true });
     expect(providerCalls).toBe(1);
@@ -155,15 +155,15 @@ describe("a ref that two files claim", () => {
 
   test("falls back to the other file in the same run when the file that holds it is deleted", async () => {
     write(IN_SKILLS, "from skills");
-    write("skills/demo/references/b.md", "only in skills");
+    write(OTHER, "only in skills");
     await akmIndex({ stashDir: storage.stashDir, full: true });
     write(IN_KNOWLEDGE, "from knowledge");
     await akmIndex({ stashDir: storage.stashDir });
     expect(holder()?.file).toBe(IN_KNOWLEDGE);
 
-    // The skills directory was skipped when the other file took the ref over. It must drain again to take it
+    // The directory was skipped when the other file took the ref over. It must drain again to take it
     // back; it used to stay skipped, and the ref left the index although its file was still on disk.
-    fs.rmSync(path.join(storage.stashDir, "knowledge", "skills"), { recursive: true });
+    fs.rmSync(path.join(storage.stashDir, IN_KNOWLEDGE));
     const result = await akmIndex({ stashDir: storage.stashDir });
     expect(result.totalEntries).toBe(2);
     const afterDelete = holder();

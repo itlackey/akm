@@ -49,7 +49,7 @@ import {
   readFrontmatterDate,
   replaceFrontmatterBlocks,
 } from "../../core/asset/frontmatter";
-import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
+import { conceptIdFromTypeName, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { bestEffort } from "../../core/best-effort";
 import { asNonEmptyString, existingFileMode, writeFileAtomic } from "../../core/common";
 import { concurrentMap } from "../../core/concurrent";
@@ -811,7 +811,7 @@ async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDr
 
   try {
     const content = renderDerivedMemory(parent, derived);
-    const childRef = parseRefInput(childRefStr);
+    const childRef = parsePlacementRef(childRefStr);
     await writeAssetToSource(writeTarget, writeConfig, childRef, content);
     return { written: 1, childExists: false };
   } catch (err) {
