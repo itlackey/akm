@@ -107,6 +107,12 @@ export interface StashEntryScope {
 /** Allowed keys in the `--filter k=v` flag (used by `akm search` and `akm curate`). */
 export type ScopeKey = keyof StashEntryScope;
 
+/**
+ * Scope filters: per key one value or a list. A list matches any of its values
+ * (OR within a key); different keys must all match (AND across keys).
+ */
+export type ScopeFilters = Partial<Record<ScopeKey, string | string[]>>;
+
 // ── §3 — IndexDocument (Chunk 5 F4a M-core-1: IS IndexDocument + provenance) ─────
 //
 // The spec's §3 `IndexDocument` IS `IndexDocument` + provenance (M1 decision). The

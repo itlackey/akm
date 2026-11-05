@@ -28,6 +28,7 @@ import { type AkmConfig, saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import { validateJsonSchemaSubset } from "../../src/core/json-schema";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
+import { _setWarnSinkForTests } from "../../src/core/warn";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { LlmCallError } from "../../src/llm/client";
@@ -3014,6 +3015,23 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     });
   });
 
+  test("a memory of one scope is not merged into a lesson of another (#1446)", async () => {
+    const fixture = setup();
+    fs.writeFileSync(
+      path.join(fixture.stash, "memories", "deploy-retries.md"),
+      "---\ndescription: deploy retries\nscope_user: alice\n---\n\nRetry a deploy at most three times. Never retry a 4xx.\n",
+    );
+    const { result } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [REPEAT, ADDITION_OK],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(result.updatesExisting).toBeUndefined();
+    expect(listProposals(fixture.stash).filter((p) => p.ref.endsWith("lessons/deploy-retries"))).toEqual([]);
+  });
+
   test("the triage drain leaves the update for a person", async () => {
     const fixture = setup();
     await run(fixture, {
@@ -3292,5 +3310,115 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
 
     expect(result.outcome).toBe("quality_rejected");
     expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
+  });
+});
+
+// ── Scope: an output has its input's scope, never the model's (#1446) ────────
+
+describe("akmDistill — scope of the output (#1446)", () => {
+  const warnings: string[] = [];
+  beforeEach(() => {
+    warnings.length = 0;
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn" && String(args[0]).includes("ignored scope")) warnings.push(args.join(" "));
+    });
+  });
+  afterEach(() => _setWarnSinkForTests(undefined));
+
+  async function distillFrom(memoryFrontmatter: string, written: string, proposalKind: "lesson" | "knowledge") {
+    const stash = makeStashDir();
+    const memoryFile = path.join(stash, "memories", "scoped.md");
+    fs.writeFileSync(memoryFile, `---\ndescription: A scoped memory\n${memoryFrontmatter}---\n\nA fact.\n`, "utf8");
+    const result = await akmDistill({
+      ref: "memories/scoped",
+      proposalKind,
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => written,
+      lookupFn: async () => memoryFile,
+      readEventsFn: emptyEvents,
+    });
+    expect(result.outcome).toBe("queued");
+    return parseFrontmatter(listProposals(stash)[0]!.payload.content).data;
+  }
+
+  test("a lesson from a user-scoped memory is user-scoped", async () => {
+    const data = await distillFrom("scope_user: alice\n", VALID_LESSON, "lesson");
+    expect(data.scope_user).toBe("alice");
+    expect(warnings).toEqual([]);
+  });
+
+  test("knowledge from a channel-scoped memory is channel-scoped", async () => {
+    const data = await distillFrom("scope_channel: ops\n", VALID_KNOWLEDGE, "knowledge");
+    expect(data.scope_channel).toBe("ops");
+    expect(data.scope_user).toBeUndefined();
+  });
+
+  test("a deterministic knowledge promotion from a user-scoped memory is user-scoped", async () => {
+    const stash = makeStashDir();
+    const memoryFile = path.join(stash, "memories", "deploy-fact.md");
+    fs.writeFileSync(
+      memoryFile,
+      "---\ndescription: VPN required before deploy\nsource: skill:deploy\nobserved_at: 2026-04-20\nconfidence: 0.95\ntags: [deploy, ops]\nscope_user: alice\n---\n\nAlways connect the VPN before starting production deploys.\n",
+      "utf8",
+    );
+    const result = await akmDistill({
+      ref: "memories/deploy-fact",
+      proposalKind: "auto",
+      config: configAbsentFeature(stash),
+      stashDir: stash,
+      chat: async () => {
+        throw new Error("deterministic promotion must not dispatch");
+      },
+      lookupFn: async () => memoryFile,
+      readEventsFn: eventsFor("memories/deploy-fact", ["positive", "positive"]),
+    });
+    expect(result.proposalKind).toBe("knowledge");
+    expect(parseFrontmatter(listProposals(stash)[0]!.payload.content).data.scope_user).toBe("alice");
+    expect(warnings).toEqual([]);
+  });
+
+  test("a scoped memory is not promoted into a knowledge doc of another scope", async () => {
+    const stash = makeStashDir();
+    const memoryFile = path.join(stash, "memories", "deploy-fact.md");
+    fs.writeFileSync(
+      memoryFile,
+      "---\ndescription: VPN required before deploy\nsource: skill:deploy\nobserved_at: 2026-04-20\nconfidence: 0.95\ntags: [deploy, ops]\nscope_user: alice\n---\n\nAlways connect the VPN before starting production deploys.\n",
+      "utf8",
+    );
+    const docFile = path.join(stash, "knowledge", "deploy-fact.md");
+    const doc = "---\ndescription: General deploy guidance\n---\n\nDeploys run from CI.\n";
+    fs.mkdirSync(path.dirname(docFile), { recursive: true });
+    fs.writeFileSync(docFile, doc, "utf8");
+    const result = await akmDistill({
+      ref: "memories/deploy-fact",
+      proposalKind: "auto",
+      config: configAbsentFeature(stash),
+      stashDir: stash,
+      chat: async () => JSON.stringify({ action: "ADD", content: "---\ndescription: Merged\n---\n\nMerged.\n" }),
+      lookupFn: async (ref) => (ref === "knowledge/deploy-fact" ? docFile : memoryFile),
+      readEventsFn: eventsFor("memories/deploy-fact", ["positive", "positive"]),
+    });
+    expect(result).toMatchObject({ outcome: "skipped", skipReason: "scope_differs" });
+    expect(listProposals(stash)).toEqual([]);
+    expect(fs.readFileSync(docFile, "utf8")).toBe(doc);
+  });
+
+  test("a scope the model wrote is replaced by the memory's, with one warning", async () => {
+    const written = VALID_LESSON.replace("---\n\n", "scope_user: mallory\nscope_run: r1\nscope:\n  agent: x\n---\n\n");
+    const data = await distillFrom("scope_user: alice\n", written, "lesson");
+    expect(data.scope_user).toBe("alice");
+    expect(data.scope_run).toBeUndefined();
+    expect(data.scope).toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    // The scope may come from an existing doc, not the model, so the warning does not name its author.
+    expect(warnings[0]).not.toContain("model");
+  });
+
+  test("a scope the model wrote is removed when the memory has none, with one warning", async () => {
+    const written = VALID_LESSON.replace("---\n\n", "scope_user: mallory\n---\n\n");
+    const data = await distillFrom("", written, "lesson");
+    expect(Object.keys(data).filter((key) => key.startsWith("scope"))).toEqual([]);
+    expect(warnings).toHaveLength(1);
   });
 });

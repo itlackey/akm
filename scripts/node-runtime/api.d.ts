@@ -12,8 +12,8 @@ export interface CurateOptions {
   type?: string;
   /** Named bundle or local|registry|all, same as --from. */
   source?: string;
-  /** AND-joined exact scope values, same as repeated --filter. */
-  filters?: { user?: string; agent?: string; run?: string; channel?: string };
+  /** Exact scope values, same as repeated --filter: a list matches any of its values; different keys must all match. */
+  filters?: { user?: string | string[]; agent?: string | string[]; run?: string | string[]; channel?: string | string[] };
   /** Default current; labels do not establish factual truth. */
   belief?: "all" | "current" | "historical";
   /** Output format, same as `--format`. Default `"json"`, as in the CLI. */

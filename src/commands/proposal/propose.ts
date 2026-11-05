@@ -17,6 +17,8 @@
 
 import type { SelectionFlags } from "../../cli/selection";
 import { placementTypes, stashDirFor } from "../../core/asset/asset-placement";
+import { assembleAsset } from "../../core/asset/asset-serialize";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { parsePlacementRef } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
@@ -25,9 +27,11 @@ import { generatedContentRejection } from "../../core/content-safety";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
+import { warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveEntryProvenance } from "../../indexer/installations";
+import { stampScope } from "../../indexer/passes/metadata";
 import type { AgentFailureReason, AgentRunResult } from "../../integrations/agent";
 import { buildExecution, currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
 import {
@@ -343,14 +347,21 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     ref = proposeItemRef(target.source, parsedRef.type, parsedRef.name);
   }
 
+  // Scope is the host's to set, never the model's: drop what the model wrote.
+  const parsedContent = parseFrontmatter(payload.content);
+  const stamped = stampScope(parsedContent.data, {});
+  const content = stamped.replaced ? assembleAsset(stamped.data, parsedContent.content) : payload.content;
+  if (stamped.replaced) warn(`[akm] propose: ignored scope set by the model for ${ref}.`);
+  const frontmatter = payload.frontmatter ? stampScope(payload.frontmatter, {}).data : undefined;
+
   const createInput: CreateProposalInput = {
     ref,
     source: "propose",
     sourceRun: `propose-${Date.now()}`,
     target,
     payload: {
-      content: payload.content,
-      ...(payload.frontmatter ? { frontmatter: payload.frontmatter } : {}),
+      content,
+      ...(frontmatter ? { frontmatter } : {}),
     },
     ...(payload.confidence !== undefined ? { confidence: payload.confidence } : {}),
   };

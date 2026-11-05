@@ -10,6 +10,7 @@
  * CLI entry point stays focused on argument parsing + output routing.
  */
 
+import { isDeepStrictEqual } from "node:util";
 import { serializeFrontmatter } from "../core/asset/asset-serialize";
 import { DESCRIPTION_MAX_CHARS } from "../core/authoring-rules";
 import { toErrorMessage, tryReadStdinText } from "../core/common";
@@ -18,11 +19,11 @@ import { SHIPPED_ALIAS } from "../core/config/model-aliases";
 import { ConfigError, UsageError } from "../core/errors";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { DURATION_UNITS, parseDuration as parseDurationSpec } from "../core/time";
-import { warn } from "../core/warn";
+import { warn, warnOnce } from "../core/warn";
 import { noticeSet } from "../execution/notices";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { StashEntryScope } from "../indexer/passes/metadata";
-import { SCOPE_KEYS } from "../indexer/passes/metadata";
+import { SCOPE_FRONTMATTER_KEYS, SCOPE_KEYS } from "../indexer/passes/metadata";
 import { callStructured } from "../llm/structured-call";
 import { withLlmStage } from "../llm/usage-telemetry";
 import { resolveImproveExecution } from "./improve/execution";
@@ -67,6 +68,12 @@ export interface MemoryFrontmatterFields {
    * union; until then, the indexer simply passes the string through.
    */
   beliefState?: string;
+  /**
+   * Keys from a frontmatter block the user's body began with. Merged under
+   * akm's own: a key akm also sets keeps akm's value, scope keys come only from
+   * the scope flags, and ignored keys are warned about once.
+   */
+  leading?: Record<string, unknown>;
 }
 
 /**
@@ -124,6 +131,19 @@ export function buildMemoryFrontmatter(fields: MemoryFrontmatterFields): string 
         obj[`scope_${key}`] = value.trim();
       }
     }
+  }
+  if (fields.leading) {
+    // Scope comes only from the scope flags; any other key akm set keeps akm's value.
+    const ignored = Object.keys(fields.leading).filter(
+      (k) => SCOPE_FRONTMATTER_KEYS.includes(k) || (k in obj && !isDeepStrictEqual(obj[k], fields.leading?.[k])),
+    );
+    if (ignored.length > 0) {
+      warnOnce(
+        "remember-leading-frontmatter",
+        `Ignoring frontmatter key(s) in the memory body that akm sets itself: ${ignored.join(", ")}.`,
+      );
+    }
+    for (const [k, v] of Object.entries(fields.leading)) if (!ignored.includes(k) && !(k in obj)) obj[k] = v;
   }
   // No fields populated → emit a bare delimiter pair so callers don't
   // produce `---\n{}\n---` (the YAML serializer's empty-object form).

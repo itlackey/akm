@@ -8,7 +8,14 @@ import path from "node:path";
 // — and the sub-shapes it references — live in `core/adapter/types.ts` so
 // `IndexDocument` can reference them without a `metadata.ts ↔ types.ts` cycle;
 // they are imported (and re-exported below) here. `SCOPE_KEYS` (a value) stays.
-import type { AssetParameter, IndexDocument, ScopeKey, StashEntryScope, StashIntent } from "../../core/adapter/types";
+import type {
+  AssetParameter,
+  IndexDocument,
+  ScopeFilters,
+  ScopeKey,
+  StashEntryScope,
+  StashIntent,
+} from "../../core/adapter/types";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter, readFrontmatterDate } from "../../core/asset/frontmatter";
 import type { TocHeading } from "../../core/asset/markdown";
@@ -22,12 +29,16 @@ import type { buildFileContext } from "../walk/file-context";
 export type {
   AssetParameter,
   IndexDocument,
+  ScopeFilters,
   ScopeKey,
   StashEntryScope,
   StashIntent,
 } from "../../core/adapter/types";
 
 export const SCOPE_KEYS: readonly ScopeKey[] = ["user", "agent", "run", "channel"] as const;
+
+/** Every frontmatter key that carries scope: the flat `scope_*` keys and a legacy nested `scope:`. */
+export const SCOPE_FRONTMATTER_KEYS: readonly string[] = ["scope", ...SCOPE_KEYS.map((key) => `scope_${key}`)];
 
 export interface StashFile {
   entries: IndexDocument[];
@@ -255,6 +266,36 @@ export function scopeFromFrontmatter(fm: Record<string, unknown>): StashEntrySco
   }
   applyScopeFrontmatter(entry, fm);
   return entry.scope ?? {};
+}
+
+/**
+ * Frontmatter with its scope keys ({@link SCOPE_FRONTMATTER_KEYS}) replaced by `scope`'s flat keys, or removed when
+ * `scope` is empty. `replaced` is true when the input carried a scope other than `scope`, so a caller can warn once.
+ */
+export function stampScope(
+  data: Record<string, unknown>,
+  scope: StashEntryScope,
+): { data: Record<string, unknown>; replaced: boolean } {
+  const out: Record<string, unknown> = { ...data };
+  for (const key of SCOPE_FRONTMATTER_KEYS) delete out[key];
+  for (const key of SCOPE_KEYS) if (scope[key] !== undefined) out[`scope_${key}`] = scope[key];
+  const present = SCOPE_FRONTMATTER_KEYS.some((key) => Object.hasOwn(data, key));
+  return { data: out, replaced: present && !sameScope(scopeFromFrontmatter(data), scope) };
+}
+
+/**
+ * The one scope-filter rule: every supplied key must match (AND), and a key
+ * with several values matches any of them (OR). Entries without the key never
+ * match a supplied filter on it.
+ */
+export function scopeMatchesFilters(scope: StashEntryScope | undefined, filters: ScopeFilters): boolean {
+  for (const key of SCOPE_KEYS) {
+    const expected = filters[key];
+    if (expected === undefined) continue;
+    const value = scope?.[key];
+    if (value === undefined || !(Array.isArray(expected) ? expected : [expected]).includes(value)) return false;
+  }
+  return true;
 }
 
 /** Exact maintenance equality: absence is a value, never a wildcard. */
