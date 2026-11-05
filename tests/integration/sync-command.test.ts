@@ -396,37 +396,4 @@ describe("akm sync", () => {
     expect(gitHeadSubject(installedStashDir)).toMatch(/^akm save /);
     expect(spawnSync("git", ["-C", installedStashDir, "status", "--porcelain"], { encoding: "utf8" }).stdout).toBe("");
   });
-
-  test("refuses a code-project bundle and leaves the repository's work alone (#1411)", async () => {
-    const primaryStashDir = makeTempDir("akm-save-primary-code-");
-    initGitRepo(primaryStashDir);
-    const repoDir = makeTempDir("akm-save-code-project-");
-    initGitRepo(repoDir);
-    fs.mkdirSync(path.join(repoDir, "scripts"), { recursive: true });
-    fs.writeFileSync(path.join(repoDir, "scripts", "build.sh"), "echo wip\n");
-
-    const configRoot = makeTempDir("akm-save-config-code-");
-    writeJson(path.join(configRoot, "akm", "config.json"), {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      bundles: { proj: { path: repoDir, components: { main: { root: ".", adapter: "code-project" } } } },
-    });
-
-    const result = await withEnv(
-      {
-        AKM_BUNDLE_DIR: primaryStashDir,
-        XDG_CONFIG_HOME: configRoot,
-        XDG_CACHE_HOME: makeTempDir("akm-save-cache-code-"),
-        XDG_DATA_HOME: makeTempDir("akm-save-data-code-"),
-        XDG_STATE_HOME: makeTempDir("akm-save-state-code-"),
-      },
-      () => runCliCapture(["sync", "proj"]),
-    );
-
-    expect(result.code).toBe(2);
-    expect(spawnSync("git", ["-C", repoDir, "rev-list", "--all"], { encoding: "utf8" }).stdout).toBe("");
-    expect(spawnSync("git", ["-C", repoDir, "status", "--porcelain"], { encoding: "utf8" }).stdout).toBe(
-      "?? scripts/\n",
-    );
-  });
 });

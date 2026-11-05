@@ -9,7 +9,7 @@ import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
 import { stashDirNames } from "../../core/asset/asset-placement";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
-import { bundleComponentConfig, getSources, loadConfig, resolveConfiguredSources } from "../../core/config/config";
+import { getSources, loadConfig, resolveConfiguredSources } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { sanitizeCommitMessage } from "../../core/git-message";
 import { lockContentRootFor } from "../../integrations/lockfile";
@@ -288,14 +288,6 @@ export function saveGitStash(
     }
     if (stash.type === "filesystem") {
       if (!stash.path) throw new UsageError(`Filesystem bundle "${name}" has no path configured.`);
-      // A code-project bundle is a source tree akm only reads (#1411): sync would stage the
-      // user's own work under it, so akm never commits or pushes there.
-      if (stash.name && bundleComponentConfig(config.bundles?.[stash.name])?.adapter === "code-project") {
-        throw new UsageError(
-          `Bundle "${name}" is a code-project bundle; akm does not commit to it.`,
-          "INVALID_FLAG_VALUE",
-        );
-      }
       const contentRoot = path.resolve(stash.path);
       const topLevel = runGit(["-C", contentRoot, "rev-parse", "--show-toplevel"]);
       if (topLevel.status !== 0 || !topLevel.stdout.trim()) {
