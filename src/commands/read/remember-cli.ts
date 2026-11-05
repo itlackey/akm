@@ -159,6 +159,9 @@ export const rememberCommand = defineJsonCommand({
   async run({ args }) {
     // A body that starts with its own frontmatter block: that block's keys merge under akm's.
     const { data: leading, content: body } = parseFrontmatter(readMemoryContent(args.content));
+    // Its description fills in for a missing --description, ahead of a derived one.
+    const leadingDescription =
+      typeof leading.description === "string" && leading.description.trim() ? leading.description : undefined;
     const eventSource = resolveUsageEventSource();
 
     // `--name` is a flat name; subdirectory placement is `--path`'s job.
@@ -215,7 +218,7 @@ export const rememberCommand = defineJsonCommand({
       // memories outrank background-derived ones during ranking.
       // #834: `description` is synthesized deterministically (see synthesizeMemoryDescription) so the memory is indexable.
       const frontmatterBlock = buildMemoryFrontmatter({
-        description: synthesizeMemoryDescription(body),
+        description: leadingDescription ?? synthesizeMemoryDescription(body),
         captureMode: "hot",
         beliefState: "asserted",
         leading,
@@ -254,7 +257,7 @@ export const rememberCommand = defineJsonCommand({
     // Start with CLI args (Mode 1: always)
     const tags = [...rawTags];
     // --description is persisted as-is; LLM enrichment may fill it if absent.
-    let description: string | undefined = args.description || undefined;
+    let description: string | undefined = args.description || leadingDescription;
     let source: string | undefined = args.source;
     let observed_at: string | undefined;
     let expires: string | undefined;

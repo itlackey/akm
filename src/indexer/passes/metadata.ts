@@ -29,6 +29,9 @@ export type {
 
 export const SCOPE_KEYS: readonly ScopeKey[] = ["user", "agent", "run", "channel"] as const;
 
+/** Every frontmatter key that carries scope: the flat `scope_*` keys and a legacy nested `scope:`. */
+export const SCOPE_FRONTMATTER_KEYS: readonly string[] = ["scope", ...SCOPE_KEYS.map((key) => `scope_${key}`)];
+
 export interface StashFile {
   entries: IndexDocument[];
   warnings?: string[];
