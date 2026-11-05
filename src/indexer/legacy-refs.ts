@@ -15,11 +15,8 @@
  */
 
 import { stashDirFor } from "../core/asset/asset-placement";
-import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { withStateDb } from "../core/state-db";
 import type { Database } from "../storage/database";
-import { findEntryIdByRef } from "../storage/repositories/index-entries-repository";
-import { warnOutdatedRef, withoutTypeHead } from "./lookup/adapter-concept-owner";
 
 /** state.db tables that store a full `bundle//conceptId` ref, with the column that holds it. */
 const STATE_REF_COLUMNS = [
@@ -70,19 +67,4 @@ export function rewriteLegacyStateRefs(moves: readonly LegacyRefMove[]): void {
       }
     })();
   });
-}
-
-/**
- * The entry id a ref names in the index. A ref that misses is retried in its
- * current spelling (the same fallback `resolveConceptOwner` applies), with one warning.
- */
-export function findEntryIdByRefOrLegacy(db: Database, ref: string, bundleId?: string): number | undefined {
-  const id = findEntryIdByRef(db, ref, bundleId);
-  if (id !== undefined) return id;
-  const { bundle, conceptId } = parseBundleRef(ref);
-  const current = withoutTypeHead(conceptId);
-  if (current === undefined) return undefined;
-  const legacy = findEntryIdByRef(db, makeBundleRef(bundle, current), bundleId);
-  if (legacy !== undefined) warnOutdatedRef(conceptId, current);
-  return legacy;
 }

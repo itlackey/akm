@@ -22,14 +22,18 @@ import { getStateDbPath, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
 import { withWriteTargetMutation } from "../core/write-source";
 import { recomputeUtilityScores } from "../indexer/indexer";
-import { findEntryIdByRefOrLegacy } from "../indexer/legacy-refs";
-import { resolveWriteAddress } from "../indexer/lookup/adapter-concept-owner";
-import { resolveSourceEntries } from "../indexer/search/search-source";
+import { currentConceptId, resolveWriteAddress } from "../indexer/lookup/adapter-concept-owner";
+import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
 import { insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
-import { getEntryById, getEntryFilePathById, getItemRefById } from "../storage/repositories/index-entries-repository";
+import {
+  findEntryIdByRef,
+  getEntryById,
+  getEntryFilePathById,
+  getItemRefById,
+} from "../storage/repositories/index-entries-repository";
 import { getUtilityScore } from "../storage/repositories/index-utility-repository";
 import { contentHash } from "./improve/content-hash";
 import { readEdgeList } from "./improve/memory/memory-belief";
@@ -84,21 +88,20 @@ function appendLessonStrength(
   origin: string | undefined,
   feedbackRef: string,
 ): { ref: string; strength: number } | null {
-  // `findEntryIdByRefOrLegacy` keys on the stored `item_ref`; the lesson's type is the one its entry records.
-  let { conceptId } = parseBundleRef(raw);
+  // `findEntryIdByRef` keys on the stored `item_ref`; the lesson's type is the one its entry records.
   const config = loadConfig();
+  const conceptId = currentConceptId(parseBundleRef(raw), resolveSourceEntries(undefined, config));
   let filePath: string | undefined;
   let bundleId: string | undefined;
   let type: string | undefined;
   const db = openExistingDatabase();
   try {
-    const entryId = findEntryIdByRefOrLegacy(db, makeBundleRef(origin, conceptId));
+    const entryId = findEntryIdByRef(db, makeBundleRef(origin, conceptId));
     if (entryId !== undefined) {
       const itemRef = getItemRefById(db, entryId);
       const parsedItemRef = itemRef ? parseBundleRef(itemRef) : undefined;
       filePath = getEntryFilePathById(db, entryId) ?? undefined;
       bundleId = parsedItemRef?.bundle;
-      if (parsedItemRef) conceptId = parsedItemRef.conceptId;
       type = getEntryById(db, entryId)?.entry.type;
     }
   } finally {
@@ -369,9 +372,9 @@ type HistoryMark = { supersededBy: string } | { outdated: true };
  * The durable ref of the asset `--superseded-by` names. It must be indexed and
  * must not be the asset itself, or nothing is recorded.
  */
-function resolveSuccessorRef(db: Database, input: string, itemRef: string): string {
+function resolveSuccessorRef(db: Database, input: string, itemRef: string, sources: SearchSource[]): string {
   const parsed = parseBundleRef(input);
-  const id = findEntryIdByRefOrLegacy(db, makeBundleRef(parsed.bundle, parsed.conceptId), parsed.bundle);
+  const id = findEntryIdByRef(db, makeBundleRef(parsed.bundle, currentConceptId(parsed, sources)), parsed.bundle);
   const successor = id === undefined ? null : getItemRefById(db, id);
   if (!successor) {
     throw new UsageError(
@@ -723,8 +726,8 @@ export const feedbackCommand = defineJsonCommand({
       if (parsedRef.bundle && !requestedSource) {
         throw new UsageError(`Source "${parsedRef.bundle}" is not configured.`, "INVALID_FLAG_VALUE");
       }
-      const lookupRef = makeBundleRef(parsedRef.bundle, parsedRef.conceptId);
-      const entryId = findEntryIdByRefOrLegacy(db, lookupRef, parsedRef.bundle);
+      const lookupRef = makeBundleRef(parsedRef.bundle, currentConceptId(parsedRef, sources));
+      const entryId = findEntryIdByRef(db, lookupRef, parsedRef.bundle);
       if (entryId === undefined) {
         // NotFoundError (exit 1), not UsageError (exit 2): the flags parsed
         // fine, the asset just isn't there. The documented exit-code table
@@ -774,7 +777,7 @@ export const feedbackCommand = defineJsonCommand({
           }
           mark =
             supersededBy !== undefined
-              ? { supersededBy: resolveSuccessorRef(db, supersededBy.trim(), itemRef) }
+              ? { supersededBy: resolveSuccessorRef(db, supersededBy.trim(), itemRef, sources) }
               : { outdated: true };
         }
         const before = fs.readFileSync(filePath, "utf8");

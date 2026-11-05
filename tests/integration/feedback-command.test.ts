@@ -7,6 +7,7 @@ import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
+import { _resetWarnOnceForTests } from "../../src/core/warn";
 import { akmIndex, recomputeUtilityScores } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
@@ -145,12 +146,13 @@ describe("akm feedback", () => {
   });
 
   test("a ref in the old type-folder spelling is recorded under the new ref, with one warning (#1439)", async () => {
+    _resetWarnOnceForTests();
     writeFile(path.join(stashDir, "WORK", "plan.md"), "---\ndescription: plan\n---\nThe plan.\n");
     await buildIndex();
 
     const result = await runCli(["feedback", "knowledge/WORK/plan", "--positive", "--format=json"]);
     expect(result.status).toBe(0);
-    expect(result.stderr).toMatch(/"knowledge\/WORK\/plan" is outdated.*"WORK\/plan"/);
+    expect(result.stderr.match(/"knowledge\/WORK\/plan" is outdated.*"WORK\/plan"/g)).toHaveLength(1);
     const db = openStateDatabase();
     try {
       const rows = db.prepare("SELECT entry_ref FROM usage_events WHERE event_type = 'feedback'").all() as Array<{

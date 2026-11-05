@@ -50,7 +50,7 @@ import {
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { deriveInstallations } from "../../indexer/installations";
-import { resolveWriteAddress, type WriteAddress } from "../../indexer/lookup/adapter-concept-owner";
+import { currentConceptId, resolveWriteAddress, type WriteAddress } from "../../indexer/lookup/adapter-concept-owner";
 import { sameScope, scopeFromFrontmatter } from "../../indexer/passes/metadata";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { sha256Hex } from "../../runtime";
@@ -244,8 +244,11 @@ function proposalRefIdentity(ref: string): ProposalRefIdentity | undefined {
   }
 }
 
-/** A `--ref` filter: a short ref matches its concept in the queue, a qualified one also its bundle. */
-function filterRefIdentity(ref: string): ProposalRefIdentity {
+/**
+ * A `--ref` filter: a short ref matches its concept in the queue, a qualified one also its bundle.
+ * An old spelling matches the proposals re-keyed to the asset's ref.
+ */
+function filterRefIdentity(stashDir: string, ref: string): ProposalRefIdentity {
   const identity = proposalRefIdentity(ref);
   if (!identity) {
     throw new UsageError(
@@ -253,7 +256,7 @@ function filterRefIdentity(ref: string): ProposalRefIdentity {
       "INVALID_FLAG_VALUE",
     );
   }
-  return identity;
+  return { ...identity, conceptId: currentConceptId(identity, resolveSourceEntries(stashDir, loadConfig())) };
 }
 
 function proposalMatchesRef(proposalRef: string, filter: ProposalRefIdentity): boolean {
@@ -642,7 +645,7 @@ function queryProposals(db: Database, stashDir: string, options: ListProposalsOp
   // non-pending status matches nothing.
   if (!options.includeArchive && options.status !== undefined && options.status !== "pending") return [];
   const status = options.includeArchive ? options.status : "pending";
-  const wantRef = options.ref !== undefined ? filterRefIdentity(options.ref) : undefined;
+  const wantRef = options.ref !== undefined ? filterRefIdentity(stashDir, options.ref) : undefined;
   return listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) }).filter((p) => {
     if (wantRef !== undefined && !proposalMatchesRef(p.ref, wantRef)) return false;
     if (!options.type) return true;
@@ -711,7 +714,7 @@ export function resolveProposalIdIn(db: Database, stashDir: string, idOrRef: str
   const exact = getStateProposal(db, idOrRef, stashDir);
   if (exact) return exact;
   if (idOrRef.includes(":") || idOrRef.includes("/")) {
-    const wantRef = filterRefIdentity(idOrRef);
+    const wantRef = filterRefIdentity(stashDir, idOrRef);
     // By-ref resolution never picks a retire proposal — the
     // newest pending proposal for a ref could be a `consolidate-pair`
     // retirement rather than the reflect/distill edit a person typed the

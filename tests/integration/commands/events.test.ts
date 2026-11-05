@@ -6,6 +6,7 @@ import { akmEventsList } from "../../../src/commands/log";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import { getStateDbPath } from "../../../src/core/state-db";
+import { _resetWarnOnceForTests } from "../../../src/core/warn";
 import { runCliCapture } from "../../_helpers/cli";
 import { type Cleanup, sandboxStashDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
@@ -349,6 +350,22 @@ describe("akm CLI mutation events", () => {
     const events = parsed.events as Array<Record<string, unknown>>;
     expect(events.length).toBeGreaterThanOrEqual(1);
     expect(events.every((e) => e.eventType === "feedback")).toBe(true);
+  });
+
+  test("`akm log --ref` in the old type-folder spelling lists the asset's events, with one warning (#1439)", async () => {
+    _resetWarnOnceForTests();
+    const stashDir = sandboxIsolatedStash();
+    writeFile(path.join(stashDir, "WORK", "plan.md"), "---\ndescription: plan\n---\nThe plan.\n");
+    const dbPath = getStateDbPath();
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    appendEvent({ eventType: "feedback", ref: "stash//WORK/plan" }, { dbPath });
+
+    const result = await runCli(["log", "--ref", "knowledge/WORK/plan", "--format=json"]);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { ref: string; events: Array<{ ref: string }> };
+    expect(parsed.ref).toBe("stash//WORK/plan");
+    expect(parsed.events.map((e) => e.ref)).toEqual(["stash//WORK/plan"]);
+    expect(result.stderr.match(/"knowledge\/WORK\/plan" is outdated/g)).toHaveLength(1);
   });
 });
 
