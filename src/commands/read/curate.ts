@@ -28,6 +28,7 @@ import { appendEvent } from "../../core/events";
 import { nonTaskInput } from "../../core/non-task-input";
 import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
+import { lookupBundleRef } from "../../indexer/indexer";
 import { applyCuratedFrontmatter } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
 import {
@@ -227,7 +228,6 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
   }
 
   const recall: RecallOptions = {
-    type: options.type,
     source: options.source ?? "local",
     filters: normalizeScopeFilters(options.filters),
     belief: parseBeliefFilterMode(options.belief ?? "current"),
@@ -603,8 +603,10 @@ async function buildCurateSupportRefs(
     for (const [kind, group] of Object.entries(links?.[part] ?? {})) {
       for (const ref of group.refs) {
         if (ref === ownerRef || selectedRefs.has(ref) || supportRefs.some((existing) => existing.ref === ref)) continue;
-        // A support ref is a link, not a hit: `--type` narrows the hits only.
-        const evidence = policy ? eligibleEvidence(ref, policy) : undefined;
+        // A support ref is a link, not a hit: `--type` narrows the hits only. A short link ref
+        // is checked on the asset `akm show <ref>` resolves, not another bundle's same conceptId.
+        const itemRef = policy ? (await lookupBundleRef(parseBundleRef(ref)).catch(() => null))?.itemRef : undefined;
+        const evidence = policy && itemRef ? eligibleEvidence(itemRef, policy) : undefined;
         if (policy && !evidence) continue;
         const historical = matchBeliefFilter(evidence?.beliefState, "historical");
         const type = supportRefType(ref);

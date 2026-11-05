@@ -211,6 +211,24 @@ test("a linked asset that became ineligible is not emitted as support", async ()
   put("knowledge/support", { scope: { user: "bob" } }, "supplemental context only");
   expect(support(await akmCurate({ query: "quartz deployment selected", filters, limit: 1 }))).toBeUndefined();
 });
+test("a short support ref is checked on the asset show resolves, not a same-named one in another bundle", async () => {
+  const filters = { user: "alice" };
+  const other = path.join(storage.root, "other");
+  saveConfig({
+    semanticSearchMode: "off",
+    bundles: { stash: { path: storage.stashDir }, other: { path: other } },
+    defaultBundle: "stash",
+    registries: [],
+  });
+  // Index the other bundle's eligible twin first so it has the lower row id.
+  put("knowledge/support", { scope: filters }, "supplemental context only", other);
+  await akmIndex({ stashDir: storage.stashDir, full: true });
+  put("knowledge/main", { scope: filters, xrefs: ["knowledge/support"] }, "quartz deployment selected");
+  put("knowledge/support", { scope: { user: "bob" } }, "supplemental context only");
+  await akmIndex({ stashDir: storage.stashDir });
+  const item = (await akmCurate({ query: "quartz deployment selected", filters, limit: 1 })).items[0];
+  expect(item && "supportRefs" in item ? item.supportRefs : undefined).toBeUndefined();
+});
 test("show reads a scoped asset by its bundle-qualified ref whatever the filters", async () => {
   put("knowledge/main", { scope: { user: "bob" } });
   await akmIndex({ stashDir: storage.stashDir, full: true });
