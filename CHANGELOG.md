@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261108] - 2026-11-05
+
 ### Changed
 
 - Markdown under `raw/` of an LLM Wiki inside an akm bundle (a folder, or the bundle root, with a root `schema.md` and `pages/`) is now type `wiki-source`, as it is when the wiki is a bundle of its own. Refs do not change. The first `akm index` after the upgrade re-files those rows in place; `improve` reflect skips the type by default, `search --type knowledge`/`command` no longer returns them, and a command-shaped snapshot no longer runs with `akm command run`.
