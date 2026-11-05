@@ -579,6 +579,9 @@ akm search "docker" --from all --detail full
 akm search "deploy" --filter user=alice
 akm search "deploy" --filter user=alice --filter agent=claude
 
+# Rank one user's assets slightly higher, dropping nothing:
+akm search "deploy" --prefer user=alice
+
 # Include proposal-queue entries:
 akm search "deploy" --include-proposed
 
@@ -656,6 +659,7 @@ it.
 | `--limit` | number | `20` | Maximum results |
 | `--from` | `local`, `registry`, `all` | `local` | Where to search |
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable; a repeated key matches any of its values, different keys must all match. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the candidates before ranking. |
+| `--prefer` | `<key>=<value>` | _(none)_ | Scope preference — same keys, repetition and matching as `--filter`, but a boost, not a limit: a matching asset's score is multiplied by 1.02 (browse and ref-prefix listings put matches first). It never drops or admits an asset; `--from` and `--filter` still decide which are eligible. Example: `--prefer channel=ops`. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--belief` | `all`, `current`, `historical` | `current` | Belief filter on any asset. `current` keeps unflagged/active/asserted assets; `historical` keeps deprecated/contradicted/superseded/archived assets. Labels do not establish truth. |
 | `--since` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or after this day: the `observed` date, else `updated`. Assets with neither are dropped. Applies before the candidate budgets, like `--filter`. Search only; registry hits are unaffected. |
@@ -739,6 +743,7 @@ akm curate "deploy the service" --filter user=alice --pack 4000
 | `--limit` | number | `4` | Maximum curated results |
 | `--from` | `local`, `registry`, `all`, bundle name | `local` | Where to search before curating |
 | `--filter` | `<key>=<value>` | _(none)_ | Repeatable exact scope filter: user, agent, run, channel; a repeated key matches any of its values, different keys are AND-joined |
+| `--prefer` | `<key>=<value>` | _(none)_ | Repeatable scope preference with the keys and matching of `--filter`; matching hits rank slightly higher (×1.02 on the score). It never drops or admits a hit and does not change which evidence curate accepts |
 | `--belief` | `all`, `current`, `historical` | `current` | Current keeps unflagged and active/asserted assets; historical keeps deprecated/contradicted/superseded/archived assets |
 | `--pack` | positive token budget | _(none)_ | Pack eligible local content in rank order; drop tail items before truncating the first oversized item |
 

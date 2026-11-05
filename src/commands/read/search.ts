@@ -84,6 +84,11 @@ export async function akmSearch(input: {
    * Eligibility is applied before each channel's candidate budget.
    */
   filters?: ScopeFilters;
+  /**
+   * Optional scope preference, same keys and match rule as `filters`. Matching
+   * local hits rank first; it never drops or admits a hit.
+   */
+  prefer?: ScopeFilters;
   /** Inclusive `YYYY-MM-DD` bounds on the hit's `observed` date, else `updated`. Local hits only. */
   since?: string;
   until?: string;
@@ -204,6 +209,7 @@ export async function akmSearch(input: {
           sources,
           config,
           filters,
+          prefer: normalizeScopeFilters(input.prefer),
           since: input.since,
           until: input.until,
           includeProposed,

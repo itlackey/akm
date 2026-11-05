@@ -18,6 +18,8 @@ export type BeliefFilterMode = "all" | "current" | "historical";
 export interface RecallOptions {
   /** Exact scope values: AND across keys, any-of within a repeated key; CLI --filter user=…|agent=…|run=…|channel=… . */
   filters?: ScopeFilters;
+  /** Same keys and match rule as `filters`, as a ranking preference: matching hits rank first, nothing is dropped; CLI --prefer. */
+  prefer?: ScopeFilters;
   /** Search and curate default to current; explicit all/historical retain investigation. */
   belief?: BeliefFilterMode;
   type?: string;

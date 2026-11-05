@@ -31,6 +31,13 @@ export interface CurateOptions extends RecallOptions {
   format?: "text" | "json";
 }
 
+/** `ScopeFilters` as the `key=value` tokens of repeated `--filter`/`--prefer` flags. */
+function scopeFlagTokens(scope: RecallOptions["filters"]): string[] | undefined {
+  return scope === undefined
+    ? undefined
+    : Object.entries(scope).flatMap(([key, value]) => [value ?? []].flat().map((v) => `${key}=${v}`));
+}
+
 /**
  * Returns exactly the stdout text of
  * `akm --detail agent -q curate <query> [--limit N] [--type T] --format <format>`
@@ -55,12 +62,8 @@ export async function curate(query: string, options: CurateOptions = {}): Promis
           limit: options.limit === undefined ? undefined : String(options.limit),
           from: options.source,
           belief: options.belief,
-          filters:
-            options.filters === undefined
-              ? undefined
-              : Object.entries(options.filters).flatMap(([key, value]) =>
-                  [value ?? []].flat().map((v) => `${key}=${v}`),
-                ),
+          filters: scopeFlagTokens(options.filters),
+          prefer: scopeFlagTokens(options.prefer),
         },
         mode,
       );

@@ -34,6 +34,11 @@ const scopeFilterArg = {
   description:
     "Scope filter (repeatable): --filter user=<id> --filter agent=<id> --filter run=<id> --filter channel=<name>. Repeating a key matches any of its values; different keys must all match. Narrows results without changing ranking.",
 } as const;
+const scopePreferArg = {
+  type: "string",
+  description:
+    "Scope preference (repeatable, same keys and matching as --filter): matching assets rank slightly higher. Never drops or admits an asset; --filter and --from still decide which are eligible.",
+} as const;
 const beliefArg = {
   type: "string",
   description:
@@ -58,6 +63,7 @@ export const searchCommand = defineJsonCommand({
     limit: { type: "string", description: "Maximum number of results" },
     from: { type: "string", description: "Search source (local|registry|all)", default: "local" },
     filter: scopeFilterArg,
+    prefer: scopePreferArg,
     "include-proposed": {
       type: "boolean",
       description: 'Include entries with quality:"proposed" in the result set. Excluded by default.',
@@ -90,6 +96,7 @@ export const searchCommand = defineJsonCommand({
     // occurrences directly from argv (same pattern as `--tag`).
     const filterTokens = parseAllFlagValues("--filter");
     const filters = parseScopeFilterFlags(filterTokens, "--filter");
+    const prefer = parseScopeFilterFlags(parseAllFlagValues("--prefer"), "--prefer");
     const includeProposed = args["include-proposed"] === true;
     const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
     const includeSessions = args["include-sessions"];
@@ -102,6 +109,7 @@ export const searchCommand = defineJsonCommand({
       limit,
       source,
       filters,
+      prefer,
       since,
       until,
       includeProposed,
@@ -143,6 +151,7 @@ export const curateCommand = defineJsonCommand({
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
     from: { type: "string", description: "Search source (local|registry|all)", default: "local" },
     filter: scopeFilterArg,
+    prefer: scopePreferArg,
     belief: { ...beliefArg, default: "current" },
     pack: {
       type: "string",
@@ -165,6 +174,7 @@ export const curateCommand = defineJsonCommand({
         limit: args.limit,
         from: args.from,
         filters: parseAllFlagValues("--filter"),
+        prefer: parseAllFlagValues("--prefer"),
         belief: args.belief,
       },
       outputMode,
@@ -195,6 +205,7 @@ export async function runCurate(
     limit?: string;
     from?: string;
     filters?: string[];
+    prefer?: string[];
     belief?: string;
     /** In-process callers (an agent's tool) name the run's source; the CLI reads `AKM_EVENT_SOURCE`. */
     eventSource?: UsageEventSource;
@@ -215,6 +226,7 @@ export async function runCurate(
     limit: limitParsed && limitParsed > 0 ? limitParsed : 4,
     source: parseSearchSource(args.from ?? "local"),
     filters: parseScopeFilterFlags(args.filters ?? [], "--filter"),
+    prefer: parseScopeFilterFlags(args.prefer ?? [], "--prefer"),
     belief: parseBeliefFilterMode(args.belief ?? "current"),
     eventSource: args.eventSource ?? resolveUsageEventSource(),
     attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,

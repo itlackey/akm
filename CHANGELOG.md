@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `akm search --prefer key=value` and `akm curate --prefer key=value` (and `prefer` beside `filters` in the `akm-cli/api` `curate()` options): repeatable, with the keys and matching of `--filter`, but a ranking preference instead of a limit. A matching local hit's score is multiplied by 1.02; browse and ref-prefix listings put matches first. It never drops or admits a hit (#1437).
+
 ## [0.10.261108] - 2026-11-05
 
 ### Changed

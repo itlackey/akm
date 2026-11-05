@@ -96,6 +96,18 @@ export function applyFeedback(
     .sort((a, b) => b.score - a.score || compareCodePoints(a.itemRef, b.itemRef));
 }
 
+/** Multiplier on the fused score of a hit that matches `--prefer`; ×1.02 passed the akm-eval#196 gate, ×1.05 failed its nDCG limit. */
+export const PREFER_WEIGHT = 1.02;
+
+/** Scale the fused score of each preferred asset (a set of `itemRef`s) by {@link PREFER_WEIGHT} and reorder, with the same tie-break as fusion. */
+export function applyPrefer(fused: readonly FusedCandidate[], preferred: ReadonlySet<string>): FusedCandidate[] {
+  return fused
+    .map((candidate) =>
+      preferred.has(candidate.itemRef) ? { ...candidate, score: candidate.score * PREFER_WEIGHT } : candidate,
+    )
+    .sort((a, b) => b.score - a.score || compareCodePoints(a.itemRef, b.itemRef));
+}
+
 /**
  * Weight of recency among dated candidates. A dated candidate's score is scaled
  * by 1 + w·r, where r is 1 for the newest dated candidate and halves for every
