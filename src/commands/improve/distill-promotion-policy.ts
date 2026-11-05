@@ -12,6 +12,8 @@ export interface PromotionFeedbackEvent {
 
 export interface PromotionPolicyInput {
   inputRef: string;
+  /** The input asset's type, from its file or index entry (never read from the ref). */
+  inputType: string;
   assetContent: string | null;
   feedbackEvents: readonly PromotionFeedbackEvent[];
 }
@@ -119,14 +121,13 @@ function collectPromotionFeatures(input: PromotionPolicyInput): {
   observedAt?: string;
   source?: string;
 } {
-  const parsed = parsePlacementRef(input.inputRef);
   const blockedBy: string[] = [];
 
-  if (parsed.type !== "memory") {
+  if (input.inputType !== "memory") {
     return { blockedBy: ["not-memory"] };
   }
 
-  if (parsed.name.endsWith(".derived")) {
+  if (input.inputRef.endsWith(".derived")) {
     return { blockedBy: ["derived-memory"] };
   }
 

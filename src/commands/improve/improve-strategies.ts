@@ -4,6 +4,7 @@
 
 import consolidate from "../../assets/improve-strategies/consolidate.json" with { type: "json" };
 import defaultStrategy from "../../assets/improve-strategies/default.json" with { type: "json" };
+import { stashDirFor } from "../../core/asset/asset-placement";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import {
   type AkmConfig,
@@ -22,6 +23,7 @@ import {
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { ConfigError } from "../../core/errors";
 import type { ImproveEligibleRef } from "../../core/improve-types";
+import { warnOnce } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -74,9 +76,20 @@ export function shouldSkipRef(
     const excludePrefixes = strategy.processes?.reflect?.excludeRefPrefixes;
     if (excludePrefixes && excludePrefixes.length > 0) {
       const { conceptId } = parseBundleRef(ref);
+      const under = (prefix: string) => conceptId === prefix || conceptId.startsWith(`${prefix}/`);
+      const typeDir = stashDirFor(type);
       const excluded = excludePrefixes.some((prefix) => {
         const stripped = stripBundlePrefix(prefix);
-        return conceptId === stripped || conceptId.startsWith(`${stripped}/`);
+        if (under(stripped)) return true;
+        // A prefix in the spelling before path refs (`knowledge/wikis/raw` for
+        // the loose `wikis/raw/`) still names the files of its type it named.
+        const outdated = typeDir !== undefined && stripped.startsWith(`${typeDir}/`);
+        if (!outdated || !under(stripped.slice(typeDir.length + 1))) return false;
+        warnOnce(
+          `outdated-exclude-prefix:${stripped}`,
+          `improve excludeRefPrefixes entry "${prefix}" is outdated: refs are the path inside the bundle, so it is now "${stripped.slice(typeDir.length + 1)}". Matched it that way.`,
+        );
+        return true;
       });
       if (excluded) return { skip: true, reason: "exclude-filter" };
     }

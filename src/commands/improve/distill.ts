@@ -1126,6 +1126,7 @@ async function planPromotion(
 ): Promise<PromotionPlan | null> {
   const assessment = assessMemoryKnowledgePromotionCandidate({
     inputRef: run.inputRef,
+    inputType: run.inputType,
     assetContent: run.asset.content,
     feedbackEvents,
   });

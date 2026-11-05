@@ -203,6 +203,16 @@ describe("shouldSkipRef excludeRefPrefixes (reflect only)", () => {
     ).toBe(false);
   });
 
+  test("a prefix in the type-folder spelling still excludes the loose files of its type it named (#1432)", () => {
+    const strategy = strategyWithExcluded(["knowledge/wikis/articles/raw/"]);
+    expect(shouldSkipRef({ ref: "wikis/articles/raw/some-page", type: "knowledge" }, "reflect", strategy).skip).toBe(
+      true,
+    );
+    expect(shouldSkipRef({ ref: "wikis/articles/raw/some-page", type: "lesson" }, "reflect", strategy).skip).toBe(
+      false,
+    );
+  });
+
   test("leaves other refs unaffected", () => {
     const strategy = strategyWithExcluded(["knowledge/wikis/articles/raw"]);
     const result = shouldSkipRef({ ref: "knowledge/guides/http-caching", type: "knowledge" }, "reflect", strategy);

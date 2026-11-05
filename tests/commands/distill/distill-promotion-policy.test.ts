@@ -14,6 +14,7 @@ function memoryInput(
 ): PromotionPolicyInput {
   return {
     inputRef: `memories/${name}`,
+    inputType: "memory",
     assetContent: assembleAssetFromString(frontmatter.join("\n"), body),
     feedbackEvents: feedbackSignals.map((signal) => ({ metadata: { signal } })),
   };
@@ -31,6 +32,15 @@ const VPN_BODY = "Always connect the VPN before starting production deploys.";
 describe("distill promotion policy", () => {
   test("does not copy a memory project scope into the reusable knowledge namespace", () => {
     expect(deriveKnowledgeRef("memories/project-a/oauth-refresh-race")).toBe("knowledge/oauth-refresh-race");
+  });
+
+  test("the input's type decides, not its ref's first folder (#1432)", () => {
+    const vpn = memoryInput("deploy-vpn-required", VPN_FRONTMATTER, VPN_BODY, ["positive", "positive"]);
+    const loose = assessMemoryKnowledgePromotionCandidate({ ...vpn, inputRef: "notes/deploy-vpn-required" });
+    expect(loose.blockedBy).not.toContain("not-memory");
+    expect(loose.promote).toBe(true);
+    const notMemory = assessMemoryKnowledgePromotionCandidate({ ...vpn, inputType: "knowledge" });
+    expect(notMemory.blockedBy).toContain("not-memory");
   });
 
   test("a reinforced, well-sourced memory promotes and emits knowledge payload content", () => {

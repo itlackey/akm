@@ -57,6 +57,15 @@ describe("getRetrievalCounts", () => {
     expect(counts.get("lessons/a")).toBe(2);
   });
 
+  test("counts refs outside a type folder and at the bundle root, alongside the rest (#1432)", () => {
+    seed("search", "stash//lessons/a");
+    seed("show", "stash//reports/release");
+    seed("show", "stash//release");
+
+    const counts = getRetrievalCounts(db, stateDb, ["lessons/a", "reports/release", "release"]);
+    expect(Object.fromEntries(counts)).toEqual({ "lessons/a": 1, "reports/release": 1, release: 1 });
+  });
+
   test("does not match a qualified input ref against a bare stored ref", () => {
     seed("show", "lessons/b");
     const counts = getRetrievalCounts(db, stateDb, ["stash//lessons/b"]);

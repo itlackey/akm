@@ -1262,6 +1262,7 @@ describe("akmDistill — queued proposal", () => {
   test("scored promotion can still pass without curated quality when the fixture is strongly reinforced", () => {
     const assessment = assessMemoryKnowledgePromotionCandidate({
       inputRef: "memories/deploy-fact",
+      inputType: "memory",
       assetContent: [
         "---",
         "description: VPN required before deploy",
