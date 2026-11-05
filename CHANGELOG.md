@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261107] - 2026-11-05
+
 ### Added
 
 - `code-project` adapter: `akm bundle add . --adapter code-project` indexes a coding repository (source, Markdown docs, a few named config files) into the global index, one document per file, read-only (#1411). Explicit `--adapter` only; a fixed allowlist skips binaries, lockfiles, `.env*`, keys and generated or vendored directories. With a remote embedding endpoint, indexed source code leaves the machine.
