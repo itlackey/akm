@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261106] - 2026-11-04
+
 ### Added
 
 - `akm judge <name>` runs one of akm's judges (`reflect.quality`, `distill.lesson`,
