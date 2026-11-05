@@ -579,7 +579,7 @@ async function enumerateEntries(
   );
 }
 
-interface EntryFilterOptions {
+export interface EntryFilterOptions {
   db: Database;
   sources: SearchSource[];
   restrictToSources: boolean;
@@ -821,6 +821,7 @@ export async function buildDbHit(input: {
     name: input.entry.name,
     path: absolutePath,
     ref,
+    itemRef: input.itemRef,
     origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(ref) } : {}),

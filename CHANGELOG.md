@@ -10,14 +10,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `code-project` adapter: `akm bundle add . --adapter code-project` indexes a coding repository (source, Markdown docs, a few named config files) into the global index, one document per file, read-only (#1411). Explicit `--adapter` only; a fixed allowlist skips binaries, lockfiles, `.env*`, keys and generated or vendored directories. With a remote embedding endpoint, indexed source code leaves the machine.
 
+### Removed
+
+- `akm show --filter` is removed (#1413). `show` reads the ref it is given and never filters by
+  scope, belief or any other metadata, so a valid ref is no longer refused because its `scope_*`
+  differs from the caller's. `akm show <ref> --filter ...` now fails as an unknown flag (exit 2,
+  `UNKNOWN_FLAG`) instead of narrowing the read. Only `akm search` and `akm curate` take `--filter`.
+  In-process `akmShowUnified` loses its `scope` and `recall` inputs and `ShowResponse.beliefState`.
+
+- The unused `BundleAdapter.index()` and `affectedItems()` hooks.
+
 ### Changed
+
+- `akm curate` checks each selected hit and each support ref against the run's filters itself,
+  on the indexed row with the live file's frontmatter laid over it, before it shows or packs
+  them. A hit or link that fails is dropped, never shown unfiltered. `--pack` packs the items
+  curate kept in the same run and no longer re-checks them. Support refs are checked without
+  rendering them, and `--from <name>` narrows curate's checks by the rule search uses.
+  `akm search --detail full` hits carry `itemRef`, the durable `bundle//conceptId`.
+
+- OpenCode 1 model work is limited to reading and searching, as on OpenCode 2 (#1428): its
+  `akm-model-work` agent denies every tool but `read`, `glob` and `grep`, and the akm plugin's
+  `akm_search`, `akm_show` and `akm_curate`. OpenCode 1 refuses a call to a denied tool, not only
+  leaves it out (measured on 1.18.25 for a built-in, a plugin's and an MCP server's tool), and the
+  tool schemas sent per call fall from about 20,300 to 4,000 characters. The "OpenCode 1 cannot
+  restrict its tools" warning is gone, and `akm setup --yes` hands model calls to OpenCode 1 as it
+  does to OpenCode 2 instead of saving it as `modelWork: false`.
 
 - The walk mode is declared by the adapter (`walkMode`) instead of an `okf` id check. `node_modules` is now skipped by every walk, and the git-ignored `env/`/`secrets/` listing applies only to the default (akm/dotenv) walk, so it no longer applies to `okf` bundles.
 - One content bound (`MARKDOWN_CONTENT_MAX_CHARS`) now applies to every adapter's indexed document, not only the akm Markdown path; a longer body is cut and flagged `contentTruncated`.
 
-### Removed
+### Fixed
 
-- The unused `BundleAdapter.index()` and `affectedItems()` hooks.
+- improve and `akm proposal extract` leave akm's own OpenCode 1 model-work sessions out of the
+  sessions they read, as they do for OpenCode 2, where OpenCode 1 records the session's agent
+  (#1428).
 
 ## [0.10.261106] - 2026-11-04
 

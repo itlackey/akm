@@ -54,7 +54,8 @@ akm remember "Use staging cluster for blue-green" --bundle team-bundle
 writes a correction while demoting the stale asset it replaces in the same
 step. Scope flags (`--user`, `--agent`, `--run`, `--channel`) partition
 memories for multi-agent environments; a scoped memory is only returned when
-the same scope filter is supplied to `akm search` or `akm show`. Full flag
+the same scope filter is supplied to `akm search` or `akm curate`; `akm show <ref>`
+reads any ref directly. Full flag
 reference, belief-state mechanics, and provenance detail live in
 [Memory](../reference/memory.md).
 
@@ -121,7 +122,8 @@ runs before the write, so nothing partial is left behind.
 
 **A scoped memory isn't showing up in search.** Scoped memories
 (`--user`/`--agent`/`--run`/`--channel`) only surface when the same scope
-filter is passed to `akm search --filter` or `akm show --filter`.
+filter is passed to `akm search --filter` or `akm curate --filter`.
+`akm show <ref>` never filters.
 
 ## See also
 

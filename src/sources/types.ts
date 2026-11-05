@@ -52,6 +52,8 @@ export interface SourceSearchHit {
   name: string;
   path: string;
   ref: string;
+  /** Durable fully-qualified `bundle//conceptId` of the indexed entry; `ref` is its display spelling. */
+  itemRef?: string;
   origin?: string | null;
   /** Env-only: key names surfaced in search results (no values). */
   keys?: string[];
@@ -477,7 +479,6 @@ export interface ShowLinkGroup {
 }
 
 export interface ShowResponse extends FragmentProvenance {
-  beliefState?: string;
   /** Captured support and source identities, when available. Omitted in compact projections. */
   evidence?: string;
   evidenceSources?: string[];
