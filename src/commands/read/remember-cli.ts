@@ -4,6 +4,7 @@
 
 import { getStringArg } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
+import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
@@ -156,7 +157,8 @@ export const rememberCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const body = readMemoryContent(args.content);
+    // A body that starts with its own frontmatter block: that block's keys merge under akm's.
+    const { data: leading, content: body } = parseFrontmatter(readMemoryContent(args.content));
     const eventSource = resolveUsageEventSource();
 
     // `--name` is a flat name; subdirectory placement is `--path`'s job.
@@ -216,6 +218,7 @@ export const rememberCommand = defineJsonCommand({
         description: synthesizeMemoryDescription(body),
         captureMode: "hot",
         beliefState: "asserted",
+        leading,
       });
       const contentWithFrontmatter = `${frontmatterBlock}\n${body}`;
       // Derive the asset slug from the body (not the frontmatter block);
@@ -322,6 +325,7 @@ export const rememberCommand = defineJsonCommand({
       subjective,
       captureMode: "hot",
       beliefState: "asserted",
+      leading,
       ...(hasScope ? { scope: scopeFields } : {}),
     });
 

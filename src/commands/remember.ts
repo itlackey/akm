@@ -18,7 +18,7 @@ import { SHIPPED_ALIAS } from "../core/config/model-aliases";
 import { ConfigError, UsageError } from "../core/errors";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { DURATION_UNITS, parseDuration as parseDurationSpec } from "../core/time";
-import { warn } from "../core/warn";
+import { warn, warnOnce } from "../core/warn";
 import { noticeSet } from "../execution/notices";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { StashEntryScope } from "../indexer/passes/metadata";
@@ -67,6 +67,11 @@ export interface MemoryFrontmatterFields {
    * union; until then, the indexer simply passes the string through.
    */
   beliefState?: string;
+  /**
+   * Keys from a frontmatter block the user's body began with. Merged under
+   * akm's own: a key akm also sets keeps akm's value and is warned about once.
+   */
+  leading?: Record<string, unknown>;
 }
 
 /**
@@ -124,6 +129,16 @@ export function buildMemoryFrontmatter(fields: MemoryFrontmatterFields): string 
         obj[`scope_${key}`] = value.trim();
       }
     }
+  }
+  if (fields.leading) {
+    const ignored = Object.keys(fields.leading).filter((k) => k in obj);
+    if (ignored.length > 0) {
+      warnOnce(
+        `remember-leading-frontmatter:${ignored.join(",")}`,
+        `Ignoring frontmatter key(s) in the memory body that akm sets itself: ${ignored.join(", ")}.`,
+      );
+    }
+    Object.assign(obj, { ...fields.leading, ...obj });
   }
   // No fields populated → emit a bare delimiter pair so callers don't
   // produce `---\n{}\n---` (the YAML serializer's empty-object form).
