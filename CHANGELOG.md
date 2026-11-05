@@ -6,7 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- `akm show --filter` is removed (#1413). `show` reads the ref it is given and never filters by
+  scope, belief or any other metadata, so a valid ref is no longer refused because its `scope_*`
+  differs from the caller's. `akm show <ref> --filter ...` now fails as an unknown flag (exit 2,
+  `UNKNOWN_FLAG`) instead of narrowing the read. Only `akm search` and `akm curate` take `--filter`.
+  In-process `akmShowUnified` loses its `scope` and `recall` inputs and `ShowResponse.beliefState`.
+
 ### Changed
+
+- `akm curate` checks each selected hit and each support ref against the run's filters itself,
+  on the indexed row with the live file's frontmatter laid over it, before it shows or packs
+  them. A hit or link that fails is dropped, never shown unfiltered. `--pack` packs the items
+  curate kept in the same run and no longer re-checks them. Support refs are checked without
+  rendering them, and `--from <name>` narrows curate's checks by the rule search uses.
+  `akm search --detail full` hits carry `itemRef`, the durable `bundle//conceptId`.
 
 - OpenCode 1 model work is limited to reading and searching, as on OpenCode 2 (#1428): its
   `akm-model-work` agent denies every tool but `read`, `glob` and `grep`, and the akm plugin's

@@ -694,7 +694,7 @@ assembled into the shape registry by the `src/output/shapes.ts` barrel:
 | --- | --- | --- |
 | `brief` (default) | `type`, `name`, `ref`, `action`, `estimatedTokens` | `name`, `installRef`, `score` |
 | `normal` | `type`, `name`, `ref`, `description`, `action`, `score`, `estimatedTokens`, optional `warnings`/`quality`/`observed`/`updated`/`keys` | `name`, `description`, `action`, `installRef`, `score`, optional `warnings` |
-| `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, optional `observed`/`created`/`updated`/`expires`, timings, bundle metadata) | full hit object |
+| `full` | full hit object (includes `ref`, the durable `itemRef` (`bundle//conceptId`), `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, optional `observed`/`created`/`updated`/`expires`, timings, bundle metadata) | full hit object |
 | `agent` | `name`, `ref`, `type`, `path`, `editable`, conditional `editHint`, `description`, `action`, `score`, optional `estimatedTokens`/`keys`/`observed`/`updated` | no local access fields |
 
 There is no registry `curated` boolean. Renderers surface an optional
@@ -812,10 +812,6 @@ akm show meta                       # working bundle's .meta/index.md
 akm show meta:about                 # working bundle's .meta/about.md
 akm show akm//meta                  # the primary bundle explicitly
 akm show github:owner/repo//meta    # an installed bundle's .meta/index.md
-
-# Multi-tenant scope filtering:
-akm show memories/retro --filter user=alice
-akm show memories/retro --filter user=alice --filter agent=claude
 ```
 
 | Flag | Values | Default | Description |
@@ -823,7 +819,6 @@ akm show memories/retro --filter user=alice --filter agent=claude
 | `--context` | `exact`, `lead` | `exact` | Fragment presentation. `exact` preserves the selected-section behavior. `lead` returns the indexed-safe first fragment followed by `[Selected matching fragment]` and the selected fragment. |
 | `--max-chars` | positive integer | `3200` for `lead` | Hard contextual content budget in characters; requires `--context lead` and is mutually exclusive with `--max-tokens`. |
 | `--max-tokens` | positive integer | _(none)_ | Approximate contextual budget using four characters per token; requires `--context lead` and is mutually exclusive with `--max-chars`. |
-| `--filter` | `<key>=<value>` | _(none)_ | Repeatable scope filter (`user`, `agent`, `run`, `channel`). |
 
 `meta` is not an asset type — `[<origin>//]meta[:<name>]` direct-reads a
 human-authored orientation doc from a bundle's optional `.meta/` directory
@@ -1910,7 +1905,7 @@ of the tag-required check. They write the four canonical top-level
 frontmatter keys (`scope_user`, `scope_agent`, `scope_run`, `scope_channel`)
 and a memory with only scope flags is valid (no tags required). Scope is the
 multi-tenant / multi-agent contract; the same shape is read back by
-`akm search --filter` and `akm show --filter`.
+`akm search --filter` and `akm curate --filter`.
 
 **Cross-references** (`--xref`) implement the bundle back-linking conventions'
 provenance channel: the refs land in the memory's `xrefs:` frontmatter list,

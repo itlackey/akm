@@ -8,7 +8,7 @@
  * `.curate`, and `.show` keys and every command's args/output shape are
  * byte-identical. The three commands form a clean cluster: they share the
  * usage-event provenance and the `parseScopeFilterFlags`
- * search-source parsers. Handlers whose body is a plain
+ * search-source parsers. `show` takes a ref and applies no filter. Handlers whose body is a plain
  * `runWithJsonErrors(async () => { … })` are migrated to `defineJsonCommand`,
  * which emits the same JSON envelope (stdout/stderr/exit-code) as the inline
  * form.
@@ -259,11 +259,6 @@ export const showCommand = defineJsonCommand({
         "Asset ref ([bundle//]conceptId[#fragment]). On a markdown document `#fragment` selects one section by heading slug; `--detail brief` returns the outline (`toc`, each heading's slug) without the body. Example: `akm show knowledge/guide.md#auth`.",
       required: true,
     },
-    filter: {
-      type: "string",
-      description:
-        "Scope filter (repeatable): --filter user=<id> --filter agent=<id> --filter run=<id> --filter channel=<name>. Narrows resolution to assets whose frontmatter scope matches. Same axis as `akm search --filter`.",
-    },
     context: {
       type: "string",
       description:
@@ -302,11 +297,6 @@ export const showCommand = defineJsonCommand({
     // `--detail brief` forces the brief response regardless of projection.
     const showDetail: ShowDetailLevel | undefined =
       explicitDetail === "brief" ? "brief" : explicitDetail === "full" ? "full" : undefined;
-    // `--filter` is repeatable — citty only exposes the last value, so read
-    // every occurrence directly from argv (same helper as `akm search`; the two
-    // commands share one spelling for the scope-narrowing axis).
-    const scopeTokens = parseAllFlagValues("--filter");
-    const scope = parseScopeFilterFlags(scopeTokens, "--filter");
     const contextMode = parseFragmentContextMode(typeof args.context === "string" ? args.context : undefined);
     const maxTokens = parsePositiveIntFlag(args["max-tokens"] ?? undefined, "--max-tokens");
     const maxChars = parsePositiveIntFlag(args["max-chars"] ?? undefined, "--max-chars");
@@ -322,7 +312,6 @@ export const showCommand = defineJsonCommand({
       detail: showDetail,
       contextMode,
       maxContextChars,
-      scope,
       eventSource: resolveUsageEventSource(),
     });
     output("show", result);
