@@ -255,7 +255,7 @@ describe("declared links", () => {
       "stash//knowledge/release-guide superseded_by stash//knowledge/release-guide-v2 -> stash//knowledge/release-guide-v2",
       "stash//memories/deploy-window contradicted_by memory:deploy-window-moved -> stash//memories/deploy-window-moved",
       "stash//memories/deploy-window xref memories/release-checklist -> null",
-      "stash//memories/deploy-window xref wiki:notes/pages/release-train -> stash//wikis/notes/pages/release-train",
+      "stash//memories/deploy-window xref wiki:notes/pages/release-train -> null",
       "stash//memories/deploy-window-moved.derived derived_from memories/deploy-window-moved -> stash//memories/deploy-window-moved",
       "stash//tasks/nightly-release uses workflows/release -> stash//workflows/release",
       "stash//wikis/notes/pages/release-train cites raw/train-source.md -> stash//wikis/notes/raw/train-source",

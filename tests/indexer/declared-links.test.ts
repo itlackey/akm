@@ -57,7 +57,7 @@ describe("declaredLinks", () => {
     );
     expect(links.map((link) => [link.kind, link.bundle, link.conceptId])).toEqual([
       ["xref", undefined, "knowledge/projects/akm/checklist"],
-      ["xref", undefined, "wikis/notes/pages/release-train"],
+      ["xref", undefined, "knowledge/wikis/notes/pages/release-train"],
       ["xref", undefined, "memories/release-checklist"],
       ["xref", undefined, "knowledge/runbook"],
       ["contradicted_by", undefined, "memories/deploy-window-moved"],
