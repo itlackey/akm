@@ -283,7 +283,6 @@ export function stampScope(
   return { data: out, replaced: present && !sameScope(scopeFromFrontmatter(data), scope) };
 }
 
-/** Exact maintenance equality: absence is a value, never a wildcard. */
 /**
  * The one scope-filter rule: every supplied key must match (AND), and a key
  * with several values matches any of them (OR). Entries without the key never
@@ -299,6 +298,7 @@ export function scopeMatchesFilters(scope: StashEntryScope | undefined, filters:
   return true;
 }
 
+/** Exact maintenance equality: absence is a value, never a wildcard. */
 export function sameScope(a: StashEntryScope, b: StashEntryScope): boolean {
   return SCOPE_KEYS.every((key) => a[key] === b[key]);
 }

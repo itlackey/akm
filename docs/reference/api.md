@@ -35,8 +35,9 @@ function curate(
   validation, search, ranking, shaping and rendering are shared, not copied), so
   the two cannot drift.
 - **Recall controls.** `source` is CLI `--from` (local, registry, all, or a named
-  bundle); `filters` uses the same normalized scope keys and exact AND semantics
-  as repeated CLI `--filter key=value`. `belief` defaults to `"current"`, keeping
+  bundle); `filters` uses the same scope keys and rule
+  as repeated CLI `--filter key=value`: each key takes a value or a list, a list
+  matches any of its values, and different keys must all match. `belief` defaults to `"current"`, keeping
   unflagged reference knowledge and active/asserted assets. These labels do not
   prove factual truth. Explicit `"all"` and `"historical"` support investigations.
   The policy also applies to derived surfaces, support refs and content reads;

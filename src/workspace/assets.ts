@@ -15,6 +15,7 @@ import { loadConfig } from "../core/config/config";
 import { resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
 import { getDbPath } from "../core/paths";
+import type { ScopeFilters } from "../indexer/passes/metadata";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
@@ -32,7 +33,7 @@ export interface SearchInput {
   /** One configured bundle; absent means every local bundle, as `akm search` does. */
   bundle?: string;
   belief?: string;
-  scope?: Partial<Record<"user" | "agent" | "run" | "channel", string>>;
+  scope?: ScopeFilters;
   limit?: number;
 }
 

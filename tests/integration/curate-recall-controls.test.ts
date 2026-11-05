@@ -108,7 +108,7 @@ test("a repeated scope key matches any value, with CLI/API parity", async () => 
   put("knowledge/b", { scope: { user: "bob" } }, "quartz deployment beta");
   put("knowledge/c", { scope: { user: "carol" } }, "quartz deployment gamma");
   await akmIndex({ stashDir: storage.stashDir, full: true });
-  const filters = { user: ["alice", "bob"] };
+  const filters = { user: ["alice", "bob"], channel: undefined };
   expect(refs(await akmCurate({ query: "quartz deployment", filters })).sort()).toEqual(["knowledge/a", "knowledge/b"]);
   expect(await curate("quartz deployment", { filters })).toBe(
     cli(["--filter", "user=alice", "--filter", "user=bob"]).stdout,
