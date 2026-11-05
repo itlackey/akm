@@ -4,11 +4,16 @@
 
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect } from "@playwright/test";
 import { launchFixture } from "./support.mjs";
+
+// The built-in engine is whatever akm-cli Desktop was built with, so its version follows each release.
+const engine = createRequire(import.meta.url)("akm-cli/package.json").version;
+const escaped = engine.replaceAll(".", "\\.");
 
 test("Software uses authenticated native actions, shows receipts, preserves the workspace and fits the established UI", {
   timeout: 120000,
@@ -51,9 +56,9 @@ else {process.exitCode=1}
   await expect(page.getByText("To update, download a newer AKM Desktop.", { exact: true })).toBeVisible();
   // The fixture's host CLI (0.10.261104) is older than the built-in engine: said once, with its remedy.
   await expect(
-    page.getByText(/Host akm 0\.10\.261104 is older than this app's engine \(0\.10\.261105\)/),
+    page.getByText(new RegExp(`Host akm 0\\.10\\.261104 is older than this app's engine \\(${escaped}\\)`)),
   ).toBeVisible();
-  await expect(page.getByText("Built-in AKM engine 0.10.261105.", { exact: true })).toBeVisible();
+  await expect(page.getByText(`Built-in AKM engine ${engine}.`, { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Add to application menu", exact: true })).toHaveCount(0);
   assert.equal((await server.call("/api/desktop/software", { action: "desktop-menu-install" })).status, 400);
   await page.getByRole("button", { name: "Install AKM plugin", exact: true }).click();
