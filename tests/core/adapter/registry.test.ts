@@ -32,6 +32,7 @@ const PROBE_ORDER = [
   "akm",
   "okf",
   "generic-files",
+  "code-project",
 ];
 
 describe("adapter registry — static frozen map (normative §12.6)", () => {
@@ -39,7 +40,7 @@ describe("adapter registry — static frozen map (normative §12.6)", () => {
     // The registry is live purely from importing it. This is the exact
     // production guarantee that was previously broken (empty registry ⇒ every
     // source fell back to `akm`).
-    expect(getAdapters().length).toBe(11);
+    expect(getAdapters().length).toBe(12);
     expect(getAdapters().map((a) => a.id)).toEqual(PROBE_ORDER);
   });
 
@@ -64,7 +65,7 @@ describe("adapter registry — static frozen map (normative §12.6)", () => {
     const snapshot = getAdapters();
     snapshot.length = 0;
     snapshot.push(okfAdapter);
-    expect(getAdapters().length).toBe(11);
+    expect(getAdapters().length).toBe(12);
     expect(getAdapters().map((a) => a.id)).toEqual(PROBE_ORDER);
   });
 });

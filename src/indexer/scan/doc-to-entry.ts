@@ -37,11 +37,14 @@
 
 import path from "node:path";
 import type { IndexDocument } from "../../core/adapter/types";
+import { warn } from "../../core/warn";
 import {
   getMarkdownFragmentContent,
   hasMarkdownFragmentContent,
+  MARKDOWN_CONTENT_MAX_CHARS,
   type StashIntent,
   setMarkdownFragmentContent,
+  truncateUnicodeSafe,
 } from "../passes/metadata";
 
 /**
@@ -66,7 +69,17 @@ export function indexDocumentToStashEntry(doc: IndexDocument): IndexDocument {
   // ── First-class IndexDocument members ──
   if (doc.description !== undefined) entry.description = doc.description;
   if (doc.tags !== undefined) entry.tags = doc.tags;
-  if (doc.content !== undefined) entry.content = doc.content;
+  // One content bound for every adapter's document. The `akm` adapter already
+  // bounds its Markdown projection, so this only cuts other adapters' bodies.
+  if (doc.content !== undefined) {
+    if (doc.content.length > MARKDOWN_CONTENT_MAX_CHARS) {
+      entry.content = truncateUnicodeSafe(doc.content, MARKDOWN_CONTENT_MAX_CHARS);
+      entry.contentTruncated = true;
+      warn(`${doc.path}: indexed content truncated to ${MARKDOWN_CONTENT_MAX_CHARS} chars`);
+    } else {
+      entry.content = doc.content;
+    }
+  }
   if (doc.contentTruncated !== undefined) entry.contentTruncated = doc.contentTruncated;
   if (hasMarkdownFragmentContent(doc)) setMarkdownFragmentContent(entry, getMarkdownFragmentContent(doc));
   if (doc.ownsPresentation !== undefined) entry.ownsPresentation = doc.ownsPresentation;

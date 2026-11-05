@@ -21,8 +21,7 @@
  *
  * Deliberately NOT in scope here (per the chunk-1 brief):
  *   - `scanComponent` (WI-1.3, a sibling module not yet minted);
- *   - any REAL adapter or the `index() == fold(recognize())` conformance
- *     suite (Chunk 2's gate, requires real adapters).
+ *   - any REAL adapter (Chunk 2's gate).
  */
 
 import { describe, expect, test } from "bun:test";
@@ -65,8 +64,7 @@ function makeValidateContext(): ValidateContext {
  * The stub itself: implements ONLY the required surface
  * (id/version/extensions/recognize/validate). This assignment is the
  * compile-time conformance check — `stubAdapter` must structurally satisfy
- * `BundleAdapter` with every OTHER member (index, affectedItems,
- * renderExecutionSource, readCandidates, directoryList, looksLikeRoot) left absent, proving they are genuinely
+ * `BundleAdapter` with every OTHER member (renderExecutionSource, readCandidates, directoryList, looksLikeRoot) left absent, proving they are genuinely
  * optional per the transcription. (The spec's Tier-B authoring/export/memory
  * facet methods are deferred, not declared on the 0.9.0 contract — see the
  * interface docblock.)
@@ -129,8 +127,6 @@ describe("BundleAdapter type-level conformance (WI-1.1)", () => {
   });
 
   test("all optional members are legitimately absent on a REQUIRED-only stub", () => {
-    expect(stubAdapter.index).toBeUndefined();
-    expect(stubAdapter.affectedItems).toBeUndefined();
     expect(stubAdapter.renderExecutionSource).toBeUndefined();
     expect(stubAdapter.readCandidates).toBeUndefined();
     expect(stubAdapter.directoryList).toBeUndefined();

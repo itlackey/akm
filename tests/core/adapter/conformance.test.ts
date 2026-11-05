@@ -27,18 +27,11 @@
  * fixtures were needed. Neither the frozen `all-types` stash nor any golden is
  * touched.
  *
- * ── 2. `index() == fold(recognize)` (§12.3) ──
+ * ── 2. fold(recognize) over the walk ──
  *
- * The optional `index()` capability, when present, MUST equal folding
- * `recognize()` over the core walk (adapter-spec §2's `index?` JSDoc /
- * normative §14.2). NEITHER `okf` NOR `akm` overrides `index()`, so the
- * conformance is VACUOUSLY satisfied — the core walk × `recognize` IS the index
- * for these adapters. We first assert every registered adapter leaves `index`
- * undefined (documenting the vacuous-true §12.3 shape), then exercise the
- * equality CONCRETELY over each golden root by folding `recognize` over the
- * `walkStashFlat(root)` files directly (the walk×recognize mapping the live
- * indexer drains) — the per-adapter recognize-over-walk coverage that the retired
- * `scanComponent` module used to carry (owner ruling 2026-07-21).
+ * The core walk × `recognize` IS the index. We exercise it concretely over each
+ * golden root by folding `recognize` over the `walkStashFlat(root)` files
+ * directly (the walk×recognize mapping the live indexer drains).
  */
 
 import { describe, expect, spyOn, test } from "bun:test";
@@ -80,6 +73,7 @@ const AKM_TASK_ROOT = path.join(BUNDLES, "akm-task");
 const DOTENV_ROOT = path.join(BUNDLES, "dotenv");
 const WEBSITE_ROOT = path.join(BUNDLES, "website-snapshot");
 const GENERIC_FILES_ROOT = path.join(BUNDLES, "generic-files");
+const CODE_PROJECT_ROOT = path.join(BUNDLES, "code-project");
 
 /**
  * adapter id → its OWN golden/fixture root. Every registered adapter EXCEPT the
@@ -98,10 +92,11 @@ const OWN_ROOT_BY_ID: Record<string, string> = {
   dotenv: DOTENV_ROOT,
   "website-snapshot": WEBSITE_ROOT,
   "generic-files": GENERIC_FILES_ROOT,
+  "code-project": CODE_PROJECT_ROOT,
 };
 
 /** Adapters whose `looksLikeRoot` is intentionally never-firing (explicit-config, §1.2). */
-const NEVER_FIRES = new Set(["generic-files"]);
+const NEVER_FIRES = new Set(["generic-files", "code-project"]);
 
 /**
  * The §1.2 install-time probe: the FIRST registered adapter (registration order
@@ -140,7 +135,7 @@ function foldRecognize(adapter: BundleAdapter, c: BundleComponent): IndexDocumen
 // ── 1. looksLikeRoot own-root-only (§4) ──────────────────────────────────────
 
 describe("conformance — looksLikeRoot own-root-only (§4)", () => {
-  test("the built-in registry is exactly the 11 format families, and every one has a fixture root", () => {
+  test("the built-in registry is exactly the 12 format families, and every one has a fixture root", () => {
     // Pins the fixture set: every registered adapter has a golden/fixture root in
     // OWN_ROOT_BY_ID, so the ordered-probe matrix below is complete.
     const ids = getAdapters().map((a) => a.id);
@@ -150,6 +145,7 @@ describe("conformance — looksLikeRoot own-root-only (§4)", () => {
       "akm-task",
       "akm-workflow",
       "claude",
+      "code-project",
       "dotenv",
       "generic-files",
       "llm-wiki",
@@ -158,7 +154,7 @@ describe("conformance — looksLikeRoot own-root-only (§4)", () => {
       "website-snapshot",
     ]);
     for (const id of ids) {
-      expect(typeof adapterForId(id)?.looksLikeRoot).toBe("function");
+      if (id !== "code-project") expect(typeof adapterForId(id)?.looksLikeRoot).toBe("function");
       expect(OWN_ROOT_BY_ID[id]).toBeDefined();
     }
   });
@@ -195,20 +191,9 @@ describe("conformance — looksLikeRoot own-root-only (§4)", () => {
   });
 });
 
-// ── 2. index() == fold(recognize) (§12.3) ────────────────────────────────────
+// ── 2. fold(recognize) over the walk ─────────────────────────────────────────
 
-describe("conformance — index() == fold(recognize) (§12.3)", () => {
-  test("no built-in adapter overrides index() — the conformance is vacuously satisfied", () => {
-    // §12.3: an adapter overriding index() MUST keep it == fold(recognize).
-    // None of the built-ins override it, so the core walk × recognize IS the
-    // index; the equality holds vacuously.
-    expect(okfAdapter.index).toBeUndefined();
-    expect(akmAdapter.index).toBeUndefined();
-    expect(llmWikiAdapter.index).toBeUndefined();
-    // Documented over the whole registry, not just the named handles.
-    for (const adapter of getAdapters()) expect(adapter.index).toBeUndefined();
-  });
-
+describe("conformance — fold(recognize) over the walk", () => {
   // fold(recognize) over the golden walk is the live indexer's scan engine
   // (drainDirDocuments × adapter.recognize). These assertions pin each adapter's
   // recognize-over-walk behavior directly (owner ruling 2026-07-21 — the

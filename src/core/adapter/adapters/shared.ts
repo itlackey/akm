@@ -52,6 +52,7 @@
 import { createHash } from "node:crypto";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../asset/frontmatter-lint";
+import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleComponent, Diagnostic, ValidateContext } from "../types";
 
@@ -292,7 +293,7 @@ export async function validateChangesWithBaseChecks(
     const raw = change.after ?? (await ctx.readFile(change.path));
     if (typeof raw !== "string") continue;
     const parsed = parseFrontmatter(raw);
-    diagnostics.push(...(await runBaseValidateChecks(change.path, parsed, c.root, ctx)));
+    diagnostics.push(...(await runBaseValidateChecks(toPosix(change.path), parsed, c.root, ctx)));
   }
   return diagnostics;
 }

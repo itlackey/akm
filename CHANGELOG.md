@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `code-project` adapter: `akm bundle add . --adapter code-project` indexes a coding repository (source, Markdown docs, a few named config files) into the global index, one document per file, read-only (#1411). Explicit `--adapter` only; a fixed allowlist skips binaries, lockfiles, `.env*`, keys and generated or vendored directories. With a remote embedding endpoint, indexed source code leaves the machine.
+
 ### Removed
 
 - `akm show --filter` is removed (#1413). `show` reads the ref it is given and never filters by
@@ -13,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   differs from the caller's. `akm show <ref> --filter ...` now fails as an unknown flag (exit 2,
   `UNKNOWN_FLAG`) instead of narrowing the read. Only `akm search` and `akm curate` take `--filter`.
   In-process `akmShowUnified` loses its `scope` and `recall` inputs and `ShowResponse.beliefState`.
+
+- The unused `BundleAdapter.index()` and `affectedItems()` hooks.
 
 ### Changed
 
@@ -30,6 +36,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tool schemas sent per call fall from about 20,300 to 4,000 characters. The "OpenCode 1 cannot
   restrict its tools" warning is gone, and `akm setup --yes` hands model calls to OpenCode 1 as it
   does to OpenCode 2 instead of saving it as `modelWork: false`.
+
+- The walk mode is declared by the adapter (`walkMode`) instead of an `okf` id check. `node_modules` is now skipped by every walk, and the git-ignored `env/`/`secrets/` listing applies only to the default (akm/dotenv) walk, so it no longer applies to `okf` bundles.
+- One content bound (`MARKDOWN_CONTENT_MAX_CHARS`) now applies to every adapter's indexed document, not only the akm Markdown path; a longer body is cut and flagged `contentTruncated`.
 
 ### Fixed
 

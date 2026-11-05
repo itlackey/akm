@@ -24,6 +24,7 @@ import { akmAdapter } from "./akm-adapter";
 import { akmTaskAdapter } from "./akm-task-adapter";
 import { akmWorkflowAdapter } from "./akm-workflow-adapter";
 import { claudeAdapter } from "./claude-adapter";
+import { codeProjectAdapter } from "./code-project-adapter";
 import { dotenvAdapter } from "./dotenv-adapter";
 import { genericFilesAdapter } from "./generic-files-adapter";
 import { llmWikiAdapter } from "./llm-wiki-adapter";
@@ -36,6 +37,7 @@ export { akmAdapter } from "./akm-adapter";
 export { akmTaskAdapter } from "./akm-task-adapter";
 export { akmWorkflowAdapter } from "./akm-workflow-adapter";
 export { claudeAdapter } from "./claude-adapter";
+export { codeProjectAdapter } from "./code-project-adapter";
 export { dotenvAdapter } from "./dotenv-adapter";
 export { genericFilesAdapter } from "./generic-files-adapter";
 export { llmWikiAdapter } from "./llm-wiki-adapter";
@@ -67,8 +69,8 @@ export { websiteSnapshotAdapter } from "./website-snapshot-adapter";
  *    package), `akm-workflow` (a workflow-shaped top-level file), and `akm-task`
  *    (a schedule-bearing top-level `.yml`) carry disjoint, specific markers that
  *    fire on none of the other roots; they come at the front for clarity.
- *  - `generic-files` is EXPLICIT-CONFIG ONLY — its `looksLikeRoot` never
- *    fires — so it is LAST and can never shadow anything.
+ *  - `generic-files` and `code-project` are EXPLICIT-CONFIG ONLY (neither can
+ *    be auto-detected), so they are LAST and can never shadow anything.
  */
 export const BUILTIN_ADAPTERS: readonly BundleAdapter[] = Object.freeze([
   // Specific, disjoint markers first.
@@ -87,6 +89,8 @@ export const BUILTIN_ADAPTERS: readonly BundleAdapter[] = Object.freeze([
   okfAdapter,
   // Explicit-config fallback (never auto-selected) — last.
   genericFilesAdapter,
+  // Explicit-config only (`--adapter code-project`) — no probe, so order is moot.
+  codeProjectAdapter,
 ]);
 
 // Construction-time drift guard (#909): ../adapter-ids.ts's ADAPTER_ID_TABLE
