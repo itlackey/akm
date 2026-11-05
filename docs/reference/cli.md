@@ -160,7 +160,8 @@ akm setup --yes                  # Non-interactive, accepts all defaults
 Creates one subdirectory per asset type under the bundle path — currently
 `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`,
 `instructions/`, `memories/`, `env/`, `secrets/`, `lessons/`, `tasks/`,
-`sessions/`, and `facts/`. See
+`sessions/`, and `facts/`, plus a root `.scratch/README.md` and a `/.scratch/`
+`.gitignore` rule (see [Scratch space](asset-types.md#scratch-space-the-scratch-convention)). See
 [technical/filesystem.md](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/storage-locations.md) for config file locations.
 
 ```sh

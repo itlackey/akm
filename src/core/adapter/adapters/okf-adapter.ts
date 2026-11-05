@@ -33,6 +33,7 @@ import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { markdownLinkTargets } from "../../asset/markdown-link-targets";
+import { SCRATCH_DIR } from "../../asset/scratch";
 import { isRecord, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
@@ -352,6 +353,7 @@ export const okfAdapter: BundleAdapter = {
       }
       for (const entry of entries) {
         if (entry.isSymbolicLink() || entry.name === ".git") continue;
+        if (current === root && entry.name === SCRATCH_DIR) continue;
         const absolute = path.join(current, entry.name);
         if (entry.isDirectory()) {
           stack.push(absolute);

@@ -14,7 +14,11 @@ import path from "node:path";
 
 import { akmLint } from "../src/commands/lint/index";
 import { akmInit } from "../src/commands/sources/init";
-import { ensureStashGitignore, STASH_GITIGNORE_TRACK_SECRETS_MARKER } from "../src/commands/sources/stash-skeleton";
+import {
+  ensureScratchGitignore,
+  ensureStashGitignore,
+  STASH_GITIGNORE_TRACK_SECRETS_MARKER,
+} from "../src/commands/sources/stash-skeleton";
 import { loadUserConfig, primaryBundlePath, saveConfig } from "../src/core/config/config";
 import { resolveTypeConventions } from "../src/core/standards/resolve-type-conventions";
 import { type Cleanup, sandboxHome, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
@@ -103,6 +107,52 @@ describe("akmInit (akm bundle create)", () => {
     ensureStashGitignore(stashDir);
 
     expect(fs.readFileSync(gitignorePath, "utf8")).toBe(authored);
+  });
+
+  test("scaffolds .scratch/README.md and a root-scoped /.scratch/ ignore rule (#1435)", async () => {
+    const stashDir = makeTempDir("akm-init-scratch-");
+    fs.rmSync(stashDir, { recursive: true, force: true });
+    await akmInit({ dir: stashDir });
+    const readme = fs.readFileSync(path.join(stashDir, ".scratch", "README.md"), "utf8");
+    expect(readme).toContain("# Bundle scratch space");
+    expect(readme).toContain("Clean up after yourself:");
+    expect(fs.readFileSync(path.join(stashDir, ".gitignore"), "utf8")).toMatch(
+      /^# Local scratch material\n\/\.scratch\/$/m,
+    );
+  });
+
+  test("re-init restores a missing README, keeps scratch files and a customized README, and never duplicates the rule (#1435)", async () => {
+    const stashDir = makeTempDir("akm-init-scratch-idem-");
+    fs.writeFileSync(path.join(stashDir, ".gitignore"), "# my rules\n*.log\n");
+    await akmInit({ dir: stashDir });
+    const readmePath = path.join(stashDir, ".scratch", "README.md");
+    const notePath = path.join(stashDir, ".scratch", "note.md");
+    fs.writeFileSync(notePath, "mine");
+    fs.writeFileSync(readmePath, "custom");
+    await akmInit({ dir: stashDir });
+    expect(fs.readFileSync(readmePath, "utf8")).toBe("custom");
+    expect(fs.readFileSync(notePath, "utf8")).toBe("mine");
+    fs.rmSync(readmePath);
+    await akmInit({ dir: stashDir });
+    expect(fs.readFileSync(readmePath, "utf8")).toContain("# Bundle scratch space");
+    const gitignore = fs.readFileSync(path.join(stashDir, ".gitignore"), "utf8");
+    expect(gitignore).toContain("*.log");
+    expect(gitignore.match(/^\/\.scratch\/$/gm)).toHaveLength(1);
+  });
+
+  test("the scratch rule is added despite the secret-ignore marker or the track-secrets opt-out (#1435)", () => {
+    for (const authored of [
+      "# akm: keep secret material out of git by default\nenv/\n",
+      `${STASH_GITIGNORE_TRACK_SECRETS_MARKER}\n!env/\n`,
+    ]) {
+      const stashDir = makeTempDir("akm-init-scratch-marker-");
+      fs.writeFileSync(path.join(stashDir, ".gitignore"), authored);
+      ensureScratchGitignore(stashDir);
+      ensureScratchGitignore(stashDir);
+      const gitignore = fs.readFileSync(path.join(stashDir, ".gitignore"), "utf8");
+      expect(gitignore.startsWith(authored)).toBe(true);
+      expect(gitignore.match(/^\/\.scratch\/$/gm)).toHaveLength(1);
+    }
   });
 
   test("re-running on an existing stash is idempotent and keeps lessons/", async () => {

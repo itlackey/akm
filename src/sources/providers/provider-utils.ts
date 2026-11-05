@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getAdapters } from "../../core/adapter/registry";
 import { stashDirNames } from "../../core/asset/asset-placement";
+import { SCRATCH_DIR } from "../../core/asset/scratch";
 import type { SourceSpec } from "../../core/config/config";
 import { fetchRegistry } from "../../registry/network";
 import { writeResponseToFileCapped } from "../../runtime";
@@ -212,6 +213,7 @@ function findShallowestStashRoot(root: string): string | undefined {
     for (const child of children) {
       if (!child.isDirectory()) continue;
       if (child.name === ".git" || child.name === "node_modules") continue;
+      if (current === root && child.name === SCRATCH_DIR) continue;
       queue.push({ dir: path.join(current, child.name), depth: depth + 1 });
     }
   }

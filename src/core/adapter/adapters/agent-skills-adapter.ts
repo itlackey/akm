@@ -46,6 +46,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
+import { SCRATCH_DIR } from "../../asset/scratch";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
@@ -267,7 +268,7 @@ export const agentSkillsAdapter: BundleAdapter = {
       return false;
     }
     return entries.some((entry) => {
-      if (!entry.isDirectory()) return false;
+      if (!entry.isDirectory() || entry.name === SCRATCH_DIR) return false;
       try {
         return fs.existsSync(path.join(root, entry.name, SKILL_MANIFEST));
       } catch {
