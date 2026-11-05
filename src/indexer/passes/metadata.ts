@@ -8,7 +8,14 @@ import path from "node:path";
 // — and the sub-shapes it references — live in `core/adapter/types.ts` so
 // `IndexDocument` can reference them without a `metadata.ts ↔ types.ts` cycle;
 // they are imported (and re-exported below) here. `SCOPE_KEYS` (a value) stays.
-import type { AssetParameter, IndexDocument, ScopeKey, StashEntryScope, StashIntent } from "../../core/adapter/types";
+import type {
+  AssetParameter,
+  IndexDocument,
+  ScopeFilters,
+  ScopeKey,
+  StashEntryScope,
+  StashIntent,
+} from "../../core/adapter/types";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter, readFrontmatterDate } from "../../core/asset/frontmatter";
 import type { TocHeading } from "../../core/asset/markdown";
@@ -22,6 +29,7 @@ import type { buildFileContext } from "../walk/file-context";
 export type {
   AssetParameter,
   IndexDocument,
+  ScopeFilters,
   ScopeKey,
   StashEntryScope,
   StashIntent,
@@ -276,6 +284,21 @@ export function stampScope(
 }
 
 /** Exact maintenance equality: absence is a value, never a wildcard. */
+/**
+ * The one scope-filter rule: every supplied key must match (AND), and a key
+ * with several values matches any of them (OR). Entries without the key never
+ * match a supplied filter on it.
+ */
+export function scopeMatchesFilters(scope: StashEntryScope | undefined, filters: ScopeFilters): boolean {
+  for (const key of SCOPE_KEYS) {
+    const expected = filters[key];
+    if (expected === undefined) continue;
+    const value = scope?.[key];
+    if (value === undefined || !(Array.isArray(expected) ? expected : [expected]).includes(value)) return false;
+  }
+  return true;
+}
+
 export function sameScope(a: StashEntryScope, b: StashEntryScope): boolean {
   return SCOPE_KEYS.every((key) => a[key] === b[key]);
 }

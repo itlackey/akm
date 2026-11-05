@@ -5,7 +5,7 @@
 import type { TargetRow } from "../commands/targets";
 import type { OkfProvenance } from "../core/adapter/types";
 import type { MarkdownTocEntry } from "../core/asset/markdown";
-import type { StashEntryScope } from "../indexer/passes/metadata";
+import type { ScopeFilters } from "../indexer/passes/metadata";
 import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
 import type { WorkflowExec as ProgramExecCore } from "../workflows/plan";
@@ -16,8 +16,8 @@ export type SearchHitSize = "small" | "medium" | "large";
 export type BeliefFilterMode = "all" | "current" | "historical";
 /** Existing search controls, carried through task-evidence reads. */
 export interface RecallOptions {
-  /** Exact AND-joined scope values; CLI --filter user=…|agent=…|run=…|channel=… . */
-  filters?: StashEntryScope;
+  /** Exact scope values: AND across keys, any-of within a repeated key; CLI --filter user=…|agent=…|run=…|channel=… . */
+  filters?: ScopeFilters;
   /** Search and curate default to current; explicit all/historical retain investigation. */
   belief?: BeliefFilterMode;
   type?: string;

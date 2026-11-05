@@ -95,7 +95,14 @@ describe("buildMemoryFrontmatter — scope keys", () => {
 describe("parseScopeFilterFlags", () => {
   test("parses k=v tokens into a scope filter", () => {
     const filters = parseScopeFilterFlags(["user=alice", "channel=ops"], "--filter");
-    expect(filters).toEqual({ user: "alice", channel: "ops" });
+    expect(filters).toEqual({ user: ["alice"], channel: ["ops"] });
+  });
+
+  test("a repeated key collects all its values", () => {
+    expect(parseScopeFilterFlags(["user=alice", "user=bob", "channel=ops"], "--filter")).toEqual({
+      user: ["alice", "bob"],
+      channel: ["ops"],
+    });
   });
 
   test("rejects unknown keys with UsageError", async () => {
@@ -167,6 +174,30 @@ describe("akm search --filter narrows by scope", () => {
     const filteredLocal = filtered.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     const filteredNames = filteredLocal.map((h) => h.name);
     expect(filteredNames).toEqual(["alice-note"]);
+  });
+
+  test("a repeated key matches any value; different keys must all match", async () => {
+    const stashDir = tmpStash();
+    saveConfig({ semanticSearchMode: "off" });
+    const note = (name: string, user: string, channel: string) =>
+      writeFile(
+        path.join(stashDir, "memories", `${name}.md`),
+        `---\ntags: [t]\ndescription: deployment note\nscope_user: ${user}\nscope_channel: ${channel}\n---\nDeployment note ${name}\n`,
+      );
+    note("alice-ops", "alice", "ops");
+    note("bob-ops", "bob", "ops");
+    note("bob-dev", "bob", "dev");
+    note("carol-ops", "carol", "ops");
+    await akmIndex({ stashDir, full: true });
+    const names = async (filters: Record<string, string | string[]>) =>
+      (await akmSearch({ query: "deployment", source: "local", filters })).hits
+        .filter((h): h is SourceSearchHit => h.type !== "registry")
+        .map((h) => h.name)
+        .sort();
+    const cli = parseScopeFilterFlags(["user=alice", "user=bob"], "--filter");
+    expect(await names(cli ?? {})).toEqual(["alice-ops", "bob-dev", "bob-ops"]);
+    expect(await names({ user: ["alice", "bob"], channel: "ops" })).toEqual(["alice-ops", "bob-ops"]);
+    expect(await names({ user: "bob" })).toEqual(["bob-dev", "bob-ops"]);
   });
 
   test("legacy memories without scope still match unfiltered queries", async () => {

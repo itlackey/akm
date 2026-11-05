@@ -58,9 +58,9 @@ export async function curate(query: string, options: CurateOptions = {}): Promis
           filters:
             options.filters === undefined
               ? undefined
-              : Object.entries(options.filters)
-                  .filter(([, value]) => value !== undefined)
-                  .map(([key, value]) => `${key}=${value}`),
+              : Object.entries(options.filters).flatMap(([key, value]) =>
+                  (Array.isArray(value) ? value : [value]).map((v) => `${key}=${v}`),
+                ),
         },
         mode,
       );
