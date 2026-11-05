@@ -102,15 +102,13 @@ describe("akm show --scope fails loudly for both spellings", () => {
     });
   }
 
-  test("--filter (the real spelling) still works and is unaffected", async () => {
+  test("--filter is no longer a show flag and exits 2", async () => {
     seedGuide();
 
     const result = await runEntrypoint(["show", "knowledge/guide", "--filter", "user=x", "--format=json"]);
 
-    // No matching scope_user on disk -> not found in this scope, NOT a usage error.
-    expect(result.status).toBe(1);
-    const error = JSON.parse(result.stderr) as Record<string, unknown>;
-    expect(String(error.error)).toContain("out of scope");
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('Unknown flag "--filter"');
   });
 });
 

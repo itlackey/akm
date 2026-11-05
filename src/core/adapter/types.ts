@@ -104,7 +104,7 @@ export interface StashEntryScope {
   channel?: string;
 }
 
-/** Allowed keys in the `--filter k=v` flag (used by `akm search` and `akm show`). */
+/** Allowed keys in the `--filter k=v` flag (used by `akm search` and `akm curate`). */
 export type ScopeKey = keyof StashEntryScope;
 
 // ── §3 — IndexDocument (Chunk 5 F4a M-core-1: IS IndexDocument + provenance) ─────
@@ -196,7 +196,7 @@ export interface IndexDocument {
   /**
    * Multi-tenant / multi-agent scope. Populated from the canonical
    * `scope_user`, `scope_agent`, `scope_run`, `scope_channel`
-   * frontmatter keys. Used by `akm search --filter` and `akm show --filter`.
+   * frontmatter keys. Used by `akm search --filter` and `akm curate --filter`.
    */
   scope?: StashEntryScope;
   /**

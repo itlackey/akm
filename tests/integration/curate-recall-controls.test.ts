@@ -171,19 +171,50 @@ test("--type narrows hits but keeps cross-type support links", async () => {
   const support = result.items[0] && "supportRefs" in result.items[0] ? result.items[0].supportRefs : [];
   expect(support?.map((x) => x.ref)).toEqual(["memories/cur"]);
 });
-test("packing rechecks changed scope/belief and missing content instead of widening", async () => {
-  const file = put("knowledge/main", { scope: { user: "alice" } });
+test("curate drops a hit whose file changed after indexing, and packs only what it kept", async () => {
+  const filters = { user: "alice" };
+  const edits: Array<[string, () => void]> = [
+    ["scope changed", () => put("knowledge/main", { scope: { user: "bob" } })],
+    ["scope removed", () => put("knowledge/main")], // the old indexed scope must not survive
+    ["belief edited", () => put("knowledge/main", { scope: filters, beliefState: "superseded" })],
+    ["file removed", () => fs.rmSync(path.join(storage.stashDir, "knowledge/main.md"))],
+  ];
+  for (const [label, edit] of edits) {
+    put("knowledge/main", { scope: filters });
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const kept = await akmCurate({ query: "quartz deployment", filters });
+    expect(refs(kept), label).toEqual(["knowledge/main"]);
+    expect(
+      (await packCuratedHits(kept, 4000)).items.map((x) => x.ref),
+      label,
+    ).toEqual(["knowledge/main"]);
+    edit();
+    const result = await akmCurate({ query: "quartz deployment", filters });
+    expect(result.items, label).toEqual([]);
+    expect((await packCuratedHits(result, 4000)).items, label).toEqual([]);
+  }
+});
+test("a linked asset that became ineligible is not emitted as support", async () => {
+  const filters = { user: "alice" };
+  put(
+    "knowledge/main",
+    { scope: filters, xrefs: ["knowledge/support"] },
+    "quartz deployment selected\n\n[good](stash//knowledge/support)",
+  );
+  put("knowledge/support", { scope: filters }, "supplemental context only");
   await akmIndex({ stashDir: storage.stashDir, full: true });
-  const result = await akmCurate({ query: "quartz deployment", filters: { user: "alice" } });
-  expect(result.items).toHaveLength(1);
+  const support = (result: Awaited<ReturnType<typeof akmCurate>>) =>
+    result.items[0] && "supportRefs" in result.items[0] ? result.items[0].supportRefs?.map((x) => x.ref) : undefined;
+  expect(support(await akmCurate({ query: "quartz deployment selected", filters, limit: 1 }))).toEqual([
+    "knowledge/support",
+  ]);
+  put("knowledge/support", { scope: { user: "bob" } }, "supplemental context only");
+  expect(support(await akmCurate({ query: "quartz deployment selected", filters, limit: 1 }))).toBeUndefined();
+});
+test("show reads a scoped asset by its bundle-qualified ref whatever the filters", async () => {
   put("knowledge/main", { scope: { user: "bob" } });
-  expect((await packCuratedHits(result, 4000)).items).toEqual([]);
-  put("knowledge/main"); // Removing the scope must not retain its old indexed value.
-  expect((await packCuratedHits(result, 4000)).items).toEqual([]);
-  put("knowledge/main", { scope: { user: "alice" }, beliefState: "superseded" });
-  expect((await packCuratedHits(result, 4000)).items).toEqual([]);
-  fs.rmSync(file);
-  expect((await packCuratedHits(result, 4000)).items).toEqual([]);
+  await akmIndex({ stashDir: storage.stashDir, full: true });
+  expect((await akmShowUnified({ ref: "stash//knowledge/main" })).content).toContain("quartz deployment");
 });
 for (const enabled of [false, true]) {
   test(`reranking ${enabled}: only eligible candidates and derived surfaces reach reranker`, async () => {
