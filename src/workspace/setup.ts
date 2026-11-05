@@ -14,11 +14,13 @@ import {
   resetConfigCache,
 } from "../core/config/config";
 import { IMPROVE_ENGINE_PROCESSES } from "../core/config/engine-semantics";
+import { STANDARD_ALIASES } from "../core/config/model-aliases";
+import { sameEndpoint } from "../core/endpoint-url";
 import { UsageError } from "../core/errors";
 import { getDefaultStashDir } from "../core/paths";
 import { warnOnce } from "../core/warn";
 import { detectEnvironment } from "../setup/detect";
-import { normalizeEndpoint } from "../setup/endpoint";
+import { parseSetupFlags } from "../setup/setup-flags";
 import { describeRuns, runsReadOnly, unrestrictedModelWorkNote } from "../setup/summary";
 import { listEmbeddedTasks } from "../tasks/embedded";
 import { runCli } from "./cli-child";
@@ -73,8 +75,9 @@ function switchedOff(config: AkmConfig): string[] {
  * that akm can run work on, each with what its model calls could do (`modelWorkNote`, akm's own words);
  * `enabled` are the platforms the config already has; `modelCalls` is where akm's own model calls (improve, judging, extraction) run, as
  * `akm setup` says it, with the platform when they run on a harness; `connection` is the connection that takes them
- * when no agent does. `learning` is background learning: on when the scheduled improve task is enabled and the
- * config switches none of the learning processes off, and `agent`, the platform it is sent to (else akm itself).
+ * when no agent does. `learning` is background learning: on when akm's model calls run somewhere (`modelCalls`) and
+ * the config does not switch every learning process off, as learning off does, so a session-end extract or an improve
+ * run could spend model quota; `agent` is the platform they run on (`null`: akm itself, or off).
  */
 export async function detect() {
   const config = loadConfig();
@@ -85,7 +88,11 @@ export async function detect() {
     improve?.type === "process" && improve.kind === "harness"
       ? rows.find((row) => row.type === "harness" && row.name === improve.target)
       : undefined;
-  const learningHarness = config.improve?.harness;
+  const runsOn = harness?.type === "harness" ? harness.platform : null;
+  const learning =
+    improve?.type === "process" &&
+    improve.kind !== null &&
+    switchedOff(config).length < IMPROVE_ENGINE_PROCESSES.length;
   return {
     stashDir: found.stashSuggestions[0]?.path ?? getDefaultStashDir(),
     harnesses: found.harnesses.map(({ platform, path }) => ({
@@ -97,16 +104,11 @@ export async function detect() {
     })),
     enabled: [...new Set(Object.entries(config.harnesses ?? {}).map(([name, entry]) => entry.platform ?? name))],
     modelCalls: {
-      platform: harness?.type === "harness" ? harness.platform : null,
+      platform: runsOn,
       description: describeRuns(config).modelCalls,
     },
     connection: defaultConnection(config)?.name ?? null,
-    learning: {
-      on:
-        tasks.list().tasks.some((task) => task.id === LEARNING_TASK && task.enabled) &&
-        switchedOff(config).length === 0,
-      agent: learningHarness ? (config.harnesses?.[learningHarness]?.platform ?? learningHarness) : null,
-    },
+    learning: { on: learning, agent: learning ? runsOn : null },
   };
 }
 
@@ -140,6 +142,9 @@ export async function apply(input: {
     throw new UsageError("harness must be a list of agent program names.");
   if (connection !== undefined && !(typeof connection?.endpoint === "string" && typeof connection.model === "string"))
     throw new UsageError("connection needs an endpoint and a model.");
+  // Checked as `akm setup --endpoint --api-key-env` checks them: a base URL, and the NAME of a variable, never a key.
+  const flags = connection && parseSetupFlags({ endpoint: connection.endpoint, apiKeyEnv: connection.apiKeyEnv });
+  const checked = connection && { ...connection, endpoint: flags?.endpoint as string, apiKeyEnv: flags?.apiKeyEnv };
   if (learning !== undefined && typeof learning?.on !== "boolean")
     throw new UsageError("learning must say whether it is on.");
   const config = loadConfig();
@@ -149,7 +154,7 @@ export async function apply(input: {
       ? ["setup", "--yes", "--no-probe", ...(dir ? [`--dir=${dir}`] : []), `--harness=${harness.join(",")}`]
       : ["bundle", "create", `--dir=${dir ?? primaryBundlePath(config) ?? getDefaultStashDir()}`],
   );
-  if (connection || learning) await writeLearning(connection, learning);
+  if (checked || learning) await writeLearning(checked, learning);
   return detect();
 }
 
@@ -163,10 +168,18 @@ async function writeLearning(
   const unset: string[] = [];
   const connectionName = defaultConnection(config)?.name ?? (connection ? "default" : undefined);
   if (connection && connectionName) {
+    // As `akm setup` writes a connection: a key belongs to the endpoint it was given for, so a new endpoint without
+    // its own variable drops the old reference; an alias that carries request fields keeps them (`akm models set`).
     const base = `connections.${connectionName}`;
-    set[`${base}.endpoint`] = normalizeEndpointOrUsage(connection.endpoint);
-    if (connection.apiKeyEnv) set[`${base}.apiKey`] = apiKeyReference(connection.apiKeyEnv);
-    for (const alias of ["fast", "balanced", "reasoning"]) set[`${base}.models.${alias}`] = connection.model;
+    const existing = config.connections?.[connectionName];
+    set[`${base}.endpoint`] = connection.endpoint;
+    if (connection.apiKeyEnv) set[`${base}.apiKey`] = `$${connection.apiKeyEnv}`;
+    else if (existing?.apiKey !== undefined && !sameEndpoint(existing.endpoint, connection.endpoint))
+      unset.push(`${base}.apiKey`);
+    for (const alias of STANDARD_ALIASES) {
+      const held = existing?.models?.[alias];
+      set[`${base}.models.${alias}${typeof held === "object" ? ".model" : ""}`] = connection.model;
+    }
   }
   // Where improve runs: the named agent's entry, else the connection. Neither: learning stays off, with a warning.
   const agent = learning?.agent
@@ -193,21 +206,6 @@ async function writeLearning(
   }
   if (Object.keys(set).length || unset.length) change({ set, unset });
   if (learning) await setLearningTask(on);
-}
-
-function normalizeEndpointOrUsage(endpoint: string): string {
-  try {
-    return normalizeEndpoint(endpoint);
-  } catch (error) {
-    throw new UsageError((error as Error).message);
-  }
-}
-
-/** `$NAME`: the config holds the variable's name, never a key. */
-function apiKeyReference(name: string): string {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
-    throw new UsageError("Name the environment variable that holds the key, not the key itself.");
-  return `$${name}`;
 }
 
 /** Enable the scheduled improve task (adding it from akm's template when the library has none), or disable it. */

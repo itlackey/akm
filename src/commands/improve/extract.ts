@@ -1172,7 +1172,8 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   const activeProfile =
     options.improveProfile ?? (options.resolvedPlan ? undefined : resolveImproveStrategy(undefined, config).config);
   const process = options.resolvedPlan?.process ?? getImproveProcessConfig("extract", activeProfile);
-  // The extract toggle gates extract as an improve STAGE; an explicit `akm extract` always runs.
+  // The extract toggle gates extract as an improve STAGE; an explicit `akm extract` runs unless the person's own
+  // config switches it off (`resolveStandaloneExtractPlan`).
   const enabled =
     options.resolvedPlan?.enabled ??
     (options.improveProfile ? resolveProcessEnabled("extract", options.improveProfile) : true);

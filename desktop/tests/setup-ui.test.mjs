@@ -143,7 +143,7 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await expect(page.getByRole("radio")).toHaveCount(0);
   await page.getByRole("button", { name: "Install 2 selected" }).click();
   await expect(page.getByText(/AKM CLI installed in ~\/.local\/bin/)).toBeVisible();
-  // Enabled, and learning stays off: nothing is scheduled and no model call is routed anywhere.
+  // Enabled, and learning stays off: nothing is scheduled, and every learning process stays switched off.
   await expect(page.getByText(/1 agent is enabled for akm. Background learning is off./)).toBeVisible();
   const enabledOnly = await savedConfig(server);
   assert.equal(enabledOnly.harnesses.claude.modelWork, undefined);
@@ -305,7 +305,10 @@ test("run again on an existing machine shows live state, offers the CLI update o
   // The plugin is there, but akm's config does not enable Claude Code yet: that is the one thing still offered.
   await expect(page.getByRole("checkbox", { name: "Let akm use Claude Code" })).toBeChecked();
   await expect(page.getByRole("button", { name: "Install 1 selected" })).toBeEnabled();
-  await expect(page.getByText("Now: off.")).toBeVisible();
+  // Its only harness is akm's default and there is no connection, so akm's learning runs there: said, not hidden.
+  await expect(page.getByText(/Now: on, harness "fake"/)).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Let akm learn in the background" })).toBeChecked();
+  await expect(page.getByRole("radio", { checked: true })).toHaveCount(0);
   // No agent has searched: nothing is claimed, and after two minutes the page offers what to check.
   await expect(page.getByText("Waiting. Nothing has been seen yet.")).toBeVisible();
   await expect(page.getByText(/A search reached akm/)).toHaveCount(0);

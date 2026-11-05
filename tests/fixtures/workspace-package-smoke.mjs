@@ -50,6 +50,7 @@ for (const name of [
   "proposals",
   "sensitive",
   "setup",
+  "tasks",
 ])
   assert.equal(typeof workspace[name], "object", name);
 for (const name of [

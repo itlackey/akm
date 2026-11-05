@@ -124,7 +124,7 @@ AKM Desktop ships in the same release as the akm it embeds: one version, one tag
   agent" per harness (enabling it never lets akm spend its quota), background learning as one separate
   choice, off unless turned on, that runs on akm itself (a model connection, whose endpoint, model and
   API-key variable name it asks for) or on any enabled agent (the receipt says where akm's model calls
-  run and whether the scheduled improve task is enabled), Bun's official install
+  run, and learning reads on wherever they could run with no switch off), Bun's official install
   command with Copy and Check again for the Claude Code and Codex hooks, and a search akm is seen to
   receive. There is no stored "done" flag; Settings → Bundles & index and Software have Run setup again,
   and an error that says the library is missing links to setup.

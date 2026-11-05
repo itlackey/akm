@@ -163,8 +163,9 @@ export interface LearnPlan {
  */
 export function learnPlan(detected: Detected, agents: string[], input: LearnInput): LearnPlan {
   const on = input.learn ?? detected.learning.on;
+  // Where it runs now stands until the person picks: it may be an agent this page has no card for.
   const wanted = input.where ?? detected.learning.agent ?? "internal";
-  const where = wanted === "internal" || agents.includes(wanted) ? wanted : "internal";
+  const where = wanted === "internal" || agents.includes(wanted) || input.where === undefined ? wanted : "internal";
   const endpoint = input.endpoint.trim(),
     model = input.model.trim(),
     keyEnv = input.keyEnv.trim();
@@ -177,8 +178,12 @@ export function learnPlan(detected: Detected, agents: string[], input: LearnInpu
   const changed =
     connection !== undefined ||
     (!problem && (on !== detected.learning.on || (on && target !== detected.learning.agent)));
+  // Wanted on with nowhere to run, learning is not turned on; while it is off, setup keeps writing off, so that an agent
+  // enabled in the same apply does not take akm's model calls.
   const learning = problem
-    ? undefined
+    ? detected.learning.on
+      ? undefined
+      : { on: false }
     : !on
       ? { on: false }
       : changed

@@ -93,7 +93,8 @@ Nothing runs until you press a button.
      shows the package it configured.
    - **Let akm use this agent** (ticked) enables the agent in akm's config (`akm setup --yes --harness=<agents>` through
      `setup.apply`) so that `akm agent` and tasks can run on it. The first agent enabled is the default harness, so
-     several never leave the default ambiguous. Enabling does not turn learning on.
+     several never leave the default ambiguous. Enabling does not turn learning on: while learning is off, setup writes
+     off with it, so the agent takes none of akm's learning calls.
    - **Let akm learn in the background** is a separate choice, off unless you turn it on, because learning (improve,
      judging, extraction) uses model quota. Off means every model-calling improve process is switched off in the active
      strategy (`enabled: false`, which also stops the plugins' end-of-session `akm proposal extract`) and the scheduled
@@ -104,7 +105,9 @@ Nothing runs until you press a button.
      searching (a warning when it cannot). akm itself needs a connection: enter its endpoint, model and the NAME of the
      variable holding its key (never the key); with none configured and none entered it cannot be chosen. Turning
      learning on removes every `enabled: false` of those processes, a person's own included, because the config does not
-     say who wrote it. The result reports what akm says afterwards.
+     say who wrote it. The result reports what akm says afterwards. Learning reads on wherever akm's model calls could
+     run with nothing switched off, scheduled or not (an only agent akm made its default harness, with no connection,
+     takes them at every session end), so that state is shown, not hidden.
    - **Bun.** The Claude Code and Codex hooks are TypeScript files that the harness starts with `bun`; the standalone
      akm CLI does not provide a `bun` command, so Bun is the plugin's own runtime, not just a way to get akm. When Bun
      is missing the card shows Bun's official install command with **Copy** and **Check again**. Desktop never runs

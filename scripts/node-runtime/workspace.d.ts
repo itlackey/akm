@@ -180,8 +180,9 @@ export namespace setup {
     /** The connection that takes akm's model calls when no agent does, or `null` when none is configured. */
     connection: string | null;
     /**
-     * Background learning: `on` when the scheduled improve task is enabled and the config switches none of the
-     * learning processes off; `agent` is the platform improve runs on (`improve.harness`), `null` for akm itself.
+     * Background learning: `on` when akm's model calls run somewhere and the config does not switch every learning
+     * process off, so a session-end extract or an improve run could spend quota; `agent` is the platform they run on,
+     * `null` for akm itself or when off.
      */
     learning: { on: boolean; agent: string | null };
   }

@@ -133,6 +133,27 @@ describe("setup.apply", () => {
     }
   });
 
+  test("learning reads on wherever model calls already run, and a new endpoint keeps no old key", async () => {
+    await setup.apply({ dir: library() });
+    change({
+      set: {
+        "connections.default.endpoint": "http://old:1/v1",
+        "connections.default.apiKey": "$OLD_KEY",
+        "connections.default.models.fast.model": "x",
+        "connections.default.models.fast.temperature": "0.2",
+      },
+      unset: [],
+    });
+    // No improve task and no switch: a session-end extract would still call the model, so learning is on.
+    expect((await setup.detect()).learning).toEqual({ on: true, agent: null });
+    await setup.apply({ dir: library(), connection: { endpoint: "http://new:1", model: "m" } });
+    const connection = savedConfig().connections.default;
+    // As `akm setup`: the old endpoint's key is not sent to the new one, and an alias keeps its request fields.
+    expect(connection.apiKey).toBeUndefined();
+    expect(connection.models).toEqual({ fast: { model: "m", temperature: 0.2 }, balanced: "m", reasoning: "m" });
+    expect(savedConfig().improve).toBeUndefined();
+  });
+
   test("learning on an enabled agent writes improve.harness to its entry and no connection", async () => {
     const restore = claudeOnPath();
     fs.writeFileSync(path.join(ctx.storage.root, "bin", "codex"), "#!/bin/sh\necho 1\n", { mode: 0o755 });

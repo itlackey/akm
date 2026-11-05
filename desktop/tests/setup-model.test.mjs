@@ -137,7 +137,10 @@ test("learning is off unless turned on, and setup writes the off state with what
 test("learning on needs a connection or an agent, and says why in one line", () => {
   const none = learnPlan(detected(), ["claude"], { ...blank, learn: true });
   assert.match(none.problem, /needs a model connection/);
-  assert.deepEqual([none.changed, none.learning], [false, undefined]);
+  // Not turned on: off is written still, so that an agent enabled in the same apply does not take akm's model calls.
+  assert.deepEqual([none.changed, none.learning], [false, { on: false }]);
+  const wasOn = learnPlan(detected({ learning: { on: true, agent: "claude" } }), [], { ...blank, where: "internal" });
+  assert.deepEqual([wasOn.problem !== undefined, wasOn.learning], [true, undefined]);
   const typed = learnPlan(detected(), [], {
     learn: true,
     endpoint: " http://localhost:1/v1 ",
@@ -161,6 +164,9 @@ test("learning on an agent names its platform, and an agent that is not allowed 
   assert.deepEqual([agent.where, agent.learning], ["codex", { on: true, agent: "codex" }]);
   const gone = learnPlan(detected({ connection: "lab" }), ["claude"], { ...blank, learn: true, where: "codex" });
   assert.deepEqual([gone.where, gone.learning], ["internal", { on: true }]);
+  // On through an agent the page has no card for: left as it is, with no problem, until the person picks.
+  const elsewhere = learnPlan(detected({ learning: { on: true, agent: "aider" } }), ["claude"], blank);
+  assert.deepEqual([elsewhere.where, elsewhere.problem, elsewhere.learning], ["aider", undefined, undefined]);
   const back = learnPlan(detected({ learning: { on: true, agent: "codex" } }), ["codex"], { ...blank, learn: false });
   assert.deepEqual([back.changed, back.learning], [true, { on: false }]);
 });
