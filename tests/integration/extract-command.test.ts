@@ -2111,14 +2111,19 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
     expect(plan.process.maxTotalChars).toBe(4321);
   });
 
-  test("an explicitly selected strategy supplies settings but cannot disable standalone extract", () => {
+  test("an explicitly selected strategy supplies settings, and its own enabled: false in the config stops standalone extract", () => {
     const stash = makeStashDir();
-    const config = configWithStrategy(stash, { enabled: false, maxTotalChars: 4321 });
-    const plan = resolveStandaloneExtractPlan(config, { strategy: "extract" });
-    expect(plan).toMatchObject({ strategy: "extract", enabled: true });
-    expect(plan.runner?.timeoutMs).toBe(600_000);
-    expect(plan.process.enabled).toBe(false);
-    expect(plan.process.maxTotalChars).toBe(4321);
+    const on = resolveStandaloneExtractPlan(configWithStrategy(stash, { maxTotalChars: 4321 }), {
+      strategy: "extract",
+    });
+    expect(on).toMatchObject({ strategy: "extract", enabled: true });
+    expect(on.runner?.timeoutMs).toBe(600_000);
+    expect(on.process.maxTotalChars).toBe(4321);
+    const off = resolveStandaloneExtractPlan(configWithStrategy(stash, { enabled: false, maxTotalChars: 4321 }), {
+      strategy: "extract",
+    });
+    expect(off).toMatchObject({ strategy: "extract", enabled: false, runner: null });
+    expect(off.process.maxTotalChars).toBe(4321);
   });
 
   test("standalone planning preserves an explicit unbounded timeout", () => {

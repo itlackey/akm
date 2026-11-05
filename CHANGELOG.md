@@ -26,6 +26,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and every failed id of a batch decision carries its error `code`. `docs/reference/workspace.md`
   lists what each operation takes and returns. `akm-cli/api` is unchanged.
 
+- `akm-cli/workspace` gains `setup` for AKM Desktop's first run (#1423): `setup.detect` reads
+  where the library goes, which agent programs are on `PATH` and where akm's model calls run (no
+  network, no writes), and `setup.apply({dir?, harness?, connection?, learning?})` creates the library
+  (`akm bundle create`) or enables the named agent programs (`akm setup --yes --no-probe --harness`),
+  then in one config write sets the default connection (the key's variable name, never a key) and turns
+  background learning on or off: off sets `enabled: false` on each model-calling improve process of the
+  active strategy and disables the scheduled `improve` task and the optional `akm-improve-consolidate`
+  one when installed, on removes those switches, sends improve to
+  an enabled agent (`improve.harness`) or the connection (`improve.connection`) and always ensures the task exists and is enabled.
+  It never runs a bare `akm setup --yes`, which enables every agent program it finds and so lets akm
+  spend their model quota. `tasks.list`, `tasks.enable` and `tasks.disable` wrap `akm task` for the
+  default bundle's tasks. No new command or config key.
+
 - `akm secret remove` is back, shaped like `akm env remove` (`--yes`, `--bundle`; it removes
   the file and its `.sensitive` marker). It names its file through the write-target resolver,
   as `env remove` does.
@@ -62,6 +75,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `akm proposal extract` now honours `improve.strategies.<active>.processes.extract.enabled: false`
+  from your own config: it makes no model call, resolves no connection or harness, and returns
+  `ok: true` with no sessions and a warning that says why, so a session-end hook stays quiet. It used
+  to ignore the setting and always extract. The built-in strategies' own `extract.enabled: false`
+  (improve-stage extract off, because sessions are extracted when they end) still does not stop it.
 - OpenCode model work now sends akm's one-line system prompt instead of OpenCode's coding-agent
   prompt, and OpenCode 1 runs it as the `akm-model-work` agent with `--title akm` (so no title
   request) rather than as OpenCode's default agent, with its `skill` tool denied as on OpenCode 2
@@ -100,6 +118,17 @@ AKM Desktop ships in the same release as the akm it embeds: one version, one tag
   CLI uses the installer of its own release.
 - Desktop replaces `akm ui` and akm's HTML reports (both removed, see Removed above). Add bundle opens
   the operating system's folder dialog.
+- Desktop walks a new user through first-run setup at `/setup`, which Home offers on a computer with no
+  library instead of a red health failure: the library and the starter bundle (ticked, downloads from
+  GitHub), the akm CLI (installed from Desktop's own release, on Windows through its `install.ps1`),
+  one card per harness with the akm plugin on Desktop's channel and its version, "Let akm use this
+  agent" per harness (enabling it never lets akm spend its quota), background learning as one separate
+  choice, off unless turned on, that runs on akm itself (a model connection, whose endpoint, model and
+  API-key variable name it asks for) or on any enabled agent (the receipt says where akm's model calls
+  run, and learning reads on wherever they could run with no switch off), Bun's official install
+  command with Copy and Check again for the Claude Code and Codex hooks, and a search akm is seen to
+  receive. There is no stored "done" flag; Settings → Bundles & index and Software have Run setup again,
+  and an error that says the library is missing links to setup.
 
 ## [0.10.261105] - 2026-11-02
 

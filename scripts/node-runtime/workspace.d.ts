@@ -168,3 +168,52 @@ export namespace sensitive {
   /** Create (no `revision`; an existing file is refused) or replace (the `revision` last seen). */
   function save(input: SensitiveSelector & { content: string; revision?: string }): Promise<SensitiveWriteResult & { revision: string }>;
 }
+export namespace setup {
+  interface Detected {
+    stashDir: string;
+    /** Agent programs on PATH that akm can run, each with akm's words for what its model calls could do. */
+    harnesses: Array<{ platform: string; path: string; modelWorkNote: string }>;
+    /** The platforms the config already enables. */
+    enabled: string[];
+    /** Where akm's own model calls run, in setup's words, and the harness platform when they run on one. */
+    modelCalls: { platform: string | null; description: string };
+    /** The connection that takes akm's model calls when no agent does, or `null` when none is configured. */
+    connection: string | null;
+    /**
+     * Background learning: `on` when akm's model calls run somewhere and the config does not switch every learning
+     * process off, so a session-end extract or an improve run could spend quota; `agent` is the platform they run on,
+     * `null` for akm itself or when off.
+     */
+    learning: { on: boolean; agent: string | null };
+  }
+  /**
+   * Create the library, or with `harness` enable those agent programs. `connection` writes the default connection
+   * (the variable's name, never a key). `learning` turns background learning off (each learning process switched off
+   * in the active strategy, the scheduled improve task disabled) or on (those switches cleared, improve sent to
+   * `agent` or else the connection, the task enabled). Returns `detect()` afterwards. Unknown fields are ignored with a warning.
+   */
+  function apply(input: {
+    dir?: string;
+    harness?: string[];
+    connection?: { endpoint: string; model: string; apiKeyEnv?: string };
+    learning?: { on: boolean; agent?: string };
+  }): Promise<Detected>;
+  /** What setup could use on this computer, from the file system, PATH and config only (no network, no writes). */
+  function detect(): Promise<Detected>;
+}
+export namespace tasks {
+  interface Task {
+    id: string;
+    schedule: string;
+    schedules?: readonly string[];
+    /** This host has the task in its scheduler configuration. */
+    enabled: boolean;
+    description?: string;
+  }
+  /** The default bundle's scheduled tasks and whether this host has each enabled. Nothing is written. */
+  function list(): { tasks: Task[] };
+  /** `akm task enable`: schedule the task in this host's scheduler. The OS scheduler is written. */
+  function enable(input: { task: string }): Promise<Record<string, unknown>>;
+  /** `akm task disable`: take the task out of this host's scheduler. */
+  function disable(input: { task: string }): Promise<Record<string, unknown>>;
+}

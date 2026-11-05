@@ -24,6 +24,8 @@ const {
   proposals,
   scrubUrlCredentials,
   sensitive,
+  setup,
+  tasks,
 } = await import("./workspace.js");
 
 export {
@@ -43,4 +45,6 @@ export {
   proposals,
   scrubUrlCredentials,
   sensitive,
+  setup,
+  tasks,
 };

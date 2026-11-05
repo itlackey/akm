@@ -111,6 +111,7 @@ are ignored) and returns plain JSON-safe data without a CLI envelope; failures r
 | `bundles` | `list`, `add`, `remove`, `update`, `rename`, `setSettings` |
 | `config` | `get`, `change` |
 | `feedback` | `record` |
+| `setup` | `detect`, `apply` (first-run setup: the library, and the agent programs akm may use; `akm bundle create`, `akm setup --yes --harness`) |
 | `sensitive` | `describe`, `readValue`, `save`, `remove` (env files and secrets; only `readValue` returns a value) |
 | `activity` | `overview`, `pulse`, `health`, `retrievalTrend`, `improveImpact`, `taskHistory`, `meta` |
 
@@ -140,7 +141,7 @@ failed id in the result carries its `code`.
 
 Reads open `index.db` and `state.db` read-only and never create or migrate them. Mutations keep the
 write leases, auditing, indexing, Git commits and possible pushes of the CLI. `feedback.record` and
-the `bundles` actions `add`, `remove`, `update` and `rename` run the packaged CLI as a child
+the `bundles` actions `add`, `remove`, `update` and `rename`, and `setup.apply`, run the packaged CLI as a child
 process (their validation lives in the command bodies, and `add` and `update` do network and git
 work that would block a single-threaded host); ship the complete package including its launcher,
 Node wrapper and assets. Under Node the existing invocation resolver finds `dist/cli-node.mjs`

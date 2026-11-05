@@ -61,8 +61,9 @@ export function parseCommandResponse(stdout: string, expectedShape: string): Rec
   }
 }
 
-/** `bundle rename` is the one `bundle` subcommand whose output shape is not its name. */
-const bundleShape = (subcommand: string) => (subcommand === "rename" ? "bundle-rename" : subcommand);
+/** `bundle create` and `bundle rename` are the `bundle` subcommands whose output shape is not their name. */
+const bundleShape = (subcommand: string) =>
+  subcommand === "create" || subcommand === "rename" ? `bundle-${subcommand}` : subcommand;
 
 /**
  * Run the bundled CLI for an action whose validation and orchestration live in its `run()` body (feedback's argv-dependent
@@ -101,7 +102,12 @@ export async function runCli(args: string[], input?: string, userFeedback = fals
           return;
         }
         try {
-          resolve(parseCommandResponse(stdout, args[0] === "bundle" ? bundleShape(args[1]!) : args[0]!));
+          resolve(
+            parseCommandResponse(
+              stdout,
+              args[0] === "bundle" ? bundleShape(args[1]!) : args[0] === "task" ? `task-${args[1]}` : args[0]!,
+            ),
+          );
         } catch (error) {
           reject(error);
         }

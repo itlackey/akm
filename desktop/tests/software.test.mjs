@@ -37,7 +37,7 @@ test("host environment finds conventional user tools without running profiles or
   assert.ok(!env.PATH.split(":").includes("."));
 });
 
-async function hostFixture({ absent = false, failure = false, desktopVersion } = {}) {
+async function hostFixture({ absent = false, failure = false, desktopVersion, bun = true, platform = "linux" } = {}) {
   const home = await mkdtemp(path.join(os.tmpdir(), "akm-host-test-"));
   temporary.push(home);
   const calls = [],
@@ -45,21 +45,29 @@ async function hostFixture({ absent = false, failure = false, desktopVersion } =
     installed = new Set(),
     configured = new Set();
   let cli = !absent;
-  const env = { HOME: home, PATH: "/fixture/bin", XDG_CONFIG_HOME: path.join(home, ".config") };
+  let hasBun = bun;
+  const env = {
+    HOME: home,
+    PATH: "/fixture/bin",
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+    LOCALAPPDATA: path.join(home, "AppData", "Local"),
+  };
   const manager = new HostTools({
     home,
     env,
-    platform: "linux",
+    platform,
     desktopVersion,
-    find: async (name) => (name === "akm" && !cli ? undefined : `/fixture/bin/${name}`),
+    find: async (name) =>
+      (name === "akm" && !cli) || (name === "bun" && !hasBun) ? undefined : `/fixture/bin/${name}`,
     fetcher: async (url) => {
       installerUrls.push(url);
-      return { ok: true, text: async () => "#!/usr/bin/env bash\n# fixture; never executed\n" };
+      const first = url.endsWith(".ps1") ? "#Requires -Version 5.1" : "#!/usr/bin/env bash";
+      return { ok: true, text: async () => `${first}\n# fixture; never executed\n` };
     },
     run: async (file, args, options) => {
       assert.equal(options.home, home);
       assert.equal(options.env.AKM_LAUNCHER_NODE, undefined);
-      calls.push({ file, args });
+      calls.push({ file, args, installDir: options.env.AKM_INSTALL_DIR });
       const name = path.basename(file);
       if (args[0] === "--version")
         return name.startsWith("opencode") ? (name === "opencode2" ? "2.1.4" : "1.18.34") : "0.10.261104";
@@ -77,7 +85,7 @@ async function hostFixture({ absent = false, failure = false, desktopVersion } =
           migration: { status: "current" },
         });
       }
-      if (name === "bash") {
+      if (name === "bash" || name === "powershell.exe") {
         cli = true;
         return "installed";
       }
@@ -114,7 +122,7 @@ async function hostFixture({ absent = false, failure = false, desktopVersion } =
       return "{}";
     },
   });
-  return { manager, home, calls, installed, configured, installerUrls };
+  return { manager, home, calls, installed, configured, installerUrls, installBun: () => (hasBun = true) };
 }
 
 test("host checks are read-only and upgrades invoke the existing CLI, not the bundled engine", async () => {
@@ -165,6 +173,23 @@ test("the installer comes from Desktop's own release, so the host CLI starts equ
   assert.deepEqual(f.installerUrls, ["https://github.com/itlackey/akm/releases/download/v0.10.261105-beta/install.sh"]);
 });
 
+test("on Windows the CLI installs through install.ps1 of Desktop's release, into %LOCALAPPDATA%\\akm", async () => {
+  const f = await hostFixture({ absent: true, desktopVersion: "0.10.261105", platform: "win32" });
+  assert.equal(f.manager.snapshot().cliDirectory, "%LOCALAPPDATA%\\akm");
+  f.manager.start("install-cli");
+  await f.manager.pending;
+  assert.equal(f.manager.snapshot().error, undefined);
+  assert.deepEqual(f.installerUrls, ["https://github.com/itlackey/akm/releases/download/v0.10.261105/install.ps1"]);
+  const [install] = f.calls.filter((call) => call.file === "powershell.exe");
+  assert.deepEqual(install.args.slice(0, -1), ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]);
+  assert.equal(path.basename(install.args.at(-1)), "install.ps1");
+  assert.equal(install.installDir, path.join(f.home, "AppData", "Local", "akm"));
+  assert.ok(!f.calls.some((call) => call.file === "/bin/bash"));
+  assert.match(f.manager.snapshot().receipt, /installed in %LOCALAPPDATA%\\akm/);
+  const env = await hostEnvironment({ PATH: "", LOCALAPPDATA: "/la" }, f.home, "win32");
+  assert.ok(env.PATH.split(path.delimiter).includes(path.join("/la", "akm")), "Desktop finds what it installed");
+});
+
 test("all four harness paths use standard native installation commands and verify afterward", async () => {
   const f = await hostFixture();
   for (const id of ["claude", "codex", "opencode", "opencode2"]) {
@@ -188,6 +213,42 @@ test("all four harness paths use standard native installation commands and verif
   await f.manager.pending;
   assert.match(f.manager.snapshot().error, /already present/);
   assert.ok(f.calls.slice(count).every((call) => call.args.includes("--version") || call.args.includes("list")));
+});
+
+test("Claude and Codex plugins need Bun, which Desktop shows the official command for and re-detects but never runs", async () => {
+  const f = await hostFixture({ bun: false });
+  f.manager.start("check");
+  await f.manager.pending;
+  assert.deepEqual(f.manager.snapshot().bun, {
+    id: "bun",
+    installed: false,
+    installCommand: "curl -fsSL https://bun.sh/install | bash",
+  });
+  for (const id of ["claude", "codex"]) {
+    f.manager.start("install-plugin", id);
+    await f.manager.pending;
+    assert.match(f.manager.snapshot().error, /Install Bun first/, id);
+  }
+  // OpenCode installs its own copy of akm and has no Bun hooks, so it is not held back.
+  f.manager.start("install-plugin", "opencode");
+  await f.manager.pending;
+  assert.equal(f.manager.snapshot().error, undefined);
+  assert.ok(!f.calls.some((call) => call.args.includes("marketplace")));
+  // The person installs Bun and rechecks; the same action then goes through.
+  f.installBun();
+  f.manager.start("check");
+  await f.manager.pending;
+  assert.equal(f.manager.snapshot().bun.installed, true);
+  f.manager.start("install-plugin", "claude");
+  await f.manager.pending;
+  assert.equal(f.manager.snapshot().error, undefined);
+  assert.ok(!f.calls.some((call) => path.basename(call.file) === "bash" || /bun\.sh/.test(call.args.join(" "))));
+});
+
+test("Bun's install command follows the platform", async () => {
+  const { bunInstallCommand } = await import("../src/lib/server/features/host-tools.ts");
+  assert.match(bunInstallCommand("win32"), /^powershell .*bun\.sh\/install\.ps1/);
+  assert.equal(bunInstallCommand("darwin"), bunInstallCommand("linux"));
 });
 
 test("OpenCode plugin detection reads config files in the order akm does", async () => {

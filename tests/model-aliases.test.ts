@@ -109,6 +109,24 @@ describe("the shipped alias per kind of call", () => {
     expect(asLlmRunner(resolveIndexPassExecution("memory", configOf()).runner).model).toBe("m-fast");
   });
 
+  test("standalone extract runs under the built-in strategy, and an explicit false in the config skips it", () => {
+    // The built-in default strategy turns improve-stage extract off; that must not stop session-end extraction.
+    expect(resolveStandaloneExtractPlan(configOf(), {}).enabled).toBe(true);
+    const off = (enabled: boolean) =>
+      configOf({ improve: { strategies: { default: { processes: { extract: { enabled } } } } } });
+    expect(resolveStandaloneExtractPlan(off(true), {}).enabled).toBe(true);
+    // Skipped, it resolves no runner, so a computer with no connection gets no error.
+    const skipped = resolveStandaloneExtractPlan({ ...off(false), connections: {} } as AkmConfig, {});
+    expect(skipped).toMatchObject({ enabled: false, runner: null });
+    // Another strategy's false does not reach the active one.
+    expect(
+      resolveStandaloneExtractPlan(
+        configOf({ improve: { strategies: { consolidate: { processes: { extract: { enabled: false } } } } } }),
+        {},
+      ).enabled,
+    ).toBe(true);
+  });
+
   test("agent work asks for balanced: on a connection's models, and on a harness's shipped map", async () => {
     const onConnection = await prepareCommandInvocation({ action: { content: "Review." }, config: configOf() });
     expect(onConnection.request.model).toEqual({ model: "m-balanced", alias: "balanced" });

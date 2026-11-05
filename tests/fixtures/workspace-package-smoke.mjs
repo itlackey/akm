@@ -33,13 +33,25 @@ const {
   feedback,
   proposals,
   sensitive,
+  setup,
   AkmError,
   CONFLICT_CODES,
   scrubUrlCredentials,
 } = workspace;
 assert.equal(Boolean(process.versions.bun), process.argv[2] === "bun");
 for (const [name, value] of Object.entries(workspace)) assert.notEqual(value, undefined, name);
-for (const name of ["activity", "assets", "bundles", "config", "documents", "feedback", "proposals", "sensitive"])
+for (const name of [
+  "activity",
+  "assets",
+  "bundles",
+  "config",
+  "documents",
+  "feedback",
+  "proposals",
+  "sensitive",
+  "setup",
+  "tasks",
+])
   assert.equal(typeof workspace[name], "object", name);
 for (const name of [
   "UsageError",
@@ -57,6 +69,7 @@ const pkg = fileURLToPath(import.meta.resolve("akm-cli/package.json"));
 const cli = path.join(path.dirname(pkg), "dist", process.versions.bun ? "cli.js" : "cli-node.mjs");
 execFileSync(process.execPath, [cli, "index", "--format=json"], { env: process.env, stdio: "pipe" });
 assert.ok((await bundles.list()).bundles.length === 2);
+assert.equal(typeof (await setup.detect()).stashDir, "string");
 const created = await documents.createKnowledge({
   name: "desktop-note",
   bundle: "stash",

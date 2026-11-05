@@ -93,8 +93,9 @@ npm start
 ```
 
 `npm start` opens your real local AKM workspace. For synthetic verification use
-the test commands below instead. A first-time user can register an existing
-bundle from Settings; this version does not add a second provider setup wizard.
+the test commands below instead. A first-time user is taken through setup (`/setup`):
+the library, the akm CLI and the harness plugins, then a check that an agent reaches the
+library ([Software](docs/software.md#first-run-setup)).
 
 Setup disables dependency lifecycle scripts. The explicit Electron command above
 downloads the pinned development runtime; nothing is downloaded at app startup.

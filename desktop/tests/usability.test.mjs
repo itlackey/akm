@@ -36,6 +36,7 @@ test("populated workspace accessibility and reflow across both themes", { timeou
     { id: "impact", route: "/activity/improve", ready: ".impact-links" },
     { id: "bundles", route: "/settings/bundles", ready: "#configured-bundles" },
     { id: "config", route: "/settings/config", ready: "#library-settings" },
+    { id: "setup", route: "/setup", ready: "#setup-try" },
   ];
   const observations = [],
     failures = [],

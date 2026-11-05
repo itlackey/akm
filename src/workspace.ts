@@ -27,3 +27,5 @@ export * as feedback from "./workspace/feedback";
 export * as proposals from "./workspace/proposals";
 export { scrubUrlCredentials } from "./workspace/redact";
 export * as sensitive from "./workspace/sensitive";
+export * as setup from "./workspace/setup";
+export * as tasks from "./workspace/tasks";
