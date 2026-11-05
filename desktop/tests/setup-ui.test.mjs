@@ -114,7 +114,7 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await expect(page.getByText("Starter bundle added and indexed.")).toBeVisible();
   assert.equal(tries, 2);
   const config = JSON.parse(await readFile(path.join(server.env.AKM_CONFIG_DIR, "config.json"), "utf8"));
-  assert.equal(config.harnesses, undefined, "learning is off unless it is ticked");
+  assert.equal(config.harnesses, undefined, "nothing is enabled until the agents step is run");
 
   // 2. The CLI is pre-ticked with the version and place it installs to; Claude's plugin waits for Bun.
   const cli = page.getByRole("checkbox", { name: /Install .*akm.* to ~\/.local\/bin/ });
@@ -125,8 +125,18 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await expect(page.getByText("The Claude Code plugin's hooks run on Bun")).toBeVisible();
   await expect(page.getByText("curl -fsSL https://bun.sh/install | bash")).toBeVisible();
   await shot("setup-03-agents-before");
-  await page.getByRole("button", { name: "Install 1 selected" }).click();
+  // The agent is offered as "let akm use it" (ticked); learning is a separate choice, off.
+  await expect(page.getByRole("checkbox", { name: "Let akm use Claude Code" })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Let akm learn in the background" })).not.toBeChecked();
+  await expect(page.getByRole("radio")).toHaveCount(0);
+  await page.getByRole("button", { name: "Install 2 selected" }).click();
   await expect(page.getByText(/AKM CLI installed in ~\/.local\/bin/)).toBeVisible();
+  // Enabled, and no agent runs akm's model calls: with no connection that means learning is off, and it says so.
+  await expect(page.getByText(/1 agent is enabled for akm. No agent runs akm's model calls./)).toBeVisible();
+  await expect(page.getByText(/akm's model calls: off: no connection is configured/)).toBeVisible();
+  const enabledOnly = JSON.parse(await readFile(path.join(server.env.AKM_CONFIG_DIR, "config.json"), "utf8"));
+  assert.equal(enabledOnly.harnesses.claude.modelWork, false);
+  assert.equal(enabledOnly.improve?.harness, undefined);
   await expect(page.getByText(`akm ${ENGINE} at`)).toBeVisible();
 
   // The person installs Bun and checks again; Desktop never ran Bun's installer.
@@ -137,15 +147,21 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await expect(claudeBox).toBeEnabled();
   await expect(page.getByText("The Claude Code plugin's hooks run on Bun")).toHaveCount(0);
   await expect(claudeBox).toBeChecked();
-  const learning = page.getByRole("checkbox", { name: "Let akm use Claude Code for learning" });
+  const learning = page.getByRole("checkbox", { name: "Let akm learn in the background" });
   await expect(learning).not.toBeChecked();
   await learning.check();
+  // The default is akm itself; any enabled agent can be chosen instead, with akm's own words about its limits.
+  await expect(page.getByRole("radio", { name: /akm itself/ })).toBeChecked();
+  await expect(page.getByText(/model calls are limited to reading and searching|cannot be restricted/)).toBeVisible();
+  await page.getByRole("radio", { name: "Claude Code" }).check();
   await page.getByRole("button", { name: "Install 2 selected" }).click();
   await expect(page.getByText("AKM plugin installed. Restart the harness to load it.")).toBeVisible();
-  // The receipt is where akm says its model calls run now, not the ticked box.
-  await expect(page.getByText(/akm's model calls: harness "claude"/)).toBeVisible();
+  // The receipt is where akm says its model calls run now, not the chosen radio.
+  await expect(
+    page.getByText(/Claude Code is enabled and runs background learning. akm's model calls: harness "claude"/),
+  ).toBeVisible();
   await expect(learning).toBeChecked();
-  await expect(learning).toBeDisabled();
+  await expect(page.getByRole("radio", { name: "Claude Code" })).toBeChecked();
   await expect(page.getByText(`✓ AKM plugin ${PLUGIN}`)).toBeVisible();
   await expect(page.getByText("Restart Claude Code")).toBeVisible();
   await shot("setup-04-agents-after");
@@ -154,7 +170,8 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   assert.ok(run.some((item) => item.args.join(" ") === "plugin install akm@akm-plugins --scope user"));
   assert.ok(!run.some((item) => item.name === "bun"), "Bun's installer is never run");
   const enabled = JSON.parse(await readFile(path.join(server.env.AKM_CONFIG_DIR, "config.json"), "utf8"));
-  assert.ok(enabled.harnesses?.claude, "the ticked harness is in akm's config");
+  assert.equal(enabled.improve.harness, "claude");
+  assert.equal(enabled.harnesses.claude.modelWork, undefined);
 
   // 3. Try it: a real search, and the agent check, which claims nothing until akm's count rises.
   await expect(page.getByRole("searchbox", { name: "Search your library" })).toHaveValue(/\w/);
@@ -237,7 +254,10 @@ test("run again on an existing machine shows live state, offers the CLI update o
   await page.screenshot({ path: path.join(screenshots, "existing-machine-setup.png"), fullPage: true });
   await page.getByRole("button", { name: "Update CLI & plugins" }).click();
   await expect(page.getByText(/Native AKM upgrade completed/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Nothing selected" })).toBeDisabled();
+  // The plugin is there, but akm's config does not enable Claude Code yet: that is the one thing still offered.
+  await expect(page.getByRole("checkbox", { name: "Let akm use Claude Code" })).toBeChecked();
+  await expect(page.getByRole("button", { name: "Install 1 selected" })).toBeEnabled();
+  await expect(page.getByText(/Now: harness "fake"/)).toBeVisible();
   // No agent has searched: nothing is claimed, and after two minutes the page offers what to check.
   await expect(page.getByText("Waiting. Nothing has been seen yet.")).toBeVisible();
   await expect(page.getByText(/A search reached akm/)).toHaveCount(0);

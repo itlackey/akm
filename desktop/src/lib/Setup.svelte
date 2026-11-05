@@ -17,11 +17,8 @@
   let detected = $state<Detected | null>(null);
   let error = $state("");
 
-  const akmSees = $derived(detected?.harnesses.map((harness) => harness.platform) ?? []);
   const cards = $derived(
-    software.data && detected
-      ? agentCards(software.data.host, software.data.engine, akmSees, detected.modelCalls.platform)
-      : [],
+    software.data && detected ? agentCards(software.data.host, software.data.engine, detected) : [],
   );
   const connected = $derived(cards.filter((card) => card.state === "connected"));
 
@@ -45,7 +42,12 @@
   {#if error}<p class="notice notice-warn" role="alert">{error}</p>{/if}
   {#if !detected}<p role="status">Looking at this computer…</p>{:else}
     <SetupLibrary stashDir={detected.stashDir} />
-    <SetupAgents {cards} engine={software.data?.engine} onconfigured={(next: Detected) => (detected = next)} />
+    <SetupAgents
+      {cards}
+      {detected}
+      engine={software.data?.engine}
+      onconfigured={(next: Detected) => (detected = next)}
+    />
     <SetupTryIt {connected} />
   {/if}
 </div>

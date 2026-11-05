@@ -110,8 +110,10 @@ AKM Desktop ships in the same release as the akm it embeds: one version, one tag
 - Desktop walks a new user through first-run setup at `/setup`, which Home offers on a computer with no
   library instead of a red health failure: the library and the starter bundle (ticked, downloads from
   GitHub), the akm CLI (installed from Desktop's own release, on Windows through its `install.ps1`),
-  one card per harness with the akm plugin on Desktop's channel and its version, learning per harness
-  (off unless ticked; the card and receipt say where akm's model calls run), Bun's official install
+  one card per harness with the akm plugin on Desktop's channel and its version, "Let akm use this
+  agent" per harness (enabling it never lets akm spend its quota), background learning as one separate
+  choice, off unless turned on, that runs on akm itself by default or on any enabled agent (the receipt
+  says where akm's model calls run, including that none run with no connection), Bun's official install
   command with Copy and Check again for the Claude Code and Codex hooks, and a search akm is seen to
   receive. There is no stored "done" flag; Settings → Bundles & index and Software have Run setup again,
   and an error that says the library is missing links to setup.

@@ -91,11 +91,16 @@ Nothing runs until you press a button.
      Desktop the `next` one. Plugins share akm's major and minor version and number their builds on their own, so a
      plugin built for another minor is flagged. OpenCode resolves its plugin's exact version when it starts, so its card
      shows the package it configured.
-   - **Let akm use this agent for learning** is off unless you tick it, because background learning runs that agent's
-     model on your quota. Ticking it runs `akm setup --yes --harness=<agent>` (`setup.apply`), which makes that agent
-     akm's default. akm's model calls run in one place (a connection when there is one, else the default agent when akm
-     can limit it to reading and searching), so a card shows learning as on only where akm says they run, and the
-     result says where that is.
+   - **Let akm use this agent** (ticked) enables the agent in akm's config (`akm setup --yes --harness=<agents>` through
+     `setup.apply`) so that `akm agent` and tasks can run on it. The first agent enabled is the default harness, so
+     several never leave the default ambiguous. Enabling does not let akm spend the agent's model quota: every enabled
+     agent is set `modelWork: false`.
+   - **Let akm learn in the background** is a separate choice, off unless you turn it on, because learning (improve,
+     judging, extraction) uses model quota. Turned on, it asks where to run: **akm itself** (the default: a model
+     reached through a connection, not an agent program) or any enabled agent, with akm's own note on whether that
+     agent can be limited to reading and searching (a warning when it cannot). An agent is `improve.harness`; akm
+     itself is the default connection. With no connection configured, akm itself runs nothing, and the result says
+     so (`akm setup --endpoint URL` adds one). The result always reports where akm says its model calls run.
    - **Bun.** The Claude Code and Codex hooks are TypeScript files that the harness starts with `bun`; the standalone
      akm CLI does not provide a `bun` command, so Bun is the plugin's own runtime, not just a way to get akm. When Bun
      is missing the card shows Bun's official install command with **Copy** and **Check again**. Desktop never runs

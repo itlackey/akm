@@ -228,7 +228,7 @@ export const routes: Route[] = [
     "/api/bundles/settings",
     body(bundles.setSettings, ["bundle", "enabled", "writable", "componentWritability"], "bundle settings"),
   ),
-  post("/api/setup/apply", body(setup.apply, ["dir", "harness"], "setup apply")),
+  post("/api/setup/apply", body(setup.apply, ["dir", "harness", "learning"], "setup apply")),
   post("/api/config/set", body(config.change, ["set", "unset"], "config")),
   post(
     "/api/knowledge/create",

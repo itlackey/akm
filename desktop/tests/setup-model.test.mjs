@@ -46,15 +46,41 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
       { id: "opencode2", installed: false },
     ]),
     "0.10.261105",
-    ["claude", "opencode"],
-    "opencode",
+    {
+      stashDir: "/x",
+      harnesses: [
+        { platform: "claude", path: "/bin/claude", modelWorkNote: "model calls are limited to reading and searching" },
+        {
+          platform: "opencode",
+          path: "/bin/opencode",
+          modelWorkNote: "Model work on opencode cannot be restricted: it can edit files and run commands.",
+        },
+      ],
+      enabled: ["opencode"],
+      modelCalls: { platform: "opencode", description: "harness" },
+    },
   );
   assert.deepEqual(
     cards.map((card) => [card.id, card.state, card.needsBun, card.learning]),
     [
-      ["claude", "ready", true, { available: true, enabled: false }],
-      ["codex", "connected", true, { available: false, enabled: false }],
-      ["opencode", "connected", false, { available: true, enabled: true }],
+      [
+        "claude",
+        "ready",
+        true,
+        { available: true, enabled: false, active: false, note: "model calls are limited to reading and searching" },
+      ],
+      ["codex", "connected", true, { available: false, enabled: false, active: false, note: "" }],
+      [
+        "opencode",
+        "connected",
+        false,
+        {
+          available: true,
+          enabled: true,
+          active: true,
+          note: "Model work on opencode cannot be restricted: it can edit files and run commands.",
+        },
+      ],
     ],
   );
   assert.deepEqual(cards[1].plugin, { text: "AKM plugin 0.9.1", mismatch: true });
@@ -68,8 +94,7 @@ test("a plugin that is turned off, or that the harness cannot report, is not off
       { id: "codex", installed: true, runnable: true, plugin: { state: "disabled", version: "0.10.1" } },
     ]),
     "0.10.261105",
-    [],
-    null,
+    { stashDir: "/x", harnesses: [], enabled: [], modelCalls: { platform: null, description: "off" } },
   );
   assert.deepEqual(
     cards.map((card) => [card.state, card.needsBun]),

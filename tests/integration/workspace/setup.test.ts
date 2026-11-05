@@ -10,6 +10,7 @@ import path from "node:path";
 import { getConfigPath } from "../../../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { setup } from "../../../src/workspace";
+import { change } from "../../../src/workspace/config";
 import { ctx, expectUsage, useSandbox } from "./workspace-behaviour-helpers";
 
 useSandbox();
@@ -57,12 +58,66 @@ describe("setup.apply", () => {
     expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
   });
 
-  test("a named harness lands in the config and takes akm's model calls", async () => {
+  test("a named harness is enabled, and akm's model calls stay off it unless learning names it", async () => {
     const restore = claudeOnPath();
     try {
       const after = await setup.apply({ dir: library(), harness: ["claude"] });
-      expect(savedConfig().harnesses).toHaveProperty("claude");
+      expect(savedConfig().harnesses.claude.modelWork).toBe(false);
+      expect(savedConfig().improve?.harness).toBeUndefined();
+      expect(after.modelCalls.platform).toBeNull();
+      expect(after.modelCalls.description).toStartWith("off: no connection is configured");
+      expect(after.enabled).toEqual(["claude"]);
+      expect(after.harnesses[0]?.modelWorkNote).toBeString();
+    } finally {
+      restore();
+    }
+  });
+
+  test("learning on an enabled agent runs akm's model calls there, even with a connection", async () => {
+    const restore = claudeOnPath();
+    try {
+      const after = await setup.apply({ dir: library(), harness: ["claude"], learning: "claude" });
+      expect(savedConfig().harnesses.claude.modelWork).toBeUndefined();
       expect(after.modelCalls.platform).toBe("claude");
+      change({
+        set: { "connections.lab.endpoint": "http://localhost:1/v1", "connections.lab.models.fast": "m" },
+        unset: [],
+      });
+      expect((await setup.detect()).modelCalls.platform).toBe("claude");
+      const back = await setup.apply({ dir: library(), harness: ["claude"] });
+      expect(back.modelCalls.platform).toBeNull();
+      expect(back.modelCalls.description).toContain('connection "lab"');
+      expect(savedConfig().improve?.harness).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  test("several agents leave one default harness, and learning may name any of them", async () => {
+    const restore = claudeOnPath();
+    fs.writeFileSync(path.join(ctx.storage.root, "bin", "codex"), "#!/bin/sh\necho 1\n", { mode: 0o755 });
+    try {
+      const after = await setup.apply({ dir: library(), harness: ["claude", "codex"], learning: "codex" });
+      expect(Object.keys(savedConfig().harnesses).sort()).toEqual(["codex", "default"]);
+      expect(savedConfig().harnesses.default.platform).toBe("claude");
+      expect(savedConfig().improve.harness).toBe("codex");
+      expect(after.modelCalls.platform).toBe("codex");
+      expect(after.enabled.sort()).toEqual(["claude", "codex"]);
+    } finally {
+      restore();
+    }
+  });
+
+  test("learning on an agent that is not enabled is ignored with a warning", async () => {
+    const warned: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warned.push(String(args[0]));
+    });
+    const restore = claudeOnPath();
+    try {
+      const after = await setup.apply({ dir: library(), harness: ["claude"], learning: "codex" });
+      expect(after.modelCalls.platform).toBeNull();
+      expect(warned.some((line) => line.includes("codex is not enabled"))).toBe(true);
     } finally {
       restore();
     }

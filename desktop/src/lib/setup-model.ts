@@ -12,7 +12,9 @@ export const STARTER = "github:itlackey/akm-stash";
 /** What `setup.detect` reports, and `setup.apply` returns once it has run. */
 export interface Detected {
   stashDir: string;
-  harnesses: Array<{ platform: string; path: string }>;
+  harnesses: Array<{ platform: string; path: string; modelWorkNote: string }>;
+  /** The platforms akm's config already enables. */
+  enabled: string[];
   modelCalls: { platform: string | null; description: string };
 }
 
@@ -78,24 +80,23 @@ export interface AgentCard {
   plugin?: { text: string; mismatch: boolean };
   /** The plugin cannot be installed until Bun is. */
   needsBun: boolean;
-  /** Whether akm can use this harness for learning, and whether akm's model calls run on it now. */
-  learning: { available: boolean; enabled: boolean };
+  /**
+   * Whether akm can use this harness (it finds the program on its own PATH), whether it is enabled in akm's config, and
+   * whether akm's model calls (learning) run on it now, with akm's words for what those calls could do there.
+   */
+  learning: { available: boolean; enabled: boolean; active: boolean; note: string };
 }
 
 /**
- * One card per harness Desktop found. A harness that is not installed is not offered. `akmSees` are the platforms akm
- * finds on its PATH; `learningOn` is the one akm's own model calls run on (`setup.detect`), if any.
+ * One card per harness Desktop found. A harness that is not installed is not offered. `detected` is `setup.detect`:
+ * the programs akm finds on its PATH, those its config enables, and the one its own model calls run on, if any.
  */
-export function agentCards(
-  host: HostSnapshot,
-  engine: string | undefined,
-  akmSees: string[],
-  learningOn: string | null,
-): AgentCard[] {
+export function agentCards(host: HostSnapshot, engine: string | undefined, detected: Detected): AgentCard[] {
   return host.harnesses
     .filter((harness) => harness.installed)
     .map((harness) => {
       const platform = akmPlatform(harness.id);
+      const seen = detected.harnesses.find((found) => found.platform === platform);
       const state: AgentCard["state"] = !harness.runnable
         ? "stopped"
         : ["installed", "configured"].includes(harness.plugin?.state ?? "")
@@ -120,7 +121,12 @@ export function agentCards(
             }
           : {}),
         needsBun: ["claude", "codex"].includes(harness.id) && host.bun?.installed === false,
-        learning: { available: akmSees.includes(platform), enabled: platform === learningOn },
+        learning: {
+          available: seen !== undefined,
+          enabled: detected.enabled.includes(platform),
+          active: platform === detected.modelCalls.platform,
+          note: seen?.modelWorkNote ?? "",
+        },
       };
     });
 }

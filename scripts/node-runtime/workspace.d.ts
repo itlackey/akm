@@ -171,12 +171,18 @@ export namespace sensitive {
 export namespace setup {
   interface Detected {
     stashDir: string;
-    harnesses: Array<{ platform: string; path: string }>;
+    /** Agent programs on PATH that akm can run, each with akm's words for what its model calls could do. */
+    harnesses: Array<{ platform: string; path: string; modelWorkNote: string }>;
+    /** The platforms the config already enables. */
+    enabled: string[];
     /** Where akm's own model calls run, in setup's words, and the harness platform when they run on one. */
     modelCalls: { platform: string | null; description: string };
   }
-  /** Create the library, or with `harness` enable those agent programs; returns `detect()` afterwards. Unknown fields are ignored with a warning. */
-  function apply(input: { dir?: string; harness?: string[] }): Promise<Detected>;
+  /**
+   * Create the library, or with `harness` enable those agent programs and, with `learning` (one of them), run akm's own
+   * model calls on it; returns `detect()` afterwards. Unknown fields are ignored with a warning.
+   */
+  function apply(input: { dir?: string; harness?: string[]; learning?: string }): Promise<Detected>;
   /** What setup could use on this computer, from the file system, PATH and config only (no network, no writes). */
   function detect(): Promise<Detected>;
 }
