@@ -3354,6 +3354,30 @@ describe("akmDistill — scope of the output (#1446)", () => {
     expect(data.scope_user).toBeUndefined();
   });
 
+  test("a deterministic knowledge promotion from a user-scoped memory is user-scoped", async () => {
+    const stash = makeStashDir();
+    const memoryFile = path.join(stash, "memories", "deploy-fact.md");
+    fs.writeFileSync(
+      memoryFile,
+      "---\ndescription: VPN required before deploy\nsource: skill:deploy\nobserved_at: 2026-04-20\nconfidence: 0.95\ntags: [deploy, ops]\nscope_user: alice\n---\n\nAlways connect the VPN before starting production deploys.\n",
+      "utf8",
+    );
+    const result = await akmDistill({
+      ref: "memories/deploy-fact",
+      proposalKind: "auto",
+      config: configAbsentFeature(stash),
+      stashDir: stash,
+      chat: async () => {
+        throw new Error("deterministic promotion must not dispatch");
+      },
+      lookupFn: async () => memoryFile,
+      readEventsFn: eventsFor("memories/deploy-fact", ["positive", "positive"]),
+    });
+    expect(result.proposalKind).toBe("knowledge");
+    expect(parseFrontmatter(listProposals(stash)[0]!.payload.content).data.scope_user).toBe("alice");
+    expect(warnings).toEqual([]);
+  });
+
   test("a scope the model wrote is replaced by the memory's, with one warning", async () => {
     const written = VALID_LESSON.replace("---\n\n", "scope_user: mallory\nscope_run: r1\nscope:\n  agent: x\n---\n\n");
     const data = await distillFrom("scope_user: alice\n", written, "lesson");

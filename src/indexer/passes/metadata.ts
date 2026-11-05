@@ -257,24 +257,21 @@ export function scopeFromFrontmatter(fm: Record<string, unknown>): StashEntrySco
   return entry.scope ?? {};
 }
 
+/** The frontmatter keys that hold a scope: the flat `scope_*` keys and the legacy nested `scope`. */
+export const SCOPE_FRONTMATTER_KEYS: readonly string[] = ["scope", ...SCOPE_KEYS.map((key) => `scope_${key}`)];
+
 /**
- * Frontmatter with its scope keys (`scope_*` and legacy nested `scope`) replaced by `scope`, or removed when `scope`
- * is empty. `replaced` is true when the input carried a scope other than `scope`, so a caller can warn once.
+ * Frontmatter with its scope keys ({@link SCOPE_FRONTMATTER_KEYS}) replaced by `scope`'s flat keys, or removed when
+ * `scope` is empty. `replaced` is true when the input carried a scope other than `scope`, so a caller can warn once.
  */
 export function stampScope(
   data: Record<string, unknown>,
   scope: StashEntryScope,
 ): { data: Record<string, unknown>; replaced: boolean } {
-  const out: Record<string, unknown> = {};
-  let present = false;
-  for (const [key, value] of Object.entries(data)) {
-    if (key === "scope" || key.startsWith("scope_")) present = true;
-    else out[key] = value;
-  }
-  for (const key of SCOPE_KEYS) {
-    const value = scope[key];
-    if (value !== undefined) out[`scope_${key}`] = value;
-  }
+  const out: Record<string, unknown> = { ...data };
+  for (const key of SCOPE_FRONTMATTER_KEYS) delete out[key];
+  for (const key of SCOPE_KEYS) if (scope[key] !== undefined) out[`scope_${key}`] = scope[key];
+  const present = SCOPE_FRONTMATTER_KEYS.some((key) => Object.hasOwn(data, key));
   return { data: out, replaced: present && !sameScope(scopeFromFrontmatter(data), scope) };
 }
 

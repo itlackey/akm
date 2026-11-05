@@ -785,7 +785,7 @@ async function judgeAndQueue(
   if (out.promotion) {
     if (Object.keys(stamped.data).length > 0) frontmatter = stamped.data;
     // Promotion content stays as written unless its scope changed.
-    if (!sameScope(scopeFromFrontmatter(parsed.data), inherited) || stamped.replaced) {
+    if (!sameScope(scopeFromFrontmatter(parsed.data), inherited)) {
       content = assembleAsset(stamped.data, parsed.content);
     }
   } else {
