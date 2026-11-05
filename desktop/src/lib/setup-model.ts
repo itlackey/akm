@@ -178,7 +178,8 @@ export function learnPlan(detected: Detected, agents: string[], input: LearnInpu
   const changed =
     connection !== undefined ||
     (!problem && (on !== detected.learning.on || (on && target !== detected.learning.agent)));
-  // Wanted on with nowhere to run, learning is not turned on; while it is off, setup keeps writing off, so that an agent
+  // An on state is sent whenever setup applies, so a save also gives it its scheduled improve task. Wanted on with
+  // nowhere to run, learning is not turned on; while it is off, setup keeps writing off, so that an agent
   // enabled in the same apply does not take akm's model calls.
   const learning = problem
     ? detected.learning.on
@@ -186,9 +187,7 @@ export function learnPlan(detected: Detected, agents: string[], input: LearnInpu
       : { on: false }
     : !on
       ? { on: false }
-      : changed
-        ? { on: true, ...(target ? { agent: target } : {}) }
-        : undefined;
+      : { on: true, ...(target ? { agent: target } : {}) };
   return {
     on,
     where,

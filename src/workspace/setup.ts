@@ -200,7 +200,9 @@ async function writeLearning(
     }
     if (on) unset.push(...clearSwitches(config));
     if (on) {
-      set[agent ? "improve.harness" : "improve.connection"] = target;
+      // An improve connection the person chose stays; the connection is named only when nothing says where improve runs.
+      if (agent) set["improve.harness"] = target;
+      else if (config.improve?.connection === undefined) set["improve.connection"] = target;
       unset.push(agent ? "improve.connection" : "improve.harness");
     }
   }
@@ -208,11 +210,20 @@ async function writeLearning(
   if (learning) await setLearningTask(on);
 }
 
-/** Enable the scheduled improve task (adding it from akm's template when the library has none), or disable it. */
+/**
+ * Learning on: the scheduled improve task exists (added from akm's template when the library has none) and is
+ * enabled, however learning read before. Off: that task is disabled, and so is any of akm's optional improve templates
+ * (`improve/…`, which run `akm improve --strategy …`) that is installed and enabled; none is ever added.
+ */
 async function setLearningTask(on: boolean) {
-  const task = tasks.list().tasks.find((entry) => entry.id === LEARNING_TASK);
+  const listed = tasks.list().tasks;
+  const task = listed.find((entry) => entry.id === LEARNING_TASK);
   if (!on) {
-    if (task?.enabled) await tasks.disable({ task: LEARNING_TASK });
+    const optional = listEmbeddedTasks()
+      .filter((entry) => entry.label.startsWith("improve/"))
+      .map((entry) => entry.id);
+    for (const id of [LEARNING_TASK, ...optional])
+      if (listed.some((entry) => entry.id === id && entry.enabled)) await tasks.disable({ task: id });
   } else if (!task) {
     const template = listEmbeddedTasks().find((entry) => entry.label === `core/${LEARNING_TASK}`);
     if (!template) throw new Error("akm ships no improve task template.");

@@ -154,6 +154,68 @@ describe("setup.apply", () => {
     expect(savedConfig().improve).toBeUndefined();
   });
 
+  test("saving with learning on gives an already-on setup its improve task, and keeps an improve connection of its own", async () => {
+    const cron = fakeCrontab();
+    try {
+      await setup.apply({ dir: library() });
+      change({
+        set: {
+          "connections.default.endpoint": "http://old:1/v1",
+          "connections.other.endpoint": "http://other:1/v1",
+          "connections.other.models.fast": "m",
+          "connections.other.models.balanced": "m",
+          "connections.other.models.reasoning": "m",
+          "improve.connection": "other",
+        },
+        unset: [],
+      });
+      // On already (akm's model calls run), but nothing is scheduled.
+      expect((await setup.detect()).learning.on).toBe(true);
+      expect(tasks.list().tasks).toEqual([]);
+      await setup.apply({ dir: library(), learning: { on: true } });
+      expect(tasks.list().tasks).toEqual([expect.objectContaining({ id: "improve", enabled: true })]);
+      expect(fs.readFileSync(cron.file, "utf8")).toContain("improve");
+      expect(savedConfig().improve.connection).toBe("other");
+      // A save with it already enabled changes nothing.
+      const before = fs.readFileSync(getConfigPath(), "utf8");
+      await setup.apply({ dir: library(), learning: { on: true } });
+      expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
+    } finally {
+      cron.restore();
+    }
+  });
+
+  test("learning off also disables akm's optional improve task when it is installed and enabled, and never adds it", async () => {
+    const cron = fakeCrontab();
+    try {
+      const dir = library();
+      await setup.apply({ dir });
+      change({ set: { "connections.default.endpoint": "http://old:1/v1" }, unset: [] });
+      // `learning on` adds only the improve task: the consolidate template is not created.
+      await setup.apply({ dir, learning: { on: true } });
+      expect(tasks.list().tasks.map((task) => task.id)).toEqual(["improve"]);
+      const template = fs.readFileSync(
+        path.join(import.meta.dir, "../../../src/assets/tasks/improve/akm-improve-consolidate.yml"),
+        "utf8",
+      );
+      fs.writeFileSync(path.join(dir, "tasks", "akm-improve-consolidate.yml"), template);
+      await tasks.enable({ task: "akm-improve-consolidate" });
+      expect(fs.readFileSync(cron.file, "utf8")).toContain("consolidate");
+      await setup.apply({ dir, learning: { on: false } });
+      expect(tasks.list().tasks.map((task) => [task.id, task.enabled])).toEqual([
+        ["akm-improve-consolidate", false],
+        ["improve", false],
+      ]);
+      expect(fs.readFileSync(cron.file, "utf8")).not.toContain("improve");
+      // Off with the template not installed adds nothing.
+      fs.rmSync(path.join(dir, "tasks", "akm-improve-consolidate.yml"));
+      await setup.apply({ dir, learning: { on: false } });
+      expect(tasks.list().tasks.map((task) => task.id)).toEqual(["improve"]);
+    } finally {
+      cron.restore();
+    }
+  });
+
   test("learning on an enabled agent writes improve.harness to its entry and no connection", async () => {
     const restore = claudeOnPath();
     fs.writeFileSync(path.join(ctx.storage.root, "bin", "codex"), "#!/bin/sh\necho 1\n", { mode: 0o755 });

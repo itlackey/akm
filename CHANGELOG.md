@@ -32,8 +32,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`akm bundle create`) or enables the named agent programs (`akm setup --yes --no-probe --harness`),
   then in one config write sets the default connection (the key's variable name, never a key) and turns
   background learning on or off: off sets `enabled: false` on each model-calling improve process of the
-  active strategy and disables the scheduled `improve` task, on removes those switches, sends improve to
-  an enabled agent (`improve.harness`) or the connection (`improve.connection`) and enables the task.
+  active strategy and disables the scheduled `improve` task and the optional `akm-improve-consolidate`
+  one when installed, on removes those switches, sends improve to
+  an enabled agent (`improve.harness`) or the connection (`improve.connection`) and always ensures the task exists and is enabled.
   It never runs a bare `akm setup --yes`, which enables every agent program it finds and so lets akm
   spend their model quota. `tasks.list`, `tasks.enable` and `tasks.disable` wrap `akm task` for the
   default bundle's tasks. No new command or config key.

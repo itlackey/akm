@@ -131,7 +131,8 @@ test("learning is off unless turned on, and setup writes the off state with what
   assert.deepEqual([off.on, off.changed, off.learning, off.problem], [false, false, { on: false }, undefined]);
   // An on state nobody touched is left as it is: it may run somewhere this page does not list.
   const on = learnPlan(detected({ learning: { on: true, agent: null }, connection: "lab" }), [], blank);
-  assert.deepEqual([on.on, on.changed, on.learning], [true, false, undefined]);
+  // An on state is sent whenever setup applies, so a save gives it its improve task.
+  assert.deepEqual([on.on, on.changed, on.learning], [true, false, { on: true }]);
 });
 
 test("learning on needs a connection or an agent, and says why in one line", () => {
@@ -166,7 +167,10 @@ test("learning on an agent names its platform, and an agent that is not allowed 
   assert.deepEqual([gone.where, gone.learning], ["internal", { on: true }]);
   // On through an agent the page has no card for: left as it is, with no problem, until the person picks.
   const elsewhere = learnPlan(detected({ learning: { on: true, agent: "aider" } }), ["claude"], blank);
-  assert.deepEqual([elsewhere.where, elsewhere.problem, elsewhere.learning], ["aider", undefined, undefined]);
+  assert.deepEqual(
+    [elsewhere.where, elsewhere.problem, elsewhere.learning],
+    ["aider", undefined, { on: true, agent: "aider" }],
+  );
   const back = learnPlan(detected({ learning: { on: true, agent: "codex" } }), ["codex"], { ...blank, learn: false });
   assert.deepEqual([back.changed, back.learning], [true, { on: false }]);
 });

@@ -98,8 +98,8 @@ Nothing runs until you press a button.
    - **Let akm learn in the background** is a separate choice, off unless you turn it on, because learning (improve,
      judging, extraction) uses model quota. Off means every model-calling improve process is switched off in the active
      strategy (`enabled: false`, which also stops the plugins' end-of-session `akm proposal extract`) and the scheduled
-     `improve` task is disabled. Turned on, it removes those switches (so the strategy's own defaults apply again),
-     enables the `improve` task (adding it from akm's template when the library has none) and asks where to run:
+     `improve` task, and akm's optional `akm-improve-consolidate` task if installed and enabled, are disabled. Turned on, it removes those switches (so the strategy's own defaults apply again),
+     ensures the `improve` task exists and is enabled on every save (adding it from akm's template when the library has none) and asks where to run:
      **akm itself** (the default: a model reached through a connection, not an agent program; `improve.connection`) or
      any enabled agent (`improve.harness`), with akm's own note on whether that agent can be limited to reading and
      searching (a warning when it cannot). akm itself needs a connection: enter its endpoint, model and the NAME of the
