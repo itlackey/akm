@@ -3237,6 +3237,7 @@ akm proposal extract --type claude --location /custom/path --session-id <id>
 | `--connection <name>` / `--harness <name\|platform>` | Connection or harness for this invocation, by name, a harness also by platform (mutually exclusive). |
 | `--model <alias\|name>` | Model for this invocation: an alias or an exact name. |
 | `--strategy <name>` | Improve strategy supplying extract behavior; it never chooses where the model runs. |
+| `--user <id>` / `--agent <id>` / `--run <id>` / `--channel <name>` | Scope stamped on every proposal, as for `akm remember` (`scope_*` frontmatter). A scope the model writes is never used. |
 
 `--type` and `--auto` are mutually exclusive; one of them is required.
 `--auto` iterates `getAvailableHarnesses()` — every harness with a detectable
@@ -3322,6 +3323,7 @@ akm proposal new skill code-review --bundle team --task "PR-style review skill" 
 | `--connection` / `--harness` | Override the default connection or harness, by name, a harness also by platform (mutually exclusive) |
 | `--model` | Override the model: an alias or an exact name |
 | `--timeout-ms` | Override the selected connection's or harness's timeout for this call |
+| `--user` / `--agent` / `--run` / `--channel` | Scope stamped on the proposal, as for `akm remember` (`scope_*` frontmatter). A scope the model writes is replaced by these flags (none given: removed), with one warning. |
 
 Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 

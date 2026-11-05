@@ -260,6 +260,50 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
     }
   });
 
+  test("the scope flags replace a scope the model wrote, with one warning (#1454)", async () => {
+    const stash = makeStashDir();
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn" && String(args[0]).includes("ignored scope")) warnings.push(String(args[0]));
+    });
+    try {
+      const reply = JSON.stringify({
+        ref: "skills/hello",
+        content: "---\ndescription: Say hi\nscope_user: mallory\n---\n\nSay hi politely.\n",
+        frontmatter: { description: "Say hi", scope_user: "mallory" },
+      });
+      const result = await akmPropose({
+        ...coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi" }),
+        scope: { user: "alice", channel: "ops" },
+        stashDir: stash,
+        agentConfig: quietQualityGateConfig(fakeAgent([reply])),
+      });
+      if (!result.ok) throw new Error("expected ok");
+      const data = parseFrontmatter(result.proposal.payload.content).data;
+      expect(data).toMatchObject({ description: "Say hi", scope_user: "alice", scope_channel: "ops" });
+      expect(result.proposal.payload.frontmatter).toMatchObject({ scope_user: "alice", scope_channel: "ops" });
+      expect(warnings).toHaveLength(1);
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+  });
+
+  test("the scope flags are stamped when the model wrote none (#1454)", async () => {
+    const stash = makeStashDir();
+    const reply = JSON.stringify({
+      ref: "skills/hello",
+      content: "---\ndescription: Say hi\n---\n\nSay hi politely.\n",
+    });
+    const result = await akmPropose({
+      ...coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi" }),
+      scope: { user: "alice" },
+      stashDir: stash,
+      agentConfig: quietQualityGateConfig(fakeAgent([reply])),
+    });
+    if (!result.ok) throw new Error("expected ok");
+    expect(parseFrontmatter(result.proposal.payload.content).data.scope_user).toBe("alice");
+  });
+
   test("parse_error: agent returns malformed JSON", async () => {
     const stash = makeStashDir();
     const coerced = coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi" });

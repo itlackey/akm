@@ -16,6 +16,7 @@
  */
 
 import type { SelectionFlags } from "../../cli/selection";
+import type { StashEntryScope } from "../../core/adapter/types";
 import { placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -31,7 +32,7 @@ import { warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveEntryProvenance } from "../../indexer/installations";
-import { stampScope } from "../../indexer/passes/metadata";
+import { sameScope, scopeFromFrontmatter, stampScope } from "../../indexer/passes/metadata";
 import type { AgentFailureReason, AgentRunResult } from "../../integrations/agent";
 import { buildExecution, currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
 import {
@@ -61,6 +62,8 @@ export interface AkmProposeOptions {
   timeoutMs?: number;
   /** Configured bundle to queue the proposal for (`--bundle`); default: the working bundle. */
   bundle?: string;
+  /** Scope stamped on the proposal (`--user`, `--agent`, `--run`, `--channel`); the model never sets one. */
+  scope?: StashEntryScope;
   stashDir?: string;
   agentConfig?: AkmConfig;
   ctx?: ProposalsContext;
@@ -347,12 +350,15 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     ref = proposeItemRef(target.source, parsedRef.type, parsedRef.name);
   }
 
-  // Scope is the host's to set, never the model's: drop what the model wrote.
+  // Scope is the host's to set, never the model's: the flags' scope replaces what the model wrote.
+  const scope = options.scope ?? {};
   const parsedContent = parseFrontmatter(payload.content);
-  const stamped = stampScope(parsedContent.data, {});
-  const content = stamped.replaced ? assembleAsset(stamped.data, parsedContent.content) : payload.content;
+  const stamped = stampScope(parsedContent.data, scope);
+  const content = sameScope(scopeFromFrontmatter(parsedContent.data), scope)
+    ? payload.content
+    : assembleAsset(stamped.data, parsedContent.content);
   if (stamped.replaced) warn(`[akm] propose: ignored scope set by the model for ${ref}.`);
-  const frontmatter = payload.frontmatter ? stampScope(payload.frontmatter, {}).data : undefined;
+  const frontmatter = payload.frontmatter ? stampScope(payload.frontmatter, scope).data : undefined;
 
   const createInput: CreateProposalInput = {
     ref,

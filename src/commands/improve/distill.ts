@@ -41,7 +41,13 @@ import { recordWrittenPath } from "../../core/write-provenance";
 import { type NoticeSet, noticeSet } from "../../execution/notices";
 import type { ConfiguredExecutionSettings } from "../../execution/source";
 import { resolveOwnedType, resolveWriteAddress } from "../../indexer/lookup/adapter-concept-owner";
-import { type StashEntryScope, sameScope, scopeFromFrontmatter, stampScope } from "../../indexer/passes/metadata";
+import {
+  SCOPE_FRONTMATTER_KEYS,
+  type StashEntryScope,
+  sameScope,
+  scopeFromFrontmatter,
+  stampScope,
+} from "../../indexer/passes/metadata";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -1162,6 +1168,15 @@ async function planPromotion(
   return { knowledgeRef: assessment.knowledgeRef, content: assessment.content, existing };
 }
 
+/** The content with the frontmatter keys the existing doc has and it lacks (`team`, `project`, ...) put back; scope is stamped later and `updated` is akm's. */
+function withMissingKeysOf(existing: string, content: string): string {
+  const kept = parseFrontmatter(content);
+  const missing = Object.entries(parseFrontmatter(existing).data).filter(
+    ([key]) => !Object.hasOwn(kept.data, key) && key !== "updated" && !SCOPE_FRONTMATTER_KEYS.includes(key),
+  );
+  return missing.length === 0 ? content : assembleAsset({ ...kept.data, ...Object.fromEntries(missing) }, kept.content);
+}
+
 /**
  * Promote a reinforced memory to knowledge. An existing destination is
  * reconciled by the model (ADD/UPDATE swap content in, NOOP keeps what is
@@ -1240,6 +1255,7 @@ async function promoteToKnowledge(run: DistillRun, plan: PromotionPlan): Promise
       plan.existing,
     ].join("\n");
   }
+  if (plan.existing) content = withMissingKeysOf(plan.existing, content);
   return judgeAndQueue(run, {
     ref: plan.knowledgeRef,
     kind: "knowledge",
