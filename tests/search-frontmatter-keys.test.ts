@@ -8,8 +8,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { akmSearch, parseScopeFilterFlags } from "../src/commands/read/search";
+import type { IndexDocument } from "../src/core/adapter/types";
 import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { akmIndex } from "../src/indexer/indexer";
+import { applyCuratedFrontmatter, scopeMatchesFilters } from "../src/indexer/passes/metadata";
 import { writeMemory } from "./_helpers/assets";
 import {
   type Cleanup,
@@ -112,5 +114,16 @@ describe("prefer on any frontmatter key", () => {
     const boosted = await names(stash, { prefer: flags("tag=billing") });
     expect(boosted).toHaveLength(5);
     expect(boosted[1]).toBe("m3");
+  });
+});
+
+describe("a __proto__ frontmatter key", () => {
+  test("is kept as an ordinary key and never touches the prototype", () => {
+    const entry = { type: "memory", name: "m", filename: "m.md" } as unknown as IndexDocument;
+    applyCuratedFrontmatter(entry, JSON.parse('{"__proto__": "x", "team": "core"}'));
+    expect(Object.getPrototypeOf(entry.frontmatter)).toBeNull();
+    expect(Object.hasOwn(entry.frontmatter ?? {}, "__proto__")).toBe(true);
+    expect(scopeMatchesFilters(entry, { team: "core" })).toBe(true);
+    expect(({} as Record<string, unknown>).x).toBeUndefined();
   });
 });

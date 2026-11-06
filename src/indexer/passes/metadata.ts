@@ -485,7 +485,7 @@ const SELECTION_VALUE_MAX_CHARS = 200;
  * lists on `entry.frontmatter`. Scope keys and `tags` have their own homes; objects and prose are skipped.
  */
 function applySelectionFrontmatter(entry: IndexDocument, fmData: Record<string, unknown>): void {
-  const kept: Record<string, string[]> = {};
+  const kept: Record<string, string[]> = Object.create(null);
   for (const [key, raw] of Object.entries(fmData)) {
     if (key === "tags" || SCOPE_FRONTMATTER_KEYS.includes(key)) continue;
     const values: string[] = [];
