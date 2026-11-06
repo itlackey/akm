@@ -18,7 +18,6 @@ import { akmShowUnified } from "../../src/commands/read/show";
 import { buildMemoryFrontmatter } from "../../src/commands/remember";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { saveConfig } from "../../src/core/config/config";
-import { UsageError } from "../../src/core/errors";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { runCliCapture } from "../_helpers/cli";
@@ -105,26 +104,20 @@ describe("parseScopeFilterFlags", () => {
     });
   });
 
-  test("rejects unknown keys with UsageError", async () => {
-    let captured: unknown;
-    try {
-      parseScopeFilterFlags(["foo=bar"], "--filter");
-    } catch (err) {
-      captured = err;
-    }
-    expect(captured).toBeInstanceOf(UsageError);
-    expect((captured as UsageError).message).toMatch(/Unknown scope key/);
-    // Spec: UsageError → exit 2 and {ok:false, error, code} envelope on stderr.
-    const result = await runCliCapture(["search", "foo", "--filter", "foo=bar"]);
-    expect(result.code).toBe(2); // EXIT_USAGE
-    const envelope = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
-    expect(envelope.ok).toBe(false);
-    expect(typeof envelope.error).toBe("string");
-    expect(envelope.error).toMatch(/Unknown scope key/);
+  test("accepts any frontmatter key", () => {
+    expect(parseScopeFilterFlags(["team=platform", "project=openpalm"], "--filter")).toEqual({
+      team: ["platform"],
+      project: ["openpalm"],
+    });
   });
 
   test("rejects malformed tokens", () => {
     expect(() => parseScopeFilterFlags(["nope"], "--filter")).toThrow(/Expected key=value/);
+    expect(() => parseScopeFilterFlags([" =x"], "--filter")).toThrow(/Expected key=value/);
+  });
+
+  test("a key named like an Object member is just a key", () => {
+    expect(Object.entries(parseScopeFilterFlags(["__proto__=x"], "--filter") ?? {})).toEqual([["__proto__", ["x"]]]);
   });
 
   test("rejects empty values", () => {
@@ -189,7 +182,7 @@ describe("akm search --filter narrows by scope", () => {
     note("bob-dev", "bob", "dev");
     note("carol-ops", "carol", "ops");
     await akmIndex({ stashDir, full: true });
-    const names = async (filters: Record<string, string | string[]>) =>
+    const names = async (filters: NonNullable<Parameters<typeof akmSearch>[0]["filters"]>) =>
       (await akmSearch({ query: "deployment", source: "local", filters })).hits
         .filter((h): h is SourceSearchHit => h.type !== "registry")
         .map((h) => h.name)

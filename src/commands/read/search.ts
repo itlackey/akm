@@ -18,7 +18,7 @@ import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
-import { SCOPE_KEYS, type ScopeFilters } from "../../indexer/passes/metadata";
+import type { ScopeFilters } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
 import { searchLocal } from "../../indexer/search/db-search";
 import {
@@ -526,9 +526,8 @@ export function parseBeliefFilterMode(value: string | undefined): BeliefFilterMo
  */
 export function normalizeScopeFilters(raw: ScopeFilters | undefined): ScopeFilters | undefined {
   if (!raw) return undefined;
-  const out: Record<string, string[]> = {};
-  for (const key of SCOPE_KEYS) {
-    const given = raw[key];
+  const out: Record<string, string[]> = Object.create(null);
+  for (const [key, given] of Object.entries(raw)) {
     const values = new Set<string>();
     for (const value of Array.isArray(given) ? given : [given]) {
       if (typeof value === "string" && value.trim()) values.add(value.trim());
@@ -542,22 +541,22 @@ export function normalizeScopeFilters(raw: ScopeFilters | undefined): ScopeFilte
  * Parse repeated `--filter k=v` argv tokens into a
  * `ScopeFilters`: a repeated key collects all its values (matched as OR; see
  * `scopeMatchesFilters`). Throws a {@link UsageError} for malformed tokens
- * (missing `=`, unknown key) so callers don't see ambiguous misses.
+ * (missing `=`, empty key or value) so callers don't see ambiguous misses.
  *
  * Used by `akm search --filter` and `akm curate --filter`.
  */
 export function parseScopeFilterFlags(values: string[], flagName = "--filter"): ScopeFilters | undefined {
   if (values.length === 0) return undefined;
-  const out: Record<string, string[]> = {};
+  const out: Record<string, string[]> = Object.create(null);
   for (const raw of values) {
     const eq = raw.indexOf("=");
     if (eq <= 0) {
-      throw new UsageError(`Invalid ${flagName} value "${raw}". Expected key=value (e.g. user=alice).`);
+      throw new UsageError(`Invalid ${flagName} value "${raw}". Expected key=value (e.g. team=platform).`);
     }
     const key = raw.slice(0, eq).trim();
     const value = raw.slice(eq + 1).trim();
-    if (key !== "user" && key !== "agent" && key !== "run" && key !== "channel") {
-      throw new UsageError(`Unknown scope key "${key}" in ${flagName}. Valid keys: user, agent, run, channel.`);
+    if (!key) {
+      throw new UsageError(`Invalid ${flagName} value "${raw}". Expected key=value (e.g. team=platform).`);
     }
     if (!value) {
       throw new UsageError(`${flagName} ${key}=… requires a non-empty value.`);

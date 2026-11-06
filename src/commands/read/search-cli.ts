@@ -32,12 +32,12 @@ import { akmShowUnified } from "./show";
 const scopeFilterArg = {
   type: "string",
   description:
-    "Scope filter (repeatable): --filter user=<id> --filter agent=<id> --filter run=<id> --filter channel=<name>. Repeating a key matches any of its values; different keys must all match. Narrows results without changing ranking.",
+    "Frontmatter filter (repeatable): --filter team=<name> --filter user=<id>. Any frontmatter key, plus tag and the scope keys user, agent, run, channel. Repeating a key matches any of its values; different keys must all match. Narrows results without changing ranking.",
 } as const;
 const scopePreferArg = {
   type: "string",
   description:
-    "Scope preference (repeatable, same keys and matching as --filter): matching assets rank slightly higher. Never drops or admits an asset; --filter and --from still decide which are eligible.",
+    "Frontmatter preference (repeatable, same keys and matching as --filter): matching assets rank slightly higher. Never drops or admits an asset; --filter and --from still decide which are eligible.",
 } as const;
 const beliefArg = {
   type: "string",
