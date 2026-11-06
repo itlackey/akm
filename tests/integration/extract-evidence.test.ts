@@ -77,7 +77,7 @@ function setup(indexSessions = true) {
 async function extract(
   type: "memory" | "lesson" | "knowledge" = "memory",
   indexSessions = true,
-  options: { priorContent?: string; evidence?: string; sourcePath?: string } = {},
+  options: { priorContent?: string; evidence?: string; sourcePath?: string; scope?: { user?: string } } = {},
 ) {
   const state = setup(indexSessions);
   if (options.sourcePath !== undefined) {
@@ -96,6 +96,7 @@ async function extract(
     stashDir: state.stash,
     config: state.config,
     harnesses: [state.harness],
+    ...(options.scope ? { scope: options.scope } : {}),
     generateSessionSummary: async () => ({
       summary: "The operator established a VPN deployment prerequisite and confirmed it worked.",
       keyTopics: ["deployment"],
@@ -173,6 +174,17 @@ for (const type of ["memory", "lesson", "knowledge"] as const) {
     ).toBe(true);
   });
 }
+
+test("the scope flags are stamped on the proposal's content and frontmatter (#1454)", async () => {
+  const { proposal } = await extract("memory", true, { scope: { user: "alice" } });
+  expect(parseFrontmatter(proposal.payload.content).data.scope_user).toBe("alice");
+  expect(proposal.payload.frontmatter?.scope_user).toBe("alice");
+});
+
+test("without scope flags the proposal has no scope (#1454)", async () => {
+  const { proposal } = await extract();
+  expect(Object.keys(parseFrontmatter(proposal.payload.content).data).filter((k) => k.startsWith("scope"))).toEqual([]);
+});
 
 test("an unindexed native session keeps its known log identity without an invented asset ref", async () => {
   const { stash, config, session, proposal } = await extract("lesson", false);

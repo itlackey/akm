@@ -16,6 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { SelectionFlags } from "../../cli/selection";
+import type { StashEntryScope } from "../../core/adapter/types";
 import { assembleAsset } from "../../core/asset/asset-serialize";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
@@ -45,6 +46,7 @@ import { warn, warnVerbose } from "../../core/warn";
 import { noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
+import { stampScope } from "../../indexer/passes/metadata";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { collectDispatchSensitiveValues } from "../../integrations/agent/runner-dispatch";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
@@ -185,6 +187,8 @@ export interface AkmExtractOptions {
   /** The improve run's events context. */
   eventsCtx?: EventsContext;
   sourceRun?: string;
+  /** Scope stamped on every proposal (`--user`, `--agent`, `--run`, `--channel`); the model never sets one. */
+  scope?: StashEntryScope;
   /** The active improve profile (its extract toggle gates extract as an improve stage only). */
   improveProfile?: ImproveProfileConfig;
   signal?: AbortSignal;
@@ -336,6 +340,7 @@ function buildCandidateProposal(
   candidate: ExtractCandidate,
   sourceRef: SessionSummary,
   sessionAssetRef?: string,
+  scope: StashEntryScope = {},
 ): { ref: string; content: string; frontmatter: Record<string, unknown> } {
   const ref = deriveExtractCandidateRef(candidate, sourceRef);
   // Complete a description the model cut mid-sentence (no-op for valid ones).
@@ -352,7 +357,8 @@ function buildCandidateProposal(
     fm.provenance = { sources: [{ resource: `${sourceRef.harness}:${sourceRef.sessionId}` }] };
   }
   if (candidate.when_to_use) fm.when_to_use = candidate.when_to_use;
-  return { ref, content: assembleAsset(fm, candidate.body), frontmatter: fm };
+  const stamped = stampScope(fm, scope).data;
+  return { ref, content: assembleAsset(stamped, candidate.body), frontmatter: stamped };
 }
 
 function canonicalSegment(value: string): string {
@@ -730,7 +736,7 @@ async function processSession(
     }
     const nowIso = new Date().toISOString();
     for (const candidate of payload.candidates) {
-      const built = buildCandidateProposal(candidate, data.ref, sessionAsset.sessionAssetRef);
+      const built = buildCandidateProposal(candidate, data.ref, sessionAsset.sessionAssetRef, options.scope);
       const ledgerRow = ledger.get(ledgerKey("extract", built.ref));
       if (isLedgerBlocked(ledgerRow, nowIso)) {
         blockedCount += 1;

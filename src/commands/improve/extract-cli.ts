@@ -19,7 +19,7 @@
  * `--auto` runs multiple harnesses).
  */
 
-import { getStringArg } from "../../cli/parse-args";
+import { getStringArg, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
 import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
@@ -72,6 +72,7 @@ export const extractCommand = defineJsonCommand({
     },
     ...SELECTION_ARGS,
     ...RETIRED_ENGINE_ARG,
+    ...SCOPE_ARGS,
     strategy: {
       type: "string",
       description: "Improve strategy supplying extract behavior.",
@@ -113,7 +114,9 @@ export const extractCommand = defineJsonCommand({
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     });
 
+    const scope = scopeFromArgs(args);
     const commonOptions = Object.freeze({
+      ...(Object.keys(scope).length > 0 ? { scope } : {}),
       ...(sessionId ? { sessionId } : {}),
       ...(location ? { location } : {}),
       ...(since ? { since } : {}),
