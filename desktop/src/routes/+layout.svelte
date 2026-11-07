@@ -11,6 +11,7 @@
   import { api } from "../lib/client";
   import { hasStoredDrafts, hasUnsaved } from "../lib/drafts";
   import { navigate } from "../lib/navigation";
+  import Toasts from "../lib/Toasts.svelte";
   import { applyTheme, refreshBundles, refreshPending, workspace } from "../lib/state/workspace.svelte";
   import "../lib/ui/tokens.css";
   import "../lib/ui/base.css";
@@ -250,6 +251,7 @@
 </dialog>
 {#if themeError}<p role="status" class="notice notice-warn">{themeError}</p>{/if}
 <div id="route-status" class="sr-only" role="status" aria-live="polite"></div>
+<Toasts />
 
 <style>
   .build-label {
