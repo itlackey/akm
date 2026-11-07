@@ -29,6 +29,10 @@ export interface CurateOptions extends RecallOptions {
   type?: string;
   /** Output format, same as `--format`. Default `"json"`, as in the CLI. */
   format?: "text" | "json";
+  /** The caller's working directory; it selects a configured project (default: the process's). Never changes the process's own directory. */
+  cwd?: string;
+  /** A configured project to use instead of the one `cwd` selects, same as `--project`; `none` uses no project. */
+  project?: string;
 }
 
 /** `ScopeFilters` as the `key=value` tokens of repeated `--filter`/`--prefer` flags. */
@@ -64,6 +68,8 @@ export async function curate(query: string, options: CurateOptions = {}): Promis
           belief: options.belief,
           filters: scopeFlagTokens(options.filters),
           prefer: scopeFlagTokens(options.prefer),
+          cwd: options.cwd,
+          project: options.project,
         },
         mode,
       );

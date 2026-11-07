@@ -19,11 +19,13 @@
  * `--auto` runs multiple harnesses).
  */
 
-import { getStringArg, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
+import { getStringArg, PROJECT_ARG, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
 import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { resolveProject } from "../../core/projects";
+import { resolveWriteTarget } from "../../core/write-source";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { type AkmExtractResult, akmExtract, resolveStandaloneExtractPlan } from "./extract";
 
@@ -73,6 +75,7 @@ export const extractCommand = defineJsonCommand({
     ...SELECTION_ARGS,
     ...RETIRED_ENGINE_ARG,
     ...SCOPE_ARGS,
+    ...PROJECT_ARG,
     strategy: {
       type: "string",
       description: "Improve strategy supplying extract behavior.",
@@ -114,8 +117,11 @@ export const extractCommand = defineJsonCommand({
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     });
 
-    const scope = scopeFromArgs(args);
+    const project = resolveProject(config, { project: getStringArg(args, "project") });
+    const scope = scopeFromArgs(args, project);
     const commonOptions = Object.freeze({
+      ...(project?.write.bundle ? { stashDir: resolveWriteTarget(config, project.write.bundle).source.path } : {}),
+      ...(project ? { metadata: project.write.metadata } : {}),
       ...(Object.keys(scope).length > 0 ? { scope } : {}),
       ...(sessionId ? { sessionId } : {}),
       ...(location ? { location } : {}),

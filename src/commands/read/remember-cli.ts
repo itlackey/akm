@@ -2,11 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { getStringArg } from "../../cli/parse-args";
+import { getStringArg, PROJECT_ARG } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
+import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { resolveProject } from "../../core/projects";
 import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
 import type { SourceSearchHit } from "../../sources/types";
 import {
@@ -124,8 +126,9 @@ export const rememberCommand = defineJsonCommand({
     bundle: {
       type: "string",
       description:
-        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working bundle.",
+        "Override the write destination. Accepts a source name from your config; falls back to the project's write.bundle, then defaultWriteTarget, then the working bundle.",
     },
+    ...PROJECT_ARG,
     user: {
       type: "string",
       description: "Scope this memory to a user id (persisted as `scope_user` frontmatter)",
@@ -158,10 +161,15 @@ export const rememberCommand = defineJsonCommand({
   },
   async run({ args }) {
     // A body that starts with its own frontmatter block: that block's keys merge under akm's.
-    const { data: leading, content: body } = parseFrontmatter(readMemoryContent(args.content));
+    const { data: bodyFrontmatter, content: body } = parseFrontmatter(readMemoryContent(args.content));
+    // The project's write defaults: its metadata sits under the body's own keys, which win.
+    const project = resolveProject(loadConfig(), { project: getStringArg(args, "project") });
+    const leading = project ? { ...project.write.metadata, ...bodyFrontmatter } : bodyFrontmatter;
     // Its description fills in for a missing --description, ahead of a derived one.
     const leadingDescription =
-      typeof leading.description === "string" && leading.description.trim() ? leading.description : undefined;
+      typeof bodyFrontmatter.description === "string" && bodyFrontmatter.description.trim()
+        ? bodyFrontmatter.description
+        : undefined;
     const eventSource = resolveUsageEventSource();
 
     // `--name` is a flat name; subdirectory placement is `--path`'s job.
@@ -178,7 +186,7 @@ export const rememberCommand = defineJsonCommand({
     // untouched. Refs resolvable only in a configured extra stash source are
     // accepted (cross-stash provenance).
     const rawSupersedes = parseAllFlagValues("--supersedes");
-    const writeTarget = resolveSupersedesWriteTarget(rawSupersedes, args.bundle, TARGET_FLAG);
+    const writeTarget = resolveSupersedesWriteTarget(rawSupersedes, args.bundle || project?.write.bundle, TARGET_FLAG);
     const xrefs = resolveXrefsForWrite(parseAllFlagValues("--xref"), writeTarget, TARGET_FLAG);
 
     // Collect and validate --supersedes occurrences (repeatable). Same
@@ -198,7 +206,7 @@ export const rememberCommand = defineJsonCommand({
     // memory + scope (no tags) is a valid combination for multi-tenant use.
     const scopeFields: { user?: string; agent?: string; run?: string; channel?: string } = {};
     for (const k of ["user", "agent", "run", "channel"] as const) {
-      const v = getStringArg(args, k);
+      const v = getStringArg(args, k) ?? (k === "run" ? undefined : project?.write[k]);
       if (v) scopeFields[k] = v;
     }
     const hasScope = Object.keys(scopeFields).length > 0;

@@ -283,6 +283,18 @@ export function stampScope(
   return { data: out, replaced: present && !sameScope(scopeFromFrontmatter(data), scope) };
 }
 
+/** `data` plus the `metadata` keys it lacks; the keys already in `data` win, and metadata never carries scope. */
+export function fillMetadata(
+  data: Record<string, unknown>,
+  metadata: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...data };
+  for (const [key, value] of Object.entries(metadata)) {
+    if (!Object.hasOwn(out, key) && !SCOPE_FRONTMATTER_KEYS.includes(key)) out[key] = value;
+  }
+  return out;
+}
+
 /**
  * The one selection rule: every supplied key must match (AND), and a key with
  * several values matches any of them (OR). A key is a scope key, `tag`/`tags`

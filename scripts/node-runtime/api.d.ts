@@ -18,6 +18,10 @@ export interface CurateOptions {
   belief?: "all" | "current" | "historical";
   /** Output format, same as `--format`. Default `"json"`, as in the CLI. */
   format?: "text" | "json";
+  /** The caller's working directory; it selects a configured project (default: the process's). */
+  cwd?: string;
+  /** A configured project to use instead of the one `cwd` selects, same as `--project`; `none` uses no project. */
+  project?: string;
 }
 
 /**

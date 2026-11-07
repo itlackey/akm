@@ -940,8 +940,8 @@ working bundle (`defaultBundle`) -> `ConfigError`.
 write four canonical top-level frontmatter keys on the memory file:
 `scope_user`, `scope_agent`, `scope_run`, `scope_channel` (one key per
 non-empty scope value; string values). This is not a config-file setting —
-it is documented here because it is the multi-tenant/multi-agent contract
-that `akm search --filter` and `akm curate --filter` read back:
+it is documented here because it is the contract
+that `akm search --filter` and `akm curate --filter` read back, to select inside a set the caller may already read (tenants are separated by deployment or bundles, not scope):
 `--filter user=<id>` / `--filter agent=<id>` / `--filter run=<id>` /
 `--filter channel=<name>` (repeatable; a repeated key matches any of its values, different keys must all match) narrow results to assets
 whose frontmatter scope matches; search applies them before ranking. A memory
@@ -955,6 +955,41 @@ proposal is kept before `akm improve`'s maintenance pass archives it (status
 from the last `akm proposal reopen`, if there was one) — `akm proposal` itself
 has no archive/expire verb, though `akm proposal reopen` puts an expired
 proposal back. Setting it to `0` or less disables expiry entirely.
+
+## Projects
+
+`projects` names the places you work. Each entry lists its directories and, optionally,
+what akm reads and writes there:
+
+```jsonc
+"projects": {
+  "akm": { "paths": ["~/code/akm", "~/code/akm-wt-feature"] },
+  "acme": {
+    "paths": ["~/clients/acme"],
+    "from": ["acme", "personal"],
+    "filters": { "channel": ["acme", ""] },
+    "prefer": { "team": "consulting" },
+    "write": { "bundle": "personal", "channel": "acme", "metadata": { "client": "acme" } }
+  }
+}
+```
+
+- `paths`: absolute or `~`-prefixed; the project whose path most specifically contains the
+  working directory (symlinks resolved, whole segments) applies. A project without `paths` is
+  chosen with `--project` only.
+- `from`, `filters`, `prefer`: the defaults for `akm search` and `akm curate`, in the shape of
+  `--from`, `--filter` and `--prefer` (a value or a list; an empty string matches assets
+  without the key).
+- `write`: `bundle` (between `--bundle` and `defaultWriteTarget`), `user`, `agent`, `channel`
+  (each fills a flag you left out) and `metadata` (frontmatter keys a write lacks; the body's
+  own keys win, and akm's own keys win over both).
+- A project with no `prefer` prefers `project=<name>`; with no `write.metadata.project`, its
+  writes carry `project: <name>`.
+- A malformed project or key warns once and is ignored. `extends` layers merge projects by name,
+  the local file winning. Improve's session extract names a memory folder and a session asset's
+  `project:` after the project containing the session's working directory, when there is one.
+
+See [Projects in the CLI reference](cli.md#projects) for how a call chooses one.
 
 ## Registries
 

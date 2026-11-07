@@ -5,6 +5,7 @@
 import type { TargetRow } from "../commands/targets";
 import type { OkfProvenance } from "../core/adapter/types";
 import type { MarkdownTocEntry } from "../core/asset/markdown";
+import type { ProjectView } from "../core/projects";
 import type { ScopeFilters } from "../indexer/passes/metadata";
 import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
@@ -148,6 +149,8 @@ export interface SearchResponse {
   warnings?: string[];
   /** `fts-fallback` means semantic ranking was attempted but keyword search had to serve the result. */
   searchMode?: SearchExecutionMode;
+  /** The project whose defaults applied; absent when none did. */
+  project?: ProjectView;
   /** Timing counters in milliseconds */
   timing?: { totalMs: number; rankMs?: number; embedMs?: number };
 }

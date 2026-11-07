@@ -267,10 +267,12 @@ export function shapeSearchOutput(
   const searchMode = typeof result.searchMode === "string" ? result.searchMode : undefined;
   const bundles = Array.isArray(result.bundles) ? result.bundles : undefined;
   const warnings = Array.isArray(result.warnings) && result.warnings.length > 0 ? result.warnings : undefined;
+  const project = result.project;
 
   if (forAgent) {
     return {
       hits: shapedHits,
+      ...(project ? { project } : {}),
       ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
       ...(searchMode ? { searchMode } : {}),
       ...(bundles ? { bundles } : {}),
@@ -284,6 +286,7 @@ export function shapeSearchOutput(
       schemaVersion: result.schemaVersion,
       bundleDir: result.bundleDir,
       source: result.source,
+      ...(project ? { project } : {}),
       hits: shapedHits,
       ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
       ...(result.tip ? { tip: result.tip } : {}),
@@ -296,6 +299,7 @@ export function shapeSearchOutput(
 
   return {
     hits: shapedHits,
+    ...(project ? { project } : {}),
     ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
     ...(searchMode ? { searchMode } : {}),
     ...(bundles ? { bundles } : {}),

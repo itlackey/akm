@@ -47,6 +47,7 @@ import { deepMergeConfig, isPlainObject } from "./deep-merge";
 import { documentEndpoint, planKeyMoves } from "./migrate-keys";
 import { modelsFileExists, readModelsFile, retireModelsFile } from "./models-file";
 import { type EngineTargets, rememberEngineTargets, rememberedEngineTargets } from "./retired-engines";
+import { dropUnusableProjects } from "./schema/projects";
 import { dropUnusableEntries, findUnusableEntries, type UnusableEntry } from "./unusable-entries";
 
 export { stripJsonComments } from "./config-io";
@@ -386,7 +387,7 @@ function dropRetiredOutputFormat(raw: Record<string, unknown>, sourcePath?: stri
  */
 function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePath?: string): AkmConfig {
   const chained = dropRetiredOutputFormat(
-    dropUnusableEntries(resolveExtendsChain(liftedLocalRaw, sourcePath), sourcePath),
+    dropUnusableProjects(dropUnusableEntries(resolveExtendsChain(liftedLocalRaw, sourcePath), sourcePath), sourcePath),
     sourcePath,
   );
   // Writing an `embedding` block says semantic search is wanted: a config that names no mode reads as "auto".

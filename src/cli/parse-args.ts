@@ -11,6 +11,7 @@
 
 import type { StashEntryScope } from "../core/adapter/types";
 import { UsageError } from "../core/errors";
+import type { ResolvedProject } from "../core/projects";
 
 // findCittyTopLevelCommand(Index) + CittyArg(s)DefinitionForScan moved to
 // ./invocation (chunk-9 WI-9.9 argv-normalization fold — that cluster had no
@@ -88,6 +89,15 @@ export function getStringArg(args: unknown, key: string): string | undefined {
   return trimmed || undefined;
 }
 
+/** `--project`: the configured project to use instead of the one the working directory selects (`none`: no project). */
+export const PROJECT_ARG = {
+  project: {
+    type: "string",
+    description:
+      "Use this configured project's defaults instead of the one the working directory selects; `none` uses no project. Explicit flags replace the project's value for the same kind.",
+  },
+} as const;
+
 /** The scope flags `remember` takes, for the proposal commands that stamp a scope on what they queue. */
 export const SCOPE_ARGS = {
   user: { type: "string", description: "Scope the proposal to a user id (persisted as `scope_user` frontmatter)" },
@@ -99,11 +109,11 @@ export const SCOPE_ARGS = {
   },
 } as const;
 
-/** The scope the {@link SCOPE_ARGS} flags name; empty when none is given. */
-export function scopeFromArgs(args: unknown): StashEntryScope {
+/** The scope the {@link SCOPE_ARGS} flags name, each absent one filled from the project's `write`; empty when none is given. */
+export function scopeFromArgs(args: unknown, project?: ResolvedProject): StashEntryScope {
   const scope: StashEntryScope = {};
   for (const key of ["user", "agent", "run", "channel"] as const) {
-    const value = getStringArg(args, key);
+    const value = getStringArg(args, key) ?? (key === "run" ? undefined : project?.write[key]);
     if (value) scope[key] = value;
   }
   return scope;
