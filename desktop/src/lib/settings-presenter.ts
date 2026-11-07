@@ -55,6 +55,8 @@ export interface SettingsConfig {
   exists: boolean;
   config: Record<string, unknown>;
   entries: SettingsEntry[];
+  /** What akm ignores in the `projects` of config.json, in its own words. */
+  projectWarnings: string[];
   automaticWriteTarget: { name: string; path: string | null; workingStash: boolean } | null;
   connections: Array<{ name: string; default?: boolean; models?: Record<string, unknown> }>;
   harnesses: Array<{ name: string; platform?: string }>;

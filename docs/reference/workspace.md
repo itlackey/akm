@@ -228,6 +228,7 @@ The effective configuration, as `akm config list` shows it, with where each valu
       "defaultBundle": "stash"
     },
     "automaticWriteTarget": { "name": "stash", "path": "/home/me/akm", "workingStash": false },
+    "projectWarnings": [],
     "entries": [
       { "path": "semanticSearchMode", "value": "off", "source": "file" },
       { "path": "output.format", "value": "json", "source": "default" }
@@ -246,6 +247,8 @@ The effective configuration, as `akm config list` shows it, with where each valu
   `AKM_BUNDLE_DIR` when set (even with a `defaultBundle`), otherwise the default bundle. `workingStash` is `true` when
   that directory is the one `bundles.list` reports as the working stash. It is `null` when neither exists, so writes
   need a target.
+- `projectWarnings` lists, in akm's own words, what it ignores in the `projects` of this install's `config.json` (a
+  relative path, a filter of the wrong shape, a reserved name). The file keeps what was ignored.
 - `connections` and `harnesses` are `config.connections` and `config.harnesses` as lists, each entry with its `name`
   and the entry's own keys (a connection's `endpoint` and `models`, a harness's `platform`, ...); keys are never
   included (`apiKey` shows as `[redacted]` or its `$VAR` reference). Reachability is a health probe, not config: use
@@ -776,6 +779,7 @@ retry a failed write automatically.
 | `bundles.remove` | `{bundle, confirm: true}` → `akm bundle remove --yes -- <bundle>`. Managed installs may be deleted; local filesystem source files remain on disk. |
 | `bundles.setSettings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Existing validation rejects disabled targets and writable npm/website sources. The default bundle and write target are edited through `config.change`. |
 | `config.change` | `{set?: {key: string}, unset?: string[]}` → `akm config set` / `unset` on each key, in one validated, atomic write. Values are strings, as on the command line, and are coerced and checked against the schema; literal API keys and `configVersion` are refused. An unset is refused with `TARGET_NOT_UPDATABLE` when the key is inherited from an `extends` base or sits inside a connection or harness entry akm ignores, and an unset with no config file writes nothing (`saved: false`), all as `akm config unset` does. |
+| `config.changeProjects` | `{set?: {name: project}, unset?: string[]}` → adds, replaces and removes `projects` entries in one validated, atomic write; a rename sets the new name and unsets the old. Each `set` value is a whole project (`paths`, `from`, `filters`, `prefer`, `write`), checked by akm's config schema. `none` and empty names are refused. Names are not dotted keys, so they may contain a dot, which `config.change` cannot address. Unrelated config and credential references are kept, as for `config.change`. |
 | `documents.createKnowledge` | `{bundle, name, path?, content}` → `akm import -` with Markdown on stdin. Uses the existing writable AKM target, name/path validation, frontmatter preservation, index/Git effects, and no `--force`. Existing files are never overwritten. Fails fast with `ASSET_MUTATION_LEASE_HELD` while another writer holds the asset-mutation lease. |
 | `documents.save` | `{ref, revision, content}` → the existing shared Markdown writer with `force` and the expected raw-content hash. Only indexed writable AKM knowledge/memory documents accepted by `documents.readSource` can be edited. The writer takes the asset-mutation lease and compares the live source with `revision` inside it, immediately before writing. While another writer holds the lease the save fails fast with `ASSET_MUTATION_LEASE_HELD` instead of waiting. A stale revision raises `ASSET_CONTENT_CHANGED` without writing; a source deleted after it was loaded is refused (`ASSET_NOT_FOUND`) rather than recreated. An identical save returns `unchanged: true` without rewriting, reindexing or recording an event. Changed saves retain normal writer validation, indexing and Git effects. |
 | `documents.retire` | `{ref, revision}` → retires an indexed writable AKM asset the way `akm feedback`'s typed fix applies a change: it mints a retire proposal (source `propose`, no judged pair) and accepts it at once, so the asset follows the ordinary proposal-retire lifecycle. Skill packages, env/secret files and sessions are excluded; memory retirement carries its derived twin. The current raw SHA-256 `revision` is required, and the accept is refused if the bytes changed since. |

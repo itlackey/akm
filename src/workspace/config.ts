@@ -6,7 +6,10 @@
 
 import fs from "node:fs";
 import { assertUnsettable, listConfig, setConfigValue, unsetConfigValue } from "../commands/config-cli";
+import { isRecord } from "../core/common";
 import { type AkmConfig, loadConfig, mutateConfig, resetConfigCache } from "../core/config/config";
+import { parseConfigText, readConfigText } from "../core/config/config-io";
+import { dropUnusableProjects, NO_PROJECT, type ProjectConfig } from "../core/config/schema/projects";
 import { UsageError } from "../core/errors";
 import { getConfigPath } from "../core/paths";
 import { resolveWorkingStashTarget } from "../core/write-source";
@@ -40,6 +43,19 @@ function configLeaves(value: unknown, prefix: string[], out: Array<{ path: strin
   out.push({ path: prefix, value });
 }
 
+/** What akm says about the malformed parts of `projects` in this install's config file, in its own words. */
+function projectWarnings(configPath: string): string[] {
+  const warnings: string[] = [];
+  try {
+    const text = readConfigText(configPath);
+    if (text !== undefined)
+      dropUnusableProjects(parseConfigText(text, configPath), configPath, (_key, message) => warnings.push(message));
+  } catch {
+    // An unreadable file fails the read above, not this one.
+  }
+  return warnings;
+}
+
 export function get() {
   const live = loadConfig();
   const effective = redactForUi(listConfig(live)) as Record<string, unknown>;
@@ -62,6 +78,7 @@ export function get() {
   const configPath = getConfigPath();
   return {
     path: configPath,
+    projectWarnings: projectWarnings(configPath),
     exists: fs.existsSync(configPath),
     config: effective,
     automaticWriteTarget: automaticWriteTarget(live),
@@ -101,6 +118,36 @@ export function change(input: { set?: Record<string, string>; unset?: string[] }
       return updated;
     },
     // With no config file there is nothing to unset; a set still has to create it.
+    { absentNoop: Object.keys(set).length === 0 },
+  );
+  resetConfigCache();
+  return { saved: result.written };
+}
+
+/**
+ * Add, replace, rename (set the new name and unset the old) and remove `projects` entries in one atomic write.
+ * Each entry is a whole project; the complete config is validated as for `change`, so akm's schema decides what is
+ * accepted. Names are not dotted config keys, so a name may contain a dot.
+ */
+export function changeProjects(input: { set?: Record<string, ProjectConfig>; unset?: string[] }) {
+  const set = input.set ?? {};
+  const unset = input.unset ?? [];
+  if (!isRecord(set) || Object.values(set).some((project) => !isRecord(project)))
+    throw new UsageError("set must be an object of project names to project objects.");
+  if (!Array.isArray(unset) || unset.some((name) => typeof name !== "string"))
+    throw new UsageError("unset must be a list of project names.");
+  for (const name of Object.keys(set)) {
+    if (!name.trim() || name === NO_PROJECT) throw new UsageError(`"${name}" cannot name a project.`);
+  }
+  if (Object.keys(set).length === 0 && unset.length === 0) return { saved: false };
+  const result = mutateConfig(
+    (current) => {
+      const projects = { ...current.projects };
+      for (const name of unset) delete projects[name];
+      Object.assign(projects, set);
+      preserveUnrelatedConfig(current);
+      return { ...current, projects };
+    },
     { absentNoop: Object.keys(set).length === 0 },
   );
   resetConfigCache();

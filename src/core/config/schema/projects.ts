@@ -91,15 +91,23 @@ export const ProjectsSchema = z.record(nonEmptyString, ProjectSchema);
 
 export type ProjectConfig = z.infer<typeof ProjectSchema>;
 
+type Report = (key: string, message: string) => void;
+
 /** `raw` without the keys of `fields` whose value its schema rejects; one warning each, naming the first problem. */
-function keepValid(raw: Dict, fields: Record<string, z.ZodTypeAny>, where: string, sourcePath?: string): Dict {
+function keepValid(
+  raw: Dict,
+  fields: Record<string, z.ZodTypeAny>,
+  where: string,
+  sourcePath: string | undefined,
+  report: Report,
+): Dict {
   const out = { ...raw };
   for (const [key, schema] of Object.entries(fields)) {
     if (raw[key] === undefined) continue;
     const parsed = schema.safeParse(raw[key]);
     if (parsed.success) continue;
     const issue = parsed.error.issues[0];
-    warnOnce(
+    report(
       `config:unusable:project:${sourcePath ?? "inline"}:${where}.${key}`,
       `Ignoring ${where}.${key}${sourcePath ? ` in ${sourcePath}` : ""}: ${issue?.message ?? "it is not valid"}.`,
     );
@@ -114,10 +122,10 @@ function keepValid(raw: Dict, fields: Record<string, z.ZodTypeAny>, where: strin
  * config or disables another project. A `paths` entry that is not absolute is
  * dropped on its own. The file keeps what was dropped.
  */
-export function dropUnusableProjects(raw: Dict, sourcePath?: string): Dict {
+export function dropUnusableProjects(raw: Dict, sourcePath?: string, report: Report = warnOnce): Dict {
   if (raw.projects === undefined) return raw;
   const warn = (where: string, why: string) =>
-    warnOnce(
+    report(
       `config:unusable:project:${sourcePath ?? "inline"}:${where}`,
       `Ignoring ${where}${sourcePath ? ` in ${sourcePath}` : ""}: ${why}.`,
     );
@@ -134,7 +142,7 @@ export function dropUnusableProjects(raw: Dict, sourcePath?: string): Dict {
     } else if (!isRecord(entry)) {
       warn(where, "it must be an object");
     } else {
-      let project = keepValid(entry, ProjectFields, where, sourcePath);
+      let project = keepValid(entry, ProjectFields, where, sourcePath, report);
       if (Array.isArray(entry.paths)) {
         const paths = entry.paths.filter((p) => {
           const ok = projectPath.safeParse(p).success;
@@ -143,10 +151,10 @@ export function dropUnusableProjects(raw: Dict, sourcePath?: string): Dict {
         });
         project = { ...project, paths };
       } else {
-        project = keepValid(project, { paths: z.array(projectPath) }, where, sourcePath);
+        project = keepValid(project, { paths: z.array(projectPath) }, where, sourcePath, report);
       }
       if (isRecord(entry.write)) {
-        const write = keepValid(entry.write, WriteFields, `${where}.write`, sourcePath);
+        const write = keepValid(entry.write, WriteFields, `${where}.write`, sourcePath, report);
         if (isRecord(write.metadata)) {
           const metadata: Dict = {};
           for (const [key, value] of Object.entries(write.metadata)) {
@@ -158,7 +166,7 @@ export function dropUnusableProjects(raw: Dict, sourcePath?: string): Dict {
         }
         project = { ...project, write };
       } else {
-        project = keepValid(project, { write: z.object({}) }, where, sourcePath);
+        project = keepValid(project, { write: z.object({}) }, where, sourcePath, report);
       }
       kept[name] = project;
     }

@@ -275,6 +275,53 @@ describe("bundle settings and config", () => {
     expect(config.change({})).toEqual({ saved: false });
   });
 
+  test("config changeProjects adds, edits, renames and removes projects, validates, and reports akm's warnings", async () => {
+    await writableConfig();
+    writeSandboxConfig({ ...loadConfig(), unrelated: { keep: [1] } });
+    const configPath = getConfigPath();
+    const saved = () => JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(
+      config.changeProjects({
+        set: {
+          "acme.corp": { paths: ["~/clients/acme"], filters: { channel: ["acme", ""] }, write: { channel: "acme" } },
+          akm: { paths: ["/work/akm"] },
+        },
+      }),
+    ).toEqual({ saved: true });
+    expect(saved().projects["acme.corp"].filters).toEqual({ channel: ["acme", ""] });
+    expect(saved().unrelated).toEqual({ keep: [1] });
+
+    // A rename is the new name set and the old one unset, in one write; an edit replaces the whole entry.
+    expect(config.changeProjects({ set: { acme: { paths: ["/work/acme"] } }, unset: ["acme.corp"] })).toEqual({
+      saved: true,
+    });
+    expect(Object.keys(saved().projects).sort()).toEqual(["acme", "akm"]);
+    expect(saved().projects.acme).toEqual({ paths: ["/work/acme"] });
+    expect(config.changeProjects({ unset: ["akm"] })).toEqual({ saved: true });
+    expect(Object.keys(saved().projects)).toEqual(["acme"]);
+    expect(config.changeProjects({})).toEqual({ saved: false });
+
+    // akm's schema decides what is accepted; a refusal writes nothing.
+    const before = fs.readFileSync(configPath, "utf8");
+    await expectUsage(() => config.changeProjects({ set: { none: { paths: ["/x"] } } }));
+    await expectUsage(() => config.changeProjects({ set: { " ": {} } }));
+    await expectUsage(() => config.changeProjects({ set: { bad: "x" } } as never));
+    await expectAkmError(() => config.changeProjects({ set: { bad: { paths: "x" } } } as never), { kind: "config" });
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+
+    // A malformed entry written by hand is ignored with akm's own warning, which config.get returns.
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ ...saved(), projects: { ...saved().projects, hand: { paths: ["relative"], from: 3 } } }),
+    );
+    resetConfigCache();
+    const warnings = (config.get() as { projectWarnings: string[] }).projectWarnings;
+    expect(warnings.some((w) => w.includes("projects.hand.paths") && w.includes("must be an absolute path"))).toBe(
+      true,
+    );
+    expect(warnings.some((w) => w.includes("projects.hand.from"))).toBe(true);
+  });
+
   test("config unset refuses an entry akm ignores, and does nothing without a config file", async () => {
     await seed();
     const configPath = getConfigPath();
