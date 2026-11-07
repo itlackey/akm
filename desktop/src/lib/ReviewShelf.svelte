@@ -97,17 +97,23 @@
   const nextLabel = $derived(status === "pending" ? "pending" : "decision");
 </script>
 
-<footer class="decision-shelf" aria-label="Proposal decision" aria-busy={busy} bind:this={el}>
+<footer
+  class="decision-shelf"
+  class:rejecting={!!intent && rejecting}
+  aria-label="Proposal decision"
+  aria-busy={busy}
+  bind:this={el}
+>
   {#if report}<section class="notice notice-warn report" role="alert">
       <h3 tabindex="-1" data-report>
         {report.done.length} of {report.total}
-        {report.verb}. {report.failed.length} failed and remain selected.
+        {report.verb}. {report.failed.length} failed and {report.failed.length === 1 ? "remains" : "remain"} selected.
       </h3>
       <ul class="plain">
         {#each report.failed as f}<li>
             <span class="badge" data-tone="fail">Failed</span>
-            <a href={proposalHref(f.id, query)}>{f.ref ?? f.id}</a> — {f.error}{#if f.code}
-              <code>{f.code}</code>{/if}
+            <a href={proposalHref(f.id, query)}>{f.ref ?? f.id}</a> — {f.error}{#if f.code}{" "}<code>{f.code}</code
+              >{/if}
           </li>{/each}
       </ul>
       <button type="button" class="btn-quiet" onclick={dismissReport}>Dismiss</button>
@@ -117,8 +123,8 @@
       {failure}
     </div>{/if}
   {#if intent && rejecting}<div class="reason-block">
-      <fieldset class="reason-chips">
-        <legend>Why reject?</legend>
+      <div class="reason-chips" role="group" aria-labelledby="why-reject">
+        <span id="why-reject" class="legend">Why reject?</span>
         <div class="segmented">
           {#each rejectionChoices as chip}<label
               ><input type="radio" name="reject-choice" value={chip} bind:group={choice} disabled={busy} /><span
@@ -126,7 +132,7 @@
               ></label
             >{/each}
         </div>
-      </fieldset>
+      </div>
       <label
         >Details<textarea
           bind:value={reason}
@@ -186,7 +192,7 @@
       </div>
       <div class="btn-row">
         <button type="button" class="btn-quiet" disabled={busy || !canNext} onclick={next}
-          >Next<span class="next-context"> {nextLabel}</span> <Icon name="arrow-right" size={16} /></button
+          >Next<span class="next-context">&nbsp;{nextLabel}</span><Icon name="arrow-right" size={16} /></button
         >
         {#if current.status === "pending"}<button
             type="button"
@@ -286,6 +292,18 @@
   [data-primary-decision] {
     min-width: 6.5rem;
   }
+  .decision-shelf.rejecting {
+    max-height: 60%;
+  }
+  .reason-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+  }
+  .legend {
+    font-weight: 600;
+  }
   .reason-block {
     display: grid;
     gap: var(--space-2);
@@ -316,6 +334,9 @@
       z-index: 2;
       padding: var(--space-3);
       max-height: 50dvh;
+    }
+    .decision-shelf.rejecting {
+      max-height: 60dvh;
     }
     .shelf-row {
       flex-direction: column;

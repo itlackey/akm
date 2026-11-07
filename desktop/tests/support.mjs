@@ -138,6 +138,14 @@ export async function projectsAndConnections(fixture) {
     },
   };
   config.improve = { connection: "lab" };
+  // A config this one extends, defining a connection that is only inherited.
+  await writeFile(
+    path.join(fixture.root, "base-config.json"),
+    JSON.stringify({
+      connections: { shared: { endpoint: "http://127.0.0.1:9/shared/v1", models: { fast: "base-small" } } },
+    }),
+  );
+  config.extends = path.join(fixture.root, "base-config.json");
   config.projects = {
     docs: { paths: ["~/code/docs"], from: ["personal", "vendor"], filters: { project: "none-here" } },
     notes: { paths: ["~/notes"] },

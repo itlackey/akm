@@ -11,6 +11,7 @@ import {
   connectionEntry,
   connectionErrors,
   connectionSummary,
+  defaultFirst,
   deletionImpact,
   newConnectionDraft,
   optionsText,
@@ -75,7 +76,7 @@ test("a new connection starts with fast, balanced and reasoning and validates by
   const errors = connectionErrors(draft, { existing: ["default"], creating: true });
   assert.equal(errors.name, "Enter a name.");
   assert.match(errors.endpoint, /http or https/);
-  assert.equal(errors["model-0"], "Enter the model name.");
+  assert.equal(errors["model-0"], undefined, "blank alias rows are not checked");
   Object.assign(draft, { name: "default", endpoint: "https://x.test/v1", apiKey: "sk-secret" });
   draft.models.forEach((row) => (row.model = "m"));
   assert.match(connectionErrors(draft, { existing: ["default"], creating: true }).name, /already exists/);
@@ -96,7 +97,8 @@ test("a new connection starts with fast, balanced and reasoning and validates by
 
 test("a save sends the whole entry under its name", () => {
   assert.deepEqual(connectionChange(" lab ", { endpoint: "http://x/v1" }), {
-    set: { "connections.lab": '{"endpoint":"http://x/v1"}' },
+    name: "lab",
+    entry: { endpoint: "http://x/v1" },
   });
 });
 
@@ -119,4 +121,30 @@ test("a row from config.get() is stripped to its configured entry before it is e
   assert.deepEqual(entryOf(row), { endpoint: "http://x/v1", top_p: 0.9 });
   assert.deepEqual(requestOptions(entryOf(row)), { top_p: 0.9 });
   assert.deepEqual(connectionEntry(connectionDraft("lab", entryOf(row)), entryOf(row)), entryOf(row));
+});
+
+test("clearing a model's options writes it back as a plain string; adding them makes it an object again", () => {
+  const draft = connectionDraft("lab", lab);
+  draft.models[1].options = "";
+  assert.equal(connectionEntry(draft, lab).models.judge, "lab-large");
+  assert.equal(connectionChanges(draft, connectionDraft("lab", lab)), 1);
+  draft.models[1].options = '{"temperature": 0.5}';
+  assert.deepEqual(connectionEntry(draft, lab).models.judge, { model: "lab-large", temperature: 0.5 });
+});
+
+test("alias rows left blank are neither checked nor written", () => {
+  const draft = newConnectionDraft();
+  Object.assign(draft, { name: "x", endpoint: "https://x.test/v1" });
+  draft.models[0].model = "m";
+  assert.deepEqual(connectionErrors(draft, { existing: [], creating: true }), {});
+  assert.deepEqual(connectionEntry(draft, {}).models, { fast: "m" });
+  draft.models[1].options = "{}";
+  assert.equal(connectionErrors(draft, { existing: [], creating: true })["model-1"], "Enter the model name.");
+});
+
+test("the default connection is listed first", () => {
+  assert.deepEqual(
+    defaultFirst([{ name: "shared" }, { name: "default" }, { name: "lab" }], "default").map((r) => r.name),
+    ["default", "shared", "lab"],
+  );
 });

@@ -72,7 +72,9 @@
 
 <section aria-labelledby="applies">
   <h2 id="applies">Applies in</h2>
-  {#if entry.paths?.length}<p class="mono wrap">{entry.paths.join(" · ")}</p>
+  {#if entry.paths?.length}<ul class="paths mono">
+      {#each entry.paths as path}<li>{path}</li>{/each}
+    </ul>
     <p class="muted small">The most specific matching directory wins.</p>{:else}<p class="muted">
       No directories. The project applies only when selected with --project.
     </p>{/if}
@@ -116,15 +118,20 @@
               <strong>{n(total)}</strong> indexed · <strong>{n(bundle.eligible.count)}</strong> eligible
             </p>
             {#if total > 0 && bundle.eligible.count === 0}<p class="small muted">
-                None of its {n(total)} assets match this project's filters.
+                {total === 1
+                  ? "Its only asset doesn't match this project's filters."
+                  : `None of its ${n(total)} assets match this project's filters.`}
               </p>{/if}
           {:else}<p class="small">
               {n(bundles.find((b) => b.name === bundle.name)?.itemCount ?? 0)} indexed · eligible not counted
             </p>{/if}
           {#if types.text}<p class="small muted" title={types.full}>{types.text}</p>{/if}
-          <a class="small" href={`${base}/assets?bundle=${encodeURIComponent(bundle.name)}`}
-            >Browse {n(bundle.eligible?.count ?? total)} assets →</a
-          >
+          {#if (bundle.eligible?.count ?? total) > 0}<a
+              class="small"
+              href={`${base}/assets?bundle=${encodeURIComponent(bundle.name)}`}
+              >Browse {n(bundle.eligible?.count ?? total)}
+              {(bundle.eligible?.count ?? total) === 1 ? "asset" : "assets"} →</a
+            >{:else}<p class="small muted">No eligible assets</p>{/if}
         {/if}
       </article>
     {:else}{#if overview}<p class="muted">No bundles are available to read.</p>{/if}{/each}
@@ -166,18 +173,20 @@
     <dt>Bundle</dt>
     <dd>
       {#if overview?.writeBundle.name}<span class="mono">{overview.writeBundle.name}</span
-        >{#if overview.writeBundle.implicit}
-          — the default write target <span class="badge">Default</span>{:else}
-          <span class="muted">(set by this project)</span>{/if}{:else if overview}No write target is available.{:else}…{/if}
+        >{" "}{#if overview.writeBundle.implicit}— the default write target <span class="badge">Default</span
+          >{:else}<span class="muted">(set by this project)</span>{/if}{:else if overview}No write target is available.{:else}…{/if}
     </dd>
     <dt>User · Agent · Channel</dt>
-    <dd>{entry.write?.user ?? "—"} · {entry.write?.agent ?? "—"} · {entry.write?.channel ?? "—"}</dd>
+    <dd>
+      {#if !entry.write?.user && !entry.write?.agent && !entry.write?.channel}Not set{:else}{entry.write?.user ?? "—"} · {entry
+          .write?.agent ?? "—"} · {entry.write?.channel ?? "—"}{/if}
+    </dd>
     <dt>Metadata</dt>
     <dd>
       {#each Object.entries(overview ? metadata : (entry.write?.metadata ?? {})) as [key, value]}<span class="chip"
           >{key}: {String(value)}</span
-        >{/each}{#if overview && !explicitMetadata}
-        <span class="badge">Default</span>{/if}
+        >{#if key === "project" && overview && !explicitMetadata}{" "}<span class="badge">Default</span
+          >{" "}{/if}{/each}
     </dd>
   </dl>
   {#if overview?.writeBundle.name && overview.writeBundle.usable === false}<p class="notice notice-warn">
@@ -198,6 +207,21 @@
   }
   .actions {
     margin-inline-start: auto;
+  }
+  .paths {
+    list-style: none;
+    margin: 0 0 var(--space-1);
+    padding: 0;
+    overflow-wrap: anywhere;
+  }
+  @media (width < 48rem) {
+    .actions {
+      width: 100%;
+    }
+    .actions :global(.btn) {
+      flex: 1;
+      justify-content: center;
+    }
   }
   section {
     margin-block: var(--space-5);
@@ -260,8 +284,5 @@
     border-radius: var(--radius-pill);
     background: var(--surface-2);
     font-size: var(--text-s);
-  }
-  .wrap {
-    overflow-wrap: anywhere;
   }
 </style>

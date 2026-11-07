@@ -339,6 +339,11 @@
   [hidden] {
     display: none;
   }
+  /* A heading focused by script (arrival on a view) is for screen readers; it shows no ring. */
+  :is(h1, h2, h3)[tabindex="-1"]:is(:focus, :focus-visible) {
+    outline: none;
+    box-shadow: none;
+  }
   @media (width > 850px) {
     .desktop-shell.workspace-active {
       block-size: 100dvh;
@@ -397,6 +402,11 @@
       padding-inline: 2px;
       font-size: 13px;
       min-width: 0;
+    }
+    @media (width < 24rem) {
+      .desktop-topbar nav > a {
+        font-size: 12px;
+      }
     }
     .desktop-topbar .version {
       display: none;

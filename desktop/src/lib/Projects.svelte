@@ -13,6 +13,7 @@
   import ProjectForm from "./ProjectForm.svelte";
   import ProjectList from "./ProjectList.svelte";
   import ProjectOverview from "./ProjectOverview.svelte";
+  import { documentTitle } from "./library-model";
   import { projectRows, type ProjectEntry, type ProjectRow, type projectChange } from "./projects-model";
   import { refreshBundles, workspace } from "./state/workspace.svelte";
   import { showToast } from "./state/toasts.svelte";
@@ -36,7 +37,9 @@
   const row = $derived<ProjectRow | undefined>(rows.find((r) => r.name === name));
   const adding = $derived(!name && query.has("add"));
   const defaultTarget = $derived(config?.config.defaultWriteTarget || config?.automaticWriteTarget?.name || "");
-  const bundleNames = $derived(workspace.bundles.map((b) => b.name));
+  const bundleInfo = $derived(
+    workspace.bundles.map((b) => ({ name: b.name, enabled: b.enabled, writable: b.writable })),
+  );
   const view = $derived(adding ? "add" : !name ? "list" : !row ? "missing" : sub || "overview");
   const enc = encodeURIComponent;
 
@@ -76,10 +79,12 @@
       busy = false;
     }
   }
-  async function save(body: ReturnType<typeof projectChange>, saved: string) {
+  async function save(body: ReturnType<typeof projectChange>, saved: string): Promise<boolean> {
     const old = row?.name;
     const outcome = await write(body);
-    if (outcome === "failed") return;
+    if (outcome === "failed") return false;
+    // Back to the old name's pages lands on the renamed project, not on "Project not found".
+    if (old && old !== saved) workspace.renamedProjects[old] = saved;
     showToast(
       outcome === "unchanged"
         ? { kind: "info", title: "No changes to save." }
@@ -92,20 +97,31 @@
           },
     );
     await navigate(`/projects/${enc(saved)}`, true);
+    return true;
   }
-  async function remove() {
-    if (!row) return;
+  async function remove(): Promise<boolean> {
+    if (!row) return true;
     const removed = row.name;
-    if ((await write({ unset: [removed] })) === "failed") return;
+    if ((await write({ unset: [removed] })) === "failed") return false;
     showToast({ title: `Removed project “${removed}”`, detail: "Its bundles and assets are unchanged." });
     await navigate("/projects", true);
+    return true;
   }
+  // A page of a project that was renamed in this session opens the new name instead.
+  $effect(() => {
+    const renamed = name && !loading && !row ? workspace.renamedProjects[name] : "";
+    if (renamed)
+      void navigate(`/projects/${enc(renamed)}${sub ? `/${sub}` : ""}${query.size ? `?${query}` : ""}`, true);
+  });
   const returnTo = $derived(query.get("returnTo") || `/projects/${enc(name)}/assets`);
   const assetRef = $derived(query.get("ref") ?? "");
-  const assetBundle = $derived(
-    new URLSearchParams(returnTo.split("?")[1] ?? "").get("bundle") ||
-      (assetRef.includes("//") ? assetRef.split("//")[0] : ""),
-  );
+  // The way the reader was reached, so the crumbs are the same for every asset: the bundle only when the list was one.
+  const assetBundle = $derived(new URLSearchParams(returnTo.split("?")[1] ?? "").get("bundle") ?? "");
+  let assetTitle = $state("");
+  $effect(() => {
+    void assetRef;
+    assetTitle = "";
+  });
 </script>
 
 <div class="projects" bind:this={root}>
@@ -122,14 +138,14 @@
     <h1 tabindex="-1">Add a project</h1>
     <ProjectForm
       original={null}
-      bundles={bundleNames}
+      bundles={bundleInfo}
       existing={rows.map((r) => r.name)}
       {defaultTarget}
       {busy}
       {failure}
       cancelHref="/projects"
       save={(body, saved) => save(body, saved)}
-      remove={() => {}}
+      remove={async () => true}
     />
   {:else if view === "missing"}
     <div class="state">
@@ -148,7 +164,7 @@
     </div>
     {#key row.name}<ProjectForm
         original={row}
-        bundles={bundleNames}
+        bundles={bundleInfo}
         existing={rows.map((r) => r.name)}
         {defaultTarget}
         {busy}
@@ -163,7 +179,7 @@
     <nav class="crumbs" aria-label="Breadcrumb">
       <a href="/projects">Projects</a> › <a href={`/projects/${enc(row.name)}`}>{row.name}</a> ›
       {#if assetBundle}<a href={returnTo}>{assetBundle}</a>{:else}<a href={returnTo}>All read bundles</a>{/if} ›
-      <span aria-current="page">{assetRef.split("/").pop()}</span>
+      <span aria-current="page">{assetTitle || assetRef.split("/").pop()}</span>
     </nav>
     <p class="muted small">Reading in project {row.name}.</p>
     {#key assetRef}<LibraryAsset
@@ -173,6 +189,8 @@
         bundles={workspace.bundles}
         defaultWriteTarget={workspace.defaultWriteTarget}
         mode="search"
+        hideBack
+        on:loaded={(event) => (assetTitle = documentTitle(event.detail.asset))}
       />{/key}
   {:else if row}
     <ProjectOverview {row} bundles={workspace.bundles} />

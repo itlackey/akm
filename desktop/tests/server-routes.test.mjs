@@ -102,6 +102,25 @@ test("writes reach their operations and unknown fields are ignored", async (t) =
       set: { "connections.lab": JSON.stringify({ endpoint: "http://127.0.0.1:9/v1", models: { fast: "m" } }) },
     }),
   );
+  assert.deepEqual(
+    ok(
+      await app.call("/api/config/connections/save", {
+        name: "lab",
+        entry: { endpoint: "http://127.0.0.1:9/v1" },
+        surprise: 1,
+      }),
+    ),
+    { saved: true },
+  );
+  assert.equal(
+    (
+      await app.call("/api/config/connections/save", {
+        name: "lab",
+        entry: { endpoint: "http://x/v1", apiKey: "sk-literal" },
+      })
+    ).status,
+    400,
+  );
   assert.equal(ok(await app.call("/api/config")).defaultConnection, "lab");
   assert.deepEqual(ok(await app.call("/api/config/connections/remove", { name: "lab", surprise: true })), {
     saved: true,

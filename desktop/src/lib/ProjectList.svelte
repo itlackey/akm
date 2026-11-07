@@ -44,10 +44,9 @@
           <span class="badge">{project.inherited ? "Inherited" : "Local"}</span>
         </header>
         <p class="mono wrap small">
-          {#if first(project)}{first(project)}{#if more(project) > 0}
-              <span class="muted sans"> +{more(project)} more</span>{/if}{:else}<span class="muted sans"
-              >No directories (selected only with --project)</span
-            >{/if}
+          {#if first(project)}{first(project)}{#if more(project) > 0}{" "}<span class="muted sans"
+                >+{more(project)} more</span
+              >{/if}{:else}<span class="muted sans">No directories (selected only with --project)</span>{/if}
         </p>
         <p class="small">{reads(project)}</p>
         <p class="small">
@@ -91,7 +90,8 @@
     background: var(--surface-2);
   }
   .project-card:has(a:focus-visible) {
-    box-shadow: var(--focus-halo);
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
   .card-head {
     display: flex;

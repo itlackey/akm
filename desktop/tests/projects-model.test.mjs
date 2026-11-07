@@ -153,5 +153,8 @@ test("a project name is checked for the reserved words and for duplicates, and m
   assert.equal(draftChanges(draft, base), 4);
   assert.equal(filterLine({}), "No filters · default preference");
   assert.equal(filterLine(entry), "1 filter · default preference");
-  assert.equal(filterLine({ filters: { a: "1", b: "2" }, prefer: { channel: "w" } }), "2 filters · prefers channel");
+  assert.equal(
+    filterLine({ filters: { a: "1", b: "2" }, prefer: { channel: ["w", "x"] } }),
+    "2 filters · ranks channel = w +1 first",
+  );
 });

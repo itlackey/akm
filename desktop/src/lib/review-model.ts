@@ -59,8 +59,16 @@ export function text(value: unknown, fallback = "Not recorded"): string {
 export function commitOutcome(value: unknown): string {
   const commit = record(value);
   return typeof commit.sha === "string"
-    ? `Committed ${commit.sha.slice(0, 8)}${commit.subject ? ` — ${commit.subject}` : ""}. Push status was not reported by this action.`
-    : "No Git commit was reported by this action.";
+    ? `Committed ${commit.sha.slice(0, 8)}. Push status not reported.`
+    : "No Git commit reported.";
+}
+/** "1 finding", "2 findings". */
+export function plural(count: number, one: string, many = `${one}s`): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+/** The text cut to `max` characters with an ellipsis when it is longer. */
+export function clip(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1).trimEnd()}…` : value;
 }
 
 // ── Deciding and moving on ───────────────────────────────────────────────────────────────────────────────────────

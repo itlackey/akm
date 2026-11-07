@@ -89,8 +89,31 @@ test("Projects: list, overview with counts, assets, add, edit, rename, remove; u
   await expect(page).toHaveURL(/\/projects\/fresh$/);
   assert.deepEqual((await configOf(server)).projects.fresh, { paths: ["/work/fresh"] });
 
+  // Saving an existing project finishes: overview, toast, no "Discard unsaved changes?" and a clean guard.
+  await page.goto(`${server.origin}/projects/docs/edit`);
+  await page.getByLabel(/^Channel/).fill("synthetic-channel");
+  await page.getByRole("button", { name: "Save project" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved project “docs”" })).toBeVisible();
+  await expect(page).toHaveURL(/\/projects\/docs$/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  assert.equal((await configOf(server)).projects.docs.write.channel, "synthetic-channel");
+  await page.getByRole("link", { name: "Edit project" }).click();
+  await page.getByLabel(/^Channel/).fill("again");
+  await page.getByRole("button", { name: "Save project" }).click();
+  await expect(page).toHaveURL(/\/projects\/docs$/);
+  await page.goto(`${server.origin}/projects?add`);
+  await page.getByLabel(/^Name/).fill("rel");
+  await page.getByLabel(/^Directories/).fill("relative/path");
+  await page.getByRole("button", { name: "Add project" }).click();
+  await expect(page.getByText("Use an absolute path or one starting with ~.")).toBeVisible();
+  assert.equal((await configOf(server)).projects.rel, undefined);
+  await page.getByLabel(/^Directories/).fill("/work/rel");
+  await page.getByRole("button", { name: "Add project" }).click();
+  await expect(page).toHaveURL(/\/projects\/rel$/);
+
   // A dirty form asks before it is left; Keep editing stays.
-  await page.goto(`${server.origin}/projects/fresh/edit`);
+  await page.goto(`${server.origin}/projects/fresh`);
+  await page.getByRole("link", { name: "Edit project" }).click();
   await page.getByLabel(/^Directories/).fill("/work/changed");
   await expect(page.getByText("1 unsaved change")).toBeVisible();
   await page.getByRole("link", { name: "Cancel" }).click();
@@ -104,6 +127,10 @@ test("Projects: list, overview with counts, assets, add, edit, rename, remove; u
   await expect(page.getByRole("status").filter({ hasText: "Renamed project “fresh” to “fresh-2”" })).toBeVisible();
   const renamed = (await configOf(server)).projects;
   assert.deepEqual([renamed.fresh, renamed["fresh-2"]], [undefined, { paths: ["/work/changed"] }]);
+  // Back to the old overview opens the renamed project instead of "Project not found".
+  await page.goBack();
+  await expect(page).toHaveURL(/\/projects\/fresh-2$/);
+  await expect(page.getByRole("heading", { name: "fresh-2", level: 1 })).toBeVisible();
   await page.goto(`${server.origin}/projects/fresh`);
   await expect(page.getByRole("heading", { name: "Project not found" })).toBeVisible();
 
@@ -111,10 +138,13 @@ test("Projects: list, overview with counts, assets, add, edit, rename, remove; u
   await page.goto(`${server.origin}/projects/fresh-2/edit`);
   await page.getByRole("button", { name: "Remove fresh-2…" }).click();
   await expect(page.getByRole("button", { name: "Keep project" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "Remove fresh-2…" })).toBeFocused();
+  await page.getByRole("button", { name: "Remove fresh-2…" }).click();
   await page.getByRole("button", { name: "Remove project" }).click();
   await expect(page).toHaveURL(/\/projects$/);
   assert.equal((await configOf(server)).projects["fresh-2"], undefined);
-  assert.deepEqual(Object.keys((await configOf(server)).projects), ["docs", "notes"]);
+  assert.deepEqual(Object.keys((await configOf(server)).projects), ["docs", "notes", "rel"]);
 
   // Old links land on the new destination.
   await page.goto(`${server.origin}/settings/config?section=projects`);
@@ -164,6 +194,24 @@ test("Connections: list, detail, add, edit preserving options, delete with its c
   const after = (await configOf(server)).connections.lab;
   assert.deepEqual(after, { ...before, models: { ...before.models, summarize: "mid-2" } });
 
+  // Clearing a model's options removes them from the file, and saving an existing connection finishes.
+  await page.getByRole("link", { name: "Edit" }).click();
+  await page.getByText("Options (1)").click();
+  await page.getByRole("textbox", { name: "Request options for model 2" }).fill("");
+  await page.getByRole("button", { name: "Save connection" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved connection “lab”" })).toBeVisible();
+  await expect(page).toHaveURL(/\/settings\/connections\?name=lab$/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  assert.equal((await configOf(server)).connections.lab.models.judge, "big");
+
+  // An inherited connection names the config that defines it, not this computer's file.
+  await page.goto(`${server.origin}/settings/connections?name=shared`);
+  await expect(page.getByText(/Inherited from .*base-config\.json\. Delete it there\./)).toBeVisible();
+  await expect(page.getByRole("definition").filter({ hasText: "base-config.json" })).toBeVisible();
+  await page.goto(`${server.origin}/settings/connections`);
+  await expect(page.getByRole("link", { name: /^default/ })).toBeVisible();
+  assert.match(await page.getByRole("list").first().innerText(), /^default/);
+
   // Add: the key must be a reference; a literal one never reaches akm.
   await page.goto(`${server.origin}/settings/connections?add`);
   await page.getByLabel(/^Name/).fill("Bad Name");
@@ -190,7 +238,7 @@ test("Connections: list, detail, add, edit preserving options, delete with its c
   await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
   await dialog.getByRole("button", { name: "Delete connection" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Deleted connection “lab”" })).toContainText(
-    "1 settings still name it",
+    "1 setting still names it",
   );
   await expect(page).toHaveURL(/\/settings\/connections$/);
   const saved = await configOf(server);
@@ -198,4 +246,25 @@ test("Connections: list, detail, add, edit preserving options, delete with its c
   assert.deepEqual(Object.keys(saved.connections), ["default", "extra"]);
   assert.equal(saved.improve.connection, "lab");
   assert.deepEqual(errors, []);
+});
+
+test("Project assets: Show 50 more appends in place and focuses the first new row", { timeout: 240000 }, async (t) => {
+  const server = await launchFixture({ assetCount: 70, configureFixture: configure });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await open(page, server, "/projects/notes/assets?bundle=personal");
+  const rows = page.locator(".asset-row");
+  await expect(rows).toHaveCount(50);
+  const url = page.url();
+  await page.getByRole("button", { name: "Show 50 more" }).click();
+  await expect(rows).not.toHaveCount(50);
+  assert.ok((await rows.count()) > 50);
+  assert.equal(page.url(), url, "no navigation");
+  assert.equal(
+    await page.evaluate(() => [...document.querySelectorAll(".asset-row a")].indexOf(document.activeElement)),
+    50,
+    "focus is on the first new row",
+  );
 });

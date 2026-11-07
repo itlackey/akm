@@ -8,11 +8,13 @@
   import { onMount, tick, untrack } from "svelte";
   import { api, type ApiError } from "./client";
   import { navigate } from "./navigation";
+  import { plural } from "./review-model";
   import ConnectionForm from "./ConnectionForm.svelte";
   import Icon from "./Icon.svelte";
   import { showToast } from "./state/toasts.svelte";
   import {
     connectionChange,
+    defaultFirst,
     connectionSummary,
     defaultStatement,
     deletionImpact,
@@ -45,7 +47,7 @@
   const adding = $derived(query.has("add"));
   const name = $derived(query.get("name") ?? "");
   const editing = $derived(!!name && query.has("edit"));
-  const rows = $derived(config?.connections ?? []);
+  const rows = $derived(defaultFirst(config?.connections ?? [], config?.defaultConnection ?? null));
   const names = $derived(rows.map((row) => row.name));
   const row = $derived(rows.find((r) => r.name === name));
   const view = $derived(adding ? "add" : name ? (editing ? "edit" : "detail") : "list");
@@ -73,24 +75,30 @@
       );
   });
 
-  async function save(connection: string, entry: ConnectionEntry) {
+  async function save(connection: string, entry: ConnectionEntry): Promise<boolean> {
     busy = true;
     failure = "";
     const creating = adding;
     try {
-      const result = await api<{ saved?: boolean }>("/config/set", {}, connectionChange(connection, entry));
+      const result = await api<{ saved?: boolean }>(
+        "/config/connections/save",
+        {},
+        connectionChange(connection, entry),
+      );
       await load();
       showToast(
         result.saved === false
           ? { kind: "info", title: "No changes to save." }
           : {
               title: `${creating ? "Added" : "Saved"} connection “${connection}”`,
-              detail: "Saving does not test the connection.",
+              detail: "Desktop does not test connections. Saving only checks the configuration.",
             },
       );
       await navigate(detailHref(connection), true);
+      return true;
     } catch (cause) {
       failure = (cause as ApiError).message;
+      return false;
     } finally {
       busy = false;
     }
@@ -118,7 +126,7 @@
           ? {
               kind: "warning",
               title: `Deleted connection “${removed}”`,
-              detail: `${result.references.length} settings still name it: ${result.references.join(", ")}.`,
+              detail: `${plural(result.references.length, "setting still names it", "settings still name it")} and will fail until changed: ${result.references.join(", ")}.`,
               action: { label: "Open Advanced", run: () => navigate("/settings/config?section=advanced-settings") },
             }
           : { title: `Deleted connection “${removed}”` },
@@ -132,6 +140,9 @@
   }
   const status = $derived(defaultStatement(names, config?.defaultConnection ?? null));
   const impact = $derived(row ? deletionImpact(row, names, config?.defaultConnection ?? null) : null);
+  /** The config this one extends that defines it, as AKM reports it (`extends:<ref>`). */
+  const inheritedFrom = (r: ConnectionRow) =>
+    r.source?.startsWith("extends:") ? r.source.slice("extends:".length) : "a config this one extends";
   const provenanceOf = (r: ConnectionRow) => (r.inherited ? "Inherited" : "This computer");
   const number = (value: unknown, fallback: string, unit = "") =>
     typeof value === "number" ? `${value.toLocaleString("en-US")}${unit}` : fallback;
@@ -155,6 +166,10 @@
       {save}
     />
   {:else if view === "edit" && row}
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <a href={LIST}>Connections</a> › <a href={detailHref(row.name)}>{row.name}</a> ›
+      <span aria-current="page">Edit</span>
+    </nav>
     <h2 class="conn-title" tabindex="-1">Edit {row.name}</h2>
     {#key row.name}<ConnectionForm
         name={row.name}
@@ -179,7 +194,7 @@
         {#if !row.inherited}<button class="btn-secondary danger" onclick={askDelete}>Delete…</button>{/if}
       </div>
     </div>
-    {#if row.inherited}<p class="muted small">Inherited from {config?.path}. Delete it there.</p>{/if}
+    {#if row.inherited}<p class="muted small">Inherited from {inheritedFrom(row)}. Delete it there.</p>{/if}
     <dl class="kv conn-facts">
       <dt>Endpoint</dt>
       <dd class="mono wrap">{row.endpoint ?? "Not set"}</dd>
@@ -224,9 +239,9 @@
           ].join(" · ")}{:else}<span class="sans">Nothing names this connection.</span>{/if}
       </dd>
       <dt>Source</dt>
-      <dd class="mono wrap">{config?.path}</dd>
+      <dd class="mono wrap">{row.inherited ? inheritedFrom(row) : config?.path}</dd>
     </dl>
-    <p class="muted small">Saving or viewing a connection does not test it.</p>
+    <p class="muted small">Desktop does not test connections. Saving only checks the configuration.</p>
     <dialog
       class="leave-editor-dialog"
       bind:this={dialog}
@@ -235,10 +250,13 @@
     >
       <h2 id="delete-title">Delete connection “{row.name}”?</h2>
       <p>Removes it from this computer's config.json. Other settings are not changed.</p>
-      {#if impact?.references.length}<p>These settings name it and will stop working until you change them:</p>
+      {#if impact?.references.length}<p>
+          These settings name it. A connection named in a setting is never replaced by another, so they fail with
+          “Connection is not configured” until you change them:
+        </p>
         <ul class="mono">
           {#each impact.references as key}<li>{key}</li>{/each}
-        </ul>{:else}<p>Nothing names this connection.</p>{/if}
+        </ul>{:else if !impact?.defaultLine}<p>Nothing names this connection.</p>{/if}
       {#if impact?.defaultLine}<p>{impact.defaultLine}</p>{/if}
       {#if deleteFailure}<p class="notice notice-fail" role="alert">
           <strong>The connection was not deleted.</strong>

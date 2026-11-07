@@ -7,7 +7,9 @@ import { test } from "node:test";
 import {
   activityReturn,
   batchOutcome,
+  clip,
   commitOutcome,
+  plural,
   conceptLocation,
   nextAfterDecision,
   proposalHref,
@@ -29,8 +31,11 @@ test("review helpers preserve route filters and bound composed rejection reasons
   assert.equal(rejectionError("Stale", ""), "");
   assert.match(rejectionError("Other", ""), /required/);
   assert.match(rejectionError("Wrong", "a".repeat(2000)), /2000/);
-  assert.match(commitOutcome(null), /No Git commit/);
-  assert.match(commitOutcome({ sha: "1234567890", subject: "test" }), /Push status was not reported/);
+  assert.match(commitOutcome(null), /No Git commit reported/);
+  assert.equal(
+    commitOutcome({ sha: "1234567890", subject: "akm accept: x" }),
+    "Committed 12345678. Push status not reported.",
+  );
   assert.equal(
     activityReturn("/activity/improve?since=365d&anchor=impact-drill"),
     "/activity/improve?since=365d&anchor=impact-drill",
@@ -186,4 +191,13 @@ test("waiting time reads in the largest whole unit", () => {
   assert.equal(relativeAge(ago(3 * 86400000 + 5000), now), "3 days");
   assert.equal(relativeAge(undefined, now), "Not recorded");
   assert.equal(relativeAge("nonsense", now), "Not recorded");
+});
+
+test("counts read as words and long text is cut with an ellipsis", () => {
+  assert.equal(plural(1, "finding"), "1 finding");
+  assert.equal(plural(3, "finding"), "3 findings");
+  assert.equal(plural(0, "setting still names it", "settings still name it"), "0 settings still name it");
+  assert.equal(clip("short", 60), "short");
+  assert.equal(clip("a".repeat(70), 60).length, 60);
+  assert.ok(clip("a".repeat(70), 60).endsWith("…"));
 });

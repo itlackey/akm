@@ -26,6 +26,8 @@
   export let defaultWriteTarget = "";
   export let match: SearchHit | null = null;
   export let mode: "search" | "files" = "search";
+  /** Another view supplies the way back (project crumbs), so the reader's own link is left out. */
+  export let hideBack = false;
   export let filesHref = "";
   export let editHref = "";
   export let readingHref = "";
@@ -361,7 +363,7 @@
 {:else if data}
   {#if data.redacted}{#key canonical}<SensitiveAsset ref={canonical} on:changed={() => dispatch("changed")} />{/key}
   {:else}
-    {#if mode === "search"}<div class="reader-navigation">
+    {#if mode === "search" && !hideBack}<div class="reader-navigation">
         <a href={returnTo}><Icon name="arrow-left" size={16} />Search results</a>
       </div>{/if}
     <header class="asset-heading">

@@ -224,11 +224,14 @@ export function scopeText(scope: Scope | undefined): Array<{ key: string; values
   return Object.entries(scope ?? {}).map(([key, value]) => ({ key, values: list(value) }));
 }
 
-/** The list card's summary lines: filters and preference. */
+/** The list card's filter and preference line: "2 filters · ranks channel = work first". */
 export function filterLine(entry: ProjectEntry): string {
   const filters = Object.keys(entry.filters ?? {}).length;
-  const prefer = Object.keys(entry.prefer ?? {});
-  return `${filters ? `${filters} ${filters === 1 ? "filter" : "filters"}` : "No filters"} · ${prefer.length ? `prefers ${prefer.join(", ")}` : "default preference"}`;
+  const prefer = scopeText(entry.prefer)[0];
+  const ranks = prefer
+    ? `ranks ${prefer.key} = ${prefer.values.filter(Boolean)[0] ?? ""}${prefer.values.filter(Boolean).length > 1 ? ` +${prefer.values.filter(Boolean).length - 1}` : ""} first`
+    : "default preference";
+  return `${filters ? `${filters} ${filters === 1 ? "filter" : "filters"}` : "No filters"} · ${ranks}`;
 }
 
 /** What `GET /api/projects/overview` returns: a project's effective read and write bundles with their counts. */

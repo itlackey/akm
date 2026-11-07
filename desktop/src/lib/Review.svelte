@@ -18,6 +18,7 @@
     ageBands,
     activityReturn,
     batchOutcome,
+    clip,
     commitOutcome,
     conceptLocation,
     decisionVerb,
@@ -69,7 +70,9 @@
     queuedAction = "",
     focusNext = false,
     decisionTrigger: HTMLElement | null = null,
-    decisionTriggerKey = "";
+    decisionTriggerKey = "",
+    afterFocus = "",
+    focusQueue = false;
   let region = $state<HTMLElement>(),
     scroller = $state<HTMLElement>(),
     shelf = $state<HTMLElement>(),
@@ -79,6 +82,10 @@
   const current = $derived(detail?.proposal as ReviewProposal | undefined);
   const analyticsReturn = $derived(activityReturn(query.get("returnTo")));
   const filtered = $derived(!!(source || age || week || outcome));
+  // Nothing pending matches: after the last decision, and also when the page is opened with an empty queue.
+  const showFinished = $derived(
+    !desiredId && status === "pending" && (finished || (!!queue && queueState(queue) === "finished")),
+  );
   const noop = $derived(
     !!(
       current?.status === "pending" &&
@@ -100,11 +107,16 @@
     const element = shelf;
     if (!element) return;
     const root = document.documentElement;
-    const observer = new ResizeObserver(() => root.style.setProperty("--shelf-h", `${element.offsetHeight}px`));
+    const observer = new ResizeObserver(() => {
+      root.style.setProperty("--shelf-h", `${element.offsetHeight}px`);
+      // A control focused just above the sticky shelf scrolls clear of it.
+      root.style.scrollPaddingBottom = `${element.offsetHeight + 8}px`;
+    });
     observer.observe(element);
     return () => {
       observer.disconnect();
       root.style.removeProperty("--shelf-h");
+      root.style.removeProperty("scroll-padding-bottom");
     };
   });
   onDestroy(() => {
@@ -131,6 +143,7 @@
     if (changed || !queue) {
       if (changed) {
         queue = null;
+        if (finished) focusQueue = true;
         finished = false;
       }
       selected = [];
@@ -165,7 +178,14 @@
     loading = true;
     try {
       const next = await fetchQueue();
-      if (generation === queueGeneration) queue = next;
+      if (generation === queueGeneration) {
+        queue = next;
+        if (focusQueue) {
+          focusQueue = false;
+          await tick();
+          (region?.querySelector<HTMLElement>(".review-item") ?? region?.querySelector<HTMLElement>("h1"))?.focus();
+        }
+      }
     } catch (e) {
       if (generation === queueGeneration) queueError = (e as Error).message;
     } finally {
@@ -199,8 +219,11 @@
             if (scroller) scroller.scrollTop = 0;
             detailHeading?.focus({ preventScroll: true });
           } else if (!intent && matchMedia("(max-width:850px)").matches) {
+            // The heading is already near the top: focus it where it is. Scroll only when it is out of sight.
             detailHeading?.focus({ preventScroll: true });
-            detailHeading?.scrollIntoView({ block: "start" });
+            const box = detailHeading?.getBoundingClientRect();
+            const top = document.querySelector(".desktop-topbar")?.getBoundingClientRect().bottom ?? 0;
+            if (box && (box.top < top || box.bottom > innerHeight)) detailHeading?.scrollIntoView({ block: "start" });
           }
         }
       }
@@ -237,7 +260,8 @@
     void navigate(proposalHref("", params));
   }
   async function begin(action: string) {
-    decisionTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const active = document.activeElement;
+    decisionTrigger = active instanceof HTMLElement && active !== document.body ? active : null;
     decisionTriggerKey = action;
     intent = action;
     failure = "";
@@ -277,16 +301,20 @@
     busy = true;
     failure = "";
     report = null;
+    afterFocus = "";
     try {
       if (batch) await decideBatch(action);
       else await decideOne(action, current!);
     } finally {
       busy = false;
     }
-  }
-  async function afterFailure() {
+    // Controls are disabled while busy, so focus is placed once they are enabled again.
     await tick();
-    region?.querySelector<HTMLElement>("[data-confirm]")?.focus();
+    if (afterFocus === "confirm") region?.querySelector<HTMLElement>("[data-confirm]")?.focus();
+    else if (afterFocus === "primary")
+      (region?.querySelector<HTMLElement>("[data-primary-decision]") ?? detailHeading)?.focus({ preventScroll: true });
+    else if (afterFocus === "report") region?.querySelector<HTMLElement>("[data-report]")?.focus();
+    afterFocus = "";
   }
   async function decideOne(action: string, target: ReviewProposal) {
     const label = title(target);
@@ -307,12 +335,14 @@
           if (workspace.pendingCount !== null) workspace.pendingCount = Math.max(0, workspace.pendingCount - 1);
         }
         showToast({
+          // One decision toast at a time: the newest replaces the last (Recent decisions keeps the history).
+          key: "decision",
           title: `${decisionVerb(action)} “${label}”`,
           detail:
             action === "accept"
-              ? `${target.ref} · ${commitOutcome(receipt.commit)}`
+              ? `${target.ref}\n${commitOutcome(receipt.commit)}`
               : action === "reject"
-                ? `${target.ref} · Reason: ${String(payload && "reason" in payload ? payload.reason : "").slice(0, 60)}`
+                ? `${target.ref}\nReason: ${clip(String("reason" in payload ? payload.reason : ""), 60)}`
                 : action === "revert"
                   ? "Restored the backup kept at acceptance."
                   : "Back in the pending queue.",
@@ -327,7 +357,7 @@
     );
     if (result.status === "failed") {
       failure = result.error;
-      await afterFailure();
+      afterFocus = "confirm";
       return;
     }
     if (result.refreshError)
@@ -336,14 +366,13 @@
         key: "queue-refresh",
         title: "Decision recorded; the queue did not refresh.",
         detail: `${result.refreshError}. Counts may be out of date.`,
-        action: { label: "Refresh queue", run: refresh },
+        action: { label: "Refresh queue", run: refreshFromToast },
       });
     void refreshPending();
     if (advance) await advanceFrom(order, target.id);
     else {
       await open(target.id);
-      await tick();
-      (region?.querySelector<HTMLElement>("[data-primary-decision]") ?? detailHeading)?.focus({ preventScroll: true });
+      afterFocus = "primary";
     }
   }
   /** Open the next remaining proposal in the queue's order, or show that the queue is finished. */
@@ -386,7 +415,7 @@
     );
     if (result.status === "failed") {
       failure = result.error;
-      await afterFailure();
+      afterFocus = "confirm";
       return;
     }
     const done = outcomeOf!;
@@ -397,15 +426,15 @@
         key: "queue-refresh",
         title: "Decision recorded; the queue did not refresh.",
         detail: `${result.refreshError}. Counts may be out of date.`,
-        action: { label: "Refresh queue", run: refresh },
+        action: { label: "Refresh queue", run: refreshFromToast },
       });
     void refreshPending();
     if (done.failed.length) {
       report = { ...done, verb, total: ids.length };
-      await tick();
-      region?.querySelector<HTMLElement>("[data-report]")?.focus();
+      afterFocus = "report";
     } else
       showToast({
+        key: "decision",
         title: `${decisionVerb(action)} ${done.done.length} proposals`,
         detail: "Details are in Recent decisions.",
         action: { label: "View", run: () => navigate(proposalHref("", new URLSearchParams({ status: "recent" }))) },
@@ -416,6 +445,23 @@
     failure = "";
     await load();
     if (desiredId) await open(desiredId);
+  }
+  /** The toast's action closes the toast, so focus goes to the page rather than to nothing. */
+  async function refreshFromToast() {
+    await refresh();
+    await tick();
+    (
+      detailHeading ??
+      region?.querySelector<HTMLElement>(".review-item") ??
+      region?.querySelector<HTMLElement>("h1")
+    )?.focus({
+      preventScroll: true,
+    });
+  }
+  async function dismissReport() {
+    report = null;
+    await tick();
+    (region?.querySelector<HTMLElement>("[data-primary-decision]") ?? detailHeading)?.focus({ preventScroll: true });
   }
   function go(direction: number) {
     const proposals = queue?.proposals ?? [],
@@ -565,7 +611,7 @@
             {status === "pending"
               ? "waiting for review"
               : "recent decisions"}{#if source || age || week || outcome}<span class="muted">
-                · {queue.totalCount} match the filters</span
+                {" "}· {queue.totalCount} match the filters</span
               >{/if}
           </p>
         </section>{/if}
@@ -605,7 +651,7 @@
             >
           </li>{/each}
       </ul>
-      {#if queue && !queue.proposals.length}<div class="state">
+      {#if queue && !queue.proposals.length && !showFinished}<div class="state">
           <h2>
             {source || age
               ? "No proposals match these filters"
@@ -616,7 +662,7 @@
           <p class="muted">
             {source || age
               ? "Clear a filter to inspect the rest of the queue."
-              : "AKM’s recorded proposals appear here."}
+              : "Decisions appear here after you accept or reject a proposal."}
           </p>
         </div>{/if}
       {#if queue && queue.totalCount > queue.proposals.length}<p class="muted small">
@@ -672,7 +718,7 @@
             {noop}
             {query}
             bind:heading={detailHeading}
-          />{:else if finished}<ReviewFinished
+          />{:else if showFinished}<ReviewFinished
             {filtered}
             remaining={queue?.fullCount ?? 0}
             {reviewed}
@@ -703,7 +749,7 @@
           clearSelection={() => (selected = [])}
           next={() => go(1)}
           openLast={(action) => last && openDecided(last.id, action)}
-          dismissReport={() => (report = null)}
+          {dismissReport}
         />{/if}
     </section>
   </div>

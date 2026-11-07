@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import type { ProposalDetail } from "./types";
-  import { record, relativeAge, rows, text, type ReviewProposal } from "./review-model";
+  import { plural, record, relativeAge, rows, text, type ReviewProposal } from "./review-model";
   import { date } from "./client";
 
   let { detail, noop }: { detail: ProposalDetail; noop: boolean } = $props();
@@ -18,13 +18,23 @@
   const retirement = $derived(record(p.retirement));
   const risk = $derived(record(retirement.continuityRisk));
   const review = $derived(record(p.review));
+  // A retirement carries its own judge and reason; show them where the proposal has none of its own.
+  const reasonText = $derived(p.reason || (p.retirement ? text(retirement.judgeReason, "") : ""));
+  const judgeText = $derived(
+    p.gateDecision?.outcome ?? (p.retirement && typeof retirement.judgeLabel === "string" ? retirement.judgeLabel : ""),
+  );
+  const severityLabel = (value: unknown) =>
+    (({ error: "Error", warn: "Warning", warning: "Warning", info: "Info" }) as Record<string, string>)[
+      text(value, "info")
+    ] ?? text(value, "info");
+  const missing = (value: string) => value === "Not recorded" || value === "Unavailable";
   const validationText = $derived(
     detail.validation == null
       ? "Unavailable"
       : validation.ok === false
         ? "Did not pass"
         : findings.length
-          ? `${findings.length} findings`
+          ? plural(findings.length, "finding")
           : "Passed",
   );
 </script>
@@ -49,7 +59,7 @@
 
 <section class="why" aria-labelledby="review-why">
   <h3 id="review-why">Why AKM proposed this</h3>
-  {#if p.reason}<p class="reason">{p.reason}</p>{:else}<p class="reason muted">No reason recorded.</p>{/if}
+  {#if reasonText}<p class="reason">{reasonText}</p>{:else}<p class="reason muted">No reason recorded.</p>{/if}
   <dl class="facts">
     <div>
       <dt>Process</dt>
@@ -57,19 +67,23 @@
     </div>
     <div>
       <dt>Waiting</dt>
-      <dd><span title={date(p.waitingSince)}>{relativeAge(p.waitingSince)}</span></dd>
+      <dd class={missing(relativeAge(p.waitingSince)) ? "missing" : undefined}>
+        <span title={date(p.waitingSince)}>{relativeAge(p.waitingSince)}</span>
+      </dd>
     </div>
     <div>
       <dt>Judge</dt>
-      <dd>{p.gateDecision?.outcome ?? "Not recorded"}</dd>
+      <dd class={judgeText ? undefined : "missing"}>{judgeText || "Not recorded"}</dd>
     </div>
     <div>
       <dt>Confidence</dt>
-      <dd>{typeof p.confidence === "number" ? p.confidence.toFixed(2) : "Not recorded"}</dd>
+      <dd class={typeof p.confidence === "number" ? undefined : "missing"}>
+        {typeof p.confidence === "number" ? p.confidence.toFixed(2) : "Not recorded"}
+      </dd>
     </div>
     <div>
       <dt>Validation</dt>
-      <dd>{validationText}</dd>
+      <dd class={missing(validationText) ? "missing" : undefined}>{validationText}</dd>
     </div>
   </dl>
   {#if p.gateDecision?.reason}<p class="judge muted small" title={p.gateDecision.reason}>
@@ -156,7 +170,7 @@
 {#snippet item(finding: Record<string, unknown>)}
   <li>
     <span class="badge" data-tone={finding.severity === "error" ? "fail" : "warn"}
-      >{text(finding.severity, "info")}</span
+      >{severityLabel(finding.severity)}</span
     >
     <strong>{text(finding.kind, "Finding")}</strong>
     <span>{text(finding.message)}</span>
@@ -193,6 +207,10 @@
     margin: 0 0 0 4px;
     font-weight: 550;
   }
+  .facts dd.missing {
+    color: var(--muted);
+    font-weight: 400;
+  }
   .judge {
     margin: var(--space-1) 0 0;
     display: -webkit-box;
@@ -217,7 +235,7 @@
     font-size: var(--text-s);
   }
   details {
-    margin-block: var(--space-2);
+    margin-block: var(--space-1) 0;
     font-size: var(--text-s);
   }
   .evidence-grid {

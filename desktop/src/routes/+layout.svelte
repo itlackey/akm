@@ -223,9 +223,9 @@
   <Toasts />
   <footer class="desktop-footer">
     <span class="build-label" title={metadata?.commit ? `Build ${metadata.commit}` : undefined}
-      ><span class="footer-host">{metadata?.hostname ?? "This computer"} ·</span> AKM Desktop <span
-        >{metadata?.version ?? ""}</span
-      >{#if metadata?.commit && metadata.commit !== "development"}<span class="build-commit">{metadata.commit}</span
+      ><span class="footer-host">{metadata?.hostname ?? "This computer"} ·</span> AKM Desktop
+      <span>{metadata?.version ?? ""}</span>{#if metadata?.commit && metadata.commit !== "development"}<span
+          class="build-commit">{metadata.commit}</span
         >{/if}</span
     >
     <label class="theme-picker"

@@ -23,7 +23,7 @@
 
 <!-- Reading order, visual and DOM: what it is, what to watch for, why it was proposed, then the change itself. -->
 <nav class="crumbs proposal-back" aria-label="Proposal breadcrumb">
-  <a href={proposalHref("", query)}><Icon name="arrow-left" size={16} /> Back to queue</a>
+  <a class="back" href={proposalHref("", query)}><Icon name="arrow-left" size={16} /><span>Back to queue</span></a>
 </nav>
 <header class="proposal-summary">
   <div class="proposal-title">
@@ -59,6 +59,15 @@
   .proposal-back {
     display: none;
   }
+  .back {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    text-decoration: none;
+  }
+  .back span {
+    text-decoration: underline;
+  }
   .proposal-summary {
     margin: 0 0 var(--space-2);
   }
@@ -82,7 +91,7 @@
   }
   section h3 {
     font-size: var(--text-m);
-    margin: var(--space-3) 0 var(--space-2);
+    margin: var(--space-2) 0 var(--space-2);
   }
   .wrap {
     overflow-wrap: anywhere;

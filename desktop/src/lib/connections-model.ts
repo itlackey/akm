@@ -25,10 +25,12 @@ export interface ConnectionRow extends ConnectionEntry {
   name: string;
   inherited?: boolean;
   usedBy?: string[];
+  /** `file` (this install's config.json) or `extends:<ref>`: the config that defines it. */
+  source?: string;
 }
 /** The configured entry of a row: `config.get()` adds the name, provenance and consumers, which are not the entry's. */
 export function entryOf(row: ConnectionRow): ConnectionEntry {
-  const { name: _name, inherited: _inherited, usedBy: _usedBy, ...entry } = row;
+  const { name: _name, inherited: _inherited, usedBy: _usedBy, source: _source, ...entry } = row;
   return entry;
 }
 export interface ModelRowDraft {
@@ -103,6 +105,8 @@ function parseObject(text: string): Record<string, unknown> | undefined {
     return undefined;
   }
 }
+/** A row with no model and no options is an alias left blank: it is not written and not checked. */
+const blank = (row: ModelRowDraft) => !row.model.trim() && !row.options.trim();
 const whole = (text: string) => /^[0-9]+$/.test(text.trim()) && Number(text) > 0;
 
 /** What stops a draft being sent, by field: `name`, `endpoint`, `apiKey`, `models`, `model-{n}`, `modelOptions-{n}`, `contextLength`, `timeoutMs`, `concurrency`, `options`. */
@@ -128,6 +132,7 @@ export function connectionErrors(
     errors.apiKey = "Enter a reference such as $OPENAI_API_KEY, not the key itself.";
   const seen = new Set<string>();
   draft.models.forEach((row, index) => {
+    if (blank(row)) return;
     const alias = row.alias.trim();
     if (!alias) errors[`alias-${index}`] = "Enter an alias.";
     else if (seen.has(alias)) errors[`alias-${index}`] = `“${alias}” is listed twice.`;
@@ -180,6 +185,7 @@ export function connectionEntry(draft: ConnectionDraft, original: ConnectionEntr
   if (!same(draft.models, base.models)) {
     const models: Record<string, ModelEntry> = {};
     for (const row of draft.models) {
+      if (blank(row)) continue;
       const alias = row.alias.trim();
       const before = original.models?.[alias];
       const baseRow = base.models.find((r) => r.alias === alias);
@@ -188,10 +194,8 @@ export function connectionEntry(draft: ConnectionDraft, original: ConnectionEntr
         continue;
       }
       const options = parseObject(row.options) ?? {};
-      models[alias] =
-        Object.keys(options).length || (before !== undefined && typeof before === "object")
-          ? { model: row.model.trim(), ...options }
-          : row.model.trim();
+      // Options added make a string model an object; options all cleared make it a plain string again.
+      models[alias] = Object.keys(options).length ? { model: row.model.trim(), ...options } : row.model.trim();
     }
     set("models", Object.keys(models).length ? models : undefined);
   }
@@ -211,9 +215,9 @@ export function connectionEntry(draft: ConnectionDraft, original: ConnectionEntr
   return Object.fromEntries(Object.entries(entry).sort(([a], [b]) => rank(a) - rank(b)));
 }
 
-/** The body of a save: the whole entry under its name (a set replaces the entry, so removed aliases go). */
+/** The body of a save: the whole entry under its name; akm replaces the entry, so removed aliases and options go. */
 export function connectionChange(name: string, entry: ConnectionEntry) {
-  return { set: { [`connections.${name.trim()}`]: JSON.stringify(entry) } };
+  return { name: name.trim(), entry };
 }
 
 /** `Models fast, balanced, reasoning, +2 · Key $OPENAI_API_KEY` for a list row. */
@@ -257,8 +261,13 @@ export function deletionImpact(
       defaultName !== row.name
         ? ""
         : rest.length === 1
-          ? `It is the default connection. Afterwards: ${rest[0]} becomes the default (the only connection left).`
-          : "It is the default connection. Afterwards no connection is the default; model work runs on the default harness, if one is set.",
+          ? `It is the default connection, used by model work that names none. Afterwards ${rest[0]} becomes the default (the only connection left).`
+          : "It is the default connection, used by model work that names none. Afterwards no connection is the default, so that work runs on the default harness, if one is set.",
     inherited: false,
   };
+}
+
+/** The default connection first, then the others in the order they were configured. */
+export function defaultFirst<T extends { name: string }>(rows: T[], defaultName: string | null): T[] {
+  return [...rows].sort((a, b) => Number(b.name === defaultName) - Number(a.name === defaultName));
 }

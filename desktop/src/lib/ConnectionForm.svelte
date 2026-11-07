@@ -24,7 +24,6 @@
     connectionEntry,
     connectionErrors,
     newConnectionDraft,
-    MAX_TIMEOUT_MS,
     type ConnectionDraft,
     type ConnectionEntry,
   } from "./connections-model";
@@ -48,7 +47,8 @@
     /** What akm said when it refused the save. */
     failure: string;
     cancelHref: string;
-    save: (name: string, entry: ConnectionEntry) => void;
+    /** Resolves to false when the save failed, so the form is dirty again. */
+    save: (name: string, entry: ConnectionEntry) => Promise<boolean> | void;
   } = $props();
 
   // The form is keyed by the connection, so what it starts from never changes while it is open.
@@ -57,14 +57,15 @@
   // svelte-ignore state_referenced_locally
   const base = $state.snapshot(original ? connectionDraft(name, original) : newConnectionDraft());
   let draft = $state<ConnectionDraft>($state.snapshot(base));
-  let submitted = $state(false);
+  let submitted = $state(false),
+    saving = $state(false);
   let form = $state<HTMLFormElement>();
 
   const errors = $derived(connectionErrors(draft, { existing, creating }));
   const problems = $derived(Object.keys(errors).length);
   const changes = $derived(connectionChanges(draft, base) + (creating && draft.name.trim() ? 1 : 0));
   $effect(() => {
-    workspace.guard.dirty = changes > 0;
+    workspace.guard.dirty = changes > 0 && !saving;
     workspace.guard.what = creating
       ? "This new connection has not been saved."
       : `Your changes to “${name}” have not been saved.`;
@@ -82,8 +83,9 @@
       form?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
       return;
     }
-    workspace.guard.dirty = false;
-    save(creating ? draft.name.trim() : name, connectionEntry(draft, original ?? {}));
+    saving = true;
+    if ((await save(creating ? draft.name.trim() : name, connectionEntry(draft, original ?? {}))) === false)
+      saving = false;
   }
   const shown = (key: string) => (submitted ? errors[key] : undefined);
 </script>
@@ -210,7 +212,7 @@
         >
       </div>
     </fieldset>
-    <div class="settings-grid">
+    <div class="numbers">
       <label class="field">
         <span class="field-label">Context length (tokens)</span>
         <input
@@ -222,6 +224,21 @@
         />
         <span class="field-hint">Leave empty if unknown.</span>{@render err("contextLength")}
       </label>
+      <div class="field">
+        <label class="field-label" for="conn-timeout">Timeout (milliseconds)</label>
+        <input
+          id="conn-timeout"
+          inputmode="numeric"
+          bind:value={draft.timeoutMs}
+          disabled={busy || draft.noTimeout}
+          aria-invalid={shown("timeoutMs") ? "true" : undefined}
+          aria-describedby={shown("timeoutMs") ? "err-timeoutMs" : undefined}
+        />
+        <label class="check-label"
+          ><input type="checkbox" bind:checked={draft.noTimeout} disabled={busy} /> No timeout</label
+        >
+        <span class="field-hint">Empty uses akm's default.</span>{@render err("timeoutMs")}
+      </div>
       <label class="field">
         <span class="field-label">Concurrency</span>
         <input
@@ -231,26 +248,8 @@
           aria-invalid={shown("concurrency") ? "true" : undefined}
           aria-describedby={shown("concurrency") ? "err-concurrency" : undefined}
         />
-        <span class="field-hint">Requests sent at the same time. Empty uses akm's default.</span>{@render err(
-          "concurrency",
-        )}
+        <span class="field-hint">Requests at the same time. Empty uses akm's default.</span>{@render err("concurrency")}
       </label>
-    </div>
-    <div class="field">
-      <label class="field-label" for="conn-timeout">Timeout (milliseconds)</label>
-      <input
-        id="conn-timeout"
-        inputmode="numeric"
-        bind:value={draft.timeoutMs}
-        disabled={busy || draft.noTimeout}
-        aria-invalid={shown("timeoutMs") ? "true" : undefined}
-        aria-describedby={shown("timeoutMs") ? "err-timeoutMs" : undefined}
-      />
-      <label class="check-label"
-        ><input type="checkbox" bind:checked={draft.noTimeout} disabled={busy} /> No timeout</label
-      >
-      <span class="field-hint">Empty uses akm's default (at most {MAX_TIMEOUT_MS.toLocaleString("en-US")}).</span
-      >{@render err("timeoutMs")}
     </div>
     <label class="field">
       <span class="field-label">Request options</span>
@@ -278,8 +277,8 @@
     </p>{/if}
   <div class="settings-footer sticky-footer">
     <span class="muted small"
-      >{changes ? `${changes} unsaved ${changes === 1 ? "change" : "changes"}` : "No unsaved changes"} · Saving does not test
-      the connection.</span
+      >{changes ? `${changes} unsaved ${changes === 1 ? "change" : "changes"}` : "No unsaved changes"} · Desktop does not
+      test connections. Saving only checks the configuration.</span
     >
     <div class="btn-row">
       <a class="btn btn-secondary" href={cancelHref}>Cancel</a><button
@@ -298,6 +297,27 @@
     max-width: 44rem;
     display: grid;
     gap: var(--space-4);
+  }
+  .connection-form :global(.settings-fields) {
+    padding: 0;
+  }
+  .numbers {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-3);
+    align-items: start;
+  }
+  @media (width < 48rem) {
+    .numbers {
+      grid-template-columns: 1fr;
+    }
+    .sticky-footer .btn-row {
+      width: 100%;
+    }
+    .sticky-footer .btn-row > :global(*) {
+      flex: 1;
+      justify-content: center;
+    }
   }
   .model-row {
     display: grid;

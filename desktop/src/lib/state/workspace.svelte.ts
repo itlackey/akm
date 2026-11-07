@@ -24,6 +24,8 @@ export const workspace = $state({
    * navigation, Back/Forward or closing the window asks first. `what` is the sentence the dialog shows.
    */
   guard: { dirty: false, what: "" },
+  /** Projects renamed in this session, old name to new, so Back to an old page finds the project. */
+  renamedProjects: {} as Record<string, string>,
   /** Where each section was last left, so the primary navigation returns to it. */
   sectionHref: {
     Home: "/",

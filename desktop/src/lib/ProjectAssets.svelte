@@ -8,6 +8,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { api, title } from "./client";
   import { navigate } from "./navigation";
+  import { plural } from "./review-model";
   import { scopeText, type Overview, type ProjectRow } from "./projects-model";
   import type { SearchResult } from "./library-model";
 
@@ -19,7 +20,8 @@
   const bundle = $derived(query.get("bundle") ?? "");
   const type = $derived(query.get("type") ?? "");
   const q = $derived(query.get("q") ?? "");
-  const limit = $derived(Math.min(MAX, Math.max(PAGE, Number(query.get("limit")) || PAGE)));
+  // Show more grows the list in place: no navigation, so the reader keeps their place and focus moves to the first new row.
+  let limit = $state(PAGE);
 
   let overview = $state<Overview | null>(null),
     result = $state<SearchResult | null>(null),
@@ -38,8 +40,17 @@
     }
   });
   $effect(() => {
-    const params = { q, type, bundle, limit: String(limit) };
+    void q;
+    void type;
+    void bundle;
+    untrack(() => {
+      limit = PAGE;
+      previousShown = 0;
+    });
     search = q;
+  });
+  $effect(() => {
+    const params = { q, type, bundle, limit: String(limit) };
     untrack(() => void run(params));
   });
   async function run(params: { q: string; type: string; bundle: string; limit: string }) {
@@ -54,7 +65,7 @@
       previousShown = next.hits.length;
       if (first > 0 && next.hits.length > first) {
         await tick();
-        root?.querySelectorAll<HTMLElement>(".asset-row a")[first]?.focus();
+        root?.parentElement?.querySelectorAll<HTMLElement>(".asset-row a")[first]?.focus();
       }
     } catch (cause) {
       if (mine === generation) error = (cause as Error).message;
@@ -68,7 +79,6 @@
       if (value) params.set(key, value);
       else params.delete(key);
     }
-    if (!("limit" in changes)) params.delete("limit");
     return `${base}/assets${params.size ? `?${params}` : ""}`;
   };
   const here = $derived(`${base}/assets${query.size ? `?${query}` : ""}`);
@@ -79,7 +89,10 @@
   const types = $derived([...new Set(selected.flatMap((b) => Object.keys(b.total?.byType ?? {})))].sort());
   const filtersText = $derived(
     scopeText(row.entry.filters)
-      .map((f) => `${f.key} = ${f.values.map((v) => v || `(no ${f.key})`).join(", ")}`)
+      .map((f) => {
+        const values = f.values.filter(Boolean);
+        return `${f.key} = ${values.join(", ")}${f.values.includes("") ? (values.length ? ` or no ${f.key}` : `no ${f.key}`) : ""}`;
+      })
       .join(" · "),
   );
   const preferText = $derived(
@@ -154,30 +167,33 @@
       <a class="btn" href={`${base}/edit`}>Edit project</a>
     </div>{/if}
 {:else}
-  <p role="status" class="sr-only">{loading ? "Loading assets…" : `${hits.length} assets shown`}</p>
-  <ul class="results" aria-busy={loading} class:dim={loading}>
-    {#each hits as hit (hit.ref)}<li class="asset-row">
+  <p role="status" class="sr-only">{loading ? "Loading assets…" : `${plural(hits.length, "asset")} shown`}</p>
+  <ul class="search-results" aria-busy={loading} class:dim={loading}>
+    {#each hits as hit (hit.ref)}<li class="search-result asset-row">
         <article>
           <h2>
-            <a href={`${base}/asset?ref=${encodeURIComponent(hit.ref)}&returnTo=${encodeURIComponent(here)}`}
+            <a
+              class="library-hit-content"
+              href={`${base}/asset?ref=${encodeURIComponent(hit.ref)}&returnTo=${encodeURIComponent(here)}`}
               >{title(hit)}</a
             >
           </h2>
           {#if hit.description}<p>{hit.description}</p>{/if}
-          <div class="muted small">
-            {hit.type} · {hit.origin || (hit.ref.includes("//") ? hit.ref.split("//")[0] : "")}
+          <div class="result-context">
+            {hit.origin || (hit.ref.includes("//") ? hit.ref.split("//")[0] : "Default bundle")} · {hit.type}
           </div>
         </article>
       </li>{/each}
   </ul>
   {#if hits.length}<p class="muted small">
-      {#if searching}{hits.length} {hits.length === 1 ? "match" : "matches"} from AKM.{:else}Showing {hits.length} of {n(
+      {#if searching}{plural(hits.length, "match", "matches")} from AKM.{:else}Showing {hits.length} of {n(
           eligible,
         )}.{/if}
-      {#if hits.length >= limit && limit < MAX && (searching || hits.length < eligible)}<a
-          class="btn btn-secondary"
-          href={href({ limit: String(limit + PAGE) })}>Show {PAGE} more</a
-        >{:else if hits.length >= MAX && eligible > MAX}Narrow the list with a bundle, type or search.{/if}
+      {#if hits.length >= limit && limit < MAX && (searching || hits.length < eligible)}<button
+          class="btn-secondary"
+          onclick={() => (limit = Math.min(MAX, limit + PAGE))}>Show {PAGE} more</button
+        >{:else if hits.length >= MAX && (searching || eligible > MAX)}Showing the first {MAX} of {n(eligible)}. Narrow
+        with a bundle, type or search.{/if}
     </p>{/if}
 {/if}
 
@@ -238,29 +254,51 @@
   .search input {
     min-width: 14rem;
   }
-  .results {
+  /* The same look as Library's search results. */
+  .search-results {
     list-style: none;
     margin: 0;
     padding: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
+    max-width: 800px;
   }
-  .results.dim {
+  .search-results.dim {
     opacity: 0.6;
   }
-  .asset-row {
-    padding: var(--space-3) var(--space-4);
+  .search-result {
+    display: flex;
+    gap: 12px;
+    margin: 0 0 20px;
+    padding: 0 0 18px;
+    border-bottom: 1px solid var(--border);
   }
-  .asset-row + .asset-row {
-    border-top: 1px solid var(--border);
+  .search-result:last-child {
+    border: 0;
   }
-  .asset-row h2 {
+  .search-result article {
+    min-width: 0;
+  }
+  .search-result h2 {
+    font-size: 21px;
+    font-weight: 600;
+    line-height: 1.4;
     margin: 0;
-    font-size: var(--text-m);
   }
-  .asset-row p {
-    margin: var(--space-1) 0;
-    font-size: var(--text-s);
+  .search-result h2 a {
+    text-decoration: none;
+    color: var(--accent);
+  }
+  .search-result h2 a:hover {
+    text-decoration: underline;
+  }
+  .search-result p {
+    font-size: 14px;
+    line-height: 1.7;
+    margin: 5px 0 0;
+    max-width: 72ch;
+  }
+  .result-context {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
   }
 </style>
