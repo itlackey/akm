@@ -25,9 +25,8 @@ import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/in
 import { countFeedbackBySignal, listFeedbackEventRows } from "../storage/repositories/metrics-repository";
 import { assetImprove } from "./asset-improve";
 import { bundleFileLocation, listBundleFiles } from "./bundle-files";
-import { automaticWriteTarget } from "./config";
 import { readFileRevision, readRecentCommits } from "./git-read";
-import { capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from "./readers";
+import { automaticWriteTarget, capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from "./readers";
 
 export { searchMisses } from "./misses";
 

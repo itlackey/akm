@@ -9,7 +9,6 @@ import { isDeepStrictEqual } from "node:util";
 import { assertUnsettable, listConfig, setConfigValue, unsetConfigValue } from "../commands/config-cli";
 import { isRecord } from "../core/common";
 import {
-  type AkmConfig,
   defaultConnection,
   inheritedConnectionsOf,
   loadConfig,
@@ -20,20 +19,8 @@ import { parseConfigText, readConfigText } from "../core/config/config-io";
 import { dropUnusableProjects, NO_PROJECT, type ProjectConfig } from "../core/config/schema/projects";
 import { UsageError } from "../core/errors";
 import { getConfigPath } from "../core/paths";
-import { resolveWorkingStashTarget } from "../core/write-source";
-import { configSource, preserveUnrelatedConfig, workingStashDir } from "./readers";
+import { automaticWriteTarget, configSource, preserveUnrelatedConfig } from "./readers";
 import { isSecretEnvName, redactForUi } from "./redact";
-
-/** Where an automatic write goes (no defaultWriteTarget): AKM_BUNDLE_DIR first, then the default bundle. */
-export function automaticWriteTarget(config: AkmConfig) {
-  try {
-    const { source } = resolveWorkingStashTarget(config, { requireWritable: false });
-    const path = source.path ?? null;
-    return { name: source.name, path, workingStash: path !== null && path === workingStashDir(config) };
-  } catch {
-    return null; // No AKM_BUNDLE_DIR and no usable default bundle: writes need an explicit target.
-  }
-}
 
 /** Names that would reach Object.prototype when used as a key. */
 const UNSAFE_NAMES = new Set(["__proto__", "constructor", "prototype"]);
