@@ -148,6 +148,28 @@ describe("config", () => {
     expect(text).toMatch(/projects\.none/);
   });
 
+  test("project names that are prototype keys warn and are ignored", () => {
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(String(args[0]));
+    });
+    const good = tmp("proj-proto");
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      projects: {
+        ["__proto__"]: { paths: [good] },
+        constructor: { paths: [good] },
+        prototype: {},
+        good: { paths: [good] },
+      },
+    });
+    resetConfigCache();
+    const projects = loadConfig().projects;
+    expect(Object.keys(projects ?? {})).toEqual(["good"]);
+    const text = warnings.join("\n");
+    for (const name of ["__proto__", "constructor", "prototype"]) expect(text).toContain(`projects.${name}`);
+  });
+
   test("reserved metadata keys, ~user paths and a path shared by two projects warn and are ignored", () => {
     const warnings: string[] = [];
     _setWarnSinkForTests((level, args) => {

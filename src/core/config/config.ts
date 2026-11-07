@@ -387,7 +387,13 @@ function dropRetiredOutputFormat(raw: Record<string, unknown>, sourcePath?: stri
  */
 function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePath?: string): AkmConfig {
   const chained = dropRetiredOutputFormat(
-    dropUnusableProjects(dropUnusableEntries(resolveExtendsChain(liftedLocalRaw, sourcePath), sourcePath), sourcePath),
+    dropUnusableProjects(
+      dropUnusableEntries(
+        resolveExtendsChain(dropUnusableProjects(liftedLocalRaw, sourcePath), sourcePath),
+        sourcePath,
+      ),
+      sourcePath,
+    ),
     sourcePath,
   );
   // Writing an `embedding` block says semantic search is wanted: a config that names no mode reads as "auto".

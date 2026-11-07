@@ -3258,7 +3258,7 @@ akm proposal extract --type claude --location /custom/path --session-id <id>
 | `--model <alias\|name>` | Model for this invocation: an alias or an exact name. |
 | `--strategy <name>` | Improve strategy supplying extract behavior; it never chooses where the model runs. |
 | `--user <id>` / `--agent <id>` / `--run <id>` / `--channel <name>` | Scope stamped on every proposal, as for `akm remember` (`scope_*` frontmatter). A scope the model writes is never used. |
-| `--project <name>` | Use this [project](#projects)'s write defaults (`write.user`, `agent`, `channel`, `metadata`, and `write.bundle` as the destination) instead of the one the working directory selects; `none` uses none. |
+| `--project <name>` | Use this [project](#projects)'s `write.user`, `agent`, `channel` and `metadata` for every session, instead of the project each session's own directory selects; `none` uses none. `write.bundle` is never used by extract. |
 
 `--type` and `--auto` are mutually exclusive; one of them is required.
 `--auto` iterates `getAvailableHarnesses()` — every harness with a detectable

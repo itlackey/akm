@@ -640,6 +640,10 @@ describe("reads", () => {
     const blank = await out(assets.search({ q: "deploy", limit: 10, scope: { channel: "" } }));
     expect(blank.hits.map((h: { ref: string }) => h.ref)).toEqual(viaOp.hits.map((h: { ref: string }) => h.ref));
 
+    // A non-string value is omitted too, never thrown on.
+    const odd = await out(assets.search({ q: "deploy", limit: 10, scope: { channel: 5, user: [null, " "] } as never }));
+    expect(odd.hits.map((h: { ref: string }) => h.ref)).toEqual(viaOp.hits.map((h: { ref: string }) => h.ref));
+
     const typed = await out(assets.search({ q: "deploy", type: "knowledge" }));
     expect(typed.hits.every((h: { type: string }) => h.type === "knowledge")).toBe(true);
     const named = await out(assets.search({ q: "deploy", bundle: "stash" }));

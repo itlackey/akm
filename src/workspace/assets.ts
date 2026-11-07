@@ -40,9 +40,9 @@ export interface SearchInput {
 /** Browse keeps its contract that blank scope values are omitted (an empty filter value would mean "without the key"). */
 function blanksOmitted(scope: ScopeFilters | undefined): ScopeFilters | undefined {
   if (!scope) return undefined;
-  const out: ScopeFilters = {};
+  const out: ScopeFilters = Object.create(null);
   for (const [key, given] of Object.entries(scope)) {
-    const kept = [given ?? []].flat().filter((value) => value.trim());
+    const kept = [given ?? []].flat().filter((value) => typeof value === "string" && value.trim());
     if (kept.length > 0) out[key] = kept;
   }
   return out;

@@ -20,6 +20,9 @@ type Dict = Record<string, unknown>;
 /** The name that means "no project" on `--project`. */
 export const NO_PROJECT = "none";
 
+/** Names that would collide with object prototype keys; reserved like `none`. */
+const PROTOTYPE_NAMES = new Set(["__proto__", "constructor", "prototype"]);
+
 const scopeValues = z.union([z.string(), z.array(z.string()).min(1)]);
 
 const WriteFields = {
@@ -134,11 +137,11 @@ export function dropUnusableProjects(raw: Dict, sourcePath?: string, report: Rep
     const { projects: _dropped, ...rest } = raw;
     return rest;
   }
-  const kept: Dict = {};
+  const kept: Dict = Object.create(null);
   for (const [name, entry] of Object.entries(raw.projects)) {
     const where = `projects.${name}`;
-    if (name === NO_PROJECT || !name.trim()) {
-      warn(where, `"${NO_PROJECT}" and empty names are reserved`);
+    if (name === NO_PROJECT || !name.trim() || PROTOTYPE_NAMES.has(name)) {
+      warn(where, `"${NO_PROJECT}", "__proto__", "constructor", "prototype" and empty names are reserved`);
     } else if (!isRecord(entry)) {
       warn(where, "it must be an object");
     } else {
