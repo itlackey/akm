@@ -6,7 +6,14 @@
 
 <script lang="ts">
   import { tick } from "svelte";
-  import { projectChange, projectDraft, projectSummary, type ProjectDraft, type ProjectRow } from "./projects-model";
+  import {
+    draftErrors,
+    projectChange,
+    projectDraft,
+    projectSummary,
+    type ProjectDraft,
+    type ProjectRow,
+  } from "./projects-model";
 
   let {
     projects,
@@ -30,7 +37,8 @@
     heading = $state<HTMLHeadingElement>();
 
   // A configured bundle the project names that is no longer registered stays selectable, so saving does not drop it.
-  const choices = $derived([...new Set([...bundles, ...(draft?.from ?? [])])]);
+  const choices = $derived([...new Set([...bundles, ...[editing?.entry.from ?? []].flat(), ...(draft?.from ?? [])])]);
+  const errors = $derived(draft ? draftErrors(draft) : []);
 
   async function open(row: ProjectRow | null) {
     editing = row;
@@ -40,7 +48,7 @@
     heading?.focus();
   }
   async function submit() {
-    if (draft && (await save(projectChange(draft, editing)))) draft = undefined;
+    if (draft && !errors.length && (await save(projectChange(draft, editing)))) draft = undefined;
   }
   async function remove() {
     if (editing && (await save({ unset: [editing.name] }))) draft = undefined;
@@ -57,11 +65,11 @@
     {#each rows as row, index}
       <div class="scope-row">
         <input bind:value={row.key} placeholder="Key, such as channel" aria-label={`${label} key ${index + 1}`} />
-        <input
+        <textarea
           bind:value={row.values}
-          placeholder="Values, separated by commas"
-          aria-label={`${label} values ${index + 1}`}
-        />
+          rows="2"
+          placeholder="One value per line"
+          aria-label={`${label} values ${index + 1}`}></textarea>
         <label class="check-label"
           ><input type="checkbox" bind:checked={row.absent} /> Also when the key is absent</label
         >
@@ -124,8 +132,12 @@
         </p>{/if}
       <label class="field">
         <span class="field-label">Name</span>
-        <input bind:value={draft.name} required autocomplete="off" spellcheck="false" />
-        <span class="field-hint">Renaming a project moves its settings to the new name.</span>
+        <input bind:value={draft.name} required disabled={editing?.inherited} autocomplete="off" spellcheck="false" />
+        <span class="field-hint"
+          >{editing?.inherited
+            ? "An inherited project keeps its name; saving creates a local project of that name."
+            : "Renaming a project moves its settings to the new name."}</span
+        >
       </label>
       <label class="field">
         <span class="field-label">Directories</span>
@@ -215,9 +227,10 @@
         </div>{/if}
     </div>
     <div class="settings-footer">
+      {#each errors as message}<p class="field-error" role="alert">{message}</p>{/each}
       <div class="btn-row">
         <button type="button" class="btn-secondary" disabled={busy} onclick={() => (draft = undefined)}>Cancel</button
-        ><button type="submit" disabled={busy}>{editing ? "Save project" : "Add project"}</button>
+        ><button type="submit" disabled={busy || errors.length > 0}>{editing ? "Save project" : "Add project"}</button>
       </div>
     </div>
   </form>

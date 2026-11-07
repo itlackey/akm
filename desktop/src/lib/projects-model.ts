@@ -45,37 +45,40 @@ export interface ProjectRow {
 
 const list = (value: string | string[] | undefined): string[] =>
   value === undefined ? [] : Array.isArray(value) ? value : [value];
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
+/** One value per line: a line never occurs inside a frontmatter value, and a comma can. */
 function scopeRows(scope: Scope | undefined): ScopeRow[] {
   return Object.entries(scope ?? {}).map(([key, value]) => {
     const values = list(value);
-    return { key, values: values.filter(Boolean).join(", "), absent: values.includes("") };
+    return { key, values: values.filter(Boolean).join("\n"), absent: values.includes("") };
   });
 }
-function scopeOf(rows: ScopeRow[]): Scope | undefined {
+/** A row that still reads as it did when loaded keeps the value it came from, whatever shape that had. */
+function scopeOf(rows: ScopeRow[], original: Scope | undefined): Scope | undefined {
   const entries = rows
     .map((row) => {
+      const key = row.key.trim();
+      if (original && key in original && same(scopeRows({ [key]: original[key] })[0], row))
+        return [key, original[key]] as const;
       const values = row.values
-        .split(",")
+        .split("\n")
         .map((value) => value.trim())
         .filter(Boolean);
-      return [row.key.trim(), row.absent ? [...values, ""] : values] as const;
+      const all = row.absent ? [...values, ""] : values;
+      return [key, all] as const;
     })
     .filter(([key, values]) => key && values.length);
   return entries.length
-    ? Object.fromEntries(entries.map(([key, values]) => [key, values.length === 1 ? values[0] : values]))
+    ? Object.fromEntries(
+        entries.map(([key, values]) => [key, Array.isArray(values) && values.length === 1 ? values[0] : values]),
+      )
     : undefined;
 }
 
-/** The project rows, in config order. A project whose every setting is inherited is read-only here. */
-export function projectRows(
-  projects: Record<string, ProjectEntry> | undefined,
-  entries: Array<{ path: string; source: string | null }>,
-): ProjectRow[] {
-  return Object.entries(projects ?? {}).map(([name, entry]) => {
-    const own = entries.filter((item) => item.path === `projects.${name}` || item.path.startsWith(`projects.${name}.`));
-    return { name, entry, inherited: own.length > 0 && own.every((item) => item.source?.startsWith("extends:")) };
-  });
+/** The project rows, in config order; `local` names the projects this install's config.json holds. */
+export function projectRows(projects: Record<string, ProjectEntry> | undefined, local: string[]): ProjectRow[] {
+  return Object.entries(projects ?? {}).map(([name, entry]) => ({ name, entry, inherited: !local.includes(name) }));
 }
 
 export function projectDraft(name: string, entry: ProjectEntry = {}): ProjectDraft {
@@ -94,52 +97,81 @@ export function projectDraft(name: string, entry: ProjectEntry = {}): ProjectDra
   };
 }
 
+/** What stops a draft being saved: a key twice in one list would silently overwrite itself. */
+export function draftErrors(draft: ProjectDraft): string[] {
+  const twice = (keys: string[]) =>
+    keys.map((key) => key.trim()).filter((key, i, all) => key && all.indexOf(key) !== i);
+  return [
+    ...twice(draft.filters.map((row) => row.key)).map((key) => `Filters name "${key}" twice.`),
+    ...twice(draft.prefer.map((row) => row.key)).map((key) => `Prefer names "${key}" twice.`),
+    ...twice(draft.metadata.map((row) => row.key)).map((key) => `Metadata names "${key}" twice.`),
+  ];
+}
+
 /**
- * The entry to write for a draft. Fields Desktop has no control for stay as they were in `original`; a metadata value
- * keeps its type (number or boolean) when the text is unchanged.
+ * The entry to write for a draft. A field the person did not change keeps the value it had in `original`, in its own
+ * shape (a one-element list, an empty object, the order of its values); fields Desktop has no control for stay too.
  */
 export function projectEntry(draft: ProjectDraft, original: ProjectEntry = {}): ProjectEntry {
-  const { paths: _paths, from: _from, filters: _filters, prefer: _prefer, write: oldWrite = {}, ...rest } = original;
-  const {
-    bundle: _bundle,
-    user: _user,
-    agent: _agent,
-    channel: _channel,
-    metadata: oldMetadata = {},
-    ...writeRest
-  } = oldWrite;
+  const { paths: oldPaths, from: oldFrom, filters: oldFilters, prefer: oldPrefer, write: oldWrite, ...rest } = original;
+  const base = projectDraft(draft.name, original);
   const text = (value: string) => value.trim() || undefined;
   const paths = draft.paths
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
-  const metadata = Object.fromEntries(
-    draft.metadata
-      .filter((row) => row.key.trim())
-      .map((row) => {
-        const key = row.key.trim();
-        return [key, key in oldMetadata && String(oldMetadata[key]) === row.value ? oldMetadata[key] : row.value];
-      }),
+  const from = draft.from.length === 1 ? draft.from[0] : draft.from;
+  const filters = same(draft.filters, base.filters) ? oldFilters : scopeOf(draft.filters, oldFilters);
+  const prefer = same(draft.prefer, base.prefer) ? oldPrefer : scopeOf(draft.prefer, oldPrefer);
+  const writeSame = (["bundle", "user", "agent", "channel", "metadata"] as const).every((key) =>
+    same(draft[key], base[key]),
   );
-  const write = {
-    ...writeRest,
-    ...(text(draft.bundle) ? { bundle: text(draft.bundle) } : {}),
-    ...(text(draft.user) ? { user: text(draft.user) } : {}),
-    ...(text(draft.agent) ? { agent: text(draft.agent) } : {}),
-    ...(text(draft.channel) ? { channel: text(draft.channel) } : {}),
-    ...(Object.keys(metadata).length ? { metadata } : {}),
-  };
-  const filters = scopeOf(draft.filters);
-  const prefer = scopeOf(draft.prefer);
-  return {
+  let write = oldWrite;
+  if (!writeSame) {
+    const { bundle: _b, user: _u, agent: _a, channel: _c, metadata: oldMetadata = {}, ...writeRest } = oldWrite ?? {};
+    const metadata = Object.fromEntries(
+      draft.metadata
+        .filter((row) => row.key.trim())
+        .map((row) => {
+          const key = row.key.trim();
+          return [key, key in oldMetadata && String(oldMetadata[key]) === row.value ? oldMetadata[key] : row.value];
+        }),
+    );
+    const next = {
+      ...writeRest,
+      ...(text(draft.bundle) ? { bundle: text(draft.bundle) } : {}),
+      ...(text(draft.user) ? { user: text(draft.user) } : {}),
+      ...(text(draft.agent) ? { agent: text(draft.agent) } : {}),
+      ...(text(draft.channel) ? { channel: text(draft.channel) } : {}),
+      ...(Object.keys(metadata).length ? { metadata } : {}),
+    };
+    write = Object.keys(next).length ? next : undefined;
+  }
+  const entry: ProjectEntry = {
     ...rest,
-    ...(paths.length ? { paths } : {}),
-    ...(draft.from.length ? { from: draft.from.length === 1 ? draft.from[0] : draft.from } : {}),
+    ...(same(draft.paths, base.paths)
+      ? oldPaths !== undefined
+        ? { paths: oldPaths }
+        : {}
+      : paths.length
+        ? { paths }
+        : {}),
+    ...(same(draft.from, base.from)
+      ? oldFrom !== undefined
+        ? { from: oldFrom }
+        : {}
+      : draft.from.length
+        ? { from }
+        : {}),
     ...(filters ? { filters } : {}),
     ...(prefer ? { prefer } : {}),
-    ...(Object.keys(write).length ? { write } : {}),
+    ...(write ? { write } : {}),
   };
+  // Keys keep the order the file had them in, so an unchanged entry serializes as it was.
+  const order = Object.keys(original);
+  return Object.fromEntries(Object.entries(entry).sort(([a], [b]) => rank(order, a) - rank(order, b)));
 }
+const rank = (order: string[], key: string) => (order.includes(key) ? order.indexOf(key) : order.length);
 
 /** The body of a save: the entry under its name, and the old name unset when the project was renamed. */
 export function projectChange(draft: ProjectDraft, original: { name: string; entry: ProjectEntry } | null) {

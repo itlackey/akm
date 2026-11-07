@@ -69,7 +69,10 @@
     drafts = { ...next, ...retained };
     resetKeys = new Set();
   }
-  $: projects = projectRows(config?.config.projects as Record<string, ProjectEntry> | undefined, config?.entries ?? []);
+  $: projects = projectRows(
+    config?.config.projects as Record<string, ProjectEntry> | undefined,
+    config?.localProjects ?? [],
+  );
   $: sourceMap = new Map(config?.entries.map((entry) => [entry.path, entry.source]) ?? []);
   $: editCounts = Object.fromEntries(groups.map((group) => [group.id, changed(group, initial, drafts)]));
   $: effectiveGroups = [...new Set((config?.entries ?? []).map((entry) => entry.path.split(".")[0]))].sort();

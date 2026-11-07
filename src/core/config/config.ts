@@ -1040,7 +1040,7 @@ function pruneUnchangedInheritedFields(before: unknown, after: unknown, localRaw
  * keys of a nested map follow `after`, which is how a mutation says where it
  * inserted one (`bundles`); the top level keeps the file's authored order. A
  * removal of a key the document does not hold is left undone and recorded in
- * `unremoved`, with the path of the key.
+ * `unremoved`, with the path of the key. A `projects` entry is one value, as an array is.
  */
 function applyEdit(
   target: Record<string, unknown>,
@@ -1057,6 +1057,12 @@ function applyEdit(
   for (const [key, value] of Object.entries(after)) {
     const was = before[key];
     if (isDeepStrictEqual(value, was)) continue;
+    // The reader takes a project whole by name, so one is written whole (an inherited project's unchanged fields
+    // included), never as the changed part of it.
+    if (at.length === 1 && at[0] === "projects") {
+      target[key] = value;
+      continue;
+    }
     const existing = target[key];
     // An entry the reader dropped (a connection with no endpoint) is absent from
     // `before` but present in the file: an edit to it adds to what the file has.

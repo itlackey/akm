@@ -322,6 +322,69 @@ describe("bundle settings and config", () => {
     expect(warnings.some((w) => w.includes("projects.hand.from"))).toBe(true);
   });
 
+  test("changeProjects writes a project whole, refuses what the file does not hold, and keeps projects unredacted", async () => {
+    await writableConfig();
+    const configPath = getConfigPath();
+    const saved = () => JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const base = path.join(ctx.storage.root, "base-config.json");
+    fs.writeFileSync(
+      base,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        projects: { base: { paths: ["/srv/base"], from: "team" }, "acme.corp": { paths: ["/srv/dot"] } },
+      }),
+    );
+    writeSandboxConfig({
+      ...loadConfig(),
+      extends: base,
+      projects: { acme: { paths: ["/srv/acme"] }, hand: { paths: ["relative", "/srv/hand"], from: 3 } },
+    });
+    const get = () =>
+      config.get() as unknown as { config: { projects: Record<string, unknown> }; localProjects: string[] };
+
+    // Inherited projects are reported as such, dotted names included; a local `acme` does not make `acme.corp` local.
+    expect(get().localProjects.sort()).toEqual(["acme", "hand"]);
+    expect(Object.keys(get().config.projects).sort()).toEqual(["acme", "acme.corp", "base", "hand"]);
+
+    // Editing an inherited project writes it whole: the unchanged fields stay, and the reload equals what was sent.
+    const sent = { paths: ["/srv/base"], from: ["team", "personal"] };
+    expect(config.changeProjects({ set: { base: sent } })).toEqual({ saved: true });
+    expect(saved().projects.base).toEqual(sent);
+    expect(get().config.projects.base).toEqual(sent);
+
+    // Editing a malformed local entry clears what akm ignored.
+    expect(config.changeProjects({ set: { hand: { paths: ["/srv/hand2"] } } })).toEqual({ saved: true });
+    expect(saved().projects.hand).toEqual({ paths: ["/srv/hand2"] });
+    expect(get().config.projects.hand).toEqual({ paths: ["/srv/hand2"] });
+
+    // A project the file does not hold cannot be unset or renamed, and nothing is written.
+    const before = fs.readFileSync(configPath, "utf8");
+    await expectUsage(() => config.changeProjects({ unset: ["acme.corp"] }), "TARGET_NOT_UPDATABLE");
+    await expectUsage(() => config.changeProjects({ unset: ["nope"] }), "TARGET_NOT_UPDATABLE");
+    await expectUsage(
+      () => config.changeProjects({ set: { renamed: { paths: ["/srv/dot"] } }, unset: ["acme.corp"] }),
+      "TARGET_NOT_UPDATABLE",
+    );
+    for (const name of ["__proto__", "constructor", "prototype"])
+      await expectUsage(() => config.changeProjects({ set: { [name]: {} } }));
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+
+    // A set that changes nothing neither rewrites the file nor backs it up.
+    const mtime = fs.statSync(configPath).mtimeMs;
+    expect(config.changeProjects({ set: { acme: { paths: ["/srv/acme"] } } })).toEqual({ saved: false });
+    expect(fs.statSync(configPath).mtimeMs).toBe(mtime);
+
+    // Values that look like secrets are not redacted: a save would write "[redacted]" back.
+    config.changeProjects({
+      set: { acme: { paths: ["/srv/acme"], filters: { env: "prod" }, write: { metadata: { tokenBudget: 5 } } } },
+    });
+    expect(get().config.projects.acme).toEqual({
+      paths: ["/srv/acme"],
+      filters: { env: "prod" },
+      write: { metadata: { tokenBudget: 5 } },
+    });
+  });
+
   test("config unset refuses an entry akm ignores, and does nothing without a config file", async () => {
     await seed();
     const configPath = getConfigPath();

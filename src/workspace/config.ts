@@ -5,6 +5,7 @@
 /** The effective config the owner can read, and the validated changes they can make to it. */
 
 import fs from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { assertUnsettable, listConfig, setConfigValue, unsetConfigValue } from "../commands/config-cli";
 import { isRecord } from "../core/common";
 import { type AkmConfig, loadConfig, mutateConfig, resetConfigCache } from "../core/config/config";
@@ -27,6 +28,9 @@ function automaticWriteTarget(config: AkmConfig) {
   }
 }
 
+/** Names that would reach Object.prototype when used as a key. */
+const UNSAFE_NAMES = new Set(["__proto__", "constructor", "prototype"]);
+
 interface ConfigEntry {
   path: string;
   value: unknown;
@@ -43,22 +47,31 @@ function configLeaves(value: unknown, prefix: string[], out: Array<{ path: strin
   out.push({ path: prefix, value });
 }
 
-/** What akm says about the malformed parts of `projects` in this install's config file, in its own words. */
-function projectWarnings(configPath: string): string[] {
+/**
+ * What akm says about the malformed parts of `projects` in this install's config file, in its own words, and the
+ * names of the projects that file holds (the others are only inherited).
+ */
+function localProjects(configPath: string): { warnings: string[]; local: string[] } {
   const warnings: string[] = [];
+  let local: string[] = [];
   try {
     const text = readConfigText(configPath);
-    if (text !== undefined)
-      dropUnusableProjects(parseConfigText(text, configPath), configPath, (_key, message) => warnings.push(message));
+    if (text !== undefined) {
+      const raw = parseConfigText(text, configPath);
+      const kept = dropUnusableProjects(raw, configPath, (_key, message) => warnings.push(message)).projects;
+      local = isRecord(kept) ? Object.keys(kept) : [];
+    }
   } catch {
     // An unreadable file fails the read above, not this one.
   }
-  return warnings;
+  return { warnings, local };
 }
 
 export function get() {
   const live = loadConfig();
   const effective = redactForUi(listConfig(live)) as Record<string, unknown>;
+  // Projects hold no credentials; redaction would turn a value such as `filters.env` into "[redacted]" and a save would write that back.
+  if (live.projects) effective.projects = live.projects;
   const leaves: Array<{ path: string[]; value: unknown }> = [];
   configLeaves(effective, [], leaves);
   const entries: ConfigEntry[] = leaves.map(({ path, value }) => ({
@@ -76,9 +89,11 @@ export function get() {
     .sort()
     .map((name) => ({ name, value: isSecretEnvName(name) ? "[redacted]" : (process.env[name] ?? "") }));
   const configPath = getConfigPath();
+  const projects = localProjects(configPath);
   return {
     path: configPath,
-    projectWarnings: projectWarnings(configPath),
+    projectWarnings: projects.warnings,
+    localProjects: projects.local,
     exists: fs.existsSync(configPath),
     config: effective,
     automaticWriteTarget: automaticWriteTarget(live),
@@ -126,8 +141,10 @@ export function change(input: { set?: Record<string, string>; unset?: string[] }
 
 /**
  * Add, replace, rename (set the new name and unset the old) and remove `projects` entries in one atomic write.
- * Each entry is a whole project; the complete config is validated as for `change`, so akm's schema decides what is
- * accepted. Names are not dotted config keys, so a name may contain a dot.
+ * Each entry is a whole project, written as sent (the reader takes a project whole by name); the complete config is
+ * validated as for `change`, so akm's schema decides what is accepted. Names are not dotted config keys, so a name
+ * may contain a dot. A project this install's config.json does not hold (inherited, or one akm ignores) cannot be
+ * unset or renamed here, as `akm config unset` refuses a key it cannot remove.
  */
 export function changeProjects(input: { set?: Record<string, ProjectConfig>; unset?: string[] }) {
   const set = input.set ?? {};
@@ -137,14 +154,25 @@ export function changeProjects(input: { set?: Record<string, ProjectConfig>; uns
   if (!Array.isArray(unset) || unset.some((name) => typeof name !== "string"))
     throw new UsageError("unset must be a list of project names.");
   for (const name of Object.keys(set)) {
-    if (!name.trim() || name === NO_PROJECT) throw new UsageError(`"${name}" cannot name a project.`);
+    if (!name.trim() || name === NO_PROJECT || UNSAFE_NAMES.has(name))
+      throw new UsageError(`"${name}" cannot name a project.`);
   }
   if (Object.keys(set).length === 0 && unset.length === 0) return { saved: false };
+  const held = localProjects(getConfigPath()).local;
+  for (const name of unset) {
+    if (!held.includes(name))
+      throw new UsageError(
+        `Project "${name}" is not in ${getConfigPath()}, so it cannot be removed or renamed here.`,
+        "TARGET_NOT_UPDATABLE",
+        "It is inherited from an extended config, or akm ignores it: edit the file that holds it.",
+      );
+  }
   const result = mutateConfig(
     (current) => {
-      const projects = { ...current.projects };
+      const projects: Record<string, ProjectConfig> = { ...current.projects };
       for (const name of unset) delete projects[name];
       Object.assign(projects, set);
+      if (isDeepStrictEqual(projects, current.projects ?? {})) return current;
       preserveUnrelatedConfig(current);
       return { ...current, projects };
     },

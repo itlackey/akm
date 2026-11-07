@@ -57,6 +57,8 @@ export interface SettingsConfig {
   entries: SettingsEntry[];
   /** What akm ignores in the `projects` of config.json, in its own words. */
   projectWarnings: string[];
+  /** The projects this install's config.json holds; any other is inherited. */
+  localProjects: string[];
   automaticWriteTarget: { name: string; path: string | null; workingStash: boolean } | null;
   connections: Array<{ name: string; default?: boolean; models?: Record<string, unknown> }>;
   harnesses: Array<{ name: string; platform?: string }>;

@@ -4,7 +4,14 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { projectChange, projectDraft, projectEntry, projectRows, projectSummary } from "../src/lib/projects-model.ts";
+import {
+  draftErrors,
+  projectChange,
+  projectDraft,
+  projectEntry,
+  projectRows,
+  projectSummary,
+} from "../src/lib/projects-model.ts";
 
 const acme = {
   paths: ["~/clients/acme", "/work/acme"],
@@ -30,7 +37,7 @@ test("a draft becomes a minimal entry: blanks are left out, one value stays a st
   draft.paths = " /work/a \n\n/work/b ";
   draft.from = ["one"];
   draft.filters = [
-    { key: " channel ", values: " acme ,, ", absent: true },
+    { key: " channel ", values: " acme \n\n a,b ", absent: true },
     { key: "team", values: "", absent: false },
     { key: "", values: "x", absent: false },
     { key: "only-absent", values: "", absent: true },
@@ -43,7 +50,7 @@ test("a draft becomes a minimal entry: blanks are left out, one value stays a st
   assert.deepEqual(projectEntry(draft), {
     paths: ["/work/a", "/work/b"],
     from: "one",
-    filters: { channel: ["acme", ""], "only-absent": "" },
+    filters: { channel: ["acme", "a,b", ""], "only-absent": "" },
     write: { channel: "acme", metadata: { team: "platform" } },
   });
 });
@@ -70,19 +77,46 @@ test("a rename sets the new name and unsets the old one; an unchanged name unset
   assert.deepEqual(projectChange(projectDraft("new"), null), { set: { new: {} } });
 });
 
-test("rows say which projects are only inherited, and summaries name what a project sets", () => {
-  const rows = projectRows({ mine: { paths: ["/a"] }, base: { paths: ["/b"] }, mixed: { paths: ["/c"], from: "x" } }, [
-    { path: "projects.mine.paths", source: "file" },
-    { path: "projects.base.paths", source: "extends:team.json" },
-    { path: "projects.mixed.paths", source: "extends:team.json" },
-    { path: "projects.mixed.from", source: "file" },
-  ]);
+test("saving an unchanged draft gives the entry back exactly, whatever its shape", () => {
+  const entries = [
+    { paths: ["/a"], from: ["one"], filters: { channel: ["", "acme"], team: ["x"], list: "a,b" }, prefer: {} },
+    { paths: [], write: {}, filters: {} },
+    { from: "one", write: { metadata: { n: 1 } }, extra: 1 },
+    {},
+  ];
+  for (const entry of entries) {
+    const entryOut = projectEntry(projectDraft("p", entry), entry);
+    assert.equal(JSON.stringify(entryOut), JSON.stringify(entry));
+  }
+  // Changing one row leaves the others as they were.
+  const entry = entries[0];
+  const draft = projectDraft("p", entry);
+  draft.filters[1].values = "y";
+  assert.deepEqual(projectEntry(draft, entry).filters, { channel: ["", "acme"], team: "y", list: "a,b" });
+});
+
+test("a key named twice in one list is a form error, not a silent overwrite", () => {
+  const draft = projectDraft("p");
+  draft.filters = [
+    { key: "team", values: "a", absent: false },
+    { key: " team", values: "b", absent: false },
+  ];
+  draft.metadata = [
+    { key: "k", value: "1" },
+    { key: "k", value: "2" },
+  ];
+  assert.deepEqual(draftErrors(draft), ['Filters name "team" twice.', 'Metadata names "k" twice.']);
+  assert.deepEqual(draftErrors(projectDraft("p", acme)), []);
+});
+
+test("rows are inherited unless the config file holds them, and summaries name what a project sets", () => {
+  const rows = projectRows({ acme: {}, "acme.corp": {}, base: {} }, ["acme"]);
   assert.deepEqual(
     rows.map((row) => [row.name, row.inherited]),
     [
-      ["mine", false],
+      ["acme", false],
+      ["acme.corp", true],
       ["base", true],
-      ["mixed", false],
     ],
   );
   assert.deepEqual(projectSummary(acme), [
