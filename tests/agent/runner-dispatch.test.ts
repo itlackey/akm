@@ -144,6 +144,22 @@ describe("runExecution routes each runner kind to its transport", () => {
     });
   });
 
+  test("confined agent work on a connection runs in a scratch directory; other runtime runs keep the caller's cwd", async () => {
+    const cwds: Array<string | undefined> = [];
+    const runSdk = async (_profile: AgentProfile, opts: { cwd?: string }): Promise<AgentRunResult> => {
+      cwds.push(opts.cwd);
+      return okResult("answer");
+    };
+    const user = built(lab, "p");
+    await runExecution({ ...user, options: { ...user.options, cwd: "/work/here" } }, { runSdk: runSdk as never });
+    // Model work that reaches the runtime without chat messages is confined.
+    const confined = { ...built(lab, "p", undefined, true), messages: undefined };
+    await runExecution(confined, { runSdk: runSdk as never });
+    expect(cwds[0]).toBe("/work/here");
+    expect(cwds[1]).toContain("akm-model-work-");
+    expect(cwds[1]).not.toBe(process.cwd());
+  });
+
   test("a connection running model work goes to chat with the connection and the user message", async () => {
     const calls: Array<{ connection: ChatCompletionConfig; messages: unknown }> = [];
     const result = await runExecution(built(lab, "llm-prompt", undefined, true), {

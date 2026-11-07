@@ -179,7 +179,7 @@ interface DispatchTarget {
   readonly runner: RunnerSpec;
   readonly profile?: AgentProfile;
   readonly inference?: LlmInference | null;
-  /** Model work that runs an agent: a CLI it spawns runs in a scratch directory. */
+  /** Model work that runs an agent: what it spawns, or runs on akm's runtime, runs in a scratch directory. */
   readonly confined?: boolean;
 }
 
@@ -199,9 +199,10 @@ async function dispatchRunner(
   } else {
     const connection = materializeConnection(runner, inference);
     if (connection.apiKey) secrets.push(connection.apiKey);
-    result = llm
-      ? await llm(connection, opts)
-      : await (seams.runSdk ?? agentRuntime.run)(profile ?? runtimeProfile(runner), opts, connection);
+    const runtime = (runOpts: RunAgentOptions) =>
+      (seams.runSdk ?? agentRuntime.run)(profile ?? runtimeProfile(runner), runOpts, connection);
+    // Confined, its commands (an `akm curate`, say) must not resolve a project from akm's own directory.
+    result = llm ? await llm(connection, opts) : await (confined ? inScratchDirectory(opts, runtime) : runtime(opts));
   }
   return redactResult(result, collectSensitiveValues(secrets));
 }
