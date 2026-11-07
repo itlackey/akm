@@ -48,6 +48,27 @@ export const DISTILL_LESSON_UPDATE_JSON_SCHEMA: Record<string, unknown> = {
   },
 };
 
+/**
+ * The figures and names in the memory that the lesson never mentions: numbers with their unit, dates, file and host
+ * names, identifiers and capitalised names. The writer skips many of these when left to find them (#1405), so they
+ * are found here, without the model, and handed over to place.
+ */
+export function memoryFactCandidates(memory: string, lessonBody: string): string[] {
+  const text = memory.slice(0, 3000);
+  const lesson = lessonBody.toLowerCase();
+  const found = new Set<string>();
+  const add = (re: RegExp, keep: (m: RegExpMatchArray) => string | undefined = (m) => m[0]) => {
+    for (const m of text.matchAll(re)) {
+      const hit = keep(m)?.replace(/[.,;:]+$/, "");
+      if (hit && !lesson.includes(hit.toLowerCase())) found.add(hit);
+    }
+  };
+  add(/\b\d[\d,.:/-]*(?: ?(?:%|[A-Za-z]+))?/g, (m) => m[0].trim());
+  add(/[\w-]+(?:[./][\w-]+)+|\b[a-z]+[A-Z]\w*|\b\w+_\w+|\b[a-z]+(?:-\w+)*-\w*\d\w*/g);
+  add(/(?<=[a-z,;(] )[A-Z][\w-]+(?: [A-Z][\w-]+)*/g);
+  return [...found].slice(0, 20);
+}
+
 export function buildLessonUpdatePrompt(memory: string, feedback: string[], candidates: UpdateCandidate[]): string {
   const lines = [
     "A lesson written from the memory below would repeat a lesson the library already holds. Do not write a new lesson. Extend the existing one with what the memory adds.",
@@ -63,6 +84,13 @@ export function buildLessonUpdatePrompt(memory: string, feedback: string[], cand
   for (const candidate of candidates) {
     lines.push(`\nExisting lesson ref: ${candidate.ref}`, "```", candidate.body.slice(0, 3000), "```");
   }
+  const named = candidates.flatMap((c) => memoryFactCandidates(memory, c.body));
+  if (named.length > 0)
+    lines.push(
+      "",
+      "Figures and names in the memory that the nearest lessons do not mention (place each one that belongs to the rule in new_facts and the body, written out as the memory gives it; skip any that does not):",
+      ...[...new Set(named)].slice(0, 20).map((fact) => `- ${fact}`),
+    );
   lines.push(
     "",
     "Pick the one existing lesson that already states the rule the memory gives. Write its whole body again with the new lines added:",
