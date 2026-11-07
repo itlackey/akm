@@ -107,14 +107,21 @@
     const element = shelf;
     if (!element) return;
     const root = document.documentElement;
-    const observer = new ResizeObserver(() => {
-      root.style.setProperty("--shelf-h", `${element.offsetHeight}px`);
+    // Toasts sit above the shelf wherever it is on screen: at the page end the sticky shelf is not at the viewport bottom.
+    const update = () => {
+      root.style.setProperty("--shelf-h", `${Math.max(0, innerHeight - element.getBoundingClientRect().top)}px`);
       // A control focused just above the sticky shelf scrolls clear of it.
       root.style.scrollPaddingBottom = `${element.offsetHeight + 8}px`;
-    });
+    };
+    const observer = new ResizeObserver(update);
+    addEventListener("scroll", update, { passive: true });
+    addEventListener("resize", update);
+    update();
     observer.observe(element);
     return () => {
       observer.disconnect();
+      removeEventListener("scroll", update);
+      removeEventListener("resize", update);
       root.style.removeProperty("--shelf-h");
       root.style.removeProperty("scroll-padding-bottom");
     };

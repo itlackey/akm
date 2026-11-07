@@ -192,7 +192,7 @@
       </div>
       <div class="btn-row">
         <button type="button" class="btn-quiet" disabled={busy || !canNext} onclick={next}
-          >Next<span class="next-context">&nbsp;{nextLabel}</span><Icon name="arrow-right" size={16} /></button
+          >Next<span class="next-context">{nextLabel}</span><Icon name="arrow-right" size={16} /></button
         >
         {#if current.status === "pending"}<button
             type="button"
