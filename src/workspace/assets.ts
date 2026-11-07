@@ -6,7 +6,7 @@
 
 import path from "node:path";
 import { akmRelated } from "../commands/read/related";
-import { akmSearch, normalizeScopeFilters, parseBeliefFilterMode } from "../commands/read/search";
+import { akmSearch, narrowSourcesToName, normalizeScopeFilters, parseBeliefFilterMode } from "../commands/read/search";
 import { akmShowUnified } from "../commands/read/show";
 import { parseBundleRef } from "../core/asset/asset-ref";
 import { parseMarkdownToc, uniqueHeadingSlugs } from "../core/asset/markdown";
@@ -15,7 +15,10 @@ import { loadConfig } from "../core/config/config";
 import { resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
 import { getDbPath } from "../core/paths";
+import { projectView, resolveProject } from "../core/projects";
 import type { ScopeFilters } from "../indexer/passes/metadata";
+import { resolveReadSources } from "../indexer/read-preflight";
+import { countBrowseEntries } from "../indexer/search/db-search";
 import { findSourceForPath, resolveSourceEntries } from "../indexer/search/search-source";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/index-entries-repository";
@@ -34,6 +37,12 @@ export interface SearchInput {
   bundle?: string;
   belief?: string;
   scope?: ScopeFilters;
+  /**
+   * A configured project (`akm search --project`): its `from` bundles, `filters` and `prefer` apply where this input does
+   * not name that kind itself (a `bundle` replaces `from`, a non-blank `scope` replaces `filters`). Absent: no project,
+   * and ordinary Library behavior. The response then carries `project`.
+   */
+  project?: string;
   limit?: number;
 }
 
@@ -48,19 +57,73 @@ function blanksOmitted(scope: ScopeFilters | undefined): ScopeFilters | undefine
   return out;
 }
 
-export function search(input: SearchInput) {
+export async function search(input: SearchInput) {
   const type = input.type || undefined;
   const bundle = input.bundle || undefined;
-  return akmSearch({
+  const project = input.project?.trim() ? resolveProject(loadConfig(), { project: input.project.trim() }) : undefined;
+  const scope = normalizeScopeFilters(blanksOmitted(input.scope));
+  const result = await akmSearch({
     query: (input.q ?? "").trim(),
     type,
     limit: clampLimit(input.limit, 20),
     // `--from <name>` narrows to one configured bundle; absent means every local bundle, as `akm search` does.
-    source: bundle ?? "local",
+    source: bundle ?? project?.from ?? "local",
     belief: parseBeliefFilterMode(input.belief || "current"),
-    filters: normalizeScopeFilters(blanksOmitted(input.scope)),
+    filters: scope && Object.keys(scope).length > 0 ? scope : project?.filters,
+    prefer: project?.prefer,
     readOnly: true,
   });
+  return project ? { ...result, project: projectView(project) } : result;
+}
+
+/**
+ * What a project resolves to, and what its bundles hold: the read bundles it selects (its `from`, else every local
+ * bundle), the write bundle, and per bundle how many assets a browse lists (`total`) and how many of those satisfy the
+ * project's `filters` (`eligible`), counted over the whole index. `prefer` only orders results; it never changes a count.
+ * Counts are `null` where the bundle cannot be read or nothing is indexed.
+ */
+export function projectOverview(input: { project: string }) {
+  const name = (input.project ?? "").trim();
+  if (!name) throw new UsageError("A project name is required.", "MISSING_REQUIRED_ARGUMENT");
+  const config = loadConfig();
+  const project = resolveProject(config, { project: name });
+  if (!project) throw new UsageError(`"${name}" selects no project.`, "INVALID_FLAG_VALUE");
+  const local = resolveReadSources(undefined, config).sources;
+  const selected =
+    project.from === undefined
+      ? local.map((source) => ({ name: source.registryId ?? source.path, source }))
+      : [project.from].flat().map((from) => ({ name: from, source: narrowSourcesToName(local, [from])[0] }));
+  const readable = selected.flatMap((bundle) => (bundle.source ? [bundle.source] : []));
+  let counts: ReturnType<typeof countBrowseEntries> | undefined;
+  const db = readable.length > 0 ? openReadonlyExistingDatabase(getDbPath()) : undefined;
+  if (db) {
+    try {
+      counts = countBrowseEntries(db, readable, project.filters, config.search?.defaultExcludeTypes ?? ["session"]);
+    } finally {
+      closeDatabase(db);
+    }
+  }
+  const writeBundle = project.write.bundle ?? config.defaultWriteTarget ?? null;
+  return {
+    project: { ...projectView(project), write: project.write },
+    fromImplicit: project.from === undefined,
+    preferImplicit: config.projects?.[name]?.prefer === undefined,
+    writeBundle: { name: writeBundle, implicit: project.write.bundle === undefined },
+    bundles: selected.map(({ name: bundle, source }) => {
+      const entry = Object.hasOwn(config.bundles ?? {}, bundle) ? config.bundles?.[bundle] : undefined;
+      const found = source ? counts?.[readable.indexOf(source)] : undefined;
+      return {
+        name: bundle,
+        configured: entry !== undefined,
+        enabled: entry === undefined ? false : entry.enabled !== false,
+        readable: source !== undefined,
+        writable: source?.writable ?? false,
+        type: source?.type ?? entry?.type ?? null,
+        total: found?.total ?? null,
+        eligible: found?.eligible ?? null,
+      };
+    }),
+  };
 }
 
 /** The durable `bundle//conceptId` of the indexed asset at `filePath`, the key feedback rows use. */

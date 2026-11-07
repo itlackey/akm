@@ -8,7 +8,14 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { assertUnsettable, listConfig, setConfigValue, unsetConfigValue } from "../commands/config-cli";
 import { isRecord } from "../core/common";
-import { type AkmConfig, loadConfig, mutateConfig, resetConfigCache } from "../core/config/config";
+import {
+  type AkmConfig,
+  defaultConnection,
+  inheritedConnectionsOf,
+  loadConfig,
+  mutateConfig,
+  resetConfigCache,
+} from "../core/config/config";
 import { parseConfigText, readConfigText } from "../core/config/config-io";
 import { dropUnusableProjects, NO_PROJECT, type ProjectConfig } from "../core/config/schema/projects";
 import { UsageError } from "../core/errors";
@@ -100,7 +107,13 @@ export function get() {
     config: effective,
     automaticWriteTarget: automaticWriteTarget(live),
     entries,
-    connections: named(effective.connections),
+    connections: named(effective.connections).map((connection) => ({
+      ...connection,
+      // Only an `extends` base defines it: it cannot be removed here, and a local save overrides it.
+      inherited: inheritedConnectionsOf(live).has(connection.name),
+    })),
+    // The connection named `default`, else the only one, else none: the rule every consumer without a `connection` follows.
+    defaultConnection: defaultConnection(live)?.name ?? null,
     harnesses: named(effective.harnesses),
     env,
   };
@@ -184,4 +197,38 @@ export function changeProjects(input: { set?: Record<string, ProjectConfig>; uns
   );
   resetConfigCache();
   return { saved: result.written };
+}
+
+/** Where configured work names a connection: the dotted paths of every `connection` key holding `name`. */
+function connectionReferences(value: unknown, name: string, prefix: string[] = []): string[] {
+  if (!isRecord(value)) return [];
+  return Object.entries(value).flatMap(([key, child]) => {
+    const path = [...prefix, key];
+    if (key === "connection" && child === name) return [path.join(".")];
+    return prefix.length === 0 && key === "connections" ? [] : connectionReferences(child, name, path);
+  });
+}
+
+/**
+ * Remove one connection through the same validated, atomic path as `akm config unset connections.<name>`, and say what
+ * the removal touches: the configured `connection` references to the name (which then fall back to the default
+ * connection, or fail where there is none), whether it was the default and which connection is after, and whether an
+ * `extends` base still defines it. A connection only a base defines is refused, as `unset` refuses it.
+ */
+export function removeConnection(input: { name: string }) {
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  if (!name) throw new UsageError("A connection name is required.", "MISSING_REQUIRED_ARGUMENT");
+  const before = loadConfig();
+  if (!Object.hasOwn(before.connections ?? {}, name)) throw new UsageError(`No connection named "${name}".`);
+  const references = connectionReferences(before, name);
+  const wasDefault = defaultConnection(before)?.name === name;
+  const { saved } = change({ unset: [`connections.${name}`] });
+  const after = loadConfig();
+  return {
+    saved,
+    references,
+    wasDefault,
+    defaultConnection: defaultConnection(after)?.name ?? null,
+    stillInherited: Object.hasOwn(after.connections ?? {}, name),
+  };
 }
