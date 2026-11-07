@@ -265,6 +265,7 @@ export function shapeSearchOutput(
     ? registryHits.map((hit) => shapeSearchHitForAgent(hit))
     : registryHits.map((hit) => shapeSearchHit(hit, detail));
   const searchMode = typeof result.searchMode === "string" ? result.searchMode : undefined;
+  const bundles = Array.isArray(result.bundles) ? result.bundles : undefined;
   const warnings = Array.isArray(result.warnings) && result.warnings.length > 0 ? result.warnings : undefined;
 
   if (forAgent) {
@@ -272,6 +273,7 @@ export function shapeSearchOutput(
       hits: shapedHits,
       ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
       ...(searchMode ? { searchMode } : {}),
+      ...(bundles ? { bundles } : {}),
       ...(warnings ? { warnings } : {}),
       ...(result.tip ? { tip: result.tip } : {}),
     };
@@ -286,6 +288,7 @@ export function shapeSearchOutput(
       ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
       ...(result.tip ? { tip: result.tip } : {}),
       ...(searchMode ? { searchMode } : {}),
+      ...(bundles ? { bundles } : {}),
       ...(warnings ? { warnings } : {}),
       ...(result.timing ? { timing: result.timing } : {}),
     };
@@ -295,6 +298,7 @@ export function shapeSearchOutput(
     hits: shapedHits,
     ...(shapedRegistryHits.length > 0 ? { registryHits: shapedRegistryHits } : {}),
     ...(searchMode ? { searchMode } : {}),
+    ...(bundles ? { bundles } : {}),
     ...(warnings ? { warnings } : {}),
     ...(result.tip ? { tip: result.tip } : {}),
   };

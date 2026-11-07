@@ -75,7 +75,7 @@ export async function akmSearch(input: {
   query: string;
   type?: AkmSearchType;
   limit?: number;
-  source?: SearchSource | string;
+  source?: SearchSource | string | string[];
   /**
    * Optional scope filter. Each present field narrows local hits to entries
    * whose `entry.scope.<key>` exactly equals the supplied value. Unfiltered
@@ -144,14 +144,17 @@ export async function akmSearch(input: {
   // as a named source (a `bundles` key). Validated early (before
   // resolveSourceEntries, which can throw STASH_DIR_NOT_FOUND) so that a bad
   // --from name always produces INVALID_SOURCE_VALUE regardless of stash state.
-  let namedSourceName: string | undefined;
+  let namedSourceNames: string[] | undefined;
   let source: SearchSource;
-  if (parsedSource !== "local" && parsedSource !== "registry" && parsedSource !== "all") {
-    namedSourceName = parsedSource as string;
-    assertNamedSourceExists(config, namedSourceName);
+  if (
+    Array.isArray(parsedSource) ||
+    (parsedSource !== "local" && parsedSource !== "registry" && parsedSource !== "all")
+  ) {
+    namedSourceNames = Array.isArray(parsedSource) ? parsedSource : [parsedSource];
+    for (const name of namedSourceNames) assertNamedSourceExists(config, name);
     source = "local";
   } else {
-    source = parsedSource as SearchSource;
+    source = parsedSource;
   }
 
   // A pure `--from registry` search needs no local stash at all (this is the
@@ -161,14 +164,13 @@ export async function akmSearch(input: {
   // to a local bundle. Without this, `resolveReadSources` (which can throw
   // STASH_DIR_NOT_FOUND via `resolveStashDir()`) would make registry-only
   // search fail on a machine with no stash ever configured.
-  const needsLocalSources = source !== "registry" || namedSourceName !== undefined;
+  const needsLocalSources = source !== "registry" || namedSourceNames !== undefined;
   let allSources = needsLocalSources ? resolveReadSources(undefined, config).sources : [];
 
   // When a named source was requested, narrow the sources list to just that entry.
   // `resolveSourceEntries` sets `registryId` to `entry.name` for each config source.
-  if (namedSourceName !== undefined) {
-    const ns = namedSourceName;
-    allSources = narrowSourcesToName(allSources, ns);
+  if (namedSourceNames !== undefined) {
+    allSources = narrowSourcesToName(allSources, namedSourceNames);
     // allSources may still be empty if the configured source dir doesn't exist on
     // disk (resolveSourceEntries skips non-existent dirs). Fall through to the
     // zero-sources guard below which emits a friendly warning.
@@ -219,7 +221,7 @@ export async function akmSearch(input: {
           // sources outside the narrowed set cannot consume candidate budgets.
           // Without this, the index (which spans every configured source)
           // would leak hits from sources the caller did not request.
-          restrictToSources: namedSourceName !== undefined,
+          restrictToSources: namedSourceNames !== undefined,
           includeExcludedTypes: input.includeSessions === true,
           readOnly: input.readOnly,
         });
@@ -235,6 +237,7 @@ export async function akmSearch(input: {
       schemaVersion: 1,
       bundleDir: stashDir,
       source,
+      ...bundlesField(namedSourceNames),
       hits: localHits,
       tip: hasResults ? undefined : localResult?.tip,
       warnings: warnings.length ? warnings : undefined,
@@ -291,6 +294,7 @@ export async function akmSearch(input: {
     schemaVersion: 1,
     bundleDir: stashDir,
     source,
+    ...bundlesField(namedSourceNames),
     hits: allStashHits,
     registryHits,
     tip: hasResults ? undefined : "No matching stash assets or registry entries were found.",
@@ -300,6 +304,11 @@ export async function akmSearch(input: {
   };
   maybeLogSearchEvent(input, query, response, usageSearchMode(localResult?.mode));
   return response;
+}
+
+/** Several `--from` bundles are reported back; a single one reports nothing extra, as before. */
+function bundlesField(names: string[] | undefined): { bundles?: string[] } {
+  return names !== undefined && names.length > 1 ? { bundles: names } : {};
 }
 
 /** Usage telemetry retains its historical semantic|keyword vocabulary. */
@@ -317,9 +326,13 @@ function maybeLogSearchEvent(
   logSearchEvent(query, response, mode, input.eventSource, input.attributionProjection);
 }
 
-/** The sources a named `--from <name>` selects: matched on `registryId` or path. */
-export function narrowSourcesToName<T extends { registryId?: string; path: string }>(sources: T[], name: string): T[] {
-  return sources.filter((s) => s.registryId === name || s.path === name);
+/** The sources the named `--from <name>` values select (any of them): matched on `registryId` or path. */
+export function narrowSourcesToName<T extends { registryId?: string; path: string }>(
+  sources: T[],
+  names: string | readonly string[],
+): T[] {
+  const wanted = typeof names === "string" ? [names] : names;
+  return sources.filter((s) => wanted.some((name) => s.registryId === name || s.path === name));
 }
 
 /**
@@ -491,6 +504,8 @@ function normalizeLimit(limit?: number): number {
  *   - `registry`        — search remote registries only
  *   - `all`             — search local and registries
  *   - Any named configured bundle — filters local results to that bundle only.
+ *     Repeated (an array), several bundles are searched as one set (OR); a
+ *     keyword cannot be mixed with bundle names.
  *     The named-source path is detected and resolved
  *     inside `akmSearch`; this function returns the raw name so the caller can
  *     pass it through to `akmSearch` which accepts `SearchSource | string`.
@@ -500,7 +515,21 @@ function normalizeLimit(limit?: number): number {
  * This allows the CLI to accept named sources without requiring config access
  * at parse time.
  */
-export function parseSearchSource(source: SearchSource | string | undefined): SearchSource | string {
+export function parseSearchSource(
+  source: SearchSource | string | string[] | undefined,
+): SearchSource | string | string[] {
+  if (Array.isArray(source)) {
+    const names = [...new Set(source)];
+    if (names.length <= 1) return parseSearchSource(names[0]);
+    const keyword = names.find((name) => name === "local" || name === "registry" || name === "all");
+    if (keyword !== undefined) {
+      throw new UsageError(
+        `--from "${keyword}" cannot be combined with other --from values. Repeat --from only for bundle names.`,
+        "INVALID_SOURCE_VALUE",
+      );
+    }
+    return names;
+  }
   if (source === "local" || source === "registry" || source === "all") return source;
   if (typeof source === "undefined") return "local";
   // Pass through unknown strings — they may be valid named sources.

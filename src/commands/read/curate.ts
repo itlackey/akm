@@ -111,6 +111,8 @@ export interface CurateResponse {
   items: CuratedItem[];
   warnings?: string[];
   searchMode?: SearchExecutionMode;
+  /** The bundles a repeated `--from` searched; absent for a single `--from`. */
+  bundles?: string[];
   tip?: string;
 }
 
@@ -277,7 +279,8 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
 
 function evidencePolicy(recall: RecallOptions): EvidencePolicy {
   const allSources = resolveReadSources().sources;
-  const named = recall.source && !["local", "all"].includes(recall.source) ? recall.source : undefined;
+  const named =
+    recall.source === undefined || recall.source === "local" || recall.source === "all" ? undefined : recall.source;
   return {
     sources: named === undefined ? allSources : narrowSourcesToName(allSources, named),
     restrictToSources: true,
@@ -359,6 +362,7 @@ export async function curateSearchResults(
     items,
     ...(result.warnings?.length ? { warnings: result.warnings } : {}),
     ...(result.searchMode ? { searchMode: result.searchMode } : {}),
+    ...(result.bundles ? { bundles: result.bundles } : {}),
     ...(result.tip ? { tip: result.tip } : {}),
   };
 }

@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm proposal extract` and `akm proposal new` take `--user`, `--agent`, `--run` and `--channel`, as `remember` does, and stamp that scope on the proposal; model output never sets scope (#1454).
 
 - `--filter key=` (an empty value) matches assets that do not carry `key`, combined with the key's other values by OR: `--filter channel=acme --filter channel=` keeps acme's notes plus every unscoped asset. `tag=` means no tags. Search, curate and `curate()` share the parser and matcher; the workspace browse still omits blank scope values (#1459).
+- `--from` is repeatable on `akm search` and `akm curate` (`--from team --from personal`), and `source` in `curate()` takes a string array: the named bundles are searched and ranked as one set (OR), with `--filter`, `--prefer` and `--type` still applied on top. A keyword (`local`, `registry`, `all`) cannot be mixed with bundle names. The response lists the `bundles` used when several were given; a single `--from` is unchanged (#1460).
 
 ### Fixed
 
