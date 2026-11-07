@@ -357,6 +357,13 @@ describe("bundle settings and config", () => {
     expect(saved().projects.hand).toEqual({ paths: ["/srv/hand2"] });
     expect(get().config.projects.hand).toEqual({ paths: ["/srv/hand2"] });
 
+    // A malformed local entry saved unchanged from the form (its effective value) is rewritten, and its warning is gone.
+    writeSandboxConfig({ ...saved(), projects: { ...saved().projects, bad: { paths: ["relative", "/srv/bad"] } } });
+    expect(get().config.projects.bad).toEqual({ paths: ["/srv/bad"] });
+    expect(config.changeProjects({ set: { bad: { paths: ["/srv/bad"] } } })).toEqual({ saved: true });
+    expect(saved().projects.bad).toEqual({ paths: ["/srv/bad"] });
+    expect((get() as unknown as { projectWarnings: string[] }).projectWarnings.join()).not.toContain("projects.bad");
+
     // A project the file does not hold cannot be unset or renamed, and nothing is written.
     const before = fs.readFileSync(configPath, "utf8");
     await expectUsage(() => config.changeProjects({ unset: ["acme.corp"] }), "TARGET_NOT_UPDATABLE");

@@ -91,7 +91,8 @@
 
 {#if warnings.length}<div class="notice notice-warn" role="status">
     <p>
-      akm ignores these parts of the projects in config.json. Remove a project, or edit the file, to clear a warning.
+      akm ignores these parts of the projects in config.json. Saving a project writes it as shown, which clears its
+      warnings; an entry akm ignores entirely is not listed, so edit the file to fix it.
     </p>
     <ul>
       {#each warnings as warning}<li>{warning}</li>{/each}

@@ -51,20 +51,22 @@ function configLeaves(value: unknown, prefix: string[], out: Array<{ path: strin
  * What akm says about the malformed parts of `projects` in this install's config file, in its own words, and the
  * names of the projects that file holds (the others are only inherited).
  */
-function localProjects(configPath: string): { warnings: string[]; local: string[] } {
+function localProjects(configPath: string): { warnings: string[]; local: string[]; raw: Record<string, unknown> } {
   const warnings: string[] = [];
   let local: string[] = [];
+  let raw: Record<string, unknown> = {};
   try {
     const text = readConfigText(configPath);
     if (text !== undefined) {
-      const raw = parseConfigText(text, configPath);
-      const kept = dropUnusableProjects(raw, configPath, (_key, message) => warnings.push(message)).projects;
+      const file = parseConfigText(text, configPath);
+      if (isRecord(file.projects)) raw = file.projects;
+      const kept = dropUnusableProjects(file, configPath, (_key, message) => warnings.push(message)).projects;
       local = isRecord(kept) ? Object.keys(kept) : [];
     }
   } catch {
     // An unreadable file fails the read above, not this one.
   }
-  return { warnings, local };
+  return { warnings, local, raw };
 }
 
 export function get() {
@@ -158,7 +160,7 @@ export function changeProjects(input: { set?: Record<string, ProjectConfig>; uns
       throw new UsageError(`"${name}" cannot name a project.`);
   }
   if (Object.keys(set).length === 0 && unset.length === 0) return { saved: false };
-  const held = localProjects(getConfigPath()).local;
+  const { local: held, raw } = localProjects(getConfigPath());
   for (const name of unset) {
     if (!held.includes(name))
       throw new UsageError(
@@ -167,16 +169,18 @@ export function changeProjects(input: { set?: Record<string, ProjectConfig>; uns
         "It is inherited from an extended config, or akm ignores it: edit the file that holds it.",
       );
   }
+  // A set is a no-op only when the file already holds exactly that entry, whatever akm makes of the file's own.
+  const writeProjects = Object.keys(set).filter((name) => !isDeepStrictEqual(raw[name], set[name]));
+  if (writeProjects.length === 0 && unset.length === 0) return { saved: false };
   const result = mutateConfig(
     (current) => {
       const projects: Record<string, ProjectConfig> = { ...current.projects };
       for (const name of unset) delete projects[name];
       Object.assign(projects, set);
-      if (isDeepStrictEqual(projects, current.projects ?? {})) return current;
       preserveUnrelatedConfig(current);
       return { ...current, projects };
     },
-    { absentNoop: Object.keys(set).length === 0 },
+    { absentNoop: Object.keys(set).length === 0, writeProjects },
   );
   resetConfigCache();
   return { saved: result.written };
