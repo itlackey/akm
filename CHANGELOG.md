@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261111] - 2026-11-06
+
 ### Added
 
 - `--filter` and `--prefer` (search and curate) select on any frontmatter key, such as `team=platform` or `project=openpalm`, and on `tag` (normalised like indexed tags), beside the scope keys. The values are used only for selection, never searched, embedded or shown. The first `akm index` after the upgrade indexes them for existing files (#1453).
