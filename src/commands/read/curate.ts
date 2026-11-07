@@ -25,6 +25,7 @@ import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { nonTaskInput } from "../../core/non-task-input";
+import type { ProjectView } from "../../core/projects";
 import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
 import { lookupBundleRef } from "../../indexer/indexer";
@@ -113,6 +114,8 @@ export interface CurateResponse {
   searchMode?: SearchExecutionMode;
   /** The bundles a repeated `--from` searched; absent for a single `--from`. */
   bundles?: string[];
+  /** The project whose defaults applied; absent when none did. */
+  project?: ProjectView;
   tip?: string;
 }
 

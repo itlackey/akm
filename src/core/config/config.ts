@@ -47,6 +47,7 @@ import { deepMergeConfig, isPlainObject } from "./deep-merge";
 import { documentEndpoint, planKeyMoves } from "./migrate-keys";
 import { modelsFileExists, readModelsFile, retireModelsFile } from "./models-file";
 import { type EngineTargets, rememberEngineTargets, rememberedEngineTargets } from "./retired-engines";
+import { dropUnusableProjects } from "./schema/projects";
 import { dropUnusableEntries, findUnusableEntries, type UnusableEntry } from "./unusable-entries";
 
 export { stripJsonComments } from "./config-io";
@@ -386,7 +387,7 @@ function dropRetiredOutputFormat(raw: Record<string, unknown>, sourcePath?: stri
  */
 function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePath?: string): AkmConfig {
   const chained = dropRetiredOutputFormat(
-    dropUnusableEntries(resolveExtendsChain(liftedLocalRaw, sourcePath), sourcePath),
+    dropUnusableProjects(dropUnusableEntries(resolveExtendsChain(liftedLocalRaw, sourcePath), sourcePath), sourcePath),
     sourcePath,
   );
   // Writing an `embedding` block says semantic search is wanted: a config that names no mode reads as "auto".
@@ -586,7 +587,11 @@ function resolveExtendsChain(
   let merged: Record<string, unknown> = {};
   for (let i = layers.length - 1; i >= 0; i--) {
     const layer = layers[i]!;
-    merged = deepMergeConfig(merged, i > 0 ? sanitizeInheritedConfig(layer.raw, layer.ref ?? String(i)) : layer.raw);
+    const raw = i > 0 ? sanitizeInheritedConfig(layer.raw, layer.ref ?? String(i)) : layer.raw;
+    const inherited = merged.projects;
+    merged = deepMergeConfig(merged, raw);
+    // A project is replaced whole by name: its fields are never merged across layers.
+    if (isPlainObject(inherited) && isPlainObject(raw.projects)) merged.projects = { ...inherited, ...raw.projects };
   }
   return merged;
 }

@@ -19,11 +19,12 @@
  * `--auto` runs multiple harnesses).
  */
 
-import { getStringArg, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
+import { getStringArg, PROJECT_ARG, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
 import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { resolveProject } from "../../core/projects";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { type AkmExtractResult, akmExtract, resolveStandaloneExtractPlan } from "./extract";
 
@@ -73,6 +74,7 @@ export const extractCommand = defineJsonCommand({
     ...SELECTION_ARGS,
     ...RETIRED_ENGINE_ARG,
     ...SCOPE_ARGS,
+    ...PROJECT_ARG,
     strategy: {
       type: "string",
       description: "Improve strategy supplying extract behavior.",
@@ -114,8 +116,12 @@ export const extractCommand = defineJsonCommand({
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     });
 
+    // The project is chosen per session from its own directory; `--project` names one for every session.
+    const projectName = getStringArg(args, "project");
+    resolveProject(config, { project: projectName });
     const scope = scopeFromArgs(args);
     const commonOptions = Object.freeze({
+      ...(projectName !== undefined ? { project: projectName } : {}),
       ...(Object.keys(scope).length > 0 ? { scope } : {}),
       ...(sessionId ? { sessionId } : {}),
       ...(location ? { location } : {}),

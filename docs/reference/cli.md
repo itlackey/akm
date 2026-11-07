@@ -576,7 +576,7 @@ akm search "deploy" --type script --limit 10
 akm search "lint" --from registry
 akm search "docker" --from all --detail full
 
-# Multi-tenant scope filtering:
+# Selection inside an authorised set (not tenant isolation; see below):
 akm search "deploy" --filter user=alice
 akm search "deploy" --filter user=alice --filter agent=claude
 
@@ -661,6 +661,7 @@ it.
 | `--from` | `local`, `registry`, `all`, bundle name | `local` | Where to search. A bundle name narrows to that bundle; repeat `--from` (`--from team --from personal`) to search several bundles as one ranked set (OR). A keyword cannot be mixed with bundle names, and an unknown name is a usage error. With several bundles the response carries `bundles` |
 | `--filter` | `<key>=<value>` | _(none)_ | Frontmatter filter — repeatable; a repeated key matches any of its values, different keys must all match. A key is any frontmatter key (`team`, `project`, `category`, ...), `tag` (matched the way the index normalises tags), or a scope key (`user`, `agent`, `run`, `channel`). Example: `--filter team=platform --filter user=alice`. An empty value (`--filter channel=`) matches assets that do not carry the key (`tag` always carries path-derived tags, so `tag=` matches almost no assets), and combines with other values of the key by OR: `--filter channel=acme --filter channel=` keeps acme's assets plus every unscoped one. Narrows the candidates before ranking. |
 | `--prefer` | `<key>=<value>` | _(none)_ | Frontmatter preference — same keys, repetition and matching as `--filter`, but a boost, not a limit: a matching asset's score is multiplied by 1.02 (browse and ref-prefix listings put matches first). It never drops or admits an asset; `--from` and `--filter` still decide which are eligible. Example: `--prefer channel=ops`. |
+| `--project` | project name, `none` | _(by directory)_ | Use this [project](#projects)'s defaults instead of the one the working directory selects; `none` uses no project. An unknown name is a usage error. A flag you pass replaces the project's value of the same kind. When a project applies, the response carries `project` and text output opens with one line, e.g. `Project akm (~/code/akm): prefer project=akm`. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--belief` | `all`, `current`, `historical` | `current` | Belief filter on any asset. `current` keeps unflagged/active/asserted assets; `historical` keeps deprecated/contradicted/superseded/archived assets. Labels do not establish truth. |
 | `--since` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or after this day: the `observed` date, else `updated`. Assets with neither are dropped. Applies before the candidate budgets, like `--filter`. Search only; registry hits are unaffected. |
@@ -750,6 +751,7 @@ akm curate "deploy the service" --filter user=alice --pack 4000
 | `--from` | `local`, `registry`, `all`, bundle name | `local` | Where to search before curating; repeat it to search several bundles (OR), as in `akm search` |
 | `--filter` | `<key>=<value>` | _(none)_ | Repeatable exact frontmatter filter (any key, `tag`, or user, agent, run, channel); a repeated key matches any of its values, different keys are AND-joined; an empty value (`key=`) matches assets without the key |
 | `--prefer` | `<key>=<value>` | _(none)_ | Repeatable frontmatter preference with the keys and matching of `--filter`; matching hits rank slightly higher (×1.02 on the score). It never drops or admits a hit and does not change which evidence curate accepts |
+| `--project` | project name, `none` | _(by directory)_ | Use this [project](#projects)'s defaults instead of the one the working directory selects; `none` uses no project. An unknown name is a usage error. A flag you pass replaces the project's value of the same kind. When a project applies, the response carries `project` and text output opens with one line, e.g. `Project akm (~/code/akm): prefer project=akm`. |
 | `--belief` | `all`, `current`, `historical` | `current` | Current keeps unflagged and active/asserted assets; historical keeps deprecated/contradicted/superseded/archived assets |
 | `--pack` | positive token budget | _(none)_ | Pack eligible local content in rank order; drop tail items before truncating the first oversized item |
 
@@ -837,14 +839,6 @@ human-authored orientation doc from a bundle's optional `.meta/` directory
 extensionless `.meta/<name>`). These files are never indexed, so they do not
 appear in `akm search`. See [Concepts](../guides/concepts.md) for the full
 convention.
-
-`--filter` accepts the same `<key>=<value>` shape as `akm search --filter` — one
-spelling for the scope-narrowing axis on both commands (`--scope` was removed
-in 0.9.0)
-(repeatable; valid keys: `user`, `agent`, `run`, `channel`). When supplied,
-the resolved asset's frontmatter `scope_*` keys must match every supplied
-filter. A mismatch (or absent scope) returns `NotFoundError` so the caller
-cannot accidentally read out-of-scope content.
 
 The default `show` JSON includes the asset body when applicable. Canonical
 `ref` is always present, at every `--detail` level, `agent` included. Absolute `path` and `editable` are
@@ -1831,6 +1825,25 @@ To make a named remote git bundle writable, pass `--writable` when adding it:
 akm bundle add git@github.com:org/skills.git --provider git --name my-skills --writable
 ```
 
+### Projects
+
+A project is a named entry under `projects` in the config file: the directories you
+work on it in, and what akm reads and writes there (see
+[configuration](configuration.md#projects)). One project applies to a call at most:
+`--project <name>` if given (`none`: no project; an unknown name is a usage error),
+else the configured path that most specifically contains the working directory,
+else none, and then nothing changes. It supplies defaults only for `akm search`,
+`akm curate` (and `curate()`), `akm remember`, `akm proposal extract` and
+`akm proposal new`; never for `show`, `improve`, model work or the scheduler. A flag you pass
+replaces the project's value of that kind (`--from`, `--filter`, `--prefer`,
+`--bundle`, `--user`, `--agent`, `--channel`); nothing is merged. `--pack` with
+`--format json` prints only the packed items, so it does not report the project
+(text output still opens with the project line). `proposal extract` takes a
+project's `write.user`, `agent`, `channel` and `metadata` but never its
+`write.bundle`, and chooses the project per session from the session's own
+directory (`--project` names one for every session). A project with no
+`prefer` prefers `project=<name>`, and its writes carry `project: <name>`.
+
 ### remember
 
 Record a memory. This writes a markdown file into `memories/` in the configured
@@ -1865,7 +1878,7 @@ akm remember "Found this snippet: \`curl -fsSL ... | bash\`" --tag ops --auto
 # Opt-in LLM enrichment (requires configured LLM endpoint; fails soft):
 akm remember "Long meeting notes..." --enrich
 
-# Multi-tenant / multi-agent scope:
+# Scope a memory to a user, agent, run or channel:
 akm remember "Use staging cluster for blue-green" \
   --user alice --agent claude --run run-42 --channel "#ops"
 
@@ -1899,7 +1912,8 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 | `--agent <id>` | Scope this memory to an agent id. Persisted as `scope_agent`. |
 | `--run <id>` | Scope this memory to a run id. Persisted as `scope_run`. |
 | `--channel <name>` | Scope this memory to a channel name. Persisted as `scope_channel`. |
-| `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working bundle. |
+| `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to the project's `write.bundle`, then `defaultWriteTarget`, then the working bundle. |
+| `--project <name>` | Use this [project](#projects)'s write defaults instead of the one the working directory selects; `none` uses none. |
 
 Pass the content as a quoted positional argument for short notes, or pipe
 markdown into stdin for longer memories.
@@ -1914,9 +1928,10 @@ helpers: if they derive nothing, the memory still writes successfully.
 **Scope flags** (`--user`, `--agent`, `--run`, `--channel`) are independent
 of the tag-required check. They write the four canonical top-level
 frontmatter keys (`scope_user`, `scope_agent`, `scope_run`, `scope_channel`)
-and a memory with only scope flags is valid (no tags required). Scope is the
-multi-tenant / multi-agent contract; the same shape is read back by
-`akm search --filter` and `akm curate --filter`.
+and a memory with only scope flags is valid (no tags required). Scope is
+selection inside a set the caller is already authorised to read; the same shape
+is read back by `akm search --filter` and `akm curate --filter`. Tenants are
+separated by deployment or by bundles, never by scope.
 
 **Cross-references** (`--xref`) implement the bundle back-linking conventions'
 provenance channel: the refs land in the memory's `xrefs:` frontmatter list,
@@ -3243,6 +3258,7 @@ akm proposal extract --type claude --location /custom/path --session-id <id>
 | `--model <alias\|name>` | Model for this invocation: an alias or an exact name. |
 | `--strategy <name>` | Improve strategy supplying extract behavior; it never chooses where the model runs. |
 | `--user <id>` / `--agent <id>` / `--run <id>` / `--channel <name>` | Scope stamped on every proposal, as for `akm remember` (`scope_*` frontmatter). A scope the model writes is never used. |
+| `--project <name>` | Use this [project](#projects)'s write defaults (`write.user`, `agent`, `channel`, `metadata`, and `write.bundle` as the destination) instead of the one the working directory selects; `none` uses none. |
 
 `--type` and `--auto` are mutually exclusive; one of them is required.
 `--auto` iterates `getAvailableHarnesses()` — every harness with a detectable
@@ -3329,6 +3345,7 @@ akm proposal new skill code-review --bundle team --task "PR-style review skill" 
 | `--model` | Override the model: an alias or an exact name |
 | `--timeout-ms` | Override the selected connection's or harness's timeout for this call |
 | `--user` / `--agent` / `--run` / `--channel` | Scope stamped on the proposal, as for `akm remember` (`scope_*` frontmatter). A scope the model writes is replaced by these flags (none given: removed), with one warning. |
+| `--project <name>` | Use this [project](#projects)'s write defaults (`write.user`, `agent`, `channel`, `metadata`, and `write.bundle` as the destination) instead of the one the working directory selects; `none` uses none. |
 
 Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 

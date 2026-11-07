@@ -25,6 +25,7 @@ function curate(
     prefer?: { user?: string; agent?: string; run?: string; channel?: string };
     belief?: "all" | "current" | "historical";
     format?: "text" | "json";
+    cwd?: string; project?: string;
   },
 ): Promise<string>;
 ```
@@ -51,6 +52,13 @@ function curate(
   await curate("deploy to prod", { source: "team", filters: { user: "alice" } });
   await curate("investigate the old deployment port", { belief: "historical" });
   ```
+- **Project.** `cwd` is the caller's working directory; with no `project`, the
+  [configured project](configuration.md#projects) whose path contains it (the
+  most specific one) supplies the defaults for `source`, `filters` and `prefer`
+  you leave out. `project` names one instead (`"none"`: no project), and an
+  unknown name rejects with `INVALID_FLAG_VALUE`. Without either, it uses the
+  process's directory. When a project applies, the result carries a `project`
+  field. `cwd` is never used to change the process's directory.
 - **Failure.** It rejects with an `Error` whose `message` is the CLI's error
   text and whose `code` is the CLI's error code (`MISSING_REQUIRED_ARGUMENT`,
   `INVALID_FLAG_VALUE`, `INVALID_CONFIG_FILE`, ...) wherever the CLI would have
@@ -62,8 +70,9 @@ function curate(
   unchanged afterwards. As with `akm curate`, the call records its usage
   event in `state.db`.
 - **Repeated calls.** Config is re-validated against `config.json` on every
-  call (its path, size and modification time), so an edit on disk is seen by
-  the next call exactly as a separate CLI run would see it. Database handles are
+  call (its path, size and modification time), so an edit to that file is seen by
+  the next call exactly as a separate CLI run would see it. A change only in a file
+  its `extends` names is not noticed until the config file itself changes. Database handles are
   opened and closed within each call. The local embedding model and the embedding
   cache are kept for the life of the process, which is what makes a warm call
   cheaper than a CLI run. Overlapping calls are safe. Under Bun the SQLite file

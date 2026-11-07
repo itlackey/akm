@@ -32,7 +32,7 @@ import { warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveEntryProvenance } from "../../indexer/installations";
-import { sameScope, scopeFromFrontmatter, stampScope } from "../../indexer/passes/metadata";
+import { fillMetadata, sameScope, scopeFromFrontmatter, stampScope } from "../../indexer/passes/metadata";
 import type { AgentFailureReason, AgentRunResult } from "../../integrations/agent";
 import { buildExecution, currentLayer, resolveExecution, shippedAlias } from "../../integrations/agent/execution";
 import {
@@ -64,6 +64,8 @@ export interface AkmProposeOptions {
   bundle?: string;
   /** Scope stamped on the proposal (`--user`, `--agent`, `--run`, `--channel`); the model never sets one. */
   scope?: StashEntryScope;
+  /** Frontmatter keys the model's content lacks, from the project's `write.metadata`; the model's own keys win. */
+  metadata?: Record<string, unknown>;
   stashDir?: string;
   agentConfig?: AkmConfig;
   ctx?: ProposalsContext;
@@ -354,11 +356,16 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
   const scope = options.scope ?? {};
   const parsedContent = parseFrontmatter(payload.content);
   const stamped = stampScope(parsedContent.data, scope);
-  const content = sameScope(scopeFromFrontmatter(parsedContent.data), scope)
-    ? payload.content
-    : assembleAsset(stamped.data, parsedContent.content);
+  const data = fillMetadata(stamped.data, options.metadata);
+  const content =
+    sameScope(scopeFromFrontmatter(parsedContent.data), scope) &&
+    Object.keys(data).length === Object.keys(stamped.data).length
+      ? payload.content
+      : assembleAsset(data, parsedContent.content);
   if (stamped.replaced) warn(`[akm] propose: ignored scope set by the model for ${ref}.`);
-  const frontmatter = payload.frontmatter ? stampScope(payload.frontmatter, scope).data : undefined;
+  const frontmatter = payload.frontmatter
+    ? fillMetadata(stampScope(payload.frontmatter, scope).data, options.metadata)
+    : undefined;
 
   const createInput: CreateProposalInput = {
     ref,

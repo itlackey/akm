@@ -68,6 +68,7 @@ export abstract class AbstractSessionLogProvider implements SessionLogHarness {
     startedAt?: number;
     endedAt?: number;
     projectHint?: string;
+    cwd?: string;
     title?: string;
   }): SessionSummary {
     return {
@@ -77,6 +78,7 @@ export abstract class AbstractSessionLogProvider implements SessionLogHarness {
       ...(input.startedAt !== undefined ? { startedAt: input.startedAt } : {}),
       ...(input.endedAt !== undefined ? { endedAt: input.endedAt } : {}),
       ...(input.projectHint ? { projectHint: input.projectHint } : {}),
+      ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.title ? { title: input.title } : {}),
     };
   }

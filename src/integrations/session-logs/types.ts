@@ -37,6 +37,8 @@ export interface SessionSummary extends SessionRef {
   endedAt?: number;
   /** Platform-specific project hint (claude: project dir; codex, opencode: working dir). */
   projectHint?: string;
+  /** The session's real working directory, when the platform records it (claude, codex, opencode). */
+  cwd?: string;
   /** Human-readable session title when the platform provides one. */
   title?: string;
 }
