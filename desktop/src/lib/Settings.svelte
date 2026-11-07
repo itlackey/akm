@@ -9,8 +9,10 @@
   import { api, date, pickFolder, type ApiError } from "./client";
   import SettingsBundleCard from "./SettingsBundle.svelte";
   import SettingsFieldControl from "./SettingsField.svelte";
+  import SettingsProjects from "./SettingsProjects.svelte";
   import Software from "./Software.svelte";
   import Icon from "./Icon.svelte";
+  import { projectRows, type ProjectEntry } from "./projects-model";
   import { configurationChanges, fieldText, provenance, valueAt } from "./settings-presenter";
   import type { SettingsBundleResponse, SettingsConfig, SettingsGroup } from "./settings-presenter";
   import type { Bundle } from "./types";
@@ -67,6 +69,10 @@
     drafts = { ...next, ...retained };
     resetKeys = new Set();
   }
+  $: projects = projectRows(
+    config?.config.projects as Record<string, ProjectEntry> | undefined,
+    config?.localProjects ?? [],
+  );
   $: sourceMap = new Map(config?.entries.map((entry) => [entry.path, entry.source]) ?? []);
   $: editCounts = Object.fromEntries(groups.map((group) => [group.id, changed(group, initial, drafts)]));
   $: effectiveGroups = [...new Set((config?.entries ?? []).map((entry) => entry.path.split(".")[0]))].sort();
@@ -278,9 +284,11 @@
           ? "No configuration change was needed."
           : path === "/config/set"
             ? "Settings saved."
-            : path === "/bundles/add"
-              ? "Bundle added and indexed."
-              : "Bundle changes saved.";
+            : path === "/config/projects"
+              ? "Projects saved."
+              : path === "/bundles/add"
+                ? "Bundle added and indexed."
+                : "Bundle changes saved.";
       if (path === "/config/set" && body && typeof body === "object") {
         const submitted = body as { set?: Record<string, unknown>; unset?: string[] };
         resetKeys = new Set([...Object.keys(submitted.set ?? {}), ...(submitted.unset ?? [])]);
@@ -309,6 +317,10 @@
     } finally {
       busy = false;
     }
+  }
+  async function saveProjects(body: unknown) {
+    await action("/config/projects", body);
+    return !error;
   }
   async function refresh() {
     await refreshBundles();
@@ -506,6 +518,9 @@
               aria-current={selectedGroup === group.id ? "page" : undefined}
               >{group.title}{#if editCounts[group.id]}<span aria-label="Unsaved changes">•</span>{/if}</a
             >{/each}<a
+            href="/settings/config?section=projects"
+            aria-current={selectedGroup === "projects" ? "page" : undefined}>Projects</a
+          ><a
             href="/settings/config?section=add-connection"
             aria-current={selectedGroup === "add-connection" ? "page" : undefined}>Add connection</a
           ><a
@@ -517,9 +532,10 @@
           >Settings section<select
             value={selectedGroup}
             on:change={(event) => navigate(`/settings/config?section=${event.currentTarget.value}`)}
-            >{#each groups as group}<option value={group.id}>{group.title}</option>{/each}<option value="add-connection"
-              >Add connection</option
-            ><option value="advanced-settings">Advanced</option></select
+            >{#each groups as group}<option value={group.id}>{group.title}</option>{/each}<option value="projects"
+              >Projects</option
+            ><option value="add-connection">Add connection</option><option value="advanced-settings">Advanced</option
+            ></select
           ></label
         >
       </aside>
@@ -567,6 +583,24 @@
               </div>
             </form>
           </section>{/each}
+        <div hidden={selectedGroup !== "projects"}>
+          <section class="settings-section configuration-group" aria-labelledby="projects">
+            <div class="settings-intro">
+              <h2 id="projects">Projects</h2>
+              <p>
+                The places you work. In a project's directories akm reads the bundles, filters and preferences set here,
+                and writes with its defaults.
+              </p>
+            </div>
+            <SettingsProjects
+              {projects}
+              bundles={listing?.bundles.map((bundle) => bundle.name) ?? bundles.map((bundle) => bundle.name)}
+              warnings={config.projectWarnings ?? []}
+              busy={busy || loading}
+              save={saveProjects}
+            />
+          </section>
+        </div>
         <div hidden={selectedGroup !== "add-connection"}>
           <section class="settings-section configuration-group" aria-labelledby="add-connection">
             <div class="settings-intro">

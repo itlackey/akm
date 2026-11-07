@@ -94,7 +94,9 @@ export function shapeCurateOutput(
     query: result.query,
     summary: result.summary,
     items: shapedItems,
+    ...(result.project ? { project: result.project } : {}),
     ...(typeof result.searchMode === "string" ? { searchMode: result.searchMode } : {}),
+    ...(Array.isArray(result.bundles) ? { bundles: result.bundles } : {}),
     ...(Array.isArray(result.warnings) && result.warnings.length > 0 ? { warnings: result.warnings } : {}),
     ...(result.tip ? { tip: result.tip } : {}),
   };

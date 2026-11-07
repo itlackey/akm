@@ -84,7 +84,7 @@ export class OpenCodeProvider extends AbstractSessionLogProvider implements Sess
         : readV1Session(db, this.name, ref.sessionId, ref.filePath),
     );
     return {
-      ref: this.sessionRef({ ...read.meta, filePath: ref.filePath }),
+      ref: this.sessionRef({ ...read.meta, cwd: read.meta.projectHint, filePath: ref.filePath }),
       events: read.events,
       inlineRefs: read.inlineRefs,
     };
@@ -99,7 +99,7 @@ export class OpenCodeProvider extends AbstractSessionLogProvider implements Sess
     const metas = this.#withDb(dbPath, isolated, (db) =>
       layout === "v2" ? listV2Sessions(db, sinceMs) : listV1Sessions(db, sinceMs),
     );
-    return metas.map((meta) => this.sessionRef({ ...meta, filePath: dbPath }));
+    return metas.map((meta) => this.sessionRef({ ...meta, cwd: meta.projectHint, filePath: dbPath }));
   }
 
   /** Run `use` on the SQLite file at `dbPath`, read-only (a private copy when `isolated`). */

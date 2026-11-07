@@ -50,6 +50,7 @@ import { ImproveConfigSchema } from "./schema/improve";
 import { IndexConfigSchema } from "./schema/index-config";
 import { OutputConfigSchema } from "./schema/output";
 import { CURRENT_CONFIG_VERSION, nonEmptyString, nonNegativeNumber } from "./schema/primitives";
+import { ProjectsSchema } from "./schema/projects";
 import { SchedulerConfigSchema } from "./schema/scheduler";
 import { SearchConfigSchema } from "./schema/search";
 import { SetupConfigSchema } from "./schema/setup";
@@ -132,6 +133,8 @@ export const AkmConfigShape = {
   defaultBundle: nonEmptyString.optional(),
   output: OutputConfigSchema.optional(),
   defaultWriteTarget: nonEmptyString.optional(),
+  // Named places the user works on (see ./schema/projects.ts); malformed pieces are dropped at load.
+  projects: ProjectsSchema.optional(),
   search: SearchConfigSchema.optional(),
   feedback: FeedbackConfigSchema.optional(),
   archiveRetentionDays: nonNegativeNumber.optional(),

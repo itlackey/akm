@@ -5,6 +5,7 @@
 import type { TargetRow } from "../commands/targets";
 import type { OkfProvenance } from "../core/adapter/types";
 import type { MarkdownTocEntry } from "../core/asset/markdown";
+import type { ProjectView } from "../core/projects";
 import type { ScopeFilters } from "../indexer/passes/metadata";
 import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
@@ -23,7 +24,7 @@ export interface RecallOptions {
   /** Search and curate default to current; explicit all/historical retain investigation. */
   belief?: BeliefFilterMode;
   type?: string;
-  source?: SearchSource | string;
+  source?: SearchSource | string | string[];
 }
 /** Actual local ranking mode, including a semantic attempt that failed at runtime. */
 export type SearchExecutionMode = "semantic" | "keyword" | "fts-fallback";
@@ -140,12 +141,16 @@ export interface SearchResponse {
   schemaVersion: number;
   bundleDir: string;
   source: SearchSource;
+  /** The bundles a repeated `--from` searched; absent for a single `--from`. */
+  bundles?: string[];
   hits: SearchHit[];
   registryHits?: RegistrySearchResultHit[];
   tip?: string;
   warnings?: string[];
   /** `fts-fallback` means semantic ranking was attempted but keyword search had to serve the result. */
   searchMode?: SearchExecutionMode;
+  /** The project whose defaults applied; absent when none did. */
+  project?: ProjectView;
   /** Timing counters in milliseconds */
   timing?: { totalMs: number; rankMs?: number; embedMs?: number };
 }

@@ -10,14 +10,20 @@ export interface CurateOptions {
   limit?: number;
   /** Asset type filter, same as `--type`. */
   type?: string;
-  /** Named bundle or local|registry|all, same as --from. */
-  source?: string;
-  /** Exact scope values, same as repeated --filter: a list matches any of its values; different keys must all match. */
-  filters?: { user?: string | string[]; agent?: string | string[]; run?: string | string[]; channel?: string | string[] };
+  /** Named bundle or local|registry|all, same as --from; an array of bundle names is a repeated --from (searched as one set). */
+  source?: string | string[];
+  /** Exact frontmatter values for any key, same as repeated --filter: a list matches any of its values; different keys must all match. An empty string matches assets without the key. */
+  filters?: Partial<Record<string, string | string[]>>;
+  /** Same keys and match rule as `filters`, as a ranking preference: matching hits rank first, nothing is dropped. */
+  prefer?: Partial<Record<string, string | string[]>>;
   /** Default current; labels do not establish factual truth. */
   belief?: "all" | "current" | "historical";
   /** Output format, same as `--format`. Default `"json"`, as in the CLI. */
   format?: "text" | "json";
+  /** The caller's working directory; it selects a configured project (default: the process's). */
+  cwd?: string;
+  /** A configured project to use instead of the one `cwd` selects, same as `--project`; `none` uses no project. */
+  project?: string;
 }
 
 /**

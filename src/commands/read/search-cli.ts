@@ -15,11 +15,14 @@
  */
 
 import { getParsedInvocation } from "../../cli/invocation";
-import { parsePositiveIntFlag } from "../../cli/parse-args";
+import { getStringArg, PROJECT_ARG, parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
+import type { ScopeFilters } from "../../core/adapter/types";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
+import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { projectView, type ResolvedProject, resolveProject, withProjectLine } from "../../core/projects";
 import { isoDay } from "../../core/time";
 import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { getOutputMode, type OutputMode } from "../../output/context";
@@ -61,9 +64,14 @@ export const searchCommand = defineJsonCommand({
         "Asset type filter — free-form, exact match, unvalidated; an unknown type returns no hits (default: any). Built-ins: skill, command, agent, knowledge, workflow, script, memory, lesson, task, session, fact, env, secret, instruction — plus any adapter-defined type (e.g. website, wiki-source, a wiki pageKind). Use workflow to find step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of results" },
-    from: { type: "string", description: "Search source (local|registry|all)", default: "local" },
+    from: {
+      type: "string",
+      description:
+        "Search source (local|registry|all) or a bundle name; repeat --from to search several bundles together (OR). Default: local, or the project's from.",
+    },
     filter: scopeFilterArg,
     prefer: scopePreferArg,
+    ...PROJECT_ARG,
     "include-proposed": {
       type: "boolean",
       description: 'Include entries with quality:"proposed" in the result set. Excluded by default.',
@@ -91,12 +99,15 @@ export const searchCommand = defineJsonCommand({
     const query = (args.query ?? "").trim();
     const type = args.type as string | undefined;
     const limit = parsePositiveIntFlag(args.limit ?? undefined);
-    const source = parseSearchSource(args.from);
     // Repeatable; citty exposes only the last `--filter` value, so read all
     // occurrences directly from argv (same pattern as `--tag`).
     const filterTokens = parseAllFlagValues("--filter");
-    const filters = parseScopeFilterFlags(filterTokens, "--filter");
-    const prefer = parseScopeFilterFlags(parseAllFlagValues("--prefer"), "--prefer");
+    const project = resolveProject(loadConfig(), { project: getStringArg(args, "project") });
+    const { source, filters, prefer } = withProjectDefaults(project, {
+      source: fromValues(args.from),
+      filters: parseScopeFilterFlags(filterTokens, "--filter"),
+      prefer: parseScopeFilterFlags(parseAllFlagValues("--prefer"), "--prefer"),
+    });
     const includeProposed = args["include-proposed"] === true;
     const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
     const includeSessions = args["include-sessions"];
@@ -118,9 +129,30 @@ export const searchCommand = defineJsonCommand({
       eventSource: resolveUsageEventSource(),
       attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
     });
-    output("search", result);
+    output("search", project ? { ...result, project: projectView(project) } : result);
   },
 });
+
+/**
+ * The read defaults a call runs with: each kind the caller gave replaces the
+ * project's value for that kind, and a kind neither gave stays at today's default.
+ */
+function withProjectDefaults(
+  project: ResolvedProject | undefined,
+  explicit: { source?: string | string[]; filters?: ScopeFilters; prefer?: ScopeFilters },
+) {
+  return {
+    source: parseSearchSource(explicit.source ?? project?.from),
+    filters: explicit.filters ?? project?.filters,
+    prefer: explicit.prefer ?? project?.prefer,
+  };
+}
+
+/** `--from` is repeatable; citty keeps only the last value, so read every occurrence from argv. */
+function fromValues(parsed: unknown): string | string[] | undefined {
+  const all = parseAllFlagValues("--from");
+  return all.length > 1 ? all : (parsed as string | undefined);
+}
 
 function parseDayFlag(raw: unknown, flag: string): string | undefined {
   if (raw === undefined) return undefined;
@@ -149,9 +181,14 @@ export const curateCommand = defineJsonCommand({
         "Asset type filter — free-form, exact match, unvalidated; an unknown type returns no hits (default: any). Built-ins: skill, command, agent, knowledge, workflow, script, memory, lesson, task, session, fact, env, secret, instruction — plus any adapter-defined type (e.g. website, wiki-source, a wiki pageKind). Use workflow to curate step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
-    from: { type: "string", description: "Search source (local|registry|all)", default: "local" },
+    from: {
+      type: "string",
+      description:
+        "Search source (local|registry|all) or a bundle name; repeat --from to search several bundles together (OR). Default: local, or the project's from.",
+    },
     filter: scopeFilterArg,
     prefer: scopePreferArg,
+    ...PROJECT_ARG,
     belief: { ...beliefArg, default: "current" },
     pack: {
       type: "string",
@@ -172,17 +209,20 @@ export const curateCommand = defineJsonCommand({
         query: args.query,
         type: args.type as string | undefined,
         limit: args.limit,
-        from: args.from,
+        from: fromValues(args.from),
         filters: parseAllFlagValues("--filter"),
         prefer: parseAllFlagValues("--prefer"),
         belief: args.belief,
+        project: getStringArg(args, "project"),
       },
       outputMode,
     );
     if (packBudget !== undefined) {
       const packed = await packCuratedHits(curated, packBudget);
       deliverRendered(
-        outputMode.format === "text" ? formatCuratePackText(packed) : JSON.stringify(packed.items, null, 2),
+        outputMode.format === "text"
+          ? withProjectLine(formatCuratePackText(packed), curated.project)
+          : JSON.stringify(packed.items, null, 2),
         outputMode.outputPath,
       );
       return;
@@ -203,12 +243,16 @@ export async function runCurate(
     query?: string;
     type?: string;
     limit?: string;
-    from?: string;
+    from?: string | string[];
     filters?: string[];
     prefer?: string[];
     belief?: string;
     /** In-process callers (an agent's tool) name the run's source; the CLI reads `AKM_EVENT_SOURCE`. */
     eventSource?: UsageEventSource;
+    /** The project to use (`--project`); absent: the one `cwd` selects. */
+    project?: string;
+    /** The working directory that selects a project; default: the process's. */
+    cwd?: string;
   },
   outputMode: Pick<OutputMode, "detail" | "shape">,
 ): Promise<CurateResponse> {
@@ -220,17 +264,24 @@ export async function runCurate(
     );
   }
   const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
-  return akmCurate({
+  const project = resolveProject(loadConfig(), { project: args.project, cwd: args.cwd });
+  const { source, filters, prefer } = withProjectDefaults(project, {
+    source: args.from,
+    filters: parseScopeFilterFlags(args.filters ?? [], "--filter"),
+    prefer: parseScopeFilterFlags(args.prefer ?? [], "--prefer"),
+  });
+  const curated = await akmCurate({
     query: args.query,
     type: args.type,
     limit: limitParsed && limitParsed > 0 ? limitParsed : 4,
-    source: parseSearchSource(args.from ?? "local"),
-    filters: parseScopeFilterFlags(args.filters ?? [], "--filter"),
-    prefer: parseScopeFilterFlags(args.prefer ?? [], "--prefer"),
+    source,
+    filters,
+    prefer,
     belief: parseBeliefFilterMode(args.belief ?? "current"),
     eventSource: args.eventSource ?? resolveUsageEventSource(),
     attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
   });
+  return project ? { ...curated, project: projectView(project) } : curated;
 }
 
 /** Human-readable rendering for `akm curate --pack`: concatenated content per hit under a `## <ref>` header. */

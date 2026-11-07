@@ -36,6 +36,7 @@ import {
 } from "../../core/file-lock";
 import type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
+import { type ResolvedProject, resolveProject } from "../../core/projects";
 import { collectSensitiveValues, redactErrorBody } from "../../core/redaction";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { resolveTypeConventions, typeConventionRef } from "../../core/standards/resolve-type-conventions";
@@ -46,7 +47,7 @@ import { warn, warnVerbose } from "../../core/warn";
 import { noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import { stampScope } from "../../indexer/passes/metadata";
+import { fillMetadata, stampScope } from "../../indexer/passes/metadata";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { collectDispatchSensitiveValues } from "../../integrations/agent/runner-dispatch";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
@@ -189,6 +190,8 @@ export interface AkmExtractOptions {
   sourceRun?: string;
   /** Scope stamped on every proposal (`--user`, `--agent`, `--run`, `--channel`); the model never sets one. */
   scope?: StashEntryScope;
+  /** `--project`: the project for every session; absent, each session's own directory selects one. */
+  project?: string;
   /** The active improve profile (its extract toggle gates extract as an improve stage only). */
   improveProfile?: ImproveProfileConfig;
   signal?: AbortSignal;
@@ -341,8 +344,10 @@ function buildCandidateProposal(
   sourceRef: SessionSummary,
   sessionAssetRef?: string,
   scope: StashEntryScope = {},
+  projectName?: string,
+  metadata?: Record<string, unknown>,
 ): { ref: string; content: string; frontmatter: Record<string, unknown> } {
-  const ref = deriveExtractCandidateRef(candidate, sourceRef);
+  const ref = deriveExtractCandidateRef(candidate, sourceRef, projectName);
   // Complete a description the model cut mid-sentence (no-op for valid ones).
   const description = repairTruncatedDescription(candidate.description, candidate.body);
   const fm: Record<string, unknown> = {
@@ -357,7 +362,7 @@ function buildCandidateProposal(
     fm.provenance = { sources: [{ resource: `${sourceRef.harness}:${sourceRef.sessionId}` }] };
   }
   if (candidate.when_to_use) fm.when_to_use = candidate.when_to_use;
-  const stamped = stampScope(fm, scope).data;
+  const stamped = fillMetadata(stampScope(fm, scope).data, metadata);
   return { ref, content: assembleAsset(stamped, candidate.body), frontmatter: stamped };
 }
 
@@ -370,11 +375,29 @@ function canonicalSegment(value: string): string {
     .replace(/^-|-$/g, "");
 }
 
-export function deriveExtractCandidateRef(candidate: ExtractCandidate, sourceRef: SessionSummary): string {
+/** The project a session runs under: `--project`, else the one its recorded working directory is in. */
+function sessionProject(run: Pick<ExtractRun, "config" | "options">, ref: SessionSummary): ResolvedProject | undefined {
+  const { project } = run.options;
+  if (project !== undefined) return resolveProject(run.config, { project });
+  return ref.cwd ? resolveProject(run.config, { cwd: ref.cwd }) : undefined;
+}
+
+/** The scope flags, with the project's `write` scope filling the ones not given. */
+function sessionScope(project: ResolvedProject | undefined, flags: StashEntryScope = {}): StashEntryScope {
+  const { user, agent, channel } = project?.write ?? {};
+  return { ...(user ? { user } : {}), ...(agent ? { agent } : {}), ...(channel ? { channel } : {}), ...flags };
+}
+
+/** `projectName` (a configured project) names the memory folder; without it, the platform's project hint does. */
+export function deriveExtractCandidateRef(
+  candidate: ExtractCandidate,
+  sourceRef: SessionSummary,
+  projectName?: string,
+): string {
   const leaf = candidate.name.split("/").map(canonicalSegment).filter(Boolean).at(-1) ?? "extracted-insight";
   if (candidate.type === "memory" || candidate.type === "lesson") {
-    const projectName = sourceRef.projectHint?.split(/[\\/]/).filter(Boolean).at(-1);
-    const scope = projectName ? canonicalSegment(projectName) : "";
+    const folder = projectName ?? sourceRef.projectHint?.split(/[\\/]/).filter(Boolean).at(-1);
+    const scope = folder ? canonicalSegment(folder) : "";
     return `${candidate.type === "memory" ? "memories" : "lessons"}/${scope ? `${scope}/` : ""}${leaf}`;
   }
   return `knowledge/${leaf}`;
@@ -636,7 +659,12 @@ async function maybeWriteSessionAsset(
   if (!sessionIndexing.enabled || run.dryRun) return {};
   if (!sessionMeetsDurationGate(data, sessionIndexing.minDurationMinutes)) return {};
   try {
-    const result = await writeSessionAsset(data, run.stashDir, (summaryData) => sessionIndexing.generate(summaryData));
+    const result = await writeSessionAsset(
+      data,
+      run.stashDir,
+      (summaryData) => sessionIndexing.generate(summaryData),
+      sessionProject(run, data.ref)?.name,
+    );
     if (!result.written) return {};
     // A standalone extract has no post-loop reindex to pick the file up.
     if (result.filePath) await indexWrittenAssets(run.stashDir, [result.filePath]);
@@ -658,6 +686,8 @@ async function processSession(
   const { harness, stashDir, sourceRun, dryRun, options } = run;
   const { data, filtered, contentHash: hash } = gate;
   const base = { preFilter: preFilterStats(filtered), contentHash: hash };
+  const project = sessionProject(run, data.ref);
+  const projectName = project?.name;
   const extraction = await extractFromSession(
     run,
     buildExtractPrompt({
@@ -721,7 +751,7 @@ async function processSession(
         for (const row of listImproveLedgerRows(db, stashDir, ["extract"]))
           ledger.set(ledgerKey(row.source, row.ref), row);
         for (const candidate of payload.candidates) {
-          const row = ledger.get(ledgerKey("extract", deriveExtractCandidateRef(candidate, data.ref)));
+          const row = ledger.get(ledgerKey("extract", deriveExtractCandidateRef(candidate, data.ref, projectName)));
           if (row?.outcome !== "accepted" || !row.proposalId) continue;
           const fm = getStateProposal(db, row.proposalId, stashDir)?.payload.frontmatter ?? {};
           const sources = (fm.provenance as { sources?: Array<{ resource?: unknown }> } | undefined)?.sources;
@@ -736,7 +766,14 @@ async function processSession(
     }
     const nowIso = new Date().toISOString();
     for (const candidate of payload.candidates) {
-      const built = buildCandidateProposal(candidate, data.ref, sessionAsset.sessionAssetRef, options.scope);
+      const built = buildCandidateProposal(
+        candidate,
+        data.ref,
+        sessionAsset.sessionAssetRef,
+        sessionScope(project, options.scope),
+        projectName,
+        project?.write.metadata,
+      );
       const ledgerRow = ledger.get(ledgerKey("extract", built.ref));
       if (isLedgerBlocked(ledgerRow, nowIso)) {
         blockedCount += 1;

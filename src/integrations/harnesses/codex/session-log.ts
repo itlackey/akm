@@ -182,6 +182,7 @@ export class CodexProvider extends AbstractSessionLogProvider implements Session
           startedAt: meta?.startedAt ?? stat.ctimeMs,
           endedAt: stat.mtimeMs,
           projectHint: meta?.cwd,
+          cwd: meta?.cwd,
         });
       },
     });
@@ -212,6 +213,7 @@ export class CodexProvider extends AbstractSessionLogProvider implements Session
         startedAt: meta?.startedAt ?? events[0]?.ts ?? stat.ctimeMs,
         endedAt: events[events.length - 1]?.ts ?? stat.mtimeMs,
         projectHint: meta?.cwd,
+        cwd: meta?.cwd,
       }),
       events,
       inlineRefs,

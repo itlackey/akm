@@ -120,8 +120,10 @@ describe("parseScopeFilterFlags", () => {
     expect(Object.entries(parseScopeFilterFlags(["__proto__=x"], "--filter") ?? {})).toEqual([["__proto__", ["x"]]]);
   });
 
-  test("rejects empty values", () => {
-    expect(() => parseScopeFilterFlags(["user="], "--filter")).toThrow(/non-empty value/);
+  test("an empty value is kept: it selects assets without the key", () => {
+    expect(Object.entries(parseScopeFilterFlags(["user=", "user=alice"], "--filter") ?? {})).toEqual([
+      ["user", ["", "alice"]],
+    ]);
   });
 
   test("returns undefined for empty input", () => {

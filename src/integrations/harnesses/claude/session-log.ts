@@ -164,6 +164,7 @@ export class ClaudeCodeProvider extends AbstractSessionLogProvider implements Se
           startedAt: peek.firstTsMs ?? stat.ctimeMs,
           endedAt: peek.lastTsMs ?? stat.mtimeMs,
           projectHint: path.basename(path.dirname(jsonlPath)),
+          cwd: peek.cwd,
           title: peek.title,
         });
       },
@@ -206,6 +207,7 @@ export class ClaudeCodeProvider extends AbstractSessionLogProvider implements Se
         startedAt: events[0]?.ts ?? stat.ctimeMs,
         endedAt: events[events.length - 1]?.ts ?? stat.mtimeMs,
         projectHint,
+        cwd: parent.cwd,
         title: parent.title,
       }),
       events,
@@ -223,10 +225,11 @@ export class ClaudeCodeProvider extends AbstractSessionLogProvider implements Se
     sessionId: string | undefined,
     fallbackTsMs: number,
     provenance?: string,
-  ): { events: SessionEvent[]; inlineRefs: InlineRefMention[]; title?: string } {
+  ): { events: SessionEvent[]; inlineRefs: InlineRefMention[]; title?: string; cwd?: string } {
     const events: SessionEvent[] = [];
     const inlineRefs: InlineRefMention[] = [];
     let title: string | undefined;
+    let cwd: string | undefined;
     const lines = fs.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
 
     for (const line of lines) {
@@ -237,6 +240,7 @@ export class ClaudeCodeProvider extends AbstractSessionLogProvider implements Se
         continue;
       }
       if (!entry) continue;
+      if (cwd === undefined && typeof entry.cwd === "string" && entry.cwd) cwd = entry.cwd;
       if (entry.type === "custom-title" && typeof entry.customTitle === "string") {
         title = entry.customTitle;
         continue;
@@ -248,7 +252,7 @@ export class ClaudeCodeProvider extends AbstractSessionLogProvider implements Se
       inlineRefs.push(...extractInlineRefMentions(parsed.text, parsed.ts));
     }
 
-    return { events, inlineRefs, ...(title ? { title } : {}) };
+    return { events, inlineRefs, ...(title ? { title } : {}), ...(cwd ? { cwd } : {}) };
   }
 
   /**
@@ -257,8 +261,8 @@ export class ClaudeCodeProvider extends AbstractSessionLogProvider implements Se
    * reads the tail (~4KB) for the last timestamp. Avoids slurping multi-MB
    * session files during `listSessions`.
    */
-  #peekJsonl(filePath: string): { firstTsMs?: number; lastTsMs?: number; title?: string } {
-    const result: { firstTsMs?: number; lastTsMs?: number; title?: string } = {};
+  #peekJsonl(filePath: string): { firstTsMs?: number; lastTsMs?: number; title?: string; cwd?: string } {
+    const result: { firstTsMs?: number; lastTsMs?: number; title?: string; cwd?: string } = {};
     try {
       const fd = fs.openSync(filePath, "r");
       try {
@@ -275,6 +279,7 @@ export class ClaudeCodeProvider extends AbstractSessionLogProvider implements Se
             if (e.type === "custom-title" && typeof e.customTitle === "string") {
               result.title = e.customTitle;
             }
+            if (result.cwd === undefined && typeof e.cwd === "string" && e.cwd) result.cwd = e.cwd;
             if (typeof e.timestamp === "string") {
               const t = Date.parse(e.timestamp);
               if (!Number.isNaN(t)) {

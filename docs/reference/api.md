@@ -20,11 +20,12 @@ const text = await curate("deploy to prod", { limit: 4, type: "skill", format: "
 function curate(
   query: string,
   options?: {
-    limit?: number; type?: string; source?: string;
-    filters?: { user?: string; agent?: string; run?: string; channel?: string };
-    prefer?: { user?: string; agent?: string; run?: string; channel?: string };
+    limit?: number; type?: string; source?: string | string[];
+    filters?: Record<string, string | string[]>;
+    prefer?: Record<string, string | string[]>;
     belief?: "all" | "current" | "historical";
     format?: "text" | "json";
+    cwd?: string; project?: string;
   },
 ): Promise<string>;
 ```
@@ -36,10 +37,10 @@ function curate(
   validation, search, ranking, shaping and rendering are shared, not copied), so
   the two cannot drift.
 - **Recall controls.** `source` is CLI `--from` (local, registry, all, or a named
-  bundle); `filters` uses the same scope keys and rule
+  bundle; an array of bundle names is a repeated `--from`, searched as one set); `filters` takes any frontmatter key, with the same rule
   as repeated CLI `--filter key=value`: each key takes a value or a list, a list
-  matches any of its values, and different keys must all match. `prefer` takes
-  the same shape as CLI `--prefer`: matching hits rank slightly higher and
+  matches any of its values (an empty string matches assets without the key), and different keys must all match. `prefer` takes
+  the same shape as CLI `--prefer` (any frontmatter key; `""` means "without the key"): matching hits rank slightly higher and
   nothing is dropped or admitted. `belief` defaults to `"current"`, keeping
   unflagged reference knowledge and active/asserted assets. These labels do not
   prove factual truth. Explicit `"all"` and `"historical"` support investigations.
@@ -51,6 +52,13 @@ function curate(
   await curate("deploy to prod", { source: "team", filters: { user: "alice" } });
   await curate("investigate the old deployment port", { belief: "historical" });
   ```
+- **Project.** `cwd` is the caller's working directory; with no `project`, the
+  [configured project](configuration.md#projects) whose path contains it (the
+  most specific one) supplies the defaults for `source`, `filters` and `prefer`
+  you leave out. `project` names one instead (`"none"`: no project), and an
+  unknown name rejects with `INVALID_FLAG_VALUE`. Without either, it uses the
+  process's directory. When a project applies, the result carries a `project`
+  field. `cwd` is never used to change the process's directory.
 - **Failure.** It rejects with an `Error` whose `message` is the CLI's error
   text and whose `code` is the CLI's error code (`MISSING_REQUIRED_ARGUMENT`,
   `INVALID_FLAG_VALUE`, `INVALID_CONFIG_FILE`, ...) wherever the CLI would have
@@ -62,8 +70,9 @@ function curate(
   unchanged afterwards. As with `akm curate`, the call records its usage
   event in `state.db`.
 - **Repeated calls.** Config is re-validated against `config.json` on every
-  call (its path, size and modification time), so an edit on disk is seen by
-  the next call exactly as a separate CLI run would see it. Database handles are
+  call (its path, size and modification time), so an edit to that file is seen by
+  the next call exactly as a separate CLI run would see it. A change only in a file
+  its `extends` names is not noticed until the config file itself changes. Database handles are
   opened and closed within each call. The local embedding model and the embedding
   cache are kept for the life of the process, which is what makes a warm call
   cheaper than a CLI run. Overlapping calls are safe. Under Bun the SQLite file

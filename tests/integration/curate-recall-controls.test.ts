@@ -278,7 +278,6 @@ for (const enabled of [false, true]) {
 }
 for (const [flags, opts] of [
   [["--belief", "invalid"], { belief: "invalid" }],
-  [["--filter", "user="], { filters: { user: "" } }],
   [["--from", "missing"], { source: "missing" }],
 ] as const) {
   test(`invalid controls: ${flags.join(" ")}`, async () => {
@@ -291,6 +290,47 @@ for (const [flags, opts] of [
     expect((err as Error).message).toBe(JSON.parse(out.stderr).error);
   });
 }
+test("an empty filter value selects assets without the key, with CLI/API parity", async () => {
+  put("knowledge/alice", { scope: { user: "alice" } }, "quartz deployment alice");
+  put("knowledge/open", {}, "quartz deployment open");
+  await akmIndex({ stashDir: storage.stashDir, full: true });
+  const out = cli(["--filter", "user="]);
+  expect(out.status).toBe(0);
+  expect(await curate("quartz deployment", { filters: { user: "" } })).toBe(out.stdout);
+  expect(refs(await akmCurate({ query: "quartz deployment", filters: { user: "" } }))).toEqual(["knowledge/open"]);
+});
+
+test("repeated --from searches several bundles, in either spelling, and curate reports them", async () => {
+  const roots = ["one", "two"].map((n) => path.join(storage.root, n));
+  put("knowledge/a", {}, "quartz deployment one", roots[0]);
+  put("knowledge/b", {}, "quartz deployment two", roots[1]);
+  put("knowledge/c", {}, "quartz deployment home");
+  saveConfig({
+    semanticSearchMode: "off",
+    bundles: {
+      stash: { path: storage.stashDir },
+      one: { path: roots[0] as string },
+      two: { path: roots[1] as string },
+    },
+    defaultBundle: "stash",
+    registries: [],
+  });
+  await akmIndex({ stashDir: storage.stashDir, full: true });
+  for (const detail of ["agent", "full"]) {
+    const out = spawnSync(
+      "bun",
+      [CLI, "-q", "--detail", detail, "curate", "quartz deployment", "--from", "one", "--from=two", "--limit", "10"],
+      { encoding: "utf8", env: { ...process.env } },
+    );
+    expect(out.status).toBe(0);
+    const json = JSON.parse(out.stdout);
+    expect(json.bundles).toEqual(["one", "two"]);
+    expect(json.items).toHaveLength(2);
+  }
+  const result = await akmCurate({ query: "quartz deployment", source: ["one", "two"], limit: 10 });
+  expect(refs(result)).toEqual(["one//knowledge/a", "two//knowledge/b"]);
+  expect(result.bundles).toEqual(["one", "two"]);
+});
 test("missing configured source gives empty evidence, not another bundle", async () => {
   put("knowledge/main");
   saveConfig({

@@ -37,6 +37,17 @@ export interface SearchInput {
   limit?: number;
 }
 
+/** Browse keeps its contract that blank scope values are omitted (an empty filter value would mean "without the key"). */
+function blanksOmitted(scope: ScopeFilters | undefined): ScopeFilters | undefined {
+  if (!scope) return undefined;
+  const out: ScopeFilters = Object.create(null);
+  for (const [key, given] of Object.entries(scope)) {
+    const kept = [given ?? []].flat().filter((value) => typeof value === "string" && value.trim());
+    if (kept.length > 0) out[key] = kept;
+  }
+  return out;
+}
+
 export function search(input: SearchInput) {
   const type = input.type || undefined;
   const bundle = input.bundle || undefined;
@@ -47,7 +58,7 @@ export function search(input: SearchInput) {
     // `--from <name>` narrows to one configured bundle; absent means every local bundle, as `akm search` does.
     source: bundle ?? "local",
     belief: parseBeliefFilterMode(input.belief || "current"),
-    filters: normalizeScopeFilters({ user: "", agent: "", run: "", channel: "", ...input.scope }),
+    filters: normalizeScopeFilters(blanksOmitted(input.scope)),
     readOnly: true,
   });
 }

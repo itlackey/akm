@@ -19,11 +19,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { defineCommand } from "citty";
-import { getStringArg, parsePositiveIntFlag, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
+import { getStringArg, PROJECT_ARG, parsePositiveIntFlag, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
 import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
+import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
+import { resolveProject } from "../../core/projects";
 import { akmPropose } from "./propose";
 
 const EXIT_GENERAL = EXIT_CODES.GENERAL;
@@ -56,8 +58,9 @@ export const proposeCommand = defineCommand({
     bundle: {
       type: "string",
       description:
-        "Configured writable bundle to queue the proposal for and draw convention facts from (default: the working bundle)",
+        "Configured writable bundle to queue the proposal for and draw convention facts from (default: the project's write.bundle, else the working bundle)",
     },
+    ...PROJECT_ARG,
     ...SELECTION_ARGS,
     ...RETIRED_ENGINE_ARG,
     ...SCOPE_ARGS,
@@ -85,13 +88,15 @@ export const proposeCommand = defineCommand({
       const proposedName = combineCreatePath(normalizeCreateSubPath(getStringArg(args, "path")), String(args.name));
       const taskText = fileFromFlag ? fs.readFileSync(path.resolve(fileFromFlag), "utf8") : (taskFromFlag ?? "");
       const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
+      const project = resolveProject(loadConfig(), { project: getStringArg(args, "project") });
       const result = await akmPropose({
         type: String(args.type),
         name: proposedName,
         task: taskText,
         selection: selectionFromArgs(args),
-        bundle: getStringArg(args, "bundle"),
-        scope: scopeFromArgs(args),
+        bundle: getStringArg(args, "bundle") ?? project?.write.bundle,
+        scope: scopeFromArgs(args, project),
+        ...(project ? { metadata: project.write.metadata } : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
       output("proposal-new", result);

@@ -230,6 +230,7 @@ export const routes: Route[] = [
   ),
   post("/api/setup/apply", body(setup.apply, ["dir", "harness", "connection", "learning"], "setup apply")),
   post("/api/config/set", body(config.change, ["set", "unset"], "config")),
+  post("/api/config/projects", body(config.changeProjects, ["set", "unset"], "projects")),
   post(
     "/api/knowledge/create",
     body(documents.createKnowledge, ["bundle", "name", "path", "content"], "knowledge create"),

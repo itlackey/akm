@@ -90,6 +90,23 @@ function writeClaudeSessionJsonl(filePath: string, lines: object[]): void {
 }
 
 describe("ClaudeCodeProvider.listSessions", () => {
+  test("records the session's real working directory when the log carries one", () => {
+    const root = makeTempDir("akm-claude-cwd-");
+    const file = path.join(root, "-home-user-project-a", "session-ccc.jsonl");
+    writeClaudeSessionJsonl(file, [
+      {
+        type: "user",
+        cwd: "/home/user/project-a",
+        timestamp: "2026-05-26T10:00:00.000Z",
+        message: { role: "user", content: "hi" },
+      },
+    ]);
+    const provider = new ClaudeCodeProvider();
+    const [summary] = provider.listSessions({ location: root });
+    expect(summary?.cwd).toBe("/home/user/project-a");
+    expect(provider.readSession(summary as never).ref.cwd).toBe("/home/user/project-a");
+  });
+
   test("lists sessions across project subdirectories with correct metadata", () => {
     const root = makeTempDir("akm-claude-list-");
     const sessionA = path.join(root, "-home-user-project-a", "session-aaa.jsonl");
@@ -323,6 +340,7 @@ describe("CodexProvider.listSessions", () => {
         sessionId: threadId(2),
         filePath: vscode,
         projectHint: "/home/user/project-a",
+        cwd: "/home/user/project-a",
         startedAt: Date.parse("2026-09-03T10:00:00.000Z"),
         endedAt: Date.parse("2026-09-03T11:00:00.000Z"),
       },
@@ -331,6 +349,7 @@ describe("CodexProvider.listSessions", () => {
         sessionId: threadId(1),
         filePath: exec,
         projectHint: "/home/user/project-b",
+        cwd: "/home/user/project-b",
         startedAt: Date.parse("2026-08-01T10:00:00.000Z"),
         endedAt: Date.parse("2026-08-01T10:30:00.000Z"),
       },
@@ -450,6 +469,7 @@ describe("CodexProvider.readSession", () => {
       sessionId: threadId(1),
       filePath: file,
       projectHint: "/home/user/project-a",
+      cwd: "/home/user/project-a",
       startedAt: Date.parse("2026-08-01T10:00:00.000Z"),
       endedAt: Date.parse("2026-08-01T10:12:00.000Z"),
     });

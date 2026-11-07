@@ -185,6 +185,7 @@ export function buildSessionAssetName(harness: string, sessionId: string, starte
 export function buildSessionAssetContent(
   data: SessionData,
   summary: SessionSummaryResult,
+  projectName?: string,
 ): { name: string; frontmatter: SessionAssetFrontmatter; content: string } {
   const ref = data.ref;
   const harness = ref.harness;
@@ -204,7 +205,7 @@ export function buildSessionAssetContent(
     session_id: ref.sessionId,
     ...(startedAt ? { started: startedAt } : {}),
     ...(endedAt ? { ended: endedAt } : {}),
-    ...(ref.projectHint ? { project: ref.projectHint } : {}),
+    ...((projectName ?? ref.projectHint) ? { project: projectName ?? ref.projectHint } : {}),
     log_path: logPath,
     access: buildSessionAccessInstructions(harness, logPath, ref.sessionId),
     tags,
@@ -241,13 +242,14 @@ export async function writeSessionAsset(
   data: SessionData,
   stashDir: string,
   generate: SessionSummaryGenerator,
+  projectName?: string,
 ): Promise<WriteSessionAssetResult> {
   const summary = await generate(data);
   if (!summary?.summary || summary.summary.trim().length === 0) {
     return { written: false };
   }
 
-  const { content } = buildSessionAssetContent(data, summary);
+  const { content } = buildSessionAssetContent(data, summary, projectName);
   const harness = data.ref.harness;
   const sessionId = data.ref.sessionId;
   const filePath = resolveSessionAssetPath(stashDir, harness, sessionId);
