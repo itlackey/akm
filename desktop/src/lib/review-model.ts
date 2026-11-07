@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import type { Proposal, ProposalQueue } from "./types";
+import type { Proposal, ProposalQueue, WriteResult } from "./types";
 
 export interface ReviewQueue extends ProposalQueue {
   fullCount?: number;
@@ -61,4 +61,114 @@ export function commitOutcome(value: unknown): string {
   return typeof commit.sha === "string"
     ? `Committed ${commit.sha.slice(0, 8)}${commit.subject ? ` — ${commit.subject}` : ""}. Push status was not reported by this action.`
     : "No Git commit was reported by this action.";
+}
+
+// ── Deciding and moving on ───────────────────────────────────────────────────────────────────────────────────────
+
+/** What a decision attempt came to: nothing written, or written (with the refresh that followed, which may have failed). */
+export type DecisionOutcome<T> =
+  | { status: "failed"; error: string }
+  | { status: "decided"; result: T; refreshError?: string };
+
+/**
+ * Run a decision's write, then the refresh of what it changed. A write that fails changed nothing: the caller keeps the
+ * proposal and the reviewer's input. A write that succeeded and a refresh that failed is a recorded decision: the caller
+ * must not invite the same decision again.
+ */
+export async function settleDecision<T>(
+  write: () => Promise<T>,
+  refresh: (result: T) => Promise<void>,
+): Promise<DecisionOutcome<T>> {
+  let result: T;
+  try {
+    result = await write();
+  } catch (e) {
+    return { status: "failed", error: errorMessage(e) };
+  }
+  try {
+    await refresh(result);
+    return { status: "decided", result };
+  } catch (e) {
+    return { status: "decided", result, refreshError: errorMessage(e) };
+  }
+}
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The proposal to review after `from` was decided, in the queue's own order. `order` is the ids as shown before the
+ * decision, `decided` the ids that left the pending queue, `reloaded` the queue as fetched afterwards (the fetch is
+ * limited, so it can hold proposals `order` never showed). First choice is the next proposal after `from` that is
+ * still pending; past the end of what was shown, the first proposal the reload added; then the nearest one before
+ * `from`. "" means no proposal remains in this queue.
+ */
+export function nextAfterDecision(
+  order: string[],
+  decided: Iterable<string>,
+  from: string,
+  reloaded: string[],
+): string {
+  const gone = new Set(decided);
+  const still = new Set(reloaded);
+  const left = (id: string) => !gone.has(id) && still.has(id);
+  const at = order.indexOf(from);
+  const after = order.slice(at + 1).find(left);
+  if (after) return after;
+  const shown = new Set(order);
+  const added = reloaded.find((id) => !shown.has(id) && !gone.has(id));
+  if (added) return added;
+  return order.slice(0, Math.max(at, 0)).reverse().find(left) ?? reloaded.find((id) => !gone.has(id)) ?? "";
+}
+
+/**
+ * `queue` without the decided proposals, its counts moved with them, so rows, counts and progress change in one step
+ * before the reload confirms them.
+ */
+export function withoutDecided(queue: ReviewQueue, decided: Iterable<string>): ReviewQueue {
+  const gone = new Set(decided);
+  const removed = queue.proposals.filter((p) => gone.has(p.id));
+  const bySource = { ...queue.bySource };
+  for (const p of removed) bySource[p.source] = Math.max(0, (bySource[p.source] ?? 0) - 1);
+  return {
+    ...queue,
+    proposals: queue.proposals.filter((p) => !gone.has(p.id)),
+    totalCount: Math.max(0, queue.totalCount - removed.length),
+    ...(queue.fullCount === undefined ? {} : { fullCount: Math.max(0, queue.fullCount - removed.length) }),
+    bySource,
+  };
+}
+
+/**
+ * The queue is finished only when no pending proposal matches the filters. A fetch holds at most its limit, so an empty
+ * list with a positive `totalCount` is a queue to refill, not a finished one.
+ */
+export function queueState(queue: Pick<ProposalQueue, "proposals" | "totalCount">): "finished" | "refill" | "open" {
+  if (queue.proposals.length > 0) return "open";
+  return queue.totalCount > 0 ? "refill" : "finished";
+}
+
+/** What a batch left: the ids it decided, the failures with their reasons, and the selection that remains (the failures). */
+export interface BatchOutcome {
+  done: string[];
+  failed: Array<{ id: string; ref?: string; error: string; code?: string }>;
+  selected: string[];
+}
+/** An id the result does not mention was not reported decided, so it stays selected as a failure. */
+export function batchOutcome(ids: string[], result: Pick<WriteResult, "results">): BatchOutcome {
+  const byId = new Map((result.results ?? []).map((r) => [r.id, r]));
+  const done: string[] = [];
+  const failed: BatchOutcome["failed"] = [];
+  for (const id of ids) {
+    const r = byId.get(id);
+    if (r?.ok) done.push(id);
+    else
+      failed.push({
+        id,
+        ...(r?.ref ? { ref: r.ref } : {}),
+        error: r?.error ?? "The result did not report this proposal.",
+        ...(r?.code ? { code: r.code } : {}),
+      });
+  }
+  return { done, failed, selected: failed.map((f) => f.id) };
 }
