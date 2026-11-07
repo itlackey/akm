@@ -25,7 +25,7 @@ import { configSource, preserveUnrelatedConfig, workingStashDir } from "./reader
 import { isSecretEnvName, redactForUi } from "./redact";
 
 /** Where an automatic write goes (no defaultWriteTarget): AKM_BUNDLE_DIR first, then the default bundle. */
-function automaticWriteTarget(config: AkmConfig) {
+export function automaticWriteTarget(config: AkmConfig) {
   try {
     const { source } = resolveWorkingStashTarget(config, { requireWritable: false });
     const path = source.path ?? null;
@@ -111,6 +111,8 @@ export function get() {
       ...connection,
       // Only an `extends` base defines it: it cannot be removed here, and a local save overrides it.
       inherited: inheritedConnectionsOf(live).has(connection.name),
+      // The configured keys that name it, so a reader can say what depends on it.
+      usedBy: connectionReferences(live, connection.name),
     })),
     // The connection named `default`, else the only one, else none: the rule every consumer without a `connection` follows.
     defaultConnection: defaultConnection(live)?.name ?? null,

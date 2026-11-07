@@ -106,7 +106,7 @@ describe("assets.projectOverview", () => {
       project: { name: "alpha", from: ["stash", "team"], filters: { project: "alpha" }, prefer: { project: "alpha" } },
       fromImplicit: false,
       preferImplicit: false,
-      writeBundle: { name: "stash", implicit: true },
+      writeBundle: { name: "stash", implicit: true, usable: true },
     });
     expect(alpha.bundles).toMatchObject([
       {
@@ -175,6 +175,10 @@ describe("config.removeConnection", () => {
     expect(before.connections.map((connection: Json) => [connection.name, connection.inherited])).toEqual([
       ["default", false],
       ["lab", false],
+    ]);
+    expect(before.connections.find((connection: Json) => connection.name === "lab")?.usedBy).toEqual([
+      "improve.connection",
+      "improve.processes.reflect.connection",
     ]);
 
     const removed = config.removeConnection({ name: "lab" });

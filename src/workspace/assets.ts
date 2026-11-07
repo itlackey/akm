@@ -25,6 +25,7 @@ import { getEntryIdByFilePath, getItemRefById } from "../storage/repositories/in
 import { countFeedbackBySignal, listFeedbackEventRows } from "../storage/repositories/metrics-repository";
 import { assetImprove } from "./asset-improve";
 import { bundleFileLocation, listBundleFiles } from "./bundle-files";
+import { automaticWriteTarget } from "./config";
 import { readFileRevision, readRecentCommits } from "./git-read";
 import { capSide, clampLimit, DIFF_SIDE_MAX_CHARS, withReadonlyStateDb } from "./readers";
 
@@ -103,12 +104,18 @@ export function projectOverview(input: { project: string }) {
       closeDatabase(db);
     }
   }
-  const writeBundle = project.write.bundle ?? config.defaultWriteTarget ?? null;
+  const writeName = project.write.bundle ?? config.defaultWriteTarget ?? automaticWriteTarget(config)?.name ?? null;
+  const writeSource = writeName === null ? undefined : local.find((source) => source.registryId === writeName);
   return {
     project: { ...projectView(project), write: project.write },
     fromImplicit: project.from === undefined,
     preferImplicit: config.projects?.[name]?.prefer === undefined,
-    writeBundle: { name: writeBundle, implicit: project.write.bundle === undefined },
+    // `usable`: the bundle is enabled and accepts writes. Null when no write bundle resolves.
+    writeBundle: {
+      name: writeName,
+      implicit: project.write.bundle === undefined,
+      usable: writeName === null ? null : writeSource?.writable === true,
+    },
     bundles: selected.map(({ name: bundle, source }) => {
       const entry = Object.hasOwn(config.bundles ?? {}, bundle) ? config.bundles?.[bundle] : undefined;
       const found = source ? counts?.[readable.indexOf(source)] : undefined;
