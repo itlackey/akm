@@ -100,6 +100,33 @@ describe("filter on any frontmatter key", () => {
   });
 });
 
+describe("an empty filter value matches assets without the key (#1459)", () => {
+  test("alone it keeps only assets without the key", async () => {
+    const stash = await indexStash();
+    expect(await names(stash, { filters: flags("project=") })).toEqual(["m5"]);
+    expect(await names(stash, { filters: flags("nokey=") })).toEqual(["m1", "m2", "m3", "m4", "m5"]);
+  });
+
+  test("with a value it keeps that value plus the assets without the key", async () => {
+    const stash = await indexStash();
+    expect(await names(stash, { filters: flags("team=data", "team=") })).toEqual(["m2", "m4", "m5"]);
+  });
+
+  test("tag= means no tags", () => {
+    expect(scopeMatchesFilters({ tags: undefined }, { tag: [""] })).toBe(true);
+    expect(scopeMatchesFilters({ tags: [] }, { tag: [""] })).toBe(true);
+    expect(scopeMatchesFilters({ tags: ["billing"] }, { tag: [""] })).toBe(false);
+    expect(scopeMatchesFilters({ tags: ["billing"] }, { tag: ["Billing", ""] })).toBe(true);
+    expect(scopeMatchesFilters({ tags: [] }, { tag: ["billing"] })).toBe(false);
+  });
+
+  test("scope keys work, and different keys still AND", async () => {
+    const stash = await indexStash();
+    expect(await names(stash, { filters: flags("channel=") })).toHaveLength(5);
+    expect(await names(stash, { filters: flags("channel=", "project=akm") })).toEqual(["m3", "m4"]);
+  });
+});
+
 describe("prefer on any frontmatter key", () => {
   test("matches rank first and nothing is dropped", async () => {
     const stash = await indexStash();

@@ -287,7 +287,9 @@ export function stampScope(
  * The one selection rule: every supplied key must match (AND), and a key with
  * several values matches any of them (OR). A key is a scope key, `tag`/`tags`
  * (matched like the index normalises tags), or any other frontmatter key.
- * Entries without the key never match a supplied filter on it.
+ * An empty value (`key=`) matches an entry that does not carry the key; any
+ * other value never matches such an entry. `tag` always carries path-derived
+ * tags, so `tag=` matches almost no assets.
  */
 export function scopeMatchesFilters(
   entry: Pick<IndexDocument, "scope" | "tags" | "frontmatter">,
@@ -296,21 +298,23 @@ export function scopeMatchesFilters(
   for (const [key, expected] of Object.entries(filters)) {
     if (expected === undefined) continue;
     const wanted = Array.isArray(expected) ? expected : [expected];
+    const wantsAbsent = wanted.includes("");
+    let values = wanted.filter((value) => value !== "");
     let have: readonly string[] | undefined;
     if ((SCOPE_KEYS as readonly string[]).includes(key)) {
       const value = entry.scope?.[key as ScopeKey];
       have = value === undefined ? undefined : [value];
     } else if (key === "tag" || key === "tags") {
       have = entry.tags;
-      if (have) {
-        const normalized = normalizeTerms(wanted);
-        if (!normalized.some((value) => have?.includes(value))) return false;
-        continue;
-      }
+      values = normalizeTerms(values);
     } else {
       have = entry.frontmatter && Object.hasOwn(entry.frontmatter, key) ? entry.frontmatter[key] : undefined;
     }
-    if (!have || !wanted.some((value) => have.includes(value))) return false;
+    if (!have?.length) {
+      if (wantsAbsent) continue;
+      return false;
+    }
+    if (!values.some((value) => have.includes(value))) return false;
   }
   return true;
 }

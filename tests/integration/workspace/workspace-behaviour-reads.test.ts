@@ -636,6 +636,10 @@ describe("reads", () => {
     const cliRefs = (JSON.parse(cli.stdout) as { hits: Array<{ ref: string }> }).hits.map((h) => h.ref);
     expect(viaOp.hits.map((h: { ref: string }) => h.ref)).toEqual(cliRefs);
 
+    // A blank scope value is omitted, not "without the key".
+    const blank = await out(assets.search({ q: "deploy", limit: 10, scope: { channel: "" } }));
+    expect(blank.hits.map((h: { ref: string }) => h.ref)).toEqual(viaOp.hits.map((h: { ref: string }) => h.ref));
+
     const typed = await out(assets.search({ q: "deploy", type: "knowledge" }));
     expect(typed.hits.every((h: { type: string }) => h.type === "knowledge")).toBe(true);
     const named = await out(assets.search({ q: "deploy", bundle: "stash" }));

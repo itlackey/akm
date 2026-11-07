@@ -61,7 +61,12 @@ export const searchCommand = defineJsonCommand({
         "Asset type filter — free-form, exact match, unvalidated; an unknown type returns no hits (default: any). Built-ins: skill, command, agent, knowledge, workflow, script, memory, lesson, task, session, fact, env, secret, instruction — plus any adapter-defined type (e.g. website, wiki-source, a wiki pageKind). Use workflow to find step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of results" },
-    from: { type: "string", description: "Search source (local|registry|all)", default: "local" },
+    from: {
+      type: "string",
+      description:
+        "Search source (local|registry|all) or a bundle name; repeat --from to search several bundles together (OR)",
+      default: "local",
+    },
     filter: scopeFilterArg,
     prefer: scopePreferArg,
     "include-proposed": {
@@ -91,7 +96,7 @@ export const searchCommand = defineJsonCommand({
     const query = (args.query ?? "").trim();
     const type = args.type as string | undefined;
     const limit = parsePositiveIntFlag(args.limit ?? undefined);
-    const source = parseSearchSource(args.from);
+    const source = parseSearchSource(fromValues(args.from));
     // Repeatable; citty exposes only the last `--filter` value, so read all
     // occurrences directly from argv (same pattern as `--tag`).
     const filterTokens = parseAllFlagValues("--filter");
@@ -122,6 +127,12 @@ export const searchCommand = defineJsonCommand({
   },
 });
 
+/** `--from` is repeatable; citty keeps only the last value, so read every occurrence from argv. */
+function fromValues(parsed: unknown): string | string[] | undefined {
+  const all = parseAllFlagValues("--from");
+  return all.length > 1 ? all : (parsed as string | undefined);
+}
+
 function parseDayFlag(raw: unknown, flag: string): string | undefined {
   if (raw === undefined) return undefined;
   const day = typeof raw === "string" ? isoDay(raw) : undefined;
@@ -149,7 +160,12 @@ export const curateCommand = defineJsonCommand({
         "Asset type filter — free-form, exact match, unvalidated; an unknown type returns no hits (default: any). Built-ins: skill, command, agent, knowledge, workflow, script, memory, lesson, task, session, fact, env, secret, instruction — plus any adapter-defined type (e.g. website, wiki-source, a wiki pageKind). Use workflow to curate step-by-step task assets.",
     },
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
-    from: { type: "string", description: "Search source (local|registry|all)", default: "local" },
+    from: {
+      type: "string",
+      description:
+        "Search source (local|registry|all) or a bundle name; repeat --from to search several bundles together (OR)",
+      default: "local",
+    },
     filter: scopeFilterArg,
     prefer: scopePreferArg,
     belief: { ...beliefArg, default: "current" },
@@ -172,7 +188,7 @@ export const curateCommand = defineJsonCommand({
         query: args.query,
         type: args.type as string | undefined,
         limit: args.limit,
-        from: args.from,
+        from: fromValues(args.from),
         filters: parseAllFlagValues("--filter"),
         prefer: parseAllFlagValues("--prefer"),
         belief: args.belief,
@@ -203,7 +219,7 @@ export async function runCurate(
     query?: string;
     type?: string;
     limit?: string;
-    from?: string;
+    from?: string | string[];
     filters?: string[];
     prefer?: string[];
     belief?: string;

@@ -20,7 +20,7 @@ const text = await curate("deploy to prod", { limit: 4, type: "skill", format: "
 function curate(
   query: string,
   options?: {
-    limit?: number; type?: string; source?: string;
+    limit?: number; type?: string; source?: string | string[];
     filters?: { user?: string; agent?: string; run?: string; channel?: string };
     prefer?: { user?: string; agent?: string; run?: string; channel?: string };
     belief?: "all" | "current" | "historical";
@@ -36,9 +36,9 @@ function curate(
   validation, search, ranking, shaping and rendering are shared, not copied), so
   the two cannot drift.
 - **Recall controls.** `source` is CLI `--from` (local, registry, all, or a named
-  bundle); `filters` uses the same scope keys and rule
+  bundle; an array of bundle names is a repeated `--from`, searched as one set); `filters` uses the same scope keys and rule
   as repeated CLI `--filter key=value`: each key takes a value or a list, a list
-  matches any of its values, and different keys must all match. `prefer` takes
+  matches any of its values (an empty string matches assets without the key), and different keys must all match. `prefer` takes
   the same shape as CLI `--prefer`: matching hits rank slightly higher and
   nothing is dropped or admitted. `belief` defaults to `"current"`, keeping
   unflagged reference knowledge and active/asserted assets. These labels do not

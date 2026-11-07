@@ -23,7 +23,7 @@ export interface RecallOptions {
   /** Search and curate default to current; explicit all/historical retain investigation. */
   belief?: BeliefFilterMode;
   type?: string;
-  source?: SearchSource | string;
+  source?: SearchSource | string | string[];
 }
 /** Actual local ranking mode, including a semantic attempt that failed at runtime. */
 export type SearchExecutionMode = "semantic" | "keyword" | "fts-fallback";
@@ -140,6 +140,8 @@ export interface SearchResponse {
   schemaVersion: number;
   bundleDir: string;
   source: SearchSource;
+  /** The bundles a repeated `--from` searched; absent for a single `--from`. */
+  bundles?: string[];
   hits: SearchHit[];
   registryHits?: RegistrySearchResultHit[];
   tip?: string;
