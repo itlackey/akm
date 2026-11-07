@@ -114,7 +114,9 @@ export namespace config {
     saved: boolean;
   };
   function get(): unknown;
-  /** Remove one connection; reports the `connection` references to it, whether it was the default and the default after. */
+  /** Replace one connection with `entry` as a whole (removed aliases and options leave the file); a literal API key is refused. */
+  function saveConnection(input: { name: string; entry: Record<string, unknown> }): { saved: boolean };
+  /** Remove one connection; reports the `connection` references to it (each fails until changed: a named connection is never replaced by the default), whether it was the default and the default after. */
   function removeConnection(input: { name: string }): {
     saved: boolean;
     references: string[];

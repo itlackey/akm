@@ -196,6 +196,28 @@ describe("config.removeConnection", () => {
     expect(loadConfig().connections?.lab).toBeUndefined();
   });
 
+  test("saveConnection replaces the entry: removed aliases and cleared options leave the file; a literal key is refused", async () => {
+    seedConnections();
+    const lab = JSON.parse(JSON.stringify(loadConfig().connections?.lab));
+    lab.models = { fast: "lab-small", judge: "big" };
+    delete lab.top_p;
+    expect(config.saveConnection({ name: "lab", entry: lab })).toEqual({ saved: true });
+    expect(saved().connections.lab).toEqual({
+      endpoint: "http://127.0.0.1:2/v1",
+      models: { fast: "lab-small", judge: "big" },
+    });
+    expect(saved().connections.default.apiKey).toBe("$SYNTH_KEY");
+    expect(saved().unrelated).toEqual({ keep: [1] });
+    expect(config.saveConnection({ name: "lab", entry: lab })).toEqual({ saved: false });
+    await expectUsage(() => config.saveConnection({ name: "lab", entry: { ...lab, apiKey: "sk-literal" } }));
+    await expectUsage(() => config.saveConnection({ name: " ", entry: lab }));
+    // A new name is added.
+    expect(config.saveConnection({ name: "extra", entry: { endpoint: "http://127.0.0.1:4/v1" } })).toEqual({
+      saved: true,
+    });
+    expect(Object.keys(saved().connections)).toEqual(["default", "lab", "extra"]);
+  });
+
   test("removing the default hands the default to the sole remaining connection, then to none", async () => {
     seedConnections();
     expect(config.removeConnection({ name: "default" })).toMatchObject({
@@ -211,7 +233,9 @@ describe("config.removeConnection", () => {
     const base = path.join(ctx.storage.root, "base.json");
     fs.writeFileSync(base, JSON.stringify({ connections: { shared: { endpoint: "http://127.0.0.1:3/v1" } } }));
     seedConnections({ extends: base });
-    expect(config.get().connections.find((connection: Json) => connection.name === "shared")?.inherited).toBe(true);
+    const shared = config.get().connections.find((connection: Json) => connection.name === "shared");
+    expect([shared?.inherited, shared?.source]).toEqual([true, `extends:${base}`]);
+    expect(config.get().connections.find((connection: Json) => connection.name === "lab")?.source).toBe("local");
     await expectUsage(() => config.removeConnection({ name: "nope" }));
     await expectUsage(() => config.removeConnection({ name: " " }));
     await expectUsage(() => config.removeConnection({ name: "shared" }), "TARGET_NOT_UPDATABLE");
