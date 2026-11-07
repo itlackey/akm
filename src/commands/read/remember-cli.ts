@@ -186,7 +186,8 @@ export const rememberCommand = defineJsonCommand({
     // untouched. Refs resolvable only in a configured extra stash source are
     // accepted (cross-stash provenance).
     const rawSupersedes = parseAllFlagValues("--supersedes");
-    const writeTarget = resolveSupersedesWriteTarget(rawSupersedes, args.bundle || project?.write.bundle, TARGET_FLAG);
+    // The project's bundle is only a default: a `--bundle` or a `--supersedes` ref decides first.
+    const writeTarget = resolveSupersedesWriteTarget(rawSupersedes, args.bundle, TARGET_FLAG) ?? project?.write.bundle;
     const xrefs = resolveXrefsForWrite(parseAllFlagValues("--xref"), writeTarget, TARGET_FLAG);
 
     // Collect and validate --supersedes occurrences (repeatable). Same

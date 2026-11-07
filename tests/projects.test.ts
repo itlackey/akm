@@ -2,7 +2,8 @@
  * Projects (#1461): the resolver, precedence per kind, the name convention, config handling, curate()'s
  * cwd/project, write defaults and extract naming. No project must leave every output byte-identical.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,6 +17,7 @@ import { projectForDirectory, resolveProject } from "../src/core/projects";
 import { _setWarnSinkForTests } from "../src/core/warn";
 import { akmIndex } from "../src/indexer/indexer";
 import { fillMetadata } from "../src/indexer/passes/metadata";
+import { AKM_READ_TOOLS } from "../src/integrations/agent/akm-read-tools";
 import { runCliCapture } from "./_helpers/cli";
 import {
   type Cleanup,
@@ -146,7 +148,39 @@ describe("config", () => {
     expect(text).toMatch(/projects\.none/);
   });
 
-  test("extends merges projects by name, local winning", () => {
+  test("reserved metadata keys, ~user paths and a path shared by two projects warn and are ignored", () => {
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(String(args[0]));
+    });
+    const dir = tmp("proj-dup");
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      projects: {
+        first: { paths: [dir], write: { metadata: { description: "x", scope_user: "u", tags: "t", client: "c" } } },
+        second: { paths: [`${dir}/`, "~someone/code"] },
+      },
+    });
+    resetConfigCache();
+    const config = loadConfig();
+    expect(config.projects?.first?.write?.metadata).toEqual({ client: "c" });
+    expect(config.projects?.second?.paths).toEqual([`${dir}/`]);
+    const text = warnings.join("\n");
+    expect(text).toMatch(/metadata\.description/);
+    expect(text).toMatch(/metadata\.scope_user/);
+    expect(text).toMatch(/~someone/);
+    expect(text).toMatch(/also a path of "first"/);
+    // First in the file wins the shared path.
+    expect(resolveProject(config, { cwd: dir })?.name).toBe("first");
+  });
+
+  test("a trailing slash in a configured path still matches", () => {
+    const dir = tmp("proj-slash");
+    const config = { projects: { p: { paths: [`${dir}/`] } } };
+    expect(resolveProject(config, { cwd: path.join(dir, "sub") })).toMatchObject({ name: "p", path: `${dir}/` });
+  });
+
+  test("extends replaces a project whole by name, local winning", () => {
     const base = path.join(tmp("proj-base"), "base.json");
     fs.writeFileSync(
       base,
@@ -163,7 +197,8 @@ describe("config", () => {
     resetConfigCache();
     const projects = loadConfig().projects ?? {};
     expect(Object.keys(projects).sort()).toEqual(["local", "only", "shared"]);
-    expect(projects.shared).toEqual({ paths: ["/srv/mine"], from: "team" });
+    expect(projects.shared).toEqual({ paths: ["/srv/mine"] });
+    expect(projects.only).toEqual({ paths: ["/srv/o"] });
   });
 });
 
@@ -226,6 +261,47 @@ describe("curate", () => {
     await expect(curate("widget", { project: "nope" })).rejects.toMatchObject({ code: "INVALID_FLAG_VALUE" });
   });
 
+  test("--pack: text opens with the project line, json stays the items only", async () => {
+    const text = await runCliCapture(["curate", "widget", "--project", "akm", "--pack", "2000", "--format", "text"]);
+    expect(text.code).toBe(0);
+    expect(text.stdout.split("\n")[0]).toBe("Project akm: prefer project=akm");
+    const json = await runCliCapture(["curate", "widget", "--project", "akm", "--pack", "2000", "--format", "json"]);
+    expect(Array.isArray(JSON.parse(json.stdout))).toBe(true);
+    expect(json.stdout).not.toContain('"project"');
+  });
+
+  test("model work ignores a registered project", async () => {
+    const spy = spyOn(process, "cwd").mockReturnValue(work);
+    try {
+      const curateTool = AKM_READ_TOOLS.find((tool) => tool.name === "akm_curate");
+      const out = JSON.parse(await curateTool!.run({ query: "widget" }));
+      expect(out.project).toBeUndefined();
+      const user = await run({});
+      expect(user.project?.name).toBe("akm");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("akm search with no project: json and text are byte-identical with or without a projects key", async () => {
+    const elsewhere = tmp("proj-nowhere-cli");
+    const spy = spyOn(process, "cwd").mockReturnValue(elsewhere);
+    try {
+      const outputs = async () => [
+        (await runCliCapture(["search", "widget", "--format", "json"])).stdout,
+        (await runCliCapture(["search", "widget", "--format", "text"])).stdout,
+      ];
+      const withProjects = await outputs();
+      saveConfig({ semanticSearchMode: "off" });
+      resetConfigCache();
+      expect(await outputs()).toEqual(withProjects);
+      expect(withProjects[0]).not.toContain('"project"');
+      expect(withProjects[1]).not.toContain("Project ");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test("akm search --project reports the project and applies its filters", async () => {
     const { code, stdout } = await runCliCapture(["search", "widget", "--project", "scoped", "--format", "json"]);
     expect(code).toBe(0);
@@ -268,6 +344,42 @@ describe("write defaults", () => {
     expect(data.client).toBe("acme");
     expect(data.kind).toBe("meta");
     expect(data.project).toBe("acme");
+  });
+
+  test("remember: body frontmatter beats project metadata, and akm's own keys beat both (stdin)", () => {
+    saveConfig({
+      semanticSearchMode: "off",
+      projects: { acme: { write: { metadata: { kind: "meta", tier: "meta", client: "acme" } } } },
+    } as never);
+    const result = spawnSync("bun", ["src/cli.ts", "remember", "--project", "acme", "--name", "stdin-note"], {
+      input: "---\nkind: body\ncaptureMode: background\ndescription: from body\n---\nnote text\n",
+      encoding: "utf8",
+      env: process.env,
+    });
+    expect(result.status).toBe(0);
+    const file = JSON.parse(result.stdout).path as string;
+    const { data } = parseFrontmatter(fs.readFileSync(file, "utf8"));
+    expect(data.kind).toBe("body");
+    expect(data.tier).toBe("meta");
+    expect(data.client).toBe("acme");
+    expect(data.project).toBe("acme");
+    expect(data.captureMode).toBe("hot");
+    expect(data.description).toBe("from body");
+  });
+
+  test("remember: the project's write.bundle never raises a conflict the user did not type", async () => {
+    const team = tmp("proj-team2");
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: { team: { path: team, writable: true } },
+      projects: { acme: { write: { bundle: "team" } } },
+    } as never);
+    const first = await runCliCapture(["remember", "base note", "--name", "base"]);
+    expect(first.code).toBe(0);
+    const ref = JSON.parse(first.stdout).ref as string;
+    const second = await runCliCapture(["remember", "fix", "--project", "acme", "--supersedes", ref, "--name", "fix"]);
+    expect(second.code).toBe(0);
+    expect(JSON.parse(second.stdout).path.startsWith(team)).toBe(false);
   });
 
   test("remember: an unwritable write.bundle fails with --bundle's error", async () => {

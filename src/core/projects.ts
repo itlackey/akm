@@ -10,12 +10,10 @@
  * those defaults under their explicit flags, one kind at a time.
  */
 
-import os from "node:os";
-import path from "node:path";
 import type { ScopeFilters } from "./adapter/types";
 import { isWithin, safeRealpath } from "./common";
 import type { AkmConfig } from "./config/config-types";
-import { NO_PROJECT, type ProjectConfig } from "./config/schema/projects";
+import { expandProjectPath, NO_PROJECT, type ProjectConfig } from "./config/schema/projects";
 import { UsageError } from "./errors";
 
 type FrontmatterScalar = string | number | boolean;
@@ -47,10 +45,6 @@ export interface ProjectView {
   prefer?: ScopeFilters;
 }
 
-function expandPath(p: string): string {
-  return p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p;
-}
-
 /** The project whose configured path most specifically contains `dir`, with that path as configured. */
 export function projectForDirectory(
   config: Pick<AkmConfig, "projects">,
@@ -59,7 +53,7 @@ export function projectForDirectory(
   let best: { name: string; path: string; length: number } | undefined;
   for (const [name, project] of Object.entries(config.projects ?? {})) {
     for (const configured of project.paths ?? []) {
-      const root = expandPath(configured);
+      const root = expandProjectPath(configured);
       if (!isWithin(dir, root)) continue;
       const length = safeRealpath(root).length;
       if (!best || length > best.length) best = { name, path: configured, length };

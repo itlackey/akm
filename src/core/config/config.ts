@@ -587,7 +587,11 @@ function resolveExtendsChain(
   let merged: Record<string, unknown> = {};
   for (let i = layers.length - 1; i >= 0; i--) {
     const layer = layers[i]!;
-    merged = deepMergeConfig(merged, i > 0 ? sanitizeInheritedConfig(layer.raw, layer.ref ?? String(i)) : layer.raw);
+    const raw = i > 0 ? sanitizeInheritedConfig(layer.raw, layer.ref ?? String(i)) : layer.raw;
+    const inherited = merged.projects;
+    merged = deepMergeConfig(merged, raw);
+    // A project is replaced whole by name: its fields are never merged across layers.
+    if (isPlainObject(inherited) && isPlainObject(raw.projects)) merged.projects = { ...inherited, ...raw.projects };
   }
   return merged;
 }

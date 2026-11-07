@@ -25,7 +25,6 @@ import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { resolveProject } from "../../core/projects";
-import { resolveWriteTarget } from "../../core/write-source";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { type AkmExtractResult, akmExtract, resolveStandaloneExtractPlan } from "./extract";
 
@@ -117,11 +116,12 @@ export const extractCommand = defineJsonCommand({
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     });
 
-    const project = resolveProject(config, { project: getStringArg(args, "project") });
-    const scope = scopeFromArgs(args, project);
+    // The project is chosen per session from its own directory; `--project` names one for every session.
+    const projectName = getStringArg(args, "project");
+    resolveProject(config, { project: projectName });
+    const scope = scopeFromArgs(args);
     const commonOptions = Object.freeze({
-      ...(project?.write.bundle ? { stashDir: resolveWriteTarget(config, project.write.bundle).source.path } : {}),
-      ...(project ? { metadata: project.write.metadata } : {}),
+      ...(projectName !== undefined ? { project: projectName } : {}),
       ...(Object.keys(scope).length > 0 ? { scope } : {}),
       ...(sessionId ? { sessionId } : {}),
       ...(location ? { location } : {}),

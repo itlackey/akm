@@ -980,13 +980,18 @@ what akm reads and writes there:
 - `from`, `filters`, `prefer`: the defaults for `akm search` and `akm curate`, in the shape of
   `--from`, `--filter` and `--prefer` (a value or a list; an empty string matches assets
   without the key).
-- `write`: `bundle` (between `--bundle` and `defaultWriteTarget`), `user`, `agent`, `channel`
-  (each fills a flag you left out) and `metadata` (frontmatter keys a write lacks; the body's
-  own keys win, and akm's own keys win over both).
+- `write`: `bundle` (a default for `remember` and `proposal new`, between `--bundle` and
+  `defaultWriteTarget`; an explicit `--bundle` or a `--supersedes` ref decides first), `user`,
+  `agent`, `channel` (each fills a flag you left out) and `metadata` (frontmatter keys a write
+  lacks; the body's own keys win, and akm's own keys win over both; keys akm sets itself, such
+  as `description` or `tags`, are ignored with a warning). `proposal extract` uses `user`,
+  `agent`, `channel` and `metadata`, never `bundle`.
 - A project with no `prefer` prefers `project=<name>`; with no `write.metadata.project`, its
   writes carry `project: <name>`.
-- A malformed project or key warns once and is ignored. `extends` layers merge projects by name,
-  the local file winning. Improve's session extract names a memory folder and a session asset's
+- A malformed project or key warns once and is ignored, as is a path that is `~user/...` or
+  relative. When two projects list the same path, the first in the file is used, with a warning.
+  `extends` layers combine projects by name: a project in the local file replaces the inherited
+  one of that name whole, never field by field. Improve's session extract names a memory folder and a session asset's
   `project:` after the project containing the session's working directory, when there is one.
 
 See [Projects in the CLI reference](cli.md#projects) for how a call chooses one.

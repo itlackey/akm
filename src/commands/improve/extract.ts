@@ -36,7 +36,7 @@ import {
 } from "../../core/file-lock";
 import type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
-import { projectForDirectory } from "../../core/projects";
+import { type ResolvedProject, resolveProject } from "../../core/projects";
 import { collectSensitiveValues, redactErrorBody } from "../../core/redaction";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { resolveTypeConventions, typeConventionRef } from "../../core/standards/resolve-type-conventions";
@@ -190,8 +190,8 @@ export interface AkmExtractOptions {
   sourceRun?: string;
   /** Scope stamped on every proposal (`--user`, `--agent`, `--run`, `--channel`); the model never sets one. */
   scope?: StashEntryScope;
-  /** Frontmatter keys a proposal lacks, from the project's `write.metadata`. */
-  metadata?: Record<string, unknown>;
+  /** `--project`: the project for every session; absent, each session's own directory selects one. */
+  project?: string;
   /** The active improve profile (its extract toggle gates extract as an improve stage only). */
   improveProfile?: ImproveProfileConfig;
   signal?: AbortSignal;
@@ -375,9 +375,17 @@ function canonicalSegment(value: string): string {
     .replace(/^-|-$/g, "");
 }
 
-/** The configured project the session's working directory is in, if the platform recorded one. */
-function sessionProjectName(run: Pick<ExtractRun, "config">, ref: SessionSummary): string | undefined {
-  return ref.cwd ? projectForDirectory(run.config, ref.cwd)?.name : undefined;
+/** The project a session runs under: `--project`, else the one its recorded working directory is in. */
+function sessionProject(run: Pick<ExtractRun, "config" | "options">, ref: SessionSummary): ResolvedProject | undefined {
+  const { project } = run.options;
+  if (project !== undefined) return resolveProject(run.config, { project });
+  return ref.cwd ? resolveProject(run.config, { cwd: ref.cwd }) : undefined;
+}
+
+/** The scope flags, with the project's `write` scope filling the ones not given. */
+function sessionScope(project: ResolvedProject | undefined, flags: StashEntryScope = {}): StashEntryScope {
+  const { user, agent, channel } = project?.write ?? {};
+  return { ...(user ? { user } : {}), ...(agent ? { agent } : {}), ...(channel ? { channel } : {}), ...flags };
 }
 
 /** `projectName` (a configured project) names the memory folder; without it, the platform's project hint does. */
@@ -655,7 +663,7 @@ async function maybeWriteSessionAsset(
       data,
       run.stashDir,
       (summaryData) => sessionIndexing.generate(summaryData),
-      sessionProjectName(run, data.ref),
+      sessionProject(run, data.ref)?.name,
     );
     if (!result.written) return {};
     // A standalone extract has no post-loop reindex to pick the file up.
@@ -678,7 +686,8 @@ async function processSession(
   const { harness, stashDir, sourceRun, dryRun, options } = run;
   const { data, filtered, contentHash: hash } = gate;
   const base = { preFilter: preFilterStats(filtered), contentHash: hash };
-  const projectName = sessionProjectName(run, data.ref);
+  const project = sessionProject(run, data.ref);
+  const projectName = project?.name;
   const extraction = await extractFromSession(
     run,
     buildExtractPrompt({
@@ -761,9 +770,9 @@ async function processSession(
         candidate,
         data.ref,
         sessionAsset.sessionAssetRef,
-        options.scope,
+        sessionScope(project, options.scope),
         projectName,
-        options.metadata,
+        project?.write.metadata,
       );
       const ledgerRow = ledger.get(ledgerKey("extract", built.ref));
       if (isLedgerBlocked(ledgerRow, nowIso)) {

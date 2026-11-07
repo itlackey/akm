@@ -233,6 +233,29 @@ describe("akmPropose — argv-coerced calls (happy + failure)", () => {
     expect(result.proposal.ref).toBe(durableItemRef(stash, "skill", "hello"));
   });
 
+  test("a project's scope and metadata are stamped; the model's own keys win (#1461)", async () => {
+    const stash = makeStashDir();
+    const reply = JSON.stringify({
+      ref: "skills/hello",
+      content: "---\ndescription: Say hi\nteam: model\n---\n\nSay hi politely.\n",
+    });
+    const result = await akmPropose({
+      ...coerceProposeArgs({ type: "skill", name: "hello", task: "Say hi" }),
+      stashDir: stash,
+      scope: { user: "u1", channel: "acme" },
+      metadata: { team: "config", client: "acme", project: "acme" },
+      agentConfig: quietQualityGateConfig(fakeAgent([reply])),
+    });
+    if (!result.ok) throw new Error("expected ok");
+    expect(parseFrontmatter(result.proposal.payload.content).data).toMatchObject({
+      scope_user: "u1",
+      scope_channel: "acme",
+      team: "model",
+      client: "acme",
+      project: "acme",
+    });
+  });
+
   test("a scope the model wrote is removed, with one warning (#1446)", async () => {
     const stash = makeStashDir();
     const warnings: string[] = [];

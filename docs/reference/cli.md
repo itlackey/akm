@@ -1834,9 +1834,14 @@ work on it in, and what akm reads and writes there (see
 else the configured path that most specifically contains the working directory,
 else none, and then nothing changes. It supplies defaults only for `akm search`,
 `akm curate` (and `curate()`), `akm remember`, `akm proposal extract` and
-`akm proposal new`; never for `show`, `improve` or the scheduler. A flag you pass
+`akm proposal new`; never for `show`, `improve`, model work or the scheduler. A flag you pass
 replaces the project's value of that kind (`--from`, `--filter`, `--prefer`,
-`--bundle`, `--user`, `--agent`, `--channel`); nothing is merged. A project with no
+`--bundle`, `--user`, `--agent`, `--channel`); nothing is merged. `--pack` with
+`--format json` prints only the packed items, so it does not report the project
+(text output still opens with the project line). `proposal extract` takes a
+project's `write.user`, `agent`, `channel` and `metadata` but never its
+`write.bundle`, and chooses the project per session from the session's own
+directory (`--project` names one for every session). A project with no
 `prefer` prefers `project=<name>`, and its writes carry `project: <name>`.
 
 ### remember

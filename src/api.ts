@@ -69,7 +69,7 @@ export async function curate(query: string, options: CurateOptions = {}): Promis
           filters: scopeFlagTokens(options.filters),
           prefer: scopeFlagTokens(options.prefer),
           cwd: options.cwd,
-          project: options.project,
+          project: options.project?.trim() || undefined,
         },
         mode,
       );

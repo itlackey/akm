@@ -8,6 +8,8 @@
  * checked piece by piece by {@link dropUnusableProjects} (a malformed piece
  * warns once and is ignored), so what reaches {@link ProjectsSchema} is valid.
  */
+import os from "node:os";
+import path from "node:path";
 import { z } from "zod";
 import { isRecord } from "../../common";
 import { warnOnce } from "../../warn";
@@ -34,10 +36,36 @@ const ProjectFields = {
   prefer: z.record(nonEmptyString, scopeValues),
 };
 
-/** A directory a project lives in: absolute, or starting with `~`. */
-const projectPath = nonEmptyString.refine((p) => p.startsWith("~") || p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p), {
-  message: "must be an absolute path or start with ~",
-});
+/** A directory a project lives in: absolute, `~` or `~/...` (not `~user/...`). */
+const projectPath = nonEmptyString.refine(
+  (p) => p === "~" || /^~[\\/]/.test(p) || p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p),
+  { message: "must be an absolute path, ~ or ~/..." },
+);
+
+/** A configured path as a directory: `~` expanded, trailing slashes and `..` resolved. */
+export function expandProjectPath(p: string): string {
+  return path.resolve(p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p);
+}
+
+/** Frontmatter keys akm sets itself: a project's `write.metadata` never carries them. */
+const AKM_OWNED_KEYS = new Set([
+  "name",
+  "type",
+  "description",
+  "tags",
+  "source",
+  "xrefs",
+  "observed",
+  "expires",
+  "updated",
+  "subjective",
+  "captureMode",
+  "beliefState",
+  "supersededBy",
+  "when_to_use",
+  "provenance",
+  "scope",
+]);
 
 export const ProjectWriteSchema = z
   .object({
@@ -110,7 +138,7 @@ export function dropUnusableProjects(raw: Dict, sourcePath?: string): Dict {
       if (Array.isArray(entry.paths)) {
         const paths = entry.paths.filter((p) => {
           const ok = projectPath.safeParse(p).success;
-          if (!ok) warn(`${where}.paths`, `${JSON.stringify(p)} must be an absolute path or start with ~`);
+          if (!ok) warn(`${where}.paths`, `${JSON.stringify(p)} must be an absolute path, ~ or ~/...`);
           return ok;
         });
         project = { ...project, paths };
@@ -118,11 +146,34 @@ export function dropUnusableProjects(raw: Dict, sourcePath?: string): Dict {
         project = keepValid(project, { paths: z.array(projectPath) }, where, sourcePath);
       }
       if (isRecord(entry.write)) {
-        project = { ...project, write: keepValid(entry.write, WriteFields, `${where}.write`, sourcePath) };
+        const write = keepValid(entry.write, WriteFields, `${where}.write`, sourcePath);
+        if (isRecord(write.metadata)) {
+          const metadata: Dict = {};
+          for (const [key, value] of Object.entries(write.metadata)) {
+            if (AKM_OWNED_KEYS.has(key) || key.startsWith("scope_")) {
+              warn(`${where}.write.metadata.${key}`, "akm sets this key itself");
+            } else metadata[key] = value;
+          }
+          write.metadata = metadata;
+        }
+        project = { ...project, write };
       } else {
         project = keepValid(project, { write: z.object({}) }, where, sourcePath);
       }
       kept[name] = project;
+    }
+  }
+  const owners = new Map<string, string>();
+  for (const [name, project] of Object.entries(kept)) {
+    for (const configured of (isRecord(project) && Array.isArray(project.paths) ? project.paths : []) as string[]) {
+      const dir = expandProjectPath(configured);
+      const first = owners.get(dir);
+      if (first !== undefined && first !== name) {
+        warnOnce(
+          `config:project-shared-path:${sourcePath ?? "inline"}:${name}:${configured}`,
+          `projects.${name}.paths: ${configured} is also a path of "${first}"${sourcePath ? ` in ${sourcePath}` : ""}; "${first}" is used there.`,
+        );
+      } else owners.set(dir, name);
     }
   }
   return { ...raw, projects: kept };

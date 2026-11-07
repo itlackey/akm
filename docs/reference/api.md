@@ -70,8 +70,9 @@ function curate(
   unchanged afterwards. As with `akm curate`, the call records its usage
   event in `state.db`.
 - **Repeated calls.** Config is re-validated against `config.json` on every
-  call (its path, size and modification time), so an edit on disk is seen by
-  the next call exactly as a separate CLI run would see it. Database handles are
+  call (its path, size and modification time), so an edit to that file is seen by
+  the next call exactly as a separate CLI run would see it. A change only in a file
+  its `extends` names is not noticed until the config file itself changes. Database handles are
   opened and closed within each call. The local embedding model and the embedding
   cache are kept for the life of the process, which is what makes a warm call
   cheaper than a CLI run. Overlapping calls are safe. Under Bun the SQLite file

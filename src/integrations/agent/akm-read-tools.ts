@@ -77,6 +77,8 @@ export const AKM_READ_TOOLS: readonly AkmReadTool[] = [
             type: str(input.type),
             limit: positiveInt(input.limit) === undefined ? undefined : String(input.limit),
             eventSource: sourceOf(context),
+            // Model work is not a place the user works: no project's defaults apply.
+            project: "none",
           },
           mode,
         ),
