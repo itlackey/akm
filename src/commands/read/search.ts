@@ -520,7 +520,8 @@ export function parseBeliefFilterMode(value: string | undefined): BeliefFilterMo
 
 /**
  * Normalise scope filters to per-key value lists: strings are trimmed, and
- * empty / non-string values and duplicates are dropped. Returns `undefined`
+ * non-string values and duplicates are dropped; an empty string stays (it
+ * selects assets without the key). Returns `undefined`
  * when nothing meaningful remains, so callers don't pay for an empty-filter
  * post-walk in `searchLocal`.
  */
@@ -530,7 +531,7 @@ export function normalizeScopeFilters(raw: ScopeFilters | undefined): ScopeFilte
   for (const [key, given] of Object.entries(raw)) {
     const values = new Set<string>();
     for (const value of Array.isArray(given) ? given : [given]) {
-      if (typeof value === "string" && value.trim()) values.add(value.trim());
+      if (typeof value === "string") values.add(value.trim());
     }
     if (values.size > 0) out[key] = [...values];
   }
@@ -540,8 +541,9 @@ export function normalizeScopeFilters(raw: ScopeFilters | undefined): ScopeFilte
 /**
  * Parse repeated `--filter k=v` argv tokens into a
  * `ScopeFilters`: a repeated key collects all its values (matched as OR; see
- * `scopeMatchesFilters`). Throws a {@link UsageError} for malformed tokens
- * (missing `=`, empty key or value) so callers don't see ambiguous misses.
+ * `scopeMatchesFilters`). An empty value (`key=`) selects assets without the
+ * key. Throws a {@link UsageError} for malformed tokens (missing `=` or an
+ * empty key) so callers don't see ambiguous misses.
  *
  * Used by `akm search --filter` and `akm curate --filter`.
  */
@@ -557,9 +559,6 @@ export function parseScopeFilterFlags(values: string[], flagName = "--filter"): 
     const value = raw.slice(eq + 1).trim();
     if (!key) {
       throw new UsageError(`Invalid ${flagName} value "${raw}". Expected key=value (e.g. team=platform).`);
-    }
-    if (!value) {
-      throw new UsageError(`${flagName} ${key}=… requires a non-empty value.`);
     }
     out[key] = [...(out[key] ?? []), value];
   }

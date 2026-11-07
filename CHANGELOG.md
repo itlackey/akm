@@ -11,6 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `--filter` and `--prefer` (search and curate) select on any frontmatter key, such as `team=platform` or `project=openpalm`, and on `tag` (normalised like indexed tags), beside the scope keys. The values are used only for selection, never searched, embedded or shown. The first `akm index` after the upgrade indexes them for existing files (#1453).
 - `akm proposal extract` and `akm proposal new` take `--user`, `--agent`, `--run` and `--channel`, as `remember` does, and stamp that scope on the proposal; model output never sets scope (#1454).
 
+- `--filter key=` (an empty value) matches assets that do not carry `key`, combined with the key's other values by OR: `--filter channel=acme --filter channel=` keeps acme's notes plus every unscoped asset. `tag=` means no tags. Search, curate and `curate()` share the parser and matcher; the workspace browse still omits blank scope values (#1459).
+
 ### Fixed
 
 - A distill update of an existing knowledge doc keeps the doc's frontmatter keys the model's rewrite left out (such as `team` or `project`); scope still comes from the memory and `updated` is refreshed (#1454).

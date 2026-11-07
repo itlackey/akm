@@ -38,7 +38,7 @@ function curate(
 - **Recall controls.** `source` is CLI `--from` (local, registry, all, or a named
   bundle); `filters` uses the same scope keys and rule
   as repeated CLI `--filter key=value`: each key takes a value or a list, a list
-  matches any of its values, and different keys must all match. `prefer` takes
+  matches any of its values (an empty string matches assets without the key), and different keys must all match. `prefer` takes
   the same shape as CLI `--prefer`: matching hits rank slightly higher and
   nothing is dropped or admitted. `belief` defaults to `"current"`, keeping
   unflagged reference knowledge and active/asserted assets. These labels do not
