@@ -111,7 +111,7 @@ export type ScopeKey = keyof StashEntryScope;
  * Scope filters: per key one value or a list. A list matches any of its values
  * (OR within a key); different keys must all match (AND across keys).
  */
-export type ScopeFilters = Partial<Record<ScopeKey, string | string[]>>;
+export type ScopeFilters = Partial<Record<string, string | string[]>>;
 
 // ── §3 — IndexDocument (Chunk 5 F4a M-core-1: IS IndexDocument + provenance) ─────
 //
@@ -205,6 +205,11 @@ export interface IndexDocument {
    * frontmatter keys. Used by `akm search --filter` and `akm curate --filter`.
    */
   scope?: StashEntryScope;
+  /**
+   * The other scalar frontmatter keys, as string lists. Selection only: read by
+   * `--filter` / `--prefer`, never ranked text, never output.
+   */
+  frontmatter?: Record<string, string[]>;
   /**
    * Wiki role for knowledge pages following the LLM Wiki pattern.
    * `schema` / `index` / `log` are the special files at the top of the wiki;

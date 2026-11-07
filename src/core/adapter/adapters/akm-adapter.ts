@@ -213,6 +213,8 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
   // `OkfProvenance` doc). Carried so the akm adapter rereads what it wrote and
   // `akm show` surfaces it, exactly like every other field in this list.
   "provenance",
+  // #1453: the other frontmatter keys, read only by `--filter` / `--prefer`.
+  "frontmatter",
 ] as const satisfies readonly (keyof IndexDocument)[];
 
 /**
@@ -469,12 +471,12 @@ export const akmAdapter: BundleAdapter = {
   id: "akm",
   // Bump when a change to the matchers (or `recognize`) can retype or re-ref a
   // file that has not changed, or when the document records new fields from it
-  // (0.9.4: frontmatter dates, #1228; 0.9.5: path refs, #1432; 0.9.6: a wiki's raw/ is wiki-source): the version is
+  // (0.9.4: frontmatter dates, #1228; 0.9.5: path refs, #1432; 0.9.6: a wiki's raw/ is wiki-source; 0.9.7: selection frontmatter, #1453): the version is
   // folded into each directory's freshness, so the next incremental `akm index`
   // re-drains it and re-files those rows, including old command refs inferred
   // from body placeholders and loose files' type-folder refs. Vectors are kept
   // when the search text is unchanged.
-  version: "0.9.6",
+  version: "0.9.7",
   // Recognized-extension HINT, derived from what the matchers accept (§6):
   // `.md` (Markdown types + workflow peer), `.yml` (task and workflow YAML),
   // `.yaml` (task near-miss diagnostics), `.env` (env files), and the 16

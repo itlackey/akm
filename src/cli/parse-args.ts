@@ -9,6 +9,7 @@
  * main CLI file focused on command definitions and routing.
  */
 
+import type { StashEntryScope } from "../core/adapter/types";
 import { UsageError } from "../core/errors";
 
 // findCittyTopLevelCommand(Index) + CittyArg(s)DefinitionForScan moved to
@@ -85,4 +86,25 @@ export function getStringArg(args: unknown, key: string): string | undefined {
   if (typeof val !== "string") return undefined;
   const trimmed = val.trim();
   return trimmed || undefined;
+}
+
+/** The scope flags `remember` takes, for the proposal commands that stamp a scope on what they queue. */
+export const SCOPE_ARGS = {
+  user: { type: "string", description: "Scope the proposal to a user id (persisted as `scope_user` frontmatter)" },
+  agent: { type: "string", description: "Scope the proposal to an agent id (persisted as `scope_agent` frontmatter)" },
+  run: { type: "string", description: "Scope the proposal to a run id (persisted as `scope_run` frontmatter)" },
+  channel: {
+    type: "string",
+    description: "Scope the proposal to a channel name (persisted as `scope_channel` frontmatter)",
+  },
+} as const;
+
+/** The scope the {@link SCOPE_ARGS} flags name; empty when none is given. */
+export function scopeFromArgs(args: unknown): StashEntryScope {
+  const scope: StashEntryScope = {};
+  for (const key of ["user", "agent", "run", "channel"] as const) {
+    const value = getStringArg(args, key);
+    if (value) scope[key] = value;
+  }
+  return scope;
 }

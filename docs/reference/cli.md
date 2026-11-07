@@ -659,8 +659,8 @@ it.
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter by asset type. Free-form and unvalidated — an unknown type returns no hits. Also accepts any adapter-defined type (e.g. `website`) — see [Bundle Types](bundle-types.md) for the open types each adapter emits. |
 | `--limit` | number | `20` | Maximum results |
 | `--from` | `local`, `registry`, `all` | `local` | Where to search |
-| `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable; a repeated key matches any of its values, different keys must all match. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the candidates before ranking. |
-| `--prefer` | `<key>=<value>` | _(none)_ | Scope preference — same keys, repetition and matching as `--filter`, but a boost, not a limit: a matching asset's score is multiplied by 1.02 (browse and ref-prefix listings put matches first). It never drops or admits an asset; `--from` and `--filter` still decide which are eligible. Example: `--prefer channel=ops`. |
+| `--filter` | `<key>=<value>` | _(none)_ | Frontmatter filter — repeatable; a repeated key matches any of its values, different keys must all match. A key is any frontmatter key (`team`, `project`, `category`, ...), `tag` (matched the way the index normalises tags), or a scope key (`user`, `agent`, `run`, `channel`). Example: `--filter team=platform --filter user=alice`. Narrows the candidates before ranking. |
+| `--prefer` | `<key>=<value>` | _(none)_ | Frontmatter preference — same keys, repetition and matching as `--filter`, but a boost, not a limit: a matching asset's score is multiplied by 1.02 (browse and ref-prefix listings put matches first). It never drops or admits an asset; `--from` and `--filter` still decide which are eligible. Example: `--prefer channel=ops`. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--belief` | `all`, `current`, `historical` | `current` | Belief filter on any asset. `current` keeps unflagged/active/asserted assets; `historical` keeps deprecated/contradicted/superseded/archived assets. Labels do not establish truth. |
 | `--since` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or after this day: the `observed` date, else `updated`. Assets with neither are dropped. Applies before the candidate budgets, like `--filter`. Search only; registry hits are unaffected. |
@@ -669,9 +669,12 @@ it.
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output verbosity level, or the `agent` projection |
 
-`--filter` flags AND-join: every supplied key must match the entry's
-`scope` for the entry to appear in the result set. Entries without any scope
-are excluded as soon as a filter is supplied. With no `--filter` (the
+`--filter` flags AND-join: every supplied key must match the entry for it
+to appear in the result set. Entries without a supplied key are excluded as
+soon as a filter is supplied. Keys other than the scope keys are read from the
+indexed frontmatter; the first `akm index` after upgrading indexes them for
+existing files. Their values are used only for selection: never searched,
+embedded or shown. With no `--filter` (the
 default), unfiltered queries continue to surface all entries — including
 legacy memories that pre-date the scope contract.
 
@@ -743,8 +746,8 @@ akm curate "deploy the service" --filter user=alice --pack 4000
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter curated results by asset type |
 | `--limit` | number | `4` | Maximum curated results |
 | `--from` | `local`, `registry`, `all`, bundle name | `local` | Where to search before curating |
-| `--filter` | `<key>=<value>` | _(none)_ | Repeatable exact scope filter: user, agent, run, channel; a repeated key matches any of its values, different keys are AND-joined |
-| `--prefer` | `<key>=<value>` | _(none)_ | Repeatable scope preference with the keys and matching of `--filter`; matching hits rank slightly higher (×1.02 on the score). It never drops or admits a hit and does not change which evidence curate accepts |
+| `--filter` | `<key>=<value>` | _(none)_ | Repeatable exact frontmatter filter (any key, `tag`, or user, agent, run, channel); a repeated key matches any of its values, different keys are AND-joined |
+| `--prefer` | `<key>=<value>` | _(none)_ | Repeatable frontmatter preference with the keys and matching of `--filter`; matching hits rank slightly higher (×1.02 on the score). It never drops or admits a hit and does not change which evidence curate accepts |
 | `--belief` | `all`, `current`, `historical` | `current` | Current keeps unflagged and active/asserted assets; historical keeps deprecated/contradicted/superseded/archived assets |
 | `--pack` | positive token budget | _(none)_ | Pack eligible local content in rank order; drop tail items before truncating the first oversized item |
 
@@ -3237,6 +3240,7 @@ akm proposal extract --type claude --location /custom/path --session-id <id>
 | `--connection <name>` / `--harness <name\|platform>` | Connection or harness for this invocation, by name, a harness also by platform (mutually exclusive). |
 | `--model <alias\|name>` | Model for this invocation: an alias or an exact name. |
 | `--strategy <name>` | Improve strategy supplying extract behavior; it never chooses where the model runs. |
+| `--user <id>` / `--agent <id>` / `--run <id>` / `--channel <name>` | Scope stamped on every proposal, as for `akm remember` (`scope_*` frontmatter). A scope the model writes is never used. |
 
 `--type` and `--auto` are mutually exclusive; one of them is required.
 `--auto` iterates `getAvailableHarnesses()` — every harness with a detectable
@@ -3322,6 +3326,7 @@ akm proposal new skill code-review --bundle team --task "PR-style review skill" 
 | `--connection` / `--harness` | Override the default connection or harness, by name, a harness also by platform (mutually exclusive) |
 | `--model` | Override the model: an alias or an exact name |
 | `--timeout-ms` | Override the selected connection's or harness's timeout for this call |
+| `--user` / `--agent` / `--run` / `--channel` | Scope stamped on the proposal, as for `akm remember` (`scope_*` frontmatter). A scope the model writes is replaced by these flags (none given: removed), with one warning. |
 
 Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 

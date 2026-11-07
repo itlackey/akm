@@ -278,7 +278,6 @@ for (const enabled of [false, true]) {
 }
 for (const [flags, opts] of [
   [["--belief", "invalid"], { belief: "invalid" }],
-  [["--filter", "project=bad"], { filters: { project: "bad" } }],
   [["--filter", "user="], { filters: { user: "" } }],
   [["--from", "missing"], { source: "missing" }],
 ] as const) {

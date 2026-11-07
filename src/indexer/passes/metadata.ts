@@ -284,16 +284,33 @@ export function stampScope(
 }
 
 /**
- * The one scope-filter rule: every supplied key must match (AND), and a key
- * with several values matches any of them (OR). Entries without the key never
- * match a supplied filter on it.
+ * The one selection rule: every supplied key must match (AND), and a key with
+ * several values matches any of them (OR). A key is a scope key, `tag`/`tags`
+ * (matched like the index normalises tags), or any other frontmatter key.
+ * Entries without the key never match a supplied filter on it.
  */
-export function scopeMatchesFilters(scope: StashEntryScope | undefined, filters: ScopeFilters): boolean {
-  for (const key of SCOPE_KEYS) {
-    const expected = filters[key];
+export function scopeMatchesFilters(
+  entry: Pick<IndexDocument, "scope" | "tags" | "frontmatter">,
+  filters: ScopeFilters,
+): boolean {
+  for (const [key, expected] of Object.entries(filters)) {
     if (expected === undefined) continue;
-    const value = scope?.[key];
-    if (value === undefined || !(Array.isArray(expected) ? expected : [expected]).includes(value)) return false;
+    const wanted = Array.isArray(expected) ? expected : [expected];
+    let have: readonly string[] | undefined;
+    if ((SCOPE_KEYS as readonly string[]).includes(key)) {
+      const value = entry.scope?.[key as ScopeKey];
+      have = value === undefined ? undefined : [value];
+    } else if (key === "tag" || key === "tags") {
+      have = entry.tags;
+      if (have) {
+        const normalized = normalizeTerms(wanted);
+        if (!normalized.some((value) => have?.includes(value))) return false;
+        continue;
+      }
+    } else {
+      have = entry.frontmatter && Object.hasOwn(entry.frontmatter, key) ? entry.frontmatter[key] : undefined;
+    }
+    if (!have || !wanted.some((value) => have.includes(value))) return false;
   }
   return true;
 }
@@ -457,6 +474,29 @@ export function applyCuratedFrontmatter(entry: IndexDocument, fmData: Record<str
   }
 
   applyScopeFrontmatter(entry, fmData);
+  applySelectionFrontmatter(entry, fmData);
+}
+
+/** Longest value kept for selection; a longer one is prose, not a label. */
+const SELECTION_VALUE_MAX_CHARS = 200;
+
+/**
+ * Keep the frontmatter keys `--filter` / `--prefer` can select on (`team`, `project`, `category`, ...) as string
+ * lists on `entry.frontmatter`. Scope keys and `tags` have their own homes; objects and prose are skipped.
+ */
+function applySelectionFrontmatter(entry: IndexDocument, fmData: Record<string, unknown>): void {
+  const kept: Record<string, string[]> = Object.create(null);
+  for (const [key, raw] of Object.entries(fmData)) {
+    if (key === "tags" || SCOPE_FRONTMATTER_KEYS.includes(key)) continue;
+    const values: string[] = [];
+    for (const item of Array.isArray(raw) ? raw : [raw]) {
+      if (typeof item !== "string" && typeof item !== "number" && typeof item !== "boolean") continue;
+      const value = String(item).trim();
+      if (value && value.length <= SELECTION_VALUE_MAX_CHARS) values.push(value);
+    }
+    if (values.length > 0) kept[key] = values;
+  }
+  if (Object.keys(kept).length > 0) entry.frontmatter = kept;
 }
 
 function normalizeNonEmptyStringList(value: unknown): string[] | undefined {

@@ -306,7 +306,7 @@ function eligibleEvidence(ref: string, policy: EvidencePolicy): { itemRef: strin
     } catch {
       return undefined;
     }
-    const entry = { ...row.entry, scope: undefined };
+    const entry = { ...row.entry, scope: undefined, frontmatter: undefined };
     applyCuratedFrontmatter(entry, parseFrontmatter(raw).data);
     const kept = applyEntryFilters([{ ...row, id, entry }], { ...policy, db });
     return kept.length > 0 ? { itemRef: row.itemRef, beliefState: entry.beliefState } : undefined;

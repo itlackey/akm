@@ -144,6 +144,7 @@ export function indexDocumentToStashEntry(doc: IndexDocument): IndexDocument {
   // `generation`/`evidenceSources` above, so it round-trips to the top level
   // of the persisted entry rather than staying nested under `documentJson`.
   if (dj.provenance !== undefined) entry.provenance = dj.provenance as IndexDocument["provenance"];
+  if (dj.frontmatter !== undefined) entry.frontmatter = dj.frontmatter as IndexDocument["frontmatter"];
 
   return entry;
 }
