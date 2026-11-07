@@ -526,6 +526,7 @@ export function parseSearchSource(
       throw new UsageError(
         `--from "${keyword}" cannot be combined with other --from values. Repeat --from only for bundle names.`,
         "INVALID_SOURCE_VALUE",
+        `Use "${keyword}" alone, or repeat --from with configured bundle names only.`,
       );
     }
     return names;

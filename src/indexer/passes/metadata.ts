@@ -287,8 +287,9 @@ export function stampScope(
  * The one selection rule: every supplied key must match (AND), and a key with
  * several values matches any of them (OR). A key is a scope key, `tag`/`tags`
  * (matched like the index normalises tags), or any other frontmatter key.
- * An empty value (`key=`) matches an entry that does not carry the key (no tags
- * for `tag`); any other value never matches such an entry.
+ * An empty value (`key=`) matches an entry that does not carry the key; any
+ * other value never matches such an entry. `tag` always carries path-derived
+ * tags, so `tag=` matches almost no assets.
  */
 export function scopeMatchesFilters(
   entry: Pick<IndexDocument, "scope" | "tags" | "frontmatter">,
