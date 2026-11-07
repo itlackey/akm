@@ -12,6 +12,7 @@ import {
   nextAfterDecision,
   proposalHref,
   queueState,
+  relativeAge,
   rejectionError,
   rejectionReason,
   settleDecision,
@@ -90,8 +91,8 @@ test("after a decision the next proposal is the next remaining one in queue orde
   assert.equal(nextAfterDecision(order, ["b"], "b", ["a", "d"]), "d", "one another reviewer decided is skipped");
   assert.equal(
     nextAfterDecision(order, ["d"], "d", ["a", "b", "c"]),
-    "c",
-    "at the end the nearest earlier one stays in view",
+    "a",
+    "at the end the queue wraps to its first remaining proposal",
   );
   assert.equal(nextAfterDecision(order, ["a", "b", "c", "d"], "d", []), "", "nothing remains");
   assert.equal(
@@ -175,4 +176,14 @@ test("a batch keeps its failures selected and inspectable, and an unreported id 
     { id: "d", error: "The result did not report this proposal." },
   ]);
   assert.deepEqual(batchOutcome(["a"], {}).selected, ["a"]);
+});
+
+test("waiting time reads in the largest whole unit", () => {
+  const now = Date.parse("2026-11-10T12:00:00Z");
+  const ago = (ms) => new Date(now - ms).toISOString();
+  assert.equal(relativeAge(ago(20000), now), "just now");
+  assert.equal(relativeAge(ago(61 * 60000), now), "1 hour");
+  assert.equal(relativeAge(ago(3 * 86400000 + 5000), now), "3 days");
+  assert.equal(relativeAge(undefined, now), "Not recorded");
+  assert.equal(relativeAge("nonsense", now), "Not recorded");
 });

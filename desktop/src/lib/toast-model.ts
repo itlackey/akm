@@ -26,8 +26,12 @@ export interface Toast extends Required<Pick<ToastInput, "title" | "kind">> {
 }
 
 export const TOAST_MS = 6000;
-/** More than this never show at once: the oldest self-closing toast goes first, a toast that needs action last. */
-export const TOAST_MAX = 4;
+/** A toast with an action stays longer, so there is time to reach it. */
+export const TOAST_ACTION_MS = 10000;
+/** Pause after the pointer or focus leaves a toast before its timer starts again. */
+export const TOAST_RESUME_MS = 2000;
+/** At most this many show at once: a new one drops the oldest self-closing toast; warnings and errors are never dropped. */
+export const TOAST_MAX = 3;
 
 /** Success and info are announced politely; warnings and errors interrupt, because the reviewer has to act on them. */
 export const toastRole = (kind: ToastKind): "status" | "alert" =>
@@ -43,12 +47,19 @@ export function addToast(list: Toast[], input: ToastInput, id: number): Toast[] 
     ...(input.action ? { action: input.action } : {}),
     ...(input.key ? { key: input.key } : {}),
     timeoutMs:
-      input.timeoutMs === undefined ? (kind === "success" || kind === "info" ? TOAST_MS : null) : input.timeoutMs,
+      input.timeoutMs !== undefined
+        ? input.timeoutMs
+        : kind === "success" || kind === "info"
+          ? input.action
+            ? TOAST_ACTION_MS
+            : TOAST_MS
+          : null,
   };
   const next = [...list.filter((t) => !input.key || t.key !== input.key), toast];
   while (next.length > TOAST_MAX) {
     const drop = next.findIndex((t) => t.timeoutMs !== null && t.id !== id);
-    next.splice(drop >= 0 ? drop : 0, 1);
+    if (drop < 0) break;
+    next.splice(drop, 1);
   }
   return next;
 }

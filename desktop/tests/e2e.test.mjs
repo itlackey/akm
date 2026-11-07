@@ -146,14 +146,23 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
       .filter({ hasText: "review example" })
       .click();
     await page.getByRole("button", { name: "Reject…", exact: true }).click();
-    await page.getByRole("textbox", { name: "Rejection reason" }).fill("Synthetic review: verify the evidence first.");
+    await page.getByRole("textbox", { name: "Details" }).fill("Synthetic review: verify the evidence first.");
     await refuse("**/api/proposals/*/reject", 409, "PROPOSAL_NOT_PENDING", "This proposal is no longer pending.");
-    await page.getByRole("button", { name: "Confirm decision", exact: true }).click();
-    await expect(page.getByRole("alert").filter({ hasText: "no longer pending" })).toBeVisible();
-    await page.getByRole("button", { name: "Confirm decision", exact: true }).click();
+    await page.getByRole("button", { name: "Confirm reject", exact: true }).click();
+    // A refused write is not recorded, nothing advances, and the reviewer's input stays.
+    await expect(page.getByRole("alert").filter({ hasText: "The decision was not recorded." })).toContainText(
+      "no longer pending",
+    );
+    await expect(page.getByRole("textbox", { name: "Details" })).toHaveValue(/verify the evidence/);
+    await expect(page.getByRole("heading", { name: "review example", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Confirm reject", exact: true }).click();
+    // The next proposal opens by itself, and a toast (no Dismiss step) says what was rejected, with Reopen….
+    await expect(page.getByRole("status").filter({ hasText: "Rejected “review example”" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "review example", exact: true })).toHaveCount(0);
     await expect(
-      page.getByRole("region", { name: "Proposal detail" }).getByRole("button", { name: "Reopen…", exact: true }),
-    ).toBeVisible();
+      page.getByRole("region", { name: "Proposal detail" }).getByRole("heading", { level: 2 }),
+    ).toBeFocused();
+    await expect(page.getByRole("region", { name: "Proposal detail" }).getByText(/^Last: Rejected/)).toBeVisible();
     await page
       .getByRole("region", { name: "Proposals" })
       .getByRole("link")
@@ -161,8 +170,8 @@ test("built desktop UI: each section's happy path and one refusal", { timeout: 2
       .click();
     await page.screenshot({ path: path.join(screenshots, "review-desktop.png"), fullPage: true });
     await page.getByRole("button", { name: "Accept…", exact: true }).click();
-    await page.getByRole("button", { name: "Confirm decision", exact: true }).click();
-    await expect(page.getByRole("status").filter({ hasText: "Decision recorded" })).toBeVisible();
+    await page.getByRole("button", { name: "Confirm accept", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Accepted “recovery checklist”" })).toBeVisible();
     assert.match(
       await readFile(path.join(server.root, "personal/knowledge/recovery-checklist.md"), "utf8"),
       /Preserve the original backup/,

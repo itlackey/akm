@@ -357,6 +357,21 @@
       min-block-size: 0;
     }
   }
+  .footer-host {
+    display: none;
+  }
+  /* Mid widths: the bar keeps one row, so the host moves to the footer. */
+  @media (48rem <= width < 72rem) {
+    .desktop-topbar .host {
+      display: none;
+    }
+    .desktop-topbar nav > a {
+      padding: 8px 12px;
+    }
+    .footer-host {
+      display: inline;
+    }
+  }
   @media (width < 48rem) {
     :root {
       --top-inset: 7rem;
@@ -371,9 +386,20 @@
     .desktop-topbar nav {
       order: 3;
       flex: 1 0 100%;
-      justify-content: space-between;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 4px;
-      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .desktop-topbar nav > a {
+      justify-content: center;
+      gap: 4px;
+      padding-inline: 2px;
+      font-size: 13px;
+      min-width: 0;
+    }
+    .desktop-topbar .version {
+      display: none;
     }
     .desktop-topbar > .brand {
       padding-block-start: var(--space-3);
@@ -397,20 +423,13 @@
     }
   }
   @media (width < 26rem) {
-    .desktop-topbar nav {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 4px;
-      min-width: 0;
-    }
     .desktop-topbar nav > a {
-      justify-content: center;
-      gap: 4px;
-      padding-inline: 2px;
-      font-size: 13px;
-      min-width: 0;
+      position: relative;
     }
     .desktop-topbar .nav-count {
+      position: absolute;
+      inset-block-start: 2px;
+      inset-inline-end: 2px;
       font-size: 11px;
       min-width: 14px;
       padding: 0 2px;

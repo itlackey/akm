@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { addToast, removeToast, type Toast, type ToastInput } from "../toast-model";
+import { addToast, removeToast, TOAST_RESUME_MS, type Toast, type ToastInput } from "../toast-model";
 
 /** Nonblocking feedback any view can raise: `showToast({ title: "Accepted restore laptop" })`. `Toasts.svelte` shows and announces them. */
 export const toasts = $state({ items: [] as Toast[] });
@@ -42,5 +42,8 @@ export function holdToast(id: number) {
 }
 export function releaseToast(id: number) {
   const toast = toasts.items.find((t) => t.id === id);
-  if (toast) arm(toast);
+  if (toast && toast.timeoutMs !== null) {
+    clearTimeout(timers.get(id));
+    timers.set(id, setTimeout(() => dismissToast(id), toast.timeoutMs + TOAST_RESUME_MS));
+  }
 }

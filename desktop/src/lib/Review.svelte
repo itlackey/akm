@@ -6,78 +6,110 @@
 
 <script lang="ts">
   import { navigate } from "./navigation";
-  import { refreshPending } from "./state/workspace.svelte";
-  import { onMount, tick } from "svelte";
+  import { refreshPending, workspace } from "./state/workspace.svelte";
+  import { showToast } from "./state/toasts.svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { api, date, title, toggleSelection } from "./client";
-  import Diff from "./Diff.svelte";
-  import ReviewEvidence from "./ReviewEvidence.svelte";
   import Icon from "./Icon.svelte";
+  import ReviewDetail from "./ReviewDetail.svelte";
+  import ReviewFinished from "./ReviewFinished.svelte";
+  import ReviewShelf from "./ReviewShelf.svelte";
   import {
     ageBands,
-    rejectionChoices,
-    rejectionReason,
-    rejectionError,
-    proposalHref,
     activityReturn,
+    batchOutcome,
     commitOutcome,
     conceptLocation,
+    decisionVerb,
+    nextAfterDecision,
+    proposalHref,
+    queueState,
     record,
+    rejectionError,
+    rejectionReason,
+    settleDecision,
     text,
-    type ReviewQueue,
+    withoutDecided,
+    type BatchOutcome,
+    type LastDecision,
     type ReviewProposal,
+    type ReviewQueue,
   } from "./review-model";
   import type { ProposalDetail, WriteResult } from "./types";
-  export let id = "";
-  export let query = new URLSearchParams();
-  let status = "pending",
-    source = "",
-    age = "",
-    week = "",
-    outcome = "",
-    queue: ReviewQueue | null = null,
-    detail: ProposalDetail | null = null,
-    selected: string[] = [];
-  let error = "",
-    queueError = "",
-    detailError = "",
-    busy = false,
-    loading = false,
-    opening = false,
-    intent = "",
-    reason = "",
-    choice = "";
-  let receipt: WriteResult | null = null,
-    receiptKind = "",
-    receiptId = "",
-    reviewed = 0;
+
+  let { id = "", query = new URLSearchParams() }: { id?: string; query?: URLSearchParams } = $props();
+
+  let status = $state("pending"),
+    source = $state(""),
+    age = $state(""),
+    week = $state(""),
+    outcome = $state(""),
+    queue = $state<ReviewQueue | null>(null),
+    detail = $state<ProposalDetail | null>(null),
+    selected = $state<string[]>([]);
+  let failure = $state(""),
+    queueError = $state(""),
+    detailError = $state(""),
+    reasonError = $state(""),
+    busy = $state(false),
+    loading = $state(false),
+    opening = $state(false),
+    intent = $state(""),
+    reason = $state(""),
+    choice = $state(""),
+    reviewed = $state(0),
+    finished = $state(false),
+    shortcutsEnabled = $state(false),
+    last = $state<LastDecision | null>(null),
+    report = $state<(BatchOutcome & { verb: string; total: number }) | null>(null);
+  let desiredId = $state("");
   let queueGeneration = 0,
     detailGeneration = 0,
-    mounted = false,
     previousRoute = "",
-    desiredId = "",
     queuedAction = "",
-    region: HTMLElement;
-  let shortcutsEnabled = false,
+    focusNext = false,
     decisionTrigger: HTMLElement | null = null,
     decisionTriggerKey = "";
-  let detailHeading: HTMLHeadingElement;
-  $: current = detail?.proposal as ReviewProposal | undefined;
-  $: analyticsReturn = activityReturn(query.get("returnTo"));
-  $: noop = !!(
-    current?.status === "pending" &&
-    detail?.diff &&
-    !detail.diff.redacted &&
-    !detail.diff.truncated &&
-    typeof detail.diff.before === "string" &&
-    detail.diff.before === detail.diff.after
+  let region = $state<HTMLElement>(),
+    scroller = $state<HTMLElement>(),
+    shelf = $state<HTMLElement>(),
+    detailHeading = $state<HTMLHeadingElement>(),
+    finishedHeading = $state<HTMLHeadingElement>();
+
+  const current = $derived(detail?.proposal as ReviewProposal | undefined);
+  const analyticsReturn = $derived(activityReturn(query.get("returnTo")));
+  const filtered = $derived(!!(source || age || week || outcome));
+  const noop = $derived(
+    !!(
+      current?.status === "pending" &&
+      detail?.diff &&
+      !detail.diff.redacted &&
+      !detail.diff.truncated &&
+      typeof detail.diff.before === "string" &&
+      detail.diff.before === detail.diff.after
+    ),
   );
-  $: if (mounted) syncRoute(id, String(query));
-  onMount(() => {
-    mounted = true;
+
+  $effect(() => {
+    const proposal = id,
+      params = String(query);
+    untrack(() => syncRoute(proposal, params));
+  });
+  // Narrow toasts sit above the sticky shelf, so they never cover its buttons.
+  $effect(() => {
+    const element = shelf;
+    if (!element) return;
+    const root = document.documentElement;
+    const observer = new ResizeObserver(() => root.style.setProperty("--shelf-h", `${element.offsetHeight}px`));
+    observer.observe(element);
     return () => {
-      ++queueGeneration;
-      ++detailGeneration;
+      observer.disconnect();
+      root.style.removeProperty("--shelf-h");
     };
+  });
+  onDestroy(() => {
+    ++queueGeneration;
+    ++detailGeneration;
   });
 
   function syncRoute(proposal: string, params: string) {
@@ -97,7 +129,10 @@
     week = nextWeek;
     outcome = nextOutcome;
     if (changed || !queue) {
-      if (changed) queue = null;
+      if (changed) {
+        queue = null;
+        finished = false;
+      }
       selected = [];
       void load();
     }
@@ -105,25 +140,31 @@
       const previousId = desiredId;
       desiredId = proposal;
       intent = "";
-      error = "";
+      failure = "";
+      reasonError = "";
       reason = "";
       choice = "";
-      if (proposal) void open(proposal);
-      else {
+      if (proposal) {
+        finished = false;
+        void open(proposal);
+      } else {
         ++detailGeneration;
         detail = null;
         detailError = "";
         opening = false;
       }
-      if (!proposal && previousId && !changed) void restoreQueueFocus(previousId);
+      if (!proposal && previousId && !changed && !finished) void restoreQueueFocus(previousId);
     }
+  }
+  async function fetchQueue(): Promise<ReviewQueue> {
+    return api<ReviewQueue>("/proposals", { status, source, age, week, class: outcome, limit: "200" });
   }
   async function load() {
     const generation = ++queueGeneration;
     queueError = "";
     loading = true;
     try {
-      const next = await api<ReviewQueue>("/proposals", { status, source, age, week, class: outcome, limit: "200" });
+      const next = await fetchQueue();
       if (generation === queueGeneration) queue = next;
     } catch (e) {
       if (generation === queueGeneration) queueError = (e as Error).message;
@@ -131,13 +172,13 @@
       if (generation === queueGeneration) loading = false;
     }
   }
-  async function open(id: string) {
+  async function open(proposal: string) {
     const generation = ++detailGeneration;
     detailError = "";
     detail = null;
     opening = true;
     try {
-      const next = await api<ProposalDetail>(`/proposals/${encodeURIComponent(id)}`);
+      const next = await api<ProposalDetail>(`/proposals/${encodeURIComponent(proposal)}`);
       if (generation === detailGeneration) {
         detail = next;
         if (queuedAction) {
@@ -152,9 +193,15 @@
       if (generation === detailGeneration) {
         opening = false;
         await tick();
-        if (generation === detailGeneration && !intent && matchMedia("(max-width:850px)").matches) {
-          detailHeading?.focus({ preventScroll: true });
-          detailHeading?.scrollIntoView({ block: "start" });
+        if (generation === detailGeneration) {
+          if (focusNext) {
+            focusNext = false;
+            if (scroller) scroller.scrollTop = 0;
+            detailHeading?.focus({ preventScroll: true });
+          } else if (!intent && matchMedia("(max-width:850px)").matches) {
+            detailHeading?.focus({ preventScroll: true });
+            detailHeading?.scrollIntoView({ block: "start" });
+          }
         }
       }
     }
@@ -165,8 +212,8 @@
       .find((link) => link.dataset.id === previousId)
       ?.focus();
   }
-  function select(id: string) {
-    void navigate(proposalHref(id, query));
+  function select(next: string, replace = false) {
+    void navigate(proposalHref(next, query), replace);
   }
   function queueDate(value: unknown) {
     const parsed = new Date(String(value ?? ""));
@@ -174,11 +221,12 @@
       ? "Date unavailable"
       : parsed.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   }
-  function receiptAction(action: string) {
-    if (desiredId === receiptId) void begin(action);
+  /** Undo… and Reopen… open the decided proposal with its confirmation ready, wherever the reviewer is. */
+  function openDecided(proposal: string, action: "revert" | "reopen") {
+    if (desiredId === proposal) void begin(action);
     else {
       queuedAction = action;
-      select(receiptId);
+      select(proposal);
     }
   }
   function filter(key: string, value: string) {
@@ -192,7 +240,9 @@
     decisionTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     decisionTriggerKey = action;
     intent = action;
-    error = "";
+    failure = "";
+    reasonError = "";
+    report = null;
     if (noop && action === "reject") {
       choice = "Other";
       reason = "No-op: the proposed content matches the current asset.";
@@ -204,6 +254,8 @@
   }
   async function cancel() {
     intent = "";
+    failure = "";
+    reasonError = "";
     await tick();
     if (decisionTrigger?.isConnected) decisionTrigger.focus();
     else
@@ -215,44 +267,153 @@
   async function decide() {
     if (!intent || busy) return;
     if (intent.includes("reject")) {
-      error = rejectionError(choice, reason);
-      if (error) return;
+      reasonError = rejectionError(choice, reason);
+      if (reasonError) return;
     }
-    const isBatch = intent.startsWith("batch-"),
-      action = intent.replace("batch-", ""),
-      targetId = current?.id;
-    if ((!isBatch && !targetId) || (isBatch && !selected.length)) return;
+    reasonError = "";
+    const batch = intent.startsWith("batch-"),
+      action = intent.replace("batch-", "");
+    if ((!batch && !current) || (batch && !selected.length)) return;
     busy = true;
-    error = "";
-    receipt = null;
+    failure = "";
+    report = null;
     try {
-      const payload = action === "reject" ? { reason: rejectionReason(choice, reason) } : {};
-      receipt = await api<WriteResult>(
-        isBatch ? `/proposals/${action}` : `/proposals/${encodeURIComponent(targetId!)}/${action}`,
-        {},
-        isBatch ? { ids: [...selected], ...payload } : payload,
-      );
-      void refreshPending();
-      receiptKind = action;
-      receiptId = isBatch ? "" : targetId!;
-      if (action === "accept" || action === "reject")
-        reviewed += isBatch ? (receipt.accepted ?? receipt.rejected ?? 0) : 1;
-      intent = "";
-      reason = "";
-      choice = "";
-      if (isBatch) selected = (receipt.results ?? []).filter((r) => !r.ok).map((r) => r.id);
-      await load();
-      if (targetId && desiredId === targetId) await open(targetId);
-      await tick();
-      region?.querySelector<HTMLElement>("[data-receipt]")?.focus();
-    } catch (e) {
-      error = (e as Error).message;
+      if (batch) await decideBatch(action);
+      else await decideOne(action, current!);
     } finally {
       busy = false;
     }
   }
+  async function afterFailure() {
+    await tick();
+    region?.querySelector<HTMLElement>("[data-confirm]")?.focus();
+  }
+  async function decideOne(action: string, target: ReviewProposal) {
+    const label = title(target);
+    const advance = status === "pending" && (action === "accept" || action === "reject");
+    const order = (queue?.proposals ?? []).map((p) => p.id);
+    const payload = action === "reject" ? { reason: rejectionReason(choice, reason) } : {};
+    const result = await settleDecision(
+      () => api<WriteResult>(`/proposals/${encodeURIComponent(target.id)}/${action}`, {}, payload),
+      async (receipt) => {
+        const revertable = !!record(receipt.proposal).revertable;
+        intent = "";
+        reason = "";
+        choice = "";
+        last = { action, id: target.id, ref: target.ref, title: label, revertable };
+        if (advance) {
+          reviewed++;
+          if (queue) queue = withoutDecided(queue, [target.id]);
+          if (workspace.pendingCount !== null) workspace.pendingCount = Math.max(0, workspace.pendingCount - 1);
+        }
+        showToast({
+          title: `${decisionVerb(action)} “${label}”`,
+          detail:
+            action === "accept"
+              ? `${target.ref} · ${commitOutcome(receipt.commit)}`
+              : action === "reject"
+                ? `${target.ref} · Reason: ${String(payload && "reason" in payload ? payload.reason : "").slice(0, 60)}`
+                : action === "revert"
+                  ? "Restored the backup kept at acceptance."
+                  : "Back in the pending queue.",
+          ...(action === "accept" && revertable
+            ? { action: { label: "Undo…", run: () => openDecided(target.id, "revert") } }
+            : action === "reject"
+              ? { action: { label: "Reopen…", run: () => openDecided(target.id, "reopen") } }
+              : {}),
+        });
+        queue = await fetchQueue();
+      },
+    );
+    if (result.status === "failed") {
+      failure = result.error;
+      await afterFailure();
+      return;
+    }
+    if (result.refreshError)
+      showToast({
+        kind: "warning",
+        key: "queue-refresh",
+        title: "Decision recorded; the queue did not refresh.",
+        detail: `${result.refreshError}. Counts may be out of date.`,
+        action: { label: "Refresh queue", run: refresh },
+      });
+    void refreshPending();
+    if (advance) await advanceFrom(order, target.id);
+    else {
+      await open(target.id);
+      await tick();
+      (region?.querySelector<HTMLElement>("[data-primary-decision]") ?? detailHeading)?.focus({ preventScroll: true });
+    }
+  }
+  /** Open the next remaining proposal in the queue's order, or show that the queue is finished. */
+  async function advanceFrom(order: string[], decided: string) {
+    const state = queue ? queueState(queue) : "refill";
+    const next = queue
+      ? nextAfterDecision(
+          order,
+          [decided],
+          decided,
+          queue.proposals.map((p) => p.id),
+        )
+      : "";
+    focusNext = true;
+    if (state === "finished") {
+      finished = true;
+      await navigate(proposalHref("", query), true);
+      await tick();
+      finishedHeading?.focus({ preventScroll: true });
+    } else if (next) await navigate(proposalHref(next, query), true);
+    else await navigate(proposalHref("", query), true);
+  }
+  async function decideBatch(action: string) {
+    const ids = [...selected];
+    const payload = action === "reject" ? { reason: rejectionReason(choice, reason) } : {};
+    let outcomeOf: BatchOutcome | undefined;
+    const result = await settleDecision(
+      () => api<WriteResult>(`/proposals/${action}`, {}, { ids, ...payload }),
+      async (receipt) => {
+        const done = batchOutcome(ids, receipt);
+        outcomeOf = done;
+        intent = "";
+        reason = "";
+        choice = "";
+        selected = done.selected;
+        reviewed += done.done.length;
+        if (queue) queue = withoutDecided(queue, done.done);
+        queue = await fetchQueue();
+      },
+    );
+    if (result.status === "failed") {
+      failure = result.error;
+      await afterFailure();
+      return;
+    }
+    const done = outcomeOf!;
+    const verb = action === "accept" ? "accepted" : "rejected";
+    if (result.refreshError)
+      showToast({
+        kind: "warning",
+        key: "queue-refresh",
+        title: "Decision recorded; the queue did not refresh.",
+        detail: `${result.refreshError}. Counts may be out of date.`,
+        action: { label: "Refresh queue", run: refresh },
+      });
+    void refreshPending();
+    if (done.failed.length) {
+      report = { ...done, verb, total: ids.length };
+      await tick();
+      region?.querySelector<HTMLElement>("[data-report]")?.focus();
+    } else
+      showToast({
+        title: `${decisionVerb(action)} ${done.done.length} proposals`,
+        detail: "Details are in Recent decisions.",
+        action: { label: "View", run: () => navigate(proposalHref("", new URLSearchParams({ status: "recent" }))) },
+      });
+    if (desiredId && done.done.includes(desiredId)) await open(desiredId);
+  }
   async function refresh() {
-    error = "";
+    failure = "";
     await load();
     if (desiredId) await open(desiredId);
   }
@@ -286,7 +447,8 @@
       target?.closest('input,textarea,select,[contenteditable="true"]')
     )
       return;
-    if (busy) return;
+    // A decision key pressed while the next proposal is still loading is ignored, never queued.
+    if (busy || opening) return;
     switch (event.key.toLowerCase()) {
       case "j":
       case "n":
@@ -324,7 +486,9 @@
         break;
       case "[":
       case "]": {
-        const all = [...region.querySelectorAll<HTMLElement>(".sbs-pane:first-child .drow, .dcol.inline .drow")];
+        const all = [
+          ...(region?.querySelectorAll<HTMLElement>(".sbs-pane:first-child .drow, .dcol.inline .drow") ?? []),
+        ];
         const starts = all.filter(
           (row) => row.matches(".add,.del") && !row.previousElementSibling?.matches(".add,.del"),
         );
@@ -342,7 +506,7 @@
   }
 </script>
 
-<svelte:window on:keydown={keydown} />
+<svelte:window onkeydown={keydown} />
 <div class="review-page" data-detail={desiredId ? "" : undefined} bind:this={region}>
   <div class="page-heading">
     <div>
@@ -353,7 +517,7 @@
             : "activity"}</a
         >{/if}
     </div>
-    <button class="btn-quiet" on:click={refresh} disabled={busy || loading}
+    <button class="btn-quiet" onclick={refresh} disabled={busy || loading}
       ><Icon name="refresh" size={16} /> Refresh queue</button
     >
   </div>
@@ -370,7 +534,7 @@
       >
     </nav>
     <label
-      >Source<select value={source} on:change={(e) => filter("source", e.currentTarget.value)}
+      >Source<select value={source} onchange={(e) => filter("source", e.currentTarget.value)}
         ><option value="">All processes</option
         >{#each [...new Set([...Object.keys(queue?.bySource ?? {}), ...(source ? [source] : [])])] as s}<option
             value={s}>{s} ({queue?.bySource[s] ?? 0})</option
@@ -378,7 +542,7 @@
       ></label
     >
     <label
-      >Waiting age<select value={age} on:change={(e) => filter("age", e.currentTarget.value)}
+      >Waiting age<select value={age} onchange={(e) => filter("age", e.currentTarget.value)}
         ><option value="">Any age</option>{#each Object.entries(ageBands) as [key, label]}<option value={key}
             >{label}</option
           >{/each}</select
@@ -391,9 +555,8 @@
         .join(" · ")} · <a href={proposalHref("", new URLSearchParams({ status }))}>Clear filters</a>
     </p>{/if}
   {#if queueError}<div class="notice notice-fail" role="alert">
-      Queue could not refresh: {queueError} <button class="btn-secondary" on:click={load}>Retry queue</button>
+      Queue could not refresh: {queueError} <button class="btn-secondary" onclick={load}>Retry queue</button>
     </div>{/if}
-  {#if error}<div class="notice notice-fail" role="alert">{error}</div>{/if}
   <div class="review review-workspace" data-detail={desiredId ? "" : undefined}>
     <section class="review-list proposal-list" aria-label="Proposals">
       {#if queue}<section class="queue-summary" aria-label="Queue summary">
@@ -412,7 +575,7 @@
             type="checkbox"
             checked={queue.proposals.every((p) => selected.includes(p.id))}
             disabled={busy}
-            on:change={(e) => (selected = e.currentTarget.checked ? queue!.proposals.map((p) => p.id) : [])}
+            onchange={(e) => (selected = e.currentTarget.checked ? queue!.proposals.map((p) => p.id) : [])}
           />Select all shown</label
         >{/if}
       {#if loading && !queue}<p class="muted" role="status">Loading proposals…</p>{/if}
@@ -423,7 +586,7 @@
                 aria-label={`Select ${p.ref}`}
                 checked={selected.includes(p.id)}
                 disabled={busy}
-                on:change={() => (selected = toggleSelection(selected, p.id, 200))}
+                onchange={() => (selected = toggleSelection(selected, p.id, 200))}
               />{/if}<a
               class="review-item"
               data-id={p.id}
@@ -487,212 +650,61 @@
             ><input type="checkbox" bind:checked={shortcutsEnabled} /> Enable single-key shortcuts for this window</label
           >
           <p class="muted small">
-            <kbd>j</kbd>/<kbd>k</kbd> next/previous · <kbd>a</kbd> accept, again to confirm · <kbd>r</kbd> reject ·
-            <kbd>x</kbd>
-            select · <kbd>u</kbd> undo confirmation · <kbd>[</kbd>/<kbd>]</kbd> changed blocks · <kbd>Esc</kbd> cancel. Accept
-            and reject apply to the selection when items are selected. Shortcuts only work inside Review when you are not
-            typing.
+            <kbd>j</kbd>/<kbd>k</kbd> next/previous · <kbd>a</kbd> accept, <kbd>a</kbd> again to confirm · <kbd>r</kbd>
+            reject ·
+            <kbd>x</kbd> select · <kbd>u</kbd> revert confirmation · <kbd>[</kbd> <kbd>]</kbd> changed blocks ·
+            <kbd>Esc</kbd>
+            cancel. After accept or reject the next proposal opens. Accept and reject apply to the selection when items are
+            selected. Shortcuts work inside Review when you are not typing.
           </p>
         </details>
       </div>
     </section>
     <section class="review-pane inspector" aria-label="Proposal detail">
-      <div class="review-scroll">
+      <div class="review-scroll" bind:this={scroller}>
         {#if opening}<p role="status" class="muted">Loading proposal…</p>{:else if detailError}<div
             class="notice notice-fail"
             role="alert"
           >
-            {detailError}<button class="btn-secondary" on:click={() => open(desiredId)}>Retry proposal</button>
-          </div>{:else if detail && current}
-          <nav class="crumbs proposal-back" aria-label="Proposal breadcrumb">
-            <a href={proposalHref("", query)}>Back to queue</a>
-          </nav>
-          <header class="proposal-summary">
-            <div class="proposal-title">
-              <h2 bind:this={detailHeading} tabindex="-1">{title(current)}</h2>
-              <div class="badges">
-                <span class="badge">{current.status}</span><span class="badge">{current.source}</span
-                >{#if current.isRetire}<span class="badge">Retirement</span>{/if}
-              </div>
-            </div>
-            <div class="proposal-location">
-              <span class="mono wrap small">{current.ref}</span>{#if detail.diff?.isNew}<span class="muted small"
-                  >New asset</span
-                >{:else}<a
-                  class="target-link"
-                  href={`/library/asset?ref=${encodeURIComponent(current.ref)}&view=files&returnTo=${encodeURIComponent(proposalHref(current.id, query))}`}
-                  >Open in Files</a
-                >{/if}
-            </div>
-            {#if current.reason}<p class="proposal-reason">{current.reason}</p>{/if}
-          </header>
-          {#if record(detail.validation).ok === false}<p class="notice notice-warn" role="alert">
-              Validation did not pass. Inspect the validation evidence below before deciding.
-            </p>{/if}
-          {#if noop}<div class="notice notice-warn">
-              <strong>This proposal changes nothing.</strong>
-              <p>
-                Its proposed source matches the current asset. Reject it as a no-op to clear the queue, or accept
-                anyway.
-              </p>
-            </div>{/if}
-          <section aria-label="Proposed change">
-            <h3>Proposed change</h3>
-            {#if detail.diffError}<p class="notice notice-fail">
-                Change preview unavailable: {detail.diffError}. AKM still validates a decision.
-              </p>{/if}
-            {#if detail.diff}<Diff
-                before={detail.diff.before}
-                after={detail.diff.after}
-                unified={detail.diff.unified ?? ""}
-                redacted={detail.diff.redacted ?? false}
-                truncated={detail.diff.truncated ?? false}
-              />{:else}<p class="muted">No change preview is available.</p>{/if}
-          </section>
-          {#key current.id}<ReviewEvidence {detail} />{/key}
-        {:else}<div class="state welcome">
+            {detailError}<button class="btn-secondary" onclick={() => open(desiredId)}>Retry proposal</button>
+          </div>{:else if detail && current}<ReviewDetail
+            {detail}
+            {noop}
+            {query}
+            bind:heading={detailHeading}
+          />{:else if finished}<ReviewFinished
+            {filtered}
+            remaining={queue?.fullCount ?? 0}
+            {reviewed}
+            bind:heading={finishedHeading}
+          />{:else}<div class="state welcome">
             <h2>Select a proposal</h2>
             <p>Inspect the source change and evidence before deciding.</p>
           </div>{/if}
       </div>
-      {#if current || intent || receipt || selected.length}<footer
-          class="decision-shelf"
-          aria-label="Proposal decision"
-        >
-          {#if receipt && (!receiptId || receiptId === current?.id || !current)}<section
-              class="notice receipt"
-              class:notice-warn={(receipt.failed ?? 0) > 0}
-              class:notice-ok={!(receipt.failed ?? 0)}
-              role="status"
-              tabindex="-1"
-              data-receipt
-            >
-              <strong>Decision recorded</strong>
-              <p>
-                {receipt.results
-                  ? `${receipt.accepted ?? receipt.rejected ?? 0} completed · ${receipt.failed ?? 0} failed. Failed items remain selected.`
-                  : `${receiptKind === "revert" ? "Reverted" : receiptKind === "reopen" ? "Reopened" : receiptKind === "reject" ? "Rejected" : "Accepted"} ${receiptId}.`}
-              </p>
-              {#if receiptKind === "accept"}<p>{commitOutcome(receipt.commit)}</p>{/if}
-              {#if receipt.results}<ul class="plain">
-                  {#each receipt.results as r}<li>
-                      <span class="badge">{r.ok ? "Completed" : "Failed"}</span>
-                      <a href={proposalHref(r.id, query)}>{r.ref ?? r.id}</a>{#if !r.ok}
-                        — {r.error ?? r.code} <code>{r.code ?? ""}</code>{/if}
-                    </li>{/each}
-                </ul>{/if}
-              <div class="btn-row">
-                {#if receiptId && receiptId !== current?.id && receiptKind === "reject"}<button
-                    class="btn-secondary"
-                    on:click={() => receiptAction("reopen")}>Reopen…</button
-                  >{/if}{#if receiptId && receiptId !== current?.id && receiptKind === "accept" && record(receipt.proposal).revertable}<button
-                    class="btn-secondary"
-                    on:click={() => receiptAction("revert")}>Undo…</button
-                  >{/if}<button class="btn-secondary" on:click={() => (receipt = null)}>Dismiss</button>
-              </div>
-            </section>{/if}
-          {#if selected.length && !intent}<div class="batch-bar">
-              <strong>{selected.length} selected</strong>
-              <div class="btn-row">
-                <button on:click={() => begin("batch-accept")} disabled={busy}>Accept selected…</button><button
-                  class="btn-secondary"
-                  on:click={() => begin("batch-reject")}
-                  disabled={busy}>Reject selected…</button
-                ><button class="btn-quiet" on:click={() => (selected = [])} disabled={busy}>Clear selection</button>
-              </div>
-            </div>{/if}
-          {#if intent}<section class="confirmation notice" aria-label="Confirm decision">
-              <h2>
-                {intent.includes("reject")
-                  ? "Reject"
-                  : intent.includes("reopen")
-                    ? "Reopen"
-                    : intent.includes("revert")
-                      ? "Revert"
-                      : "Accept"}
-                {intent.startsWith("batch-") ? `${selected.length} selected proposals` : "this proposal"}?
-              </h2>
-              <p>
-                {intent.includes("accept")
-                  ? "Accepted content is written through AKM. Git-backed changes are committed and may be pushed. A batch can partially succeed."
-                  : intent.includes("revert")
-                    ? "Restore the backup retained when this proposal was accepted. AKM refuses to overwrite subsequent edits."
-                    : intent.includes("reopen")
-                      ? "Return this rejected proposal to the pending queue, if its target remains valid."
-                      : "Your reason is recorded for each rejection. Rejected proposals can be reopened if their targets remain valid."}
-              </p>
-              {#if intent.includes("reject")}<fieldset class="reason-chips">
-                  <legend>Why reject this proposal?</legend>
-                  <div class="segmented">
-                    {#each rejectionChoices as chip}<label
-                        ><input
-                          type="radio"
-                          name="reject-choice"
-                          value={chip}
-                          bind:group={choice}
-                          disabled={busy}
-                        /><span>{chip}</span></label
-                      >{/each}
-                  </div>
-                </fieldset>
-                <label
-                  >Rejection reason<textarea
-                    bind:value={reason}
-                    rows="3"
-                    maxlength="2000"
-                    disabled={busy}
-                    aria-describedby="reason-hint"></textarea></label
-                >
-                <p class="muted small" id="reason-hint">
-                  {choice && choice !== "Other"
-                    ? "Details optional with a reason above."
-                    : "Choose a reason or write details. Other requires details."} At most 2000 characters including the selected
-                  reason.
-                </p>{/if}
-              <div class="btn-row">
-                <button data-confirm disabled={busy} on:click={decide}
-                  >{busy ? "Recording…" : "Confirm decision"}</button
-                ><button class="btn-secondary" disabled={busy} on:click={cancel}>Cancel</button>
-              </div>
-            </section>{/if}
-
-          {#if current && !intent && !selected.length}<div class="decision-row">
-              <div class="decision-context">
-                <span
-                  >{current.status === "pending" ? "Changes follow the bundle’s Git policy." : "Recorded outcome"}</span
-                >
-              </div>
-              <div class="btn-row">
-                {#if current.status === "pending"}<button
-                    data-primary-decision
-                    disabled={busy}
-                    data-decision="accept"
-                    on:click={() => begin("accept")}>Accept…</button
-                  ><button class="btn-secondary" disabled={busy} data-decision="reject" on:click={() => begin("reject")}
-                    >Reject…</button
-                  >{:else if current.status === "rejected"}<button
-                    data-primary-decision
-                    disabled={busy}
-                    data-decision="reopen"
-                    on:click={() => begin("reopen")}>Reopen…</button
-                  >{:else if current.status === "accepted" && current.revertable}<button
-                    data-primary-decision
-                    disabled={busy}
-                    data-decision="revert"
-                    on:click={() => begin("revert")}>Revert accepted change…</button
-                  >{/if}<button
-                  class="btn-quiet"
-                  aria-label={status === "pending" ? "Next pending" : "Next decision"}
-                  disabled={busy || !queue?.proposals.some((p) => p.id !== current?.id)}
-                  on:click={() => go(1)}
-                  >Next<span class="next-context">{status === "pending" ? " pending" : " decision"}</span><Icon
-                    name="arrow-right"
-                    size={16}
-                  /></button
-                >
-              </div>
-            </div>{/if}
-        </footer>{/if}
+      {#if current || intent || selected.length || report}<ReviewShelf
+          {current}
+          {status}
+          {intent}
+          selectedCount={selected.length}
+          {busy}
+          {failure}
+          {reasonError}
+          bind:choice
+          bind:reason
+          {last}
+          {report}
+          {query}
+          canNext={!!queue?.proposals.some((p) => p.id !== current?.id)}
+          bind:el={shelf}
+          begin={(action) => void begin(action)}
+          cancel={() => void cancel()}
+          decide={() => void decide()}
+          clearSelection={() => (selected = [])}
+          next={() => go(1)}
+          openLast={(action) => last && openDecided(last.id, action)}
+          dismissReport={() => (report = null)}
+        />{/if}
     </section>
   </div>
 </div>
@@ -706,8 +718,7 @@
     min-height: 0;
   }
   .page-heading,
-  .review-filters,
-  .batch-bar {
+  .review-filters {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -723,7 +734,6 @@
   }
   .review-filters {
     justify-content: flex-start;
-    align-items: center;
     margin-bottom: 0.5rem;
     flex: none;
   }
@@ -734,10 +744,10 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-s);
   }
   .shortcuts {
-    font-size: 0.8125rem;
+    font-size: var(--text-s);
   }
   .shortcuts .check-label {
     display: flex;
@@ -745,7 +755,7 @@
   }
   .queue-utilities {
     margin-top: 1.5rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-s);
   }
   .queue-utilities details {
     margin: 0.5rem 0;
@@ -756,14 +766,14 @@
     flex-wrap: wrap;
     gap: 0.25rem 0.5rem;
     color: var(--muted);
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
   }
   .queue-meta time {
     white-space: nowrap;
   }
   .queue-location {
     color: var(--muted);
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
     overflow-wrap: anywhere;
   }
   .review-workspace {
@@ -781,7 +791,7 @@
   }
   .return-link {
     display: inline-block;
-    font-size: 0.8125rem;
+    font-size: var(--text-s);
     margin-top: 0.5rem;
   }
   .review-list {
@@ -792,7 +802,7 @@
   }
   .queue-summary {
     margin: 0 0 1rem;
-    font-size: 0.8125rem;
+    font-size: var(--text-s);
   }
   .queue-summary p {
     margin: 0 0 0.5rem;
@@ -847,119 +857,16 @@
     font-size: 0.875rem;
   }
   .select-all {
-    font-size: 0.8125rem;
+    font-size: var(--text-s);
     display: flex;
     gap: 0.5rem;
     align-items: center;
-  }
-  .proposal-back {
-    display: none;
-  }
-  .proposal-summary {
-    margin: 0 0 1rem;
-  }
-  .proposal-title,
-  .proposal-location {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem 1rem;
-    flex-wrap: wrap;
-  }
-  .proposal-title h2 {
-    font-size: 1.25rem;
-    margin: 0;
-  }
-  .proposal-location {
-    margin-top: 0.5rem;
-  }
-  .proposal-reason {
-    margin: 0.75rem 0 0;
-    font-size: 0.875rem;
-    line-height: 1.5;
-  }
-  .target-link {
-    display: inline-block;
-    font-size: 0.8125rem;
-  }
-  .review-scroll > section {
-    margin-top: 1rem;
-  }
-  .review-scroll h3 {
-    font-size: 0.875rem;
-    margin: 0 0 0.5rem;
-  }
-  .review-scroll :global(.change-preview) {
-    margin-block-start: 0.75rem;
-  }
-  .decision-shelf {
-    flex: none;
-    border-top: 1px solid var(--border);
-    padding: 1rem 1.5rem;
-    background: var(--surface);
-    max-height: 55vh;
-    overflow-y: auto;
-  }
-  .decision-row {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    justify-content: space-between;
-  }
-  .decision-context {
-    flex: 1;
-    font-size: 0.75rem;
-    color: var(--muted);
-    min-width: 0;
-  }
-  .btn-row {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-  .batch-bar {
-    position: static;
-    box-shadow: none;
-    padding: 0;
-    border: 0;
-    margin: 0;
-    font-size: 0.8125rem;
-  }
-  .confirmation {
-    margin: 0;
-    padding: 0;
-    border: 0;
-    background: none;
-    box-shadow: none;
-  }
-  .confirmation h2 {
-    font-size: 1rem;
-    margin-top: 0;
-  }
-  .confirmation p {
-    font-size: 0.8125rem;
-  }
-  .confirmation textarea {
-    width: 100%;
-    box-sizing: border-box;
-  }
-  .receipt {
-    margin: 0 0 1rem;
-    padding: 1rem;
-  }
-  .receipt p,
-  .receipt li {
-    font-size: 0.8125rem;
-    overflow-wrap: anywhere;
   }
   .table-wrap {
     overflow-x: auto;
   }
   .state {
     padding: 2rem 1rem;
-  }
-  .wrap {
-    overflow-wrap: anywhere;
   }
   .welcome {
     border: 0;
@@ -974,12 +881,6 @@
     }
     .review-scroll {
       padding: 1.25rem;
-    }
-    .decision-row {
-      flex-wrap: wrap;
-    }
-    .decision-context {
-      flex-basis: 100%;
     }
   }
   @media (max-width: 850px) {
@@ -1003,16 +904,6 @@
       padding: 1rem 0 2rem;
       overflow: visible;
     }
-    .proposal-back {
-      display: block;
-      margin: 0 0 1rem;
-    }
-    .decision-shelf {
-      position: sticky;
-      bottom: 0;
-      padding: 1rem;
-      z-index: 2;
-    }
     .review-filters {
       gap: 0.75rem;
     }
@@ -1021,33 +912,11 @@
       gap: 0.3rem;
       flex: 1;
     }
-    .shortcuts {
-      margin-inline-start: 0;
-    }
   }
   @media (max-width: 850px), (max-height: 700px) {
     .review-page[data-detail] > .review-filters,
     .review-page[data-detail] > .active-filters {
       display: none;
-    }
-    .decision-context {
-      display: none;
-    }
-    .decision-row > .btn-row {
-      width: 100%;
-      flex-wrap: nowrap;
-      align-items: stretch;
-    }
-    .decision-row > .btn-row > button {
-      flex: 1;
-      min-width: 0;
-      padding-inline: 0.5rem;
-    }
-    .next-context {
-      display: none;
-    }
-    .decision-shelf {
-      padding: 0.75rem;
     }
   }
   @media (min-width: 851px) and (max-height: 700px) {
@@ -1064,21 +933,8 @@
       height: 100%;
       border-left: 0;
     }
-    .proposal-back {
-      display: block;
-      margin: 0 0 0.5rem;
-    }
     .review-scroll {
       padding: 0.75rem 0;
-    }
-    .proposal-summary {
-      margin-bottom: 0.25rem;
-    }
-    .review-scroll > section {
-      margin-top: 0.25rem;
-    }
-    .review-scroll :global(.change-preview) {
-      margin-block-start: 0.25rem;
     }
   }
 </style>

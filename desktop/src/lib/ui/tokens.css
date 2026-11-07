@@ -75,6 +75,7 @@
     --shadow-float: 0 4px 16px rgb(0 0 0 / 0.2);
     --edge-accent: inset 3px 0 0 var(--accent);
     --edge-underline: inset 0 -3px 0 var(--accent);
+    --edge-ok: inset 3px 0 0 var(--ok);
     --edge-warn: inset 3px 0 0 var(--warn);
     --edge-fail: inset 3px 0 0 var(--fail);
     --focus-halo: 0 0 0 3px color-mix(in srgb, var(--link) 30%, transparent);

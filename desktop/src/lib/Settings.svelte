@@ -9,10 +9,9 @@
   import { api, date, pickFolder, type ApiError } from "./client";
   import SettingsBundleCard from "./SettingsBundle.svelte";
   import SettingsFieldControl from "./SettingsField.svelte";
-  import SettingsProjects from "./SettingsProjects.svelte";
+  import Connections from "./Connections.svelte";
   import Software from "./Software.svelte";
   import Icon from "./Icon.svelte";
-  import { projectRows, type ProjectEntry } from "./projects-model";
   import { configurationChanges, fieldText, provenance, valueAt } from "./settings-presenter";
   import type { SettingsBundleResponse, SettingsConfig, SettingsGroup } from "./settings-presenter";
   import type { Bundle } from "./types";
@@ -37,10 +36,6 @@
     key = "",
     value = "",
     unset = false;
-  let connectionName = "",
-    connectionEndpoint = "",
-    connectionModel = "",
-    connectionKey = "";
   let initial: Record<string, string> = {},
     drafts: Record<string, string> = {};
   let resetKeys = new Set<string>();
@@ -69,10 +64,6 @@
     drafts = { ...next, ...retained };
     resetKeys = new Set();
   }
-  $: projects = projectRows(
-    config?.config.projects as Record<string, ProjectEntry> | undefined,
-    config?.localProjects ?? [],
-  );
   $: sourceMap = new Map(config?.entries.map((entry) => [entry.path, entry.source]) ?? []);
   $: editCounts = Object.fromEntries(groups.map((group) => [group.id, changed(group, initial, drafts)]));
   $: effectiveGroups = [...new Set((config?.entries ?? []).map((entry) => entry.path.split(".")[0]))].sort();
@@ -212,29 +203,6 @@
           },
         ],
       },
-      ...(config?.connections ?? []).map((connection) => {
-        const base = `connections.${connection.name}`;
-        return {
-          id: `connection-${connection.name}`,
-          title: `Connection ${connection.name}${connection.default ? " (default)" : ""}`,
-          description:
-            "Model endpoint settings. Keys must be environment-variable references; no model request is made by saving.",
-          fields: [
-            { key: `${base}.endpoint`, label: `${connection.name} endpoint`, kind: "url" as const },
-            {
-              key: `${base}.apiKey`,
-              label: `${connection.name} API key reference`,
-              placeholder: "$OPENAI_API_KEY",
-              hint: "Literal secrets are refused by AKM.",
-            },
-            ...["fast", "balanced", "reasoning"].map((alias) => ({
-              key: `${base}.models.${alias}${connection.models?.[alias] && typeof connection.models[alias] === "object" ? ".model" : ""}`,
-              label: `${connection.name} ${alias} model`,
-            })),
-            { key: `${base}.concurrency`, label: `${connection.name} concurrency`, kind: "number" as const },
-          ],
-        };
-      }),
     ];
     return groups.sort((a, b) => (a.id === "library-settings" ? -1 : b.id === "library-settings" ? 1 : 0));
   }
@@ -284,11 +252,9 @@
           ? "No configuration change was needed."
           : path === "/config/set"
             ? "Settings saved."
-            : path === "/config/projects"
-              ? "Projects saved."
-              : path === "/bundles/add"
-                ? "Bundle added and indexed."
-                : "Bundle changes saved.";
+            : path === "/bundles/add"
+              ? "Bundle added and indexed."
+              : "Bundle changes saved.";
       if (path === "/config/set" && body && typeof body === "object") {
         const submitted = body as { set?: Record<string, unknown>; unset?: string[] };
         resetKeys = new Set([...Object.keys(submitted.set ?? {}), ...(submitted.unset ?? [])]);
@@ -318,10 +284,6 @@
       busy = false;
     }
   }
-  async function saveProjects(body: unknown) {
-    await action("/config/projects", body);
-    return !error;
-  }
   async function refresh() {
     await refreshBundles();
     await load();
@@ -337,14 +299,6 @@
     await tick();
     sourceInput.focus();
   }
-  function addConnection() {
-    const entry: Record<string, unknown> = {
-      endpoint: connectionEndpoint.trim(),
-      models: Object.fromEntries(["fast", "balanced", "reasoning"].map((alias) => [alias, connectionModel.trim()])),
-    };
-    if (connectionKey.trim()) entry.apiKey = connectionKey.trim();
-    return action("/config/set", { set: { [`connections.${connectionName.trim()}`]: JSON.stringify(entry) } });
-  }
   onMount(load);
   onDestroy(() => {
     generation++;
@@ -353,13 +307,19 @@
 
 <div class="page-header">
   <h1>Settings</h1>
-  {#if route !== "software"}<button class="quiet" disabled={busy || loading} on:click={refresh}
-      ><Icon name="refresh" size={16} /> Refresh settings</button
+  {#if route !== "software" && route !== "connections"}<button
+      class="quiet"
+      disabled={busy || loading}
+      on:click={refresh}><Icon name="refresh" size={16} /> Refresh settings</button
     >{/if}
 </div>
 <nav class="settings-tabs" aria-label="Settings views">
   <a href="/settings/bundles" class:active={route === "bundles"} aria-current={route === "bundles" ? "page" : undefined}
     >Bundles & index</a
+  ><a
+    href="/settings/connections"
+    class:active={route === "connections"}
+    aria-current={route === "connections" ? "page" : undefined}>Connections</a
   ><a href="/settings/config" class:active={route === "config"} aria-current={route === "config" ? "page" : undefined}
     >Configuration</a
   ><a
@@ -368,7 +328,7 @@
     aria-current={route === "software" ? "page" : undefined}>Software</a
   >
 </nav>
-{#if route === "software"}<Software />{:else}
+{#if route === "software"}<Software />{:else if route === "connections"}<Connections {query} />{:else}
   {#if error}<div class="notice notice-warn" role="alert">
       {error}
       {#if errorCode === "STASH_DIR_NOT_FOUND"}<a href="/setup">Set up akm</a>{/if}
@@ -518,12 +478,6 @@
               aria-current={selectedGroup === group.id ? "page" : undefined}
               >{group.title}{#if editCounts[group.id]}<span aria-label="Unsaved changes">•</span>{/if}</a
             >{/each}<a
-            href="/settings/config?section=projects"
-            aria-current={selectedGroup === "projects" ? "page" : undefined}>Projects</a
-          ><a
-            href="/settings/config?section=add-connection"
-            aria-current={selectedGroup === "add-connection" ? "page" : undefined}>Add connection</a
-          ><a
             href="/settings/config?section=advanced-settings"
             aria-current={selectedGroup === "advanced-settings" ? "page" : undefined}>Advanced</a
           >
@@ -532,9 +486,8 @@
           >Settings section<select
             value={selectedGroup}
             on:change={(event) => navigate(`/settings/config?section=${event.currentTarget.value}`)}
-            >{#each groups as group}<option value={group.id}>{group.title}</option>{/each}<option value="projects"
-              >Projects</option
-            ><option value="add-connection">Add connection</option><option value="advanced-settings">Advanced</option
+            >{#each groups as group}<option value={group.id}>{group.title}</option>{/each}<option
+              value="advanced-settings">Advanced</option
             ></select
           ></label
         >
@@ -583,46 +536,6 @@
               </div>
             </form>
           </section>{/each}
-        <div hidden={selectedGroup !== "projects"}>
-          <section class="settings-section configuration-group" aria-labelledby="projects">
-            <div class="settings-intro">
-              <h2 id="projects">Projects</h2>
-              <p>
-                The places you work. In a project's directories akm reads the bundles, filters and preferences set here,
-                and writes with its defaults.
-              </p>
-            </div>
-            <SettingsProjects
-              {projects}
-              bundles={listing?.bundles.map((bundle) => bundle.name) ?? bundles.map((bundle) => bundle.name)}
-              warnings={config.projectWarnings ?? []}
-              busy={busy || loading}
-              save={saveProjects}
-            />
-          </section>
-        </div>
-        <div hidden={selectedGroup !== "add-connection"}>
-          <section class="settings-section configuration-group" aria-labelledby="add-connection">
-            <div class="settings-intro">
-              <h2 id="add-connection">Add a model connection</h2>
-              <p>
-                Use environment-variable references, never literal keys. No connection or model readiness is inferred
-                from saving.
-              </p>
-            </div>
-            <form class="card settings-card" on:submit|preventDefault={addConnection}>
-              <div class="settings-fields settings-grid">
-                <label class="field"
-                  >Connection name<input bind:value={connectionName} required pattern="[A-Za-z0-9_-]+" /></label
-                ><label class="field">Endpoint<input type="url" bind:value={connectionEndpoint} required /></label
-                ><label class="field">Model<input bind:value={connectionModel} required /></label><label class="field"
-                  >API key reference<input bind:value={connectionKey} placeholder="$OPENAI_API_KEY" /></label
-                >
-              </div>
-              <div class="settings-footer"><button disabled={busy}>Add connection</button></div>
-            </form>
-          </section>
-        </div>
         <div hidden={selectedGroup !== "advanced-settings"}>
           <section class="settings-section configuration-group" aria-labelledby="advanced-settings">
             <div class="settings-intro">
@@ -866,7 +779,8 @@
   }
   .settings-tabs {
     display: flex;
-    gap: 1.25rem;
+    flex-wrap: wrap;
+    gap: 4px 1.25rem;
     margin-bottom: 1rem;
     padding-bottom: 0.75rem;
     border-bottom: 1px solid var(--border);

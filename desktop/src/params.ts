@@ -9,5 +9,6 @@ const oneOf = (values: string[]) => (value: string) => (values.includes(value) ?
 export const params = defineParams({
   libraryView: oneOf(["search", "asset", "files", "edit", "new", "new-sensitive", "compare"]),
   activityView: oneOf(["overview", "improve", "history"]),
-  settingsSection: oneOf(["bundles", "config", "software"]),
+  projectSub: oneOf(["edit", "assets", "asset"]),
+  settingsSection: oneOf(["bundles", "connections", "config", "software"]),
 });

@@ -100,8 +100,8 @@ function errorMessage(error: unknown): string {
  * The proposal to review after `from` was decided, in the queue's own order. `order` is the ids as shown before the
  * decision, `decided` the ids that left the pending queue, `reloaded` the queue as fetched afterwards (the fetch is
  * limited, so it can hold proposals `order` never showed). First choice is the next proposal after `from` that is
- * still pending; past the end of what was shown, the first proposal the reload added; then the nearest one before
- * `from`. "" means no proposal remains in this queue.
+ * still pending; past the end of what was shown, the first proposal the reload added; then, wrapping, the first
+ * remaining one of `order`. "" means no proposal remains in this queue.
  */
 export function nextAfterDecision(
   order: string[],
@@ -118,7 +118,7 @@ export function nextAfterDecision(
   const shown = new Set(order);
   const added = reloaded.find((id) => !shown.has(id) && !gone.has(id));
   if (added) return added;
-  return order.slice(0, Math.max(at, 0)).reverse().find(left) ?? reloaded.find((id) => !gone.has(id)) ?? "";
+  return order.slice(0, Math.max(at, 0)).find(left) ?? reloaded.find((id) => !gone.has(id)) ?? "";
 }
 
 /**
@@ -171,4 +171,31 @@ export function batchOutcome(ids: string[], result: Pick<WriteResult, "results">
       });
   }
   return { done, failed, selected: failed.map((f) => f.id) };
+}
+
+/** How long ago, in the largest whole unit ("3 days", "5 hours", "just now"); "Not recorded" without a usable date. */
+export function relativeAge(value: unknown, now = Date.now()): string {
+  const at = typeof value === "string" ? Date.parse(value) : Number.NaN;
+  if (Number.isNaN(at)) return "Not recorded";
+  const minutes = Math.max(0, Math.floor((now - at) / 60000));
+  const unit = (n: number, name: string) => `${n} ${name}${n === 1 ? "" : "s"}`;
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return unit(minutes, "minute");
+  if (minutes < 1440) return unit(Math.floor(minutes / 60), "hour");
+  if (minutes < 43200) return unit(Math.floor(minutes / 1440), "day");
+  return unit(Math.floor(minutes / 43200), "month");
+}
+
+/** The one-line toast and last-decision text for a decision. */
+export function decisionVerb(action: string): string {
+  return { accept: "Accepted", reject: "Rejected", revert: "Reverted", reopen: "Reopened" }[action] ?? "Decided";
+}
+
+/** What the reviewer decided last in this session, kept so Undo… and Reopen… stay reachable after the queue moves on. */
+export interface LastDecision {
+  action: string;
+  id: string;
+  ref: string;
+  title: string;
+  revertable: boolean;
 }

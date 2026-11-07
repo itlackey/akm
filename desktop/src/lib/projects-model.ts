@@ -193,3 +193,62 @@ export function projectSummary(entry: ProjectEntry): string[] {
     ...(entry.write?.bundle ? [`Writes to ${entry.write.bundle}`] : []),
   ];
 }
+
+/** Names akm refuses for a project (`none` selects no project; the others would reach Object.prototype). */
+export const RESERVED_NAMES = ["none", "__proto__", "constructor", "prototype"];
+
+/** The message under the Name field, or "" when the name can be used. `editing` is the name being edited, which may keep itself. */
+export function nameError(name: string, existing: string[], editing = ""): string {
+  const value = name.trim();
+  if (!value) return "Enter a name.";
+  if (RESERVED_NAMES.includes(value)) return `“${value}” is reserved. Choose another name.`;
+  if (value !== editing && existing.includes(value)) return `A project named “${value}” already exists.`;
+  return "";
+}
+
+/** How many things differ from the loaded draft, for "n unsaved changes". */
+export function draftChanges(draft: ProjectDraft, base: ProjectDraft): number {
+  let count = 0;
+  for (const key of ["name", "paths", "bundle", "user", "agent", "channel"] as const)
+    if (draft[key] !== base[key]) count++;
+  if (!same(draft.from, base.from)) count++;
+  for (const key of ["filters", "prefer", "metadata"] as const) {
+    const rows = Math.max(draft[key].length, base[key].length);
+    for (let i = 0; i < rows; i++) if (!same(draft[key][i], base[key][i])) count++;
+  }
+  return count;
+}
+
+/** `{key} = a, b` pieces for a scope, with "" shown as the absent value. */
+export function scopeText(scope: Scope | undefined): Array<{ key: string; values: string[] }> {
+  return Object.entries(scope ?? {}).map(([key, value]) => ({ key, values: list(value) }));
+}
+
+/** The list card's summary lines: filters and preference. */
+export function filterLine(entry: ProjectEntry): string {
+  const filters = Object.keys(entry.filters ?? {}).length;
+  const prefer = Object.keys(entry.prefer ?? {});
+  return `${filters ? `${filters} ${filters === 1 ? "filter" : "filters"}` : "No filters"} · ${prefer.length ? `prefers ${prefer.join(", ")}` : "default preference"}`;
+}
+
+/** What `GET /api/projects/overview` returns: a project's effective read and write bundles with their counts. */
+export interface BundleCount {
+  count: number;
+  byType: Record<string, number>;
+}
+export interface OverviewBundle {
+  name: string;
+  configured: boolean;
+  enabled: boolean;
+  readable: boolean;
+  writable: boolean;
+  total: BundleCount | null;
+  eligible: BundleCount | null;
+}
+export interface Overview {
+  project: { name: string; prefer: Record<string, string | string[]>; write: { metadata: Record<string, unknown> } };
+  fromImplicit: boolean;
+  preferImplicit: boolean;
+  writeBundle: { name: string | null; implicit: boolean; usable: boolean | null };
+  bundles: OverviewBundle[];
+}
