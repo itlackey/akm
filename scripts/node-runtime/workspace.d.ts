@@ -106,6 +106,9 @@ export namespace bundles {
 }
 export namespace config {
   function change(input: { set?: Record<string, string>; unset?: string[] }): { saved: boolean };
+  function changeProjects(input: { set?: Record<string, Record<string, unknown>>; unset?: string[] }): {
+    saved: boolean;
+  };
   function get(): unknown;
 }
 export namespace documents {

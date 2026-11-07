@@ -1040,7 +1040,7 @@ function pruneUnchangedInheritedFields(before: unknown, after: unknown, localRaw
  * keys of a nested map follow `after`, which is how a mutation says where it
  * inserted one (`bundles`); the top level keeps the file's authored order. A
  * removal of a key the document does not hold is left undone and recorded in
- * `unremoved`, with the path of the key.
+ * `unremoved`, with the path of the key. A `projects` entry is one value, as an array is.
  */
 function applyEdit(
   target: Record<string, unknown>,
@@ -1057,6 +1057,12 @@ function applyEdit(
   for (const [key, value] of Object.entries(after)) {
     const was = before[key];
     if (isDeepStrictEqual(value, was)) continue;
+    // The reader takes a project whole by name, so one is written whole (an inherited project's unchanged fields
+    // included), never as the changed part of it.
+    if (at.length === 1 && at[0] === "projects") {
+      target[key] = value;
+      continue;
+    }
     const existing = target[key];
     // An entry the reader dropped (a connection with no endpoint) is absent from
     // `before` but present in the file: an edit to it adds to what the file has.
@@ -1096,6 +1102,7 @@ function editedConfigFile(
   next: AkmConfig,
   persistTopLevelKeys: readonly (keyof AkmConfig)[] = [],
   unremoved: string[][] = [],
+  writeProjects: readonly string[] = [],
 ): Record<string, unknown> {
   // A first write keeps the established full-default scaffold. Besides being
   // useful to a new user, the add -> rejected-install -> remove lifecycle
@@ -1107,6 +1114,13 @@ function editedConfigFile(
   // back byte for byte.
   const body = structuredClone(document);
   applyEdit(body, current, next, unremoved);
+  // A project the caller names is written whole even when it equals the effective entry: the file's own may hold parts the reader ignores.
+  for (const name of writeProjects) {
+    const entry = next.projects?.[name];
+    if (!entry) continue;
+    if (!isPlainObject(body.projects)) body.projects = {};
+    (body.projects as Record<string, unknown>)[name] = entry;
+  }
   // A caller may need to persist an explicit user choice even when it equals the
   // schema default. Interactive setup uses this for semanticSearchMode: "off"
   // means the user declined the opt-in, not an incidental default.
@@ -1347,7 +1361,7 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
  */
 export function mutateConfig(
   mutate: (current: AkmConfig) => AkmConfig,
-  options?: { absentNoop?: boolean },
+  options?: { absentNoop?: boolean; writeProjects?: readonly string[] },
 ): ConfigMutationResult {
   cachedConfig = undefined;
   const configPath = getConfigPath();
@@ -1364,7 +1378,7 @@ export function mutateConfig(
     if (mutated === current) return { config: current, written: false };
     const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
     const unremoved: string[][] = [];
-    const body = editedConfigFile(document, current, next, [], unremoved);
+    const body = editedConfigFile(document, current, next, [], unremoved, options?.writeProjects);
     refuseRemovalFromRetiredForm(unremoved, document, localRaw);
     if (text !== undefined) backupExistingConfig(configPath);
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
