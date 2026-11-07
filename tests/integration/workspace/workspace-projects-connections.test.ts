@@ -235,7 +235,7 @@ describe("config.removeConnection", () => {
     seedConnections({ extends: base });
     const shared = config.get().connections.find((connection: Json) => connection.name === "shared");
     expect([shared?.inherited, shared?.source]).toEqual([true, `extends:${base}`]);
-    expect(config.get().connections.find((connection: Json) => connection.name === "lab")?.source).toBe("local");
+    expect(config.get().connections.find((connection: Json) => connection.name === "lab")?.source).toBe("file");
     await expectUsage(() => config.removeConnection({ name: "nope" }));
     await expectUsage(() => config.removeConnection({ name: " " }));
     await expectUsage(() => config.removeConnection({ name: "shared" }), "TARGET_NOT_UPDATABLE");

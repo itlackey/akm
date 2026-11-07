@@ -101,7 +101,7 @@ export function get() {
       inherited: inheritedConnectionsOf(live).has(connection.name),
       // The configured keys that name it, so a reader can say what depends on it.
       usedBy: connectionReferences(live, connection.name),
-      // `local`, or `extends:<ref>` naming the config this one extends that defines it.
+      // `file` (this install's config.json), or `extends:<ref>` naming the config this one extends that defines it.
       source: configSource(["connections", connection.name]),
     })),
     // The connection named `default`, else the only one, else none: the rule every consumer without a `connection` follows.
