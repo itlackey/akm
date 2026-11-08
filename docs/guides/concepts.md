@@ -9,7 +9,7 @@ model.
 
 A **capability** is any asset an agent can search for and act on: a script,
 skill, command, agent definition, knowledge document, instruction, env file,
-secret, workflow, lesson, memory, task, session summary, or fact. Scripts,
+secret, workflow, lesson, memory, task, session summary, fact, or rule. Scripts,
 knowledge documents, commands, agents and workflows are classified by **what
 they are** (file extension and content), not by which directory they live in:
 a `.sh` file is a script whether it lives in `scripts/`, `deploy/`, or the

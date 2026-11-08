@@ -142,14 +142,37 @@ describe("search", () => {
     expect(refs((await search("rules/", "--project", "none")).hits)).toEqual(["rules/shared"]);
   });
 
-  test("rules count in --limit and a cut list says so", async () => {
+  test("rules take at most half of --limit; the rest is warned about and listed by --type rule", async () => {
+    for (const name of ["acme/a", "acme/b", "acme/c"]) rule(stashDir, name, "acme");
     await setup();
+    // 5 applicable rules (acme/development, a, b, c, shared); default curate-sized page of 4 leaves 2.
+    const four = await search("invoice export", "--project", "acme", "--limit", "4");
+    expect(four.hits.filter((h) => h.type === "rule")).toHaveLength(2);
+    expect(refs(four.hits).slice(2)).toEqual(["knowledge/invoice-export", "knowledge/invoice-tax"]);
+    expect(four.warnings?.join(" ")).toContain("3 more rules apply than the 2 shown");
+    expect(four.warnings?.join(" ")).toContain('akm search "" --type rule --limit 200');
+    const dflt = await search("invoice export", "--project", "acme");
+    expect(dflt.hits.filter((h) => h.type === "rule")).toHaveLength(5);
+    expect(dflt.warnings).toBeUndefined();
     const one = await search("invoice export", "--project", "acme", "--limit", "1");
-    expect(refs(one.hits)).toEqual(["rules/acme/development"]);
-    expect(one.warnings?.join(" ")).toContain("More rules apply than --limit 1");
-    const exact = await search("invoice export", "--project", "acme", "--limit", "2");
-    expect(refs(exact.hits)).toEqual(["rules/acme/development", "rules/shared"]);
-    expect(exact.warnings).toBeUndefined();
+    expect(refs(one.hits)).toHaveLength(1);
+    expect(one.warnings?.join(" ")).toContain("more rules apply");
+  });
+
+  test("a query that matches nothing keeps the no-match tip beside the rules", async () => {
+    await setup();
+    const result = (await search("zzqxjnomatch", "--project", "acme")) as { hits: unknown[]; tip?: string };
+    expect(result.tip).toBeTruthy();
+    expect(result.hits.length).toBeGreaterThan(0);
+  });
+
+  test('search "" --type rule lists exactly the applicable rules, with descriptions', async () => {
+    write(stashDir, "rules/README.md", { description: "readme" }, "readme");
+    await setup();
+    const result = await search("", "--type", "rule", "--limit", "200", "--project", "acme", "--detail", "normal");
+    expect(refs(result.hits)).toEqual(["rules/acme/development", "rules/shared"]);
+    expect((result.hits[0] as { description?: string }).description).toBe("Rules acme/development");
+    expect(refs((await search("", "--type", "rule", "--project", "none")).hits)).toEqual(["rules/shared"]);
   });
 
   test("an explicit --type or --filter that excludes rules is honoured", async () => {
@@ -235,6 +258,53 @@ describe("curate", () => {
   });
 });
 
+describe("classification", () => {
+  test("only a top-level rules/ folder holds rules; a nested rules folder keeps its type", async () => {
+    write(stashDir, "knowledge/x/rules/y.md", { description: "nested knowledge" }, "marker text");
+    write(stashDir, "memories/rules/n.md", { description: "memory in rules" }, "marker text");
+    write(stashDir, "lessons/rules/l.md", { description: "lesson in rules", when_to_use: "always" }, "marker text");
+    write(stashDir, "docs/rules/d.md", { description: "docs rules" }, "marker text");
+    await setup();
+    const of = async (type: string) => refs((await search("", "--type", type, "--project", "none")).hits);
+    expect(await of("knowledge")).toContain("knowledge/x/rules/y");
+    expect(await of("knowledge")).toContain("docs/rules/d");
+    expect(await of("memory")).toContain("memories/rules/n");
+    expect(await of("lesson")).toContain("lessons/rules/l");
+    expect(refs((await search("", "--type", "rule", "--project", "none")).hits)).toEqual(["rules/shared"]);
+  });
+});
+
+describe("the project's own value", () => {
+  test("rules match what the project stamps and prefers, not its key", async () => {
+    const web = tmp("rules-web2");
+    rule(stashDir, "platform/dev", "platform");
+    await setup({
+      projects: {
+        web2: { paths: [web], prefer: { project: "platform" }, write: { metadata: { project: "platform" } } },
+      },
+    });
+    expect(refs((await search("", "--type", "rule", "--project", "web2")).hits)).toEqual([
+      "rules/platform/dev",
+      "rules/shared",
+    ]);
+  });
+
+  test("a project filter on project decides eligibility; the comparison is skipped", async () => {
+    rule(stashDir, "platform/dev", "platform");
+    await setup({ projects: { web: { paths: [tmp("rules-web")], filters: { project: "platform" } } } });
+    expect(refs((await search("", "--type", "rule", "--project", "web")).hits)).toEqual(["rules/platform/dev"]);
+  });
+
+  test("usage is recorded and compared by the stamped value", async () => {
+    write(stashDir, "knowledge/platform-doc.md", { description: "Platform doc", project: "platform" }, "doc");
+    await setup({
+      projects: { web2: { paths: [tmp("rules-web2u")], write: { metadata: { project: "platform" } } } },
+    });
+    await runCliCapture(["show", "knowledge/platform-doc", "--project", "web2", "--format", "json"]);
+    expect(refs((await search("--by-usage", "--project", "web2")).hits)).toEqual(["knowledge/platform-doc"]);
+  });
+});
+
 describe("search --by-usage", () => {
   const inDir = async <T>(dir: string, fn: () => Promise<T>): Promise<T> => {
     const original = process.cwd;
@@ -302,6 +372,26 @@ describe("search --by-usage", () => {
     expect(result.warnings?.join(" ")).toContain("ignores the query");
     expect(count()).toBe(before);
     db.close();
+  });
+
+  test("show --project attributes a read to that project, from any directory; none records no project", async () => {
+    await show("knowledge/invoice-tax");
+    await runCliCapture(["show", "knowledge/invoice-tax", "--project", "acme", "--format", "json"]);
+    await runCliCapture(["show", "knowledge/invoice-export", "--project", "acme", "--format", "json"]);
+    await inDir(acmeDir, () =>
+      runCliCapture(["show", "knowledge/invoice-export", "--project", "none", "--format", "json"]),
+    );
+    expect(await usage("--project", "acme")).toEqual(["knowledge/invoice-export", "knowledge/invoice-tax"]);
+    expect(await usage("--project", "globex")).toEqual([]);
+    const bad = await runCliCapture(["show", "knowledge/invoice-tax", "--project", "nope"]);
+    expect(bad.code).toBe(2);
+  });
+
+  test("--type rule does not list rules; --from registry warns and lists locally", async () => {
+    await inDir(acmeDir, () => show("rules/acme/development"));
+    expect(await usage("--project", "acme", "--type", "rule")).toEqual([]);
+    const result = await search("--by-usage", "--project", "acme", "--from", "registry");
+    expect(result.warnings?.join(" ")).toContain("ignores --from registry");
   });
 
   test("no history: an empty list", async () => {

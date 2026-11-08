@@ -21,7 +21,7 @@ import { parseFrontmatter, readFrontmatterDate } from "../../core/asset/frontmat
 import type { TocHeading } from "../../core/asset/markdown";
 import { asNonEmptyString } from "../../core/common";
 import { isoDay } from "../../core/time";
-import { isVerbose, warn } from "../../core/warn";
+import { isVerbose, warn, warnOnce } from "../../core/warn";
 import type { buildFileContext } from "../walk/file-context";
 
 // ── Schema ──────────────────────────────────────────────────────────────────
@@ -522,6 +522,12 @@ function applySelectionFrontmatter(entry: IndexDocument, fmData: Record<string, 
       if (value && value.length <= SELECTION_VALUE_MAX_CHARS) values.push(value);
     }
     if (values.length > 0) kept[key] = values;
+    else if (key === "project" && raw !== undefined && raw !== null && raw !== "") {
+      warnOnce(
+        `project-unusable:${entry.name}`,
+        `"${entry.name}": frontmatter \`project\` must be a name (or a list of names), so it is ignored and the asset counts as shared.`,
+      );
+    }
   }
   if (Object.keys(kept).length > 0) entry.frontmatter = kept;
 }

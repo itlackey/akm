@@ -15,12 +15,14 @@ akm search "<query>" --limit 10               # Limit results
 akm search "<query>" --detail full            # Include scores, paths, timing
 akm search "memories/projectA/"               # Enumerate a subtree (conceptId prefix; trailing slash required)
 akm search "knowledge/"                       # List every knowledge item
+akm search "" --type rule --limit 200 --detail normal   # List the project's rules (read each with akm show)
+akm search --by-usage --detail normal         # Assets shown most in the project (no query)
 akm search "team-catalog//"                   # List every item in one bundle
 ```
 
 | Flag | Values | Default |
 | --- | --- | --- |
-| `--type` | free-form. Built-ins: `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `lesson`, `task`, `session`, `fact`, `env`, `secret`, `instruction` — plus any adapter-defined type (`website`, `wiki-source`, a wiki `pageKind`). Exact match; an unknown type returns no hits. | `any` |
+| `--type` | free-form. Built-ins: `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `lesson`, `task`, `session`, `fact`, `env`, `secret`, `instruction`, `rule` — plus any adapter-defined type (`website`, `wiki-source`, a wiki `pageKind`). Exact match; an unknown type returns no hits. | `any` |
 | `--from` | `local`, `registry`, `all`, or a configured bundle name | `local` (or the project's `from`) |
 | `--limit` | number | `20` |
 | `--format` | `json`, `jsonl`, `text`, `yaml`, `md` | `json` |

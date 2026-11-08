@@ -41,6 +41,7 @@ import { TELEMETRY_BUSY_TIMEOUT_MS } from "../../storage/repositories/index-db";
 import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 200;
 
 function duplicateConceptWarnings(hits: SourceSearchHit[], defaultBundle?: string): string[] {
   const ownersByConcept = new Map<string, string[]>();
@@ -246,7 +247,7 @@ export async function akmSearch(input: {
       ? await searchLocal({
           query: "",
           searchType: "rule",
-          limit: limit + 1,
+          limit: MAX_LIMIT,
           stashDir,
           sources,
           config,
@@ -261,14 +262,19 @@ export async function akmSearch(input: {
           project: input.project,
         })
       : undefined;
+  // Ordinary hits found before the rules lead: with none, the no-match tip stays.
+  const ordinaryFound = (localResult?.hits.length ?? 0) > 0;
   if (localResult && leadRules) {
-    const rules = leadRules.hits.slice(0, limit);
+    // Rules take at most half the page, so ordinary hits keep the rest.
+    const cap = Math.ceil(limit / 2);
+    const rules = leadRules.hits.slice(0, cap);
     const lead = new Set(rules.map((hit) => hit.ref));
     localResult.hits = [...rules, ...localResult.hits.filter((hit) => !lead.has(hit.ref))].slice(0, limit);
-    if (leadRules.hits.length > limit) {
+    const left = leadRules.hits.length - rules.length;
+    if (left > 0) {
       localResult.warnings = [
         ...(localResult.warnings ?? []),
-        `More rules apply than --limit ${limit} shows; raise --limit to see them all.`,
+        `${left}${leadRules.hits.length >= MAX_LIMIT ? "+" : ""} more rule${left === 1 ? "" : "s"} apply than the ${cap} shown (rules take at most half of --limit ${limit}). List them all with: akm search "" --type rule --limit ${MAX_LIMIT}`,
       ];
     }
   }
@@ -282,8 +288,11 @@ export async function akmSearch(input: {
       ...(localResult?.warnings ?? []),
       ...duplicateConceptWarnings(localHits, config.defaultBundle),
       ...(byUsage && input.query.trim() ? ["--by-usage lists by use and ignores the query."] : []),
+      ...(byUsage && (parsedSource === "registry" || parsedSource === "all")
+        ? [`--by-usage lists local bundles and ignores --from ${parsedSource}.`]
+        : []),
     ];
-    const hasResults = localHits.length > 0;
+    const hasResults = ordinaryFound;
     const response: SearchResponse = {
       schemaVersion: 1,
       bundleDir: stashDir,
@@ -509,7 +518,7 @@ function normalizeLimit(limit?: number): number {
   if (typeof limit !== "number" || Number.isNaN(limit) || limit <= 0) {
     return DEFAULT_LIMIT;
   }
-  return Math.min(Math.floor(limit), 200);
+  return Math.min(Math.floor(limit), MAX_LIMIT);
 }
 
 /**

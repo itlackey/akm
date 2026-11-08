@@ -345,7 +345,7 @@ async function searchDatabase(
         typeFilter: searchType === "any" ? undefined : searchType,
         // Rules are standing context, listed on their own; they are not "used" assets.
         excludeTypes: input.byUsage ? [...defaultExcludes, "rule"] : defaultExcludes,
-        ...(input.byUsage ? { usage: { project: input.project?.name } } : {}),
+        ...(input.byUsage ? { usage: input.project ?? {} } : {}),
       }),
       mode: "keyword",
     };
@@ -584,7 +584,7 @@ async function enumerateEntries(
     limit: number;
     prefer?: ScopeFilters;
     /** Order by use instead: only assets shown in `project` (any, when absent), most shown first. */
-    usage?: { project?: string };
+    usage?: ProjectContext;
     stashDir: string;
     config: AkmConfig;
   },
@@ -620,7 +620,7 @@ async function enumerateEntries(
   const eligible = applyEntryFilters(deduplicateByPath(prefixFiltered), opts);
   const { prefer } = opts;
   const ordered = opts.usage
-    ? rankByUsage(eligible, opts.usage.project)
+    ? rankByUsage(eligible, opts.usage)
     : prefer
       ? [
           ...eligible.filter((ie) => scopeMatchesFilters(ie.entry, prefer)),
@@ -651,13 +651,18 @@ async function enumerateEntries(
  * The items shown in `project` (anywhere, when absent), most shown first, ties by ref. With a project, an
  * asset naming another project is left out. A missing state.db is no history. Never a relevance ranking.
  */
-function rankByUsage<T extends { itemRef: string; entry: IndexDocument }>(items: T[], project?: string): T[] {
+function rankByUsage<T extends { itemRef: string; entry: IndexDocument }>(items: T[], project: ProjectContext): T[] {
   let shown = new Map<string, number>();
   withStateDbTelemetry((stateDb) => {
-    shown = countShownByRef(stateDb, project);
+    shown = countShownByRef(stateDb, project.name);
   });
   return items
-    .filter((item) => shown.has(item.itemRef) && (project === undefined || appliesToProject(item.entry, project)))
+    .filter(
+      (item) =>
+        item.entry.type !== "rule" &&
+        shown.has(item.itemRef) &&
+        (project.name === undefined || appliesUnder(item.entry, project)),
+    )
     .sort((a, b) => (shown.get(b.itemRef) ?? 0) - (shown.get(a.itemRef) ?? 0) || a.itemRef.localeCompare(b.itemRef));
 }
 
@@ -674,9 +679,19 @@ export interface EntryFilterOptions {
   project?: ProjectContext;
 }
 
-/** The project a search or curate runs under (`name` absent: none), set by the commands that apply projects. */
+/**
+ * The project a search or curate runs under, set by the commands that apply projects. `name` is the value the
+ * project's writes carry as `project` (absent: no project). `byFilter`: the selection's own `project` filter
+ * already decided which assets are eligible, so the `project` comparison is skipped.
+ */
 export interface ProjectContext {
   name?: string;
+  byFilter?: boolean;
+}
+
+/** Whether an asset applies under the project: it names it or no project, unless the selection's filter decided. */
+function appliesUnder(entry: IndexDocument, project: ProjectContext): boolean {
+  return project.byFilter === true || appliesToProject(entry, project.name);
 }
 
 /** The day an entry is dated by: when it was observed, else when it was last updated. */
@@ -710,7 +725,7 @@ export function applyEntryFilters<T extends { id: number; entry: IndexDocument; 
   // Rule filter: a project's rules apply to that project only; shared rules to every one.
   const { project } = opts;
   const ruleFiltered = project
-    ? scopeFiltered.filter((item) => item.entry.type !== "rule" || appliesToProject(item.entry, project.name))
+    ? scopeFiltered.filter((item) => item.entry.type !== "rule" || appliesUnder(item.entry, project))
     : scopeFiltered;
   // Date filter: keep entries dated within the inclusive range; undated
   // entries cannot satisfy a bound.

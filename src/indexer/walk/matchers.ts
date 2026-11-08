@@ -175,6 +175,8 @@ function matchDirectoryHint(dirName: string, ctx: PathFileContext, specificity: 
   }
 
   for (const rule of DIR_TYPE_MAP) {
+    // `rules/` is the bundle's top-level folder only; a `rules` folder deeper down is whatever its parent says.
+    if (rule.dir === "rules" && ctx.ancestorDirs[0] !== "rules") continue;
     if (rule.dir === dirName && rule.test(ctx.ext, ctx.fileName)) {
       // Skip `README.md` (case-insensitive) so `workflows/README.md`,
       // `agents/README.md`, etc. are not parsed as the typed asset and don't
