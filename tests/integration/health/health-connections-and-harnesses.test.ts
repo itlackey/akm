@@ -66,7 +66,7 @@ describe("the connections-and-harnesses table in akm health", () => {
       "connections-and-harnesses  [pass, deterministic, high]  1 connection and 0 harnesses, all ready.",
     );
     expect(stdout).toContain("connections:");
-    expect(stdout).toContain("improve        connection default  small");
+    expect(stdout).toContain("improve    connection default  small");
   });
 });
 
@@ -96,7 +96,7 @@ describe("the connections-and-harnesses table in akm info", () => {
     const { stdout } = await runCliCapture(["info", "--format", "text"]);
     expect(stdout).toContain("connections:");
     expect(stdout).toContain("work:");
-    expect(stdout).toContain("agents         connection default  mid");
+    expect(stdout).toContain("agents     connection default  mid");
   });
 });
 

@@ -10,7 +10,7 @@ import { deriveEntryProvenance } from "../../src/indexer/installations";
 import { ensureUsageEventsSchema } from "../../src/indexer/usage/usage-events";
 import type { Database as AkmDatabase } from "../../src/storage/database";
 import { openIndexDatabase } from "../../src/storage/repositories/index-connection";
-import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { getItemRefById, upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import { getRetrievalCounts, upsertUtilityScore } from "../../src/storage/repositories/index-utility-repository";
 
 /**
@@ -148,10 +148,11 @@ describe("getRetrievalCounts", () => {
       { type: "skill", name: "probe" } as never,
       deriveEntryProvenance({ bundleId: "utility", componentId: "utility", adapterId: "akm" }, "skill", "probe"),
     );
-    seed("search", "skills/probe", "user", entryId);
-    seed("show", "skills/probe", "user", entryId);
-    seed("search", "skills/probe", "audit", entryId);
-    seed("show", "skills/probe", "unknown", entryId);
+    const ref = getItemRefById(db, entryId) as string;
+    seed("search", ref, "user", entryId);
+    seed("show", ref, "user", entryId);
+    seed("search", ref, "audit", entryId);
+    seed("show", ref, "unknown", entryId);
 
     recomputeUtilityScores(db, stateDb);
 
