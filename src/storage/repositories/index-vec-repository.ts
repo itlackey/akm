@@ -253,15 +253,40 @@ export function getAllEntriesForEmbedding(
   }
   const entries: EntryForEmbedding[] = [];
   for (const { documentJson, ...row } of rows) {
-    let document: IndexDocument;
-    try {
-      document = JSON.parse(documentJson) as IndexDocument;
-    } catch {
-      continue;
-    }
-    entries.push({ ...row, searchText: buildSearchText(document) });
+    const searchText = searchTextOf(documentJson);
+    if (searchText !== undefined) entries.push({ ...row, searchText });
   }
   return entries;
+}
+
+/** An entry's embedding input from its stored document, or undefined when the document does not parse. */
+function searchTextOf(documentJson: string): string | undefined {
+  try {
+    return buildSearchText(JSON.parse(documentJson) as IndexDocument);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The embedding input and stored vector bytes of every entry that has a vector
+ * stamped with exactly `model` (what `akm index --export-vectors` writes).
+ */
+export function listEmbeddedSearchTexts(
+  db: Database,
+  model: string,
+): Array<{ searchText: string; embedding: Uint8Array }> {
+  const rows = db
+    .prepare(
+      "SELECT e.document_json AS documentJson, b.embedding AS embedding FROM entries e JOIN embeddings b ON b.id = e.id WHERE b.model = ? ORDER BY e.id",
+    )
+    .all(model) as Array<{ documentJson: string; embedding: Uint8Array }>;
+  const out: Array<{ searchText: string; embedding: Uint8Array }> = [];
+  for (const { documentJson, embedding } of rows) {
+    const searchText = searchTextOf(documentJson);
+    if (searchText !== undefined) out.push({ searchText, embedding });
+  }
+  return out;
 }
 
 /** Stored embedding rows — for `model` when given, otherwise every row. */

@@ -192,6 +192,8 @@ interface IndexOptions {
    * the stored vectors and re-embeds incrementally.
    */
   reembed?: boolean;
+  /** `akm index --import-vectors <file>`: vectors consulted before the embedder (see `vector-file.ts`). */
+  importVectors?: string;
   onProgress?: (event: IndexProgressEvent) => void;
   signal?: AbortSignal;
   /**
@@ -328,10 +330,12 @@ export async function runEmbeddingPass(params: {
   onProgress: (event: IndexProgressEvent) => void;
   signal?: AbortSignal;
   reembed?: boolean;
+  importVectorsFile?: string;
 }): Promise<EmbeddingPassResult> {
-  const { db, config, onProgress, signal, reembed } = params;
+  const { db, config, onProgress, signal, reembed, importVectorsFile } = params;
   const embeddingResult = await generateEmbeddingsForDb(db, config, onProgress, signal, undefined, {
     forceReembed: reembed,
+    importVectorsFile,
   });
   setMeta(db, "hasEmbeddings", embeddingResult.success ? "1" : "0");
   const semanticEntryCount = getEmbeddableEntryCount(db);
@@ -789,6 +793,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       onProgress,
       signal,
       reembed: options.reembed === true,
+      importVectorsFile: options.importVectors,
     });
     const tEmbedEnd = Date.now();
 

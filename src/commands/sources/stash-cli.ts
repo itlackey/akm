@@ -41,8 +41,9 @@ import { loadConfig } from "../../core/config/config";
 import { appendEvent } from "../../core/events";
 import { resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getRunLogDir } from "../../core/paths";
-import { clearLogFile, info, isVerbose, setLogFile } from "../../core/warn";
+import { clearLogFile, info, isVerbose, setLogFile, warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
+import { exportVectors } from "../../indexer/export-vectors";
 import { releaseIndexRebuildLock, tryAcquireIndexRebuildLock } from "../../indexer/index-rebuild-lock";
 import { akmIndex } from "../../indexer/indexer";
 import { getOutputMode } from "../../output/context";
@@ -86,6 +87,16 @@ export const indexCommand = defineCommand({
       description: "Discard every stored vector and re-embed all entries under the configured model.",
       default: false,
     },
+    "export-vectors": {
+      type: "string",
+      description:
+        "Write the current model's embedding vectors to <file> (no model calls) instead of indexing. Experimental.",
+    },
+    "import-vectors": {
+      type: "string",
+      description:
+        "Index as usual, but store vectors found in <file> instead of embedding those entries. Experimental.",
+    },
     "skip-if-locked": {
       type: "boolean",
       description: "Skip (exit 0) if another `akm index` holds the rebuild lock",
@@ -94,6 +105,12 @@ export const indexCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
+      const exportFile = args["export-vectors"];
+      if (exportFile) {
+        if (args["import-vectors"]) warn("--import-vectors is ignored with --export-vectors.");
+        output("index", { ok: true, exported: exportVectors(loadConfig(), path.resolve(exportFile)) });
+        return;
+      }
       // #956: opt-in, non-blocking rebuild lock — never gates a human-typed
       // `akm index` (it only warns and contends), but a scheduled/opportunistic
       // caller can pass --skip-if-locked to step aside instead of piling up
@@ -139,6 +156,7 @@ export const indexCommand = defineCommand({
           clean: args.clean,
           dryRun: args["dry-run"],
           reembed: args.reembed,
+          importVectors: args["import-vectors"] ? path.resolve(args["import-vectors"]) : undefined,
           onProgress: ({ phase, message, processed, total }) => {
             latestMessage = message;
             const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";
