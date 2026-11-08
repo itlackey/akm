@@ -106,11 +106,17 @@ export const indexCommand = defineCommand({
   async run({ args }) {
     await runWithJsonErrors(async () => {
       const exportFile = args["export-vectors"];
-      if (exportFile) {
-        if (args["import-vectors"]) warn("--import-vectors is ignored with --export-vectors.");
+      if (exportFile !== undefined) {
+        if (!exportFile) {
+          warn("--export-vectors needs a file path; nothing exported and no index run.");
+          return;
+        }
+        if (args["import-vectors"] !== undefined) warn("--import-vectors is ignored with --export-vectors.");
         output("index", { ok: true, exported: exportVectors(loadConfig(), path.resolve(exportFile)) });
         return;
       }
+      const importFile = args["import-vectors"];
+      if (importFile === "") warn("--import-vectors needs a file path; indexing without it.");
       // #956: opt-in, non-blocking rebuild lock — never gates a human-typed
       // `akm index` (it only warns and contends), but a scheduled/opportunistic
       // caller can pass --skip-if-locked to step aside instead of piling up
@@ -156,7 +162,7 @@ export const indexCommand = defineCommand({
           clean: args.clean,
           dryRun: args["dry-run"],
           reembed: args.reembed,
-          importVectors: args["import-vectors"] ? path.resolve(args["import-vectors"]) : undefined,
+          importVectors: importFile ? path.resolve(importFile) : undefined,
           onProgress: ({ phase, message, processed, total }) => {
             latestMessage = message;
             const progressPrefix = processed !== undefined && total !== undefined ? `[${processed}/${total}] ` : "";

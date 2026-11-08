@@ -304,7 +304,9 @@ meantime.
 
 **`--reembed` flag:** Discards every stored vector and re-embeds all entries
 under the configured model. Run it after changing `embedding.maxInputTokens`:
-a cap change re-embeds nothing by itself.
+a cap change re-embeds nothing by itself. Run it before
+`--export-vectors` too: after a cap change, old vectors would otherwise be
+exported under the hash of the new, longer text.
 
 **`--export-vectors <file>` / `--import-vectors <file>` flags (Experimental):**
 `--export-vectors` writes the vectors of the configured embedding model to a
@@ -317,9 +319,9 @@ place, and with no vectors writes an empty file with a warning. The file holds
 no document text and no paths. `--import-vectors` runs the normal index; in the
 embedding pass an entry whose current model and text hash are in the file is
 stored from it and never reaches the embedder, and any other entry is embedded
-as usual. A missing, unreadable or foreign file, a row of the wrong width, or a
-file with nothing for the current model (a different model) warns and indexes
-normally. `--reembed` ignores the import (it regenerates every vector), and so
+as usual. A missing, unreadable or foreign file, or a
+file with nothing usable for the current model (a different model) warns and
+indexes normally; a single row of the wrong width is a silent miss. `--reembed` ignores the import (it regenerates every vector), and so
 does semantic search off; both warn. With both flags, the export runs and the
 import is ignored with a warning.
 

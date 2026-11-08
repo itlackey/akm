@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getDbPath } from "../src/core/paths";
+import { getDbPath, getStateDbPathInDataDir } from "../src/core/paths";
 import { _setWarnSinkForTests } from "../src/core/warn";
 import { _setEmbedderForTests } from "../src/llm/embedder";
 import { deterministicEmbed } from "../src/llm/embedders/deterministic";
@@ -179,8 +179,9 @@ describe("akm index --export-vectors / --import-vectors", () => {
     const bytes = fs.readFileSync(file).toString("latin1");
     expect(bytes).not.toContain("Zebras");
     expect(bytes).not.toContain("cartography");
-    expect(bytes).not.toContain(path.basename(path.dirname(file)));
+    expect(bytes).not.toContain(storage?.stashDir as string);
     expect(bytes).not.toContain("note-");
+    expect(bytes).not.toContain("knowledge/");
     const db = openDatabase(file, { readonly: true, create: false });
     expect(db.prepare("SELECT COUNT(*) AS n FROM vectors").get()).toEqual({ n: NOTES });
     db.close();
@@ -195,9 +196,57 @@ describe("akm index --export-vectors / --import-vectors", () => {
     expect(embedCalls).toHaveLength(callsBefore);
     expect(fs.statSync(getDbPath()).mtimeMs).toBe(indexBefore);
     const before = fs.readFileSync(file);
-    const failed = await runCliCapture(["index", "--export-vectors", path.join(file, "nested", "x.db")]);
+    // A directory as the target makes the final rename fail after the temp file was written.
+    const dirTarget = path.join(filesDir, "a-directory");
+    fs.mkdirSync(dirTarget);
+    const failed = await runCliCapture(["index", "--export-vectors", dirTarget]);
     expect(failed.code).not.toBe(0);
     expect(fs.readFileSync(file)).toEqual(before);
+    expect(fs.readdirSync(filesDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  test("export refuses to write over index.db or state.db", async () => {
+    await exportedBundle();
+    const stateDb = getStateDbPathInDataDir();
+    fs.writeFileSync(stateDb, "state sentinel");
+    const indexBefore = fs.readFileSync(getDbPath());
+    for (const target of [getDbPath(), stateDb]) {
+      const result = await runCliCapture(["index", "--export-vectors", target]);
+      expect(result.code).not.toBe(0);
+    }
+    expect(fs.readFileSync(getDbPath())).toEqual(indexBefore);
+    expect(fs.readFileSync(stateDb, "utf8")).toBe("state sentinel");
+  });
+
+  test("a valueless --export-vectors warns and does not index; a valueless --import-vectors warns and indexes", async () => {
+    useStorage();
+    const exported = await runCliCapture(["index", "--export-vectors"]);
+    expect(exported.code).toBe(0);
+    expect(embedCalls).toHaveLength(0);
+    expect(fs.existsSync(getDbPath())).toBe(false);
+    expect(warnings.some((w) => w.includes("--export-vectors needs a file path"))).toBe(true);
+    await indexWith("--import-vectors");
+    expect(embedCalls.flat()).toHaveLength(NOTES);
+    expect(warnings.some((w) => w.includes("--import-vectors needs a file path"))).toBe(true);
+  });
+
+  test("export includes unlabelled vectors of the model the index serves", async () => {
+    await exportedBundle();
+    const db = openDatabase(getDbPath());
+    db.exec("UPDATE embeddings SET model = NULL");
+    db.close();
+    const file = path.join(filesDir, "null-model.db");
+    expect((await runCliCapture(["index", "--export-vectors", file])).code).toBe(0);
+    const out = openDatabase(file, { readonly: true, create: false });
+    expect(out.prepare("SELECT COUNT(*) AS n FROM vectors").get()).toEqual({ n: NOTES });
+    out.close();
+  });
+
+  test("a stale temp file from the same pid does not break an export", async () => {
+    await exportedBundle();
+    const file = path.join(filesDir, "again.db");
+    fs.writeFileSync(`${file}.${process.pid}.tmp`, "stale");
+    expect((await runCliCapture(["index", "--export-vectors", file])).code).toBe(0);
   });
 
   test("an export with no vectors is an empty valid file and exits 0", async () => {

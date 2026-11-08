@@ -269,18 +269,23 @@ function searchTextOf(documentJson: string): string | undefined {
 }
 
 /**
- * The embedding input and stored vector bytes of every entry that has a vector
- * stamped with exactly `model` (what `akm index --export-vectors` writes).
+ * The embedding input and stored vector bytes of every entry whose vector is
+ * served as `model`'s (what `akm index --export-vectors` writes). Unlabelled
+ * rows count only when `model` is the model the index currently serves, so
+ * they are never stamped with a model they were not generated under.
  */
 export function listEmbeddedSearchTexts(
   db: Database,
   model: string,
 ): Array<{ searchText: string; embedding: Uint8Array }> {
+  const serving = currentEmbeddingModel(db) === model;
+  if (!serving && !hasModelColumn(db)) return [];
+  const current = serving ? modelPredicate(db, model, "b") : { sql: "b.model = ?", params: [model] };
   const rows = db
     .prepare(
-      "SELECT e.document_json AS documentJson, b.embedding AS embedding FROM entries e JOIN embeddings b ON b.id = e.id WHERE b.model = ? ORDER BY e.id",
+      `SELECT e.document_json AS documentJson, b.embedding AS embedding FROM entries e JOIN embeddings b ON b.id = e.id WHERE ${current.sql} ORDER BY e.id`,
     )
-    .all(model) as Array<{ documentJson: string; embedding: Uint8Array }>;
+    .all(...current.params) as Array<{ documentJson: string; embedding: Uint8Array }>;
   const out: Array<{ searchText: string; embedding: Uint8Array }> = [];
   for (const { documentJson, embedding } of rows) {
     const searchText = searchTextOf(documentJson);
