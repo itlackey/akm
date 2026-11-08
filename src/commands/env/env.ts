@@ -112,6 +112,21 @@ export function buildShellExportScript(envPath: string): string {
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
 }
 
+/**
+ * Key names whose UNQUOTED value contains `#`. dotenv treats `#` there as a
+ * comment start and drops the rest (`A=#x` parses to ""), so the caller warns.
+ * Returns key names only — never any value text.
+ */
+export function keysWithUnquotedHash(content: string): string[] {
+  const keys = new Set<string>();
+  for (const line of content.split(/\r?\n/)) {
+    const m = /^\s*(?:export\s+)?([\w.-]+)(?:\s*=|:\s)\s*([^'"`\s].*)$/.exec(line);
+    if (m?.[2]?.includes("#") && m[1]) keys.add(m[1]);
+  }
+  const parsed = dotenv.parse(content);
+  return [...keys].filter((k) => k in parsed);
+}
+
 /** Create an empty env file (does nothing if it already exists). */
 export function createEnv(envPath: string): void {
   ensureParentDir(envPath);

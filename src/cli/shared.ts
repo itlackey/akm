@@ -237,27 +237,12 @@ export function defineJsonCommand<const T extends ArgsDef = ArgsDef>(def: JsonCo
 }
 
 /**
- * Canonical bare-group behavior (0.9.0 breaking change, owner ruling 12).
- *
- * Before 0.9.0 the twelve `akm <group>` command groups did three different
- * things when invoked with no subcommand: some printed help and exited 1,
- * some ran an implicit default action and exited 0 (e.g. bare `akm graph`
- * silently rendering `graph summary`), and one already raised a structured
- * usage error and exited 2. None of that is discoverable from the exit code
- * alone, and a script that greps stdout for a specific default action broke
- * silently the moment someone reordered subcommands.
- *
- * The canonical choice, applied uniformly: a bare group invocation is a
- * USAGE ERROR — exit 2, the same structured JSON envelope every other usage
- * mistake in this CLI produces (not citty's raw help banner, and not a
- * silent default action). This matches STABILITY.md's documented exit-code
- * table (2 = usage) and the exit code the CLI already used for "unknown
- * command" / "missing required argument" as of the companion 0.9.0 fix.
- *
- * `defaultRun` is now OPTIONAL for exactly this reason: omitting it opts a
- * group into the shared, canonical error below. Passing an explicit
- * `defaultRun` is a deliberate opt-out and should not be added to new groups
- * without a documented reason — see CHANGELOG for the migration note.
+ * Canonical bare-group behavior (owner ruling 12): a bare group with no
+ * listing (`task`, `migrate`, `command`) is a USAGE ERROR — exit 2 with the
+ * structured JSON envelope. Groups with a read-only `list` never reach this:
+ * `insertBareListSubcommand` (src/cli.ts) rewrites their bare form to
+ * `<group> list`. `defaultRun` is optional; omitting it opts a group into
+ * this error.
  */
 function bareGroupUsageError<T extends ArgsDef>(meta: CommandDef<T>["meta"], subcommandSet: Set<string>): never {
   const name =

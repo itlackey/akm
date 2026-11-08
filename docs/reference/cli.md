@@ -81,24 +81,6 @@ For local materialized assets, `editHint` is added only when `editable` is
 or use `action` (or curate `followUp`). Registry-only results have no local
 `path`, `editable`, or `editHint`.
 
-### The `results` collection alias
-
-Every list-returning command names its collection field differently —
-`search` returns `hits`, `curate` returns `items`, `proposal list` returns
-`proposals`, `bundle list` returns `sources`, `env list` returns `envs`,
-`secret list` returns `secrets`, `registry list` returns `registries`,
-`registry search` returns `hits`, `workflow list` returns `runs`,
-`task history` returns `rows`, `log list` returns `events`. A caller that does
-not already know each command's key cannot write one accessor across all of
-them.
-
-Every one of these commands also carries a `results` field — the identical
-array, not a copy — alongside its semantic key, in every `--format`/`--detail`
-combination, including `--detail agent`. Code
-written against a single command should keep using its semantic key for
-clarity; code that needs to handle several list commands uniformly can read
-`results` and never maintain a per-command lookup table.
-
 ## Exit Codes and Error Envelope
 
 Every command exits with one of the following codes:
@@ -964,8 +946,7 @@ akm workflow list --children               # also list child workflow runs (Expe
 akm workflow plan workflows/ship-release    # compile+freeze preview, zero writes
 ```
 
-Bare `akm workflow` (no subcommand) is a usage error (exit 2), the canonical
-bare-group behavior — name a subcommand.
+Bare `akm workflow` (no subcommand) runs `akm workflow list`.
 
 Subcommands:
 
@@ -2268,8 +2249,7 @@ forces `status: "blocked"` and adds a matching line to `blockers`, so
 
 ### config
 
-Read and write configuration. Bare `akm config` (no subcommand) is a usage
-error (exit 2), the canonical bare-group behavior — name a subcommand.
+Read and write configuration. Bare `akm config` runs `akm config list`.
 
 ```sh
 akm config list                     # List current config
@@ -2355,8 +2335,7 @@ akm help migrate latest        # Resolve against the most recent CHANGELOG entry
 
 `akm help <command>` is equivalent to `akm <command> --help`. Bare `akm help`
 prints the same sectioned overview as `akm --help` and exits
-`0` — this is the one group where a bare invocation is a complete request,
-not the canonical bare-group usage error.
+`0`.
 
 Migration notes live as one markdown file per release in
 [`docs/migration/release-notes/`](../migration/release-notes/). Adding notes for a
@@ -3205,8 +3184,7 @@ verdict changes shape. The verdicts of `reflect.quality` and `distill.lesson` ar
 
 Manage the proposal queue. The canonical grammar is `akm proposal <verb>`:
 `extract`, `new`, `list`, `show`, `diff`, `accept`, `reject`, `reopen`,
-`revert`, `drain`. Bare `akm proposal` is a usage error (exit 2) as of 0.9.0 — it used
-to behave as `akm proposal list`; name the verb. There are no flat-verb
+`revert`, `drain`. Bare `akm proposal` runs `akm proposal list`. There are no flat-verb
 spellings (`akm proposals`, `akm extract`, `akm propose`, `akm accept`, `akm
 reject`, `akm diff`, `akm revert`) — use the `akm proposal <verb>` form.
 

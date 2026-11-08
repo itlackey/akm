@@ -59,7 +59,13 @@
  */
 
 import { renderUsage, runCommand } from "citty";
-import { isInfoCommand, main, normalizeCittyCliError, shouldBypassConfigStartup } from "../../src/cli";
+import {
+  insertBareListSubcommand,
+  isInfoCommand,
+  main,
+  normalizeCittyCliError,
+  shouldBypassConfigStartup,
+} from "../../src/cli";
 import { _resetParsedInvocationForTests } from "../../src/cli/invocation";
 import { emitJsonError } from "../../src/cli/shared";
 import { assertKnownFlags, type FlagScanCommand } from "../../src/cli/unknown-flags";
@@ -155,7 +161,7 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
   // sinks, so the patched console.log isn't relied on across an await boundary
   // (see module docstring). For the normal command path nothing is awaited
   // before runCommand, so this only matters for --help / --version.
-  const argv = ["bun", "cli.ts", ...args];
+  const argv = insertBareListSubcommand(["bun", "cli.ts", ...args]);
   const rawArgs = argv.slice(2);
   const cmd = main as Parameters<typeof runCommand>[0];
 

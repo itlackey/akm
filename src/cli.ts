@@ -1045,6 +1045,26 @@ export function normalizeCittyCliError(error: unknown, rawArgs: readonly string[
   return isCittyCliError(error) ? toUsageErrorFromCliError(error, rawArgs) : error;
 }
 
+/** Groups whose bare form (`akm <group>`) is `akm <group> list` (#1485). Others keep the usage error. */
+const BARE_LISTS = new Set(["bundle", "config", "env", "proposal", "registry", "secret", "workflow"]);
+
+/**
+ * Splice `list` after a bare listing group so its flags parse exactly as on
+ * `akm <group> list`. Help requests are left alone.
+ */
+export function insertBareListSubcommand(argv: string[]): string[] {
+  const rawArgs = argv.slice(2);
+  if (rawArgs.some((a) => a === "--help" || a === "-h")) return argv;
+  const index = findCittyTopLevelCommandIndex(rawArgs, (main.args ?? {}) as CittyArgsDefinitionForScan);
+  const group = index >= 0 ? rawArgs[index] : undefined;
+  if (group === undefined || !BARE_LISTS.has(group)) return argv;
+  if (resolveCittyCommandPath(main, rawArgs).length !== 1) return argv;
+  // A word right after the group is an attempted (unknown) subcommand: let citty report it.
+  const next = rawArgs[index + 1];
+  if (next !== undefined && !next.startsWith("-")) return argv;
+  return [...argv.slice(0, index + 3), "list", ...argv.slice(index + 3)];
+}
+
 /**
  * The CLI's real startup sequence, extracted into a function so error paths
  * can `return` early — top-level `return` is a syntax error in an ES module.
@@ -1059,6 +1079,7 @@ export async function runCli(): Promise<void> {
     emitJsonError(error);
     return;
   }
+  process.argv = insertBareListSubcommand(process.argv);
   // Mint the ParsedInvocation singleton from the (normalized) argv — the ONE
   // place argv is parsed for the whole process.
   // Every out-of-cli.ts command module reads argv state through

@@ -146,8 +146,8 @@ describe("stands down when the command itself is the problem", () => {
     expect(() => check(["distill", "--source-run", "abc"])).not.toThrow();
   });
 
-  test("a bare group reports the missing subcommand, not its flags", () => {
-    expect(() => check(["proposal", "--status=reverted"])).not.toThrow();
+  test("a group with no listing reports the missing subcommand, not its flags", () => {
+    expect(() => check(["task", "--status=reverted"])).not.toThrow();
   });
 
   test("a spelling an earlier release retired is a plain unknown flag, not a pass-through", () => {

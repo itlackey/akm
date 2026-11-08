@@ -541,9 +541,9 @@ describe("shapeForCommand: unknown command", () => {
   });
 });
 
-// ── #922: every list-returning command aliases its collection as `results` ──
+// ── #1476: list-returning commands carry no `results` alias ──
 
-describe("shapeForCommand — `results` collection alias (#922)", () => {
+describe("shapeForCommand — no `results` collection alias (#1476)", () => {
   // command -> [collection key, minimal valid raw result]
   const LIST_COMMANDS: Array<[string, string, Record<string, unknown>]> = [
     ["search", "hits", { hits: [{ type: "skill", name: "x", action: "a" }], registryHits: [] }],
@@ -561,20 +561,13 @@ describe("shapeForCommand — `results` collection alias (#922)", () => {
 
   for (const [command, key, raw] of LIST_COMMANDS) {
     for (const shapeMode of ["human", "agent"] as const) {
-      test(`akm ${command} projection ${shapeMode} carries \`results\` as the SAME array as \`${key}\``, () => {
+      test(`akm ${command} ${shapeMode} has \`${key}\` and no \`results\``, () => {
         const out = shapeForCommand(command, raw, "normal", shapeMode) as Record<string, unknown>;
-        expect(Array.isArray(out.results)).toBe(true);
-        // Not merely equal in content — the identical reference, so `results`
-        // can never silently diverge from the semantic key it aliases.
-        expect(out.results).toBe(out[key]);
+        expect(Array.isArray(out[key])).toBe(true);
+        expect(out).not.toHaveProperty("results");
       });
     }
   }
-
-  test("a command with no registered collection key is untouched", () => {
-    const out = shapeForCommand("info", { something: "untouched" }, "full", "human") as Record<string, unknown>;
-    expect(out).not.toHaveProperty("results");
-  });
 });
 
 // ── #284: shapeProposal* — proposal commands ───────────────────────────────
