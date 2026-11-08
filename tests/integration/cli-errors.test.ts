@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { main } from "../../src/cli";
 import { GLOBAL_OUTPUT_ARGS } from "../../src/cli/shared";
@@ -549,12 +550,9 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
     expect(stderr).toContain("Missing required positional argument");
   });
 
-  // Owner ruling 12 canonical bare-group behavior: every `akm <group>` with no
-  // subcommand produces the SAME structured usage envelope on stderr and exits
-  // 2. Before 0.9.0 the twelve groups split three ways — some ran an implicit
-  // default action and exited 0, and `log`/`lessons`/`registry` fell through to
-  // citty's human usage banner on stdout. Matching exit codes was not enough:
-  // a script could not parse the failure uniformly.
+  // Bare-group behavior: groups with no read-only listing (`migrate`, `task`,
+  // `command`) produce the structured usage envelope on stderr and exit 2;
+  // groups with a `list` run it instead (tests below).
   // One test PER GROUP rather than one loop over all eleven. The loop form
   // spawned eleven real subprocesses inside a single test, and at roughly half
   // a second of Bun startup each it sat right on the harness's default 5s
@@ -567,7 +565,9 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
   // invocation, not a bare-group usage error; see
   // tests/commands/observability-cli-envelope.test.ts) and `lessons` was
   // removed entirely.
-  for (const group of ["migrate", "registry", "config", "proposal", "env", "secret", "task", "workflow"]) {
+  // Groups with a read-only `list` (config, bundle, env, secret, proposal, registry,
+  // workflow) run it instead; see the bare-listing test below.
+  for (const group of ["migrate", "task", "command"]) {
     test(`bare akm ${group} emits the canonical usage envelope and exits 2`, () => {
       const { status, stderr } = spawnCli([group], { cwd: repoRoot });
       expect(status).toBe(2);
@@ -575,6 +575,19 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
       expect(parsed.ok).toBe(false);
       expect(parsed.code).toBe("MISSING_REQUIRED_ARGUMENT");
       expect(parsed.error).toContain(`\`akm ${group}\` requires a subcommand`);
+    });
+  }
+
+  for (const group of ["config", "bundle", "env", "secret", "proposal", "registry", "workflow"]) {
+    test(`bare akm ${group} runs its list and exits 0`, () => {
+      const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bare-list-"));
+      try {
+        const { status, stderr } = spawnCli([group], { cwd: repoRoot, env: { AKM_BUNDLE_DIR: bundleDir } });
+        expect(status).toBe(0);
+        expect(stderr).not.toContain("requires a subcommand");
+      } finally {
+        fs.rmSync(bundleDir, { recursive: true, force: true });
+      }
     });
   }
 

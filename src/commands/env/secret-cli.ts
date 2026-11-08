@@ -290,7 +290,5 @@ export const secretCommand = defineGroupCommand({
     set: secretSetCommand,
     remove: secretRemoveCommand,
   },
-  // No `defaultRun`: bare `akm secret` is a usage error (exit 2), the canonical
-  // bare-group behavior — owner ruling 12. Run `akm secret list` for what the
-  // bare form used to print.
+  // Bare `akm secret` runs `akm secret list` (see insertBareListSubcommand in src/cli.ts).
 });

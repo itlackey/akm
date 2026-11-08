@@ -813,26 +813,28 @@ describe("akm proposal noun group (canonical)", () => {
     expect(result.stderr).not.toContain("deprecated");
   });
 
-  // Owner ruling 12, canonical bare-group behavior: bare `akm proposal` used to
-  // act as `akm proposal list`, and the group mirrored list's filter flags so
-  // `akm proposal --status=…` worked too. Both are now a usage error — naming
-  // the verb is required, and `akm proposal list` still takes the same flags.
-  // Deliberately pinning the NEW behavior, including the dropped group flags:
-  // the mirrored args were removed with the default body, so `--status` on the
-  // bare form is no longer even declared.
-  test("bare `akm proposal` is a usage error, with or without the old group filters", async () => {
+  test("bare `akm proposal` lists like `akm proposal list`, flags included", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
-    for (const argv of [["proposal"], ["proposal", "--status=reverted"]]) {
-      const result = await runCli([...argv, "--format=json"], { stashDir: stash });
-      expect({ argv, status: result.status }).toEqual({ argv, status: 2 });
-      const parsed = JSON.parse(result.stderr.trim());
-      expect(parsed.code).toBe("MISSING_REQUIRED_ARGUMENT");
-      expect(parsed.error).toContain("`akm proposal` requires a subcommand");
+    const bare = await runCli(["proposal", "--format=json"], { stashDir: stash });
+    expect(bare.status).toBe(0);
+    expect(JSON.parse(bare.stdout).totalCount).toBeGreaterThan(0);
+    for (const argv of [["--status=reverted"], ["--status", "reverted"]]) {
+      const filtered = await runCli(["proposal", ...argv, "--format=json"], { stashDir: stash });
+      expect({ argv, status: filtered.status }).toEqual({ argv, status: 0 });
+      expect(JSON.parse(filtered.stdout).totalCount).toBe(0);
+    }
+    for (const argv of [
+      ["proposal", "--stauts=x"],
+      ["config", "--bogus"],
+    ]) {
+      const typo = await runCli([...argv, "--format=json"], { stashDir: stash });
+      expect({ argv, status: typo.status }).toEqual({ argv, status: 2 });
+      expect(typo.stderr).toContain("Unknown flag");
     }
   });
 
-  test("`akm proposal list --status` still filters (the bare form's replacement)", async () => {
+  test("`akm proposal list --status` still filters ", async () => {
     const stash = makeStashDir();
     const created = seedProposal(stash);
 

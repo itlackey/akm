@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Bare `akm config`, `bundle`, `env`, `secret`, `proposal`, `registry` and `workflow` now run their `list` and exit 0 instead of exiting 2; `task`, `migrate` and `command` have no listing and keep the usage error (#1485).
 - Breaking output change: list results are serialized once. The `results` alias that duplicated `hits`, `items`, `proposals`, `sources`, `envs`, `secrets`, `registries`, `runs`, `rows` and `events` is removed from every format and detail level (#1476). Migration: read the command's own key (`hits` for search, `items` for curate, and so on).
 - curate items no longer carry a `reason`/`why:` line except to mark historical context; it used to repeat the query (#1482).
 - The hints guides are accurate: the brief guide is cut to about 3,000 characters (find, read, feedback, writing, errors and exit codes), both exit-code tables list 75, `akm search` is described as searching local sources (or the project's `from`), and improvement is described as review-first. Both guides, and `akm curate --help`, now mention `curate --pack <tokens>`. **`akm hints` now prints the brief guide by default (it printed the complete guide); `--detail full` prints the complete guide.** Text search output no longer ends with a nudge toward `akm workflow run` (#1474, #1489).
@@ -15,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- env: `akm env create --from-file/--from-stdin` warns once per key whose unquoted value contains `#` (key name only; dotenv drops everything from `#` on), writes the file unchanged, and `akm env --help` says to quote such values (#1488).
 - improve: distill runs on the memories the pass plans. The skips for a memory with no recent feedback and for one whose only feedback is a bare `--positive` are gone (#1479). Distill now also runs on the memories the proactive lane plans, which carry no feedback, and memories with repeated bare positives can again be proposed for promotion to knowledge. A memory whose lesson was recently rejected stays out of the proactive lane's distill.
 
 ## [0.10.261111] - 2026-11-06
