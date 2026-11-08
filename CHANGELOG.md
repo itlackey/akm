@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261114] - 2026-11-08
+
 ### Added
 
 - `akm-web` (command `akm-web`) is AKM Desktop's web process alone, published to npm with each release, for servers and containers where `akm ui` used to run (#1503). `akm-web` takes `--host <addr>` (default `127.0.0.1`), `--port <n>` (default a free port) and `--origin <url>` (the address the browser uses, default `http://<host>:<port>`); a wildcard `--host` without `--origin` exits with an error. Run from a terminal, it opens the URL in the default browser; it does not when its output is piped, under SSH, in CI, in a container, or on Linux with no display. The token, Host and Origin checks stay on and compare against the origin. An `https` origin sets `Secure` on the session cookie, and the cookie name carries the origin's port so instances on one host do not share it. The token holder has full owner authority over that library, and over plain HTTP the token is unencrypted: use a private network or a TLS proxy that keeps the Host header. Desktop and `npm run start:server` with no flags behave as before, except that the session cookie is named `akm_desktop_session_<port>`.
