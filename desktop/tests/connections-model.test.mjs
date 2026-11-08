@@ -78,7 +78,7 @@ test("a new connection starts with fast, balanced and reasoning and validates by
   assert.match(errors.endpoint, /http or https/);
   assert.equal(errors["model-0"], undefined, "blank alias rows are not checked");
   Object.assign(draft, { name: "default", endpoint: "https://x.test/v1", apiKey: "sk-secret" });
-  draft.models.forEach((row) => (row.model = "m"));
+  for (const row of draft.models) row.model = "m";
   assert.match(connectionErrors(draft, { existing: ["default"], creating: true }).name, /already exists/);
   draft.name = "akm-x";
   assert.match(connectionErrors(draft, { existing: [], creating: true }).name, /lowercase/);

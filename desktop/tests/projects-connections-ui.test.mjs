@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
-import { launchFixture, open, projectsAndConnections as configure } from "./support.mjs";
+import { projectsAndConnections as configure, launchFixture, open } from "./support.mjs";
 
 const configOf = async (server) => JSON.parse(await readFile(path.join(server.root, "config/config.json"), "utf8"));
 

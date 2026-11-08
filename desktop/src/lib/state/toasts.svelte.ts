@@ -44,6 +44,9 @@ export function releaseToast(id: number) {
   const toast = toasts.items.find((t) => t.id === id);
   if (toast && toast.timeoutMs !== null) {
     clearTimeout(timers.get(id));
-    timers.set(id, setTimeout(() => dismissToast(id), toast.timeoutMs + TOAST_RESUME_MS));
+    timers.set(
+      id,
+      setTimeout(() => dismissToast(id), toast.timeoutMs + TOAST_RESUME_MS),
+    );
   }
 }
