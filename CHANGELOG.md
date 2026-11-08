@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261113] - 2026-11-08
+
 ### Removed
 
 - The curate reranker is gone (#1468): `search.curateRerank` (`enabled`, `endpoint`, `model`, `apiKey`, `timeoutMs`, `topN`), the rerank client, curate's rerank pass and its candidate expansion, the `curate-rerank` row in `akm config targets` and `akm health`, the Desktop setting, and the schema and docs entries. `akm curate` takes the top `--limit` hits of one search. A config that still has `search.curateRerank` loads, warns once that the key is ignored, enables nothing, and `akm migrate apply` drops it; a `curateRerank` key in `credentials.json` is left alone.
