@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -310,4 +310,85 @@ describe("tryAcquireLockSync: no empty window", () => {
     await exited;
     expect(staleReasons).toEqual([]);
   }, 30_000);
+});
+
+describe("hard links unsupported (Azure Files SMB, #1505)", () => {
+  let dir: string;
+  let cleanup: Cleanup;
+  let linkSpy: ReturnType<typeof spyOn>;
+  beforeEach(() => {
+    const r = sandboxXdgDataHome();
+    dir = r.dir;
+    cleanup = r.cleanup;
+    linkSpy = spyOn(fs, "linkSync").mockImplementation(() => {
+      throw Object.assign(new Error("ENOTSUP: operation not supported on socket, link"), { code: "ENOTSUP" });
+    });
+  });
+  afterEach(() => {
+    linkSpy.mockRestore();
+    cleanup();
+  });
+
+  test("acquires, excludes a second writer, and leaves no temp files", () => {
+    const lock = path.join(dir, "config.json.lck");
+    const first = tryAcquireLockSync(lock, JSON.stringify({ pid: process.pid, lockId: "a" }));
+    expect(first).toBeDefined();
+    expect(tryAcquireLockSync(lock, JSON.stringify({ pid: process.pid, lockId: "b" }))).toBeUndefined();
+    expect(fs.readFileSync(lock, "utf8")).toContain('"a"');
+    expect(fs.readdirSync(dir)).toEqual(["config.json.lck"]);
+    if (first) releaseLock(first);
+    expect(fs.existsSync(lock)).toBe(false);
+    expect(tryAcquireLockSync(lock, String(process.pid))).toBeDefined();
+  });
+
+  test("EPERM from link also falls back", () => {
+    linkSpy.mockImplementation(() => {
+      throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+    });
+    expect(tryAcquireLockSync(path.join(dir, "x.lck"), String(process.pid))).toBeDefined();
+  });
+
+  test("an unrelated link error still throws", () => {
+    linkSpy.mockImplementation(() => {
+      throw Object.assign(new Error("EIO"), { code: "EIO" });
+    });
+    expect(() => tryAcquireLockSync(path.join(dir, "x.lck"), String(process.pid))).toThrow("EIO");
+  });
+
+  test("stale-owner takeover still works", () => {
+    const lock = path.join(dir, "stale.lck");
+    fs.writeFileSync(lock, "2147480000");
+    const probe = probeLock(lock);
+    expect(probe.state).toBe("stale");
+    if (probe.state !== "stale") throw new Error("expected stale");
+    expect(reclaimStaleLock(lock, probe)).toBe(true);
+    expect(tryAcquireLockSync(lock, String(process.pid))).toBeDefined();
+  });
+
+  test("a contender does not reclaim a lock that is still being initialised, but does once it is old", () => {
+    const lock = path.join(dir, "init.lck");
+    fs.writeFileSync(lock, "");
+    const probe = probeLock(lock);
+    expect(probe.state).toBe("stale");
+    if (probe.state !== "stale") throw new Error("expected stale");
+    expect(reclaimStaleLock(lock, probe)).toBe(false);
+    expect(fs.existsSync(lock)).toBe(true);
+
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lock, old, old);
+    const aged = probeLock(lock);
+    if (aged.state !== "stale") throw new Error("expected stale");
+    expect(reclaimStaleLock(lock, aged)).toBe(true);
+  });
+
+  test("old-owner release after replacement leaves the new owner's lock", () => {
+    const lock = path.join(dir, "replaced.lck");
+    const old = tryAcquireLockSync(lock, JSON.stringify({ pid: process.pid, lockId: "old" }));
+    if (!old) throw new Error("expected lock");
+    fs.rmSync(lock);
+    const next = tryAcquireLockSync(lock, JSON.stringify({ pid: process.pid, lockId: "new" }));
+    expect(next).toBeDefined();
+    releaseLock(old);
+    expect(fs.readFileSync(lock, "utf8")).toContain('"new"');
+  });
 });

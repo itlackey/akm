@@ -266,7 +266,7 @@ rebuilding `index.db` does not discard it.
 | `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
 | `event_type` | TEXT NOT NULL | `search`, `show`, `curate`, `feedback` |
 | `query` | TEXT | The search or curate query; NULL for show and feedback |
-| `entry_id` | INTEGER | `index.db` entry id; re-linked after a rebuild. Null at write time on search, curate and nested command/persona read events, which record only `entry_ref`; the next index fills it from `entry_ref`. Utility scores aggregate by `entry_ref`. Events recorded since the last index carry no `entry_id`, so they survive deletion of their entry until the next relink, and a later asset at the same ref inherits them until the 90-day purge |
+| `entry_id` | INTEGER | `index.db` entry id; re-linked after a rebuild. Null at write time on search, curate and nested command/persona read events, which record only `entry_ref`; the next index fills it from `entry_ref`. Utility scores aggregate by `entry_ref`. Deleting an entry also deletes its events that carry no `entry_id` yet, matched by `entry_ref` |
 | `entry_ref` | TEXT | Stable ref string |
 | `signal` | TEXT | `positive` or `negative` for feedback |
 | `metadata` | TEXT | JSON |

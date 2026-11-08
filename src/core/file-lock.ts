@@ -11,6 +11,11 @@
  * dead one; only a verifiably dead holder is ever reclaimed. Reclaim moves the
  * stale file aside, re-verifies it is the very file that was probed, and only
  * then unlinks it, so two reclaimers cannot both "win" the same stale lock.
+ *
+ * Publication is a hard link of a fully written temp file. On filesystems
+ * without hard links (Azure Files SMB) it falls back to an `O_EXCL` create plus
+ * write; reclaim then leaves a freshly created empty lock alone for a short
+ * grace period.
  */
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -79,6 +84,44 @@ function sameIdentity(left: LockFileIdentity, right: LockFileIdentity): boolean 
   return left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeMs === right.mtimeMs;
 }
 
+/**
+ * A just-created lock file on a filesystem without hard links is briefly empty
+ * (see `createLockFileExclusive`). A probe younger than this reads that as
+ * "initialising", not stale, so a live acquirer is never reclaimed.
+ */
+const UNINITIALISED_LOCK_GRACE_MS = 2000;
+
+/** `link()` errnos that mean "this filesystem has no hard links" (SMB/CIFS, some FUSE mounts). */
+function isHardLinkUnsupported(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === "ENOTSUP" || code === "EOPNOTSUPP" || code === "EPERM" || code === "EINVAL";
+}
+
+/**
+ * Hard-link-free exclusive publish: `O_EXCL` create, then write the payload.
+ * The file exists empty for an instant; `reclaimStaleLock` refuses to reclaim
+ * an empty lock younger than `UNINITIALISED_LOCK_GRACE_MS`. Returns false when
+ * another holder already has the path.
+ */
+function createLockFileExclusive(lockPath: string, payload: string): boolean {
+  let fd: number;
+  try {
+    fd = fs.openSync(lockPath, "wx");
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw err;
+  }
+  try {
+    fs.writeSync(fd, payload);
+  } catch (error) {
+    fs.closeSync(fd);
+    releaseLockRaw(lockPath);
+    throw error;
+  }
+  fs.closeSync(fd);
+  return true;
+}
+
 function releaseLockRaw(lockPath: string): void {
   try {
     fs.unlinkSync(lockPath);
@@ -99,7 +142,8 @@ export function tryAcquireLockSync(lockPath: string, payload: string): LockOwner
     fs.linkSync(tmpPath, lockPath);
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "EEXIST") return undefined;
-    throw err;
+    if (!isHardLinkUnsupported(err)) throw err;
+    if (!createLockFileExclusive(lockPath, payload)) return undefined;
   } finally {
     releaseLockRaw(tmpPath);
   }
@@ -167,6 +211,8 @@ export function reclaimStaleLock(
   options?: ReclaimStaleLockOptions,
 ): boolean {
   if (probe.rawContent === undefined || probe.identity === undefined) return false;
+  // An empty lock this young may be mid-initialisation on a filesystem without hard links.
+  if (probe.rawContent.trim() === "" && (probe.ageMs ?? 0) < UNINITIALISED_LOCK_GRACE_MS) return false;
   const expectedContent = probe.rawContent;
   const expectedIdentity = probe.identity;
   let current: ReturnType<typeof readLockSnapshot>;
@@ -201,7 +247,9 @@ export function reclaimStaleLock(
     try {
       fs.linkSync(quarantinePath, lockPath);
     } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      if (isHardLinkUnsupported(err)) {
+        createLockFileExclusive(lockPath, fs.readFileSync(quarantinePath, "utf8"));
+      } else if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
     releaseLockRaw(quarantinePath);
     return false;
