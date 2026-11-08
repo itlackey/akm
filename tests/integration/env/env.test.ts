@@ -505,6 +505,23 @@ describe("env create --from-file / --from-stdin", () => {
     }
   });
 
+  test("--from-file warns once per key with an unquoted # (key only) and writes the file unchanged", async () => {
+    const stashDir = makeTempDir("akm-envcli-stash-");
+    const srcFile = path.join(stashDir, "source.env");
+    const text = 'A=#sekrit1\nB=x #sekrit2\nC="#sekrit3"\nD=plain\n';
+    fs.writeFileSync(srcFile, text, "utf8");
+
+    const result = await runCli(["env", "create", "env/prod", "--from-file", srcFile], { AKM_BUNDLE_DIR: stashDir });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr.match(/^A: /gm)?.length).toBe(1);
+    expect(result.stderr.match(/^B: /gm)?.length).toBe(1);
+    expect(result.stderr).not.toMatch(/^C: /m);
+    expect(result.stderr).not.toMatch(/^D: /m);
+    expect(result.stderr).not.toContain("sekrit");
+    expect(fs.readFileSync(path.join(stashDir, "env", "prod.env"), "utf8")).toBe(text);
+  });
+
   test("--from-file refuses to clobber an existing env", async () => {
     const stashDir = makeTempDir("akm-envcli-stash-");
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });

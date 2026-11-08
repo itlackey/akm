@@ -487,9 +487,8 @@ export const workflowCommand = defineGroupCommand({
     run: workflowRunCommand,
     plan: workflowPlanCommand,
   },
-  // No `defaultRun`: bare `akm workflow` is a usage error (exit 2), the
-  // canonical bare-group behavior — owner ruling 12. Run `akm workflow list
-  // --active` for what the bare form used to print. This group was previously
+  // Bare `akm workflow` runs `akm workflow list` (BARE_GROUP_LISTING in
+  // src/cli/shared.ts). This group was previously
   // hand-rolled on `defineCommand` with its own `hasWorkflowSubcommand` guard,
   // which duplicated the subcommand names in a second hand-maintained set;
   // `defineGroupCommand` derives the guard from `subCommands` directly.

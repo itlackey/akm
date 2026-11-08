@@ -964,8 +964,7 @@ akm workflow list --children               # also list child workflow runs (Expe
 akm workflow plan workflows/ship-release    # compile+freeze preview, zero writes
 ```
 
-Bare `akm workflow` (no subcommand) is a usage error (exit 2), the canonical
-bare-group behavior — name a subcommand.
+Bare `akm workflow` (no subcommand) runs `akm workflow list`.
 
 Subcommands:
 
@@ -3203,8 +3202,7 @@ verdict changes shape. The verdicts of `reflect.quality` and `distill.lesson` ar
 
 Manage the proposal queue. The canonical grammar is `akm proposal <verb>`:
 `extract`, `new`, `list`, `show`, `diff`, `accept`, `reject`, `reopen`,
-`revert`, `drain`. Bare `akm proposal` is a usage error (exit 2) as of 0.9.0 — it used
-to behave as `akm proposal list`; name the verb. There are no flat-verb
+`revert`, `drain`. Bare `akm proposal` runs `akm proposal list`. There are no flat-verb
 spellings (`akm proposals`, `akm extract`, `akm propose`, `akm accept`, `akm
 reject`, `akm diff`, `akm revert`) — use the `akm proposal <verb>` form.
 

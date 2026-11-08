@@ -8,10 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Bare `akm config`, `bundle`, `env`, `secret`, `proposal`, `registry` and `workflow` now run their `list` and exit 0 instead of exiting 2; `task`, `migrate` and `command` have no listing and keep the usage error (#1485).
 - Search and curate return one result per memory family: a `.derived` twin is dropped when its parent memory is also a hit, and a parent ranked below its twin takes the twin's place (the parent keeps `expandTo`), and the freed slot goes to the next hit. A twin whose parent is not a hit is still returned (#1481).
 
 ### Fixed
 
+- env: `akm env create --from-file/--from-stdin` warns once per key whose unquoted value contains `#` (key name only; dotenv drops everything from `#` on), writes the file unchanged, and `akm env --help` says to quote such values (#1488).
 - improve: distill runs on the memories the pass plans. The skips for a memory with no recent feedback and for one whose only feedback is a bare `--positive` are gone (#1479). Distill now also runs on the memories the proactive lane plans, which carry no feedback, and memories with repeated bare positives can again be proposed for promotion to knowledge. A memory whose lesson was recently rejected stays out of the proactive lane's distill.
 
 ## [0.10.261111] - 2026-11-06

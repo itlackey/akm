@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { main } from "../../src/cli";
 import { GLOBAL_OUTPUT_ARGS } from "../../src/cli/shared";
@@ -567,7 +568,9 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
   // invocation, not a bare-group usage error; see
   // tests/commands/observability-cli-envelope.test.ts) and `lessons` was
   // removed entirely.
-  for (const group of ["migrate", "registry", "config", "proposal", "env", "secret", "task", "workflow"]) {
+  // Groups with a read-only `list` (config, bundle, env, secret, proposal, registry,
+  // workflow) run it instead; see the bare-listing test below.
+  for (const group of ["migrate", "task", "command"]) {
     test(`bare akm ${group} emits the canonical usage envelope and exits 2`, () => {
       const { status, stderr } = spawnCli([group], { cwd: repoRoot });
       expect(status).toBe(2);
@@ -575,6 +578,19 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
       expect(parsed.ok).toBe(false);
       expect(parsed.code).toBe("MISSING_REQUIRED_ARGUMENT");
       expect(parsed.error).toContain(`\`akm ${group}\` requires a subcommand`);
+    });
+  }
+
+  for (const group of ["config", "bundle", "env", "secret", "proposal", "registry", "workflow"]) {
+    test(`bare akm ${group} runs its list and exits 0`, () => {
+      const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-bare-list-"));
+      try {
+        const { status, stderr } = spawnCli([group], { cwd: repoRoot, env: { AKM_BUNDLE_DIR: bundleDir } });
+        expect(status).toBe(0);
+        expect(stderr).not.toContain("requires a subcommand");
+      } finally {
+        fs.rmSync(bundleDir, { recursive: true, force: true });
+      }
     });
   }
 

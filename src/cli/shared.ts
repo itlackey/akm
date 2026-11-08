@@ -261,6 +261,21 @@ export function defineJsonCommand<const T extends ArgsDef = ArgsDef>(def: JsonCo
  * `defaultRun` is a deliberate opt-out and should not be added to new groups
  * without a documented reason — see CHANGELOG for the migration note.
  */
+/**
+ * Bare groups that run a read-only listing subcommand instead of erroring
+ * (exit 0). Explicit on purpose: groups absent from this table (task, migrate,
+ * command) have no listing and keep the usage error above.
+ */
+const BARE_GROUP_LISTING: Record<string, string> = {
+  bundle: "list",
+  config: "list",
+  env: "list",
+  proposal: "list",
+  registry: "list",
+  secret: "list",
+  workflow: "list",
+};
+
 function bareGroupUsageError<T extends ArgsDef>(meta: CommandDef<T>["meta"], subcommandSet: Set<string>): never {
   const name =
     typeof meta === "object" && meta !== null && "name" in meta && typeof (meta as { name?: unknown }).name === "string"
@@ -302,7 +317,17 @@ export function defineGroupCommand<const T extends ArgsDef = ArgsDef>(def: {
   defaultRun?: (context: CommandContext<T>) => void | Promise<void>;
 }): CommandDef<T> {
   const subcommandSet = new Set(Object.keys(def.subCommands));
-  const defaultRun = def.defaultRun ?? (() => bareGroupUsageError<T>(def.meta, subcommandSet));
+  const groupName =
+    typeof def.meta === "object" && def.meta !== null && "name" in def.meta
+      ? (def.meta as { name?: unknown }).name
+      : undefined;
+  const listing = typeof groupName === "string" ? BARE_GROUP_LISTING[groupName] : undefined;
+  const listingCommand = listing ? (def.subCommands[listing] as CommandDef<ArgsDef> | undefined) : undefined;
+  const defaultRun =
+    def.defaultRun ??
+    (listingCommand?.run
+      ? (context: CommandContext<T>) => listingCommand.run?.(context as unknown as CommandContext<ArgsDef>)
+      : () => bareGroupUsageError<T>(def.meta, subcommandSet));
   return defineCommand({
     meta: def.meta,
     ...(def.args ? { args: def.args } : {}),

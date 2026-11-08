@@ -33,8 +33,10 @@ import {
   withEnvSecretWrite,
 } from "../../core/env-secret-ref";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { warn } from "../../core/warn";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
+import { keysWithUnquotedHash } from "./env";
 
 const envListCommand = defineJsonCommand({
   meta: { name: "list", description: "List all env files across all bundles with their key names (no values)" },
@@ -48,7 +50,7 @@ const envCreateCommand = defineJsonCommand({
   meta: {
     name: "create",
     description:
-      "Create an env file (empty by default; seed an existing `.env` with --from-file or --from-stdin). No-op if it already exists and no source is given.",
+      "Create an env file (empty by default; seed an existing `.env` with --from-file or --from-stdin). No-op if it already exists and no source is given. Quote values that contain `#`, or everything from `#` on is dropped.",
   },
   args: {
     name: {
@@ -114,8 +116,14 @@ const envCreateCommand = defineJsonCommand({
       written.push(markerPath);
     }
     withEnvSecretWrite(target, { type: "env", name }, "Update", written, () => {
-      if (content !== undefined) writeEnv(absPath, content);
-      else createEnv(absPath);
+      if (content !== undefined) {
+        writeEnv(absPath, content);
+        for (const key of keysWithUnquotedHash(content)) {
+          warn(
+            `${key}: the unquoted value contains "#", so everything from "#" on is dropped. Quote the value to keep it.`,
+          );
+        }
+      } else createEnv(absPath);
       if (args.sensitive) {
         if (!fs.existsSync(markerPath)) {
           writeFileAtomic(markerPath, "", 0o600);
@@ -385,7 +393,8 @@ export const envCommand = defineGroupCommand({
     name: "env",
     description:
       "Manage `.env` files — configuration values an app loads together (URLs, flags, and any credentials it needs).\n\n" +
-      "Values may or may not be sensitive; akm protects them all the same way — key names are visible, values never appear in structured output. For a single sensitive value used on its own (an auth token, key, or cert), use `akm secret`.",
+      "Values may or may not be sensitive; akm protects them all the same way — key names are visible, values never appear in structured output. For a single sensitive value used on its own (an auth token, key, or cert), use `akm secret`.\n\n" +
+      "Quote values that contain `#`, or everything from `#` on is dropped.",
   },
   subCommands: {
     list: envListCommand,
@@ -395,7 +404,5 @@ export const envCommand = defineGroupCommand({
     create: envCreateCommand,
     remove: envRemoveCommand,
   },
-  // No `defaultRun`: bare `akm env` is a usage error (exit 2), the canonical
-  // bare-group behavior — owner ruling 12. Run `akm env list` for what the
-  // bare form used to print.
+  // Bare `akm env` runs `akm env list` (BARE_GROUP_LISTING in src/cli/shared.ts).
 });

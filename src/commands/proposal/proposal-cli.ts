@@ -608,7 +608,5 @@ export const proposalCommand = defineGroupCommand({
     extract: extractCommand,
     new: proposeCommand,
   },
-  // No `defaultRun`: bare `akm proposal [--status …]` is a usage error (exit 2),
-  // the canonical bare-group behavior — owner ruling 12. `akm proposal list`
-  // takes the same flags and produces what the bare form used to.
+  // Bare `akm proposal` runs `akm proposal list` (BARE_GROUP_LISTING in src/cli/shared.ts).
 });
