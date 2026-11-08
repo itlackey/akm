@@ -199,5 +199,8 @@ describe("curate over fused search", () => {
     const result = await akmCurate({ query: "gizmo", limit: 1, skipLogging: true });
 
     expect(result.items).toHaveLength(1);
+    // Curate keeps the fused order: its one item is the search's top hit.
+    const top = (await search("gizmo")).hits[0];
+    expect(result.items[0] && "ref" in result.items[0] ? result.items[0].ref : undefined).toBe(top?.ref);
   });
 });

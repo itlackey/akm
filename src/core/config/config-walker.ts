@@ -347,7 +347,7 @@ function holdsLiteralApiKey(value: unknown): boolean {
 }
 
 function rejectLiteralApiKeyInWholeObjectSet(path: Path, raw: string, dotted: string): void {
-  const wholeObject = ["connections", "embedding", "search"].includes(path[0] as string) && !isCredentialPath(path);
+  const wholeObject = ["connections", "embedding"].includes(path[0] as string) && !isCredentialPath(path);
   if (!wholeObject) return;
   let parsed: unknown;
   try {

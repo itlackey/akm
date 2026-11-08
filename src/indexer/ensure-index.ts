@@ -12,7 +12,7 @@
  * Writers maintain the index (`indexWrittenAssets` for `remember`/extract
  * session assets; the mutation commands run `akmIndex()` themselves), and the
  * improve cron / explicit `akm index` do full refreshes. Reads serve whatever
- * populated index exists. The previous design — a staleness walk plus a
+ * index has completed a build. The previous design — a staleness walk plus a
  * detached background reindex per read — made every read on an actively
  * written stash spawn a writer that the read's own telemetry then queued
  * behind (the 2026-07 read-path reindex-contention findings).

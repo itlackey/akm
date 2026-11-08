@@ -14,7 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - `ensureIndex` in blocking mode (improve) runs an incremental index and lets its per-file fingerprints decide, so an edit in any bundle, not only the primary stash, is picked up.
-- Search, curate and nested command/persona read usage events record `entry_ref` only (`entry_id` is null); utility scores now aggregate by `entry_ref`, so an old event with a bare, unqualified ref no longer counts toward a score.
+- Search, curate and nested command/persona read usage events record `entry_ref` only; `entry_id` is null until the next index fills it from `entry_ref`. Utility scores aggregate by `entry_ref`, with the same result as before for existing data. Events recorded since the last index survive the deletion of their entry until the next relink, so a later asset at the same ref can inherit them until the 90-day purge.
+- `ensureIndexDurationMs` in the improve result is now set on every non-dry run, because blocking mode always runs the incremental index.
 
 ## [0.10.261112] - 2026-11-07
 

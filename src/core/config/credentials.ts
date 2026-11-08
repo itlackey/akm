@@ -189,7 +189,10 @@ export function storedCredentials(): Array<{ slot: CredentialSlot; credential: S
       isStoredCredential(held)
         ? [
             {
-              slot: group === "connections" ? { connection: name } : { service: name as "embedding" },
+              slot:
+                group === "connections"
+                  ? { connection: name }
+                  : { service: name as "embedding" } /* any other name is inert; only its key is read */,
               credential: held,
             },
           ]

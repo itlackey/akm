@@ -31,7 +31,8 @@ import { getDbPath, getIndexRebuildLockPath } from "../core/paths";
 import { formatLockHolderPid } from "../core/run-lock";
 import { warn, warnVerbose } from "../core/warn";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
-import { deleteEntriesByIds, getEntryCount, upsertEntry } from "../storage/repositories/index-entries-repository";
+import { deleteEntriesByIds, upsertEntry } from "../storage/repositories/index-entries-repository";
+import { getMeta } from "../storage/repositories/index-meta-repository";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
 import { embeddingInputCap, generateEmbeddingsForDb, publishTargetedEmbeddingMeta } from "./materialize-embeddings";
 import { type IndexDocument, withFileSize } from "./passes/metadata";
@@ -55,14 +56,14 @@ export const WRITE_PATH_INDEX_BUSY_TIMEOUT_MS = 5_000;
  * pre-write-path-indexing behavior: the asset appears after the next full
  * `akm index` / improve-cron run.
  *
- * An absent or empty index is skipped on purpose — bootstrap belongs to the
+ * An absent index, or one that never completed a build (no `builtAt`), is skipped on purpose — bootstrap belongs to the
  * first read (`ensureIndex`) or an explicit `akm index`, which also cover
  * embeddings and the other passes this fast path skips.
  *
  * A live rebuild holding the rebuild lock is the SAME kind of skip, not a
  * failure (#956 fix): a live `akm index` run owns bringing the index to the
  * expected state on its own, so this call returns `true` on that skip
- * exactly like the absent-index and empty-index cases above. Callers that
+ * exactly like the absent-index and never-built cases above. Callers that
  * gate their own success on this boolean (`acceptProposal`, `source clone`)
  * must never fail or warn just because a concurrent rebuild is in progress.
  */
@@ -158,7 +159,7 @@ export async function indexWrittenAssets(
     const db = openExistingDatabase(dbPath);
     try {
       db.exec(`PRAGMA busy_timeout = ${WRITE_PATH_INDEX_BUSY_TIMEOUT_MS}`);
-      if (getEntryCount(db) === 0) return true;
+      if (!getMeta(db, "builtAt")) return true;
       const config = loadConfig();
       const targetEntryIds = new Set<number>();
       let mutated = false;
