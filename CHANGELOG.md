@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Breaking output change: list results are serialized once. The `results` alias that duplicated `hits`, `items`, `proposals`, `sources`, `envs`, `secrets`, `registries`, `runs`, `rows` and `events` is removed from every format and detail level (#1476). Migration: read the command's own key (`hits` for search, `items` for curate, and so on).
+- curate: an item's `why:` line (`reason` in JSON) no longer repeats the query; it states only the match kind (#1482).
 - Search and curate return one result per memory family: a `.derived` twin is dropped when its parent memory is also a hit, and a parent ranked below its twin takes the twin's place (the parent keeps `expandTo`), and the freed slot goes to the next hit. A twin whose parent is not a hit is still returned (#1481).
 
 ### Fixed

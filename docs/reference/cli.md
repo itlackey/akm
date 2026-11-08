@@ -81,24 +81,6 @@ For local materialized assets, `editHint` is added only when `editable` is
 or use `action` (or curate `followUp`). Registry-only results have no local
 `path`, `editable`, or `editHint`.
 
-### The `results` collection alias
-
-Every list-returning command names its collection field differently —
-`search` returns `hits`, `curate` returns `items`, `proposal list` returns
-`proposals`, `bundle list` returns `sources`, `env list` returns `envs`,
-`secret list` returns `secrets`, `registry list` returns `registries`,
-`registry search` returns `hits`, `workflow list` returns `runs`,
-`task history` returns `rows`, `log list` returns `events`. A caller that does
-not already know each command's key cannot write one accessor across all of
-them.
-
-Every one of these commands also carries a `results` field — the identical
-array, not a copy — alongside its semantic key, in every `--format`/`--detail`
-combination, including `--detail agent`. Code
-written against a single command should keep using its semantic key for
-clarity; code that needs to handle several list commands uniformly can read
-`results` and never maintain a per-command lookup table.
-
 ## Exit Codes and Error Envelope
 
 Every command exits with one of the following codes:

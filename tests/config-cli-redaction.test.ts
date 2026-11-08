@@ -246,7 +246,7 @@ describe("config diff", () => {
     expect(parsed.rows).toEqual([]);
   });
 
-  test("diff --detail agent still exposes the results alias", async () => {
+  test("diff --detail agent carries rows without a results alias", async () => {
     const env = freshEnv();
 
     const outputs = await withEnv(env, async () => {
@@ -262,7 +262,8 @@ describe("config diff", () => {
     });
 
     expect(outputs.code).toBe(0);
-    const parsed = JSON.parse(outputs.stdout) as { rows: unknown[]; results: unknown[] };
-    expect(parsed.results).toEqual(parsed.rows);
+    const parsed = JSON.parse(outputs.stdout) as { rows: unknown[]; results?: unknown };
+    expect(parsed.rows.length).toBeGreaterThan(0);
+    expect(parsed).not.toHaveProperty("results");
   });
 });

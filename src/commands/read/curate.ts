@@ -353,11 +353,9 @@ export async function curateSearchResults(
 
   const items = [
     ...(
-      await Promise.all(
-        selectedStashHits.map((hit) => enrichCuratedStashHit(query, hit, selectedRefs, eventSource, policy)),
-      )
+      await Promise.all(selectedStashHits.map((hit) => enrichCuratedStashHit(hit, selectedRefs, eventSource, policy)))
     ).filter((item): item is CuratedStashItem => item !== undefined),
-    ...selectedRegistryHits.map((hit) => buildCuratedRegistryItem(query, hit)),
+    ...selectedRegistryHits.map((hit) => buildCuratedRegistryItem(hit)),
   ].slice(0, limit);
   return {
     query,
@@ -442,7 +440,6 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
 }
 
 async function enrichCuratedStashHit(
-  query: string,
   hit: SourceSearchHit,
   selectedRefs: Set<string>,
   eventSource?: UsageEventSource,
@@ -486,14 +483,14 @@ async function enrichCuratedStashHit(
     ...(supportRefs.length > 0 ? { supportRefs } : {}),
     followUp: `akm show ${ref}`,
     ...(beliefState ? { beliefState } : {}),
-    reason: `${matchBeliefFilter(beliefState, "historical") ? "Historical context. " : ""}${buildCuratedReason(query, shown?.type ?? hit.type)}`,
+    reason: `${matchBeliefFilter(beliefState, "historical") ? "Historical context. " : ""}${buildCuratedReason(shown?.type ?? hit.type)}`,
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
   copySearchHitAttribution(hit, item, item.description);
   return item;
 }
 
-function buildCuratedRegistryItem(query: string, hit: RegistrySearchResultHit): CuratedRegistryItem {
+function buildCuratedRegistryItem(hit: RegistrySearchResultHit): CuratedRegistryItem {
   return {
     source: "registry",
     type: "registry",
@@ -501,7 +498,7 @@ function buildCuratedRegistryItem(query: string, hit: RegistrySearchResultHit): 
     id: hit.id,
     ...(hit.description ? { description: hit.description } : {}),
     followUp: hit.action ?? `akm bundle add ${hit.id}`,
-    reason: `Useful external source to explore for ${query}.`,
+    reason: "Useful external source to explore.",
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
 }
@@ -518,22 +515,22 @@ function buildCuratedPreview(shown: ShowResponse | undefined, hit: SourceSearchH
   return payload ? truncateDescription(payload, 160) : undefined;
 }
 
-function buildCuratedReason(query: string, type: string): string {
+function buildCuratedReason(type: string): string {
   switch (type) {
     case "script":
-      return `Strong runnable script match for "${query}".`;
+      return "Strong runnable script match.";
     case "command":
-      return `Strong reusable command/template match for "${query}".`;
+      return "Strong reusable command/template match.";
     case "knowledge":
-      return `Strong reference document match for "${query}".`;
+      return "Strong reference document match.";
     case "skill":
-      return `Strong instructions/workflow match for "${query}".`;
+      return "Strong instructions/workflow match.";
     case "agent":
-      return `Strong specialized agent prompt match for "${query}".`;
+      return "Strong specialized agent prompt match.";
     case "memory":
-      return `Strong saved context match for "${query}".`;
+      return "Strong saved context match.";
     default:
-      return `Strong ${type} match for "${query}".`;
+      return `Strong ${type} match.`;
   }
 }
 

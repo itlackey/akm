@@ -53,6 +53,19 @@ describe("curateSearchResults", () => {
     ]);
   });
 
+  test("item reasons do not embed the query (#1482)", async () => {
+    const response = searchResponse({
+      hits: [stashHit({ type: "knowledge", name: "g", ref: "knowledge/g", path: "/tmp/g" })],
+      registryHits: [registryHit({ name: "r", id: "npm:r" })],
+    });
+    const short = await curateSearchResults("release", response, 3);
+    const longQuery = `release ${"very long prompt text ".repeat(40)}`;
+    const long = await curateSearchResults(longQuery, response, 3);
+    const reasons = (r: typeof short) => r.items.map((i) => i.reason);
+    expect(reasons(long)).toEqual(reasons(short));
+    for (const reason of reasons(long)) expect(reason).not.toContain("very long prompt");
+  });
+
   // F3/R-018: `--type` narrows the pool of a search response that was never
   // type-filtered (tests, `searchResponse` fixtures) without reordering it.
   test("--type narrows the candidate pool and keeps the search order", async () => {
