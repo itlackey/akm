@@ -68,6 +68,12 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
     }
   }
   if (Array.isArray(r.connectionsAndHarnesses)) lines.push(...renderTargetsTable(r.connectionsAndHarnesses));
+  const learning = r.learning as Record<string, unknown> | undefined;
+  if (learning) {
+    lines.push(
+      `learning: ${learning.on ? "on" : "off"}${typeof learning.agent === "string" ? ` (agent: ${learning.agent})` : ""}, improve task ${learning.scheduled ? "scheduled" : "not scheduled"}`,
+    );
+  }
   const indexStats = r.indexStats as Record<string, unknown> | undefined;
   if (indexStats) {
     lines.push("indexStats:");

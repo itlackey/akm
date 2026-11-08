@@ -214,6 +214,42 @@ Flags answer one question each; `--yes` takes the detected default for every
 question left, so nothing is prompted. Without a terminal, `akm setup` refuses
 unless `--yes` or `--from` is given.
 
+#### setup --learning
+
+```sh
+akm setup --learning off
+akm setup --learning on
+```
+
+`--learning on|off` turns background learning on or off and does nothing else:
+it needs no `--yes`, creates no bundle, enables no agent program and runs no
+other setup step, and it refuses to be combined with `--yes` or the other setup
+flags. `akm info` shows the current state (its `learning` field). **Experimental**
+for its first release.
+
+- **Off** sets `enabled: false` on each model-calling improve process
+  (`reflect`, `distill`, `consolidate`, `memoryInference`, `extract`,
+  `validation`, `triage`) of the **active** `improve.strategy` (which also makes
+  `akm proposal extract` a no-op), and disables the scheduled `improve` task and
+  any installed `improve/…` task templates. Changing `improve.strategy` later
+  brings the other strategy's processes back.
+- **On** removes every `enabled: false` of the active strategy, a person's own
+  included, points improve at the agent program or the default connection, and
+  enables the `improve` task, adding it from akm's template when the bundle has
+  none. It can start model spending, so run it as an explicit action, not at
+  container boot. With nowhere to run learning (no connection and no enabled
+  agent program) it warns and leaves learning off. On a host with no `crontab`
+  (or whose scheduler cannot be written) it warns, keeps the config change and
+  reports `scheduled: false`.
+
+The result is JSON naming what changed; unrelated config is kept:
+
+```json
+{ "learning": { "on": true, "agent": null, "processes": ["reflect", "..."], "tasksEnabled": ["improve"], "tasksDisabled": [], "scheduled": true } }
+```
+
+`processes` lists the switches written (off) or cleared (on).
+
 | Flag | Answers |
 |---|---|
 | `--endpoint <url>` | The connection to add or update (the first is named `default`) |
@@ -364,6 +400,7 @@ Returns a JSON object with:
 | `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
 | `registries` | Configured registries |
 | `connectionsAndHarnesses` | The connections, harnesses and work that runs on them, as the rows `akm health` reports under its `connections-and-harnesses` check, without contacting anything: each connection's endpoint and whether its key is held, each harness's platform and whether its binary is on `PATH`, and for each kind of work the connection or harness and model it resolves to |
+| `learning` | Background learning, read from the config and the bundle's task files alone (nothing is scheduled, probed or written): `on` (the same test as `setup.detect`'s `learning.on`: akm's model calls run somewhere and the active strategy's learning processes are not all switched off), `agent` (the agent program platform they run on; `null` for akm itself, or when off) and `scheduled` (whether the `improve` task is enabled; the config's word, not the OS scheduler's). **Experimental** for its first release |
 | `sourceProviders` | Configured sources (filesystem, git, website, npm) |
 | `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `links` (declared links per kind with `total` and `unresolved`; absent when the index holds none), `lastBuiltAt`, `hasEmbeddings`, `unreadable` (index.db exists but the filesystem refuses to read it — a permissions problem), `unavailable` (index.db is readable but the SQLite-level read didn't complete: locked by another akm process, a newer layout this akm can't understand, or a corrupt file) |
 
@@ -3384,6 +3421,7 @@ akm proposal new skill code-review --bundle team --task "PR-style review skill" 
 | `--timeout-ms` | Override the selected connection's or harness's timeout for this call |
 | `--user` / `--agent` / `--run` / `--channel` | Scope stamped on the proposal, as for `akm remember` (`scope_*` frontmatter). A scope the model writes is replaced by these flags (none given: removed), with one warning. |
 | `--project <name>` | Use this [project](#projects)'s write defaults (`write.user`, `agent`, `channel`, `metadata`, and `write.bundle` as the destination) instead of the one the working directory selects; `none` uses none. |
+| `--if-learning` | For automatic callers (the AKM agent plugins). When background learning is off (the same core switch as `akm info`'s `learning.on`, not the scheduler), exit 0 at once with `{"ok": true, "skipped": "learning-off"}`: no model call, no proposal, no event. Without it, `proposal new` always authors on request. **Experimental** for its first release. |
 
 Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 

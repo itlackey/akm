@@ -91,11 +91,11 @@ covers beyond the table.
 
 | Command | Tier | Notes |
 | --- | --- | --- |
-| `akm setup` | Stable | The answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10; `--config` and `--probe` are gone (see the table above). |
+| `akm setup` | Stable | The answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10; `--config` and `--probe` are gone (see the table above). `--learning on|off` is Experimental for its first release. |
 | `akm index` | Stable | |
 | `akm health` | Evolving | Exit codes are Evolving; report *content* and rendered `md` layout are Experimental — do not script against report layout. |
 | `akm metrics` | Experimental | New in 0.9.28. Report content and JSON shape may change. |
-| `akm info` | Stable | |
+| `akm info` | Stable | The `learning` field is Experimental for its first release. |
 | `akm bundle create` | Stable | |
 | `akm bundle add` | Stable | |
 | `akm bundle list` | Stable | |
@@ -148,7 +148,7 @@ covers beyond the table.
 | `akm proposal revert` | Evolving | |
 | `akm proposal drain` | Evolving | |
 | `akm proposal extract` | Evolving | Former top-level `akm extract`. Promoted from Experimental in 0.10 (#1133): the extract eval measures it. Evolving, not Stable, because 0.10 is still settling the improve defaults. |
-| `akm proposal new` | Evolving | Former top-level `akm propose`. |
+| `akm proposal new` | Evolving | Former top-level `akm propose`. `--if-learning` is Experimental for its first release. |
 | `akm help` | Stable | |
 | `akm help migrate` | Stable | Only renders release notes. |
 | `akm hints` | Stable | Format-exempt agent guide; the brief guide is the default; `--detail full` selects the complete version. |

@@ -236,6 +236,11 @@ const setupCommand = defineCommand({
       type: "string",
       description: "Bundle directory path (overrides defaultBundle in config)",
     },
+    learning: {
+      type: "string",
+      description:
+        "on|off: turn background learning (improve processes and the scheduled improve task) on or off, and nothing else. Alone it needs no --yes. `on` clears learning switches set to false and can start model spending",
+    },
     // Declared as the POSITIVE name with `default: true` so citty's native
     // `--no-<name>` negation (it strips a leading `--no-` from ANY token and
     // negates the remainder BEFORE consulting the declared-args table) does
@@ -260,6 +265,30 @@ const setupCommand = defineCommand({
     await runWithJsonErrors(async () => {
       const noInit = !args.init;
       const noProbe = (args as { probe?: boolean }).probe === false;
+      if (args.learning !== undefined) {
+        // Alone it is one step: no bundle, no harness, no other setup question.
+        if (args.learning !== "on" && args.learning !== "off")
+          throw new UsageError("--learning takes `on` or `off`.", "INVALID_FLAG_VALUE");
+        const others = [
+          "endpoint",
+          "api-key-env",
+          "name",
+          "harness",
+          "embedding",
+          "embedding-endpoint",
+          "embedding-api-key-env",
+          "from",
+          "dir",
+        ] as const;
+        if (args.yes || others.some((flag) => args[flag] !== undefined))
+          throw new UsageError(
+            "--learning runs on its own; do not combine it with --yes or the other setup flags.",
+            "INVALID_FLAG_VALUE",
+          );
+        const { setLearning } = await import("./setup/learning");
+        output("setup", { learning: await setLearning({ on: args.learning === "on" }) });
+        return;
+      }
       const { hasSetupFlags, parseSetupFlags } = await import("./setup/setup-flags");
       const flags = parseSetupFlags({
         endpoint: args.endpoint,

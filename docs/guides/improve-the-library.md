@@ -166,6 +166,26 @@ days (git-tracked and clean ones only), the commit that `akm proposal accept`
 makes in a git-backed bundle, and the end-of-run sync that commits and pushes a
 git-backed bundle (`--no-sync` and `--no-push` turn it off for a run).
 
+## Learning layers
+
+Several things can spend model calls on their own. Core learning is one switch,
+shown by `akm info` (`learning`) and set by `akm setup --learning on|off`; the
+layers below follow it or sit beside it.
+
+| Layer | Switch | Model calls |
+| --- | --- | --- |
+| Recall | `AKM_AUTO_CURATE` (plugin) | None |
+| Prompt-time proposal capture | Follows core learning (`akm proposal new --if-learning`) | Yes, agent work |
+| Session extraction | Follows core learning (`akm proposal extract` is a no-op when `extract` is `enabled: false`) | Yes |
+| Scheduled improve | Core learning plus the `improve` task | Yes |
+
+`akm setup --learning on` clears every `enabled: false` of the active strategy
+(a person's own included) and can start model spending, so run it as an explicit
+action, not at container boot. `off` covers the active `improve.strategy`
+only: switching strategies brings the other one's processes back. A person or
+agent can always author a proposal with `akm proposal new` without the flag,
+whatever the switch says.
+
 ## akm proposal (list, show, diff, accept, reject, reopen, revert)
 
 `akm proposal list` lists pending proposals in the queue. Each proposal is an

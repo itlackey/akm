@@ -37,6 +37,7 @@ export function formatProposalProducerPlain(command: string, r: Record<string, u
     appendLoweringNotices(lines, r);
     return lines.join("\n");
   }
+  if (typeof r.skipped === "string") return `${command}: skipped (${r.skipped})`;
   const proposal = r.proposal as Record<string, unknown>;
   const id = String(proposal.id);
   const ref = String(r.ref);

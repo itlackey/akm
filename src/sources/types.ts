@@ -688,6 +688,13 @@ export interface InfoResponse {
    * is reported as held, never its value.
    */
   connectionsAndHarnesses: TargetRow[];
+  /**
+   * Background learning, read from the config and the bundle's task files alone (nothing is scheduled, probed or
+   * written): `on` when akm's model calls run somewhere and the active strategy's learning processes are not all
+   * switched off; `agent` the platform they run on (`null`: akm itself, or off); `scheduled` whether the `improve`
+   * task is enabled.
+   */
+  learning: { on: boolean; agent: string | null; scheduled: boolean };
   sourceProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
   indexStats: {
     entryCount: number;
