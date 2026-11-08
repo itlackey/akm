@@ -111,7 +111,8 @@ test("an existing unscoped child of a scoped parent gets the parent's scope and 
 
   await reindex();
   const after = await searchUser("alice");
-  expect(after.some((hit) => hit.ref === "memories/tunnel.derived")).toBe(true);
+  // Once both are reachable they are one result (the parent), which points at the child with expandTo.
+  expect(after.some((hit) => hit.ref === "memories/tunnel.derived")).toBe(false);
   expect(after.find((hit) => hit.ref === "memories/tunnel")?.expandTo).toBe("memories/tunnel.derived");
   expect(await searchUser("bob")).toHaveLength(0);
   expect((await run()).scopeSynced).toBe(0);

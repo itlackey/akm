@@ -198,7 +198,9 @@ for (const fm of [
     expect(JSON.stringify(shown)).toContain("restart requested");
     for (const [key, value] of Object.entries(scopeFromFrontmatter(fm))) {
       const matching = await akmSearch({ query: "tunnel", filters: { [key]: value }, skipLogging: true });
-      expect(matching.hits.some((h) => "ref" in h && h.ref === "memories/tunnel.derived")).toBe(true);
+      // The child and its parent are one result; the parent points at the child only when the child passes the filter too.
+      const family = matching.hits.find((h) => "ref" in h && h.ref === "memories/tunnel");
+      expect(family && "expandTo" in family ? family.expandTo : undefined).toBe("memories/tunnel.derived");
       const other = await akmSearch({ query: "tunnel", filters: { [key]: "someone-else" }, skipLogging: true });
       expect(other.hits).toHaveLength(0);
     }

@@ -240,11 +240,19 @@ describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {
   });
 
   test("derived child hit is not double-enriched (no recursive expandTo)", async () => {
-    const result = await akmSearch({ query: "claude-prefs.derived", source: "local", limit: 10 });
+    // "distilled" is only in the child's body, so the child is returned alone (its parent is not a hit).
+    const result = await akmSearch({ query: "distilled", source: "local", limit: 10 });
     const derivedHit = result.hits.find((h) => h.type === "memory" && h.name === "claude-prefs.derived");
     expect(derivedHit).toBeDefined();
     if (!derivedHit || !("ref" in derivedHit)) return;
     expect(derivedHit.expandTo).toBeUndefined();
+  });
+
+  test("a parent and its child that both match are one result: the parent, with expandTo", async () => {
+    const result = await akmSearch({ query: "claude-prefs.derived", source: "local", limit: 10 });
+    const names = result.hits.flatMap((h) => (h.type === "memory" ? [h.name] : []));
+    expect(names).toContain("claude-prefs");
+    expect(names).not.toContain("claude-prefs.derived");
   });
 });
 
