@@ -247,7 +247,7 @@ covers beyond the table.
   `search`, `curate` and `show`; see Experimental). A small set of commands is **format-exempt** because their
   output is not a result envelope at all: `completions` (shell script source),
   child-process passthrough in `env run` / `secret run`, a bare-path payload
-  from `env path`, and document payloads from `help` (bare and
+  from `env path` and `config path`, and document payloads from `help` (bare and
   `help migrate`). The set is declared in
   `src/output/format-exempt.ts`, and
   passing `--format` to one of them warns rather than silently doing something

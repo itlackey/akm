@@ -159,20 +159,23 @@ describe("curate --pack honours --format", () => {
     expect(items[0]?.ref).toContain("alias-note");
   });
 
-  test("md and text are not JSON", async () => {
+  test("md and text are not JSON; md is the markdown packed text, not a table", async () => {
     for (const format of ["md", "text"] as const) {
       const out = await pack(format);
       expect(out).toContain("alias-note");
       expect(out.trimStart().startsWith("[")).toBe(false);
     }
+    const md = await pack("md");
+    expect(md).toMatch(/^## .*alias-note/m);
+    expect(md).not.toContain("| ref |");
   });
 });
 
-describe("config path is format-exempt", () => {
-  test("--format json warns and still prints the bare path", async () => {
-    const result = await runCliCapture(["config", "path", "--format=json"]);
+describe("jsonl per-line records are limited to the pack", () => {
+  test("config get of an array value stays one line", async () => {
+    const result = await runCliCapture(["config", "get", "registries", "--format=jsonl"]);
     expect(result.code).toBe(0);
-    expect(result.stdout.trim()).toContain("config.json");
-    expect(result.stdout.trimStart().startsWith("{")).toBe(false);
+    expect(result.stdout.trim().split("\n")).toHaveLength(1);
+    expect(Array.isArray(JSON.parse(result.stdout))).toBe(true);
   });
 });

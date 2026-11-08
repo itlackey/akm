@@ -20,8 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- curate: `--pack` honours `--format`: jsonl is one record per line, yaml and md are real, json is unchanged. `config path` is format-exempt, so `--format json` now gets the usual "format ignored" warning instead of being silently dropped (#1473).
-- search and curate report the project as applied: `project.from`, `filters` and `prefer` show the values the run used after `--from`/`--filter`/`--prefer` replaced the project's by kind, not the configured defaults. Output with no project is unchanged (#1472).
+- curate: `--pack` honours `--format`: jsonl is one record per line (only for the pack; other commands stay one line), yaml is real, md is the packed markdown (`## <ref>` per item, with the project line), json is unchanged. `config path` is format-exempt, so `--format json` now gets the usual "format ignored" warning instead of being silently dropped (#1473).
+- search and curate report the project as applied: `project.from`, `filters` and `prefer` show the values the run used after `--from`/`--filter`/`--prefer` replaced the project's by kind, not the configured defaults, in the library `search()` of `akm-cli/workspace` too. Output with no project is unchanged (#1472).
 - env: `akm env create --from-file/--from-stdin` warns once per key whose unquoted value contains `#` (key name only; dotenv drops everything from `#` on), writes the file unchanged, and `akm env --help` says to quote such values (#1488).
 - improve: distill runs on the memories the pass plans. The skips for a memory with no recent feedback and for one whose only feedback is a bare `--positive` are gone (#1479). Distill now also runs on the memories the proactive lane plans, which carry no feedback, and memories with repeated bare positives can again be proposed for promotion to knowledge. A memory whose lesson was recently rejected stays out of the proactive lane's distill.
 

@@ -210,7 +210,7 @@ export const curateCommand = defineJsonCommand({
     );
     if (packBudget !== undefined) {
       const packed = await packCuratedHits(curated, packBudget);
-      if (outputMode.format === "text") {
+      if (outputMode.format === "text" || outputMode.format === "md") {
         deliverRendered(withProjectLine(formatCuratePackText(packed), curated.project), outputMode.outputPath);
       } else {
         output("curate-pack", packed.items);

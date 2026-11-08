@@ -32,7 +32,7 @@ on `show`; use `--detail brief` there.)
 ### `--format jsonl`
 
 Outputs one JSON object per line. For `search` (including `--from registry`),
-each hit is a separate line. For other commands, the entire result is a single line.
+each hit is a separate line, and `curate --pack` writes each packed item on its own line. For other commands, the entire result is a single line.
 Useful for streaming consumption by scripts or agents.
 
 ### `--format md`
@@ -55,7 +55,7 @@ ignored (the default format applies).
 A small set of commands is **format-exempt** because their output is not a
 result envelope at all — `completions`, child-process passthrough (`env run`
 and `secret run`), document payloads (`help`,
-`help migrate`), and `env path` (a bare filesystem path is the payload, the
+`help migrate`), and `env path` and `config path` (a bare filesystem path is the payload, the
 documented shell-substitution primitive — wrapping it in an envelope would
 break `$(akm env path <ref>)` substitutions). Passing `--format` to one of
 those **warns on stderr** and is otherwise ignored; the exempt set is declared
@@ -1818,8 +1818,8 @@ else none, and then nothing changes. It supplies defaults only for `akm search`,
 `akm proposal new`; never for `show`, `improve`, model work or the scheduler. A flag you pass
 replaces the project's value of that kind (`--from`, `--filter`, `--prefer`,
 `--bundle`, `--user`, `--agent`, `--channel`); nothing is merged. `--pack` with
-`--format json` prints only the packed items, so it does not report the project
-(text output still opens with the project line). `proposal extract` takes a
+any format but `text` and `md` (json, jsonl, yaml) prints only the packed items, so it does not report the project
+(text and md output open with the project line). `proposal extract` takes a
 project's `write.user`, `agent`, `channel` and `metadata` but never its
 `write.bundle`, and chooses the project per session from the session's own
 directory (`--project` names one for every session). A project with no

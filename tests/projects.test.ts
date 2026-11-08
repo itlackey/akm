@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { curate } from "../src/api";
+import { search as workspaceSearch } from "../src/workspace/assets";
 import { deriveExtractCandidateRef } from "../src/commands/improve/extract";
 import { buildSessionAssetContent } from "../src/commands/improve/session-asset";
 import { runCurate } from "../src/commands/read/search-cli";
@@ -299,6 +300,20 @@ describe("curate", () => {
       if (flag === "--prefer") effective.prefer = { team: ["t"] };
       expect(out.project).toEqual(effective);
     }
+  });
+
+  test("workspace search reports the from/filters its bundle and scope override", async () => {
+    saveConfig({
+      semanticSearchMode: "off",
+      projects: { full: { paths: [tmp("proj-ws")], from: "local", filters: { team: ["t"] } } },
+    } as never);
+    resetConfigCache();
+    const base = { name: "full", from: "local", filters: { team: ["t"] }, prefer: { project: "full" } };
+    expect((await workspaceSearch({ q: "widget", project: "full" })).project).toEqual(base);
+    const scoped = await workspaceSearch({ q: "widget", project: "full", scope: { project: ["other"] } });
+    expect(scoped.project).toEqual({ ...base, filters: { project: ["other"] } });
+    expect(scoped.hits.map((h: { name: string }) => h.name)).toEqual(["other-note"]);
+    expect((await workspaceSearch({ q: "widget", project: "full", bundle: "all" })).project?.from).toBe("all");
   });
 
   test("no project: output is byte-identical with or without a projects key", async () => {
