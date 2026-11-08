@@ -331,6 +331,17 @@ export function scopeMatchesFilters(
   return true;
 }
 
+/**
+ * Whether an asset applies under `project`: it names that project (`project:` in its
+ * frontmatter) or names none (shared). With no project, only shared assets apply.
+ */
+export function appliesToProject(
+  entry: Pick<IndexDocument, "scope" | "tags" | "frontmatter">,
+  project?: string,
+): boolean {
+  return scopeMatchesFilters(entry, { project: project === undefined ? "" : [project, ""] });
+}
+
 /** Exact maintenance equality: absence is a value, never a wildcard. */
 export function sameScope(a: StashEntryScope, b: StashEntryScope): boolean {
   return SCOPE_KEYS.every((key) => a[key] === b[key]);

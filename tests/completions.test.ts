@@ -154,7 +154,7 @@ describe("completions command", () => {
     // stash-resident asset type is registered — `instruction` joined it with
     // owner ruling 11. Update deliberately rather than loosening the match.
     expect(script).toContain(
-      "skill command agent knowledge instruction workflow script memory env secret lesson task session fact any",
+      "skill command agent knowledge instruction workflow script memory env secret lesson task session fact rule any",
     );
   });
 

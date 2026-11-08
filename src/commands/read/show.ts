@@ -96,6 +96,8 @@ export async function akmShowUnified(input: {
   eventSource?: UsageEventSource;
   /** Internal nested reads can render without recording a second user consumption row. */
   skipLogging?: boolean;
+  /** The project the read runs under; recorded on the usage event so `akm search --by-usage` can rank by project. */
+  project?: string;
   /**
    * Read without side effects (the workspace): no usage events, no index refresh and
    * no workflow-run lookup, so the show never counts as demand and never writes
@@ -131,7 +133,7 @@ export async function akmShowUnified(input: {
   if (!input.skipLogging && !input.readOnly) {
     const consumedRef = result.ref ?? makeBundleRef(undefined, parseBundleRef(ref).conceptId);
     const priorShowCount = recentShowCount(consumedRef);
-    recordShowUsage(consumedRef, result.type, result.name, input.eventSource, result.path);
+    recordShowUsage(consumedRef, result.type, result.name, input.eventSource, result.path, input.project);
     if (priorShowCount >= 2) {
       // Agent has shown this same asset 3+ times — inject a loop-break hint.
       (result as unknown as Record<string, unknown>).showLoopWarning = priorShowCount + 1;

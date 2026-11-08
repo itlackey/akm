@@ -29,7 +29,12 @@ import { withStateDbTelemetry } from "../../core/state-db";
 import { lookupBundleRef } from "../../indexer/indexer";
 import { applyCuratedFrontmatter } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
-import { applyEntryFilters, type EntryFilterOptions, matchBeliefFilter } from "../../indexer/search/db-search";
+import {
+  applyEntryFilters,
+  type EntryFilterOptions,
+  matchBeliefFilter,
+  type ProjectContext,
+} from "../../indexer/search/db-search";
 import {
   type AttributionProjection,
   copySearchHitAttribution,
@@ -138,6 +143,8 @@ export interface CurateOptions extends RecallOptions {
    * top-level event.
    */
   skipLogging?: boolean;
+  /** Present: the project's applicable rules lead the items, counted in `limit` (see `akmSearch`). */
+  project?: ProjectContext;
 }
 
 /** The run's explicit filters, built once in {@link akmCurate} and checked against every hit and link. */
@@ -243,6 +250,7 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
       filters: recall.filters,
       prefer: recall.prefer,
       belief: recall.belief,
+      project: options.project,
       skipLogging: true,
     }));
   const result = await curateSearchResults(
@@ -251,7 +259,7 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
     limit,
     options.type,
     options.eventSource,
-    options.searchResponse || source === "registry" ? undefined : evidencePolicy(recall),
+    options.searchResponse || source === "registry" ? undefined : evidencePolicy(recall, options.project),
   );
   if (!options.skipLogging) {
     logCurateEvent(options.query, result, options.eventSource, options.attributionProjection);
@@ -259,7 +267,7 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
   return result;
 }
 
-function evidencePolicy(recall: RecallOptions): EvidencePolicy {
+function evidencePolicy(recall: RecallOptions, project?: ProjectContext): EvidencePolicy {
   const allSources = resolveReadSources().sources;
   const named =
     recall.source === undefined || recall.source === "local" || recall.source === "all" ? undefined : recall.source;
@@ -269,6 +277,7 @@ function evidencePolicy(recall: RecallOptions): EvidencePolicy {
     filters: recall.filters,
     includeProposed: false,
     beliefFilter: recall.belief ?? "current",
+    project,
   };
 }
 

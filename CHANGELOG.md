@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `rules/` is a native bundle convention (#1467): Markdown files there, nested folders included, are `rule` assets, short bullet lists of agent rules. In `akm search` (untyped, not a `rules/` or other conceptId-prefix query) and `akm curate` / `curate()`, the rules that apply lead the results, ahead of the ordinary hits and counted in `--limit`: those whose frontmatter `project` equals the project in force (`--project`, else the working directory's) and those with no `project` (shared). With no project, only shared rules apply. Another project's rules are never returned, by any search or curate, for as long as the call runs under a project selection. Rules follow the same `--from`, `--filter`, `--since`/`--until`, disabled-bundle and belief selection as every asset; a list cut by `--limit` adds a warning. `akm search "rules/"` lists exactly the applicable rules, `akm show <ref>` reads one. `--type` set explicitly, model work (`akm_curate`) and internal searches are unchanged. Bundles without `rules/` behave as before. The bundle skeleton gains a `rule` convention fact and a README row; `akm bundle create` makes `rules/`.
+- `akm search --by-usage` (itlackey/akm-plugins#154): lists the eligible assets that were shown (`akm show`) in the project in force, most shown first, ties by ref, within the 90-day usage window, limited by `--limit`. It takes no query (a given one is ignored with a warning), records no usage event, and leaves out rules. With no project (`--project none`) every show counts, whichever project it recorded. `akm show` now records the project in force (the working directory's, as `show` has no `--project`) in the `project` key of the show event's `metadata`; shows recorded before this release carry none and count only for no project. Only `source: user` shows count, so reads run with `AKM_EVENT_SOURCE` set to another source (`unknown`, `task`, `audit`, `improve`) do not.
+
 ## [0.10.261113] - 2026-11-08
 
 ### Removed

@@ -20,7 +20,8 @@ import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
 import type { ScopeFilters } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
-import { searchLocal } from "../../indexer/search/db-search";
+import { type ProjectContext, searchLocal } from "../../indexer/search/db-search";
+import { parseRefPrefixQuery } from "../../indexer/search/fts-query";
 import {
   type AttributionProjection,
   getSearchHitAttribution,
@@ -65,6 +66,7 @@ function duplicateConceptWarnings(hits: SourceSearchHit[], defaultBundle?: strin
 
 interface SearchEventLoggingInput {
   skipLogging?: boolean;
+  byUsage?: boolean;
   readOnly?: boolean;
   eventSource?: UsageEventSource;
   attributionProjection?: AttributionProjection;
@@ -131,9 +133,21 @@ export async function akmSearch(input: {
   eventSource?: UsageEventSource;
   /** Internal projection used only to decide whether derived surface content was emitted. */
   attributionProjection?: AttributionProjection;
+  /**
+   * Present: the call runs under project selection (`name` absent: no project). The applicable
+   * `rules/` assets (those naming the project, and shared ones) lead an untyped keyword search,
+   * counted in `limit`; other projects' rules are never returned.
+   */
+  project?: ProjectContext;
+  /**
+   * List instead of search: the eligible assets that were shown in the project (every show when `project`
+   * names none), most shown first, ties by ref. Takes no query; records no usage event; rules are not listed.
+   */
+  byUsage?: boolean;
 }): Promise<SearchResponse> {
   const t0 = Date.now();
-  const query = input.query.trim();
+  const byUsage = input.byUsage === true;
+  const query = byUsage ? "" : input.query.trim();
   const searchType = input.type ?? "any";
   const limit = normalizeLimit(input.limit);
   const parsedSource = parseSearchSource(input.source ?? "local");
@@ -155,6 +169,7 @@ export async function akmSearch(input: {
   } else {
     source = parsedSource;
   }
+  if (byUsage) source = "local";
 
   // A pure `--from registry` search needs no local stash at all (this is the
   // one path folded in from the retired `akm registry search`, which never
@@ -223,14 +238,51 @@ export async function akmSearch(input: {
           restrictToSources: namedSourceNames !== undefined,
           includeExcludedTypes: input.includeSessions === true,
           readOnly: input.readOnly,
+          project: input.project,
+          byUsage,
         });
+  const leadRules =
+    localResult && input.project && !byUsage && searchType === "any" && !parseRefPrefixQuery(query)
+      ? await searchLocal({
+          query: "",
+          searchType: "rule",
+          limit: limit + 1,
+          stashDir,
+          sources,
+          config,
+          filters,
+          prefer: normalizeScopeFilters(input.prefer),
+          since: input.since,
+          until: input.until,
+          includeProposed,
+          beliefFilter: belief,
+          restrictToSources: namedSourceNames !== undefined,
+          readOnly: input.readOnly,
+          project: input.project,
+        })
+      : undefined;
+  if (localResult && leadRules) {
+    const rules = leadRules.hits.slice(0, limit);
+    const lead = new Set(rules.map((hit) => hit.ref));
+    localResult.hits = [...rules, ...localResult.hits.filter((hit) => !lead.has(hit.ref))].slice(0, limit);
+    if (leadRules.hits.length > limit) {
+      localResult.warnings = [
+        ...(localResult.warnings ?? []),
+        `More rules apply than --limit ${limit} shows; raise --limit to see them all.`,
+      ];
+    }
+  }
 
   const registryResult =
     source === "local" ? undefined : await searchRegistry(query, { limit, registries: config.registries });
 
   if (source === "local") {
     const localHits = localResult?.hits ?? [];
-    const warnings = [...(localResult?.warnings ?? []), ...duplicateConceptWarnings(localHits, config.defaultBundle)];
+    const warnings = [
+      ...(localResult?.warnings ?? []),
+      ...duplicateConceptWarnings(localHits, config.defaultBundle),
+      ...(byUsage && input.query.trim() ? ["--by-usage lists by use and ignores the query."] : []),
+    ];
     const hasResults = localHits.length > 0;
     const response: SearchResponse = {
       schemaVersion: 1,
@@ -321,7 +373,7 @@ function maybeLogSearchEvent(
   response: SearchResponse,
   mode?: "semantic" | "keyword",
 ): void {
-  if (input.skipLogging || input.readOnly) return;
+  if (input.skipLogging || input.readOnly || input.byUsage) return;
   logSearchEvent(query, response, mode, input.eventSource, input.attributionProjection);
 }
 

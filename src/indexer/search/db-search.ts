@@ -53,8 +53,14 @@ import { searchFts } from "../../storage/repositories/index-fts-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
 import { ensureIndex } from "../ensure-index";
-import { type IndexDocument, isProposedQuality, type ScopeFilters, scopeMatchesFilters } from "../passes/metadata";
-import { countFeedbackSignalsByRef } from "../usage/usage-events";
+import {
+  appliesToProject,
+  type IndexDocument,
+  isProposedQuality,
+  type ScopeFilters,
+  scopeMatchesFilters,
+} from "../passes/metadata";
+import { countFeedbackSignalsByRef, countShownByRef } from "../usage/usage-events";
 import { ftsQueryTokens, parseRefPrefixQuery } from "./fts-query";
 import {
   applyFeedback,
@@ -185,6 +191,10 @@ export interface SearchLocalInput {
    * would run for a stash the index cannot serve yet (the workspace never writes).
    */
   readOnly?: boolean;
+  /** Present: the call runs under project selection (see {@link ProjectContext}). */
+  project?: ProjectContext;
+  /** Browse only: the eligible assets shown in the project, most shown first; assets never shown are left out. */
+  byUsage?: boolean;
 }
 
 export async function searchLocal(input: SearchLocalInput): Promise<{
@@ -288,6 +298,7 @@ async function searchDatabase(
     until: input.until,
     includeProposed: input.includeProposed === true,
     beliefFilter: input.beliefFilter ?? "all",
+    project: input.project,
   };
 
   // #627 — resolve the default type-exclusion policy. It applies ONLY on the
@@ -332,7 +343,9 @@ async function searchDatabase(
         stashDir,
         config,
         typeFilter: searchType === "any" ? undefined : searchType,
-        excludeTypes: defaultExcludes,
+        // Rules are standing context, listed on their own; they are not "used" assets.
+        excludeTypes: input.byUsage ? [...defaultExcludes, "rule"] : defaultExcludes,
+        ...(input.byUsage ? { usage: { project: input.project?.name } } : {}),
       }),
       mode: "keyword",
     };
@@ -570,6 +583,8 @@ async function enumerateEntries(
     bundle?: string;
     limit: number;
     prefer?: ScopeFilters;
+    /** Order by use instead: only assets shown in `project` (any, when absent), most shown first. */
+    usage?: { project?: string };
     stashDir: string;
     config: AkmConfig;
   },
@@ -604,12 +619,14 @@ async function enumerateEntries(
   // returns up to `limit` results.
   const eligible = applyEntryFilters(deduplicateByPath(prefixFiltered), opts);
   const { prefer } = opts;
-  const ordered = prefer
-    ? [
-        ...eligible.filter((ie) => scopeMatchesFilters(ie.entry, prefer)),
-        ...eligible.filter((ie) => !scopeMatchesFilters(ie.entry, prefer)),
-      ]
-    : eligible;
+  const ordered = opts.usage
+    ? rankByUsage(eligible, opts.usage.project)
+    : prefer
+      ? [
+          ...eligible.filter((ie) => scopeMatchesFilters(ie.entry, prefer)),
+          ...eligible.filter((ie) => !scopeMatchesFilters(ie.entry, prefer)),
+        ]
+      : eligible;
   const selected = ordered.slice(0, opts.limit);
   return Promise.all(
     selected.map((ie) =>
@@ -630,6 +647,20 @@ async function enumerateEntries(
   );
 }
 
+/**
+ * The items shown in `project` (anywhere, when absent), most shown first, ties by ref. With a project, an
+ * asset naming another project is left out. A missing state.db is no history. Never a relevance ranking.
+ */
+function rankByUsage<T extends { itemRef: string; entry: IndexDocument }>(items: T[], project?: string): T[] {
+  let shown = new Map<string, number>();
+  withStateDbTelemetry((stateDb) => {
+    shown = countShownByRef(stateDb, project);
+  });
+  return items
+    .filter((item) => shown.has(item.itemRef) && (project === undefined || appliesToProject(item.entry, project)))
+    .sort((a, b) => (shown.get(b.itemRef) ?? 0) - (shown.get(a.itemRef) ?? 0) || a.itemRef.localeCompare(b.itemRef));
+}
+
 export interface EntryFilterOptions {
   db: Database;
   sources: SearchSource[];
@@ -639,6 +670,13 @@ export interface EntryFilterOptions {
   until?: string;
   includeProposed: boolean;
   beliefFilter: BeliefFilterMode;
+  /** Present: a `rule` asset is eligible only when it applies to `project.name` (or is shared). */
+  project?: ProjectContext;
+}
+
+/** The project a search or curate runs under (`name` absent: none), set by the commands that apply projects. */
+export interface ProjectContext {
+  name?: string;
 }
 
 /** The day an entry is dated by: when it was observed, else when it was last updated. */
@@ -669,13 +707,18 @@ export function applyEntryFilters<T extends { id: number; entry: IndexDocument; 
   const scopeFiltered = filters
     ? sourceFiltered.filter((item) => scopeMatchesFilters(item.entry, filters))
     : sourceFiltered;
+  // Rule filter: a project's rules apply to that project only; shared rules to every one.
+  const { project } = opts;
+  const ruleFiltered = project
+    ? scopeFiltered.filter((item) => item.entry.type !== "rule" || appliesToProject(item.entry, project.name))
+    : scopeFiltered;
   // Date filter: keep entries dated within the inclusive range; undated
   // entries cannot satisfy a bound.
   const { since, until } = opts;
   const dateFiltered =
     since === undefined && until === undefined
-      ? scopeFiltered
-      : scopeFiltered.filter((item) => {
+      ? ruleFiltered
+      : ruleFiltered.filter((item) => {
           const day = entryDay(item.entry);
           return day !== undefined && (since === undefined || day >= since) && (until === undefined || day <= until);
         });

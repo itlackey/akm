@@ -77,6 +77,7 @@ function insertShowUsage(
   entryRef: string,
   derivedFrom: unknown,
   eventSource: UsageEventSource,
+  project?: string,
 ): void {
   withStateDbTelemetry((stateDb) => {
     insertUsageEvent(stateDb, {
@@ -86,6 +87,8 @@ function insertShowUsage(
       metadata: usageEventAttributionMetadata(
         derivedFrom ? { memoryInference: { exposure: "direct" } } : undefined,
         entryRef,
+        "full",
+        project,
       ),
       source: eventSource,
     });
@@ -99,6 +102,7 @@ export function recordShowUsage(
   name: string,
   eventSource: UsageEventSource = "user",
   filePath?: string,
+  project?: string,
 ): void {
   const parsed = parseBundleRef(ref);
   const eventRef = makeBundleRef(parsed.bundle, parsed.conceptId);
@@ -110,7 +114,7 @@ export function recordShowUsage(
         if (entryId === undefined) return;
         const entryRef = getItemRefById(db, entryId);
         if (!entryRef) return;
-        insertShowUsage(entryId, entryRef, getEntryById(db, entryId)?.entry.derivedFrom, eventSource);
+        insertShowUsage(entryId, entryRef, getEntryById(db, entryId)?.entry.derivedFrom, eventSource, project);
       },
       { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
     );

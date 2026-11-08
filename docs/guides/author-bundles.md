@@ -255,6 +255,39 @@ Key names are listed by `akm env list` and appear in search results. The
 search index; its key names then appear only when the file is shown directly
 by ref.
 
+## Project Rules
+
+`rules/` holds the short rules an agent should follow for a project: a Markdown file
+per topic, nested folders allowed, each a bullet list of imperative, checkable lines.
+Rules are standing context. In `akm search` and `akm curate`, the rules that apply lead
+the results whatever the query says, so keep them to a handful of lines.
+
+```markdown
+---
+description: Development rules for Acme.
+project: acme
+---
+
+- Use Bun for package installation and scripts.
+- Run the focused tests for changed behavior.
+- Keep generated files out of source commits.
+```
+
+`project: acme` is the key the [projects](../reference/configuration.md#projects) setting
+already uses (a project prefers `project=<name>` and stamps it on what it writes). It is
+not rule-specific configuration. A rule applies when its `project` is the project in force
+(`--project`, else the working directory's) or when it has none (shared); with no project
+in force only shared rules apply. Another project's rules are never returned while a project
+is selected. Use `akm search "rules/"` to list the rules that apply and `akm show <ref>` to
+read one.
+
+Rules lead `akm search` (untyped, not a `rules/` prefix query) and `akm curate`, ahead of
+the ordinary hits and counted in `--limit`: with `--limit 4` and two applicable rules,
+two ordinary hits follow. When more rules apply than the limit shows, the response says
+so. Rules follow the same `--from`, `--filter` and disabled-bundle selection as every
+asset, and `--type` set explicitly turns the leading off. `curate --pack` packs hits in
+result order, so rules come first.
+
 ## Bundle Structure Tips
 
 - **Keep it focused.** A bundle with 5 great scripts is more useful than one

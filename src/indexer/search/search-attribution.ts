@@ -74,9 +74,11 @@ export function usageEventAttributionMetadata(
   attribution: SearchHitAttribution | undefined,
   entryRef: string,
   projection: AttributionProjection = "full",
+  project?: string,
 ): string | undefined {
   const applicable = buildUsageEventAttribution(attribution, entryRef, projection);
   return JSON.stringify({
+    ...(project !== undefined ? { project } : {}),
     downstreamAttribution: {
       version: 1,
       control: applicable === undefined,

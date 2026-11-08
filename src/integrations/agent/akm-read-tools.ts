@@ -79,6 +79,7 @@ export const AKM_READ_TOOLS: readonly AkmReadTool[] = [
             eventSource: sourceOf(context),
             // Model work is not a place the user works: no project's defaults apply.
             project: "none",
+            rules: false,
           },
           mode,
         ),

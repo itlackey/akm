@@ -70,6 +70,11 @@ const DIR_TYPE_MAP: DirTypeRule[] = [
     test: (ext) => ext === ".md",
   },
   {
+    dir: "rules",
+    type: "rule",
+    test: (ext) => ext === ".md",
+  },
+  {
     dir: "workflows",
     type: "workflow",
     test: (ext) => ext === ".md" || ext === ".yml",

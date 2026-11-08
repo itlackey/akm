@@ -172,6 +172,8 @@ const BUILTIN_PLACEMENT_SPECS = {
   // Durable stash-level semantic knowledge — facts about the user, team, or
   // project. A plain markdown spec; see docs/architecture/specs/fact-asset-type.md.
   fact: { stashDir: "facts", ...markdownSpec },
+  // Short agent rules for a project (`rules/<project>/<name>.md`); see docs/guides/author-bundles.md.
+  rule: { stashDir: "rules", ...markdownSpec },
 } satisfies Record<string, AssetSpec>;
 
 /**
