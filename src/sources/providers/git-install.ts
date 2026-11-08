@@ -21,6 +21,28 @@ import type { ParsedGitRef } from "../../registry/types";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import { applyAkmIncludeConfig, buildInstallCacheDir, detectStashRoot, isDirectory } from "./provider-utils";
 
+const DIRTY_PATHS_SHOWN = 5;
+
+/**
+ * Throw a UsageError unless the worktree is clean. A failing `git status` is reported as a
+ * git error; otherwise the refusal names the first few changed paths.
+ */
+export function assertCleanWorktree(repoDir: string, subject: string, refusal: string): void {
+  const status = runGit(["-C", repoDir, "-c", "core.quotePath=false", "status", "--porcelain"]);
+  if (status.error || status.status !== 0) {
+    throw new UsageError(
+      `${subject}: git status failed (${status.error?.message || status.stderr?.trim() || `exit ${status.status}`}).`,
+    );
+  }
+  const paths = status.stdout
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => line.slice(3));
+  if (paths.length === 0) return;
+  const more = paths.length > DIRTY_PATHS_SHOWN ? ` (and ${paths.length - DIRTY_PATHS_SHOWN} more)` : "";
+  throw new UsageError(`${subject} ${refusal} Changed: ${paths.slice(0, DIRTY_PATHS_SHOWN).join(", ")}${more}.`);
+}
+
 /**
  * Shared subprocess wrapper for `git` invocations. Disables git's interactive
  * terminal prompt so a missing credential never hangs the process.
@@ -387,12 +409,11 @@ export function syncExistingWritableCheckout(
     );
   }
 
-  const status = runGit(["-C", repoDir, "status", "--porcelain"]);
-  if (status.status !== 0 || status.stdout.trim()) {
-    throw new UsageError(
-      `Writable Git install at ${root} has uncommitted changes; commit or discard them before update.`,
-    );
-  }
+  assertCleanWorktree(
+    repoDir,
+    `Writable Git install at ${root}`,
+    "has uncommitted changes; commit or discard them before update.",
+  );
 
   if (parsed.requestedRef) {
     const branch = runGit(["-C", repoDir, "branch", "--show-current"]);
@@ -465,12 +486,11 @@ export function syncExistingWritableCheckout(
       }
     }
 
-    const statusBeforeMerge = runGit(["-C", repoDir, "status", "--porcelain"]);
-    if (statusBeforeMerge.status !== 0 || statusBeforeMerge.stdout.trim()) {
-      throw new UsageError(
-        `Writable Git install at ${root} changed while its update was prepared; local work was preserved.`,
-      );
-    }
+    assertCleanWorktree(
+      repoDir,
+      `Writable Git install at ${root}`,
+      "changed while its update was prepared; local work was preserved.",
+    );
     assertNoIgnoredPathOverwrite(repoDir, targetRevision);
     const merge = runGit(["-C", repoDir, "merge", "--ff-only", "--no-overwrite-ignore", targetRevision], {
       timeout: 120_000,
