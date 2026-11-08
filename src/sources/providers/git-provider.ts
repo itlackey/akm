@@ -13,7 +13,13 @@ import { getRegistryIndexCacheDir } from "../../core/paths";
 import { validateGitUrl } from "../../registry/resolve";
 import { withFreshnessCache } from "../freshness";
 import type { SyncOptions as ProviderSyncOptions, SourceProvider } from "../provider";
-import { assertNoIgnoredPathOverwrite, cloneRepo, inspectGitUpstream, runGit } from "./git-install";
+import {
+  assertCleanWorktree,
+  assertNoIgnoredPathOverwrite,
+  cloneRepo,
+  inspectGitUpstream,
+  runGit,
+} from "./git-install";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import { sanitizeString } from "./provider-utils";
 
@@ -150,21 +156,17 @@ export async function syncMirroredRepo(config: SourceConfigEntry, options?: Sync
 }
 
 function pullRepo(repoDir: string, credential?: string): void {
-  const status = runGit(["-C", repoDir, "status", "--porcelain"]);
-  if (status.status !== 0 || status.stdout.trim()) {
-    throw new UsageError(`Writable Git source at ${repoDir} has uncommitted changes; refusing to update it.`);
-  }
+  assertCleanWorktree(repoDir, `Writable Git source at ${repoDir}`, "has uncommitted changes; refusing to update it.");
   const relation = inspectGitUpstream(repoDir, credential);
   if (relation.behind > 0 && relation.upstream) {
     if (relation.ahead > 0) {
       throw new UsageError(`Writable Git source at ${repoDir} has unpushed commits; refusing to update it.`);
     }
-    const statusBeforeMerge = runGit(["-C", repoDir, "status", "--porcelain"]);
-    if (statusBeforeMerge.status !== 0 || statusBeforeMerge.stdout.trim()) {
-      throw new UsageError(
-        `Writable Git source at ${repoDir} changed while its update was prepared; refusing to merge.`,
-      );
-    }
+    assertCleanWorktree(
+      repoDir,
+      `Writable Git source at ${repoDir}`,
+      "changed while its update was prepared; refusing to merge.",
+    );
     assertNoIgnoredPathOverwrite(repoDir, relation.upstream);
     const merge = runGit(["-C", repoDir, "merge", "--ff-only", "--no-overwrite-ignore", relation.upstream], {
       timeout: 120_000,

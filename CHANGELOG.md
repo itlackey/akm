@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- bundle update: refusing a writable git checkout with local changes now names the first five changed paths, and a failing `git status` is reported as a git error instead of "uncommitted changes" (#1477).
 - env: `akm env create --from-file/--from-stdin` warns once per key whose unquoted value contains `#` (key name only; dotenv drops everything from `#` on), writes the file unchanged, and `akm env --help` says to quote such values (#1488).
 - improve: distill runs on the memories the pass plans. The skips for a memory with no recent feedback and for one whose only feedback is a bare `--positive` are gone (#1479). Distill now also runs on the memories the proactive lane plans, which carry no feedback, and memories with repeated bare positives can again be proposed for promotion to knowledge. A memory whose lesson was recently rejected stays out of the proactive lane's distill.
 
