@@ -422,6 +422,29 @@ describe("performUpgrade", () => {
     expect(result.message).toContain("v0.0.14");
   });
 
+  test.skipIf(typeof process.getuid === "function" && process.getuid() === 0)(
+    "UPGRADE_BLOCKED hint points at a pinned user install and a new shell",
+    async () => {
+      const installDir = path.join(sandboxHome().dir, "readonly-bin");
+      fs.mkdirSync(installDir, { recursive: true });
+      const binaryPath = path.join(installDir, "akm");
+      fs.writeFileSync(binaryPath, "old-binary");
+      fs.chmodSync(installDir, 0o555);
+      mockFetch(() => new Response("new-binary", { status: 200 }));
+      try {
+        await expect(
+          performUpgrade(
+            { currentVersion: "0.9.0", latestVersion: "0.10.0", updateAvailable: true, installMethod: "binary" },
+            { skipPostUpgrade: true },
+            { execPath: binaryPath, ...currentMigrator },
+          ),
+        ).rejects.toThrow(/--dir ~\/\.local\/bin v0\.9\.0 && sudo rm "[^"]+\/akm"[\s\S]*hash -r/);
+      } finally {
+        fs.chmodSync(installDir, 0o755);
+      }
+    },
+  );
+
   test("rejects an oversized binary response before replacing or staging the executable", async () => {
     const installDir = path.join(sandboxHome().dir, "oversized-binary");
     fs.mkdirSync(installDir, { recursive: true });

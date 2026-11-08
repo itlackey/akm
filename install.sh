@@ -2,7 +2,22 @@
 set -euo pipefail
 
 REPO="itlackey/akm"
-INSTALL_DIR="${AKM_INSTALL_DIR:-/usr/local/bin}"
+INSTALL_URL="https://raw.githubusercontent.com/${REPO}/main/install.sh"
+INSTALL_DIR="${AKM_INSTALL_DIR:-}"
+SYSTEM=0
+TAG="latest"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --system) SYSTEM=1; shift ;;
+    --dir)
+      if [ "$#" -lt 2 ]; then echo "Error: --dir needs a directory" >&2; exit 1; fi
+      INSTALL_DIR="$2"; shift 2 ;;
+    -*) echo "Error: unknown option $1 (use --system, --dir <dir>, or a release tag)" >&2; exit 1 ;;
+    *) TAG="$1"; shift ;;
+  esac
+done
+INSTALL_DIR="${INSTALL_DIR%/}"
 
 # Detect OS
 OS="$(uname -s)"
@@ -17,12 +32,25 @@ case "$OS" in
   *) echo "Unsupported OS: $OS" >&2; exit 1 ;;
 esac
 
-# Print sudo notice up-front so users know what's coming before the prompt
-if [ ! -w "$INSTALL_DIR" ] && [ "$INSTALL_DIR" = "/usr/local/bin" ]; then
-  echo "Note: installing to $INSTALL_DIR will require sudo."
-  echo "      To install user-local (no sudo), re-run with:"
-  echo "        AKM_INSTALL_DIR=\$HOME/.local/bin $0"
-  echo ""
+if [ -z "${HOME:-}" ] && [ -z "$INSTALL_DIR" ] && [ "$SYSTEM" -eq 0 ]; then
+  echo "Error: HOME is not set; pass --dir <dir> or --system." >&2
+  exit 1
+fi
+
+# Pick the install dir. --dir / AKM_INSTALL_DIR win; --system means
+# /usr/local/bin (sudo when needed); otherwise /usr/local/bin only if we can
+# already write there, else a user install in ~/.local/bin. A root-owned dir
+# makes every later `akm upgrade` fail, so sudo is never used implicitly.
+if [ -z "$INSTALL_DIR" ]; then
+  if [ "$SYSTEM" -eq 1 ] || [ "$(id -u)" -eq 0 ] || [ -w /usr/local/bin ]; then
+    INSTALL_DIR="/usr/local/bin"
+  else
+    INSTALL_DIR="$HOME/.local/bin"
+    echo "Note: installing for the current user in $INSTALL_DIR (no sudo)."
+    echo "      For a system-wide install in /usr/local/bin instead, run:"
+    echo "        curl -fsSL $INSTALL_URL | bash -s -- --system"
+    echo ""
+  fi
 fi
 
 # Detect architecture
@@ -34,7 +62,6 @@ case "$ARCH" in
 esac
 
 BINARY="akm-${OS}-${ARCH}"
-TAG="${1:-latest}"
 
 if [ "$TAG" = "latest" ]; then
   DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${BINARY}"
@@ -110,15 +137,63 @@ echo "Checksum verified for ${BINARY}."
 
 chmod +x "$TMPFILE"
 
-# Use sudo if needed
-if [ -w "$INSTALL_DIR" ]; then
-  mv "$TMPFILE" "${INSTALL_DIR}/akm"
-else
+# Install, using sudo only for an explicit --system install.
+USE_SUDO=0
+if [ ! -d "$INSTALL_DIR" ]; then
+  mkdir -p "$INSTALL_DIR" 2>/dev/null || USE_SUDO=1
+elif [ ! -w "$INSTALL_DIR" ]; then
+  USE_SUDO=1
+fi
+if [ "$USE_SUDO" -eq 1 ]; then
+  if [ "$SYSTEM" -ne 1 ]; then
+    echo "Error: cannot write to ${INSTALL_DIR}." >&2
+    echo "Pick a directory you own, or ask for a system install (uses sudo):" >&2
+    echo "  curl -fsSL $INSTALL_URL | bash -s -- --dir \$HOME/.local/bin" >&2
+    echo "  curl -fsSL $INSTALL_URL | bash -s -- --system" >&2
+    exit 1
+  fi
+  if ! command -v sudo &>/dev/null; then
+    echo "Error: --system needs write access to ${INSTALL_DIR}, but sudo is not available." >&2
+    echo "Re-run as root, or install for your user:" >&2
+    echo "  curl -fsSL $INSTALL_URL | bash -s -- --dir \$HOME/.local/bin" >&2
+    exit 1
+  fi
   echo "Installing to ${INSTALL_DIR} (requires sudo)..."
+  sudo mkdir -p "$INSTALL_DIR"
   sudo mv "$TMPFILE" "${INSTALL_DIR}/akm"
+else
+  mv "$TMPFILE" "${INSTALL_DIR}/akm"
 fi
 
 echo "akm installed to ${INSTALL_DIR}/akm"
+
+if [ "$USE_SUDO" -eq 1 ]; then
+  echo ""
+  echo "Note: ${INSTALL_DIR} is owned by root, so upgrade with: sudo akm upgrade"
+fi
+
+# PATH checks
+case ":$PATH:" in
+  *":${INSTALL_DIR}:"*) ;;
+  *)
+    case "$(basename "${SHELL:-}")" in
+      zsh)  PROFILE="$HOME/.zshrc" ;;
+      bash) if [ "$OS" = "darwin" ]; then PROFILE="$HOME/.bash_profile"; else PROFILE="$HOME/.bashrc"; fi ;;
+      *)    PROFILE="your shell profile" ;;
+    esac
+    echo ""
+    echo "Warning: ${INSTALL_DIR} is not on your PATH. Add it to ${PROFILE}:"
+    echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+    ;;
+esac
+
+FOUND="$(command -v akm 2>/dev/null || true)"
+if [ -n "$FOUND" ] && [ "$FOUND" != "${INSTALL_DIR}/akm" ]; then
+  echo ""
+  echo "Warning: another akm on your PATH may shadow this install:"
+  echo "  $FOUND"
+  echo "Remove it, or put ${INSTALL_DIR} before it on PATH."
+fi
 
 echo ""
 echo "To get started, run:"

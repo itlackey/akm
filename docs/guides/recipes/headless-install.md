@@ -9,6 +9,7 @@ set -euo pipefail
 
 # 1. Install (standalone binary, runtime-free)
 curl -fsSL https://github.com/itlackey/akm/releases/latest/download/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"   # a non-root install lands in ~/.local/bin (or pass --system)
 
 # 2. Initialize the bundle directory and accept all defaults (no prompts)
 akm setup --yes
