@@ -94,12 +94,9 @@ are Evolving, and the
 3. `akm improve` selects assets from the one bundle it writes to. A rewrite
    (reflect) is planned only for an asset with negative feedback in the last
    30 days that is newer than the stage's last attempt, or for an explicit ref;
-   a positive or note-only signal never plans one, and neither does a negative whose exact fix has since been accepted as a `feedback` proposal. Distill reads any feedback
-   on a memory in that window, but skips a memory flagged wrong and not edited
+   a positive or note-only signal never plans one, and neither does a negative whose exact fix has since been accepted as a `feedback` proposal. Distill also runs on the memories the proactive lane plans, with or without feedback, but skips a memory flagged wrong and not edited
    since: a negative feedback in the window judged the body it still has (or,
-   recorded without that body's hash, is newer than its file's last write). It
-   also skips a memory whose only feedback in the window is positive with no
-   reason or note, which gives the writer nothing to distil. Unless
+   recorded without that body's hash, is newer than its file's last write). Unless
    `--require-feedback-signal` is set, the
    proactive-maintenance lane (where the strategy enables it, as `default`
    does) adds the stable assets due for a revisit that the retrieval scope below

@@ -857,6 +857,7 @@ export function partitionBySignalDelta(args: {
       !isLedgerBlocked(ledgerRowFor(ledger, "reflect", r.ref, r.itemRef), nowIso)
     ) {
       out.noFeedbackPool.push(r);
+      if (isLedgerBlocked(ledgerRowFor(ledger, "distill", r.ref, r.itemRef), nowIso)) out.distillCooledRefs.add(r.ref);
     } else {
       out.fullySkippedCount++;
     }

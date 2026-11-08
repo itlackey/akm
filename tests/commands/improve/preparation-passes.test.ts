@@ -158,6 +158,20 @@ describe("partitionBySignalDelta — the four buckets", () => {
     expect(out.distillOnlyRefs.map((r) => r.ref)).toEqual(["memories/distill-only"]);
   });
 
+  test("no feedback but a recent distill rejection → still pooled, and distill is cooled for it", () => {
+    const stash = freshStash();
+    const out = partitionBySignalDelta({
+      scope: { mode: "all" },
+      options: { stashDir: stash, config: {} as AkmConfig },
+      postCleanupRefs: [ref("memories/rejected")],
+      validationFailureRefs: new Set(),
+      snapshot: snapshot({ lastDistillAttemptAt: new Map([["memories/rejected", T2]]), outcome: "rejected" }),
+    });
+
+    expect(out.noFeedbackPool.map((r) => r.ref)).toEqual(["memories/rejected"]);
+    expect([...out.distillCooledRefs]).toEqual(["memories/rejected"]);
+  });
+
   test("no feedback at all → deferred to the noFeedbackPool, never skipped outright", () => {
     const stash = freshStash();
     const out = partitionBySignalDelta({

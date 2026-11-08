@@ -242,10 +242,19 @@ describe("D-2: reject-aware cooldown for distill (#370)", () => {
 
     const distilledRefs: string[] = [];
     const now = Date.now();
-    appendEvent(
-      { eventType: "proposal_rejected", ref: "lessons/memory-auth-tips-lesson", metadata: { reason: "Too generic" } },
-      { now: () => now - 60 * 1000 },
-    );
+    // A person's rejection of the lesson leaves a distill ledger row decided `rejected`.
+    const db = openStateDatabase();
+    try {
+      recordImproveLedger(db, {
+        stashDir,
+        ref: durableRef("memories/auth-tips"),
+        source: "distill",
+        outcome: "rejected",
+        at: new Date(now - 60 * 1000).toISOString(),
+      });
+    } finally {
+      db.close();
+    }
 
     const result = await akmImprove({
       scope: "memory",

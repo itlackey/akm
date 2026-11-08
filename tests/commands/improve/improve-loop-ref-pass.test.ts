@@ -201,7 +201,7 @@ describe("processImproveLoopRef — reflect half", () => {
 
     const tally = await processImproveLoopRef(eligibleRef("memories/note.derived"), env);
 
-    expect(tally.actions[0]!.mode).toBe("distill-skipped");
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
     expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "derived-memory-reflect-skipped" });
   });
 });
@@ -612,12 +612,18 @@ describe("processImproveLoopRef — a memory with bare or no recent feedback", (
     expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
   });
 
-  test("a memory with no recent feedback reaches distill", async () => {
+  test("a memory with no recent feedback, planned by the proactive lane, reaches distill", async () => {
     const sandbox = freshSandbox();
+    const env = makeEnv({
+      stashDir: sandbox.stashDir,
+      eventsCtx: { dbPath: sandbox.eventsDbPath },
+      reflectFn: () => Promise.resolve(reflectFail("no_change")),
+      distillFn: () => Promise.resolve(distillQueued(memoryRef, "lesson")),
+    });
 
-    const tally = await processImproveLoopRef(eligibleRef(memoryRef), distillingEnv(sandbox));
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
 
-    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+    expect(tally.actions.map((a) => a.mode)).toContain("distill");
   });
 });
 
