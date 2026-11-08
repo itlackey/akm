@@ -109,7 +109,7 @@ function openBrowser(url) {
     process.platform === "darwin"
       ? ["open", url]
       : process.platform === "win32"
-        ? ["cmd", "/c", "start", '""', url]
+        ? ["cmd", "/c", "start", "", url]
         : ["xdg-open", url];
   try {
     const opener = spawn(/** @type {string} */ (command), args, { detached: true, stdio: "ignore" });
