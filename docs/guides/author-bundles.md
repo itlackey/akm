@@ -255,6 +255,48 @@ Key names are listed by `akm env list` and appear in search results. The
 search index; its key names then appear only when the file is shown directly
 by ref.
 
+## Project Rules
+
+`rules/` holds the short rules an agent should follow for a project: a Markdown file
+per topic, nested folders allowed, each a bullet list of imperative, checkable lines.
+Rules are standing context. In `akm search` and `akm curate`, the rules that apply lead
+the results whatever the query says, so keep them to a handful of lines.
+
+```markdown
+---
+description: Development rules for Acme.
+project: acme
+---
+
+- Use Bun for package installation and scripts.
+- Run the focused tests for changed behavior.
+- Keep generated files out of source commits.
+```
+
+`project: acme` is the key the [projects](../reference/configuration.md#projects) setting
+already uses (a project prefers `project=<name>` and stamps it on what it writes). It is
+not rule-specific configuration. Write the value the project stamps: its
+`write.metadata.project`, which is its name unless you set one. A rule applies when its
+`project` is that value for the project in force (`--project`, else the working directory's)
+or when it has none (shared); with no project in force only shared rules apply. Another
+project's rules are never returned while a project is selected. If the project's own `filters`
+constrain `project`, that filter decides instead. Only the bundle's top-level `rules/` folder
+holds rules. After adding `rules/` to a bundle that already has files there, run
+`akm index --full` so they are retyped.
+
+To list the rules that apply: `akm search "" --type rule --limit 200 --detail normal`
+(rules only, honouring the project; exactly 200 results means the list was cut), then
+`akm show <ref>` to read one. `akm search "rules/"` is a plain path listing that also
+returns other files and stops at 20.
+
+Rules lead `akm search` (untyped, not a `rules/` prefix query) and `akm curate`, ahead of
+the ordinary hits, but take at most half of `--limit` (`ceil(limit/2)`): with `--limit 4`
+and five applicable rules, two rules and two ordinary hits are returned, and a warning says
+how many rules were left out and how to list them. A query that matches nothing keeps its
+no-match tip. Rules follow the same `--from`, `--filter` and disabled-bundle selection as every
+asset, and an explicit `--type` other than `any` turns the leading off. `curate --pack`
+packs hits in result order, so rules come first.
+
 ## Bundle Structure Tips
 
 - **Keep it focused.** A bundle with 5 great scripts is more useful than one

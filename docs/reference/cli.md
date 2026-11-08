@@ -141,7 +141,7 @@ akm setup --yes                  # Non-interactive, accepts all defaults
 
 Creates one subdirectory per asset type under the bundle path — currently
 `scripts/`, `skills/`, `commands/`, `agents/`, `knowledge/`, `workflows/`,
-`instructions/`, `memories/`, `env/`, `secrets/`, `lessons/`, `tasks/`,
+`instructions/`, `rules/`, `memories/`, `env/`, `secrets/`, `lessons/`, `tasks/`,
 `sessions/`, and `facts/`, plus a root `.scratch/README.md` and a `/.scratch/`
 `.gitignore` rule (see [Scratch space](asset-types.md#scratch-space-the-scratch-convention)). See
 [technical/filesystem.md](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/storage-locations.md) for config file locations.
@@ -637,7 +637,7 @@ it.
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter by asset type. Free-form and unvalidated — an unknown type returns no hits. Also accepts any adapter-defined type (e.g. `website`) — see [Bundle Types](bundle-types.md) for the open types each adapter emits. |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `rule`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter by asset type. Free-form and unvalidated — an unknown type returns no hits. Also accepts any adapter-defined type (e.g. `website`) — see [Bundle Types](bundle-types.md) for the open types each adapter emits. |
 | `--limit` | number | `20` | Maximum results |
 | `--from` | `local`, `registry`, `all`, bundle name | `local` | Where to search. A bundle name narrows to that bundle; repeat `--from` (`--from team --from personal`) to search several bundles as one ranked set (OR). A keyword cannot be mixed with bundle names, and an unknown name is a usage error. With several bundles the response carries `bundles` |
 | `--filter` | `<key>=<value>` | _(none)_ | Frontmatter filter — repeatable; a repeated key matches any of its values, different keys must all match. A key is any frontmatter key (`team`, `project`, `category`, ...), `tag` (matched the way the index normalises tags), or a scope key (`user`, `agent`, `run`, `channel`). Example: `--filter team=platform --filter user=alice`. An empty value (`--filter channel=`) matches assets that do not carry the key (`tag` always carries path-derived tags, so `tag=` matches almost no assets), and combines with other values of the key by OR: `--filter channel=acme --filter channel=` keeps acme's assets plus every unscoped one. Narrows the candidates before ranking. |
@@ -648,6 +648,7 @@ it.
 | `--since` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or after this day: the `observed` date, else `updated`. Assets with neither are dropped. Applies before the candidate budgets, like `--filter`. Search only; registry hits are unaffected. |
 | `--until` | `YYYY-MM-DD` | _(none)_ | Keep local assets dated on or before this day, by the same date. |
 | `--include-sessions` | flag | `false` | Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
+| `--by-usage` | flag | `false` | List instead of search: the eligible assets that were shown (`akm show`) in the [project](#projects) in force, most shown first, ties by ref. See [Usage list](#usage-list-by-usage) |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output verbosity level, or the `agent` projection |
 
@@ -727,7 +728,7 @@ akm curate "deploy the service" --filter user=alice --pack 4000
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
-| `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter curated results by asset type |
+| `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `rule`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter curated results by asset type |
 | `--limit` | number | `4` | Maximum curated results |
 | `--from` | `local`, `registry`, `all`, bundle name | `local` | Where to search before curating; repeat it to search several bundles (OR), as in `akm search` |
 | `--filter` | `<key>=<value>` | _(none)_ | Repeatable exact frontmatter filter (any key, `tag`, or user, agent, run, channel); a repeated key matches any of its values, different keys are AND-joined; an empty value (`key=`) matches assets without the key |
@@ -810,6 +811,7 @@ akm show github:owner/repo//meta    # an installed bundle's .meta/index.md
 | `--context` | `exact`, `lead` | `exact` | Fragment presentation. `exact` preserves the selected-section behavior. `lead` returns the indexed-safe first fragment followed by `[Selected matching fragment]` and the selected fragment. |
 | `--max-chars` | positive integer | `3200` for `lead` | Hard contextual content budget in characters; requires `--context lead` and is mutually exclusive with `--max-tokens`. |
 | `--max-tokens` | positive integer | _(none)_ | Approximate contextual budget using four characters per token; requires `--context lead` and is mutually exclusive with `--max-chars`. |
+| `--project` | project name, `none` | _(by directory)_ | The [project](#projects) recorded on this read's usage event, for [`akm search --by-usage`](#usage-list-by-usage); changes nothing else. `none` records no project; an unknown name is a usage error. |
 
 `meta` is not an asset type — `[<origin>//]meta[:<name>]` direct-reads a
 human-authored orientation doc from a bundle's optional `.meta/` directory
@@ -1827,7 +1829,7 @@ work on it in, and what akm reads and writes there (see
 else the configured path that most specifically contains the working directory,
 else none, and then nothing changes. It supplies defaults only for `akm search`,
 `akm curate` (and `curate()`), `akm remember`, `akm proposal extract` and
-`akm proposal new`; never for `show`, `improve`, model work or the scheduler. A flag you pass
+`akm proposal new`; never for `improve`, model work or the scheduler (`show` only records the project on its usage event). A flag you pass
 replaces the project's value of that kind (`--from`, `--filter`, `--prefer`,
 `--bundle`, `--user`, `--agent`, `--channel`); nothing is merged. `--pack` with
 any format but `text` and `md` (json, jsonl, yaml) prints only the packed items, so it does not report the project
@@ -1836,6 +1838,55 @@ project's `write.user`, `agent`, `channel` and `metadata` but never its
 `write.bundle`, and chooses the project per session from the session's own
 directory (`--project` names one for every session). A project with no
 `prefer` prefers `project=<name>`, and its writes carry `project: <name>`.
+
+#### Project rules
+
+Assets in the bundle's top-level `rules/` folder are `rule` assets: short bullet lists of
+agent rules (see [Project Rules](../guides/author-bundles.md#project-rules)); a `rules`
+folder deeper down (`docs/rules/`) is not. A rule applies when its frontmatter `project`
+equals the value the project in force writes as `project` (its `write.metadata.project`,
+default its name) or it has none (shared); with no project, only shared rules apply. If the
+selection's own `project` filter is in force, that filter decides and the comparison is
+skipped. In an untyped `akm search` (not a conceptId-prefix query) and in `akm curate` /
+`curate()`, the applicable rules lead the hits, whatever the query, in the order of the
+listing below. They take at most `ceil(limit/2)` of the page, so ordinary hits keep the
+rest; a query that matches nothing keeps its no-match tip beside them. Rules beyond the cap
+are dropped with a warning that says how many and how to list them. They follow `--from`,
+`--filter`, `--since`/`--until`, disabled bundles and `--belief` like any asset. A rule of
+another project is never returned while a project is selected, by any search or curate,
+including `--type rule`. An explicit `--type` other than `any` turns the leading off, and
+`--pack` packs in result order.
+
+**Listing contract (for plugins):** `akm search "" --type rule --limit 200 --detail normal`
+returns exactly the applicable rules (honouring `--project`, the working directory, `--from`
+and the other selection), with `ref` and `description`; read each with `akm show <ref>`. A
+result of exactly 200 means the list was cut. `akm search "rules/"` is a plain path
+listing: it also returns `README` and scripts under `rules/` and stops at 20.
+
+#### Usage list (`--by-usage`)
+
+`akm search --by-usage` lists the eligible assets that were shown in the project in force,
+most shown first. It applies the project's `from`, `filters` and your flags like any search, takes no
+query (one given is ignored with a warning) and no `--from registry|all` (warned; local is
+used), orders by use instead of `--prefer`, records no usage event, and leaves rules out
+(they have their own listing). Assets that were never shown are not listed, so with no
+history the list is empty. What counts: `akm show` events of `source: user` in the last 90
+days (the usage retention); only `akm show` counts, not nested command or persona reads. Search and
+curate results are impressions and do not count. Each `akm show` records the project in force
+on its event: the value the project writes as `project`, from `--project` on `show` (for this
+attribution only; `none` records none) else the working directory. With a project, only shows
+that recorded it count and an asset naming another project is left out (unless the project's
+own `project` filter decides); shows from before the project was recorded count for no project
+only. `--project none` counts every show. Reads that must not raise their own count (a
+session-start hook, an automatic rule read) run with `AKM_EVENT_SOURCE` set to `unknown`
+(or `audit`), which is not user demand.
+
+**Plugin recipe.** With the project resolved: `akm search --by-usage --detail normal
+[--project <p>]`, run in the session directory. With no project resolved, read the default
+bundle with no selection: `--project none --from <defaultBundle>` on both the rules listing
+and `--by-usage`, where `<defaultBundle>` is `akm config get defaultBundle`. If none is
+configured there is no bundle to name (neither `--from <name>` nor `--from <path>` accepts the
+primary stash), so pass `--project none` without `--from`; every enabled bundle is then read.
 
 ### remember
 

@@ -98,6 +98,7 @@ export const KNOWN_TYPES = [
   "session",
   "fact",
   "instruction",
+  "rule",
 ] as const;
 
 export type KnownType = (typeof KNOWN_TYPES)[number];

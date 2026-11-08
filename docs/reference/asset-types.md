@@ -5,8 +5,8 @@ the bundle directory layout, and the metadata every asset carries.
 
 ## Contract
 
-- akm's own native format (the `akm` adapter) recognizes **fourteen asset
-  types**: script, skill, command, agent, knowledge, instruction, env,
+- akm's own native format (the `akm` adapter) recognizes **fifteen asset
+  types**: script, skill, command, agent, knowledge, instruction, rule, env,
   secret, workflow, lesson, memory, task, session, and fact.
 - Scripts, knowledge, commands, agents, skills, and workflows are classified
   by **file extension, directory placement, and supported content signals**.
@@ -15,7 +15,7 @@ the bundle directory layout, and the metadata every asset carries.
   root. A typed directory declares intent that body-placeholder guesses do
   not override; explicit frontmatter can still take precedence. The remaining types are
   **directory-required**: env, secret, memory, lesson, fact, session, task,
-  and instruction assets are only discovered under their placement
+  rule, and instruction assets are only discovered under their placement
   directories (a memory-shaped `.md` outside `memories/` indexes as plain
   knowledge).
 - `type` is not part of an asset's ref — the placement subdirectory carries
@@ -39,6 +39,7 @@ my-bundle/
   agents/         # Agent definitions (.md with model/tools frontmatter)
   knowledge/      # Reference documents (.md)
   instructions/   # Project guidance (.md)
+  rules/          # Short agent rules, led by project in search and curate (.md, see "Project Rules" in the author guide)
   env/            # Environment files (.env) — groups of related config, loaded whole
   secrets/        # Secrets — one sensitive value per file (auth tokens, keys, certs)
   workflows/      # Workflow sources (.md)
@@ -152,7 +153,7 @@ For script assets, akm resolves execution hints in this order:
 
 - Directory placement is advisory for scripts, knowledge, commands, agents,
   skills, and workflows; it is required for env, secret, memory, lesson,
-  fact, session, task, and instruction discovery.
+  fact, session, task, rule, and instruction discovery.
 - A memory asset with no source directory pointed at it is written to the
   working bundle by `akm remember`.
 - `facts/` holds durable bundle-level facts, including the organization,
