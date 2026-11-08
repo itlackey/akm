@@ -5,7 +5,7 @@
 /**
  * Background learning: whether akm's own model work (the improve processes and the scheduled `improve` task) may run,
  * and the one change that turns it on or off. `akm info` reads it, `akm setup --learning` and the workspace
- * `setup.apply` write it, `akm proposal new --if-learning` asks it.
+ * `setup.apply` write it.
  */
 
 import fs from "node:fs";

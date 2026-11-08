@@ -55,7 +55,6 @@ export function shapeProposalProducerOutput(
     }
     return base;
   }
-  if (typeof result.skipped === "string") return { ok: true, skipped: result.skipped };
   const proposal = result.proposal as Record<string, unknown>;
   const base: Record<string, unknown> = {
     ok: result.ok,

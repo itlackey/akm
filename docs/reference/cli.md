@@ -3426,7 +3426,6 @@ akm proposal new skill code-review --bundle team --task "PR-style review skill" 
 | `--timeout-ms` | Override the selected connection's or harness's timeout for this call |
 | `--user` / `--agent` / `--run` / `--channel` | Scope stamped on the proposal, as for `akm remember` (`scope_*` frontmatter). A scope the model writes is replaced by these flags (none given: removed), with one warning. |
 | `--project <name>` | Use this [project](#projects)'s write defaults (`write.user`, `agent`, `channel`, `metadata`, and `write.bundle` as the destination) instead of the one the working directory selects; `none` uses none. |
-| `--if-learning` | For automatic callers (the AKM agent plugins). When background learning is off (the same core switch as `akm info`'s `learning.on`, not the scheduler), exit 0 at once with `{"ok": true, "skipped": "learning-off"}`: no model call, no proposal, no event. Without it, `proposal new` always authors on request. **Experimental** for its first release. |
 
 Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
 

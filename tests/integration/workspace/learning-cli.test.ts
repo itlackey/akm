@@ -2,14 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** `akm info` learning, `akm setup --learning`, `akm proposal new --if-learning` and `setup.apply` for learning alone. */
+/** `akm info` learning, `akm setup --learning` and `setup.apply` for learning alone. */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { getConfigPath } from "../../../src/core/paths";
-import { resolveAkmInvocation } from "../../../src/tasks/resolve-akm-bin";
 import { setup } from "../../../src/workspace";
 import { runCli } from "../../../src/workspace/cli-child";
 import { change } from "../../../src/workspace/config";
@@ -51,12 +49,6 @@ function snapshot(): Record<string, string> {
   walk(ctx.storage.root);
   return files;
 }
-const akmJson = (args: string[]): Json => {
-  const [bin, ...prefix] = resolveAkmInvocation().argv;
-  return JSON.parse(
-    execFileSync(bin!, [...prefix, ...args, "--format=json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
-  );
-};
 
 describe("akm info learning", () => {
   test("reports on, agent and scheduled, and writes nothing", async () => {
@@ -240,6 +232,24 @@ describe("scheduled agrees between setup --learning and akm info", () => {
     }
   });
 
+  test("off disables the installed improve row on a legacy config with no scheduler.enabled", async () => {
+    const cron = fakeCrontab();
+    try {
+      await setup.apply({ dir: library() });
+      connect();
+      await runCli(["setup", "--learning", "on"]);
+      expect(fs.readFileSync(cron.file, "utf8")).toContain("improve");
+      const config = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+      delete config.scheduler;
+      fs.writeFileSync(getConfigPath(), JSON.stringify(config));
+      const off = await runCli(["setup", "--learning", "off"]);
+      expect(off.learning).toMatchObject({ on: false, tasksDisabled: ["improve"], scheduled: false });
+      expect(fs.readFileSync(cron.file, "utf8")).not.toContain("improve");
+    } finally {
+      cron.restore();
+    }
+  });
+
   test("--yes and --no-probe are ignored with a lone --learning", async () => {
     const result = await runCli(["setup", "--learning", "off", "--yes", "--no-probe"]);
     expect(result.learning).toMatchObject({ on: false });
@@ -303,28 +313,5 @@ describe("setup.apply with learning", () => {
     expect(fs.existsSync(getConfigPath())).toBe(true);
     await setup.apply({ dir: library(), learning: { on: false } });
     expect(fs.existsSync(path.join(library(), "knowledge"))).toBe(true);
-  });
-});
-
-describe("akm proposal new --if-learning", () => {
-  test("exits 0 with skipped: learning-off and makes no proposal when learning is off", async () => {
-    await setup.apply({ dir: library(), learning: { on: false } });
-    const before = snapshot();
-    const result = akmJson(["proposal", "new", "lesson", "x", "--task", "hi", "--if-learning"]);
-    expect(result).toMatchObject({ ok: true, skipped: "learning-off" });
-    expect(snapshot()).toEqual(before);
-  });
-
-  test("with learning on it carries on to the normal path", async () => {
-    await setup.apply({ dir: library() });
-    connect();
-    let failure = "";
-    try {
-      akmJson(["proposal", "new", "lesson", "x", "--task", "hi", "--if-learning"]);
-    } catch (error) {
-      failure = String((error as { stdout?: string }).stdout ?? error);
-    }
-    // It reached the engine (which cannot answer here) instead of skipping.
-    expect(failure).not.toContain("learning-off");
   });
 });

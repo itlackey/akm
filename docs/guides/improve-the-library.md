@@ -175,8 +175,8 @@ layers below follow it or sit beside it.
 | Layer | Switch | Model calls |
 | --- | --- | --- |
 | Recall | `AKM_AUTO_CURATE` (plugin) | None |
-| Prompt-time proposal capture | Follows core learning (`akm proposal new --if-learning`) | Yes, agent work |
-| Session extraction | Follows core learning (`akm proposal extract` is a no-op when `extract` is `enabled: false`) | Yes |
+| Prompt-time proposal capture | Follows core learning (the plugins read `learning.on` from `akm info`) | Yes, agent work |
+| Session extraction | Follows core learning (the plugins read `learning.on` from `akm info`; `akm proposal extract` is a no-op when `extract` is `enabled: false`) | Yes |
 | Scheduled improve | Core learning plus the `improve` task | Yes |
 
 `akm setup --learning on` clears every `enabled: false` of the active strategy

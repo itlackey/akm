@@ -148,7 +148,7 @@ covers beyond the table.
 | `akm proposal revert` | Evolving | |
 | `akm proposal drain` | Evolving | |
 | `akm proposal extract` | Evolving | Former top-level `akm extract`. Promoted from Experimental in 0.10 (#1133): the extract eval measures it. Evolving, not Stable, because 0.10 is still settling the improve defaults. |
-| `akm proposal new` | Evolving | Former top-level `akm propose`. `--if-learning` is Experimental for its first release. |
+| `akm proposal new` | Evolving | Former top-level `akm propose`. |
 | `akm help` | Stable | |
 | `akm help migrate` | Stable | Only renders release notes. |
 | `akm hints` | Stable | Format-exempt agent guide; the brief guide is the default; `--detail full` selects the complete version. |

@@ -26,7 +26,6 @@ import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { resolveProject } from "../../core/projects";
-import { learningState } from "../../setup/learning";
 import { akmPropose } from "./propose";
 
 const EXIT_GENERAL = EXIT_CODES.GENERAL;
@@ -64,19 +63,9 @@ export const proposeCommand = defineCommand({
     ...RETIRED_ENGINE_ARG,
     ...SCOPE_ARGS,
     "timeout-ms": { type: "string", description: "Override the engine timeout in milliseconds" },
-    "if-learning": {
-      type: "boolean",
-      description:
-        "For automatic callers: when background learning is off, do nothing and exit 0 with skipped: learning-off",
-      default: false,
-    },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      if (args["if-learning"] && !learningState().on) {
-        output("proposal-new", { ok: true, skipped: "learning-off" });
-        return;
-      }
       // citty silently shows help and exits 0 when required positionals are
       // omitted. Re-validate explicitly so the exit code is 2 (USAGE) and a
       // structured JSON error reaches scripted callers.
