@@ -48,6 +48,23 @@ The Release workflow, on the pushed commit:
    prerelease, so Desktop's next channel follows it). The installers are
    unsigned, see [Software](https://github.com/itlackey/akm/blob/main/desktop/docs/software.md#unsigned-installers).
 
+7. publishes `akm-web` (Desktop's web process alone, for servers and containers) from the same tarball (`akm-web`
+   job, independent of the installers). It fails on every release until the package exists on npm and has a trusted
+   publisher. Once, by hand, from a clean checkout of the release commit, logged in to npm:
+
+   ```sh
+   cd desktop
+   node scripts/core.mjs --tarball /path/to/akm-cli-<version>.tgz   # the released tarball
+   bun install --frozen-lockfile --ignore-scripts --force
+   npm run build
+   node scripts/package-web.mjs --release                            # prints {"stage": "<dir>"}
+   npm publish <dir> --ignore-scripts --access public --tag next     # `latest` for a stable version
+   ```
+
+   Then on npmjs.com add a trusted publisher for `akm-web`: repository `itlackey/akm`, workflow `release.yml`, and
+   leave the Environment field blank (the `akm-web` job has no environment; the `release` job's `release`
+   environment would not match).
+
 Push nothing else to the branch until the Release finishes: a push cancels the
 release commit's CI run (`ci.yml` cancels an in-progress run on the same ref),
 and the Release then fails.

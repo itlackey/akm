@@ -3,14 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import assert from "node:assert/strict";
-import { fork } from "node:child_process";
+import { fork, spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
 import { createRequire } from "node:module";
+import net from "node:net";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createFixture } from "../scripts/fixture.mjs";
+import { shouldOpenBrowser } from "../server/server.mjs";
 
 const appRoot = process.env.AKM_DESKTOP_TEST_APP_ROOT ?? fileURLToPath(new URL("..", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -49,10 +51,25 @@ async function launch(t, { runtime = process.execPath, electronMode = false } = 
     });
   });
   const bootstrap = await fetch(ready.url, { redirect: "manual" });
-  assert.equal(bootstrap.status, 303);
-  assert.equal(bootstrap.headers.get("location"), "/");
+  assert.equal(bootstrap.status, 200);
+  assert.match(await bootstrap.text(), /http-equiv="refresh" content="0;url=\/"/);
+  assert.equal(bootstrap.headers.get("cache-control"), "no-store");
+  assert.equal(bootstrap.headers.get("referrer-policy"), "no-referrer");
   assert.match(bootstrap.headers.get("set-cookie"), /HttpOnly; SameSite=Strict/);
   const cookie = bootstrap.headers.get("set-cookie").split(";")[0];
+  for (const site of ["none", "same-origin"]) {
+    const redirect = await fetch(ready.url, { redirect: "manual", headers: { "Sec-Fetch-Site": site } });
+    assert.equal(redirect.status, 303, site);
+    assert.equal(redirect.headers.get("location"), "/");
+    assert.match(redirect.headers.get("set-cookie"), /HttpOnly; SameSite=Strict/);
+    assert.equal(redirect.headers.get("cache-control"), "no-store");
+    assert.equal(redirect.headers.get("referrer-policy"), "no-referrer");
+  }
+  for (const site of ["cross-site", "same-site"]) {
+    const refresh = await fetch(ready.url, { redirect: "manual", headers: { "Sec-Fetch-Site": site } });
+    assert.equal(refresh.status, 200, site);
+    assert.match(refresh.headers.get("set-cookie"), /HttpOnly; SameSite=Strict/);
+  }
   const request = (route, body, extra = {}) =>
     fetch(`${ready.origin}/api${route}`, {
       method: body === undefined ? "GET" : "POST",
@@ -72,7 +89,11 @@ test("loopback session bootstrap, authentication and strict write origin", async
   assert.equal(denied.status, 401);
   assert.equal((await denied.json()).code, "UNAUTHORIZED");
   assert.equal(
-    (await fetch(`${app.origin}/api/meta`, { headers: { Cookie: "akm_desktop_session=invalid" } })).status,
+    (
+      await fetch(`${app.origin}/api/meta`, {
+        headers: { Cookie: `akm_desktop_session_${new URL(app.origin).port}=invalid` },
+      })
+    ).status,
     401,
   );
   assert.equal(
@@ -274,4 +295,158 @@ export const handler = (req, res) => res.end('loaded');
   child.send("load");
   await ready;
   assert.equal(await (await fetch(`${loading.origin}/`)).text(), "loaded");
+});
+
+async function freePort() {
+  const probe = net.createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const { port } = probe.address();
+  await new Promise((resolve) => probe.close(resolve));
+  return port;
+}
+
+/** Starts the server with flags, then talks to its bind address while claiming the configured host name. */
+async function launchWith(t, args) {
+  const fixture = await createFixture({ packageRoot: appRoot });
+  t.after(() => fixture.cleanup());
+  const child = fork(path.join(appRoot, "server/server.mjs"), args, {
+    execArgv: [],
+    env: fixture.env,
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
+  });
+  t.after(() => child.kill());
+  const ready = await new Promise((resolve, reject) => {
+    child.once("exit", (code) => reject(new Error(`Server exit ${code}`)));
+    child.once("message", resolve);
+  });
+  const token = new URL(ready.url).searchParams.get("desktop_session");
+  const send = (route, { host = new URL(ready.origin).host, method = "GET", headers = {} } = {}) =>
+    new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          host: args.includes("--origin") ? "127.0.0.1" : new URL(ready.origin).hostname.replace(/[[\]]/g, ""),
+          port: bindPort(args),
+          path: route,
+          method,
+          headers: { Host: host, ...headers },
+        },
+        (res) => {
+          res.resume();
+          res.once("end", () => resolve({ status: res.statusCode, headers: res.headers }));
+        },
+      );
+      req.once("error", reject);
+      req.end();
+    });
+  return { ready, token, send };
+}
+const bindPort = (args) => Number(args[args.indexOf("--port") + 1]);
+
+test("a configured --origin and --host serve under that address, with every check still on", async (t) => {
+  const port = await freePort();
+  const origin = `http://akm.test:${port}`;
+  const app = await launchWith(t, ["--host", "127.0.0.1", "--port", String(port), "--origin", origin]);
+  assert.equal(app.ready.origin, origin);
+  assert.equal(app.ready.url, `${origin}/?desktop_session=${app.token}`);
+  const bootstrap = await app.send(`/?desktop_session=${app.token}`);
+  assert.equal(bootstrap.status, 200);
+  const setCookie = bootstrap.headers["set-cookie"][0];
+  assert.match(setCookie, new RegExp(`^akm_desktop_session_${port}=`));
+  assert.doesNotMatch(setCookie, /Secure/);
+  const cookie = setCookie.split(";")[0];
+  assert.equal((await app.send("/api/desktop", { headers: { Cookie: cookie } })).status, 200);
+  assert.equal((await app.send("/api/desktop")).status, 401, "no token");
+  assert.equal(
+    (await app.send("/api/desktop", { host: `127.0.0.1:${port}`, headers: { Cookie: cookie } })).status,
+    403,
+    "a Host other than the configured origin",
+  );
+  const write = (originHeader) =>
+    app.send("/api/feedback", {
+      method: "POST",
+      headers: { Cookie: cookie, Origin: originHeader, "Content-Type": "application/json", "Content-Length": "2" },
+    });
+  assert.equal((await write("http://evil.example")).status, 403, "a write from another origin");
+  assert.notEqual((await write(origin)).status, 403, "a write from the configured origin passes the origin check");
+});
+
+test("an https origin marks the session cookie Secure", async (t) => {
+  const port = await freePort();
+  const app = await launchWith(t, ["--port", String(port), "--origin", `https://akm.test:${port}`]);
+  const bootstrap = await app.send(`/?desktop_session=${app.token}`);
+  assert.equal(bootstrap.status, 200);
+  assert.match(bootstrap.headers["set-cookie"][0], /; Secure$/);
+});
+
+test("host spellings are normalised, and wildcard spellings need --origin", async (t) => {
+  const port = await freePort();
+  const app = await launchWith(t, ["--host", "Localhost", "--port", String(port)]);
+  const url = new URL(app.ready.origin);
+  assert.equal(url.port, String(port));
+  assert.ok(["127.0.0.1", "[::1]"].includes(url.hostname), url.hostname);
+  assert.equal((await app.send(`/?desktop_session=${app.token}`)).status, 200);
+  for (const host of ["::0", "0", "0:0:0:0:0:0:0:0"]) {
+    const child = spawn(process.execPath, [path.join(appRoot, "server/server.mjs"), "--host", host], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    const [code] = await new Promise((resolve) => child.once("exit", (...exit) => resolve(exit)));
+    assert.notEqual(code, 0, host);
+    assert.match(stderr, /--origin/, host);
+  }
+});
+
+test("an --origin without http(s) exits non-zero and names the flag", async () => {
+  for (const origin of ["my-server:4444", "ftp://my-server"]) {
+    const child = spawn(process.execPath, [path.join(appRoot, "server/server.mjs"), "--origin", origin], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    const [code] = await new Promise((resolve) => child.once("exit", (...exit) => resolve(exit)));
+    assert.notEqual(code, 0, origin);
+    assert.match(stderr, /--origin must be http\(s\):\/\/host/, origin);
+  }
+});
+
+test("instances on different ports use different cookie names", async (t) => {
+  const [first, second] = [await freePort(), await freePort()];
+  const names = [];
+  for (const port of [first, second]) {
+    const app = await launchWith(t, ["--port", String(port)]);
+    names.push((await app.send(`/?desktop_session=${app.token}`)).headers["set-cookie"][0].split("=")[0]);
+  }
+  assert.notEqual(names[0], names[1]);
+});
+
+test("a wildcard --host without --origin exits non-zero and says why", async () => {
+  const child = spawn(process.execPath, [path.join(appRoot, "server/server.mjs"), "--host", "0.0.0.0"], {
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const [code] = await new Promise((resolve) => child.once("exit", (...exit) => resolve(exit)));
+  assert.notEqual(code, 0);
+  assert.match(stderr, /--origin/);
+});
+
+test("the browser opens only for a person at a terminal on a machine with a screen", () => {
+  const base = { env: { DISPLAY: ":0" }, platform: "linux", hasParent: false, isTTY: true, exists: () => false };
+  assert.equal(shouldOpenBrowser(base), true);
+  assert.equal(shouldOpenBrowser({ ...base, env: {}, platform: "darwin" }), true, "macOS needs no display variable");
+  assert.equal(shouldOpenBrowser({ ...base, env: { WAYLAND_DISPLAY: "wayland-0" } }), true);
+  assert.equal(shouldOpenBrowser({ ...base, hasParent: true }), false, "an IPC parent such as Electron");
+  assert.equal(shouldOpenBrowser({ ...base, isTTY: false }), false, "piped stdout");
+  for (const name of ["SSH_CONNECTION", "SSH_TTY", "CI"])
+    assert.equal(shouldOpenBrowser({ ...base, env: { DISPLAY: ":0", [name]: "1" } }), false, name);
+  for (const file of ["/.dockerenv", "/run/.containerenv"])
+    assert.equal(shouldOpenBrowser({ ...base, exists: (f) => f === file }), false, file);
+  assert.equal(shouldOpenBrowser({ ...base, env: {} }), false, "Linux without DISPLAY or WAYLAND_DISPLAY");
 });

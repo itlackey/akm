@@ -48,7 +48,7 @@ the format alone, so the same dataset is available as JSON too. Every other comm
 generic rendering derived from its own envelope — headings for the top-level
 keys, a table for an array of uniform objects, lists otherwise.
 
-`--format html` was removed with `akm ui`: AKM Desktop shows what the HTML reports showed. The flag is refused with
+`--format html` was removed with `akm ui`: AKM Desktop shows what the HTML reports showed, and `akm-web` serves the same interface on a headless host or in a container (`npm install -g akm-web`, then `akm-web`). The flag is refused with
 a usage error (exit 2) that names Desktop and `--format md`, and `output.format: html` in config warns once and is
 ignored (the default format applies).
 

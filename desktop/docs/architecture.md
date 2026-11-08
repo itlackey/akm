@@ -3,7 +3,7 @@
 ```text
 Electron main
   ├─ sandboxed BrowserWindow → SvelteKit UI
-  └─ private Node child → loopback SvelteKit server
+  └─ private Node child → SvelteKit server (loopback)
                           └─ akm-cli/workspace
                                └─ existing AKM domain functions / CLI children
 ```
@@ -18,7 +18,7 @@ host CLI/harnesses strictly for explicit installation and upgrade management.
 | Layer | Owns |
 | --- | --- |
 | `electron/` | The privileged shell only: window, local server lifecycle, external browser links, application-menu install |
-| `server/` | The web process (`server.mjs`): per-launch token, loopback HTTP listener, the built app. Runs on plain Node or Bun; imports nothing from Electron |
+| `server/` | The web process (`server.mjs`): per-launch token, HTTP listener (loopback by default; `--host`/`--origin` for `akm-web` on a server), the built app. Runs on plain Node or Bun; imports nothing from Electron |
 | `src/hooks.server.ts` | Per-launch authentication and same-origin checks |
 | `src/lib/server/` and `src/routes/api/` | HTTP shell (`http.ts`: body limits, envelope, scrubbing and the one error-to-status mapping) over one route table (`routes.ts`: each route names a workspace operation and its input; unknown request fields are warned and ignored) |
 | `src/lib/server/features/` | Desktop-only features built on `akm-cli/workspace`: plain file editing, secret reveal policy, preferences, native host software orchestration |
@@ -105,11 +105,12 @@ checks the import rule for server code. Desktop-owned routes are under
 
 ## Local application boundary
 
-The server binds an OS-selected port on `127.0.0.1`. A random per-launch token
+By default the server binds an OS-selected port on `127.0.0.1`; `akm-web` with `--host` and `--origin` binds elsewhere
+(see the README section "Run it on a server"). A random per-launch token
 bootstraps an HttpOnly, SameSite=Strict cookie and is removed from the browser
 URL. The app refuses foreign Host/Origin requests, validates JSON body sizes,
 and does not enable CORS. Its token is redacted by AKM's configuration inspector.
-This local HTTP listener is implementation detail, **not** a public API server.
+Unless `akm-web` is started with `--host`, this local HTTP listener is implementation detail, **not** a public API server.
 
 The renderer has no Node integration or preload authority. Electron sandboxing
 and context isolation remain enabled. Native permission requests, embedded

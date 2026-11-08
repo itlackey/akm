@@ -231,7 +231,7 @@ export async function launchFixture({
       });
     });
     const bootstrap = await fetch(ready.url, { redirect: "manual" });
-    assert.equal(bootstrap.status, 303);
+    assert.equal(bootstrap.status, 200);
     const setCookie = bootstrap.headers.get("set-cookie");
     assert.ok(setCookie, `Session bootstrap must set a cookie. ${logs}`);
     const cookie = setCookie.split(";")[0];

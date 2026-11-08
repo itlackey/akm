@@ -23,6 +23,7 @@
     "dist": "npm run prepare:core && npm run build && node scripts/package.mjs --dist",
     "smoke": "node scripts/smoke.mjs",
     "test:server": "node scripts/server-guard.mjs",
+    "test:web-package": "node scripts/smoke-web.mjs",
     "test:host-install": "node --test tests/host-install.integration.test.mjs",
     "test:plugin-install": "node --test tests/plugin-install.integration.test.mjs",
     "format": "prettier --write \"src/**/*.svelte\""

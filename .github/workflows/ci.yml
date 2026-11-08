@@ -106,6 +106,10 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         working-directory: desktop
         run: npm run test:server
+      - name: Verify the akm-web package installs and runs
+        if: steps.scope.outputs.run == 'true'
+        working-directory: desktop
+        run: npm run test:web-package
       - name: Verify the Electron shell
         if: steps.scope.outputs.run == 'true'
         working-directory: desktop
