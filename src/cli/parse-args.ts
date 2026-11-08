@@ -93,8 +93,7 @@ export function getStringArg(args: unknown, key: string): string | undefined {
 export const PROJECT_ARG = {
   project: {
     type: "string",
-    description:
-      "Use this configured project's defaults instead of the one the working directory selects; `none` uses no project. Explicit flags replace the project's value for the same kind.",
+    description: "Configured project to use instead of the one the working directory selects (`none`: no project)",
   },
 } as const;
 

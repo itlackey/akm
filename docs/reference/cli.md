@@ -2276,6 +2276,7 @@ akm config get output.format        # Read one key
 akm config get output.format --show-source  # Read one key, with where it came from
 akm config set output.detail full   # Set one key
 akm config set output.detail full --silent  # Set without the post-write config dump on stdout
+akm config set projects.x.filters.project '["x"]'  # Array and object values take JSON; `akm config unset <key>` removes a key
 akm config unset embedding          # Remove an optional key
 akm config path                     # Print path to config file
 akm config diff other-host/config.json  # Effective-config differences, secrets redacted

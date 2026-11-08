@@ -239,13 +239,11 @@ export const importKnowledgeCommand = defineJsonCommand({
     },
     xref: {
       type: "string",
-      description:
-        "Cross-reference ref merged into the document's `xrefs:` frontmatter (repeatable: --xref knowledge/auth-flow). Existing frontmatter is preserved (dedupe-append, never a nested block); a document whose frontmatter is not parseable YAML aborts the import rather than being rewritten lossily. Each ref must resolve in the write target or a configured source; an unresolvable ref aborts the import.",
+      description: "Asset ref to cross-reference in `xrefs:` (repeatable); it must resolve",
     },
     supersedes: {
       type: "string",
-      description:
-        "Ref of an existing asset this document corrects (repeatable: --supersedes knowledge/legacy-guide). Imports the correction with an xref to the old asset AND demotes the old asset (`beliefState: superseded` + `supersededBy`, a metadata-only edit) so ranking prefers the correction and `--belief current` hides the stale version. An unresolvable or self-referencing ref aborts the import; a ref outside the write target and working bundle still imports the correction but skips the demotion (reported as applied: false).",
+      description: "Ref of an asset this document corrects (repeatable); the old asset is marked superseded",
     },
   },
   async run({ args }) {

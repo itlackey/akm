@@ -170,38 +170,47 @@ export type JsonCommandDef<T extends ArgsDef = ArgsDef> = Omit<CommandDef<T>, "r
  * overrides at the root; the description text itself is never duplicated.
  */
 export const GLOBAL_OUTPUT_ARGS = {
-  format: { type: "string", description: "Output format: json|jsonl|yaml|text|md (global flag)" },
+  format: { type: "string", description: "Output format: json|jsonl|yaml|text|md" },
   detail: {
     type: "string",
-    description:
-      "Detail level: brief|normal|full (verbosity), or agent (trims search, curate and show to agent-essential " +
-      "fields; other commands ignore it) (global flag).",
+    description: "Detail level: brief|normal|full, or agent (trims search, curate and show to essential fields)",
   },
-  output: {
-    type: "string",
-    description: "Write rendered output to a file instead of stdout (all formats except jsonl) (global flag)",
-  },
-  // S11: surfaced at every leaf (not just the root) so `akm <command> --help`
-  // documents them too — they already apply globally, parsed from raw argv
-  // by `applyEarlyStderrFlags` in src/cli.ts before citty ever sees them, so
-  // declaring them here is documentation, not new parsing behavior. A
+  output: { type: "string", description: "Write output to a file instead of stdout (not jsonl)" },
+  // S11: declared at every leaf so a command's flags parse wherever they sit;
+  // leaf `--help` prints them once as a pointer (see `withoutGlobalArgs`), root
+  // `--help` lists them in full. They are parsed from raw argv by
+  // `applyEarlyStderrFlags` in src/cli.ts before citty ever sees them. A
   // command with its own same-named arg (e.g. `env path --quiet`) wins the
   // merge in `defineJsonCommand` as usual.
   quiet: {
     type: "boolean",
     alias: "q",
-    description:
-      "Suppress non-essential stderr output (banners, spinners, progress info) (global flag). " +
-      "Safety-critical output is never suppressed: errors and destructive-action confirmation prompts " +
-      "always appear regardless of --quiet.",
+    description: "Suppress non-essential stderr output; errors and confirmation prompts always show",
     default: false,
   },
   verbose: {
     type: "boolean",
-    description: "Print per-spec diagnostics to stderr (global flag; also honours AKM_VERBOSE env var).",
+    description: "Print diagnostics to stderr (also AKM_VERBOSE)",
     default: false,
   },
 } as const satisfies ArgsDef;
+
+/**
+ * A command with its {@link GLOBAL_OUTPUT_ARGS} left out of the args `--help`
+ * renders, so leaf help does not repeat them (`akm --help` lists them once).
+ * Only an arg that is still the shared definition goes; a command's own
+ * same-named arg stays.
+ */
+export function withoutGlobalArgs<T extends object>(command: T): T {
+  const args = (command as { args?: Record<string, unknown> }).args;
+  if (!args) return command;
+  const globals = GLOBAL_OUTPUT_ARGS as Record<string, unknown>;
+  return { ...command, args: Object.fromEntries(Object.entries(args).filter(([key, def]) => globals[key] !== def)) };
+}
+
+/** The one line leaf `--help` prints in place of the global flags. */
+export const GLOBAL_FLAGS_POINTER =
+  "Global flags: --format, --detail, --output, -q/--quiet, --verbose (see `akm --help`)";
 
 /**
  * A command with the args marked `hidden` left out: what `--help` renders. A

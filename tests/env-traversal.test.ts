@@ -56,12 +56,12 @@ afterEach(() => {
  * as on the intended traversal rejection — see
  * tests/config-cli-silent-layer.test.ts:131-139 for the established pattern.
  * All traversal rejections here are USAGE (exit 2); the `code` distinguishes
- * "asset name has relative-path segments" (MISSING_REQUIRED_ARGUMENT, thrown
+ * "asset name has relative-path segments" (PATH_ESCAPE_VIOLATION, thrown
  * by validateName in src/core/asset/asset-ref.ts) from INVALID_FLAG_VALUE.
  */
 function expectRejection(
   result: { status: number; stderr: string },
-  code: "MISSING_REQUIRED_ARGUMENT" | "INVALID_FLAG_VALUE",
+  code: "PATH_ESCAPE_VIOLATION" | "MISSING_REQUIRED_ARGUMENT" | "INVALID_FLAG_VALUE",
 ): void {
   expect(result.status).toBe(2);
   const envelope = JSON.parse(result.stderr) as { code?: string };
@@ -83,7 +83,7 @@ describe("env: directory traversal rejection", () => {
 
     const result = await runCli(["env", "create", "../../evil"], stashDir);
 
-    expectRejection(result, "MISSING_REQUIRED_ARGUMENT");
+    expectRejection(result, "PATH_ESCAPE_VIOLATION");
 
     // The file must NOT have been created at the traversal destination
     const escapedPath = path.join(stashDir, "evil.env");
@@ -97,7 +97,7 @@ describe("env: directory traversal rejection", () => {
     const result = await runCli(["env", "create", "env/../../evil"], stashDir);
     // F5 new grammar: the traversal normalizes back inside the bundle (no escape)
     // and is then rejected as an unrecognized conceptId — still a hard rejection.
-    expectRejection(result, "MISSING_REQUIRED_ARGUMENT");
+    expectRejection(result, "PATH_ESCAPE_VIOLATION");
   });
 
   test("rejects nested traversal foo/../../evil in env create", async () => {
@@ -105,31 +105,31 @@ describe("env: directory traversal rejection", () => {
     const result = await runCli(["env", "create", "foo/../../evil"], stashDir);
     // F5 new grammar: the traversal normalizes back inside the bundle (no escape)
     // and is then rejected as an unrecognized conceptId — still a hard rejection.
-    expectRejection(result, "MISSING_REQUIRED_ARGUMENT");
+    expectRejection(result, "PATH_ESCAPE_VIOLATION");
   });
 
   test("rejects ../../evil in env path", async () => {
     const stashDir = freshStash();
     const result = await runCli(["env", "path", "../../evil"], stashDir);
-    expectRejection(result, "MISSING_REQUIRED_ARGUMENT");
+    expectRejection(result, "PATH_ESCAPE_VIOLATION");
   });
 
   test("rejects ../../evil in env export", async () => {
     const stashDir = freshStash();
     const result = await runCli(["env", "export", "../../evil", "--out", path.join(stashDir, "o.sh")], stashDir);
-    expectRejection(result, "MISSING_REQUIRED_ARGUMENT");
+    expectRejection(result, "PATH_ESCAPE_VIOLATION");
   });
 
   test("rejects ../../evil in env run", async () => {
     const stashDir = freshStash();
     const result = await runCli(["env", "run", "../../evil", "--", "echo", "hi"], stashDir);
-    expectRejection(result, "MISSING_REQUIRED_ARGUMENT");
+    expectRejection(result, "PATH_ESCAPE_VIOLATION");
   });
 
   test("rejects traversal hidden behind a colon prefix", async () => {
     const stashDir = freshStash();
     const result = await runCli(["env", "path", "vault:../../evil"], stashDir);
-    expectRejection(result, "MISSING_REQUIRED_ARGUMENT");
+    expectRejection(result, "PATH_ESCAPE_VIOLATION");
   });
 
   test("legitimate env name succeeds", async () => {

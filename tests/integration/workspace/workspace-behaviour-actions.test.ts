@@ -786,7 +786,7 @@ describe("documents", () => {
     for (const ref of ["knowledge/../../escaped", "stash//knowledge/../../../escaped"]) {
       const error = await expectUsage(
         () => documents.save({ ref, revision: sha256(""), content: "# Escaped\n" }),
-        "MISSING_REQUIRED_ARGUMENT",
+        "PATH_ESCAPE_VIOLATION",
       );
       expect(error.message).toBe("Asset name cannot contain relative path segments.");
     }

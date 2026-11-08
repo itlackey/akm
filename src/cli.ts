@@ -84,9 +84,11 @@ import {
   defineGroupCommand,
   EXIT_CODES,
   emitJsonError,
+  GLOBAL_FLAGS_POINTER,
   GLOBAL_OUTPUT_ARGS,
   output,
   runWithJsonErrors,
+  withoutGlobalArgs,
   withoutHiddenArgs,
 } from "./cli/shared";
 import { assertKnownFlags, type FlagScanCommand } from "./cli/unknown-flags";
@@ -556,11 +558,20 @@ const commands = {
   hints: hintsCommand,
 };
 
+/** Leaf `--help`: usage without the hidden args and the shared global flags, then one pointer line. */
+async function showCommandUsage(command: AnyCittyCommand, path: readonly string[]): Promise<void> {
+  await showUsage(
+    withoutGlobalArgs(withoutHiddenArgs(command)) as CommandDef,
+    buildUsageParentForPath(path) as CommandDef,
+  );
+  console.log(GLOBAL_FLAGS_POINTER);
+}
+
 function commandHelpTopic(name: string, command: AnyCittyCommand): AnyCittyCommand {
   return defineCommand({
     meta: { name, description: `Print help for akm ${name}` },
     async run() {
-      await showUsage(withoutHiddenArgs(command) as CommandDef, buildUsageParentForPath([name]) as CommandDef);
+      await showCommandUsage(command, [name]);
     },
   });
 }
@@ -1000,8 +1011,6 @@ function closestCommandMatch(attempted: string, candidates: readonly string[]): 
   return closestMatch(attempted, candidates, Math.floor(attempted.length / 3));
 }
 
-const CLI_HELP_POINTER = "Run `akm --help` for usage.";
-
 /**
  * citty's `CLIError` carries its own stable `.code` (not exported in its
  * types, but present on every instance — see {@link isCittyCliError}'s doc
@@ -1035,7 +1044,8 @@ function toUsageErrorFromCliError(error: Error, rawArgs: readonly string[]): Usa
   const code = cittyCliErrorUsageCode(error as Error & { code?: string });
   const attempt = code === "UNKNOWN_COMMAND" ? findUnknownCommandAttempt(rawArgs) : undefined;
   const suggestion = attempt ? closestCommandMatch(attempt.attempted, attempt.candidates) : undefined;
-  const hint = suggestion ? `Did you mean \`${suggestion}\`? ${CLI_HELP_POINTER}` : CLI_HELP_POINTER;
+  const helpPointer = `Run \`${["akm", ...resolveCittyCommandPath(main, rawArgs), "--help"].join(" ")}\` for usage.`;
+  const hint = suggestion ? `Did you mean \`${suggestion}\`? ${helpPointer}` : helpPointer;
   // citty colorizes error.message with ANSI escapes even when stdout/stderr
   // is not a TTY. Strip them so the JSON envelope's `error` field is plain
   // text instead of embedding raw escape sequences.
@@ -1175,7 +1185,7 @@ export async function runCli(): Promise<void> {
         process.stdout.write(`${await renderSectionedRootHelp()}\n`);
       } else {
         const path = resolveCittyCommandPath(main, rawArgs);
-        await showUsage(withoutHiddenArgs(resolved) as CommandDef, buildUsageParentForPath(path) as CommandDef);
+        await showCommandUsage(resolved, path);
       }
       return;
     }

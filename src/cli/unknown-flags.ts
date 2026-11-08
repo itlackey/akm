@@ -137,6 +137,32 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
 }
 
 /**
+ * Flags STABILITY.md lists under "Gone / Use", checked before edit distance so
+ * the hint names the real replacement (`--shape` is not a typo of `--type`).
+ * `commands` limits an entry to those command paths; absent means every command.
+ */
+const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly string[] }> = [
+  { flag: "--shape", use: "`--detail agent` (was `--shape agent`) or `--detail brief` (was `--shape summary`)" },
+  {
+    flag: "--target",
+    use: "`--bundle`",
+    commands: [
+      "import",
+      "env create",
+      "env remove",
+      "secret set",
+      "proposal accept",
+      "proposal diff",
+      "proposal revert",
+    ],
+  },
+  { flag: "--run", use: "`akm improve report --run`", commands: ["improve"] },
+  { flag: "--since", use: "`akm improve report --since`", commands: ["improve"] },
+  { flag: "--config", use: "`--endpoint <url> --yes` and the other answer flags", commands: ["setup"] },
+  { flag: "--probe", use: "nothing (probing is the default; `--no-probe` runs offline)", commands: ["setup"] },
+];
+
+/**
  * The one unknown-flag rejection, shared by the short- and long-flag scans so
  * the user-facing error contract cannot drift between them. No explicit hint
  * when there is no suggestion — UNKNOWN_FLAG's canned hint (core/errors.ts)
@@ -146,6 +172,17 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
  * @param attempted  The spelling to edit-distance against `--long` candidates.
  */
 function throwUnknownFlag(shown: string, attempted: string, known: KnownArgs): never {
+  const command = known.path.join(" ");
+  const gone = GONE_FLAGS.find(
+    (entry) => entry.flag === attempted && (!entry.commands || entry.commands.includes(command)),
+  );
+  if (gone) {
+    throw new UsageError(
+      `Unknown flag "${shown}".`,
+      "UNKNOWN_FLAG",
+      `\`${gone.flag}\` is gone: use ${gone.use}. Run the command with \`--help\` to see its accepted flags.`,
+    );
+  }
   const threshold = Math.max(2, Math.ceil(attempted.length / 3));
   const suggestion = closestMatch(attempted, known.displayNames, threshold);
   throw new UsageError(

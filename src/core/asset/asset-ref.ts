@@ -9,21 +9,20 @@ import { UsageError } from "../errors";
 
 function validateName(name: string): void {
   if (!name) throw new UsageError("Empty asset name.", "MISSING_REQUIRED_ARGUMENT");
-  if (name.includes("\0")) throw new UsageError("Null byte in asset name.", "MISSING_REQUIRED_ARGUMENT");
-  if (/^[A-Za-z]:/.test(name)) throw new UsageError("Windows drive path in asset name.", "MISSING_REQUIRED_ARGUMENT");
+  if (name.includes("\0")) throw new UsageError("Null byte in asset name.", "PATH_ESCAPE_VIOLATION");
+  if (/^[A-Za-z]:/.test(name)) throw new UsageError("Windows drive path in asset name.", "PATH_ESCAPE_VIOLATION");
 
   const slashName = name.replace(/\\/g, "/");
   if (slashName === ".." || slashName.startsWith("../")) {
-    throw new UsageError("Path traversal in asset name.", "MISSING_REQUIRED_ARGUMENT");
+    throw new UsageError("Path traversal in asset name.", "PATH_ESCAPE_VIOLATION");
   }
   if (slashName.split("/").some((seg) => seg === "." || seg === "..")) {
-    throw new UsageError("Asset name cannot contain relative path segments.", "MISSING_REQUIRED_ARGUMENT");
+    throw new UsageError("Asset name cannot contain relative path segments.", "PATH_ESCAPE_VIOLATION");
   }
   const normalized = path.posix.normalize(slashName);
-  if (path.posix.isAbsolute(normalized))
-    throw new UsageError("Absolute path in asset name.", "MISSING_REQUIRED_ARGUMENT");
+  if (path.posix.isAbsolute(normalized)) throw new UsageError("Absolute path in asset name.", "PATH_ESCAPE_VIOLATION");
   if (normalized === ".." || normalized.startsWith("../")) {
-    throw new UsageError("Path traversal in asset name.", "MISSING_REQUIRED_ARGUMENT");
+    throw new UsageError("Path traversal in asset name.", "PATH_ESCAPE_VIOLATION");
   }
 }
 
