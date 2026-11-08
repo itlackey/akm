@@ -31,7 +31,7 @@ export const DISTILL_LESSON_UPDATE_JSON_SCHEMA: Record<string, unknown> = {
       type: "array",
       items: { type: "string" },
       description:
-        "Written before the body: each cause, step, number, name, limit or consequence the memory states and the lesson lacks, in the memory's own words with its figures and names. Empty when there is none.",
+        "Written before the body: each cause, step, number, limit or consequence the memory states and the lesson lacks, one short phrase each. Empty when there is none.",
     },
     decision: {
       type: "string",
@@ -95,7 +95,7 @@ export function buildLessonUpdatePrompt(memory: string, feedback: string[], cand
     "",
     "Pick the one existing lesson that already states the rule the memory gives. Write its whole body again with the new lines added:",
     "- Copy every existing line unchanged, in its place. Do not reword, shorten, reorder or drop any of them.",
-    "First list in new_facts each cause, step, number, name, limit or consequence the memory states and the lesson lacks, in the memory's own words with its figures and names: check every sentence of the memory against the lesson, and place each listed figure or name that belongs to the rule. The memory's own incident retold (what happened in one test, project or day) is not a new fact unless it carries one of these. Then add one line to the body for each new fact, keeping the memory's own numbers, names and dates, and say nothing the memory does not say.",
+    "First list in new_facts each cause, step, number, limit or consequence the memory states and the lesson lacks, one short phrase each: check every sentence of the memory against the lesson. The memory's own incident retold (what happened in one test, project or day) is not a new fact unless it carries one of these. Then add one line to the body for each new fact, keeping the memory's own numbers, names and dates, and say nothing the memory does not say.",
     "- If the memory contradicts a line of the lesson, answer none.",
     "- If no listed lesson states the memory's rule, or the memory adds nothing the lesson lacks, answer none.",
     "",
