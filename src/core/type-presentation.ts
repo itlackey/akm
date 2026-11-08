@@ -157,7 +157,7 @@ export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
     fragmentRef: false,
   },
   // `rule` (rules/) is a short bullet list of standing agent rules. It reads like
-  // knowledge (same renderer); search and curate lead with the applicable ones.
+  // knowledge (same renderer).
   rule: {
     label: "Rule",
     renderer: "knowledge-md",

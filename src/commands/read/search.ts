@@ -21,7 +21,6 @@ import { withStateDbTelemetry } from "../../core/state-db";
 import type { ScopeFilters } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
 import { type ProjectContext, searchLocal } from "../../indexer/search/db-search";
-import { parseRefPrefixQuery } from "../../indexer/search/fts-query";
 import {
   type AttributionProjection,
   getSearchHitAttribution,
@@ -41,7 +40,6 @@ import { TELEMETRY_BUSY_TIMEOUT_MS } from "../../storage/repositories/index-db";
 import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;
-const MAX_LIMIT = 200;
 
 function duplicateConceptWarnings(hits: SourceSearchHit[], defaultBundle?: string): string[] {
   const ownersByConcept = new Map<string, string[]>();
@@ -136,8 +134,8 @@ export async function akmSearch(input: {
   attributionProjection?: AttributionProjection;
   /**
    * Present: the call runs under project selection (`name` absent: no project). The applicable
-   * `rules/` assets (those naming the project, and shared ones) lead an untyped keyword search,
-   * counted in `limit`; other projects' rules are never returned.
+   * `rules/` assets are those naming the project and shared ones; other projects' rules are
+   * never returned.
    */
   project?: ProjectContext;
   /**
@@ -242,43 +240,6 @@ export async function akmSearch(input: {
           project: input.project,
           byUsage,
         });
-  const leadRules =
-    localResult && input.project && !byUsage && searchType === "any" && !parseRefPrefixQuery(query)
-      ? await searchLocal({
-          query: "",
-          searchType: "rule",
-          limit: MAX_LIMIT,
-          stashDir,
-          sources,
-          config,
-          filters,
-          prefer: normalizeScopeFilters(input.prefer),
-          since: input.since,
-          until: input.until,
-          includeProposed,
-          beliefFilter: belief,
-          restrictToSources: namedSourceNames !== undefined,
-          readOnly: input.readOnly,
-          project: input.project,
-        })
-      : undefined;
-  // Ordinary hits found before the rules lead: with none, the no-match tip stays.
-  const ordinaryFound = (localResult?.hits.length ?? 0) > 0;
-  if (localResult && leadRules) {
-    // Rules take at most half the page, so ordinary hits keep the rest.
-    const cap = Math.ceil(limit / 2);
-    const rules = leadRules.hits.slice(0, cap);
-    const lead = new Set(rules.map((hit) => hit.ref));
-    localResult.hits = [...rules, ...localResult.hits.filter((hit) => !lead.has(hit.ref))].slice(0, limit);
-    const left = leadRules.hits.length - rules.length;
-    if (left > 0) {
-      localResult.warnings = [
-        ...(localResult.warnings ?? []),
-        `${left}${leadRules.hits.length >= MAX_LIMIT ? "+" : ""} more rule${left === 1 ? "" : "s"} apply than the ${cap} shown (rules take at most half of --limit ${limit}). List them all with: akm search "" --type rule --limit ${MAX_LIMIT}`,
-      ];
-    }
-  }
-
   const registryResult =
     source === "local" ? undefined : await searchRegistry(query, { limit, registries: config.registries });
 
@@ -292,7 +253,7 @@ export async function akmSearch(input: {
         ? [`--by-usage lists local bundles and ignores --from ${parsedSource}.`]
         : []),
     ];
-    const hasResults = ordinaryFound;
+    const hasResults = localHits.length > 0;
     const response: SearchResponse = {
       schemaVersion: 1,
       bundleDir: stashDir,
@@ -518,7 +479,7 @@ function normalizeLimit(limit?: number): number {
   if (typeof limit !== "number" || Number.isNaN(limit) || limit <= 0) {
     return DEFAULT_LIMIT;
   }
-  return Math.min(Math.floor(limit), MAX_LIMIT);
+  return Math.min(Math.floor(limit), 200);
 }
 
 /**

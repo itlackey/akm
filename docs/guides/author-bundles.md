@@ -259,8 +259,8 @@ by ref.
 
 `rules/` holds the short rules an agent should follow for a project: a Markdown file
 per topic, nested folders allowed, each a bullet list of imperative, checkable lines.
-Rules are standing context. In `akm search` and `akm curate`, the rules that apply lead
-the results whatever the query says, so keep them to a handful of lines.
+Rules are standing context: the AKM agent plugins load the applicable ones at session
+start and after compaction, so keep them to a handful of lines.
 
 ```markdown
 ---
@@ -289,13 +289,9 @@ To list the rules that apply: `akm search "" --type rule --limit 200 --detail no
 `akm show <ref>` to read one. `akm search "rules/"` is a plain path listing that also
 returns other files and stops at 20.
 
-Rules lead `akm search` (untyped, not a `rules/` prefix query) and `akm curate`, ahead of
-the ordinary hits, but take at most half of `--limit` (`ceil(limit/2)`): with `--limit 4`
-and five applicable rules, two rules and two ordinary hits are returned, and a warning says
-how many rules were left out and how to list them. A query that matches nothing keeps its
-no-match tip. Rules follow the same `--from`, `--filter` and disabled-bundle selection as every
-asset, and an explicit `--type` other than `any` turns the leading off. `curate --pack`
-packs hits in result order, so rules come first.
+Rules are ordinary search hits and follow the same `--from`, `--filter` and
+disabled-bundle selection as every asset. Agents without a plugin list them with the
+command above.
 
 ## Bundle Structure Tips
 

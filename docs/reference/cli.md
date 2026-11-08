@@ -1847,15 +1847,11 @@ folder deeper down (`docs/rules/`) is not. A rule applies when its frontmatter `
 equals the value the project in force writes as `project` (its `write.metadata.project`,
 default its name) or it has none (shared); with no project, only shared rules apply. If the
 selection's own `project` filter is in force, that filter decides and the comparison is
-skipped. In an untyped `akm search` (not a conceptId-prefix query) and in `akm curate` /
-`curate()`, the applicable rules lead the hits, whatever the query, in the order of the
-listing below. They take at most `ceil(limit/2)` of the page, so ordinary hits keep the
-rest; a query that matches nothing keeps its no-match tip beside them. Rules beyond the cap
-are dropped with a warning that says how many and how to list them. They follow `--from`,
-`--filter`, `--since`/`--until`, disabled bundles and `--belief` like any asset. A rule of
-another project is never returned while a project is selected, by any search or curate,
-including `--type rule`. An explicit `--type` other than `any` turns the leading off, and
-`--pack` packs in result order.
+skipped. Rules are ordinary search hits: nothing is added to a page for them. They follow
+`--from`, `--filter`, `--since`/`--until`, disabled bundles and `--belief` like any asset. A
+rule of another project is never returned while a project is selected, by any search or
+curate, including `--type rule`. The AKM agent plugins load the applicable rules at session
+start and after compaction; an agent without a plugin lists them with the command below.
 
 **Listing contract (for plugins):** `akm search "" --type rule --limit 200 --detail normal`
 returns exactly the applicable rules (honouring `--project`, the working directory, `--from`

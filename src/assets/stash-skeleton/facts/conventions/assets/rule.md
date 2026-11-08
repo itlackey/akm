@@ -13,7 +13,7 @@ updated: 2026-11-08
 
 # Rule authoring conventions
 
-A rule is a short bullet list of things an agent must do for a project. Rules under `rules/` lead `akm search` and `akm curate` for the project they name, whatever the query, so every line costs context on every task.
+A rule is a short bullet list of things an agent must do for a project. The AKM agent plugins load the applicable rules at session start and after compaction, so every line costs context on every task.
 
 - One rule per bullet, imperative, checkable ("Run the focused tests for changed behavior"). No background or rationale; put that in knowledge.
 - Keep a file to a handful of bullets and one topic. Split by topic (`rules/acme/testing.md`), not by length.
