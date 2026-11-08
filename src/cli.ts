@@ -463,19 +463,19 @@ const hintsCommand = defineCommand({
   meta: {
     name: "hints",
     description:
-      "Print agent instructions on how to use akm — the complete guide by default; pass --detail brief for the short one",
+      "Print agent instructions on how to use akm — the short guide by default; pass --detail full for the complete one",
   },
   args: {
     detail: {
       type: "string",
       description:
-        "Hints detail level (brief|normal|full). `brief` prints the short guide; `normal`/`full` print the complete guide.",
-      default: "normal",
+        "Hints detail level (brief|normal|full). `brief` (default) prints the short guide; `normal`/`full` print the complete guide.",
+      default: "brief",
     },
   },
   run({ args }) {
     return runWithJsonErrors(() => {
-      const detail = parseDetailLevel(args.detail as string | undefined) ?? "normal";
+      const detail = parseDetailLevel(args.detail as string | undefined) ?? "brief";
       process.stdout.write(detail === "brief" ? EMBEDDED_HINTS : EMBEDDED_HINTS_FULL);
     });
   },
@@ -957,7 +957,7 @@ async function renderSectionedRootHelp(): Promise<string> {
       "`akm search` output rather than synthesizing them.",
     "",
     "Run `akm help <command>` or `akm <command> --help` for details on any command.",
-    "Agents: run `akm hints` for the complete guide, or `akm hints --detail brief` for the short one.",
+    "Agents: run `akm hints` for the short guide, or `akm hints --detail full` for the complete one.",
   ].join("\n");
   return [head, "", renderCommandSections(), "", epilogue].join("\n");
 }

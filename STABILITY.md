@@ -17,7 +17,7 @@ spelling is in the CHANGELOG entry and the CLI reference.
 
 | Gone | Use |
 | --- | --- |
-| `akm help agents` | `akm hints` (`--detail brief` for the short guide) |
+| `akm help agents` | `akm hints` (`--detail full` for the complete guide) |
 | `--shape agent` | `--detail agent` |
 | `--shape summary` | `--detail brief` (it only had a projection on `akm show`) |
 | `--target` on `import`, `env create`, `env remove`, `secret set`, `proposal accept`, `proposal diff`, `proposal revert` | `--bundle` |
@@ -151,7 +151,7 @@ covers beyond the table.
 | `akm proposal new` | Evolving | Former top-level `akm propose`. |
 | `akm help` | Stable | |
 | `akm help migrate` | Stable | Only renders release notes. |
-| `akm hints` | Stable | Format-exempt agent guide; `--detail brief` selects the compact version. |
+| `akm hints` | Stable | Format-exempt agent guide; the brief guide is the default; `--detail full` selects the complete version. |
 | `akm completions` | Stable | Format-exempt (emits shell script source). |
 | `akm env list` | Stable | Read-and-inject surface. |
 | `akm env path` | Stable | Read-and-inject surface. |

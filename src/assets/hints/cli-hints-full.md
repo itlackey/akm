@@ -5,8 +5,9 @@ You have access to a searchable library of scripts, skills, commands, agents, kn
 ## Search
 
 ```sh
-akm search "<query>"                          # Search all sources
+akm search "<query>"                          # Search local sources (or the project's `from`)
 akm curate "<task>"                          # Curate the best matches for a task
+akm curate "<task>" --pack <tokens>           # Return the hits' content as one token-budgeted bundle
 akm search "<query>" --type workflow          # Filter by asset type
 akm search "<query>" --from all                # Also search registries
 akm search "<query>" --from registry           # Search registries only
@@ -20,7 +21,7 @@ akm search "team-catalog//"                   # List every item in one bundle
 | Flag | Values | Default |
 | --- | --- | --- |
 | `--type` | free-form. Built-ins: `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `lesson`, `task`, `session`, `fact`, `env`, `secret`, `instruction` — plus any adapter-defined type (`website`, `wiki-source`, a wiki `pageKind`). Exact match; an unknown type returns no hits. | `any` |
-| `--from` | `local`, `registry`, `all`, or a configured bundle name | `local` |
+| `--from` | `local`, `registry`, `all`, or a configured bundle name | `local` (or the project's `from`) |
 | `--limit` | number | `20` |
 | `--format` | `json`, `jsonl`, `text`, `yaml`, `md` | `json` |
 | `--detail` | `brief`, `normal`, `full`, `agent` (`agent`: search, curate and show only) | `brief` |
@@ -44,6 +45,7 @@ Combine search + follow-up hints into a dense summary for a task or prompt.
 akm curate "plan a release"                   # Pick top matches across asset types
 akm curate "deploy a Bun app" --limit 3       # Keep the summary shorter
 akm curate "review architecture" --type workflow # Restrict to one asset type
+akm curate "plan a release" --pack 4000       # Pack the hits' content into one blob of at most 4000 tokens
 ```
 
 ## Show
@@ -331,7 +333,7 @@ akm upgrade --check                           # Report pending CLI and plugin up
 akm upgrade --next                            # Follow prereleases (@next); OpenCode needs "akm-opencode@next" (or "akm-opencode-v2@next" on OpenCode 2) in its plugin list
 akm help migrate 0.6.0                        # Print migration notes for a release (or: latest)
 akm help bundle                               # Print options and subcommands for one command
-akm hints                                     # Print this complete agent guide (--detail brief for the short one)
+akm hints --detail full                       # Print this complete agent guide (plain akm hints prints the short one)
 akm completions                               # Print bash completion script
 akm completions --install                     # Install completions
 ```
@@ -466,6 +468,7 @@ Exit codes:
 | 2 | Usage / bad input | `UsageError` |
 | 4 | Health warning (`akm health` only) | — |
 | 70 | Internal / unclassified error | unexpected throw |
+| 75 | Transient: retry shortly | `TransientError` (another akm process holds a lock) |
 | 78 | Configuration error | `ConfigError` |
 
 To detect failure reliably, check either:
