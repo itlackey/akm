@@ -294,7 +294,7 @@ describe("curate", () => {
       const out = JSON.parse(
         (await runCliCapture(["search", "widget", "--project", "full", flag, value, "--format", "json"])).stdout,
       );
-      const effective = { ...base, ...(flag === "--from" ? { from: "all" } : {}) };
+      const effective: Record<string, unknown> = { ...base, ...(flag === "--from" ? { from: "all" } : {}) };
       if (flag === "--filter") effective.filters = { project: ["other"] };
       if (flag === "--prefer") effective.prefer = { team: ["t"] };
       expect(out.project).toEqual(effective);
