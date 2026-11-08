@@ -219,18 +219,20 @@ export function withAssetMutationLeaseSync<T>(purpose: string, run: () => T): T 
       lease = tryAcquireAssetMutationLease(lockPath, purpose);
       if (!lease) {
         const waitedMs = Date.now() - startedAt;
+        // #956: the sync path used to wait up to 10 minutes with zero
+        // progress feedback. Mirror the async path's 15s onWait cadence, but
+        // actually warn by default — no caller wires onWait on this path.
+        // Announce before the timeout check: a starved iteration that
+        // overshoots maxWaitMs must still have reported the wait.
+        if (waitedMs - lastWaitNoticeMs >= waitNoticeIntervalMs) {
+          warn(`waiting for ${describeAssetMutationHolder(lockPath)} — ${Math.round(waitedMs / 1000)}s`);
+          lastWaitNoticeMs = waitedMs;
+        }
         if (waitedMs >= maxWaitMs) {
           throw new TransientError(
             `timed out waiting for asset mutation lease for ${purpose}`,
             "ASSET_MUTATION_LEASE_HELD",
           );
-        }
-        // #956: the sync path used to wait up to 10 minutes with zero
-        // progress feedback. Mirror the async path's 15s onWait cadence, but
-        // actually warn by default — no caller wires onWait on this path.
-        if (waitedMs - lastWaitNoticeMs >= waitNoticeIntervalMs) {
-          warn(`waiting for ${describeAssetMutationHolder(lockPath)} — ${Math.round(waitedMs / 1000)}s`);
-          lastWaitNoticeMs = waitedMs;
         }
         sleepSync(ASSET_MUTATION_WAIT_MS);
       }
