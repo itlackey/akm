@@ -231,6 +231,33 @@ describe("asset mutation lease", () => {
       ).toBe(true);
     });
 
+    test("emits a notice even when a slow wait iteration overshoots maxWaitMs", () => {
+      // Simulates a starved runner: the first sleep returns only after the
+      // whole bound has elapsed. The wait must still have announced itself.
+      const lockPath = getIndexWriterLockPath();
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+      fs.writeFileSync(
+        lockPath,
+        JSON.stringify({ purpose: "source-update", pid: process.ppid, startedAt: "2026-01-01T00:00:00.000Z" }),
+        "utf8",
+      );
+      _setAssetMutationLeaseSyncTimingForTests({ maxWaitMs: 150, waitNoticeIntervalMs: 20 });
+      const notices: string[] = [];
+      _setWarnSinkForTests((level, args) => {
+        if (level === "warn") notices.push(args.map(String).join(" "));
+      });
+
+      const realNow = Date.now;
+      let calls = 0;
+      Date.now = () => (calls++ === 0 ? 1_000_000 : 1_000_000 + 1_000);
+      try {
+        expect(() => withAssetMutationLeaseSync("waiter", () => {})).toThrow(TransientError);
+      } finally {
+        Date.now = realNow;
+      }
+      expect(notices.length).toBeGreaterThan(0);
+    });
+
     test("emits no notice when the lease is free", () => {
       _setAssetMutationLeaseSyncTimingForTests({ maxWaitMs: 5_000, waitNoticeIntervalMs: 15_000 });
       const notices: string[] = [];

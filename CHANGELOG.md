@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The synchronous asset-mutation lease wait now announces itself before checking its timeout, so a wait that outlasts the notice interval always emits at least one notice even when a starved iteration overshoots the bound (fixes a flaky test on slow CI runners).
 - curate: `--pack` honours `--format`: jsonl is one record per line (only for the pack; other commands stay one line), yaml is real, md is the packed markdown (`## <ref>` per item, with the project line), json is unchanged. `config path` is format-exempt, so `--format json` now gets the usual "format ignored" warning instead of being silently dropped (#1473).
 - search and curate report the project as applied: `project.from`, `filters` and `prefer` show the values the run used after `--from`/`--filter`/`--prefer` replaced the project's by kind, not the configured defaults, in the library `search()` of `akm-cli/workspace` too. Output with no project is unchanged (#1472).
 - bundle update: refusing a writable git checkout with local changes now names the first five changed paths, and a failing `git status` is reported as a git error instead of "uncommitted changes" (#1477).
