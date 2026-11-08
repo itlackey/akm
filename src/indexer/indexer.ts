@@ -47,11 +47,12 @@ import {
   openReadonlyExistingDatabase,
 } from "../storage/repositories/index-connection";
 import {
+  type DeletedEntry,
   deleteEntriesByBundle,
   deleteEntriesByDirAndBundle,
   deleteEntriesByDirExceptRefs,
   deleteEntriesByIds,
-  deleteUsageEventsByEntryIds,
+  deleteUsageEventsForEntries,
   findEntryIdByRef,
   getAllEntries,
   getEmbeddableEntryCount,
@@ -922,8 +923,8 @@ function removalsFirst(records: DirRecord[]): DirRecord[] {
   return [...records.filter((record) => record.remove), ...records.filter((record) => !record.remove)];
 }
 
-function addEntryIds(target: Set<number>, ids: number[]): void {
-  for (const id of ids) target.add(id);
+function addDeletedEntries(target: Map<number, DeletedEntry>, entries: DeletedEntry[]): void {
+  for (const entry of entries) target.set(entry.id, entry);
 }
 
 function groupFileContextsByDir(fileContexts: FileContext[]): Map<string, FileContext[]> {
@@ -1361,7 +1362,7 @@ function persistDirRecords(
   bundleByRoot: ReadonlyMap<string, { bundleId: string; componentId: string; adapterId: string }>,
   maxInputTokens: number,
 ): void {
-  const deletedUsageEntryIds = new Set<number>();
+  const deletedEntries = new Map<number, DeletedEntry>();
   const legacyMoves: LegacyRefMove[] = [];
   const findPersisted = db.prepare("SELECT id, content_hash, file_path, adapter_id FROM entries WHERE item_ref = ?");
 
@@ -1383,10 +1384,10 @@ function persistDirRecords(
       const bundle = bundleByRoot.get(path.resolve(currentStashDir));
       if (!bundle) throw new Error(`Missing bundle provenance for indexed source ${currentStashDir}`);
       if (remove) {
-        const removedIds = deleteEntriesByDirAndBundle(db, dirPath, bundle.bundleId, {
+        const removed = deleteEntriesByDirAndBundle(db, dirPath, bundle.bundleId, {
           cleanupUsageEvents: false,
         });
-        addEntryIds(deletedUsageEntryIds, removedIds);
+        addDeletedEntries(deletedEntries, removed);
         deleteIndexDirState(db, dirPath);
         continue;
       }
@@ -1500,8 +1501,8 @@ function persistDirRecords(
       // an empty kept-set this deletes every row for the dir — the exact net
       // effect of the old unconditional `deleteEntriesByDir`, minus the id churn.
       // (A source whose walk was incomplete never reaches this point.)
-      addEntryIds(
-        deletedUsageEntryIds,
+      addDeletedEntries(
+        deletedEntries,
         deleteEntriesByDirExceptRefs(db, dirPath, bundle.bundleId, keptItemRefs, { cleanupUsageEvents: false }),
       );
 
@@ -1545,7 +1546,12 @@ function persistDirRecords(
   });
 
   insertTransaction();
-  deleteUsageEventsByEntryIds([...deletedUsageEntryIds]);
+  // A ref deleted from one directory may have been re-inserted by another in
+  // this same run: only refs that no longer exist lose their events.
+  const refStillIndexed = db.prepare("SELECT 1 FROM entries WHERE item_ref = ?");
+  deleteUsageEventsForEntries(
+    [...deletedEntries.values()].filter((entry) => refStillIndexed.get(entry.itemRef) == null),
+  );
   try {
     rewriteLegacyStateRefs(legacyMoves);
   } catch (error) {

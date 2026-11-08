@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Every akm lock file (config, secret, lockfile, scheduler, run, extract, index and OpenCode runtime) now works on filesystems without hard links, such as Azure Files SMB, where `akm migrate apply` failed with `ENOTSUP` from `link` (#1505). When the hard link is refused, the lock is created with an exclusive `O_EXCL` create instead; exclusion and stale-lock recovery are unchanged, and an empty lock younger than two seconds is left alone as one still being written.
+- Deleting an asset now also deletes its usage events recorded since the last index (those with no `entry_id` yet), so a new asset at the same ref no longer inherits them (#1509). Refs that still exist after the index keep their events: `akm mv` re-keys and same-ref re-inserts. A file moved on disk changes its ref, so its unlinked events go with the old ref.
 - `akm sync` no longer rejects unchanged files on a mount where Git runs with `core.filemode=false` (SMB/CIFS) with "Exact Git publication path changed". The exact-path snapshot and its validation honour the effective `core.filemode`: a tracked file keeps its Git mode, a new file is `100644`; with `core.filemode=true` executable-bit changes are still tracked (#1500).
 - `akm sync` passes the bundle's configured Git `credential` to both the fetch and the push, including a push of earlier unpushed commits, through the child environment only (never the URL, Git config or arguments). Without a credential, Git helpers and SSH are unchanged (#1501).
 - An explicit `akm sync` commits every unignored change inside the bundle instead of only the asset directories and `.akm`, so root files, custom directories, attachments and edits to already tracked files are no longer left out, and a lone edit to a root file no longer reports "nothing to commit". Nested bundles stay inside their content root, ignored files and nested repositories are left out, staged work is never swept in, and writes with an explicit path list keep their narrow scope. (#1502).
@@ -20,7 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - `ensureIndex` in blocking mode (improve) runs an incremental index and lets its per-file fingerprints decide, so an edit in any bundle, not only the primary stash, is picked up.
-- Search, curate and nested command/persona read usage events record `entry_ref` only; `entry_id` is null until the next index fills it from `entry_ref`. Utility scores aggregate by `entry_ref`, with the same result as before for existing data. Events recorded since the last index survive the deletion of their entry until the next relink, so a later asset at the same ref can inherit them until the 90-day purge.
+- Search, curate and nested command/persona read usage events record `entry_ref` only; `entry_id` is null until the next index fills it from `entry_ref`. Utility scores aggregate by `entry_ref`, with the same result as before for existing data.
 - `ensureIndexDurationMs` in the improve result is now set on every non-dry run, because blocking mode always runs the incremental index.
 
 ## [0.10.261112] - 2026-11-07

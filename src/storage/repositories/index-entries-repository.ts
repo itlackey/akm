@@ -453,11 +453,17 @@ function rowsInDirectory(db: Database, dirPath: string, bundleId?: string): Arra
   );
 }
 
+/** An entry that was just deleted: its id and the durable ref its usage events were recorded under. */
+export interface DeletedEntry {
+  id: number;
+  itemRef: string;
+}
+
 function deleteEntryRows(
   db: Database,
-  rows: Array<{ id: number }>,
+  rows: Array<{ id: number; item_ref: string }>,
   options: { cleanupUsageEvents?: boolean } = {},
-): number[] {
+): DeletedEntry[] {
   if (rows.length === 0) return [];
   deleteRelatedRows(db, rows, options);
   for (let i = 0; i < rows.length; i += SQLITE_CHUNK_SIZE) {
@@ -465,7 +471,7 @@ function deleteEntryRows(
     const placeholders = chunk.map(() => "?").join(",");
     db.prepare(`DELETE FROM entries WHERE id IN (${placeholders})`).run(...chunk.map((row) => row.id));
   }
-  return rows.map((row) => row.id);
+  return rows.map((row) => ({ id: row.id, itemRef: row.item_ref }));
 }
 
 export function deleteEntriesByDirAndBundle(
@@ -473,14 +479,17 @@ export function deleteEntriesByDirAndBundle(
   dirPath: string,
   bundleId: string,
   options: { cleanupUsageEvents?: boolean } = {},
-): number[] {
+): DeletedEntry[] {
   return db.transaction(() => deleteEntryRows(db, rowsInDirectory(db, dirPath, bundleId), options))();
 }
 
 /** Delete every entry and child row belonging to one canonical bundle. */
 export function deleteEntriesByBundle(db: Database, bundleId: string): void {
   db.transaction(() => {
-    const rows = db.prepare("SELECT id FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{ id: number }>;
+    const rows = db.prepare("SELECT id, item_ref FROM entries WHERE bundle_id = ?").all(bundleId) as Array<{
+      id: number;
+      item_ref: string;
+    }>;
     deleteEntryRows(db, rows);
   })();
 }
@@ -535,7 +544,7 @@ export function deleteEntriesByDirExceptRefs(
   bundleId: string,
   keepRefs: ReadonlySet<string>,
   options: { cleanupUsageEvents?: boolean } = {},
-): number[] {
+): DeletedEntry[] {
   return db.transaction(() => {
     const doomed = rowsInDirectory(db, dirPath, bundleId).filter((row) => !keepRefs.has(row.item_ref));
     return deleteEntryRows(db, doomed, options);
@@ -549,6 +558,20 @@ function deleteRelatedRows(
 ): void {
   if (ids.length === 0) return;
   const numericIds = ids.map((r) => r.id);
+
+  // Read the refs before the rows go: usage events recorded since the last
+  // index carry only `entry_ref`, and the entry is the only place that names it.
+  const deleted: DeletedEntry[] = [];
+  if (options.cleanupUsageEvents !== false) {
+    for (let i = 0; i < numericIds.length; i += SQLITE_CHUNK_SIZE) {
+      const chunk = numericIds.slice(i, i + SQLITE_CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(",");
+      const found = db
+        .prepare(`SELECT id, item_ref AS itemRef FROM entries WHERE id IN (${placeholders})`)
+        .all(...chunk) as DeletedEntry[];
+      deleted.push(...found);
+    }
+  }
 
   // FTS and declared links are part of the canonical mutation boundary, not a
   // caller-maintained dirty queue. Delete them before the parent row inside
@@ -574,17 +597,27 @@ function deleteRelatedRows(
   // usage_events lives in state.db, outside this transaction. Index persistence
   // disables this cleanup and runs it only after its index.db transaction
   // commits; standalone delete callers retain the immediate behavior.
-  if (options.cleanupUsageEvents !== false) deleteUsageEventsByEntryIds(numericIds);
+  if (options.cleanupUsageEvents !== false) deleteUsageEventsForEntries(deleted);
 }
 
-export function deleteUsageEventsByEntryIds(entryIds: number[]): void {
-  if (entryIds.length === 0 || !fs.existsSync(getStateDbPath())) return;
+/**
+ * Delete the usage events of deleted entries: those linked by `entry_id`, and
+ * those not yet relinked (`entry_id IS NULL`) that carry the entry's `entry_ref`.
+ * Callers pass only entries whose ref no longer exists after their operation.
+ */
+export function deleteUsageEventsForEntries(entries: DeletedEntry[]): void {
+  if (entries.length === 0 || !fs.existsSync(getStateDbPath())) return;
   bestEffort(() => {
     withStateDb((stateDb) => {
-      for (let i = 0; i < entryIds.length; i += SQLITE_CHUNK_SIZE) {
-        const chunk = entryIds.slice(i, i + SQLITE_CHUNK_SIZE);
+      for (let i = 0; i < entries.length; i += SQLITE_CHUNK_SIZE) {
+        const chunk = entries.slice(i, i + SQLITE_CHUNK_SIZE);
         const placeholders = chunk.map(() => "?").join(",");
-        stateDb.prepare(`DELETE FROM usage_events WHERE entry_id IN (${placeholders})`).run(...chunk);
+        stateDb
+          .prepare(`DELETE FROM usage_events WHERE entry_id IN (${placeholders})`)
+          .run(...chunk.map((entry) => entry.id));
+        stateDb
+          .prepare(`DELETE FROM usage_events WHERE entry_id IS NULL AND entry_ref IN (${placeholders})`)
+          .run(...chunk.map((entry) => entry.itemRef));
       }
     });
   }, "delete usage_events (state.db) for entries");

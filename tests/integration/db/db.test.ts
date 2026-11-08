@@ -13,7 +13,7 @@ import {
 } from "../../../src/storage/repositories/index-connection";
 import {
   deleteEntriesByDirAndBundle,
-  deleteUsageEventsByEntryIds,
+  deleteUsageEventsForEntries,
   findEntryIdByRef,
   getAllEntries,
   getEmbeddableEntryCount,
@@ -378,10 +378,10 @@ describe("Entry CRUD", () => {
       });
       afterRollback.close();
 
-      const deletedIds = deleteEntriesByDirAndBundle(db, "/handoff", "test-bundle", {
+      const deleted = deleteEntriesByDirAndBundle(db, "/handoff", "test-bundle", {
         cleanupUsageEvents: false,
       });
-      deleteUsageEventsByEntryIds(deletedIds);
+      deleteUsageEventsForEntries(deleted);
       const afterCommit = openStateDatabase();
       expect(afterCommit.prepare("SELECT COUNT(*) AS count FROM usage_events WHERE entry_id = ?").get(entryId)).toEqual(
         {
