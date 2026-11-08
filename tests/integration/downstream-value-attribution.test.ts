@@ -104,6 +104,15 @@ function writeIndexFixture(): void {
     "inferred: true\nsource: memories/parent\ndescription: direct-child-needle\ntags: [derived-insight]",
     "Primary derived body.",
   );
+  // A twin whose parent does not match its query: the twin is the only hit, so exposure is "direct".
+  writeAsset(storage.stashDir, "memories", "solo", "type: memory", "Solo parent body.");
+  writeAsset(
+    storage.stashDir,
+    "memories",
+    "solo.derived",
+    "inferred: true\nsource: memories/solo\ndescription: solodirecttwinneedle",
+    "Solo derived body.",
+  );
   writeAsset(
     storage.stashDir,
     "knowledge",
@@ -153,14 +162,14 @@ function clearUsageRows(): void {
 
 describe("downstream value attribution", () => {
   test("persists MI direct and parent-surface exposure without adding attribution to search result payloads", async () => {
-    const direct = await akmSearch({ query: "direct-child-needle", limit: 10 });
+    const direct = await akmSearch({ query: "solodirecttwinneedle", limit: 10 });
     const surface = await akmSearch({ query: "surface-parent-needle", limit: 10 });
 
-    expect(metadataFor("direct-child-needle", "stash//memories/parent.derived")).toEqual({
+    expect(metadataFor("solodirecttwinneedle", "stash//memories/solo.derived")).toEqual({
       downstreamAttribution: {
         version: 1,
         control: false,
-        memoryInference: { exposure: "direct", childRef: "stash//memories/parent.derived" },
+        memoryInference: { exposure: "direct", childRef: "stash//memories/solo.derived" },
       },
     });
     expect(metadataFor("surface-parent-needle", "stash//memories/parent")).toEqual({
@@ -275,12 +284,12 @@ describe("downstream value attribution", () => {
 
   test("final curate selection retains attribution and audit source without a nested show row", async () => {
     const searchResponse = await akmSearch({
-      query: "direct-child-needle",
+      query: "solodirecttwinneedle",
       limit: 10,
       skipLogging: true,
       eventSource: "audit",
     });
-    await akmCurate({ query: "direct-child-needle", limit: 1, searchResponse, eventSource: "audit" });
+    await akmCurate({ query: "solodirecttwinneedle", limit: 1, searchResponse, eventSource: "audit" });
 
     const rows = usageRows();
     const selected = rows.filter((row) => row.event_type === "curate" && row.entry_ref !== null);
@@ -288,7 +297,7 @@ describe("downstream value attribution", () => {
     expect(selected[0]?.source).toBe("audit");
     expect(selected[0]?.metadata ? JSON.parse(selected[0].metadata) : undefined).toMatchObject({
       downstreamAttribution: {
-        memoryInference: { exposure: "direct", childRef: "stash//memories/parent.derived" },
+        memoryInference: { exposure: "direct", childRef: "stash//memories/solo.derived" },
       },
     });
     expect(rows.filter((row) => row.event_type === "show")).toHaveLength(0);

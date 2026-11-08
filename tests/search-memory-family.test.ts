@@ -96,6 +96,14 @@ describe("akmSearch memory families", () => {
     expect(await search(stash, {})).toEqual(["alpha.derived", "alpha-old.derived"]);
   });
 
+  test("an explicit belief all asks for every record: parent and twin both returned", async () => {
+    const stash = await index((s) => {
+      writeMemory(s, "alpha", {}, "gateway gateway notes");
+      writeMemory(s, "alpha.derived", twin("alpha"), "gateway lesson");
+    });
+    expect((await search(stash, { belief: "all" })).sort()).toEqual(["alpha", "alpha.derived"]);
+  });
+
   test("twin alone matching is kept", async () => {
     const stash = await index((s) => {
       writeMemory(s, "alpha", {}, "unrelated words only");

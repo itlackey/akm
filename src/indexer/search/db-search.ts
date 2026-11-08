@@ -454,7 +454,7 @@ type HydratedEntry = NonNullable<ReturnType<typeof getEntryById>> & { id: number
  * A memory and the `.derived` twin memory-inference wrote beside it are one
  * family and take one slot: the twin is skipped when its parent is kept, and
  * a parent that arrives after its twin takes the place of the first twin and drops the others. Twins of one parent do not collapse into each other. A twin whose
- * parent is not a hit stays. The parent's `expandTo` still points at the twin.
+ * parent is not a hit stays. Only a current-belief search collapses; `--belief all` and `historical` ask for every record. The parent's `expandTo` still points at the twin.
  */
 function selectFusedEntries(
   db: Database,
@@ -485,7 +485,7 @@ function selectFusedEntries(
         if (seenContent.has(content)) continue;
         seenContent.add(content);
       }
-      if (row.entry.type === "memory") {
+      if (row.entry.type === "memory" && filterOptions.beliefFilter === "current") {
         const twin = Boolean(row.entry.derivedFrom);
         const key = `${row.bundleId}\0${row.entry.derivedFrom ?? row.conceptId}`;
         const family = families.get(key) ?? { parent: false, twins: [] };
