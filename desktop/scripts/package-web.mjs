@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { releaseRefusal } from "./release-guard.mjs";
 
 /** The published package name; the one place to change it. */
-const PACKAGE_NAME = "@itlackey/akm-ui";
+const PACKAGE_NAME = "akm-web";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const release = process.argv.includes("--release");
@@ -26,7 +26,7 @@ if (release) {
   const refusal = releaseRefusal({ dirty, core });
   if (refusal) throw new Error(refusal);
 }
-const stage = await mkdtemp(path.join(os.tmpdir(), "akm-ui-package-"));
+const stage = await mkdtemp(path.join(os.tmpdir(), "akm-web-package-"));
 await cp(path.join(root, "build"), path.join(stage, "build"), { recursive: true });
 await cp(path.join(root, "server"), path.join(stage, "server"), { recursive: true });
 // Source maps would only add weight; the package is not debugged from its tarball.
@@ -45,11 +45,11 @@ await writeFile(
     {
       name: PACKAGE_NAME,
       version,
-      description: "AKM's web interface for a server or container, started with akm-ui.",
+      description: "AKM's web interface for a server or container, started with akm-web.",
       license: "MPL-2.0",
       type: "module",
       repository: { type: "git", url: "git+https://github.com/itlackey/akm.git", directory: "desktop" },
-      bin: { "akm-ui": "server/server.mjs" },
+      bin: { "akm-web": "server/server.mjs" },
       dependencies: { "akm-cli": version, "jsonc-parser": manifest.dependencies["jsonc-parser"] },
       engines: { node: manifest.engines.node },
     },
@@ -71,7 +71,7 @@ AKM's web interface for a server or container. It manages the library of the use
 
 \`\`\`sh
 npm install -g ${PACKAGE_NAME}
-akm-ui --host 0.0.0.0 --port 4444 --origin http://my-server:4444
+akm-web --host 0.0.0.0 --port 4444 --origin http://my-server:4444
 \`\`\`
 
 It prints one JSON line with the \`url\` to open; that URL carries the session token. Anyone with the token can edit

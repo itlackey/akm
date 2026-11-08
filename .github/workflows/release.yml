@@ -276,10 +276,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "v$VERSION" desktop/dist/* --clobber
 
-  # The web process alone, for servers and containers (`akm-ui`). Independent of the Desktop installers: nothing needs
+  # The web process alone, for servers and containers (`akm-web`). Independent of the Desktop installers: nothing needs
   # this job and it needs only `release`, so its failure is visible but never blocks the installer uploads. A dry run
   # builds the package and publishes nothing.
-  akm-ui:
+  akm-web:
     needs: release
     if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-latest
@@ -309,16 +309,16 @@ jobs:
           name: akm-cli
           path: ${{ runner.temp }}/engine
 
-      - name: Build the akm-ui package
+      - name: Build the akm-web package
         run: |
           cd desktop
           node scripts/core.mjs --tarball "$RUNNER_TEMP/engine/akm-cli-$VERSION.tgz"
           bun install --frozen-lockfile --ignore-scripts --force
           npm run build
-          echo "STAGE=$(node scripts/package-ui.mjs --release | tail -1 | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).stage')" >> "$GITHUB_ENV"
+          echo "STAGE=$(node scripts/package-web.mjs --release | tail -1 | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).stage')" >> "$GITHUB_ENV"
 
       # npm trusted publishing, as for akm-cli: the job's OIDC token authenticates; no npm token is stored.
-      - name: Publish akm-ui to npm
+      - name: Publish akm-web to npm
         if: ${{ !inputs.dry_run }}
         run: |
           NAME=$(node -p 'require(process.argv[1]).name' "$STAGE/package.json")

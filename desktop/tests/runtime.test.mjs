@@ -12,6 +12,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createFixture } from "../scripts/fixture.mjs";
+import { shouldOpenBrowser } from "../server/server.mjs";
 
 const appRoot = process.env.AKM_DESKTOP_TEST_APP_ROOT ?? fileURLToPath(new URL("..", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -372,4 +373,18 @@ test("a wildcard --host without --origin exits non-zero and says why", async () 
   const [code] = await new Promise((resolve) => child.once("exit", (...exit) => resolve(exit)));
   assert.notEqual(code, 0);
   assert.match(stderr, /--origin/);
+});
+
+test("the browser opens only for a person at a terminal on a machine with a screen", () => {
+  const base = { env: { DISPLAY: ":0" }, platform: "linux", hasParent: false, isTTY: true, exists: () => false };
+  assert.equal(shouldOpenBrowser(base), true);
+  assert.equal(shouldOpenBrowser({ ...base, env: {}, platform: "darwin" }), true, "macOS needs no display variable");
+  assert.equal(shouldOpenBrowser({ ...base, env: { WAYLAND_DISPLAY: "wayland-0" } }), true);
+  assert.equal(shouldOpenBrowser({ ...base, hasParent: true }), false, "an IPC parent such as Electron");
+  assert.equal(shouldOpenBrowser({ ...base, isTTY: false }), false, "piped stdout");
+  for (const name of ["SSH_CONNECTION", "SSH_TTY", "CI"])
+    assert.equal(shouldOpenBrowser({ ...base, env: { DISPLAY: ":0", [name]: "1" } }), false, name);
+  for (const file of ["/.dockerenv", "/run/.containerenv"])
+    assert.equal(shouldOpenBrowser({ ...base, exists: (f) => f === file }), false, file);
+  assert.equal(shouldOpenBrowser({ ...base, env: {} }), false, "Linux without DISPLAY or WAYLAND_DISPLAY");
 });

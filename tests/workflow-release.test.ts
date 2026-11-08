@@ -14,11 +14,11 @@ const VERSION_INPUT = "$" + "{{ inputs.version }}";
 const STAGE_INPUT = "$" + "{{ inputs.stage }}";
 
 describe("release workflow", () => {
-  test("runs the gated suites, then one straightforward release job, then Desktop and akm-ui", () => {
+  test("runs the gated suites, then one straightforward release job, then Desktop and akm-web", () => {
     const workflow = YAML.parse(source) as { jobs: Record<string, { uses?: string; needs?: string }> };
-    expect(Object.keys(workflow.jobs)).toEqual(["gated", "release", "desktop", "akm-ui"]);
+    expect(Object.keys(workflow.jobs)).toEqual(["gated", "release", "desktop", "akm-web"]);
     expect(workflow.jobs.desktop?.needs).toBe("release");
-    expect(workflow.jobs["akm-ui"]?.needs).toBe("release");
+    expect(workflow.jobs["akm-web"]?.needs).toBe("release");
     expect(workflow.jobs.gated?.uses).toBe("./.github/workflows/gated-ci.yml");
     expect(workflow.jobs.release?.needs).toBe("gated");
     expect(source).toContain("Require green CI on this commit");
@@ -115,8 +115,8 @@ describe("release workflow", () => {
     // Everything that reads a secret, tags or waits for another run is skipped; the builds are not.
     expect(skipped("release")).toEqual(["Require green CI on this commit", "Publish to npm", "Create GitHub release"]);
     expect(skipped("desktop")).toEqual(["Attach Desktop to the GitHub release"]);
-    expect(skipped("akm-ui")).toEqual(["Publish akm-ui to npm"]);
-    expect(workflow.jobs["akm-ui"]?.permissions).toEqual({ contents: "read", "id-token": "write" });
+    expect(skipped("akm-web")).toEqual(["Publish akm-web to npm"]);
+    expect(workflow.jobs["akm-web"]?.permissions).toEqual({ contents: "read", "id-token": "write" });
     // Gated CI is skipped, and a skipped job upstream would skip Desktop unless it says it runs after a good release.
     expect(workflow.jobs.desktop?.if).toContain("needs.release.result == 'success'");
   });
@@ -132,11 +132,11 @@ describe("release workflow", () => {
     expect(source).toContain('gh release upload "v$VERSION" desktop/dist/* --clobber');
   });
 
-  test("akm-ui is published from the same tarball, independent of the Desktop installers", () => {
+  test("akm-web is published from the same tarball, independent of the Desktop installers", () => {
     const workflow = YAML.parse(source) as { jobs: Record<string, { needs?: string | string[] }> };
     expect(workflow.jobs.desktop?.needs).toBe("release");
-    expect(workflow.jobs["akm-ui"]?.needs).toBe("release");
-    expect(source).toContain("node scripts/package-ui.mjs --release");
+    expect(workflow.jobs["akm-web"]?.needs).toBe("release");
+    expect(source).toContain("node scripts/package-web.mjs --release");
     expect(source).toContain('npm publish "$STAGE" --ignore-scripts --provenance --access public --tag "$DIST_TAG"');
   });
 

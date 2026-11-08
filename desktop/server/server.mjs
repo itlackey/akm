@@ -1,10 +1,12 @@
 #!/usr/bin/env node
+
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
@@ -81,6 +83,38 @@ export async function startServer({ host = "127.0.0.1", port = 0, origin: config
   return { server, origin, url, close };
 }
 
+/**
+ * Whether to open the printed URL in the default browser: only for a person at a terminal on a machine with a screen.
+ * @param {{ env: NodeJS.ProcessEnv, platform: string, hasParent: boolean, isTTY: boolean, exists?: (file: string) => boolean }} context
+ */
+export function shouldOpenBrowser({ env, platform, hasParent, isTTY, exists = existsSync }) {
+  if (hasParent || !isTTY) return false; // Electron (IPC parent), scripts and supervisors (piped stdout)
+  if (env.SSH_CONNECTION || env.SSH_TTY || env.CI) return false;
+  if (exists("/.dockerenv") || exists("/run/.containerenv")) return false;
+  if (platform === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY) return false;
+  return true;
+}
+
+/**
+ * Best effort: a missing opener or a failed open costs one line on stderr, never the server.
+ * @param {string} url
+ */
+function openBrowser(url) {
+  const [command, ...args] =
+    process.platform === "darwin"
+      ? ["open", url]
+      : process.platform === "win32"
+        ? ["cmd", "/c", "start", '""', url]
+        : ["xdg-open", url];
+  try {
+    const opener = spawn(/** @type {string} */ (command), args, { detached: true, stdio: "ignore" });
+    opener.once("error", () => console.error(`Could not open a browser; open ${url} yourself.`));
+    opener.unref();
+  } catch {
+    console.error(`Could not open a browser; open ${url} yourself.`);
+  }
+}
+
 /** @param {string} host */
 const isWildcard = (host) => host === "0.0.0.0" || host === "::" || host === "[::]";
 /** @param {string} host */
@@ -120,6 +154,15 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.a
   const ready = { type: "ready", url: runtime.url, origin: runtime.origin };
   if (process.send) process.send(ready);
   else console.log(JSON.stringify(ready));
+  if (
+    shouldOpenBrowser({
+      env: process.env,
+      platform: process.platform,
+      hasParent: process.send !== undefined,
+      isTTY: Boolean(process.stdout.isTTY),
+    })
+  )
+    openBrowser(runtime.url);
   const shutdown = async () => {
     await runtime.close();
     process.exit(0);

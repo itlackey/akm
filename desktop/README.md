@@ -12,7 +12,7 @@ The Attention desk Home page provides a compact starting point for those workflo
 The compact top bar and established AKM palette remain. This does not claim
 that the larger asset-manager design is complete.
 Desktop's version is the version of the AKM it embeds (one version, one release); the commit ID is shown separately.
-The same web process also runs on a server or in a container as `akm-ui` (see [Run it on a server](#run-it-on-a-server)).
+The same web process also runs on a server or in a container as `akm-web` (see [Run it on a server](#run-it-on-a-server)).
 See [verification](docs/verification.md) for evidence and limits.
 
 ## Use it
@@ -158,12 +158,12 @@ paths. Do not share that URL.
 
 ## Run it on a server
 
-`@itlackey/akm-ui` is the web process alone, with no Electron and no display, for a server or an Assistant container. It
+`akm-web` is the web process alone, with no Electron and no display, for a server or an Assistant container. It
 replaces `akm ui` for headless installs and manages the library of the user that runs it.
 
 ```sh
-npm install -g @itlackey/akm-ui   # Node 22.18 or later
-akm-ui --host 0.0.0.0 --port 4444 --origin http://my-server:4444
+npm install -g akm-web   # Node 22.18 or later
+akm-web --host 0.0.0.0 --port 4444 --origin http://my-server:4444
 ```
 
 - `--host <addr>` is the address to listen on (default `127.0.0.1`).
@@ -172,13 +172,17 @@ akm-ui --host 0.0.0.0 --port 4444 --origin http://my-server:4444
   mapping or a proxy (default `http://<host>:<port>`). It is required with a wildcard `--host` (`0.0.0.0`, `::`); without
   it the command exits with an error. An `https` origin marks the session cookie `Secure`.
 
+When started from a terminal on a machine with a screen it also opens that URL in the default browser. It does not when
+there is no TTY, an SSH session, CI, a container, or (on Linux) no `DISPLAY` or `WAYLAND_DISPLAY`; there is no flag for it.
+A failed open prints one line to stderr and the server keeps running.
+
 It prints one JSON line, `{"type":"ready","url":"...","origin":"..."}`; open `url`. The URL carries the session token
 and the browser keeps it in a cookie. The token, Host and Origin checks are always on and are compared with `--origin`.
 
 In Docker, publish the port and pass the address the browser will use:
 
 ```sh
-docker run -p 4444:4444 my-image akm-ui --host 0.0.0.0 --port 4444 --origin http://localhost:4444
+docker run -p 4444:4444 my-image akm-web --host 0.0.0.0 --port 4444 --origin http://localhost:4444
 ```
 
 Whoever holds the token has the owner's full authority over that library: they can edit bundle files, reveal

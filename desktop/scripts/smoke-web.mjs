@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Packs the akm-ui package (package-ui.mjs) with the locally unpacked engine, installs both into a temporary prefix,
-// starts `akm-ui` through the npm bin link with plain Node against a synthetic home, and checks /api/desktop.
+// Packs the akm-web package (package-web.mjs) with the locally unpacked engine, installs both into a temporary prefix,
+// starts `akm-web` through the npm bin link with plain Node against a synthetic home, and checks /api/desktop.
 // Local only: nothing is published and no registry login is used. Run after `npm run build`.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
@@ -16,13 +16,13 @@ import { fileURLToPath } from "node:url";
 import { createFixture } from "./fixture.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const work = await mkdtemp(path.join(os.tmpdir(), "akm-ui-smoke-"));
+const work = await mkdtemp(path.join(os.tmpdir(), "akm-web-smoke-"));
 const fixture = await createFixture({ index: false, packageRoot: root });
 /** @type {import("node:child_process").ChildProcess | undefined} */
 let child;
 try {
   const { stage } = JSON.parse(
-    execFileSync(process.execPath, [path.join(root, "scripts/package-ui.mjs")], { encoding: "utf8" }).trim(),
+    execFileSync(process.execPath, [path.join(root, "scripts/package-web.mjs")], { encoding: "utf8" }).trim(),
   );
   const pack = (/** @type {string} */ dir) =>
     path.join(
@@ -35,13 +35,13 @@ try {
     stdio: "inherit",
   });
   await rm(stage, { recursive: true, force: true });
-  const bin = path.join(prefix, "node_modules/.bin/akm-ui");
+  const bin = path.join(prefix, "node_modules/.bin/akm-web");
   child = spawn(process.execPath, [bin], { env: fixture.env, stdio: ["ignore", "pipe", "inherit"] });
   const lines = readline.createInterface({ input: /** @type {import("node:stream").Readable} */ (child.stdout) });
   /** @type {{ url: string, origin: string }} */
   const ready = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("akm-ui printed no ready line in 60 s.")), 60_000);
-    child?.once("exit", (code) => reject(new Error(`akm-ui exited (${code}) before it was ready.`)));
+    const timer = setTimeout(() => reject(new Error("akm-web printed no ready line in 60 s.")), 60_000);
+    child?.once("exit", (code) => reject(new Error(`akm-web exited (${code}) before it was ready.`)));
     lines.on("line", (line) => {
       const message = JSON.parse(line);
       if (message.type !== "ready") return;
@@ -50,10 +50,10 @@ try {
     });
   });
   const cookie = (await fetch(ready.url, { redirect: "manual" })).headers.get("set-cookie")?.split(";")[0];
-  assert.ok(cookie, "akm-ui did not start a session from its token.");
+  assert.ok(cookie, "akm-web did not start a session from its token.");
   const response = await fetch(`${ready.origin}/api/desktop`, { headers: { cookie } });
   assert.equal(response.status, 200, `/api/desktop answered ${response.status}`);
-  console.log("The packed akm-ui package installed and answered /api/desktop through its bin link.");
+  console.log("The packed akm-web package installed and answered /api/desktop through its bin link.");
 } finally {
   if (child && child.exitCode === null) {
     child.removeAllListeners("exit");
