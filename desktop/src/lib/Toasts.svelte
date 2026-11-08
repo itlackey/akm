@@ -18,6 +18,28 @@
   });
   const urgent = $derived(toasts.items.filter((t) => toastRole(t.kind) === "alert"));
   const icons = { success: "check", warning: "warning", error: "alert" } as const;
+  /** How far a toast sits above the viewport bottom so it clears any sticky bottom bar (the review shelf, a form's Save bar). */
+  let lift = $state(0);
+  function measure() {
+    let top = innerHeight;
+    for (const bar of document.querySelectorAll<HTMLElement>("[data-bottom-bar]")) {
+      const box = bar.getBoundingClientRect();
+      if (box.height && box.bottom > 0 && box.top < top) top = box.top;
+    }
+    lift = innerHeight - top;
+  }
+  // While a toast shows, keep it clear of whichever bar is on screen: bars come and go with the page (the shelf is rebuilt
+  // after a decision), so this looks again a few times a second rather than watching each one.
+  $effect(() => {
+    if (!toasts.items.length) return;
+    measure();
+    const timer = setInterval(measure, 200);
+    addEventListener("resize", measure);
+    return () => {
+      clearInterval(timer);
+      removeEventListener("resize", measure);
+    };
+  });
   /** The control that had focus before it moved into a toast, which Esc gives it back to. */
   let returnTo: HTMLElement | null = null;
 
@@ -74,7 +96,7 @@
 {/snippet}
 
 <!-- The live regions are always in the page, so a toast added to an empty one is announced. Nothing here takes focus. -->
-<section class="toasts" aria-label="Notifications">
+<section class="toasts" aria-label="Notifications" style:--lift="{lift}px">
   <div role="status" aria-live="polite" aria-atomic="false">{@render list(polite)}</div>
   <div role="alert" aria-atomic="false">{@render list(urgent)}</div>
 </section>
@@ -83,11 +105,11 @@
   .toasts {
     position: fixed;
     z-index: 50;
-    /* Below the page heading row, so a toast never covers its actions (Refresh queue). */
-    top: calc(var(--topbar-h) + 64px);
+    /* Bottom corner, above any sticky bottom bar: page actions sit at the top or inside the page, never here. */
+    bottom: calc(var(--lift, 0px) + var(--bottom-inset) + 16px);
     right: 16px;
     display: flex;
-    flex-direction: column-reverse;
+    flex-direction: column;
     align-items: flex-end;
     gap: var(--space-2);
     max-width: 26rem;
@@ -173,13 +195,11 @@
   }
   @media (max-width: 850px) {
     .toasts {
-      top: auto;
       left: 16px;
       right: 16px;
       width: auto;
       max-width: none;
-      bottom: calc(var(--shelf-h, 0px) + var(--bottom-inset) + 12px + env(safe-area-inset-bottom));
-      flex-direction: column;
+      bottom: calc(var(--lift, 0px) + var(--bottom-inset) + 12px + env(safe-area-inset-bottom));
       align-items: stretch;
     }
   }

@@ -39,7 +39,7 @@ test("Review: focus stays on a control after a failed write, Undo, Reopen, batch
   // Accept, then Undo… from the toast; Cancel returns to the shelf's Revert…, not to <body>.
   await button("Confirm accept").click();
   await expect(page.getByRole("status").filter({ hasText: "Accepted “restore laptop”" })).toContainText(
-    /Push status not reported\.|No Git commit reported\./,
+    /restore-laptop/,
   );
   await page.getByRole("status").getByRole("button", { name: "Undo…" }).click();
   await expect(button("Confirm revert")).toBeFocused();
@@ -97,4 +97,35 @@ test("Review: focus stays on a control after a failed write, Undo, Reopen, batch
   await page.getByRole("button", { name: "Dismiss", exact: true }).click();
   await expect.poll(active).not.toBe("BODY");
   assert.deepEqual(errors, []);
+});
+
+// Refresh says it worked without moving anything, and a decision toast sits above the shelf, never over its buttons.
+test("Review: Refresh confirms politely and keeps focus; a toast clears the decision shelf", {
+  timeout: 120000,
+}, async (t) => {
+  const server = await launchFixture({ proposals: true });
+  t.after(() => server.stop());
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  await open(page, server, "/review");
+  const refresh = page.getByRole("button", { name: /Refresh queue/ });
+  await refresh.click();
+  await expect(page.locator(".refresh-note")).toHaveText("Updated just now");
+  await expect(page.locator(".refresh-note")).toHaveAttribute("role", "status");
+  await expect(refresh).toBeFocused();
+
+  await open(page, server, `/review/${server.proposals.stale}`);
+  await button("Accept…").click();
+  await button("Confirm accept").click();
+  const toast = page.locator(".toast").first();
+  await expect(toast).toBeVisible();
+  const [toastBox, shelfBox] = await Promise.all([toast.boundingBox(), page.locator(".decision-shelf").boundingBox()]);
+  assert.ok(toastBox.y + toastBox.height <= shelfBox.y + 1, "the toast ends above the shelf");
+  // The next proposal's row is the highlighted one and is inside the queue list's view.
+  const row = page.locator(".review-row.active");
+  await expect(row).toBeVisible();
+  const [rowBox, listBox] = await Promise.all([row.boundingBox(), page.locator(".review-list").boundingBox()]);
+  assert.ok(rowBox.y >= listBox.y - 1 && rowBox.y + rowBox.height <= listBox.y + listBox.height + 1);
 });

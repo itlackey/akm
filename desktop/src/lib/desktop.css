@@ -436,13 +436,21 @@
     .desktop-topbar nav > a {
       position: relative;
     }
+    /* The count sits in its own band above the label, so it never touches a neighbouring tab. */
+    .desktop-topbar nav > a {
+      align-items: flex-end;
+      padding-block-start: 14px;
+    }
     .desktop-topbar .nav-count {
       position: absolute;
-      inset-block-start: 2px;
-      inset-inline-end: 2px;
+      inset-block-start: 1px;
+      inset-inline-end: 4px;
       font-size: 11px;
-      min-width: 14px;
-      padding: 0 2px;
+      line-height: 1.2;
+      min-width: 16px;
+      padding: 0 4px;
+      border-radius: 8px;
+      text-align: center;
     }
     .desktop-footer {
       flex-wrap: wrap;

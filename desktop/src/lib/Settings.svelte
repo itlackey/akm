@@ -790,6 +790,18 @@
     color: var(--muted);
     text-decoration: none;
   }
+  /* Phones: four even cells in two rows, so no tab wraps alone. */
+  @media (width < 30rem) {
+    .settings-tabs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space-2) var(--space-4);
+    }
+    .settings-tabs a {
+      justify-self: start;
+      min-block-size: 2rem;
+    }
+  }
   .settings-tabs a.active {
     color: var(--text);
     box-shadow: 0 2px var(--accent);

@@ -97,18 +97,36 @@
   const nextLabel = $derived(status === "pending" ? "pending" : "decision");
 </script>
 
+{#snippet confirmButtons()}
+  <div class="btn-row">
+    <button type="button" class="btn-secondary" disabled={busy} onclick={cancel}>Cancel</button><button
+      type="button"
+      class="confirm"
+      data-confirm
+      disabled={busy}
+      onclick={decide}
+      >{#if busy}<span class="spinner" aria-hidden="true"></span>
+      {/if}{confirmLabel}</button
+    >
+  </div>
+{/snippet}
+
 <footer
   class="decision-shelf"
+  data-bottom-bar
   class:rejecting={!!intent && rejecting}
   aria-label="Proposal decision"
   aria-busy={busy}
   bind:this={el}
 >
   {#if report}<section class="notice notice-warn report" role="alert">
-      <h3 tabindex="-1" data-report>
-        {report.done.length} of {report.total}
-        {report.verb}. {report.failed.length} failed and {report.failed.length === 1 ? "remains" : "remain"} selected.
-      </h3>
+      <div class="report-head">
+        <h3 tabindex="-1" data-report>
+          {report.done.length} of {report.total}
+          {report.verb}. {report.failed.length} failed and {report.failed.length === 1 ? "remains" : "remain"} selected.
+        </h3>
+        <button type="button" class="btn-secondary" onclick={dismissReport}>Dismiss</button>
+      </div>
       <ul class="plain">
         {#each report.failed as f}<li>
             <span class="badge" data-tone="fail">Failed</span>
@@ -116,13 +134,16 @@
               >{/if}
           </li>{/each}
       </ul>
-      <button type="button" class="btn-quiet" onclick={dismissReport}>Dismiss</button>
     </section>{/if}
   {#if failure}<div class="notice notice-fail" role="alert">
       <strong>The decision was not recorded.</strong>
       {failure}
     </div>{/if}
-  {#if intent && rejecting}<div class="reason-block">
+  {#if intent && rejecting}<div class="reason-block" role="group" aria-label="Confirm decision">
+      <div class="shelf-left">
+        <strong>{question[0]}</strong>
+        <span class="muted small helper">{question[1]}</span>
+      </div>
       <div class="reason-chips" role="group" aria-labelledby="why-reject">
         <span id="why-reject" class="legend">Why reject?</span>
         <div class="segmented">
@@ -133,98 +154,92 @@
             >{/each}
         </div>
       </div>
-      <label
-        >Details<textarea
-          bind:value={reason}
-          rows="2"
-          maxlength="2000"
-          disabled={busy}
-          aria-describedby={reasonError ? "reason-hint reason-error" : "reason-hint"}
-          aria-invalid={reasonError ? "true" : undefined}></textarea></label
-      >
-      <p class="muted small" id="reason-hint">
-        Optional when a reason is chosen above. Required for Other. At most 2000 characters in total.
-      </p>
+      <div class="reason-row">
+        <label class="details"
+          ><span
+            >Details <span class="muted small" id="reason-hint">Optional with a reason above; required for Other.</span
+            ></span
+          ><textarea
+            bind:value={reason}
+            rows="1"
+            maxlength="2000"
+            disabled={busy}
+            aria-describedby={reasonError ? "reason-hint reason-error" : "reason-hint"}
+            aria-invalid={reasonError ? "true" : undefined}></textarea></label
+        >
+        {@render confirmButtons()}
+      </div>
       {#if reasonError}<p class="field-error" id="reason-error" role="alert">{reasonError}</p>{/if}
-    </div>{/if}
-  <div class="shelf-row">
-    {#if intent}
-      <div class="shelf-left" aria-label="Confirm decision" role="group">
-        <strong>{question[0]}</strong>
-        <span class="muted small helper">{question[1]}</span>
-      </div>
-      <div class="btn-row">
-        <button type="button" class="btn-secondary" disabled={busy} onclick={cancel}>Cancel</button><button
-          type="button"
-          class="confirm"
-          data-confirm
-          disabled={busy}
-          onclick={decide}
-          >{#if busy}<span class="spinner" aria-hidden="true"></span>
-          {/if}{confirmLabel}</button
-        >
-      </div>
-    {:else if selectedCount}
-      <div class="shelf-left">
-        <strong>{selectedCount} selected</strong>
-        <button type="button" class="btn-quiet" disabled={busy} onclick={clearSelection}>Clear selection</button>
-      </div>
-      <div class="btn-row">
-        <button type="button" class="btn-secondary" disabled={busy} onclick={() => begin("batch-reject")}
-          >Reject selected…</button
-        ><button type="button" disabled={busy} data-primary-decision onclick={() => begin("batch-accept")}
-          >Accept selected…</button
-        >
-      </div>
-    {:else if current}
-      <div class="shelf-left muted">
-        {#if last}<span class="last"
-            ><span class="last-text" title={`${last.title} — ${last.ref}`}
-              >Last: {decisionVerb(last.action)} “{last.title}”</span
-            >{#if last.action === "accept" && last.revertable}
-              · <button type="button" class="link-button" disabled={busy} onclick={() => openLast("revert")}
-                >Undo…</button
-              >{:else if last.action === "reject"}
-              · <button type="button" class="link-button" disabled={busy} onclick={() => openLast("reopen")}
-                >Reopen…</button
-              >{/if}</span
-          >{/if}
-      </div>
-      <div class="btn-row">
-        <button type="button" class="btn-quiet" disabled={busy || !canNext} onclick={next}
-          ><span>Next<span class="next-context">&nbsp;{nextLabel}</span></span><Icon
-            name="arrow-right"
-            size={16}
-          /></button
-        >
-        {#if current.status === "pending"}<button
-            type="button"
-            class="btn-secondary"
-            disabled={busy}
-            data-decision="reject"
-            onclick={() => begin("reject")}>Reject…</button
-          ><button
-            type="button"
-            data-primary-decision
-            disabled={busy}
-            data-decision="accept"
-            onclick={() => begin("accept")}>Accept…</button
-          >{:else if current.status === "rejected"}<button
-            type="button"
-            data-primary-decision
-            disabled={busy}
-            data-decision="reopen"
-            onclick={() => begin("reopen")}>Reopen…</button
-          >{:else if current.status === "accepted" && current.revertable}<button
-            type="button"
-            data-primary-decision
-            disabled={busy}
-            data-decision="revert"
-            onclick={() => begin("revert")}>Revert…</button
-          >{/if}
-      </div>
-    {/if}
-  </div>
+    </div>{:else}
+    <div class="shelf-row">
+      {#if intent}
+        <div class="shelf-left" aria-label="Confirm decision" role="group">
+          <strong>{question[0]}</strong>
+          <span class="muted small helper">{question[1]}</span>
+        </div>
+        {@render confirmButtons()}
+      {:else if selectedCount}
+        <div class="shelf-left">
+          <strong>{selectedCount} selected</strong>
+          <button type="button" class="btn-quiet" disabled={busy} onclick={clearSelection}>Clear selection</button>
+        </div>
+        <div class="btn-row">
+          <button type="button" class="btn-secondary" disabled={busy} onclick={() => begin("batch-reject")}
+            >Reject selected…</button
+          ><button type="button" disabled={busy} data-primary-decision onclick={() => begin("batch-accept")}
+            >Accept selected…</button
+          >
+        </div>
+      {:else if current}
+        <div class="shelf-left muted">
+          {#if last}<span class="last"
+              ><span class="last-text" title={`${last.title} — ${last.ref}`}
+                >Last: {decisionVerb(last.action)} “{last.title}”</span
+              >{#if last.action === "accept" && last.revertable}
+                · <button type="button" class="link-button" disabled={busy} onclick={() => openLast("revert")}
+                  >Undo…</button
+                >{:else if last.action === "reject"}
+                · <button type="button" class="link-button" disabled={busy} onclick={() => openLast("reopen")}
+                  >Reopen…</button
+                >{/if}</span
+            >{/if}
+        </div>
+        <div class="btn-row">
+          <button type="button" class="btn-quiet" disabled={busy || !canNext} onclick={next}
+            ><span>Next<span class="next-context">&nbsp;{nextLabel}</span></span><Icon
+              name="arrow-right"
+              size={16}
+            /></button
+          >
+          {#if current.status === "pending"}<button
+              type="button"
+              class="btn-secondary"
+              disabled={busy}
+              data-decision="reject"
+              onclick={() => begin("reject")}>Reject…</button
+            ><button
+              type="button"
+              data-primary-decision
+              disabled={busy}
+              data-decision="accept"
+              onclick={() => begin("accept")}>Accept…</button
+            >{:else if current.status === "rejected"}<button
+              type="button"
+              data-primary-decision
+              disabled={busy}
+              data-decision="reopen"
+              onclick={() => begin("reopen")}>Reopen…</button
+            >{:else if current.status === "accepted" && current.revertable}<button
+              type="button"
+              data-primary-decision
+              disabled={busy}
+              data-decision="revert"
+              onclick={() => begin("revert")}>Revert…</button
+            >{/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
 </footer>
 
 <style>
@@ -312,6 +327,9 @@
     gap: var(--space-2);
     font-size: var(--text-s);
   }
+  .reason-block .shelf-left {
+    align-items: baseline;
+  }
   .reason-block textarea {
     width: 100%;
     box-sizing: border-box;
@@ -319,9 +337,34 @@
   .reason-block p {
     margin: 0;
   }
+  .report-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-block-end: var(--space-2);
+  }
   .report h3 {
     font-size: var(--text-m);
-    margin: 0 0 var(--space-2);
+    margin: 0;
+  }
+  .report-head button {
+    flex: none;
+  }
+  .reason-row {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-3);
+  }
+  .reason-row .details {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    gap: var(--space-1);
+  }
+  .reason-row textarea {
+    min-height: var(--control-height);
+    resize: vertical;
   }
   .report li {
     font-size: var(--text-s);
@@ -348,6 +391,10 @@
     }
     .shelf-left {
       flex-wrap: nowrap;
+    }
+    .reason-row {
+      flex-direction: column;
+      align-items: stretch;
     }
     .btn-row > button {
       flex: 1;

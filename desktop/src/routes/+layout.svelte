@@ -249,8 +249,9 @@
     <h2 id="leave-editor-title">Discard unsaved changes?</h2>
     <p>{workspace.guard.what}</p>
     <div class="btn-row">
-      <button class="btn-secondary" onclick={stayInEditor}>Keep editing</button><button onclick={leaveAndKeep}
-        >Discard changes</button
+      <button class="btn-secondary" onclick={stayInEditor}>Keep editing</button><button
+        class="btn-danger"
+        onclick={leaveAndKeep}>Discard changes</button
       >
     </div>
   {:else}

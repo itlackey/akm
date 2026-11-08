@@ -163,7 +163,7 @@
       <a class="btn" href={href({ q: "", type: "" })}>Clear search</a>
     </div>{:else}<div class="state">
       <h2>No assets match this project</h2>
-      <p>The read bundles have {n(total)} assets, but none match the filters.</p>
+      <p>The read {bundle ? "bundle has" : "bundles have"} {plural(total, "asset")}, but none match the filters.</p>
       <a class="btn" href={`${base}/edit`}>Edit project</a>
     </div>{/if}
 {:else}
@@ -259,7 +259,6 @@
     list-style: none;
     margin: 0;
     padding: 0;
-    max-width: 800px;
   }
   .search-results.dim {
     opacity: 0.6;

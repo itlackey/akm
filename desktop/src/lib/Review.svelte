@@ -73,6 +73,9 @@
     decisionTriggerKey = "",
     afterFocus = "",
     focusQueue = false;
+  let refreshNote = $state(""),
+    refreshButton = $state<HTMLButtonElement>(),
+    refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let region = $state<HTMLElement>(),
     scroller = $state<HTMLElement>(),
     shelf = $state<HTMLElement>(),
@@ -102,31 +105,31 @@
       params = String(query);
     untrack(() => syncRoute(proposal, params));
   });
-  // Narrow toasts sit above the sticky shelf, so they never cover its buttons.
+  // A control focused just above the sticky shelf scrolls clear of it. (Toasts find the shelf by its data-bottom-bar.)
   $effect(() => {
     const element = shelf;
     if (!element) return;
     const root = document.documentElement;
-    // Toasts sit above the shelf wherever it is on screen: at the page end the sticky shelf is not at the viewport bottom.
     const update = () => {
-      root.style.setProperty("--shelf-h", `${Math.max(0, innerHeight - element.getBoundingClientRect().top)}px`);
-      // A control focused just above the sticky shelf scrolls clear of it.
       root.style.scrollPaddingBottom = `${element.offsetHeight + 8}px`;
     };
     const observer = new ResizeObserver(update);
-    addEventListener("scroll", update, { passive: true });
     addEventListener("resize", update);
     update();
     observer.observe(element);
     return () => {
       observer.disconnect();
-      removeEventListener("scroll", update);
       removeEventListener("resize", update);
-      root.style.removeProperty("--shelf-h");
       root.style.removeProperty("scroll-padding-bottom");
     };
   });
+  // The queue list follows the current proposal: after auto-advance the new row is brought into view.
+  $effect(() => {
+    const id = desiredId;
+    if (id && queue) untrack(() => void revealCurrentRow());
+  });
   onDestroy(() => {
+    clearTimeout(refreshTimer);
     ++queueGeneration;
     ++detailGeneration;
   });
@@ -236,6 +239,16 @@
       }
     }
   }
+  async function revealCurrentRow() {
+    await tick();
+    const list = region?.querySelector<HTMLElement>(".review-list");
+    const row = list?.querySelector<HTMLElement>(".review-row.active");
+    if (!list || !row || !list.offsetParent) return;
+    const above = row.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    const below = row.getBoundingClientRect().bottom - list.getBoundingClientRect().bottom;
+    if (above < 0) list.scrollTop += above - 8;
+    else if (below > 0) list.scrollTop += below + 8;
+  }
   async function restoreQueueFocus(previousId: string) {
     await tick();
     [...(region?.querySelectorAll<HTMLAnchorElement>(".review-item") ?? [])]
@@ -281,7 +294,15 @@
     await tick();
     region
       ?.querySelector<HTMLElement>(action.includes("reject") ? '[name="reject-choice"]' : "[data-confirm]")
-      ?.focus();
+      ?.focus({ preventScroll: true });
+    if (action === "reject") showChange();
+  }
+  /** The reject form takes room from the pane: put the change at its top, so the diff stays readable beside the form. */
+  function showChange() {
+    const change = region?.querySelector<HTMLElement>('section[aria-label="Proposed change"]');
+    if (!change) return;
+    if (matchMedia("(max-width:850px)").matches) change.scrollIntoView({ block: "start" });
+    else if (scroller) scroller.scrollTop += change.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
   }
   async function cancel() {
     intent = "";
@@ -347,7 +368,7 @@
           title: `${decisionVerb(action)} “${label}”`,
           detail:
             action === "accept"
-              ? `${target.ref}\n${commitOutcome(receipt.commit)}`
+              ? [target.ref, commitOutcome(receipt.commit)].filter(Boolean).join("\n")
               : action === "reject"
                 ? `${target.ref}\nReason: ${clip(String("reason" in payload ? payload.reason : ""), 60)}`
                 : action === "revert"
@@ -452,6 +473,17 @@
     failure = "";
     await load();
     if (desiredId) await open(desiredId);
+  }
+  /** The button disables itself while loading, which drops focus: say it worked, then give focus back. */
+  async function refreshClicked() {
+    refreshNote = "";
+    await refresh();
+    if (queueError) return;
+    refreshNote = "Updated just now";
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => (refreshNote = ""), 4000);
+    await tick();
+    refreshButton?.focus({ preventScroll: true });
   }
   /** The toast's action closes the toast, so focus goes to the page rather than to nothing. */
   async function refreshFromToast() {
@@ -561,46 +593,51 @@
 
 <svelte:window onkeydown={keydown} />
 <div class="review-page" data-detail={desiredId ? "" : undefined} bind:this={region}>
-  <div class="page-heading">
-    <div>
-      <h1>Review</h1>
-      {#if analyticsReturn}<a class="return-link" href={analyticsReturn}
-          ><Icon name="arrow-left" size={16} /> Back to {analyticsReturn.startsWith("/activity/improve")
-            ? "improve impact"
-            : "activity"}</a
-        >{/if}
+  <div class="review-top">
+    <div class="page-heading">
+      <div>
+        <h1>Review</h1>
+        {#if analyticsReturn}<a class="return-link" href={analyticsReturn}
+            ><Icon name="arrow-left" size={16} /> Back to {analyticsReturn.startsWith("/activity/improve")
+              ? "improve impact"
+              : "activity"}</a
+          >{/if}
+      </div>
+      <div class="refresh">
+        <span class="refresh-note muted small" role="status">{refreshNote}</span>
+        <button class="btn-quiet" bind:this={refreshButton} onclick={refreshClicked} disabled={busy || loading}
+          ><Icon name="refresh" size={16} /> Refresh queue</button
+        >
+      </div>
     </div>
-    <button class="btn-quiet" onclick={refresh} disabled={busy || loading}
-      ><Icon name="refresh" size={16} /> Refresh queue</button
-    >
-  </div>
-  <div class="review-filters">
-    <nav class="tabs" aria-label="Proposal status">
-      <a
-        class="tab"
-        aria-current={status === "pending" ? "page" : undefined}
-        href={proposalHref("", new URLSearchParams({ status: "pending" }))}>Pending</a
-      ><a
-        class="tab"
-        aria-current={status === "recent" ? "page" : undefined}
-        href={proposalHref("", new URLSearchParams({ status: "recent" }))}>Recent decisions</a
+    <div class="review-filters">
+      <nav class="tabs" aria-label="Proposal status">
+        <a
+          class="tab"
+          aria-current={status === "pending" ? "page" : undefined}
+          href={proposalHref("", new URLSearchParams({ status: "pending" }))}>Pending</a
+        ><a
+          class="tab"
+          aria-current={status === "recent" ? "page" : undefined}
+          href={proposalHref("", new URLSearchParams({ status: "recent" }))}>Recent decisions</a
+        >
+      </nav>
+      <label
+        >Source<select value={source} onchange={(e) => filter("source", e.currentTarget.value)}
+          ><option value="">All processes</option
+          >{#each [...new Set([...Object.keys(queue?.bySource ?? {}), ...(source ? [source] : [])])] as s}<option
+              value={s}>{s} ({queue?.bySource[s] ?? 0})</option
+            >{/each}</select
+        ></label
       >
-    </nav>
-    <label
-      >Source<select value={source} onchange={(e) => filter("source", e.currentTarget.value)}
-        ><option value="">All processes</option
-        >{#each [...new Set([...Object.keys(queue?.bySource ?? {}), ...(source ? [source] : [])])] as s}<option
-            value={s}>{s} ({queue?.bySource[s] ?? 0})</option
-          >{/each}</select
-      ></label
-    >
-    <label
-      >Waiting age<select value={age} onchange={(e) => filter("age", e.currentTarget.value)}
-        ><option value="">Any age</option>{#each Object.entries(ageBands) as [key, label]}<option value={key}
-            >{label}</option
-          >{/each}</select
-      ></label
-    >
+      <label
+        >Waiting age<select value={age} onchange={(e) => filter("age", e.currentTarget.value)}
+          ><option value="">Any age</option>{#each Object.entries(ageBands) as [key, label]}<option value={key}
+              >{label}</option
+            >{/each}</select
+        ></label
+      >
+    </div>
   </div>
   {#if source || age || week || outcome}<p class="muted small active-filters">
       Active filters: {[source, age ? ageBands[age as keyof typeof ageBands] : "", week, outcome]
@@ -714,7 +751,7 @@
       </div>
     </section>
     <section class="review-pane inspector" aria-label="Proposal detail">
-      <div class="review-scroll" bind:this={scroller}>
+      <div class="review-scroll" class:rejecting={intent === "reject"} bind:this={scroller}>
         {#if opening}<p role="status" class="muted">Loading proposal…</p>{:else if detailError}<div
             class="notice notice-fail"
             role="alert"
@@ -769,6 +806,20 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
+  }
+  .review-top {
+    display: contents;
+  }
+  .refresh {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  /* Beside the button, out of the flow, so showing it never moves anything. */
+  .refresh-note {
+    position: absolute;
+    inset-inline-end: calc(100% + var(--space-2));
+    white-space: nowrap;
   }
   .page-heading,
   .review-filters {
@@ -875,6 +926,10 @@
     overflow-y: auto;
     padding: 1rem 1.5rem 1.5rem;
   }
+  /* While the reject form is open, the change can scroll to the pane's top even when it is short. */
+  .review-scroll.rejecting :global(section[aria-label="Proposed change"]) {
+    min-height: 100%;
+  }
   .review-items {
     list-style: none;
     padding: 0;
@@ -928,6 +983,34 @@
     text-align: left;
     padding: 2rem 0.5rem;
   }
+  /* Wide: the heading, tabs, filters and Refresh share one row, so the proposal gets the height. */
+  @media (min-width: 851px) {
+    .review-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--space-2) var(--space-5);
+      margin-bottom: 0.5rem;
+      flex: none;
+    }
+    .review-top > .page-heading,
+    .review-top > .review-filters {
+      display: contents;
+    }
+    .review-top .refresh {
+      order: 9;
+      margin-inline-start: auto;
+    }
+  }
+  @media (max-width: 850px) {
+    .refresh {
+      flex-direction: column;
+      align-items: flex-end;
+    }
+    .refresh-note {
+      position: static;
+    }
+  }
   @media (max-width: 1050px) {
     .review-workspace {
       grid-template-columns: 14rem minmax(0, 1fr);
@@ -967,13 +1050,13 @@
     }
   }
   @media (max-width: 850px), (max-height: 700px) {
-    .review-page[data-detail] > .review-filters,
+    .review-page[data-detail] .review-filters,
     .review-page[data-detail] > .active-filters {
       display: none;
     }
   }
   @media (min-width: 851px) and (max-height: 700px) {
-    .review-page[data-detail] > .page-heading {
+    .review-page[data-detail] .page-heading {
       display: none;
     }
     .review-workspace[data-detail] {

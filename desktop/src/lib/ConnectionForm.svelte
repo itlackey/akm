@@ -150,7 +150,7 @@
         key.</span
       >{@render err("apiKey")}
     </label>
-    <fieldset class="field models">
+    <fieldset class="field models wide">
       <legend class="field-label">Models</legend>
       <p class="field-hint">
         Aliases such as fast, balanced and reasoning name the model to use. Add any alias you need.
@@ -212,7 +212,7 @@
         >
       </div>
     </fieldset>
-    <div class="numbers">
+    <div class="numbers wide">
       <label class="field">
         <span class="field-label">Context length (tokens)</span>
         <input
@@ -251,7 +251,7 @@
         <span class="field-hint">Requests at the same time. Empty uses akm's default.</span>{@render err("concurrency")}
       </label>
     </div>
-    <label class="field">
+    <label class="field wide">
       <span class="field-label">Request options</span>
       <textarea
         class="mono"
@@ -275,7 +275,7 @@
       Fix {problems}
       {problems === 1 ? "problem" : "problems"} before saving.
     </p>{/if}
-  <div class="settings-footer sticky-footer">
+  <div class="settings-footer sticky-footer" data-bottom-bar>
     <span class="muted small"
       >{changes ? `${changes} unsaved ${changes === 1 ? "change" : "changes"}` : "No unsaved changes"} · Desktop does not
       test connections. Saving only checks the configuration.</span
@@ -294,18 +294,34 @@
 
 <style>
   .connection-form {
-    max-width: 44rem;
     display: grid;
     gap: var(--space-4);
   }
   .connection-form :global(.settings-fields) {
     padding: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-5) var(--space-6);
+  }
+  /* Wide: Name beside Endpoint; models, numbers and options run the full width. */
+  @media (width >= 64rem) {
+    .connection-form :global(.settings-fields) {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .connection-form .wide {
+      grid-column: 1 / -1;
+    }
+  }
+  /* A field focused near the Save bar scrolls clear of it. */
+  .connection-form :is(input, textarea, button) {
+    scroll-margin-block-end: 6rem;
   }
   .sticky-footer .btn-row {
     margin-inline-start: auto;
   }
   .sticky-footer > span {
-    flex: 1 1 100%;
+    flex: 1 1 20rem;
   }
   .connection-form {
     margin-block-start: var(--space-5);
@@ -346,6 +362,7 @@
     position: sticky;
     bottom: 0;
     background: var(--bg);
+    box-shadow: 0 -8px 8px -8px rgb(0 0 0 / 0.15);
     padding-block: var(--space-3);
     display: flex;
     justify-content: space-between;

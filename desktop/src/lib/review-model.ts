@@ -56,11 +56,10 @@ export function rows(value: unknown): Record<string, unknown>[] {
 export function text(value: unknown, fallback = "Not recorded"): string {
   return typeof value === "string" || typeof value === "number" ? String(value) : fallback;
 }
+/** What to tell a reviewer about the Git commit an accept made; empty when there is none to report. */
 export function commitOutcome(value: unknown): string {
   const commit = record(value);
-  return typeof commit.sha === "string"
-    ? `Committed ${commit.sha.slice(0, 8)}. Push status not reported.`
-    : "No Git commit reported.";
+  return typeof commit.sha === "string" ? `Saved to Git history as ${commit.sha.slice(0, 8)}.` : "";
 }
 /** "1 finding", "2 findings". */
 export function plural(count: number, one: string, many = `${one}s`): string {

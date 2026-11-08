@@ -191,12 +191,19 @@
     font-size: var(--text-m);
     line-height: var(--leading-snug);
   }
+  /* Each fact is its own boxed cell, so five facts do not read as one run-on line, and wrapping stays tidy. */
   .facts {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 16px;
+    gap: var(--space-2);
     font-size: var(--text-s);
     margin: 0;
+  }
+  .facts > div {
+    padding: 2px var(--space-2);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
   }
   .facts dt {
     display: inline;
@@ -206,6 +213,26 @@
     display: inline;
     margin: 0 0 0 4px;
     font-weight: 550;
+  }
+  @media (width < 48rem) {
+    .facts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(6.5rem, max-content));
+      gap: var(--space-2) var(--space-5);
+    }
+    .facts > div {
+      padding: 0;
+      background: none;
+      border: 0;
+    }
+    .facts dt {
+      display: block;
+      font-size: var(--text-xs);
+    }
+    .facts dd {
+      display: block;
+      margin: 0;
+    }
   }
   .facts dd.missing {
     color: var(--muted);

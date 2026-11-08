@@ -186,7 +186,7 @@
         >{inherited
           ? "An inherited project keeps its name."
           : original
-            ? "Renaming moves its settings to the new name."
+            ? "Renaming moves its settings to the new name. Filter and preference values stay as written."
             : "Used with --project and shown in Desktop."}</span
       >
       {#if submitted && nameProblem}<span class="field-error" id="project-name-error">{nameProblem}</span>{/if}
@@ -204,7 +204,7 @@
       {#if submitted && pathsProblem}<span class="field-error">{pathsProblem}</span>{/if}
     </label>
     <h2 class="group">Reads</h2>
-    <fieldset class="field">
+    <fieldset class="field reads-bundles">
       <legend class="field-label">Bundles to read</legend>
       <p class="field-hint">None selected reads all enabled bundles.</p>
       {#each choices as bundle (bundle)}
@@ -252,7 +252,7 @@
         ><span class="field-label">Channel</span><input bind:value={draft.channel} disabled={busy} /></label
       >
     </div>
-    <div class="field">
+    <div class="field wide">
       <span class="field-label">Metadata</span>
       <span class="field-hint">Frontmatter keys added to what is written. Empty keys are left out.</span>
       {#each draft.metadata as row, index}
@@ -319,7 +319,7 @@
       Fix {problems}
       {problems === 1 ? "problem" : "problems"} before saving.
     </p>{/if}
-  <div class="settings-footer sticky-footer">
+  <div class="settings-footer sticky-footer" data-bottom-bar>
     <span class="muted small"
       >{changes ? `${changes} unsaved ${changes === 1 ? "change" : "changes"}` : "No unsaved changes"}</span
     >
@@ -338,12 +338,33 @@
 <style>
   .project-form {
     margin-block-start: var(--space-5);
-    max-width: 44rem;
     display: grid;
     gap: var(--space-4);
   }
   .project-form :global(.settings-fields) {
     padding: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-5) var(--space-6);
+  }
+  /* Wide: Name beside Directories, the read settings beside each other, writes beside their metadata. */
+  @media (width >= 64rem) {
+    .project-form :global(.settings-fields) {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .project-form .group,
+    .project-form .wide,
+    .project-form .project-removal {
+      grid-column: 1 / -1;
+    }
+    .project-form .reads-bundles {
+      grid-row: span 2;
+    }
+  }
+  /* A field focused near the Save bar scrolls clear of it. */
+  .project-form :is(input, textarea, select, button) {
+    scroll-margin-block-end: 6rem;
   }
   /* A plain section heading with a rule above it, not a box. */
   .group {
@@ -401,6 +422,7 @@
     position: sticky;
     bottom: 0;
     background: var(--bg);
+    box-shadow: 0 -8px 8px -8px rgb(0 0 0 / 0.15);
     padding-block: var(--space-3);
     display: flex;
     justify-content: space-between;

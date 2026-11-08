@@ -31,11 +31,8 @@ test("review helpers preserve route filters and bound composed rejection reasons
   assert.equal(rejectionError("Stale", ""), "");
   assert.match(rejectionError("Other", ""), /required/);
   assert.match(rejectionError("Wrong", "a".repeat(2000)), /2000/);
-  assert.match(commitOutcome(null), /No Git commit reported/);
-  assert.equal(
-    commitOutcome({ sha: "1234567890", subject: "akm accept: x" }),
-    "Committed 12345678. Push status not reported.",
-  );
+  assert.equal(commitOutcome(null), "");
+  assert.equal(commitOutcome({ sha: "1234567890", subject: "akm accept: x" }), "Saved to Git history as 12345678.");
   assert.equal(
     activityReturn("/activity/improve?since=365d&anchor=impact-drill"),
     "/activity/improve?since=365d&anchor=impact-drill",

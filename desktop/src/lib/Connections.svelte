@@ -310,9 +310,6 @@
 </div>
 
 <style>
-  .connections {
-    max-width: 56rem;
-  }
   .conn-head {
     display: flex;
     flex-wrap: wrap;

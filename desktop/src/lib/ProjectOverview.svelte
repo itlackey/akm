@@ -158,7 +158,11 @@
           <dd>
             {#each f.values as value}<span class="chip">{value === "" ? `(no ${f.key})` : value}</span>{/each}
           </dd>{/each}
-      </dl>{:else}<dl class="kv">
+      </dl>
+      <p class="muted small">
+        These values match what assets are marked with, not the project's name, so renaming the project leaves them as
+        they are.
+      </p>{:else}<dl class="kv">
         <dt>project</dt>
         <dd><span class="chip">{row.name}</span> <span class="badge">Default</span></dd>
       </dl>

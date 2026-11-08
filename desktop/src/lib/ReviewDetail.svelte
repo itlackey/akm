@@ -44,7 +44,7 @@
   </div>
 </header>
 {#key current.id}<ReviewEvidence {detail} {noop} />{/key}
-<section aria-label="Proposed change">
+<section class="change" aria-label="Proposed change">
   <h3>Proposed change</h3>
   {#if detail.diff}<Diff
       before={detail.diff.before}
@@ -88,6 +88,10 @@
   }
   .target-link {
     font-size: var(--text-s);
+  }
+  .change {
+    margin-block-start: var(--space-2);
+    scroll-margin-block-start: calc(var(--top-inset) + var(--space-2));
   }
   section h3 {
     font-size: var(--text-m);
