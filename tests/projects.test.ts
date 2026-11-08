@@ -8,7 +8,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { curate } from "../src/api";
-import { search as workspaceSearch } from "../src/workspace/assets";
 import { deriveExtractCandidateRef } from "../src/commands/improve/extract";
 import { buildSessionAssetContent } from "../src/commands/improve/session-asset";
 import { runCurate } from "../src/commands/read/search-cli";
@@ -19,6 +18,7 @@ import { _setWarnSinkForTests } from "../src/core/warn";
 import { akmIndex } from "../src/indexer/indexer";
 import { fillMetadata } from "../src/indexer/passes/metadata";
 import { AKM_READ_TOOLS } from "../src/integrations/agent/akm-read-tools";
+import { search as workspaceSearch } from "../src/workspace/assets";
 import { runCliCapture } from "./_helpers/cli";
 import {
   type Cleanup,
