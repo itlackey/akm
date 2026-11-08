@@ -18,6 +18,7 @@ import { _setWarnSinkForTests } from "../src/core/warn";
 import { akmIndex } from "../src/indexer/indexer";
 import { fillMetadata } from "../src/indexer/passes/metadata";
 import { AKM_READ_TOOLS } from "../src/integrations/agent/akm-read-tools";
+import { search as workspaceSearch } from "../src/workspace/assets";
 import { runCliCapture } from "./_helpers/cli";
 import {
   type Cleanup,
@@ -254,13 +255,65 @@ describe("curate", () => {
   test("an explicit --prefer replaces the project's; --project reports no path", async () => {
     const result = await run({ cwd: work, prefer: ["project=other"] });
     expect(result.items[0]?.name).toBe("other-note");
-    expect(result.project?.prefer).toEqual({ project: "akm" });
+    expect(result.project?.prefer).toEqual({ project: ["other"] });
     const named = await run({ project: "scoped" });
     expect(named.project?.path).toBeUndefined();
     expect(named.project?.filters).toEqual({ project: ["other", ""] });
     expect(named.items.map((i) => i.name).sort()).toEqual(["other-note", "plain-note"]);
     const explicit = await run({ project: "scoped", filters: ["project=akm"] });
     expect(explicit.items.map((i) => i.name)).toEqual(["akm-note"]);
+  });
+
+  test("the reported project is the one applied: each kind replaced alone, then together, then none", async () => {
+    saveConfig({
+      semanticSearchMode: "off",
+      projects: {
+        full: { paths: [tmp("proj-full")], from: "local", filters: { team: ["t"] }, prefer: { project: "akm" } },
+      },
+    } as never);
+    resetConfigCache();
+    const base = { name: "full", from: "local", filters: { team: ["t"] }, prefer: { project: "akm" } };
+    expect((await run({ project: "full" })).project).toEqual(base);
+    expect((await run({ project: "full", from: "all" })).project).toEqual({ ...base, from: "all" });
+    expect((await run({ project: "full", filters: ["project=other"] })).project).toEqual({
+      ...base,
+      filters: { project: ["other"] },
+    });
+    expect((await run({ project: "full", prefer: ["project=other"] })).project).toEqual({
+      ...base,
+      prefer: { project: ["other"] },
+    });
+    expect(
+      (await run({ project: "full", from: "all", filters: ["project=other"], prefer: ["team=t"] })).project,
+    ).toEqual({ name: "full", from: "all", filters: { project: ["other"] }, prefer: { team: ["t"] } });
+    expect((await run({ project: "none", from: "all", prefer: ["team=t"] })).project).toBeUndefined();
+    for (const [flag, value] of [
+      ["--from", "all"],
+      ["--filter", "project=other"],
+      ["--prefer", "team=t"],
+    ] as const) {
+      const out = JSON.parse(
+        (await runCliCapture(["search", "widget", "--project", "full", flag, value, "--format", "json"])).stdout,
+      );
+      const effective: Record<string, unknown> = { ...base, ...(flag === "--from" ? { from: "all" } : {}) };
+      if (flag === "--filter") effective.filters = { project: ["other"] };
+      if (flag === "--prefer") effective.prefer = { team: ["t"] };
+      expect(out.project).toEqual(effective);
+    }
+  });
+
+  test("workspace search reports the from/filters its bundle and scope override", async () => {
+    saveConfig({
+      semanticSearchMode: "off",
+      projects: { full: { paths: [tmp("proj-ws")], from: "local", filters: { team: ["t"] } } },
+    } as never);
+    resetConfigCache();
+    const base = { name: "full", from: "local", filters: { team: ["t"] }, prefer: { project: "full" } };
+    expect((await workspaceSearch({ q: "widget", project: "full" })).project).toEqual(base);
+    const scoped = await workspaceSearch({ q: "widget", project: "full", scope: { project: ["other"] } });
+    expect(scoped.project).toEqual({ ...base, filters: { project: ["other"] } });
+    expect(scoped.hits.map((h: { name: string }) => h.name)).toEqual(["other-note"]);
+    expect((await workspaceSearch({ q: "widget", project: "full", bundle: "all" })).project?.from).toBe("all");
   });
 
   test("no project: output is byte-identical with or without a projects key", async () => {

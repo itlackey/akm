@@ -59,6 +59,15 @@ console.log(JSON.stringify({ before: before ?? null, after: process.exitCode }))
     expect(result.stderr).toContain("'--format' has no effect on 'akm env run'");
   });
 
+  test("config path is exempt: warns and prints the bare path", () => {
+    const home = tempDir("akm-exempt-config-");
+    const result = spawnCli(["config", "path", "--format", "json"], { HOME: home, XDG_CONFIG_HOME: home });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("'--format' has no effect on 'akm config path'");
+    expect(result.stdout.trim()).toBe(path.join(home, "akm", "config.json"));
+  });
+
   test("a format suffix before `--` identifies the full exempt leaf", () => {
     const stash = tempDir("akm-exempt-suffix-");
     fs.mkdirSync(path.join(stash, "env"), { recursive: true });

@@ -118,6 +118,11 @@ export function outputJsonl(command: string, shaped: unknown): void {
     }
     return;
   }
+  // `curate --pack` is a list of packed items, one record per line.
+  if (command === "curate-pack" && Array.isArray(shaped)) {
+    for (const record of shaped) writeStdout(JSON.stringify(record));
+    return;
+  }
   // For non-search commands, output the whole object as a single JSONL line
   writeStdout(JSON.stringify(shaped));
 }
