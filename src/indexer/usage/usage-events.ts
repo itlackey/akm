@@ -163,6 +163,26 @@ export function countFeedbackSignalsByRef(
 }
 
 /**
+ * How many times each asset was shown, by durable `entry_ref`: user-attributed `show` events newer than
+ * {@link USAGE_EVENT_RETENTION_DAYS}. With a `project`, only shows that recorded it count (older shows,
+ * which recorded none, cannot be placed in a project and do not); without one, every show counts.
+ * Search and curate results are impressions, not use, and are not counted.
+ */
+export function countShownByRef(db: Database, project?: string): Map<string, number> {
+  const cutoff = new Date(Date.now() - USAGE_EVENT_RETENTION_DAYS * 86_400_000).toISOString();
+  const rows = db
+    .prepare(
+      `SELECT entry_ref, COUNT(*) AS shown FROM usage_events
+       WHERE event_type = 'show' AND source = 'user' AND entry_ref IS NOT NULL
+         AND datetime(created_at) >= datetime(?)
+         AND (? IS NULL OR CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.project') END = ?)
+       GROUP BY entry_ref`,
+    )
+    .all(cutoff, project ?? null, project ?? null) as Array<{ entry_ref: string; shown: number }>;
+  return new Map(rows.map((row) => [row.entry_ref, row.shown]));
+}
+
+/**
  * Count usage events of a given `event_type`.
  *
  * Lifted verbatim from `akm improve` (improve.ts) where the show-event count

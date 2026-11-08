@@ -94,7 +94,7 @@ Directories that declare a type (`DIR_TYPE_MAP`) and the files they accept:
 | --- | --- | --- |
 | `scripts/` | `script` | script extensions |
 | `skills/` | `skill` | `SKILL.md` (other files under a skill are resources, not skills) |
-| `commands/`, `agents/`, `knowledge/`, `instructions/`, `memories/`, `lessons/`, `facts/`, `sessions/` | `command`, `agent`, `knowledge`, `instruction`, `memory`, `lesson`, `fact`, `session` | `.md` |
+| `commands/`, `agents/`, `knowledge/`, `instructions/`, `rules/`, `memories/`, `lessons/`, `facts/`, `sessions/` | `command`, `agent`, `knowledge`, `instruction`, `rule`, `memory`, `lesson`, `fact`, `session` | `.md` |
 | `workflows/` | `workflow` | `.md` (a `.yml` is typed `workflow`, then skipped at index time with a warning that it must use `.md`) |
 | `tasks/` | `task` | `.yml` |
 | `env/` | `env` | `.env` and `*.env` |

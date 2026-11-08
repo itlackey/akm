@@ -42,6 +42,7 @@ const TYPE_TO_RENDERER: Record<string, string> = {
   session: "session-md",
   fact: "fact-md",
   instruction: "knowledge-md",
+  rule: "knowledge-md",
 };
 
 /** POSIX-shell single-quote — copied verbatim from the retired asset-registry action-builder chain. */
@@ -74,6 +75,7 @@ const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
     `akm show ${ref} -> read the session summary; follow the \`access\` frontmatter to open the raw log at \`log_path\``,
   fact: (ref) => `akm show ${ref} -> read the stash fact and apply it as durable context`,
   instruction: (ref) => `akm show ${ref} -> read the project instructions`,
+  rule: (ref) => `akm show ${ref} -> read the rules and follow them`,
 };
 
 interface RecognitionGolden {

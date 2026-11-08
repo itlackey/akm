@@ -269,7 +269,7 @@ rebuilding `index.db` does not discard it.
 | `entry_id` | INTEGER | `index.db` entry id; re-linked after a rebuild. Null at write time on search, curate and nested command/persona read events, which record only `entry_ref`; the next index fills it from `entry_ref`. Utility scores aggregate by `entry_ref`. Deleting an entry also deletes its events that carry no `entry_id` yet, matched by `entry_ref` |
 | `entry_ref` | TEXT | Stable ref string |
 | `signal` | TEXT | `positive` or `negative` for feedback |
-| `metadata` | TEXT | JSON |
+| `metadata` | TEXT | JSON. A `show` event carries `project` (the project in force when it ran; absent on events recorded before project attribution and when none applied), which `akm search --by-usage` counts by |
 | `source` | TEXT NOT NULL DEFAULT 'user' | `user`, `improve`, `task`, `audit`, `unknown` (`AKM_EVENT_SOURCE` sets it for child processes) |
 | `created_at` | TEXT NOT NULL | |
 
@@ -366,7 +366,7 @@ Subdirectories and file shapes come from `BUILTIN_PLACEMENT_SPECS`,
 | Subdirectory | Type | File |
 |---|---|---|
 | `skills/<name>/` | skill | `SKILL.md` |
-| `commands/`, `agents/`, `knowledge/`, `instructions/`, `memories/`, `lessons/`, `facts/` | command, agent, knowledge, instruction, memory, lesson, fact | `<name>.md` |
+| `commands/`, `agents/`, `knowledge/`, `instructions/`, `rules/`, `memories/`, `lessons/`, `facts/` | command, agent, knowledge, instruction, rule, memory, lesson, fact | `<name>.md` |
 | `workflows/` | workflow | `<name>.md` |
 | `tasks/` | task | `<name>.yml` |
 | `scripts/` | script | `<name>.<ext>` for `.sh`, `.ts`, `.js`, `.ps1`, `.cmd`, `.bat`, and other script extensions |

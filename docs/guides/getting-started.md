@@ -113,7 +113,7 @@ akm setup --dir ~/custom-bundle   # optional: a non-default bundle location
 **Success check:** either form creates `~/akm` (or your `--dir` path) — your
 working bundle, the primary directory where your personal assets live — with
 subdirectories for each asset type: `scripts/`, `skills/`, `commands/`,
-`agents/`, `knowledge/`, `instructions/`, `workflows/`, `memories/`, `env/`,
+`agents/`, `knowledge/`, `instructions/`, `rules/`, `workflows/`, `memories/`, `env/`,
 `secrets/`, `facts/`, `lessons/`, `tasks/`, and `sessions/`. See
 [Storage Locations](../architecture/internals/storage-locations.md) for
 platform-specific paths and environment variable overrides.

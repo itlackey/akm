@@ -64,7 +64,9 @@ describe("the placement pair: a file's ref and the files a ref can name", () => 
   test("every placement type is covered by a sample", () => {
     expect(new Set(samples.map(([type]) => type))).toEqual(
       new Set(
-        placementTypes().filter((t) => t !== "session" && t !== "fact" && t !== "command" && t !== "instruction"),
+        placementTypes().filter(
+          (t) => t !== "session" && t !== "fact" && t !== "command" && t !== "instruction" && t !== "rule",
+        ),
       ),
     );
   });

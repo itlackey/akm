@@ -24,6 +24,7 @@ import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { projectView, type ResolvedProject, resolveProject, withProjectLine } from "../../core/projects";
 import { isoDay } from "../../core/time";
+import type { ProjectContext } from "../../indexer/search/db-search";
 import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { getOutputMode, type OutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/stdout";
@@ -87,6 +88,12 @@ export const searchCommand = defineJsonCommand({
       description: "Include session assets",
       default: false,
     },
+    "by-usage": {
+      type: "boolean",
+      description:
+        "List the assets shown in the project (any project with --project none), most shown first, instead of searching; the query is ignored and no usage is recorded",
+      default: false,
+    },
   },
   async run({ args }) {
     const query = (args.query ?? "").trim();
@@ -121,10 +128,26 @@ export const searchCommand = defineJsonCommand({
       includeSessions,
       eventSource: resolveUsageEventSource(),
       attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
+      project: projectContext(project, filters),
+      byUsage: args["by-usage"] === true,
     });
     output("search", view ? { ...result, project: view } : result);
   },
 });
+
+/** The value a project's writes carry as `project`: what its rules and usage are matched against. */
+function stampedProject(project: ResolvedProject | undefined): string | undefined {
+  const value = project?.write.metadata.project;
+  return value === undefined ? undefined : String(value);
+}
+
+/** The project a search or curate runs under; a `project` filter in force has already decided eligibility. */
+function projectContext(project: ResolvedProject | undefined, filters: ScopeFilters | undefined): ProjectContext {
+  return {
+    name: stampedProject(project),
+    ...(filters && Object.hasOwn(filters, "project") ? { byFilter: true } : {}),
+  };
+}
 
 /**
  * The read defaults a call runs with: each kind the caller gave replaces the
@@ -243,6 +266,8 @@ export async function runCurate(
     project?: string;
     /** The working directory that selects a project; default: the process's. */
     cwd?: string;
+    /** `false`: the project's rules do not lead (model work, which runs under no project). */
+    rules?: boolean;
   },
   outputMode: Pick<OutputMode, "detail" | "shape">,
 ): Promise<CurateResponse> {
@@ -270,6 +295,7 @@ export async function runCurate(
     belief: parseBeliefFilterMode(args.belief ?? "current"),
     eventSource: args.eventSource ?? resolveUsageEventSource(),
     attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
+    project: args.rules === false ? undefined : projectContext(project, filters),
   });
   return view ? { ...curated, project: view } : curated;
 }
@@ -324,6 +350,11 @@ export const showCommand = defineJsonCommand({
       type: "string",
       description: "Context budget in characters (needs --context lead; not with --max-tokens)",
     },
+    project: {
+      type: "string",
+      description:
+        "Project to record on this read's usage event instead of the one the working directory selects (`none`: no project); changes nothing else",
+    },
   },
   async run({ args }) {
     // `[origin//]meta[:name]` targets the stash `.meta/` convention, which is
@@ -364,6 +395,7 @@ export const showCommand = defineJsonCommand({
       contextMode,
       maxContextChars,
       eventSource: resolveUsageEventSource(),
+      project: stampedProject(resolveProject(loadConfig(), { project: getStringArg(args, "project") })),
     });
     output("show", result);
   },

@@ -156,6 +156,14 @@ export const TYPE_PRESENTATION: Record<KnownType, Presentation> = {
     action: (ref) => `akm show ${ref} -> read the project instructions`,
     fragmentRef: false,
   },
+  // `rule` (rules/) is a short bullet list of standing agent rules. It reads like
+  // knowledge (same renderer); search and curate lead with the applicable ones.
+  rule: {
+    label: "Rule",
+    renderer: "knowledge-md",
+    action: (ref) => `akm show ${ref} -> read the rules and follow them`,
+    fragmentRef: false,
+  },
 };
 
 /** Generic fallback for a type outside {@link KNOWN_TYPES} — never `undefined`, never a throw. */
