@@ -16,7 +16,7 @@ narrows to a ref, and loads that ref's content:
 ```sh
 akm curate "deploy the app to staging"
 # → shortlist; top item: {"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh",
-#                          "followUp":"akm show scripts/deploy.sh","reason":"..."}
+#                          "followUp":"akm show scripts/deploy.sh"}
 
 akm show scripts/deploy.sh
 # → {"run": "...", "setup": "...", ...} — ready to execute
@@ -31,7 +31,7 @@ Reach for `akm search` when you already know roughly what you're looking for
 — a type, a keyword, a conceptId prefix — and want a ranked list of matches.
 Reach for `akm curate` when you're starting a task and want akm to do the
 narrowing for you: curate runs a search and returns a small shortlist rather
-than a long results page, with a reason and a follow-up command for each item.
+than a long results page, with a follow-up command for each item.
 In short: search when you know what you're querying for, curate when you know
 what you're trying to do.
 
