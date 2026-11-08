@@ -753,7 +753,7 @@ akm curate "deploy the service" --filter user=alice --pack 4000
 | `--prefer` | `<key>=<value>` | _(none)_ | Repeatable frontmatter preference with the keys and matching of `--filter`; matching hits rank slightly higher (×1.02 on the score). It never drops or admits a hit and does not change which evidence curate accepts |
 | `--project` | project name, `none` | _(by directory)_ | Use this [project](#projects)'s defaults instead of the one the working directory selects; `none` uses no project. An unknown name is a usage error. A flag you pass replaces the project's value of the same kind. When a project applies, the response carries `project` and text output opens with one line, e.g. `Project akm (~/code/akm): prefer project=akm`. |
 | `--belief` | `all`, `current`, `historical` | `current` | Current keeps unflagged and active/asserted assets; historical keeps deprecated/contradicted/superseded/archived assets |
-| `--pack` | positive token budget | _(none)_ | Pack eligible local content in rank order; drop tail items before truncating the first oversized item |
+| `--pack` | positive token budget | _(none)_ | Pack eligible local content in rank order; drop tail items before truncating the first oversized item. The budget is estimated at about 4 characters per token; a `ref#fragment` hit packs only that section; registry hits are never packed. It is a context-size target for this call, not a workflow asset's `budget` (a run-cost cap) |
 
 `akm curate` takes the top `--limit` hits of one search, in search order, and
 enriches each with a preview, run details and up to two support refs: the
@@ -1899,6 +1899,7 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 | Flag | Description |
 | --- | --- |
 | `--name` | Optional memory name. Defaults to a slug derived from the content |
+| `--path <dir>` | Subdirectory under `memories/` to place the memory in (for example `personal/projects`). The filename still comes from `--name` or the content slug |
 | `--force` | Overwrite an existing memory with the same name |
 | `--description <text>` | Short description written to frontmatter (persisted as the memory's `description` field). Honoured by both the zero-flag form and the tagged form. |
 | `--tag <v>` | Tag to attach to the memory. Repeatable: `--tag foo --tag bar` |

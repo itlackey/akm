@@ -305,22 +305,20 @@ export const showCommand = defineJsonCommand({
     ref: {
       type: "positional",
       description:
-        "Asset ref ([bundle//]conceptId[#fragment]). On a markdown document `#fragment` selects one section by heading slug; `--detail brief` returns the outline (`toc`, each heading's slug) without the body. Example: `akm show knowledge/guide.md#auth`.",
+        "Asset ref [bundle//]conceptId[#fragment]; `--detail brief` returns the outline (`toc`, each heading's slug)",
       required: true,
     },
     context: {
       type: "string",
-      description:
-        "Fragment presentation: exact (default) returns only the selected section; lead returns bounded indexed-safe document lead plus the explicitly labelled selected match.",
+      description: "Fragment presentation: exact (default) or lead (adds the document lead)",
     },
     "max-tokens": {
       type: "string",
-      description:
-        "Approximate context budget in tokens (four characters per token). Requires --context lead; mutually exclusive with --max-chars.",
+      description: "Context budget in tokens (needs --context lead; not with --max-chars)",
     },
     "max-chars": {
       type: "string",
-      description: "Exact context budget in characters. Requires --context lead; mutually exclusive with --max-tokens.",
+      description: "Context budget in characters (needs --context lead; not with --max-tokens)",
     },
   },
   async run({ args }) {

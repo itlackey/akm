@@ -61,7 +61,7 @@ afterEach(() => {
  */
 function expectRejection(
   result: { status: number; stderr: string },
-  code: "PATH_ESCAPE_VIOLATION" | "MISSING_REQUIRED_ARGUMENT" | "INVALID_FLAG_VALUE",
+  code: "PATH_ESCAPE_VIOLATION" | "INVALID_FLAG_VALUE",
 ): void {
   expect(result.status).toBe(2);
   const envelope = JSON.parse(result.stderr) as { code?: string };
@@ -95,16 +95,12 @@ describe("env: directory traversal rejection", () => {
   test("rejects env/../../evil (conceptId form) in env create", async () => {
     const stashDir = freshStash();
     const result = await runCli(["env", "create", "env/../../evil"], stashDir);
-    // F5 new grammar: the traversal normalizes back inside the bundle (no escape)
-    // and is then rejected as an unrecognized conceptId — still a hard rejection.
     expectRejection(result, "PATH_ESCAPE_VIOLATION");
   });
 
   test("rejects nested traversal foo/../../evil in env create", async () => {
     const stashDir = freshStash();
     const result = await runCli(["env", "create", "foo/../../evil"], stashDir);
-    // F5 new grammar: the traversal normalizes back inside the bundle (no escape)
-    // and is then rejected as an unrecognized conceptId — still a hard rejection.
     expectRejection(result, "PATH_ESCAPE_VIOLATION");
   });
 

@@ -60,8 +60,7 @@ export const addCommand = defineJsonCommand({
     adapter: {
       type: "string",
       description:
-        "Override the auto-detected component adapter for a local directory (#909). One of: " +
-        `${VALID_ADAPTER_IDS.join(", ")}.`,
+        "Component adapter for a local directory: website-snapshot, agent-skills, claude, opencode, dotenv, akm-workflow, akm-task, llm-wiki, akm, okf, generic-files, code-project",
     },
     writable: {
       type: "boolean",
@@ -87,8 +86,7 @@ export const addCommand = defineJsonCommand({
     // env files are no longer scanned for process-hijacking keys.
     "allow-dangerous-env-keys": {
       type: "boolean",
-      description:
-        "Deprecated, no effect: add no longer scans env files for process-hijacking keys. Accepted through 0.10 for existing scripts.",
+      description: "Deprecated, no effect (accepted through 0.10)",
       default: false,
     },
   },

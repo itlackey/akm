@@ -196,33 +196,22 @@ export const GLOBAL_OUTPUT_ARGS = {
 } as const satisfies ArgsDef;
 
 /**
- * A command with its {@link GLOBAL_OUTPUT_ARGS} left out of the args `--help`
- * renders, so leaf help does not repeat them (`akm --help` lists them once).
- * Only an arg that is still the shared definition goes; a command's own
- * same-named arg stays.
+ * A command with the args `--help` does not list left out. A hidden arg parses
+ * like any other and is simply not advertised, the way `meta.hidden` keeps a
+ * command out of the COMMANDS list (it is for a retired spelling that still
+ * works, so a scheduled command written for an earlier release keeps running).
+ * An arg that is still the shared {@link GLOBAL_OUTPUT_ARGS} definition is left
+ * out too: leaf help points at `akm --help` instead of repeating it. A command's
+ * own same-named arg stays.
  */
-export function withoutGlobalArgs<T extends object>(command: T): T {
-  const args = (command as { args?: Record<string, unknown> }).args;
-  if (!args) return command;
-  const globals = GLOBAL_OUTPUT_ARGS as Record<string, unknown>;
-  return { ...command, args: Object.fromEntries(Object.entries(args).filter(([key, def]) => globals[key] !== def)) };
-}
-
-/** The one line leaf `--help` prints in place of the global flags. */
-export const GLOBAL_FLAGS_POINTER =
-  "Global flags: --format, --detail, --output, -q/--quiet, --verbose (see `akm --help`)";
-
-/**
- * A command with the args marked `hidden` left out: what `--help` renders. A
- * hidden arg parses like any other and is simply not advertised, the way
- * `meta.hidden` keeps a command out of the COMMANDS list. It is for a retired
- * spelling that still works, so a scheduled command written for an earlier
- * release keeps running.
- */
-export function withoutHiddenArgs<T extends object>(command: T): T {
+export function withoutHelpHiddenArgs<T extends object>(command: T): T {
   const args = (command as { args?: Record<string, { hidden?: boolean }> }).args;
   if (!args) return command;
-  return { ...command, args: Object.fromEntries(Object.entries(args).filter(([, def]) => def.hidden !== true)) };
+  const globals = GLOBAL_OUTPUT_ARGS as Record<string, unknown>;
+  return {
+    ...command,
+    args: Object.fromEntries(Object.entries(args).filter(([key, def]) => def.hidden !== true && globals[key] !== def)),
+  };
 }
 
 /**

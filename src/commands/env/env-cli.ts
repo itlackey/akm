@@ -58,8 +58,7 @@ const envCreateCommand = defineJsonCommand({
     },
     path: {
       type: "string",
-      description:
-        "Relative subdirectory under env/ to place the env file in (e.g. 'staging'). The filename comes from the name.",
+      description: "Subdirectory under env/ (e.g. 'staging')",
     },
     "from-file": { type: "string", description: "Seed the env file from an existing .env at this path" },
     "from-stdin": { type: "boolean", description: "Seed the env file from stdin", default: false },
@@ -70,8 +69,7 @@ const envCreateCommand = defineJsonCommand({
     },
     bundle: {
       type: "string",
-      description:
-        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working bundle.",
+      description: "Write destination: a source name (default: defaultWriteTarget)",
     },
   },
   async run({ args }) {
@@ -315,22 +313,19 @@ const envRunCommand = defineJsonCommand({
     except: { type: "string", description: "Inject all keys EXCEPT these (comma-separated)." },
     clean: {
       type: "boolean",
-      description:
-        "Start the child with a minimal inherited environment (PATH/HOME/locale/terminal basics) instead of the full parent environment.",
+      description: "Start the child with a minimal inherited environment",
       default: false,
     },
     inherit: {
       type: "string",
-      description:
-        "When used with --clean, also inherit these parent env vars (comma-separated). Ignored without --clean.",
+      description: "With --clean, also inherit these parent env vars (comma-separated)",
     },
     // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
     // fail with UNKNOWN_FLAG. Installing a bundle is the trust decision: env
     // run no longer blocks process-hijacking keys.
     "allow-dangerous-env-keys": {
       type: "boolean",
-      description:
-        "Deprecated, no effect: env run no longer blocks process-hijacking variables. Accepted through 0.10 for existing scripts.",
+      description: "Deprecated, no effect (accepted through 0.10)",
       default: false,
     },
   },
@@ -351,8 +346,7 @@ const envRemoveCommand = defineJsonCommand({
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
     bundle: {
       type: "string",
-      description:
-        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working bundle.",
+      description: "Write destination: a source name (default: defaultWriteTarget)",
     },
   },
   async run({ args }) {

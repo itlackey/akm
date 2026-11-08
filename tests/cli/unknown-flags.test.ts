@@ -51,6 +51,7 @@ describe("rejects undeclared flags", () => {
     expect(shape.hint()).toContain("--detail agent");
     expect(shape.hint()).not.toContain("--type");
     expect(errorFor(["env", "create", "x", "--target", "b"]).hint()).toContain("`--bundle`");
+    expect(errorFor(["config", "path", "--all"]).hint()).toContain("`akm info`");
     // `--target` is only gone where STABILITY says so.
     expect(errorFor(["search", "foo", "--target", "b"]).hint() ?? "").not.toContain("is gone");
   });

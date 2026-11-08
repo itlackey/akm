@@ -84,12 +84,10 @@ import {
   defineGroupCommand,
   EXIT_CODES,
   emitJsonError,
-  GLOBAL_FLAGS_POINTER,
   GLOBAL_OUTPUT_ARGS,
   output,
   runWithJsonErrors,
-  withoutGlobalArgs,
-  withoutHiddenArgs,
+  withoutHelpHiddenArgs,
 } from "./cli/shared";
 import { assertKnownFlags, type FlagScanCommand } from "./cli/unknown-flags";
 import { agentCommand, lintCommand } from "./commands/agent/contribute-cli";
@@ -199,13 +197,11 @@ const setupCommand = defineCommand({
     ...GLOBAL_OUTPUT_ARGS,
     endpoint: {
       type: "string",
-      description:
-        "OpenAI-compatible endpoint to add or update as a connection (the first is named default), e.g. http://localhost:11434/v1",
+      description: "OpenAI-compatible endpoint to add or update as a connection, e.g. http://localhost:11434/v1",
     },
     "api-key-env": {
       type: "string",
-      description:
-        "Name of the environment variable holding the connection's API key; the connection gets apiKey: $NAME. Keys are never passed on the command line.",
+      description: "Environment variable holding the connection's API key (never passed on the command line)",
     },
     name: {
       type: "string",
@@ -217,8 +213,7 @@ const setupCommand = defineCommand({
     },
     embedding: {
       type: "string",
-      description:
-        "Embeddings: a model the connection serves, local (the built-in embedder, on the platforms that have it; its runtime and model are downloaded now), or off",
+      description: "Embeddings: a model the connection serves, `local`, or `off`",
     },
     "embedding-endpoint": {
       type: "string",
@@ -230,14 +225,12 @@ const setupCommand = defineCommand({
     },
     from: {
       type: "string",
-      description:
-        "Path to a config file (JSON or YAML) to bootstrap from. Skips prompts for keys present in the file.",
+      description: "Config file (JSON or YAML) to bootstrap from",
     },
     yes: {
       type: "boolean",
       default: false,
-      description:
-        "Take the detected default for every question no flag answers; no prompts. Idempotent — safe to run in CI.",
+      description: "Take the detected default for every unanswered question; no prompts",
     },
     dir: {
       type: "string",
@@ -253,15 +246,14 @@ const setupCommand = defineCommand({
     init: {
       type: "boolean",
       default: true,
-      description: "Scaffold the bundle directory. Use --no-init to write configuration without scaffolding it.",
+      description: "Scaffold the bundle directory (--no-init skips it)",
     },
     // There is no `--probe`: probing is the default, so only the opt-out is declared. citty parses `--no-probe`
     // as the negation of `probe` whether or not `probe` is declared, so the value is `args.probe === false`;
     // declaring `no-probe` is what puts the flag in `--help` and keeps the unknown-flag check from refusing it.
     "no-probe": {
       type: "boolean",
-      description:
-        "Offline run: nothing is contacted or downloaded. The endpoint's models are not listed, so a connection added this way has no model until one is named with `akm models set` (the picks it already has are kept), and the local embedder's runtime and model are fetched by the first `akm index`.",
+      description: "Offline run: contact and download nothing",
     },
   },
   async run({ args }) {
@@ -353,13 +345,11 @@ const healthCommand = defineCommand({
     },
     windows: {
       type: "string",
-      description:
-        "Explicit comparison window 'name=...,since=ISO,until=ISO' (repeatable, up to 4; mutually exclusive with --window-compare)",
+      description: "Comparison window 'name=...,since=ISO,until=ISO' (repeatable, up to 4; not with --window-compare)",
     },
     report: {
       type: "boolean",
-      description:
-        "Fetch the full report dataset: per-run rows, trend deltas vs the prior window, and the pending proposal queue. Renders as the rich report under --format md and as complete data under any other format.",
+      description: "Fetch the full report dataset (per-run rows, trend deltas, pending proposals)",
       default: false,
     },
     // #914: citty strips any `--no-X` argument and treats it as negating `X`
@@ -371,8 +361,7 @@ const healthCommand = defineCommand({
     probe: {
       type: "boolean",
       default: true,
-      description:
-        "Probe configured connections for reachability and run each harness's `--version`, check for a newer akm release, look up the newest Claude plugin tag, and check the scheduler's recorded akm binary version (on by default).",
+      description: "Probe connections, harnesses, newer releases and the scheduler binary (on by default)",
       negativeDescription:
         "Skip the reachability probes, the harness `--version` runs, the update check, the Claude plugin tag lookup, and the scheduler-binary version check (for an offline or air-gapped host).",
     },
@@ -560,11 +549,8 @@ const commands = {
 
 /** Leaf `--help`: usage without the hidden args and the shared global flags, then one pointer line. */
 async function showCommandUsage(command: AnyCittyCommand, path: readonly string[]): Promise<void> {
-  await showUsage(
-    withoutGlobalArgs(withoutHiddenArgs(command)) as CommandDef,
-    buildUsageParentForPath(path) as CommandDef,
-  );
-  console.log(GLOBAL_FLAGS_POINTER);
+  await showUsage(withoutHelpHiddenArgs(command) as CommandDef, buildUsageParentForPath(path) as CommandDef);
+  console.log("Global flags: --format, --detail, --output, -q/--quiet, --verbose (see `akm --help`)");
 }
 
 function commandHelpTopic(name: string, command: AnyCittyCommand): AnyCittyCommand {

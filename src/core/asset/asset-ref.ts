@@ -7,22 +7,27 @@ import { UsageError } from "../errors";
 
 // ── Validation ──────────────────────────────────────────────────────────────
 
+const REF_FORM_HINT =
+  "Refs use the form [bundle//]conceptId, e.g. `akm show knowledge/guide.md` or `akm show skills/deploy`.";
+
 function validateName(name: string): void {
   if (!name) throw new UsageError("Empty asset name.", "MISSING_REQUIRED_ARGUMENT");
-  if (name.includes("\0")) throw new UsageError("Null byte in asset name.", "PATH_ESCAPE_VIOLATION");
-  if (/^[A-Za-z]:/.test(name)) throw new UsageError("Windows drive path in asset name.", "PATH_ESCAPE_VIOLATION");
+  if (name.includes("\0")) throw new UsageError("Null byte in asset name.", "PATH_ESCAPE_VIOLATION", REF_FORM_HINT);
+  if (/^[A-Za-z]:/.test(name))
+    throw new UsageError("Windows drive path in asset name.", "PATH_ESCAPE_VIOLATION", REF_FORM_HINT);
 
   const slashName = name.replace(/\\/g, "/");
   if (slashName === ".." || slashName.startsWith("../")) {
-    throw new UsageError("Path traversal in asset name.", "PATH_ESCAPE_VIOLATION");
+    throw new UsageError("Path traversal in asset name.", "PATH_ESCAPE_VIOLATION", REF_FORM_HINT);
   }
   if (slashName.split("/").some((seg) => seg === "." || seg === "..")) {
-    throw new UsageError("Asset name cannot contain relative path segments.", "PATH_ESCAPE_VIOLATION");
+    throw new UsageError("Asset name cannot contain relative path segments.", "PATH_ESCAPE_VIOLATION", REF_FORM_HINT);
   }
   const normalized = path.posix.normalize(slashName);
-  if (path.posix.isAbsolute(normalized)) throw new UsageError("Absolute path in asset name.", "PATH_ESCAPE_VIOLATION");
+  if (path.posix.isAbsolute(normalized))
+    throw new UsageError("Absolute path in asset name.", "PATH_ESCAPE_VIOLATION", REF_FORM_HINT);
   if (normalized === ".." || normalized.startsWith("../")) {
-    throw new UsageError("Path traversal in asset name.", "PATH_ESCAPE_VIOLATION");
+    throw new UsageError("Path traversal in asset name.", "PATH_ESCAPE_VIOLATION", REF_FORM_HINT);
   }
 }
 

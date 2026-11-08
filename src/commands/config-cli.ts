@@ -193,9 +193,7 @@ export const configCommand = defineGroupCommand({
         key: { type: "positional", required: true, description: "Config key (for example: embedding, defaultBundle)" },
         "show-source": {
           type: "boolean",
-          description:
-            'Wrap the value as { value, source }, where source is "local", "extends:<ref>" (the nearest ' +
-            'extends chain member that sets it), or "default".',
+          description: "Wrap the value as { value, source } (local, extends:<ref> or default)",
           default: false,
         },
       },

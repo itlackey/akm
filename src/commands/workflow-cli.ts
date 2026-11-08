@@ -37,17 +37,14 @@ const workflowStatusCommand = defineJsonCommand({
     target: { type: "positional", description: "Workflow run id or workflow ref (workflows/<name>)", required: true },
     units: {
       type: "boolean",
-      description:
-        "Also list per-unit rows from the run journal (unit id, status, failure_reason, and any result/error " +
-        "diagnostic text). Diagnostics only — step evidence stays deterministic and is unaffected.",
+      description: "Also list per-unit rows from the run journal",
       default: false,
     },
     // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
     // fail with UNKNOWN_FLAG. Runs are no longer scoped to a directory.
     "all-scopes": {
       type: "boolean",
-      description:
-        "Deprecated, no effect: runs are host-wide, not scoped to a directory. Accepted through 0.10 for existing scripts.",
+      description: "Deprecated, no effect (accepted through 0.10)",
       default: false,
     },
   },
@@ -95,8 +92,7 @@ const workflowListCommand = defineJsonCommand({
     // fail with UNKNOWN_FLAG. Runs are no longer scoped to a directory.
     "all-scopes": {
       type: "boolean",
-      description:
-        "Deprecated, no effect: runs are host-wide, not scoped to a directory. Accepted through 0.10 for existing scripts.",
+      description: "Deprecated, no effect (accepted through 0.10)",
       default: false,
     },
   },
@@ -123,8 +119,7 @@ const workflowCreateCommand = defineJsonCommand({
     },
     path: {
       type: "string",
-      description:
-        "Relative subdirectory under workflows/ to place the workflow in (e.g. 'release'). The filename comes from the name.",
+      description: "Subdirectory under workflows/ (e.g. 'release')",
     },
     from: {
       type: "string",
@@ -132,14 +127,12 @@ const workflowCreateCommand = defineJsonCommand({
     },
     force: {
       type: "boolean",
-      description:
-        "Overwrite an existing workflow. Combined with --from, replaces its content; alone, replaces it with a fresh template.",
+      description: "Overwrite an existing workflow",
       default: false,
     },
     print: {
       type: "boolean",
-      description:
-        "Print the RAW template that would be written to stdout without creating anything — pipe it to a file as a starter document",
+      description: "Print the raw template to stdout without creating anything",
       default: false,
     },
   },
@@ -204,16 +197,12 @@ const workflowRunCommand = defineJsonCommand({
     // fail with UNKNOWN_FLAG. A workflow ref always starts a new run now.
     new: {
       type: "boolean",
-      description:
-        "Deprecated, no effect: a workflow ref always starts a new run. Accepted through 0.10 for existing scripts.",
+      description: "Deprecated, no effect (accepted through 0.10)",
       default: false,
     },
     "skip-if-locked": {
       type: "boolean",
-      description:
-        "If another akm process is already driving this run (or, for a workflow ref, an active run of it), or " +
-        "state.db is busy with another writer, skip gracefully (exit 0) instead of failing (exit 75). Use for " +
-        "high-frequency scheduled runs so they don't pile up failures while a longer-running invocation is in progress.",
+      description: "Skip (exit 0, not 75) if another akm process holds this run or state.db is busy",
       default: false,
     },
   },

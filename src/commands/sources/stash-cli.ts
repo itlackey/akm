@@ -88,8 +88,7 @@ export const indexCommand = defineCommand({
     },
     "skip-if-locked": {
       type: "boolean",
-      description:
-        "If another `akm index` run already holds the rebuild lock, skip gracefully (exit 0) instead of contending with it. Use for scheduled/opportunistic index runs so they don't pile up against a longer run in progress.",
+      description: "Skip (exit 0) if another `akm index` holds the rebuild lock",
       default: false,
     },
   },
@@ -219,13 +218,11 @@ export const importKnowledgeCommand = defineJsonCommand({
     },
     name: {
       type: "string",
-      description:
-        "Knowledge name (flat, no '/'; defaults to the source filename or content slug). Use --path for a subdirectory.",
+      description: "Knowledge name (flat; default: source filename or content slug)",
     },
     path: {
       type: "string",
-      description:
-        "Relative subdirectory under knowledge/ to place the document in (e.g. 'projects/example'). The filename still comes from --name or the source slug.",
+      description: "Subdirectory under knowledge/ (e.g. 'projects/example')",
     },
     force: {
       type: "boolean",
@@ -234,8 +231,7 @@ export const importKnowledgeCommand = defineJsonCommand({
     },
     bundle: {
       type: "string",
-      description:
-        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working bundle.",
+      description: "Write destination: a source name (default: defaultWriteTarget)",
     },
     xref: {
       type: "string",

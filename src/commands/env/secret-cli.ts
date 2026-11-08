@@ -105,15 +105,13 @@ const secretSetCommand = defineJsonCommand({
     },
     path: {
       type: "string",
-      description:
-        "Relative subdirectory under secrets/ to place the secret in (e.g. 'team'). The filename comes from the name.",
+      description: "Subdirectory under secrets/ (e.g. 'team')",
     },
     "from-file": { type: "string", description: "Read the value from this file (stored byte-exact)" },
     "from-env": { type: "string", description: "Read the value from the named environment variable" },
     bundle: {
       type: "string",
-      description:
-        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working bundle.",
+      description: "Write destination: a source name (default: defaultWriteTarget)",
     },
   },
   async run({ args }) {
@@ -167,14 +165,12 @@ const secretRunCommand = defineJsonCommand({
     var: { type: "positional", description: "Environment variable name to inject the value into", required: true },
     clean: {
       type: "boolean",
-      description:
-        "Start the child with a minimal inherited environment (PATH/HOME/locale/terminal basics) instead of the full parent environment.",
+      description: "Start the child with a minimal inherited environment",
       default: false,
     },
     inherit: {
       type: "string",
-      description:
-        "When used with --clean, also inherit these parent env vars (comma-separated). Ignored without --clean.",
+      description: "With --clean, also inherit these parent env vars (comma-separated)",
     },
   },
   async run({ args }) {
@@ -248,8 +244,7 @@ const secretRemoveCommand = defineJsonCommand({
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
     bundle: {
       type: "string",
-      description:
-        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working bundle.",
+      description: "Write destination: a source name (default: defaultWriteTarget)",
     },
   },
   async run({ args }) {

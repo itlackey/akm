@@ -85,13 +85,11 @@ const improveReportCommand = defineJsonCommand({
   args: {
     run: {
       type: "string",
-      description:
-        "Show the report for one specific improve_runs row instead of the most recent run. Mutually exclusive with --since.",
+      description: "Report for one improve_runs row instead of the latest (not with --since)",
     },
     since: {
       type: "string",
-      description:
-        'Aggregate the report over every real run started since <window> (a duration like "24h"/"7d", or an ISO timestamp) instead of showing one run. Mutually exclusive with --run.',
+      description: "Aggregate every run since a duration (24h, 7d) or ISO time (not with --run)",
     },
   },
   run({ args }) {
@@ -176,8 +174,7 @@ export const improveCommand = defineCommand({
     "dry-run": { type: "boolean", description: "Show planned actions without writing", default: false },
     bundle: {
       type: "string",
-      description:
-        "Bundle to improve and write proposals to (default: defaultWriteTarget, else the working bundle); only its assets are planned",
+      description: "Bundle to improve (default: defaultWriteTarget, else the working bundle)",
     },
     limit: { type: "string", description: "Maximum number of assets to process (highest salience first)" },
     "timeout-ms": {
@@ -197,33 +194,28 @@ export const improveCommand = defineCommand({
     },
     "skip-if-locked": {
       type: "boolean",
-      description:
-        "If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with 'already running' (exit 75). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress.",
+      description: "Skip (exit 0, not 75) if another improve run holds the lock",
       default: false,
     },
     // Retired: a run already stops at planning (exit 78) when no process has a connection or harness to run on.
     "require-engines": { type: "boolean", hidden: true, description: "Retired: has no effect." },
     "show-prompt": {
       type: "boolean",
-      description:
-        "Print the composed reflect prompt for one asset ref and exit — no lock, index write, or model call (#952). Requires a fully-qualified asset ref as the scope positional (e.g. `akm improve lessons/my-lesson --show-prompt`). JSON/yaml format carries the prompt as a `prompt` field; text format prints it directly.",
+      description: "Print the composed reflect prompt for one asset ref and exit (no lock, index write or model call)",
       default: false,
     },
     strategy: {
       type: "string",
-      description:
-        "Named improve strategy from improve.strategies or built-in strategies (consolidate, default). Controls which sub-processes run and which asset types are processed, never where they run.",
+      description: "Named improve strategy: improve.strategies key, or consolidate or default",
     },
     ...SELECTION_ARGS,
     sync: {
       type: "boolean",
-      description:
-        "Sync the git-backed primary bundle like `akm sync` (fetch and merge the upstream, commit, push) before the run, and commit (and optionally push) when it finishes. Use --no-sync to disable. Default: on for git-backed bundles (per profile config).",
+      description: "Sync the git-backed primary bundle before and after the run (--no-sync disables)",
     },
     push: {
       type: "boolean",
-      description:
-        "Push after the pre-run and end-of-run sync commits when writable + remote configured. Use --no-push to commit only. Default: per profile config (true).",
+      description: "Push after the sync commits (--no-push commits only)",
     },
   },
   async run({ args }) {

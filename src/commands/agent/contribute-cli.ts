@@ -49,7 +49,7 @@ export const agentCommand = defineCommand({
     ...GLOBAL_OUTPUT_ARGS,
     "agent-ref": {
       type: "positional",
-      description: "Optional agent asset ref (e.g. agents/code-reviewer). Resolves persona and model defaults.",
+      description: "Agent asset ref (e.g. agents/code-reviewer)",
       required: false,
     },
     prompt: { type: "string", description: "Task prompt to pass to the agent" },
@@ -153,7 +153,7 @@ export const lintCommand = defineCommand({
     dir: { type: "string", description: "Override bundle root directory (default: from config)" },
     "fail-on-flagged": {
       type: "boolean",
-      description: "Exit non-zero when summary.flagged > 0 (CI-friendly). Default: exit 0 regardless of findings.",
+      description: "Exit non-zero when summary.flagged > 0 (CI)",
       default: false,
     },
     // #884: NOT folded into `--fix`. Every other auto-fix repairs a structural
@@ -163,14 +163,12 @@ export const lintCommand = defineCommand({
     // so it stays opt-in behind its own flag even when `--fix` is present.
     "prune-dangling-edges": {
       type: "boolean",
-      description:
-        "Opt-in repair: drop supersededBy/contradictedBy entries whose target has neither a file nor a prune tombstone. Modifies memories — review the plain `akm lint` report first.",
+      description: "Drop supersededBy/contradictedBy entries whose target is gone (modifies memories)",
       default: false,
     },
     type: {
       type: "string",
-      description:
-        "Only lint assets of this type (e.g. workflows, tasks, memories). akm bundles only — every other adapter validates the whole bundle and warns that the flag had no effect.",
+      description: "Only lint assets of this type (akm bundles only; e.g. workflows, tasks)",
       default: undefined,
     },
   },

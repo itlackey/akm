@@ -88,8 +88,7 @@ const proposalListCommand = defineJsonCommand({
     type: { type: "string", description: "Filter by asset type" },
     generator: {
       type: "string",
-      description:
-        "Filter by generator/source (e.g. reflect, distill, consolidate-pair) — same value accept/reject --generator take.",
+      description: "Filter by generator (e.g. reflect, distill, consolidate-pair)",
     },
   },
   run({ args }) {
@@ -115,8 +114,7 @@ const proposalAcceptCommand = defineJsonCommand({
   args: {
     id: {
       type: "positional",
-      description:
-        "Proposal id (uuid / prefix) or asset ref (e.g. skills/akm-dream); repeat it to accept several at once. Optional when --generator is provided.",
+      description: "Proposal id (uuid or prefix) or asset ref; repeatable. Optional with --generator",
       required: false,
     },
     queue: { type: "string", description: "Select the proposal queue by source name" },
@@ -124,18 +122,15 @@ const proposalAcceptCommand = defineJsonCommand({
     // F-6 / #393: Batch accept by generator, diff size, or age.
     generator: {
       type: "string",
-      description:
-        "Bulk-accept all pending proposals from this generator (e.g. reflect, distill). Requires no positional id.",
+      description: "Bulk-accept pending proposals from this generator (e.g. reflect, distill)",
     },
     "max-diff-lines": {
       type: "string",
-      description:
-        "When bulk-accepting, only accept proposals whose content is <= this many lines. Skips larger proposals.",
+      description: "Bulk accept only proposals of at most this many lines",
     },
     "older-than": {
       type: "string",
-      description:
-        "When bulk-accepting, only accept proposals created (or last reopened) more than this many days ago (e.g. '7' for 7 days).",
+      description: "Bulk accept only proposals older than this many days",
     },
     "dry-run": {
       type: "boolean",
@@ -217,8 +212,7 @@ const proposalRejectCommand = defineJsonCommand({
   args: {
     id: {
       type: "positional",
-      description:
-        "Proposal id (uuid / prefix) or asset ref (e.g. skills/akm-dream). Optional when --generator is provided.",
+      description: "Proposal id (uuid or prefix) or asset ref. Optional with --generator",
       required: false,
     },
     reason: { type: "string", description: "Reason for rejection (required)" },
@@ -226,18 +220,15 @@ const proposalRejectCommand = defineJsonCommand({
     // F-6 / #393: Batch reject by generator, diff size, or age.
     generator: {
       type: "string",
-      description:
-        "Bulk-reject all pending proposals from this generator (e.g. reflect, distill). Requires no positional id.",
+      description: "Bulk-reject pending proposals from this generator (e.g. reflect, distill)",
     },
     "max-diff-lines": {
       type: "string",
-      description:
-        "When bulk-rejecting, only reject proposals whose content is <= this many lines. Skips larger proposals.",
+      description: "Bulk reject only proposals of at most this many lines",
     },
     "older-than": {
       type: "string",
-      description:
-        "When bulk-rejecting, only reject proposals created (or last reopened) more than this many days ago (e.g. '7' for 7 days).",
+      description: "Bulk reject only proposals older than this many days",
     },
     "dry-run": {
       type: "boolean",
@@ -381,8 +372,7 @@ const proposalRevertCommand = defineJsonCommand({
   args: {
     id: {
       type: "positional",
-      description:
-        "Proposal id (full uuid) or asset ref (e.g. skills/akm-dream). UUID prefixes are not supported for archived proposals — use the full UUID.",
+      description: "Proposal id (full uuid for archived proposals) or asset ref",
       required: true,
     },
     queue: { type: "string", description: "Select the proposal queue by source name" },
@@ -435,7 +425,7 @@ const proposalDrainCommand = defineJsonCommand({
     },
     "max-accepts": {
       type: "string",
-      description: "Hard per-run accept ceiling. Accepts beyond this are reported as skippedByCap.",
+      description: "Per-run accept ceiling; extra accepts are reported as skippedByCap",
     },
     "older-than": {
       type: "string",
@@ -443,20 +433,17 @@ const proposalDrainCommand = defineJsonCommand({
     },
     promote: {
       type: "boolean",
-      description:
-        "Promote (accept) judge-passed proposals. Without it, drain queues: it stages its decisions and writes nothing to assets.",
+      description: "Promote (accept) judge-passed proposals; without it drain only queues decisions",
       default: false,
     },
     judgment: {
       type: "boolean",
-      description:
-        "Enable the judgment tier for this drain (overrides judgment.enabled=false; agent/sdk per config). It accepts only consolidate promotions; every other kind it would accept is left for review. No-op with a logged triage_deferred summary when no runner is configured.",
+      description: "Enable the judgment tier for this drain (consolidate promotions only)",
       default: false,
     },
     strategy: {
       type: "string",
-      description:
-        "Read the triage block (applyMode, ceilings, judgment) from this improve strategy; enabled judgment runs the judge.",
+      description: "Improve strategy whose triage block (applyMode, ceilings, judgment) to use",
     },
   },
   async run({ args }) {

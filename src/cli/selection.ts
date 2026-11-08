@@ -21,10 +21,10 @@ import { getStringArg } from "./parse-args";
 export const SELECTION_ARGS = {
   connection: { type: "string", description: "Run on this connection, by name (default: the default connection)" },
   harness: { type: "string", description: "Run on this harness, by name or platform (default: the default harness)" },
-  model: { type: "string", description: "Model to run, by alias (fast, balanced, reasoning) or exact name" },
+  model: { type: "string", description: "Model alias (fast, balanced, reasoning) or exact name" },
 } as const satisfies ArgsDef;
 
-/** The retired `--engine`: parsed, left out of `--help` (`withoutHiddenArgs`). Spread it where the flag existed. */
+/** The retired `--engine`: parsed, left out of `--help` (`withoutHelpHiddenArgs`). Spread it where the flag existed. */
 export const RETIRED_ENGINE_ARG = {
   engine: { type: "string", hidden: true, description: "Retired: use --connection or --harness." },
 } as const;
