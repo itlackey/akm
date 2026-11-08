@@ -19,10 +19,18 @@ export const workspace = $state({
   /** Pending proposals; null when the queue could not be read (not the same as zero). */
   pendingCount: null as number | null,
   theme: "system",
+  /**
+   * A form with unsaved changes that is not a Library draft (Projects, Connections): while `dirty`, leaving by
+   * navigation, Back/Forward or closing the window asks first. `what` is the sentence the dialog shows.
+   */
+  guard: { dirty: false, what: "" },
+  /** Projects renamed in this session, old name to new, so Back to an old page finds the project. */
+  renamedProjects: {} as Record<string, string>,
   /** Where each section was last left, so the primary navigation returns to it. */
   sectionHref: {
     Home: "/",
     Library: "/library/search",
+    Projects: "/projects",
     Review: "/review",
     Activity: "/activity/overview",
     Settings: "/settings/bundles",

@@ -84,7 +84,52 @@ test("writes reach their operations and unknown fields are ignored", async (t) =
   ok(await app.call("/api/config/set", { set: { "output.format": "text" } }));
   ok(await app.call("/api/config/projects", { set: { "my.project": { paths: ["/work/mine"] } } }));
   assert.deepEqual(ok(await app.call("/api/config")).config.projects, { "my.project": { paths: ["/work/mine"] } });
-  ok(await app.call("/api/config/projects", { unset: ["my.project"] }));
+  ok(
+    await app.call("/api/config/projects", {
+      set: { browse: { from: "personal", filters: { project: "none-here" } } },
+    }),
+  );
+  const overview = ok(await app.call("/api/projects/overview?project=browse"));
+  assert.deepEqual(
+    overview.bundles.map((bundle) => [bundle.name, bundle.total.count > 0, bundle.eligible.count]),
+    [["personal", true, 0]],
+  );
+  assert.deepEqual(ok(await app.call("/api/search?q=restore&project=browse&surprise=1")).hits, []);
+  assert.equal((await app.call("/api/projects/overview?project=missing")).status, 400);
+  ok(await app.call("/api/config/projects", { unset: ["browse", "my.project"] }));
+  ok(
+    await app.call("/api/config/set", {
+      set: { "connections.lab": JSON.stringify({ endpoint: "http://127.0.0.1:9/v1", models: { fast: "m" } }) },
+    }),
+  );
+  assert.deepEqual(
+    ok(
+      await app.call("/api/config/connections/save", {
+        name: "lab",
+        entry: { endpoint: "http://127.0.0.1:9/v1" },
+        surprise: 1,
+      }),
+    ),
+    { saved: true },
+  );
+  assert.equal(
+    (
+      await app.call("/api/config/connections/save", {
+        name: "lab",
+        entry: { endpoint: "http://x/v1", apiKey: "sk-literal" },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(ok(await app.call("/api/config")).defaultConnection, "lab");
+  assert.deepEqual(ok(await app.call("/api/config/connections/remove", { name: "lab", surprise: true })), {
+    saved: true,
+    references: [],
+    wasDefault: true,
+    defaultConnection: null,
+    stillInherited: false,
+  });
+  assert.equal((await app.call("/api/config/connections/remove", { name: "lab" })).status, 400);
   ok(await app.call("/api/bundles/settings", { bundle: "vendor", enabled: true }));
   ok(await app.call(`/api/proposals/${fresh}/reject`, { reason: "Synthetic" }));
   ok(await app.call(`/api/proposals/${fresh}/reopen`, {}));

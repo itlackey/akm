@@ -8,12 +8,18 @@ import path from "node:path";
 import test from "node:test";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect } from "@playwright/test";
-import { launchFixture } from "./support.mjs";
+import { launchFixture, projectsAndConnections } from "./support.mjs";
 
 // Automated floor, not a substitute for independent task/keyboard/visual review.
 // Populated real AKM APIs; all sources and writes are confined to the fixture.
 test("populated workspace accessibility and reflow across both themes", { timeout: 300000 }, async (t) => {
-  const app = await launchFixture({ proposals: true, metrics: true, assetCount: 30, git: true });
+  const app = await launchFixture({
+    proposals: true,
+    metrics: true,
+    assetCount: 30,
+    git: true,
+    configureFixture: projectsAndConnections,
+  });
   t.after(() => app.stop());
   const browser = await chromium.launch();
   t.after(() => browser.close());
@@ -35,6 +41,13 @@ test("populated workspace accessibility and reflow across both themes", { timeou
     { id: "retrieval", route: "/activity/overview?view=retrieval", ready: "#activity-retrieval-rate svg" },
     { id: "impact", route: "/activity/improve", ready: ".impact-links" },
     { id: "bundles", route: "/settings/bundles", ready: "#configured-bundles" },
+    { id: "projects", route: "/projects", ready: ".project-grid" },
+    { id: "project", route: "/projects/docs", ready: "#applies" },
+    { id: "project-assets", route: "/projects/notes/assets", ready: ".asset-row" },
+    { id: "project-edit", route: "/projects/docs/edit", ready: ".project-form" },
+    { id: "connections", route: "/settings/connections", ready: ".conn-list" },
+    { id: "connection", route: "/settings/connections?name=lab", ready: ".conn-facts" },
+    { id: "connection-edit", route: "/settings/connections?name=lab&edit", ready: ".connection-form" },
     { id: "config", route: "/settings/config", ready: "#library-settings" },
     { id: "setup", route: "/setup", ready: "#setup-try" },
   ];

@@ -11,6 +11,7 @@
   import { api } from "../lib/client";
   import { hasStoredDrafts, hasUnsaved } from "../lib/drafts";
   import { navigate } from "../lib/navigation";
+  import Toasts from "../lib/Toasts.svelte";
   import { applyTheme, refreshBundles, refreshPending, workspace } from "../lib/state/workspace.svelte";
   import "../lib/ui/tokens.css";
   import "../lib/ui/base.css";
@@ -25,6 +26,7 @@
   const sections = [
     { name: "Home", prefix: "" },
     { name: "Library", prefix: "library" },
+    { name: "Projects", prefix: "projects" },
     { name: "Review", prefix: "review" },
     { name: "Activity", prefix: "activity" },
     { name: "Settings", prefix: "settings" },
@@ -57,7 +59,7 @@
       approved = "";
       return;
     }
-    if (!editing || !hasUnsaved()) return;
+    if (!workspace.guard.dirty && (!editing || !hasUnsaved())) return;
     if (navigation.to?.url.href === page.url.href && !navigation.willUnload) return;
     navigation.cancel();
     if (navigation.willUnload || pending || !navigation.to) return;
@@ -71,7 +73,7 @@
   afterNavigate((navigation) => {
     // A completed save may open its reader while a leave prompt is pending.
     // Once there is no unsaved work, that prompt no longer describes reality.
-    if (pending && !hasUnsaved()) {
+    if (pending && !hasUnsaved() && !workspace.guard.dirty) {
       pending = null;
       approved = "";
       leaveDialog?.close();
@@ -98,6 +100,7 @@
     const destination = pending;
     if (!destination) return;
     pending = null;
+    workspace.guard.dirty = false;
     leaveDialog.close();
     approved = destination.href;
     // Kit has already cancelled/restored the original traversal. Retry the same
@@ -148,7 +151,7 @@
     }
   }
   function unload(event: BeforeUnloadEvent) {
-    if (hasUnsaved() || hasStoredDrafts()) {
+    if (hasUnsaved() || hasStoredDrafts() || workspace.guard.dirty) {
       event.preventDefault();
       event.returnValue = "";
     }
@@ -217,10 +220,12 @@
       {@render children()}
     {:else}<p class="state" role="status">Opening your workspace…</p>{/if}
   </main>
+  <Toasts />
   <footer class="desktop-footer">
     <span class="build-label" title={metadata?.commit ? `Build ${metadata.commit}` : undefined}
-      >AKM Desktop <span>{metadata?.version ?? ""}</span
-      >{#if metadata?.commit && metadata.commit !== "development"}<span class="build-commit">{metadata.commit}</span
+      ><span class="footer-host">{metadata?.hostname ?? "This computer"} ·</span> AKM Desktop
+      <span>{metadata?.version ?? ""}</span>{#if metadata?.commit && metadata.commit !== "development"}<span
+          class="build-commit">{metadata.commit}</span
         >{/if}</span
     >
     <label class="theme-picker"
@@ -240,13 +245,24 @@
     stayInEditor();
   }}
 >
-  <h2 id="leave-editor-title">Leave this draft?</h2>
-  <p>Your unsaved changes stay in this window. Reopen this editor to continue, or save before leaving.</p>
-  <div class="btn-row">
-    <button class="btn-secondary" onclick={stayInEditor}>Stay in editor</button><button onclick={leaveAndKeep}
-      >Leave and keep draft</button
-    >
-  </div>
+  {#if workspace.guard.dirty}
+    <h2 id="leave-editor-title">Discard unsaved changes?</h2>
+    <p>{workspace.guard.what}</p>
+    <div class="btn-row">
+      <button class="btn-secondary" onclick={stayInEditor}>Keep editing</button><button
+        class="btn-danger"
+        onclick={leaveAndKeep}>Discard changes</button
+      >
+    </div>
+  {:else}
+    <h2 id="leave-editor-title">Leave this draft?</h2>
+    <p>Your unsaved changes stay in this window. Reopen this editor to continue, or save before leaving.</p>
+    <div class="btn-row">
+      <button class="btn-secondary" onclick={stayInEditor}>Stay in editor</button><button onclick={leaveAndKeep}
+        >Leave and keep draft</button
+      >
+    </div>
+  {/if}
 </dialog>
 {#if themeError}<p role="status" class="notice notice-warn">{themeError}</p>{/if}
 <div id="route-status" class="sr-only" role="status" aria-live="polite"></div>

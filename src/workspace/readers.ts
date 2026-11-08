@@ -11,6 +11,7 @@ import { type AkmConfig, getConfigValueSource, loadConfig, sanitizeConfigForWrit
 import { bundleKeyForContentRoot } from "../core/config/config-sources";
 import { UsageError } from "../core/errors";
 import { getStateDbPath, listPendingStateMigrations } from "../core/state-db";
+import { resolveWorkingStashTarget } from "../core/write-source";
 import { implicitStashDir } from "../indexer/search/search-source";
 import { type Database, openDatabase } from "../storage/database";
 import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
@@ -112,5 +113,16 @@ export function configSource(path: string[]): string | null {
     return source === "local" ? "file" : source;
   } catch {
     return null;
+  }
+}
+
+/** Where an automatic write goes (no defaultWriteTarget): AKM_BUNDLE_DIR first, then the default bundle. */
+export function automaticWriteTarget(config: AkmConfig) {
+  try {
+    const { source } = resolveWorkingStashTarget(config, { requireWritable: false });
+    const path = source.path ?? null;
+    return { name: source.name, path, workingStash: path !== null && path === workingStashDir(config) };
+  } catch {
+    return null; // No AKM_BUNDLE_DIR and no usable default bundle: writes need an explicit target.
   }
 }

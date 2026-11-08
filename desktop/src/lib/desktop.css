@@ -339,6 +339,11 @@
   [hidden] {
     display: none;
   }
+  /* A heading focused by script (arrival on a view) is for screen readers; it shows no ring. */
+  :is(h1, h2, h3)[tabindex="-1"]:is(:focus, :focus-visible) {
+    outline: none;
+    box-shadow: none;
+  }
   @media (width > 850px) {
     .desktop-shell.workspace-active {
       block-size: 100dvh;
@@ -357,6 +362,21 @@
       min-block-size: 0;
     }
   }
+  .footer-host {
+    display: none;
+  }
+  /* Mid widths: the bar keeps one row, so the host moves to the footer. */
+  @media (48rem <= width < 72rem) {
+    .desktop-topbar .host {
+      display: none;
+    }
+    .desktop-topbar nav > a {
+      padding: 8px 12px;
+    }
+    .footer-host {
+      display: inline;
+    }
+  }
   @media (width < 48rem) {
     :root {
       --top-inset: 7rem;
@@ -371,9 +391,25 @@
     .desktop-topbar nav {
       order: 3;
       flex: 1 0 100%;
-      justify-content: space-between;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 4px;
-      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .desktop-topbar nav > a {
+      justify-content: center;
+      gap: 4px;
+      padding-inline: 2px;
+      font-size: 13px;
+      min-width: 0;
+    }
+    @media (width < 24rem) {
+      .desktop-topbar nav > a {
+        font-size: 12px;
+      }
+    }
+    .desktop-topbar .version {
+      display: none;
     }
     .desktop-topbar > .brand {
       padding-block-start: var(--space-3);
@@ -397,23 +433,24 @@
     }
   }
   @media (width < 26rem) {
-    .desktop-topbar nav {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 4px;
-      min-width: 0;
-    }
     .desktop-topbar nav > a {
-      justify-content: center;
-      gap: 4px;
-      padding-inline: 2px;
-      font-size: 13px;
-      min-width: 0;
+      position: relative;
+    }
+    /* The count sits in its own band above the label, so it never touches a neighbouring tab. */
+    .desktop-topbar nav > a {
+      align-items: flex-end;
+      padding-block-start: 14px;
     }
     .desktop-topbar .nav-count {
+      position: absolute;
+      inset-block-start: 1px;
+      inset-inline-end: 4px;
       font-size: 11px;
-      min-width: 14px;
-      padding: 0 2px;
+      line-height: 1.2;
+      min-width: 16px;
+      padding: 0 4px;
+      border-radius: 8px;
+      text-align: center;
     }
     .desktop-footer {
       flex-wrap: wrap;

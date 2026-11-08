@@ -8,25 +8,20 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { assertUnsettable, listConfig, setConfigValue, unsetConfigValue } from "../commands/config-cli";
 import { isRecord } from "../core/common";
-import { type AkmConfig, loadConfig, mutateConfig, resetConfigCache } from "../core/config/config";
+import {
+  type AkmConfig,
+  defaultConnection,
+  inheritedConnectionsOf,
+  loadConfig,
+  mutateConfig,
+  resetConfigCache,
+} from "../core/config/config";
 import { parseConfigText, readConfigText } from "../core/config/config-io";
 import { dropUnusableProjects, NO_PROJECT, type ProjectConfig } from "../core/config/schema/projects";
 import { UsageError } from "../core/errors";
 import { getConfigPath } from "../core/paths";
-import { resolveWorkingStashTarget } from "../core/write-source";
-import { configSource, preserveUnrelatedConfig, workingStashDir } from "./readers";
+import { automaticWriteTarget, configSource, preserveUnrelatedConfig } from "./readers";
 import { isSecretEnvName, redactForUi } from "./redact";
-
-/** Where an automatic write goes (no defaultWriteTarget): AKM_BUNDLE_DIR first, then the default bundle. */
-function automaticWriteTarget(config: AkmConfig) {
-  try {
-    const { source } = resolveWorkingStashTarget(config, { requireWritable: false });
-    const path = source.path ?? null;
-    return { name: source.name, path, workingStash: path !== null && path === workingStashDir(config) };
-  } catch {
-    return null; // No AKM_BUNDLE_DIR and no usable default bundle: writes need an explicit target.
-  }
-}
 
 /** Names that would reach Object.prototype when used as a key. */
 const UNSAFE_NAMES = new Set(["__proto__", "constructor", "prototype"]);
@@ -100,7 +95,17 @@ export function get() {
     config: effective,
     automaticWriteTarget: automaticWriteTarget(live),
     entries,
-    connections: named(effective.connections),
+    connections: named(effective.connections).map((connection) => ({
+      ...connection,
+      // Only an `extends` base defines it: it cannot be removed here, and a local save overrides it.
+      inherited: inheritedConnectionsOf(live).has(connection.name),
+      // The configured keys that name it, so a reader can say what depends on it.
+      usedBy: connectionReferences(live, connection.name),
+      // `file` (this install's config.json), or `extends:<ref>` naming the config this one extends that defines it.
+      source: configSource(["connections", connection.name]),
+    })),
+    // The connection named `default`, else the only one, else none: the rule every consumer without a `connection` follows.
+    defaultConnection: defaultConnection(live)?.name ?? null,
     harnesses: named(effective.harnesses),
     env,
   };
@@ -182,6 +187,65 @@ export function changeProjects(input: { set?: Record<string, ProjectConfig>; uns
     },
     { absentNoop: Object.keys(set).length === 0, writeProjects },
   );
+  resetConfigCache();
+  return { saved: result.written };
+}
+
+/** Where configured work names a connection: the dotted paths of every `connection` key holding `name`. */
+function connectionReferences(value: unknown, name: string, prefix: string[] = []): string[] {
+  if (!isRecord(value)) return [];
+  return Object.entries(value).flatMap(([key, child]) => {
+    const path = [...prefix, key];
+    if (key === "connection" && child === name) return [path.join(".")];
+    return prefix.length === 0 && key === "connections" ? [] : connectionReferences(child, name, path);
+  });
+}
+
+/**
+ * Remove one connection through the same validated, atomic path as `akm config unset connections.<name>`, and say what
+ * the removal touches: the configured `connection` references to the name (a connection named explicitly is never
+ * replaced by the default, so each of them fails with "Connection is not configured" until it is changed), whether it was the default and which connection is after, and whether an
+ * `extends` base still defines it. A connection only a base defines is refused, as `unset` refuses it.
+ */
+export function removeConnection(input: { name: string }) {
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  if (!name) throw new UsageError("A connection name is required.", "MISSING_REQUIRED_ARGUMENT");
+  const before = loadConfig();
+  if (!Object.hasOwn(before.connections ?? {}, name)) throw new UsageError(`No connection named "${name}".`);
+  const references = connectionReferences(before, name);
+  const wasDefault = defaultConnection(before)?.name === name;
+  const { saved } = change({ unset: [`connections.${name}`] });
+  const after = loadConfig();
+  return {
+    saved,
+    references,
+    wasDefault,
+    defaultConnection: defaultConnection(after)?.name ?? null,
+    stillInherited: Object.hasOwn(after.connections ?? {}, name),
+  };
+}
+
+/**
+ * Replace one connection with `entry` as a whole, through the same validated atomic write as `change`. Keys the entry
+ * no longer has (a removed alias, cleared request options) leave the file, which a dotted `set` of the entry would not
+ * do. A literal API key is refused; a connection only an `extends` base defines is saved as a local copy that overrides it.
+ */
+export function saveConnection(input: { name: string; entry: Record<string, unknown> }) {
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  if (!name) throw new UsageError("A connection name is required.", "MISSING_REQUIRED_ARGUMENT");
+  if (UNSAFE_NAMES.has(name)) throw new UsageError(`"${name}" cannot name a connection.`);
+  if (!isRecord(input.entry)) throw new UsageError("entry must be a connection object.");
+  const key = input.entry.apiKey;
+  if (key !== undefined && (typeof key !== "string" || !key.startsWith("$")))
+    throw new UsageError(
+      `connections.${name}.apiKey must be an environment-variable reference such as $OPENAI_API_KEY, not the key itself.`,
+    );
+  const result = mutateConfig((current) => {
+    // Already exactly this: nothing to write.
+    if (isDeepStrictEqual(current.connections?.[name], input.entry)) return current;
+    preserveUnrelatedConfig(current);
+    return { ...current, connections: { ...current.connections, [name]: input.entry } as AkmConfig["connections"] };
+  });
   resetConfigCache();
   return { saved: result.written };
 }

@@ -931,6 +931,41 @@ export function deriveSize(bytes?: number): SearchHitSize | undefined {
   return "large";
 }
 
+export interface BrowseCount {
+  count: number;
+  byType: Record<string, number>;
+}
+
+/**
+ * For each source, how many assets a browse lists in it (`total`: the browse defaults, so no proposed or historical
+ * entry and none of `excludeTypes`) and how many of those satisfy `filters` (`eligible`). Counts the whole index,
+ * not a result page, through the same source narrowing, belief and scope matching the browse path applies.
+ */
+export function countBrowseEntries(
+  db: Database,
+  sources: SearchSource[],
+  filters: ScopeFilters | undefined,
+  excludeTypes: readonly string[],
+): Array<{ total: BrowseCount; eligible: BrowseCount }> {
+  const all = deduplicateByPath(getAllEntries(db, undefined, [...excludeTypes]).filter(hasIndexedProvenance));
+  const tally = (items: Array<{ entry: IndexDocument }>): BrowseCount => {
+    const byType: Record<string, number> = {};
+    for (const { entry } of items) byType[entry.type] = (byType[entry.type] ?? 0) + 1;
+    return { count: items.length, byType };
+  };
+  return sources.map((source) => {
+    const total = applyEntryFilters(all, {
+      db,
+      sources: [source],
+      restrictToSources: true,
+      includeProposed: false,
+      beliefFilter: "current",
+    });
+    const eligible = filters ? total.filter((item) => scopeMatchesFilters(item.entry, filters)) : total;
+    return { total: tally(total), eligible: tally(eligible) };
+  });
+}
+
 /** Keep the first entry per file path; the caller owns the order. */
 function deduplicateByPath<T extends { filePath: string }>(items: T[]): T[] {
   const seen = new Set<string>();

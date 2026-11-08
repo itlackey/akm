@@ -128,3 +128,33 @@ test("rows are inherited unless the config file holds them, and summaries name w
   assert.deepEqual(projectSummary({ paths: ["/a"] }), []);
   assert.deepEqual(projectRows(undefined, []), []);
 });
+
+test("a project name is checked for the reserved words and for duplicates, and may keep its own", async () => {
+  const { nameError, draftChanges, projectDraft, filterLine } = await import("../src/lib/projects-model.ts");
+  assert.equal(nameError("  ", []), "Enter a name.");
+  assert.match(nameError("none", []), /reserved/);
+  assert.match(nameError("constructor", []), /reserved/);
+  assert.match(nameError("akm", ["akm", "docs"]), /already exists/);
+  assert.equal(nameError("akm", ["akm", "docs"], "akm"), "");
+  assert.equal(nameError("fresh", ["akm"]), "");
+  const entry = {
+    paths: ["/a"],
+    from: ["x"],
+    filters: { channel: ["w", ""] },
+    write: { bundle: "x", metadata: { t: "1" } },
+  };
+  const base = projectDraft("p", entry);
+  assert.equal(draftChanges(structuredClone(base), base), 0);
+  const draft = structuredClone(base);
+  draft.name = "q";
+  draft.from.push("y");
+  draft.filters[0].values = "z";
+  draft.metadata.push({ key: "k", value: "v" });
+  assert.equal(draftChanges(draft, base), 4);
+  assert.equal(filterLine({}), "No filters · default preference");
+  assert.equal(filterLine(entry), "1 filter · default preference");
+  assert.equal(
+    filterLine({ filters: { a: "1", b: "2" }, prefer: { channel: ["w", "x"] } }),
+    "2 filters · ranks channel = w +1 first",
+  );
+});

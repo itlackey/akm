@@ -86,8 +86,12 @@ export namespace assets {
     bundle?: string;
     belief?: string;
     scope?: Partial<Record<"user" | "agent" | "run" | "channel", string | string[]>>;
+    /** A configured project: its `from`, `filters` and `prefer` apply where this input names no such kind. */
+    project?: string;
     limit?: number;
   }): Promise<unknown>;
+  /** A project's effective read bundles and write bundle, with each bundle's browse total and the count its filters leave eligible. */
+  function projectOverview(input: { project: string }): unknown;
   function searchMisses(input?: { since?: string }): unknown;
   function show(input: { ref: string }): Promise<unknown>;
 }
@@ -110,6 +114,16 @@ export namespace config {
     saved: boolean;
   };
   function get(): unknown;
+  /** Replace one connection with `entry` as a whole (removed aliases and options leave the file); a literal API key is refused. */
+  function saveConnection(input: { name: string; entry: Record<string, unknown> }): { saved: boolean };
+  /** Remove one connection; reports the `connection` references to it (each fails until changed: a named connection is never replaced by the default), whether it was the default and the default after. */
+  function removeConnection(input: { name: string }): {
+    saved: boolean;
+    references: string[];
+    wasDefault: boolean;
+    defaultConnection: string | null;
+    stillInherited: boolean;
+  };
 }
 export namespace documents {
   function copy(input: { sourceRef: string; target?: string; newName?: string }): Promise<CloneResponse>;

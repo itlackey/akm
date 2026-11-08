@@ -173,10 +173,12 @@ export const routes: Route[] = [
       type: query.get("type") || undefined,
       bundle: query.get("bundle") || undefined,
       belief: query.get("belief") || undefined,
+      project: query.get("project") || undefined,
       scope: Object.fromEntries(["user", "agent", "run", "channel"].map((key) => [key, text(query, `scope_${key}`)])),
       limit: count(query, "limit"),
     }),
   ),
+  get("/api/projects/overview", (query) => assets.projectOverview({ project: text(query, "project") })),
   get("/api/search/misses", (query) => assets.searchMisses({ since: text(query, "since") })),
   get("/api/asset", (query) => assets.show(refOf(query))),
   get("/api/asset/history", (query) =>
@@ -231,6 +233,8 @@ export const routes: Route[] = [
   post("/api/setup/apply", body(setup.apply, ["dir", "harness", "connection", "learning"], "setup apply")),
   post("/api/config/set", body(config.change, ["set", "unset"], "config")),
   post("/api/config/projects", body(config.changeProjects, ["set", "unset"], "projects")),
+  post("/api/config/connections/save", body(config.saveConnection, ["name", "entry"], "connection save")),
+  post("/api/config/connections/remove", body(config.removeConnection, ["name"], "connection remove")),
   post(
     "/api/knowledge/create",
     body(documents.createKnowledge, ["bundle", "name", "path", "content"], "knowledge create"),

@@ -125,6 +125,34 @@ function seedSimilarity(fixture) {
   }
 }
 
+/** Two projects and two connections (one with an object model and request options) in the fixture's config, for the Projects and Connections screens. */
+export async function projectsAndConnections(fixture) {
+  const file = path.join(fixture.root, "config/config.json");
+  const config = JSON.parse(await readFile(file, "utf8"));
+  config.connections = {
+    default: { endpoint: "http://127.0.0.1:9/v1", apiKey: "$SYNTH_KEY", models: { fast: "small" } },
+    lab: {
+      endpoint: "http://127.0.0.1:9/lab/v1",
+      models: { summarize: "mid", judge: { model: "big", temperature: 0 } },
+      top_p: 0.9,
+    },
+  };
+  config.improve = { connection: "lab" };
+  // A config this one extends, defining a connection that is only inherited.
+  await writeFile(
+    path.join(fixture.root, "base-config.json"),
+    JSON.stringify({
+      connections: { shared: { endpoint: "http://127.0.0.1:9/shared/v1", models: { fast: "base-small" } } },
+    }),
+  );
+  config.extends = path.join(fixture.root, "base-config.json");
+  config.projects = {
+    docs: { paths: ["~/code/docs"], from: ["personal", "vendor"], filters: { project: "none-here" } },
+    notes: { paths: ["~/notes"] },
+  };
+  await writeFile(file, JSON.stringify(config, null, 2));
+}
+
 /**
  * Open the app the way the launcher does (the one-time session URL sets the cookie), then optionally go to a route.
  * `go` navigates inside the running app, so drafts and in-memory state survive, as a click on a link would.
