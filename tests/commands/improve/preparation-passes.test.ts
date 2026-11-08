@@ -21,7 +21,6 @@ import { contentHash } from "../../../src/commands/improve/content-hash";
 import { type ImproveLedgerOutcome, type ImproveLedgerRow, ledgerKey } from "../../../src/commands/improve/ledger";
 import {
   buildSnapshotManifest,
-  hasOnlyBarePositiveFeedback,
   isFlaggedSinceLastEdit,
   partitionBySignalDelta,
 } from "../../../src/commands/improve/preparation";
@@ -157,6 +156,20 @@ describe("partitionBySignalDelta — the four buckets", () => {
 
     expect(out.eligibleRefs).toEqual([]);
     expect(out.distillOnlyRefs.map((r) => r.ref)).toEqual(["memories/distill-only"]);
+  });
+
+  test("no feedback but a recent distill rejection → still pooled, and distill is cooled for it", () => {
+    const stash = freshStash();
+    const out = partitionBySignalDelta({
+      scope: { mode: "all" },
+      options: { stashDir: stash, config: {} as AkmConfig },
+      postCleanupRefs: [ref("memories/rejected")],
+      validationFailureRefs: new Set(),
+      snapshot: snapshot({ lastDistillAttemptAt: new Map([["memories/rejected", T2]]), outcome: "rejected" }),
+    });
+
+    expect(out.noFeedbackPool.map((r) => r.ref)).toEqual(["memories/rejected"]);
+    expect([...out.distillCooledRefs]).toEqual(["memories/rejected"]);
   });
 
   test("no feedback at all → deferred to the noFeedbackPool, never skipped outright", () => {
@@ -555,67 +568,5 @@ describe("isFlaggedSinceLastEdit", () => {
       fs.writeFileSync(candidate.filePath as string, frontmatterOnlyWrite);
       expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
     });
-  });
-});
-
-describe("hasOnlyBarePositiveFeedback", () => {
-  const DAY_MS = 24 * 3_600_000;
-  const memory = "memories/rollout-status";
-
-  function feedbackAgo(agoMs: number, metadata: Record<string, unknown>, eventRef = memory): void {
-    appendEvent({ eventType: "feedback", ref: eventRef, metadata }, { now: () => Date.now() - agoMs });
-  }
-
-  test("a memory whose every signal in the window is a positive with no reason or note is matched", () => {
-    freshStash();
-    feedbackAgo(2 * DAY_MS, { signal: "positive" });
-    feedbackAgo(DAY_MS, { signal: "positive", reason: "  " });
-
-    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(true);
-  });
-
-  test.each([
-    ["a reason", { signal: "positive", reason: "the runbook worked first try" }],
-    ["a note", { signal: "positive", note: "worked" }],
-    ["a negative signal", { signal: "negative" }],
-    ["a note and no signal", { note: "see the changelog" }],
-  ])("one event with %s means it is not bare", (_name, metadata) => {
-    freshStash();
-    feedbackAgo(2 * DAY_MS, { signal: "positive" });
-    feedbackAgo(DAY_MS, metadata);
-
-    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(false);
-  });
-
-  test("no feedback in the window matches nothing, an event that is not a signal is ignored", () => {
-    freshStash();
-    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(false);
-
-    feedbackAgo(40 * DAY_MS, { signal: "positive" });
-    feedbackAgo(DAY_MS, { tags: ["rollout"] });
-    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(false);
-
-    feedbackAgo(DAY_MS, { signal: "positive" });
-    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(true);
-  });
-
-  test("only the 30-day window counts, in both directions", () => {
-    freshStash();
-    feedbackAgo(40 * DAY_MS, { signal: "positive", reason: "the runbook worked first try" });
-    feedbackAgo(DAY_MS, { signal: "positive" });
-    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(true);
-
-    feedbackAgo(2 * DAY_MS, { signal: "positive", reason: "the runbook worked first try" });
-    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(false);
-  });
-
-  test("feedback is read under the candidate's durable item_ref", () => {
-    freshStash();
-    const candidate = ref(memory, { itemRef: `stash//${memory}` });
-    feedbackAgo(DAY_MS, { signal: "positive" });
-    expect(hasOnlyBarePositiveFeedback(candidate)).toBe(false);
-
-    feedbackAgo(DAY_MS, { signal: "positive" }, `stash//${memory}`);
-    expect(hasOnlyBarePositiveFeedback(candidate)).toBe(true);
   });
 });

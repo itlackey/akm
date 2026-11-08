@@ -68,7 +68,6 @@ test("improve dedupes safe lowering notices through JSON and text output", async
           loopRefs: [],
           distillOnlyRefs: [],
           distillCooledRefs: new Set(),
-          signalBearingSet: new Set(),
           utilityMap: new Map(),
           actions: [
             {
@@ -189,7 +188,6 @@ test("dry-run preserves the same plan-owned lowering notices as live output with
           loopRefs: [],
           distillOnlyRefs: [],
           distillCooledRefs: new Set(),
-          signalBearingSet: new Set(),
           utilityMap: new Map(),
           actions: [],
           cleanupWarnings: [],

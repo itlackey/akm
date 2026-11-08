@@ -60,12 +60,7 @@ import type {
 import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
 import { type ImproveLedgerOutcome, recordLedgerAttempt, stateKey, stripBundle } from "./ledger";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
-import {
-  hasOnlyBarePositiveFeedback,
-  isDeprecatedOrSuperseded,
-  isFlaggedSinceLastEdit,
-  pushRecentError,
-} from "./preparation";
+import { isDeprecatedOrSuperseded, isFlaggedSinceLastEdit, pushRecentError } from "./preparation";
 import type { AkmReflectOptions } from "./reflect";
 import { recordNoOp, resetConsecutiveNoOps } from "./salience";
 import { attributeStage, errMessage } from "./stage";
@@ -77,7 +72,6 @@ export interface ImproveLoopEnv {
   primaryStashDir?: string;
   reflectFn: ImproveLoopState["reflectFn"];
   distillFn: ImproveLoopState["distillFn"];
-  signalBearingSet: Set<string>;
   distillCooledRefs: Set<string>;
   /** These refs skip the reflect call and only distill. */
   distillOnlyRefSet: Set<string>;
@@ -101,7 +95,6 @@ export function prepareImproveLoopEnv(args: ImproveLoopState): ImproveLoopEnv {
     primaryStashDir: args.primaryStashDir,
     reflectFn: args.reflectFn,
     distillFn: args.distillFn,
-    signalBearingSet: args.signalBearingSet,
     distillCooledRefs: args.distillCooledRefs,
     distillOnlyRefSet,
     recentErrors: args.recentErrors,
@@ -283,7 +276,6 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
 }
 
 const FLAGGED_WRONG_REASON = "flagged wrong since its last edit";
-const BARE_POSITIVE_REASON = "only positive feedback, without a reason";
 const DEPRECATED_REASON = "marked deprecated or superseded";
 
 async function runLoopDistillPass(
@@ -300,14 +292,6 @@ async function runLoopDistillPass(
     return recordSkip(tally, planned.ref, "require_planned_refs");
   }
   const explicitRefScope = env.scope.mode === "ref";
-  const weakMemorySignal =
-    !isDistillOnly && refType === "memory" && !env.signalBearingSet.has(planned.ref) && !explicitRefScope;
-  if (weakMemorySignal) {
-    return recordSkip(tally, planned.ref, "memory requires recent feedback signal", {
-      env,
-      reason: "memory_distill_requires_feedback",
-    });
-  }
   // The ledger holds cooled refs; an explicit `--scope` ref overrides it.
   if (!isDistillCandidateRef(planned)) return;
   if (env.distillCooledRefs.has(planned.ref) && !explicitRefScope) return;
@@ -316,13 +300,6 @@ async function runLoopDistillPass(
   if (!explicitRefScope && isFlaggedSinceLastEdit(planned, env.eventsCtx)) {
     recordLoopAttempt(planned, env, "distill", "unchanged", FLAGGED_WRONG_REASON);
     return recordSkip(tally, planned.ref, FLAGGED_WRONG_REASON, { env, reason: "distill_flagged_wrong" });
-  }
-  // A memory whose only recent feedback is a positive with no reason or note gives the writer nothing to distil:
-  // 10 of the 11 lessons made from one were rejected. The ledger holds it until newer feedback; an explicit `--scope`
-  // ref still runs.
-  if (!explicitRefScope && hasOnlyBarePositiveFeedback(planned, env.eventsCtx)) {
-    recordLoopAttempt(planned, env, "distill", "unchanged", BARE_POSITIVE_REASON);
-    return recordSkip(tally, planned.ref, BARE_POSITIVE_REASON, { env, reason: "distill_positive_without_reason" });
   }
   // A memory marked deprecated or superseded is no longer true, so it gives no lesson. The ledger holds it; an
   // explicit `--scope` ref still runs.

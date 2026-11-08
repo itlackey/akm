@@ -89,8 +89,6 @@ export interface ImprovePreparationResult {
   extract?: AkmExtractResult[];
   /** Refs surviving every selector and the disk check, ranked, before the limit. */
   actionableRefs: ImproveEligibleRef[];
-  /** Refs with in-window feedback. */
-  signalBearingSet: Set<string>;
   validationFailures: Array<{ ref: string; reason: string }>;
   schemaRepairs: Array<{
     ref: string;
@@ -164,7 +162,6 @@ export interface ImproveLoopState {
   budgetMs: number;
   loopRefs: ImproveEligibleRef[];
   actions: ImproveActionResult[];
-  signalBearingSet: Set<string>;
   distillCooledRefs: Set<string>;
   distillOnlyRefs: ImproveEligibleRef[];
   recentErrors: Record<string, string[]>;
