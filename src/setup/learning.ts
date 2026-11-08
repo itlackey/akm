@@ -8,17 +8,22 @@
  * `setup.apply` write it, `akm proposal new --if-learning` asks it.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { assertUnsettable, setConfigValue, unsetConfigValue } from "../commands/config-cli";
 import { targetRows } from "../commands/targets";
-import { akmTasksAdd, akmTasksDisable, akmTasksEnable } from "../commands/tasks/tasks";
+import { akmTasksAdd, akmTasksDisable, akmTasksEnable, type TasksActivationResult } from "../commands/tasks/tasks";
+import { makeBundleRef } from "../core/asset/asset-ref";
 import { toErrorMessage } from "../core/common";
 import { type AkmConfig, defaultConnection, loadConfig, mutateConfig, resetConfigCache } from "../core/config/config";
 import { IMPROVE_ENGINE_PROCESSES } from "../core/config/engine-semantics";
 import { STANDARD_ALIASES } from "../core/config/model-aliases";
 import { sameEndpoint } from "../core/endpoint-url";
+import { AkmError } from "../core/errors";
 import { warn, warnOnce } from "../core/warn";
+import { resolveWriteTarget } from "../core/write-source";
+import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../tasks/activation-config";
 import { listEmbeddedTasks } from "../tasks/embedded";
-import { listSetupTaskDefinitions } from "./steps/tasks";
 
 /** The scheduled task that runs `akm improve`: akm's background learning. */
 const LEARNING_TASK = "improve";
@@ -84,14 +89,21 @@ export function learningState(config: AkmConfig = loadConfig()): {
   return { on, agent: on ? runsOn : null, runsOn };
 }
 
-/** Whether the `improve` task is enabled, from the config and the default bundle's task files. Writes nothing. */
-function learningTaskEnabled(config: AkmConfig): boolean {
-  if (!config.defaultBundle) return false;
+/** The default bundle's task source and the ref `id` has there, or undefined when there is no usable bundle. */
+function taskLocation(config: AkmConfig, id: string) {
+  if (!config.defaultBundle) return undefined;
   try {
-    return listSetupTaskDefinitions().some((task) => task.id === LEARNING_TASK && task.enabled);
+    const source = resolveWriteTarget(config, config.defaultBundle, { requireWritable: false }).source;
+    return { dir: path.join(source.path, "tasks"), ref: makeBundleRef(source.name, `tasks/${id}`) };
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+/** Whether the `improve` task is enabled on this host, by its ref in `scheduler.enabled`. Parses no task file. */
+function learningTaskEnabled(config: AkmConfig): boolean {
+  const ref = taskLocation(config, LEARNING_TASK)?.ref;
+  return ref !== undefined && new Set(schedulerEnabledRefs(config)).has(ref);
 }
 
 /**
@@ -170,7 +182,7 @@ export async function setLearning(
   const agent = learning?.agent
     ? Object.entries(config.harnesses ?? {}).find(([name, entry]) => (entry.platform ?? name) === learning.agent)?.[0]
     : undefined;
-  const target = agent ?? (learning?.agent ? undefined : connectionName);
+  const target = agent ?? (learning?.agent ? undefined : (connectionName ?? config.improve?.connection));
   const on = learning?.on === true && target !== undefined;
   if (learning?.on && target === undefined)
     warnOnce(
@@ -217,40 +229,66 @@ export async function setLearning(
 async function setLearningTask(on: boolean) {
   const result = { enabled: [] as string[], disabled: [] as string[], scheduled: false };
   const config = loadConfig();
-  const listed = config.defaultBundle ? listSetupTaskDefinitions() : [];
-  const task = listed.find((entry) => entry.id === LEARNING_TASK);
+  const bundle = config.defaultBundle;
+  const attempted: string[] = [];
   try {
     if (!on) {
       const optional = listEmbeddedTasks()
         .filter((entry) => entry.label.startsWith("improve/"))
         .map((entry) => entry.id);
-      for (const id of [LEARNING_TASK, ...optional])
-        if (listed.some((entry) => entry.id === id && entry.enabled)) {
-          await akmTasksDisable(id, { target: config.defaultBundle });
-          result.disabled.push(id);
-        }
-    } else if (!config.defaultBundle) {
+      const legacy = schedulerEnabledRefs(config) === undefined;
+      const enabled = new Set(schedulerEnabledRefs(config));
+      for (const id of [LEARNING_TASK, ...optional]) {
+        const where = taskLocation(config, id);
+        if (!where || !fs.existsSync(path.join(where.dir, `${id}.yml`))) continue;
+        if (!legacy && !enabled.has(where.ref)) continue;
+        attempted.push(where.ref);
+        await changeActivation(() => akmTasksDisable(id, { target: bundle }), where.ref);
+        result.disabled.push(id);
+      }
+    } else if (!bundle) {
       warn("[setup] learning: there is no default bundle to hold the improve task; it is not scheduled.");
-    } else if (!task) {
-      const template = listEmbeddedTasks().find((entry) => entry.label === `core/${LEARNING_TASK}`);
-      if (!template) throw new Error("akm ships no improve task template.");
-      await akmTasksAdd({
-        id: LEARNING_TASK,
-        schedule: template.schedule,
-        command: template.command,
-        description: template.description,
-        target: config.defaultBundle,
-      });
-      result.enabled.push(LEARNING_TASK);
-    } else if (!task.enabled) {
-      await akmTasksEnable(LEARNING_TASK, { target: config.defaultBundle });
-      result.enabled.push(LEARNING_TASK);
+    } else {
+      const where = taskLocation(config, LEARNING_TASK);
+      if (!where) throw new Error("the default bundle cannot hold tasks");
+      attempted.push(where.ref);
+      if (!fs.existsSync(path.join(where.dir, `${LEARNING_TASK}.yml`))) {
+        const template = listEmbeddedTasks().find((entry) => entry.label === `core/${LEARNING_TASK}`);
+        if (!template) throw new Error("akm ships no improve task template.");
+        await akmTasksAdd({
+          id: LEARNING_TASK,
+          schedule: template.schedule,
+          command: template.command,
+          description: template.description,
+          target: bundle,
+        });
+        result.enabled.push(LEARNING_TASK);
+      } else if (!learningTaskEnabled(config)) {
+        await changeActivation(() => akmTasksEnable(LEARNING_TASK, { target: bundle }), where.ref);
+        result.enabled.push(LEARNING_TASK);
+      }
     }
   } catch (err) {
-    warn(`[setup] learning: the improve task is not scheduled on this host: ${toErrorMessage(err)}`);
+    // A held scheduler lock is a retry, not a host that cannot schedule: it keeps its exit code.
+    if (err instanceof AkmError && err.code === "SCHEDULER_LOCK_HELD") throw err;
+    warn(
+      `[setup] learning: the schedule of the improve task could not be changed on this host: ${toErrorMessage(err)}`,
+    );
     resetConfigCache();
-    return { enabled: [], disabled: [], scheduled: false };
+    // Put the config back to what the OS scheduler holds, so `akm info` is true and a rerun retries.
+    const current = loadConfig();
+    const held = new Set(schedulerEnabledRefs(current));
+    for (const ref of attempted) if (held.has(ref) !== !on) setSchedulerRefEnabled(ref, !on);
+    resetConfigCache();
+    return { enabled: [], disabled: [], scheduled: learningTaskEnabled(loadConfig()) };
   }
   resetConfigCache();
-  return { ...result, scheduled: on && config.defaultBundle !== undefined };
+  return { ...result, scheduled: learningTaskEnabled(loadConfig()) };
+}
+
+/** `akm task enable` / `disable`, where a sync failure for the task is a failure, as it is for `akm task add`. */
+async function changeActivation(change: () => Promise<TasksActivationResult>, ref: string) {
+  const { sync } = await change();
+  const failed = sync.failures.find((failure) => failure.ref === undefined || failure.ref === ref);
+  if (failed) throw new Error(failed.reason);
 }

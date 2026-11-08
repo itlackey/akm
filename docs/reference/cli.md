@@ -214,6 +214,19 @@ Flags answer one question each; `--yes` takes the detected default for every
 question left, so nothing is prompted. Without a terminal, `akm setup` refuses
 unless `--yes` or `--from` is given.
 
+| Flag | Answers |
+|---|---|
+| `--endpoint <url>` | The connection to add or update (the first is named `default`) |
+| `--api-key-env <NAME>` | The environment variable holding its key (`apiKey: "$NAME"`) |
+| `--name <name>` | A further connection, with `--endpoint` |
+| `--harness <a,b>` | Agent programs to enable; the first is the default |
+| `--embedding <model\|local\|off>` | Embeddings |
+| `--embedding-endpoint <url>`, `--embedding-api-key-env <NAME>` | Another endpoint serving the embedding model |
+| `--from <file>` | A config file (JSON or YAML) to merge |
+| `--dir <path>`, `--no-init` | The bundle directory; skip scaffolding it |
+| `--learning <on\|off>` | Background learning, on its own: see [setup --learning](#setup---learning) |
+| `--no-probe` | Offline: nothing is contacted or downloaded. The endpoint's models are not listed, so a connection added this way has no model until `akm models set` names one, and the built-in embedder's runtime and model are downloaded by the first `akm index` |
+
 #### setup --learning
 
 ```sh
@@ -223,8 +236,11 @@ akm setup --learning on
 
 `--learning on|off` turns background learning on or off and does nothing else:
 it needs no `--yes`, creates no bundle, enables no agent program and runs no
-other setup step, and it refuses to be combined with `--yes` or the other setup
-flags. `akm info` shows the current state (its `learning` field). **Experimental**
+other setup step. `--yes`, `--no-probe` and `--no-init` are ignored with a
+warning; a flag that asks for work this run would drop (`--endpoint`,
+`--api-key-env`, `--name`, `--harness`, `--embedding*`, `--from`, `--dir`) is a
+usage error. It keeps learning where it runs now: an agent program that runs improve
+stays it, and a connection stays the connection. `akm info` shows the current state (its `learning` field). **Experimental**
 for its first release.
 
 - **Off** sets `enabled: false` on each model-calling improve process
@@ -240,7 +256,8 @@ for its first release.
   container boot. With nowhere to run learning (no connection and no enabled
   agent program) it warns and leaves learning off. On a host with no `crontab`
   (or whose scheduler cannot be written) it warns, keeps the config change and
-  reports `scheduled: false`.
+  reports what the config now says (`scheduled: false`).
+  A scheduler lock held by another akm process exits 75 as `akm task enable` does.
 
 The result is JSON naming what changed; unrelated config is kept:
 
@@ -249,18 +266,6 @@ The result is JSON naming what changed; unrelated config is kept:
 ```
 
 `processes` lists the switches written (off) or cleared (on).
-
-| Flag | Answers |
-|---|---|
-| `--endpoint <url>` | The connection to add or update (the first is named `default`) |
-| `--api-key-env <NAME>` | The environment variable holding its key (`apiKey: "$NAME"`) |
-| `--name <name>` | A further connection, with `--endpoint` |
-| `--harness <a,b>` | Agent programs to enable; the first is the default |
-| `--embedding <model\|local\|off>` | Embeddings |
-| `--embedding-endpoint <url>`, `--embedding-api-key-env <NAME>` | Another endpoint serving the embedding model |
-| `--from <file>` | A config file (JSON or YAML) to merge |
-| `--dir <path>`, `--no-init` | The bundle directory; skip scaffolding it |
-| `--no-probe` | Offline: nothing is contacted or downloaded. The endpoint's models are not listed, so a connection added this way has no model until `akm models set` names one, and the built-in embedder's runtime and model are downloaded by the first `akm index` |
 
 The detected defaults are: when no agent program is configured yet, every one
 found on `PATH` is enabled and the first found is the default. If no connection

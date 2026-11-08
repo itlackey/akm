@@ -74,7 +74,7 @@ export const proposeCommand = defineCommand({
   async run({ args }) {
     await runWithJsonErrors(async () => {
       if (args["if-learning"] && !learningState().on) {
-        output("proposal-new", { schemaVersion: 2, ok: true, skipped: "learning-off" });
+        output("proposal-new", { ok: true, skipped: "learning-off" });
         return;
       }
       // citty silently shows help and exits 0 when required positionals are

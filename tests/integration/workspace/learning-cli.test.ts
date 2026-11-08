@@ -145,7 +145,154 @@ describe("akm setup --learning", () => {
 
   test("a value other than on or off, or a flag beside it, is a usage error", async () => {
     await expect(runCli(["setup", "--learning", "maybe"])).rejects.toThrow(/on. or .off/);
-    await expect(runCli(["setup", "--learning", "on", "--yes"])).rejects.toThrow(/on its own/);
+    await expect(runCli(["setup", "--learning", "on", "--harness", "claude"])).rejects.toThrow(/on its own/);
+    await expect(runCli(["setup", "--learning", "on", "--dir", library()])).rejects.toThrow(/on its own/);
+  });
+});
+
+/** A crontab whose `-` (write) fails when `failing` exists. */
+function flakyCrontab() {
+  const bin = path.join(ctx.storage.root, "flakybin");
+  const file = path.join(ctx.storage.root, "crontab.txt");
+  const failing = path.join(ctx.storage.root, "crontab-fails");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(
+    path.join(bin, "crontab"),
+    `#!/bin/sh\ncase "$1" in -l) [ -f "${file}" ] && cat "${file}" || exit 1;; -) if [ -f "${failing}" ]; then cat >/dev/null; echo denied >&2; exit 1; fi; cat > "${file}";; esac\n`,
+    { mode: 0o755 },
+  );
+  const before = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${before}`;
+  return {
+    file,
+    failWrites: (on: boolean) => (on ? fs.writeFileSync(failing, "") : fs.rmSync(failing, { force: true })),
+    restore: () => {
+      process.env.PATH = before;
+    },
+  };
+}
+const scheduledIn = async (result: Json) => {
+  const info = (await runCli(["info"])).learning as Json;
+  expect(info.scheduled).toBe(result.learning.scheduled);
+  return info.scheduled as boolean;
+};
+
+describe("scheduled agrees between setup --learning and akm info", () => {
+  test("a crontab that refuses writes: on is not scheduled, and a rerun retries", async () => {
+    await setup.apply({ dir: library() });
+    connect();
+    const cron = flakyCrontab();
+    try {
+      cron.failWrites(true);
+      const on = await runCli(["setup", "--learning", "on"]);
+      expect(on.learning).toMatchObject({ on: true, scheduled: false, tasksEnabled: [] });
+      expect(await scheduledIn(on)).toBe(false);
+      cron.failWrites(false);
+      const again = await runCli(["setup", "--learning", "on"]);
+      expect(again.learning).toMatchObject({ scheduled: true });
+      expect(await scheduledIn(again)).toBe(true);
+      // Off cannot take the row out: the report does not claim it is gone, and a rerun retries.
+      cron.failWrites(true);
+      const off = await runCli(["setup", "--learning", "off"]);
+      expect(off.learning).toMatchObject({ on: false, scheduled: true, tasksDisabled: [] });
+      expect(await scheduledIn(off)).toBe(true);
+      expect(fs.readFileSync(cron.file, "utf8")).toContain("improve");
+      cron.failWrites(false);
+      const retried = await runCli(["setup", "--learning", "off"]);
+      expect(retried.learning).toMatchObject({ scheduled: false, tasksDisabled: ["improve"] });
+      expect(await scheduledIn(retried)).toBe(false);
+    } finally {
+      cron.restore();
+    }
+  });
+
+  test("no crontab: on and info agree", async () => {
+    await setup.apply({ dir: library() });
+    connect();
+    const realPath = process.env.PATH;
+    const bin = path.join(ctx.storage.root, "nobin2");
+    fs.mkdirSync(bin);
+    for (const name of ["bun", "node", "git", "sh"]) {
+      const found = realPath?.split(path.delimiter).find((dir) => fs.existsSync(path.join(dir, name)));
+      if (found) fs.symlinkSync(path.join(found, name), path.join(bin, name));
+    }
+    process.env.PATH = bin;
+    try {
+      expect(await scheduledIn(await runCli(["setup", "--learning", "on"]))).toBe(false);
+    } finally {
+      process.env.PATH = realPath;
+    }
+  });
+
+  test("a malformed sibling task file breaks neither off nor info", async () => {
+    const cron = fakeCrontab();
+    try {
+      await setup.apply({ dir: library() });
+      connect();
+      await runCli(["setup", "--learning", "on"]);
+      fs.writeFileSync(path.join(library(), "tasks", "broken.yml"), "schedule: [unclosed\n  : :");
+      expect((await runCli(["info"])).learning).toMatchObject({ scheduled: true });
+      const off = await runCli(["setup", "--learning", "off"]);
+      expect(off.learning).toMatchObject({ on: false, tasksDisabled: ["improve"], scheduled: false });
+      expect(await scheduledIn(off)).toBe(false);
+    } finally {
+      cron.restore();
+    }
+  });
+
+  test("--yes and --no-probe are ignored with a lone --learning", async () => {
+    const result = await runCli(["setup", "--learning", "off", "--yes", "--no-probe"]);
+    expect(result.learning).toMatchObject({ on: false });
+    expect(fs.existsSync(library())).toBe(false);
+  });
+});
+
+describe("learning on keeps where improve runs", () => {
+  test("a harness-only config stays on, and off then on keeps improve.harness", async () => {
+    const bin = path.join(ctx.storage.root, "hbin");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, "claude"), "#!/bin/sh\necho 2.1.283\n", { mode: 0o755 });
+    const realPath = process.env.PATH;
+    process.env.PATH = `${bin}${path.delimiter}${realPath}`;
+    const cron = fakeCrontab();
+    try {
+      await setup.apply({ dir: library(), harness: ["claude"] });
+      change({ set: { "improve.harness": "claude" }, unset: [] });
+      expect((await runCli(["info"])).learning).toMatchObject({ on: true, agent: "claude" });
+      await runCli(["setup", "--learning", "off"]);
+      const on = await runCli(["setup", "--learning", "on"]);
+      expect(on.learning).toMatchObject({ on: true, agent: "claude" });
+      const config = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+      expect(config.improve.harness).toBe("claude");
+      expect(JSON.stringify(config.improve.strategies ?? {})).not.toContain("false");
+    } finally {
+      cron.restore();
+      process.env.PATH = realPath;
+    }
+  });
+
+  test("two connections and no default: off then on keeps improve.connection", async () => {
+    const cron = fakeCrontab();
+    try {
+      await setup.apply({ dir: library() });
+      change({
+        set: {
+          "connections.a.endpoint": "http://localhost:1/v1",
+          "connections.a.models.fast": "m",
+          "connections.b.endpoint": "http://localhost:2/v1",
+          "connections.b.models.fast": "m",
+          "improve.connection": "a",
+        },
+        unset: [],
+      });
+      expect((await runCli(["info"])).learning).toMatchObject({ on: true });
+      await runCli(["setup", "--learning", "off"]);
+      const on = await runCli(["setup", "--learning", "on"]);
+      expect(on.learning).toMatchObject({ on: true });
+      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).improve.connection).toBe("a");
+    } finally {
+      cron.restore();
+    }
   });
 });
 

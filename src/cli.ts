@@ -126,7 +126,7 @@ import { startParentDeathWatchdog } from "./core/parent-watchdog";
 import { getConfigPath } from "./core/paths";
 import { DURATION_UNITS, parseDuration } from "./core/time";
 import { plainize } from "./core/tty";
-import { info, isQuiet, setQuiet, setVerbose, warn } from "./core/warn";
+import { info, isQuiet, setQuiet, setVerbose, warn, warnOnce } from "./core/warn";
 import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
 import { getOutputMode, initOutputMode, parseDetailLevel } from "./output/context";
@@ -269,7 +269,8 @@ const setupCommand = defineCommand({
         // Alone it is one step: no bundle, no harness, no other setup question.
         if (args.learning !== "on" && args.learning !== "off")
           throw new UsageError("--learning takes `on` or `off`.", "INVALID_FLAG_VALUE");
-        const others = [
+        // Flags that ask for real work this run would drop are errors; the rest are ignored with a warning.
+        const work = [
           "endpoint",
           "api-key-env",
           "name",
@@ -280,13 +281,21 @@ const setupCommand = defineCommand({
           "from",
           "dir",
         ] as const;
-        if (args.yes || others.some((flag) => args[flag] !== undefined))
+        if (work.some((flag) => args[flag] !== undefined))
           throw new UsageError(
-            "--learning runs on its own; do not combine it with --yes or the other setup flags.",
+            "--learning runs on its own; do not combine it with --endpoint, --harness, --dir or the other answer flags.",
             "INVALID_FLAG_VALUE",
           );
-        const { setLearning } = await import("./setup/learning");
-        output("setup", { learning: await setLearning({ on: args.learning === "on" }) });
+        for (const [given, flag] of [
+          [args.yes, "--yes"],
+          [noProbe, "--no-probe"],
+          [noInit, "--no-init"],
+        ] as const)
+          if (given) warnOnce(`setup-learning:${flag}`, `[setup] ${flag} is ignored with --learning.`);
+        const { learningState, setLearning } = await import("./setup/learning");
+        // Keep learning where it runs now: an agent program stays one, and akm's own runtime stays akm's.
+        const agent = learningState().runsOn ?? undefined;
+        output("setup", { learning: await setLearning({ on: args.learning === "on", agent }) });
         return;
       }
       const { hasSetupFlags, parseSetupFlags } = await import("./setup/setup-flags");

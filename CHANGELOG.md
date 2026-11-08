@@ -8,12 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Learning status and controls on the CLI (#1506), Experimental for their first release. `akm info` gains a `learning` field (`on`, `agent`, `scheduled`), read from the config and the bundle's task files only. `akm setup --learning on|off` turns background learning on or off and does nothing else (no `--yes`, no bundle, no agent program, no other step), and prints what it changed (`processes`, `tasksEnabled`, `tasksDisabled`, `scheduled`). `on` clears `enabled: false` switches of the active strategy and can start model spending; `off` covers the active `improve.strategy` only. `akm proposal new --if-learning` exits 0 with `skipped: "learning-off"` and does nothing when learning is off, for automatic callers; without it `proposal new` is unchanged. The learning code moved from `src/workspace/setup.ts` to `src/setup/learning.ts`.
+- Learning status and controls on the CLI (#1506), Experimental for their first release. `akm info` gains a `learning` field (`on`, `agent`, `scheduled`), read from the config and the bundle's task files only. `akm setup --learning on|off` turns background learning on or off and does nothing else (no `--yes`, no bundle, no agent program, no other step; `--yes`, `--no-probe` and `--no-init` are ignored with a warning, other setup flags are a usage error; it keeps learning where it runs now), and prints what it changed (`processes`, `tasksEnabled`, `tasksDisabled`, `scheduled`). `on` clears `enabled: false` switches of the active strategy and can start model spending; `off` covers the active `improve.strategy` only. `akm proposal new --if-learning` exits 0 with `skipped: "learning-off"` and does nothing when learning is off, for automatic callers; without it `proposal new` is unchanged. The learning code moved from `src/workspace/setup.ts` to `src/setup/learning.ts`.
 
 ### Fixed
 
 - `setup.apply` with only `learning` no longer runs `akm bundle create` first (a call with `dir`, `harness` or `connection` is unchanged).
-- Turning learning on on a host with no `crontab` binary no longer writes the config and then fails: it warns, keeps the change and reports `scheduled: false`.
+- Turning learning on on a host with no `crontab` binary no longer writes the config and then fails: it warns and reports what the config says (`scheduled: false`); a failed scheduler write puts the config back to what the OS scheduler holds, and a held scheduler lock exits 75 as before.
 
 ## [0.10.261114] - 2026-11-08
 
