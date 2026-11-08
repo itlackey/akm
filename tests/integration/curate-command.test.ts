@@ -122,7 +122,7 @@ describe("curate command", () => {
       if (item.source === "local") {
         expect(typeof item.ref).toBe("string");
         expect(String(item.followUp)).toContain("akm show");
-        expect(typeof item.reason).toBe("string");
+        expect(item.reason).toBeUndefined(); // only historical items carry a reason (#1482)
       }
     }
   });
