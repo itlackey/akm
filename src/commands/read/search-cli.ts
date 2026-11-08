@@ -35,17 +35,15 @@ import { akmShowUnified } from "./show";
 const scopeFilterArg = {
   type: "string",
   description:
-    "Frontmatter filter (repeatable): --filter team=<name> --filter user=<id>. Any frontmatter key, plus tag and the scope keys user, agent, run, channel. Repeating a key matches any of its values; different keys must all match. Narrows results without changing ranking.",
+    "Frontmatter key=value filter (repeatable); a repeated key matches any value, different keys must all match",
 } as const;
 const scopePreferArg = {
   type: "string",
-  description:
-    "Frontmatter preference (repeatable, same keys and matching as --filter): matching assets rank slightly higher. Never drops or admits an asset; --filter and --from still decide which are eligible.",
+  description: "Like --filter, but matching assets rank slightly higher instead of being required",
 } as const;
 const beliefArg = {
   type: "string",
-  description:
-    "Belief filter on any asset: all|current|historical. current keeps active/asserted and unflagged assets; historical keeps deprecated/contradicted/superseded/archived assets. Labels do not establish factual truth.",
+  description: "all|current|historical; historical keeps deprecated, contradicted, superseded and archived assets",
 } as const;
 
 export const searchCommand = defineJsonCommand({
@@ -54,44 +52,39 @@ export const searchCommand = defineJsonCommand({
     query: {
       type: "positional",
       description:
-        'Search query (omit to list all assets). A conceptId-prefix query — "memories/projecta/", "bundle//", "bundle//skills/" — enumerates that subtree instead of keyword-matching; a trailing "/" is required, and an explicit --type wins over the prefix.',
+        'Search query (omit to list all). A query ending in "/" (memories/projecta/, bundle//) lists that subtree',
       required: false,
       default: "",
     },
     type: {
       type: "string",
-      description:
-        "Asset type filter — free-form, exact match, unvalidated; an unknown type returns no hits (default: any). Built-ins: skill, command, agent, knowledge, workflow, script, memory, lesson, task, session, fact, env, secret, instruction — plus any adapter-defined type (e.g. website, wiki-source, a wiki pageKind). Use workflow to find step-by-step task assets.",
+      description: "Asset type, exact match (e.g. skill, memory, knowledge, workflow); default: any",
     },
     limit: { type: "string", description: "Maximum number of results" },
     from: {
       type: "string",
-      description:
-        "Search source (local|registry|all) or a bundle name; repeat --from to search several bundles together (OR). Default: local, or the project's from.",
+      description: "local|registry|all or a bundle name (repeatable). Default: local, or the project's from",
     },
     filter: scopeFilterArg,
     prefer: scopePreferArg,
     ...PROJECT_ARG,
     "include-proposed": {
       type: "boolean",
-      description: 'Include entries with quality:"proposed" in the result set. Excluded by default.',
+      description: 'Include entries with quality:"proposed"',
       default: false,
     },
     belief: { ...beliefArg, default: "current" },
     since: {
       type: "string",
-      description:
-        "Only local assets dated on or after this day (YYYY-MM-DD): the observed date, else updated. Undated assets are excluded. Applied before ranking.",
+      description: "Only local assets dated on or after this day (YYYY-MM-DD)",
     },
     until: {
       type: "string",
-      description:
-        "Only local assets dated on or before this day (YYYY-MM-DD): the observed date, else updated. Undated assets are excluded. Applied before ranking.",
+      description: "Only local assets dated on or before this day (YYYY-MM-DD)",
     },
     "include-sessions": {
       type: "boolean",
-      description:
-        "Include session assets (excluded from default search results via config.search.defaultExcludeTypes).",
+      description: "Include session assets",
       default: false,
     },
   },
@@ -177,14 +170,12 @@ export const curateCommand = defineJsonCommand({
     query: { type: "positional", description: "Task or prompt to curate assets for", required: false },
     type: {
       type: "string",
-      description:
-        "Asset type filter — free-form, exact match, unvalidated; an unknown type returns no hits (default: any). Built-ins: skill, command, agent, knowledge, workflow, script, memory, lesson, task, session, fact, env, secret, instruction — plus any adapter-defined type (e.g. website, wiki-source, a wiki pageKind). Use workflow to curate step-by-step task assets.",
+      description: "Asset type, exact match (e.g. skill, memory, knowledge, workflow); default: any",
     },
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
     from: {
       type: "string",
-      description:
-        "Search source (local|registry|all) or a bundle name; repeat --from to search several bundles together (OR). Default: local, or the project's from.",
+      description: "local|registry|all or a bundle name (repeatable). Default: local, or the project's from",
     },
     filter: scopeFilterArg,
     prefer: scopePreferArg,
@@ -193,12 +184,7 @@ export const curateCommand = defineJsonCommand({
     pack: {
       type: "string",
       description:
-        "Pack the ranked stash hits' full content into a single token-budgeted blob instead of returning refs " +
-        "to follow up on individually — value is the max token budget, e.g. --pack 4000 (~4 chars/token, same " +
-        "estimator as embedding). Content is resolved the same way `akm show` resolves it, so a ref#fragment " +
-        "hit packs just that section. Registry hits (--from registry|all) are never packed. Not to be confused " +
-        "with a workflow asset's own `budget` field (a run-cost cap) — this is a context-size target for this " +
-        "one curate call.",
+        "Pack the hits' full content into one blob within this token budget, e.g. --pack 4000 (registry hits are never packed)",
     },
   },
   async run({ args }) {
@@ -319,22 +305,20 @@ export const showCommand = defineJsonCommand({
     ref: {
       type: "positional",
       description:
-        "Asset ref ([bundle//]conceptId[#fragment]). On a markdown document `#fragment` selects one section by heading slug; `--detail brief` returns the outline (`toc`, each heading's slug) without the body. Example: `akm show knowledge/guide.md#auth`.",
+        "Asset ref [bundle//]conceptId[#fragment]; `--detail brief` returns the outline (`toc`, each heading's slug)",
       required: true,
     },
     context: {
       type: "string",
-      description:
-        "Fragment presentation: exact (default) returns only the selected section; lead returns bounded indexed-safe document lead plus the explicitly labelled selected match.",
+      description: "Fragment presentation: exact (default) or lead (adds the document lead)",
     },
     "max-tokens": {
       type: "string",
-      description:
-        "Approximate context budget in tokens (four characters per token). Requires --context lead; mutually exclusive with --max-chars.",
+      description: "Context budget in tokens (needs --context lead; not with --max-chars)",
     },
     "max-chars": {
       type: "string",
-      description: "Exact context budget in characters. Requires --context lead; mutually exclusive with --max-tokens.",
+      description: "Context budget in characters (needs --context lead; not with --max-tokens)",
     },
   },
   async run({ args }) {

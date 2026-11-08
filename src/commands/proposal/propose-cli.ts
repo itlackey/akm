@@ -50,15 +50,13 @@ export const proposeCommand = defineCommand({
     },
     path: {
       type: "string",
-      description:
-        "Relative subdirectory under the type dir to place the proposed asset in (e.g. 'release'). The filename comes from the name.",
+      description: "Subdirectory under the type dir (e.g. 'release')",
     },
     task: { type: "string", description: "Task description for the agent (what should the asset do?)" },
     file: { type: "string", description: "Read the task or prompt text from a UTF-8 file" },
     bundle: {
       type: "string",
-      description:
-        "Configured writable bundle to queue the proposal for and draw convention facts from (default: the project's write.bundle, else the working bundle)",
+      description: "Writable bundle to queue the proposal for (default: project write.bundle, else the working bundle)",
     },
     ...PROJECT_ARG,
     ...SELECTION_ARGS,

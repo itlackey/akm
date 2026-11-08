@@ -193,9 +193,7 @@ export const configCommand = defineGroupCommand({
         key: { type: "positional", required: true, description: "Config key (for example: embedding, defaultBundle)" },
         "show-source": {
           type: "boolean",
-          description:
-            'Wrap the value as { value, source }, where source is "local", "extends:<ref>" (the nearest ' +
-            'extends chain member that sets it), or "default".',
+          description: "Wrap the value as { value, source } (local, extends:<ref> or default)",
           default: false,
         },
       },
@@ -207,22 +205,24 @@ export const configCommand = defineGroupCommand({
     set: defineJsonCommand({
       meta: {
         name: "set",
-        description: "Set a configuration value by key; prints the resulting config with ok: true",
+        description:
+          "Set a configuration value by key; prints the resulting config with ok: true. " +
+          "Array and object values take JSON, quoted for the shell: akm config set projects.x.filters.project '[\"x\"]'. " +
+          "Remove a key with `akm config unset`.",
       },
       args: {
         key: {
           type: "positional",
           required: true,
-          description: "Config key (for example: embedding, engines.default)",
+          description: "Config key (for example: defaultBundle, connections.fast.endpoint)",
         },
-        value: { type: "positional", required: true, description: "Config value" },
+        value: { type: "positional", required: true, description: "Config value (JSON for arrays and objects)" },
         // #463: stable machine-friendly entry point for plugins / hooks.
         // `--silent` suppresses the config dump on stdout so hook-driven
         // writes don't pollute their host's output stream.
         silent: {
           type: "boolean",
-          description:
-            "Suppress the post-write config dump on stdout entirely (prints nothing; exit code is the status). Use from hooks and CI scripts; the write still happens and errors still print.",
+          description: "Print nothing on success (for hooks and CI); errors still print",
           default: false,
         },
       },
@@ -237,14 +237,13 @@ export const configCommand = defineGroupCommand({
       meta: {
         name: "unset",
         description:
-          "Unset an optional configuration key or whole embedding/engine section; prints the resulting config with ok: true",
+          "Unset an optional configuration key or a whole section such as connections.fast or harnesses.opencode; prints the resulting config with ok: true",
       },
       args: {
         key: { type: "positional", required: true, description: "Config key to unset" },
         silent: {
           type: "boolean",
-          description:
-            "Suppress the post-write config dump on stdout entirely (prints nothing; exit code is the status).",
+          description: "Print nothing on success (for hooks and CI); errors still print",
           default: false,
         },
       },

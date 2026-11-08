@@ -367,10 +367,7 @@ const tasksSyncCommand = defineJsonCommand({
     },
     "dry-run": {
       type: "boolean",
-      description:
-        "Compute and print the full reconcile plan (adds/updates/removes, with owning bundle on every " +
-        "removal) without touching the OS scheduler. Zero durable writes. Exits non-zero when the plan " +
-        "contains removals.",
+      description: "Print the reconcile plan without touching the OS scheduler; exits non-zero if it has removals",
       default: false,
     },
   },

@@ -87,7 +87,7 @@ describe("CLI error handling", () => {
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
     expect(typeof parsed.error).toBe("string");
-    expect(parsed.code).toBe("MISSING_REQUIRED_ARGUMENT");
+    expect(parsed.code).toBe("PATH_ESCAPE_VIOLATION");
   });
 
   test("search --from invalid prints hint about source", async () => {
@@ -162,7 +162,8 @@ describe("CLI error handling", () => {
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
     expect(parsed.code).toBe("INVALID_JSON_CONFIG_VALUE");
-    expect(parsed.hint).toContain("Quote JSON values");
+    expect(parsed.hint).toContain("JSON array like");
+    expect(parsed.hint).toContain("akm config unset");
   });
 
   test("CLI hint comes from the error instance, not a regex over the message", async () => {
@@ -336,7 +337,7 @@ describe("error class hints", () => {
     expect(new UsageError("bad detail", "INVALID_DETAIL_VALUE").hint()).toBe(
       "Pick one of: brief, normal, full, agent.",
     );
-    expect(new UsageError("bad json", "INVALID_JSON_CONFIG_VALUE").hint()).toContain("Quote JSON values");
+    expect(new UsageError("bad json", "INVALID_JSON_CONFIG_VALUE").hint()).toContain("JSON array like");
     expect(new UsageError("bad target", "MISSING_OR_AMBIGUOUS_TARGET").hint()).toContain("akm bundle update --all");
     expect(new UsageError("not updatable", "TARGET_NOT_UPDATABLE").hint()).toContain("akm bundle list");
   });
@@ -627,6 +628,21 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.hint).not.toContain("Did you mean");
     expect(parsed.hint).toBe("Run `akm --help` for usage.");
+  });
+
+  test("a missing argument on a subcommand points at that command's --help", () => {
+    const { status, stderr } = spawnCli(["config", "set"], { cwd: repoRoot });
+    expect(status).toBe(2);
+    const parsed = JSON.parse(stderr.trim());
+    expect(parsed.hint).toBe("Run `akm config set --help` for usage.");
+  });
+
+  test("leaf --help prints the global flags once as a pointer", () => {
+    const { stdout } = spawnCli(["config", "set", "--help"], { cwd: repoRoot });
+    expect(stdout).toContain("Global flags: --format, --detail, --output");
+    expect(stdout).not.toContain("--verbose=");
+    expect(stdout).not.toContain("--format=<format>");
+    expect(stdout).toContain("akm config unset");
   });
 
   // The did-you-mean threshold is floor(len / 3): real typos keep their

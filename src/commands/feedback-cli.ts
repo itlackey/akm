@@ -545,18 +545,16 @@ export const feedbackCommand = defineJsonCommand({
     negative: {
       type: "boolean",
       description:
-        "Flag the asset: lowers its ranking immediately (no reindex needed), and the next improve run may repair its frontmatter from --reason. Attach --replace/--with/--source to correct its text, or --superseded-by/--outdated to mark its history.",
+        "Flag the asset: lowers its ranking now; the next improve run may repair its frontmatter from --reason",
       default: false,
     },
     reason: {
       type: "string",
-      description:
-        "What is wrong with the asset's content and what should change, specifically (required for negative feedback by default). Not for akm command errors.",
+      description: "What is wrong with the asset's content and what should change. Not for akm command errors",
     },
     replace: {
       type: "string",
-      description:
-        "Exact text to correct, copied verbatim from the asset file; it must appear exactly once (repeatable, each paired with a --with in order). Negative feedback only.",
+      description: "Exact text to correct; it must appear exactly once (repeatable, paired with --with)",
     },
     with: {
       type: "string",
@@ -564,18 +562,15 @@ export const feedbackCommand = defineJsonCommand({
     },
     source: {
       type: "string",
-      description:
-        "Where the correct fact comes from: a URL, command or file. Required with --replace, --superseded-by and --outdated.",
+      description: "Where the correct fact comes from (URL, command or file). Required with --replace",
     },
     "superseded-by": {
       type: "string",
-      description:
-        "Ref of the asset that replaces this one. The fix sets beliefState: superseded and adds the ref to supersededBy (contradicted and archived stay). The ref must be indexed and not this asset. Negative feedback on a markdown asset only; may be combined with --replace/--with.",
+      description: "Ref of the asset that replaces this one (needs --source)",
     },
     outdated: {
       type: "boolean",
-      description:
-        "The asset describes a past state and no single asset replaces it. The fix sets beliefState: deprecated (superseded, contradicted and archived stay). Negative feedback on a markdown asset only; may be combined with --replace/--with, not with --superseded-by.",
+      description: "Mark the asset as describing a past state with no replacement (needs --source)",
       default: false,
     },
     tag: {
@@ -585,10 +580,7 @@ export const feedbackCommand = defineJsonCommand({
     "applied-to": {
       type: "string",
       description:
-        "Credit a lesson that helped resolve this task. Accepts a `lessons/<name>` ref. " +
-        "When combined with --positive, appends this feedback ref to the target lesson's " +
-        "`lessonStrength[]` frontmatter array (dedup, idempotent). A non-lesson target or a " +
-        "missing --positive produces a warning rather than silently doing nothing.",
+        "Credit a `lessons/<name>` ref that helped; with --positive it is added to the lesson's lessonStrength",
     },
   },
   async run({ args }) {

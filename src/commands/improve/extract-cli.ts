@@ -63,8 +63,7 @@ export const extractCommand = defineJsonCommand({
     },
     force: {
       type: "boolean",
-      description:
-        "Re-process sessions even if they were already extracted and have no new events. Default: skip already-seen sessions.",
+      description: "Re-process sessions already extracted with no new events",
       default: false,
     },
     "timeout-ms": {

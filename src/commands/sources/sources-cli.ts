@@ -70,8 +70,7 @@ export const upgradeCommand = defineJsonCommand({
     },
     next: {
       type: "boolean",
-      description:
-        "Install the newest prerelease (the @next npm tag) of akm and, if OpenCode's config names akm-opencode@next, of its plugin",
+      description: "Install the newest prerelease (the @next npm tag)",
       default: false,
     },
   },
@@ -149,7 +148,7 @@ export const syncCommand = defineCommand({
     },
     push: {
       type: "boolean",
-      description: "Push after commit when writable + remote configured (use --no-push to commit only). Default: true.",
+      description: "Push after commit when writable and a remote is configured (--no-push commits only)",
       default: true,
     },
   },
@@ -169,8 +168,7 @@ export const cloneCommand = defineJsonCommand({
     force: { type: "boolean", description: "Overwrite if the asset already exists at the destination", default: false },
     bundle: {
       type: "string",
-      description:
-        "Override the managed destination. Accepts a bundle name from config; falls back to defaultWriteTarget then the working bundle.",
+      description: "Managed destination: a bundle name (default: defaultWriteTarget)",
     },
     dest: { type: "string", description: "Unmanaged destination directory (cannot be combined with --bundle)" },
   },

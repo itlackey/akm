@@ -260,7 +260,7 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   INVALID_FORMAT_VALUE: "Pick one of: json, jsonl, yaml, text, md.",
   INVALID_DETAIL_VALUE: "Pick one of: brief, normal, full, agent.",
   INVALID_JSON_CONFIG_VALUE:
-    'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.',
+    'Array and object values take JSON, quoted for the shell: a JSON array like `akm config set projects.x.filters.project \'["x"]\'` or a JSON object like `akm config set connections.fast \'{"endpoint":"http://localhost:11434/v1"}\'`. `akm config unset <key>` removes a key.',
   MISSING_OR_AMBIGUOUS_TARGET:
     "Use `akm bundle update --all` or pass a target like `akm bundle update npm:@scope/pkg` (not both).",
   TARGET_NOT_UPDATABLE: "Run `akm bundle list` to view your sources, then retry with one of those values.",

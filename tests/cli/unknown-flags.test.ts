@@ -46,6 +46,16 @@ describe("rejects undeclared flags", () => {
     expect(errorFor(["search", "foo", "--limt", "3"]).hint()).toContain("--limit");
   });
 
+  test("a flag STABILITY lists as gone names its replacement, not an edit-distance guess", () => {
+    const shape = errorFor(["search", "foo", "--shape", "agent"]);
+    expect(shape.hint()).toContain("--detail agent");
+    expect(shape.hint()).not.toContain("--type");
+    expect(errorFor(["env", "create", "x", "--target", "b"]).hint()).toContain("`--bundle`");
+    expect(errorFor(["config", "path", "--all"]).hint()).toContain("`akm info`");
+    // `--target` is only gone where STABILITY says so.
+    expect(errorFor(["search", "foo", "--target", "b"]).hint() ?? "").not.toContain("is gone");
+  });
+
   test("a hidden flag is accepted but never suggested", () => {
     // `--require-engines` is a hidden no-op on `improve`: pointing a typo at it would send the user to a flag that does nothing.
     expect(() => check(["improve", "--require-engines"])).not.toThrow();

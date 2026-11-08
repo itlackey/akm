@@ -433,6 +433,23 @@ function coerceForSchema(schema: z.ZodTypeAny, raw: string, key: string): unknow
     // Try each option in order. Use the first that the schema accepts after
     // coercion. Falls through to JSON parsing if all fail.
     const options = target.options as z.ZodTypeAny[];
+    // A value that starts like JSON (`["x"]`, `{...}`) is JSON when an option takes an array or object,
+    // even though a string option would also accept the text.
+    const trimmed = raw.trim();
+    const takesJson = options.some((opt) => {
+      const inner = unwrap(opt);
+      return inner instanceof z.ZodArray || inner instanceof z.ZodObject || inner instanceof z.ZodRecord;
+    });
+    if (takesJson && (trimmed.startsWith("[") || trimmed.startsWith("{"))) {
+      let json: unknown;
+      try {
+        json = JSON.parse(trimmed);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new UsageError(`Invalid JSON for ${key}: ${detail}`, "INVALID_JSON_CONFIG_VALUE");
+      }
+      if (options.some((opt) => opt.safeParse(json).success)) return json;
+    }
     let lastErr: unknown;
     for (const opt of options) {
       try {

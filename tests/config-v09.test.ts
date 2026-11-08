@@ -533,3 +533,30 @@ describe("0.9 config contract", () => {
     expect(validateConfigShape({ configVersion: "0.9.0", modelAliases: { deep: { pi: "model-b" } } }).ok).toBe(true);
   });
 });
+
+describe("config set: JSON for string-or-array keys", () => {
+  const filters = (config: Record<string, unknown>, key: string) =>
+    (config.projects as { x: { filters?: Record<string, unknown>; from?: unknown } }).x.filters?.[key];
+
+  test("a JSON array is stored as an array, not a string", () => {
+    const set = configSet({}, "projects.x.filters.project", '["x","y"]');
+    expect(filters(set, "project")).toEqual(["x", "y"]);
+    expect((configSet({}, "projects.x.from", '["a","b"]').projects as { x: { from: unknown } }).x.from).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  test("a plain value stays a string", () => {
+    expect(filters(configSet({}, "projects.x.filters.project", "x"), "project")).toBe("x");
+  });
+
+  test("malformed JSON that starts like an array is rejected with the JSON hint", () => {
+    try {
+      configSet({}, "projects.x.filters.project", '["x"');
+      throw new Error("expected a throw");
+    } catch (err) {
+      expect((err as { code?: string }).code).toBe("INVALID_JSON_CONFIG_VALUE");
+    }
+  });
+});

@@ -75,12 +75,11 @@ export const rememberCommand = defineJsonCommand({
     },
     name: {
       type: "string",
-      description: "Memory name (flat, no '/'; defaults to a slug from the content). Use --path for a subdirectory.",
+      description: "Memory name (flat; default: slug of the content)",
     },
     path: {
       type: "string",
-      description:
-        "Relative subdirectory under memories/ to place the memory in (e.g. 'personal/projects'). The filename still comes from --name or the content slug.",
+      description: "Subdirectory under memories/ (e.g. 'personal/projects')",
     },
     force: {
       type: "boolean",
@@ -89,7 +88,7 @@ export const rememberCommand = defineJsonCommand({
     },
     description: {
       type: "string",
-      description: "Short description written to frontmatter (persisted as the memory's description field)",
+      description: "Short description for frontmatter",
     },
     tag: {
       type: "string",
@@ -97,53 +96,50 @@ export const rememberCommand = defineJsonCommand({
     },
     expires: {
       type: "string",
-      description: "Expiry duration shorthand — e.g. 30d, 12h, 5m (minutes), 3M (months). Resolved to an ISO date.",
+      description: "Expiry, e.g. 30d, 12h, 5m (minutes), 3M (months)",
     },
     source: {
       type: "string",
-      description: "Source reference (URL, asset ref, file path, or any free-form string)",
+      description: "Source (URL, asset ref, file path or text)",
     },
     xref: {
       type: "string",
-      description:
-        "Cross-reference ref recorded in the memory's `xrefs:` frontmatter (repeatable: --xref knowledge/auth-flow --xref memories/vpn-note). Each ref must resolve in the write target or a configured source; an unresolvable ref aborts the write.",
+      description: "Asset ref to cross-reference in `xrefs:` (repeatable); it must resolve",
     },
     supersedes: {
       type: "string",
-      description:
-        "Ref of an existing asset this memory corrects (repeatable: --supersedes memories/projectA/old-note). Writes the correction with an xref to the old asset AND demotes the old asset (`beliefState: superseded` + `supersededBy`, a metadata-only edit) so ranking prefers the correction and `--belief current` hides the stale version. An unresolvable or self-referencing ref aborts the write; a ref outside the write target and working bundle still writes the correction but skips the demotion (reported as applied: false).",
+      description: "Ref of an asset this memory corrects (repeatable); the old asset is marked superseded",
     },
     auto: {
       type: "boolean",
-      description: "Apply heuristic tagging (code, subjective, source, observed) from the body",
+      description: "Tag heuristically from the body",
       default: false,
     },
     enrich: {
       type: "boolean",
-      description: "Call the configured LLM to propose tags and description (requires LLM config)",
+      description: "Propose tags and description with the configured LLM",
       default: false,
     },
     bundle: {
       type: "string",
-      description:
-        "Override the write destination. Accepts a source name from your config; falls back to the project's write.bundle, then defaultWriteTarget, then the working bundle.",
+      description: "Write destination: a source name (default: project write.bundle, then defaultWriteTarget)",
     },
     ...PROJECT_ARG,
     user: {
       type: "string",
-      description: "Scope this memory to a user id (persisted as `scope_user` frontmatter)",
+      description: "Scope to a user id",
     },
     agent: {
       type: "string",
-      description: "Scope this memory to an agent id (persisted as `scope_agent` frontmatter)",
+      description: "Scope to an agent id",
     },
     run: {
       type: "string",
-      description: "Scope this memory to a run id (persisted as `scope_run` frontmatter)",
+      description: "Scope to a run id",
     },
     channel: {
       type: "string",
-      description: "Scope this memory to a channel name (persisted as `scope_channel` frontmatter)",
+      description: "Scope to a channel name",
     },
     "show-similar": {
       type: "boolean",
@@ -156,7 +152,7 @@ export const rememberCommand = defineJsonCommand({
       // breaking change: both spellings already worked, and both keep
       // working.
       alias: "showSimilar",
-      description: "Return top-3 similar existing memories in output (opt-in). Alias: --showSimilar.",
+      description: "Return the top 3 similar memories (alias: --showSimilar)",
     },
   },
   async run({ args }) {

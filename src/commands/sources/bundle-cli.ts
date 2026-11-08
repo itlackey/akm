@@ -56,8 +56,7 @@ const createCommand = defineJsonCommand({
     dir: { type: "string", description: "Custom bundle directory path (default: ~/akm)" },
     "set-default": {
       type: "boolean",
-      description:
-        "Make --dir the default bundle. Without this, `akm bundle create --dir X` scaffolds X but leaves your existing default bundle unchanged.",
+      description: "Make --dir the default bundle",
       default: false,
     },
   },
@@ -148,8 +147,7 @@ const updateCommand = defineJsonCommand({
     // update no longer scans env files for process-hijacking keys.
     "allow-dangerous-env-keys": {
       type: "boolean",
-      description:
-        "Deprecated, no effect: update no longer scans env files for process-hijacking keys. Accepted through 0.10 for existing scripts.",
+      description: "Deprecated, no effect (accepted through 0.10)",
       default: false,
     },
     // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
@@ -158,8 +156,7 @@ const updateCommand = defineJsonCommand({
     yes: {
       type: "boolean",
       alias: "y",
-      description:
-        "Deprecated, no effect: update no longer asks before pruning old install directories of a read-only bundle. Accepted through 0.10 for existing scripts.",
+      description: "Deprecated, no effect (accepted through 0.10)",
       default: false,
     },
   },

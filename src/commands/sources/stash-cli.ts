@@ -88,8 +88,7 @@ export const indexCommand = defineCommand({
     },
     "skip-if-locked": {
       type: "boolean",
-      description:
-        "If another `akm index` run already holds the rebuild lock, skip gracefully (exit 0) instead of contending with it. Use for scheduled/opportunistic index runs so they don't pile up against a longer run in progress.",
+      description: "Skip (exit 0) if another `akm index` holds the rebuild lock",
       default: false,
     },
   },
@@ -219,13 +218,11 @@ export const importKnowledgeCommand = defineJsonCommand({
     },
     name: {
       type: "string",
-      description:
-        "Knowledge name (flat, no '/'; defaults to the source filename or content slug). Use --path for a subdirectory.",
+      description: "Knowledge name (flat; default: source filename or content slug)",
     },
     path: {
       type: "string",
-      description:
-        "Relative subdirectory under knowledge/ to place the document in (e.g. 'projects/example'). The filename still comes from --name or the source slug.",
+      description: "Subdirectory under knowledge/ (e.g. 'projects/example')",
     },
     force: {
       type: "boolean",
@@ -234,18 +231,15 @@ export const importKnowledgeCommand = defineJsonCommand({
     },
     bundle: {
       type: "string",
-      description:
-        "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working bundle.",
+      description: "Write destination: a source name (default: defaultWriteTarget)",
     },
     xref: {
       type: "string",
-      description:
-        "Cross-reference ref merged into the document's `xrefs:` frontmatter (repeatable: --xref knowledge/auth-flow). Existing frontmatter is preserved (dedupe-append, never a nested block); a document whose frontmatter is not parseable YAML aborts the import rather than being rewritten lossily. Each ref must resolve in the write target or a configured source; an unresolvable ref aborts the import.",
+      description: "Asset ref to cross-reference in `xrefs:` (repeatable); it must resolve",
     },
     supersedes: {
       type: "string",
-      description:
-        "Ref of an existing asset this document corrects (repeatable: --supersedes knowledge/legacy-guide). Imports the correction with an xref to the old asset AND demotes the old asset (`beliefState: superseded` + `supersededBy`, a metadata-only edit) so ranking prefers the correction and `--belief current` hides the stale version. An unresolvable or self-referencing ref aborts the import; a ref outside the write target and working bundle still imports the correction but skips the demotion (reported as applied: false).",
+      description: "Ref of an asset this document corrects (repeatable); the old asset is marked superseded",
     },
   },
   async run({ args }) {
