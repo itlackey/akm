@@ -248,7 +248,12 @@ an asset with none keeps its fused score), and the list is re-sorted, equal
 scores by fully qualified ref (`<bundle>//<conceptId>`). A hit's `score` is
 that adjusted score. One-hit-per-file deduplication, and keeping only
 the highest-ranked of entries with identical indexed content, then drop entries
-from the sorted list without reordering it. Nothing else — name, type, tag,
+from the sorted list without reordering it. The one exception is a memory and
+the `.derived` twin memory inference wrote beside it: they take one slot, the
+twin is dropped when its parent is among the candidates, and a parent ranked
+below its twin takes the twin's place, so the list can then stop being in
+descending `score` order (a promoted parent keeps its own, lower score; this
+matters only to a minimum-score floor such as `AKM_CURATE_MIN_SCORE`). Nothing else — name, type, tag,
 graph, utility score or belief-state signals — changes the order.
 
 Notes:

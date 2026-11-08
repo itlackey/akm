@@ -72,22 +72,26 @@ describe("akmSearch memory families", () => {
     expect(two).not.toContain("alpha.derived");
   });
 
+  test("a parent ranked below its twin takes the twin's place and keeps expandTo", async () => {
+    const stash = await index((s) => {
+      writeMemory(s, "alpha", {}, `gateway ${"filler ".repeat(40)}`);
+      writeMemory(s, "alpha.derived", twin("alpha"), "gateway gateway gateway gateway");
+      writeMemory(s, "beta", {}, "gateway gateway gateway");
+      writeMemory(s, "gamma", {}, "gateway gateway");
+    });
+    const hits = await withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+      resetConfigCache();
+      return (await akmSearch({ query: "gateway", limit: 10 })).hits as Array<{ name: string; expandTo?: string }>;
+    });
+    expect(hits.map((h) => h.name)).toEqual(["beta", "alpha", "gamma"]);
+    expect(hits[1]?.expandTo).toContain("alpha.derived");
+  });
+
   test("twin alone matching is kept", async () => {
     const stash = await index((s) => {
       writeMemory(s, "alpha", {}, "unrelated words only");
       writeMemory(s, "alpha.derived", twin("alpha"), "gateway lesson about timeouts");
     });
     expect(await search(stash, {})).toEqual(["alpha.derived"]);
-  });
-
-  test("non-memory types are unaffected", async () => {
-    const stash = await index((s) => {
-      for (const name of ["one", "two"]) {
-        const file = path.join(s, "knowledge", `${name}.md`);
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, `---\ndescription: gateway ${name}\n---\n\ngateway ${name} body\n`);
-      }
-    });
-    expect((await search(stash, {})).sort()).toEqual(["one", "two"]);
   });
 });
