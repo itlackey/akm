@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The hints guides are accurate: the brief guide is cut to about 3,000 characters (find, read, feedback, writing, errors and exit codes) so the plugins' 4,000-character injection no longer truncates it, both exit-code tables list 75, `akm search` is described as searching local sources (or the project's `from`), and improvement is described as review-first. Both guides, and `akm curate --help`, now mention `curate --pack <tokens>`. Text search output no longer ends with a nudge toward `akm workflow run` (#1474, #1489).
 - Search and curate return one result per memory family: a `.derived` twin is dropped when its parent memory is also a hit, and a parent ranked below its twin takes the twin's place (the parent keeps `expandTo`), and the freed slot goes to the next hit. A twin whose parent is not a hit is still returned (#1481).
 
 ### Fixed

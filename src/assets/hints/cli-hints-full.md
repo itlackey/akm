@@ -5,8 +5,9 @@ You have access to a searchable library of scripts, skills, commands, agents, kn
 ## Search
 
 ```sh
-akm search "<query>"                          # Search all sources
+akm search "<query>"                          # Search local sources (or the project's `from`)
 akm curate "<task>"                          # Curate the best matches for a task
+akm curate "<task>" --pack <tokens>           # Return the hits' content as one token-budgeted bundle
 akm search "<query>" --type workflow          # Filter by asset type
 akm search "<query>" --from all                # Also search registries
 akm search "<query>" --from registry           # Search registries only
@@ -44,6 +45,7 @@ Combine search + follow-up hints into a dense summary for a task or prompt.
 akm curate "plan a release"                   # Pick top matches across asset types
 akm curate "deploy a Bun app" --limit 3       # Keep the summary shorter
 akm curate "review architecture" --type workflow # Restrict to one asset type
+akm curate "plan a release" --pack 4000       # Pack the hits' content into one blob of at most 4000 tokens
 ```
 
 ## Show
@@ -466,6 +468,7 @@ Exit codes:
 | 2 | Usage / bad input | `UsageError` |
 | 4 | Health warning (`akm health` only) | — |
 | 70 | Internal / unclassified error | unexpected throw |
+| 75 | Transient: retry shortly | `TransientError` (another akm process holds a lock) |
 | 78 | Configuration error | `ConfigError` |
 
 To detect failure reliably, check either:
