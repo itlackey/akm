@@ -129,7 +129,7 @@ export const syncCommand = defineCommand({
   meta: {
     name: "sync",
     description:
-      "Sync changes in a git-backed bundle: commits (and pushes when writable + remote is configured). No-op for non-git bundles.",
+      "Sync changes in a git-backed bundle: commits every unignored change inside the bundle (and pushes when writable + remote is configured, using the bundle's configured credential). No-op for non-git bundles.",
   },
   // Raw defineCommand (not defineJsonCommand), so the global output flags are
   // spread in explicitly — without them the optional `name` positional would

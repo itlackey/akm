@@ -413,8 +413,8 @@ Strategy sync behavior is configured via the `sync` block under
 
 The pre-run sync runs right after the run takes its lock and before the index
 and plan stages, so they see what another host pushed. It stages what `akm sync`
-stages (the managed paths, or the content subdirectory of a repo whose content
-lives in one), which means pending hand edits there are committed (and pushed)
+stages (every unignored change in the bundle, or in the content subdirectory of a
+repo whose content lives in one), which means pending hand edits there are committed (and pushed)
 before the run starts, not mistaken for the run's own writes. It never aborts
 the run: a merge that conflicts (aborted, local commit kept), a failed fetch, or
 any other error is a warning, and the run continues on the local state. The
@@ -444,7 +444,7 @@ then rewritten by the run IS committed. Deletions are journaled like writes, so
 the final on-disk state is what lands — a path written and then reverted or
 purged produces no commit at all. The run reports its journal as
 `writtenPaths` on the improve result. Callers that supply no explicit path list
-(`akm sync`) keep the managed-pathspec fallback in `saveGitStash`.
+(`akm sync`) select every unignored change inside the resolved bundle content boundary in `saveGitStash`.
 
 ### Archive purge
 

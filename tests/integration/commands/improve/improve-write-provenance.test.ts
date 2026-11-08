@@ -406,7 +406,7 @@ test("a run that writes nothing commits nothing at the end — an empty set is n
   expect(statusPaths()).toEqual([]);
 });
 
-test("saveGitStash with no explicit path list still falls back to managed pathspecs", () => {
+test("saveGitStash with no explicit path list selects every unignored change in the bundle", () => {
   initRepo();
   fs.writeFileSync(path.join(stashDir, "memories", "human.md"), "---\ntype: memory\n---\n\nManaged edit.\n");
   fs.writeFileSync(path.join(stashDir, "stray-report.html"), "<html></html>", "utf8");
@@ -414,9 +414,8 @@ test("saveGitStash with no explicit path list still falls back to managed pathsp
   const result = saveGitStash(undefined, "akm sync", true, { repoDir: stashDir, push: false });
 
   expect(result.committed).toBe(true);
-  expect(lastCommitPaths()).toEqual(["memories/human.md"]);
-  // The stray non-akm file is neither committed nor a reason to refuse.
-  expect(statusPaths()).toEqual(["stray-report.html"]);
+  expect(lastCommitPaths()).toEqual(["memories/human.md", "stray-report.html"]);
+  expect(statusPaths()).toEqual([]);
 });
 
 test("resolveSyncPathSet: provenance is authoritative, the dirty diff is the fallback", () => {
