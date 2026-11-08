@@ -96,7 +96,7 @@ export const searchCommand = defineJsonCommand({
     // occurrences directly from argv (same pattern as `--tag`).
     const filterTokens = parseAllFlagValues("--filter");
     const project = resolveProject(loadConfig(), { project: getStringArg(args, "project") });
-    const { source, filters, prefer } = withProjectDefaults(project, {
+    const { source, filters, prefer, view } = withProjectDefaults(project, {
       source: fromValues(args.from),
       filters: parseScopeFilterFlags(filterTokens, "--filter"),
       prefer: parseScopeFilterFlags(parseAllFlagValues("--prefer"), "--prefer"),
@@ -122,22 +122,27 @@ export const searchCommand = defineJsonCommand({
       eventSource: resolveUsageEventSource(),
       attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
     });
-    output("search", project ? { ...result, project: projectView(project) } : result);
+    output("search", view ? { ...result, project: view } : result);
   },
 });
 
 /**
  * The read defaults a call runs with: each kind the caller gave replaces the
  * project's value for that kind, and a kind neither gave stays at today's default.
+ * `view` is the project as applied: the same effective values, for the response to report.
  */
 function withProjectDefaults(
   project: ResolvedProject | undefined,
   explicit: { source?: string | string[]; filters?: ScopeFilters; prefer?: ScopeFilters },
 ) {
+  const from = explicit.source ?? project?.from;
+  const filters = explicit.filters ?? project?.filters;
+  const prefer = explicit.prefer ?? project?.prefer;
   return {
-    source: parseSearchSource(explicit.source ?? project?.from),
-    filters: explicit.filters ?? project?.filters,
-    prefer: explicit.prefer ?? project?.prefer,
+    source: parseSearchSource(from),
+    filters,
+    prefer,
+    view: project && projectView({ ...project, from, filters, prefer: prefer ?? project.prefer }),
   };
 }
 
@@ -205,12 +210,11 @@ export const curateCommand = defineJsonCommand({
     );
     if (packBudget !== undefined) {
       const packed = await packCuratedHits(curated, packBudget);
-      deliverRendered(
-        outputMode.format === "text"
-          ? withProjectLine(formatCuratePackText(packed), curated.project)
-          : JSON.stringify(packed.items, null, 2),
-        outputMode.outputPath,
-      );
+      if (outputMode.format === "text") {
+        deliverRendered(withProjectLine(formatCuratePackText(packed), curated.project), outputMode.outputPath);
+      } else {
+        output("curate-pack", packed.items);
+      }
       return;
     }
     output("curate", curated);
@@ -251,7 +255,7 @@ export async function runCurate(
   }
   const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
   const project = resolveProject(loadConfig(), { project: args.project, cwd: args.cwd });
-  const { source, filters, prefer } = withProjectDefaults(project, {
+  const { source, filters, prefer, view } = withProjectDefaults(project, {
     source: args.from,
     filters: parseScopeFilterFlags(args.filters ?? [], "--filter"),
     prefer: parseScopeFilterFlags(args.prefer ?? [], "--prefer"),
@@ -267,7 +271,7 @@ export async function runCurate(
     eventSource: args.eventSource ?? resolveUsageEventSource(),
     attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
   });
-  return project ? { ...curated, project: projectView(project) } : curated;
+  return view ? { ...curated, project: view } : curated;
 }
 
 /** Human-readable rendering for `akm curate --pack`: concatenated content per hit under a `## <ref>` header. */

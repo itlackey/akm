@@ -135,3 +135,44 @@ describe("akm health keeps its bespoke report through the registry", () => {
     expect(result.stdout.trimStart().startsWith("{")).toBe(false);
   });
 });
+
+describe("curate --pack honours --format", () => {
+  const pack = async (format: (typeof FORMATS)[number]) => {
+    const result = await runCliCapture(["curate", "alias", "--pack", "2000", `--format=${format}`]);
+    expect(result.code).toBe(0);
+    return result.stdout;
+  };
+
+  test("json is the items array", async () => {
+    const items = JSON.parse(await pack("json"));
+    expect(items.map((item: { ref: string }) => item.ref)).toEqual([expect.stringContaining("alias-note")]);
+  });
+
+  test("jsonl is one record per line", async () => {
+    const lines = (await pack("jsonl")).trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] as string).ref).toContain("alias-note");
+  });
+
+  test("yaml parses to the items array", async () => {
+    const items = Bun.YAML.parse(await pack("yaml")) as { ref: string }[];
+    expect(items[0]?.ref).toContain("alias-note");
+  });
+
+  test("md and text are not JSON", async () => {
+    for (const format of ["md", "text"] as const) {
+      const out = await pack(format);
+      expect(out).toContain("alias-note");
+      expect(out.trimStart().startsWith("[")).toBe(false);
+    }
+  });
+});
+
+describe("config path is format-exempt", () => {
+  test("--format json warns and still prints the bare path", async () => {
+    const result = await runCliCapture(["config", "path", "--format=json"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout.trim()).toContain("config.json");
+    expect(result.stdout.trimStart().startsWith("{")).toBe(false);
+  });
+});

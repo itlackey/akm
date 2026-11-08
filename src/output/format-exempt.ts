@@ -61,6 +61,8 @@ const EXEMPT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   // (exactly how the substitution is always written) started emitting
   // `{"path":"..."}` instead of the raw path.
   "env path",
+  // Prints the bare config file path, like `env path`.
+  "config path",
 ]);
 
 /**

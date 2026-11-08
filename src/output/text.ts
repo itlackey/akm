@@ -118,6 +118,11 @@ export function outputJsonl(command: string, shaped: unknown): void {
     }
     return;
   }
+  // A list payload (`curate --pack`) is one record per line.
+  if (Array.isArray(shaped)) {
+    for (const record of shaped) writeStdout(JSON.stringify(record));
+    return;
+  }
   // For non-search commands, output the whole object as a single JSONL line
   writeStdout(JSON.stringify(shaped));
 }
