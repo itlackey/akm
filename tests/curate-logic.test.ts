@@ -53,6 +53,19 @@ describe("curateSearchResults", () => {
     ]);
   });
 
+  test("non-historical stash items and registry items carry no reason (#1482)", async () => {
+    const result = await curateSearchResults(
+      `release ${"very long prompt text ".repeat(40)}`,
+      searchResponse({
+        hits: [stashHit({ type: "knowledge", name: "g", ref: "knowledge/g", path: "/tmp/g" })],
+        registryHits: [registryHit({ name: "r", id: "npm:r" })],
+      }),
+      3,
+    );
+    expect(result.items.length).toBe(2);
+    for (const item of result.items) expect(item).not.toHaveProperty("reason");
+  });
+
   // F3/R-018: `--type` narrows the pool of a search response that was never
   // type-filtered (tests, `searchResponse` fixtures) without reordering it.
   test("--type narrows the candidate pool and keeps the search order", async () => {

@@ -88,7 +88,7 @@ export type CuratedStashItem = {
   run?: string;
   supportRefs?: CurateSupportRef[];
   followUp: string;
-  reason: string;
+  reason?: string;
   score?: number;
   beliefState?: string;
 };
@@ -100,7 +100,7 @@ export type CuratedRegistryItem = {
   id: string;
   description?: string;
   followUp: string;
-  reason: string;
+  reason?: string;
   score?: number;
 };
 
@@ -353,11 +353,9 @@ export async function curateSearchResults(
 
   const items = [
     ...(
-      await Promise.all(
-        selectedStashHits.map((hit) => enrichCuratedStashHit(query, hit, selectedRefs, eventSource, policy)),
-      )
+      await Promise.all(selectedStashHits.map((hit) => enrichCuratedStashHit(hit, selectedRefs, eventSource, policy)))
     ).filter((item): item is CuratedStashItem => item !== undefined),
-    ...selectedRegistryHits.map((hit) => buildCuratedRegistryItem(query, hit)),
+    ...selectedRegistryHits.map((hit) => buildCuratedRegistryItem(hit)),
   ].slice(0, limit);
   return {
     query,
@@ -442,7 +440,6 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
 }
 
 async function enrichCuratedStashHit(
-  query: string,
   hit: SourceSearchHit,
   selectedRefs: Set<string>,
   eventSource?: UsageEventSource,
@@ -486,14 +483,16 @@ async function enrichCuratedStashHit(
     ...(supportRefs.length > 0 ? { supportRefs } : {}),
     followUp: `akm show ${ref}`,
     ...(beliefState ? { beliefState } : {}),
-    reason: `${matchBeliefFilter(beliefState, "historical") ? "Historical context. " : ""}${buildCuratedReason(query, shown?.type ?? hit.type)}`,
+    ...(matchBeliefFilter(beliefState, "historical")
+      ? { reason: "Historical context; not current supporting authority." }
+      : {}),
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
   copySearchHitAttribution(hit, item, item.description);
   return item;
 }
 
-function buildCuratedRegistryItem(query: string, hit: RegistrySearchResultHit): CuratedRegistryItem {
+function buildCuratedRegistryItem(hit: RegistrySearchResultHit): CuratedRegistryItem {
   return {
     source: "registry",
     type: "registry",
@@ -501,7 +500,6 @@ function buildCuratedRegistryItem(query: string, hit: RegistrySearchResultHit): 
     id: hit.id,
     ...(hit.description ? { description: hit.description } : {}),
     followUp: hit.action ?? `akm bundle add ${hit.id}`,
-    reason: `Useful external source to explore for ${query}.`,
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
 }
@@ -516,25 +514,6 @@ function buildCuratedPreview(shown: ShowResponse | undefined, hit: SourceSearchH
     ?.replace(/\s+/g, " ")
     .trim();
   return payload ? truncateDescription(payload, 160) : undefined;
-}
-
-function buildCuratedReason(query: string, type: string): string {
-  switch (type) {
-    case "script":
-      return `Strong runnable script match for "${query}".`;
-    case "command":
-      return `Strong reusable command/template match for "${query}".`;
-    case "knowledge":
-      return `Strong reference document match for "${query}".`;
-    case "skill":
-      return `Strong instructions/workflow match for "${query}".`;
-    case "agent":
-      return `Strong specialized agent prompt match for "${query}".`;
-    case "memory":
-      return `Strong saved context match for "${query}".`;
-    default:
-      return `Strong ${type} match for "${query}".`;
-  }
 }
 
 function buildCurateSummary(query: string, items: CuratedItem[]): string {
