@@ -88,7 +88,7 @@ export type CuratedStashItem = {
   run?: string;
   supportRefs?: CurateSupportRef[];
   followUp: string;
-  reason: string;
+  reason?: string;
   score?: number;
   beliefState?: string;
 };
@@ -100,7 +100,7 @@ export type CuratedRegistryItem = {
   id: string;
   description?: string;
   followUp: string;
-  reason: string;
+  reason?: string;
   score?: number;
 };
 
@@ -483,7 +483,9 @@ async function enrichCuratedStashHit(
     ...(supportRefs.length > 0 ? { supportRefs } : {}),
     followUp: `akm show ${ref}`,
     ...(beliefState ? { beliefState } : {}),
-    reason: `${matchBeliefFilter(beliefState, "historical") ? "Historical context. " : ""}${buildCuratedReason(shown?.type ?? hit.type)}`,
+    ...(matchBeliefFilter(beliefState, "historical")
+      ? { reason: "Historical context; not current supporting authority." }
+      : {}),
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
   copySearchHitAttribution(hit, item, item.description);
@@ -498,7 +500,6 @@ function buildCuratedRegistryItem(hit: RegistrySearchResultHit): CuratedRegistry
     id: hit.id,
     ...(hit.description ? { description: hit.description } : {}),
     followUp: hit.action ?? `akm bundle add ${hit.id}`,
-    reason: "Useful external source to explore.",
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
 }
@@ -513,25 +514,6 @@ function buildCuratedPreview(shown: ShowResponse | undefined, hit: SourceSearchH
     ?.replace(/\s+/g, " ")
     .trim();
   return payload ? truncateDescription(payload, 160) : undefined;
-}
-
-function buildCuratedReason(type: string): string {
-  switch (type) {
-    case "script":
-      return "Strong runnable script match.";
-    case "command":
-      return "Strong reusable command/template match.";
-    case "knowledge":
-      return "Strong reference document match.";
-    case "skill":
-      return "Strong instructions/workflow match.";
-    case "agent":
-      return "Strong specialized agent prompt match.";
-    case "memory":
-      return "Strong saved context match.";
-    default:
-      return `Strong ${type} match.`;
-  }
 }
 
 function buildCurateSummary(query: string, items: CuratedItem[]): string {
