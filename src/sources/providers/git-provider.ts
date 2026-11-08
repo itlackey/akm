@@ -13,7 +13,13 @@ import { getRegistryIndexCacheDir } from "../../core/paths";
 import { validateGitUrl } from "../../registry/resolve";
 import { withFreshnessCache } from "../freshness";
 import type { SyncOptions as ProviderSyncOptions, SourceProvider } from "../provider";
-import { assertNoIgnoredPathOverwrite, cloneRepo, inspectGitUpstream, runGit } from "./git-install";
+import {
+  assertCleanWorktree,
+  assertNoIgnoredPathOverwrite,
+  cloneRepo,
+  inspectGitUpstream,
+  runGit,
+} from "./git-install";
 import type { SourceLockData, SyncOptions } from "./install-types";
 import { sanitizeString } from "./provider-utils";
 
@@ -150,10 +156,7 @@ export async function syncMirroredRepo(config: SourceConfigEntry, options?: Sync
 }
 
 function pullRepo(repoDir: string, credential?: string): void {
-  const status = runGit(["-C", repoDir, "status", "--porcelain"]);
-  if (status.status !== 0 || status.stdout.trim()) {
-    throw new UsageError(`Writable Git source at ${repoDir} has uncommitted changes; refusing to update it.`);
-  }
+  assertCleanWorktree(repoDir, `Writable Git source at ${repoDir}`, "has uncommitted changes; refusing to update it.");
   const relation = inspectGitUpstream(repoDir, credential);
   if (relation.behind > 0 && relation.upstream) {
     if (relation.ahead > 0) {
