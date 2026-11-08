@@ -119,13 +119,31 @@ test("Review: Refresh confirms politely and keeps focus; a toast clears the deci
   await open(page, server, `/review/${server.proposals.stale}`);
   await button("Accept…").click();
   await button("Confirm accept").click();
-  const toast = page.locator(".toast").first();
-  await expect(toast).toBeVisible();
-  const [toastBox, shelfBox] = await Promise.all([toast.boundingBox(), page.locator(".decision-shelf").boundingBox()]);
+  // The shelf unmounts while the next proposal loads, and the toast closes itself, so read both rects in one
+  // synchronous evaluate, retried until both exist, instead of two separate boundingBox() calls that can straddle either change.
+  const rects = (a, b) =>
+    page.evaluate(
+      ([x, y]) => {
+        const r = (sel) => {
+          const e = document.querySelector(sel);
+          const v = e?.getBoundingClientRect();
+          return v && v.width > 0 && v.height > 0 ? { y: v.y, height: v.height } : null;
+        };
+        const [ra, rb] = [r(x), r(y)];
+        return ra && rb ? [ra, rb] : null;
+      },
+      [a, b],
+    );
+  const both = async (a, b) => {
+    for (const deadline = Date.now() + 10000; Date.now() < deadline; await page.waitForTimeout(50)) {
+      const pair = await rects(a, b);
+      if (pair) return pair;
+    }
+    throw new Error(`${a} and ${b} were never on screen together`);
+  };
+  const [toastBox, shelfBox] = await both(".toast", ".decision-shelf");
   assert.ok(toastBox.y + toastBox.height <= shelfBox.y + 1, "the toast ends above the shelf");
   // The next proposal's row is the highlighted one and is inside the queue list's view.
-  const row = page.locator(".review-row.active");
-  await expect(row).toBeVisible();
-  const [rowBox, listBox] = await Promise.all([row.boundingBox(), page.locator(".review-list").boundingBox()]);
+  const [rowBox, listBox] = await both(".review-row.active", ".review-list");
   assert.ok(rowBox.y >= listBox.y - 1 && rowBox.y + rowBox.height <= listBox.y + listBox.height + 1);
 });
