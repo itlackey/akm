@@ -10,6 +10,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
+import { stashDirNames } from "../../core/asset/asset-placement";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
@@ -45,6 +47,7 @@ import {
   GitStashPushError,
   isGitBackedStash,
   listGitChangedPaths,
+  listIgnoredExactPaths,
   resolveWritableOverride,
   saveGitStash,
 } from "../../sources/providers/git";
@@ -1014,10 +1017,11 @@ function syncBeforeRun(run: ImproveRunSetup, eventsCtx: EventsContext): ImproveS
     message: "akm improve pre-run sync",
     scopePaths: ({ repoDir, assetRoot }) => {
       // A bundle whose content sits in a subdirectory of the repo stages only that subdirectory, as
-      // `akm sync` does for a content root; a root-level bundle leaves `paths` to the managed-path default.
+      // `akm sync` does for a content root; a root-level bundle stages only the asset directories and
+      // `.akm`, never the rest of the repo (an automatic run must not sweep unrelated work).
       const assetPrefix = path.relative(repoDir, assetRoot).replaceAll(path.sep, "/");
-      if (!assetPrefix) return {};
-      return resolveSyncPathSet({
+      if (!assetPrefix) return { paths: managedFallbackPaths(repoDir, listGitChangedPaths(repoDir)) };
+      const { paths, unattributed } = resolveSyncPathSet({
         repoDir,
         assetPrefix,
         changedPaths: listGitChangedPaths(repoDir),
@@ -1025,10 +1029,23 @@ function syncBeforeRun(run: ImproveRunSetup, eventsCtx: EventsContext): ImproveS
         writtenPaths: [],
         provenance: false,
       });
+      return { paths, unattributed: unattributed.length };
     },
   });
   if (outcome?.reason) warn(`[improve] pre-run sync: ${outcome.reason}; continuing on the local state`);
   return outcome;
+}
+
+/** Changed paths under the asset directories and `.akm`, minus ignored ones (git refuses to stage those). */
+function managedFallbackPaths(repoDir: string, changedPaths: string[]): string[] {
+  const ownedDirs =
+    akmAdapter.directoryList?.({ id: "akm", adapter: "akm", root: repoDir, writable: false }) ?? stashDirNames();
+  const prefixes = [...ownedDirs, ".akm"];
+  const managed = changedPaths.filter((changedPath) =>
+    prefixes.some((prefix) => changedPath === prefix || changedPath.startsWith(`${prefix}/`)),
+  );
+  const ignored = new Set(listIgnoredExactPaths(repoDir, managed, { includeTracked: true }));
+  return managed.filter((candidate) => !ignored.has(candidate));
 }
 
 /**

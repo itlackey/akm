@@ -4,11 +4,10 @@
 
 // Git write safety at the source boundary (real repositories, spawnSync git):
 //
-//   - `saveGitStash` SCOPES what it stages instead of refusing (#476 + the
-//     auto-sync incident where stray non-akm files in the stash root refused
-//     EVERY commit for ~1.5 days): explicit `options.paths` → exactly those;
-//     otherwise akm-managed pathspecs that exist; nothing managed → no commit.
-//     Unrelated non-akm files are left untouched/uncommitted.
+//   - `saveGitStash` SCOPES what it stages instead of refusing (#476, #1502):
+//     explicit `options.paths` → exactly those; otherwise every unignored change
+//     inside the bundle (a nested content root stays contained). Ignored paths
+//     are left untouched/uncommitted.
 //   - `commitWriteTargetBoundary` commits exactly the operation's paths (also
 //     under a content/ layout, also next to pre-staged user WIP), keeps
 //     ignored paths local with a warning, and when the lease-guarded push is
@@ -297,7 +296,7 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
   });
 });
 
-describe("saveGitStash — scoped staging (auto-sync incident regression)", () => {
+describe("saveGitStash — scoped staging (exact paths, bundle-wide default)", () => {
   test("an ignored path aborts a mixed exact-path commit without staging its siblings", () => {
     const repoDir = process.env.AKM_BUNDLE_DIR as string;
     initRepo(repoDir);
@@ -318,39 +317,30 @@ describe("saveGitStash — scoped staging (auto-sync incident regression)", () =
     expect(git(repoDir, ["rev-list", "--count", "HEAD"])).toBe("1");
   });
 
-  test("commits akm-managed files and leaves unrelated non-akm files dirty/untouched", () => {
+  test("commits every unignored change in the bundle, files outside asset directories included (#1502)", () => {
     const stashDir = process.env.AKM_BUNDLE_DIR as string;
     initRepo(stashDir);
+    writeFile(path.join(stashDir, ".gitignore"), "tasks.bak-*/\n");
 
-    // akm-managed dirty files.
     writeFile(path.join(stashDir, "memories", "x.md"), "memory x\n");
     writeFile(path.join(stashDir, "knowledge", "y.md"), "knowledge y\n");
-    // Unrelated non-akm files (the exact shapes that caused the incident).
     writeFile(path.join(stashDir, "data.js"), "window.data = {};\n");
-    writeFile(path.join(stashDir, "akm-health-report.html"), "<html></html>\n");
     writeFile(path.join(stashDir, "reports", "summary.txt"), "report\n");
     writeFile(path.join(stashDir, "tasks.bak-123", "z"), "backup\n");
 
-    const result = saveGitStash(undefined, "scoped commit");
+    const result = saveGitStash(undefined, "bundle commit");
     expect(result.committed).toBe(true);
     expect(result.skipped).toBe(false);
 
-    // The commit contains ONLY managed paths.
-    const files = committedFiles(stashDir);
-    expect(files).toContain("memories/x.md");
-    expect(files).toContain("knowledge/y.md");
-    expect(files.some((f) => f.startsWith("data.js"))).toBe(false);
-    expect(files.some((f) => f.startsWith("akm-health-report.html"))).toBe(false);
-    expect(files.some((f) => f.startsWith("reports/"))).toBe(false);
-    expect(files.some((f) => f.startsWith("tasks.bak-123/"))).toBe(false);
-
-    // The non-akm files are STILL dirty afterward (untouched). Untracked
-    // directories are collapsed to "<dir>/" by git porcelain.
-    const after = status(stashDir);
-    expect(after).toContain("data.js");
-    expect(after).toContain("akm-health-report.html");
-    expect(after).toContain("reports/");
-    expect(after).toContain("tasks.bak-123/");
+    expect(committedFiles(stashDir).sort()).toEqual([
+      ".gitignore",
+      "data.js",
+      "knowledge/y.md",
+      "memories/x.md",
+      "reports/summary.txt",
+    ]);
+    // An ignored path stays out and stays local.
+    expect(status(stashDir)).toBe("");
   });
 
   test("does NOT throw the old 'refusing to push' error when non-akm files are present", () => {
@@ -407,31 +397,19 @@ describe("saveGitStash — scoped staging (auto-sync incident regression)", () =
     expect(committedFiles(stashDir)).toEqual(["memories/hook-safe.md"]);
   });
 
-  test("only non-akm files dirty → nothing committed, no commit created, no throw", () => {
+  test("a change outside the asset directories is committed, not reported as nothing to commit (#1502)", () => {
     const stashDir = process.env.AKM_BUNDLE_DIR as string;
     initRepo(stashDir);
-    // Seed an initial commit so HEAD exists, then add only non-akm dirt.
     writeFile(path.join(stashDir, "knowledge", "seed.md"), "seed\n");
+    writeFile(path.join(stashDir, "README.md"), "v1\n");
     saveGitStash(undefined, "seed");
-    const headBefore = spawnSync("git", ["-C", stashDir, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
 
-    writeFile(path.join(stashDir, "data.js"), "only non-akm\n");
-    writeFile(path.join(stashDir, "tasks.bak-9", "z"), "backup\n");
+    writeFile(path.join(stashDir, "README.md"), "v2\n");
 
-    const result = saveGitStash(undefined, "should not commit");
-    expect(result.committed).toBe(false);
-    expect(result.skipped).toBe(false);
-    expect(result.output).toBe("nothing to commit");
-
-    // No new commit was created.
-    const headAfter = spawnSync("git", ["-C", stashDir, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
-    expect(headAfter).toBe(headBefore);
-
-    // Non-akm files still dirty.
-    const after = status(stashDir);
-    expect(after).toContain("data.js");
-    // tasks.bak-9/ is entirely untracked → porcelain collapses it.
-    expect(after).toContain("tasks.bak-9/");
+    const result = saveGitStash(undefined, "readme edit");
+    expect(result.committed).toBe(true);
+    expect(committedFiles(stashDir)).toEqual(["README.md"]);
+    expect(status(stashDir)).toBe("");
   });
 
   test("clean tree → nothing to commit, working tree clean", () => {
@@ -463,19 +441,18 @@ describe("saveGitStash — scoped staging (auto-sync incident regression)", () =
     spawnSync("git", ["-C", stashDir, "push", "-u", "origin", "main"], { encoding: "utf8" });
 
     writeFile(path.join(stashDir, "memories", "pushed.md"), "pushed\n");
-    // Stray non-akm file must NOT block the push.
-    writeFile(path.join(stashDir, "data.js"), "stray\n");
+    writeFile(path.join(stashDir, "data.js"), "also bundle content\n");
 
     const result = saveGitStash(undefined, "push it", /* writableOverride */ true);
     expect(result.committed).toBe(true);
     expect(result.pushed).toBe(true);
 
-    // The remote received exactly the managed file.
+    // The remote received both unignored files.
     const remoteFiles = spawnSync("git", ["-C", remoteDir, "show", "--name-only", "--format=", "HEAD"], {
       encoding: "utf8",
     }).stdout;
     expect(remoteFiles).toContain("memories/pushed.md");
-    expect(remoteFiles).not.toContain("data.js");
+    expect(remoteFiles).toContain("data.js");
 
     fs.rmSync(remoteDir, { recursive: true, force: true });
   });

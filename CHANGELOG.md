@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The curate reranker is gone (#1468): `search.curateRerank` (`enabled`, `endpoint`, `model`, `apiKey`, `timeoutMs`, `topN`), the rerank client, curate's rerank pass and its candidate expansion, the `curate-rerank` row in `akm config targets` and `akm health`, the Desktop setting, and the schema and docs entries. `akm curate` takes the top `--limit` hits of one search. A config that still has `search.curateRerank` loads, warns once that the key is ignored, enables nothing, and `akm migrate apply` drops it; a `curateRerank` key in `credentials.json` is left alone.
 - `ensureIndex` and search drop three things (#1469): the rebuild of an indexed empty stash on every read (`builtAt`, written after a complete scan, now means "built"), the separate freshness walker and the uncalled `isIndexStale`, and the reverse path-to-id-to-ref lookups in search and curate telemetry and in nested command/persona read telemetry, which use the ref they already hold and open no index connection of their own.
 
+### Fixed
+
+- `akm sync` no longer rejects unchanged files on a mount where Git runs with `core.filemode=false` (SMB/CIFS) with "Exact Git publication path changed". The exact-path snapshot and its validation honour the effective `core.filemode`: a tracked file keeps its Git mode, a new file is `100644`; with `core.filemode=true` executable-bit changes are still tracked (#1500).
+- `akm sync` passes the bundle's configured Git `credential` to both the fetch and the push, including a push of earlier unpushed commits, through the child environment only (never the URL, Git config or arguments). Without a credential, Git helpers and SSH are unchanged (#1501).
+- An explicit `akm sync` commits every unignored change inside the bundle instead of only the asset directories and `.akm`, so root files, custom directories, attachments and edits to already tracked files are no longer left out, and a lone edit to a root file no longer reports "nothing to commit". Nested bundles stay inside their content root, ignored files and nested repositories are left out, staged work is never swept in, and writes with an explicit path list keep their narrow scope. (#1502).
+
 ### Changed
 
 - `ensureIndex` in blocking mode (improve) runs an incremental index and lets its per-file fingerprints decide, so an edit in any bundle, not only the primary stash, is picked up.

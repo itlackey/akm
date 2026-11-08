@@ -444,7 +444,7 @@ then rewritten by the run IS committed. Deletions are journaled like writes, so
 the final on-disk state is what lands — a path written and then reverted or
 purged produces no commit at all. The run reports its journal as
 `writtenPaths` on the improve result. Callers that supply no explicit path list
-(`akm sync`) keep the managed-pathspec fallback in `saveGitStash`.
+(`akm sync`) select every unignored change inside the resolved bundle content boundary in `saveGitStash`; the pre-run sync of a repo-root bundle passes the managed paths itself.
 
 ### Archive purge
 

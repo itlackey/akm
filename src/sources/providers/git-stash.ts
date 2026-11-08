@@ -5,14 +5,14 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { akmAdapter } from "../../core/adapter/adapters/akm-adapter";
-import { stashDirNames } from "../../core/asset/asset-placement";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
-import { getSources, loadConfig, resolveConfiguredSources } from "../../core/config/config";
+import { getSources, loadConfig, resolveConfiguredSources, resolveSecret } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { sanitizeCommitMessage } from "../../core/git-message";
 import { lockContentRootFor } from "../../integrations/lockfile";
+import { gitCredentialEnvironment } from "../../registry/resolve";
+import { storeSecretResolver } from "../snapshot-fetchers/secret-seam";
 import { runGit } from "./git-install";
 import { getCachePaths, parseGitRepoUrl } from "./git-provider";
 
@@ -276,6 +276,7 @@ export function saveGitStash(
   let repoDir: string;
   let writable = false;
   let managedContentRoot: string | undefined;
+  let namedCredential: string | undefined;
 
   if (name) {
     const config = loadConfig();
@@ -283,6 +284,7 @@ export function saveGitStash(
     // NotFoundError (exit 1), not UsageError (exit 2): the argument is
     // well-formed, the bundle just isn't configured.
     if (!stash) throw new NotFoundError(`No git-backed bundle found with name "${name}"`, "SOURCE_NOT_FOUND");
+    namedCredential = stash.credential;
     if (stash.enabled === false) {
       throw new UsageError(`Bundle "${name}" is disabled and cannot be synced.`, "INVALID_FLAG_VALUE");
     }
@@ -335,23 +337,37 @@ export function saveGitStash(
   }
   const hasRemote = readHasRemote(repoDir);
   // `--no-push`, a read-only bundle and a bundle without a remote never touch the network.
-  const syncWithRemote = hasRemote && writable && allowPush;
+  let syncWithRemote = hasRemote && writable && allowPush;
+  // The bundle's configured credential reaches fetch and push through the child environment only. One
+  // that cannot be resolved only skips the network step: the local commit still happens.
+  let remoteEnv: NodeJS.ProcessEnv | undefined;
+  let credentialFailure: string | undefined;
+  if (syncWithRemote) {
+    const credentialRef = name ? namedCredential : credentialForRepo(repoDir);
+    if (credentialRef) {
+      try {
+        remoteEnv = gitCredentialEnvironment(resolveSecret(credentialRef, storeSecretResolver.resolveSecret));
+      } catch (error) {
+        credentialFailure = `not pushed: ${error instanceof Error ? error.message : "credential could not be resolved"}`;
+        syncWithRemote = false;
+      }
+    }
+  }
+  const report = (result: SaveGitStashResult): SaveGitStashResult =>
+    credentialFailure && !result.reason ? { ...result, reason: credentialFailure } : result;
   if (!statusResult.stdout.trim() && options?.paths === undefined) {
-    return nothingToCommit(repoDir, "nothing to commit, working tree clean", syncWithRemote);
+    return report(nothingToCommit(repoDir, "nothing to commit, working tree clean", syncWithRemote, remoteEnv));
   }
 
-  // Scoped staging (#476 + the auto-sync incident): NEVER refuse akm's commit
-  // because unrelated non-akm files exist in the working tree. When the stash
-  // dir is shared with a non-akm project (stash root == project repo root), a
-  // blunt `git add -A` would sweep the user's unrelated WIP into the stash's
-  // remote. We avoid that by SCOPING what we stage, not by refusing the commit.
+  // Selection (#476, #1502): an explicit sync commits every unignored change inside the bundle, so a
+  // file outside the asset directories is never left behind. What it never does is reach beyond the
+  // bundle or sweep in work staged elsewhere: the commit is built from exact paths only.
   //
   // Precedence:
   //   1. Explicit modified-file list (`options.paths`) — stage exactly those.
-  //   2. A lock-backed content root, or managed adapter pathspecs for an
-  //      ordinary stash. Both stay below AKM's resolved content boundary.
-  //   3. No resolvable managed path — no commit. Broad staging is never safe
-  //      because it can absorb unrelated work already present in the index.
+  //   2. A lock-backed or filesystem content root below the repo — its changed paths only.
+  //   3. Otherwise (the bundle is the repo root) — every changed path.
+  //   Ignored paths and nested repositories are dropped from 2 and 3.
   const managedRelativeRoot = managedContentRoot
     ? path.relative(repoDir, managedContentRoot).replaceAll(path.sep, "/")
     : "";
@@ -361,15 +377,19 @@ export function saveGitStash(
     options?.paths ??
       withoutIgnoredPaths(
         repoDir,
-        managedRelativeRoot && managedRelativeRoot !== ".." && !managedRelativeRoot.startsWith("../")
-          ? changedPaths.filter(
-              (changedPath) => changedPath === managedRelativeRoot || changedPath.startsWith(`${managedRelativeRoot}/`),
-            )
-          : managedFallbackPaths(repoDir, changedPaths),
+        withoutDirectories(
+          repoDir,
+          managedRelativeRoot && managedRelativeRoot !== ".." && !managedRelativeRoot.startsWith("../")
+            ? changedPaths.filter(
+                (changedPath) =>
+                  changedPath === managedRelativeRoot || changedPath.startsWith(`${managedRelativeRoot}/`),
+              )
+            : changedPaths,
+        ),
       ),
   );
   if (requestedPaths.length === 0) {
-    return nothingToCommit(repoDir, "nothing to commit", syncWithRemote);
+    return report(nothingToCommit(repoDir, "nothing to commit", syncWithRemote, remoteEnv));
   }
   assertNoIgnoredExactPaths(repoDir, requestedPaths);
 
@@ -383,12 +403,12 @@ export function saveGitStash(
     expectedSnapshots: options?.expectedSnapshots,
   });
   if (!exactCommit) {
-    return nothingToCommit(repoDir, "nothing to commit", syncWithRemote);
+    return report(nothingToCommit(repoDir, "nothing to commit", syncWithRemote, remoteEnv));
   }
 
   // Bring in whatever another host pushed, then push. A branch that cannot be pushed still keeps its
   // commit: only the push is skipped, and the result says why.
-  const integration = syncWithRemote ? integrateUpstream(repoDir) : undefined;
+  const integration = syncWithRemote ? integrateUpstream(repoDir, remoteEnv) : undefined;
   const upstream =
     integration && "blocked" in integration
       ? integration.blocked
@@ -397,17 +417,24 @@ export function saveGitStash(
         : undefined;
   const pushTarget = typeof upstream === "object" ? upstream : undefined;
   if (!pushTarget) {
-    return {
+    return report({
       committed: true,
       pushed: false,
       skipped: false,
       ...(typeof upstream === "string" ? { reason: `not pushed: ${upstream}` } : {}),
       output: `commit ${exactCommit}`,
       commit: exactCommit,
-    };
+    });
   }
 
-  const pushOutput = pushToUpstream(repoDir, pushTarget, readOptionalHead(repoDir) ?? exactCommit, exactCommit);
+  const pushOutput = pushToUpstream(
+    repoDir,
+    pushTarget,
+    readOptionalHead(repoDir) ?? exactCommit,
+    exactCommit,
+    true,
+    remoteEnv,
+  );
 
   return {
     committed: true,
@@ -436,6 +463,7 @@ function pushToUpstream(
   head: string,
   commit: string,
   committedNow = true,
+  env?: NodeJS.ProcessEnv,
 ): string {
   const pushResult = runGit(
     [
@@ -446,7 +474,7 @@ function pushToUpstream(
       target.remote,
       `${head}:${target.mergeRef}`,
     ],
-    { timeout: GIT_PUSH_TIMEOUT_MS },
+    { timeout: GIT_PUSH_TIMEOUT_MS, ...(env ? { env } : {}) },
   );
   if (pushResult.status !== 0) {
     throw new GitStashPushError(
@@ -463,8 +491,13 @@ function pushToUpstream(
  * made earlier and never pushed (a proposal accept, a killed improve run) are pushed here, once the
  * branch is up to date with its upstream and ahead of it.
  */
-function nothingToCommit(repoDir: string, output: string, syncWithRemote: boolean): SaveGitStashResult {
-  const integration = syncWithRemote ? integrateUpstream(repoDir) : undefined;
+function nothingToCommit(
+  repoDir: string,
+  output: string,
+  syncWithRemote: boolean,
+  env?: NodeJS.ProcessEnv,
+): SaveGitStashResult {
+  const integration = syncWithRemote ? integrateUpstream(repoDir, env) : undefined;
   if (integration && "blocked" in integration) {
     return { committed: false, pushed: false, skipped: false, reason: `not pushed: ${integration.blocked}`, output };
   }
@@ -472,7 +505,7 @@ function nothingToCommit(repoDir: string, output: string, syncWithRemote: boolea
   const head = syncWithRemote && readUpstreamConfig(repoDir) ? readOptionalHead(repoDir) : undefined;
   const upstream = head ? readActualUpstream(repoDir, head) : undefined;
   if (head && typeof upstream === "object" && upstream.upstreamHead !== head) {
-    const pushOutput = pushToUpstream(repoDir, upstream, head, head, false);
+    const pushOutput = pushToUpstream(repoDir, upstream, head, head, false, env);
     return {
       committed: false,
       pushed: true,
@@ -508,10 +541,13 @@ function isAncestor(repoDir: string, ancestor: string, descendant: string): bool
  * so the working tree and the local commits stay exactly as they were. `blocked` says why the branch
  * could not be brought up to date (and therefore must not be pushed); `integrated` describes what moved.
  */
-function integrateUpstream(repoDir: string): { integrated?: string } | { blocked: string } {
+function integrateUpstream(repoDir: string, env?: NodeJS.ProcessEnv): { integrated?: string } | { blocked: string } {
   const config = readUpstreamConfig(repoDir);
   if (!config) return {};
-  const fetch = runGit(["-C", repoDir, "fetch", config.remote], { timeout: GIT_PUSH_TIMEOUT_MS });
+  const fetch = runGit(["-C", repoDir, "fetch", config.remote], {
+    timeout: GIT_PUSH_TIMEOUT_MS,
+    ...(env ? { env } : {}),
+  });
   if (fetch.status !== 0) {
     return { blocked: `could not fetch ${config.remote}: ${fetch.stderr?.trim() || "unknown error"}` };
   }
@@ -550,13 +586,30 @@ function integrateUpstream(repoDir: string): { integrated?: string } | { blocked
   };
 }
 
-function managedFallbackPaths(repoDir: string, changedPaths: string[]): string[] {
-  const ownedDirs =
-    akmAdapter.directoryList?.({ id: "akm", adapter: "akm", root: repoDir, writable: false }) ?? stashDirNames();
-  const prefixes = [...ownedDirs, ".akm"];
-  return changedPaths.filter((changedPath) =>
-    prefixes.some((prefix) => changedPath === prefix || changedPath.startsWith(`${prefix}/`)),
-  );
+/** Git lists a nested repository as a bare directory; it is not a file sync can publish, so it is left out. */
+function withoutDirectories(repoDir: string, paths: string[]): string[] {
+  return paths.filter((candidate) => {
+    try {
+      return !fs.lstatSync(path.join(repoDir, candidate)).isDirectory();
+    } catch {
+      return true; // deleted
+    }
+  });
+}
+
+/** The credential reference of the configured Git bundle whose working tree is `repoDir`. */
+function credentialForRepo(repoDir: string): string | undefined {
+  for (const stash of getSources(loadConfig())) {
+    if (!stash.credential || stash.enabled === false || stash.type === "filesystem") continue;
+    const root =
+      lockContentRootFor(stash.name, stash.type) ??
+      (stash.url ? getCachePaths(parseGitRepoUrl(stash.url).canonicalUrl).repoDir : undefined);
+    if (!root) continue;
+    const topLevel = runGit(["-C", path.resolve(root), "rev-parse", "--show-toplevel"]);
+    if (topLevel.status === 0 && path.resolve(topLevel.stdout.trim()) === path.resolve(repoDir))
+      return stash.credential;
+  }
+  return undefined;
 }
 
 /**
@@ -781,7 +834,22 @@ export function reconcileGitExactPathIndex(repoDir: string, baseCommit: string, 
   }
 }
 
-function captureWorktreeState(repoDir: string, filePath: string): GitExactPathState | null {
+/** Git's effective `core.filemode`: on unless the repository (or Git's probe at init) turned it off. */
+function fileModeTracked(repoDir: string): boolean {
+  const result = runGit(["-C", repoDir, "config", "--type=bool", "--get", "core.filemode"]);
+  return result.status !== 0 || result.stdout.trim() !== "false";
+}
+
+/**
+ * With `core.filemode` off the filesystem's executable bit means nothing to Git, so a regular file keeps
+ * the mode its baseline entry already has and a new one gets Git's `100644`. `modeBaseline` is that
+ * baseline (null: no entry); leaving it undefined means the bit is read from the filesystem.
+ */
+function captureWorktreeState(
+  repoDir: string,
+  filePath: string,
+  modeBaseline?: { base: GitExactPathState | null },
+): GitExactPathState | null {
   const absolutePath = path.join(repoDir, filePath);
   let stat: fs.Stats;
   try {
@@ -796,7 +864,8 @@ function captureWorktreeState(repoDir: string, filePath: string): GitExactPathSt
     mode = "120000";
     result = runGit(["-C", repoDir, "hash-object", "--stdin"], { input: fs.readlinkSync(absolutePath) });
   } else if (stat.isFile()) {
-    mode = stat.mode & 0o111 ? "100755" : "100644";
+    const baseMode = modeBaseline?.base?.mode;
+    mode = modeBaseline ? (baseMode === "100755" ? "100755" : "100644") : stat.mode & 0o111 ? "100755" : "100644";
     result = runGit(["-C", repoDir, "hash-object", `--path=${filePath}`, "--", absolutePath]);
   } else {
     throw new Error(`Exact Git publication path is not a file: ${filePath}`);
@@ -812,12 +881,12 @@ function samePathState(left: GitExactPathState | null, right: GitExactPathState 
 }
 
 function assertWorktreeMatchesExpected(
-  repoDir: string,
   paths: string[],
   expected: Map<string, GitExactPathState | null>,
+  captureState: (filePath: string) => GitExactPathState | null,
 ): void {
   for (const filePath of paths) {
-    if (!samePathState(captureWorktreeState(repoDir, filePath), expected.get(filePath) ?? null)) {
+    if (!samePathState(captureState(filePath), expected.get(filePath) ?? null)) {
       throw new Error(`Exact Git publication path changed while committing: ${filePath}`);
     }
   }
@@ -855,13 +924,16 @@ function createExactPathCommit(
   const initialIndex = readIndexEntries(repoDir, options.paths);
   assertIndexMatchesBase(options.paths, initialIndex, baseStates);
 
+  const ignoreFileMode = !fileModeTracked(repoDir);
+  const captureState = (filePath: string) =>
+    captureWorktreeState(repoDir, filePath, ignoreFileMode ? { base: baseStates.get(filePath) ?? null } : undefined);
   const expected = new Map<string, GitExactPathState | null>();
   for (const filePath of options.paths) {
     expected.set(
       filePath,
       options.expectedSnapshots && Object.hasOwn(options.expectedSnapshots, filePath)
         ? (options.expectedSnapshots[filePath] ?? null)
-        : captureWorktreeState(repoDir, filePath),
+        : captureState(filePath),
     );
   }
 
@@ -890,7 +962,7 @@ function createExactPathCommit(
         throw new Error(`Exact Git publication path changed while committing: ${filePath}`);
       }
     }
-    assertWorktreeMatchesExpected(repoDir, options.paths, expected);
+    assertWorktreeMatchesExpected(options.paths, expected, captureState);
     const baseTreeResult = options.baseHead
       ? runGit(["-C", repoDir, "rev-parse", `${options.baseHead}^{tree}`])
       : undefined;
@@ -926,7 +998,7 @@ function createExactPathCommit(
     if (currentBranch !== branchRef || currentHead !== options.baseHead) {
       throw new Error(`Git target changed before its exact commit could be attached.`);
     }
-    assertWorktreeMatchesExpected(repoDir, options.paths, expected);
+    assertWorktreeMatchesExpected(options.paths, expected, captureState);
     // Race window: everything below this line is defended only by the
     // update-ref compare-and-swap. See
     // tests/integration/sync-exact-commit-cas.test.ts.

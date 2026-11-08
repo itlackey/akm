@@ -32,6 +32,7 @@ export {
   GitStashPushError,
   isGitBackedStash,
   listGitChangedPaths,
+  listIgnoredExactPaths,
   resolveWritableOverride,
   type SaveGitStashResult,
   saveGitStash,

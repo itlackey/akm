@@ -1739,6 +1739,22 @@ remote, brings in what another host pushed (a fast-forward when it can, otherwis
 git's default merge), and then pushes. A merge that conflicts is aborted: your
 commit stays, the push is skipped, and `reason` names the conflicting files.
 
+An explicit `akm sync` commits every unignored change inside the bundle: additions,
+edits and deletions, in any directory (root `README.md`, `notes/`, attachments), not
+only the asset directories. A bundle whose content sits in a subdirectory of the
+repository stays inside that subdirectory. Files a `.gitignore` rule matches are left
+out, and so is a nested Git repository. Work already staged in the index is never
+swept into the commit; a path of the bundle with staged changes is refused until it
+is committed, stashed or discarded. Git's `core.filemode` is honoured: when it is
+off (an SMB/CIFS mount), a tracked file keeps its Git mode and a new file is `100644`,
+whatever the filesystem presents.
+
+When the bundle has a configured `credential` (a git bundle added with
+`--credential`), `akm sync` passes it to both the fetch and the push, including a
+push of earlier unpushed commits. It goes to Git through the child process
+environment only, never in the remote URL, Git config or arguments. Without one,
+Git's own helpers and SSH setup apply as before.
+
 > **Note:** there is no `akm save` command — use `akm sync`.
 
 ```sh
