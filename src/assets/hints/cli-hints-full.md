@@ -21,7 +21,7 @@ akm search "team-catalog//"                   # List every item in one bundle
 | Flag | Values | Default |
 | --- | --- | --- |
 | `--type` | free-form. Built-ins: `skill`, `command`, `agent`, `knowledge`, `workflow`, `script`, `memory`, `lesson`, `task`, `session`, `fact`, `env`, `secret`, `instruction` — plus any adapter-defined type (`website`, `wiki-source`, a wiki `pageKind`). Exact match; an unknown type returns no hits. | `any` |
-| `--from` | `local`, `registry`, `all`, or a configured bundle name | `local` |
+| `--from` | `local`, `registry`, `all`, or a configured bundle name | `local` (or the project's `from`) |
 | `--limit` | number | `20` |
 | `--format` | `json`, `jsonl`, `text`, `yaml`, `md` | `json` |
 | `--detail` | `brief`, `normal`, `full`, `agent` (`agent`: search, curate and show only) | `brief` |
@@ -333,7 +333,7 @@ akm upgrade --check                           # Report pending CLI and plugin up
 akm upgrade --next                            # Follow prereleases (@next); OpenCode needs "akm-opencode@next" (or "akm-opencode-v2@next" on OpenCode 2) in its plugin list
 akm help migrate 0.6.0                        # Print migration notes for a release (or: latest)
 akm help bundle                               # Print options and subcommands for one command
-akm hints                                     # Print this complete agent guide (--detail brief for the short one)
+akm hints --detail full                       # Print this complete agent guide (plain akm hints prints the short one)
 akm completions                               # Print bash completion script
 akm completions --install                     # Install completions
 ```

@@ -2,8 +2,8 @@
 
 Documentation for wiring AI agents into akm.
 
-Run `akm hints` for the complete CLI reference agents should load into a
-system prompt, or `akm hints --detail brief` for the compact guide. Both print
+Run `akm hints` for the compact CLI guide agents should load into a
+system prompt, or `akm hints --detail full` for the complete reference. Both print
 the guide embedded in the CLI (`src/assets/hints/cli-hints-full.md` and
 `cli-hints-short.md`), so you can also read those files directly.
 

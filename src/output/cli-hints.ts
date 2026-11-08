@@ -7,7 +7,7 @@
  *
  * Extracted from `src/cli.ts` so it does not bloat the CLI module and so
  * docs/CI tooling can re-use the same constants. Two flavors:
- * `EMBEDDED_HINTS` (`--detail brief`, short reference, ~3,000 characters) and
+ * `EMBEDDED_HINTS` (the default, `--detail brief`, short reference, ~3,000 characters) and
  * `EMBEDDED_HINTS_FULL` (`--detail normal|full`, complete reference).
  */
 
