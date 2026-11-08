@@ -29,7 +29,7 @@ Desktop replaces `akm ui` and akm's HTML output, which are removed; the CLI keep
 
 `electron-updater` is imported only by `electron/main.mjs`, and the web process (`server/`, `src/`) never needs it.
 It stays in `dependencies` anyway: the packager stages a production-only install, so a devDependency would be missing
-from the packaged app. A distribution of the web process alone would leave it out of its own manifest.
+from the packaged app. `@itlackey/akm-ui` (`scripts/package-ui.mjs`) is that web-process-only distribution and leaves it out of its manifest.
 
 ## Editing files
 
@@ -40,7 +40,7 @@ read, and write atomically. Then ask AKM to refresh the index for that path (`in
 ## Rules
 
 - Use the existing public API semantics. New deletions, schema changes or proposal behavior require a separate scoped design.
-- Keep the renderer sandboxed and the server private to the app. Test authentication, source conflicts and credential
+- Keep the renderer sandboxed. The server listens on loopback unless `akm-ui` is given `--host`, and then its token, Host and Origin checks are compared with the configured `--origin`; none can be turned off. Test authentication, source conflicts and credential
   redaction after changes.
 - Test only against generated synthetic HOME/XDG/AKM paths. Do not run manual writes, provider requests or bundle
   operations against a developer's real data.

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { Handle } from "@sveltejs/kit/hooks";
-import { COOKIE, failure, sameSecret } from "./lib/server/security.js";
+import { cookieName, failure, sameSecret } from "./lib/server/security.js";
 
 // Read once and removed from the environment, so the CLI children AKM spawns do not inherit the session credential.
 // Kept on globalThis because a dev server re-evaluates this module and the variable is gone by then.
@@ -16,8 +16,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   const origin = process.env.AKM_DESKTOP_ORIGIN;
   if (!token || !origin)
     return failure(503, "SESSION_UNAVAILABLE", "Start AKM Desktop using its application launcher.");
+  const COOKIE = cookieName(origin);
   if (event.url.origin !== origin || event.request.headers.get("host") !== new URL(origin).host) {
-    return failure(403, "HOST_NOT_ALLOWED", "This application only accepts its own loopback address.");
+    return failure(403, "HOST_NOT_ALLOWED", "This application only accepts the address it was started with.");
   }
   const bootstrap = event.url.searchParams.get("desktop_session");
   if (event.request.method === "GET" && event.url.pathname === "/" && sameSecret(bootstrap, token)) {
@@ -25,7 +26,7 @@ export const handle: Handle = async ({ event, resolve }) => {
       status: 303,
       headers: {
         Location: "/",
-        "Set-Cookie": `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict`,
+        "Set-Cookie": `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict${origin.startsWith("https:") ? "; Secure" : ""}`,
         "Cache-Control": "no-store",
         "Referrer-Policy": "no-referrer",
       },

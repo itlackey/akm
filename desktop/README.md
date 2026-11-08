@@ -12,7 +12,7 @@ The Attention desk Home page provides a compact starting point for those workflo
 The compact top bar and established AKM palette remain. This does not claim
 that the larger asset-manager design is complete.
 Desktop's version is the version of the AKM it embeds (one version, one release); the commit ID is shown separately.
-No public release, background service, or remote-management endpoint is included.
+The same web process also runs on a server or in a container as `akm-ui` (see [Run it on a server](#run-it-on-a-server)).
 See [verification](docs/verification.md) for evidence and limits.
 
 ## Use it
@@ -154,7 +154,36 @@ CI packages and starts Desktop on Linux, macOS and Windows; the installers are u
 
 `npm run dev` starts a loopback-only Vite preview and prints a private launch
 URL. It uses your configured AKM data unless you supply isolated environment
-paths. Do not share that URL or expose the server through a proxy.
+paths. Do not share that URL.
+
+## Run it on a server
+
+`@itlackey/akm-ui` is the web process alone, with no Electron and no display, for a server or an Assistant container. It
+replaces `akm ui` for headless installs and manages the library of the user that runs it.
+
+```sh
+npm install -g @itlackey/akm-ui   # Node 22.18 or later
+akm-ui --host 0.0.0.0 --port 4444 --origin http://my-server:4444
+```
+
+- `--host <addr>` is the address to listen on (default `127.0.0.1`).
+- `--port <n>` is the port (default: a free one).
+- `--origin <url>` is the address your browser uses, which differs from the listen address behind a Docker port
+  mapping or a proxy (default `http://<host>:<port>`). It is required with a wildcard `--host` (`0.0.0.0`, `::`); without
+  it the command exits with an error. An `https` origin marks the session cookie `Secure`.
+
+It prints one JSON line, `{"type":"ready","url":"...","origin":"..."}`; open `url`. The URL carries the session token
+and the browser keeps it in a cookie. The token, Host and Origin checks are always on and are compared with `--origin`.
+
+In Docker, publish the port and pass the address the browser will use:
+
+```sh
+docker run -p 4444:4444 my-image akm-ui --host 0.0.0.0 --port 4444 --origin http://localhost:4444
+```
+
+Whoever holds the token has the owner's full authority over that library: they can edit bundle files, reveal
+secrets and install host tools. Over plain HTTP the token and any revealed secret cross the network unencrypted, so use a
+private network or a TLS proxy that keeps the `Host` header. Desktop does not add TLS or a login.
 
 ## AKM dependency
 
@@ -178,7 +207,7 @@ proposal amendment/rebase, or model-backed scheduling UI.
 Secret/environment files have explicit masked viewing, create, edit and delete
 actions; generated sessions remain read-only. Large result lists expose their limit and can be narrowed
 with filters. This v1 is a foundation for human curation, not a claim that the
-larger file-manager design is complete. Remote instances are not supported yet.
+larger file-manager design is complete.
 
 Files lists actual folders, including unindexed files, without rebuilding the
 index. Any text file in an enabled bundle, including a skill's supporting files,

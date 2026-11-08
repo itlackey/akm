@@ -3,10 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import assert from "node:assert/strict";
-import { fork } from "node:child_process";
+import { fork, spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
 import { createRequire } from "node:module";
+import net from "node:net";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -72,7 +73,7 @@ test("loopback session bootstrap, authentication and strict write origin", async
   assert.equal(denied.status, 401);
   assert.equal((await denied.json()).code, "UNAUTHORIZED");
   assert.equal(
-    (await fetch(`${app.origin}/api/meta`, { headers: { Cookie: "akm_desktop_session=invalid" } })).status,
+    (await fetch(`${app.origin}/api/meta`, { headers: { Cookie: "akm_desktop_session_80=invalid" } })).status,
     401,
   );
   assert.equal(
@@ -274,4 +275,101 @@ export const handler = (req, res) => res.end('loaded');
   child.send("load");
   await ready;
   assert.equal(await (await fetch(`${loading.origin}/`)).text(), "loaded");
+});
+
+async function freePort() {
+  const probe = net.createServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const { port } = probe.address();
+  await new Promise((resolve) => probe.close(resolve));
+  return port;
+}
+
+/** Starts the server with flags, then talks to its bind address while claiming the configured host name. */
+async function launchWith(t, args) {
+  const fixture = await createFixture({ packageRoot: appRoot });
+  t.after(() => fixture.cleanup());
+  const child = fork(path.join(appRoot, "server/server.mjs"), args, {
+    execArgv: [],
+    env: fixture.env,
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
+  });
+  t.after(() => child.kill());
+  const ready = await new Promise((resolve, reject) => {
+    child.once("exit", (code) => reject(new Error(`Server exit ${code}`)));
+    child.once("message", resolve);
+  });
+  const token = new URL(ready.url).searchParams.get("desktop_session");
+  const send = (route, { host = new URL(ready.origin).host, method = "GET", headers = {} } = {}) =>
+    new Promise((resolve, reject) => {
+      const req = http.request(
+        { host: "127.0.0.1", port: bindPort(args), path: route, method, headers: { Host: host, ...headers } },
+        (res) => {
+          res.resume();
+          res.once("end", () => resolve({ status: res.statusCode, headers: res.headers }));
+        },
+      );
+      req.once("error", reject);
+      req.end();
+    });
+  return { ready, token, send };
+}
+const bindPort = (args) => Number(args[args.indexOf("--port") + 1]);
+
+test("a configured --origin and --host serve under that address, with every check still on", async (t) => {
+  const port = await freePort();
+  const origin = `http://akm.test:${port}`;
+  const app = await launchWith(t, ["--host", "127.0.0.1", "--port", String(port), "--origin", origin]);
+  assert.equal(app.ready.origin, origin);
+  assert.equal(app.ready.url, `${origin}/?desktop_session=${app.token}`);
+  const bootstrap = await app.send(`/?desktop_session=${app.token}`);
+  assert.equal(bootstrap.status, 303);
+  const setCookie = bootstrap.headers["set-cookie"][0];
+  assert.match(setCookie, new RegExp(`^akm_desktop_session_${port}=`));
+  assert.doesNotMatch(setCookie, /Secure/);
+  const cookie = setCookie.split(";")[0];
+  assert.equal((await app.send("/api/desktop", { headers: { Cookie: cookie } })).status, 200);
+  assert.equal((await app.send("/api/desktop")).status, 401, "no token");
+  assert.equal(
+    (await app.send("/api/desktop", { host: `127.0.0.1:${port}`, headers: { Cookie: cookie } })).status,
+    403,
+    "a Host other than the configured origin",
+  );
+  const write = (originHeader) =>
+    app.send("/api/feedback", {
+      method: "POST",
+      headers: { Cookie: cookie, Origin: originHeader, "Content-Type": "application/json", "Content-Length": "2" },
+    });
+  assert.equal((await write("http://evil.example")).status, 403, "a write from another origin");
+});
+
+test("an https origin marks the session cookie Secure", async (t) => {
+  const port = await freePort();
+  const app = await launchWith(t, ["--port", String(port), "--origin", `https://akm.test:${port}`]);
+  const bootstrap = await app.send(`/?desktop_session=${app.token}`);
+  assert.equal(bootstrap.status, 303);
+  assert.match(bootstrap.headers["set-cookie"][0], /; Secure$/);
+});
+
+test("instances on different ports use different cookie names", async (t) => {
+  const [first, second] = [await freePort(), await freePort()];
+  const names = [];
+  for (const port of [first, second]) {
+    const app = await launchWith(t, ["--port", String(port)]);
+    names.push((await app.send(`/?desktop_session=${app.token}`)).headers["set-cookie"][0].split("=")[0]);
+  }
+  assert.notEqual(names[0], names[1]);
+});
+
+test("a wildcard --host without --origin exits non-zero and says why", async () => {
+  const child = spawn(process.execPath, [path.join(appRoot, "server/server.mjs"), "--host", "0.0.0.0"], {
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const [code] = await new Promise((resolve) => child.once("exit", (...exit) => resolve(exit)));
+  assert.notEqual(code, 0);
+  assert.match(stderr, /--origin/);
 });

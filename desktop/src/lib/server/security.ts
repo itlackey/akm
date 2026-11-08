@@ -4,7 +4,14 @@
 
 import { timingSafeEqual } from "node:crypto";
 
-export const COOKIE = "akm_desktop_session";
+/**
+ * Browsers share cookies across ports of one host, so several instances on a host each need their own name.
+ * The origin's port tells them apart.
+ */
+export function cookieName(origin: string): string {
+  const url = new URL(origin);
+  return `akm_desktop_session_${url.port || (url.protocol === "https:" ? "443" : "80")}`;
+}
 export function sameSecret(value: string | undefined | null, expected: string | undefined): boolean {
   if (!value || !expected || expected.length < 32) return false;
   const a = Buffer.from(value);
