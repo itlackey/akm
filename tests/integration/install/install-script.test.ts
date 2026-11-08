@@ -44,6 +44,11 @@ interface HarnessOptions {
   checksumTool?: "sha256sum" | "shasum" | "none";
   installDirName?: string;
   sudoSucceeds?: boolean;
+  /** Do not set AKM_INSTALL_DIR (exercise the default / flag paths). */
+  noInstallDirEnv?: boolean;
+  /** Extra directory placed on PATH after the fake bin (e.g. one holding another akm). */
+  extraPath?: string[];
+  shell?: string;
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -53,6 +58,8 @@ function createHarness(options: HarnessOptions = {}) {
   const fakeBin = path.join(root, "fakebin");
   const installDir = path.join(root, options.installDirName ?? "install-dir");
   const logFile = path.join(root, "requests.log");
+  const home = path.join(root, "home");
+  fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(installDir, { recursive: true });
 
@@ -61,6 +68,9 @@ function createHarness(options: HarnessOptions = {}) {
   addProxy(fakeBin, "chmod");
   addProxy(fakeBin, "mv");
   addProxy(fakeBin, "rm");
+  addProxy(fakeBin, "mkdir");
+  addProxy(fakeBin, "id");
+  addProxy(fakeBin, "basename");
 
   const checksumTool = options.checksumTool ?? "sha256sum";
   if (checksumTool === "sha256sum") {
@@ -167,6 +177,7 @@ exec "$@"
 
   return {
     root,
+    home,
     installDir,
     logFile,
     binaryName,
@@ -176,8 +187,13 @@ exec "$@"
         encoding: "utf8",
         env: {
           ...process.env,
-          PATH: downloader === "none" ? buildPathWithoutDownloaders(fakeBin) : fakeBin,
-          AKM_INSTALL_DIR: installDir,
+          HOME: home,
+          SHELL: options.shell ?? "/bin/bash",
+          PATH: [
+            downloader === "none" ? buildPathWithoutDownloaders(fakeBin) : fakeBin,
+            ...(options.extraPath ?? []),
+          ].join(":"),
+          ...(options.noInstallDirEnv ? { AKM_INSTALL_DIR: "" } : { AKM_INSTALL_DIR: installDir }),
         },
       }),
   };
@@ -259,9 +275,9 @@ describe("install.sh", () => {
     expect(result.stdout + result.stderr).toContain("curl or wget is required");
   });
 
-  test.skipIf(runningAsRoot)("uses sudo mv when install dir is not writable", () => {
+  test.skipIf(runningAsRoot)("uses sudo mv for --system when install dir is not writable", () => {
     const harness = createHarness({ installDirWritable: false, useSudo: true });
-    const result = harness.run();
+    const result = harness.run(["--system"]);
 
     expect(result.status).toBe(0);
     const log = fs.readFileSync(harness.logFile, "utf8");
@@ -307,13 +323,113 @@ describe("install.sh", () => {
 
   test.skipIf(runningAsRoot)("fails clearly when sudo is required but unavailable", () => {
     const harness = createHarness({ installDirWritable: false, useSudo: true, sudoSucceeds: false });
-    const result = harness.run();
+    const result = harness.run(["--system"]);
 
     // `set -euo pipefail` propagates the fake sudo's exit 127 (command not
     // found convention) straight through as install.sh's own exit status.
     // Ground-truthed by probing the actual harness exit status before pinning.
     expect(result.status).toBe(127);
     expect(fs.existsSync(path.join(harness.installDir, "akm"))).toBe(false);
+  });
+
+  test.skipIf(runningAsRoot)(
+    "uses sudo for a --system install into a non-writable dir and says upgrades need sudo",
+    () => {
+      const harness = createHarness({ installDirWritable: false, useSudo: true });
+      const result = harness.run(["--system"]);
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(path.join(harness.installDir, "akm"))).toBe(true);
+      expect(result.stdout).toContain("sudo akm upgrade");
+    },
+  );
+
+  test.skipIf(runningAsRoot)("does not use sudo without --system", () => {
+    const harness = createHarness({ installDirWritable: false, useSudo: true });
+    const result = harness.run();
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("cannot write to");
+    expect(result.stderr).toContain("bash -s -- --system");
+    expect(fs.existsSync(path.join(harness.installDir, "akm"))).toBe(false);
+    expect(fs.readFileSync(harness.logFile, "utf8")).not.toContain("sudo");
+  });
+
+  test.skipIf(runningAsRoot)("--system without sudo available fails with a clear error", () => {
+    const harness = createHarness({ installDirWritable: false });
+    const result = harness.run(["--system"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("sudo is not available");
+    expect(result.stderr).toContain("--dir");
+  });
+
+  test.skipIf(runningAsRoot)(
+    "defaults to a user install in ~/.local/bin, created if missing, when /usr/local/bin is not writable",
+    () => {
+      const harness = createHarness({ noInstallDirEnv: true, shell: "/bin/zsh" });
+      // Skip when the machine running the test can write to /usr/local/bin.
+      if (fs.existsSync("/usr/local/bin")) {
+        try {
+          fs.accessSync("/usr/local/bin", fs.constants.W_OK);
+          return;
+        } catch {}
+      }
+      const result = harness.run();
+      const target = path.join(harness.home, ".local", "bin", "akm");
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(target)).toBe(true);
+      expect(result.stdout).toContain("bash -s -- --system");
+      expect(result.stdout).toContain("not on your PATH");
+      expect(result.stdout).toContain("~/.zshrc");
+      expect(result.stdout).toContain(`export PATH="${path.join(harness.home, ".local", "bin")}:$PATH"`);
+    },
+  );
+
+  test("--dir creates a missing directory and installs there", () => {
+    const harness = createHarness();
+    const dir = path.join(harness.root, "made", "by", "dir-flag");
+    const result = harness.run(["--dir", dir]);
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(dir, "akm"))).toBe(true);
+  });
+
+  test("AKM_INSTALL_DIR still works and is created if missing", () => {
+    const harness = createHarness({ installDirName: "missing-parent/inner" });
+    fs.rmSync(path.join(harness.root, "missing-parent"), { recursive: true, force: true });
+    const result = harness.run();
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(harness.installDir, "akm"))).toBe(true);
+  });
+
+  test("no PATH warning when the install dir is on PATH", () => {
+    const dir = path.join(os.tmpdir(), "akm-path-test-dir");
+    const harness = createHarness({ extraPath: [dir] });
+    const result = harness.run(["--dir", dir]);
+    expect(result.status).toBe(0);
+    fs.rmSync(dir, { recursive: true, force: true });
+    expect(result.stdout).not.toContain("not on your PATH");
+  });
+
+  test("warns when another akm earlier on PATH shadows the new one", () => {
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), "akm-other-bin-"));
+    tempRoots.push(other);
+    writeExecutable(path.join(other, "akm"), "#!/bin/sh\n");
+    const result = createHarness({ extraPath: [other] }).run();
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("will shadow this install");
+    expect(result.stdout).toContain(path.join(other, "akm"));
+  });
+
+  test("rejects an unknown option", () => {
+    const harness = createHarness();
+    const result = harness.run(["--bogus"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("unknown option");
   });
 
   test("prints the Windows install.ps1 guidance on MINGW", () => {

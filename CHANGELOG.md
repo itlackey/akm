@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `install.sh` installs for the current user by default when `/usr/local/bin` is not writable (to `~/.local/bin`, created if missing) instead of silently using `sudo`, which left a root-owned folder that made every later `akm upgrade` fail. New flags work when piped (`curl … | bash -s -- --system` for `/usr/local/bin` with sudo, `--dir <dir>`); `AKM_INSTALL_DIR` still works. It prints the exact `export PATH=…` line when the folder is not on `PATH`, warns when another `akm` earlier on `PATH` shadows the new one, and says a `--system` install upgrades with `sudo akm upgrade`. The `UPGRADE_BLOCKED` message now suggests the user install (#1457).
 - Bare `akm config`, `bundle`, `env`, `secret`, `proposal`, `registry` and `workflow` now run their `list` and exit 0 instead of exiting 2; `task`, `migrate` and `command` have no listing and keep the usage error (#1485).
 - Breaking output change: list results are serialized once. The `results` alias that duplicated `hits`, `items`, `proposals`, `sources`, `envs`, `secrets`, `registries`, `runs`, `rows` and `events` is removed from every format and detail level (#1476). Migration: read the command's own key (`hits` for search, `items` for curate, and so on).
 - curate items no longer carry a `reason`/`why:` line except to mark historical context; it used to repeat the query (#1482).
