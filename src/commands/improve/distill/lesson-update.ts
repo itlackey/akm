@@ -31,7 +31,7 @@ export const DISTILL_LESSON_UPDATE_JSON_SCHEMA: Record<string, unknown> = {
       type: "array",
       items: { type: "string" },
       description:
-        "Written before the body: each cause, step, number, limit or consequence the memory states and the lesson lacks, one short phrase each. Empty when there is none.",
+        "Written before the body: each cause, step, number, name, limit or consequence the memory states and the lesson lacks, in the memory's own words with its figures and names. Empty when there is none.",
     },
     decision: {
       type: "string",
@@ -55,17 +55,22 @@ export const DISTILL_LESSON_UPDATE_JSON_SCHEMA: Record<string, unknown> = {
  */
 export function memoryFactCandidates(memory: string, lessonBody: string): string[] {
   const text = memory.slice(0, 3000);
-  const lesson = lessonBody.toLowerCase();
   const found = new Set<string>();
-  const add = (re: RegExp, keep: (m: RegExpMatchArray) => string | undefined = (m) => m[0]) => {
+  const add = (re: RegExp) => {
     for (const m of text.matchAll(re)) {
-      const hit = keep(m)?.replace(/[.,;:]+$/, "");
-      if (hit && !lesson.includes(hit.toLowerCase())) found.add(hit);
+      const hit = m[0];
+      const inLesson = new RegExp(
+        `(?<![\\p{L}\\p{N}])${hit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`,
+        "iu",
+      );
+      if (!inLesson.test(lessonBody)) found.add(hit);
     }
   };
-  add(/\b\d[\d,.:/-]*(?: ?(?:%|[A-Za-z]+))?/g, (m) => m[0].trim());
-  add(/[\w-]+(?:[./][\w-]+)+|\b[a-z]+[A-Z]\w*|\b\w+_\w+|\b[a-z]+(?:-\w+)*-\w*\d\w*/g);
-  add(/(?<=[a-z,;(] )[A-Z][\w-]+(?: [A-Z][\w-]+)*/g);
+  add(
+    /\b\d+(?:[.,:/-]\d+)*(?:%|\p{L}+| (?:[KMGT]i?B|ms|seconds?|minutes?|hours?|days?|weeks?|months?|years?|MB\/s|GB\/s|requests?|retries|times|files?|nodes?|workers?|connections?)\b)?/gu,
+  );
+  add(/[\p{L}\d_-]+(?:[./][\p{L}\d_-]+)+|\b\p{Ll}+\p{Lu}\p{L}*|\b\p{L}+_\p{L}+|\b\p{Ll}+(?:-\w+)*-\w*\d\w*/gu);
+  add(/(?<=\p{Ll}[,;(]? )\p{Lu}[\p{L}-]+(?: \p{Lu}[\p{L}-]+)*/gu);
   return [...found].slice(0, 20);
 }
 
@@ -83,19 +88,14 @@ export function buildLessonUpdatePrompt(memory: string, feedback: string[], cand
   lines.push("", "Existing lessons, nearest first (they may be on another subject):");
   for (const candidate of candidates) {
     lines.push(`\nExisting lesson ref: ${candidate.ref}`, "```", candidate.body.slice(0, 3000), "```");
+    const missing = memoryFactCandidates(memory, candidate.body);
+    if (missing.length > 0) lines.push(`Figures and names in the memory this lesson lacks: ${missing.join(" | ")}`);
   }
-  const named = candidates.flatMap((c) => memoryFactCandidates(memory, c.body));
-  if (named.length > 0)
-    lines.push(
-      "",
-      "Figures and names in the memory that the nearest lessons do not mention (place each one that belongs to the rule in new_facts and the body, written out as the memory gives it; skip any that does not):",
-      ...[...new Set(named)].slice(0, 20).map((fact) => `- ${fact}`),
-    );
   lines.push(
     "",
     "Pick the one existing lesson that already states the rule the memory gives. Write its whole body again with the new lines added:",
     "- Copy every existing line unchanged, in its place. Do not reword, shorten, reorder or drop any of them.",
-    "First list in new_facts each cause, step, number, limit or consequence the memory states and the lesson lacks, one short phrase each: check every sentence of the memory against the lesson. The memory's own incident retold (what happened in one test, project or day) is not a new fact unless it carries one of these. Then add one line to the body for each new fact, keeping the memory's own numbers, names and dates, and say nothing the memory does not say.",
+    "First list in new_facts each cause, step, number, name, limit or consequence the memory states and the lesson lacks, in the memory's own words with its figures and names: check every sentence of the memory against the lesson, and place each listed figure or name that belongs to the rule. The memory's own incident retold (what happened in one test, project or day) is not a new fact unless it carries one of these. Then add one line to the body for each new fact, keeping the memory's own numbers, names and dates, and say nothing the memory does not say.",
     "- If the memory contradicts a line of the lesson, answer none.",
     "- If no listed lesson states the memory's rule, or the memory adds nothing the lesson lacks, answer none.",
     "",

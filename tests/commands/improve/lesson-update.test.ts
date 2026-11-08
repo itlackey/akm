@@ -22,10 +22,40 @@ describe("memoryFactCandidates (#1405)", () => {
     expect(facts).toContain("40 GB");
   });
 
+  test("a figure stops at its number: no trailing words or punctuation", () => {
+    const facts = memoryFactCandidates("Issue 212 was closed after 3 retries, and 4.2, which shipped, fixed it.", "x");
+    expect(facts).toEqual(["212", "3 retries", "4.2"]);
+  });
+
+  test("a figure is present only as a whole word: 30 is not in 300", () => {
+    expect(memoryFactCandidates("Set the TTL to 30.", "Cache 300 s.")).toContain("30");
+    expect(memoryFactCandidates("Set the TTL to 30.", "Cache 30 s.")).not.toContain("30");
+  });
+
+  test("names keep their accents", () => {
+    expect(memoryFactCandidates("The job in Zürich failed, said José Núñez.", "x")).toEqual(["Zürich", "José Núñez"]);
+  });
+
+  test("the update prompt lists each lesson's own missing facts", () => {
+    const other = "Restores took 25 minutes on db-eu1.";
+    const prompt = buildLessonUpdatePrompt(
+      memory,
+      [],
+      [
+        { ref: "lesson:a", body: lesson },
+        { ref: "lesson:b", body: other },
+      ],
+    );
+    const [, blockB] = prompt.split("Existing lesson ref: lesson:b");
+    expect(prompt.split("Existing lesson ref: lesson:b")[0]).toContain("25 minutes");
+    expect(blockB).not.toMatch(/lacks: .*25 minutes/);
+    expect(blockB).not.toMatch(/lacks: .*db-eu1/);
+  });
+
   test("the update prompt hands the writer the list", () => {
     const prompt = buildLessonUpdatePrompt(memory, [], [{ ref: "lesson:backups", body: lesson }]);
-    expect(prompt).toContain("- 25 minutes");
-    expect(prompt).toContain("- db-eu1");
+    expect(prompt).toContain("25 minutes");
+    expect(prompt).toContain("db-eu1");
   });
 
   test("no candidates, no list", () => {
