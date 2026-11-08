@@ -72,7 +72,12 @@ function appendShowTrace(ref: string, type: string, name: string): void {
   }
 }
 
-function insertShowUsage(entryId: number, entryRef: string, derivedFrom: unknown, eventSource: UsageEventSource): void {
+function insertShowUsage(
+  entryId: number | undefined,
+  entryRef: string,
+  derivedFrom: unknown,
+  eventSource: UsageEventSource,
+): void {
   withStateDbTelemetry((stateDb) => {
     insertUsageEvent(stateDb, {
       event_type: "show",
@@ -114,21 +119,20 @@ export function recordShowUsage(
   }
 }
 
-/** Record a nested execution-source read only after dispatch has crossed preflight. */
-export function recordIndexedShowUsage(ref: string, eventSource: UsageEventSource = "user"): void {
+/**
+ * Record a nested execution-source read only after dispatch has crossed
+ * preflight. The caller holds the source's durable `bundle//conceptId` ref, so
+ * no index connection is opened.
+ */
+export function recordIndexedShowUsage(
+  ref: string,
+  type: string,
+  name: string,
+  eventSource: UsageEventSource = "user",
+): void {
+  appendShowTrace(ref, type, name);
   try {
-    withIndexDb(
-      (db) => {
-        const entryId = findEntryIdByRef(db, ref);
-        if (entryId === undefined) return;
-        const indexed = getEntryById(db, entryId);
-        const entryRef = getItemRefById(db, entryId);
-        if (!indexed || !entryRef) return;
-        appendShowTrace(entryRef, indexed.entry.type, indexed.entry.name);
-        insertShowUsage(entryId, entryRef, indexed.entry.derivedFrom, eventSource);
-      },
-      { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
-    );
+    insertShowUsage(undefined, ref, undefined, eventSource);
   } catch (error) {
     rethrowIfTestIsolationError(error);
   }

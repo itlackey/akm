@@ -382,3 +382,17 @@ describe("indexWrittenAssets", () => {
     expect(indexedFileCount(filePath)).toBe(0);
   });
 });
+
+describe("indexWrittenAssets on an indexed empty stash", () => {
+  test("a memory written after a search on the empty stash is found by the next search", async () => {
+    fs.rmSync(path.join(stashDir, "memories"), { recursive: true, force: true });
+    await akmIndex({ stashDir, full: true });
+    expect((await akmSearch({ query: "zebra" })).hits).toHaveLength(0);
+
+    const file = writeMemory("zebra-crossing", "zebra crossing procedure");
+    expect(await indexWrittenAssets(stashDir, [file])).toBe(true);
+
+    const hits = (await akmSearch({ query: "zebra" })).hits;
+    expect(hits.length).toBeGreaterThan(0);
+  });
+});

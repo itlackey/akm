@@ -6,8 +6,7 @@
  * API keys akm holds for the user: `<configDir>/credentials.json` (0600).
  *
  *     { "connections": { "<name>": { "key": "…", "endpoint": "…" } },
- *       "services":    { "embedding": { "key": "…", "endpoint": "…" },
- *                        "curateRerank": { … } } }
+ *       "services":    { "embedding": { "key": "…", "endpoint": "…" } } }
  *
  * A key is stored for one endpoint and is read for that endpoint alone: the
  * entry records the endpoint it was stored for, and a block whose endpoint is
@@ -33,8 +32,8 @@ import { copyToConfigBackups } from "./config-io";
 import type { AkmConfig } from "./config-types";
 import { envReferenceName, isEnvReference } from "./schema/primitives";
 
-/** Where a key is stored: a connection, by its name, or one of the two services that have an endpoint of their own. */
-export type CredentialSlot = { readonly connection: string } | { readonly service: "embedding" | "curateRerank" };
+/** Where a key is stored: a connection, by its name, or the embedding service, which has an endpoint of its own. */
+export type CredentialSlot = { readonly connection: string } | { readonly service: "embedding" };
 
 /** A key and the endpoint it was stored for. */
 export interface StoredCredential {
@@ -190,7 +189,10 @@ export function storedCredentials(): Array<{ slot: CredentialSlot; credential: S
       isStoredCredential(held)
         ? [
             {
-              slot: group === "connections" ? { connection: name } : { service: name as "embedding" | "curateRerank" },
+              slot:
+                group === "connections"
+                  ? { connection: name }
+                  : { service: name as "embedding" } /* any other name is inert; only its key is read */,
               credential: held,
             },
           ]
@@ -230,7 +232,7 @@ export function slotStanding(
 /**
  * File every key the store holds in the older flat `{ "<name>": "<key>" }` form under
  * the endpoint of the block it belongs to, as `endpointOf` says: a name that is a
- * connection's, or `curateRerank`, or `embedding` (the service's, or a connection
+ * connection's, or `embedding` (the service's, or a connection
  * called that: one of the two must have an endpoint, or it is not filed). `pending` is
  * what the same migration is about to file in the current form, which a flat key is
  * measured against like the store's own entries ({@link slotStanding}): a slot that
@@ -259,11 +261,7 @@ export function fileFlatCredentials(
     const value = store.entries[name];
     if (typeof value !== "string") continue;
     const slots: CredentialSlot[] =
-      name === "curateRerank"
-        ? [{ service: "curateRerank" }]
-        : name === "embedding"
-          ? [{ service: "embedding" }, { connection: name }]
-          : [{ connection: name }];
+      name === "embedding" ? [{ service: "embedding" }, { connection: name }] : [{ connection: name }];
     const homes = slots.flatMap((slot) => {
       const endpoint = endpointOf(slot);
       return endpoint === undefined ? [] : [{ slot, endpoint }];
@@ -356,14 +354,10 @@ export function apiKeyReference(apiKey: string | undefined): string | undefined 
  * file as written.
  */
 export function collectCredentialValues(
-  config: Pick<AkmConfig, "connections" | "embedding" | "search">,
+  config: Pick<AkmConfig, "connections" | "embedding">,
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  const blocks: Array<{ apiKey?: string } | undefined> = [
-    ...Object.values(config.connections ?? {}),
-    config.embedding,
-    config.search?.curateRerank,
-  ];
+  const blocks: Array<{ apiKey?: string } | undefined> = [...Object.values(config.connections ?? {}), config.embedding];
   return collectSensitiveValues([
     ...storedCredentials().map(({ credential }) => credential.key),
     ...blocks.flatMap((block) => {

@@ -20,7 +20,7 @@ import { deriveEntryProvenance } from "../../src/indexer/installations";
 import { ensureUsageEventsSchema } from "../../src/indexer/usage/usage-events";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
-import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { getItemRefById, upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import { getUtilityScore, upsertUtilityScore } from "../../src/storage/repositories/index-utility-repository";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 import { recordUsageEvent } from "../_helpers/usage-events";
@@ -258,6 +258,7 @@ describe("recomputeUtilityScores", () => {
     const stateDb = new Database(":memory:") as unknown as typeof db;
     try {
       const entryId = seedIndexEntry(db, "recompute-test", "/tmp/recompute.sh");
+      const entryRef = getItemRefById(db, entryId) as string;
 
       // Record usage events: 5 searches that returned this entry, then 3 shows.
       // last_used_at must preserve the latest event time;
@@ -269,6 +270,7 @@ describe("recomputeUtilityScores", () => {
         recordUsageEvent(stateDb, {
           eventType: "search",
           entryId,
+          entryRef,
           timestamp: searchAt,
         });
       }
@@ -276,6 +278,7 @@ describe("recomputeUtilityScores", () => {
         recordUsageEvent(stateDb, {
           eventType: "show",
           entryId,
+          entryRef,
           timestamp: showAt,
         });
       }
@@ -347,7 +350,7 @@ describe("recomputeUtilityScores", () => {
 // ── Test 9: Production path end-to-end ───────────────────────────────────────
 
 describe("Production path end-to-end", () => {
-  test("index → search → usage_events have entry_id → recompute populates utility_scores", async () => {
+  test("index → search → usage_events have entry_ref → recompute populates utility_scores", async () => {
     const stashDir = tmpStash();
 
     writeFile(
@@ -362,14 +365,14 @@ describe("Production path end-to-end", () => {
     const localHits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(localHits.length).toBeGreaterThan(0);
 
-    // Verify usage_events have entry_id (usage_events lives in state.db, WI-8.3)
+    // Verify usage_events have entry_ref (usage_events lives in state.db, WI-8.3)
     const dbPath = getDbPath();
     const db = openIndexDatabase(dbPath);
     const stateDb = openStateDatabase();
     try {
       const events = stateDb
-        .prepare("SELECT entry_id FROM usage_events WHERE event_type = 'search' AND entry_id IS NOT NULL")
-        .all() as Array<{ entry_id: number }>;
+        .prepare("SELECT entry_ref FROM usage_events WHERE event_type = 'search' AND entry_ref IS NOT NULL")
+        .all() as Array<{ entry_ref: string }>;
       expect(events.length).toBeGreaterThan(0);
 
       // Recompute utility scores
@@ -414,13 +417,13 @@ describe("Production path end-to-end", () => {
         .prepare(
           "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, source, created_at) VALUES (?, ?, 'search', NULL, 'user', datetime('now'))",
         )
-        .run(realId!, "skills/real-skill");
+        .run(realId!, getItemRefById(db, realId!));
       const staleId = 999999; // not in entries
       stateDb
         .prepare(
           "INSERT INTO usage_events (entry_id, entry_ref, event_type, signal, source, created_at) VALUES (?, ?, 'search', NULL, 'user', datetime('now'))",
         )
-        .run(staleId, "skills/vaporware");
+        .run(staleId, "test//skills/vaporware");
 
       // This used to throw FOREIGN KEY constraint failed.
       expect(() => recomputeUtilityScores(db, stateDb)).not.toThrow();

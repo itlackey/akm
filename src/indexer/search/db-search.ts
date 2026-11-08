@@ -86,14 +86,6 @@ export const DEFAULT_QUERY_EMBED_TIMEOUT_MS = 3000;
 
 type IndexedProvenance = { itemRef: string; bundleId: string; conceptId: string };
 
-/** Each search hit's indexed content, kept off the output object for curate's reranker. */
-const hitContent = new WeakMap<SourceSearchHit, string>();
-
-/** The indexed (safe-projected) content of a hit this process's search returned. */
-export function searchHitContent(hit: SourceSearchHit): string | undefined {
-  return hitContent.get(hit);
-}
-
 function hasIndexedProvenance<
   T extends { itemRef?: string | null; bundleId?: string | null; conceptId?: string | null },
 >(entry: T): entry is T & IndexedProvenance {
@@ -902,7 +894,6 @@ export async function buildDbHit(input: {
     ...(input.entry.expires ? { expires: input.entry.expires } : {}),
   };
 
-  if (input.entry.content) hitContent.set(hit, input.entry.content);
   if (input.entry.derivedFrom) {
     attachSearchHitAttribution(hit, {
       memoryInference: { exposure: "direct" },

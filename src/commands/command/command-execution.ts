@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import type { AkmConfig } from "../../core/config/config-types";
 import { SHIPPED_ALIAS } from "../../core/config/model-aliases";
 import { UsageError } from "../../core/errors";
@@ -392,6 +393,12 @@ function resultEnvelope(
   };
 }
 
+/** The entry name of a `bundle//<type dir>/<name>` ref: the concept id without its type directory. */
+function entryNameOfRef(ref: string): string {
+  const conceptId = parseBundleRef(ref).conceptId;
+  return conceptId.slice(conceptId.indexOf("/") + 1);
+}
+
 export async function dispatchPreparedCommandInvocation(
   prepared: PreparedCommandInvocation,
   options: DispatchPreparedCommandOptions = {},
@@ -400,13 +407,13 @@ export async function dispatchPreparedCommandInvocation(
   const built = buildExecution(request, prepared.runner);
   const selectedEngine = request.target.name;
   const result = await runExecution(built, runOptionsFor(options));
-  const consumedRefs = new Set<string>();
-  if (request.command.source) consumedRefs.add(request.command.source.ref);
-  if (request.persona) consumedRefs.add(request.persona.source.ref);
+  const consumed = new Map<string, "command" | "agent">();
+  if (request.command.source) consumed.set(request.command.source.ref, "command");
+  if (request.persona) consumed.set(request.persona.source.ref, "agent");
   // options.eventSource is only a FALLBACK — an ambient AKM_EVENT_SOURCE still
   // wins. Absent, the default is "user".
   const eventSource = resolveUsageEventSource(process.env, options.eventSource ?? "user");
-  for (const ref of consumedRefs) recordIndexedShowUsage(ref, eventSource);
+  for (const [ref, type] of consumed) recordIndexedShowUsage(ref, type, entryNameOfRef(ref), eventSource);
   return resultEnvelope(result, selectedEngine, [], built.notices);
 }
 

@@ -94,7 +94,7 @@ expanded from the process environment. A ref no bundle owns is an error and
 nothing is injected. Each read records an `env_access` event. See
 [Workflow Schema: Binding a secret to a unit](workflow-schema.md#binding-a-secret-to-a-unit).
 
-The API keys of model connections, `embedding` and `search.curateRerank` are
+The API keys of model connections and `embedding` are
 not secrets-store references: they are a `$VAR` environment reference or an
 entry of `credentials.json` stored for the endpoint, and a `${secrets/...}` in an `apiKey` is ignored
 with a warning (see [Configuration: Credentials](configuration.md#credentials)).

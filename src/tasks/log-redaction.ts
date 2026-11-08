@@ -36,8 +36,7 @@
  * Three sources, and the distinction between them is the whole design:
  *
  *  1. **Declared by config** — the config names which variables hold
- *     credentials (a connection's `apiKey: $VAR`, `embedding.apiKey`, the
- *     reranker's) and which keys sit in `credentials.json`. akm KNOWS these
+ *     credentials (a connection's `apiKey: $VAR`, `embedding.apiKey`) and which keys sit in `credentials.json`. akm KNOWS these
  *     are secret.
  *  2. **Declared by the task** — the `redact:` list, names only.
  *  3. **Inferred** — a name-shape heuristic over the remaining environment, for
@@ -93,7 +92,7 @@ export function collectTaskLogSensitiveValues(input: {
     if (trimmed.length > 0) values.add(trimmed);
   };
 
-  // (1) Declared by config — every key a connection, the embedder or the reranker can resolve.
+  // (1) Declared by config — every key a connection, or the embedder can resolve.
   if (config) {
     for (const value of collectCredentialValues(config, env)) values.add(value);
   }

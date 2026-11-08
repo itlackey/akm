@@ -11,8 +11,7 @@
  *
  * Curation is one search with the fused ranking, the top `limit` hits, and
  * per-hit enrichment (preview, run and parameters, support refs from the
- * hit's declared links). An optional reranker reorders the top fused
- * candidates first.
+ * hit's declared links).
  *
  * The exported `akmCurate()` API is the single entry point; tests can also
  * drive `curateSearchResults` with a fixture search response.
@@ -21,7 +20,6 @@
 import fs from "node:fs";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { nonTaskInput } from "../../core/non-task-input";
@@ -31,12 +29,7 @@ import { withStateDbTelemetry } from "../../core/state-db";
 import { lookupBundleRef } from "../../indexer/indexer";
 import { applyCuratedFrontmatter } from "../../indexer/passes/metadata";
 import { resolveReadSources } from "../../indexer/read-preflight";
-import {
-  applyEntryFilters,
-  type EntryFilterOptions,
-  matchBeliefFilter,
-  searchHitContent,
-} from "../../indexer/search/db-search";
+import { applyEntryFilters, type EntryFilterOptions, matchBeliefFilter } from "../../indexer/search/db-search";
 import {
   type AttributionProjection,
   copySearchHitAttribution,
@@ -45,7 +38,6 @@ import {
 } from "../../indexer/search/search-attribution";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { estimateTokenCount } from "../../llm/embedders/remote";
-import { rerankDocuments } from "../../llm/rerank-client";
 import { truncateDescription } from "../../output/shapes/helpers";
 import type {
   RecallOptions,
@@ -56,7 +48,7 @@ import type {
   SourceSearchHit,
 } from "../../sources/types";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
-import { findEntryIdByRef, getEntryById, getItemRefById } from "../../storage/repositories/index-entries-repository";
+import { findEntryIdByRef, getEntryById } from "../../storage/repositories/index-entries-repository";
 import {
   akmSearch,
   narrowSourcesToName,
@@ -152,10 +144,9 @@ export interface CurateOptions extends RecallOptions {
 type EvidencePolicy = Omit<EntryFilterOptions, "db">;
 const DEFAULT_CURATE_LIMIT = 4;
 const MAX_CURATE_SUPPORT_REFS = 2;
-/** Fused candidates the reranker reorders when `search.curateRerank.topN` is unset. */
-const DEFAULT_CURATE_RERANK_TOP_N = 30;
-/** Characters of name, description and content sent to the reranker per candidate. */
-const RERANK_DOCUMENT_CHARS = 2000;
+
+/** The durable `bundle//conceptId` ref of the search hit a curated item was built from, for telemetry. */
+const durableItemRef = new WeakMap<CuratedItem, string>();
 
 /**
  * Fire-and-forget: log a curate event to the usage_events table and events.jsonl.
@@ -180,43 +171,32 @@ function logCurateEvent(
   });
 
   try {
-    withIndexDb(
-      (db) => {
-        // Resolve each curated item's DURABLE fully-qualified `item_ref` (D-R3)
-        // + entry_id from index.db (`db`); the usage_events writes land in
-        // state.db (Chunk-8 WI-8.3).
-        const perItem = result.items
-          .filter((item): item is typeof item & { ref: string } => "ref" in item && typeof item.ref === "string")
-          .flatMap((item) => {
-            const entryId = findEntryIdByRef(db, item.ref);
-            if (entryId === undefined) return [];
-            const itemRef = getItemRefById(db, entryId);
-            return itemRef ? [{ entryRef: itemRef, entryId, item }] : [];
-          });
-        withStateDbTelemetry((stateDb) => {
-          insertUsageEvent(stateDb, {
-            event_type: "curate",
-            query,
-            metadata: JSON.stringify({
-              itemCount: result.items.length,
-              itemRefs,
-            }),
-            source: eventSource,
-          });
-          for (const { entryRef, entryId, item } of perItem) {
-            insertUsageEvent(stateDb, {
-              event_type: "curate",
-              query,
-              entry_ref: entryRef,
-              entry_id: entryId,
-              metadata: usageEventAttributionMetadata(getSearchHitAttribution(item), entryRef, attributionProjection),
-              source: eventSource,
-            });
-          }
-        }, TELEMETRY_BUSY_TIMEOUT_MS);
-      },
-      { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
-    );
+    // Each curated item remembers the durable ref of the hit it came from, so
+    // no index connection is opened here.
+    const perItem = result.items.flatMap((item) => {
+      const entryRef = durableItemRef.get(item);
+      return entryRef ? [{ entryRef, item }] : [];
+    });
+    withStateDbTelemetry((stateDb) => {
+      insertUsageEvent(stateDb, {
+        event_type: "curate",
+        query,
+        metadata: JSON.stringify({
+          itemCount: result.items.length,
+          itemRefs,
+        }),
+        source: eventSource,
+      });
+      for (const { entryRef, item } of perItem) {
+        insertUsageEvent(stateDb, {
+          event_type: "curate",
+          query,
+          entry_ref: entryRef,
+          metadata: usageEventAttributionMetadata(getSearchHitAttribution(item), entryRef, attributionProjection),
+          source: eventSource,
+        });
+      }
+    }, TELEMETRY_BUSY_TIMEOUT_MS);
   } catch (err) {
     rethrowIfTestIsolationError(err);
   }
@@ -258,8 +238,7 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
     (await akmSearch({
       query: options.query,
       type: options.type,
-      // An enabled reranker reorders the top fused candidates, not just the final `limit`.
-      limit: Math.max(limit, rerankTopN(loadConfig())),
+      limit,
       source,
       filters: recall.filters,
       prefer: recall.prefer,
@@ -343,7 +322,7 @@ export async function curateSearchResults(
   const stashHits =
     selectedType && selectedType !== "any" ? allStashHits.filter((hit) => hit.type === selectedType) : allStashHits;
 
-  const selectedStashHits = (await maybeRerankCuratedStashHits(query, stashHits)).slice(0, limit);
+  const selectedStashHits = stashHits.slice(0, limit);
 
   // F4/R-019: respect `--limit` for registry fill instead of hard-capping it
   // at a bare literal 2 — the remaining slots after stash hits ARE the cap.
@@ -489,6 +468,8 @@ async function enrichCuratedStashHit(
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
   copySearchHitAttribution(hit, item, item.description);
+  const itemRef = evidence?.itemRef ?? hit.itemRef;
+  if (itemRef) durableItemRef.set(item, itemRef);
   return item;
 }
 
@@ -524,50 +505,6 @@ function buildCurateSummary(query: string, items: CuratedItem[]): string {
   // ref — keep their `registry:<name>` label).
   const labels = items.map((item) => ("ref" in item ? item.ref : `${item.type}:${item.name}`));
   return `Selected ${items.length} curated result${items.length === 1 ? "" : "s"}: ${labels.join(", ")}.`;
-}
-
-/** How many fused candidates curate fetches for the reranker; 0 when reranking is off. */
-function rerankTopN(config: ReturnType<typeof loadConfig>): number {
-  if (!config.search?.curateRerank?.enabled) return 0;
-  return config.search?.curateRerank?.topN ?? DEFAULT_CURATE_RERANK_TOP_N;
-}
-
-/**
- * Optional cross-encoder rerank of the top fused candidates (#951). Disabled
- * by default (`search.curateRerank.enabled`) and, when enabled, best-effort:
- * any failure (misconfigured endpoint, network error, timeout, malformed
- * response) keeps the fused order — a reranker outage must never turn into a
- * curate failure. The top `topN` candidates (default
- * {@link DEFAULT_CURATE_RERANK_TOP_N}) are sent as name, description and the
- * start of the indexed content; the rest keep their fused order after them.
- */
-async function maybeRerankCuratedStashHits(query: string, hits: SourceSearchHit[]): Promise<SourceSearchHit[]> {
-  if (hits.length <= 1) return hits;
-  const config = loadConfig();
-  const rerankConfig = config.search?.curateRerank;
-  if (!rerankConfig?.enabled) return hits;
-  try {
-    const head = hits.slice(0, rerankTopN(config));
-    const tail = hits.slice(head.length);
-    const ranked = await rerankDocuments(rerankConfig, query, rerankDocumentTexts(head));
-    const rerankedHead = ranked
-      .map(({ index }) => head[index])
-      .filter((hit): hit is SourceSearchHit => hit !== undefined);
-    return [...rerankedHead, ...tail];
-  } catch {
-    return hits;
-  }
-}
-
-/**
- * Name, description and the start of each hit's indexed content, capped for
- * the reranker. The content is the index's safe projection (env and secret
- * values never reach it), never the raw file.
- */
-function rerankDocumentTexts(hits: SourceSearchHit[]): string[] {
-  return hits.map((hit) =>
-    [hit.name, hit.description, searchHitContent(hit)].filter(Boolean).join("\n").slice(0, RERANK_DOCUMENT_CHARS),
-  );
 }
 
 /**

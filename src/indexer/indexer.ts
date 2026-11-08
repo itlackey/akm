@@ -1880,16 +1880,28 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
   const emaDecay = EMA_DECAY ** elapsedDays;
   const emaNew = 1 - emaDecay; // complement so weights still sum to 1
 
-  // Aggregate explicit user demand per entry_id from state.db's usage_events, then keep only entries
-  // that STILL EXIST in index.db's `entries` (the former in-SQL JOIN is now a
-  // cross-DB filter). This latter check is critical: usage_events has no FK to
-  // entries, so its entry_id can become stale (entry deleted, re-keyed, moved
-  // between sources). Without it, writing the derived row to utility_scores
-  // (which DOES have an FK) raises "FOREIGN KEY constraint failed" and rolls
-  // back the whole finalize transaction — failing every index run.
-  const aggregatedRows = stateDb
-    .prepare(`
-      SELECT u.entry_id,
+  // Aggregate explicit user demand per `entry_ref` from state.db's usage_events
+  // (the stable identity every event carries; search and curate telemetry hold
+  // only the ref, not the index row id), then map each ref to its CURRENT entry
+  // id in index.db's `entries` (the former in-SQL JOIN is now a cross-DB
+  // lookup). Refs naming no current entry are dropped: usage_events has no FK
+  // to entries, so a ref can go stale (entry deleted, re-keyed, moved between
+  // sources), and writing the derived row to utility_scores (which DOES have an
+  // FK) would raise "FOREIGN KEY constraint failed" and roll back the whole
+  // finalize transaction — failing every index run.
+  const scopedRef = scoped
+    ? (
+        db.prepare("SELECT item_ref FROM entries WHERE id = ?").get(onlyEntryId) as
+          | { item_ref: string | null }
+          | undefined
+      )?.item_ref
+    : undefined;
+  const aggregatedRows =
+    scoped && !scopedRef
+      ? []
+      : (stateDb
+          .prepare(`
+      SELECT u.entry_ref,
              SUM(CASE WHEN u.event_type = 'search' THEN 1 ELSE 0 END) AS search_count,
              SUM(CASE WHEN u.event_type = 'show'   THEN 1 ELSE 0 END) AS show_count,
              SUM(CASE WHEN u.event_type = 'feedback' AND u.signal = 'positive' THEN 1 ELSE 0 END) AS positive_feedback_count,
@@ -1901,23 +1913,25 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
                END
              ) AS last_used_at
       FROM usage_events u
-      WHERE u.entry_id IS NOT NULL
+      WHERE u.entry_ref IS NOT NULL
         AND u.source = 'user'
-        ${scoped ? "AND u.entry_id = ?" : ""}
-      GROUP BY u.entry_id
+        ${scoped ? "AND u.entry_ref = ?" : ""}
+      GROUP BY u.entry_ref
     `)
-    .all(...(scoped ? [onlyEntryId] : [])) as Array<{
-    entry_id: number;
-    search_count: number;
-    show_count: number;
-    positive_feedback_count: number;
-    negative_feedback_count: number;
-    last_used_at: string | null;
-  }>;
-  const entryExists = db.prepare("SELECT 1 FROM entries WHERE id = ?");
-  const usageByEntry = new Map(
-    aggregatedRows.filter((row) => entryExists.get(row.entry_id) != null).map((row) => [row.entry_id, row]),
-  );
+          .all(...(scoped ? [scopedRef ?? null] : [])) as Array<{
+          entry_ref: string;
+          search_count: number;
+          show_count: number;
+          positive_feedback_count: number;
+          negative_feedback_count: number;
+          last_used_at: string | null;
+        }>);
+  const entryIdByRef = db.prepare("SELECT id FROM entries WHERE item_ref = ?");
+  const usageByEntry = new Map<number, (typeof aggregatedRows)[number] & { entry_id: number }>();
+  for (const row of aggregatedRows) {
+    const entry = entryIdByRef.get(row.entry_ref) as { id: number } | undefined;
+    if (entry) usageByEntry.set(entry.id, { ...row, entry_id: entry.id });
+  }
 
   // Batch-load existing utility scores
   const existingScores = new Map<number, { utility: number; lastUsedAt: string | undefined }>();

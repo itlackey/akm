@@ -32,8 +32,8 @@
  *   silently dropping them would mask user data loss.
  * - UNKNOWN-KEY POLICY: portable descriptive sections generally use
  *   passthrough so version skew round-trips newer settings. Small finite
- *   authority/toggle sections (`scheduler`, `experimental`, and
- *   reranker policy) are strict: a misspelling there must not silently turn a
+ *   authority/toggle sections (`scheduler` and `experimental`)
+ *   are strict: a misspelling there must not silently turn a
  *   safety decision off. The top level remains passthrough and warns on
  *   unknown keys.
  * - `defaultWriteTarget` resolution and similar cross-field invariants are

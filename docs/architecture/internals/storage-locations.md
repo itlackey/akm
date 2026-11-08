@@ -266,7 +266,7 @@ rebuilding `index.db` does not discard it.
 | `id` | INTEGER PRIMARY KEY AUTOINCREMENT | |
 | `event_type` | TEXT NOT NULL | `search`, `show`, `curate`, `feedback` |
 | `query` | TEXT | The search or curate query; NULL for show and feedback |
-| `entry_id` | INTEGER | `index.db` entry id; re-linked after a rebuild |
+| `entry_id` | INTEGER | `index.db` entry id; re-linked after a rebuild. Null at write time on search, curate and nested command/persona read events, which record only `entry_ref`; the next index fills it from `entry_ref`. Utility scores aggregate by `entry_ref`. Events recorded since the last index carry no `entry_id`, so they survive deletion of their entry until the next relink, and a later asset at the same ref inherits them until the 90-day purge |
 | `entry_ref` | TEXT | Stable ref string |
 | `signal` | TEXT | `positive` or `negative` for feedback |
 | `metadata` | TEXT | JSON |
@@ -353,7 +353,7 @@ that ran as the `akm-model-work` agent). The binary itself is in
 | Path | Contents |
 |---|---|
 | `$CONFIG/config.json` | User configuration: bundles, connections, harnesses, feature flags, registries (JSONC: comments are stripped at parse time). |
-| `$CONFIG/credentials.json` | The API keys akm holds, as `{ "connections": { "<name>": { "key", "endpoint" } }, "services": { "embedding" \| "curateRerank": { "key", "endpoint" } } }`: each key with the endpoint it was stored for. Written atomically with mode `0600` (directory `0700` when akm creates it) by `akm setup` and `akm migrate apply`; never part of `config.json`. See [Credentials](../../reference/configuration.md#credentials). |
+| `$CONFIG/credentials.json` | The API keys akm holds, as `{ "connections": { "<name>": { "key", "endpoint" } }, "services": { "embedding": { "key", "endpoint" } } }`: each key with the endpoint it was stored for. Written atomically with mode `0600` (directory `0700` when akm creates it) by `akm setup` and `akm migrate apply`; never part of `config.json`. See [Credentials](../../reference/configuration.md#credentials). |
 | `$CACHE/config-backups/config-<ISO-ts>.json` | Snapshot of `config.json` taken before each config write (`backupExistingConfig`, `src/core/config/config-io.ts`), plus `config.latest.json`, a copy of the newest. The five newest timestamped snapshots are kept. `akm migrate apply` also leaves `credentials.json.<ts>` (a copy of the key store, taken before it re-files older entries) and `models.json.<ts>` (the retired file, moved aside) here; those are not pruned. |
 | `$DATA/akm.lock` | JSON array of installed bundle entries, maintained by `akm bundle add` and `akm bundle remove` (`src/integrations/lockfile.ts`). |
 | `$STASH/memories/MEMORY.md` | Optional memory index. `akm improve` warns when it passes 180 of a 200-line budget; akm does not write it. |

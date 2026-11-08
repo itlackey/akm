@@ -357,7 +357,7 @@ akm reads an API key from one of two places, and nowhere else:
   A key is stored for one endpoint and read for that endpoint alone. Change a
   block's endpoint and the old key is not sent to the new one (it is named once,
   without its value, and the block goes without until a key is stored for the new
-  endpoint). A connection's name and a service (`embedding`, `curateRerank`) are
+  endpoint). A connection's name and the `embedding` service are
   different namespaces, so a connection called `embedding` and the embedding
   service hold different keys. An `embedding` that runs on the default connection
   uses that connection's entry. A connection that only an `extends` base defines
@@ -874,29 +874,14 @@ taking about the same wall time as a single one against a healthy endpoint.
 
 ## Search tuning
 
-`search` sets which types search leaves out by default, and the optional curate reranker:
+`search` sets which types search leaves out by default:
 
 | Key | Purpose |
 | --- | --- |
 | `search.defaultExcludeTypes` | Asset types excluded from results by default |
 
-### Curate rerank
-
-An optional cross-encoder rerank pass over the top fused search candidates
-`akm curate` fetches, via a standalone `/rerank`-style HTTP endpoint (not a
-connection or a harness). Each candidate is sent as its
-name, description and the start of its indexed content (2,000 characters in
-all). Disabled by default; a misconfigured endpoint, network failure, timeout,
-or malformed response keeps the fused order.
-
-| Key | Purpose |
-| --- | --- |
-| `search.curateRerank.enabled` | Turn the rerank pass on (default `false`) |
-| `search.curateRerank.endpoint` | Full URL of the reranker's rerank endpoint |
-| `search.curateRerank.model` | Model name sent to the endpoint (optional) |
-| `search.curateRerank.apiKey` | `$VAR` reference (optional); absent, the `curateRerank` service's entry in `credentials.json` |
-| `search.curateRerank.timeoutMs` | Request timeout (default `10000`) |
-| `search.curateRerank.topN` | How many of the top fused candidates to rerank (default `30`, max `50`) |
+An older config that still has `search.curateRerank` (the removed curate reranker) loads, warns once that
+the key is ignored, and enables nothing; `akm migrate apply` drops it.
 
 ## Feedback
 
@@ -1129,8 +1114,7 @@ write defaults, registries, embedding connections, scheduler activation,
 Connection and harness definitions may be shared, but credentials and
 executable authority (`apiKey`, `bin`, `args`, and `workspace`) are ignored
 when inherited and must be supplied by the local file; a key in the host's
-`credentials.json` needs no entry at all. Improve publication (`strategies.*.sync`) and reranker network
-configuration are local as well. Bundle-relative chains stay physically inside
+`credentials.json` needs no entry at all. Improve publication (`strategies.*.sync`) is local as well. Bundle-relative chains stay physically inside
 the bundle root for every hop; lexical `..` paths and symlink escapes are both
 rejected before a referenced file is read.
 

@@ -658,15 +658,6 @@ function sanitizeInheritedConfig(raw: Record<string, unknown>, label: string): R
     );
   }
 
-  if (isPlainObject(inherited.search) && Object.hasOwn(inherited.search, "curateRerank")) {
-    const { curateRerank: _curateRerank, ...portableSearch } = inherited.search;
-    inherited.search = portableSearch;
-    warnOnce(
-      `config:inherited-host-local:${label}:search.curateRerank`,
-      `Ignoring inherited config key "search.curateRerank" from ${label}; network endpoints and credentials are host-local.`,
-    );
-  }
-
   if (isPlainObject(inherited.improve) && isPlainObject(inherited.improve.strategies)) {
     const strategies: Record<string, unknown> = {};
     let strippedSync = false;

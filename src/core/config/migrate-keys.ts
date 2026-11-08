@@ -6,13 +6,12 @@
  * `akm migrate apply`'s key step. akm reads a key from a `$VAR` reference or
  * from `credentials.json`, nowhere else. The keys a config still holds in any
  * other form are read once, filed in `credentials.json` for the block they
- * belong to (a connection, or the `embedding` or `curateRerank` service) and the
+ * belong to (a connection, or the `embedding` service) and the
  * endpoint that block names, and removed from the document:
  *
  *   - an engine's `apiKeyFile`, a literal `apiKey` or a `${secrets/...}` one,
  *     which the conversion to a connection cannot carry;
- *   - the same literal or secret-store `apiKey` on a connection, `embedding` or
- *     `search.curateRerank` that the file already says in the current form.
+ *   - the same literal or secret-store `apiKey` on a connection or `embedding` that the file already says in the current form.
  *
  * A key that cannot be read, whose block names no endpoint to file it for, whose
  * engine wrote it for another endpoint than the connection now names (the file's
@@ -109,21 +108,12 @@ function documentCandidates(config: Dict, options: KeyMoveOptions): Candidate[] 
       if (isRecord(block)) blocks.push({ name, slot: { connection: name }, from: `connections.${name}.apiKey`, block });
     }
   }
-  const search = isRecord(config.search) ? config.search : {};
   if (isRecord(config.embedding)) {
     blocks.push({
       name: "embedding",
       slot: { service: "embedding" },
       from: "embedding.apiKey",
       block: config.embedding,
-    });
-  }
-  if (isRecord(search.curateRerank)) {
-    blocks.push({
-      name: "curateRerank",
-      slot: { service: "curateRerank" },
-      from: "search.curateRerank.apiKey",
-      block: search.curateRerank,
     });
   }
   return blocks.flatMap(({ name, slot, from, block }) => {
@@ -166,15 +156,12 @@ function documentCandidates(config: Dict, options: KeyMoveOptions): Candidate[] 
 
 /** The endpoint the document gives the block that `slot` stands for, if it gives one. */
 export function documentEndpoint(config: Dict, slot: CredentialSlot): string | undefined {
-  const search = isRecord(config.search) ? config.search : {};
   const block =
     "connection" in slot
       ? isRecord(config.connections)
         ? config.connections[slot.connection]
         : undefined
-      : slot.service === "embedding"
-        ? config.embedding
-        : search.curateRerank;
+      : config.embedding;
   return isRecord(block) && typeof block.endpoint === "string" ? block.endpoint : undefined;
 }
 

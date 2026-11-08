@@ -67,7 +67,7 @@ search returns the indexed file.
 - `akm index` takes `$DATA/index.rebuild.lock` (`src/indexer/index-rebuild-lock.ts`). It is advisory: a plain `akm index` that finds it held warns and proceeds; `akm index --skip-if-locked` (the shipped `index-refresh` task uses it) exits 0. The holder is reclaimed only when its PID is dead.
 - `$DATA/index.db.write.lock` (`src/indexer/index-writer-lock.ts`) serializes writes to authored content (`remember`, `import`, source updates, proposal apply). Indexing does not take it.
 - `indexWrittenAssets` (the immediate upsert after `remember`, `import`, `proposal accept`, and similar) returns without indexing when the rebuild lock is held; the running rebuild picks the change up.
-- `ensureIndex` (`src/indexer/ensure-index.ts`) builds the index inline on first use when it is missing, empty, or built for a different bundle. Otherwise reads serve the existing index without a freshness walk; `improve` checks freshness and rebuilds inline.
+- `ensureIndex` (`src/indexer/ensure-index.ts`) builds the index inline on first use when it is missing, has never completed a build (`builtAt` unset), or was built for a different bundle. An indexed empty stash counts as built. Otherwise reads serve the existing index without a freshness walk; `improve` runs an incremental `akmIndex` inline and lets its per-file fingerprints decide what changed, in every bundle.
 
 ## Embedding phase
 

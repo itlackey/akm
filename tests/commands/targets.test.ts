@@ -191,16 +191,7 @@ describe("work rows", () => {
 
   test("with neither, nothing runs and nothing is wrong", () => {
     const all = rows(cfg());
-    const names: ProcessName[] = [
-      "improve",
-      "judges",
-      "agents",
-      "extract",
-      "enrich",
-      "index",
-      "embedding",
-      "curate-rerank",
-    ];
+    const names: ProcessName[] = ["improve", "judges", "agents", "extract", "enrich", "index", "embedding"];
     for (const name of names) {
       expect(work(all, name)).toEqual({ type: "process", process: name, kind: null, target: null, model: null });
     }
@@ -326,12 +317,5 @@ describe("work rows", () => {
         "embedding",
       ),
     ).toMatchObject({ kind: "endpoint", target: "https://emb.example.test/v1", model: "e5" });
-  });
-
-  test("curate rerank runs on its own endpoint when enabled", () => {
-    const off = rows(cfg({ search: { curateRerank: { endpoint: "http://r/rerank" } } }));
-    expect(work(off, "curate-rerank").kind).toBeNull();
-    const on = rows(cfg({ search: { curateRerank: { enabled: true, endpoint: "http://r/rerank", model: "rr" } } }));
-    expect(work(on, "curate-rerank")).toMatchObject({ kind: "endpoint", target: "http://r/rerank", model: "rr" });
   });
 });

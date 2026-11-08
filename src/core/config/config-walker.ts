@@ -318,17 +318,13 @@ const LITERAL_API_KEY_HINT =
   "Storing API keys in config.json leaks them through backups, logs, and version control. " +
   "akm keeps keys in the environment or in credentials.json.";
 
-/** The three config blocks that carry an `apiKey` akm resolves at request time. */
+/** The two config blocks that carry an `apiKey` akm resolves at request time. */
 function isCredentialPath(path: Path): boolean {
-  return (
-    (path[0] === "connections" && path.length === 3) ||
-    (path[0] === "embedding" && path.length === 2) ||
-    (path[0] === "search" && path[1] === "curateRerank" && path.length === 3)
-  );
+  return (path[0] === "connections" && path.length === 3) || (path[0] === "embedding" && path.length === 2);
 }
 
 /**
- * A literal `apiKey` is never persisted: on the three credential blocks only a
+ * A literal `apiKey` is never persisted: on the two credential blocks only a
  * `$VAR` reference is accepted, and an `apiKey` anywhere else is not a key akm
  * defines.
  */
@@ -351,7 +347,7 @@ function holdsLiteralApiKey(value: unknown): boolean {
 }
 
 function rejectLiteralApiKeyInWholeObjectSet(path: Path, raw: string, dotted: string): void {
-  const wholeObject = ["connections", "embedding", "search"].includes(path[0] as string) && !isCredentialPath(path);
+  const wholeObject = ["connections", "embedding"].includes(path[0] as string) && !isCredentialPath(path);
   if (!wholeObject) return;
   let parsed: unknown;
   try {

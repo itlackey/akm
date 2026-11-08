@@ -4,11 +4,9 @@
 
 /**
  * #951 (item E, docs/architecture/specs/0.9.0-docs-code-drift-register.md
- * Q-10): `akm curate` never implemented reranking — `curate_rerank` was
- * removed in 0.8.0 and no `--rerank` flag or reranking behavior exists in
- * `curate.ts`. The command's own description string used to claim
- * otherwise ("reranks by intent"); pin that it no longer does, so the claim
- * cannot silently drift back in without a matching implementation.
+ * Q-10): `akm curate` has no reranking step, and the command's own description
+ * string must not claim one. Pin that, so the claim cannot silently drift back
+ * in without a matching implementation.
  */
 
 import { describe, expect, test } from "bun:test";

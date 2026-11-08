@@ -448,8 +448,7 @@ check's `status` instead of grepping akm's error text.
 `connections-and-harnesses` is one table: a row for each configured connection (endpoint, whether
 its key is held, whether the endpoint answers) and harness (platform, whether
 its binary is found, and with a probe its `--version`), then a row for each kind of work
-(`improve`, `judges`, `agents`, `extract`, `enrich`, `index`, `embedding`,
-`curate-rerank`) naming the connection or harness and the model it resolves to.
+(`improve`, `judges`, `agents`, `extract`, `enrich`, `index`, `embedding`) naming the connection or harness and the model it resolves to.
 The rows are in `evidence.rows`, each typed `connection`, `harness` or `process`;
 the text format always prints them. It is a `warn` when a key variable is unset,
 an endpoint does not answer (the probes, and the harness `--version` runs, are skipped by `--no-probe`), a harness is not
@@ -741,10 +740,7 @@ akm curate "deploy the service" --filter user=alice --pack 4000
 enriches each with a preview, run details and up to two support refs: the
 assets the hit's declared links name (`xrefs:`, `supersededBy:` and the other
 kinds `akm show` lists under `links`), what it links to before what links to
-it, skipping assets curate already selected. With
-`search.curateRerank.enabled`, a cross-encoder first reorders the top 30 fused
-candidates (`search.curateRerank.topN`) by name, description and the start of
-each asset's indexed content. Curate includes direct follow-up
+it, skipping assets curate already selected. Curate includes direct follow-up
 commands such as `akm show <ref>` or `akm bundle add <ref>` so you can
 immediately inspect or install what it found.
 `--detail` (including `agent`) works on curate output.
@@ -2181,8 +2177,8 @@ in order:
    to `connections` / `harnesses` — the same conversion every load already
    runs in memory, so this only persists it, under a backup. The keys akm no
    longer reads from config (an engine's `apiKeyFile`, a literal or
-   `${secrets/...}` `apiKey`, and the same on a connection, `embedding` or
-   `search.curateRerank`) move to `credentials.json`, one note per key and
+   `${secrets/...}` `apiKey`, and the same on a connection or `embedding`)
+   move to `credentials.json`, one note per key and
    never its value; a key that cannot be moved stays where it was, with a
    note. A leftover `models.json` is folded into the `models` of the
    connections and harnesses it names, then moved to `config-backups/` in the
@@ -2274,8 +2270,7 @@ Subcommands:
 | `path` | Print the config file path (`akm info` reports the bundle, config, data, cache and state directories). Load-bearing: `config path` is the one subcommand the CLI still allows to run when the on-disk config itself fails to load, so you always have a way to locate a broken config. |
 | `diff <path\|bundle//path>` | Compare this instance's effective config (its own `extends` already applied) against another config file or bundle-relative file (loaded through the same loader — its `extends` honoured too); prints sorted `{ path, local, other }` rows for every differing leaf, secrets redacted on both sides. |
 
-A key that holds an API key (`connections.<name>.apiKey`, `embedding.apiKey`,
-`search.curateRerank.apiKey`) accepts a `$VAR` reference and rejects a literal
+A key that holds an API key (`connections.<name>.apiKey`, `embedding.apiKey`) accepts a `$VAR` reference and rejects a literal
 key: keys live in the environment or in `credentials.json`, never in
 `config.json` (see [Credentials](configuration.md#credentials)). A connection or
 harness name that is not lowercase kebab-case, or a harness entry that names no
@@ -3831,8 +3826,8 @@ fail-closed migration behavior.
 file and its `logs.db` rows — is scrubbed before it is written. Two passes run:
 credential *shapes* (`Bearer …`, `sk-…`, webhook URLs) are matched by pattern,
 and exact secret values are matched by value. akm knows a value is secret when
-the config declares it (the key every connection, `embedding` and
-`search.curateRerank` resolves to: a `$VAR`'s value, or the `credentials.json`
+the config declares it (the key every connection and `embedding`
+resolves to: a `$VAR`'s value, or the `credentials.json`
 entry), and it infers others from the variable name (`*_TOKEN`, `*_SECRET`, `*_API_KEY`,
 `*_PASSWORD`, …) provided the value is at least 8 characters — a short one is
 far more likely to be a flag than a credential, and redaction replaces

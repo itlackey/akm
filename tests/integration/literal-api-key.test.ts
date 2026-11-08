@@ -114,15 +114,12 @@ describe("a literal apiKey in the file", () => {
   });
 
   test("is never printed by config get, for the key itself or for the entry that holds it", () => {
-    writeConfig({
-      ...withLiteral,
-      search: { curateRerank: { endpoint: "http://rerank:1/v1/rerank", model: "r", apiKey: LITERAL } },
-    });
+    writeConfig(withLiteral);
     const held = loadUserConfig();
-    for (const key of ["connections.lab.apiKey", "embedding.apiKey", "search.curateRerank.apiKey"]) {
+    for (const key of ["connections.lab.apiKey", "embedding.apiKey"]) {
       expect(getConfigValue(held, key), key).toBeUndefined();
     }
-    for (const key of ["connections.lab", "embedding", "search.curateRerank"]) {
+    for (const key of ["connections.lab", "embedding"]) {
       expect(JSON.stringify(getConfigValue(held, key)), key).not.toContain(LITERAL);
     }
     expect(JSON.stringify(listConfig(held))).not.toContain(LITERAL);

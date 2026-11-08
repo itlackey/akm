@@ -39,6 +39,7 @@ beforeEach(() => {
   // Satisfies ensure-index's indexCanServeStash() so searchLocal serves this
   // hand-built index instead of rebuilding it from the (empty) stash.
   setMeta(db, "stashDir", storage.stashDir);
+  setMeta(db, "builtAt", new Date().toISOString());
 });
 
 afterEach(() => {
@@ -179,7 +180,7 @@ describe("fused search", () => {
 });
 
 describe("curate over fused search", () => {
-  test("an enabled reranker gets each candidate's name, description and indexed content", async () => {
+  test("curate returns the top `limit` fused candidates", async () => {
     // Curate emits readable eligible evidence; materialize the hand-built rows.
     const alpha = path.join(storage.stashDir, "knowledge/alpha.md");
     const beta = path.join(storage.stashDir, "knowledge/beta.md");
@@ -192,27 +193,14 @@ describe("curate over fused search", () => {
       bundles: { stash: { path: storage.stashDir } },
       defaultBundle: "stash",
       registries: [],
-      search: { curateRerank: { enabled: true, endpoint: "http://127.0.0.1:9/rerank" } },
     });
     resetConfigCache();
 
-    let documents: string[] = [];
-    const result = await withMockedFetch(
-      () => akmCurate({ query: "gizmo", limit: 1, skipLogging: true }),
-      (_url, init) => {
-        documents = (JSON.parse(String(init?.body)) as { documents: string[] }).documents;
-        const results = documents.map((document, index) => ({
-          index,
-          relevance_score: document.startsWith("beta") ? 1 : 0,
-        }));
-        return new Response(JSON.stringify({ results }), { headers: { "Content-Type": "application/json" } });
-      },
-    );
+    const result = await akmCurate({ query: "gizmo", limit: 1, skipLogging: true });
 
-    expect([...documents].sort()).toEqual([
-      "alpha\ngizmo guide\nAlpha body about the gizmo.",
-      "beta\ngizmo notes\nBeta body about the gizmo.",
-    ]);
-    expect(result.items.map((item) => ("ref" in item ? item.ref : undefined))).toEqual(["knowledge/beta"]);
+    expect(result.items).toHaveLength(1);
+    // Curate keeps the fused order: its one item is the search's top hit.
+    const top = (await search("gizmo")).hits[0];
+    expect(result.items[0] && "ref" in result.items[0] ? result.items[0].ref : undefined).toBe(top?.ref);
   });
 });

@@ -76,7 +76,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
       try {
         db.exec("DELETE FROM entries");
         // Force ensureIndex's staleness check to fire by also clearing builtAt
-        // (so hasNewerIndexableFiles returns true unconditionally).
+        // (so ensureIndex treats the index as never built).
         db.prepare("DELETE FROM index_meta WHERE key = 'builtAt'").run();
         expect(getEntryCount(db)).toBe(0);
       } finally {
@@ -128,7 +128,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
     expect(entryCountAtCollect).toBe(2);
   });
 
-  test("R6: ensureIndexDurationMs is surfaced on the result only when an implicit reindex actually ran", async () => {
+  test("R6: ensureIndexDurationMs is surfaced on the result when the inline index ran", async () => {
     const stashDir = makeTempDir("akm-improve-ensure-duration-");
     mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
     saveConfig(withTestImproveLlm({ semanticSearchMode: "off" }));
@@ -188,8 +188,8 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
     expect(rebuiltResult.ok).toBe(true);
     expect(rebuiltResult.ensureIndexDurationMs).toBeGreaterThanOrEqual(0);
 
-    // Second run: the index left behind by the first run is already fresh, so
-    // ensureIndex is a no-op and the field must be OMITTED, not reported as 0.
+    // Second run: the index is current, but blocking mode still runs the
+    // incremental index and lets its fingerprints decide, so the field is set.
     const freshResult = await akmImprove({
       stashDir,
       strategy: "duration-order",
@@ -198,7 +198,7 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
       collectEligibleRefsFn,
     });
     expect(freshResult.ok).toBe(true);
-    expect(freshResult.ensureIndexDurationMs).toBeUndefined();
+    expect(freshResult.ensureIndexDurationMs).toBeGreaterThanOrEqual(0);
   });
 
   test("dry-run never invokes ensureIndex and uses only the existing index", async () => {
