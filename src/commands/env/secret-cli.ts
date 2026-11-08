@@ -290,5 +290,5 @@ export const secretCommand = defineGroupCommand({
     set: secretSetCommand,
     remove: secretRemoveCommand,
   },
-  // Bare `akm secret` runs `akm secret list` (BARE_GROUP_LISTING in src/cli/shared.ts).
+  // Bare `akm secret` runs `akm secret list` (see insertBareListSubcommand in src/cli.ts).
 });

@@ -813,15 +813,28 @@ describe("akm proposal noun group (canonical)", () => {
     expect(result.stderr).not.toContain("deprecated");
   });
 
-  test("bare `akm proposal` lists like `akm proposal list`", async () => {
+  test("bare `akm proposal` lists like `akm proposal list`, flags included", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
-    const result = await runCli(["proposal", "--format=json"], { stashDir: stash });
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).totalCount).toBeGreaterThan(0);
+    const bare = await runCli(["proposal", "--format=json"], { stashDir: stash });
+    expect(bare.status).toBe(0);
+    expect(JSON.parse(bare.stdout).totalCount).toBeGreaterThan(0);
+    for (const argv of [["--status=reverted"], ["--status", "reverted"]]) {
+      const filtered = await runCli(["proposal", ...argv, "--format=json"], { stashDir: stash });
+      expect({ argv, status: filtered.status }).toEqual({ argv, status: 0 });
+      expect(JSON.parse(filtered.stdout).totalCount).toBe(0);
+    }
+    for (const argv of [
+      ["proposal", "--stauts=x"],
+      ["config", "--bogus"],
+    ]) {
+      const typo = await runCli([...argv, "--format=json"], { stashDir: stash });
+      expect({ argv, status: typo.status }).toEqual({ argv, status: 2 });
+      expect(typo.stderr).toContain("Unknown flag");
+    }
   });
 
-  test("`akm proposal list --status` still filters (the bare form's replacement)", async () => {
+  test("`akm proposal list --status` still filters ", async () => {
     const stash = makeStashDir();
     const created = seedProposal(stash);
 

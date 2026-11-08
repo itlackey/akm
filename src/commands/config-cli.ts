@@ -279,5 +279,5 @@ export const configCommand = defineGroupCommand({
   // current config. defineGroupCommand short-circuits this body when a
   // registered subcommand ran, so the routing set stays derived from the
   // subCommands map and can never desync.
-  // Bare `akm config` runs `akm config list` (BARE_GROUP_LISTING in src/cli/shared.ts).
+  // Bare `akm config` runs `akm config list` (see insertBareListSubcommand in src/cli.ts).
 });

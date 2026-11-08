@@ -239,43 +239,13 @@ export function defineJsonCommand<const T extends ArgsDef = ArgsDef>(def: JsonCo
 }
 
 /**
- * Canonical bare-group behavior (0.9.0 breaking change, owner ruling 12).
- *
- * Before 0.9.0 the twelve `akm <group>` command groups did three different
- * things when invoked with no subcommand: some printed help and exited 1,
- * some ran an implicit default action and exited 0 (e.g. bare `akm graph`
- * silently rendering `graph summary`), and one already raised a structured
- * usage error and exited 2. None of that is discoverable from the exit code
- * alone, and a script that greps stdout for a specific default action broke
- * silently the moment someone reordered subcommands.
- *
- * The canonical choice, applied uniformly: a bare group invocation is a
- * USAGE ERROR — exit 2, the same structured JSON envelope every other usage
- * mistake in this CLI produces (not citty's raw help banner, and not a
- * silent default action). This matches STABILITY.md's documented exit-code
- * table (2 = usage) and the exit code the CLI already used for "unknown
- * command" / "missing required argument" as of the companion 0.9.0 fix.
- *
- * `defaultRun` is now OPTIONAL for exactly this reason: omitting it opts a
- * group into the shared, canonical error below. Passing an explicit
- * `defaultRun` is a deliberate opt-out and should not be added to new groups
- * without a documented reason — see CHANGELOG for the migration note.
+ * Canonical bare-group behavior (owner ruling 12): a bare group with no
+ * listing (`task`, `migrate`, `command`) is a USAGE ERROR — exit 2 with the
+ * structured JSON envelope. Groups with a read-only `list` never reach this:
+ * `insertBareListSubcommand` (src/cli.ts) rewrites their bare form to
+ * `<group> list`. `defaultRun` is optional; omitting it opts a group into
+ * this error.
  */
-/**
- * Bare groups that run a read-only listing subcommand instead of erroring
- * (exit 0). Explicit on purpose: groups absent from this table (task, migrate,
- * command) have no listing and keep the usage error above.
- */
-const BARE_GROUP_LISTING: Record<string, string> = {
-  bundle: "list",
-  config: "list",
-  env: "list",
-  proposal: "list",
-  registry: "list",
-  secret: "list",
-  workflow: "list",
-};
-
 function bareGroupUsageError<T extends ArgsDef>(meta: CommandDef<T>["meta"], subcommandSet: Set<string>): never {
   const name =
     typeof meta === "object" && meta !== null && "name" in meta && typeof (meta as { name?: unknown }).name === "string"
@@ -317,17 +287,7 @@ export function defineGroupCommand<const T extends ArgsDef = ArgsDef>(def: {
   defaultRun?: (context: CommandContext<T>) => void | Promise<void>;
 }): CommandDef<T> {
   const subcommandSet = new Set(Object.keys(def.subCommands));
-  const groupName =
-    typeof def.meta === "object" && def.meta !== null && "name" in def.meta
-      ? (def.meta as { name?: unknown }).name
-      : undefined;
-  const listing = typeof groupName === "string" ? BARE_GROUP_LISTING[groupName] : undefined;
-  const listingCommand = listing ? (def.subCommands[listing] as CommandDef<ArgsDef> | undefined) : undefined;
-  const defaultRun =
-    def.defaultRun ??
-    (listingCommand?.run
-      ? (context: CommandContext<T>) => listingCommand.run?.(context as unknown as CommandContext<ArgsDef>)
-      : () => bareGroupUsageError<T>(def.meta, subcommandSet));
+  const defaultRun = def.defaultRun ?? (() => bareGroupUsageError<T>(def.meta, subcommandSet));
   return defineCommand({
     meta: def.meta,
     ...(def.args ? { args: def.args } : {}),

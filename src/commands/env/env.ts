@@ -120,10 +120,11 @@ export function buildShellExportScript(envPath: string): string {
 export function keysWithUnquotedHash(content: string): string[] {
   const keys = new Set<string>();
   for (const line of content.split(/\r?\n/)) {
-    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=\s*([^'"`\s].*)$/.exec(line);
+    const m = /^\s*(?:export\s+)?([\w.-]+)(?:\s*=|:\s)\s*([^'"`\s].*)$/.exec(line);
     if (m?.[2]?.includes("#") && m[1]) keys.add(m[1]);
   }
-  return [...keys];
+  const parsed = dotenv.parse(content);
+  return [...keys].filter((k) => k in parsed);
 }
 
 /** Create an empty env file (does nothing if it already exists). */

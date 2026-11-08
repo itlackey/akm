@@ -2266,8 +2266,7 @@ forces `status: "blocked"` and adds a matching line to `blockers`, so
 
 ### config
 
-Read and write configuration. Bare `akm config` (no subcommand) is a usage
-error (exit 2), the canonical bare-group behavior — name a subcommand.
+Read and write configuration. Bare `akm config` runs `akm config list`.
 
 ```sh
 akm config list                     # List current config
@@ -2352,8 +2351,7 @@ akm help migrate latest        # Resolve against the most recent CHANGELOG entry
 
 `akm help <command>` is equivalent to `akm <command> --help`. Bare `akm help`
 prints the same sectioned overview as `akm --help` and exits
-`0` — this is the one group where a bare invocation is a complete request,
-not the canonical bare-group usage error.
+`0`.
 
 Migration notes live as one markdown file per release in
 [`docs/migration/release-notes/`](../migration/release-notes/). Adding notes for a

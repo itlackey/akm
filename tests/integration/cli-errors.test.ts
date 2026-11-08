@@ -550,12 +550,9 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
     expect(stderr).toContain("Missing required positional argument");
   });
 
-  // Owner ruling 12 canonical bare-group behavior: every `akm <group>` with no
-  // subcommand produces the SAME structured usage envelope on stderr and exits
-  // 2. Before 0.9.0 the twelve groups split three ways — some ran an implicit
-  // default action and exited 0, and `log`/`lessons`/`registry` fell through to
-  // citty's human usage banner on stdout. Matching exit codes was not enough:
-  // a script could not parse the failure uniformly.
+  // Bare-group behavior: groups with no read-only listing (`migrate`, `task`,
+  // `command`) produce the structured usage envelope on stderr and exit 2;
+  // groups with a `list` run it instead (tests below).
   // One test PER GROUP rather than one loop over all eleven. The loop form
   // spawned eleven real subprocesses inside a single test, and at roughly half
   // a second of Bun startup each it sat right on the harness's default 5s

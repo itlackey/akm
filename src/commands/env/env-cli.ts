@@ -36,7 +36,6 @@ import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
-import { keysWithUnquotedHash } from "./env";
 
 const envListCommand = defineJsonCommand({
   meta: { name: "list", description: "List all env files across all bundles with their key names (no values)" },
@@ -77,7 +76,7 @@ const envCreateCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const { createEnv, writeEnv } = await import("./env.js");
+    const { createEnv, writeEnv, keysWithUnquotedHash } = await import("./env.js");
     // `create` always targets env/, never the frozen vaults/ copy. `--path` is
     // the subdirectory; `--bundle` selects the writable destination source.
     const { name, absPath, target, ref } = resolveEnvWriteTarget(args.name, args.bundle, {
@@ -404,5 +403,5 @@ export const envCommand = defineGroupCommand({
     create: envCreateCommand,
     remove: envRemoveCommand,
   },
-  // Bare `akm env` runs `akm env list` (BARE_GROUP_LISTING in src/cli/shared.ts).
+  // Bare `akm env` runs `akm env list` (see insertBareListSubcommand in src/cli.ts).
 });

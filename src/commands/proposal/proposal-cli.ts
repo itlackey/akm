@@ -608,5 +608,5 @@ export const proposalCommand = defineGroupCommand({
     extract: extractCommand,
     new: proposeCommand,
   },
-  // Bare `akm proposal` runs `akm proposal list` (BARE_GROUP_LISTING in src/cli/shared.ts).
+  // Bare `akm proposal` runs `akm proposal list` (see insertBareListSubcommand in src/cli.ts).
 });
