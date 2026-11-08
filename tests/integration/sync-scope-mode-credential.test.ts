@@ -185,6 +185,18 @@ describe("akm sync scope (#1502)", () => {
     ]);
   });
 
+  test("a nested Git repository in a root bundle is skipped instead of failing the sync", async () => {
+    const { repo } = repoWithRemote(files);
+    const nested = path.join(repo, "tools");
+    initRepo(nested);
+    write(nested, "x.md", "x\n");
+    commitAll(nested);
+    write(repo, "README.md", "root 2\n");
+    const result = await runSync(["sync"], primary(repo));
+    expect(result.code).toBe(0);
+    expect(headFiles(repo)).toEqual(["README.md"]);
+  });
+
   test("--no-push commits root files without pushing", async () => {
     const { repo, remote } = repoWithRemote(files);
     const before = git(remote, "rev-parse", "main");
@@ -238,6 +250,21 @@ describe("akm sync file mode (#1500)", () => {
     expect(result.code).toBe(0);
     expect(lsTreeMode(repo, "knowledge/plain.md")).toBe("100755");
     expect(lsTreeMode(repo, "knowledge/tool.md")).toBe("100644");
+  });
+
+  test("filemode=true: a concurrent mode change is still detected", async () => {
+    const { saveGitStash } = await import("../../src/sources/providers/git");
+    const repo = modeFixture("true");
+    write(repo, "knowledge/plain.md", "plain 2\n");
+    const oid = git(repo, "hash-object", "knowledge/plain.md").trim();
+    expect(() =>
+      saveGitStash(undefined, "m", true, {
+        repoDir: repo,
+        paths: ["knowledge/plain.md"],
+        expectedSnapshots: { "knowledge/plain.md": { oid, mode: "100755" } },
+      }),
+    ).toThrow("Exact Git publication path changed while committing");
+    expect(git(repo, "log", "--format=%s", "-1").trim()).toBe("seed");
   });
 
   test("filemode=false: a stale content snapshot is still rejected", async () => {
@@ -400,6 +427,80 @@ exec "${real}" "$@"
     });
     expect(result.code).not.toBe(0);
     expect(result.stdout + result.stderr).not.toContain(TOKEN);
+    expect(headFiles(repo)).toEqual(["knowledge/b.md"]);
+  });
+
+  test("an unresolvable credential still commits locally and reports the reference, never a value", async () => {
+    const team = tmp("akm-sync-team-");
+    initRepo(team);
+    const { repo, remote, result, recorded } = await syncWith(
+      ["$", "{team//secrets/missing}"].join(""),
+      [],
+      (r) => write(r, "knowledge/b.md", "b\n"),
+      {},
+      "priv",
+      { team: { path: team } },
+    );
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ committed: true, pushed: false });
+    expect(JSON.parse(result.stdout).reason).toContain("not pushed");
+    expect(recorded).toEqual([]);
+    expect(headFiles(repo)).toEqual(["knowledge/b.md"]);
+    expect(git(remote, "rev-parse", "main")).not.toBe(git(repo, "rev-parse", "HEAD"));
+  });
+
+  /** In-process unnamed `saveGitStash` for the cache checkout of the credentialed `priv` bundle. */
+  async function unnamedSync(credential: string, extraBundles: Record<string, unknown> = {}) {
+    const { saveGitStash } = await import("../../src/sources/providers/git");
+    const cacheHome = tmp("akm-sync-cache-");
+    const { repo, remote } = repoWithRemote({ "knowledge/a.md": "a\n" }, cacheRepoDir(cacheHome));
+    write(repo, "knowledge/b.md", "b\n");
+    const shim = gitShim();
+    const config = tmp("akm-sync-cfg-");
+    fs.mkdirSync(path.join(config, "akm"), { recursive: true });
+    fs.writeFileSync(
+      path.join(config, "akm", "config.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        bundles: { ...extraBundles, priv: { git: URL, writable: true, credential } },
+      }),
+    );
+    const result = await withEnv(
+      {
+        XDG_CONFIG_HOME: config,
+        XDG_CACHE_HOME: cacheHome,
+        XDG_DATA_HOME: tmp("akm-sync-data-"),
+        XDG_STATE_HOME: tmp("akm-sync-state-"),
+        PATH: `${shim.dir}:${process.env.PATH}`,
+        AKM_TEST_GIT_TOKEN: TOKEN,
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+      },
+      () => saveGitStash(undefined, "auto", true, { repoDir: repo }),
+    );
+    return { repo, remote, result, recorded: calls(shim.log) };
+  }
+
+  test("the unnamed/automatic path uses the credential of the bundle whose checkout it syncs", async () => {
+    const { repo, remote, result, recorded } = await unnamedSync("$AKM_TEST_GIT_TOKEN", {
+      decoy: { git: "https://github.com/acme/decoy", credential: "$AKM_TEST_OTHER" },
+    });
+    expect(result).toMatchObject({ committed: true, pushed: true });
+    expect(recorded.map((c) => c[0])).toEqual(["fetch", "push"]);
+    expect(recorded.every((c) => c[2] === header)).toBe(true);
+    expect(git(remote, "rev-parse", "main")).toBe(git(repo, "rev-parse", "HEAD"));
+  });
+
+  test("the unnamed path with an unresolvable credential still commits and reports not pushed", async () => {
+    const team = tmp("akm-sync-team-");
+    initRepo(team);
+    const { repo, result, recorded } = await unnamedSync(["$", "{team//secrets/missing}"].join(""), {
+      team: { path: team },
+    });
+    expect(result).toMatchObject({ committed: true, pushed: false });
+    expect(result.reason).toContain("not pushed");
+    expect(recorded).toEqual([]);
     expect(headFiles(repo)).toEqual(["knowledge/b.md"]);
   });
 });

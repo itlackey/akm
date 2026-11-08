@@ -18,8 +18,8 @@
  *     by the run IS committed (the pre-#652 dirty-diff subtracted it out),
  *   - a deletion the run performed lands as a staged deletion,
  *   - a path written and then removed again produces no commit at all,
- *   - callers that pass NO explicit path list (`akm sync`, `akm push`) still get
- *     the managed-pathspec fallback.
+ *   - callers that pass NO explicit path list (`akm sync`, `akm push`) get every
+ *     unignored change inside the bundle.
  */
 
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
@@ -404,6 +404,27 @@ test("a run that writes nothing commits nothing at the end — an empty set is n
   expect(headCount()).toBe(before + 1);
   expect(lastCommitPaths()).toEqual(["memories/human.md"]);
   expect(statusPaths()).toEqual([]);
+});
+
+test("the pre-run sync of a repo-root bundle commits only the managed paths, not stray root files (#1502)", async () => {
+  initRepo();
+  fs.writeFileSync(path.join(stashDir, ".gitignore"), ".akm/evals/runs/\n");
+  fs.mkdirSync(path.join(stashDir, ".akm", "evals", "runs"), { recursive: true });
+  fs.writeFileSync(path.join(stashDir, ".akm", "evals", "runs", "latest"), "run-1\n");
+  git("add", "-f", "-A");
+  git("commit", "-m", "track ignored");
+  const before = headCount();
+  fs.writeFileSync(path.join(stashDir, "memories", "human.md"), "---\ntype: memory\n---\n\nEdited by hand.\n");
+  fs.writeFileSync(path.join(stashDir, "stray-report.html"), "<html></html>", "utf8");
+  fs.writeFileSync(path.join(stashDir, ".akm", "evals", "runs", "latest"), "run-2\n");
+
+  const result = await runImprove(() => {});
+
+  expect(result.preRunSync?.committed).toBe(true);
+  expect(result.preRunSync?.reason).toBeUndefined();
+  expect(headCount()).toBe(before + 1);
+  expect(lastCommitPaths()).toEqual(["memories/human.md"]);
+  expect(statusPaths()).toEqual([".akm/evals/runs/latest", "stray-report.html"]);
 });
 
 test("saveGitStash with no explicit path list selects every unignored change in the bundle", () => {

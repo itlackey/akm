@@ -119,6 +119,6 @@ test("improve auto-sync excludes pre-staged WIP from the same content directory"
   });
 
   expect(result.ok).toBe(true);
-  // The pre-run sync passes no path list (`akm sync` scoping); the end-of-run commit names the journaled path.
-  expect(calls).toEqual([undefined, ["memories/operation.md"]]);
+  // The pre-run sync of a repo-root bundle names the changed managed paths; the end-of-run commit names the journaled path.
+  expect(calls).toEqual([["memories/staged-wip.md"], ["memories/operation.md"]]);
 });

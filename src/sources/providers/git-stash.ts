@@ -276,6 +276,7 @@ export function saveGitStash(
   let repoDir: string;
   let writable = false;
   let managedContentRoot: string | undefined;
+  let namedCredential: string | undefined;
 
   if (name) {
     const config = loadConfig();
@@ -283,6 +284,7 @@ export function saveGitStash(
     // NotFoundError (exit 1), not UsageError (exit 2): the argument is
     // well-formed, the bundle just isn't configured.
     if (!stash) throw new NotFoundError(`No git-backed bundle found with name "${name}"`, "SOURCE_NOT_FOUND");
+    namedCredential = stash.credential;
     if (stash.enabled === false) {
       throw new UsageError(`Bundle "${name}" is disabled and cannot be synced.`, "INVALID_FLAG_VALUE");
     }
@@ -326,9 +328,6 @@ export function saveGitStash(
   if (!isGitBackedStash(repoDir)) {
     return { committed: false, pushed: false, skipped: true, reason: "not a git repository", output: "" };
   }
-  const credentialRef = name
-    ? findSyncStashByTarget(getSources(loadConfig()), name)?.credential
-    : credentialForRepo(repoDir);
 
   const statusResult = runGit(["-C", repoDir, "status", "--porcelain"]);
   if (statusResult.error || statusResult.status !== 0) {
@@ -338,28 +337,37 @@ export function saveGitStash(
   }
   const hasRemote = readHasRemote(repoDir);
   // `--no-push`, a read-only bundle and a bundle without a remote never touch the network.
-  const syncWithRemote = hasRemote && writable && allowPush;
-  // The bundle's configured credential reaches fetch and push through the child environment only.
-  const remoteEnv =
-    syncWithRemote && credentialRef
-      ? gitCredentialEnvironment(resolveSecret(credentialRef, storeSecretResolver.resolveSecret))
-      : undefined;
+  let syncWithRemote = hasRemote && writable && allowPush;
+  // The bundle's configured credential reaches fetch and push through the child environment only. One
+  // that cannot be resolved only skips the network step: the local commit still happens.
+  let remoteEnv: NodeJS.ProcessEnv | undefined;
+  let credentialFailure: string | undefined;
+  if (syncWithRemote) {
+    const credentialRef = name ? namedCredential : credentialForRepo(repoDir);
+    if (credentialRef) {
+      try {
+        remoteEnv = gitCredentialEnvironment(resolveSecret(credentialRef, storeSecretResolver.resolveSecret));
+      } catch (error) {
+        credentialFailure = `not pushed: ${error instanceof Error ? error.message : "credential could not be resolved"}`;
+        syncWithRemote = false;
+      }
+    }
+  }
+  const report = (result: SaveGitStashResult): SaveGitStashResult =>
+    credentialFailure && !result.reason ? { ...result, reason: credentialFailure } : result;
   if (!statusResult.stdout.trim() && options?.paths === undefined) {
-    return nothingToCommit(repoDir, "nothing to commit, working tree clean", syncWithRemote, remoteEnv);
+    return report(nothingToCommit(repoDir, "nothing to commit, working tree clean", syncWithRemote, remoteEnv));
   }
 
-  // Scoped staging (#476 + the auto-sync incident): NEVER refuse akm's commit
-  // because unrelated non-akm files exist in the working tree. When the stash
-  // dir is shared with a non-akm project (stash root == project repo root), a
-  // blunt `git add -A` would sweep the user's unrelated WIP into the stash's
-  // remote. We avoid that by SCOPING what we stage, not by refusing the commit.
+  // Selection (#476, #1502): an explicit sync commits every unignored change inside the bundle, so a
+  // file outside the asset directories is never left behind. What it never does is reach beyond the
+  // bundle or sweep in work staged elsewhere: the commit is built from exact paths only.
   //
   // Precedence:
   //   1. Explicit modified-file list (`options.paths`) — stage exactly those.
-  //   2. A lock-backed content root, or managed adapter pathspecs for an
-  //      ordinary stash. Both stay below AKM's resolved content boundary.
-  //   3. No resolvable managed path — no commit. Broad staging is never safe
-  //      because it can absorb unrelated work already present in the index.
+  //   2. A lock-backed or filesystem content root below the repo — its changed paths only.
+  //   3. Otherwise (the bundle is the repo root) — every changed path.
+  //   Ignored paths and nested repositories are dropped from 2 and 3.
   const managedRelativeRoot = managedContentRoot
     ? path.relative(repoDir, managedContentRoot).replaceAll(path.sep, "/")
     : "";
@@ -381,7 +389,7 @@ export function saveGitStash(
       ),
   );
   if (requestedPaths.length === 0) {
-    return nothingToCommit(repoDir, "nothing to commit", syncWithRemote, remoteEnv);
+    return report(nothingToCommit(repoDir, "nothing to commit", syncWithRemote, remoteEnv));
   }
   assertNoIgnoredExactPaths(repoDir, requestedPaths);
 
@@ -395,7 +403,7 @@ export function saveGitStash(
     expectedSnapshots: options?.expectedSnapshots,
   });
   if (!exactCommit) {
-    return nothingToCommit(repoDir, "nothing to commit", syncWithRemote, remoteEnv);
+    return report(nothingToCommit(repoDir, "nothing to commit", syncWithRemote, remoteEnv));
   }
 
   // Bring in whatever another host pushed, then push. A branch that cannot be pushed still keeps its
@@ -409,14 +417,14 @@ export function saveGitStash(
         : undefined;
   const pushTarget = typeof upstream === "object" ? upstream : undefined;
   if (!pushTarget) {
-    return {
+    return report({
       committed: true,
       pushed: false,
       skipped: false,
       ...(typeof upstream === "string" ? { reason: `not pushed: ${upstream}` } : {}),
       output: `commit ${exactCommit}`,
       commit: exactCommit,
-    };
+    });
   }
 
   const pushOutput = pushToUpstream(

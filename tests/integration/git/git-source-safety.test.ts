@@ -4,11 +4,10 @@
 
 // Git write safety at the source boundary (real repositories, spawnSync git):
 //
-//   - `saveGitStash` SCOPES what it stages instead of refusing (#476 + the
-//     auto-sync incident where stray non-akm files in the stash root refused
-//     EVERY commit for ~1.5 days): explicit `options.paths` → exactly those;
-//     otherwise akm-managed pathspecs that exist; nothing managed → no commit.
-//     Unrelated non-akm files are left untouched/uncommitted.
+//   - `saveGitStash` SCOPES what it stages instead of refusing (#476, #1502):
+//     explicit `options.paths` → exactly those; otherwise every unignored change
+//     inside the bundle (a nested content root stays contained). Ignored paths
+//     are left untouched/uncommitted.
 //   - `commitWriteTargetBoundary` commits exactly the operation's paths (also
 //     under a content/ layout, also next to pre-staged user WIP), keeps
 //     ignored paths local with a warning, and when the lease-guarded push is
@@ -297,7 +296,7 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
   });
 });
 
-describe("saveGitStash — scoped staging (auto-sync incident regression)", () => {
+describe("saveGitStash — scoped staging (exact paths, bundle-wide default)", () => {
   test("an ignored path aborts a mixed exact-path commit without staging its siblings", () => {
     const repoDir = process.env.AKM_BUNDLE_DIR as string;
     initRepo(repoDir);
