@@ -13,11 +13,11 @@ while [ "$#" -gt 0 ]; do
     --dir)
       if [ "$#" -lt 2 ]; then echo "Error: --dir needs a directory" >&2; exit 1; fi
       INSTALL_DIR="$2"; shift 2 ;;
-    --dir=*) INSTALL_DIR="${1#--dir=}"; shift ;;
     -*) echo "Error: unknown option $1 (use --system, --dir <dir>, or a release tag)" >&2; exit 1 ;;
     *) TAG="$1"; shift ;;
   esac
 done
+INSTALL_DIR="${INSTALL_DIR%/}"
 
 # Detect OS
 OS="$(uname -s)"
@@ -31,6 +31,11 @@ case "$OS" in
     ;;
   *) echo "Unsupported OS: $OS" >&2; exit 1 ;;
 esac
+
+if [ -z "${HOME:-}" ] && [ -z "$INSTALL_DIR" ] && [ "$SYSTEM" -eq 0 ]; then
+  echo "Error: HOME is not set; pass --dir <dir> or --system." >&2
+  exit 1
+fi
 
 # Pick the install dir. --dir / AKM_INSTALL_DIR win; --system means
 # /usr/local/bin (sudo when needed); otherwise /usr/local/bin only if we can
@@ -172,8 +177,8 @@ case ":$PATH:" in
   *":${INSTALL_DIR}:"*) ;;
   *)
     case "$(basename "${SHELL:-}")" in
-      zsh)  PROFILE="~/.zshrc" ;;
-      bash) if [ "$OS" = "darwin" ]; then PROFILE="~/.bash_profile"; else PROFILE="~/.bashrc"; fi ;;
+      zsh)  PROFILE="$HOME/.zshrc" ;;
+      bash) if [ "$OS" = "darwin" ]; then PROFILE="$HOME/.bash_profile"; else PROFILE="$HOME/.bashrc"; fi ;;
       *)    PROFILE="your shell profile" ;;
     esac
     echo ""
@@ -185,9 +190,9 @@ esac
 FOUND="$(command -v akm 2>/dev/null || true)"
 if [ -n "$FOUND" ] && [ "$FOUND" != "${INSTALL_DIR}/akm" ]; then
   echo ""
-  echo "Warning: another akm comes first on your PATH and will shadow this install:"
+  echo "Warning: another akm on your PATH may shadow this install:"
   echo "  $FOUND"
-  echo "Remove it, or put ${INSTALL_DIR} earlier on PATH."
+  echo "Remove it, or put ${INSTALL_DIR} before it on PATH."
 fi
 
 echo ""

@@ -372,7 +372,8 @@ export async function performUpgrade(
           (IS_WINDOWS
             ? `Or re-run the install script: curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash`
             : `Or move to a user install (changing the binary's owner won't help, the directory is the problem):\n` +
-              `  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash -s -- --dir ~/.local/bin && sudo rm ${execPath}`),
+              `  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash -s -- --dir ~/.local/bin v${currentVersion} && sudo rm "${execPath}"\n` +
+              `Then open a new shell (or run \`hash -r\`).`),
         "UPGRADE_BLOCKED",
       );
     }

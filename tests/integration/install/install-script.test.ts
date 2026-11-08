@@ -15,6 +15,15 @@ const INSTALL_SCRIPT = path.join(PROJECT_ROOT, "install.sh");
 const BASH_PATH = resolveCommand("bash");
 const CHMOD_PATH = resolveCommand("chmod");
 
+const usrLocalBinWritable = (() => {
+  try {
+    fs.accessSync("/usr/local/bin", fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 const tempRoots: string[] = [];
 
 function resolveCommand(name: string): string {
@@ -282,6 +291,7 @@ describe("install.sh", () => {
     expect(result.status).toBe(0);
     const log = fs.readFileSync(harness.logFile, "utf8");
     expect(log).toContain("sudo mv");
+    expect(result.stdout).toContain("sudo akm upgrade");
     expect(fs.existsSync(path.join(harness.installDir, "akm"))).toBe(true);
   });
 
@@ -332,18 +342,6 @@ describe("install.sh", () => {
     expect(fs.existsSync(path.join(harness.installDir, "akm"))).toBe(false);
   });
 
-  test.skipIf(runningAsRoot)(
-    "uses sudo for a --system install into a non-writable dir and says upgrades need sudo",
-    () => {
-      const harness = createHarness({ installDirWritable: false, useSudo: true });
-      const result = harness.run(["--system"]);
-
-      expect(result.status).toBe(0);
-      expect(fs.existsSync(path.join(harness.installDir, "akm"))).toBe(true);
-      expect(result.stdout).toContain("sudo akm upgrade");
-    },
-  );
-
   test.skipIf(runningAsRoot)("does not use sudo without --system", () => {
     const harness = createHarness({ installDirWritable: false, useSudo: true });
     const result = harness.run();
@@ -368,13 +366,6 @@ describe("install.sh", () => {
     "defaults to a user install in ~/.local/bin, created if missing, when /usr/local/bin is not writable",
     () => {
       const harness = createHarness({ noInstallDirEnv: true, shell: "/bin/zsh" });
-      // Skip when the machine running the test can write to /usr/local/bin.
-      if (fs.existsSync("/usr/local/bin")) {
-        try {
-          fs.accessSync("/usr/local/bin", fs.constants.W_OK);
-          return;
-        } catch {}
-      }
       const result = harness.run();
       const target = path.join(harness.home, ".local", "bin", "akm");
 
@@ -382,7 +373,7 @@ describe("install.sh", () => {
       expect(fs.existsSync(target)).toBe(true);
       expect(result.stdout).toContain("bash -s -- --system");
       expect(result.stdout).toContain("not on your PATH");
-      expect(result.stdout).toContain("~/.zshrc");
+      expect(result.stdout).toContain(`${harness.home}/.zshrc`);
       expect(result.stdout).toContain(`export PATH="${path.join(harness.home, ".local", "bin")}:$PATH"`);
     },
   );
@@ -396,6 +387,15 @@ describe("install.sh", () => {
     expect(fs.existsSync(path.join(dir, "akm"))).toBe(true);
   });
 
+  test("--dir with a trailing slash installs to the directory", () => {
+    const harness = createHarness();
+    const dir = path.join(harness.root, "slash-dir");
+    const result = harness.run(["--dir", `${dir}/`]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`akm installed to ${dir}/akm`);
+  });
+
   test("AKM_INSTALL_DIR still works and is created if missing", () => {
     const harness = createHarness({ installDirName: "missing-parent/inner" });
     fs.rmSync(path.join(harness.root, "missing-parent"), { recursive: true, force: true });
@@ -406,7 +406,7 @@ describe("install.sh", () => {
   });
 
   test("no PATH warning when the install dir is on PATH", () => {
-    const dir = path.join(os.tmpdir(), "akm-path-test-dir");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-path-test-"));
     const harness = createHarness({ extraPath: [dir] });
     const result = harness.run(["--dir", dir]);
     expect(result.status).toBe(0);
@@ -421,7 +421,7 @@ describe("install.sh", () => {
     const result = createHarness({ extraPath: [other] }).run();
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("will shadow this install");
+    expect(result.stdout).toContain("may shadow this install");
     expect(result.stdout).toContain(path.join(other, "akm"));
   });
 

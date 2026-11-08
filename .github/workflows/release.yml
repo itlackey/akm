@@ -111,7 +111,7 @@ jobs:
           EOF
           cp install.sh install.ps1 artifacts/
           # A release's installers install that release: pin their default from "latest" to this tag.
-          sed -i "s|TAG=\"\${1:-latest}\"|TAG=\"\${1:-v$CANDIDATE_VERSION}\"|" artifacts/install.sh
+          sed -i "s|^TAG=\"latest\"$|TAG=\"v$CANDIDATE_VERSION\"|" artifacts/install.sh
           sed -i "s|else { \"latest\" }|else { \"v$CANDIDATE_VERSION\" }|" artifacts/install.ps1
           grep -q "v$CANDIDATE_VERSION" artifacts/install.sh
           grep -q "v$CANDIDATE_VERSION" artifacts/install.ps1
