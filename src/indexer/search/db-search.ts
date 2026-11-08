@@ -450,6 +450,11 @@ type HydratedEntry = NonNullable<ReturnType<typeof getEntryById>> & { id: number
  * the first `limit` that survive path deduplication and the filters. An entry
  * whose indexed content is identical to a kept one's (the same body saved
  * under another name or in another bundle) is a duplicate and is skipped.
+ *
+ * A memory and the `.derived` twin memory-inference wrote beside it are one
+ * family and take one slot: the twin is skipped when its parent is kept, and
+ * a parent that arrives after its twin takes the twin's place. A twin whose
+ * parent is not a hit stays. The parent's `expandTo` still points at the twin.
  */
 function selectFusedEntries(
   db: Database,
@@ -460,6 +465,7 @@ function selectFusedEntries(
   const selected: Array<{ candidate: FusedCandidate; row: HydratedEntry }> = [];
   const seenPaths = new Set<string>();
   const seenContent = new Set<string>();
+  const families = new Map<string, number>();
   const batchSize = Math.max(limit * 2, 20);
   for (let offset = 0; offset < fused.length && selected.length < limit; offset += batchSize) {
     const batch: Array<HydratedEntry & { candidate: FusedCandidate }> = [];
@@ -475,6 +481,15 @@ function selectFusedEntries(
       if (content) {
         if (seenContent.has(content)) continue;
         seenContent.add(content);
+      }
+      if (row.entry.type === "memory") {
+        const key = `${row.bundleId}\0${row.entry.derivedFrom ?? row.conceptId}`;
+        const at = families.get(key);
+        if (at !== undefined) {
+          if (!row.entry.derivedFrom && selected[at]?.row.entry.derivedFrom) selected[at] = { candidate, row };
+          continue;
+        }
+        families.set(key, selected.length);
       }
       selected.push({ candidate, row });
     }

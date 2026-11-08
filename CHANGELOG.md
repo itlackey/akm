@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Search and curate return one result per memory family: a `.derived` twin is dropped when its parent memory is also a hit (the parent keeps `expandTo`), and the freed slot goes to the next hit. A twin whose parent is not a hit is still returned (#1481).
+
 ## [0.10.261111] - 2026-11-06
 
 ### Added
