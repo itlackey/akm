@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261112] - 2026-11-07
+
 ### Changed
 
 - `install.sh` installs for the current user by default when `/usr/local/bin` is not writable (to `~/.local/bin`, created if missing) instead of silently using `sudo`, which left a root-owned folder that made every later `akm upgrade` fail. New flags work when piped (`curl … | bash -s -- --system` for `/usr/local/bin` with sudo, `--dir <dir>`); `AKM_INSTALL_DIR` still works. It prints the exact `export PATH=…` line when the folder is not on `PATH`, warns when another `akm` earlier on `PATH` shadows the new one, and says a `--system` install upgrades with `sudo akm upgrade`. The `UPGRADE_BLOCKED` message now suggests the user install. Scripts that run `akm` right after installing should add `~/.local/bin` to `PATH` or pass `--system` (#1457).
