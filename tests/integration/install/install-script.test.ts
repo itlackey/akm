@@ -362,7 +362,7 @@ describe("install.sh", () => {
     expect(result.stderr).toContain("--dir");
   });
 
-  test.skipIf(runningAsRoot)(
+  test.skipIf(runningAsRoot || usrLocalBinWritable)(
     "defaults to a user install in ~/.local/bin, created if missing, when /usr/local/bin is not writable",
     () => {
       const harness = createHarness({ noInstallDirEnv: true, shell: "/bin/zsh" });
