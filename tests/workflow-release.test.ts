@@ -130,13 +130,13 @@ describe("release workflow", () => {
   });
 
   test("the installers attached to a release install that release", () => {
-    expect(source).toContain('TAG=\\"\\${1:-v$CANDIDATE_VERSION}\\"');
+    expect(source).toContain('s|^TAG=\\"latest\\"$|TAG=\\"v$CANDIDATE_VERSION\\"|');
     expect(source).toContain('else { \\"v$CANDIDATE_VERSION\\" }');
     const scripts = ["install.sh", "install.ps1"].map((name) =>
       fs.readFileSync(path.resolve(import.meta.dir, "..", name), "utf8"),
     );
     // The lines the pinning rewrites must still exist in the repository's copies.
-    expect(scripts[0]).toContain('TAG="${1:-latest}"');
+    expect(scripts[0]).toMatch(/^TAG="latest"$/m);
     expect(scripts[1]).toContain('else { "latest" }');
   });
 
