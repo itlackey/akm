@@ -119,14 +119,13 @@ test("Review: Refresh confirms politely and keeps focus; a toast clears the deci
   await open(page, server, `/review/${server.proposals.stale}`);
   await button("Accept…").click();
   await button("Confirm accept").click();
-  // The shelf unmounts while the next proposal loads, and the toast closes itself, so read both rects in one
-  // synchronous evaluate, retried until both exist, instead of two separate boundingBox() calls that can straddle either change.
+  // The shelf unmounts while the next proposal loads, and the toast re-measures its lift a few times a second, so
+  // read both rects in one synchronous evaluate and retry the comparison itself instead of two boundingBox() calls.
   const rects = (a, b) =>
     page.evaluate(
       ([x, y]) => {
         const r = (sel) => {
-          const e = document.querySelector(sel);
-          const v = e?.getBoundingClientRect();
+          const v = document.querySelector(sel)?.getBoundingClientRect();
           return v && v.width > 0 && v.height > 0 ? { y: v.y, height: v.height } : null;
         };
         const [ra, rb] = [r(x), r(y)];
@@ -134,16 +133,23 @@ test("Review: Refresh confirms politely and keeps focus; a toast clears the deci
       },
       [a, b],
     );
-  const both = async (a, b) => {
-    for (const deadline = Date.now() + 10000; Date.now() < deadline; await page.waitForTimeout(50)) {
-      const pair = await rects(a, b);
-      if (pair) return pair;
-    }
-    throw new Error(`${a} and ${b} were never on screen together`);
-  };
-  const [toastBox, shelfBox] = await both(".toast", ".decision-shelf");
-  assert.ok(toastBox.y + toastBox.height <= shelfBox.y + 1, "the toast ends above the shelf");
+  await expect
+    .poll(
+      async () => {
+        const p = await rects(".toast", ".decision-shelf");
+        return !!p && p[0].y + p[0].height <= p[1].y + 1;
+      },
+      { message: "the toast ends above the shelf", timeout: 10000 },
+    )
+    .toBe(true);
   // The next proposal's row is the highlighted one and is inside the queue list's view.
-  const [rowBox, listBox] = await both(".review-row.active", ".review-list");
-  assert.ok(rowBox.y >= listBox.y - 1 && rowBox.y + rowBox.height <= listBox.y + listBox.height + 1);
+  await expect
+    .poll(
+      async () => {
+        const p = await rects(".review-row.active", ".review-list");
+        return !!p && p[0].y >= p[1].y - 1 && p[0].y + p[0].height <= p[1].y + p[1].height + 1;
+      },
+      { message: "the next row is active and in view", timeout: 10000 },
+    )
+    .toBe(true);
 });
