@@ -48,6 +48,32 @@ export const DISTILL_LESSON_UPDATE_JSON_SCHEMA: Record<string, unknown> = {
   },
 };
 
+/**
+ * The figures and names in the memory that the lesson never mentions: numbers with their unit, dates, file and host
+ * names, identifiers and capitalised names. The writer skips many of these when left to find them (#1405), so they
+ * are found here, without the model, and handed over to place.
+ */
+export function memoryFactCandidates(memory: string, lessonBody: string): string[] {
+  const text = memory.slice(0, 3000);
+  const found = new Set<string>();
+  const add = (re: RegExp) => {
+    for (const m of text.matchAll(re)) {
+      const hit = m[0];
+      const inLesson = new RegExp(
+        `(?<![\\p{L}\\p{N}])${hit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`,
+        "iu",
+      );
+      if (!inLesson.test(lessonBody)) found.add(hit);
+    }
+  };
+  add(
+    /\b\d+(?:[.,:/-]\d+)*(?:%|\p{L}+| (?:[KMGT]i?B|ms|seconds?|minutes?|hours?|days?|weeks?|months?|years?|MB\/s|GB\/s|requests?|retries|times|files?|nodes?|workers?|connections?)\b)?/gu,
+  );
+  add(/[\p{L}\d_-]+(?:[./][\p{L}\d_-]+)+|\b\p{Ll}+\p{Lu}\p{L}*|\b\p{L}+_\p{L}+|\b\p{Ll}+(?:-\w+)*-\w*\d\w*/gu);
+  add(/(?<=\p{Ll}[,;(]? )\p{Lu}[\p{L}-]+(?: \p{Lu}[\p{L}-]+)*/gu);
+  return [...found].slice(0, 20);
+}
+
 export function buildLessonUpdatePrompt(memory: string, feedback: string[], candidates: UpdateCandidate[]): string {
   const lines = [
     "A lesson written from the memory below would repeat a lesson the library already holds. Do not write a new lesson. Extend the existing one with what the memory adds.",
@@ -62,6 +88,8 @@ export function buildLessonUpdatePrompt(memory: string, feedback: string[], cand
   lines.push("", "Existing lessons, nearest first (they may be on another subject):");
   for (const candidate of candidates) {
     lines.push(`\nExisting lesson ref: ${candidate.ref}`, "```", candidate.body.slice(0, 3000), "```");
+    const missing = memoryFactCandidates(memory, candidate.body);
+    if (missing.length > 0) lines.push(`Figures and names in the memory this lesson lacks: ${missing.join(" | ")}`);
   }
   lines.push(
     "",
