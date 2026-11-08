@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The hints guides are accurate: the brief guide is cut to about 3,000 characters (find, read, feedback, writing, errors and exit codes), both exit-code tables list 75, `akm search` is described as searching local sources (or the project's `from`), and improvement is described as review-first. Both guides, and `akm curate --help`, now mention `curate --pack <tokens>`. **`akm hints` now prints the brief guide by default (it printed the complete guide); `--detail full` prints the complete guide.** Text search output no longer ends with a nudge toward `akm workflow run` (#1474, #1489).
 - Search and curate return one result per memory family: a `.derived` twin is dropped when its parent memory is also a hit, and a parent ranked below its twin takes the twin's place (the parent keeps `expandTo`), and the freed slot goes to the next hit. A twin whose parent is not a hit is still returned (#1481).
 
 - `--help` is shorter (#1486). A command's help no longer repeats the global flags (`--format`, `--detail`, `--output`, `--quiet`, `--verbose`): it ends with one line pointing at `akm --help`, where they are listed once, and every option description is one short sentence (the detail is in `docs/reference/cli.md`). `akm remember --help` goes from 13,182 to 2,882 characters and `akm search --help` from 6,716 to 2,193, `akm improve --help` from 8,495 to 3,548 and `akm feedback --help` from 7,350 to 3,750.

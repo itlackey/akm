@@ -25,7 +25,11 @@ describe("shipped hints on recording feedback (#999)", () => {
     test(`${name} hints say a failing akm command is not feedback on the asset`, () => {
       // The hints are hard-wrapped prose; compare with line breaks folded.
       const prose = hints.replace(/\s+/g, " ");
-      expect(prose).toContain("An akm command that fails says nothing about the asset; don't record it as feedback.");
+      expect(prose).toContain(
+        name === "brief"
+          ? "A failed akm command (e.g. `akm show` erroring) is not feedback on the asset."
+          : "An akm command that fails says nothing about the asset; don't record it as feedback.",
+      );
     });
 
     test(`${name} hints no longer tell agents to give feedback when something "fails"`, () => {
