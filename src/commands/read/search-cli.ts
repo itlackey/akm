@@ -266,8 +266,6 @@ export async function runCurate(
     project?: string;
     /** The working directory that selects a project; default: the process's. */
     cwd?: string;
-    /** `false`: the project's rules do not lead (model work, which runs under no project). */
-    rules?: boolean;
   },
   outputMode: Pick<OutputMode, "detail" | "shape">,
 ): Promise<CurateResponse> {
@@ -295,7 +293,7 @@ export async function runCurate(
     belief: parseBeliefFilterMode(args.belief ?? "current"),
     eventSource: args.eventSource ?? resolveUsageEventSource(),
     attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
-    project: args.rules === false ? undefined : projectContext(project, filters),
+    project: projectContext(project, filters),
   });
   return view ? { ...curated, project: view } : curated;
 }

@@ -143,7 +143,7 @@ export interface CurateOptions extends RecallOptions {
    * top-level event.
    */
   skipLogging?: boolean;
-  /** Present: the project's applicable rules lead the items, counted in `limit` (see `akmSearch`). */
+  /** Present: only the project's applicable rules are returned (see `akmSearch`). */
   project?: ProjectContext;
 }
 

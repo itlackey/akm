@@ -17,7 +17,7 @@ consistency and reducing repeated context-setting.
 | `workflows/` | Workflows | Multi-step orchestration sequences |
 | `tasks/` | Tasks | Scheduled or on-demand automation tasks |
 | `lessons/` | Lessons | Durable lessons extracted from past sessions |
-| `rules/` | Rules | Short bullet lists of agent rules; those for the current project lead search and curate |
+| `rules/` | Rules | Short bullet lists of agent rules; list them with `akm search "" --type rule --limit 200 --detail normal` |
 | `facts/` | Facts | Durable stash-level context; the house conventions in `facts/conventions/` are auto-surfaced to authoring agents |
 | `scripts/` | Scripts | Executable helpers agents and humans can run |
 | `env/`, `secrets/` | Env & Secrets | Configuration groups and single credentials; values are never content-indexed |
