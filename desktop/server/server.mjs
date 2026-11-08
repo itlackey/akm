@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
+import net from "node:net";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -18,12 +19,7 @@ import { fileURLToPath } from "node:url";
  * @param {{ host?: string, port?: number, origin?: string }} [options]
  */
 export async function startServer({ host = "127.0.0.1", port = 0, origin: configured } = {}) {
-  if (!configured && isWildcard(host)) {
-    throw new Error(
-      `--host ${host} listens on every interface, so the browser's address cannot be known. Pass --origin <url> with the address you will open.`,
-    );
-  }
-  if (configured) new URL(configured); // fail on a malformed --origin before listening
+  const configuredOrigin = configured === undefined ? undefined : parseOrigin(configured);
   delete process.env.AKM_LAUNCHER_PATH;
   delete process.env.AKM_LAUNCHER_PID;
   process.env.AKM_LAUNCHER_NODE = process.execPath;
@@ -67,7 +63,16 @@ export async function startServer({ host = "127.0.0.1", port = 0, origin: config
     server.listen(port, host, () => resolve(undefined));
   });
   const address = /** @type {import("node:net").AddressInfo} */ (server.address());
-  const origin = configured ? new URL(configured).origin : `http://${hostname(host)}:${address.port}`;
+  if (!configuredOrigin && (address.address === "0.0.0.0" || address.address === "::")) {
+    server.close();
+    throw new Error(
+      `--host ${host} listens on every interface, so the browser's address cannot be known. Pass --origin <url> with the address you will open.`,
+    );
+  }
+  // Without --origin, the browser uses the address actually bound (so "Localhost" and "0:0:0:0:0:0:0:1" normalise).
+  const origin =
+    configuredOrigin ??
+    new URL(`http://${net.isIPv6(address.address) ? `[${address.address}]` : address.address}:${address.port}`).origin;
   protocol = new URL(origin).protocol.slice(0, -1);
   process.env.AKM_DESKTOP_ORIGIN = origin;
   // Import after environment initialization, including for loader subprocesses.
@@ -115,10 +120,20 @@ function openBrowser(url) {
   }
 }
 
-/** @param {string} host */
-const isWildcard = (host) => host === "0.0.0.0" || host === "::" || host === "[::]";
-/** @param {string} host */
-const hostname = (host) => (host.includes(":") && !host.startsWith("[") ? `[${host}]` : host);
+/** @param {string} value */
+function parseOrigin(value) {
+  const message = "--origin must be http(s)://host[:port], the address the browser opens.";
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(message);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(message);
+  if ((url.pathname !== "/" && url.pathname !== "") || url.search || url.hash)
+    console.warn(`Ignoring the path in --origin ${value}: the app is always served from /.`);
+  return url.origin;
+}
 
 /** @param {string[]} argv */
 function parseArgs(argv) {

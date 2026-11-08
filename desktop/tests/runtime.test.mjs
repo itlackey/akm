@@ -51,8 +51,10 @@ async function launch(t, { runtime = process.execPath, electronMode = false } = 
     });
   });
   const bootstrap = await fetch(ready.url, { redirect: "manual" });
-  assert.equal(bootstrap.status, 303);
-  assert.equal(bootstrap.headers.get("location"), "/");
+  assert.equal(bootstrap.status, 200);
+  assert.match(await bootstrap.text(), /http-equiv="refresh" content="0;url=\/"/);
+  assert.equal(bootstrap.headers.get("cache-control"), "no-store");
+  assert.equal(bootstrap.headers.get("referrer-policy"), "no-referrer");
   assert.match(bootstrap.headers.get("set-cookie"), /HttpOnly; SameSite=Strict/);
   const cookie = bootstrap.headers.get("set-cookie").split(";")[0];
   const request = (route, body, extra = {}) =>
@@ -74,7 +76,11 @@ test("loopback session bootstrap, authentication and strict write origin", async
   assert.equal(denied.status, 401);
   assert.equal((await denied.json()).code, "UNAUTHORIZED");
   assert.equal(
-    (await fetch(`${app.origin}/api/meta`, { headers: { Cookie: "akm_desktop_session_80=invalid" } })).status,
+    (
+      await fetch(`${app.origin}/api/meta`, {
+        headers: { Cookie: `akm_desktop_session_${new URL(app.origin).port}=invalid` },
+      })
+    ).status,
     401,
   );
   assert.equal(
@@ -304,7 +310,13 @@ async function launchWith(t, args) {
   const send = (route, { host = new URL(ready.origin).host, method = "GET", headers = {} } = {}) =>
     new Promise((resolve, reject) => {
       const req = http.request(
-        { host: "127.0.0.1", port: bindPort(args), path: route, method, headers: { Host: host, ...headers } },
+        {
+          host: args.includes("--origin") ? "127.0.0.1" : new URL(ready.origin).hostname.replace(/[[\]]/g, ""),
+          port: bindPort(args),
+          path: route,
+          method,
+          headers: { Host: host, ...headers },
+        },
         (res) => {
           res.resume();
           res.once("end", () => resolve({ status: res.statusCode, headers: res.headers }));
@@ -324,7 +336,7 @@ test("a configured --origin and --host serve under that address, with every chec
   assert.equal(app.ready.origin, origin);
   assert.equal(app.ready.url, `${origin}/?desktop_session=${app.token}`);
   const bootstrap = await app.send(`/?desktop_session=${app.token}`);
-  assert.equal(bootstrap.status, 303);
+  assert.equal(bootstrap.status, 200);
   const setCookie = bootstrap.headers["set-cookie"][0];
   assert.match(setCookie, new RegExp(`^akm_desktop_session_${port}=`));
   assert.doesNotMatch(setCookie, /Secure/);
@@ -342,14 +354,51 @@ test("a configured --origin and --host serve under that address, with every chec
       headers: { Cookie: cookie, Origin: originHeader, "Content-Type": "application/json", "Content-Length": "2" },
     });
   assert.equal((await write("http://evil.example")).status, 403, "a write from another origin");
+  assert.notEqual((await write(origin)).status, 403, "a write from the configured origin passes the origin check");
 });
 
 test("an https origin marks the session cookie Secure", async (t) => {
   const port = await freePort();
   const app = await launchWith(t, ["--port", String(port), "--origin", `https://akm.test:${port}`]);
   const bootstrap = await app.send(`/?desktop_session=${app.token}`);
-  assert.equal(bootstrap.status, 303);
+  assert.equal(bootstrap.status, 200);
   assert.match(bootstrap.headers["set-cookie"][0], /; Secure$/);
+});
+
+test("host spellings are normalised, and wildcard spellings need --origin", async (t) => {
+  const port = await freePort();
+  const app = await launchWith(t, ["--host", "Localhost", "--port", String(port)]);
+  const url = new URL(app.ready.origin);
+  assert.equal(url.port, String(port));
+  assert.ok(["127.0.0.1", "[::1]"].includes(url.hostname), url.hostname);
+  assert.equal((await app.send(`/?desktop_session=${app.token}`)).status, 200);
+  for (const host of ["::0", "0", "0:0:0:0:0:0:0:0"]) {
+    const child = spawn(process.execPath, [path.join(appRoot, "server/server.mjs"), "--host", host], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    const [code] = await new Promise((resolve) => child.once("exit", (...exit) => resolve(exit)));
+    assert.notEqual(code, 0, host);
+    assert.match(stderr, /--origin/, host);
+  }
+});
+
+test("an --origin without http(s) exits non-zero and names the flag", async () => {
+  for (const origin of ["my-server:4444", "ftp://my-server"]) {
+    const child = spawn(process.execPath, [path.join(appRoot, "server/server.mjs"), "--origin", origin], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    const [code] = await new Promise((resolve) => child.once("exit", (...exit) => resolve(exit)));
+    assert.notEqual(code, 0, origin);
+    assert.match(stderr, /--origin must be http\(s\):\/\/host/, origin);
+  }
 });
 
 test("instances on different ports use different cookie names", async (t) => {

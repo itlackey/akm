@@ -22,10 +22,12 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
   const bootstrap = event.url.searchParams.get("desktop_session");
   if (event.request.method === "GET" && event.url.pathname === "/" && sameSecret(bootstrap, token)) {
-    return new Response(null, {
-      status: 303,
+    // Not a 303: a SameSite=Strict cookie is not sent on the redirect of a navigation that started on another site
+    // (a link in a chat or an admin page), so the follow-up GET / would be 401. A refresh is a fresh navigation.
+    return new Response('<!doctype html><meta http-equiv="refresh" content="0;url=/">', {
+      status: 200,
       headers: {
-        Location: "/",
+        "Content-Type": "text/html; charset=utf-8",
         "Set-Cookie": `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict${origin.startsWith("https:") ? "; Secure" : ""}`,
         "Cache-Control": "no-store",
         "Referrer-Policy": "no-referrer",

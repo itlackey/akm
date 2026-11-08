@@ -105,11 +105,12 @@ checks the import rule for server code. Desktop-owned routes are under
 
 ## Local application boundary
 
-The server binds an OS-selected port on `127.0.0.1`. A random per-launch token
+By default the server binds an OS-selected port on `127.0.0.1`; `akm-web` with `--host` and `--origin` binds elsewhere
+(see the README section "Run it on a server"). A random per-launch token
 bootstraps an HttpOnly, SameSite=Strict cookie and is removed from the browser
 URL. The app refuses foreign Host/Origin requests, validates JSON body sizes,
 and does not enable CORS. Its token is redacted by AKM's configuration inspector.
-This local HTTP listener is implementation detail, **not** a public API server.
+Unless `akm-web` is started with `--host`, this local HTTP listener is implementation detail, **not** a public API server.
 
 The renderer has no Node integration or preload authority. Electron sandboxing
 and context isolation remain enabled. Native permission requests, embedded

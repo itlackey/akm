@@ -315,7 +315,9 @@ jobs:
           node scripts/core.mjs --tarball "$RUNNER_TEMP/engine/akm-cli-$VERSION.tgz"
           bun install --frozen-lockfile --ignore-scripts --force
           npm run build
-          echo "STAGE=$(node scripts/package-web.mjs --release | tail -1 | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).stage')" >> "$GITHUB_ENV"
+          # Two commands: a failure inside $(...) would not stop the step.
+          node scripts/package-web.mjs --release > "$RUNNER_TEMP/akm-web.json"
+          echo "STAGE=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").trim().split("\n").pop()).stage' "$RUNNER_TEMP/akm-web.json")" >> "$GITHUB_ENV"
 
       # npm trusted publishing, as for akm-cli: the job's OIDC token authenticates; no npm token is stored.
       - name: Publish akm-web to npm

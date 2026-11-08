@@ -20,21 +20,22 @@ const work = await mkdtemp(path.join(os.tmpdir(), "akm-web-smoke-"));
 const fixture = await createFixture({ index: false, packageRoot: root });
 /** @type {import("node:child_process").ChildProcess | undefined} */
 let child;
+/** @type {string | undefined} */
+let stage;
 try {
-  const { stage } = JSON.parse(
+  ({ stage } = JSON.parse(
     execFileSync(process.execPath, [path.join(root, "scripts/package-web.mjs")], { encoding: "utf8" }).trim(),
-  );
+  ));
   const pack = (/** @type {string} */ dir) =>
     path.join(
       work,
       execFileSync("npm", ["pack", "--silent", "--pack-destination", work, dir], { encoding: "utf8" }).trim(),
     );
-  const tarballs = [pack(stage), pack(path.join(root, ".core"))];
+  const tarballs = [pack(/** @type {string} */ (stage)), pack(path.join(root, ".core"))];
   const prefix = path.join(work, "prefix");
   execFileSync("npm", ["install", "--prefix", prefix, "--ignore-scripts", "--no-audit", "--no-fund", ...tarballs], {
     stdio: "inherit",
   });
-  await rm(stage, { recursive: true, force: true });
   const bin = path.join(prefix, "node_modules/.bin/akm-web");
   child = spawn(process.execPath, [bin], { env: fixture.env, stdio: ["ignore", "pipe", "inherit"] });
   const lines = readline.createInterface({ input: /** @type {import("node:stream").Readable} */ (child.stdout) });
@@ -60,6 +61,7 @@ try {
     child.kill("SIGTERM");
     await once(child, "exit");
   }
+  if (stage) await rm(stage, { recursive: true, force: true });
   await fixture.cleanup();
   await rm(work, { recursive: true, force: true });
 }
