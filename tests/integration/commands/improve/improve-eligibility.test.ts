@@ -762,63 +762,7 @@ describe("distill signal-delta eligibility", () => {
     ).toMatchObject([{ ref: "memories/flagged" }]);
   });
 
-  test("a memory whose only feedback is a positive without a reason is not distilled; the skip is reported and newer feedback with a reason lifts it", async () => {
-    const stash = makeTempDir("akm-elig-distill-bare-positive-");
-    writeMemory(stash, "praised", "Helped an agent twice.");
-    writeMemory(stash, "explained", "Settled the port question.");
-    await buildIndex(stash);
-    appendEvent({ eventType: "feedback", ref: durableRef("memories/praised"), metadata: { signal: "positive" } });
-    appendEvent({
-      eventType: "feedback",
-      ref: durableRef("memories/explained"),
-      metadata: { signal: "positive", reason: "it settled the port question" },
-    });
-
-    const distilled: string[] = [];
-    const improve = () =>
-      akmImprove({
-        scope: "memory",
-        stashDir: stash,
-        ensureIndexFn: async () => false,
-        reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
-        reflectFn: async ({ ref }) => okReflect(ref ?? ""),
-        distillFn: async ({ ref }) => {
-          if (ref) distilled.push(ref);
-          return okDistill(ref ?? "");
-        },
-      });
-
-    const result = await improve();
-
-    expect(distilled).toEqual(["memories/explained"]);
-    expect(result.distillSkipped?.byReason["only positive feedback, without a reason"]).toBe(1);
-    expect(result.distillSkipped?.samples).toContainEqual({
-      ref: "memories/praised",
-      reason: "only positive feedback, without a reason",
-    });
-    expect(
-      readEvents({ type: "improve_skipped" }).events.filter(
-        (e) => e.metadata?.reason === "distill_positive_without_reason",
-      ),
-    ).toMatchObject([{ ref: "memories/praised" }]);
-
-    // The ledger holds it until newer feedback: a second run leaves it alone, a reason lifts it.
-    distilled.length = 0;
-    await improve();
-    expect(distilled).not.toContain("memories/praised");
-    appendEvent(
-      {
-        eventType: "feedback",
-        ref: durableRef("memories/praised"),
-        metadata: { signal: "positive", reason: "it saved a second debugging session" },
-      },
-      { now: () => Date.now() + 60_000 },
-    );
-    await improve();
-    expect(distilled).toContain("memories/praised");
-  });
-
-  test("never-distilled memory without signal → ineligible", async () => {
+  test("never-distilled memory without signal is distilled", async () => {
     const stash = makeTempDir("akm-elig-distill-no-signal-");
     writeMemory(stash, "untouched", "Untouched memory.");
     await buildIndex(stash);
@@ -836,7 +780,7 @@ describe("distill signal-delta eligibility", () => {
       },
     });
 
-    expect(distilled).not.toContain("memories/untouched");
+    expect(distilled).toContain("memories/untouched");
   });
 });
 

@@ -117,7 +117,6 @@ function runImprove(atIndex: () => void, options: { sync?: { push?: boolean } } 
       loopRefs: [],
       distillOnlyRefs: [],
       distillCooledRefs: new Set(),
-      signalBearingSet: new Set(),
       utilityMap: new Map(),
       actions: [],
       cleanupWarnings: [],

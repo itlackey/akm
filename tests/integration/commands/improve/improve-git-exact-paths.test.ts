@@ -81,7 +81,6 @@ test("improve auto-sync excludes pre-staged WIP from the same content directory"
         loopRefs: args.plannedRefs,
         distillOnlyRefs: [],
         distillCooledRefs: new Set(),
-        signalBearingSet: new Set(),
         utilityMap: new Map(),
         actions: [],
         cleanupWarnings: [],

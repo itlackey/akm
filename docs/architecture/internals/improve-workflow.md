@@ -85,9 +85,7 @@ The lesson ref is `lessons/[<scope>/]<type>-<name>-lesson`, derived from the inp
 
 The loop skips distill for a memory (a `distill-skipped` action and an `improve_skipped` event) when:
 
-- it has no recent feedback (`memory_distill_requires_feedback`);
 - a negative feedback in the last 30 days judged the body it still has (`distill_flagged_wrong`);
-- its only feedback is positive without a reason or note (`distill_positive_without_reason`);
 - its frontmatter says `beliefState: deprecated` or `superseded` (`distill_deprecated_or_superseded`);
 - no signal is newer than the ref's last distill attempt (`distill_no_new_signal`).
 

@@ -1131,7 +1131,6 @@ async function runImproveStageSequence(
     distillFn: run.distillFn,
     loopRefs: preparation.loopRefs,
     actions: preparation.actions,
-    signalBearingSet: preparation.signalBearingSet,
     distillCooledRefs: preparation.distillCooledRefs,
     distillOnlyRefs: preparation.distillOnlyRefs,
     recentErrors: preparation.recentErrors,

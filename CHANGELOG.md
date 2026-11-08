@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- improve: distill runs on the memories the pass plans. The skips for a memory with no recent feedback and for one whose only feedback is a bare `--positive` are gone (#1479).
+
 ## [0.10.261111] - 2026-11-06
 
 ### Added
