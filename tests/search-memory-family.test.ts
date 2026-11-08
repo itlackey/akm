@@ -87,6 +87,15 @@ describe("akmSearch memory families", () => {
     expect(hits[1]?.expandTo).toContain("alpha.derived");
   });
 
+  test("two twins of one parent do not collapse into each other while the parent is not a hit", async () => {
+    const stash = await index((s) => {
+      writeMemory(s, "alpha", {}, "unrelated words only");
+      writeMemory(s, "alpha.derived", twin("alpha"), "gateway gateway current lesson");
+      writeMemory(s, "alpha-old.derived", twin("alpha"), "gateway old lesson");
+    });
+    expect(await search(stash, {})).toEqual(["alpha.derived", "alpha-old.derived"]);
+  });
+
   test("twin alone matching is kept", async () => {
     const stash = await index((s) => {
       writeMemory(s, "alpha", {}, "unrelated words only");

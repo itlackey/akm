@@ -453,7 +453,7 @@ type HydratedEntry = NonNullable<ReturnType<typeof getEntryById>> & { id: number
  *
  * A memory and the `.derived` twin memory-inference wrote beside it are one
  * family and take one slot: the twin is skipped when its parent is kept, and
- * a parent that arrives after its twin takes the twin's place. A twin whose
+ * a parent that arrives after its twin takes the place of the first twin and drops the others. Twins of one parent do not collapse into each other. A twin whose
  * parent is not a hit stays. The parent's `expandTo` still points at the twin.
  */
 function selectFusedEntries(
@@ -465,7 +465,10 @@ function selectFusedEntries(
   const selected: Array<{ candidate: FusedCandidate; row: HydratedEntry }> = [];
   const seenPaths = new Set<string>();
   const seenContent = new Set<string>();
-  const families = new Map<string, number>();
+  const families = new Map<
+    string,
+    { parent: boolean; twins: Array<{ candidate: FusedCandidate; row: HydratedEntry }> }
+  >();
   const batchSize = Math.max(limit * 2, 20);
   for (let offset = 0; offset < fused.length && selected.length < limit; offset += batchSize) {
     const batch: Array<HydratedEntry & { candidate: FusedCandidate }> = [];
@@ -483,13 +486,26 @@ function selectFusedEntries(
         seenContent.add(content);
       }
       if (row.entry.type === "memory") {
+        const twin = Boolean(row.entry.derivedFrom);
         const key = `${row.bundleId}\0${row.entry.derivedFrom ?? row.conceptId}`;
-        const at = families.get(key);
-        if (at !== undefined) {
-          if (!row.entry.derivedFrom && selected[at]?.row.entry.derivedFrom) selected[at] = { candidate, row };
+        const family = families.get(key) ?? { parent: false, twins: [] };
+        families.set(key, family);
+        if (twin && family.parent) continue;
+        if (!twin) {
+          family.parent = true;
+          const [first, ...rest] = family.twins;
+          if (first) {
+            selected[selected.indexOf(first)] = { candidate, row };
+            for (const other of rest) selected.splice(selected.indexOf(other), 1);
+            family.twins = [];
+            continue;
+          }
+        } else {
+          const entry = { candidate, row };
+          family.twins.push(entry);
+          selected.push(entry);
           continue;
         }
-        families.set(key, selected.length);
       }
       selected.push({ candidate, row });
     }
