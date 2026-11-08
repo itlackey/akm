@@ -83,7 +83,8 @@
   .toasts {
     position: fixed;
     z-index: 50;
-    top: calc(var(--topbar-h) + 12px);
+    /* Below the page heading row, so a toast never covers its actions (Refresh queue). */
+    top: calc(var(--topbar-h) + 64px);
     right: 16px;
     display: flex;
     flex-direction: column-reverse;
@@ -180,9 +181,6 @@
       bottom: calc(var(--shelf-h, 0px) + var(--bottom-inset) + 12px + env(safe-area-inset-bottom));
       flex-direction: column;
       align-items: stretch;
-    }
-    .toast-action {
-      justify-self: start;
     }
   }
 </style>

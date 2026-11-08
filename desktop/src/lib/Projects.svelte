@@ -111,7 +111,12 @@
   $effect(() => {
     const renamed = name && !loading && !row ? workspace.renamedProjects[name] : "";
     if (renamed)
-      void navigate(`/projects/${enc(renamed)}${sub ? `/${sub}` : ""}${query.size ? `?${query}` : ""}`, true);
+      void navigate(
+        sub === "assets" || sub === "asset"
+          ? `/projects/${enc(renamed)}/${sub}${query.size ? `?${query}` : ""}`
+          : `/projects/${enc(renamed)}`,
+        true,
+      );
   });
   const returnTo = $derived(query.get("returnTo") || `/projects/${enc(name)}/assets`);
   const assetRef = $derived(query.get("ref") ?? "");

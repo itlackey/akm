@@ -337,6 +337,7 @@
 
 <style>
   .project-form {
+    margin-block-start: var(--space-5);
     max-width: 44rem;
     display: grid;
     gap: var(--space-4);
@@ -394,6 +395,7 @@
   .danger-action {
     color: var(--fail);
     justify-self: start;
+    padding-inline: 0;
   }
   .sticky-footer {
     position: sticky;

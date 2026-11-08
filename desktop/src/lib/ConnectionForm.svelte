@@ -301,6 +301,15 @@
   .connection-form :global(.settings-fields) {
     padding: 0;
   }
+  .sticky-footer .btn-row {
+    margin-inline-start: auto;
+  }
+  .sticky-footer > span {
+    flex: 1 1 100%;
+  }
+  .connection-form {
+    margin-block-start: var(--space-5);
+  }
   .numbers {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

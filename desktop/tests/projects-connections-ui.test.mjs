@@ -125,6 +125,9 @@ test("Projects: list, overview with counts, assets, add, edit, rename, remove; u
   await page.getByLabel(/^Name/).fill("fresh-2");
   await page.getByRole("button", { name: "Save project" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Renamed project “fresh” to “fresh-2”" })).toBeVisible();
+  // A rename lands on the new name's overview, not its edit form.
+  await expect(page).toHaveURL(/\/projects\/fresh-2$/);
+  await expect(page.getByRole("heading", { name: "fresh-2", level: 1 })).toBeVisible();
   const renamed = (await configOf(server)).projects;
   assert.deepEqual([renamed.fresh, renamed["fresh-2"]], [undefined, { paths: ["/work/changed"] }]);
   // Back to the old overview opens the renamed project instead of "Project not found".
