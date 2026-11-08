@@ -57,6 +57,19 @@ async function launch(t, { runtime = process.execPath, electronMode = false } = 
   assert.equal(bootstrap.headers.get("referrer-policy"), "no-referrer");
   assert.match(bootstrap.headers.get("set-cookie"), /HttpOnly; SameSite=Strict/);
   const cookie = bootstrap.headers.get("set-cookie").split(";")[0];
+  for (const site of ["none", "same-origin"]) {
+    const redirect = await fetch(ready.url, { redirect: "manual", headers: { "Sec-Fetch-Site": site } });
+    assert.equal(redirect.status, 303, site);
+    assert.equal(redirect.headers.get("location"), "/");
+    assert.match(redirect.headers.get("set-cookie"), /HttpOnly; SameSite=Strict/);
+    assert.equal(redirect.headers.get("cache-control"), "no-store");
+    assert.equal(redirect.headers.get("referrer-policy"), "no-referrer");
+  }
+  for (const site of ["cross-site", "same-site"]) {
+    const refresh = await fetch(ready.url, { redirect: "manual", headers: { "Sec-Fetch-Site": site } });
+    assert.equal(refresh.status, 200, site);
+    assert.match(refresh.headers.get("set-cookie"), /HttpOnly; SameSite=Strict/);
+  }
   const request = (route, body, extra = {}) =>
     fetch(`${ready.origin}/api${route}`, {
       method: body === undefined ? "GET" : "POST",

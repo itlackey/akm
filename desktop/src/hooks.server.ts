@@ -22,16 +22,21 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
   const bootstrap = event.url.searchParams.get("desktop_session");
   if (event.request.method === "GET" && event.url.pathname === "/" && sameSecret(bootstrap, token)) {
-    // Not a 303: a SameSite=Strict cookie is not sent on the redirect of a navigation that started on another site
-    // (a link in a chat or an admin page), so the follow-up GET / would be 401. A refresh is a fresh navigation.
+    const headers = {
+      "Set-Cookie": `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict${origin.startsWith("https:") ? "; Secure" : ""}`,
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
+    };
+    // A typed or app-opened URL (Sec-Fetch-Site none, or same-origin) redirects, as it always has. A navigation that
+    // started on another site (a link in a chat or an admin page) does not send a SameSite=Strict cookie on the
+    // redirect, so the follow-up GET / would be 401; a refresh is a fresh navigation and does. The header is also
+    // absent on plain-HTTP non-loopback origins, which take the refresh too.
+    const site = event.request.headers.get("sec-fetch-site");
+    if (site === "none" || site === "same-origin")
+      return new Response(null, { status: 303, headers: { ...headers, Location: "/" } });
     return new Response('<!doctype html><meta http-equiv="refresh" content="0;url=/">', {
       status: 200,
-      headers: {
-        "Content-Type": "text/html; charset=utf-8",
-        "Set-Cookie": `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict${origin.startsWith("https:") ? "; Secure" : ""}`,
-        "Cache-Control": "no-store",
-        "Referrer-Policy": "no-referrer",
-      },
+      headers: { ...headers, "Content-Type": "text/html; charset=utf-8" },
     });
   }
   if (!sameSecret(event.cookies.get(COOKIE), token))
