@@ -2364,12 +2364,12 @@ for the per-release workflow.
 
 Print the agent-facing CLI guide. Add this output to your `AGENTS.md`,
 `CLAUDE.md`, or system prompt so your agent knows how to use the CLI. The
-complete guide is the default; use `--detail brief` for the compact version.
+short guide is the default; use `--detail full` for the complete version.
 (`akm help agents`, the short-first form, was removed in 0.10.)
 
 ```sh
 akm hints
-akm hints --detail brief
+akm hints --detail full
 ```
 
 ### env vs secret — which do I use?

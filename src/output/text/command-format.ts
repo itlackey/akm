@@ -314,22 +314,7 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     // supplementary context, not the authoritative schema agents should load first.
     const preferredHit = hits.find((h) => h.type === "skill" || h.type === "command" || h.type === "agent") ?? hits[0]!;
     const topRef = typeof preferredHit.ref === "string" ? preferredHit.ref : null;
-    const hasWorkflowHit = hits.some((h) => h.type === "workflow");
-    if (topRef) {
-      if (hasWorkflowHit) {
-        const workflowRef = hits.find((h) => h.type === "workflow");
-        const wfRef = workflowRef && typeof workflowRef.ref === "string" ? workflowRef.ref : topRef;
-        lines.push(`Next: akm show '${topRef}'  |  To execute a workflow: akm workflow run '${wfRef}'`);
-        lines.push(
-          "Inspect the workflow before running it; `workflow run` executes and verifies its steps automatically.",
-        );
-      } else {
-        lines.push(`Next: akm show '${topRef}'`);
-        lines.push(
-          "After reading the asset: check whether a workflow applies before editing — if so, inspect it and use `akm workflow run`.",
-        );
-      }
-    }
+    if (topRef) lines.push(`Next: akm show '${topRef}'`);
   }
 
   return lines.join("\n").trimEnd();
