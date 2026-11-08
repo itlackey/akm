@@ -158,6 +158,8 @@ export function tryAcquireLockSync(lockPath: string, payload: string): LockOwner
     releaseLockRaw(lockPath);
     throw new Error(`Could not read newly acquired lock at ${lockPath}.`);
   }
+  // Another process reclaimed our still-empty lock and took the path: we lost the race.
+  if (snapshot.rawContent !== payload) return undefined;
   return { lockPath, ...snapshot };
 }
 
@@ -248,7 +250,8 @@ export function reclaimStaleLock(
       fs.linkSync(quarantinePath, lockPath);
     } catch (err: unknown) {
       if (isHardLinkUnsupported(err)) {
-        createLockFileExclusive(lockPath, fs.readFileSync(quarantinePath, "utf8"));
+        // Rename keeps the inode, so the owner's identity-checked release still matches.
+        if (!fs.existsSync(lockPath)) fs.renameSync(quarantinePath, lockPath);
       } else if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
     releaseLockRaw(quarantinePath);

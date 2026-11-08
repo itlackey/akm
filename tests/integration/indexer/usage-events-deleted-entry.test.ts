@@ -109,3 +109,27 @@ test("deleteEntriesByIds (index --clean path) also deletes not-yet-linked events
   closeDatabase(db);
   expect(eventCount(ref)).toBe(0);
 });
+
+test("a ref re-inserted by another file in the same run keeps its not-yet-linked events", async () => {
+  // `notes/demo.md` and `notes/demo/SKILL.md` claim one ref; the first holds it.
+  const note = path.join(stashDir, "notes", "demo.md");
+  const skill = path.join(stashDir, "notes", "demo", "SKILL.md");
+  for (const [file, body] of [
+    [note, "from note"],
+    [skill, "from skill"],
+  ] as const) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `---\ndescription: ${body}\n---\n\n# ${body}\n`, "utf8");
+  }
+  await akmIndex({ stashDir, full: true });
+  const db = openExistingDatabase(getDbPath());
+  const itemRef = getItemRefById(db, findEntryIdByRef(db, "notes/demo") as number) as string;
+  closeDatabase(db);
+  const stateDb = openStateDatabase();
+  insertUsageEvent(stateDb, { event_type: "search", entry_ref: itemRef, source: "user" });
+  stateDb.close();
+
+  fs.rmSync(note);
+  await akmIndex({ stashDir });
+  expect(eventCount(itemRef)).toBe(1);
+});

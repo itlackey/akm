@@ -392,3 +392,64 @@ describe("hard links unsupported (Azure Files SMB, #1505)", () => {
     expect(fs.readFileSync(lock, "utf8")).toContain('"new"');
   });
 });
+
+describe("hard links unsupported: races (#1505 review)", () => {
+  let dir: string;
+  let cleanup: Cleanup;
+  let linkSpy: ReturnType<typeof spyOn>;
+  beforeEach(() => {
+    const r = sandboxXdgDataHome();
+    dir = r.dir;
+    cleanup = r.cleanup;
+    linkSpy = spyOn(fs, "linkSync").mockImplementation(() => {
+      throw Object.assign(new Error("ENOTSUP"), { code: "ENOTSUP" });
+    });
+  });
+  afterEach(() => {
+    linkSpy.mockRestore();
+    cleanup();
+  });
+
+  test("a reclaim that moved aside a fresh owner restores it so the owner can still release", () => {
+    const lock = path.join(dir, "race.lck");
+    fs.writeFileSync(lock, "2147480000");
+    const stale = probeLock(lock);
+    if (stale.state !== "stale") throw new Error("expected stale");
+    const realRename = fs.renameSync;
+    let owner: ReturnType<typeof tryAcquireLockSync>;
+    const renameSpy = spyOn(fs, "renameSync").mockImplementation(((from: string, to: string) => {
+      // Between the reclaimer's verification and its rename, a fresh owner replaces the stale file.
+      fs.rmSync(lock);
+      owner = tryAcquireLockSync(lock, JSON.stringify({ pid: process.pid, lockId: "owner" }));
+      renameSpy.mockImplementation(realRename);
+      realRename(from, to);
+    }) as typeof fs.renameSync);
+    try {
+      expect(reclaimStaleLock(lock, stale)).toBe(false);
+    } finally {
+      renameSpy.mockRestore();
+    }
+    if (!owner) throw new Error("expected owner");
+    expect(fs.existsSync(lock)).toBe(true);
+    releaseLock(owner);
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+
+  test("an acquirer whose empty lock was taken over does not adopt the contender's lock", () => {
+    const lock = path.join(dir, "adopt.lck");
+    const realWrite = fs.writeSync;
+    const writeSpy = spyOn(fs, "writeSync").mockImplementation(((_fd: number, data: string) => {
+      // Between the O_EXCL create and the payload write the contender replaces the lock.
+      fs.rmSync(lock);
+      fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, lockId: "contender" }));
+      writeSpy.mockImplementation(realWrite as never);
+      return data.length;
+    }) as never);
+    try {
+      expect(tryAcquireLockSync(lock, JSON.stringify({ pid: process.pid, lockId: "owner" }))).toBeUndefined();
+    } finally {
+      writeSpy.mockRestore();
+    }
+    expect(fs.readFileSync(lock, "utf8")).toContain("contender");
+  });
+});
