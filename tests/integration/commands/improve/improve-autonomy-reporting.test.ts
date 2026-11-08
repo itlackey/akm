@@ -38,7 +38,6 @@ const emptyPreparation = {
   loopRefs: [],
   distillOnlyRefs: [],
   distillCooledRefs: new Set<string>(),
-  signalBearingSet: new Set<string>(),
   utilityMap: new Map<string, number>(),
   actions: [],
   cleanupWarnings: [],

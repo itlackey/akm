@@ -263,7 +263,6 @@ describe("improve plan boundaries", () => {
         },
         loopRefs: [{ ref: "memories/source", type: "memory", reason: "scope-ref" }],
         actions: [],
-        signalBearingSet: new Set(),
         distillCooledRefs: new Set(),
         distillOnlyRefs: [],
         recentErrors: {},

@@ -206,7 +206,6 @@ describe("akm improve — triage pre-pass", () => {
             loopRefs: [],
             distillOnlyRefs: [],
             distillCooledRefs: new Set(),
-            signalBearingSet: new Set(),
             utilityMap: new Map(),
             actions: [],
             cleanupWarnings: [],

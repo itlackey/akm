@@ -154,7 +154,6 @@ async function runImprove(
         loopRefs: args.plannedRefs,
         distillOnlyRefs: [],
         distillCooledRefs: new Set(),
-        signalBearingSet: new Set(),
         utilityMap: new Map(),
         actions: [],
         cleanupWarnings: [],

@@ -1031,67 +1031,6 @@ describe("akm improve memory cleanup", () => {
     expect(reflectedRefs).toContain("memories/deploy");
   });
 
-  test("memory distill is skipped without recent feedback for non-ref scope", async () => {
-    const stashDir = makeTempDir("akm-improve-memory-distill-skip-");
-    writeMemory(stashDir, "deploy", { description: "deploy memory" }, "Remember deploy details.");
-    await buildIndex(stashDir);
-
-    const distilledRefs: string[] = [];
-
-    const result = await akmImprove({
-      scope: "memory",
-      stashDir,
-      ensureIndexFn: async () => false,
-      reindexFn: async () => ({
-        schemaVersion: 1,
-        ok: true,
-        indexed: 0,
-        warnings: [],
-        errors: [],
-        durationMs: 0,
-      }),
-      reflectFn: async ({ ref }) =>
-        ({
-          schemaVersion: 2,
-          ok: true,
-          proposal: makeProposal(ref ?? "memories/missing"),
-          ref: ref ?? "",
-          engine: "test",
-          durationMs: 1,
-        }) satisfies AkmReflectResult,
-      distillFn: async ({ ref }) => {
-        if (ref) distilledRefs.push(ref);
-        return {
-          schemaVersion: 1,
-          ok: true,
-          outcome: "queued",
-          inputRef: ref,
-          proposalRef: `lessons/${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
-        } satisfies AkmDistillResult;
-      },
-    });
-
-    expect(distilledRefs).toEqual([]);
-    // 0.8.0: refs without any new feedback signal are fully skipped at the
-    // planner level (signal-delta gate). C1 (13-bus-factor): the per-ref
-    // distill-skipped rows are no longer persisted in `result.actions` — they
-    // are folded into the bounded `distillSkipped` aggregate. Assert the ref +
-    // its reason survive on the aggregate (this single ref lands in the capped
-    // sample list) and that no per-ref distill-skipped row leaked into actions.
-    expect(result.actions?.some((a) => a.mode === "distill-skipped")).toBe(false);
-    expect(
-      result.distillSkipped?.samples.some(
-        (s) =>
-          s.ref === "memories/deploy" &&
-          (s.reason === "no new signal since last proposal" || s.reason === "memory requires recent feedback signal"),
-      ),
-    ).toBe(true);
-    expect(
-      (result.distillSkipped?.byReason["no new signal since last proposal"] ?? 0) +
-        (result.distillSkipped?.byReason["memory requires recent feedback signal"] ?? 0),
-    ).toBeGreaterThanOrEqual(1);
-  });
-
   test("improve runs memory inference after distill and skips refs promoted to knowledge", async () => {
     const stashDir = makeTempDir("akm-improve-memory-maintenance-");
     writeMemory(stashDir, "deploy", { description: "deploy memory" }, "Remember deploy details.");
