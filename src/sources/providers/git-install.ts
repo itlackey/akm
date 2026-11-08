@@ -28,9 +28,11 @@ const DIRTY_PATHS_SHOWN = 5;
  * git error; otherwise the refusal names the first few changed paths.
  */
 export function assertCleanWorktree(repoDir: string, subject: string, refusal: string): void {
-  const status = runGit(["-C", repoDir, "status", "--porcelain"]);
-  if (status.status !== 0) {
-    throw new UsageError(`${subject}: git status failed (${status.stderr?.trim() || `exit ${status.status}`}).`);
+  const status = runGit(["-C", repoDir, "-c", "core.quotePath=false", "status", "--porcelain"]);
+  if (status.error || status.status !== 0) {
+    throw new UsageError(
+      `${subject}: git status failed (${status.error?.message || status.stderr?.trim() || `exit ${status.status}`}).`,
+    );
   }
   const paths = status.stdout
     .split("\n")
@@ -484,12 +486,11 @@ export function syncExistingWritableCheckout(
       }
     }
 
-    const statusBeforeMerge = runGit(["-C", repoDir, "status", "--porcelain"]);
-    if (statusBeforeMerge.status !== 0 || statusBeforeMerge.stdout.trim()) {
-      throw new UsageError(
-        `Writable Git install at ${root} changed while its update was prepared; local work was preserved.`,
-      );
-    }
+    assertCleanWorktree(
+      repoDir,
+      `Writable Git install at ${root}`,
+      "changed while its update was prepared; local work was preserved.",
+    );
     assertNoIgnoredPathOverwrite(repoDir, targetRevision);
     const merge = runGit(["-C", repoDir, "merge", "--ff-only", "--no-overwrite-ignore", targetRevision], {
       timeout: 120_000,

@@ -162,12 +162,11 @@ function pullRepo(repoDir: string, credential?: string): void {
     if (relation.ahead > 0) {
       throw new UsageError(`Writable Git source at ${repoDir} has unpushed commits; refusing to update it.`);
     }
-    const statusBeforeMerge = runGit(["-C", repoDir, "status", "--porcelain"]);
-    if (statusBeforeMerge.status !== 0 || statusBeforeMerge.stdout.trim()) {
-      throw new UsageError(
-        `Writable Git source at ${repoDir} changed while its update was prepared; refusing to merge.`,
-      );
-    }
+    assertCleanWorktree(
+      repoDir,
+      `Writable Git source at ${repoDir}`,
+      "changed while its update was prepared; refusing to merge.",
+    );
     assertNoIgnoredPathOverwrite(repoDir, relation.upstream);
     const merge = runGit(["-C", repoDir, "merge", "--ff-only", "--no-overwrite-ignore", relation.upstream], {
       timeout: 120_000,

@@ -61,4 +61,22 @@ describe("assertCleanWorktree", () => {
     expect(msg).toContain("git status failed");
     expect(msg).not.toContain("uncommitted changes");
   });
+
+  test("prints non-ASCII names as UTF-8", () => {
+    const dir = makeRepo();
+    fs.writeFileSync(path.join(dir, "café.md"), "x\n");
+    expect(message(dir)).toContain("Changed: café.md.");
+  });
+
+  test("reports a missing git binary", () => {
+    const dir = makeRepo();
+    const script = `import { assertCleanWorktree } from ${JSON.stringify(path.resolve("src/sources/providers/git-install.ts"))};
+try { assertCleanWorktree(process.argv[1], "S", "dirty."); } catch (e) { console.log(e.message); }`;
+    const result = spawnSync(process.execPath, ["-e", script, dir], {
+      encoding: "utf8",
+      env: { PATH: path.join(os.tmpdir(), "akm-no-such-bin") },
+    });
+    expect(result.stdout).toContain("git status failed");
+    expect(result.stdout).not.toContain("exit undefined");
+  });
 });
