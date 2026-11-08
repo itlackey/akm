@@ -62,18 +62,20 @@ export async function search(input: SearchInput) {
   const bundle = input.bundle || undefined;
   const project = input.project?.trim() ? resolveProject(loadConfig(), { project: input.project.trim() }) : undefined;
   const scope = normalizeScopeFilters(blanksOmitted(input.scope));
+  const filters = scope && Object.keys(scope).length > 0 ? scope : project?.filters;
+  const from = bundle ?? project?.from;
   const result = await akmSearch({
     query: (input.q ?? "").trim(),
     type,
     limit: clampLimit(input.limit, 20),
     // `--from <name>` narrows to one configured bundle; absent means every local bundle, as `akm search` does.
-    source: bundle ?? project?.from ?? "local",
+    source: from ?? "local",
     belief: parseBeliefFilterMode(input.belief || "current"),
-    filters: scope && Object.keys(scope).length > 0 ? scope : project?.filters,
+    filters,
     prefer: project?.prefer,
     readOnly: true,
   });
-  return project ? { ...result, project: projectView(project) } : result;
+  return project ? { ...result, project: projectView({ ...project, from, filters }) } : result;
 }
 
 /**

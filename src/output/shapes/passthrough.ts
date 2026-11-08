@@ -42,6 +42,7 @@ const PASSTHROUGH_COMMANDS = [
   "command-dry-run",
   "config",
   "config-diff",
+  "curate-pack",
   "env-create",
   "env-export",
   "env-remove",
