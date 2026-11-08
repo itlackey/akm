@@ -36,8 +36,7 @@ import type {
   SearchSource,
   SourceSearchHit,
 } from "../../sources/types";
-import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
-import { getEntryIdByFilePath, getItemRefById } from "../../storage/repositories/index-entries-repository";
+import { TELEMETRY_BUSY_TIMEOUT_MS } from "../../storage/repositories/index-db";
 import { searchRegistry } from "./registry-search";
 
 const DEFAULT_LIMIT = 20;
@@ -336,33 +335,6 @@ export function narrowSourcesToName<T extends { registryId?: string; path: strin
 }
 
 /**
- * Resolve entry IDs by file_path lookup (exact match, not LIKE).
- */
-function resolveEntryIds(
-  db: import("../../storage/database").Database,
-  hits: SourceSearchHit[],
-): Array<{ entryId: number; ref: string; hit: SourceSearchHit }> {
-  const results: Array<{ entryId: number; ref: string; hit: SourceSearchHit }> = [];
-  for (const hit of hits) {
-    try {
-      const entryId = getEntryIdByFilePath(db, hit.path);
-      if (entryId !== undefined) {
-        // Persist the DURABLE fully-qualified `bundle//conceptId` spelling,
-        // derived from the resolved entry row's `item_ref` (durable keys come
-        // from the resolved item, never raw input).
-        const itemRef = getItemRefById(db, entryId);
-        if (itemRef !== null) {
-          results.push({ entryId, ref: itemRef, hit });
-        }
-      }
-    } catch {
-      /* skip unresolvable */
-    }
-  }
-  return results;
-}
-
-/**
  * Fire-and-forget: log a search event to the usage_events table.
  * Never blocks the caller; errors are silently ignored.
  *
@@ -405,55 +377,47 @@ function logSearchEvent(
   });
 
   try {
-    // Short busy timeout: telemetry must never stall the search result behind
-    // a background reindex holding the index.db write lock (30s default wait).
-    // Under contention these usage hints are skipped, not waited for.
-    withIndexDb(
-      (db) => {
-        const resolved = resolveEntryIds(db, stashHits.slice(0, 50));
-        // usage_events telemetry writes to state.db;
-        // entry_id/entry_ref are resolved from index.db above and carried across.
-        const stashHitCount = response.hits.length;
-        const registryHitCount = Array.isArray(response.registryHits) ? response.registryHits.length : 0;
-        withStateDbTelemetry((stateDb) => {
-          for (const { entryId, ref, hit } of resolved) {
-            insertUsageEvent(stateDb, {
-              event_type: "search",
-              query,
-              entry_id: entryId,
-              entry_ref: ref,
-              metadata: usageEventAttributionMetadata(getSearchHitAttribution(hit), ref, attributionProjection),
-              source: eventSource,
-            });
-          }
-          // Count registry hits separately so registry-only searches record a
-          // non-zero resultCount. response.hits is always [] when source="registry".
-          insertUsageEvent(stateDb, {
-            event_type: "search",
-            query,
-            metadata: JSON.stringify({
-              resultCount: stashHitCount + registryHitCount,
-              stashHitCount,
-              registryHitCount,
-              resolvedCount: resolved.length,
-              mode,
-              // Whole-search latency plus the rank/embed phases when the local
-              // search reported them, so `akm metrics` can show timings later.
-              totalMs: response.timing?.totalMs,
-              rankMs: response.timing?.rankMs,
-              embedMs: response.timing?.embedMs,
-            }),
-            source: eventSource,
-          });
-        }, TELEMETRY_BUSY_TIMEOUT_MS);
-        // No live utility_scores write here (#862): a search result is an
-        // impression, not a signal that the asset was useful. Retrieval
-        // counts are recorded above via insertUsageEvent (search_count) and
-        // rolled into utility_scores by the offline `recomputeUtilityScores`
-        // pass (`akm index`).
-      },
-      { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
-    );
+    // Each hit already carries its durable `bundle//conceptId` ref, so no index
+    // connection is opened here. Short busy timeout: telemetry must never stall
+    // the search result behind a background write on state.db.
+    const resolved = stashHits.slice(0, 50).flatMap((hit) => (hit.itemRef ? [{ ref: hit.itemRef, hit }] : []));
+    const stashHitCount = response.hits.length;
+    const registryHitCount = Array.isArray(response.registryHits) ? response.registryHits.length : 0;
+    withStateDbTelemetry((stateDb) => {
+      for (const { ref, hit } of resolved) {
+        insertUsageEvent(stateDb, {
+          event_type: "search",
+          query,
+          entry_ref: ref,
+          metadata: usageEventAttributionMetadata(getSearchHitAttribution(hit), ref, attributionProjection),
+          source: eventSource,
+        });
+      }
+      // Count registry hits separately so registry-only searches record a
+      // non-zero resultCount. response.hits is always [] when source="registry".
+      insertUsageEvent(stateDb, {
+        event_type: "search",
+        query,
+        metadata: JSON.stringify({
+          resultCount: stashHitCount + registryHitCount,
+          stashHitCount,
+          registryHitCount,
+          resolvedCount: resolved.length,
+          mode,
+          // Whole-search latency plus the rank/embed phases when the local
+          // search reported them, so `akm metrics` can show timings later.
+          totalMs: response.timing?.totalMs,
+          rankMs: response.timing?.rankMs,
+          embedMs: response.timing?.embedMs,
+        }),
+        source: eventSource,
+      });
+    }, TELEMETRY_BUSY_TIMEOUT_MS);
+    // No live utility_scores write here (#862): a search result is an
+    // impression, not a signal that the asset was useful. Retrieval
+    // counts are recorded above via insertUsageEvent (search_count) and
+    // rolled into utility_scores by the offline `recomputeUtilityScores`
+    // pass (`akm index`).
   } catch (err) {
     rethrowIfTestIsolationError(err);
     /* fire-and-forget */

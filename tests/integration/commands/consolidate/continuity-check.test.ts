@@ -471,6 +471,7 @@ describe("createContinuitySearch: keyword-only throttle after the first fallback
       rebuildFts(db);
       setMeta(db, "hasEmbeddings", "1");
       setMeta(db, "stashDir", storage.stashDir);
+      setMeta(db, "builtAt", new Date().toISOString());
     } finally {
       closeDatabase(db);
     }
@@ -522,6 +523,7 @@ describe("createContinuitySearch: keyword-only throttle after the first fallback
       );
       rebuildFts(db);
       setMeta(db, "stashDir", storage.stashDir);
+      setMeta(db, "builtAt", new Date().toISOString());
     } finally {
       closeDatabase(db);
     }

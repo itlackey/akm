@@ -22,6 +22,7 @@ beforeEach(() => {
   storage = withIsolatedAkmStorage();
   db = openIndexDatabase(getDbPath());
   setMeta(db, "stashDir", storage.stashDir);
+  setMeta(db, "builtAt", new Date().toISOString());
   overrideSeam(_setEmbedderForTests, { embed: async () => [1, 0] });
 });
 afterEach(() => {

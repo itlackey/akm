@@ -245,37 +245,23 @@ test("show reads a scoped asset by its bundle-qualified ref whatever the filters
   await akmIndex({ stashDir: storage.stashDir, full: true });
   expect((await akmShowUnified({ ref: "stash//knowledge/main" })).content).toContain("quartz deployment");
 });
-for (const enabled of [false, true]) {
-  test(`reranking ${enabled}: only eligible candidates and derived surfaces reach reranker`, async () => {
-    const scope = { user: "alice" };
-    put("memories/base", { scope }, "quartz deployment eligible parent");
-    put("memories/base.derived", { source: "memories/base", scope: { user: "bob" } }, "POISON-DERIVED-SURFACE");
-    put("knowledge/other", { scope }, "quartz deployment eligible second");
-    put("memories/old", { scope, beliefState: "deprecated" }, "quartz deployment POISON-HISTORICAL");
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { stash: { path: storage.stashDir } },
-      defaultBundle: "stash",
-      registries: [],
-      search: { curateRerank: { enabled, endpoint: "http://localhost:9/rerank" } },
-    });
-    await akmIndex({ stashDir: storage.stashDir, full: true });
-    let documents: string[] = [];
-    const result = await withMockedFetch(async () => akmCurate({ query: "quartz deployment", filters: scope }), (async (
-      _url: unknown,
-      init: RequestInit,
-    ) => {
-      documents = JSON.parse(String(init.body)).documents;
-      return new Response(
-        JSON.stringify({ results: documents.map((_, index) => ({ index, relevance_score: index })) }),
-      );
-    }) as typeof fetch);
-    expect(result.items).toHaveLength(2);
-    expect(JSON.stringify(result)).not.toContain("POISON");
-    expect(documents.join(" ")).not.toContain("POISON");
-    expect(documents.length).toBe(enabled ? 2 : 0);
+test("only eligible candidates reach the curated result; derived and historical surfaces do not", async () => {
+  const scope = { user: "alice" };
+  put("memories/base", { scope }, "quartz deployment eligible parent");
+  put("memories/base.derived", { source: "memories/base", scope: { user: "bob" } }, "POISON-DERIVED-SURFACE");
+  put("knowledge/other", { scope }, "quartz deployment eligible second");
+  put("memories/old", { scope, beliefState: "deprecated" }, "quartz deployment POISON-HISTORICAL");
+  saveConfig({
+    semanticSearchMode: "off",
+    bundles: { stash: { path: storage.stashDir } },
+    defaultBundle: "stash",
+    registries: [],
   });
-}
+  await akmIndex({ stashDir: storage.stashDir, full: true });
+  const result = await akmCurate({ query: "quartz deployment", filters: scope });
+  expect(result.items).toHaveLength(2);
+  expect(JSON.stringify(result)).not.toContain("POISON");
+});
 for (const [flags, opts] of [
   [["--belief", "invalid"], { belief: "invalid" }],
   [["--from", "missing"], { source: "missing" }],

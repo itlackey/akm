@@ -5,23 +5,24 @@
 /**
  * Tests for the read-vs-blocking `ensureIndex()` contract.
  *
- * Read paths (default/background mode) serve any populated index built for
- * this stash AS-IS — content freshness is the writers' job
+ * Read paths (default/background mode) serve any index that completed a build
+ * for this stash AS-IS — content freshness is the writers' job
  * (`indexWrittenAssets`) plus full runs (improve cron / explicit `akm index`).
- * They rebuild inline only when the index cannot serve at all (missing DB,
- * zero rows, different stash). This replaced the stale-triggered background
+ * They rebuild inline only when the index cannot serve at all (missing DB, no
+ * `builtAt`, different stash). An indexed empty stash is built, not unusable. This replaced the stale-triggered background
  * reindex that made every read on an actively-written stash spawn a writer
  * (docs/design/read-path-reindex-contention-findings.md §7).
  *
- * Blocking mode (improve) still treats content-staleness as a rebuild trigger.
+ * Blocking mode (improve) runs an incremental index and lets its per-file
+ * fingerprints decide, in every bundle.
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { saveConfig } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
-import { ensureIndex, isIndexStale } from "../../../src/indexer/ensure-index";
-import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
+import { ensureIndex } from "../../../src/indexer/ensure-index";
 import * as indexerModule from "../../../src/indexer/indexer";
 import { openDatabase } from "../../../src/storage/database";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
@@ -48,6 +49,19 @@ function indexedPaths(): Set<string> {
   const db = openExistingDatabase(getDbPath());
   try {
     return getIndexedFilePaths(db);
+  } finally {
+    closeDatabase(db);
+  }
+}
+
+function hashOf(filePath: string): string | undefined {
+  const db = openExistingDatabase(getDbPath());
+  try {
+    return (
+      db.prepare("SELECT content_hash FROM entries WHERE file_path = ?").get(filePath) as
+        | { content_hash: string }
+        | undefined
+    )?.content_hash;
   } finally {
     closeDatabase(db);
   }
@@ -139,16 +153,39 @@ describe("ensureIndex read-path (background mode)", () => {
     spy.mockRestore();
   });
 
-  test("a populated pre-layout-21 index opens without refusal but cannot serve the stash", () => {
+  test("a populated pre-layout-21 index opens without refusal but cannot serve the stash", async () => {
     replaceWithPopulatedV17Index();
     closeDatabase(openExistingDatabase(getDbPath()));
-    expect(isIndexStale(stashDir)).toBe(true);
+    expect(await ensureIndex(stashDir)).toBe(true);
+  });
+
+  test("an indexed empty stash is built: a read does not reindex", async () => {
+    fs.rmSync(path.join(stashDir, "memories", "first.md"));
+    await indexerModule.akmIndex({ stashDir, full: true });
+    expect(indexedPaths().size).toBe(0);
+
+    const spy = spyOn(indexerModule, "akmIndex");
+    try {
+      expect(await ensureIndex(stashDir)).toBe(false);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("an index that never finished a build (no builtAt) rebuilds inline", async () => {
+    const db = openExistingDatabase(getDbPath());
+    try {
+      db.prepare("DELETE FROM index_meta WHERE key = 'builtAt'").run();
+    } finally {
+      closeDatabase(db);
+    }
+    expect(await ensureIndex(stashDir)).toBe(true);
   });
 
   test("a populated layout-20 index (0.9.1) cannot serve the stash, so a read rebuilds it first (#1053)", async () => {
     replaceWithPopulatedV20Index();
     closeDatabase(openExistingDatabase(getDbPath()));
-    expect(isIndexStale(stashDir)).toBe(true);
 
     expect(await ensureIndex(stashDir)).toBe(true);
     expect(indexedPaths()).toContain(path.join(stashDir, "memories", "first.md"));
@@ -177,59 +214,35 @@ describe("ensureIndex blocking mode (improve)", () => {
     expect(indexedPaths().has(added)).toBe(true);
   });
 
-  test("fresh index: no-op", async () => {
-    expect(await ensureIndex(stashDir, { mode: "blocking" })).toBe(false);
+  test("an edit in a non-primary bundle is picked up", async () => {
+    const other = sandboxStashDir();
+    try {
+      saveConfig({
+        semanticSearchMode: "off",
+        bundles: { stash: { path: stashDir }, other: { path: other.dir } },
+        defaultBundle: "stash",
+        registries: [],
+      });
+      const otherFile = path.join(other.dir, "memories", "elsewhere.md");
+      fs.mkdirSync(path.dirname(otherFile), { recursive: true });
+      fs.writeFileSync(otherFile, "---\ndescription: elsewhere\n---\n\n# elsewhere\n\nBody.\n", "utf8");
+      expect(await ensureIndex(stashDir, { mode: "blocking" })).toBe(true);
+      expect(indexedPaths().has(otherFile)).toBe(true);
+      const before = hashOf(otherFile);
+
+      fs.writeFileSync(otherFile, "---\ndescription: elsewhere edited\n---\n\n# elsewhere\n\nEdited body.\n", "utf8");
+      expect(await ensureIndex(stashDir, { mode: "blocking" })).toBe(true);
+      expect(hashOf(otherFile)).not.toBe(before);
+    } finally {
+      other.cleanup();
+    }
   });
 
-  test("onReindexTiming fires with a duration when a rebuild runs, and not when it is a no-op", async () => {
+  test("onReindexTiming fires with a duration when the inline index runs", async () => {
     writeMemory("second");
     const timings: Array<{ durationMs: number }> = [];
     expect(await ensureIndex(stashDir, { mode: "blocking", onReindexTiming: (t) => timings.push(t) })).toBe(true);
     expect(timings).toHaveLength(1);
     expect(timings[0]?.durationMs).toBeGreaterThanOrEqual(0);
-
-    // Fresh now — a second call is a no-op and must not fire the callback.
-    const timingsAfterNoop: Array<{ durationMs: number }> = [];
-    expect(await ensureIndex(stashDir, { mode: "blocking", onReindexTiming: (t) => timingsAfterNoop.push(t) })).toBe(
-      false,
-    );
-    expect(timingsAfterNoop).toHaveLength(0);
-  });
-});
-
-/** Deterministic staleness regardless of filesystem mtime resolution (mirrors dir-staleness-precheck.test.ts). */
-function bumpMtimeIntoFuture(filePath: string): void {
-  const future = new Date(Date.now() + 60_000);
-  fs.utimesSync(filePath, future, future);
-}
-
-describe("ensureIndex blocking mode: per-file staleness (R6)", () => {
-  test("a brand-new file that was never indexed is stale", () => {
-    writeMemory("second");
-    expect(isIndexStale(stashDir)).toBe(true);
-  });
-
-  test(
-    "a file indexed incrementally after being written is NOT stale, even though its mtime " +
-      "is newer than builtAt (indexWrittenAssets does not bump builtAt)",
-    async () => {
-      const added = writeMemory("second");
-      bumpMtimeIntoFuture(added);
-      await indexWrittenAssets(stashDir, [added]);
-      expect(indexedPaths().has(added)).toBe(true);
-
-      // Acceptance test: without the R6 per-file staleness check this would
-      // still report stale purely from mtime > builtAt, forcing a full
-      // rescan on every subsequent call even though the content is current.
-      expect(isIndexStale(stashDir)).toBe(false);
-    },
-  );
-
-  test("a file edited in place after the last build IS stale, even though it was already indexed", () => {
-    const filePath = path.join(stashDir, "memories", "first.md");
-    fs.writeFileSync(filePath, "---\ndescription: first\n---\n\n# first\n\nEdited body.\n", "utf8");
-    bumpMtimeIntoFuture(filePath);
-
-    expect(isIndexStale(stashDir)).toBe(true);
   });
 });

@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- The curate reranker is gone (#1468): `search.curateRerank` (`enabled`, `endpoint`, `model`, `apiKey`, `timeoutMs`, `topN`), the rerank client, curate's rerank pass and its candidate expansion, the `curate-rerank` row in `akm config targets` and `akm health`, the Desktop setting, and the schema and docs entries. `akm curate` takes the top `--limit` hits of one search. A config that still has `search.curateRerank` loads, warns once that the key is ignored, enables nothing, and `akm migrate apply` drops it; a `curateRerank` key in `credentials.json` is left alone.
+- `ensureIndex` and search drop three things (#1469): the rebuild of an indexed empty stash on every read (`builtAt`, written after a complete scan, now means "built"), the separate freshness walker and the uncalled `isIndexStale`, and the reverse path-to-id-to-ref lookups in search and curate telemetry and in nested command/persona read telemetry, which use the ref they already hold and open no index connection of their own.
+
+### Changed
+
+- `ensureIndex` in blocking mode (improve) runs an incremental index and lets its per-file fingerprints decide, so an edit in any bundle, not only the primary stash, is picked up.
+- Search, curate and nested command/persona read usage events record `entry_ref` only (`entry_id` is null); utility scores now aggregate by `entry_ref`, so an old event with a bare, unqualified ref no longer counts toward a score.
+
 ## [0.10.261112] - 2026-11-07
 
 ### Changed

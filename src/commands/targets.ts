@@ -76,15 +76,7 @@ export interface ProcessOverride {
 }
 
 /** The kind of work a process row is about. */
-export type ProcessName =
-  | "improve"
-  | "judges"
-  | "agents"
-  | "extract"
-  | "enrich"
-  | "index"
-  | "embedding"
-  | "curate-rerank";
+export type ProcessName = "improve" | "judges" | "agents" | "extract" | "enrich" | "index" | "embedding";
 
 export interface ProcessRow {
   readonly type: "process";
@@ -239,18 +231,6 @@ function embeddingRow(config: AkmConfig, ambiguous: string | undefined): Process
   };
 }
 
-function rerankRow(config: AkmConfig): ProcessRow {
-  const rerank = config.search?.curateRerank;
-  const on = rerank?.enabled === true && rerank.endpoint !== undefined;
-  return {
-    type: "process",
-    process: "curate-rerank",
-    kind: on ? "endpoint" : null,
-    target: on ? redactUrlCredentials(rerank.endpoint as string) : null,
-    model: on ? (rerank.model ?? null) : null,
-  };
-}
-
 function processRows(config: AkmConfig): ProcessRow[] {
   const ambiguous = ambiguousDefaultAdvice(config);
   const improve = (processName: string, alias: keyof typeof SHIPPED_ALIAS, rest: object = {}): Resolution =>
@@ -288,7 +268,6 @@ function processRows(config: AkmConfig): ProcessRow[] {
       config.index?.memory?.enabled === false ? undefined : ambiguous,
     ),
     embeddingRow(config, ambiguous),
-    rerankRow(config),
   ];
 }
 

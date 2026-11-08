@@ -5,7 +5,7 @@
 /**
  * A connection endpoint can carry a username and password in its URL. Every
  * diagnostic that names an endpoint (the config-load warning, a failed model
- * call, a failed rerank, setup's model listing) names it without that
+ * call, setup's model listing) names it without that
  * credential, and the config-load warning is keyed by the redacted URL as well.
  * The tests read what reaches the warning sink, not only the final result.
  */
@@ -14,7 +14,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { parseAndValidateConfigText } from "../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { chatCompletion } from "../src/llm/client";
-import { rerankDocuments } from "../src/llm/rerank-client";
 import { listModels } from "../src/setup/steps/connection-shared";
 import { withMockedFetch } from "./_helpers/sandbox";
 
@@ -57,19 +56,6 @@ describe("an endpoint that embeds a username and password", () => {
     const failure = await withMockedFetch(
       () =>
         chatCompletion({ endpoint: WITH_USERINFO, model: "m" }, [{ role: "user", content: "hi" }], {}).then(
-          () => undefined,
-          (error: Error) => error.message,
-        ),
-      () => new Response("boom", { status: 500 }),
-    );
-    expect(failure).toContain("example.invalid");
-    expect(failure).not.toContain(PASSWORD);
-  });
-
-  test("is named without it when a rerank fails", async () => {
-    const failure = await withMockedFetch(
-      () =>
-        rerankDocuments({ endpoint: WITH_USERINFO, model: "r" } as never, "q", ["a"]).then(
           () => undefined,
           (error: Error) => error.message,
         ),

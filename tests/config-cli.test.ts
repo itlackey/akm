@@ -315,7 +315,7 @@ describe("apiKey rejection (#454)", () => {
   const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
 
   test("a literal apiKey is refused on every block that has one, pointing at $VAR and credentials.json", () => {
-    for (const key of ["connections.fast.apiKey", "embedding.apiKey", "search.curateRerank.apiKey"]) {
+    for (const key of ["connections.fast.apiKey", "embedding.apiKey"]) {
       expect(() => setConfigValue(base, key, "sk-test")).toThrow(/use a \$VAR reference.*credentials\.json/);
     }
   });
@@ -325,9 +325,6 @@ describe("apiKey rejection (#454)", () => {
       "$LOCAL_API_KEY",
     );
     expect(setConfigValue(base, "embedding.apiKey", "${EMBED_KEY}").embedding?.apiKey).toBe("${EMBED_KEY}");
-    expect(setConfigValue(base, "search.curateRerank.apiKey", "$RERANK_KEY").search?.curateRerank?.apiKey).toBe(
-      "$RERANK_KEY",
-    );
   });
 
   test("a secrets ref is not a key akm reads, so it is refused too", () => {
@@ -359,12 +356,6 @@ describe("nested schema keys are all settable via zod walker (#455)", () => {
     expect(setConfigValue(base, "improve.strategy", "fast").improve?.strategy).toBe("fast");
     expect(setConfigValue(base, "improve.connection", "lab").improve?.connection).toBe("lab");
     expect(setConfigValue(base, "improve.harness", "claude").improve?.harness).toBe("claude");
-  });
-
-  test("search.curateRerank.topN is settable", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    const withTopN = setConfigValue(base, "search.curateRerank.topN", "30");
-    expect(withTopN.search?.curateRerank?.topN).toBe(30);
   });
 
   test("feedback.requireReason / archiveRetentionDays / improve.eventRetentionDays settable", () => {

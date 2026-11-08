@@ -4,9 +4,9 @@
 
 /**
  * Auto-index bootstrap: silently build the local index inline when it cannot
- * serve the caller's stash at all (missing DB, no `entries` table, zero rows,
- * or built for a different stash), so `search`, `show`, and `feedback` work
- * on first use without a manual `akm index`.
+ * serve the caller's stash at all (missing DB, no `entries` table, never
+ * completed a build, or built for a different stash), so `search`, `show`, and
+ * `feedback` work on first use without a manual `akm index`.
  *
  * Content FRESHNESS is intentionally not this module's job on the read path.
  * Writers maintain the index (`indexWrittenAssets` for `remember`/extract
@@ -17,24 +17,15 @@
  * written stash spawn a writer that the read's own telemetry then queued
  * behind (the 2026-07 read-path reindex-contention findings).
  *
- * `mode: "blocking"` (improve) still checks staleness and rebuilds inline,
- * because its planning logic needs a current `entries` table in-process.
+ * `mode: "blocking"` (improve) runs an incremental index inline, because its
+ * planning logic needs a current `entries` table in-process.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { hashContent } from "../core/adapter/adapters/shared";
-import { type AssetSpec, placementSpecList } from "../core/asset/asset-placement";
 import { ConfigError } from "../core/errors";
 import { classifyPathAccess } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { warnVerbose } from "../core/warn";
 import { assertIndexPathReadable, closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
-import {
-  getEntryCount,
-  getIndexedFileHashes,
-  getIndexedFilePaths,
-} from "../storage/repositories/index-entries-repository";
 import { hasCurrentEntriesTable } from "../storage/repositories/index-entry-schema";
 import { getMeta } from "../storage/repositories/index-meta-repository";
 import { warnOnBundleRenameDrift } from "./bundle-identity-guard";
@@ -52,125 +43,15 @@ export interface EnsureIndexOptions {
   onReindexTiming?: (info: { durationMs: number; timing: IndexResponse["timing"] }) => void;
 }
 
-function getIndexableFiles(root: string, spec: AssetSpec): string[] {
-  if (!fs.existsSync(root)) return [];
-
-  const files: string[] = [];
-  const stack = [root];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) continue;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (entry.name === ".stash.json") continue;
-      const fullPath = path.join(current, entry.name);
-      if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) {
-        if (entry.name.startsWith(".")) continue;
-        stack.push(fullPath);
-        continue;
-      }
-      if (entry.isFile() && spec.isRelevantFile(entry.name)) {
-        files.push(fullPath);
-      }
-    }
-  }
-
-  return files;
-}
-
-/**
- * Whether any indexable file under `stashDir` is newer than the last build, or
- * has never been indexed at all.
- *
- * Two independent signals, because neither alone is sufficient:
- *   1. **mtime > builtAt** — catches in-place *edits* of already-indexed files.
- *   2. **path not in `indexedPaths`** — catches *newly added* files. This is
- *      clock-independent on purpose: a freshly-written file can have a
- *      filesystem mtime that compares as *older* than the wall-clock `builtAt`
- *      (the two clocks are not perfectly synchronized and `builtAt` is
- *      millisecond-truncated), so the mtime test alone silently misses
- *      additions made within ~a millisecond of the previous build.
- *
- * A file whose mtime is newer than `builtAt` is NOT automatically stale
- * (R6): `indexWrittenAssets` upserts a fresh `content_hash` without bumping
- * `builtAt`, so a file `ensureIndex` itself just incrementally re-indexed
- * (for example a proposal triage just promoted into `knowledge/`) would
- * otherwise keep tripping this check on every subsequent call, forcing the
- * full rescan the write-path fast path exists to avoid. Only files newer
- * than `builtAt` are hashed here, so this stays cheap — the common case is
- * zero or a handful of such files.
- *
- * `getIndexableFiles` applies each asset type's own relevance filter, so
- * non-indexed companion files (e.g. `package.json` next to a knowledge doc) are
- * never considered and do not produce false "new file" positives.
- */
-function hasNewerIndexableFiles(
-  stashDir: string,
-  builtAt: string | undefined,
-  indexedPaths: Set<string>,
-  indexedHashes: ReadonlyMap<string, string>,
-): boolean {
-  const builtAtMs = builtAt ? new Date(builtAt).getTime() : Number.NaN;
-  const builtAtUsable = Number.isFinite(builtAtMs);
-
-  for (const spec of placementSpecList()) {
-    const typeRoot = path.join(stashDir, spec.stashDir);
-    const files = getIndexableFiles(typeRoot, spec);
-    for (const file of files) {
-      if (!indexedPaths.has(file)) return true;
-      if (!builtAtUsable) return true;
-      let mtimeMs: number;
-      try {
-        mtimeMs = fs.statSync(file).mtimeMs;
-      } catch {
-        return true;
-      }
-      if (mtimeMs <= builtAtMs) continue;
-      // Newer than the last full build — only stale if its current content
-      // actually differs from what is indexed. No stored hash means the row
-      // predates content-hash tracking, so fall back to the conservative
-      // mtime-stale answer.
-      const indexedHash = indexedHashes.get(file);
-      if (indexedHash === undefined) return true;
-      let currentHash: string;
-      try {
-        currentHash = hashContent(fs.readFileSync(file, "utf8"));
-      } catch {
-        return true;
-      }
-      if (currentHash !== indexedHash) return true;
-    }
-  }
-
-  return false;
-}
-
-/**
- * Check whether the local index is stale relative to the given stash directory.
- * Returns `true` when the index is missing, empty, was built against a
- * different primary stash dir, or an indexable file is newer than it.
- */
-export function isIndexStale(stashDir: string): boolean {
-  return !indexCanServeStash(stashDir, { requireFresh: true });
-}
-
 /**
  * Whether the existing index can serve queries for `stashDir` *right now* —
- * i.e. the DB file exists, the `entries` table holds rows, and those rows were
- * built for this stash (it is the stored primary stash or appears in the
- * stored `stashDirs` set). When this is true the index is at worst
- * content-stale, so read paths serve it as-is. When it is false the existing
- * index has nothing relevant to return (no DB, no `entries` table, zero rows,
- * or built for a different stash), so those cases must rebuild inline.
- * `requireFresh` also demands that no indexable file is newer than the index.
+ * i.e. the DB file exists, has a current `entries` table, a complete build
+ * finished (`builtAt` is written only after a full scan, so an empty stash that
+ * was indexed still counts as built), and it was built for this stash (the
+ * stored primary stash or one of the stored `stashDirs`). When this is true the
+ * index is at worst content-stale, so read paths serve it as-is.
  */
-function indexCanServeStash(stashDir: string, options: { requireFresh?: boolean } = {}): boolean {
+function indexCanServeStash(stashDir: string): boolean {
   const dbPath = getDbPath();
   // Raises on an index we cannot READ rather than calling it unusable — that
   // sends us into an inline reindex that will fail anyway, and whose failure
@@ -182,13 +63,7 @@ function indexCanServeStash(stashDir: string, options: { requireFresh?: boolean 
   try {
     db = openExistingDatabase(dbPath);
     if (!hasCurrentEntriesTable(db)) return false;
-    if (getEntryCount(db) === 0) return false;
-    if (
-      options.requireFresh &&
-      hasNewerIndexableFiles(stashDir, getMeta(db, "builtAt"), getIndexedFilePaths(db), getIndexedFileHashes(db))
-    ) {
-      return false;
-    }
+    if (!getMeta(db, "builtAt")) return false;
 
     const storedStashDir = getMeta(db, "stashDir");
     if (storedStashDir === stashDir) return true;
@@ -212,15 +87,16 @@ function indexCanServeStash(stashDir: string, options: { requireFresh?: boolean 
  * Ensure the local index exists and can serve the caller.
  *
  * Default mode is `background` — the read-path contract (`search`, `show`,
- * `feedback`): a populated index built for this stash is served as-is (its
+ * `feedback`): an index that completed a build for this stash is served as-is (its
  * freshness is the writers' job, see module doc); an unusable index rebuilds
  * inline, since there is nothing to proceed against.
  *
- * `mode: "blocking"` additionally treats content-staleness as a rebuild
- * trigger and waits for it. Use this for callers like `improve` whose
+ * `mode: "blocking"` always runs an incremental `akmIndex` and waits for it,
+ * letting its per-file fingerprints decide what changed (across every bundle,
+ * not just the primary stash). Use this for callers like `improve` whose
  * planning logic depends on a current `entries` table in the same process.
  *
- * Returns `true` only when an inline index run succeeds; `false` when no
+ * Returns `true` when an inline index run succeeds; `false` when no
  * rebuild was needed. A rebuild attempt that fails propagates its error to
  * the caller rather than silently proceeding with a stale/missing index.
  */
@@ -229,7 +105,7 @@ export async function ensureIndex(stashDir: string, options: EnsureIndexOptions 
   // index prefixes (hand-renamed bundle key) BEFORE any rebuild could re-mint.
   warnOnBundleRenameDrift();
   const blocking = options.mode === "blocking";
-  if (indexCanServeStash(stashDir, { requireFresh: blocking })) return false;
+  if (!blocking && indexCanServeStash(stashDir)) return false;
 
   const { akmIndex } = await import("./indexer.js");
   const startedMs = Date.now();

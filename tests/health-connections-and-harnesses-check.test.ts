@@ -69,7 +69,6 @@ describe("runConnectionsAndHarnessesCheck", () => {
       "process:enrich",
       "process:index",
       "process:embedding",
-      "process:curate-rerank",
     ]);
     expect(rows[0]).toMatchObject({ reachable: true, key: "none", default: true });
     expect(rows[1]).toMatchObject({ installed: true, version: "2.1.0 (Claude Code)" });

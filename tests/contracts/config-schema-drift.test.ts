@@ -107,7 +107,7 @@ describe("config schema drift pins", () => {
     expect(Object.keys(index.properties ?? {})).not.toContain("stalenessDetection");
     expect(Object.keys(index.properties ?? {})).not.toContain("indexBodyOpening");
     const search = props.search as { properties?: Record<string, unknown> };
-    expect(Object.keys(search.properties ?? {})).toEqual(["defaultExcludeTypes", "curateRerank"]);
+    expect(Object.keys(search.properties ?? {})).toEqual(["defaultExcludeTypes"]);
     const embedding = props.embedding as { properties?: Record<string, unknown> };
     for (const key of ["queryTemplate", "documentTemplate", "queryTimeoutMs"]) {
       expect(Object.keys(embedding.properties ?? {})).toContain(key);

@@ -122,19 +122,6 @@
             placeholder: "memory, script",
             hint: "Comma-separated types excluded unless explicitly requested.",
           },
-          {
-            key: "search.curateRerank.enabled",
-            label: "Rerank curate results",
-            kind: "boolean",
-            hint: "Sends top candidates to the configured reranker model.",
-          },
-          { key: "search.curateRerank.endpoint", label: "Reranker endpoint", kind: "url" },
-          {
-            key: "search.curateRerank.topN",
-            label: "Candidates to rerank",
-            kind: "number",
-            hint: "At most 50; AKM validates this value.",
-          },
         ],
       },
       {

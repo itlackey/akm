@@ -400,13 +400,13 @@ export async function dispatchPreparedCommandInvocation(
   const built = buildExecution(request, prepared.runner);
   const selectedEngine = request.target.name;
   const result = await runExecution(built, runOptionsFor(options));
-  const consumedRefs = new Set<string>();
-  if (request.command.source) consumedRefs.add(request.command.source.ref);
-  if (request.persona) consumedRefs.add(request.persona.source.ref);
+  const consumed = new Map<string, "command" | "persona">();
+  if (request.command.source) consumed.set(request.command.source.ref, "command");
+  if (request.persona) consumed.set(request.persona.source.ref, "persona");
   // options.eventSource is only a FALLBACK — an ambient AKM_EVENT_SOURCE still
   // wins. Absent, the default is "user".
   const eventSource = resolveUsageEventSource(process.env, options.eventSource ?? "user");
-  for (const ref of consumedRefs) recordIndexedShowUsage(ref, eventSource);
+  for (const [ref, type] of consumed) recordIndexedShowUsage(ref, type, ref.split("/").pop() ?? ref, eventSource);
   return resultEnvelope(result, selectedEngine, [], built.notices);
 }
 

@@ -74,7 +74,7 @@ export function envReferenceName(value: string): string | undefined {
 }
 
 /**
- * The `apiKey` of a connection, `embedding` or `search.curateRerank`: a `$VAR` /
+ * The `apiKey` of a connection, or `embedding`: a `$VAR` /
  * `${VAR}` reference, or absent (the key is then `credentials.json`'s under the
  * block's name). Anything else is never read or sent: it is warned about once,
  * never a load error, and kept as written so an ordinary write does not delete

@@ -183,23 +183,28 @@ describe("a key in the older flat form", () => {
   });
 
   test("is filed under the endpoint of the block it belongs to, then read for that endpoint", () => {
-    writeStoreFile({ lab: "flat-key", curateRerank: "rerank-key", ghost: "no-block" });
+    writeStoreFile({ lab: "flat-key", embedding: "embed-key", ghost: "no-block" });
     const endpoints: Record<string, string> = {
       lab: LAB,
-      curateRerank: "https://rerank.example.test/v1",
+      embedding: "https://embed.example.test/v1",
     };
+    // `embedding` has an endpoint only as the service: the connection of that name has none.
     const endpointOf = (slot: Parameters<typeof readCredential>[0]) =>
-      endpoints["connection" in slot ? slot.connection : slot.service];
+      "connection" in slot
+        ? slot.connection === "embedding"
+          ? undefined
+          : endpoints[slot.connection]
+        : endpoints[slot.service];
 
     const dryRun = fileFlatCredentials(endpointOf, false);
-    expect(dryRun.filed).toEqual(["lab", "curateRerank"]);
-    expect(readStoreFile()).toEqual({ lab: "flat-key", curateRerank: "rerank-key", ghost: "no-block" });
+    expect(dryRun.filed).toEqual(["lab", "embedding"]);
+    expect(readStoreFile()).toEqual({ lab: "flat-key", embedding: "embed-key", ghost: "no-block" });
 
     fileFlatCredentials(endpointOf, true);
     expect(readStoreFile()).toEqual({
       ghost: "no-block",
       connections: { lab: { key: "flat-key", endpoint: LAB } },
-      services: { curateRerank: { key: "rerank-key", endpoint: "https://rerank.example.test/v1" } },
+      services: { embedding: { key: "embed-key", endpoint: "https://embed.example.test/v1" } },
     });
     expect(readCredential(lab, LAB)).toBe("flat-key");
   });
@@ -416,11 +421,11 @@ describe("collectCredentialValues", () => {
           "stored-conn": { endpoint: "http://b/v1" },
           unkeyed: { endpoint: "http://c/v1", apiKey: "$UNSET_KEY" },
         },
-        search: { curateRerank: { endpoint: "http://d/v1", model: "m", apiKey: "$RERANK_KEY" } },
+        embedding: { endpoint: "http://d/v1", model: "m", apiKey: "$EMBED_ENV_KEY" },
       } as unknown as Parameters<typeof collectCredentialValues>[0],
-      { A_KEY: "env-key", RERANK_KEY: "rerank-key" },
+      { A_KEY: "env-key", EMBED_ENV_KEY: "embed-env-key" },
     );
-    expect(values.sort()).toEqual(["embed-key", "env-key", "rerank-key", "retired-key", "stored-key"]);
+    expect(values.sort()).toEqual(["embed-env-key", "embed-key", "env-key", "retired-key", "stored-key"]);
     expect(warnings).toEqual([]);
   });
 

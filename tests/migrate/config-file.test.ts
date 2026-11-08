@@ -113,14 +113,13 @@ describe("the keys an engines config holds that akm no longer reads", () => {
     expect(readCredential({ connection: "default" }, "http://lab:8080/v1/chat/completions")).toBe("sk-lab-from-a-file");
   });
 
-  test("a literal or secret-store apiKey on a connection, embedding and search.curateRerank moves to credentials.json for that block and its endpoint", () => {
+  test("a literal or secret-store apiKey on a connection and embedding moves to credentials.json for that block and its endpoint", () => {
     writeConfig({
       connections: {
         cloud: { endpoint: "https://api.example.com/v1", models: { fast: "m" }, apiKey: "sk-cloud-literal" },
         env: { endpoint: "https://env.example.com/v1", models: { fast: "m" }, apiKey: "$ENV_KEY" },
       },
       embedding: { model: "embed", endpoint: "https://embed.example.com/v1", apiKey: secretRef("shared") },
-      search: { curateRerank: { endpoint: "https://rerank.example.com/v1", model: "r", apiKey: "sk-rerank-literal" } },
     });
 
     const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
@@ -129,7 +128,6 @@ describe("the keys an engines config holds that akm no longer reads", () => {
       connections: { cloud: { key: "sk-cloud-literal", endpoint: "https://api.example.com/v1" } },
       services: {
         embedding: { key: "sk-from-the-secret-store", endpoint: "https://embed.example.com/v1" },
-        curateRerank: { key: "sk-rerank-literal", endpoint: "https://rerank.example.com/v1" },
       },
     });
     const written = readConfig();
@@ -138,8 +136,27 @@ describe("the keys an engines config holds that akm no longer reads", () => {
     // A reference stays: it is how the connection reads its key.
     expect(connections.env?.apiKey).toBe("$ENV_KEY");
     expect(written.embedding).not.toHaveProperty("apiKey");
-    expect((written.search as Dict).curateRerank).not.toHaveProperty("apiKey");
-    expect(result.credentials).toEqual(["cloud", "embedding", "curateRerank"]);
+    expect(result.credentials).toEqual(["cloud", "embedding"]);
+  });
+
+  test("the removed search.curateRerank block is dropped as an unknown key, and its literal apiKey is not filed", () => {
+    writeConfig({
+      search: {
+        defaultExcludeTypes: ["session"],
+        curateRerank: {
+          enabled: true,
+          endpoint: "https://rerank.example.com/v1",
+          model: "r",
+          apiKey: "sk-rerank-literal",
+        },
+      },
+    });
+
+    normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    expect((readConfig().search as Dict).curateRerank).toBeUndefined();
+    expect((readConfig().search as Dict).defaultExcludeTypes).toEqual(["session"]);
+    expect(fs.existsSync(credentialsPath())).toBe(false);
   });
 
   test("--dry-run lists the entries and the notes, and writes nothing", () => {

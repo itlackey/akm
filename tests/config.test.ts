@@ -871,14 +871,17 @@ describe("primary stash config", () => {
 // ── search config ────────────────────────────────────────────────────────────
 
 describe("search config", () => {
-  test("loads search.defaultExcludeTypes and search.curateRerank", () => {
-    writeCurrentConfig({
-      search: { defaultExcludeTypes: ["session", "memory"], curateRerank: { enabled: true, topN: 30 } },
+  test("loads search.defaultExcludeTypes", () => {
+    writeCurrentConfig({ search: { defaultExcludeTypes: ["session", "memory"] } });
+    expect(loadConfig().search).toEqual({ defaultExcludeTypes: ["session", "memory"] });
+  });
+
+  test("an older config with the removed search.curateRerank warns once, keeps loading, and enables nothing", () => {
+    writeCurrentConfig({ search: { curateRerank: { enabled: true, endpoint: "http://r/rerank", topN: 30 } } });
+    const warnings = captureWarnings(() => {
+      expect(() => loadConfig()).not.toThrow();
     });
-    expect(loadConfig().search).toEqual({
-      defaultExcludeTypes: ["session", "memory"],
-      curateRerank: { enabled: true, topN: 30 },
-    });
+    expect(warnings.join("\n")).toMatch(/unknown config key.*search\.curateRerank.*ignored/i);
   });
 
   test("tolerates the retired search.minScore and search.graphBoost keys (lenient unknown-key policy)", () => {

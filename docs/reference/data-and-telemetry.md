@@ -13,9 +13,6 @@ where.
   other model-backed features send. `akm setup`, `akm models` and `akm health`
   ask each endpoint which models it serves. Your API key is sent only to the
   endpoint of the connection it belongs to.
-- **The curate reranker** (`search.curateRerank`, off by default) receives the
-  query and, for each top candidate `akm curate` fetches, its name, description
-  and the start of its indexed content (2,000 characters in all).
 - **A harness you enable** (Claude Code, Codex, OpenCode, ...) is a program akm
   runs on your machine, and what akm hands it reaches whatever that harness is
   configured for: its own provider, its own tools, its own MCP servers. It runs
@@ -71,7 +68,7 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 | --- | --- |
 | `config.json` | Your configuration: connections, harnesses, improve strategies, bundles, registries and experimental opt-ins. See [Configuration](configuration.md). Deleting it resets all settings. |
 | `config.json.lck` | Write sentinel held while `config.json` is saved. |
-| `credentials.json` | The API keys akm holds for your connections and for the `embedding` and `search.curateRerank` services, each with the endpoint it was stored for, written with mode 0600 (see [Credentials](configuration.md#credentials)). Deleting it removes those keys; akm sends requests without them. |
+| `credentials.json` | The API keys akm holds for your connections and for the `embedding` service, each with the endpoint it was stored for, written with mode 0600 (see [Credentials](configuration.md#credentials)). Deleting it removes those keys; akm sends requests without them. |
 
 ### Data directory
 
