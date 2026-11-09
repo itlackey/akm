@@ -20,6 +20,8 @@ export interface Detected {
   connection: string | null;
   /** Background learning: the host-wide switch, the platform improve runs on (null: a connection, or nowhere) and whether its task is scheduled. */
   learning: { on: boolean; harness: string | null; scheduled: boolean };
+  /** Only from `setup.apply`: what the OS scheduler did not get (no host akm to write its entry). */
+  warnings?: string[];
 }
 
 /** Background learning is switched on and has somewhere to run. `learning.on` alone is only the switch. */

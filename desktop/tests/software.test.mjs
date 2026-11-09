@@ -294,3 +294,11 @@ test("a failed native command is not reported as success; its cause is bounded d
   assert.throws(() => f.manager.start("shell", "rm"), /Invalid/);
   assert.throws(() => f.manager.start("install-plugin", "other"), /Invalid/);
 });
+
+test("the host CLI for scheduled tasks is the one Software detects, and none when it is absent", async () => {
+  const present = await hostFixture();
+  const cli = await present.manager.cli();
+  assert.equal(cli.path, "/fixture/bin/akm");
+  assert.equal(cli.env.AKM_LAUNCHER_NODE, undefined);
+  assert.equal(await (await hostFixture({ absent: true })).manager.cli(), undefined);
+});

@@ -61,13 +61,20 @@ export function parseCommandResponse(stdout: string, expectedShape: string): Rec
   }
 }
 
+/** The host's own `akm` (a file Desktop found and ran `--version` on) and the environment to run it in. */
+export interface HostCli {
+  path: string;
+  env: NodeJS.ProcessEnv;
+}
+
 /**
  * Run the bundled CLI for an action that must not run in this process, and return its typed result, expected under
  * the output shape `shape`: `bundle add` and `bundle update` do network and git work that would block the
- * single-threaded host, `bundle remove` reindexes, and `setup` probes the machine.
+ * single-threaded host, `bundle remove` reindexes, and `setup` probes the machine. With `host`, that `akm` runs
+ * instead, so what it writes to the OS (the scheduler entry) names it: the bundled one is not an installation.
  */
-export async function runCli(args: string[], shape: string): Promise<Record<string, unknown>> {
-  const [bin, ...prefix] = resolveAkmInvocation().argv;
+export async function runCli(args: string[], shape: string, host?: HostCli): Promise<Record<string, unknown>> {
+  const [bin, ...prefix] = host ? [host.path] : resolveAkmInvocation().argv;
   // Options go before a `--` that ends them, so a positional name may begin with a dash.
   const end = args.indexOf("--");
   const argv = end === -1 ? [...args, "--format=json"] : [...args.slice(0, end), "--format=json", ...args.slice(end)];
@@ -75,7 +82,7 @@ export async function runCli(args: string[], shape: string): Promise<Record<stri
     const child = execFile(
       bin!,
       [...prefix, ...argv],
-      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, ...(host ? { env: host.env } : {}) },
       (error, stdout, stderr) => {
         resetConfigCache();
         if (error) {

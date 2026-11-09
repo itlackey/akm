@@ -6,6 +6,7 @@
 
 import path from "node:path";
 import { setConfigValue, unsetConfigValue } from "../commands/config";
+import { akmTasksAdd } from "../commands/tasks/tasks";
 import {
   type AkmConfig,
   defaultConnection,
@@ -24,7 +25,7 @@ import { parseSetupFlags } from "../setup/setup-flags";
 import { applySetupAnswers } from "../setup/setup-plan";
 import { describeRuns, runsReadOnly, unrestrictedModelWorkNote } from "../setup/summary";
 import { listEmbeddedTasks } from "../tasks/embedded";
-import { runCli } from "./cli-child";
+import { type HostCli, runCli } from "./cli-child";
 import { preserveUnrelatedConfig } from "./readers";
 import * as tasks from "./tasks";
 
@@ -77,12 +78,15 @@ export async function detect() {
  * (`improve.enabled: false`) and nothing else; on removes it, runs improve on `harness` (`improve.harness`, else the
  * connection `improve.connection`) and enables the `improve` task.
  */
-export async function apply(input: {
-  dir?: string;
-  harness?: string[];
-  connection?: { endpoint: string; model: string; apiKeyEnv?: string };
-  learning?: { on: boolean; harness?: string };
-}) {
+export async function apply(
+  input: {
+    dir?: string;
+    harness?: string[];
+    connection?: { endpoint: string; model: string; apiKeyEnv?: string };
+    learning?: { on: boolean; harness?: string };
+  },
+  host?: HostCli,
+) {
   for (const key of Object.keys(input)) {
     if (!APPLY_FIELDS.includes(key)) warnOnce(`setup-apply:${key}`, `[setup] apply: ignoring unknown field "${key}".`);
   }
@@ -109,13 +113,14 @@ export async function apply(input: {
         ["bundle", "create", `--dir=${dir ?? primaryBundlePath(config) ?? getDefaultStashDir()}`],
         "bundle-create",
       ));
-  if (checked || learning) await writeLearning(checked, learning);
-  return detect();
+  const warnings = checked || learning ? await writeLearning(checked, learning, host) : [];
+  return { ...(await detect()), ...(warnings.length ? { warnings } : {}) };
 }
 
 async function writeLearning(
   connection: { endpoint: string; model: string; apiKeyEnv?: string } | undefined,
   learning: { on: boolean; harness?: string } | undefined,
+  host: HostCli | undefined,
 ) {
   resetConfigCache();
   const config = loadConfig();
@@ -173,21 +178,25 @@ async function writeLearning(
   }
   if (learning) {
     setLearning(on);
-    if (on) await enableLearningTask();
+    if (on) return enableLearningTask(host);
   }
+  return [];
 }
 
 /**
  * Learning on: the scheduled improve task exists (added from akm's template when the library has none) and is
  * enabled. Turning learning off leaves the schedule alone: the task then exits doing nothing.
  */
-async function enableLearningTask() {
+async function enableLearningTask(host: HostCli | undefined): Promise<string[]> {
   const listed = tasks.list().tasks;
   const task = listed.find((entry) => entry.id === LEARNING_TASK);
+  let result: { warnings?: string[]; sync?: { warnings?: string[] } } = {};
   if (!task) {
     const template = listEmbeddedTasks().find((entry) => entry.label === `core/${LEARNING_TASK}`);
     if (!template) throw new Error("akm ships no improve task template.");
-    await runCli(
+    const bundle = loadConfig().defaultBundle;
+    result = await tasks.viaHost(
+      host,
       [
         "task",
         "add",
@@ -195,9 +204,18 @@ async function enableLearningTask() {
         `--schedule=${template.schedule}`,
         `--command=${template.command}`,
         `--description=${template.description}`,
-        `--bundle=${loadConfig().defaultBundle}`,
+        `--bundle=${bundle}`,
       ],
       "task-add",
+      () =>
+        akmTasksAdd({
+          id: LEARNING_TASK,
+          schedule: template.schedule,
+          command: template.command,
+          description: template.description,
+          target: bundle,
+        }),
     );
-  } else if (!task.enabled) await tasks.enable({ task: LEARNING_TASK });
+  } else if (!task.enabled) result = await tasks.enable({ task: LEARNING_TASK }, host);
+  return [...(result.warnings ?? []), ...(result.sync?.warnings ?? [])];
 }
