@@ -19,12 +19,16 @@
    another sets that pull request's branch as its base; GitHub retargets it
    when the first one merges.
 4. A prerelease is a dispatch of the Release workflow on the release branch
-   with a stage. It publishes `<version>-<stage>` to npm `next`. Each stage
-   publishes once per release.
+   with a stage. It publishes `<version>-<stage>.N` to npm `next`, `N`
+   counting up from 1 for that stage, as often as needed.
 5. To ship, commit `release: <version>` (package.json and the changelog cut),
    open the pull request into `main` and merge it when green. The push to
    `main` publishes `<version>` to npm `latest`. The branch is deleted.
 6. Cut the next release branch from `main`.
+
+Each step is one command: `bun run release:start`, `bun run release:prerelease
+[alpha|beta|rc]` and `bun run release:stable` (`scripts/release/`). Each refuses
+to run from the wrong branch or with unpushed changes, and says why.
 
 The release branch is always shippable: a pull request merges when the branch
 would still ship with it in. A feature that is not ready waits in its pull
@@ -36,26 +40,30 @@ branch.
 ## 1. Cut a release branch
 
 Right after the previous release branch merged (GitHub deletes it, see
-[Repository settings](#repository-settings)):
+[Repository settings](#repository-settings)), from a clean tree on any branch:
 
 ```sh
-git fetch origin main
-git switch -c release/$(bun scripts/release-version.ts next) origin/main
-git push -u origin HEAD
-gh repo edit --default-branch release/<version>
+bun run release:start
 ```
+
+It refuses while another `release/*` branch exists on origin, then creates
+`release/<version>` from `origin/main` with the next free number
+(`bun scripts/release-version.ts next`), pushes it, and makes it the default
+branch (`gh repo edit --default-branch`).
 
 ## 2. Prerelease
 
-When the branch is worth trying before it ships, with the stage `alpha`,
-`beta` or `rc`:
+When the branch is worth trying before it ships, on the release branch with
+everything pushed:
 
 ```sh
-gh workflow run release.yml --ref release/<version> -f stage=beta
+bun run release:prerelease          # beta
+bun run release:prerelease rc       # alpha, beta or rc
 ```
 
-No commit is needed: the branch name carries the version. The Release
-workflow, on the branch's head:
+No commit is needed: the branch name carries the version. It dispatches the
+Release workflow on the branch (`gh workflow run release.yml --ref
+release/<version> -f stage=<stage>`), which, on the branch's head:
 
 1. runs CI (lint, the typecheck, the unit and integration suites, the build, the
    Node fallback smoke, Desktop's tests) and Gated CI (semantic search with
@@ -63,7 +71,8 @@ workflow, on the branch's head:
    macOS and Windows) as its own jobs;
 2. runs `tests/release-check.sh --skip-docker`: the packaged artifact's bin
    targets and migrator, and package acceptance;
-3. builds the package and the standalone binaries as `<version>-<stage>`;
+3. builds the package and the standalone binaries as `<version>-<stage>.N`,
+   `N` one above the highest already on npm for that release and stage;
 4. publishes them to npm `next` and creates a GitHub prerelease;
 5. builds AKM Desktop on Linux, macOS and Windows from the tarball it just
    published and attaches the installers to the same release (Desktop shares
@@ -73,39 +82,39 @@ workflow, on the branch's head:
 6. publishes `akm-web` (Desktop's web process alone, for servers and
    containers) from the same tarball.
 
-Each stage publishes once per release: a second dispatch with the same stage
-stops at the version step, because `v<version>-<stage>` is already released
-from another commit. The next stage, or the stable release, comes next.
+Repeat as often as the branch needs; each dispatch takes the next counter.
 
 ## 3. Ship a stable release
 
-On the release branch:
+On the release branch with everything pushed:
 
-1. Set the version to the branch's: `npm pkg set version=<version>`.
-2. Cut the changelog: add `## [<version>] - <YYYY-MM-DD>` (UTC date) directly
-   under `## [Unreleased]`, so the unreleased entries become this release's
-   section. CI fails the commit when the newest section does not name the
-   `package.json` version (`tests/workflow-release.test.ts`).
-3. Add a migration note if the release needs one (see
-   [CONTRIBUTING](https://github.com/itlackey/akm/blob/main/.github/CONTRIBUTING.md#shipping-a-release--migration-notes)).
-4. Commit `release: <version>`, push, and open the release pull request:
+1. Add a migration note if the release needs one (see
+   [CONTRIBUTING](https://github.com/itlackey/akm/blob/main/.github/CONTRIBUTING.md#shipping-a-release--migration-notes)),
+   and merge it like any other change.
+2. Run:
 
    ```sh
-   gh pr create --base main --head release/<version> --title "release: <version>"
+   bun run release:stable
    ```
 
-   This pull request is the whole gate: everything a pull request runs, plus
+   It sets package.json to the branch's version, cuts the changelog (the
+   `## [Unreleased]` entries become `## [<version>] - <UTC date>` under a fresh
+   empty Unreleased heading; `tests/workflow-release.test.ts` pins the two
+   against each other), commits `release: <version>`, pushes, and opens the
+   pull request into `main` (`gh pr create --base main`).
+
+   That pull request is the whole gate: everything a pull request runs, plus
    Desktop packaged on all three platforms, the upgrade rehearsals from the
    previous stable and from the oldest supported releases, Gated CI, and the
    check that the head is a release branch. Fix on the release branch until it
    is green. Rerun failed jobs on a flake.
-5. Merge it (a merge commit, so `main` carries the branch's commits). The push
+3. Merge it (a merge commit, so `main` carries the branch's commits). The push
    to `main` runs the Release workflow, which publishes `<version>` to npm
    `latest`, creates the GitHub release with the binaries, the installers and
    `checksums.txt`, builds and attaches Desktop, and publishes `akm-web`.
    Nothing is tested again: the pull request proved this tree, and the ruleset
    requires the branch to be up to date, so the merge has the same tree.
-6. Cut the next release branch ([section 1](#1-cut-a-release-branch)).
+4. Cut the next release branch ([section 1](#1-cut-a-release-branch)).
 
 If Release fails on a flake, rerun the failed jobs: a rerun on the same commit
 skips what is already published. If the version it would publish is already
@@ -179,11 +188,12 @@ highest `NN` already on npm for this UTC month, at any stage, and
 retired 8-digit daily builds (`0.10.26101001-alpha` to `0.10.26101202-alpha`)
 are not counted. 0.9 and older use `X.Y.Z`.
 
-A release's prereleases are its number with the stage appended
-(`0.10.261116-beta`), published from the release branch by dispatch; the stable
-release is the bare number, published by the merge into `main`. The stage is
-never committed. A number that never published (an abandoned branch) stays
-unused.
+A release's prereleases are its number with the stage and a counter appended
+(`0.10.261116-beta.1`, then `-beta.2`, then `-rc.1`), published from the release
+branch by dispatch; the stable release is the bare number, published by the
+merge into `main`. The stage is never committed. A number that never published
+(an abandoned branch) stays unused. Prereleases published before the counter
+carry a bare stage (`0.10.261115-beta`).
 
 ## Repository settings
 

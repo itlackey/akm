@@ -4,7 +4,7 @@ name: Release
 # package.json to npm `latest` and a GitHub release, then builds Desktop and akm-web from that tarball. The pull
 # request that merged it ran the whole gate (CI, including Gated CI), so nothing is tested again here.
 # A prerelease is a dispatch on a release branch, release/<version>, with a stage: CI and Gated CI run as jobs of
-# this run on the commit, then <version>-<stage> goes to npm `next` and a GitHub prerelease.
+# this run on the commit, then <version>-<stage>.N goes to npm `next` and a GitHub prerelease, N counting up from 1.
 # docs/maintainers/release-checklist.md describes the branch model.
 on:
   push:
@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "Prerelease stage: publishes the release branch's version with the stage appended (release/<version> publishes <version>-<stage>) to the npm next tag and a GitHub prerelease. A stable release is the merge of a release branch into main, not a dispatch."
+        description: "Prerelease stage: publishes the release branch's version with the stage and the next counter appended (release/<version> publishes <version>-<stage>.1, then .2) to the npm next tag and a GitHub prerelease. A stable release is the merge of a release branch into main, not a dispatch."
         required: true
         default: beta
         type: choice
@@ -76,12 +76,11 @@ jobs:
 
       # A release's version is its branch name, release/<version>. A stable (the push to main) publishes the version
       # committed in package.json by the `release: <version>` commit; a prerelease (a dispatch on the release
-      # branch) publishes the branch's version with the stage appended, stamped into this run's package.json only.
-      # scripts/release-version.ts validates the format (0.10+: 0.<minor>.YYMMNN; older lines: X.Y.Z[-prerelease])
-      # and appends the stage (#1089).
-      # A version already released from another commit is refused: each stage of a release publishes once, and a
-      # merge into main without a new version would otherwise rebuild that release's assets. A rerun on the same
-      # commit goes on.
+      # branch) publishes the branch's version with the stage and the next counter appended (one above the highest
+      # on npm for that release and stage), stamped into this run's package.json only. scripts/release-version.ts
+      # validates the format (0.10+: 0.<minor>.YYMMNN; older lines: X.Y.Z[-prerelease]) and appends the stage (#1089).
+      # A version already released from another commit is refused: a merge into main without the release commit
+      # would otherwise rebuild that release's assets. A rerun on the same commit goes on.
       - name: Resolve version
         id: version
         env:

@@ -54,10 +54,11 @@ release within that month (`01` to `99`), each two digits. A release takes its
 number when its branch, `release/<version>`, is cut: one above the highest `NN`
 published that month at any stage, so the first release of 2026-10 is
 `0.10.261001` and the next `0.10.261002`. Its prereleases are that number with
-the stage appended, `-alpha`, `-beta` or `-rc` with no `.N`, so each stage
-publishes once per release; the stable release is the bare number. Prereleases
-publish to the npm `next` tag and stable releases to `latest`; `akm upgrade
---next` follows `next`. Versions sort by month and then `NN`, so semver ranges and `akm upgrade`
+the stage and a counter appended, `0.10.261001-beta.1`, then `-beta.2`, then
+`-rc.1`; the stable release is the bare number. Prereleases published before
+this rule carry a bare stage (`0.10.261115-beta`). Prereleases publish to the
+npm `next` tag and stable releases to `latest`; `akm upgrade --next` follows
+`next`. Versions sort by month and then `NN`, so semver ranges and `akm upgrade`
 order them correctly across months and years. The patch number no longer says
 how big a change is: read the CHANGELOG, which still marks breaking changes. The
 0.9 line keeps `0.9.N`, and `0.11` restarts on the same scheme.

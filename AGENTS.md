@@ -41,6 +41,7 @@ The failure to avoid is treating something other than the user's stated intent a
 
 ## Branches
 - Pull requests target the default branch, the open `release/<version>` branch, never `main`. Only a release branch merges to `main`, and that merge is a release: `docs/maintainers/release-checklist.md`.
+- Releases run from scripts: `bun run release:start` cuts the next release branch, `bun run release:prerelease [alpha|beta|rc]` publishes a prerelease of it, `bun run release:stable` opens the pull request that ships it.
 
 ## Where the details live
 - Contributing, code style, lint and commit rules, and known gotchas: `.github/CONTRIBUTING.md`.
