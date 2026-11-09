@@ -99,9 +99,11 @@ that run.
 The OS scheduler is one namespace per user, shared by every akm installation and
 every sandbox on the machine, so akm writes it for the user's **default**
 installation only: the one whose config, data, cache and state directories are
-where `HOME` puts them. Setting any `AKM_*_DIR` or `AKM_BUNDLE_DIR`, or an
-`XDG_*_HOME` that moves one of those directories, makes an installation
-non-default. `akm task sync` then writes nothing and says so; run
+where `HOME` puts them, read from the default config file. Setting any `AKM_*_DIR`
+or `AKM_BUNDLE_DIR`, a config file other than the default (`--config`,
+`AKM_CONFIG_FILE`), or an `XDG_*_HOME` that moves one of those directories, makes
+an installation non-default. A `paths` key in the default file does not: dispatch
+reads that file. `akm task sync` then writes nothing and says so; run
 `akm task dispatch` every minute from your own supervisor, with that
 installation's environment:
 

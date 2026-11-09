@@ -70,6 +70,7 @@ import { resetAllSeams } from "./_helpers/seams";
  */
 const HARNESSED: readonly string[] = [
   // Storage layout overrides.
+  "AKM_CONFIG_FILE",
   "AKM_BUNDLE_DIR",
   "AKM_CONFIG_DIR",
   "AKM_CACHE_DIR",
@@ -88,8 +89,7 @@ const HARNESSED: readonly string[] = [
   "CODEX_HOME",
   "CLAUDE_CONFIG_DIR",
   "OPENCODE_TEST_HOME",
-  // Diagnostic / secret env vars production code reads.
-  "AKM_VERBOSE",
+  // Secret env vars production code reads.
   "AKM_LLM_API_KEY",
   "AKM_EMBED_API_KEY",
   // Registry install override used by registry-providers tests.
@@ -150,13 +150,13 @@ function installSuiteWideSandbox(): void {
   // sandbox above and leak production paths into the suite. Delete them at
   // startup so the XDG sandbox always wins; tests that need a specific
   // AKM_*_DIR set it explicitly (and the afterEach tripwire restores it).
+  delete process.env.AKM_CONFIG_FILE;
   delete process.env.AKM_CONFIG_DIR;
   delete process.env.AKM_DATA_DIR;
   delete process.env.AKM_CACHE_DIR;
   delete process.env.AKM_STATE_DIR;
-  // Diagnostic / secret env vars must start unset so production code paths
+  // Secret env vars must start unset so production code paths
   // see a clean default. Tests that need them set should do so explicitly.
-  delete process.env.AKM_VERBOSE;
   delete process.env.AKM_LLM_API_KEY;
   delete process.env.AKM_EMBED_API_KEY;
   // The Codex session reader's default root is `os.homedir()/.codex`, and bun's

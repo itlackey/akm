@@ -47,6 +47,7 @@ import { FeedbackConfigSchema } from "./schema/feedback";
 import { HarnessesSchema } from "./schema/harnesses";
 import { ImproveConfigSchema } from "./schema/improve";
 import { OutputConfigSchema } from "./schema/output";
+import { PathsConfigSchema } from "./schema/paths";
 import { nonEmptyString, nonNegativeNumber } from "./schema/primitives";
 import { ProjectsSchema } from "./schema/projects";
 import { SchedulerConfigSchema } from "./schema/scheduler";
@@ -75,6 +76,7 @@ export {
   ValidationProcessConfigSchema,
 } from "./schema/improve-processes";
 export { OutputConfigSchema } from "./schema/output";
+export { PathsConfigSchema } from "./schema/paths";
 export { LlmInvocationOverridesSchema } from "./schema/primitives";
 export { SchedulerConfigSchema } from "./schema/scheduler";
 export { SearchConfigSchema } from "./schema/search";
@@ -101,6 +103,8 @@ export const AkmConfigShape = {
   connections: ConnectionsSchema.optional(),
   harnesses: HarnessesSchema.optional(),
   semanticSearchMode: z.enum(["off", "auto"]).default("off"),
+  // Where this installation keeps its data, state and cache; read before the config loads (core/paths.ts).
+  paths: PathsConfigSchema.optional(),
   embedding: EmbeddingConnectionConfigSchema.optional(),
   registries: z.array(RegistryConfigEntrySchema).optional(),
   // `bundles` + `defaultBundle` are the only source configuration shape. The

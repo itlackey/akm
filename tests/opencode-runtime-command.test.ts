@@ -95,6 +95,7 @@ describe("the inline config", () => {
       {
         package: PLUGIN,
         options: {
+          akm: [],
           shellEnv: expect.any(Object),
           requestFields: expect.objectContaining({
             top_p: 0.9,
@@ -158,22 +159,18 @@ describe("the environment", () => {
     expect(shellEnv.TMPDIR).toBe("/tmp");
     expect(shellEnv.XDG_CACHE_HOME).toBeNull();
     expect(shellEnv.OPENCODE_CONFIG_CONTENT).toBeNull();
-    // Every variable runtimeEnv sets is covered but akm's own one for its plugin, which a command may see.
-    expect(Object.keys(shellEnv).sort()).toEqual(
-      Object.keys(env)
-        .filter((name) => name !== "AKM_OPENCODE_CLI")
-        .sort(),
-    );
+    // Every variable runtimeEnv sets is covered.
+    expect(Object.keys(shellEnv).sort()).toEqual(Object.keys(env).sort());
   });
 
-  test("the config goes in OPENCODE_CONFIG_CONTENT, and the argv that runs akm, for the plugin, in AKM_OPENCODE_CLI", () => {
+  test("the config goes in OPENCODE_CONFIG_CONTENT, and the argv that runs akm, for the plugin, is its akm option", () => {
     expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT as string)).toEqual(
       runtimeConfig(connection({ apiKey: "sk-secret" }), PLUGIN, KEY_FILE),
     );
-    expect(JSON.parse(env.AKM_OPENCODE_CLI as string)).toEqual([
-      "/usr/local/bin/node",
-      "/usr/local/lib/node_modules/akm-cli/dist/akm",
-    ]);
+    expect(env).not.toHaveProperty("AKM_OPENCODE_CLI");
+    const config = runtimeConfig(connection(), PLUGIN, KEY_FILE, {}, where.akm);
+    const [entry] = config.plugins as Array<{ options: { akm: string[] } }>;
+    expect(entry?.options.akm).toEqual(["/usr/local/bin/node", "/usr/local/lib/node_modules/akm-cli/dist/akm"]);
   });
 });
 

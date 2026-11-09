@@ -228,8 +228,8 @@ the config, data, state and cache directories.
 
 | Variable | Effect |
 | --- | --- |
-| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Override the config, data, state and cache directories |
+| `AKM_CONFIG_FILE` (or `--config <file>`) | The config file to use; its `paths` key (`data`, `state`, `cache`) says where the rest lives. `credentials.json` and the config lock sit beside it |
+| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Override the config, data, state and cache directories (to be replaced by `AKM_CONFIG_FILE` and `paths`) |
 | `AKM_BUNDLE_DIR` | Default bundle directory (`~/akm/`) |
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` | XDG bases; akm appends `/akm` |
-| `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE` or `TRUNCATE`. On a detected network filesystem the default falls back to `DELETE`. |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror. Replaces `registry.npmjs.org` for npm bundle resolution. |

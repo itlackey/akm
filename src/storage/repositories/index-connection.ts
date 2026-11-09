@@ -190,8 +190,8 @@ export function openReadonlyExistingDatabase(
   // This opener bypasses openManagedDatabase/applyStandardPragmas by design (no
   // journal or schema work on a read-only handle), but that also left
   // busy_timeout at SQLite's default of 0. In WAL that is harmless — readers
-  // never block — but in the DELETE/TRUNCATE modes the network-FS fallback and
-  // AKM_SQLITE_JOURNAL_MODE can select, a concurrent writer makes every read
+  // never block — but in the DELETE mode the network-FS fallback selects, a
+  // concurrent writer makes every read
   // fail instantly with SQLITE_BUSY. busy_timeout is legal on a read-only
   // connection, so apply just that one. `busyTimeoutMs` defaults to the
   // shared 30s constant; a caller that must never sit behind another akm

@@ -178,6 +178,12 @@ function deleteConfigPath(node: Record<string, unknown>, keyPath: readonly strin
 export interface ConfigFileNormalization {
   /** Top-level keys whose stored shape differs from the current one. */
   readonly keys: readonly string[];
+  /**
+   * The `paths` entries the environment names and the file does not (`AKM_DATA_DIR`, `AKM_STATE_DIR`,
+   * `AKM_CACHE_DIR`): written by `apply`, pending under `status`, and, when the file cannot be written
+   * (an image-baked or read-only mount), the entries the image's own template must carry.
+   */
+  readonly paths?: Readonly<Record<string, string>>;
   readonly changed: boolean;
   readonly applied: boolean;
   readonly backupPath?: string;
@@ -239,6 +245,59 @@ function registerHomeBundle(body: Record<string, unknown>, notes: string[]): Rec
   return registered;
 }
 
+const ENV_LOCATIONS = { data: "AKM_DATA_DIR", state: "AKM_STATE_DIR", cache: "AKM_CACHE_DIR" } as const;
+
+/** The locations the environment names that the file's `paths` does not, as absolute paths. */
+function environmentPaths(body: Record<string, unknown>): Record<string, string> {
+  const named = isRecord(body.paths) ? body.paths : {};
+  const missing: Record<string, string> = {};
+  for (const [kind, variable] of Object.entries(ENV_LOCATIONS)) {
+    const value = process.env[variable]?.trim();
+    if (value && named[kind] === undefined) missing[kind] = path.resolve(value);
+  }
+  return missing;
+}
+
+/** Whether the file (or, when it does not exist yet, its folder) can be rewritten: an atomic write replaces the file in its folder. */
+function configWritable(configPath: string): boolean {
+  try {
+    if (fs.existsSync(configPath)) fs.accessSync(configPath, fs.constants.W_OK);
+    fs.accessSync(fs.existsSync(configPath) ? path.dirname(configPath) : nearestFolder(configPath), fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function nearestFolder(file: string): string {
+  let folder = path.dirname(file);
+  while (!fs.existsSync(folder) && path.dirname(folder) !== folder) folder = path.dirname(folder);
+  return folder;
+}
+
+/**
+ * A host that located its data, state or cache with `AKM_DATA_DIR`, `AKM_STATE_DIR` or `AKM_CACHE_DIR` keeps
+ * those locations by the file naming them in `paths`. What the file already names stays. A file that cannot be
+ * written is left alone, and the entries are reported for the template that makes it.
+ */
+function registerEnvironmentPaths(
+  body: Record<string, unknown>,
+  configPath: string,
+  notes: string[],
+): { body: Record<string, unknown>; paths?: Record<string, string> } {
+  const missing = environmentPaths(body);
+  if (Object.keys(missing).length === 0) return { body };
+  if (!configWritable(configPath)) {
+    notes.push(
+      `paths: the environment names ${Object.keys(missing).join(", ")}, but ${configPath} cannot be written. Add ${JSON.stringify({ paths: missing })} to the file where it is made (an image's config template).`,
+    );
+    return { body, paths: missing };
+  }
+  const named = isRecord(body.paths) ? body.paths : {};
+  notes.push(`paths: wrote ${Object.keys(missing).join(", ")} from the environment, so the file names where this installation keeps them.`);
+  return { body: { ...body, paths: { ...named, ...missing } }, paths: missing };
+}
+
 /**
  * The migrator's one config step. The reader tolerates the `{kind, ref, sourceId}`
  * scheduler entries 0.9.x writes and drops unknown keys; this writes the current shape back to `config.json` so the tolerance becomes
@@ -248,19 +307,25 @@ function registerHomeBundle(body: Record<string, unknown>, notes: string[]): Rec
  * written. Reports without writing unless `apply` is set.
  */
 export function normalizeConfigFile(configPath: string, options: NormalizeConfigOptions): ConfigFileNormalization {
-  return withConfigLock(() => {
+  // The lock is a file beside the config: a folder that cannot be written cannot hold it, and nothing is written there.
+  const locked = configWritable(configPath) ? withConfigLock : <T>(action: () => T): T => action();
+  return locked(() => {
     const text = readConfigText(configPath);
     if (text === undefined) {
       // No file at all: only an existing `~/akm` gives it content.
       const homeNotes: string[] = [];
-      const registered = registerHomeBundle({}, homeNotes);
-      if (homeNotes.length === 0) return { keys: [], changed: false, applied: false };
+      const withHome = registerHomeBundle({}, homeNotes);
+      const { body: registered, paths: homePaths } = registerEnvironmentPaths(withHome, configPath, homeNotes);
+      const pathsReported = homePaths ? { paths: homePaths } : {};
+      if (Object.keys(registered).length === 0) {
+        return { keys: [], changed: false, applied: false, ...pathsReported, ...(homeNotes.length > 0 ? { notes: homeNotes } : {}) };
+      }
       const homeKeys = Object.keys(registered).sort();
-      if (!options.apply) return { keys: homeKeys, changed: true, applied: false, notes: homeNotes };
+      if (!options.apply) return { keys: homeKeys, changed: true, applied: false, ...pathsReported, notes: homeNotes };
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
       writeConfigAtomic(configPath, registered);
       resetConfigCache();
-      return { keys: homeKeys, changed: true, applied: true, notes: homeNotes };
+      return { keys: homeKeys, changed: true, applied: true, ...pathsReported, notes: homeNotes };
     }
     const raw = parseConfigText(text, configPath);
     // A base the file `extends` is merged in first, so everything below reads one document, as the file will hold it.
@@ -309,6 +374,8 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     }
     keepUnusableEntries(body, localRaw, current, notes);
     body = registerHomeBundle(body, notes);
+    const environment = registerEnvironmentPaths(body, configPath, notes);
+    body = environment.body;
     const hasModelsFile = modelsFileExists();
     if (hasModelsFile) {
       notes.push(
@@ -320,6 +387,7 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       .sort();
     const reported = {
       keys,
+      ...(environment.paths ? { paths: environment.paths } : {}),
       ...(plan.moves.length > 0 || flat.filed.length > 0
         ? { credentials: [...plan.moves.map((move) => move.name), ...flat.filed] }
         : {}),

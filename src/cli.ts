@@ -44,7 +44,7 @@ process.on("unhandledRejection", (reason) => {
         ok: false,
         error: `Unhandled rejection: ${err.message}`,
         code: "UNHANDLED_REJECTION",
-        hint: "Re-run with --verbose (or AKM_VERBOSE=1) for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
+        hint: "Re-run with --verbose for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
       },
       null,
       2,
@@ -60,7 +60,7 @@ process.on("uncaughtException", (err) => {
         ok: false,
         error: `Uncaught exception: ${err.message}`,
         code: "UNCAUGHT_EXCEPTION",
-        hint: "Re-run with --verbose (or AKM_VERBOSE=1) for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
+        hint: "Re-run with --verbose for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
       },
       null,
       2,
@@ -71,6 +71,7 @@ process.on("uncaughtException", (err) => {
 });
 
 import fs from "node:fs";
+import path from "node:path";
 import { type ArgsDef, type CommandDef, defineCommand, parseArgs, renderUsage, runCommand } from "citty";
 import { formatHelp } from "./cli/help-format";
 import {
@@ -132,7 +133,35 @@ import { getOutputMode, initOutputMode } from "./output/context";
 import { isFormatExemptCommand } from "./output/format-exempt";
 import { pkgVersion } from "./version";
 
-function applyEarlyStderrFlags(argv: string[]): void {
+/**
+ * `--config <file>` (or `--config=<file>`): the installation's config file, chosen before anything is read. Resolved
+ * against the cwd and assigned to `AKM_CONFIG_FILE`, which is what every later read of a location, and every child
+ * akm starts, goes by. Beats an `AKM_CONFIG_FILE` already in the environment; the last flag wins; scanning stops
+ * at `--`. A file that does not exist is not an error here: it reads as the default file's absence does.
+ */
+export function applyEarlyConfigFlag(argv: string[]): void {
+  const separator = argv.indexOf("--");
+  const ownArgv = separator === -1 ? argv : argv.slice(0, separator);
+  let chosen: string | undefined;
+  for (let i = 2; i < ownArgv.length; i++) {
+    const token = ownArgv[i] as string;
+    if (token === "--config") {
+      const value = ownArgv[i + 1];
+      if (value === undefined || value.trim() === "" || value.startsWith("--")) {
+        throw new UsageError("--config needs the path of a config file.", "MISSING_REQUIRED_ARGUMENT");
+      }
+      chosen = value;
+      i++;
+    } else if (token.startsWith("--config=")) {
+      chosen = token.slice("--config=".length);
+      if (chosen.trim() === "")
+        throw new UsageError("--config needs the path of a config file.", "MISSING_REQUIRED_ARGUMENT");
+    }
+  }
+  if (chosen !== undefined) process.env.AKM_CONFIG_FILE = path.resolve(chosen);
+}
+
+export function applyEarlyStderrFlags(argv: string[]): void {
   const separator = argv.indexOf("--");
   const ownArgv = separator === -1 ? argv : argv.slice(0, separator);
   if (ownArgv.includes("--quiet") || ownArgv.includes("-q")) {
@@ -1070,6 +1099,7 @@ export async function runCli(): Promise<void> {
   // invalid; surface it through the same JSON-error path the rest of the CLI uses
   // rather than letting the raw exception escape with a stack trace.
   try {
+    applyEarlyConfigFlag(process.argv);
     applyEarlyStderrFlags(process.argv);
     const bypassConfig = shouldBypassConfigStartup(process.argv);
     // Off the bypass allowlist, every command reads config here exactly as

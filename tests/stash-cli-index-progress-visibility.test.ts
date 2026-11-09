@@ -18,7 +18,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { runCliCapture } from "./_helpers/cli";
-import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 
@@ -48,8 +48,8 @@ test("non-verbose text mode still uses the spinner, not stderr progress lines", 
   expect(result.stderr).not.toContain("[index:preflight]");
 });
 
-test("--verbose (AKM_VERBOSE=1) still prints every phase message, unchanged", async () => {
-  const result = await withEnv({ AKM_VERBOSE: "1" }, () => runCliCapture(["index", "--format", "json"]));
+test("--verbose still prints every phase message, unchanged", async () => {
+  const result = await runCliCapture(["index", "--format", "json", "--verbose"]);
 
   expect(result.code).toBe(0);
   expect(result.stderr).toContain("[index:preflight]");

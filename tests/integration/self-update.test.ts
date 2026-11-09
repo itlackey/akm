@@ -15,7 +15,7 @@ import {
 } from "../../src/commands/sources/self-update";
 import { upgradeCommand } from "../../src/commands/sources/sources-cli";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, setQuiet } from "../../src/core/warn";
-import { sandboxHome, withEnv } from "../_helpers/sandbox";
+import { sandboxHome } from "../_helpers/sandbox";
 
 // ── Fetch mocking helper ────────────────────────────────────────────────────
 
@@ -356,6 +356,7 @@ describe("performUpgrade", () => {
     const args = upgradeCommand.args as Record<string, { description?: string }>;
     expect(args["skip-post-upgrade"]?.description).not.toMatch(/index migrates config|auto-migrat/i);
     expect(args["migration-config"]).toBeUndefined();
+    expect(args["skip-checksum"]).toMatchObject({ type: "boolean", default: false });
 
     const spawnSyncSpy = spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
@@ -1059,12 +1060,8 @@ describe("performUpgrade", () => {
     ).rejects.toThrow(/Checksum verification failed/);
   });
 
-  // C6: the checksum bypass is no longer a `--skip-checksum` CLI option
-  // threaded through `performUpgrade`'s opts — it is the internal
-  // AKM_UPGRADE_SKIP_CHECKSUM env var, read directly inside performUpgrade
-  // (src/commands/sources/self-update.ts), so it exercises the checksum step
-  // on the binary install path rather than being a no-op npm-path option.
-  test("AKM_UPGRADE_SKIP_CHECKSUM=1 bypasses checksum verification on the binary install path", async () => {
+  // The checksum bypass is `akm upgrade --skip-checksum`, passed to `performUpgrade` as `skipChecksum`.
+  test("skipChecksum bypasses checksum verification on the binary install path", async () => {
     const installDir = path.join(sandboxHome().dir, "self-update-skip-checksum");
     fs.mkdirSync(installDir, { recursive: true });
     const binaryPath = path.join(installDir, "akm");
@@ -1075,7 +1072,31 @@ describe("performUpgrade", () => {
       url.includes("checksums.txt") ? new Response("", { status: 404 }) : new Response(binaryData, { status: 200 }),
     );
 
-    const result = await withEnv({ AKM_UPGRADE_SKIP_CHECKSUM: "1" }, () =>
+    const result = await performUpgrade(
+      {
+        currentVersion: "0.0.13",
+        latestVersion: "0.0.14",
+        updateAvailable: true,
+        installMethod: "binary",
+      },
+      { skipPostUpgrade: true, skipChecksum: true },
+      { execPath: binaryPath, ...currentMigrator },
+    );
+
+    expect(result.upgraded).toBe(true);
+    expect(fs.readFileSync(binaryPath, "utf8")).toBe(binaryData);
+  });
+
+  test("without skipChecksum, an unreachable checksums.txt blocks the binary install", async () => {
+    const installDir = path.join(sandboxHome().dir, "self-update-no-skip-checksum");
+    fs.mkdirSync(installDir, { recursive: true });
+    const binaryPath = path.join(installDir, "akm");
+    fs.writeFileSync(binaryPath, "old-binary");
+    mockFetch((url) =>
+      url.includes("checksums.txt") ? new Response("", { status: 404 }) : new Response("new-binary", { status: 200 }),
+    );
+
+    await expect(
       performUpgrade(
         {
           currentVersion: "0.0.13",
@@ -1086,35 +1107,7 @@ describe("performUpgrade", () => {
         { skipPostUpgrade: true },
         { execPath: binaryPath, ...currentMigrator },
       ),
-    );
-
-    expect(result.upgraded).toBe(true);
-    expect(fs.readFileSync(binaryPath, "utf8")).toBe(binaryData);
-  });
-
-  test("without AKM_UPGRADE_SKIP_CHECKSUM, an unreachable checksums.txt blocks the binary install", async () => {
-    const installDir = path.join(sandboxHome().dir, "self-update-no-skip-checksum");
-    fs.mkdirSync(installDir, { recursive: true });
-    const binaryPath = path.join(installDir, "akm");
-    fs.writeFileSync(binaryPath, "old-binary");
-    mockFetch((url) =>
-      url.includes("checksums.txt") ? new Response("", { status: 404 }) : new Response("new-binary", { status: 200 }),
-    );
-
-    await expect(
-      withEnv({ AKM_UPGRADE_SKIP_CHECKSUM: undefined }, () =>
-        performUpgrade(
-          {
-            currentVersion: "0.0.13",
-            latestVersion: "0.0.14",
-            updateAvailable: true,
-            installMethod: "binary",
-          },
-          { skipPostUpgrade: true },
-          { execPath: binaryPath, ...currentMigrator },
-        ),
-      ),
-    ).rejects.toThrow(/Checksum verification failed/);
+    ).rejects.toThrow(/--skip-checksum/);
     expect(fs.readFileSync(binaryPath, "utf8")).toBe("old-binary");
   });
 

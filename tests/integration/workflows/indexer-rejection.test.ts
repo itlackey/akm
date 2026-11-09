@@ -27,14 +27,12 @@ beforeEach(() => {
   // a clean state.
   resetQuiet();
   resetVerbose();
-  delete process.env.AKM_VERBOSE;
 });
 
 afterEach(() => {
   envCleanup();
   envCleanup = () => {};
   resetVerbose();
-  delete process.env.AKM_VERBOSE;
 });
 
 function tmpStash(): string {
@@ -157,7 +155,6 @@ test("default verbosity emits one summary line, not per-spec workflow warnings",
   expect(summary).toHaveLength(1);
   expect(summary[0]).toMatch(/^2 workflow specs skipped/);
   expect(summary[0]).toContain("--verbose");
-  expect(summary[0]).toContain("AKM_VERBOSE");
 });
 
 test("default verbosity uses singular 'workflow spec' when only one was skipped", async () => {
@@ -183,31 +180,4 @@ test("--verbose flag restores per-spec workflow warnings and suppresses the summ
   expect(perSpec).toHaveLength(2);
   const summary = lines.filter((l) => l.includes("workflow specs skipped due to validation errors"));
   expect(summary).toHaveLength(0);
-});
-
-test("AKM_VERBOSE=1 restores per-spec output even with the verbose flag unset", async () => {
-  const stashDir = tmpStash();
-  writeWorkflow(stashDir, "bad", BROKEN_WORKFLOW);
-
-  process.env.AKM_VERBOSE = "1";
-  const { lines } = await captureStderr(() => akmIndex({ stashDir, full: true }));
-
-  const perSpec = lines.filter((l) => l.startsWith("Skipped workflow "));
-  expect(perSpec).toHaveLength(1);
-  const summary = lines.filter((l) => l.includes("workflow spec skipped"));
-  expect(summary).toHaveLength(0);
-});
-
-test("AKM_VERBOSE=0 hard-disables verbose output even when --verbose flag was set", async () => {
-  const stashDir = tmpStash();
-  writeWorkflow(stashDir, "bad", BROKEN_WORKFLOW);
-
-  setVerbose(true);
-  process.env.AKM_VERBOSE = "0";
-  const { lines } = await captureStderr(() => akmIndex({ stashDir, full: true }));
-
-  const perSpec = lines.filter((l) => l.startsWith("Skipped workflow "));
-  expect(perSpec).toHaveLength(0);
-  const summary = lines.filter((l) => l.includes("workflow spec skipped"));
-  expect(summary).toHaveLength(1);
 });

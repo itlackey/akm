@@ -44,10 +44,9 @@ are not read by akm and nothing removes them; they are inert and safe to delete.
 ## SQLite databases
 
 Managed openers set a 30,000 ms `busy_timeout`; the fire-and-forget usage-telemetry
-writes lower it to 250 ms, and `akm info` reads the index with 750 ms. `AKM_SQLITE_JOURNAL_MODE`
-(`WAL`, `DELETE`, `TRUNCATE`) selects the journal mode; the default is WAL, and
-WAL falls back to DELETE when the data directory is on a detected network
-filesystem. The rollback-journal modes also set `synchronous = FULL`
+writes lower it to 250 ms, and `akm info` reads the index with 750 ms. The journal mode is WAL, and
+it falls back to DELETE when the data directory is on a detected network
+filesystem. The rollback-journal mode also sets `synchronous = FULL`
 (`src/storage/sqlite-pragmas.ts`). Foreign keys are on for `index.db` and
 `state.db` and off for `logs.db`.
 
@@ -462,6 +461,6 @@ harness session logs. akm does not write to these paths.
 
 | Path | Harness |
 |---|---|
-| `~/.claude/projects/` (`AKM_CLAUDE_PROJECTS_DIR` overrides) | Claude Code |
+| `~/.claude/projects/` (under `CLAUDE_CONFIG_DIR` when set) | Claude Code |
 | `$XDG_DATA_HOME/opencode/opencode.db` (`~/.local/share/opencode/opencode.db` by default, on every platform) | OpenCode (your own install; akm's own sessions are in `$DATA/opencode-runtime/data/opencode/opencode.db`) |
 | `$CODEX_HOME/sessions/` (`~/.codex/sessions/` by default) | Codex |

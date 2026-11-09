@@ -38,18 +38,6 @@ function claudePluginsDir(): string {
   );
 }
 
-/**
- * Root of OpenCode's package cache, same override pattern as
- * {@link claudePluginsDir} (`AKM_OPENCODE_CACHE_DIR` for tests).
- * The OpenCode plugins (`akm-opencode`, and `akm-opencode-v2` for OpenCode 2) bundle their own `akm-cli`
- * (layout: `integrations/harnesses/opencode/plugin-layout.ts`) and run it in-process,
- * sharing the host's databases with every other akm install — its version
- * lag matters the same way a stale Claude plugin's does.
- */
-function defaultOpencodeCacheRoot(): string {
-  return process.env.AKM_OPENCODE_CACHE_DIR ?? opencodeCacheDir();
-}
-
 /** One cached copy of an OpenCode plugin's bundled `akm-cli`. */
 interface BundledAkm {
   /** The plugin spec OpenCode cached it under, for a layout that has one folder per spec. */
@@ -346,7 +334,7 @@ export interface PluginStalenessOptions {
   probe?: boolean;
   /** Injectable remote-tag lister; defaults to the real `git ls-remote`. */
   listRemoteTags?: ListRemoteTagsFn;
-  /** Root of OpenCode's package cache. Defaults to `defaultOpencodeCacheRoot()`. */
+  /** Root of OpenCode's package cache. Defaults to `opencodeCacheDir()` (`$XDG_CACHE_HOME/opencode`). */
   opencodeCacheRoot?: string;
 }
 
@@ -381,7 +369,7 @@ export function collectPluginStalenessAdvisories(options: PluginStalenessOptions
     });
   }
 
-  const opencodeCacheRoot = options.opencodeCacheRoot ?? defaultOpencodeCacheRoot();
+  const opencodeCacheRoot = options.opencodeCacheRoot ?? opencodeCacheDir();
   for (const plugin of OPENCODE_PLUGIN_LOCATIONS) {
     for (const bundled of findBundledAkm(plugin, opencodeCacheRoot)) {
       results.push(buildOpencodeBundledAdvisory(plugin, bundled, options.cliVersion));

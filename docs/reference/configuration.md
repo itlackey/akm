@@ -2,8 +2,9 @@
 
 AKM reads one user configuration file: `$XDG_CONFIG_HOME/akm/config.json`
 (normally `~/.config/akm/config.json` on Linux and macOS, or
-`%APPDATA%\akm\config.json` on Windows). Set `AKM_CONFIG_DIR` to override the
-directory. Project `.akm/config.json` files are not merged. There is no config
+`%APPDATA%\akm\config.json` on Windows). `--config <file>` or `AKM_CONFIG_FILE`
+chooses another file (see [Choosing the config file](#choosing-the-config-file)).
+Project `.akm/config.json` files are not merged. There is no config
 inheritance: `extends` is retired (see "Config inheritance (`extends`)" below).
 
 ## Shape
@@ -1109,24 +1110,57 @@ differing secret never round-trips into the diff output.
 akm config diff ~/other-host/config.json
 ```
 
+## Choosing the config file
+
+`--config <file>` (on any command) or `AKM_CONFIG_FILE` names the config file
+this run uses; the flag wins over the variable, and either wins over the
+default location. A relative path is taken from the working directory. A file
+that does not exist reads as the default file's absence does: the defaults, and
+`akm config set` creates it. `credentials.json` and the config lock live beside
+the chosen file. akm hands `AKM_CONFIG_FILE` (absolute) to every process it starts
+that runs `akm` (agents, task and workflow scripts, scheduled tasks), so they use
+the same installation.
+
+A chosen file other than the default is a separate installation: akm does not
+write the OS scheduler entry for it, and its supervisor runs `akm task dispatch`
+itself (see [`akm task`](cli.md#akm-task)).
+
+### `paths`
+
+```jsonc
+{ "paths": { "data": "/var/lib/akm", "state": "state", "cache": "~/.cache/akm-work" } }
+```
+
+`paths.data`, `paths.state` and `paths.cache` say where this installation keeps
+its databases and `akm.lock` (data), its locks and per-run state (state), and its
+regenerable caches, config backups and task logs (cache). Each is absolute,
+`~`-relative, or relative to the config file. A key left out is the platform
+default (`XDG_DATA_HOME` and the others, else under the home folder). akm reads
+`paths` before anything else, so a value it cannot place (not a string, `~user/...`)
+is a fatal config error rather than a warning: it would move writes. While the
+older `AKM_DATA_DIR`, `AKM_STATE_DIR` and `AKM_CACHE_DIR` are still read, they win
+over `paths`; `akm migrate apply` writes them into the file (absolute, and only the
+ones the file does not name) so a host can drop them. A file that cannot be
+written (an image-baked config) gets the entries listed in the plan to add to the
+image's template. `akm info` reports the resolved `configFile`, `dataDir`,
+`stateDir` and `cacheDir`.
+
 ## Environment
 
 | Variable | Purpose |
 | --- | --- |
+| `AKM_CONFIG_FILE` | The config file to use (same as `--config <file>`, which wins); see [Choosing the config file](#choosing-the-config-file) |
 | `AKM_CONFIG_DIR` | Override the user config directory (or set `XDG_CONFIG_HOME`) |
 | `AKM_BUNDLE_DIR` | Override the working bundle for this process (containers, sandboxes, CI). When it points under `/tmp`, `/var/tmp` or the macOS temp folders, and `AKM_CONFIG_DIR`/`XDG_CONFIG_HOME` (and the cache equivalents) are not set, config moves to `<bundle>/.akm` and the cache to `<bundle>/.akm/cache`, so a sandbox never touches your real config. Scheduled-task rows always carry the resolved bundle in it |
 | `AKM_DATA_DIR` | Override the data directory — `index.db`, durable `state.db`, and `akm.lock` (or set `XDG_DATA_HOME`) |
 | `AKM_CACHE_DIR` | Override the cache directory — regenerable caches (or set `XDG_CACHE_HOME`) |
 | `AKM_STATE_DIR` | Override the state directory — per bundle, `akm improve`'s whole-run lock (or set `XDG_STATE_HOME`) |
-| `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror; replaces `registry.npmjs.org` for npm bundle resolution |
-| `AKM_VERBOSE` | Truthy value enables the same diagnostics as `--verbose` |
 
-`AKM_EMBED_DETERMINISTIC` and `AKM_CLAUDE_PROJECTS_DIR` are Internal seams that akm-eval and the tests use (a hash embedder instead of a model; where Claude session logs are read from). They are not for product use and carry no compatibility guarantee ([STABILITY](../../STABILITY.md)).
+`AKM_EMBED_DETERMINISTIC` is an Internal seam that akm-eval and the tests use (a hash embedder instead of a model). It is not for product use and carries no compatibility guarantee ([STABILITY](../../STABILITY.md)).
 
-Use `AKM_SQLITE_JOURNAL_MODE=DELETE` or `TRUNCATE` when WAL is unavailable,
-such as on some NFS/SMB mounts. With the default `WAL` setting, AKM detects a
-network filesystem for the data directory and falls back to `DELETE`.
+SQLite uses WAL; when the data directory is on a detected network filesystem
+(NFS, SMB, some FUSE mounts), akm falls back to the `DELETE` journal mode and says so.
 
 ## Retired Configuration
 

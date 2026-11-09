@@ -8,15 +8,17 @@
  * The OS scheduler is one namespace per user, shared by every akm installation
  * and every sandbox on the machine. akm writes it for the user's default
  * installation only: the one whose locations come from HOME (and, on Windows,
- * the OS-set profile folders) alone. Any `AKM_*` location variable, or an XDG
- * variable that moves a location, makes an installation non-default; its
- * supervisor runs `akm task dispatch` itself.
+ * the OS-set profile folders) alone, read from the default config file. Any `AKM_*`
+ * location variable, a config file other than the default (`--config`,
+ * `AKM_CONFIG_FILE`), or an XDG variable that moves a location, makes an
+ * installation non-default; its supervisor runs `akm task dispatch itself`. A `paths`
+ * key in the default file does not: dispatch reads that file.
  */
 
 import path from "node:path";
 import { resolveConfiguredBundlePath } from "../core/common";
 import { loadConfig } from "../core/config/config";
-import { getCacheDir, getConfigDir, getConfigPath, getDataDir, getStateDir } from "../core/paths";
+import { getCacheDir, getConfigPath, getDataDir, getStateDir } from "../core/paths";
 
 const OS_SET_VARIABLES = ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"] as const;
 
@@ -32,7 +34,7 @@ function configuredDefaultBundlePath(): string | undefined {
 }
 
 /**
- * The locations (config, data, cache, state, bundle) that `env` moves away from the HOME-only defaults. Every row akm
+ * The locations (config file, data, cache, state, bundle) that `env` moves away from the HOME-only defaults. Every row akm
  * 0.9.32 and 0.10 wrote inlines `AKM_BUNDLE_DIR`, so that variable moves the bundle only when it names a directory
  * other than the configured default bundle's: a sync or upgrade run from such a row is still the default installation.
  */
@@ -45,7 +47,7 @@ export function movedLocations(env: NodeJS.ProcessEnv = process.env): string[] {
   const home: NodeJS.ProcessEnv = {};
   for (const name of OS_SET_VARIABLES) if (env[name] !== undefined) home[name] = env[name];
   const moved: string[] = [];
-  const locations = { config: getConfigDir, data: getDataDir, cache: getCacheDir, state: getStateDir } as const;
+  const locations = { config: getConfigPath, data: getDataDir, cache: getCacheDir, state: getStateDir } as const;
   for (const [name, resolve] of Object.entries(locations)) {
     try {
       if (resolve(effective) !== resolve(home)) moved.push(name);

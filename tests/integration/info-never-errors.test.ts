@@ -281,9 +281,9 @@ describe("akm info under real index.db lock contention (a10-info)", () => {
     // Build a real (empty) index, then hold it EXCLUSIVE from a second
     // connection. WAL readers never block on a writer (SQLite's whole
     // design point — a BEGIN IMMEDIATE or even BEGIN EXCLUSIVE holder under
-    // WAL does not reproduce this), so this forces the DELETE/TRUNCATE
-    // journal mode the network-filesystem fallback (and
-    // AKM_SQLITE_JOURNAL_MODE) can also select in production, where a
+    // WAL does not reproduce this), so this forces the DELETE
+    // journal mode the network-filesystem fallback
+    // selects in production, where a
     // reader genuinely does wait on a held writer lock — the real shape of
     // the bug this fix closes, confirmed empirically before this fix
     // (a ~30s wait) and after (bounded here).

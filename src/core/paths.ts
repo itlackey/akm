@@ -10,10 +10,12 @@
  * on Windows.
  */
 
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shortHash } from "./bundle-id";
 import { ConfigError } from "./errors";
+import { stripJsonComments } from "./jsonc";
 import { IS_WINDOWS } from "./platform";
 import { warnOnce } from "./warn";
 
@@ -44,9 +46,37 @@ export function isTransientStashPath(p: string): boolean {
   );
 }
 
-// ── Config directory ─────────────────────────────────────────────────────────
+// ── Config file and directory ────────────────────────────────────────────────
+
+/**
+ * A configured bundle `path` as a directory: `~` or `~/...` expands to the home
+ * folder; a relative path means the folder of the config file that holds it, never
+ * the cwd. `undefined` when it cannot be placed: `~user/...`, or a relative path
+ * with no config file to resolve against.
+ */
+export function resolveConfiguredBundlePath(configured: string, configFilePath?: string): string | undefined {
+  if (configured === "~" || /^~[\\/]/.test(configured)) {
+    return path.resolve(path.join(os.homedir(), configured.slice(1)));
+  }
+  if (configured.startsWith("~")) return undefined;
+  if (path.isAbsolute(configured)) return path.resolve(configured);
+  return configFilePath === undefined ? undefined : path.resolve(path.dirname(configFilePath), configured);
+}
+
+/**
+ * The config file the installation was pointed at: `--config <file>` (the CLI assigns it to
+ * `AKM_CONFIG_FILE` before anything else runs) or `AKM_CONFIG_FILE`, absolute. Credentials
+ * and the config lock live beside it. `undefined` when none was chosen: the default file.
+ */
+function selectedConfigFile(env: NodeJS.ProcessEnv): string | undefined {
+  const file = env.AKM_CONFIG_FILE?.trim();
+  return file ? path.resolve(file) : undefined;
+}
 
 export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
+  const selected = selectedConfigFile(env);
+  if (selected) return path.dirname(selected);
+
   const override = env.AKM_CONFIG_DIR?.trim();
   if (override) return override;
 
@@ -104,7 +134,75 @@ export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = pr
 }
 
 export function getConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(getConfigDir(env), "config.json");
+  return selectedConfigFile(env) ?? path.join(getConfigDir(env), "config.json");
+}
+
+// ── Locations named by the config file's `paths` key ─────────────────────────
+
+type ConfiguredLocation = "data" | "state" | "cache";
+
+let cachedPaths:
+  | { file: string; mtimeMs: number; size: number; resolved: Partial<Record<ConfiguredLocation, string>> }
+  | undefined;
+
+export function resetConfiguredPathsCache(): void {
+  cachedPaths = undefined;
+}
+
+/**
+ * `paths.data|state|cache` of the config file, read before the config module can load (a location must be
+ * known to open anything): a raw parse, cached per file and mtime. A value is absolute, `~`, or relative to the
+ * config file. One that cannot be placed is fatal, because it would move writes; an unset key is the default.
+ * A missing, unreadable or unparseable file names nothing here: the config load reports it.
+ */
+function configuredLocation(kind: ConfiguredLocation, env: NodeJS.ProcessEnv): string | undefined {
+  let file: string;
+  let stat: fs.Stats;
+  try {
+    file = getConfigPath(env);
+    stat = fs.statSync(file);
+  } catch {
+    // No config file to read (or no home to find the default one under): the default location.
+    return undefined;
+  }
+  if (
+    !cachedPaths ||
+    cachedPaths.file !== file ||
+    cachedPaths.mtimeMs !== stat.mtimeMs ||
+    cachedPaths.size !== stat.size
+  ) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripJsonComments(fs.readFileSync(file, "utf8")));
+    } catch {
+      return undefined;
+    }
+    cachedPaths = { file, mtimeMs: stat.mtimeMs, size: stat.size, resolved: resolveConfiguredLocations(parsed, file) };
+  }
+  return cachedPaths.resolved[kind];
+}
+
+function resolveConfiguredLocations(parsed: unknown, file: string): Partial<Record<ConfiguredLocation, string>> {
+  const raw = typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>).paths : undefined;
+  if (raw === undefined) return {};
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(`"paths" in ${file} must be an object with data, state and cache.`, "INVALID_CONFIG_FILE");
+  }
+  const resolved: Partial<Record<ConfiguredLocation, string>> = {};
+  for (const kind of ["data", "state", "cache"] as const) {
+    const value = (raw as Record<string, unknown>)[kind];
+    if (value === undefined) continue;
+    const placed =
+      typeof value === "string" && value.trim() ? resolveConfiguredBundlePath(value.trim(), file) : undefined;
+    if (placed === undefined) {
+      throw new ConfigError(
+        `"paths.${kind}" in ${file} must be an absolute path, \`~/...\`, or a path relative to the config file.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    resolved[kind] = placed;
+  }
+  return resolved;
 }
 
 // ── Cache directory ──────────────────────────────────────────────────────────
@@ -112,6 +210,8 @@ export function getConfigPath(env: NodeJS.ProcessEnv = process.env): string {
 export function getCacheDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.AKM_CACHE_DIR?.trim();
   if (override) return override;
+  const configured = configuredLocation("cache", env);
+  if (configured) return configured;
 
   // Explicit XDG/platform overrides win before the transient-stash isolation
   // rule below — tests and operators that pre-arrange XDG_CACHE_HOME (or
@@ -194,6 +294,8 @@ function homelessFallbackDir(kind: string): string {
 export function getDataDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
   const override = env.AKM_DATA_DIR?.trim();
   if (override) return override;
+  const configured = configuredLocation("data", env);
+  if (configured) return configured;
 
   if (platform === "win32") {
     const localAppData = env.LOCALAPPDATA?.trim();
@@ -282,6 +384,8 @@ export function getRegistryIndexCacheDir(): string {
 export function getStateDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
   const override = env.AKM_STATE_DIR?.trim();
   if (override) return override;
+  const configured = configuredLocation("state", env);
+  if (configured) return configured;
 
   if (platform === "win32") {
     const localAppData = env.LOCALAPPDATA?.trim();
@@ -356,13 +460,16 @@ export function getStashLocksDir(stashDir: string): string {
 }
 
 /**
- * The directories this akm resolved, as the `AKM_*` variables that name them, so a
+ * The installation this akm resolved, as the `AKM_*` variables that name it, so a
  * child that runs `akm` (an exec unit, an agent CLI) uses the same installation even
- * when the parent found them through `XDG_*_HOME`. `AKM_BUNDLE_DIR` is passed only
- * when the parent set one.
+ * when the parent found it through `--config`, `XDG_*_HOME`, or a runtime that remaps
+ * them. `AKM_CONFIG_FILE` is always absolute: the file names the other locations (its
+ * `paths` key). The older per-location variables are still set until they are retired;
+ * `AKM_BUNDLE_DIR` is passed only when the parent set one.
  */
 export function akmLocations(): Record<string, string> {
   const locations: Record<string, string> = {
+    AKM_CONFIG_FILE: getConfigPath(),
     AKM_CONFIG_DIR: getConfigDir(),
     AKM_DATA_DIR: getDataDir(),
     AKM_CACHE_DIR: getCacheDir(),

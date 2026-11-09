@@ -21,17 +21,14 @@ import type {
  * `projects` folder of its config directory (`CLAUDE_CONFIG_DIR`, else `~/.claude`).
  *
  * Resolved per call (not memoized at module load) so the environment can be set
- * after import. `AKM_CLAUDE_PROJECTS_DIR` overrides it so tests, and the
- * isolated-storage sandbox, can point the scan at an empty fixture directory
- * instead of the real `~/.claude/projects`, which on an actively-used machine
- * holds many large session files and would make `akm health` (which scans it
- * synchronously) slow and non-hermetic.
+ * after import. Tests, and the isolated-storage sandbox, set `CLAUDE_CONFIG_DIR`
+ * to point the scan at an empty fixture directory instead of the real
+ * `~/.claude/projects`, which on an actively-used machine holds many large
+ * session files and would make `akm health` (which scans it synchronously) slow
+ * and non-hermetic.
  */
 function claudeProjectsDir(): string {
-  return (
-    process.env.AKM_CLAUDE_PROJECTS_DIR ??
-    path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects")
-  );
+  return path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects");
 }
 
 /**

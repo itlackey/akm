@@ -378,11 +378,11 @@ export interface IsolatedAkmStorage {
   readonly configDir: string;
   /** Isolated state dir (`XDG_STATE_HOME`). */
   readonly stateDir: string;
-  /** Isolated Claude session-log root (`AKM_CLAUDE_PROJECTS_DIR`), empty by default. */
+  /** Isolated Claude session-log root (`<CLAUDE_CONFIG_DIR>/projects`), empty by default. */
   readonly sessionLogsDir: string;
   /** Isolated Claude plugins root (`CLAUDE_CODE_PLUGIN_CACHE_DIR`), empty by default. */
   readonly claudePluginsDir: string;
-  /** Isolated OpenCode cache root (`AKM_OPENCODE_CACHE_DIR`), empty by default. */
+  /** Isolated OpenCode cache root (`<XDG_CACHE_HOME>/opencode`), empty by default. */
   readonly opencodeCacheDir: string;
   /** Isolated Codex home (`CODEX_HOME`), empty by default; its `sessions/` is the rollout root. */
   readonly codexHomeDir: string;
@@ -439,13 +439,15 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
   fs.mkdirSync(path.join(configDir, "akm"), { recursive: true });
   fs.mkdirSync(stateDir, { recursive: true });
 
-  const sessionLogsDir = path.join(root, "claude-projects");
+  // `CLAUDE_CONFIG_DIR` is the root below, so the session logs are read from `<root>/projects`.
+  const sessionLogsDir = path.join(root, "projects");
   fs.mkdirSync(sessionLogsDir, { recursive: true });
 
   const claudePluginsDir = path.join(root, "claude-plugins");
   fs.mkdirSync(claudePluginsDir, { recursive: true });
 
-  const opencodeCacheDir = path.join(root, "opencode-cache");
+  // OpenCode's package cache is `$XDG_CACHE_HOME/opencode`.
+  const opencodeCacheDir = path.join(cacheDir, "opencode");
   fs.mkdirSync(opencodeCacheDir, { recursive: true });
 
   const codexHomeDir = path.join(root, "codex-home");
@@ -457,19 +459,14 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
     XDG_CACHE_HOME: cacheDir,
     XDG_CONFIG_HOME: configDir,
     XDG_STATE_HOME: stateDir,
-    // Redirect the Claude session-log scan at an empty fixture dir so the
-    // synchronous `akm health` session-log scan stays hermetic and fast
-    // instead of walking the host's real (and potentially huge) history.
-    AKM_CLAUDE_PROJECTS_DIR: sessionLogsDir,
     // Same reasoning for the `plugin-version` advisory (itlackey/akm#832): an
     // empty fixture dir means "no plugin installed" instead of scanning the
     // host's real `~/.claude/plugins` cache.
     CLAUDE_CODE_PLUGIN_CACHE_DIR: claudePluginsDir,
+    // The Claude session-log scan reads `<CLAUDE_CONFIG_DIR>/projects`: the empty
+    // fixture dir keeps the synchronous `akm health` scan hermetic and fast
+    // instead of walking the host's real (and potentially huge) history.
     CLAUDE_CONFIG_DIR: root,
-    // Same reasoning for the `opencode-plugin-version` advisory: an empty
-    // fixture dir means "no OpenCode plugin installed" instead of reading
-    // the host's real `~/.cache/opencode` package cache.
-    AKM_OPENCODE_CACHE_DIR: opencodeCacheDir,
     // Same reasoning for the Codex session-log scan: `CODEX_HOME` is Codex's own
     // override of `~/.codex`, so a developer who exports it would otherwise have
     // `extract --auto` and `improve` read their real rollouts.

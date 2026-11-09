@@ -141,6 +141,15 @@ afterEach(() => cleanup());
     expect(read("calls.jsonl")).not.toContain('"remove"');
   });
 
+  test("--skip-checksum reaches the CLI step as skipChecksum, and is absent otherwise", async () => {
+    const skipped = deps();
+    await withEnv(env, () => runUpgrade({ ...opts, skipChecksum: true }, "0.10.1", skipped));
+    expect(skipped.calls).toMatchObject([{ force: false, skipPostUpgrade: true, skipChecksum: true }]);
+    const plain = deps();
+    await withEnv(env, () => runUpgrade({ ...opts }, "0.10.1", plain));
+    expect(plain.calls[0]).not.toHaveProperty("skipChecksum");
+  });
+
   test("--check shows mismatches and a planned switch without native writes or installs", async () => {
     const run = await withEnv(env, () =>
       runUpgrade({ ...opts, check: true, channel: "next" }, "0.10.3-beta", deps("0.10.3-beta")),

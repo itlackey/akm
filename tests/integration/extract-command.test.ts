@@ -493,7 +493,7 @@ describe("akmExtract — single-session mode", () => {
 
 describe("akmExtract — subagent transcripts are never extracted as their own session (#839)", () => {
   // Real ClaudeCodeProvider (not the fake harness) driven against
-  // `withIsolatedAkmStorage()`'s isolated `AKM_CLAUDE_PROJECTS_DIR`, so
+  // `withIsolatedAkmStorage()`'s isolated `CLAUDE_CONFIG_DIR`, so
   // `listSessions()`'s subagents-exclusion (#830) and the folding in
   // `readSession()` both run for real. `chat` is still injected so no LLM
   // call happens.

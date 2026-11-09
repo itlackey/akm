@@ -120,7 +120,6 @@ const env: Record<string, string> = {
   XDG_CONFIG_HOME: path.join(home, ".config"),
   XDG_CACHE_HOME: path.join(home, ".cache"),
   // Keep output machine-parseable and avoid interactive/TTY branches.
-  AKM_OUTPUT: "json",
   NO_COLOR: "1",
   CI: "1",
 };

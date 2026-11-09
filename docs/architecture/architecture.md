@@ -686,9 +686,10 @@ Agent programs are reachable by two execution paths, both behind
   akm process or another, wait for it.
 - The process loads akm's plugin (`src/assets/opencode/akm-plugin.js`, written
   to the runtime's config directory): `akm_search`, `akm_show` and `akm_curate`
-  run the akm that started the run, by the argv it runs as (`AKM_OPENCODE_CLI`,
-  a JSON array: the executable alone when compiled, the runtime and the script
-  otherwise), the
+  run the akm that started the run, by the argv it runs as (the plugin's `akm`
+  option, an array: the executable alone when compiled, the runtime and the script
+  otherwise), with the same put-back environment as the agent's commands so they
+  resolve the user's installation, not the runtime's remapped roots, the
   connection's request fields are laid over each model request, with OpenCode's
   own output cap taken off, the variables akm set for the process (its
   directories and its OpenCode settings) are put back to akm's own, or removed,

@@ -142,7 +142,7 @@ owns the process state that crosses test boundaries:
 
 - At preload time `HOME` and all four `XDG_*_HOME` variables point at a
   per-process sandbox directory, the `AKM_*_DIR` overrides are cleared, and so
-  are `AKM_VERBOSE`, `AKM_LLM_API_KEY` and `AKM_EMBED_API_KEY`. A test file never
+  are `AKM_CONFIG_FILE`, `AKM_LLM_API_KEY` and `AKM_EMBED_API_KEY`. A test file never
   reads the developer's real `~/.config/akm/` or `~/.cache/akm/`.
 - Bun's `os.homedir()` ignores a runtime `HOME` change, so the preload cannot
   redirect a default built from it. Both runner scripts start every shard with its
@@ -154,8 +154,8 @@ owns the process state that crosses test boundaries:
   `OPENCODE_TEST_HOME` for OpenCode.
 - Before each test it snapshots the harnessed environment (`HARNESSED` in the
   preload: `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_TEST_HOME`, the
-  four `XDG_*_HOME` variables, `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`,
-  `AKM_CACHE_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_VERBOSE`,
+  four `XDG_*_HOME` variables, `AKM_CONFIG_FILE`, `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`,
+  `AKM_CACHE_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`,
   `AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY`,
   `AKM_NPM_REGISTRY`), `process.cwd()` and `globalThis.fetch`, and restores them
   afterwards.

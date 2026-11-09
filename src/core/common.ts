@@ -7,13 +7,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ConfigError } from "./errors";
-import { getConfigPath, getRegistryCacheDir, getRegistryIndexCacheDir } from "./paths";
+import { stripJsonComments } from "./jsonc";
+import { getConfigPath, getRegistryCacheDir, getRegistryIndexCacheDir, resolveConfiguredBundlePath } from "./paths";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
 // Moved to the platform leaf so paths.ts can use it without a common↔paths
 // cycle (chunk-8 WI-8.6, DoD 11); re-exported here for the existing surface.
 export { IS_WINDOWS } from "./platform";
+// Moved to the `jsonc` / `paths` leaves so `paths.ts` can use them without a common↔paths cycle; re-exported for the existing surface.
+export { resolveConfiguredBundlePath, stripJsonComments };
 export const MAX_LOCK_METADATA_BYTES = 64 * 1024;
 
 export function isHttpUrl(value: string | undefined): boolean {
@@ -96,52 +99,6 @@ export function readTextFile(filePath: string, label = "File"): string {
  *      don't fail on those mounts. Windows does not support opening a
  *      directory for fsync, so the directory-sync step is skipped there.
  */
-/**
- * Strip JavaScript-style comments from a JSON string (JSONC support).
- * Handles `//` line comments, which end at a line feed or a carriage return,
- * and `/* *​/` block comments while preserving comment-like sequences inside
- * quoted strings.
- */
-export function stripJsonComments(text: string): string {
-  let result = "";
-  let i = 0;
-  let inString = false;
-  while (i < text.length) {
-    if (inString) {
-      if (text[i] === "\\") {
-        result += text[i] + (text[i + 1] ?? "");
-        i += 2;
-        continue;
-      }
-      if (text[i] === '"') {
-        inString = false;
-      }
-      result += text[i];
-      i++;
-      continue;
-    }
-    if (text[i] === '"') {
-      inString = true;
-      result += text[i];
-      i++;
-      continue;
-    }
-    if (text[i] === "/" && text[i + 1] === "/") {
-      while (i < text.length && text[i] !== "\n" && text[i] !== "\r") i++;
-      continue;
-    }
-    if (text[i] === "/" && text[i + 1] === "*") {
-      i += 2;
-      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
-      i += 2;
-      continue;
-    }
-    result += text[i];
-    i++;
-  }
-  return result;
-}
-
 /**
  * The mode to rewrite an existing USER-owned file with.
  *
@@ -278,21 +235,6 @@ function validateStashDir(raw: string): string {
     throw new ConfigError(`Bundle path must point to a directory: "${stashDir}".`, "STASH_DIR_NOT_A_DIRECTORY");
   }
   return stashDir;
-}
-
-/**
- * A configured bundle `path` as a directory: `~` or `~/...` expands to the home
- * folder; a relative path means the folder of the config file that holds it, never
- * the cwd. `undefined` when it cannot be placed: `~user/...`, or a relative path
- * with no config file to resolve against.
- */
-export function resolveConfiguredBundlePath(configured: string, configFilePath?: string): string | undefined {
-  if (configured === "~" || /^~[\\/]/.test(configured)) {
-    return path.resolve(path.join(os.homedir(), configured.slice(1)));
-  }
-  if (configured.startsWith("~")) return undefined;
-  if (path.isAbsolute(configured)) return path.resolve(configured);
-  return configFilePath === undefined ? undefined : path.resolve(path.dirname(configFilePath), configured);
 }
 
 /**

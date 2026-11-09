@@ -60,6 +60,8 @@
 
 import { renderUsage, runCommand } from "citty";
 import {
+  applyEarlyConfigFlag,
+  applyEarlyStderrFlags,
   insertBareListSubcommand,
   isInfoCommand,
   main,
@@ -189,6 +191,8 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
   const realExit = process.exit;
   const realArgv = process.argv;
   const realExitCode = process.exitCode;
+  // `--config` assigns AKM_CONFIG_FILE for the rest of the process, as it does in a real run; a fresh run must not inherit it.
+  const realConfigFile = process.env.AKM_CONFIG_FILE;
 
   // Several commands (and helpers like `parseAllFlagValues` in
   // src/cli/shared.ts) read `process.argv` DIRECTLY rather than the citty-parsed
@@ -269,6 +273,8 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
         // has (throws on invalid config.json) EXCEPT `info`, whose read is
         // best-effort — see that file's matching comment for why the
         // scoping matters.
+        applyEarlyConfigFlag(argv);
+        applyEarlyStderrFlags(argv);
         let outputDefaults = DEFAULT_CONFIG.output ?? {};
         if (!shouldBypassConfigStartup(argv)) {
           if (isInfoCommand(argv)) {
@@ -339,6 +345,8 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
     console.debug = realDebug;
     (process as unknown as { exit: typeof realExit }).exit = realExit;
     process.argv = realArgv;
+    if (realConfigFile === undefined) delete process.env.AKM_CONFIG_FILE;
+    else process.env.AKM_CONFIG_FILE = realConfigFile;
   }
 
   return { code, stdout, stderr };

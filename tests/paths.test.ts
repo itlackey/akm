@@ -32,6 +32,7 @@ const envKeys = [
   "APPDATA",
   "LOCALAPPDATA",
   "USERPROFILE",
+  "AKM_CONFIG_FILE",
   "AKM_CONFIG_DIR",
   "AKM_CACHE_DIR",
   "AKM_DATA_DIR",
@@ -512,12 +513,14 @@ describe("akmLocations", () => {
     process.env.XDG_DATA_HOME = "/xdg/data";
     process.env.XDG_CACHE_HOME = "/xdg/cache";
     process.env.XDG_STATE_HOME = "/xdg/state";
+    delete process.env.AKM_CONFIG_FILE;
     delete process.env.AKM_CONFIG_DIR;
     delete process.env.AKM_DATA_DIR;
     delete process.env.AKM_CACHE_DIR;
     delete process.env.AKM_STATE_DIR;
 
     expect(akmLocations()).toEqual({
+      AKM_CONFIG_FILE: getConfigPath(),
       AKM_CONFIG_DIR: getConfigDir(),
       AKM_DATA_DIR: getDataDir(),
       AKM_CACHE_DIR: getCacheDir(),

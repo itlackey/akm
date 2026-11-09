@@ -21,7 +21,8 @@ These flags are accepted by all commands:
 | `--output` | path | _(none)_ | Write rendered output to a file instead of stdout (all formats except `jsonl`) |
 | `--detail` | `brief`, `normal`, `full` | `brief` | Output **verbosity** level. An unknown value warns once and uses `normal` |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
-| `--verbose` | boolean | `false` | Enable verbose diagnostics gated behind `isVerbose()`. Also prints the stack trace on an unexpected internal error. Parsed globally before any subcommand runs. The `AKM_VERBOSE` env var honours the same setting and wins when both are present (see `src/core/warn.ts`). |
+| `--verbose` | boolean | `false` | Enable verbose diagnostics gated behind `isVerbose()`. Also prints the stack trace on an unexpected internal error. Parsed globally before any subcommand runs. |
+| `--config` | path | _(none)_ | Use this config file instead of the default; `credentials.json` and the config lock sit beside it, and its `paths` key (`data`, `state`, `cache`) says where the rest lives. Wins over `AKM_CONFIG_FILE`; a relative path is taken from the working directory. Parsed before anything else is read, so a task input or workflow parameter cannot be named `config`. See [Configuration](configuration.md#choosing-the-config-file). |
 
 `--detail brief|normal|full` controls **how much** is returned. A value other than
 these three (the retired `agent` included) warns once on stderr and uses `normal`.
@@ -392,7 +393,8 @@ Returns a JSON object with:
 | `configError` | Present only when `config.json` exists but could not be loaded (parse or schema failure); every config-derived field falls back to the same defaults a fresh install reports |
 | `bundleDirError` | Present when a bundle IS configured (an env override or `bundles.*` in config) but its path doesn't resolve, OR when the platform-default fallback itself can't resolve (e.g. `HOME` unset) — absent for the ordinary "no bundle created yet" state, where `bundleDir` needs no explanation |
 | `dataDir` | Resolved data directory (`getDataDir()`) |
-| `configDir` | Resolved config directory (`getConfigDir()`) |
+| `configFile` | The config file in use: `--config`, `AKM_CONFIG_FILE`, or the default |
+| `configDir` | Resolved config directory: the folder of the config file, where `credentials.json` lives |
 | `cacheDir` | Resolved cache directory (`getCacheDir()`) |
 | `stateDir` | Resolved state directory (`getStateDir()`) |
 | `assetTypes` | List of recognized asset types |
@@ -1503,6 +1505,7 @@ computed, with a 256 MiB binary limit. Release/checksum metadata is capped at
 akm upgrade              # Install a newer release if there is one, run every pending migration, then update the harness plugins
 akm upgrade --check      # Report pending updates, CLI and plugins, without changing anything (no migration step)
 akm upgrade --force      # Force the install even if already on latest
+akm upgrade --skip-checksum  # Install a binary without verifying its checksum (recovery hatch; not recommended)
 akm upgrade --next       # Include prereleases when selecting the newest CLI release
 akm upgrade --channel next   # Switch CLI and installed harness plugins to next
 akm upgrade --channel latest # Return CLI and installed harness plugins to stable
@@ -1685,10 +1688,9 @@ hooks in `/hooks` (they are in that machine's `~/.codex/config.toml`). The
 hashes stay the same across plugin version bumps and change only when a hook's
 command changes, so an upgraded plugin keeps running without a prompt.
 
-Checksum verification is not optional and has no flag. If a release's
-`checksums.txt` is genuinely unreachable, the recovery hatch is the
-`AKM_UPGRADE_SKIP_CHECKSUM=1` environment variable (Internal — deliberately
-not a discoverable, tab-completable flag). See STABILITY.md.
+Checksum verification is on by default. If a release's `checksums.txt` is
+genuinely unreachable, `akm upgrade --skip-checksum` installs the binary
+without it (it warns, and is not recommended). See STABILITY.md.
 
 Shipping akm inside your own product (a Docker image, a plugin's own
 `node_modules`)? See [Bundling akm](../integration/bundling-akm.md) for the
@@ -3804,12 +3806,15 @@ another installation's directories (an `AKM_BUNDLE_DIR` that is not this
 installation's, or any `AKM_*_DIR`) is left and reported in `keptLegacy`. A crontab whose
 akm markers are malformed is refused unmodified. `akm migrate status` reports what sync would do without writing it.
 
-An installation that moves any location (`AKM_BUNDLE_DIR`, an `AKM_*_DIR`, or an
-`XDG_*_HOME` that changes where config, data, cache or state go) is **not**
+An installation that moves any location (`AKM_BUNDLE_DIR`, an `AKM_*_DIR`, an
+`XDG_*_HOME` that changes where config, data, cache or state go, or a config file
+other than the default, by `--config` or `AKM_CONFIG_FILE`) is **not**
 the default installation, and never writes the OS scheduler: `task sync`
 returns `entry: "unmanaged"` and says to run `akm task dispatch` every minute from
 your own supervisor, with that installation's environment. `task doctor` and the
-`scheduler-binary` health advisory read nothing from the OS for it.
+`scheduler-binary` health advisory read nothing from the OS for it. A `paths` key
+in the default config file does not make an installation non-default: dispatch
+reads that file.
 
 Interactive `akm setup` reviews every embedded
 task template (both the core set and the improve-schedule set) and asks once

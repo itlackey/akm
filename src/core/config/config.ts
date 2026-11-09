@@ -44,7 +44,7 @@ import { dropUnusableEntries, findUnusableEntries, resolveBundlePaths, type Unus
 
 export { stripJsonComments } from "./config-io";
 
-import { getConfigPath } from "../paths";
+import { getConfigPath, resetConfiguredPathsCache } from "../paths";
 import { warn, warnOnce } from "../warn";
 
 // Re-export type surface from config-types.ts so call sites don't need to
@@ -97,6 +97,7 @@ let cachedConfig:
 
 export function resetConfigCache(): void {
   cachedConfig = undefined;
+  resetConfiguredPathsCache();
 }
 
 export function loadUserConfig(): AkmConfig {

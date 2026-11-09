@@ -174,7 +174,7 @@ export const opencodeRuntime: AgentRuntime = {
       // OpenCode's own ids start with `ses_`, which it requires of one it is given.
       const session = `ses_akm${randomUUID().replaceAll("-", "")}`;
       const keyFile = path.join(directory, "keys", session);
-      const config = runtimeConfig(connection, where.pluginDirectory, keyFile, ambient);
+      const config = runtimeConfig(connection, where.pluginDirectory, keyFile, ambient, where.akm);
       const env = { ...ambient, ...runtimeEnv(config, where) };
       try {
         if (connection.apiKey) writeKeyFile(keyFile, connection.apiKey);

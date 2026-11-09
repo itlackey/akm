@@ -178,6 +178,24 @@
         "auto"
       ]
     },
+    "paths": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cache": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": {}
+    },
     "embedding": {
       "type": "object",
       "properties": {
@@ -1325,6 +1343,24 @@
             "off",
             "auto"
           ]
+        },
+        "paths": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "string",
+              "minLength": 1
+            },
+            "state": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cache": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": {}
         },
         "embedding": {
           "type": "object",
