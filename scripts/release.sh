@@ -71,7 +71,7 @@ stable() {
   git add package.json CHANGELOG.md
   git commit -m "release: $version"
   git push
-  # A draft opened earlier (to run the full gate on every change) becomes the release pull request.
+  # A draft opened earlier becomes the release pull request; marking it ready runs the whole gate on this commit.
   existing="$(gh pr list --base main --head "$branch" --state open --json number,url --jq '.[0] | "\(.number) \(.url)"')"
   if [ -n "$existing" ]; then
     gh pr ready "${existing%% *}"
