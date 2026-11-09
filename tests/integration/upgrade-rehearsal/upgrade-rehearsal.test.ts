@@ -322,9 +322,9 @@ for (const origin of ["previous", "0.9.32"] as const) {
 
       const search = await runLauncher(candidateLauncher, ["search", home.searchTerm], home.env);
       expect(search.status, search.stderr).toBe(0);
-      const searched = JSON.parse(search.stdout) as { hits?: { ref?: string }[] };
-      expect(searched.hits?.length ?? 0).toBeGreaterThan(0);
-      const ref = searched.hits?.[0]?.ref;
+      const searched = JSON.parse(search.stdout) as { results?: { ref?: string }[] };
+      expect(searched.results?.length ?? 0).toBeGreaterThan(0);
+      const ref = searched.results?.[0]?.ref;
       expect(ref).toBeTruthy();
 
       const show = await runLauncher(candidateLauncher, ["show", ref as string], home.env);

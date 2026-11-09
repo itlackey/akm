@@ -817,7 +817,7 @@ describe("model surface parity", () => {
         expect(envelope).toMatchObject({ ok: true, engine: "default" });
         // The model called akm_search; the plugin ran akm by the argv it runs as (Node and the entry script) and its
         // JSON came back through the tool.
-        expect(envelope?.stdout?.trim()).toMatch(/^AKM:\{[\s\S]*"hits"/);
+        expect(envelope?.stdout?.trim()).toMatch(/^AKM:\{[\s\S]*"results"/);
       } finally {
         model.stop();
       }
