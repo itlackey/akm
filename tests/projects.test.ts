@@ -348,7 +348,9 @@ describe("curate", () => {
   test("curate --project none ignores the project the directory selects", async () => {
     const spy = spyOn(process, "cwd").mockReturnValue(work);
     try {
-      const out = JSON.parse((await runCliCapture(["curate", "widget", "--project", "none", "--format", "json"])).stdout);
+      const out = JSON.parse(
+        (await runCliCapture(["curate", "widget", "--project", "none", "--format", "json"])).stdout,
+      );
       expect(out.project).toBeUndefined();
       const user = await run({});
       expect(user.project?.name).toBe("akm");
