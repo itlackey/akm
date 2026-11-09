@@ -128,7 +128,7 @@ import { plainize } from "./core/tty";
 import { info, isQuiet, isVerbose, setQuiet, setVerbose, warn, warnOnce } from "./core/warn";
 import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
 import { EMBEDDED_HINTS } from "./output/cli-hints";
-import { getOutputMode, initOutputMode, parseDetailLevel } from "./output/context";
+import { getOutputMode, initOutputMode } from "./output/context";
 import { isFormatExemptCommand } from "./output/format-exempt";
 import { pkgVersion } from "./version";
 

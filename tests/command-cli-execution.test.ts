@@ -80,9 +80,13 @@ async function installHostileInferenceKey(): Promise<void> {
 }
 
 describe("command CLI execution convergence", () => {
-  test("`command run` is gone: `run` is read as the ref and fails", async () => {
+  test("`command run <ref>` is a usage error naming `akm command <ref>`, with no bundle configured", async () => {
+    // A bundle-less sandbox: the check runs before any config or bundle lookup.
+    fs.rmSync(storage.stashDir, { recursive: true, force: true });
     const result = await runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json"]);
-    expect(result.code).not.toBe(0);
+    expect(result.code).toBe(2);
+    const error = JSON.parse(result.stderr.trim()) as { error?: string };
+    expect(error.error).toContain("akm command commands/review");
   });
 
   test("command --dry-run authorizes and lowers without dispatch, credentials, usage, or persistent writes", async () => {

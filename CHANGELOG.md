@@ -28,7 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
-- `akm command run <ref>` is `akm command <ref>`: `command` was a group with one child. Same flags. `akm command run X` now reads `run` as the ref and fails with a not-found error naming it, so rewrite any script that calls it.
+- `akm command run <ref>` is `akm command <ref>`: `command` was a group with one child. Same flags. `akm command run X` is a usage error (exit 2) naming `akm command X`, so rewrite any script that calls it.
 - The `AKM_DEBUG` environment variable. Re-run with `--verbose` (or `AKM_VERBOSE=1`) to get the stack trace of an unexpected internal error.
 - The `AKM_REGISTRY_URL` environment variable. List the registries in config `registries` (`akm registry add`); an entry takes a `provider`. A leftover value is no longer read.
 - Readers of rows and plans older releases wrote. A scheduler row that names `--scheduler-context` (0.9.17-alpha.6 and earlier) is no longer read: it is not listed, fails when it fires, and `akm task sync` rewrites it from its task file; `akm task prune` no longer reports an `invalid-context` row. A workflow run frozen by an older plan `irVersion` is abandoned with a message naming `akm workflow run <ref>` to start afresh; only the current plan decodes. A stored `akm improve` result with a key this release does not know now reads without error, where it was refused.

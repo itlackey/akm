@@ -6,6 +6,7 @@ import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
+import { UsageError } from "../../core/errors";
 import { isVerbose, setVerbose, warn, warnVerbose } from "../../core/warn";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import { lookupBundleRefReadonly } from "../../indexer/indexer";
@@ -14,6 +15,16 @@ import {
   inspectPreparedCommandInvocation,
   prepareCommandInvocation,
 } from "./command-execution";
+
+/** `akm command run <ref>` was the 0.9 spelling; a lone `run` is still a command named `run`. */
+function rejectRetiredRunSpelling(positionals: unknown): void {
+  const tokens = Array.isArray(positionals) ? positionals.map(String) : [];
+  if (tokens[0] !== "run" || tokens.length < 2) return;
+  throw new UsageError(
+    `\`akm command run <ref>\` is now \`akm command <ref>\`: drop \`run\`, as in \`akm command ${tokens[1]}\`.`,
+    "INVALID_FLAG_VALUE",
+  );
+}
 
 function exactStringArg(args: unknown, key: string): string | undefined {
   const value = (args as Record<string, unknown>)[key];
@@ -50,6 +61,7 @@ export const commandCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
+    rejectRetiredRunSpelling(args._);
     if (args.verbose === true) setVerbose(true);
     const timeoutMs = parsePositiveIntFlag(exactStringArg(args, "timeout-ms"), "--timeout-ms");
     const current: Record<string, unknown> = {};
