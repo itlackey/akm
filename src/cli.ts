@@ -77,7 +77,6 @@ import {
   findCittyTopLevelCommandIndex,
   getParsedInvocation,
   parseAllFlagValues,
-  resolveHelpMigrateVersionArg,
   setParsedInvocation,
 } from "./cli/invocation";
 import {
@@ -114,7 +113,6 @@ import { rememberCommand } from "./commands/read/remember-cli";
 import { curateCommand, searchCommand, showCommand } from "./commands/read/search-cli";
 import { registryCommand } from "./commands/registry-cli";
 import { bundleCommand } from "./commands/sources/bundle-cli";
-import { renderMigrationHelp } from "./commands/sources/migration-help";
 import { cloneCommand, syncCommand, upgradeCommand } from "./commands/sources/sources-cli";
 import { importKnowledgeCommand, indexCommand, infoCommand } from "./commands/sources/stash-cli";
 import { taskCommand } from "./commands/tasks/tasks-cli";
@@ -519,7 +517,7 @@ const completionsCommand = defineCommand({
     // handling as a raw stack trace (`completions` is format-exempt, so it
     // stays a raw `defineCommand` rather than `defineJsonCommand`, but still
     // needs the same error-classification wrapper other bare `defineCommand`s
-    // in this file use, e.g. `help migrate` below).
+    // in this file use).
     return runWithJsonErrors(() => {
       if (args.shell !== "bash") {
         throw new UsageError(`Unsupported shell: ${args.shell}. Only bash is supported.`);
@@ -586,53 +584,17 @@ function commandHelpTopic(name: string, command: AnyCittyCommand): AnyCittyComma
   });
 }
 
-// `migrate` is excluded here even though it's a normal, now-visible SYSTEM
-// command (see HELP_SECTIONS below): `help`'s own `migrate` subcommand
-// (registered below) intentionally shadows this generic command-usage
-// renderer with release-notes lookup instead — `akm help migrate 0.9.0`
-// prints migration guidance, not `migrate`'s own `--help` usage block. That
-// usage block is still reachable directly via `akm migrate --help`.
 const commandHelpTopics = Object.fromEntries(
-  Object.entries(commands)
-    .filter(([name]) => name !== "migrate")
-    .map(([name, command]) => [name, commandHelpTopic(name, command)]),
+  Object.entries(commands).map(([name, command]) => [name, commandHelpTopic(name, command)]),
 );
 
 const helpCommand = defineGroupCommand({
   meta: {
     name: "help",
-    description:
-      "Print the command overview, detailed help for a command, agent instructions, or a release's migration guidance",
+    description: "Print the command overview or detailed help for a command",
   },
   subCommands: {
     ...commandHelpTopics,
-    migrate: defineCommand({
-      meta: {
-        name: "migrate",
-        description:
-          "Print release notes and migration guidance for a version. Bundled notes live in docs/migration/release-notes/<version>.md; an unknown version lists what's available.",
-      },
-      args: {
-        version: {
-          type: "positional",
-          description: "Version to review (for example 0.6.0, v0.6.0, 0.6.0-rc1, or latest)",
-          required: false,
-        },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          const version = resolveHelpMigrateVersionArg(typeof args.version === "string" ? args.version : undefined);
-          if (!version?.trim()) {
-            throw new UsageError(
-              "Usage: akm help migrate <version>.",
-              "MISSING_REQUIRED_ARGUMENT",
-              "Pass a version like `0.6.0`, `v0.6.0`, `0.6.0-rc1`, or `latest`.",
-            );
-          }
-          process.stdout.write(renderMigrationHelp(version));
-        });
-      },
-    }),
   },
   async defaultRun() {
     process.stdout.write(`${await renderSectionedRootHelp()}\n`);
@@ -720,13 +682,9 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
   const commandIndex = findCittyTopLevelCommandIndex(args, MAIN_TOP_LEVEL_ARGS);
   const command = commandIndex >= 0 ? args[commandIndex] : undefined;
   if (command === "setup" || command === "migrate") return true;
-  // `help` and `hints` are pure-text surfaces (bundled release notes, static
-  // agent-guide text, command usage rendered from `meta` alone) — none of
-  // their run bodies read config. The documented recovery path
-  // (`akm help migrate 0.9.0`) is only ever run against a config that
-  // startup's own load would reject, so both must bypass it the same way
-  // `setup`/`migrate` do, or the recovery instructions are themselves
-  // unreachable.
+  // `help` and `hints` are pure-text surfaces (static agent-guide text,
+  // command usage rendered from `meta` alone) — none of their run bodies
+  // read config.
   if (command === "help" || command === "hints") return true;
   if (isTaskRunWithId(argv)) return true;
   if (command !== "config") return false;

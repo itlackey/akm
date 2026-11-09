@@ -60,7 +60,7 @@ describe("package.json exports", () => {
   });
 
   test("bin and the docs page are still shipped", () => {
-    expect(pkg.bin).toEqual({ akm: "dist/akm", "akm-migrate": "dist/akm-migrate" });
+    expect(pkg.bin).toEqual({ akm: "dist/akm" });
     expect(pkg.files).toContain("dist");
     // `files` may name the page or a folder that holds it.
     const shipsApiPage = (pkg.files as string[]).some(

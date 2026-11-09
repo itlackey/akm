@@ -333,7 +333,6 @@ akm lint --fail-on-flagged                    # Exit non-zero when summary.flagg
 akm upgrade                                   # Upgrade akm using its install method, then update installed harness plugins
 akm upgrade --check                           # Report pending CLI and plugin updates, changing nothing
 akm upgrade --next                            # Follow prereleases (@next); OpenCode needs "akm-opencode@next" (or "akm-opencode-v2@next" on OpenCode 2) in its plugin list
-akm help migrate 0.6.0                        # Print migration notes for a release (or: latest)
 akm help bundle                               # Print options and subcommands for one command
 akm hints --detail full                       # Print this complete agent guide (plain akm hints prints the short one)
 akm completions                               # Print bash completion script

@@ -25,28 +25,21 @@ function runAsNodeVersion(version: string, program: string): ReturnType<typeof s
   );
 }
 
-function launcherFixture(bin: "akm" | "akm-migrate"): { launcher: string; cleanup: () => void } {
+function launcherFixture(bin: "akm"): { launcher: string; cleanup: () => void } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-node-runtime-minimum-"));
   const launcher = path.join(root, bin);
   fs.copyFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", bin), launcher);
-  if (bin === "akm") {
-    fs.writeFileSync(path.join(root, "cli-node.mjs"), 'console.log("NODE_22_LAUNCHER_RAN");\n');
-  } else {
-    fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
-    fs.writeFileSync(path.join(root, "scripts", "akm-migrate-node.js"), 'console.log("NODE_22_LAUNCHER_RAN");\n');
-  }
+  fs.writeFileSync(path.join(root, "cli-node.mjs"), 'console.log("NODE_22_LAUNCHER_RAN");\n');
   return { launcher, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 
 describe("npm bin contract", () => {
   test("uses Node as the single interpreter shared by npm's POSIX and Windows shims", () => {
-    for (const bin of ["akm", "akm-migrate"]) {
-      const launcher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", bin), "utf8");
+    const launcher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm"), "utf8");
 
-      // POSIX executes this shebang and npm embeds the same interpreter in its
-      // generated Windows shims. It cannot express a Bun-or-Node choice.
-      expect(npmShimInterpreter(launcher)).toBe("node");
-    }
+    // POSIX executes this shebang and npm embeds the same interpreter in its
+    // generated Windows shims. It cannot express a Bun-or-Node choice.
+    expect(npmShimInterpreter(launcher)).toBe("node");
   });
 
   test("declares the Node bootstrap required before Bun can be preferred", () => {
@@ -68,7 +61,7 @@ describe("npm bin contract", () => {
     };
 
     expect(pkg.bin?.akm).toBe("dist/akm");
-    expect(pkg.bin?.["akm-migrate"]).toBe("dist/akm-migrate");
+    expect(pkg.bin).toEqual({ akm: "dist/akm" });
 
     const akmLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm"), "utf8");
     expect(akmLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
@@ -76,40 +69,27 @@ describe("npm bin contract", () => {
     expect(akmLauncher).toContain('new URL("./cli.js", import.meta.url)');
     expect(akmLauncher).toContain('await import("./cli-node.mjs")');
 
-    const migrateLauncher = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm-migrate"), "utf8");
-    expect(migrateLauncher.startsWith("#!/usr/bin/env node")).toBe(true);
-    expect(migrateLauncher).toContain("requires Node.js >= 22 to bootstrap");
-    expect(migrateLauncher).toContain('new URL("./scripts/akm-migrate.js", import.meta.url)');
-    expect(migrateLauncher).toContain('new URL("./scripts/akm-migrate-node.js", import.meta.url)');
-    expect(migrateLauncher).toContain('process.versions.bun ? process.execPath : useBun ? "bun" : process.execPath');
-    expect(migrateLauncher).toContain("process.versions.bun || useBun ? bunEntry : nodeEntry");
-    expect(migrateLauncher).not.toContain("migrate-storage-node.mjs");
-
     const wrapper = fs.readFileSync(path.join(REPO_ROOT, "scripts", "node-runtime", "cli-node.mjs"), "utf8");
     expect(wrapper.startsWith("#!/usr/bin/env node")).toBe(true);
     expect(fs.existsSync(path.join(REPO_ROOT, "scripts", "node-runtime", "akm-migrate-storage"))).toBe(false);
     expect(fs.existsSync(path.join(REPO_ROOT, "scripts", "node-runtime", "migrate-storage-node.mjs"))).toBe(false);
 
-    for (const launcherSource of [akmLauncher, migrateLauncher]) {
-      expect(launcherSource).toContain('"bun", ["--version"]');
-      expect(launcherSource).toContain("bunMajor >= 1");
-    }
+    expect(akmLauncher).toContain('"bun", ["--version"]');
+    expect(akmLauncher).toContain("bunMajor >= 1");
   });
 
-  test("rejects Node 20 (below the 22 floor) before either published launcher can execute its payload", () => {
-    for (const bin of ["akm", "akm-migrate"] as const) {
-      const fixture = launcherFixture(bin);
-      try {
-        const result = runAsNodeVersion(
-          "20.0.0",
-          `await import(${JSON.stringify(pathToFileURL(fixture.launcher).href)});`,
-        );
-        expect(result.status).toBe(1);
-        expect(result.stderr).toContain("requires Node.js >= 22 to bootstrap");
-        expect(result.stdout).not.toContain("NODE_22_LAUNCHER_RAN");
-      } finally {
-        fixture.cleanup();
-      }
+  test("rejects Node 20 (below the 22 floor) before the published launcher can execute its payload", () => {
+    const fixture = launcherFixture("akm");
+    try {
+      const result = runAsNodeVersion(
+        "20.0.0",
+        `await import(${JSON.stringify(pathToFileURL(fixture.launcher).href)});`,
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("requires Node.js >= 22 to bootstrap");
+      expect(result.stdout).not.toContain("NODE_22_LAUNCHER_RAN");
+    } finally {
+      fixture.cleanup();
     }
   });
 });

@@ -22,6 +22,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- `akm help migrate` and the release notes the npm package bundled for it: `docs/migration` is no longer in the package's `files`. The notes stay in the repository, and `akm help <command>` still prints a command's usage. `akm migrate status` and `apply` are unchanged.
+- The `akm-migrate` bin of the npm package (`npx akm-migrate`, `akm-migrate` on `PATH`). Use `akm migrate status` / `akm migrate apply`. The `dist/scripts/akm-migrate{,-node}.js` files stay, because `akm upgrade` from 0.9.32 and from 0.10 looks for those exact paths.
 - The `index` config section (20 leaf paths, `index.connection`, `index.model`, `index.<pass>.*`, `index.memory.enabled`) and the `index` row of the work table `akm info` and `akm health` print: no caller read it, so it never took effect. Where memory inference runs is `improve.processes.memoryInference` over `improve.*`. A config that still has an `index` section names it once as an unknown key; `akm migrate apply` drops it.
 - Config keys with no reader: `setup`, `improve.salience`, `bundles.<name>.website.refresh`, a registry's `options`, and a strategy's `description` and `limit`. They are named once as unknown keys and dropped by `akm migrate apply`.
 - `NODE_ENV=test` and `BUN_TEST` are no longer read by akm. In a shell, `NODE_ENV=test` no longer makes akm refuse to resolve its data directory (`TEST_ISOLATION_MISSING`, with `akm info` printing `dataDir: ""`). What stopped a test run reaching a developer's real directories now lives in the test harness (`tests/_preload.ts`, `tests/_helpers/isolation-guard.ts`). `AKM_FORCE_INIT_TMP_STASH`, which nothing read, is no longer listed in `STABILITY.md`.
