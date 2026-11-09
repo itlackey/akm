@@ -426,7 +426,12 @@ const workflowResumeCommand = defineJsonCommand({
 export const workflowCommand = defineGroupCommand({
   meta: {
     name: "workflow",
-    description: "Experimental: author, inspect, and execute step-by-step workflow assets",
+    description:
+      "Experimental: author, inspect, and execute step-by-step workflow assets\n" +
+      "Order: write the definition (`workflow create`), `workflow plan <ref>` (compiles it, executes nothing), " +
+      "`workflow run <ref>` (starts a run and prints its run id), `workflow status <run-id>`, then " +
+      "`workflow resume <run-id>` or `workflow abandon <run-id>` for a blocked or failed run. " +
+      "A ref names the definition (workflows/<name>); a run id names one execution of it.",
   },
   subCommands: {
     status: workflowStatusCommand,

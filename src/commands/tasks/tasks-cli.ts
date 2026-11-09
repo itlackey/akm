@@ -478,7 +478,10 @@ export const taskCommand = defineGroupCommand({
   meta: {
     name: "task",
     description:
-      "Schedule recurring commands, prompts, and workflows through the OS scheduler (cron / launchd / schtasks)",
+      "Schedule recurring commands, prompts, and workflows through the OS scheduler (cron / launchd / schtasks)\n" +
+      "Definitions are assets: `akm search --type task`, then `akm show <ref>`. " +
+      "`task doctor` reports what is installed in the scheduler; `task explain` the resolved inputs and target; " +
+      "`task history` the executions.",
   },
   subCommands: {
     add: tasksAddCommand,

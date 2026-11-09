@@ -71,7 +71,8 @@ process.on("uncaughtException", (err) => {
 });
 
 import fs from "node:fs";
-import { type ArgsDef, type CommandDef, defineCommand, parseArgs, renderUsage, runCommand, showUsage } from "citty";
+import { type ArgsDef, type CommandDef, defineCommand, parseArgs, renderUsage, runCommand } from "citty";
+import { formatHelp } from "./cli/help-format";
 import {
   type CittyArgsDefinitionForScan,
   findCittyTopLevelCommandIndex,
@@ -571,8 +572,13 @@ const commands = {
 
 /** Leaf `--help`: usage without the hidden args and the shared global flags, then one pointer line. */
 async function showCommandUsage(command: AnyCittyCommand, path: readonly string[]): Promise<void> {
-  await showUsage(withoutHelpHiddenArgs(command) as CommandDef, buildUsageParentForPath(path) as CommandDef);
-  console.log("Global flags: --format, --detail, --output, -q/--quiet, --verbose (see `akm --help`)");
+  const usage = await renderUsage(
+    withoutHelpHiddenArgs(command) as CommandDef,
+    buildUsageParentForPath(path) as CommandDef,
+  );
+  console.log(
+    formatHelp(`${usage}\nGlobal flags: --format, --detail, --output, -q/--quiet, --verbose (see \`akm --help\`)`),
+  );
 }
 
 function commandHelpTopic(name: string, command: AnyCittyCommand): AnyCittyCommand {
@@ -597,7 +603,7 @@ const helpCommand = defineGroupCommand({
     ...commandHelpTopics,
   },
   async defaultRun() {
-    process.stdout.write(`${await renderSectionedRootHelp()}\n`);
+    process.stdout.write(`${formatHelp(await renderSectionedRootHelp())}\n`);
   },
 });
 
@@ -1000,6 +1006,12 @@ function cittyCliErrorUsageCode(error: Error & { code?: string }): UsageErrorCod
   }
 }
 
+/** Recovery hints for the mistakes agents actually make, keyed by the command path as typed. */
+const RECOVERY_HINTS: Readonly<Record<string, string>> = {
+  "task list": "Task definitions are assets: `akm search --type task`. What is installed: `akm task doctor`.",
+  "config get": "Pass a key, for example `akm config get defaultBundle`; `akm config list` shows them all.",
+};
+
 /**
  * Route a citty `CLIError` through the standard JSON envelope instead of
  * citty's own usage-banner + raw `console.error(message)`: the
@@ -1012,7 +1024,9 @@ function toUsageErrorFromCliError(error: Error, rawArgs: readonly string[]): Usa
   const code = cittyCliErrorUsageCode(error as Error & { code?: string });
   const attempt = code === "UNKNOWN_COMMAND" ? findUnknownCommandAttempt(rawArgs) : undefined;
   const suggestion = attempt ? closestCommandMatch(attempt.attempted, attempt.candidates) : undefined;
-  const helpPointer = `Run \`${["akm", ...resolveCittyCommandPath(main, rawArgs), "--help"].join(" ")}\` for usage.`;
+  const typed = [...resolveCittyCommandPath(main, rawArgs), ...(attempt ? [attempt.attempted] : [])].join(" ");
+  const recovery = RECOVERY_HINTS[typed];
+  const helpPointer = `${recovery ? `${recovery} ` : ""}Run \`${["akm", ...resolveCittyCommandPath(main, rawArgs), "--help"].join(" ")}\` for usage.`;
   const hint = suggestion ? `Did you mean \`${suggestion}\`? ${helpPointer}` : helpPointer;
   // citty colorizes error.message with ANSI escapes even when stdout/stderr
   // is not a TTY. Strip them so the JSON envelope's `error` field is plain
@@ -1153,7 +1167,7 @@ export async function runCli(): Promise<void> {
   const disposeLlmUsageSink = installLlmUsagePersistenceIfAbsent();
   try {
     if (rawArgs.length === 0) {
-      process.stdout.write(`${await renderSectionedRootHelp()}\n`);
+      process.stdout.write(`${formatHelp(await renderSectionedRootHelp())}\n`);
       return;
     }
     // Mirrors citty's own builtin-flag short-circuit in `runMain` (main's own
@@ -1171,7 +1185,7 @@ export async function runCli(): Promise<void> {
       if (resolved === (main as AnyCittyCommand)) {
         // Root `--help`: the sectioned overview, not citty's
         // flat COMMANDS dump.
-        process.stdout.write(`${await renderSectionedRootHelp()}\n`);
+        process.stdout.write(`${formatHelp(await renderSectionedRootHelp())}\n`);
       } else {
         const path = resolveCittyCommandPath(main, rawArgs);
         await showCommandUsage(resolved, path);

@@ -115,7 +115,7 @@ covers beyond the table.
 | `akm workflow create` | Experimental | |
 | `akm workflow resume` | Experimental | |
 | `akm workflow abandon` | Experimental | |
-| `akm workflow run` | Experimental | Canonical start/resume/execute command. |
+| `akm workflow run` | Experimental | Starts a run from a workflow ref or drives an existing run by id; `workflow resume` reopens a blocked or failed run first. |
 | `akm remember` | Stable | |
 | `akm import` | Stable | |
 | `akm sync` | Stable | |
