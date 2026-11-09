@@ -11,38 +11,11 @@
  * redact input values — best-effort there too, never a guarantee.
  */
 
-/**
- * Substrings that, when present in a param KEY (case-insensitive), suggest the
- * value is a credential. Deliberately specific — bare `auth` is excluded so a
- * key like `author` does not trip the heuristic.
- */
-const SECRET_KEY_HINTS = [
-  "secret",
-  "token",
-  "password",
-  "passwd",
-  "apikey",
-  "api_key",
-  "api-key",
-  "accesskey",
-  "access_key",
-  "privatekey",
-  "private_key",
-  "credential",
-  "bearer",
-  "auth_token",
-  "authtoken",
-  "client_secret",
-] as const;
+import { isSecretKey } from "../../core/redaction";
 
 /** Known credential value prefixes (OpenAI, GitHub, Slack, AWS, Google, PEM). */
 const SECRET_VALUE_PREFIX =
   /^(sk-|rk-|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|xox[baprs]-|AKIA|ASIA|AIza|ya29\.|-----BEGIN)/;
-
-function keyLooksSecret(key: string): boolean {
-  const lower = key.toLowerCase();
-  return SECRET_KEY_HINTS.some((hint) => lower.includes(hint));
-}
 
 /**
  * Unix (`/`, `./`, `../`, `~/`) or Windows (`C:\`, `\\server`) filesystem path,
@@ -63,7 +36,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function segmentLooksSecret(seg: string): boolean {
   if (SECRET_VALUE_PREFIX.test(seg)) return true;
   const eq = seg.indexOf("=");
-  if (eq > 0 && keyLooksSecret(seg.slice(0, eq)) && seg.length - eq > 8) return true;
+  if (eq > 0 && isSecretKey(seg.slice(0, eq), seg.slice(eq + 1)) && seg.length - eq > 8) return true;
   if (seg.length >= 32 && !UUID.test(seg) && /^[A-Za-z0-9+_=-]+$/.test(seg) && /\d/.test(seg) && /[a-zA-Z]/.test(seg))
     return true;
   return seg.length >= 20 && /^[A-Za-z0-9]+$/.test(seg) && /[a-z]/.test(seg) && /[A-Z]/.test(seg) && /\d/.test(seg);
@@ -124,7 +97,7 @@ function walkSecretShaped(
   hit: (path: string, why: string, value: unknown) => void,
 ): void {
   const walk = (value: unknown, path: string, key: string | null): void => {
-    if (key !== null && keyLooksSecret(key)) hit(path, "has a secret-suggesting name", value);
+    if (key !== null && isSecretKey(key, value)) hit(path, "has a secret-suggesting name", value);
     if (typeof value === "string") {
       if (valueLooksSecret(value)) hit(path, "has a secret-shaped value (long, high-entropy string)", value);
       return;

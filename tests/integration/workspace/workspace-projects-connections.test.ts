@@ -10,6 +10,12 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  type ConnectionRow,
+  connectionDraft,
+  connectionEntry,
+  entryOf,
+} from "../../../desktop/src/lib/connections-model";
 import { akmSearch } from "../../../src/commands/read/search";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { getConfigPath } from "../../../src/core/paths";
@@ -216,6 +222,49 @@ describe("config.removeConnection", () => {
       saved: true,
     });
     expect(Object.keys(saved().connections)).toEqual(["default", "lab", "extra"]);
+  });
+
+  test("a save through the real path (get, draft, change the endpoint, save) never writes a mask over a stored value", () => {
+    writeSandboxConfig({
+      bundles: { stash: { path: ctx.storage.stashDir, writable: true } },
+      defaultBundle: "stash",
+      connections: {
+        lab: {
+          endpoint: "http://127.0.0.1:2/v1",
+          headers: { Authorization: "Bearer abc-secret", "X-Team": "blue" },
+          tokenizer: "tiktoken",
+          maxTokens: 64,
+          prompt_cache_key: "cache-1",
+          models: { fast: "small", "token-small": "tiny" },
+        },
+      },
+    });
+    resetConfigCache();
+    const row = config.get().connections.find((connection: Json) => connection.name === "lab") as ConnectionRow;
+    // The view hides the credential and nothing else.
+    expect(row.headers.Authorization).toBe("[redacted]");
+    expect(row.tokenizer).toBe("tiktoken");
+    expect(row.prompt_cache_key).toBe("cache-1");
+    expect(row.models["token-small"]).toBe("tiny");
+    const original = entryOf(row);
+    const draft = { ...connectionDraft("lab", original), endpoint: "http://127.0.0.1:9/v1" };
+    expect(config.saveConnection({ name: "lab", entry: connectionEntry(draft, original) })).toEqual({ saved: true });
+    expect(saved().connections.lab).toEqual({
+      endpoint: "http://127.0.0.1:9/v1",
+      headers: { Authorization: "Bearer abc-secret", "X-Team": "blue" },
+      tokenizer: "tiktoken",
+      maxTokens: 64,
+      prompt_cache_key: "cache-1",
+      models: { fast: "small", "token-small": "tiny" },
+    });
+    // A mask with no stored value behind it is refused, never written.
+    expect(() =>
+      config.saveConnection({
+        name: "lab",
+        entry: { endpoint: "http://127.0.0.1:9/v1", headers: { Cookie: "[redacted]" } },
+      }),
+    ).toThrow();
+    expect(saved().connections.lab.headers).toEqual({ Authorization: "Bearer abc-secret", "X-Team": "blue" });
   });
 
   test("removing the default hands the default to the sole remaining connection, then to none", async () => {
