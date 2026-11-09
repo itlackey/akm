@@ -37,7 +37,6 @@ function setup(indexSessions = true) {
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       test: {
         endpoint: "http://localhost:11434/v1/chat/completions",

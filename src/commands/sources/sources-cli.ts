@@ -168,7 +168,7 @@ export const cloneCommand = defineJsonCommand({
     force: { type: "boolean", description: "Overwrite if the asset already exists at the destination", default: false },
     bundle: {
       type: "string",
-      description: "Managed destination: a bundle name (default: defaultWriteTarget)",
+      description: "Managed destination: a bundle name (default: defaultBundle)",
     },
     dest: { type: "string", description: "Unmanaged destination directory (cannot be combined with --bundle)" },
   },

@@ -179,7 +179,6 @@ describe("bundle-targeted tasks via --bundle", () => {
     saveConfig({
       ...current,
       defaultBundle: undefined,
-      defaultWriteTarget: undefined,
       bundles: Object.fromEntries(
         Object.entries(current.bundles ?? {}).map(([id, bundle]) => [id, { ...bundle, enabled: false }]),
       ),

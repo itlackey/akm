@@ -58,7 +58,6 @@ async function indexStash(stashDir: string): Promise<void> {
         semanticSearchMode: "off",
         bundles: { stash: { path: stashDir, writable: true } },
         defaultBundle: "stash",
-        defaultWriteTarget: "stash",
         index: { enrichment: { enabled: false } },
       }),
     ),

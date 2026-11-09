@@ -22,7 +22,7 @@ function configWithLlm(): AkmConfig {
     semanticSearchMode: "auto",
     stashDir: "/tmp/does-not-matter",
     sources: [],
-    defaultWriteTarget: "stash",
+    defaultBundle: "stash",
     connections: {
       default: {
         endpoint: "http://localhost:11434/v1/chat/completions",
@@ -37,7 +37,7 @@ function configWithoutLlm(): AkmConfig {
     semanticSearchMode: "auto",
     stashDir: "/tmp/does-not-matter",
     sources: [],
-    defaultWriteTarget: "stash",
+    defaultBundle: "stash",
   } as unknown as AkmConfig;
 }
 
@@ -188,7 +188,7 @@ describe("runLessonQualityJudge — pinned temperature (R13)", () => {
       semanticSearchMode: "auto",
       stashDir: "/tmp/does-not-matter",
       sources: [],
-      defaultWriteTarget: "stash",
+      defaultBundle: "stash",
       connections: {
         default: {
           endpoint: "http://localhost:11434/v1/chat/completions",

@@ -1469,7 +1469,7 @@ akm bundle rename old-name new-name --dry-run   # Show the plan; write nothing
 
 `<new>` must be a legal, unused bundle slug (the same `--name` contract `akm
 bundle add` enforces) or the rename fails before any write. Rewritten: the
-config `bundles` key; `defaultBundle`/`defaultWriteTarget` when they name the
+config `bundles` key; `defaultBundle` when it names the
 old id; every `scheduler.enabled[].ref` with the old `<old>//` prefix; the
 lockfile entry id; every indexed entry's `bundle_id`/ref; and this tool's own
 state rows that name the old bundle (`proposals.ref`, a pending proposal's
@@ -1738,7 +1738,7 @@ akm clone "npm:@scope/pkg//scripts/deploy.sh" --dest /tmp/preview
 | --- | --- |
 | `--name` | New name for the cloned asset |
 | `--force` | Overwrite if the asset already exists at the destination |
-| `--bundle <name>` | Managed destination bundle. When omitted, clone falls back to `defaultWriteTarget`, then the working bundle |
+| `--bundle <name>` | Managed destination bundle. When omitted, clone falls back to the working bundle |
 | `--dest <path>` | Unmanaged destination directory. Bypasses managed target resolution and cannot be combined with `--bundle`; the type subdirectory is appended automatically |
 
 Skills (directories) are copied recursively. Other types copy a single file.
@@ -1775,7 +1775,7 @@ akm clone "/path/to/bundle//skills/code-review" --dest ./project/.claude
 ```
 
 Without `--dest`, clone uses normal write-target resolution: explicit
-`--bundle` -> `defaultWriteTarget` -> working bundle. Managed clones use the
+`--bundle` -> working bundle. Managed clones use the
 destination bundle's canonical ref and are indexed immediately. When `--dest`
 is provided, no managed write target is required, which keeps clone usable in
 CI or fresh environments without running `akm setup` first.
@@ -1937,10 +1937,8 @@ Record a memory. This writes a markdown file into `memories/` in the configured
 write target and returns the resulting ref.
 
 **Write target resolution:** the destination is the working bundle
-(`defaultBundle`) unless `defaultWriteTarget` is set in config, which
-overrides it to a named source. An explicit `--bundle <name>` flag overrides
-both. The full order is `--bundle` → `defaultWriteTarget` → working bundle →
-`ConfigError`. See [Configuration](configuration.md#bundles-and-write-target) for
+(`defaultBundle`). An explicit `--bundle <name>` flag overrides it. The full
+order is `--bundle` → working bundle → `ConfigError`. See [Configuration](configuration.md#bundles-and-write-target) for
 details.
 
 A bundle-qualified mutation ref implies that bundle. In particular, a
@@ -2001,7 +1999,7 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 | `--agent <id>` | Scope this memory to an agent id. Persisted as `scope_agent`. |
 | `--run <id>` | Scope this memory to a run id. Persisted as `scope_run`. |
 | `--channel <name>` | Scope this memory to a channel name. Persisted as `scope_channel`. |
-| `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to the project's `write.bundle`, then `defaultWriteTarget`, then the working bundle. |
+| `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to the project's `write.bundle`, then the working bundle. |
 | `--project <name>` | Use this [project](#projects)'s write defaults instead of the one the working directory selects; `none` uses none. |
 
 Pass the content as a quoted positional argument for short notes, or pipe
@@ -2054,10 +2052,8 @@ the configured write target and returns the resulting ref. The source may be a
 file path, a single HTTP/HTTPS URL, or `-` for stdin.
 
 **Write target resolution:** the destination is the working bundle
-(`defaultBundle`) unless `defaultWriteTarget` is set in config, which
-overrides it to a named source. An explicit `--bundle <name>` flag overrides
-both. The full order is `--bundle` → `defaultWriteTarget` → working bundle →
-`ConfigError`. See [Configuration](configuration.md#bundles-and-write-target) for
+(`defaultBundle`). An explicit `--bundle <name>` flag overrides it. The full
+order is `--bundle` → working bundle → `ConfigError`. See [Configuration](configuration.md#bundles-and-write-target) for
 details.
 
 ```sh
@@ -2080,7 +2076,7 @@ akm import ./docs/auth-flow.md --bundle team-bundle
 | --- | --- |
 | `--name` | Optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
-| `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working bundle. |
+| `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to the working bundle. |
 | `--xref <ref>` | Cross-reference ref merged into the document's `xrefs:` frontmatter list. Repeatable. A document without frontmatter gains a block; a document with valid frontmatter keeps every existing key and value and gets the refs dedupe-appended (never a nested second block). Each ref must resolve in the write target or a configured source; an unresolvable ref fails with exit 2 before anything is written. If the document's existing frontmatter is not a parseable YAML mapping, the import fails (exit 2) rather than rewriting the block lossily — fix the frontmatter or import without `--xref`, which preserves the file verbatim. |
 | `--supersedes <ref>` | Ref of an existing asset this document corrects. Repeatable. Imports the correction with the old ref merged into its `xrefs:` AND demotes the old asset (`beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit), then reindexes it. Same validation (including the self-supersede rejection), skipped-demotion (`applied: false`), idempotence, and git-boundary-commit behaviour as on `remember` (see above). |
 
@@ -2522,8 +2518,8 @@ is injected. See [Environment & Secrets](env-and-secrets.md#the-ref-token).
 
 Env mutations (`create`, `remove`) pick their write destination the same way
 every other write command does: an explicit `--bundle <source>` wins, else
-`defaultWriteTarget`, else the working bundle. The chosen source must be
-writable — a non-writable `--bundle`/`defaultWriteTarget` fails with a
+the working bundle. The chosen source must be
+writable — a non-writable target fails with a
 `ConfigError` before anything is written — and on a git-backed writable target
 the mutation lands in a single boundary commit (filesystem targets are
 committed by `akm sync`; `env/` stays out of git when your bundle `.gitignore`
@@ -2596,7 +2592,7 @@ akm env create env/prod --bundle team     # write to the `team` source
 | `--from-file <path>` | Seed the env file from an existing `.env` at this path |
 | `--from-stdin` | Seed the env file from stdin |
 | `--sensitive` | Exclude this env file from `env list` output and the search index |
-| `--bundle <source>` | Override the write destination (falls back to `defaultWriteTarget` then the working bundle) |
+| `--bundle <source>` | Override the write destination (falls back to the working bundle) |
 
 Creates `env/prod.env` with mode 0600. Empty `create` is a no-op if the file
 exists; `--from-file`/`--from-stdin` **refuse to clobber** an existing env (remove
@@ -2694,7 +2690,7 @@ Subcommands:
 > roots); use `akm secret run` to consume the value without touching disk.
 > `secret remove`, removed with it, is back as of 0.10. Like `akm env remove`,
 > it names its file through the write-target resolver only (`--bundle`, then
-> `defaultWriteTarget`, then the working bundle), so for a ref present in more
+> the working bundle), so for a ref present in more
 > than one bundle name the bundle with `--bundle`.
 
 #### secret set
@@ -2717,7 +2713,7 @@ of multi-line material. Writes are atomic (mode 0600) under an exclusive
 `<secret>.lock`. Maximum size is 5 MB.
 
 `secret set` selects its write destination like every other write command: an
-explicit `--bundle <source>` wins, else `defaultWriteTarget`, else the working
+explicit `--bundle <source>` wins, else the working
 bundle. The chosen source must be writable (a non-writable target fails with a
 `ConfigError`), and on a git-backed writable target the mutation lands in a
 single boundary commit. Reads (`list`, `run`) still span all configured sources.
@@ -2999,7 +2995,7 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | --- | --- |
 | `--task` | Optional extra guidance for this improvement pass |
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
-| `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
+| `--bundle` | Select the bundle the run improves and writes to (default: the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
 | `--require-feedback-signal` | Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned |

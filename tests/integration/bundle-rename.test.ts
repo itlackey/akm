@@ -5,7 +5,7 @@
 
 /**
  * D6 — `akm bundle rename <old> <new>`: moves the config bundles key,
- * defaultBundle/defaultWriteTarget, scheduler.enabled[].ref, the lockfile
+ * defaultBundle, scheduler.enabled[].ref, the lockfile
  * entry, and the index/state rows this tool persisted under the old bundle
  * prefix; leaves bundle CONTENT refs alone and reports them; `--dry-run`
  * writes nothing; `show <new>//…` resolves while `show <old>//…` does not.
@@ -119,7 +119,6 @@ async function seedBundleWithOneEntry(): Promise<void> {
     semanticSearchMode: "off",
     bundles: { original: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } } },
     defaultBundle: "original",
-    defaultWriteTarget: "original",
   });
   await akmIndex({ stashDir: storage.stashDir });
 }
@@ -294,18 +293,16 @@ describe("akm bundle rename — applied", () => {
     expect(result.taskSync?.ok).toBe(true);
     expect(result.index.entries).toBe(2);
     expect(result.config.defaultBundleChanges).toBe(true);
-    expect(result.config.defaultWriteTargetChanges).toBe(true);
     expect(result.config.schedulerRefs).toEqual(["original//tasks/foo"]);
     expect(result.lock.present).toBe(true);
     expect(result.state.proposalRefs).toBe(1);
     expect(result.state.taskHistoryRefs).toBe(1);
     expect(result.contentRefs.some((f) => f.endsWith("cross-ref.md"))).toBe(true);
 
-    // Config: bundle key, defaultBundle, defaultWriteTarget, scheduler ref.
+    // Config: bundle key, defaultBundle, scheduler ref.
     const configAfter = loadConfig();
     expect(Object.keys(configAfter.bundles ?? {})).toEqual(["renamed"]);
     expect(configAfter.defaultBundle).toBe("renamed");
-    expect(configAfter.defaultWriteTarget).toBe("renamed");
     expect(configAfter.scheduler?.enabled?.[0]).toBe("renamed//tasks/foo");
 
     // Lockfile.
@@ -425,7 +422,6 @@ describe("akm bundle rename — applied", () => {
       semanticSearchMode: "off",
       bundles: { original: { path: storage.stashDir, writable: true } },
       defaultBundle: "original",
-      defaultWriteTarget: "original",
     });
     await akmIndex({ stashDir: storage.stashDir, full: true });
 

@@ -65,7 +65,7 @@ written are in [Core Principles](akm-core-principles.md).
   `tests/improve-plan-autonomy-wiring.test.ts` and
   `tests/config-experimental-improve-autonomy.test.ts`.
 - **Writes resolve one way.** An explicit `--bundle`, then
-  `defaultWriteTarget`, then the working bundle, then an error. A
+  the working bundle, then an error. A
   destination that is not writable is an error, never a fallback. Env and
   secret values are never printed. Pinned by
   `tests/integration/write/write-source.test.ts`,
@@ -378,7 +378,7 @@ not `false`. `options.pushOnCommit` is not supported: config load reports it
 refresh.
 
 Write-target resolution (`resolveWriteTarget`) follows: an explicit
-destination flag (`--bundle`) -> `config.defaultWriteTarget` -> working
+destination flag (`--bundle`) -> working
 bundle (`defaultBundle`) -> `ConfigError`. There is no fallback to the first
 writable source. The resolved target keeps the optional configured selector
 separate from the stable `source.name`: APIs that must re-resolve a destination

@@ -37,7 +37,6 @@ function makeStashDir(): string {
   writeSandboxConfig({
     bundles: { [bundleId]: { path: d.dir, writable: true } },
     defaultBundle: bundleId,
-    defaultWriteTarget: bundleId,
   });
   return d.dir;
 }

@@ -122,7 +122,7 @@ export const rememberCommand = defineJsonCommand({
     },
     bundle: {
       type: "string",
-      description: "Write destination: a source name (default: project write.bundle, then defaultWriteTarget)",
+      description: "Write destination: a source name (default: project write.bundle, then defaultBundle)",
     },
     ...PROJECT_ARG,
     user: {

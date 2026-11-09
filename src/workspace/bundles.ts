@@ -65,7 +65,6 @@ export async function list() {
   const entryCount = info.indexStats.entryCount;
   return {
     defaultBundle: config.defaultBundle ?? null,
-    defaultWriteTarget: config.defaultWriteTarget ?? null,
     bundles: cards,
     workingStash,
     index: {

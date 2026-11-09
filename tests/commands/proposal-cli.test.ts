@@ -39,7 +39,6 @@ function makeStashDir(): string {
   writeSandboxConfig({
     bundles: { [bundleId]: { path: stash, writable: true } },
     defaultBundle: bundleId,
-    defaultWriteTarget: bundleId,
   });
   return stash;
 }
@@ -82,7 +81,6 @@ describe("akm proposal drain strategy selector", () => {
       configVersion: "0.9.0",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       improve: {
         strategy: "queue-only",
         strategies: {
@@ -117,7 +115,6 @@ describe("akm proposal drain strategy selector", () => {
       configVersion: "0.9.0",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       harnesses: { reviewer: { platform: "claude" } },
       improve: {
         strategy: "enabled-judgment",
@@ -149,7 +146,6 @@ describe("akm proposal drain strategy selector", () => {
       configVersion: "0.9.0",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       harnesses: { reviewer: { platform: "claude" } },
       improve: {
         strategies: {
@@ -222,7 +218,6 @@ describe("akm proposal drain strategy selector", () => {
       configVersion: "0.9.0",
       bundles: { [bundleId]: { path: stashDir, writable: true } },
       defaultBundle: bundleId,
-      defaultWriteTarget: bundleId,
       improve: {
         strategies: {
           "queue-mode": { processes: { triage: { enabled: true, applyMode: "queue" } } },
@@ -919,7 +914,6 @@ describe("akm proposal multi-bundle queues", () => {
         secondary: { path: secondary, writable: true },
       },
       defaultBundle: "primary",
-      defaultWriteTarget: "primary",
       semanticSearchMode: "off",
     };
   }

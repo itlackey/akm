@@ -26,7 +26,6 @@ beforeEach(() => {
   fs.mkdirSync(path.join(teamDir, "memories"), { recursive: true });
   writeSandboxConfig({
     semanticSearchMode: "off",
-    defaultWriteTarget: "stash",
     bundles: {
       stash: { path: stashDir, writable: true },
       team: { path: teamDir },

@@ -1,74 +1,13 @@
 /**
  * Wave-2 QA fixes tests — Cluster B (#21, #36) and Cluster C (#6, #14, #24).
  *
- * Cluster B: defaultWriteTarget and llm/embedding subkey support in config-cli.
+ * Cluster B: llm/embedding subkey support in config-cli.
  * Cluster C: empty-query guards.
  */
 
 import { describe, expect, test } from "bun:test";
 import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "../../../../src/commands/config-cli";
 import type { AkmConfig } from "../../../../src/core/config/config";
-
-// ── Cluster B: #21 defaultWriteTarget ────────────────────────────────────────
-
-describe("config-cli: defaultWriteTarget (#21)", () => {
-  const base: AkmConfig = { semanticSearchMode: "auto" };
-
-  // R-063 #5: "setConfigValue cannot set defaultWriteTarget without a
-  // configured bundle" used to be a `parseConfigValue`-shim test (removed —
-  // dead code); it duplicated the "rejects defaultWriteTarget when no
-  // bundles are configured" case below, so it is not re-added here.
-  test("setConfigValue rejects empty defaultWriteTarget", () => {
-    expect(() => setConfigValue(base, "defaultWriteTarget", "")).toThrow();
-  });
-
-  test("getConfigValue returns null when not set", () => {
-    expect(getConfigValue(base, "defaultWriteTarget")).toBeNull();
-  });
-
-  test("getConfigValue returns the set value", () => {
-    const config: AkmConfig = { ...base, defaultWriteTarget: "my-stash" };
-    expect(getConfigValue(config, "defaultWriteTarget")).toBe("my-stash");
-  });
-
-  test("setConfigValue rejects defaultWriteTarget when no bundles are configured", () => {
-    expect(() => setConfigValue(base, "defaultWriteTarget", "any-name")).toThrow(/Unknown bundle/);
-  });
-
-  test("setConfigValue validates the name against configured bundles", () => {
-    const config: AkmConfig = {
-      ...base,
-      bundles: { primary: { path: "/tmp/stash" } },
-    };
-    expect(() => setConfigValue(config, "defaultWriteTarget", "unknown-stash")).toThrow(/Unknown bundle/);
-  });
-
-  test("setConfigValue accepts a valid source name", () => {
-    const config: AkmConfig = {
-      ...base,
-      bundles: { primary: { path: "/tmp/stash" } },
-    };
-    const result = setConfigValue(config, "defaultWriteTarget", "primary");
-    expect(result.defaultWriteTarget).toBe("primary");
-  });
-
-  test("unsetConfigValue clears defaultWriteTarget", () => {
-    const config: AkmConfig = { ...base, defaultWriteTarget: "primary" };
-    const result = unsetConfigValue(config, "defaultWriteTarget");
-    expect(result.defaultWriteTarget).toBeUndefined();
-  });
-
-  test("listConfig includes defaultWriteTarget when set", () => {
-    const config: AkmConfig = { ...base, defaultWriteTarget: "primary" };
-    const listed = listConfig(config);
-    expect(listed.defaultWriteTarget).toBe("primary");
-  });
-
-  test("listConfig omits defaultWriteTarget when not set", () => {
-    const listed = listConfig(base);
-    expect(listed.defaultWriteTarget).toBeUndefined();
-  });
-});
 
 // ── Cluster B: connection/embedding subkey support ────────────────────────────────
 

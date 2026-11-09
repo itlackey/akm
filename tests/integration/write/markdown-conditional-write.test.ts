@@ -36,7 +36,6 @@ beforeEach(async () => {
   writeSandboxConfig({
     semanticSearchMode: "off",
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     bundles: {
       stash: { git: url, writable: true, components: { main: { root: ".", adapter: "akm", writable: true } } },
     },

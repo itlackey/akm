@@ -33,7 +33,7 @@ function config(extra: Record<string, unknown> = {}, connections: Record<string,
     semanticSearchMode: "auto",
     stashDir: "/tmp/does-not-matter",
     sources: [],
-    defaultWriteTarget: "stash",
+    defaultBundle: "stash",
     connections: {
       default: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "gen-model" } },
       judge: {

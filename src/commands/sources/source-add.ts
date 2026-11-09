@@ -439,7 +439,6 @@ export async function removeInstalledRegistryEntry(id: string): Promise<AkmConfi
         ...current,
         bundles: Object.keys(bundles).length > 0 ? bundles : undefined,
         ...(current.defaultBundle === key ? { defaultBundle: undefined } : {}),
-        ...(current.defaultWriteTarget === key ? { defaultWriteTarget: undefined } : {}),
       },
       key,
     );

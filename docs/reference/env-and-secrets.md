@@ -172,7 +172,7 @@ need the index.
 
 Env and secret mutations (`env create`, `env remove`, `secret set`, `secret remove`) choose their
 destination like every other write command: an explicit `--bundle <source>`,
-else `defaultWriteTarget`, else the working bundle. The chosen source must be
+else the working bundle. The chosen source must be
 writable, or the command fails with a `ConfigError` before anything is written;
 a git-backed writable target commits the mutation at a single operation
 boundary. Reads (`list`, `show`, `path`, `run`, `export`) span all configured

@@ -70,7 +70,7 @@ const envCreateCommand = defineJsonCommand({
     },
     bundle: {
       type: "string",
-      description: "Write destination: a source name (default: defaultWriteTarget)",
+      description: "Write destination: a source name (default: defaultBundle)",
     },
   },
   async run({ args }) {
@@ -353,7 +353,7 @@ const envRemoveCommand = defineJsonCommand({
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
     bundle: {
       type: "string",
-      description: "Write destination: a source name (default: defaultWriteTarget)",
+      description: "Write destination: a source name (default: defaultBundle)",
     },
   },
   async run({ args }) {
