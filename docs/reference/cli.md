@@ -25,9 +25,7 @@ These flags are accepted by all commands:
 
 `--detail brief|normal|full` controls **how much** is returned. `--detail agent`
 selects the token-lean action view on `search`, `curate` and `show`; every other
-command ignores it. (`--shape`, which carried `agent` and `summary` before 0.10,
-is gone: it is an unknown flag, exit 2. `--shape summary` had a projection only
-on `show`; use `--detail brief` there.)
+command ignores it.
 
 ### `--format jsonl`
 
@@ -640,10 +638,6 @@ A full ref without the trailing slash (`memories/projectA/auth-tip`) stays an
 ordinary keyword search — use `akm show` to resolve a single ref. An explicit
 `--type` flag wins over the prefix.
 
-The pre-0.9.0 `<type>:` / `<type>:<prefix>/` spelling was removed. A query in
-that shape is now an ordinary keyword search, and when it returns nothing the
-tip names the conceptId spelling that replaces it.
-
 Local search responses include `searchMode`: `semantic` when vector ranking
 ran, `keyword` when keyword-only search was intentional or semantic search was
 not ready, and `fts-fallback` when a ready semantic backend failed during this
@@ -1010,13 +1004,9 @@ prefix matching none is a not-found error. Only strings shaped like a run id
 (hex digits and hyphens, 8+ characters) are ever treated as a prefix, so a
 workflow ref is never mistaken for one.
 
-The public `workflow start`, `next`, and `complete` lifecycle was removed in
-0.9, along with the experimental `brief`/`report` external-driver protocol.
-Use `workflow run` for execution and `workflow status` for inspection. The
-removed commands fail with an `UNKNOWN_COMMAND` envelope; there are no
-compatibility aliases.
+Use `workflow run` for execution and `workflow status` for inspection.
 
-There is also no `akm workflow template`, `validate`, or `watch`.
+There is no `akm workflow template`, `validate`, or `watch`.
 `workflow create --print` prints a starter, `akm lint --type workflows`
 validates it, and `akm log --run <id> --since '@offset:<id>'` provides durable
 event polling.
@@ -1046,7 +1036,6 @@ declared `include_processes` requires `--include_processes`, not
 `--include-processes`. Parameters are accepted on every ref start (a ref
 always starts a new run); passing them with a run id is rejected, because that
 run already has its parameters.
-The old `--params <json>` bag is removed.
 
 | Flag | Description |
 | --- | --- |
@@ -2179,8 +2168,7 @@ Append-only realtime events stream (#204). Every mutating CLI verb appends an
 event row to `<dataDir>/state.db`; `akm log` reads it.
 
 > **Note:** there is no `akm events` command, and no `akm history` command —
-> use `akm log`. There is no `akm log tail` either (0.9.0: dropped — a
-> foreground polling daemon in a one-shot CLI); poll `--since
+> use `akm log`. There is no `akm log tail` either; poll `--since
 > '@offset:<id>'` from a cooperating process instead.
 
 ```sh
@@ -2221,7 +2209,7 @@ cooperating processes, set those env vars consistently across them.
 
 Manage bundle registries. The `registry` command has three subcommands: `list`,
 `add`, and `remove`. Searching registries is `akm search --from registry`
-(0.9.0: `registry search` was dropped in favor of it — see [search](#search)).
+(see [search](#search)).
 
 Building a registry index is maintainer tooling, not a CLI command — see
 `bun scripts/build-registry-index.ts` in the akm repository.
@@ -2385,11 +2373,6 @@ See [configuration.md](configuration.md)'s "Sharing configuration across
 installs" for the `extends` config key that `diff` and `get --show-source`
 work with.
 
-> **Removed in 0.9.0:** `akm config enable`/`akm config disable`. Use
-> `akm registry add|remove` to toggle a registry, the general mechanism.
-> `akm config show` (an alias of `list`) and `akm config validate` (load-time
-> schema checks already reject an invalid config) were also removed.
-
 See [configuration.md](configuration.md) for details.
 
 ### models
@@ -2432,8 +2415,6 @@ prints the same sectioned overview as `akm --help` and exits
 Print the agent-facing CLI guide. Add this output to your `AGENTS.md`,
 `CLAUDE.md`, or system prompt so your agent knows how to use the CLI. The
 short guide is the default; use `--detail full` for the complete version.
-(`akm help agents`, the short-first form, was removed in 0.10.)
-
 ```sh
 akm hints
 akm hints --detail full
@@ -2518,8 +2499,7 @@ Subcommands:
 | `export <ref> --out <file>` | Write a safe sourceable `export` script to a file (never to stdout) |
 | `remove <ref>` | Delete an env file (and its `.sensitive` marker) |
 
-> **Removed in 0.9.0:** `akm env set`/`akm env unset`. akm does not manage
-> individual keys — edit the `.env` file directly.
+> akm does not manage individual keys — edit the `.env` file directly.
 
 #### env run — the primary value path
 
@@ -2545,9 +2525,9 @@ through in clean mode. Installing a bundle is the trust decision, so `env run`
 injects what the env file defines whichever bundle it comes from, including keys
 such as `PATH` or `LD_PRELOAD`; it does not warn or block.
 
-> The single-key `run <ref>/KEY` form was removed. To inject one value, store it
-> as a [secret](#secret) and use `akm secret run secrets/<name> <VAR> -- …`, or
-> use `akm env run <ref> --only <KEY> -- …`.
+> To inject one value, store it as a [secret](#secret) and use
+> `akm secret run secrets/<name> <VAR> -- …`, or use
+> `akm env run <ref> --only <KEY> -- …`.
 
 > Values injected via `env run` live in the child process environment for its
 > entire lifetime and are visible to all subprocesses it spawns. Avoid
@@ -2665,13 +2645,12 @@ Subcommands:
 | `run <ref> <VAR> -- <command>` | Run a command with the secret value injected into `$VAR` in the child only |
 | `remove <ref>` | Remove a secret file (and its `.sensitive` marker). `--yes` skips the prompt; `--bundle` picks the write target |
 
-> **Removed in 0.9.0: `secret path`.** It exits 2 with `Unknown command`. A ref's
-> file lives at `<bundle>/secrets/<name>` (run `akm bundle list` for bundle
-> roots); use `akm secret run` to consume the value without touching disk.
-> `secret remove`, removed with it, is back as of 0.10. Like `akm env remove`,
-> it names its file through the write-target resolver only (`--bundle`, then
-> the working bundle), so for a ref present in more
-> than one bundle name the bundle with `--bundle`.
+> There is no `secret path`. A ref's file lives at `<bundle>/secrets/<name>`
+> (run `akm bundle list` for bundle roots); use `akm secret run` to consume the
+> value without touching disk. Like `akm env remove`, `secret remove` names its
+> file through the write-target resolver only (`--bundle`, then the working
+> bundle), so for a ref present in more than one bundle name the bundle with
+> `--bundle`.
 
 #### secret set
 
@@ -2916,8 +2895,8 @@ tombstone under `.akm/memory-cleanup/archive/` and is not reported (#884). Also 
 [Env files and process-hijacking keys](#env-files-and-process-hijacking-keys);
 `lint` only warns). `--type workflows` structurally parses
 and compiles Markdown workflows; errors surface as
-`invalid-workflow-structure` findings (0.9.0: this is the only
-structural-validation surface now that `akm workflow validate` is gone).
+`invalid-workflow-structure` findings (this is the only structural-validation
+surface).
 
 ```sh
 akm lint                        # Report findings; exits 0 regardless
@@ -3337,8 +3316,7 @@ akm's own model work the same way, from the OpenCode 1 release that records the
 agent on a session (May 2026). A file it cannot read is named in
 a warning, never taken for an empty history.
 
-There is no `akm proposal extract --watch`/`--debounce-ms` either (0.9.0:
-dropped — a foreground polling daemon in a one-shot CLI); the shipped
+There is no `akm proposal extract --watch`/`--debounce-ms` either; the shipped
 `core/extract.yml` cron template (`akm proposal extract --auto` on a
 schedule) is the answer.
 

@@ -152,14 +152,8 @@ Maintainers must also follow the
 workflow runs the semantic, Docker, and Linux/macOS/Windows native-scheduler
 gates on the commit it publishes.
 
-Per-release migration notes live as markdown files under
-[`docs/migration/release-notes/`](../docs/migration/release-notes/) in the
-repository. They are not bundled with the npm package and no command prints
-them.
-
-When you tag a new release, add `docs/migration/release-notes/<version>.md` if
-the release needs a self-contained note (automatic migrations, manual actions,
-breaking CLI/flag moves), and link a longform guide from it if one exists.
+Release notes live in `CHANGELOG.md`. When a release needs a manual upgrade
+step, add it to the current migration guide under `docs/migration/`.
 
 ## Submitting Changes
 

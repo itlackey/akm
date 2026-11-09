@@ -349,9 +349,7 @@ preview again. Apply validates a complete replacement before writing and
 backs up each original immediately before replacement.
 
 Common v2 → v3 blocked reasons and what to do about each — these need a
-hand-authored replacement, not a re-run; see [the 0.9.1 to 0.9.2 migration
-guide](../migration/v0.9.1-to-v0.9.2.md#v2--v3-blocked-cases) for the full v2
-to v4 field mapping (`command:` array → `run:` + `shell:`, `timeoutMs:` →
+hand-authored replacement, not a re-run (`command:` array → `run:` + `shell:`, `timeoutMs:` →
 `timeout:`). Source-owned `enabled` fields are removed; native bindings that
 are provably enabled seed the host-local activation list:
 
@@ -397,9 +395,6 @@ Two cases produce one today:
 `akm migrate status` / `apply` runs the migrator, and
 `akm upgrade` runs `apply` after installing a release. A tree that is already
 all `version: 3` simply reports the first generation as current.
-
-See the [0.9.1 to 0.9.2 migration guide](../migration/v0.9.1-to-v0.9.2.md#migrating-task-v3-to-task-source-v4)
-for full before/after examples and recovery guidance.
 
 ## Operations
 
