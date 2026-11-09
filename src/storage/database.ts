@@ -24,8 +24,7 @@
  * This file is intentionally NOT an adapter/DI/ports-and-adapters layer. It is
  * a plain module: a structural type plus a factory function. The handle it
  * returns is the real underlying driver instance (so e.g. `sqlite-vec`'s
- * `load(db)`, used to drop the retired `entries_vec` table, receives the
- * genuine driver handle and works unchanged).
+ * `load(db)` receives the genuine driver handle and works unchanged).
  *
  * @module storage/database
  */

@@ -10,7 +10,6 @@ import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import { openDatabase } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
-import { searchFts } from "../../../src/storage/repositories/index-fts-repository";
 import { DB_VERSION, ensureSchema } from "../../../src/storage/repositories/index-schema";
 
 const CURRENT_ENTRY_COLUMNS: string[] = [
@@ -62,8 +61,8 @@ describe("canonical derived-index entry schema", () => {
       try {
         // This fails at a later required DDL surface. Before the v23 ordering
         // fix, the version was already stamped just after entries creation.
-        partial.exec("CREATE VIEW index_dir_state AS SELECT 1 AS placeholder");
-        expect(() => ensureSchema(partial)).toThrow(/Cannot add a column to a view/);
+        partial.exec("CREATE VIEW registry_index_cache AS SELECT 1 AS placeholder");
+        expect(() => ensureSchema(partial)).toThrow(/views may not be indexed/);
       } finally {
         partial.close();
       }
@@ -148,42 +147,22 @@ describe("canonical derived-index entry schema", () => {
     });
   });
 
-  test("a layout-21 index keeps its entries and gets its full-text index rebuilt from them", () => {
+  test("a layout-21 index is rebuilt empty, not upgraded", () => {
     withTempIndex((dbPath) => {
       const legacy = openIndexDatabase(dbPath);
-      const entry = {
-        type: "knowledge" as const,
-        name: "layout-21",
-        description: "kept across the upgrade",
-        filename: "layout-21.md",
-      };
+      const entry = { type: "knowledge" as const, name: "layout-21", filename: "layout-21.md" };
       const provenance = deriveEntryProvenance(
         { bundleId: "primary", componentId: "primary", adapterId: "akm" },
         entry.type,
         entry.name,
       );
-      const id = upsertEntry(legacy, "/primary/knowledge/layout-21.md", entry, provenance);
-      // Layout 21: content-bearing FTS (here left stale and empty), a dirty
-      // queue, and no fragment tables.
-      legacy.exec(`
-        DROP TABLE entries_fts;
-        DROP TABLE entry_fragments;
-        CREATE VIRTUAL TABLE entries_fts USING fts5(
-          entry_id UNINDEXED, name, description, tags, hints, content, tokenize='porter unicode61'
-        );
-        CREATE TABLE entries_fts_dirty (entry_id INTEGER PRIMARY KEY);
-      `);
-      legacy.prepare("INSERT INTO entries_fts_dirty (entry_id) VALUES (?)").run(id);
+      upsertEntry(legacy, "/primary/knowledge/layout-21.md", entry, provenance);
       legacy.prepare("UPDATE index_meta SET value = '21' WHERE key = 'version'").run();
       closeDatabase(legacy);
 
       const current = openIndexDatabase(dbPath);
       try {
-        expect(current.prepare("SELECT id FROM entries").all()).toEqual([{ id }]);
-        expect(searchFts(current, "upgrade", 10).map((hit) => hit.id)).toEqual([id]);
-        expect(
-          current.prepare("SELECT 1 AS present FROM sqlite_master WHERE name = 'entries_fts_dirty'").get(),
-        ).toBeNull();
+        expect(current.prepare("SELECT COUNT(*) AS n FROM entries").get()).toEqual({ n: 0 });
         expect(current.prepare("SELECT value FROM index_meta WHERE key = 'version'").get()).toEqual({
           value: String(DB_VERSION),
         });

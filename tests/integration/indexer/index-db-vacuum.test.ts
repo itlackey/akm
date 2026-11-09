@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm index` compacts index.db with VACUUM after a layout migration (the
- * writable opener's `vacuumPending` mark) and whenever more than half its
+ * `akm index` compacts index.db with VACUUM whenever more than half its
  * pages are free — the state.db threshold. Runs real index passes against a
  * real index.db, so it belongs under tests/integration/.
  */
@@ -18,8 +17,6 @@ import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { openDatabase } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
-import { getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
-import { VACUUM_PENDING_META } from "../../../src/storage/repositories/index-schema";
 import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo } from "../../../src/storage/state-db-integrity";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
@@ -65,7 +62,7 @@ function leaveFreePages(pages: number): void {
 function freelist() {
   const db = openIndexDatabase(getDbPath());
   try {
-    return { ...readFreelistInfo(db), pending: getMeta(db, VACUUM_PENDING_META) };
+    return readFreelistInfo(db);
   } finally {
     closeDatabase(db);
   }
@@ -103,24 +100,6 @@ describe("akm index compacts index.db", () => {
     expect(after.pageCount).toBeLessThan(before.pageCount);
     expect(messages.some((message) => message.startsWith("Compacted index.db with VACUUM:"))).toBe(true);
     expect(vacuumEvents()).toEqual([expect.objectContaining({ pagesAfter: after.pageCount })]);
-  });
-
-  test("after a layout migration, below the free-page threshold", async () => {
-    leaveFreePages(20);
-    const db = openIndexDatabase(getDbPath());
-    try {
-      setMeta(db, VACUUM_PENDING_META, "1");
-      expect(readFreelistInfo(db).ratio).toBeLessThan(0.5);
-    } finally {
-      closeDatabase(db);
-    }
-
-    await indexAgain();
-
-    const after = freelist();
-    expect(after.freelistCount).toBe(0);
-    expect(after.pending).toBeUndefined();
-    expect(vacuumEvents()).toHaveLength(1);
   });
 
   test("not otherwise", async () => {

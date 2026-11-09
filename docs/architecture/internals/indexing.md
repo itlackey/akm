@@ -92,7 +92,6 @@ Text mode shows a spinner. `--verbose` prints every phase message to stderr. In 
 
 `index_meta.version` is the layout number, currently 26. It is a marker, not a gate:
 
-- The writable opener (`ensureSchema`, `src/storage/repositories/index-schema.ts`) upgrades an older layout in place: it adds and drops columns, rebuilds `entries_fts` once if it is not contentless, drops the retired `entries_vec`, `entry_fragments_fts`, and `graph_*` tables, and derives `asset_links` from stored documents. It does not drop `embeddings`, `utility_scores`, or `llm_enrichment_cache`.
-- An `entries` table older than layout 21 (no `item_ref`) has its entry-keyed tables recreated and re-walked; the LLM enrichment cache is kept.
-- Read-only openers (`openExistingDatabase`, `openReadonlyExistingDatabase`) do not change the schema. They read an older layout as it is and refuse a newer one with `INDEX_SCHEMA_INCOMPATIBLE`.
+- The writable opener (`ensureSchema`, `src/storage/repositories/index-schema.ts`) does not upgrade across layouts. An index below layout 26 (`MIN_INDEX_LAYOUT`) is deleted and rebuilt by `openIndexDatabase`, as for `SQLITE_CORRUPT`; the next `akm index` re-walks the sources and re-embeds. It keeps the one in-place change that depends on the linked SQLite: `entries_fts` is rebuilt once when its contentless layout differs from what that SQLite supports (contentless needs 3.43).
+- Read-only openers (`openExistingDatabase`, `openReadonlyExistingDatabase`) do not change the schema. They warn about an older layout, treat it as unservable (`hasCurrentEntriesTable`), and refuse a newer one with `INDEX_SCHEMA_INCOMPATIBLE`.
 - On `SQLITE_CORRUPT` the file is deleted and rebuilt. `state.db` is not touched.
