@@ -294,6 +294,20 @@ describe("work rows", () => {
     expect(work(all, "improve").kind).toBeNull();
   });
 
+  test("several harnesses and no default: the agents row reports the problem and does not crash, and model work still has its connection", () => {
+    const all = rows(
+      cfg({
+        connections: { default: { endpoint: "http://a/v1", models: MODELS } },
+        harnesses: { work: { platform: "claude" }, home: { platform: "codex" } },
+      }),
+    );
+    expect(work(all, "agents").kind).toBeNull();
+    expect(work(all, "agents").problem).toContain(
+      'Several harnesses are configured (work, home) and none is named "default"',
+    );
+    expect(work(all, "improve")).toMatchObject({ kind: "connection", target: "default" });
+  });
+
   test("embeddings: off with semantic search, the built-in embedder, a model the connection serves, or an endpoint of its own", () => {
     const base = { connections: { default: { endpoint: "http://a/v1", models: MODELS } } };
     expect(work(rows(cfg({ ...base })), "embedding").kind).toBeNull();
