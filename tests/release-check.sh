@@ -99,17 +99,17 @@ verify_model_surface() {
 	local root="$CANDIDATE_DIR/model-surface"
 	local out status
 
-	# The AKM_*_DIR overrides beat HOME and XDG_* (src/core/paths.ts), so a
-	# caller's are dropped, as the test preload does: otherwise these commands
-	# read and write that config.
+	# A caller's AKM_CONFIG_FILE beats HOME and XDG_*, and the retired location
+	# variables stop akm (src/core/paths.ts), so they are dropped, as the test
+	# preload does.
 	akm_in() {
 		local scenario="$1"
 		shift
-		env -u AKM_CONFIG_DIR -u AKM_DATA_DIR -u AKM_STATE_DIR -u AKM_CACHE_DIR \
+		env -u AKM_CONFIG_FILE -u AKM_BUNDLE_DIR \
+			-u AKM_CONFIG_DIR -u AKM_DATA_DIR -u AKM_STATE_DIR -u AKM_CACHE_DIR \
 			HOME="$root/$scenario/home" \
 			XDG_CONFIG_HOME="$root/$scenario/config" XDG_DATA_HOME="$root/$scenario/data" \
 			XDG_CACHE_HOME="$root/$scenario/cache" XDG_STATE_HOME="$root/$scenario/state" \
-			AKM_BUNDLE_DIR="$root/$scenario/bundle" \
 			"$PROJECT_ROOT/dist/akm" "$@"
 	}
 
@@ -132,17 +132,17 @@ verify_model_surface() {
 	}
 
 	mkdir -p "$root/connection" "$root/harness"
-	expect "0" '"shape": "setup"' "setup --endpoint" \
+	expect "0" '"shape":"setup"' "setup --endpoint" \
 		connection setup --yes --no-init --no-probe --endpoint http://127.0.0.1:9/v1
-	expect "0" '"model": "smoke-model"' "models set" connection models set fast smoke-model --no-probe
-	expect "0" '"fast": "smoke-model"' "models" connection models --no-probe
-	expect "0 4" '"type": "connection"' "health --no-probe on a connection" connection health --no-probe
-	expect "0" '"type": "connection"' "info on a connection" connection info
+	expect "0" '"model":"smoke-model"' "models set" connection models set fast smoke-model --no-probe
+	expect "0" '"fast":"smoke-model"' "models" connection models --no-probe
+	expect "0 4" '"type":"connection"' "health --no-probe on a connection" connection health --no-probe
+	expect "0" '"type":"connection"' "info on a connection" connection info
 
 	expect "0" "" "config set harnesses.claude" harness config set harnesses.claude '{}' --silent
 	expect "78" 'akm setup' "models with no connection" harness models --no-probe
-	expect "0 4" '"type": "harness"' "health --no-probe on a harness" harness health --no-probe
-	expect "0" '"type": "harness"' "info on a harness" harness info
+	expect "0 4" '"type":"harness"' "health --no-probe on a harness" harness health --no-probe
+	expect "0" '"type":"harness"' "info on a harness" harness info
 }
 
 # Release acceptance for the packaged artifact. Lint, typecheck, the unit and

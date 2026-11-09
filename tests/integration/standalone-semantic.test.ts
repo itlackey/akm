@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { getCacheDir } from "../../src/core/paths";
 import { hasLocalEmbeddings, ONNXRUNTIME_VERSION } from "../../src/llm/embedders/onnx-runtime";
 import { keepOnnxRuntime, seedOnnxRuntime } from "../_helpers/onnx-runtime-cache";
 import {
@@ -68,6 +69,7 @@ describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () =
   function sandbox(): {
     storage: IsolatedAkmStorage;
     cacheDir: string;
+    configFile: string;
     akm(...args: string[]): ReturnType<typeof spawnSync>;
   } {
     const storage = withIsolatedAkmStorage();
@@ -77,9 +79,15 @@ describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () =
         `---\ndescription: Note ${note} about topic ${note}\n---\n# Note ${note}\n\nThe quick brown fox number ${note} jumps over the lazy dog.\n`,
       );
     }
+    // The file `writeSandboxConfig` writes, on every platform (XDG_CONFIG_HOME does not place the config on Windows).
+    const configFile = path.join(process.env.XDG_CONFIG_HOME as string, "akm", "config.json");
     const akm = (...args: string[]) =>
-      spawnSync(binary, args, { env: { ...process.env, HF_HOME }, encoding: "utf8", timeout: 600_000 });
-    return { storage, cacheDir: path.join(process.env.XDG_CACHE_HOME as string, "akm"), akm };
+      spawnSync(binary, args, {
+        env: { ...process.env, AKM_CONFIG_FILE: configFile, HF_HOME },
+        encoding: "utf8",
+        timeout: 600_000,
+      });
+    return { storage, cacheDir: getCacheDir(), configFile, akm };
   }
 
   const shown = (run: ReturnType<typeof spawnSync>) => `stdout:\n${run.stdout}\nstderr:\n${run.stderr}`;
@@ -126,7 +134,7 @@ describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () =
   test.skipIf(hasLocalEmbeddings())(
     "everywhere else: setup saves keyword search, the index reports the platform, health warns, search works",
     () => {
-      const { storage, cacheDir, akm } = sandbox();
+      const { storage, cacheDir, configFile, akm } = sandbox();
       try {
         const setup = akm("setup", "--yes", "--no-init", "--embedding", "local", "--format", "json");
         expect(setup.status, shown(setup)).toBe(0);
@@ -134,9 +142,7 @@ describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () =
           /Local embeddings are not available on \S+; choose a remote endpoint or keyword search\./,
         );
         expect(JSON.parse(setup.stdout as string).semanticAssets).toBeUndefined();
-        const config = JSON.parse(
-          fs.readFileSync(path.join(process.env.XDG_CONFIG_HOME as string, "akm", "config.json"), "utf8"),
-        );
+        const config = JSON.parse(fs.readFileSync(configFile, "utf8"));
         expect(config.semanticSearchMode).toBe("off");
 
         // A config that turns semantic search on anyway, as one copied from another machine does.
