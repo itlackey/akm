@@ -43,7 +43,6 @@ function stashItem(ref: string, overrides: Partial<CuratedStashItem> = {}): Cura
     ref,
     path: "",
     editable: true,
-    followUp: `akm show ${ref}`,
     reason: "test",
     ...overrides,
   };
@@ -55,7 +54,6 @@ function registryItem(overrides: Partial<CuratedRegistryItem> = {}): CuratedRegi
     type: "registry",
     name: "some-registry-pack",
     id: "some-registry-pack",
-    followUp: "akm bundle add some-registry-pack",
     reason: "test",
     ...overrides,
   };

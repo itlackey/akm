@@ -70,8 +70,7 @@ streams raw, then formats its final `agent-result` envelope normally.
 For local materialized assets, `show` carries the absolute `path` and `editable` at
 every level, and `curate` at `normal` and `full`. `editHint` is added only when
 `editable` is `false` (`show`: at `full`; `curate`: at `normal` and `full`). It is
-supplemental guidance and does not replace the normal show, run, or use `action`
-(or curate `followUp`). Registry-only results have no local `path`, `editable`, or
+supplemental guidance. Registry-only results have no local `path`, `editable`, or
 `editHint`.
 
 ## Exit Codes and Error Envelope
@@ -719,8 +718,8 @@ assembled into the shape registry by the `src/output/shapes.ts` barrel:
 
 | Level | Local bundle hits | Registry hits |
 | --- | --- | --- |
-| `brief` (default) | `type`, `name`, `ref`, `action`, `estimatedTokens` | `name`, `installRef`, `score` |
-| `normal` | `type`, `name`, `ref`, `description`, `action`, `score`, `estimatedTokens`, optional `warnings`/`quality`/`observed`/`updated`/`keys` | `name`, `description`, `action`, `installRef`, `score`, optional `warnings` |
+| `brief` (default) | `type`, `name`, `ref`, `description` (capped at 35 characters), `estimatedTokens` | `name`, `installRef`, `score` |
+| `normal` | `type`, `name`, `ref`, `description`, `score`, `estimatedTokens`, optional `warnings`/`quality`/`observed`/`updated`/`keys` | `name`, `description`, `installRef`, `score`, optional `warnings` |
 | `full` | full hit object (includes `ref`, the durable `itemRef` (`bundle//conceptId`), `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, optional `observed`/`created`/`updated`/`expires`, timings, bundle metadata) | full hit object |
 
 There is no registry `curated` boolean. Renderers surface an optional
@@ -774,13 +773,12 @@ akm curate "deploy the service" --filter user=alice --pack 4000
 enriches each with a preview, run details and up to two support refs: the
 assets the hit's declared links name (`xrefs:`, `supersededBy:` and the other
 kinds `akm show` lists under `links`), what it links to before what links to
-it, skipping assets curate already selected. Curate includes direct follow-up
-commands such as `akm show <ref>` or `akm bundle add <ref>` so you can
-immediately inspect or install what it found.
+it, skipping assets curate already selected. Run `akm show <ref>` on a result to
+read it; a registry result carries an `id` to pass to `akm bundle add`.
 `--detail` works on curate output; the list is `results`, as on search. `normal` keeps
 `source`, `type`, `name`, `ref`, `path`, `editable`, `id`, a capped `description`,
-`supportRefs`, `beliefState`, `followUp`, `reason` and `score` (plus `editHint` for
-read-only items); `brief` keeps the refs and `followUp`; `full` keeps everything,
+`supportRefs`, `beliefState`, `reason` and `score` (plus `editHint` for
+read-only items); `brief` keeps the refs and a `description` capped at 35 characters; `full` keeps everything,
 including the `preview` and run details.
 Curate preserves the underlying search's `searchMode` and warnings.
 Scope, named source, type and belief controls also constrain derived surfaces,
@@ -793,8 +791,7 @@ Ordinary knowledge without a belief label stays usable. Belief labels are
 metadata, not evidence of factual truth. Existing prose within an eligible
 asset is preserved; filters select assets rather than fact-checking their body.
 Local items at `normal` include `ref`, `path`, and `editable`, plus `editHint`
-only for read-only items. Their `followUp` remains `akm show <ref>` rather than
-being replaced by clone guidance.
+only for read-only items.
 Use `--type workflow` when you want curated step-by-step procedures instead of
 individual scripts, skills, or docs.
 Curate returns no items, on purpose, for a harness or tool envelope (input

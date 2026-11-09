@@ -13,13 +13,12 @@
  */
 
 import type { DetailLevel } from "../context";
-import { capDescription, NORMAL_DESCRIPTION_LIMIT, pickFields } from "./helpers";
+import { BRIEF_DESCRIPTION_LIMIT, capDescription, NORMAL_DESCRIPTION_LIMIT, pickFields } from "./helpers";
 import type { OutputShapeEntry } from "./registry";
 
-// Curation is a small, high-signal top-N. Even at `brief` we keep `followUp`
-// (the actionable `akm show <ref>` command) and `reason` (set only on
-// historical items) — unlike a bulk search listing.
-const BRIEF_FIELDS = ["source", "type", "name", "ref", "id", "supportRefs", "beliefState", "followUp", "reason"];
+// Curation is a small, high-signal top-N. Even at `brief` we keep a short
+// description and `reason` (set only on historical items).
+const BRIEF_FIELDS = ["source", "type", "name", "ref", "id", "description", "supportRefs", "beliefState", "reason"];
 // Normal: the minimal field set an LLM needs to decide and act.
 const NORMAL_FIELDS = [
   "source",
@@ -33,14 +32,13 @@ const NORMAL_FIELDS = [
   "description",
   "supportRefs",
   "beliefState",
-  "followUp",
   "reason",
   "score",
 ];
 
 function shapeCurateItem(item: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   if (detail === "brief") {
-    return pickFields(item, BRIEF_FIELDS);
+    return capDescription(pickFields(item, BRIEF_FIELDS), BRIEF_DESCRIPTION_LIMIT);
   }
   if (detail === "normal") {
     const shaped = pickFields(item, NORMAL_FIELDS);

@@ -122,11 +122,11 @@ describe("search, show and curate output", () => {
     // results is always present; warnings may appear when semantic search is pending
     expect(Object.keys(searchJson)).toContain("results");
     expect(Object.keys(searchJson)).not.toContain("hits");
-    // Standard brief output includes at least name, type, action (may also include estimatedTokens etc.)
+    // Standard brief output includes at least name, type (may also include description, estimatedTokens etc.)
     const hit = searchJson.results[0] ?? {};
     expect(hit).toHaveProperty("name");
     expect(hit).toHaveProperty("type");
-    expect(hit).toHaveProperty("action");
+    expect(hit).not.toHaveProperty("action");
 
     // Default show still has origin
     const showOutput = await runCli(stashDir, ["show", "commands/release.md", "--format=json"]);
@@ -134,7 +134,7 @@ describe("search, show and curate output", () => {
     expect(showJson).toHaveProperty("origin");
   });
 
-  test("read-only local assets expose secondary edit hints without replacing use actions", async () => {
+  test("read-only local assets expose secondary edit hints", async () => {
     const stashDir = makeStash();
     const teamDir = makeTempDir("akm-agent-readonly-");
     const assetPath = path.join(teamDir, "knowledge", "readonly-guide.md");
@@ -148,8 +148,8 @@ describe("search, show and curate output", () => {
       await runCli(stashDir, ["search", "readonly guide", "--format=json", "--detail=normal"], config),
     ) as { results: Array<Record<string, unknown>> };
     const searchHit = search.results.find((hit) => hit.ref === "team//knowledge/readonly-guide");
-    expect(searchHit?.action).toContain("akm show team//knowledge/readonly-guide");
-    expect(searchHit?.action).not.toContain("clone");
+    expect(searchHit).toBeDefined();
+    expect(searchHit).not.toHaveProperty("action");
 
     const show = JSON.parse(
       await runCli(stashDir, ["show", "team//knowledge/readonly-guide", "--format=json", "--detail=full"], config),
@@ -164,7 +164,7 @@ describe("search, show and curate output", () => {
     const curated = curate.results.find((item) => item.ref === "team//knowledge/readonly-guide");
     expect(curated).toMatchObject({ ref: "team//knowledge/readonly-guide", path: assetPath, editable: false });
     expect(curated?.editHint).toContain("akm clone team//knowledge/readonly-guide");
-    expect(curated?.followUp).toBe("akm show team//knowledge/readonly-guide");
+    expect(curated).not.toHaveProperty("followUp");
   }, 30_000);
 });
 

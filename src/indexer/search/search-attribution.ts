@@ -21,7 +21,8 @@ export interface UsageEventAttribution {
 const ATTRIBUTION = Symbol("search-hit-attribution");
 type AttributionHost = { [ATTRIBUTION]?: SearchHitAttribution };
 
-export type AttributionProjection = "brief" | "normal" | "full";
+/** `ref` emits only ref/title (no surface fields); the others are `--detail` levels. */
+export type AttributionProjection = "ref" | "brief" | "normal" | "full";
 
 export function attachSearchHitAttribution(target: object, attribution: SearchHitAttribution): void {
   const host = target as AttributionHost;
@@ -63,9 +64,9 @@ export function buildUsageEventAttribution(
     memoryInference.exposure !== "surface" ||
     (projection === "full"
       ? surfaceFields.length > 0
-      : projection === "normal"
-        ? surfaceFields.includes("description")
-        : false);
+      : projection === "ref"
+        ? false
+        : surfaceFields.includes("description"));
   if (childRef?.includes("//") !== true || !surfaceVisible) return undefined;
   return { memoryInference: { exposure: memoryInference.exposure, childRef } };
 }

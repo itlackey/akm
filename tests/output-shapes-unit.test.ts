@@ -3,6 +3,7 @@ import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { resolveOutputMode } from "../src/output/context";
 import { shapeForCommand } from "../src/output/shapes";
 import {
+  BRIEF_DESCRIPTION_LIMIT,
   capDescription,
   pickFields,
   shapeProposalAcceptOutput,
@@ -108,7 +109,6 @@ describe("shapeSearchHit — local stash hits", () => {
     description: "Deploy the app",
     ref: "skills/deploy",
     itemRef: "team//skills/deploy",
-    action: "akm show skills/deploy",
     score: 0.42,
     estimatedTokens: 120,
     origin: "local:.",
@@ -116,15 +116,20 @@ describe("shapeSearchHit — local stash hits", () => {
     whyMatched: "name match",
   };
 
-  test("brief keeps only type/name/ref/action/estimatedTokens", () => {
+  test("brief keeps only type/name/ref/description/estimatedTokens", () => {
     // ref is included at brief so agents can run `akm show <ref>`
     expect(shapeSearchHit(fullHit, "brief")).toEqual({
       type: "skill",
       name: "deploy",
       ref: "skills/deploy",
-      action: "akm show skills/deploy",
+      description: "Deploy the app",
       estimatedTokens: 120,
     });
+  });
+
+  test("brief caps the description", () => {
+    const out = shapeSearchHit({ ...fullHit, description: "x ".repeat(100) }, "brief");
+    expect(String(out.description).length).toBeLessThanOrEqual(BRIEF_DESCRIPTION_LIMIT + 3);
   });
 
   test("normal adds ref, description and score (and caps description)", () => {
@@ -133,7 +138,6 @@ describe("shapeSearchHit — local stash hits", () => {
       type: "skill",
       name: "deploy",
       description: "Deploy the app",
-      action: "akm show skills/deploy",
       score: 0.42,
       estimatedTokens: 120,
       ref: "skills/deploy",
@@ -156,7 +160,6 @@ describe("shapeSearchHit — registry hits", () => {
     type: "registry",
     name: "azure-ops",
     description: "Azure ops kit",
-    action: "akm bundle add npm:azure-ops",
     installRef: "npm:azure-ops",
     warnings: ["registry rate limit hit, results may be stale"],
     id: "npm:azure-ops",
@@ -167,7 +170,6 @@ describe("shapeSearchHit — registry hits", () => {
     // Brief carries the install ref so callers can act without --detail full.
     const result = shapeSearchHit(registryHit, "brief");
     expect(result).toEqual({ name: "azure-ops", installRef: "npm:azure-ops", score: 0.7 });
-    // action is not in brief output — use installRef to act
     expect(result).not.toHaveProperty("curated");
     // brief intentionally omits warnings to keep payloads small
     expect(result).not.toHaveProperty("warnings");
@@ -178,7 +180,6 @@ describe("shapeSearchHit — registry hits", () => {
     expect(out).toMatchObject({
       name: "azure-ops",
       description: "Azure ops kit",
-      action: "akm bundle add npm:azure-ops",
       installRef: "npm:azure-ops",
       warnings: ["registry rate limit hit, results may be stale"],
     });
@@ -291,7 +292,7 @@ describe("shapeForCommand", () => {
   test("routes search results through shapeSearchOutput", () => {
     const out = shapeForCommand(
       "search",
-      { hits: [{ type: "skill", name: "x", action: "a", estimatedTokens: 1 }], registryHits: [] },
+      { hits: [{ type: "skill", name: "x", estimatedTokens: 1 }], registryHits: [] },
       "brief",
     ) as Record<string, unknown>;
     expect(Array.isArray(out.results)).toBe(true);
@@ -299,7 +300,6 @@ describe("shapeForCommand", () => {
     expect((out.results as unknown[])[0]).toEqual({
       type: "skill",
       name: "x",
-      action: "a",
       estimatedTokens: 1,
     });
   });
@@ -329,12 +329,12 @@ describe("shapeForCommand", () => {
 describe("shapeSearchOutput", () => {
   test("respects detail level for hits", () => {
     const result = {
-      hits: [{ type: "skill", name: "x", action: "a", estimatedTokens: 1, description: "desc" }],
+      hits: [{ type: "skill", name: "x", estimatedTokens: 1, description: "desc" }],
       registryHits: [],
     };
     const brief = shapeSearchOutput(result, "brief") as { results: Record<string, unknown>[] };
     const normal = shapeSearchOutput(result, "normal") as { results: Record<string, unknown>[] };
-    expect((brief.results[0] as Record<string, unknown>).description).toBeUndefined();
+    expect((brief.results[0] as Record<string, unknown>).description).toBe("desc");
     expect((normal.results[0] as Record<string, unknown>).description).toBe("desc");
   });
 });
@@ -356,7 +356,6 @@ describe("curate field sets", () => {
     run: "bash x",
     supportRefs: [],
     beliefState: "active",
-    followUp: "akm show team//knowledge/guide",
     reason: "r",
     score: 0.5,
   };
@@ -377,16 +376,15 @@ describe("curate field sets", () => {
         "description",
         "supportRefs",
         "beliefState",
-        "followUp",
         "reason",
         "score",
       ].sort(),
     );
   });
 
-  test("brief keeps the refs and followUp; full keeps everything", () => {
+  test("brief keeps the refs and a capped description; full keeps everything", () => {
     expect(Object.keys(curate("brief")).sort()).toEqual(
-      ["source", "type", "name", "ref", "id", "supportRefs", "beliefState", "followUp", "reason"].sort(),
+      ["source", "type", "name", "ref", "id", "description", "supportRefs", "beliefState", "reason"].sort(),
     );
     expect(curate("full")).toEqual(item);
   });
@@ -417,7 +415,6 @@ describe("curate normal access projection", () => {
             path: "/tmp/team/knowledge/guide.md",
             editable: false,
             editHint: "Inspect with akm show team//knowledge/guide",
-            followUp: "akm show team//knowledge/guide",
             reason: "Useful guide",
           },
           {
@@ -425,7 +422,6 @@ describe("curate normal access projection", () => {
             type: "registry",
             name: "deploy-kit",
             id: "deploy-kit",
-            followUp: "akm bundle add deploy-kit",
             reason: "External kit",
           },
         ],
@@ -481,7 +477,7 @@ describe("shapeForCommand: unknown command", () => {
 describe("shapeForCommand — no `results` collection alias (#1476)", () => {
   // command -> [collection key, minimal valid raw result]
   const LIST_COMMANDS: Array<[string, string, Record<string, unknown>]> = [
-    ["search", "results", { hits: [{ type: "skill", name: "x", action: "a" }], registryHits: [] }],
+    ["search", "results", { hits: [{ type: "skill", name: "x" }], registryHits: [] }],
     ["curate", "results", { items: [{ type: "skill", name: "x" }], query: "q", summary: "s" }],
     ["proposal-list", "proposals", { totalCount: 1, proposals: [{ id: "p1", ref: "lessons/x", status: "pending" }] }],
     ["list", "sources", { sources: [{ name: "b1" }] }],
