@@ -230,7 +230,13 @@ export const routes: Route[] = [
     "/api/bundles/settings",
     body(bundles.setSettings, ["bundle", "enabled", "writable", "componentWritability"], "bundle settings"),
   ),
-  post("/api/setup/apply", body(setup.apply, ["dir", "harness", "connection", "learning"], "setup apply")),
+  // The improve task's scheduler entry is written by the host `akm`, when there is one (see docs/software.md).
+  post("/api/setup/apply", async (value) =>
+    setup.apply(
+      fields<Input<typeof setup.apply>>(value, ["dir", "harness", "connection", "learning"], "setup apply"),
+      await hostTools.cli(),
+    ),
+  ),
   post("/api/config/set", body(config.change, ["set", "unset"], "config")),
   post("/api/config/projects", body(config.changeProjects, ["set", "unset"], "projects")),
   post("/api/config/connections/save", body(config.saveConnection, ["name", "entry"], "connection save")),

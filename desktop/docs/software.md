@@ -133,7 +133,9 @@ Nothing runs until you press a button.
 
 The bundled engine runs the desktop workspace. The host CLI runs terminal jobs
 and harness integrations. Updating the host CLI does not replace the bundled
-engine; that moves with a Desktop download. No CLI, plugin, harness, sign-in,
+engine; that moves with a Desktop download. The scheduled improve task that background learning turns on is added
+through the host CLI when there is one, so the OS scheduler entry names it; with none, the task is saved and the
+setup receipt says the scheduler was not updated (install the CLI, then run `akm task sync`). No CLI, plugin, harness, sign-in,
 trust entry or scheduler is installed automatically at startup.
 
 ## Verification

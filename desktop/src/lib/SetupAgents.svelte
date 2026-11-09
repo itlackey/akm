@@ -115,7 +115,7 @@
           endpoint = model = keyEnv = "";
           outcomes.push({
             label: "Agents and learning",
-            receipt: `${enabled.size} agent${enabled.size === 1 ? " is" : "s are"} enabled for akm. ${learnReceipt(next, wantedOn, agentName)}`,
+            receipt: `${enabled.size} agent${enabled.size === 1 ? " is" : "s are"} enabled for akm. ${learnReceipt(next, wantedOn, agentName)}${next.warnings?.length ? ` ${next.warnings.join(" ")}` : ""}`,
           });
         } catch (cause) {
           outcomes.push({ label: "Agents and learning", error: (cause as Error).message });

@@ -14,7 +14,7 @@ import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/
 import { setup } from "../../../src/workspace";
 import { change } from "../../../src/workspace/config";
 import * as tasks from "../../../src/workspace/tasks";
-import { ctx, expectUsage, fakeCrontab, useSandbox } from "./workspace-behaviour-helpers";
+import { ctx, expectUsage, fakeCrontab, stubHostCli, useSandbox } from "./workspace-behaviour-helpers";
 
 useSandbox();
 // Detection reads the home directory, which is the machine's own unless a test gives it another.
@@ -337,6 +337,30 @@ describe("setup.detect", () => {
     } finally {
       fetched.mockRestore();
       restore();
+    }
+  });
+
+  test("learning on with a host CLI adds the improve task through it; without one the unmanaged warning comes back", async () => {
+    const cron = fakeCrontab();
+    try {
+      await setup.apply({ dir: library(), learning: { on: false } });
+      const connection = { endpoint: "http://localhost:1234", model: "qwen" };
+      const host = stubHostCli("task-add", { id: "improve", sync: { entry: "installed" } });
+      const withHost = (await setup.apply({ dir: library(), connection, learning: { on: true } }, host.cli)) as {
+        warnings?: string[];
+      };
+      expect(host.calls()).toEqual([
+        { marker: "host-env", args: expect.arrayContaining(["task", "add", "improve", "--format=json"]) },
+      ]);
+      expect(withHost.warnings).toBeUndefined();
+      // The stand-in did the add, so this process wrote no task.
+      expect(tasks.list().tasks).toEqual([]);
+
+      const without = (await setup.apply({ dir: library(), learning: { on: true } })) as { warnings?: string[] };
+      expect(tasks.list().tasks).toEqual([expect.objectContaining({ id: "improve", enabled: true })]);
+      expect(without.warnings?.join(" ")).toContain("akm task dispatch");
+    } finally {
+      cron.restore();
     }
   });
 });

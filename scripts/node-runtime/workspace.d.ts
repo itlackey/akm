@@ -201,18 +201,23 @@ export namespace setup {
      * `improve` task is enabled.
      */
     learning: { on: boolean; harness: string | null; scheduled: boolean };
+    /** From `apply` only: what the OS scheduler did not get (no host `akm` wrote its entry). */
+    warnings?: string[];
   }
   /**
    * Create the library, or with `harness` enable those agent programs. `connection` writes the default connection
    * (the variable's name, never a key). `learning` turns background learning off (writes `improve.enabled: false`
-   * and nothing else) or on (removes it, improve sent to `harness` or else the connection, the task enabled). Returns `detect()` afterwards. Unknown fields are ignored with a warning.
+   * and nothing else) or on (removes it, improve sent to `harness` or else the connection, the task enabled). With `host`, the task is added through that `akm` (a file and the environment to run it in), so the scheduler entry it writes names that install. Returns `detect()` afterwards. Unknown fields are ignored with a warning.
    */
-  function apply(input: {
-    dir?: string;
-    harness?: string[];
-    connection?: { endpoint: string; model: string; apiKeyEnv?: string };
-    learning?: { on: boolean; harness?: string };
-  }): Promise<Detected>;
+  function apply(
+    input: {
+      dir?: string;
+      harness?: string[];
+      connection?: { endpoint: string; model: string; apiKeyEnv?: string };
+      learning?: { on: boolean; harness?: string };
+    },
+    host?: { path: string; env: Record<string, string | undefined> },
+  ): Promise<Detected>;
   /** What setup could use on this computer, from the file system, PATH and config only (no network, no writes). */
   function detect(): Promise<Detected>;
 }

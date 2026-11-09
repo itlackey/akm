@@ -10,7 +10,7 @@ import path from "node:path";
 import { getConfigPath } from "../../../src/core/paths";
 import { setup } from "../../../src/workspace";
 import * as tasks from "../../../src/workspace/tasks";
-import { ctx, expectAkmError, fakeCrontab, useSandbox } from "./workspace-behaviour-helpers";
+import { ctx, expectAkmError, fakeCrontab, stubHostCli, useSandbox } from "./workspace-behaviour-helpers";
 
 useSandbox();
 
@@ -56,6 +56,58 @@ describe("tasks", () => {
     try {
       await expectAkmError(tasks.enable({ task: "nonesuch" }), { kind: "not-found" });
       await expect(tasks.enable({ task: " " })).rejects.toThrow(/name a task/);
+    } finally {
+      cron.restore();
+    }
+  });
+
+  test("without a host CLI the change is saved and the unmanaged warning is in the result", async () => {
+    const dir = path.join(ctx.storage.root, "library");
+    await setup.apply({ dir });
+    fs.writeFileSync(path.join(dir, "tasks", "nightly.yml"), 'version: 4\nrun: akm index\nschedule: "0 3 * * *"\n');
+    const cron = fakeCrontab();
+    try {
+      const result = (await tasks.enable({ task: "nightly" })) as { sync: { entry: string; warnings: string[] } };
+      expect(result.sync.entry).toBe("unmanaged");
+      expect(result.sync.warnings.join(" ")).toContain("akm task dispatch");
+    } finally {
+      cron.restore();
+    }
+  });
+
+  test("a runnable host CLI runs the action, in the host environment, and its sync result is returned", async () => {
+    const dir = path.join(ctx.storage.root, "library");
+    await setup.apply({ dir });
+    fs.writeFileSync(path.join(dir, "tasks", "nightly.yml"), 'version: 4\nrun: akm index\nschedule: "0 3 * * *"\n');
+    const host = stubHostCli("task-enable", {
+      ref: "x//tasks/nightly",
+      enabled: true,
+      changed: true,
+      sync: { entry: "installed" },
+    });
+    const result = await tasks.enable({ task: "nightly" }, host.cli);
+    expect(result).toMatchObject({ enabled: true, sync: { entry: "installed" } });
+    expect(host.calls()).toEqual([
+      { args: expect.arrayContaining(["task", "enable", "nightly", "--format=json"]), marker: "host-env" },
+    ]);
+    // The stand-in did the work, so this process wrote nothing.
+    expect(tasks.list().tasks[0]?.enabled).toBe(false);
+  });
+
+  test("a host CLI that fails or answers in another shape leaves the change saved here, with a warning", async () => {
+    const dir = path.join(ctx.storage.root, "library");
+    await setup.apply({ dir });
+    fs.writeFileSync(path.join(dir, "tasks", "nightly.yml"), 'version: 4\nrun: akm index\nschedule: "0 3 * * *"\n');
+    const host = stubHostCli("not-a-task-enable", {});
+    const cron = fakeCrontab();
+    try {
+      const result = (await tasks.enable({ task: "nightly" }, host.cli)) as {
+        warnings: string[];
+        sync: { entry: string };
+      };
+      expect(tasks.list().tasks[0]?.enabled).toBe(true);
+      expect(result.sync.entry).toBe("unmanaged");
+      expect(result.warnings.join(" ")).toContain("akm task sync");
     } finally {
       cron.restore();
     }

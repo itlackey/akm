@@ -276,3 +276,24 @@ export function fakeCrontab() {
     },
   };
 }
+
+/**
+ * A stand-in host `akm` that records each call (its arguments and the `HOST_MARKER` it was given) and answers with the
+ * `--format=json` envelope of `shape` and `result`. `cli` is what Desktop passes: the file and the environment to run it in.
+ */
+export function stubHostCli(shape: string, result: Json) {
+  const file = path.join(ctx.storage.root, "host-akm");
+  const log = path.join(ctx.storage.root, "host-akm.log");
+  const answer = JSON.stringify({ shape, schemaVersion: 1, ...result });
+  fs.writeFileSync(file, `#!/bin/sh\nprintf '%s\\t%s\\n' "$HOST_MARKER" "$*" >> "${log}"\nprintf '%s' '${answer}'\n`, {
+    mode: 0o755,
+  });
+  return {
+    cli: { path: file, env: { ...process.env, HOST_MARKER: "host-env" } },
+    calls: () =>
+      (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n") : []).map((line) => {
+        const [marker, args] = line.split("\t");
+        return { marker, args: args?.split(" ") };
+      }),
+  };
+}
