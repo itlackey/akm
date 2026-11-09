@@ -217,19 +217,3 @@ export namespace setup {
   /** What setup could use on this computer, from the file system, PATH and config only (no network, no writes). */
   function detect(): Promise<Detected>;
 }
-export namespace tasks {
-  interface Task {
-    id: string;
-    schedule: string;
-    schedules?: readonly string[];
-    /** This host has the task in its scheduler configuration. */
-    enabled: boolean;
-    description?: string;
-  }
-  /** The default bundle's scheduled tasks and whether this host has each enabled. Nothing is written. */
-  function list(): { tasks: Task[] };
-  /** `akm task enable`: schedule the task in this host's scheduler. The OS scheduler is written. */
-  function enable(input: { task: string }): Promise<Record<string, unknown>>;
-  /** `akm task disable`: take the task out of this host's scheduler. */
-  function disable(input: { task: string }): Promise<Record<string, unknown>>;
-}

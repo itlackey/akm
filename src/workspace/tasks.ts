@@ -4,10 +4,11 @@
 
 /** The default bundle's scheduled tasks, and the actions that enable or disable one on this host. */
 
+import { akmTasksDisable, akmTasksEnable } from "../commands/tasks/tasks";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { listSetupTaskDefinitions } from "../setup/steps/tasks";
-import { runCli } from "./cli-child";
+import { redactForUi } from "./redact";
 
 /** The tasks the default bundle holds that have a schedule, and whether this host has enabled each. Nothing is written. */
 export function list() {
@@ -15,20 +16,22 @@ export function list() {
   return { tasks: listSetupTaskDefinitions() };
 }
 
-/** The arguments that name a task in the default bundle, the one `list` reads. */
+/** The default bundle's name and the task the input names. */
 function target(input: { task: string }) {
   if (typeof input?.task !== "string" || !input.task.trim()) throw new UsageError("task must name a task.");
   const bundle = loadConfig().defaultBundle;
   if (!bundle) throw new UsageError("There is no default bundle yet.");
-  return [`--bundle=${bundle}`, "--", input.task.trim()];
+  return { ref: input.task.trim(), options: { target: bundle } };
 }
 
 /** `akm task enable`: schedule it in this host's scheduler and sync that. */
 export async function enable(input: { task: string }) {
-  return runCli(["task", "enable", ...target(input)]);
+  const { ref, options } = target(input);
+  return redactForUi(await akmTasksEnable(ref, options)) as Record<string, unknown>;
 }
 
 /** `akm task disable`: take it out of this host's scheduler and sync that. */
 export async function disable(input: { task: string }) {
-  return runCli(["task", "disable", ...target(input)]);
+  const { ref, options } = target(input);
+  return redactForUi(await akmTasksDisable(ref, options)) as Record<string, unknown>;
 }

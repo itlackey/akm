@@ -18,10 +18,10 @@
 import fs from "node:fs";
 import { filesForRef } from "../core/asset/asset-placement";
 import { bundleRefToString, makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
-import { type AkmConfig, mutateConfig, schedulerSourceIdFor } from "../core/config/config";
+import { type AkmConfig, mutateConfig, resetConfigCache, schedulerSourceIdFor } from "../core/config/config";
 import { bundleComponentConfig, bundleContentRoots, isBundleEnabled } from "../core/config/config-sources";
 import { UsageError } from "../core/errors";
-import { warnOnce } from "../core/warn";
+import { warn, warnOnce } from "../core/warn";
 import type { InstalledSchedulerBinding } from "./scheduler-binding";
 
 export function canonicalSchedulerRef(ref: string): string {
@@ -75,31 +75,65 @@ export function isSchedulerBundleActive(config: AkmConfig, bundleId: string): bo
 }
 
 /**
- * Add or remove one ref on this host's list. Callers must have made the host's
- * choice explicit first (see `initializeSchedulerChoice` in
- * `commands/tasks/tasks.ts`): on a config without the list this writes just
- * the one ref, which is the whole choice from then on.
+ * The one writer of `scheduler.enabled`'s entries: the `managed` refs leave this host's list, then the `selected` ones
+ * join it. Callers must have made the host's choice explicit first ({@link initializeSchedulerChoice}): on a config
+ * without the list this writes just these refs, which is the whole choice from then on.
  */
+export function setSchedulerRefs(
+  managed: readonly string[],
+  selected: readonly string[],
+): { config: AkmConfig; changed: boolean } {
+  const result = mutateConfig((current) => {
+    const existing = current.scheduler?.enabled ?? [];
+    for (const ref of selected) {
+      if (!isSchedulerBundleActive(current, bundleOf(ref) ?? "")) {
+        throw new UsageError(
+          `Cannot enable scheduled execution from inactive or unconfigured bundle ${JSON.stringify(bundleOf(ref))}.`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+    }
+    const next = [...existing.filter((entry) => !managed.includes(entry) && !selected.includes(entry)), ...selected];
+    next.sort((left, right) => left.localeCompare(right));
+    if (current.scheduler?.enabled !== undefined && next.length === existing.length) {
+      const held = new Set(existing);
+      if (next.every((entry) => held.has(entry))) return current;
+    }
+    return { ...current, scheduler: { ...current.scheduler, enabled: next } };
+  });
+  return { config: result.config, changed: result.written };
+}
+
+/** Add or remove one ref on this host's list. */
 export function setSchedulerRefEnabled(
   ref: string,
   enabled: boolean,
 ): { config: AkmConfig; changed: boolean; ref: string } {
   const canonicalRef = canonicalSchedulerRef(ref);
-  const result = mutateConfig((current) => {
-    const existing = current.scheduler?.enabled ?? [];
-    if (enabled && !isSchedulerBundleActive(current, bundleOf(canonicalRef) ?? "")) {
-      throw new UsageError(
-        `Cannot enable scheduled execution from inactive or unconfigured bundle ${JSON.stringify(bundleOf(canonicalRef))}.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    if (current.scheduler?.enabled !== undefined && existing.includes(canonicalRef) === enabled) return current;
-    const next = existing.filter((entry) => entry !== canonicalRef);
-    if (enabled) next.push(canonicalRef);
-    next.sort((left, right) => left.localeCompare(right));
-    return { ...current, scheduler: { ...current.scheduler, enabled: next } };
-  });
-  return { config: result.config, changed: result.written, ref: canonicalRef };
+  return { ...setSchedulerRefs([canonicalRef], enabled ? [canonicalRef] : []), ref: canonicalRef };
+}
+
+/**
+ * A config that predates `scheduler.enabled` means "keep what is installed": the akm-written rows in the native
+ * scheduler become the host's explicit list (written unless `write` is false), and the host is told so. Returns the
+ * list.
+ */
+export function initializeSchedulerChoice(
+  installed: readonly InstalledSchedulerBinding[],
+  config: AkmConfig,
+  options: { write: boolean },
+): readonly string[] {
+  const refs = enabledRefsFromInstalled(installed, config);
+  if (options.write) {
+    mutateConfig((current) => ({ ...current, scheduler: { ...current.scheduler, enabled: [...refs] } }));
+    resetConfigCache();
+  }
+  warn(
+    `This host had no scheduler.enabled list; ${options.write ? "it was" : "it would be"} initialized from the ` +
+      `${refs.length} installed akm scheduler ${refs.length === 1 ? "binding" : "bindings"}` +
+      `${refs.length > 0 ? `: ${refs.join(", ")}` : ""}. Use \`akm task enable\`/\`akm task disable <ref>\` to change it.`,
+  );
+  return refs;
 }
 
 /**
