@@ -242,10 +242,10 @@ describe("config.removeConnection", () => {
     resetConfigCache();
     const row = config.get().connections.find((connection: Json) => connection.name === "lab") as ConnectionRow;
     // The view hides the credential and nothing else.
-    expect(row.headers.Authorization).toBe("[redacted]");
+    expect((row.headers as Record<string, string>).Authorization).toBe("[redacted]");
     expect(row.tokenizer).toBe("tiktoken");
     expect(row.prompt_cache_key).toBe("cache-1");
-    expect(row.models["token-small"]).toBe("tiny");
+    expect(row.models?.["token-small"]).toBe("tiny");
     const original = entryOf(row);
     const draft = { ...connectionDraft("lab", original), endpoint: "http://127.0.0.1:9/v1" };
     expect(config.saveConnection({ name: "lab", entry: connectionEntry(draft, original) })).toEqual({ saved: true });
