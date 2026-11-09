@@ -140,11 +140,10 @@ function readEnabledTask(ref: string, sources: ReturnType<typeof activeTaskSourc
  * minute; `task doctor` and `akm health` read them here.
  */
 export function unrunnableTasks(config: AkmConfig = loadConfig()): { ref: string; reason: string }[] {
-  const sources = activeTaskSources(config);
   const failures: { ref: string; reason: string }[] = [];
   for (const ref of schedulerEnabledRefs(config) ?? []) {
     try {
-      readEnabledTask(ref, sources);
+      readEnabledTask(ref, activeTaskSources(config));
     } catch (cause) {
       failures.push({ ref, reason: cause instanceof Error ? cause.message : String(cause) });
     }

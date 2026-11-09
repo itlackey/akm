@@ -721,7 +721,7 @@ describe("tasks parity", () => {
         expect(doctor.status).toBe(0);
         expect((parseJson(doctor.stdout) as { akm?: { argv?: string[] } })?.akm?.argv?.[1]).toBe(launcher);
 
-        // `add` writes the task and enables it; `sync` writes the one dispatch entry.
+        // `add` writes the task, enables it and installs the one dispatch entry; the `sync` after it changes nothing.
         const add = launcherRun(["task", "add", id, "--schedule", "* * * * *", "--command", "akm --version"]);
         assertNoBoundaryLeak(add, "Node fallback tasks add");
         expect(add.status).toBe(0);

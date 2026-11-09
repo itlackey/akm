@@ -129,16 +129,18 @@ test.skipIf(!ENABLED)(
       expectSuccess(doctor, "standalone tasks doctor");
       expect(JSON.parse(doctor.stdout)).toMatchObject({ akm: { argv: [binary], via: "standalone" } });
 
-      // `add` writes the task and enables it; the OS scheduler is `task sync`'s.
+      // `add` writes the task, enables it, and syncs the OS scheduler: the one dispatch entry is installed by it.
       const add = run(
         [binary, "task", "add", id, "--schedule", "* * * * *", "--command", "/bin/echo standalone-cron"],
         env,
       );
       expectSuccess(add, "standalone tasks add");
-      expect(fs.existsSync(fakeCrontab)).toBe(false);
+      expect(JSON.parse(add.stdout)).toMatchObject({ sync: { entry: "installed" } });
+      expect(fs.existsSync(fakeCrontab)).toBe(true);
+      expect((fs.readFileSync(fakeCrontab, "utf8").match(/# akm:dispatch BEGIN/g) ?? []).length).toBe(1);
       const sync = run([binary, "task", "sync"], env);
       expectSuccess(sync, "standalone tasks sync");
-      expect(JSON.parse(sync.stdout)).toMatchObject({ entry: "installed" });
+      expect(JSON.parse(sync.stdout)).toMatchObject({ entry: "unchanged" });
 
       const taskPath = path.join(stashDir, "tasks", `${id}.yml`);
       const originalTask = fs.readFileSync(taskPath);
