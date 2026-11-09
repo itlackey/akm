@@ -54,15 +54,8 @@ export const migrateCommand = defineGroupCommand({
         name: "apply",
         description: "Back up and apply every pending migration (`akm upgrade` runs this after an install)",
       },
-      args: {
-        "dry-run": {
-          type: "boolean",
-          default: false,
-          description: "Run the same eligibility checks without mutation.",
-        },
-      },
-      run({ args }) {
-        return runMigrateSubcommand("migrate-apply", args.dryRun ? ["apply", "--dry-run"] : ["apply"]);
+      run() {
+        return runMigrateSubcommand("migrate-apply", ["apply"]);
       },
     }),
   },

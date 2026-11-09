@@ -99,7 +99,7 @@ beforeEach(() => {
     PATH: file("bin"),
     AKM_CHANNEL_FIXTURE: root,
     CLAUDE_CONFIG_DIR: file("claude"),
-    AKM_CLAUDE_PLUGINS_DIR: file("claude/plugins"),
+    CLAUDE_CODE_PLUGIN_CACHE_DIR: file("claude/plugins"),
     CODEX_HOME: file("codex"),
     XDG_CONFIG_HOME: file("config"),
     XDG_CACHE_HOME: file("cache"),

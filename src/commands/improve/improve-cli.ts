@@ -17,10 +17,8 @@ import { getRunLogDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { clearLogFile, setLogFile, warnOnce } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
-import { runJudge } from "../../judges/registry";
 import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/stdout";
-import { readStdin } from "../../runtime";
 import { akmImprove, buildLockSkippedResult, IMPROVE_TARGET_FLAG, resolveImproveReadSource } from "./improve";
 import { runImproveReportQuery } from "./improve-report";
 import {
@@ -33,7 +31,6 @@ import { runImproveSession } from "./improve-session";
 import { type ResolvedImprovePlan, resolveImprovePlan } from "./improve-strategies";
 import { formatUsageReportTable } from "./improve-usage-report";
 import { renderReflectPromptPreview } from "./reflect";
-import { noVerdict } from "./stage";
 
 let akmImproveForRun: typeof akmImprove = akmImprove;
 
@@ -98,51 +95,16 @@ const improveReportCommand = defineJsonCommand({
   },
 });
 
-/**
- * `akm improve judge`: `akm judge reflect.quality` on one revision, read as
- * `{"source", "candidate", "feedback", "ref"}` JSON from stdin, printed as
- * `{engine, pass, score, reason, criteria}`. A judge that gave no verdict prints
- * score -1, as it always has. It writes nothing.
- */
-const improveJudgeCommand = defineJsonCommand({
-  meta: {
-    name: "judge",
-    description:
-      "Run reflect's quality judge on one revision, read as {source, candidate, feedback, ref} JSON from stdin (the same as `akm judge reflect.quality`). Writes nothing.",
-  },
-  async run() {
-    const input = process.stdin.isTTY
-      ? {}
-      : (JSON.parse((await readStdin()).toString("utf8")) as Record<string, unknown>);
-    const { source, candidate, feedback, ref } = input;
-    if (typeof source !== "string" || typeof candidate !== "string") {
-      throw new UsageError(
-        '`akm improve judge` reads {"source": "...", "candidate": "...", "feedback": "...", "ref": "..."} JSON from stdin.',
-        "MISSING_REQUIRED_ARGUMENT",
-      );
-    }
-    const notes = typeof feedback === "string" && feedback.trim() !== "" ? [feedback.trim()] : [];
-    const envelope = await runJudge(
-      "reflect.quality",
-      { source, candidate, feedback: notes, ...(typeof ref === "string" && ref ? { ref } : {}) },
-      loadConfig(),
-      {},
-    );
-    const verdict = envelope.outcome === "verdict" ? envelope.verdict : noVerdict(envelope.outcome);
-    output("improve-judge", { engine: envelope.runner.name, ...(verdict as object) });
-  },
-});
-
 /** The subcommands `setup` withheld for this run, restored by `cleanup` (one command runs per process; in-process tests run many). */
 let subCommandsWithheld = false;
 
-const IMPROVE_SUBCOMMANDS = { report: improveReportCommand, judge: improveJudgeCommand };
+const IMPROVE_SUBCOMMANDS = { report: improveReportCommand };
 
 export const improveCommand = defineCommand({
   meta: {
     name: "improve",
     description:
-      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when the selected strategy enables consolidate. `improve report` and `improve judge` are subcommands.",
+      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when the selected strategy enables consolidate. `improve report` is a subcommand.",
   },
   subCommands: IMPROVE_SUBCOMMANDS,
   // `improve` takes a scope positional (an asset type or ref), and citty reads

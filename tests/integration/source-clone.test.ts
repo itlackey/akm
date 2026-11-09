@@ -440,6 +440,7 @@ describe("akmClone", () => {
   test("throws when self-cloning a script without rename", async () => {
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "echo deploy\n");
 
+    await expect(akmClone({ sourceRef: "scripts/deploy.sh" })).rejects.toBeInstanceOf(UsageError);
     await expect(akmClone({ sourceRef: "scripts/deploy.sh" })).rejects.toThrow("same path");
     // Verify the file was not destroyed
     expect(fs.readFileSync(path.join(stashDir, "scripts", "deploy.sh"), "utf8")).toBe("echo deploy\n");

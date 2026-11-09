@@ -86,7 +86,7 @@ export const TASK_V3_HOST_SHELLS = ["bash", "sh", "zsh", "pwsh", "powershell", "
 export type TaskV3HostShell = (typeof TASK_V3_HOST_SHELLS)[number];
 
 export const TASK_V2_MIGRATION_HINT =
-  "Run `akm migrate apply --dry-run` to preview the task-v2 to task-v3 conversion, then run `akm migrate apply`.";
+  "Run `akm migrate status` to preview the task-v2 to task-v3 conversion, then run `akm migrate apply`.";
 
 export function taskV2UnsupportedError(filePath: string, id?: string): UsageError {
   const label = id ? `Task "${id}"` : "Task";
