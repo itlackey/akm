@@ -9,7 +9,6 @@ also has its own README indexing everything inside it: [Guides](guides/README.md
 
 ## Start
 
-- [Product Surface](product-surface.md) -- Every feature and its status
 - [Getting Started](guides/getting-started.md) -- Install akm, connect a source, and pull a curated shortlist
 - [Concepts](guides/concepts.md) -- Capabilities, bundles, adapters, and refs: the mental model in one page
 - [Agent Install Guide](agents/agent-install.md) -- Automated, non-interactive install for agents
@@ -53,7 +52,7 @@ also has its own README indexing everything inside it: [Guides](guides/README.md
 
 ## Migration
 
-- [Migration](migration/README.md) -- The current 0.9 to 0.10 upgrade guide, then the historical guides and per-release notes of earlier releases
+- [Migration](migration/README.md) -- The 0.9 to 0.10 upgrade guide
 
 ## Official Ecosystem Repositories
 

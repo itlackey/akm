@@ -111,7 +111,6 @@ The full documentation is published at **[akm.fwdslsh.dev](https://akm.fwdslsh.d
 | Doc | Description |
 | --- | --- |
 | [Documentation index](https://akm.fwdslsh.dev/docs/README/) | Full guide and reference index |
-| [Product surface](https://akm.fwdslsh.dev/docs/product-surface/) | Every feature and its status |
 | [Stability policy](STABILITY.md) | Which CLI surfaces are stable, evolving, or experimental |
 | [Security policy](SECURITY.md) | Supported versions and how to report a vulnerability |
 | [Changelog](CHANGELOG.md) | Per-release behavior changes |

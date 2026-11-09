@@ -38,7 +38,7 @@ test("migrate status/apply use the normal format pipeline", () => {
   expect(isFormatExemptCommand(["migrate", "apply"])).toBe(false);
 });
 
-test("status and apply --dry-run report the same combined plan without mutation", async () => {
+test("status reports the combined plan without mutation", async () => {
   const storage = withIsolatedAkmStorage();
   try {
     configureTaskBundle(storage.stashDir);
@@ -46,10 +46,7 @@ test("status and apply --dry-run report the same combined plan without mutation"
     const before = fs.readFileSync(taskPath);
 
     const status = await runCliCapture(["migrate", "status"]);
-    const dryRun = await runCliCapture(["migrate", "apply", "--dry-run"]);
     expect(status.code, status.stderr).toBe(0);
-    expect(dryRun.code, dryRun.stderr).toBe(0);
-    expect(JSON.parse(dryRun.stdout)).toEqual(JSON.parse(status.stdout));
     expect(JSON.parse(status.stdout)).toMatchObject({
       schemaVersion: 1,
       status: "ready",

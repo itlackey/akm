@@ -380,7 +380,7 @@ export interface IsolatedAkmStorage {
   readonly stateDir: string;
   /** Isolated Claude session-log root (`AKM_CLAUDE_PROJECTS_DIR`), empty by default. */
   readonly sessionLogsDir: string;
-  /** Isolated Claude plugins root (`AKM_CLAUDE_PLUGINS_DIR`), empty by default. */
+  /** Isolated Claude plugins root (`CLAUDE_CODE_PLUGIN_CACHE_DIR`), empty by default. */
   readonly claudePluginsDir: string;
   /** Isolated OpenCode cache root (`AKM_OPENCODE_CACHE_DIR`), empty by default. */
   readonly opencodeCacheDir: string;
@@ -464,7 +464,8 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
     // Same reasoning for the `plugin-version` advisory (itlackey/akm#832): an
     // empty fixture dir means "no plugin installed" instead of scanning the
     // host's real `~/.claude/plugins` cache.
-    AKM_CLAUDE_PLUGINS_DIR: claudePluginsDir,
+    CLAUDE_CODE_PLUGIN_CACHE_DIR: claudePluginsDir,
+    CLAUDE_CONFIG_DIR: root,
     // Same reasoning for the `opencode-plugin-version` advisory: an empty
     // fixture dir means "no OpenCode plugin installed" instead of reading
     // the host's real `~/.cache/opencode` package cache.

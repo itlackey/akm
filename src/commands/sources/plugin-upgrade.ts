@@ -154,8 +154,7 @@ function detectClaudeCode(strict = false): Detected {
   const marketplaces = runCommand("claude", ["plugin", "marketplace", "list", "--json"], READ_TIMEOUT_MS);
   if (!marketplaces.ok) {
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const pluginsRoot =
-      process.env.AKM_CLAUDE_PLUGINS_DIR ?? process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
+    const pluginsRoot = process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
     const configured = fs.existsSync(path.join(pluginsRoot, "known_marketplaces.json"));
     return {
       entry:
@@ -190,10 +189,7 @@ function upgradeClaudeCode(dryRun: boolean, next: boolean, channel?: UpgradeChan
   if (channel && !dryRun) {
     try {
       const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-      const pluginsRoot =
-        process.env.AKM_CLAUDE_PLUGINS_DIR ??
-        process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ??
-        path.join(configDir, "plugins");
+      const pluginsRoot = process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
       backups = writeChannelEdits(
         claudeChannelEdits(
           configDir,
@@ -886,8 +882,7 @@ function preflightMarketplaceChannels(channel: UpgradeChannel, allowDowngrade: b
     throw new UsageError(`Could not inventory Claude before switching channels: ${claude.entry.message}`);
   if (!("entry" in claude)) {
     const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const pluginsRoot =
-      process.env.AKM_CLAUDE_PLUGINS_DIR ?? process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
+    const pluginsRoot = process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ?? path.join(configDir, "plugins");
     claudeChannelEdits(
       configDir,
       pluginsRoot,

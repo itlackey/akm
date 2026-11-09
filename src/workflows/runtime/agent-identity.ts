@@ -4,10 +4,9 @@
 
 /**
  * Resolve the invoking harness/session identity for a run from the
- * environment (best-effort, no background work): the harness from
- * `AKM_AGENT_HARNESS`, else a harness session-id env var, else a presence
- * flag; the session id from `AKM_SESSION_ID`, else the harness-native session
- * var (presence flags never supply one). The markers derive from
+ * environment (best-effort, no background work): the harness from a harness
+ * session-id env var, else a presence flag; the session id from the
+ * harness-native session var (presence flags never supply one). The markers derive from
  * `HARNESS_REGISTRY`. Explicit `startWorkflowRun` values always win.
  */
 import { HARNESS_REGISTRY } from "../../integrations/harnesses";
@@ -53,15 +52,12 @@ function firstNonEmpty(env: NodeJS.ProcessEnv, keys: readonly string[]): string 
  * detectable (e.g. a human running the CLI directly).
  */
 export function resolveAgentIdentity(env: NodeJS.ProcessEnv = process.env): AgentIdentity {
-  // Explicit override always wins.
-  let harness = firstNonEmpty(env, ["AKM_AGENT_HARNESS"]);
-  if (!harness) {
-    // A harness session id outranks any presence flag (opencode inside a codex sandbox is opencode).
-    for (const marker of SESSION_MARKERS) {
-      if (firstNonEmpty(env, marker.envKeys)) {
-        harness = marker.harnessId;
-        break;
-      }
+  let harness: string | null = null;
+  // A harness session id outranks any presence flag (opencode inside a codex sandbox is opencode).
+  for (const marker of SESSION_MARKERS) {
+    if (firstNonEmpty(env, marker.envKeys)) {
+      harness = marker.harnessId;
+      break;
     }
   }
   if (!harness) {
@@ -77,11 +73,14 @@ export function resolveAgentIdentity(env: NodeJS.ProcessEnv = process.env): Agen
     }
   }
 
-  // Session id: the explicit AKM override first, then the session-id-bearing
-  // registry markers in the same precedence order as harness inference (so
-  // harness and session id agree when multiple harness env vars are present).
-  // Presence flags are deliberately excluded — their values are not sessions.
-  const sessionId = firstNonEmpty(env, ["AKM_SESSION_ID", ...SESSION_MARKERS.flatMap((m) => [...m.envKeys])]);
+  // Session id: the session-id-bearing registry markers in the same precedence
+  // order as harness inference (so harness and session id agree when multiple
+  // harness env vars are present). Presence flags are deliberately excluded —
+  // their values are not sessions.
+  const sessionId = firstNonEmpty(
+    env,
+    SESSION_MARKERS.flatMap((m) => [...m.envKeys]),
+  );
 
   return { harness, sessionId };
 }
