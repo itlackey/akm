@@ -1170,17 +1170,13 @@ function editedConfigFile(
   unremoved: string[][] = [],
   writeProjects: readonly string[] = [],
 ): Record<string, unknown> {
-  // A first write keeps the established full-default scaffold. Besides being
-  // useful to a new user, the add -> rejected-install -> remove lifecycle
-  // relies on that symmetry to return a pristine install to DEFAULT_CONFIG.
-  if (document === undefined) return next;
-
   // Keys stay in their authored order and new ones follow in `next` order: the
   // add -> remove lifecycle writes the same logical object twice and must come
   // back byte for byte.
-  const body = structuredClone(document);
+  const source = document ?? {};
+  const body = structuredClone(source);
   applyEdit(body, current, next, unremoved);
-  keepRenamedBundlePaths(body, document, current, next);
+  keepRenamedBundlePaths(body, source, current, next);
   // A project the caller names is written whole even when it equals the effective entry: the file's own may hold parts the reader ignores.
   for (const name of writeProjects) {
     const entry = next.projects?.[name];
