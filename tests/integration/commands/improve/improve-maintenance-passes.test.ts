@@ -23,6 +23,7 @@ import {
   runRetentionPurgePass,
 } from "../../../../src/commands/improve/loop-stages";
 import type { AkmConfig } from "../../../../src/core/config/config";
+import { getMetricsDbPath, openMetricsDatabase } from "../../../../src/core/metrics-db";
 import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
 import { collectPendingMemories, type MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
 import type { Database } from "../../../../src/storage/database";
@@ -134,6 +135,59 @@ describe("runRetentionPurgePass", () => {
 
     // Empty sandboxed DBs: all purges succeed with zero rows removed.
     expect(out.warnings).toEqual([]);
+  });
+
+  test("folds old events into metrics.db before deleting them from state.db", () => {
+    const stash = freshStash();
+    const seedDb = openStateDatabase();
+    try {
+      const oldTs = new Date(Date.now() - 200 * 86_400_000).toISOString();
+      insertEventStrict(seedDb, { eventType: "reflect_invoked", ts: oldTs, ref: "lessons/a" });
+      insertEventStrict(seedDb, { eventType: "reflect_invoked", ts: oldTs, ref: "lessons/b" });
+    } finally {
+      seedDb.close();
+    }
+
+    const out = runRetentionPurgePass(makeCtx(stash));
+
+    expect(out.warnings).toEqual([]);
+    const checkDb = openStateDatabase();
+    const metricsDb = openMetricsDatabase();
+    try {
+      expect(checkDb.prepare("SELECT COUNT(*) AS n FROM events WHERE event_type = 'reflect_invoked'").get()).toEqual({
+        n: 0,
+      });
+      expect(metricsDb.prepare("SELECT n FROM event_daily WHERE event_type = 'reflect_invoked'").all()).toEqual([
+        { n: 2 },
+      ]);
+    } finally {
+      checkDb.close();
+      metricsDb.close();
+    }
+  });
+
+  test("keeps every old row when metrics.db cannot be opened", () => {
+    const stash = freshStash();
+    const seedDb = openStateDatabase();
+    try {
+      const oldTs = new Date(Date.now() - 200 * 86_400_000).toISOString();
+      insertEventStrict(seedDb, { eventType: "reflect_invoked", ts: oldTs, ref: "lessons/a" });
+    } finally {
+      seedDb.close();
+    }
+    fs.mkdirSync(getMetricsDbPath(), { recursive: true }); // a directory where the database file belongs
+
+    const out = runRetentionPurgePass(makeCtx(stash));
+
+    expect(out.warnings).toEqual([]);
+    const checkDb = openStateDatabase();
+    try {
+      expect(checkDb.prepare("SELECT COUNT(*) AS n FROM events WHERE event_type = 'reflect_invoked'").get()).toEqual({
+        n: 1,
+      });
+    } finally {
+      checkDb.close();
+    }
   });
 
   // #951: per-run flat log files under getTaskLogDir() are a separate purge

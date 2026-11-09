@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { foldBeforePurge, purgeFoldedUsageEvents } from "../commands/metrics/fold";
 import type { BundleAdapter } from "../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
@@ -99,7 +100,7 @@ import {
 } from "./passes/metadata";
 import { drainDirDocuments } from "./scan/drain-dir";
 import type { SearchSource } from "./search/search-source";
-import { purgeOldUsageEvents, USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
+import { USAGE_EVENT_RETENTION_DAYS } from "./usage/usage-events";
 import type { FileContext } from "./walk/file-context";
 import {
   type IndexVerification,
@@ -1844,6 +1845,20 @@ function readLookupEntry(db: Database, id: number, fallbackConceptId: string, so
 // ── Utility score recomputation ──────────────────────────────────────────────
 
 /**
+ * Fold closed days into metrics.db, then purge the usage rows past retention whose day is folded. When
+ * metrics.db is unavailable nothing is purged (one warning); a state.db without the table has nothing to purge.
+ */
+function purgeFoldedUsageHistory(stateDb: Database): void {
+  const folded = foldBeforePurge(stateDb);
+  if (!folded) return;
+  try {
+    purgeFoldedUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS, folded);
+  } catch {
+    /* Table may not exist yet */
+  }
+}
+
+/**
  * Recompute utility scores based on usage_events data: every entry by default,
  * or just `onlyEntryId` (what `akm feedback` passes so the value it stores is
  * the one `akm index` would compute, not a second formula). A one-entry call
@@ -1868,7 +1883,7 @@ export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntr
 
   // Purge stale usage events (90-day retention). usage_events lives in state.db
   // (Chunk-8 WI-8.3); its table is created by state migration 020.
-  if (!scoped) purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
+  if (!scoped) purgeFoldedUsageHistory(stateDb);
 
   // Decay is raised to the days since the last run, floored at one day. Every
   // run therefore applies at least one full round of EMA decay (so runs less

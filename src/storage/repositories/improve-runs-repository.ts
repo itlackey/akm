@@ -254,19 +254,3 @@ export function listRecentImproveRuns(db: Database, limit: number): ImproveRunSu
     )
     .all(limit) as ImproveRunSummaryRow[];
 }
-
-/**
- * Delete improve_runs rows older than `retentionDays` (default: 90). Mirrors
- * {@link purgeOldEvents} — same default, same return shape (number of rows
- * actually deleted), same disabled-when-non-finite semantics.
- *
- * Safe to call from the improve post-loop maintenance pass alongside
- * `purgeOldEvents(db, retentionDays)`.
- */
-export function purgeOldImproveRuns(db: Database, retentionDays = 90): number {
-  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
-  const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
-  const result = db.prepare("DELETE FROM improve_runs WHERE started_at < ?").run(cutoff);
-  const changes = (result as { changes?: number | bigint }).changes ?? 0;
-  return typeof changes === "bigint" ? Number(changes) : changes;
-}

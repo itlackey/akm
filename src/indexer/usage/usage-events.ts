@@ -253,23 +253,11 @@ export function listZeroResultSearchQueries(db: Database, sinceDays = 30): strin
   return rows.map((row) => row.query);
 }
 
-/** Usage events older than this many days are purged on every `akm index`. */
-export const USAGE_EVENT_RETENTION_DAYS = 90;
-
 /**
- * Delete usage events older than the given number of days.
+ * Usage events older than this many days are purged on every `akm index`, once metrics.db has folded their
+ * day (`purgeFoldedUsageEvents`).
  */
-export function purgeOldUsageEvents(db: Database, retentionDays: number): void {
-  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
-  try {
-    const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
-    // `created_at` is `YYYY-MM-DD HH:MM:SS`, not ISO: normalize both sides so the
-    // space-vs-`T` ordering doesn't delete the whole cutoff date early.
-    db.prepare("DELETE FROM usage_events WHERE datetime(created_at) < datetime(?)").run(cutoff);
-  } catch {
-    /* Table may not exist yet */
-  }
-}
+export const USAGE_EVENT_RETENTION_DAYS = 90;
 
 /**
  * Rewrite every `usage_events.entry_ref` naming `oldBundleId` to `newBundleId`

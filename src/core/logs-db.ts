@@ -303,7 +303,7 @@ export function getLoggedRunIds(db: Database, runIds: readonly string[]): Set<st
 
 /**
  * Delete task_logs rows older than `retentionDays` (default: 90). Mirrors
- * `purgeOldEvents` / `purgeOldImproveRuns` in state-db.ts — same default, same
+ * `purgeFoldedEvents` / `purgeFoldedImproveRuns` (commands/metrics/fold.ts) — same default, same
  * return shape (rows deleted), same disabled-when-non-positive semantics.
  * Wired into the improve maintenance pass alongside the state.db purges.
  */
