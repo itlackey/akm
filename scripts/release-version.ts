@@ -17,12 +17,13 @@
  * The 0.9 line and older keep plain `X.Y.Z[-prerelease]`.
  *
  *   bun scripts/release-version.ts validate <version>
- *   bun scripts/release-version.ts next
+ *   bun scripts/release-version.ts next [0.<minor>]
  *   VERSION_INPUT=... STAGE_INPUT=... bun scripts/release-version.ts resolve
  *
- * `next` prints the next release number of package.json's line for the UTC month, numbered from the versions already
- * on npm (any stage counts, legacy 8-digit daily builds do not): the name of the next release branch. `resolve` is
- * what the Release workflow runs on a release's version and stage.
+ * `next` prints the next release number of a line (package.json's unless one is given, as when a new line starts)
+ * for the UTC month, numbered from the versions already on npm (any stage counts, legacy 8-digit daily builds do
+ * not): the name of the next release branch. `resolve` is what the Release workflow runs on a release's version and
+ * stage.
  */
 
 import { execFileSync } from "node:child_process";
@@ -146,9 +147,11 @@ function main(argv: string[]): number {
     }
     if (command === "next") {
       const pkg = packageJson();
-      const line = /^0\.(\d+)\./.exec(pkg.version);
+      const line = /^0\.(\d+)(?:\.|$)/.exec(arg ?? pkg.version);
       if (!line || Number(line[1]) < FIRST_MONTHLY_MINOR) {
-        throw new Error(`package.json ${pkg.version} is not on a monthly-number line (0.${FIRST_MONTHLY_MINOR}+)`);
+        throw new Error(
+          `${arg ?? `package.json ${pkg.version}`} is not a monthly-number line (0.${FIRST_MONTHLY_MINOR}+)`,
+        );
       }
       console.log(deriveVersion(`0.${line[1]}`, new Date(), npmVersions(pkg.name)));
       return 0;
@@ -157,7 +160,7 @@ function main(argv: string[]): number {
     console.error((err as Error).message);
     return 1;
   }
-  console.error("usage: release-version.ts validate <version> | resolve | next");
+  console.error("usage: release-version.ts validate <version> | resolve | next [0.<minor>]");
   return 2;
 }
 
