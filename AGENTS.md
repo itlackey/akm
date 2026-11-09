@@ -40,7 +40,7 @@ The failure to avoid is treating something other than the user's stated intent a
 - Run the working tree as `bun src/cli.ts …`. A bare `akm` is the installed copy, using the real config and bundles.
 
 ## Branches
-- Pull requests target the default branch, the open `release/<version>` branch, never `main`. Only a release branch merges to `main`, and that merge is a release: `docs/maintainers/release-checklist.md`.
+- Pull requests target the default branch, the open `release/<version>` branch of the current minor, never `main`; work for the next minor targets that minor's release branch explicitly. Only a release branch merges to `main`, and that merge is a release: `docs/maintainers/release-checklist.md`.
 - Releases run from scripts: `bun run release:start` cuts the next release branch, `bun run release:prerelease [alpha|beta|rc]` publishes a prerelease of it, `bun run release:stable` opens the pull request that ships it.
 
 ## Where the details live

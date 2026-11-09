@@ -7,12 +7,13 @@
    `v<version>`, on npm `latest`, with a GitHub release that carries the
    binaries, the installers and AKM Desktop.
 2. A release branch, `release/<version>`, is cut from `main` with the next free
-   number of its line ([Versions](#versions)). The release branch taking new
-   work is the repository's default branch, so pull requests target it without
-   anyone choosing. More than one may be open: `release/0.11.261101` can take
-   0.11 work while `release/0.10.261121` patches 0.10. The patch ships first,
-   and the 0.11 branch merges `main` before it can ship (the ruleset requires
-   it), so the patch is in 0.11 too.
+   number of its line ([Versions](#versions)). The open release branch of
+   `main`'s line, the current minor, is the repository's default branch, so a
+   fix lands where it ships next without anyone choosing. A branch for the next
+   minor can be open at the same time, `release/0.11.261101` beside
+   `release/0.10.261121`; it is never the default, and its pull requests choose
+   it as their base. The patch ships first, and the 0.11 branch merges `main`
+   before it can ship (the ruleset requires it), so the patch is in 0.11 too.
 3. All work lands on the release branch by pull request. A feature that needs
    several pull requests lands in slices that are each shippable but inert
    until the last one (internals first, the command or flag wired up last, or
@@ -47,15 +48,16 @@ From a clean tree on any branch:
 
 ```sh
 bun run release:start          # the next number of main's line
-bun run release:start 0.11     # the first number of a new line
+bun run release:start 0.11     # the first number of the next minor
 ```
 
 It creates `release/<version>` from `origin/main` with the next free number of
-the line (`bun scripts/release-version.ts next [0.<minor>]`), pushes it, and
-makes it the default branch (`gh repo edit --default-branch`) unless the
-default branch is a release branch of a newer line, as when a patch branch is
-cut for 0.10 while 0.11 work is under way. GitHub deletes a release branch when
-its pull request merges (see [Repository settings](#repository-settings)).
+the line (`bun scripts/release-version.ts next [0.<minor>]`) and pushes it. On
+`main`'s line it also makes the branch the default (`gh repo edit
+--default-branch`) and deletes the merged release branch that held the default
+before, since GitHub deletes every other merged branch on its own but never the
+default one (see [Repository settings](#repository-settings)). A branch for the
+next minor leaves the default alone.
 
 ## 2. Prerelease
 
@@ -206,9 +208,9 @@ carry a bare stage (`0.10.261115-beta`).
 The process is enforced by the repository's settings where GitHub allows it.
 Set these once; the cut step changes only the default branch.
 
-**Default branch.** The open release branch. `gh repo edit --default-branch
-release/<version>` at each cut. Pull requests, `gh pr create` and the weekly
-schedule follow it.
+**Default branch.** The open release branch of the current minor, set by
+`release:start` at each cut on `main`'s line. Pull requests, `gh pr create`
+and the weekly schedule follow it.
 
 **Ruleset `main`** (Settings → Rules → Rulesets; rulesets are the current form
 of branch protection and are available on a public repository under the Free
@@ -240,8 +242,9 @@ pull request, which the `check` job gates.
 
 **Pull requests** (Settings → General): allow merge commits (release pull
 requests need them; squash and rebase may stay on for pull requests into the
-release branch); automatically delete head branches, so a merged release branch
-and merged feature branches go away on their own.
+release branch); automatically delete head branches, so merged feature branches
+and merged release branches go away on their own, except the default branch,
+which `release:start` deletes once it has moved the default.
 
 **Environment `release`** (Settings → Environments): deployment branches and
 tags limited to `main` and `release/*`, so a dispatch from any other branch
