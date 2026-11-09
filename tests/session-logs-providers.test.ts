@@ -16,6 +16,7 @@ import path from "node:path";
 import { ClaudeCodeProvider } from "../src/integrations/harnesses/claude/session-log";
 import { CodexProvider } from "../src/integrations/harnesses/codex/session-log";
 import { OpenCodeProvider } from "../src/integrations/harnesses/opencode/session-log";
+import { opencodeMessageEvents } from "../src/integrations/harnesses/opencode/session-log-v2";
 import { extractInlineRefMentions } from "../src/integrations/session-logs/inline-refs";
 import { openDatabase } from "../src/storage/database";
 import { codexMessage, writeCodexRollout } from "./_helpers/codex-rollout";
@@ -844,5 +845,80 @@ describe("OpenCodeProvider.readSession (opencode.db)", () => {
     const data = await provider.readSession(summary);
     expect(data.events).toEqual([]);
     expect(data.inlineRefs).toEqual([]);
+  });
+});
+
+// ── OpenCode 2 messages (`session_message` rows) ─────────────────────────────
+
+/** One assistant tool part as OpenCode 2 stores it: a completed call with its input and its text output. */
+function completedTool(name: string, input: Record<string, unknown>, created: number, output: string) {
+  return {
+    type: "tool",
+    name,
+    time: { created, completed: created + 5 },
+    state: { status: "completed", input, content: [{ type: "text", text: output }] },
+  };
+}
+
+/**
+ * A session in which the agent used the akm plugin's tools (its reads, then `akm_remember` and `akm_feedback`) and
+ * the shell form of `akm remember`, as the `session_message` rows read back (`{ ...data, id, type }`).
+ */
+const AKM_PLUGIN_SESSION = [
+  {
+    id: "msg_1",
+    type: "user",
+    time: { created: 1700000100000 },
+    text: "Check what we know about the deploy pipeline, then note the cert thing.",
+  },
+  {
+    id: "msg_2",
+    type: "assistant",
+    time: { created: 1700000200000 },
+    content: [
+      { type: "text", text: "Checking akm first." },
+      completedTool("akm_search", { query: "deploy pipeline" }, 1700000210000, "knowledge/deploy — Deploy pipeline"),
+      completedTool("akm_curate", { query: "deploy pipeline" }, 1700000220000, "knowledge/deploy"),
+      completedTool("akm_show", { ref: "knowledge/deploy" }, 1700000230000, "# Deploy pipeline\nRollback: ..."),
+      completedTool(
+        "akm_remember",
+        { content: "Staging deploys need the corp VPN cert" },
+        1700000300000,
+        "Saved memory/staging-deploys-need-the-corp-vpn-cert",
+      ),
+      completedTool(
+        "akm_feedback",
+        { ref: "knowledge/deploy", note: "the rollback section is current" },
+        1700000400000,
+        "recorded",
+      ),
+      completedTool("shell", { command: 'akm remember "The cert rotates monthly"' }, 1700000500000, "saved"),
+    ],
+  },
+  { id: "msg_3", type: "idle", time: { created: 1700000600000 }, outcome: "succeeded" },
+];
+
+describe("OpenCode 2 messages with the akm plugin's tools (#1577)", () => {
+  const read = () => opencodeMessageEvents(AKM_PLUGIN_SESSION, "opencode", "ses_plugin", "/db");
+
+  test("akm_remember and akm_feedback calls are inline refs beside the shell form, each with its call's timestamp", () => {
+    expect(read().inlineRefs).toEqual([
+      { kind: "remember", text: "Staging deploys need the corp VPN cert", ts: 1700000300000 },
+      { kind: "feedback", ref: "knowledge/deploy", text: "the rollback section is current", ts: 1700000400000 },
+      { kind: "remember", text: "The cert rotates monthly", ts: 1700000500000 },
+    ]);
+  });
+
+  test("akm_search, akm_show and akm_curate calls and their results are not session content", () => {
+    expect(read().events.map((e) => [e.role, e.text])).toEqual([
+      ["user", "Check what we know about the deploy pipeline, then note the cert thing."],
+      ["assistant", "Checking akm first."],
+      ["assistant", '[tool:akm_remember] {"content":"Staging deploys need the corp VPN cert"}'],
+      ["tool", "[tool_result] Saved memory/staging-deploys-need-the-corp-vpn-cert"],
+      ["assistant", '[tool:akm_feedback] {"ref":"knowledge/deploy","note":"the rollback section is current"}'],
+      ["tool", "[tool_result] recorded"],
+      ["assistant", '[tool:shell] akm remember "The cert rotates monthly"'],
+      ["tool", "[tool_result] saved"],
+    ]);
   });
 });

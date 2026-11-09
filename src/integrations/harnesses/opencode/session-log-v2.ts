@@ -15,7 +15,9 @@
  * Mapping to events follows the Codex reader: user and assistant text become events of
  * that role, a tool call becomes `[tool:<name>] <input>` and its outcome a
  * `tool` event `[tool_result] <output>`, so the inline-ref scanner sees shell
- * commands. Reasoning, compaction, synthetic/system and bookkeeping messages
+ * commands. The akm plugin's `akm_remember` and `akm_feedback` calls are inline refs
+ * too, and its reading tools (`akm_search`, `akm_show`, `akm_curate`) are left out
+ * as lookups. Reasoning, compaction, synthetic/system and bookkeeping messages
  * are skipped.
  */
 
@@ -61,6 +63,21 @@ function structuredErrorText(err: unknown): string {
   return typeof e?.type === "string" ? e.type : "error";
 }
 
+/** The akm plugin's reading tools: lookups, not session content. */
+const AKM_READ_TOOLS = new Set(["akm_search", "akm_show", "akm_curate"]);
+
+/** What an akm plugin `akm_remember` / `akm_feedback` call saved, as the shell form's inline mention would say. */
+function akmToolMentions(name: string, input: Json | undefined, ts: number | undefined): InlineRefMention[] {
+  const at = ts !== undefined ? { ts } : {};
+  if (name === "akm_remember" && typeof input?.content === "string" && input.content.trim()) {
+    return [{ kind: "remember", text: input.content, ...at }];
+  }
+  if (name === "akm_feedback" && typeof input?.ref === "string" && input.ref) {
+    return [{ kind: "feedback", ref: input.ref, text: typeof input.note === "string" ? input.note : "", ...at }];
+  }
+  return [];
+}
+
 /** One session's events and inline refs, from its messages oldest first. A message that is not an object is skipped. */
 export function opencodeMessageEvents(
   messages: readonly unknown[],
@@ -97,9 +114,12 @@ export function opencodeMessageEvents(
         if (tool?.type !== "tool") continue;
         const state = asObject(tool.state);
         const name = typeof tool.name === "string" ? tool.name : "tool";
+        // The akm plugin's reads are lookups, not session content; its writes are what the agent already saved.
+        if (AKM_READ_TOOLS.has(name)) continue;
         const toolTime = asObject(tool.time);
         const callTs = asNumber(toolTime?.created) ?? ts;
         push("assistant", `[tool:${name}] ${toolInputText(state?.input)}`, callTs);
+        inlineRefs.push(...akmToolMentions(name, asObject(state?.input), callTs));
         // Streaming/running calls are incomplete history: the call is kept, no result is invented.
         const doneTs = asNumber(toolTime?.completed) ?? callTs;
         if (state?.status === "completed") {
