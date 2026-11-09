@@ -514,8 +514,7 @@
             <div class="settings-intro">
               <h2 id="advanced-settings">Advanced configuration</h2>
               <p>
-                Set or unset a supported key. Objects and lists take JSON. Clearing a value removes its local override;
-                inherited values can still apply.
+                Set or unset a supported key. Objects and lists take JSON. Clearing a value removes it from config.json.
               </p>
             </div>
             <form

@@ -13,6 +13,8 @@
  * settings use their canonical connection, harness and strategy paths; retired aliases are not
  * rewritten at this boundary.
  */
+import os from "node:os";
+import nodePath from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
 import { isRecord } from "../core/common";
@@ -23,9 +25,9 @@ import {
   loadConfig,
   mutateConfig,
   parseAndValidateConfigText,
-  resolveConfigRefSource,
   unusableEntryAt,
 } from "../core/config/config";
+import { readConfigText } from "../core/config/config-io";
 import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
 import { isEnvReference } from "../core/config/schema/primitives";
 import { UsageError } from "../core/errors";
@@ -49,20 +51,10 @@ export function unsetConfigValue(config: AkmConfig, key: string): AkmConfig {
 }
 
 /**
- * Refuse an unset that would do nothing. A key only an `extends` base supplies has nothing local to remove:
- * `unsetConfigValue` would silently no-op and the value comes right back on the next load. An entry the reader drops
- * is not in the config `unsetConfigValue` sees, so it would no-op and say ok. Refuse before mutating rather than
- * pretend it worked.
+ * Refuse an unset that would do nothing. An entry the reader drops is not in the config `unsetConfigValue` sees, so
+ * it would no-op and say ok. Refuse before mutating rather than pretend it worked.
  */
 export function assertUnsettable(key: string): void {
-  const source = getConfigValueSource(key);
-  if (source.startsWith("extends:")) {
-    throw new UsageError(
-      `Config key "${key}" is inherited from ${source} and cannot be unset here.`,
-      "TARGET_NOT_UPDATABLE",
-      `Override it locally with "akm config set ${key} <value>", or edit the base file directly.`,
-    );
-  }
   const ignored = unusableEntryAt(key);
   if (ignored) {
     throw new UsageError(
@@ -129,7 +121,7 @@ function isRegistryUrlPath(path: string[]): boolean {
 
 export { unknownKeyHint };
 
-// ── `akm config diff` (#945) ────────────────────────────────────────────────
+// ── `akm config diff` ────────────────────────────────────────────────
 
 export interface ConfigDiffRow {
   path: string;
@@ -173,19 +165,16 @@ function diffConfigs(local: unknown, other: unknown): ConfigDiffRow[] {
 }
 
 /**
- * `akm config diff <path|bundle//path>`: the current effective config
- * (this instance's `extends` already applied) against another config file or
- * bundle-relative file (loaded through the same loader, its own `extends`
- * honoured), secrets redacted on both sides before comparison so a differing
- * secret never round-trips into the diff.
+ * `akm config diff <path>`: the current effective config against another config
+ * file (`~` expands; a relative path is read from the working directory), secrets
+ * redacted on both sides before comparison so a differing secret never
+ * round-trips into the diff.
  */
 export function akmConfigDiff(ref: string): { rows: ConfigDiffRow[] } {
   const current = loadConfig();
-  const { text, resolvedPath } = resolveConfigRefSource(
-    ref,
-    current as unknown as Record<string, unknown>,
-    getConfigPath(),
-  );
+  const resolvedPath = nodePath.resolve(ref.startsWith("~") ? nodePath.join(os.homedir(), ref.slice(1)) : ref);
+  const text = readConfigText(resolvedPath);
+  if (text === undefined) throw new UsageError(`Config file ${resolvedPath} does not exist.`);
   const other = parseAndValidateConfigText(text, resolvedPath);
   const rows = diffConfigs(redactSecretKeys(redactConfigValue(current)), redactSecretKeys(redactConfigValue(other)));
   return { rows };
@@ -223,7 +212,7 @@ export const configCommand = defineGroupCommand({
         key: { type: "positional", required: true, description: "Config key (for example: embedding, defaultBundle)" },
         "show-source": {
           type: "boolean",
-          description: "Wrap the value as { value, source } (local, extends:<ref> or default)",
+          description: "Wrap the value as { value, source } (local or default)",
           default: false,
         },
       },
@@ -292,14 +281,13 @@ export const configCommand = defineGroupCommand({
     diff: defineJsonCommand({
       meta: {
         name: "diff",
-        description:
-          "Show effective-config differences against another config file or bundle-relative file, secrets redacted",
+        description: "Show effective-config differences against another config file, secrets redacted",
       },
       args: {
         ref: {
           type: "positional",
           required: true,
-          description: "Other config: a file path or bundle//path (relative to the bundle's content root)",
+          description: "Other config file path",
         },
       },
       run({ args }) {

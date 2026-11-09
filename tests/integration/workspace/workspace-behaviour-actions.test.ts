@@ -324,31 +324,18 @@ describe("bundle settings and config", () => {
     await writableConfig();
     const configPath = getConfigPath();
     const saved = () => JSON.parse(fs.readFileSync(configPath, "utf8"));
-    const base = path.join(ctx.storage.root, "base-config.json");
-    fs.writeFileSync(
-      base,
-      JSON.stringify({
-        configVersion: "0.9.0",
-        projects: { base: { paths: ["/srv/base"], from: "team" }, "acme.corp": { paths: ["/srv/dot"] } },
-      }),
-    );
     writeSandboxConfig({
       ...loadConfig(),
-      extends: base,
-      projects: { acme: { paths: ["/srv/acme"] }, hand: { paths: ["relative", "/srv/hand"], from: 3 } },
+      projects: {
+        acme: { paths: ["/srv/acme"] },
+        hand: { paths: ["relative", "/srv/hand"], from: 3 },
+        "acme.corp": "not a project",
+      },
     });
-    const get = () =>
-      config.get() as unknown as { config: { projects: Record<string, unknown> }; localProjects: string[] };
+    const get = () => config.get() as unknown as { config: { projects: Record<string, unknown> } };
 
-    // Inherited projects are reported as such, dotted names included; a local `acme` does not make `acme.corp` local.
-    expect(get().localProjects.sort()).toEqual(["acme", "hand"]);
-    expect(Object.keys(get().config.projects).sort()).toEqual(["acme", "acme.corp", "base", "hand"]);
-
-    // Editing an inherited project writes it whole: the unchanged fields stay, and the reload equals what was sent.
-    const sent = { paths: ["/srv/base"], from: ["team", "personal"] };
-    expect(config.changeProjects({ set: { base: sent } })).toEqual({ saved: true });
-    expect(saved().projects.base).toEqual(sent);
-    expect(get().config.projects.base).toEqual(sent);
+    // A project akm ignores is not read, dotted names included.
+    expect(Object.keys(get().config.projects).sort()).toEqual(["acme", "hand"]);
 
     // Editing a malformed local entry clears what akm ignored.
     expect(config.changeProjects({ set: { hand: { paths: ["/srv/hand2"] } } })).toEqual({ saved: true });
@@ -443,24 +430,6 @@ describe("bundle settings and config", () => {
     // `bundle update` writes only the lockfile, so the config guard does not apply.
     await bundles.update({ bundle: "stash" });
     expect(fs.readFileSync(configPath, "utf8")).toBe(before);
-  });
-
-  test("local settings preserve inherited configuration and do not flatten the effective config", async () => {
-    await writableConfig();
-    const configPath = getConfigPath();
-    const basePath = path.join(path.dirname(configPath), "shared.json");
-    fs.writeFileSync(
-      basePath,
-      JSON.stringify({ configVersion: "0.9.0", inheritedExtra: { keep: true }, archiveRetentionDays: 17 }),
-    );
-    writeSandboxConfig({ extends: "./shared.json" });
-    await bundles.setSettings({ bundle: "stash", writable: false });
-    const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    expect(saved.extends).toBe("./shared.json");
-    expect(saved.inheritedExtra).toBeUndefined();
-    expect(saved.archiveRetentionDays).toBeUndefined();
-    expect(loadConfig().archiveRetentionDays).toBe(17);
-    expect(JSON.parse(fs.readFileSync(basePath, "utf8")).inheritedExtra).toEqual({ keep: true });
   });
 });
 

@@ -207,10 +207,6 @@ test("Connections: list, detail, add, edit preserving options, delete with its c
   await expect(page.getByRole("dialog")).toHaveCount(0);
   assert.equal((await configOf(server)).connections.lab.models.judge, "big");
 
-  // An inherited connection names the config that defines it, not this computer's file.
-  await page.goto(`${server.origin}/settings/connections?name=shared`);
-  await expect(page.getByText(/Inherited from .*base-config\.json\. Delete it there\./)).toBeVisible();
-  await expect(page.getByRole("definition").filter({ hasText: "base-config.json" })).toBeVisible();
   await page.goto(`${server.origin}/settings/connections`);
   await expect(page.getByRole("link", { name: /^default/ })).toBeVisible();
   assert.match(await page.getByRole("list").first().innerText(), /^default/);

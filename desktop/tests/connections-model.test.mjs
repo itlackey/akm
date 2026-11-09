@@ -116,7 +116,7 @@ test("summaries and deletion impact use akm's default rule", () => {
 
 test("a row from config.get() is stripped to its configured entry before it is edited or shown", async () => {
   const { entryOf, requestOptions } = await import("../src/lib/connections-model.ts");
-  const row = { name: "lab", inherited: false, usedBy: ["improve.connection"], endpoint: "http://x/v1", top_p: 0.9 };
+  const row = { name: "lab", usedBy: ["improve.connection"], endpoint: "http://x/v1", top_p: 0.9 };
   assert.deepEqual(entryOf(row), { endpoint: "http://x/v1", top_p: 0.9 });
   assert.deepEqual(requestOptions(entryOf(row)), { top_p: 0.9 });
   assert.deepEqual(connectionEntry(connectionDraft("lab", entryOf(row)), entryOf(row)), entryOf(row));

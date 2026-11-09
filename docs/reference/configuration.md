@@ -3,10 +3,8 @@
 AKM reads one user configuration file: `$XDG_CONFIG_HOME/akm/config.json`
 (normally `~/.config/akm/config.json` on Linux and macOS, or
 `%APPDATA%\akm\config.json` on Windows). Set `AKM_CONFIG_DIR` to override the
-directory. Project `.akm/config.json` files are not merged. A config file may
-optionally extend one other config via `extends` (see "Sharing configuration
-across installs" below) — this is a single, explicit, user-opted-in key, not
-automatic project-config discovery.
+directory. Project `.akm/config.json` files are not merged. There is no config
+inheritance: `extends` is retired (see "Config inheritance (`extends`)" below).
 
 ## Version 0.9
 
@@ -65,9 +63,8 @@ There are no grants, source identities or fire-time checks. Authored
 task/workflow files may describe schedules but cannot put themselves on the
 list.
 
-This key is deliberately local: if a config uses `extends`, any `scheduler`
-section in the base is ignored with a warning. Only the top-level local config
-can activate schedules. Prefer `akm task enable <ref>` and `akm task disable
+This key is deliberately local: only the config file itself can activate
+schedules. Prefer `akm task enable <ref>` and `akm task disable
 <ref>` over editing the JSON by hand; both update the allow-list and sync the
 affected bundle. An unscoped `akm task sync` reconciles enabled refs across all
 enabled configured bundles.
@@ -358,10 +355,7 @@ akm reads an API key from one of two places, and nowhere else:
   endpoint). A connection's name and the `embedding` service are
   different namespaces, so a connection called `embedding` and the embedding
   service hold different keys. An `embedding` that runs on the default connection
-  uses that connection's entry. A connection that only an `extends` base defines
-  gets its endpoint from that base, so it never uses a stored key: stored keys
-  are for the connections your own `config.json` names (name it there, even with
-  only its `models`, and a key stored for the endpoint it ends up with is used).
+  uses that connection's entry.
   A key in the older flat `{ "<name>": "<key>" }` form names no endpoint and is
   not used; `akm migrate apply` files it under the endpoint your own config gives
   that block, after copying `credentials.json` to `<cache dir>/config-backups/`.
@@ -989,8 +983,7 @@ what akm reads and writes there:
   writes carry `project: <name>`.
 - A malformed project or key warns once and is ignored, as is a path that is `~user/...` or
   relative. When two projects list the same path, the first in the file is used, with a warning.
-  `extends` layers combine projects by name: a project in the local file replaces the inherited
-  one of that name whole, never field by field. Improve's session extract names a memory folder and a session asset's
+  Improve's session extract names a memory folder and a session asset's
   `project:` after the project containing the session's working directory, when there is one.
 
 See [Projects in the CLI reference](cli.md#projects) for how a call chooses one.
@@ -1064,99 +1057,30 @@ walker.
 
 `config get <key> --show-source` wraps the (redacted) value as
 `{ value, source }`, where `source` is `"local"` when the local file's own
-JSON sets the key, `"extends:<ref>"` for the nearest `extends` chain member
-that sets it, or `"default"` when neither does. It is opt-in — plain
+JSON sets the key, or `"default"` when it does not. It is opt-in — plain
 `config get` keeps its Stable, script-safe bare-value shape.
 
-### Sharing configuration across installs
+### Config inheritance (`extends`)
 
-Five hosts running the same fleet often carry an identical `connections` map and
-`improve.strategies` block, differing only in credential delivery, bundle paths,
-and cron offsets. Hand-syncing that block across hosts drifts silently. `extends` fixes this: put the shared block in
-one file, and have each host's local config extend it.
+`extends`, which merged a base config file under the local one (0.9.15 to
+0.10.261019), is removed. A config file that still sets it is refused with an
+error naming `akm migrate apply`: ignoring the key would silently drop every
+setting the base supplied. `akm migrate apply` merges the base (a file path, or a
+`bundle//<path>` file under a filesystem bundle, and any chain of them) into your
+`config.json` once, with the local file winning, and drops the key. What the
+runtime never took from a base stays out of the merge, and each such part is
+noted: `bundles`, `defaultBundle`, `embedding`, `experimental`, `registries` and
+`scheduler`, a connection's `apiKey`, a harness's `bin`, `args` and `workspace`,
+and an improve strategy's `sync`. To share a block between hosts, copy it.
 
-```jsonc
-// bundles/fleet/config/shared.json — versioned with the bundle, shared by every host
-{
-  "configVersion": "0.9.0",
-  "connections": {
-    "fast": { "endpoint": "https://api.example.test/v1", "models": { "fast": "qwen3", "balanced": "qwen3" } }
-  },
-  "improve": { "connection": "fast", "strategies": { "nightly": { "processes": { "reflect": { "limit": 10 } } } } }
-}
-```
-
-```jsonc
-// ~/.config/akm/config.json — this host's local file, under 20 lines
-{
-  "configVersion": "0.9.0",
-  "extends": "fleet//config/shared.json",
-  "bundles": {
-    "fleet": { "git": "https://github.com/example/fleet-bundle.git" },
-    "stash": { "path": "~/akm-stash", "writable": true }
-  },
-  "defaultBundle": "stash",
-  "connections": { "fast": { "apiKey": "$FAST_API_KEY" } }
-}
-```
-
-`extends` accepts either form:
-
-- A filesystem path — relative paths resolve against the directory of the
-  config file that declares them; a leading `~` expands.
-- A `bundle//<path>` ref — a plain file path *relative to that bundle's
-  content root* (e.g. `config/shared.json`), resolved through the bundle's
-  configured `path`, not the search index — so it never needs `akm index` to
-  have run. This is not an asset ref: the path after `//` needs no asset type
-  (`scripts/`, `knowledge/`, …) and the shared file is never indexed; it can
-  live anywhere under the bundle. An empty, absolute, or content-root-escaping
-  path is rejected. Only a filesystem bundle (`bundles.<id>.path`) can host an
-  `extends` source; sync a `git`/`website` bundle with `akm bundle
-  add`/`akm sync` first so the file is materialized locally, then point
-  `extends` at it.
-
-Shared layers carry portable policy, not host authority. `bundles`, source and
-write defaults, registries, embedding connections, scheduler activation,
-`experimental`, and setup state are ignored when inherited.
-Connection and harness definitions may be shared, but credentials and
-executable authority (`apiKey`, `bin`, `args`, and `workspace`) are ignored
-when inherited and must be supplied by the local file; a key in the host's
-`credentials.json` needs no entry at all. Improve publication (`strategies.*.sync`) is local as well. Bundle-relative chains stay physically inside
-the bundle root for every hop; lexical `..` paths and symlink escapes are both
-rejected before a referenced file is read.
-
-There is no `extends: <url>` form: config load is synchronous and runs on
-every invocation, and akm deliberately does not fetch network resources at
-load time (the same reason `registries` is never fetched until a
-registry-touching command runs). A URL-backed shared config should be synced
-as a `git`/`website` bundle and referenced as `extends: bundle//<path>`
-once materialized, reusing the sync machinery akm already has instead of a
-second one inside config load.
-
-The base config runs through the exact same load pipeline as the local
-file — its own version shim, its own legacy-shape shim — so it can carry an
-older `configVersion` independently, and it may itself set `extends`
-(chained). Cycle detection (`ConfigError`, "extends cycle detected") stops A
-extends B extends A instead of recursing forever. Merge order is
-`DEFAULT_CONFIG` (outermost) → the resolved `extends` chain → the local
-file's own keys (local always wins) — the same `deepMergeConfig` "override
-wins" semantics `config set` already uses. A referenced file/bundle that does
-not already exist locally is a load-time `ConfigError` naming the ref — akm
-never fetches or syncs one on your behalf.
-
-`akm config diff <path|bundle//path>` compares this host's EFFECTIVE
-config (its own `extends` already applied) against another config file or
-bundle-relative file (loaded through the same loader, so ITS `extends` is
-honoured too), printing sorted `{ path, local, other }` rows for every leaf
-that differs. Both sides are redacted the same way `config get`/`list` are
-before comparison, so a differing secret never round-trips into the diff
-output. Cross-host comparison (`ssh host2 akm config diff ...` in a loop) is
-left to the operator; akm has no concept of a networked fleet to compare
-against directly.
+`akm config diff <path>` compares this host's effective config against another
+config file (a relative path is read from the working directory; `~` expands),
+printing sorted `{ path, local, other }` rows for every leaf that differs. Both
+sides are redacted the same way `config get`/`list` are before comparison, so a
+differing secret never round-trips into the diff output.
 
 ```sh
 akm config diff ~/other-host/config.json
-akm config diff fleet//config/shared.json
 ```
 
 ## Environment

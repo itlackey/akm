@@ -56,14 +56,12 @@ function overlayRows(modelsOverlay: unknown): Array<{ alias: string; column: str
 /** The engines' own models by the name their entry has now: what an alias nothing else names falls back to. */
 export type OwnModels = { readonly connections: Map<string, string>; readonly harnesses: Map<string, string> };
 
-/** What the models.json fold reads: the entries as the file will read them, the file's own and its base's, and where a column lands. */
+/** What the models.json fold reads: the entries as the file will read them, the file's own, and where a column lands. */
 export interface ModelsFold {
   readonly conversion: Conversion;
   readonly merged: Entries;
   /** What the file itself writes under `connections` / `harnesses`. */
   readonly written: Entries;
-  /** What an `extends` base defines. */
-  readonly inherited: Entries;
   readonly ownModels: OwnModels;
   /**
    * The names the connections and harnesses the engines became have now: the connections a removed runtime pointed at,
@@ -82,19 +80,16 @@ export interface ModelsFold {
  * The exception is a harness engine's own model: it ran when a request named none, so it stands over every column.
  */
 export function foldModelsOverlay(modelsOverlay: unknown, fold: ModelsFold): void {
-  const { conversion, merged, written, inherited, ownModels, renamed } = fold;
+  const { conversion, merged, written, ownModels, renamed } = fold;
   const { notes } = conversion;
   const mergedConnections = merged.connections;
   const mergedHarnesses = merged.harnesses;
-  const inheritedConnections = inherited.connections;
-  const inheritedHarnesses = inherited.harnesses;
   const writtenConnections = written.connections;
   const writtenHarnesses = written.harnesses;
-  /** Whether the config itself, the file or its base, already names a model for the alias. */
-  const configNames = (own: Dict, base: Dict, name: string, alias: string): boolean =>
-    hasModel(own[name], alias) || hasModel(base[name], alias);
+  /** Whether the config itself already names a model for the alias. */
+  const configNames = (own: Dict, name: string, alias: string): boolean => hasModel(own[name], alias);
   const platformOf = (name: string): string =>
-    String(((mergedHarnesses[name] ?? inheritedHarnesses[name]) as Dict | undefined)?.platform ?? name);
+    String((mergedHarnesses[name] as Dict | undefined)?.platform ?? name);
   /** The column of models.json that named a harness: an `opencode-sdk` engine's was `opencode-sdk`, not its platform's. */
   const columnOf = (name: string): string => (renamed.sdkHarness.includes(name) ? "opencode-sdk" : platformOf(name));
   /** Harnesses whose engine had a `model` of its own, which names every alias and so stands over the column (noted once each). */
@@ -111,17 +106,15 @@ export function foldModelsOverlay(modelsOverlay: unknown, fold: ModelsFold): voi
     }
     const candidates =
       column === "*"
-        ? [...new Set([...Object.keys(mergedConnections), ...Object.keys(inheritedConnections)])]
+        ? Object.keys(mergedConnections)
         : column === "opencode-sdk"
           ? [...renamed.runtime]
           : renamed.connection(column) !== undefined
             ? [renamed.connection(column) as string]
-            : column in writtenConnections || column in inheritedConnections
+            : column in writtenConnections
               ? [column]
               : [];
-    const harnessNamed = [...new Set([...Object.keys(mergedHarnesses), ...Object.keys(inheritedHarnesses)])].filter(
-      (name) => columnOf(name) === column,
-    );
+    const harnessNamed = Object.keys(mergedHarnesses).filter((name) => columnOf(name) === column);
     if (candidates.length === 0 && harnessNamed.length === 0) {
       notes.push(`${where}: names no configured connection or harness, so it is not carried over.`);
       continue;
@@ -129,10 +122,10 @@ export function foldModelsOverlay(modelsOverlay: unknown, fold: ModelsFold): voi
     // The config's own choice stands, and `*` leaves what an explicit column already set.
     const connectionNames = candidates.filter(
       (name) =>
-        !configNames(writtenConnections, inheritedConnections, name, alias) &&
+        !configNames(writtenConnections, name, alias) &&
         !(column === "*" && hasModel(mergedConnections[name], alias)),
     );
-    const unnamed = harnessNamed.filter((name) => !configNames(writtenHarnesses, inheritedHarnesses, name, alias));
+    const unnamed = harnessNamed.filter((name) => !configNames(writtenHarnesses, name, alias));
     // The model a harness engine named is what ran when a request named none, and a harness runs its first model then,
     // so it stands over the column, which would put the column's models first.
     const harnessNames = unnamed.filter((name) => !ownModels.harnesses.has(name));
@@ -145,8 +138,8 @@ export function foldModelsOverlay(modelsOverlay: unknown, fold: ModelsFold): voi
     if (connectionNames.length === 0 && harnessNames.length === 0) {
       // Only the config's own choice is worth a note; an explicit column that came first is the overlay's own.
       const keptByConfig =
-        candidates.some((name) => configNames(writtenConnections, inheritedConnections, name, alias)) ||
-        harnessNamed.some((name) => configNames(writtenHarnesses, inheritedHarnesses, name, alias));
+        candidates.some((name) => configNames(writtenConnections, name, alias)) ||
+        harnessNamed.some((name) => configNames(writtenHarnesses, name, alias));
       if (keptByConfig) notes.push(`${where}: the config already names a model for it, so it is not carried over.`);
       continue;
     }
@@ -156,7 +149,6 @@ export function foldModelsOverlay(modelsOverlay: unknown, fold: ModelsFold): voi
       const model =
         str(p.model) ?? str(isRecord(existing) ? existing.model : existing) ?? ownModels.connections.get(name);
       if (model === undefined) continue;
-      // A connection only the base defines gets a partial entry here; the base completes it.
       mergedConnections[name] ??= {};
       modelsOf(mergedConnections[name] as Dict)[alias] = modelEntry(model, wire);
       folded = true;

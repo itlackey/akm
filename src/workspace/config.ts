@@ -8,14 +8,7 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { assertUnsettable, listConfig, setConfigValue, unsetConfigValue } from "../commands/config-cli";
 import { isRecord } from "../core/common";
-import {
-  type AkmConfig,
-  defaultConnection,
-  inheritedConnectionsOf,
-  loadConfig,
-  mutateConfig,
-  resetConfigCache,
-} from "../core/config/config";
+import { type AkmConfig, defaultConnection, loadConfig, mutateConfig, resetConfigCache } from "../core/config/config";
 import { parseConfigText, readConfigText } from "../core/config/config-io";
 import { dropUnusableProjects, NO_PROJECT, type ProjectConfig } from "../core/config/schema/projects";
 import { UsageError } from "../core/errors";
@@ -30,7 +23,7 @@ const UNSAFE_NAMES = new Set(["__proto__", "constructor", "prototype"]);
 interface ConfigEntry {
   path: string;
   value: unknown;
-  /** `default`, `file` (this install's config.json) or `extends:<ref>`; `null` when the key cannot be traced. */
+  /** `default` or `file` (this install's config.json); `null` when the key cannot be traced. */
   source: string | null;
 }
 
@@ -45,7 +38,7 @@ function configLeaves(value: unknown, prefix: string[], out: Array<{ path: strin
 
 /**
  * What akm says about the malformed parts of `projects` in this install's config file, in its own words, and the
- * names of the projects that file holds (the others are only inherited).
+ * names of the projects that file holds (the others are ones akm ignores).
  */
 function localProjects(configPath: string): { warnings: string[]; local: string[]; raw: Record<string, unknown> } {
   const warnings: string[] = [];
@@ -91,18 +84,15 @@ export function get() {
   return {
     path: configPath,
     projectWarnings: projects.warnings,
-    localProjects: projects.local,
     exists: fs.existsSync(configPath),
     config: effective,
     automaticWriteTarget: automaticWriteTarget(live),
     entries,
     connections: named(effective.connections).map((connection) => ({
       ...connection,
-      // Only an `extends` base defines it: it cannot be removed here, and a local save overrides it.
-      inherited: inheritedConnectionsOf(live).has(connection.name),
       // The configured keys that name it, so a reader can say what depends on it.
       usedBy: connectionReferences(live, connection.name),
-      // `file` (this install's config.json), or `extends:<ref>` naming the config this one extends that defines it.
+      // `file` when this install's config.json sets it, else `default`.
       source: configSource(["connections", connection.name]),
     })),
     // The connection named `default`, else the only one, else none: the rule every consumer without a `connection` follows.
@@ -151,7 +141,7 @@ export function change(input: { set?: Record<string, string>; unset?: string[] }
  * Add, replace, rename (set the new name and unset the old) and remove `projects` entries in one atomic write.
  * Each entry is a whole project, written as sent (the reader takes a project whole by name); the complete config is
  * validated as for `change`, so akm's schema decides what is accepted. Names are not dotted config keys, so a name
- * may contain a dot. A project this install's config.json does not hold (inherited, or one akm ignores) cannot be
+ * may contain a dot. A project this install's config.json does not hold (one akm ignores) cannot be
  * unset or renamed here, as `akm config unset` refuses a key it cannot remove.
  */
 export function changeProjects(input: { set?: Record<string, ProjectConfig>; unset?: string[] }) {
@@ -172,7 +162,7 @@ export function changeProjects(input: { set?: Record<string, ProjectConfig>; uns
       throw new UsageError(
         `Project "${name}" is not in ${getConfigPath()}, so it cannot be removed or renamed here.`,
         "TARGET_NOT_UPDATABLE",
-        "It is inherited from an extended config, or akm ignores it: edit the file that holds it.",
+        "akm ignores it: edit the file that holds it.",
       );
   }
   // A set is a no-op only when the file already holds exactly that entry, whatever akm makes of the file's own.
@@ -205,8 +195,7 @@ function connectionReferences(value: unknown, name: string, prefix: string[] = [
 /**
  * Remove one connection through the same validated, atomic path as `akm config unset connections.<name>`, and say what
  * the removal touches: the configured `connection` references to the name (a connection named explicitly is never
- * replaced by the default, so each of them fails with "Connection is not configured" until it is changed), whether it was the default and which connection is after, and whether an
- * `extends` base still defines it. A connection only a base defines is refused, as `unset` refuses it.
+ * replaced by the default, so each of them fails with "Connection is not configured" until it is changed), whether it was the default and which connection is after.
  */
 export function removeConnection(input: { name: string }) {
   const name = typeof input.name === "string" ? input.name.trim() : "";
@@ -222,7 +211,6 @@ export function removeConnection(input: { name: string }) {
     references,
     wasDefault,
     defaultConnection: defaultConnection(after)?.name ?? null,
-    stillInherited: Object.hasOwn(after.connections ?? {}, name),
   };
 }
 
@@ -250,7 +238,7 @@ function unmask(entry: unknown, stored: unknown, path: string): unknown {
 /**
  * Replace one connection with `entry` as a whole, through the same validated atomic write as `change`. Keys the entry
  * no longer has (a removed alias, cleared request options) leave the file, which a dotted `set` of the entry would not
- * do. A literal API key is refused; a connection only an `extends` base defines is saved as a local copy that overrides it.
+ * do. A literal API key is refused.
  */
 export function saveConnection(input: { name: string; entry: Record<string, unknown> }) {
   const name = typeof input.name === "string" ? input.name.trim() : "";

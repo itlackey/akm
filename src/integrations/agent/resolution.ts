@@ -29,7 +29,6 @@ import {
   ambiguousDefaultAdvice,
   defaultConnection,
   defaultHarness,
-  inheritedConnectionsOf,
   unusableEntryAt,
 } from "../../core/config/config";
 import type { ConnectionConfig, HarnessConfig } from "../../core/config/config-types";
@@ -298,7 +297,6 @@ function connectionRunner(
   aliases: ReadonlySet<string>,
   layers: readonly UnresolvedExecutionDefaults[],
   modelWork: boolean,
-  inherited: boolean,
 ): ConnectionRunner {
   const entry = modelEntry(connection.models ?? {}, requested, aliases);
   if (entry === undefined) {
@@ -320,7 +318,6 @@ function connectionRunner(
     request: mergeRequestFields(connectionFields, entryFields),
     ...(inference && Object.keys(inference).length > 0 ? { inference } : {}),
     ...(apiKeyReference(connection.apiKey) !== undefined ? { apiKey: connection.apiKey } : {}),
-    ...(inherited ? { storedKey: false } : {}),
     ...(connection.contextLength !== undefined ? { contextLength: connection.contextLength } : {}),
     ...(connection.concurrency !== undefined ? { concurrency: connection.concurrency } : {}),
     timeoutMs: firstTimeout(layerTimeout(layers), connection.timeoutMs, defaultTimeout(modelWork)),
@@ -407,15 +404,7 @@ export function resolveTarget(input: ResolveTargetInput): RunnerSpec {
   const aliases = knownAliases(input.config);
   const modelWork = input.modelWork === true;
   return target.kind === "connection"
-    ? connectionRunner(
-        target.name,
-        target.connection,
-        requested,
-        aliases,
-        input.layers,
-        modelWork,
-        inheritedConnectionsOf(input.config).has(target.name),
-      )
+    ? connectionRunner(target.name, target.connection, requested, aliases, input.layers, modelWork)
     : harnessRunner(
         target.name,
         target.harness,

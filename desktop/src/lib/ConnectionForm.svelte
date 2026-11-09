@@ -32,7 +32,6 @@
     name,
     original,
     existing,
-    inherited,
     busy,
     failure,
     cancelHref,
@@ -42,7 +41,6 @@
     name: string;
     original: ConnectionEntry | null;
     existing: string[];
-    inherited: boolean;
     busy: boolean;
     /** What akm said when it refused the save. */
     failure: string;
@@ -94,9 +92,6 @@
     >{/if}{/snippet}
 
 <form class="connection-form" bind:this={form} onsubmit={submit} aria-busy={busy} novalidate>
-  {#if inherited}<p class="notice">
-      This connection comes from a config this one extends. Saving creates a local copy that overrides it.
-    </p>{/if}
   <div class="settings-fields">
     {#if creating}<label class="field">
         <span class="field-label">Name</span>

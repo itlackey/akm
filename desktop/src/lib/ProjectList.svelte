@@ -41,7 +41,6 @@
       <article class="card project-card">
         <header class="card-head">
           <h2><a href={`/projects/${encodeURIComponent(project.name)}`}>{project.name}</a></h2>
-          <span class="badge">{project.inherited ? "Inherited" : "Local"}</span>
         </header>
         <p class="mono wrap small">
           {#if first(project)}{first(project)}{#if more(project) > 0}{" "}<span class="muted sans"

@@ -63,14 +63,7 @@ export function collectDispatchSensitiveValues(
   const inherited = collectInferredSecretValues(envSource);
   if (runner.kind !== "connection") return collectSensitiveValues(inherited);
   return collectSensitiveValues([
-    resolveApiKey(
-      runner.apiKey,
-      { connection: runner.name },
-      runner.endpoint,
-      envSource,
-      true,
-      runner.storedKey !== false,
-    ),
+    resolveApiKey(runner.apiKey, { connection: runner.name }, runner.endpoint, envSource, true),
     ...inherited,
   ]);
 }
@@ -151,14 +144,7 @@ export function materializeConnection(
   inference?: LlmInference | null,
   envSource: NodeJS.ProcessEnv = process.env,
 ): ChatCompletionConfig {
-  const apiKey = resolveApiKey(
-    runner.apiKey,
-    { connection: runner.name },
-    runner.endpoint,
-    envSource,
-    false,
-    runner.storedKey !== false,
-  );
+  const apiKey = resolveApiKey(runner.apiKey, { connection: runner.name }, runner.endpoint, envSource);
   const settings = mergeLayerInference([
     { inference: runner.inference as ExecutionJsonObject | undefined },
     { inference: inference as ExecutionJsonObject | null | undefined },

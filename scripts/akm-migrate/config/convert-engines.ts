@@ -37,11 +37,6 @@ export type { EngineTarget };
 export interface ConvertEnginesOptions {
   /** The parsed user `models.json`: alias to engine column to model. */
   readonly modelsOverlay?: unknown;
-  /**
-   * The connections and harnesses an `extends` base defines (read without the overlay): models.json also names them,
-   * and a partial entry written beside the base is how what it places there outlives the file.
-   */
-  readonly inherited?: { readonly connections?: Dict; readonly harnesses?: Dict };
   /** Where an engine's implicit key variable (`AKM_ENGINE_<NAME>_API_KEY`, `AKM_LLM_API_KEY`) is looked for; one that is set becomes the connection's `$VAR` key. */
   readonly env?: NodeJS.ProcessEnv;
 }
@@ -428,12 +423,11 @@ function modelWorkTarget(
   defaults: Dict,
   naming: Naming,
   merged: Entries,
-  inherited: ConvertEnginesOptions["inherited"],
   conversion: Conversion,
 ): EngineTarget | undefined {
-  const connection = defaultName({ ...inherited?.connections, ...merged.connections });
+  const connection = defaultName(merged.connections);
   if (connection !== undefined) return { connection };
-  const harness = defaultName({ ...inherited?.harnesses, ...merged.harnesses });
+  const harness = defaultName(merged.harnesses);
   const entry = harness === undefined ? undefined : merged.harnesses[harness];
   if (harness === undefined || !isRecord(entry)) return undefined;
   if (str(defaults.llmEngine) === undefined && harness in naming.harnesses && entry.modelWork === undefined) {
@@ -467,7 +461,6 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
     merged,
     ownModels,
     written: { connections: asDict(out.connections), harnesses: asDict(out.harnesses) },
-    inherited: { connections: options.inherited?.connections ?? {}, harnesses: options.inherited?.harnesses ?? {} },
     renamed: {
       runtime: [...converted.runtimes.values()]
         .filter((name) => name in converted.connections)
@@ -482,7 +475,7 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
   const improve = out.improve;
   if (isRecord(improve)) moveStrategyExecution(improve, conversion, retarget);
   improveStrategyDefault(out, defaults, improve);
-  const judge = modelWorkTarget(defaults, naming, merged, options.inherited, conversion);
+  const judge = modelWorkTarget(defaults, naming, merged, conversion);
   dropJudgeEngine(out, conversion, naming.target, naming.defaultEngine, judge);
 
   // Assemble, keeping the file's key order.

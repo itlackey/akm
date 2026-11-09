@@ -27,7 +27,6 @@ import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { schedulerEnabledRefs } from "../src/tasks/activation-config";
 import {
   type Cleanup,
-  mockHomedir,
   sandboxHome,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -1106,291 +1105,33 @@ describe("0.9 config shape parsing", () => {
   });
 });
 
-// ── `extends` inheritance (#945) ────────────────────────────────────────────
+// ── `extends` is retired ─────────────────────────────────────────────────────
 
-describe("extends inheritance (#945)", () => {
-  test("merges a base config from a relative path, local wins", () => {
-    const dir = path.dirname(getConfigPath());
-    fs.mkdirSync(path.join(dir, "shared"), { recursive: true });
-    writeRawConfig(
-      path.join(dir, "shared", "shared.json"),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        connections: {
-          fast: { endpoint: "https://api.example.test/v1", models: { fast: "base-model" } },
-        },
-        output: { format: "text", detail: "full" },
-      }),
-    );
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        extends: "./shared/shared.json",
-        output: { detail: "brief" },
-      }),
-    );
-
-    const config = loadConfig();
-    expect(config.connections?.fast?.models).toEqual({ fast: "base-model" });
-    // Local wins: output.detail overridden, output.format inherited.
-    expect(config.output).toEqual({ format: "text", detail: "brief" });
-  });
-
-  test("expands ~ in a filesystem extends path", () => {
-    const home = mockHomedir();
-    try {
-      fs.mkdirSync(path.join(home.dir, "fleet"), { recursive: true });
-      fs.writeFileSync(
-        path.join(home.dir, "fleet", "shared.json"),
-        JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "auto" }),
-      );
-      writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "~/fleet/shared.json" }));
-
-      expect(loadConfig().semanticSearchMode).toBe("auto");
-    } finally {
-      home.cleanup();
-    }
-  });
-
-  test("supports a chain (A extends B extends C)", () => {
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(path.join(dir, "c.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 30 }));
-    writeRawConfig(
-      path.join(dir, "b.json"),
-      JSON.stringify({ configVersion: "0.9.0", extends: "./c.json", semanticSearchMode: "auto" }),
-    );
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./b.json" }));
-
-    const config = loadConfig();
-    expect(config.archiveRetentionDays).toBe(30);
-    expect(config.semanticSearchMode).toBe("auto");
-  });
-
-  test("throws ConfigError on a two-hop cycle", () => {
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(path.join(dir, "b.json"), JSON.stringify({ configVersion: "0.9.0", extends: getConfigPath() }));
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: path.join(dir, "b.json") }));
-
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/cycle/i);
-  });
-
-  test("throws ConfigError when extends resolves to a self-loop", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: getConfigPath() }));
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/cycle/i);
-  });
-
-  test("throws ConfigError on a missing extends file, naming the ref", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./does-not-exist.json" }));
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/does-not-exist\.json/);
-  });
-
-  test("throws ConfigError when extends is not a non-empty string", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "" }));
-    expect(() => loadConfig()).toThrow(ConfigError);
-  });
-
-  test("a base config declaring a foreign configVersion is still merged underneath", () => {
-    // The base gets the same per-file pipeline as the local file: its
-    // `configVersion` is read as current rather than gating the merge.
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(
-      path.join(dir, "old-base.json"),
-      JSON.stringify({
-        configVersion: "0.8.0",
-        connections: { default: { endpoint: "https://api.example.test/v1/chat/completions", models: { fast: "m" } } },
-      }),
-    );
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./old-base.json" }));
-
-    const config = loadConfig();
-    expect(config.configVersion).toBe("0.9.0");
-    expect(config.connections?.default).toMatchObject({ endpoint: "https://api.example.test/v1/chat/completions" });
-  });
-
-  test("extends by a filesystem bundle asset ref (bundle//<path>), no index involved", () => {
-    const fleetDir = makeTmpDir();
-    try {
-      fs.mkdirSync(path.join(fleetDir, "config"), { recursive: true });
-      fs.writeFileSync(
-        path.join(fleetDir, "config", "shared.json"),
-        JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 14 }),
-      );
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          configVersion: "0.9.0",
-          bundles: { fleet: { path: fleetDir } },
-          extends: "fleet//config/shared.json",
-        }),
-      );
-
-      const config = loadConfig();
-      expect(config.archiveRetentionDays).toBe(14);
-    } finally {
-      cleanup(fleetDir);
-    }
-  });
-
-  test("extends bundle ref against a non-filesystem bundle is a ConfigError naming the bundle", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        bundles: { fleet: { git: "https://example.test/fleet.git" } },
-        extends: "fleet//config/shared.json",
-      }),
-    );
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/fleet/);
-  });
-
-  test("rejects an absolute path after bundle//", () => {
-    const fleetDir = makeTmpDir();
-    try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          configVersion: "0.9.0",
-          bundles: { fleet: { path: fleetDir } },
-          extends: "fleet///etc/passwd",
-        }),
-      );
-      expect(() => loadConfig()).toThrow(ConfigError);
-      expect(() => loadConfig()).toThrow(/absolute/);
-    } finally {
-      cleanup(fleetDir);
-    }
-  });
-
-  test("rejects a bundle//<path> that escapes the bundle's content root", () => {
-    const fleetDir = makeTmpDir();
-    try {
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          configVersion: "0.9.0",
-          bundles: { fleet: { path: path.join(fleetDir, "content") } },
-          extends: "fleet//../outside.json",
-        }),
-      );
-      expect(() => loadConfig()).toThrow(ConfigError);
-      expect(() => loadConfig()).toThrow(/escapes/);
-    } finally {
-      cleanup(fleetDir);
-    }
-  });
-
-  test("rejects a bundle config symlink that physically escapes its content root", () => {
-    const fleetDir = makeTmpDir();
-    const outsideDir = makeTmpDir();
-    try {
-      fs.mkdirSync(path.join(fleetDir, "config"), { recursive: true });
-      fs.writeFileSync(
-        path.join(outsideDir, "shared.json"),
-        JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 99 }),
-      );
-      fs.symlinkSync(path.join(outsideDir, "shared.json"), path.join(fleetDir, "config", "shared.json"));
-      writeRawConfig(
-        getConfigPath(),
-        JSON.stringify({
-          configVersion: "0.9.0",
-          bundles: { fleet: { path: fleetDir } },
-          extends: "fleet//config/shared.json",
-        }),
-      );
-      expect(() => loadConfig()).toThrow(/symbolic link outside/i);
-    } finally {
-      cleanup(fleetDir);
-      cleanup(outsideDir);
-    }
-  });
-
-  test("strips inherited host authority while retaining portable connection and harness settings", () => {
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(
-      path.join(dir, "base.json"),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        connections: {
-          cloud: {
-            endpoint: "https://api.example.test/v1",
-            apiKey: "$INHERITED_KEY",
-            models: { fast: "portable-model" },
-          },
-        },
-        harnesses: {
-          inherited: {
-            platform: "claude",
-            models: { fast: "portable-model" },
-            bin: "/untrusted/bin",
-            args: ["--dangerous"],
-            workspace: "/untrusted/workspace",
-          },
-        },
-        experimental: { improveAutonomy: true },
-      }),
-    );
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
-
-    const config = loadConfig();
-    expect(config.harnesses?.inherited).toMatchObject({ platform: "claude", models: { fast: "portable-model" } });
-    expect(config.harnesses?.inherited).not.toHaveProperty("bin");
-    expect(config.harnesses?.inherited).not.toHaveProperty("args");
-    expect(config.harnesses?.inherited).not.toHaveProperty("workspace");
-    expect(config.connections?.cloud).toMatchObject({ endpoint: "https://api.example.test/v1" });
-    expect(config.connections?.cloud).not.toHaveProperty("apiKey");
-    expect(config.experimental).toBeUndefined();
-    expect(getConfigValueSource("harnesses.inherited.models")).toBe("extends:./base.json");
-    expect(getConfigValueSource("harnesses.inherited.bin")).toBe("default");
-  });
-
-  test("config get extends returns the locally configured ref (not silently dropped)", () => {
-    // Deliberate deviation from a literal "strip extends before validation"
-    // reading: `mutateConfig` (config set/unset) reads the EFFECTIVE config as
-    // `current` and writes a mutated copy of the SAME object back to the local
-    // file (pre-existing behavior — see DEFAULT_CONFIG baking into config.json
-    // on any write). Stripping `extends` from the effective object would mean
-    // any `config set` after adopting `extends` silently deletes the
-    // directive from disk. Keeping it lets it round-trip.
+describe("a config that still sets extends", () => {
+  test("is refused, naming `akm migrate apply`", () => {
     const dir = path.dirname(getConfigPath());
     writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 7 }));
     writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
 
-    const config = loadConfig();
-    expect(config.archiveRetentionDays).toBe(7);
-    expect((config as unknown as Record<string, unknown>).extends).toBe("./base.json");
+    expect(() => loadConfig()).toThrow(/"extends" is no longer supported.*akm migrate apply/s);
   });
 
-  test("scheduler activation is host-local and never inherited through extends", () => {
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(
-      path.join(dir, "base.json"),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        scheduler: { enabled: [{ kind: "task", ref: "fleet//tasks/untrusted" }] },
-      }),
-    );
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        extends: "./base.json",
-        scheduler: {
-          enabled: [{ kind: "task", ref: "local//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` }],
-        },
-      }),
-    );
+  test("is refused even when the base does not exist", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./does-not-exist.json" }));
 
-    const warnings = captureWarnings(() => {
-      expect(loadConfig().scheduler?.enabled).toEqual(["local//tasks/nightly"]);
-    });
-    expect(warnings.join("\n")).toMatch(/ignoring inherited config key "scheduler"/i);
+    expect(() => loadConfig()).toThrow(/akm migrate apply/);
   });
 
+  test("is refused by a write too, and the file is not changed", () => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
+    const before = fs.readFileSync(getConfigPath(), "utf8");
+
+    expect(() => updateConfig({ output: { detail: "full" } })).toThrow(/akm migrate apply/);
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
+  });
+});
+
+describe("scheduler.enabled", () => {
   test("scheduler.enabled tolerates non-canonical and duplicate entries, including 0.9.17-alpha grant objects", () => {
     writeCurrentConfig({
       scheduler: {
@@ -1407,48 +1148,9 @@ describe("extends inheritance (#945)", () => {
     });
     expect(warnings.join("\n")).toMatch(/Ignoring scheduler\.enabled entry "tasks\/nightly"/);
   });
-
-  test("config set on an unrelated key after adopting extends does not duplicate the base's fields into the local file", () => {
-    // Round-1 review finding: mutateConfig used to write the entire
-    // extends-merged EFFECTIVE config back to the local file on any
-    // `config set`/`unset`, baking every inherited field (connections,
-    // improve.strategies, ...) into the local file on the very next
-    // ordinary write — defeating the whole point of `extends`.
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(
-      path.join(dir, "base.json"),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        connections: {
-          fast: { endpoint: "https://api.example.test/v1", models: { fast: "base-model" } },
-        },
-        improve: { connection: "fast" },
-        archiveRetentionDays: 30,
-      }),
-    );
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
-
-    // `akm config set output.detail full` — an unrelated key. `updateConfig`
-    // goes through `mutateConfig` the same way `config set`'s CLI handler does.
-    updateConfig({ output: { detail: "full" } });
-
-    const raw = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
-    expect(raw.extends).toBe("./base.json");
-    expect(raw.output).toEqual({ detail: "full" });
-    // The base's fields must NOT have been duplicated into the local file.
-    expect(raw.connections).toBeUndefined();
-    expect(raw.improve).toBeUndefined();
-    expect(raw.archiveRetentionDays).toBeUndefined();
-
-    // The effective (loaded) config is unaffected: still inherited.
-    const config = loadConfig();
-    expect(config.connections?.fast?.models).toEqual({ fast: "base-model" });
-    expect(config.archiveRetentionDays).toBe(30);
-    expect(config.output).toEqual({ format: "json", detail: "full" });
-  });
 });
 
-describe("getConfigValueSource (#945)", () => {
+describe("getConfigValueSource", () => {
   test("reports 'default' when no config.json exists", () => {
     expect(getConfigValueSource("semanticSearchMode")).toBe("default");
   });
@@ -1458,27 +1160,8 @@ describe("getConfigValueSource (#945)", () => {
     expect(getConfigValueSource("semanticSearchMode")).toBe("local");
   });
 
-  test("reports 'extends:<ref>' for a key that only the base sets", () => {
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 30 }));
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
-
-    expect(getConfigValueSource("archiveRetentionDays")).toBe("extends:./base.json");
-  });
-
-  test("reports 'default' for a key neither the local file nor any base sets", () => {
+  test("reports 'default' for a key the local file does not set", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0" }));
     expect(getConfigValueSource("archiveRetentionDays")).toBe("default");
-  });
-
-  test("prefers 'local' over an inherited value for the same key", () => {
-    const dir = path.dirname(getConfigPath());
-    writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 30 }));
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({ configVersion: "0.9.0", extends: "./base.json", archiveRetentionDays: 5 }),
-    );
-
-    expect(getConfigValueSource("archiveRetentionDays")).toBe("local");
   });
 });

@@ -240,16 +240,14 @@ The effective configuration, as `akm config list` shows it, with where each valu
 ```
 
 - `config` is the redacted effective config tree. `entries` is the same data flattened to one row per leaf (arrays are
-  leaves) with `source`: `default` (no config file sets it), `file` (this install's `config.json`),
-  `extends:<ref>` (a config it extends), or `null` when the key cannot be traced (a key containing a `.`).
+  leaves) with `source`: `default` (no config file sets it), `file` (this install's `config.json`), or `null` when
+  the key cannot be traced (a key containing a `.`).
 - `automaticWriteTarget` is `{ name, path, workingStash }` for where a write goes:
   `AKM_BUNDLE_DIR` when set (even with a `defaultBundle`), otherwise the default bundle. `workingStash` is `true` when
   that directory is the one `bundles.list` reports as the working stash. It is `null` when neither exists, so writes
   need a target.
 - `projectWarnings` lists, in akm's own words, what it ignores in the `projects` of this install's `config.json` (a
-  relative path, a filter of the wrong shape, a reserved name). `localProjects` names the projects that file holds;
-  any other project in `config.projects` is inherited from an `extends` base. Project values are not redacted: they
-  hold no credentials.
+  relative path, a filter of the wrong shape, a reserved name). Project values are not redacted: they hold no credentials.
 - `connections` and `harnesses` are `config.connections` and `config.harnesses` as lists, each entry with its `name`
   and the entry's own keys (a connection's `endpoint` and `models`, a harness's `platform`, ...); keys are never
   included (`apiKey` shows as `[redacted]` or its `$VAR` reference). Reachability is a health probe, not config: use
@@ -775,8 +773,8 @@ retry a failed write automatically.
 | `bundles.rename` | `{bundle, name, dryRun?: true}` → what `akm bundle rename [--dry-run] <bundle> <name>` does, run in process. The result is the CLI's rename plan (`applied` is `false` for a dry run). |
 | `bundles.remove` | `{bundle, confirm: true}` → `akm bundle remove --yes -- <bundle>`. Managed installs may be deleted; local filesystem source files remain on disk. |
 | `bundles.setSettings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Existing validation rejects disabled targets and writable npm/website sources. The default bundle and write target are edited through `config.change`. |
-| `config.change` | `{set?: {key: string}, unset?: string[]}` → `akm config set` / `unset` on each key, in one validated, atomic write. Values are strings, as on the command line, and are coerced and checked against the schema; literal API keys and `configVersion` are refused. An unset is refused with `TARGET_NOT_UPDATABLE` when the key is inherited from an `extends` base or sits inside a connection or harness entry akm ignores, and an unset with no config file writes nothing (`saved: false`), all as `akm config unset` does. |
-| `config.changeProjects` | `{set?: {name: project}, unset?: string[]}` → adds, replaces and removes `projects` entries in one validated, atomic write; a rename sets the new name and unsets the old. Each `set` value is a whole project (`paths`, `from`, `filters`, `prefer`, `write`), written exactly as sent (the reader takes a project whole by name, so an inherited project's unchanged fields are written too, and a malformed local entry is replaced), and checked by akm's config schema. `none`, `__proto__`, `constructor`, `prototype` and empty names are refused. An `unset` (so a rename) of a project `config.json` does not hold, inherited or ignored by akm, is refused with `TARGET_NOT_UPDATABLE`. A set is a no-op (`saved: false`, nothing written or backed up) only when `config.json` already holds exactly that entry; one with parts akm ignores is rewritten. Names are not dotted keys, so they may contain a dot, which `config.change` cannot address. Unrelated config and credential references are kept, as for `config.change`. |
+| `config.change` | `{set?: {key: string}, unset?: string[]}` → `akm config set` / `unset` on each key, in one validated, atomic write. Values are strings, as on the command line, and are coerced and checked against the schema; literal API keys and `configVersion` are refused. An unset is refused with `TARGET_NOT_UPDATABLE` when the key sits inside a connection or harness entry akm ignores, and an unset with no config file writes nothing (`saved: false`), all as `akm config unset` does. |
+| `config.changeProjects` | `{set?: {name: project}, unset?: string[]}` → adds, replaces and removes `projects` entries in one validated, atomic write; a rename sets the new name and unsets the old. Each `set` value is a whole project (`paths`, `from`, `filters`, `prefer`, `write`), written exactly as sent (the reader takes a project whole by name, so a malformed local entry is replaced), and checked by akm's config schema. `none`, `__proto__`, `constructor`, `prototype` and empty names are refused. An `unset` (so a rename) of a project `config.json` does not hold, or akm ignores, is refused with `TARGET_NOT_UPDATABLE`. A set is a no-op (`saved: false`, nothing written or backed up) only when `config.json` already holds exactly that entry; one with parts akm ignores is rewritten. Names are not dotted keys, so they may contain a dot, which `config.change` cannot address. Unrelated config and credential references are kept, as for `config.change`. |
 | `documents.createKnowledge` | `{bundle, name, path?, content}` → `akm import -` with Markdown on stdin. Uses the existing writable AKM target, name/path validation, frontmatter preservation, index/Git effects, and no `--force`. Existing files are never overwritten. Fails fast with `ASSET_MUTATION_LEASE_HELD` while another writer holds the asset-mutation lease. |
 | `documents.save` | `{ref, revision, content}` → the existing shared Markdown writer with `force` and the expected raw-content hash. Only indexed writable AKM knowledge/memory documents accepted by `documents.readSource` can be edited. The writer takes the asset-mutation lease and compares the live source with `revision` inside it, immediately before writing. While another writer holds the lease the save fails fast with `ASSET_MUTATION_LEASE_HELD` instead of waiting. A stale revision raises `ASSET_CONTENT_CHANGED` without writing; a source deleted after it was loaded is refused (`ASSET_NOT_FOUND`) rather than recreated. An identical save returns `unchanged: true` without rewriting, reindexing or recording an event. Changed saves retain normal writer validation, indexing and Git effects. |
 | `documents.retire` | `{ref, revision}` → retires an indexed writable AKM asset the way `akm feedback`'s typed fix applies a change: it mints a retire proposal (source `propose`, no judged pair) and accepts it at once, so the asset follows the ordinary proposal-retire lifecycle. Skill packages, env/secret files and sessions are excluded; memory retirement carries its derived twin. The current raw SHA-256 `revision` is required, and the accept is refused if the bytes changed since. |
@@ -793,9 +791,7 @@ config sanitizer would remove unrelated legacy literal credentials, a bundle add
 would write config, is refused with `INVALID_FLAG_VALUE` and the user is asked to correct those settings through
 the CLI first. A settings request that changes nothing writes nothing and is not refused. It never writes
 `"[redacted]"` back as a credential. Bundle update writes only the lockfile, and feedback, knowledge creation and
-document editing do not save config, so none of them use that config-sanitizer check. Unsetting an inherited
-`defaultBundle` through `config.change` is refused with `TARGET_NOT_UPDATABLE`, as
-`akm config unset` refuses it.
+document editing do not save config, so none of them use that config-sanitizer check. Unsetting `defaultBundle` through `config.change` is an ordinary unset, as `akm config unset` is.
 
 The shared Markdown writer participates in the existing mutation lease, including CLI import/remember callers;
 omitting the optional expected hash retains their normal write/force behavior. This serializes cooperating AKM
