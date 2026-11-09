@@ -47,7 +47,7 @@
  * deleted (together with the namespace indirection, which Implement is free
  * to replace with ordinary named imports once real).
  *
- * Real, already-implemented modules (`src/tasks/source-v3.ts`,
+ * Real, already-implemented modules (`src/tasks/task-source.ts`,
  * `src/core/json-schema.ts`, `src/core/errors.ts`, `src/core/warn.ts`,
  * `src/workflows/resource-limits.ts`, `src/workflows/program/schema.ts`,
  * `src/workflows/exec/param-secrets.ts`, `src/execution/limits.ts`) are
@@ -92,10 +92,9 @@ import {
 } from "../../src/core/json-schema";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { EXECUTION_MAX_TIMEOUT_MS } from "../../src/execution/limits";
-import { TASK_V3_MAX_REDACT_NAMES } from "../../src/tasks/source/bounded-document";
+import { TASK_MAX_REDACT_NAMES, TASK_MAX_SCHEDULES } from "../../src/tasks/source/bounded-document";
 import * as ParseTaskSourceModule from "../../src/tasks/source/parse-task-source";
 import * as TaskSourceV4Module from "../../src/tasks/source/task-source-v4";
-import { TASK_V3_MAX_SCHEDULES } from "../../src/tasks/source-v3";
 import {
   TASK_RUN_BOOLEAN_FLAGS,
   TASK_RUN_RESERVED_FLAG_NAMES,
@@ -123,7 +122,7 @@ type TaskSourceV4Document = TaskSourceV4Module.TaskSourceV4Document;
 const ROOT = path.resolve(import.meta.dir, "../..");
 const FIXTURES_DIR = path.join(ROOT, "tests/fixtures/execution-contracts/tasks/v4");
 
-/** No default target/schedule — every call site supplies exactly the keys it means to exercise, mirroring source-v3.test.ts's `scheduled()` helper (which also defaults nothing but `version`/`akm.schedule`). */
+/** No default target/schedule — every call site supplies exactly the keys it means to exercise, mirroring task-source.test.ts's `scheduled()` helper (which also defaults nothing but `version`/`akm.schedule`). */
 function v4Doc(overrides: Record<string, unknown>): Record<string, unknown> {
   return { version: TASK_SOURCE_V4_VERSION, ...overrides };
 }
@@ -155,7 +154,7 @@ function expectTaskSourceInvalid(fn: () => unknown, pattern: RegExp | readonly R
  * path `field` — not nested under `akm.` — per `sourceError`'s
  * `${dotted} ${detail}` rendering (D2-N4). A v4 implementation that reuses
  * v3's `parseAkm` wholesale (nesting every execution control under
- * `["akm", key]`, `source-v3.ts:375,384,450,471,475,480,490`) would still
+ * `["akm", key]`, `task-source.ts:375,384,450,471,475,480,490`) would still
  * satisfy a loose `/timeout/i`-style substring match on
  * `"akm.timeout must be …"`; this pins the field path itself so that
  * regression class fails loudly instead of passing vacuously (test-review
@@ -466,7 +465,7 @@ describe("task source v4 — akm:/on: removal (B-11, B-12)", () => {
   test("an akm: key is TASK_SOURCE_INVALID, naming the removal and pointing at the top-level spellings", () => {
     // B-11 requires the detail to NAME THE REMOVAL, not merely mention "akm"
     // — `checkKeys`' generic unknown-field wording ("akm is an unsupported
-    // field.", src/tasks/source-v3.ts:333) also matches a bare `/akm/`, so a
+    // field.", src/tasks/task-source.ts:333) also matches a bare `/akm/`, so a
     // pattern-only check here is satisfiable by routing `akm:` through the
     // SAME generic closed-key rejection every other unrecognized top-level
     // key gets — exactly the regression class this test must catch (test-
@@ -742,16 +741,16 @@ describe("task source v4 — optional schedule (D2-N6, D2-N5, B-06..B-10, B-38)"
     );
   });
 
-  test("schedule count is bounded by TASK_V3_MAX_SCHEDULES, reused (B-09)", () => {
-    const atBound = Array.from({ length: TASK_V3_MAX_SCHEDULES }, (_, i) => ({ cron: `${i % 60} * * * *` }));
+  test("schedule count is bounded by TASK_MAX_SCHEDULES, reused (B-09)", () => {
+    const atBound = Array.from({ length: TASK_MAX_SCHEDULES }, (_, i) => ({ cron: `${i % 60} * * * *` }));
     expect(() =>
       parseTaskSourceV4Document(v4Doc({ uses: "commands/review", schedule: atBound }), { filePath: "/x.yml" }),
     ).not.toThrow();
 
-    const overBound = Array.from({ length: TASK_V3_MAX_SCHEDULES + 1 }, (_, i) => ({ cron: `${i % 60} * * * *` }));
+    const overBound = Array.from({ length: TASK_MAX_SCHEDULES + 1 }, (_, i) => ({ cron: `${i % 60} * * * *` }));
     expectTaskSourceInvalid(
       () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", schedule: overBound }), { filePath: "/x.yml" }),
-      new RegExp(String(TASK_V3_MAX_SCHEDULES)),
+      new RegExp(String(TASK_MAX_SCHEDULES)),
     );
   });
 
@@ -1112,7 +1111,7 @@ describe("task source v4 — top-level execution controls", () => {
         }),
       /timeout/i,
     );
-    // v3's parseTimeout hardcodes ["akm", "timeout"] (source-v3.ts:396) — a v4
+    // v3's parseTimeout hardcodes ["akm", "timeout"] (task-source.ts:396) — a v4
     // implementation that reuses it unmodified would render "akm.timeout …",
     // which /timeout/i alone cannot distinguish from the correct top-level
     // "timeout …" (test-review finding, tests/tasks/source-v4.test.ts:130).
@@ -1130,7 +1129,7 @@ describe("task source v4 — top-level execution controls", () => {
     expect(ok.execution.model).toBeNull();
     expect(ok.execution.agent).toBeNull();
 
-    // v3's nullableSelector hardcodes ["akm", key] (source-v3.ts:375) for
+    // v3's nullableSelector hardcodes ["akm", key] (task-source.ts:375) for
     // every one of these selectors — pin each field path individually
     // (test-review finding, tests/tasks/source-v4.test.ts:130).
     for (const key of ["connection", "harness", "engine"]) {
@@ -1154,7 +1153,7 @@ describe("task source v4 — top-level execution controls", () => {
     expectTopLevelFieldPath(agentError.message, "agent");
   });
 
-  test("redact rejects duplicate names and more than TASK_V3_MAX_REDACT_NAMES entries, at the TOP-LEVEL field path (not akm.redact)", () => {
+  test("redact rejects duplicate names and more than TASK_MAX_REDACT_NAMES entries, at the TOP-LEVEL field path (not akm.redact)", () => {
     const ok = parseTaskSourceV4Document(v4Doc({ uses: "commands/review", redact: ["TOKEN"] }), {
       filePath: "/x.yml",
     });
@@ -1167,13 +1166,13 @@ describe("task source v4 — top-level execution controls", () => {
       /duplicate/i,
     );
     // v3's redact duplicate/bound checks hardcode ["akm", "redact"]
-    // (source-v3.ts:471,475) — pin the top-level field path (test-review
+    // (task-source.ts:471,475) — pin the top-level field path (test-review
     // finding, tests/tasks/source-v4.test.ts:130).
     expectTopLevelFieldPath(duplicateError.message, "redact");
-    const tooMany = Array.from({ length: TASK_V3_MAX_REDACT_NAMES + 1 }, (_, i) => `TOKEN_${i}`);
+    const tooMany = Array.from({ length: TASK_MAX_REDACT_NAMES + 1 }, (_, i) => `TOKEN_${i}`);
     const tooManyError = expectTaskSourceInvalid(
       () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", redact: tooMany }), { filePath: "/x.yml" }),
-      new RegExp(String(TASK_V3_MAX_REDACT_NAMES)),
+      new RegExp(String(TASK_MAX_REDACT_NAMES)),
     );
     expectTopLevelFieldPath(tooManyError.message, "redact");
   });
@@ -1196,7 +1195,7 @@ describe("task source v4 — top-level execution controls", () => {
       () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", maxSteps: 0 }), { filePath: "/x.yml" }),
       /maxSteps/i,
     );
-    // v3 hardcodes ["akm", "maxSteps"] (source-v3.ts:480) — test-review
+    // v3 hardcodes ["akm", "maxSteps"] (task-source.ts:480) — test-review
     // finding, tests/tasks/source-v4.test.ts:130.
     expectTopLevelFieldPath(error.message, "maxSteps");
   });
@@ -1235,7 +1234,7 @@ describe("task source v4 — top-level execution controls", () => {
   });
 
   test("an invalid tags: value is TASK_SOURCE_INVALID at the TOP-LEVEL field path 'tags' (not akm.tags, D2-N7)", () => {
-    // v3 hardcodes ["akm", "tags"] (source-v3.ts:450) — test-review finding,
+    // v3 hardcodes ["akm", "tags"] (task-source.ts:450) — test-review finding,
     // tests/tasks/source-v4.test.ts:130.
     const error = expectTaskSourceInvalid(
       () => parseTaskSourceV4Document(v4Doc({ uses: "commands/review", tags: "not-an-array" }), { filePath: "/x.yml" }),

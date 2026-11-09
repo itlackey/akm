@@ -9,26 +9,15 @@
  * the v3 grammar went with the converter at the 0.9.32 floor (akm 0.9.32's
  * `akm migrate apply` was the last to read a v3 document).
  *
- * This file's surviving purpose is the `TaskV3*` type family
- * `src/tasks/prepare/prepare.ts` (`prepareTaskV3Execution`) and its
- * supporting modules still take as their input shape —
- * `PreparableTaskDocument` (`src/tasks/prepare/prepared-execution.ts`) is a
- * name for `TaskV3SourceDocument` that is not version-bound. The type
- * family keeps its `TaskV3*` name; only task source v4 reaches this shape
- * now — `src/tasks/source/project-v4.ts`'s `projectTaskSourceV4()` is the only
+ * This file holds the `PreparableTaskDocument` family
+ * `src/tasks/prepare/prepare.ts` (`prepareTaskExecution`) and its
+ * supporting modules take as their input shape. Only task source v4 reaches
+ * it — `src/tasks/source/project-v4.ts`'s `projectTaskSourceV4()` is the only
  * producer.
- *
- * The workflow-side trigger classifier that used to live here
- * (`classifyTaskV3Triggers`) went with the GitHub-shaped workflow format.
  */
 
 import type { ParsedBuiltinCommandAction } from "../commands/command/builtin-action";
 import type { ExecutionJsonObject } from "../execution/json";
-import { TASK_V3_MAX_SCHEDULES } from "./source/bounded-document";
-
-// Re-exported at its existing name so no importer changes: the one name a
-// surviving `src` consumer still imports (task-source-v4.ts).
-export { TASK_V3_MAX_SCHEDULES };
 
 export const TASK_EXTENSION = ".yml";
 export const TASK_NEAR_MISS_EXTENSION = ".yaml";
@@ -43,16 +32,16 @@ export function taskExtensionDetail(relPath: string): string {
 }
 
 /** Closed authoring vocabulary. Arbitrary GitHub `{0}` shell templates are not accepted. */
-export const TASK_V3_HOST_SHELLS = ["bash", "sh", "zsh", "pwsh", "powershell", "cmd"] as const;
-export type TaskV3HostShell = (typeof TASK_V3_HOST_SHELLS)[number];
+export const TASK_HOST_SHELLS = ["bash", "sh", "zsh", "pwsh", "powershell", "cmd"] as const;
+export type TaskHostShell = (typeof TASK_HOST_SHELLS)[number];
 
-export type TaskV3UsesTarget =
+export type TaskUsesTarget =
   | Readonly<{ kind: "builtin-command"; ref: "akm/command" }>
   | Readonly<{ kind: "command" | "workflow" | "script"; ref: string }>;
 
-export type TaskV3Environment = Readonly<Record<string, string | number | boolean>>;
+export type TaskEnvironment = Readonly<Record<string, string | number | boolean>>;
 
-export interface TaskV3AkmOptions {
+export interface TaskAkmOptions {
   readonly schedule?: string;
   readonly enabled?: boolean;
   readonly description?: string;
@@ -71,17 +60,17 @@ export interface TaskV3AkmOptions {
   readonly maxRetries?: number;
 }
 
-export type TaskV3Target =
+export type TaskTarget =
   | Readonly<{
       kind: "uses";
-      uses: TaskV3UsesTarget;
+      uses: TaskUsesTarget;
       with?: ExecutionJsonObject;
       command?: ParsedBuiltinCommandAction;
     }>
   | Readonly<{
       kind: "run";
       run: string;
-      shell?: TaskV3HostShell;
+      shell?: TaskHostShell;
       workingDirectory?: string;
     }>;
 
@@ -96,12 +85,12 @@ interface PreparableTaskTriggerPlan {
   readonly schedules: readonly Readonly<{ cron: string; source: string; ordinal: number }>[];
 }
 
-export interface TaskV3SourceDocument {
+export interface PreparableTaskDocument {
   readonly version: 3;
   readonly name?: string;
-  readonly target: TaskV3Target;
-  readonly env?: TaskV3Environment;
-  readonly akm?: Readonly<TaskV3AkmOptions>;
+  readonly target: TaskTarget;
+  readonly env?: TaskEnvironment;
+  readonly akm?: Readonly<TaskAkmOptions>;
   readonly triggers: PreparableTaskTriggerPlan;
   readonly source: Readonly<{ path: string }>;
 }

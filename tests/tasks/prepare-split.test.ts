@@ -6,7 +6,7 @@
  * Contract for `src/tasks/prepare/**`'s three-caller shape parity (spec
  * docs/plans/specs/p1b-model-extraction.md §4, Lane B / D4 module map).
  *
- * `prepareTaskV3Execution` moved body-intact to `src/tasks/prepare/prepare.ts`
+ * `prepareTaskExecution` moved body-intact to `src/tasks/prepare/prepare.ts`
  * at the P1b split, behind a `src/tasks/runtime-v3.ts` compat shim kept only
  * so production callers did not all need rewiring in the same change-set.
  * P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, row B-25, F-A2.15)
@@ -18,10 +18,10 @@
  *
  * This file pins that each caller's EXACT context shape — as literally
  * constructed at its call site today — produces the expected
- * `PreparedTaskV3Execution` once routed through `prepare/prepare`'s entry
- * point. The context objects are typed against `PrepareTaskV3ExecutionContext`
+ * `PreparedTaskExecution` once routed through `prepare/prepare`'s entry
+ * point. The context objects are typed against `PrepareTaskExecutionContext`
  * (a real, tsc-checked type — not a hand-rolled guess), and
- * `prepareTaskV3Execution` is typed as `typeof prepareTaskV3Execution` from
+ * `prepareTaskExecution` is typed as `typeof prepareTaskExecution` from
  * that same live import — so a caller-shaped context literal that does not
  * structurally satisfy the real parameter type fails `tsc`, not merely a
  * runtime assertion. This is the "type-level usage" proof: if the entry's
@@ -33,7 +33,7 @@
  * critically — never invokes `resolveAsset`/`readFile`/`commandSourceLoader`
  * (those branches belong to the command/workflow/script arms). That isolates
  * this file's one concern — did each caller's context shape survive the P1b
- * move and the P4 shim deletion unchanged — from `prepareTaskV3Execution`'s
+ * move and the P4 shim deletion unchanged — from `prepareTaskExecution`'s
  * per-kind behavior, which is already characterized elsewhere (the P0/P1a
  * suites and this phase's Lane A/C tests). Each stub below throws if invoked,
  * so an accidental call is itself a loud test failure.
@@ -51,8 +51,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { makeBundleRef } from "../../src/core/asset/asset-ref";
 import type { AkmConfig } from "../../src/core/config/config-types";
-import { prepareTaskV3Execution } from "../../src/tasks/prepare/prepare";
-import type { PrepareTaskV3ExecutionContext } from "../../src/tasks/prepare/prepared-execution";
+import { prepareTaskExecution } from "../../src/tasks/prepare/prepare";
+import type { PrepareTaskExecutionContext } from "../../src/tasks/prepare/prepared-execution";
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../src/tasks/source/project-v4";
 import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
@@ -89,7 +89,7 @@ describe("prepare/prepare.ts's entry — three-caller shape parity (P1b spec §4
     const root = sandboxRoot();
     const document = shellDocument(root);
     const bundleName = "bundle";
-    const context: PrepareTaskV3ExecutionContext = {
+    const context: PrepareTaskExecutionContext = {
       taskId: "nightly",
       taskRef: makeBundleRef(bundleName, "tasks/nightly"),
       bundleName,
@@ -102,7 +102,7 @@ describe("prepare/prepare.ts's entry — three-caller shape parity (P1b spec §4
       },
     };
 
-    const prepared = await prepareTaskV3Execution(document, context);
+    const prepared = await prepareTaskExecution(document, context);
     expect(prepared).toMatchObject({ kind: "shell", command: "printf ok" });
   });
 
@@ -110,7 +110,7 @@ describe("prepare/prepare.ts's entry — three-caller shape parity (P1b spec §4
     const root = sandboxRoot();
     const document = shellDocument(root);
     const bundleName = "bundle";
-    const context: PrepareTaskV3ExecutionContext = {
+    const context: PrepareTaskExecutionContext = {
       taskId: "nightly",
       taskRef: makeBundleRef(bundleName, "tasks/nightly"),
       bundleName,
@@ -126,7 +126,7 @@ describe("prepare/prepare.ts's entry — three-caller shape parity (P1b spec §4
       },
     };
 
-    const prepared = await prepareTaskV3Execution(document, context);
+    const prepared = await prepareTaskExecution(document, context);
     expect(prepared).toMatchObject({ kind: "shell", command: "printf ok" });
   });
 
@@ -134,7 +134,7 @@ describe("prepare/prepare.ts's entry — three-caller shape parity (P1b spec §4
     const root = sandboxRoot();
     const document = shellDocument(root);
     const bundleName = "bundle";
-    const context: PrepareTaskV3ExecutionContext = {
+    const context: PrepareTaskExecutionContext = {
       taskId: "nightly",
       taskRef: makeBundleRef(bundleName, "tasks/nightly"),
       bundleName,
@@ -156,7 +156,7 @@ describe("prepare/prepare.ts's entry — three-caller shape parity (P1b spec §4
       },
     };
 
-    const prepared = await prepareTaskV3Execution(document, context);
+    const prepared = await prepareTaskExecution(document, context);
     expect(prepared).toMatchObject({ kind: "shell", command: "printf ok" });
   });
 });

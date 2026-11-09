@@ -92,11 +92,11 @@ import {
   shippedAlias,
 } from "../../integrations/agent/execution";
 import { isSchedulerRefEnabled } from "../../tasks/activation-config";
-import type { PreparableTaskDocument } from "../../tasks/prepare/prepared-execution";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../../tasks/source/task-input-diagnostics";
 import { validateTaskConceptId, validateTaskId } from "../../tasks/task-id";
+import type { PreparableTaskDocument } from "../../tasks/task-source";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { prepareCommandInvocation } from "../command/command-execution";
 import { parseTaskRef, resolveTaskReadBundle, taskIdForAdapter } from "./tasks";

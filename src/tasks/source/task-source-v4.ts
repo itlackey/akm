@@ -44,8 +44,8 @@ import { EXECUTION_MAX_TIMEOUT_MS } from "../../execution/limits";
 import { classifyTargetRef } from "../../execution/target-ref";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { WORKFLOW_ENV_VAR_NAME_PATTERN, WORKFLOW_MAX_SCHEMA_BYTES } from "../../workflows/resource-limits";
-import { TASK_V3_HOST_SHELLS, TASK_V3_MAX_SCHEDULES, type TaskV3Environment, type TaskV3HostShell } from "../source-v3";
 import { TASK_RUN_RESERVED_FLAG_NAMES } from "../task-run-reserved-flags";
+import { TASK_HOST_SHELLS, type TaskEnvironment, type TaskHostShell } from "../task-source";
 import {
   asRecord,
   type BoundedDocumentContext,
@@ -59,7 +59,8 @@ import {
   readBoundedTaskSourceYaml,
   sourceError,
   stringField,
-  TASK_V3_MAX_REDACT_NAMES,
+  TASK_MAX_REDACT_NAMES,
+  TASK_MAX_SCHEDULES,
   utf8Bytes,
 } from "./bounded-document";
 
@@ -113,7 +114,7 @@ const SUBSET_KEYWORD_NAMES = JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS.split(",")
   .filter((entry) => entry.length > 0);
 export const TASK_INPUT_DECLARATION_KEYS = Object.freeze([...SUBSET_KEYWORD_NAMES, "title", "description", "default"]);
 
-const SHELL_SET = new Set<string>(TASK_V3_HOST_SHELLS);
+const SHELL_SET = new Set<string>(TASK_HOST_SHELLS);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -131,7 +132,7 @@ export type TaskSourceV4Target =
   | Readonly<{
       kind: "run";
       run: string;
-      shell?: TaskV3HostShell;
+      shell?: TaskHostShell;
       workingDirectory?: string;
     }>;
 
@@ -165,7 +166,7 @@ export interface TaskSourceV4Document {
   readonly inputs?: InputContract;
   readonly output?: Readonly<Record<string, unknown>>;
   readonly target: TaskSourceV4Target;
-  readonly env?: TaskV3Environment;
+  readonly env?: TaskEnvironment;
   readonly execution: TaskSourceV4Execution;
   readonly schedule: readonly TaskSourceV4ScheduleBinding[];
   readonly manualOnly: boolean;
@@ -348,13 +349,13 @@ function parseTarget(input: ExecutionJsonObject, ctx: BoundedDocumentContext): T
   if (own(input, "with"))
     sourceError(ctx, ["with"], "is legal only with uses: akm/command; declare typed inputs: instead.");
   const run = stringField(input.run, ctx, ["run"], { nonempty: true }) as string;
-  let shell: TaskV3HostShell | undefined;
+  let shell: TaskHostShell | undefined;
   if (own(input, "shell")) {
     const rawShell = stringField(input.shell, ctx, ["shell"], { nonempty: true }) as string;
     if (!SHELL_SET.has(rawShell)) {
-      sourceError(ctx, ["shell"], `must be one of the closed host-shell table: ${TASK_V3_HOST_SHELLS.join(", ")}.`);
+      sourceError(ctx, ["shell"], `must be one of the closed host-shell table: ${TASK_HOST_SHELLS.join(", ")}.`);
     }
-    shell = rawShell as TaskV3HostShell;
+    shell = rawShell as TaskHostShell;
   }
   let workingDirectory: string | undefined;
   if (own(input, "working-directory")) {
@@ -386,7 +387,7 @@ function parseExecutionControls(input: ExecutionJsonObject, ctx: BoundedDocument
   if (own(input, "timeout")) out.timeout = parseTimeoutTopLevel(input.timeout, ctx);
   if (own(input, "redact")) {
     const names = parseStringArray(input.redact, ctx, ["redact"], {
-      max: TASK_V3_MAX_REDACT_NAMES,
+      max: TASK_MAX_REDACT_NAMES,
       pattern: WORKFLOW_ENV_VAR_NAME_PATTERN,
     });
     if (new Set(names).size !== names.length) sourceError(ctx, ["redact"], "must not contain duplicate names.");
@@ -523,7 +524,7 @@ function parseOutputSchema(value: ExecutionJsonValue, ctx: BoundedDocumentContex
 /**
  * True for the target kinds whose runtime actually consumes `output:` —
  * command invocations (`uses: commands/<ref>` and `uses: akm/command`), where
- * `prepareTaskV3Execution` forwards it as the invocation's outputSchema
+ * `prepareTaskExecution` forwards it as the invocation's outputSchema
  * (../prepare/prepare.ts, via prepare-support.ts's currentExecutionValues).
  * `run:`, `uses: scripts/`, and `uses: workflows/` executions carry no
  * output schema anywhere (run-native-task.ts decides status from the exit
@@ -652,8 +653,8 @@ function parseSchedule(
   if (!Array.isArray(raw) || raw.length === 0) {
     sourceError(ctx, ["schedule"], "must be a non-empty string or a non-empty list of {cron, inputs?} records.");
   }
-  if (raw.length > TASK_V3_MAX_SCHEDULES) {
-    sourceError(ctx, ["schedule"], `accepts at most ${TASK_V3_MAX_SCHEDULES} entries.`);
+  if (raw.length > TASK_MAX_SCHEDULES) {
+    sourceError(ctx, ["schedule"], `accepts at most ${TASK_MAX_SCHEDULES} entries.`);
   }
   const bindings = raw.map((entryRaw, index) => parseScheduleEntry(entryRaw, index, contract, ctx));
   return Object.freeze(bindings);

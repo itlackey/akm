@@ -40,7 +40,7 @@ import {
   TASK_NEAR_MISS_EXTENSION,
   taskExtensionDetail,
   taskSourceErrorDetail,
-} from "../../../tasks/source-v3";
+} from "../../../tasks/task-source";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";

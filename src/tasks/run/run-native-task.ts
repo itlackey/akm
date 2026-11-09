@@ -20,7 +20,7 @@ import { childProcessEnv } from "../../core/paths";
 import { runManagedSubprocess, type SpawnFn, streamCaptureFailure } from "../../core/subprocess";
 import { cleanupFrozenScript, frozenScriptCommand, materializeFrozenScript } from "../frozen-script";
 import type { ExecutionProvenanceContext } from "../model/invocation";
-import type { PreparedTaskV3Script, PreparedTaskV3Shell } from "../prepare/prepared-execution";
+import type { PreparedTaskScript, PreparedTaskShell } from "../prepare/prepared-execution";
 import { resolveAkmInvocation } from "../resolve-akm-bin";
 import { finishAttempt } from "./attempt-lifecycle";
 import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run-workflow-task";
@@ -44,7 +44,7 @@ import type { TaskRunResult, TaskRunStatus } from "./task-result";
  * Exported for direct unit testing with an explicit platform/env.
  */
 export function shellExecutable(
-  shell: PreparedTaskV3Shell["shell"],
+  shell: PreparedTaskShell["shell"],
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
@@ -61,7 +61,7 @@ export function shellExecutable(
 
 /** Exported for direct unit testing with an explicit platform/env. */
 export function shellCommand(
-  task: Pick<PreparedTaskV3Shell, "command" | "shell">,
+  task: Pick<PreparedTaskShell, "command" | "shell">,
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
@@ -114,7 +114,7 @@ function withExitCodePropagation(command: string): string {
  * quoted form) to this installation. Explicit paths and arbitrary shell
  * fragments remain author-controlled.
  */
-function resolveLeadingBareAkmCommand(command: string, shell: PreparedTaskV3Shell["shell"]): string {
+function resolveLeadingBareAkmCommand(command: string, shell: PreparedTaskShell["shell"]): string {
   const leadingBareAkm = /^(\s*)(?:akm(?:\.exe)?|'akm(?:\.exe)?'|"akm(?:\.exe)?")(?=$|[\s;|&])/i;
   if (!leadingBareAkm.test(command)) return command;
   const quoted = resolveAkmInvocation()
@@ -129,7 +129,7 @@ function resolveLeadingBareAkmCommand(command: string, shell: PreparedTaskV3Shel
   return command.replace(leadingBareAkm, (_match, leadingWhitespace: string) => `${leadingWhitespace}${invocation}`);
 }
 
-function quoteShellArgument(value: string, shell: PreparedTaskV3Shell["shell"]): string {
+function quoteShellArgument(value: string, shell: PreparedTaskShell["shell"]): string {
   switch (shell) {
     case "sh":
     case "bash":
@@ -146,7 +146,7 @@ function quoteShellArgument(value: string, shell: PreparedTaskV3Shell["shell"]):
 }
 
 export async function runNativeTask(input: {
-  task: PreparedTaskV3Shell | PreparedTaskV3Script;
+  task: PreparedTaskShell | PreparedTaskScript;
   logPath: string;
   startedAt: Date;
   now: () => Date;

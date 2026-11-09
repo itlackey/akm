@@ -28,7 +28,7 @@ import { UsageError } from "../../core/errors";
 import type { FileChange } from "../../core/file-change";
 import { warn } from "../../core/warn";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/source-v3";
+import { TASK_EXTENSION, TASK_NEAR_MISS_EXTENSION, taskExtensionDetail } from "../../tasks/task-source";
 import { resolveWorkflowSourceDomains } from "../../workflows/source-files";
 import { runBaseChecks } from "./base-linter";
 import { checkEnvForDangerousKeys } from "./env-key-rules";

@@ -55,7 +55,7 @@ import path from "node:path";
 import { isDangerousEnvKey } from "../../../commands/lint/env-key-rules";
 import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } from "../../../tasks/schedule-gates";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
-import { taskSourceErrorDetail } from "../../../tasks/source-v3";
+import { taskSourceErrorDetail } from "../../../tasks/task-source";
 import { checkWorkflowPlan, compileWorkflowSource } from "../../../workflows/compile";
 import { conceptIdForStashFile } from "../../asset/resolve-ref";
 import { isAkmRegistryCachePath, scanEnvKeyNames } from "../../common";

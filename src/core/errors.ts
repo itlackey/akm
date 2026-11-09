@@ -103,7 +103,7 @@ export type UsageErrorCode =
   // src/workflows/freeze/targets/task.ts's
   // taskDispatch and src/workflows/freeze/freeze.ts's resolveStep.
   | "COMPOSITION_INVALID"
-  // P1a: the sourceError funnel in src/tasks/source-v3.ts, re-coded from
+  // P1a: the sourceError funnel in src/tasks/source/bounded-document.ts, re-coded from
   // INVALID_FLAG_VALUE. Message text, field-path rendering (`$` for the
   // empty path), and the file:line location string are unchanged.
   | "TASK_SOURCE_INVALID"

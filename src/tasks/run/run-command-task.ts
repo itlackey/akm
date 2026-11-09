@@ -21,7 +21,7 @@ import type { TaskLogLineInput } from "../../core/logs-db";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunExecutionOptions } from "../../integrations/agent/runner-dispatch";
 import type { ExecutionProvenanceContext } from "../model/invocation";
-import type { PreparedTaskV3Command } from "../prepare/prepared-execution";
+import type { PreparedTaskCommand } from "../prepare/prepared-execution";
 import { finishAttempt } from "./attempt-lifecycle";
 import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run-workflow-task";
 import { appendHistory } from "./task-history";
@@ -29,7 +29,7 @@ import { persistRunLog, scrubTaskOutput, streamLines } from "./task-log";
 import type { TaskRunResult, TaskRunStatus } from "./task-result";
 
 export async function runPreparedCommandTask(input: {
-  task: PreparedTaskV3Command;
+  task: PreparedTaskCommand;
   logPath: string;
   startedAt: Date;
   now: () => Date;
@@ -104,7 +104,7 @@ export async function runPreparedCommandTask(input: {
 }
 
 function renderPromptLog(input: {
-  task: PreparedTaskV3Command;
+  task: PreparedTaskCommand;
   engineName: string;
   result: CommandDispatchResult;
   warnings?: readonly string[];

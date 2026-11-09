@@ -3,23 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The bounded-document front end and field helpers both task source grammars
- * share. Every helper below — including the `TASK_V3_MAX_*` resource bounds and
- * `assertBoundedTaskYamlDocument` — is owned here. `source-v3.ts` imports every
- * one of them (and re-exports `assertBoundedTaskYamlDocument` and the
- * `TASK_V3_MAX_*` constants at their existing names, since those were already
- * part of its public surface) and declares no copy of any of them.
- * `tests/tasks/bounded-document.test.ts`'s last describe block pins this with
- * an AST scan of `source-v3.ts`, not just a runtime behavior check (a copy
- * would pass every other test in that file and in
- * `tests/tasks/source-v3.test.ts`, because both files would still call
- * functions they have in scope either way).
+ * The bounded-document front end and field helpers for task source documents.
+ * Every helper below — including the `TASK_MAX_*` resource bounds and
+ * `assertBoundedTaskYamlDocument` — is owned here; `task-source-v4.ts` and
+ * `parse-task-source.ts` import them.
  *
- * This module deliberately imports NOTHING from `../source-v3` (not even a
- * type): `source-v3.ts` imports from this file, so a reverse edge here would
- * close an import cycle. Where a helper's signature referenced a v3-only type
- * (`TaskV3Environment`) the return type is inlined structurally instead —
- * invisible at runtime, and TypeScript's structural typing makes the inlined
+ * This module deliberately imports NOTHING from `../task-source` (not even a
+ * type), so no import cycle can form. Where a helper's signature referenced a
+ * type declared there (`TaskEnvironment`) the return type is inlined
+ * structurally instead — TypeScript's structural typing makes the inlined
  * shape and the named alias interchangeable at every call site.
  *
  * `parseTimeout` hardcodes the `["akm", …]` field path. Task source v4's
@@ -38,16 +30,16 @@ import { EXECUTION_MAX_TIMEOUT_MS } from "../../execution/limits";
 import { type StrictRecordSnapshot, snapshotStrictRecord } from "../../execution/record";
 import { WORKFLOW_ENV_VAR_NAME_PATTERN } from "../../workflows/resource-limits";
 
-// ── Resource bounds (D2-N4: owned here, re-exported by source-v3.ts) ───────
+// ── Resource bounds (D2-N4: owned here) ───────
 
-export const TASK_V3_MAX_JSON_DEPTH = 64;
-export const TASK_V3_MAX_JSON_NODES = 10_000;
-export const TASK_V3_MAX_COLLECTION_ITEMS = 1024;
-export const TASK_V3_MAX_OBJECT_KEYS = 256;
-export const TASK_V3_MAX_STRING_BYTES = 256 * 1024;
-export const TASK_V3_MAX_SCHEDULES = 64;
+export const TASK_MAX_JSON_DEPTH = 64;
+export const TASK_MAX_JSON_NODES = 10_000;
+export const TASK_MAX_COLLECTION_ITEMS = 1024;
+export const TASK_MAX_OBJECT_KEYS = 256;
+export const TASK_MAX_STRING_BYTES = 256 * 1024;
+export const TASK_MAX_SCHEDULES = 64;
 /** Max entries in a task's `redact:` env-name list. */
-export const TASK_V3_MAX_REDACT_NAMES = 32;
+export const TASK_MAX_REDACT_NAMES = 32;
 
 /** Parse context every helper in this module takes. */
 export interface BoundedDocumentContext {
@@ -107,10 +99,8 @@ export function cloneBoundedJson(
   ancestors: ReadonlySet<object> = new Set(),
 ): ExecutionJsonValue {
   state.nodes += 1;
-  if (state.nodes > TASK_V3_MAX_JSON_NODES)
-    sourceError(ctx, fieldPath, `exceeds the ${TASK_V3_MAX_JSON_NODES}-node limit.`);
-  if (depth > TASK_V3_MAX_JSON_DEPTH)
-    sourceError(ctx, fieldPath, `exceeds the nesting depth of ${TASK_V3_MAX_JSON_DEPTH}.`);
+  if (state.nodes > TASK_MAX_JSON_NODES) sourceError(ctx, fieldPath, `exceeds the ${TASK_MAX_JSON_NODES}-node limit.`);
+  if (depth > TASK_MAX_JSON_DEPTH) sourceError(ctx, fieldPath, `exceeds the nesting depth of ${TASK_MAX_JSON_DEPTH}.`);
   if (value === null || typeof value === "boolean") return value;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) sourceError(ctx, fieldPath, "must be a finite JSON number.");
@@ -118,8 +108,8 @@ export function cloneBoundedJson(
   }
   if (typeof value === "string") {
     if (!wellFormedUnicode(value)) sourceError(ctx, fieldPath, "must contain well-formed Unicode.");
-    if (utf8Bytes(value) > TASK_V3_MAX_STRING_BYTES) {
-      sourceError(ctx, fieldPath, `exceeds the ${TASK_V3_MAX_STRING_BYTES}-byte string limit.`);
+    if (utf8Bytes(value) > TASK_MAX_STRING_BYTES) {
+      sourceError(ctx, fieldPath, `exceeds the ${TASK_MAX_STRING_BYTES}-byte string limit.`);
     }
     return value;
   }
@@ -137,9 +127,9 @@ export function cloneBoundedJson(
       typeof rawLength !== "number" ||
       !Number.isInteger(rawLength) ||
       rawLength < 0 ||
-      rawLength > TASK_V3_MAX_COLLECTION_ITEMS
+      rawLength > TASK_MAX_COLLECTION_ITEMS
     ) {
-      sourceError(ctx, fieldPath, `array exceeds the ${TASK_V3_MAX_COLLECTION_ITEMS}-item limit.`);
+      sourceError(ctx, fieldPath, `array exceeds the ${TASK_MAX_COLLECTION_ITEMS}-item limit.`);
     }
     const length = rawLength as number;
     const keys = Reflect.ownKeys(value);
@@ -162,18 +152,14 @@ export function cloneBoundedJson(
     sourceError(ctx, fieldPath, cause instanceof Error ? cause.message : String(cause));
   }
   const entries = Object.entries(snapshot);
-  if (entries.length > TASK_V3_MAX_OBJECT_KEYS) {
-    sourceError(ctx, fieldPath, `mapping exceeds the ${TASK_V3_MAX_OBJECT_KEYS}-key limit.`);
+  if (entries.length > TASK_MAX_OBJECT_KEYS) {
+    sourceError(ctx, fieldPath, `mapping exceeds the ${TASK_MAX_OBJECT_KEYS}-key limit.`);
   }
   const result = Object.create(null) as Record<string, ExecutionJsonValue>;
   for (const [key, child] of entries) {
     if (!wellFormedUnicode(key)) sourceError(ctx, fieldPath, "contains a mapping key with malformed Unicode.");
-    if (utf8Bytes(key) > TASK_V3_MAX_STRING_BYTES) {
-      sourceError(
-        ctx,
-        fieldPath,
-        `contains a mapping key exceeding the ${TASK_V3_MAX_STRING_BYTES}-byte string limit.`,
-      );
+    if (utf8Bytes(key) > TASK_MAX_STRING_BYTES) {
+      sourceError(ctx, fieldPath, `contains a mapping key exceeding the ${TASK_MAX_STRING_BYTES}-byte string limit.`);
     }
     Object.defineProperty(result, key, {
       value: cloneBoundedJson(child, ctx, [...fieldPath, key], state, depth + 1, nextAncestors),
@@ -274,7 +260,7 @@ export function parseStringArray(
 
 /**
  * `akm.timeout` — v3-only (hardcodes the `["akm", "timeout"]` field path, see
- * this module's header). Body-intact from `source-v3.ts`.
+ * this module's header). Body-intact from `task-source.ts`.
  */
 export function parseTimeout(value: unknown, ctx: BoundedDocumentContext): string | number | null {
   if (value === null) return null;
@@ -346,11 +332,11 @@ export function assertBoundedTaskYamlDocument(
     const node = current.node;
     if (node === null || node === undefined) continue;
     nodes += 1;
-    if (nodes > TASK_V3_MAX_JSON_NODES) {
-      yamlAstError(options, node, `YAML exceeds the ${TASK_V3_MAX_JSON_NODES}-node limit.`);
+    if (nodes > TASK_MAX_JSON_NODES) {
+      yamlAstError(options, node, `YAML exceeds the ${TASK_MAX_JSON_NODES}-node limit.`);
     }
-    if (current.depth > TASK_V3_MAX_JSON_DEPTH) {
-      yamlAstError(options, node, `YAML exceeds the nesting depth of ${TASK_V3_MAX_JSON_DEPTH}.`);
+    if (current.depth > TASK_MAX_JSON_DEPTH) {
+      yamlAstError(options, node, `YAML exceeds the nesting depth of ${TASK_MAX_JSON_DEPTH}.`);
     }
     if (isAlias(node)) yamlAstError(options, node, "YAML aliases are unsupported.");
     if ((node as { anchor?: unknown }).anchor !== undefined) {
@@ -361,8 +347,8 @@ export function assertBoundedTaskYamlDocument(
     }
     if (isScalar(node)) continue;
     if (isSeq(node)) {
-      if (node.items.length > TASK_V3_MAX_COLLECTION_ITEMS) {
-        yamlAstError(options, node, `YAML sequence exceeds the ${TASK_V3_MAX_COLLECTION_ITEMS}-item limit.`);
+      if (node.items.length > TASK_MAX_COLLECTION_ITEMS) {
+        yamlAstError(options, node, `YAML sequence exceeds the ${TASK_MAX_COLLECTION_ITEMS}-item limit.`);
       }
       for (let index = node.items.length - 1; index >= 0; index -= 1) {
         stack.push({ node: node.items[index], depth: current.depth + 1 });
@@ -370,8 +356,8 @@ export function assertBoundedTaskYamlDocument(
       continue;
     }
     if (isMap(node)) {
-      if (node.items.length > TASK_V3_MAX_OBJECT_KEYS) {
-        yamlAstError(options, node, `YAML mapping exceeds the ${TASK_V3_MAX_OBJECT_KEYS}-key limit.`);
+      if (node.items.length > TASK_MAX_OBJECT_KEYS) {
+        yamlAstError(options, node, `YAML mapping exceeds the ${TASK_MAX_OBJECT_KEYS}-key limit.`);
       }
       for (let index = node.items.length - 1; index >= 0; index -= 1) {
         const pair = node.items[index];
@@ -382,12 +368,8 @@ export function assertBoundedTaskYamlDocument(
         if (!wellFormedUnicode(pair.key.value)) {
           yamlAstError(options, pair.key, "YAML mapping key must contain well-formed Unicode.");
         }
-        if (utf8Bytes(pair.key.value) > TASK_V3_MAX_STRING_BYTES) {
-          yamlAstError(
-            options,
-            pair.key,
-            `YAML mapping key exceeds the ${TASK_V3_MAX_STRING_BYTES}-byte string limit.`,
-          );
+        if (utf8Bytes(pair.key.value) > TASK_MAX_STRING_BYTES) {
+          yamlAstError(options, pair.key, `YAML mapping key exceeds the ${TASK_MAX_STRING_BYTES}-byte string limit.`);
         }
         if (pair.key.value === "<<") yamlAstError(options, pair.key, "YAML merge keys are unsupported.");
         stack.push({ node: pair.value, depth: current.depth + 1 });

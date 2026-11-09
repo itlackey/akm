@@ -15,8 +15,8 @@
  * modified. `TaskDefinition` gains no `inputs`/`output` in P2a; P2b widens
  * it when it widens the adapter." The real P2a seam is
  * `projectTaskSourceV4(doc): PreparableTaskDocument` (§3.5), where
- * `PreparableTaskDocument` is a NAME for `TaskV3SourceDocument` (§3.1's file
- * table) — the type `prepareTaskV3Execution` already consumes, unmodified.
+ * `PreparableTaskDocument` is a NAME for `PreparableTaskDocument` (§3.1's file
+ * table) — the type `prepareTaskExecution` already consumes, unmodified.
  * This file tests exactly that seam.
  *
  * The projection is DELIBERATELY LOSSY relative to the parsed
@@ -65,9 +65,9 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import type { PreparableTaskDocument } from "../../src/tasks/prepare/prepared-execution";
 import * as ProjectV4Module from "../../src/tasks/source/project-v4";
 import * as TaskSourceV4Module from "../../src/tasks/source/task-source-v4";
+import type { PreparableTaskDocument } from "../../src/tasks/task-source";
 
 const { projectTaskSourceV4 } = ProjectV4Module;
 const { parseTaskSourceV4, TASK_SOURCE_V4_VERSION } = TaskSourceV4Module;

@@ -4,7 +4,7 @@
 
 /**
  * The one shared implementation of frozen-script byte/interpreter capture.
- * Both prepare.ts's script arm (prepareTaskV3Execution) and
+ * Both prepare.ts's script arm (prepareTaskExecution) and
  * prepare-script-target.ts's typed prepareScriptTarget() call
  * captureScriptTarget() below, so the two never drift into two copies of the
  * same capture logic.
@@ -14,9 +14,9 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { UsageError } from "../../core/errors";
 import { isBunStandaloneMain } from "../resolve-akm-bin";
-import type { TaskV3ScriptInterpreter } from "./prepared-execution";
+import type { TaskScriptInterpreter } from "./prepared-execution";
 
-const SCRIPT_INTERPRETERS: Readonly<Record<string, TaskV3ScriptInterpreter>> = Object.freeze({
+const SCRIPT_INTERPRETERS: Readonly<Record<string, TaskScriptInterpreter>> = Object.freeze({
   ".sh": "sh",
   ".ts": "bun",
   ".js": "bun",
@@ -35,7 +35,7 @@ const SCRIPT_INTERPRETERS: Readonly<Record<string, TaskV3ScriptInterpreter>> = O
   ".kts": "kotlin",
 });
 
-const SHEBANG_INTERPRETERS: ReadonlyArray<readonly [RegExp, TaskV3ScriptInterpreter]> = [
+const SHEBANG_INTERPRETERS: ReadonlyArray<readonly [RegExp, TaskScriptInterpreter]> = [
   [/^(bash|sh|zsh|dash|ksh)$/, "sh"],
   [/^python[0-9.]*$/, "python"],
   [/^ruby$/, "ruby"],
@@ -45,7 +45,7 @@ const SHEBANG_INTERPRETERS: ReadonlyArray<readonly [RegExp, TaskV3ScriptInterpre
   [/^node$/, "node"],
 ];
 
-function interpreterFromShebang(bytes: Uint8Array | undefined): TaskV3ScriptInterpreter | undefined {
+function interpreterFromShebang(bytes: Uint8Array | undefined): TaskScriptInterpreter | undefined {
   if (!bytes || bytes.length < 2 || bytes[0] !== 0x23 || bytes[1] !== 0x21) return undefined;
   const newline = bytes.indexOf(0x0a);
   const lineBytes = newline === -1 ? bytes.subarray(2) : bytes.subarray(2, newline);
@@ -64,7 +64,7 @@ function nodeStripsTypeScript(): boolean {
   return Boolean(features?.typescript);
 }
 
-export function scriptInterpreter(extension: string, ref: string, bytes?: Uint8Array): TaskV3ScriptInterpreter {
+export function scriptInterpreter(extension: string, ref: string, bytes?: Uint8Array): TaskScriptInterpreter {
   const interpreter = SCRIPT_INTERPRETERS[extension] ?? (extension === "" ? interpreterFromShebang(bytes) : undefined);
   if (!interpreter) {
     throw new UsageError(
@@ -87,7 +87,7 @@ export function scriptInterpreter(extension: string, ref: string, bytes?: Uint8A
 
 /** The fields both script-projection call sites (prepare.ts, prepare-script-target.ts) freeze identically. */
 export interface CapturedScriptTarget {
-  readonly interpreter: TaskV3ScriptInterpreter;
+  readonly interpreter: TaskScriptInterpreter;
   readonly extension: string;
   /** Immutable base64 encoding of the exact source bytes. */
   readonly bytesBase64: string;

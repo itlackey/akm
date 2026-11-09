@@ -46,8 +46,8 @@ import { selectBackend } from "../../tasks/backends";
 import type { DispatchEntry, EntryChange, LegacyRow, SchedulerBackend } from "../../tasks/backends/types";
 import { unrunnableTasks } from "../../tasks/dispatch";
 import { movedLocations } from "../../tasks/installation";
-import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
-import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
+import { prepareTaskExecution } from "../../tasks/prepare/prepare";
+import type { PrepareTaskExecutionContext } from "../../tasks/prepare/prepared-execution";
 import { isCheckoutInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
 import { activeTaskSources, resolveBundleAsset } from "../../tasks/run/load-task";
 import { createExecutionProvenanceContext } from "../../tasks/run/provenance";
@@ -57,8 +57,8 @@ import { exitCodeForStatus, type RunTaskOptions, type TaskRunResult } from "../.
 import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT } from "../../tasks/schedule";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
-import type { TaskV3SourceDocument } from "../../tasks/source-v3";
 import { normaliseTaskConceptId, normaliseTaskId } from "../../tasks/task-id";
+import type { PreparableTaskDocument } from "../../tasks/task-source";
 
 export interface TasksAddInput {
   id: string;
@@ -97,7 +97,7 @@ export interface TasksAddResult {
   bundleDir: string;
   schedule: string;
   enabled: boolean;
-  target: TaskV3SourceDocument["target"];
+  target: PreparableTaskDocument["target"];
   /** What the sync that followed did to the OS scheduler entry; absent when the scheduler was unavailable (see `warnings`). */
   sync?: TasksSyncResult;
   warnings?: string[];
@@ -142,7 +142,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   const parsedTask = parseTaskSource({ yaml, filePath: assetPath });
   const task = projectTaskSourceV4(parsedTask.v4);
   const qualifiedRef = makeBundleRef(bundle.bundleName, `tasks/${id}`);
-  await prepareTaskV3Execution(task, {
+  await prepareTaskExecution(task, {
     taskId: id,
     taskRef: qualifiedRef,
     bundleName: bundle.bundleName,
@@ -661,7 +661,7 @@ function taskProjectionAssetResolver(
   config: AkmConfig,
   bundleName: string,
   bundleRoot: string,
-): NonNullable<PrepareTaskV3ExecutionContext["resolveAsset"]> {
+): NonNullable<PrepareTaskExecutionContext["resolveAsset"]> {
   return async ({ bundle, type, name }) => {
     if (bundle === bundleName) {
       return { file: await resolveAssetPath(bundleRoot, type, name), bundleRoot };
