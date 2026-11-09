@@ -18,7 +18,6 @@ fs.writeFileSync(
   JSON.stringify({
     bundles: { stash: { path: stash, writable: true }, catalog: { path: catalog, writable: false } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     semanticSearchMode: "off",
   }),
 );

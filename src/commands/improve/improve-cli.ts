@@ -174,7 +174,7 @@ export const improveCommand = defineCommand({
     "dry-run": { type: "boolean", description: "Show planned actions without writing", default: false },
     bundle: {
       type: "string",
-      description: "Bundle to improve (default: defaultWriteTarget, else the working bundle)",
+      description: "Bundle to improve (default: the working bundle)",
     },
     limit: { type: "string", description: "Maximum number of assets to process (highest salience first)" },
     "timeout-ms": {

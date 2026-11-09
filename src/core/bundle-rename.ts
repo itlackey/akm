@@ -14,7 +14,7 @@
  * §11.5). This module is the rekey transaction that guard's docstring points
  * to.
  *
- * Rewritten: the config `bundles` key, `defaultBundle`/`defaultWriteTarget`
+ * Rewritten: the config `bundles` key, `defaultBundle`
  * and `projects.*.write.bundle`/`projects.*.from` when they name the old id, every `scheduler.enabled[].ref` with the old
  * `//` prefix, the lockfile entry id, and the index/state rows above.
  *
@@ -60,7 +60,6 @@ export interface BundleRenamePlan {
   newId: string;
   config: {
     defaultBundleChanges: boolean;
-    defaultWriteTargetChanges: boolean;
     /** `scheduler.enabled` refs that carry the old `<old>//` prefix. */
     schedulerRefs: string[];
   };
@@ -165,7 +164,6 @@ function renameBundleInConfig(config: AkmConfig, oldId: string, newId: string): 
     bundles,
     ...(projects ? { projects } : {}),
     ...(config.defaultBundle === oldId ? { defaultBundle: newId } : {}),
-    ...(config.defaultWriteTarget === oldId ? { defaultWriteTarget: newId } : {}),
     ...(scheduler ? { scheduler } : {}),
   };
 }
@@ -261,7 +259,6 @@ async function buildPlan(
     newId,
     config: {
       defaultBundleChanges: config.defaultBundle === oldId,
-      defaultWriteTargetChanges: config.defaultWriteTarget === oldId,
       schedulerRefs,
     },
     lock: { present: lockPresent },
@@ -339,7 +336,7 @@ export async function renameBundle(
   const plan = await buildPlan(config, oldId, newId, sched);
   if (options.dryRun) return { ...plan, applied: false };
 
-  // Config: the bundles key, defaultBundle/defaultWriteTarget, the projects'
+  // Config: the bundles key, defaultBundle, the projects'
   // write.bundle and from entries, and every
   // scheduler.enabled[].ref with the old `//` prefix — all under one write
   // (validated again inside the config lock).

@@ -33,7 +33,6 @@ test("a zero-result search in state.db is reported as a coverage gap", async () 
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
   } as AkmConfig);
   saveConfig(config);
   await akmIndex({ stashDir: stash, full: true });

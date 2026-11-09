@@ -673,12 +673,13 @@ describe("OKF first-class conformance", () => {
   });
 
   test("the native akm-workflow adapter remains executable", async () => {
+    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
+    delete process.env.AKM_BUNDLE_DIR;
     const workflowRoot = path.join(storage.root, "native-workflow-bundle");
     write(workflowRoot, "deploy.md", getWorkflowTemplate());
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "native",
-      defaultWriteTarget: "native",
       connections: {
         "test-llm": {
           endpoint: "http://localhost:1/v1/chat/completions",
@@ -730,7 +731,6 @@ describe("OKF first-class conformance", () => {
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "local",
-      defaultWriteTarget: "local",
       connections: {
         "test-llm": {
           endpoint: "http://localhost:1/v1/chat/completions",
@@ -752,6 +752,8 @@ describe("OKF first-class conformance", () => {
   test.skipIf(process.platform === "win32")(
     "standalone workflow lookup follows a file symlink and handles extension case deterministically",
     async () => {
+      // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
+      delete process.env.AKM_BUNDLE_DIR;
       const workflowRoot = path.join(storage.root, "standalone-workflow-safety");
       const outside = path.join(storage.root, "outside-workflow.md");
       write(workflowRoot, "upper.MD", getWorkflowTemplate());
@@ -762,7 +764,6 @@ describe("OKF first-class conformance", () => {
       writeSandboxConfig({
         semanticSearchMode: "off",
         defaultBundle: "native",
-        defaultWriteTarget: "native",
         bundles: {
           native: {
             path: workflowRoot,
@@ -916,11 +917,12 @@ describe("OKF first-class conformance", () => {
     });
   });
 
-  test("workflow authoring rejects an OKF defaultWriteTarget", () => {
+  test("workflow authoring rejects an OKF defaultBundle", () => {
+    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
+    delete process.env.AKM_BUNDLE_DIR;
     writeSandboxConfig({
       semanticSearchMode: "off",
-      defaultBundle: "local",
-      defaultWriteTarget: "adversarial",
+      defaultBundle: "adversarial",
       bundles: {
         local: {
           path: storage.stashDir,
@@ -967,8 +969,7 @@ describe("OKF first-class conformance", () => {
     const before = fs.readFileSync(oldPath, "utf8");
     writeSandboxConfig({
       semanticSearchMode: "off",
-      defaultBundle: "vendor",
-      defaultWriteTarget: "team",
+      defaultBundle: "team",
       bundles: {
         vendor: {
           path: okfRoot,

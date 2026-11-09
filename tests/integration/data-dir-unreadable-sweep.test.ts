@@ -85,7 +85,6 @@ function stashConfig(stashDir: string): AkmConfig {
     semanticSearchMode: "off",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
   } as AkmConfig;
 }
 

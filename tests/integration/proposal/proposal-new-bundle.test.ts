@@ -78,7 +78,6 @@ beforeEach(() => {
       frozen: { path: readonlyDir, writable: false },
     },
     defaultBundle: "work",
-    defaultWriteTarget: "work",
     harnesses: { agent: { platform: "claude", bin } },
   });
 });

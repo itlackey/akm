@@ -55,7 +55,6 @@ async function indexStash(stashDir: string): Promise<void> {
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
     }),
   );
   await akmIndex({ stashDir, full: true });
@@ -143,8 +142,7 @@ describe("#591: planned refs carry a pre-resolved filePath", () => {
           other: { path: other },
           stash: { path: stash, writable: false },
         },
-        defaultBundle: "other",
-        defaultWriteTarget: "stash",
+        defaultBundle: "stash",
       }),
     );
     await akmIndex({ stashDir: other, full: true });
@@ -155,7 +153,6 @@ describe("#591: planned refs carry a pre-resolved filePath", () => {
         stash: { path: stash, writable: true },
       },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
     });
     saveConfig(
       withTestImproveLlm({
@@ -164,8 +161,7 @@ describe("#591: planned refs carry a pre-resolved filePath", () => {
           other: { path: other },
           stash: { path: stash, writable: false },
         },
-        defaultBundle: "other",
-        defaultWriteTarget: "stash",
+        defaultBundle: "stash",
       }),
     );
 

@@ -99,7 +99,7 @@ akm improve --limit 10                # Cap the refs the run processes
 ```
 
 A run improves one bundle, the one it writes to (`--bundle`, else
-`defaultWriteTarget`, else your working bundle), and leaves assets in your other
+your working bundle), and leaves assets in your other
 bundles alone even when they are writable. Run `akm improve --bundle team` to
 improve another one. A scheduled run covers the same single bundle, so schedule
 one `akm improve --bundle <name>` run per other bundle you want improved.

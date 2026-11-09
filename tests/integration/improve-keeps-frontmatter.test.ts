@@ -41,7 +41,6 @@ async function acceptedContent(stash: string): Promise<string> {
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
   } as AkmConfig;
   const { assetPath } = await akmProposalAccept({ stashDir: stash, config, id: listProposals(stash)[0]!.id });
   return fs.readFileSync(assetPath, "utf8");
@@ -53,7 +52,6 @@ function distillConfig(stash: string, qualityGate: boolean): AkmConfig {
     semanticSearchMode: "auto",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       default: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test-model" } },
     },
@@ -109,7 +107,6 @@ describe("improve keeps the frontmatter it does not own (#1454)", () => {
       semanticSearchMode: "off",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
     } as AkmConfig;
     await emitPromotionProposal(
       { op: "promote", ref: "memories/source", knowledgeRef: "knowledge/new-slug", reason: "r", description: "d" },

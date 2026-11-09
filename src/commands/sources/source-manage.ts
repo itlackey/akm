@@ -192,7 +192,6 @@ export function removeStash(target: string): SourceRemoveResult {
         ...config,
         bundles: Object.keys(bundles).length > 0 ? bundles : undefined,
         ...(config.defaultBundle === key ? { defaultBundle: undefined } : {}),
-        ...(config.defaultWriteTarget === key ? { defaultWriteTarget: undefined } : {}),
       },
       key,
     );

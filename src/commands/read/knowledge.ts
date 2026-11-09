@@ -222,7 +222,7 @@ function parseWriteRefs(rawRefs: string[], flag: "--xref" | "--supersedes"): Par
  *
  *   1. the resolved write target (mutable),
  *   2. the primary working stash when it is a different directory (mutable) —
- *      a `--bundle`/`defaultWriteTarget` write must still see working-stash
+ *      a `--bundle` write must still see working-stash
  *      assets, which `resolveSourceEntries(writeTarget)` alone omits,
  *   3. every other configured source (read-only for demotion purposes).
  *
@@ -645,7 +645,7 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string, ta
  * Write a markdown asset (knowledge or memory) to the resolved write target.
  *
  * Resolves the write target via the v1 precedence chain (`--bundle` →
- * `defaultWriteTarget` → working stash), validates the path is within the
+ * working stash), validates the path is within the
  * type root, enforces `--force` semantics, and delegates the actual write
  * to `writeAssetToSource`.
  */

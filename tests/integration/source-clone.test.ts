@@ -205,7 +205,10 @@ describe("akmClone", () => {
     expect(fs.readFileSync(destination, "utf8")).toBe("echo original\n");
   });
 
-  test("uses defaultWriteTarget when --bundle is omitted", async () => {
+  test("uses defaultBundle when --bundle is omitted", async () => {
+    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
+
+    delete process.env.AKM_BUNDLE_DIR;
     const targetDir = createStashDir("akm-clone-default-target-");
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo deploy\n");
     saveConfig({
@@ -214,12 +217,12 @@ describe("akmClone", () => {
         searchpath: { path: searchPathDir },
         team: { path: targetDir, writable: true },
       },
-      defaultWriteTarget: "team",
+      defaultBundle: "team",
     });
 
     const result = await akmClone({ sourceRef: "scripts/deploy.sh" });
 
-    expect(result.destination.ref).toBe("team//scripts/deploy.sh");
+    expect(result.destination.ref).toBe("scripts/deploy.sh");
     expect(fs.existsSync(path.join(targetDir, "scripts", "deploy.sh"))).toBe(true);
     expect(fs.existsSync(path.join(stashDir, "scripts", "deploy.sh"))).toBe(false);
   });

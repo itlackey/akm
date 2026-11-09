@@ -57,7 +57,6 @@ async function runWithReflectFailure(reason: string): Promise<{ stash: string; m
         semanticSearchMode: "off",
         bundles: { stash: { path: stash, writable: true } },
         defaultBundle: "stash",
-        defaultWriteTarget: "stash",
         index: { enrichment: { enabled: false } },
       }),
     ),

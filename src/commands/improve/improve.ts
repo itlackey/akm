@@ -424,7 +424,7 @@ export function resolveImproveReadSource(
       `Drop ${IMPROVE_TARGET_FLAG} or use ${IMPROVE_TARGET_FLAG} ${scopedRef.origin}.`,
     );
   }
-  const selector = scopedRef?.origin ?? explicitTarget ?? config.defaultWriteTarget;
+  const selector = scopedRef?.origin ?? explicitTarget;
   if (!selector && fallbackStashDir) return { source: { name: "stash", path: fallbackStashDir } };
   if (!selector && process.env.AKM_BUNDLE_DIR?.trim()) {
     // A live run's working bundle starts from AKM_BUNDLE_DIR (`resolveWorkingStashTarget`), so its preview does too.
@@ -501,7 +501,7 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
           flag: IMPROVE_TARGET_FLAG,
         }).target
       : (options.writeTarget ??
-        (options.target || config.defaultWriteTarget || !options.stashDir
+        (options.target || !options.stashDir
           ? resolveWriteTarget(config, options.target, { flag: IMPROVE_TARGET_FLAG })
           : {
               source: { kind: "filesystem" as const, name: "stash", path: options.stashDir },

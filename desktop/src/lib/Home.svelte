@@ -140,7 +140,7 @@
             href={"/library/new?" +
               new URLSearchParams({
                 returnTo: "/",
-                ...(workspace.defaultWriteTarget ? { bundle: workspace.defaultWriteTarget } : {}),
+                ...(workspace.defaultBundle ? { bundle: workspace.defaultBundle } : {}),
               })}><Icon name="plus" />Create an asset<Icon name="chevron-right" size={16} /></a
           >
           <a href="/settings/bundles"><Icon name="folder" />Manage bundles<Icon name="chevron-right" size={16} /></a>

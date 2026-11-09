@@ -843,13 +843,12 @@ describe("primary stash config", () => {
     expect(primaryBundlePath(loadConfig())).toBe("/custom/stash");
   });
 
-  test("rejects disabled read and write defaults", () => {
+  test("rejects a disabled default bundle", () => {
     writeCurrentConfig({
       bundles: { off: { path: "/custom/stash", enabled: false } },
       defaultBundle: "off",
-      defaultWriteTarget: "off",
     });
-    expect(() => loadConfig()).toThrow(/defaultBundle.*disabled|defaultWriteTarget.*disabled/i);
+    expect(() => loadConfig()).toThrow(/defaultBundle.*disabled/i);
   });
 
   test("rejects two bundle ids that alias one physical directory through a symlink", () => {

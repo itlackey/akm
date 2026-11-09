@@ -23,7 +23,7 @@
   export let query = new URLSearchParams();
   export let returnTo = "/library/search";
   export let bundles: Bundle[] = [];
-  export let defaultWriteTarget = "";
+  export let defaultBundle = "";
   export let match: SearchHit | null = null;
   export let mode: "search" | "files" = "search";
   /** Another view supplies the way back (project crumbs), so the reader's own link is left out. */
@@ -295,7 +295,7 @@
     copying = true;
     tab = "Copy";
     newName = "";
-    target = writable.find((b) => b.name === defaultWriteTarget)?.name ?? writable[0]?.name ?? "";
+    target = writable.find((b) => b.name === defaultBundle)?.name ?? writable[0]?.name ?? "";
     await tick();
     copyDestination?.focus();
   }

@@ -46,7 +46,6 @@ async function buildIndex(stashDir: string, bundle = "stash"): Promise<void> {
       semanticSearchMode: "off",
       bundles: { [bundle]: { path: stashDir, writable: true } },
       defaultBundle: bundle,
-      defaultWriteTarget: bundle,
       index: { enrichment: { enabled: false } },
     }),
   );
@@ -199,7 +198,6 @@ describe("WS-1 wiring — first run (empty table)", () => {
       ...minimalConfig(),
       bundles: { team: { path: stash, writable: true } },
       defaultBundle: "team",
-      defaultWriteTarget: "team",
     };
 
     await akmImprove({

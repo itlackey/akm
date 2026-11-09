@@ -248,9 +248,8 @@ export function resolveSecretPath(ref: string): {
 // in 0.10, shaped like `env remove`: write-target resolution only.) WRITES route
 // through the canonical `resolveWriteTarget` selection every other write command
 // (remember/import/tasks/knowledge) shares: explicit `--bundle` wins, else
-// `defaultWriteTarget`, else the working stash, and the chosen source must be
-// writable (a non-writable `--bundle`/`defaultWriteTarget` fails fast with the
-// shared typed ConfigError). Env/secret VALUES are still never read or surfaced
+// the working stash, and the chosen source must be writable (a non-writable
+// target fails fast with the shared typed ConfigError). Env/secret VALUES are still never read or surfaced
 // here — these helpers only resolve the write target and the absolute path.
 
 export interface EnvWriteResolution {

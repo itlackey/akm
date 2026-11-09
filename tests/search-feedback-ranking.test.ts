@@ -78,7 +78,6 @@ describe("akm search with recorded feedback", () => {
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
     });
     await akmIndex({ stashDir, full: true });
   });

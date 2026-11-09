@@ -268,7 +268,7 @@ walkthrough.
 
 Renaming a *bundle* is separate: `akm bundle rename <old> <new>` is the one
 command that changes a bundle id. It rewrites the config `bundles` key,
-`defaultBundle` and `defaultWriteTarget`, `scheduler.enabled` refs, the lockfile
+`defaultBundle`, `scheduler.enabled` refs, the lockfile
 entry, and the stored `bundle//` refs in index entries, proposals, task history,
 workflow runs, recorded feedback and usage, and the improve ledger, salience, and
 outcome rows, so search and improve keep counting the bundle's feedback. Refs
