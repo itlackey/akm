@@ -67,7 +67,7 @@ verify with `akm task doctor`.
 
 ## Inspecting a Live Database
 
-`state.db`, `logs.db`, and `index.db` are WAL-mode SQLite databases that akm
+`state.db`, `logs.db`, `metrics.db`, and `index.db` are WAL-mode SQLite databases that akm
 (or a scheduled task) may be writing at any moment. Open a live one only with
 `sqlite3 -readonly`:
 

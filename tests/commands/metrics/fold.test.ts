@@ -322,6 +322,6 @@ describe("metrics.db", () => {
     metrics.close();
     metrics = openMetricsDatabase();
     expect(count(metrics, "folded_day")).toBe(2);
-    expect(count(metrics, "schema_migrations")).toBe(1);
+    expect(count(metrics, "schema_migrations")).toBe(2);
   });
 });

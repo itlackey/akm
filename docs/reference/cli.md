@@ -535,8 +535,8 @@ dashboard may change in any release.
 Report what akm has recorded locally: asset usage (search, show, curate),
 feedback, derived utility, LLM tokens, task runs, proposal
 flow, workflow token spend, and index runs. Read-only, and every number comes
-from `state.db` or `index.db`; nothing is collected that was not already
-recorded.
+from `state.db`, `metrics.db` (the days older than `state.db`'s raw rows) or
+`index.db`; nothing is collected that was not already recorded.
 
 ```sh
 akm metrics
@@ -575,10 +575,17 @@ with a `notes` entry, and the exit code stays 0.
 
 Notes you may see:
 
-- A `--since` older than what a store keeps names the store, its retention
-  (`usage_events` keeps 90 days; `events`, which holds selects, LLM calls and
-  index runs, keeps `improve.eventRetentionDays`, default 90) and where its data
-  effectively starts, so a long window is never silently shorter than asked.
+- A `--since` older than what a store keeps, with no `metrics.db` beside `state.db`,
+  names the store, its retention (`usage_events` keeps 90 days; `events`, which
+  holds selects, LLM calls and index runs, keeps `improve.eventRetentionDays`,
+  default 90) and where its data effectively starts, so a long window is never
+  silently shorter than asked.
+- With a `metrics.db`, days older than `state.db`'s raw rows come from its daily
+  rollups. They count whole UTC days (a day belongs to the window that contains
+  its midnight), the search and index medians over them are estimated from
+  duration histograms, and negative-feedback reasons and `--detail full` rows
+  cover the raw window only. A window that starts before anything was folded
+  says where the history begins.
 - `Selects deduped from <date>`: selects carry a source and search id from that
   date. From then on a select counts once per search id and ref, and only when
   its source matches the counted source. Earlier selects have neither field, so

@@ -563,6 +563,17 @@ for (const origin of ["previous", "0.9.32"] as const) {
       } finally {
         metrics.close();
       }
+      // The purged days still count: the three seeded shows are in the report, two of them from metrics.db.
+      const report = await runLauncher(candidateLauncher, ["metrics", "--since", "400d"], home.env);
+      expect(report.status, report.stderr).toBe(0);
+      const metricsReport = JSON.parse(report.stdout) as {
+        usage?: { totals?: { shows?: number }; daily?: { day: string; show: number }[] };
+        notes?: string[];
+      };
+      const shownDays = new Set((metricsReport.usage?.daily ?? []).filter((d) => d.show > 0).map((d) => d.day));
+      for (const days of [200, 100, 3]) expect(shownDays.has(dayAgo(days).slice(0, 10)), `${days}d ago`).toBe(true);
+      expect(metricsReport.notes?.join("\n")).toContain("daily rollups");
+
       const after = openDatabase(stateDbPath, { readonly: true });
       try {
         const left = (

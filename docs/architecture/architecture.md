@@ -13,7 +13,7 @@ written are in [Core Principles](akm-core-principles.md).
 - **Files are the truth.** Capabilities are files in bundles. `index.db` is
   a derived view that `akm index` rebuilds; `state.db` holds akm's
   bookkeeping (events, proposals, runs, salience), never capability
-  content; `logs.db` holds purgeable log lines. Every change akm makes to a
+  content; `logs.db` holds purgeable log lines; `metrics.db` holds the daily rollups folded from `state.db` before its history is purged, and is never purged. Every change akm makes to a
   capability lands as a file: an accepted proposal becomes the asset, memory
   inference writes derived children, retirement leaves an archive and a
   tombstone, extraction writes session assets. Pinned by
@@ -755,7 +755,7 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/sources/provider.ts` | minimal `SourceProvider` interface |
 | `src/sources/providers/` | filesystem / git / website / npm implementations |
 | `src/sources/resolve.ts` | filesystem path resolution for refs |
-| `src/storage/repositories/` | SQL for `index.db`, `state.db`, and `logs.db` (entries, FTS, proposals, task history, workflow runs, …) |
+| `src/storage/repositories/` | SQL for `index.db`, `state.db`, `logs.db`, and `metrics.db` (entries, FTS, proposals, task history, workflow runs, …) |
 | `src/indexer/indexer.ts` | walking, metadata generation, index rebuilds, embeddings, utility recompute |
 | `src/indexer/walk/` | walker, matchers, path/file/index context — the walk phase |
 | `src/indexer/db/` | `llm-cache` — the persistence phase (entries/embeddings persistence lives in `src/storage/repositories/`) |
