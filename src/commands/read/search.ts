@@ -318,7 +318,7 @@ export async function akmSearch(input: {
     ...bundlesField(namedSourceNames),
     hits: allStashHits,
     registryHits,
-    tip: hasResults ? undefined : "No matching stash assets or registry entries were found.",
+    tip: hasResults ? undefined : "No matching assets or registry entries were found.",
     warnings: warnings.length ? warnings : undefined,
     searchMode: localResult?.mode ?? "keyword",
     timing: { totalMs: Date.now() - t0 },

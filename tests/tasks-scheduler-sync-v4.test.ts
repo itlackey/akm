@@ -424,7 +424,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       id: binding.id,
       nativeId: schedulerNativeBindingId(binding.id),
       binding: ["/opt/akm"],
-      contextPath: "/state/context.json",
       target: "team",
       invocation: binding.invocation,
       signature: `${binding.id}:${binding.cron}`,
@@ -462,7 +461,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       id: binding.id,
       nativeId: schedulerNativeBindingId(binding.id),
       binding: ["/opt/akm"],
-      contextPath: "/state/context.json",
       target: "team",
       invocation: binding.invocation,
       signature: `${binding.id}:${binding.cron}`,
@@ -491,7 +489,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       id: binding.id,
       nativeId: schedulerNativeBindingId(binding.id),
       binding: ["/opt/akm"],
-      contextPath: "/state/context.json",
       target: "team",
       invocation: binding.invocation,
       signature: `${binding.id}:${binding.cron}`,
@@ -662,7 +659,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
       id: "sub/nightly",
       nativeId,
       binding: ["/opt/akm"],
-      contextPath: "/data/context.json",
       target: "team",
       invocation: ["task", "run", "sub/nightly", "--bundle", "team", "--scheduled"],
       signature: "installed-fingerprint",
@@ -781,7 +777,6 @@ describe("whole-set scheduler sync planning — task+workflow composition and CA
           nativeId: "nightly",
           target: "other",
           binding: ["/bin/akm"],
-          contextPath: "/tmp/context.json",
           invocation: foreignInvocation,
           signature: "foreign-fingerprint",
         },
@@ -834,7 +829,6 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
       id: "akm-dogfood-091-capture",
       nativeId: "task-foreign",
       binding: ["/opt/akm"],
-      contextPath: "/data/context-b.json",
       target: "akm",
       ownerBundlePath: bundleBPath,
       invocation: foreignInvocation,
@@ -863,16 +857,13 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
       "version: 4\nrun: echo nightly\nshell: sh\nschedule: '@daily'\n",
     );
 
-    // Same id and same legacy `target` name as the invoking bundle, but its
-    // scheduler-context descriptor could not be read/validated (deleted,
-    // corrupted, owned by another OS user, or predates the descriptor
-    // mechanism) — ownerBundlePath is therefore absent. A missing owning
-    // path must never be assumed to mean "mine".
+    // Same id and same legacy `target` name as the invoking bundle, but the
+    // row names no AKM_BUNDLE_DIR — ownerBundlePath is therefore absent. A
+    // missing owning path must never be assumed to mean "mine".
     const installed = {
       id: "nightly",
       nativeId: "nightly",
       binding: ["/opt/akm"],
-      contextPath: "/data/unreadable-context.json",
       target: "team",
       invocation: ["task", "run", "nightly", "--bundle", "team", "--scheduled"],
       signature: "installed-fingerprint",
@@ -903,7 +894,6 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
       id: "sub/nightly",
       nativeId,
       binding: ["/opt/akm"],
-      contextPath: "/data/context-a.json",
       target: "team",
       ownerBundlePath: bundlePath,
       invocation: ["task", "run", "sub/nightly", "--bundle", "team", "--scheduled"],
@@ -926,7 +916,7 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
     expect(plan.operations).toEqual([{ kind: "remove", id: "sub/nightly", nativeId, ownerBundlePath: bundlePath }]);
   });
 
-  test("the primary bundle owns the rows whose AKM_BUNDLE_DIR is its path, inline or in an older row's descriptor; any other bundle owns rows by name", async () => {
+  test("the primary bundle owns the rows whose AKM_BUNDLE_DIR is its path, any other bundle owns rows by name", async () => {
     const componentRoot = root();
     const bundlePath = "/home/user/stash";
     const row = (id: string, extra: Partial<InstalledSchedulerBinding>) => ({
@@ -941,8 +931,6 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
     const installed = [
       row("inline-mine", { environment: { AKM_BUNDLE_DIR: bundlePath }, ownerBundlePath: bundlePath }),
       row("inline-other", { environment: { AKM_BUNDLE_DIR: "/other/stash" }, ownerBundlePath: "/other/stash" }),
-      row("legacy-mine", { contextPath: "/data/ctx-a.json", ownerBundlePath: bundlePath }),
-      row("legacy-other", { contextPath: "/data/ctx-b.json", ownerBundlePath: "/other/stash" }),
       row("unattributed", {}),
     ];
     const plan = (primary: boolean) =>
@@ -956,14 +944,8 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
       });
 
     // No source is desired, so each sync removes exactly the rows it owns.
-    expect((await plan(true)).removed).toEqual(["inline-mine", "legacy-mine"]);
-    expect((await plan(false)).removed).toEqual([
-      "inline-mine",
-      "inline-other",
-      "legacy-mine",
-      "legacy-other",
-      "unattributed",
-    ]);
+    expect((await plan(true)).removed).toEqual(["inline-mine"]);
+    expect((await plan(false)).removed).toEqual(["inline-mine", "inline-other", "unattributed"]);
   });
 
   test("an orphaned row without a listed signature is removed like any other", async () => {
@@ -973,7 +955,6 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
       id: "healthy-orphan",
       nativeId: "task-healthy-orphan",
       binding: ["/opt/akm"],
-      contextPath: "/data/context-a.json",
       target: "team",
       ownerBundlePath: bundlePath,
       invocation: ["task", "run", "healthy-orphan", "--bundle", "team", "--scheduled"],
@@ -983,7 +964,6 @@ describe("#846: the primary bundle owns rows by resolved bundle path, not displa
       id: "poisoned-orphan",
       nativeId: "task-poisoned-orphan",
       binding: ["/opt/akm"],
-      contextPath: "/data/context-b.json",
       target: "team",
       ownerBundlePath: bundlePath,
       invocation: ["task", "run", "poisoned-orphan", "--bundle", "team", "--scheduled"],

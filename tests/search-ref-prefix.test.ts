@@ -359,7 +359,7 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
     });
     const hits = result.hits.filter((h): h is SourceSearchHit => h.type !== "registry");
     expect(hits).toHaveLength(0);
-    expect(result.tip ?? "").toContain("No matching stash assets");
+    expect(result.tip ?? "").toContain("No matching assets");
   });
 
   // The defect D4 exists to fix: the retired grammar matched `namePrefix`

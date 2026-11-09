@@ -447,8 +447,7 @@ const tasksPruneCommand = defineJsonCommand({
     name: "prune",
     description:
       "Remove installed scheduler entries `sync` can never reclaim because they no longer resolve to a live " +
-      "bundle (the bundle directory a row names is gone, or an older row's --scheduler-context descriptor " +
-      "cannot be read). Defaults to a dry-run preview — zero scheduler writes. Requires --yes to remove anything; " +
+      "bundle (the bundle directory a row names is gone). Defaults to a dry-run preview — zero scheduler writes. Requires --yes to remove anything; " +
       "--id narrows removal to specific binding ids (comma-separated).",
   },
   args: {
@@ -478,7 +477,10 @@ export const taskCommand = defineGroupCommand({
   meta: {
     name: "task",
     description:
-      "Schedule recurring commands, prompts, and workflows through the OS scheduler (cron / launchd / schtasks)",
+      "Schedule recurring commands, prompts, and workflows through the OS scheduler (cron / launchd / schtasks)\n" +
+      "Definitions are assets: `akm search --type task`, then `akm show <ref>`. " +
+      "`task doctor` reports what is installed in the scheduler; `task explain` the resolved inputs and target; " +
+      "`task history` the executions.",
   },
   subCommands: {
     add: tasksAddCommand,

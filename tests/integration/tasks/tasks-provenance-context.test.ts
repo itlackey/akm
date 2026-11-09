@@ -300,7 +300,7 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
       ...base,
       harnesses: { "cli-audit": { platform: "aider", bin: "/bin/true" } },
       scheduler: {
-        enabled: [{ kind: "task", ref: `fixture//tasks/${id}`, sourceId: bundleSourceId(base, "fixture") }],
+        enabled: [`fixture//tasks/${id}`],
       },
     });
     const indexed = await runCliCapture(["index", "--full"]);

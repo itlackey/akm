@@ -12,6 +12,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { canonicalJson, canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
+import { WORKFLOW_PLAN_VERSION } from "../../src/workflows/plan";
 import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import { freezeWorkflow } from "../_helpers/workflow";
 
@@ -29,31 +30,26 @@ const ONE_STEP_MD = [
 ].join("\n");
 
 /**
- * A fresh, independently-valid one-unit plan, forced to declare irVersion 5.
+ * A fresh, independently-valid one-unit plan, at the current irVersion.
  * No explicit return type: `JSON.parse` is already `any` (lib.d.ts), and
  * spreading it keeps the object `any` — every caller below treats this as
  * plain untyped JSON on the way into `decodeWorkflowPlan(input: unknown)`.
  */
 function freshUnitPlan(sourcePath: string) {
-  return { ...JSON.parse(canonicalPlanJson(freezeWorkflow(ONE_STEP_MD, sourcePath))), irVersion: 5 };
+  return {
+    ...JSON.parse(canonicalPlanJson(freezeWorkflow(ONE_STEP_MD, sourcePath))),
+    irVersion: WORKFLOW_PLAN_VERSION,
+  };
 }
 
 /** §3.5's exact `contentHash` formula. */
-function childContentHash(fields: {
-  ref: string;
-  planHash: string;
-  via: "direct" | "task";
-  taskRef?: string;
-  inputBindings?: unknown;
-}): string {
+function childContentHash(fields: { ref: string; planHash: string; inputBindings?: unknown }): string {
   return createHash("sha256")
     .update("akm.workflow.child-workflow\0v1\0")
     .update(
       canonicalJson({
         ref: fields.ref,
         planHash: fields.planHash,
-        via: fields.via,
-        taskRef: fields.taskRef ?? null,
         inputBindings: fields.inputBindings ?? null,
       }),
     )
@@ -65,12 +61,9 @@ function buildChildTarget(options: {
   ref?: string;
   planHash: string;
   frozenPlan: unknown;
-  via?: "direct" | "task";
-  taskRef?: string;
   inputBindings?: unknown;
 }): unknown {
   const ref = options.ref ?? "workflows/child";
-  const via = options.via ?? "direct";
   return {
     kind: "child-workflow",
     ref,
@@ -79,12 +72,8 @@ function buildChildTarget(options: {
     contentHash: childContentHash({
       ref,
       planHash: options.planHash,
-      via,
-      taskRef: options.taskRef,
       inputBindings: options.inputBindings,
     }),
-    via,
-    ...(options.taskRef ? { taskRef: options.taskRef } : {}),
     ...(options.inputBindings ? { inputBindings: options.inputBindings } : {}),
   };
 }
@@ -101,25 +90,23 @@ interface DecodedChildTargetView {
   readonly kind: "child-workflow";
   readonly ref: string;
   readonly planHash: string;
-  readonly via: "direct" | "task";
-  readonly taskRef?: string;
 }
 
 function asChildTargetView(frozenTarget: unknown): DecodedChildTargetView {
   return frozenTarget as unknown as DecodedChildTargetView;
 }
 
-describe("plan irVersion 5 — a child-workflow frozen target decodes (A-01, A-02)", () => {
-  test("a parent plan whose unit targets a child workflow decodes: irVersion 5, frozenTarget.kind child-workflow", () => {
+describe("current plan — a child-workflow frozen target decodes (A-01, A-02)", () => {
+  test("a parent plan whose unit targets a child workflow decodes: frozenTarget.kind child-workflow", () => {
     const childPlan = freshUnitPlan("workflows/child.md");
     const planHash = computePlanHash(childPlan);
-    const childTarget = buildChildTarget({ ref: "workflows/child", planHash, frozenPlan: childPlan, via: "direct" });
+    const childTarget = buildChildTarget({ ref: "workflows/child", planHash, frozenPlan: childPlan });
     const parentPlanJson = embedChildTarget(freshUnitPlan("workflows/parent.md"), childTarget);
 
     expect(() => decodeWorkflowPlan(parentPlanJson)).not.toThrow();
 
     const decoded = decodeWorkflowPlan(parentPlanJson);
-    expect(decoded.irVersion).toBe<number>(5);
+    expect(decoded.irVersion).toBe<number>(WORKFLOW_PLAN_VERSION);
     expect(decoded.steps).toHaveLength(1); // A-02: structurally sound, like any other decoded plan
     const root = decoded.steps[0]?.root;
     if (!root || root.kind === "map") throw new Error("expected a solo unit root");
@@ -127,29 +114,6 @@ describe("plan irVersion 5 — a child-workflow frozen target decodes (A-01, A-0
     const target = asChildTargetView(root.frozenTarget);
     expect(target.ref).toBe("workflows/child");
     expect(target.planHash).toBe(planHash);
-    expect(target.via).toBe("direct");
-  });
-
-  test("the same fixture, task-wrapped (via: task, taskRef present), also decodes", () => {
-    const childPlan = freshUnitPlan("workflows/child-via-task.md");
-    const planHash = computePlanHash(childPlan);
-    const childTarget = buildChildTarget({
-      ref: "workflows/child-via-task",
-      planHash,
-      frozenPlan: childPlan,
-      via: "task",
-      taskRef: "tasks/nested",
-    });
-    const parentPlanJson = embedChildTarget(freshUnitPlan("workflows/parent-via-task.md"), childTarget);
-
-    expect(() => decodeWorkflowPlan(parentPlanJson)).not.toThrow();
-    const decoded = decodeWorkflowPlan(parentPlanJson);
-    const root = decoded.steps[0]?.root;
-    if (!root || root.kind === "map") throw new Error("expected a solo unit root");
-    expect(root.frozenTarget.kind).toBe<string>("child-workflow");
-    const target = asChildTargetView(root.frozenTarget);
-    expect(target.via).toBe("task");
-    expect(target.taskRef).toBe("tasks/nested");
   });
 });
 
@@ -160,7 +124,6 @@ describe("embedded child plans at decode (A-20…A-23, §2.7)", () => {
       ref: "workflows/child",
       planHash: computePlanHash(childPlan),
       frozenPlan: childPlan,
-      via: "direct",
     });
     const plan = JSON.parse(
       JSON.stringify(embedChildTarget(freshUnitPlan("workflows/parent-provenance.md"), childTarget)),
@@ -183,7 +146,6 @@ describe("embedded child plans at decode (A-20…A-23, §2.7)", () => {
           ref: `workflows/nested-child-${level}`,
           planHash,
           frozenPlan: plan,
-          via: "direct",
         });
         plan = embedChildTarget(base, target);
       }

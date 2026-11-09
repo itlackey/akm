@@ -3800,9 +3800,7 @@ akm process holding the scheduler lock makes sync exit 75 (retry shortly).
 
 `akm task prune` reclaims installed scheduler entries that `sync` can never
 clean up on its own: entries that no longer resolve to a live bundle (a row
-whose `AKM_BUNDLE_DIR` names a directory that is gone, or a row written
-before 0.9.17-alpha.7 whose `--scheduler-context` descriptor cannot be
-read). It never touches an entry that
+whose `AKM_BUNDLE_DIR` names a directory that is gone). It never touches an entry that
 still resolves to a live bundle — that's `sync`'s job. Like `sync
 --dry-run`, the default is a dry-run preview (zero scheduler writes) that
 exits non-zero when there are candidates to remove; `--yes` executes the

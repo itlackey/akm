@@ -160,7 +160,6 @@ export function SCHTASKS_BACKEND(options: SchtasksBackendOptions = {}): Schedule
           signature: taskXmlSignature(xml),
           ...(parsed.target !== undefined ? { target: parsed.target } : {}),
           binding: parsed.binding,
-          ...(parsed.contextPath !== undefined ? { contextPath: parsed.contextPath } : {}),
           ...(parsed.environment !== undefined ? { environment: parsed.environment } : {}),
           invocation: parsed.invocation,
         });

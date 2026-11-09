@@ -18,9 +18,9 @@ day-to-day commands that drive a run, see
 The first `akm workflow run <ref>` compiles the Markdown source straight to
 the one plan type and stores it as durable plan **`irVersion` 8** on the run row
 (`plan_json` + `plan_hash`); a new start never emits an older version.
-`plan_ir_version` and `plan_hash` are recorded provenance: a stored plan is
-decoded as it is — irVersion 5, 6 and 7 plans that hold no model step included.
-One frozen by an older akm that still decodes runs with one warning. One frozen
+`plan_hash` is recorded provenance and gates nothing. Only a plan of the
+current irVersion decodes: a run frozen by an older akm is abandoned with a
+message naming `akm workflow run <ref>` to start afresh. One frozen
 by a newer akm (`plan_ir_version` above 8) is refused unread with a message
 naming "Upgrade akm". A plan frozen before 8 with a model step recorded an
 engine where 8 records a connection or harness; it does not decode, and
@@ -50,9 +50,7 @@ Everything else is live, found again at dispatch through the one ref lookup
 The executable a unit runs is resolved at dispatch too, so upgrading a CLI (say,
 `claude`) never strands a run, and a `bundle update` that moves a bundle to a
 new revision directory in the middle of a run is harmless: the next step runs
-from the new directory. Plans
-frozen as irVersion 5 or 6 also carry a `cwdIdentity` and env owner paths; the
-decoder drops them and such a run dispatches by ref. Durable plans never store
+from the new directory. Durable plans never store
 secret values.
 
 **A run executes the plan compiled at creation; edits to source need a new

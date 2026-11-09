@@ -5,12 +5,6 @@
 import { z } from "zod";
 import { nonEmptyString } from "./primitives";
 
-/** A 0.9.17-alpha `{kind, ref, sourceId}` activation, read as its ref. */
-const LegacySchedulerActivationSchema = z
-  .object({ ref: nonEmptyString })
-  .passthrough()
-  .transform((activation) => activation.ref);
-
 export const SchedulerConfigSchema = z
   .object({
     /**
@@ -18,6 +12,6 @@ export const SchedulerConfigSchema = z
      * schedules. Absent when the host has never chosen: `akm task sync` then
      * takes the akm-written rows already installed as the choice and writes it.
      */
-    enabled: z.array(z.union([nonEmptyString, LegacySchedulerActivationSchema])).optional(),
+    enabled: z.array(nonEmptyString).optional(),
   })
   .passthrough();

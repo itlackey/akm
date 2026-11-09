@@ -39,7 +39,7 @@ function writeChild(name = "child"): void {
   write(name, [
     "---",
     "type: workflow",
-    "defaults: { engine: test-llm }",
+    "defaults: { connection: test-llm }",
     "params:",
     "  topic: { type: string }",
     "steps:",
@@ -71,7 +71,7 @@ describe("child workflows — markdown form", () => {
     write("parent", [
       "---",
       "type: workflow",
-      "defaults: { engine: test-llm }",
+      "defaults: { connection: test-llm }",
       "params:",
       "  topic: { type: string }",
       "steps:",
@@ -115,7 +115,7 @@ describe("child workflows — markdown form", () => {
     write("parent-fails", [
       "---",
       "type: workflow",
-      "defaults: { engine: test-llm }",
+      "defaults: { connection: test-llm }",
       "steps:",
       "  - id: investigate",
       "    unit:",
@@ -201,7 +201,7 @@ describe("child workflows — parsing", () => {
     ["a non-workflow ref", "      workflow: commands/child", "canonical workflow ref"],
     ["with: without workflow", "      with: { topic: x }", 'declares "with" without "workflow"'],
     ["exec beside workflow", "      workflow: workflows/c\n      exec: { command: [true] }", '"exec" and "workflow"'],
-    ["engine beside workflow", "      workflow: workflows/c\n      engine: e", 'both "workflow" and "engine"'],
+    ["connection beside workflow", "      workflow: workflows/c\n      connection: e", 'both "workflow" and "connection"'],
     ["env beside workflow", "      workflow: workflows/c\n      env: [env/x]", 'both "workflow" and "env"'],
   ])("rejects %s", (_label, unitLines, message) => {
     const result = parse(unitLines);

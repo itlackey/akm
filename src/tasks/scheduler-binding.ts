@@ -65,8 +65,6 @@ export interface InstalledSchedulerBinding {
   readonly binding: readonly string[];
   /** The environment the row sets inline. Absent when it sets none. */
   readonly environment?: ScheduledRowEnvironment;
-  /** A row written by 0.9.0 – 0.9.17-alpha.6: the `--scheduler-context` descriptor it names. */
-  readonly contextPath?: string;
   /** Normalized rendering of the installed row, compared against `expectedSignature` to detect drift. */
   readonly signature?: string;
   /** Bundle named by the row's own invocation (`--bundle <x>`, or a workflow ref's bundle). */
@@ -74,9 +72,8 @@ export interface InstalledSchedulerBinding {
   /** Parsed public CLI tail. */
   readonly invocation?: readonly string[];
   /**
-   * The `AKM_BUNDLE_DIR` the row names (#846): its inline one, or the one
-   * in the descriptor an older row references. Filled in by the command
-   * layer; absent when the row names none, or its descriptor cannot be read.
+   * The `AKM_BUNDLE_DIR` the row names (#846): its inline one. Filled in by
+   * the command layer; absent when the row names none.
    */
   readonly ownerBundlePath?: string;
 }
