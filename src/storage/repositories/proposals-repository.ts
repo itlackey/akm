@@ -87,6 +87,21 @@ function storedToChanges(stored: unknown, content: string): FileChange[] {
   });
 }
 
+/**
+ * A ref written before concept IDs (#1513): `[bundle//]<type>:<name>` with an akm asset type. It names no asset in
+ * the current grammar, so the row that carries it is read as written and can be rejected, but never applied.
+ */
+export function isLegacyProposalRef(ref: string): boolean {
+  let conceptId: string;
+  try {
+    conceptId = parseBundleRef(ref).conceptId;
+  } catch {
+    return false;
+  }
+  const colon = conceptId.indexOf(":");
+  return colon > 0 && stashDirFor(conceptId.slice(0, colon)) !== undefined;
+}
+
 function currentProposalRef(ref: string, requireQualified = false): string {
   let parsed: ReturnType<typeof parseBundleRef>;
   try {
@@ -94,11 +109,9 @@ function currentProposalRef(ref: string, requireQualified = false): string {
   } catch (error) {
     throw new Error(`Proposal row has an invalid current ref: ${ref}`, { cause: error });
   }
-  const colon = parsed.conceptId.indexOf(":");
-  if (colon > 0 && stashDirFor(parsed.conceptId.slice(0, colon)) !== undefined) {
-    throw new Error(`Proposal row has an invalid current ref: ${ref}`);
-  }
   if (parsed.fragment !== undefined) throw new Error(`Proposal row ref contains a fragment: ${ref}`);
+  // Kept as written: a legacy ref has no current form to be canonical against (#1513).
+  if (isLegacyProposalRef(ref)) return ref;
   if (requireQualified && parsed.bundle === undefined) throw new Error(`Proposal ref is not bundle-qualified: ${ref}`);
   const canonical = bundleRefToString(parsed);
   if (canonical !== ref) throw new Error(`Proposal row ref is not canonical: ${ref}`);
@@ -423,7 +436,8 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   ) {
     throw new Error(`Proposal ${proposal.id} has invalid file changes.`);
   }
-  metaObj.changes = changesToStored(proposal.changes);
+  // An absent key is the legacy shape `storedToChanges` tolerates; an empty array is corruption it refuses.
+  if (proposal.changes.length > 0) metaObj.changes = changesToStored(proposal.changes);
   if (proposal.proposedTarget !== undefined) metaObj.proposedTarget = currentProposalTarget(proposal.proposedTarget);
   if (proposal.beforeHash !== undefined) metaObj.beforeHash = proposal.beforeHash;
   if (proposal.beforeHashNormalized !== undefined) metaObj.beforeHashNormalized = proposal.beforeHashNormalized;
