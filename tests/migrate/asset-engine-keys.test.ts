@@ -585,7 +585,7 @@ describe("the step", () => {
     rememberLabAsDefault();
     const file = write("commands/large.md", `---\nname: large\nengine: lab\n---\n${"text ".repeat(450_000)}`);
     expect(fs.statSync(file).size).toBeGreaterThan(2 * 1024 * 1024);
-    expect(commandSelects(file)).toBe("default");
+    expect(() => commandSelects(file)).toThrow("akm migrate apply");
 
     const plan = await runMigration({ apply: true });
 
@@ -602,7 +602,7 @@ describe("the step", () => {
     const link = path.join(stash(), "commands", "review.md");
     fs.mkdirSync(path.dirname(link), { recursive: true });
     fs.symlinkSync("../review-source.md", link);
-    expect(commandSelects(link)).toBe("default");
+    expect(() => commandSelects(link)).toThrow("akm migrate apply");
 
     const first = await runMigration({ apply: true });
 
@@ -614,7 +614,7 @@ describe("the step", () => {
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
     expect(fs.readFileSync(target, "utf8")).toContain("engine: lab");
     expect(rememberedEngineTargets()).toEqual({ lab: { connection: "default" } });
-    expect(commandSelects(link)).toBe("default");
+    expect(() => commandSelects(link)).toThrow("akm migrate apply");
 
     // The user rewrites the file the link leads to: a run that finds nothing pending forgets the old names.
     fs.writeFileSync(target, "---\nname: review\nconnection: default\n---\nReview.\n");

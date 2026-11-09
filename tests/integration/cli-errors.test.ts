@@ -77,7 +77,7 @@ describe("CLI error handling", () => {
     expect(status).toBe(78);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.code).toBe("STASH_DIR_NOT_FOUND");
-    expect(stderr).toContain("No bundle directory found");
+    expect(stderr).toContain("No default bundle is configured");
     expect(stderr).toContain("hint");
   });
 

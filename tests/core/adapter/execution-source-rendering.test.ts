@@ -222,31 +222,23 @@ describe("adapter-rendered execution sources", () => {
     }
   });
 
-  test("a retired `engine:` selects nothing and is named once, with the command that rewrites it", () => {
-    const warnings: string[] = [];
-    _resetWarnOnceForTests();
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-    try {
+  test("a retired `engine:` is refused, at the top level or under `akm`, naming the command that rewrites it", () => {
+    for (const kind of ["command", "persona"] as const) {
       for (const metadata of ["engine: selected", "akm:\n  engine: selected"]) {
-        const rendered = renderMarkdownExecutionSource({
-          kind: "persona",
-          raw: `---\n${metadata}\n---\nDo work.\n`,
-          identity: {
-            ref: "fixture//agents/retired-engine",
-            bundle: "fixture",
-            adapter: "akm",
-            file: "agents/retired-engine.md",
-          },
-          defaults: (data) => executionDefaultsFromFrontmatter(data, { kind: "persona", allowTopLevelEngine: true }),
-        });
-        expect(rendered.defaults).toEqual({});
+        expect(() =>
+          renderMarkdownExecutionSource({
+            kind,
+            raw: `---\n${metadata}\n---\nDo work.\n`,
+            identity: {
+              ref: "fixture//agents/retired-engine",
+              bundle: "fixture",
+              adapter: "akm",
+              file: "agents/retired-engine.md",
+            },
+            defaults: (data) => executionDefaultsFromFrontmatter(data, { kind, allowTopLevelEngine: true }),
+          } as Parameters<typeof renderMarkdownExecutionSource>[0]),
+        ).toThrow(/key "engine" is retired.*akm migrate apply.*read-only/s);
       }
-      expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toContain("akm migrate apply");
-    } finally {
-      _setWarnSinkForTests(undefined);
     }
   });
 

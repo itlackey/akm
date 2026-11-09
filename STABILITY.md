@@ -35,8 +35,9 @@ that names `akm migrate apply`, which converts it (`akm upgrade` runs it).
 `proposal extract`) and `--require-engines` (on `improve`) are removed: they are
 unknown flags (exit 2). Change a script to `--connection <name>` or `--harness
 <name>`, and `--model <alias|name>`. `engine:` in an asset is not read either: a
-workflow or task source that says it is refused, naming `akm migrate apply`, and
-a command or agent runs on the default with one warning. How an old engine name
+workflow, task source, command or agent that says it is refused when it is
+rendered for a run, naming `akm migrate apply` (index, show, search and lint
+still read it). How an old engine name
 is rewritten is under
 [The `engines` form](docs/reference/configuration.md#the-engines-form).
 
