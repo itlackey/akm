@@ -1,6 +1,0 @@
-version: 3
-name: v3 to v4 fixture - enabled false with akm.schedule
-uses: commands/publish-report
-akm:
-  schedule: "@daily"
-  enabled: false

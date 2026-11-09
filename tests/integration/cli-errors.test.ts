@@ -218,8 +218,7 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
   });
 
   // The runtime reads only task source v4 (#987): v3 AND v2 fail with the
-  // SAME TASK_SCHEMA_VERSION_UNSUPPORTED code, naming `akm migrate apply`
-  // (the migrator runs both generations in sequence).
+  // SAME TASK_SCHEMA_VERSION_UNSUPPORTED code, naming the 0.9.32 recipe.
   test.each([
     ["v3", "version: 3\nrun: echo hi\nschedule: '@daily'\n"],
     ["v2", "version: 2\nschedule: '@daily'\ncommand: echo hi\n"],
@@ -238,8 +237,8 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     expect(parsed.ok).toBe(false);
     expect(parsed.code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
     expect(typeof parsed.error).toBe("string");
-    expect(parsed.error).toContain("akm migrate apply");
-    expect(parsed.hint).toContain("akm migrate status");
+    expect(parsed.error).toContain("akm-cli@0.9.32");
+    expect(parsed.hint).toContain("akm-cli@0.9.32");
   });
 
   test("akm workflow run of a workflow that composes itself emits {ok:false,code:COMPOSITION_INVALID} on stderr, exit 2", async () => {

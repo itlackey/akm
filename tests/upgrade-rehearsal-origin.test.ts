@@ -13,11 +13,11 @@ import type { CommandRunner } from "../scripts/package-install";
 import { KNOWN_UPGRADE_ORIGINS, resolveUpgradeOriginVersion } from "./integration/upgrade-rehearsal/previous-release";
 
 describe("KNOWN_UPGRADE_ORIGINS / resolveUpgradeOriginVersion", () => {
-  test("lists the previous release and both fixed legacy origins", () => {
-    expect(KNOWN_UPGRADE_ORIGINS).toEqual(["previous", "0.9.32", "0.9.15"]);
+  test("lists the previous release and the 0.9.32 floor origin", () => {
+    expect(KNOWN_UPGRADE_ORIGINS).toEqual(["previous", "0.9.32"]);
   });
 
-  test.each(["0.9.32", "0.9.15"] as const)('the "%s" origin is fixed and never calls the runner', async (origin) => {
+  test.each(["0.9.32"] as const)('the "%s" origin is fixed and never calls the runner', async (origin) => {
     const runner: CommandRunner = () => {
       throw new Error("should not be called for a fixed origin");
     };

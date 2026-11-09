@@ -12,7 +12,6 @@ test("the plain plan names the keys filed in credentials.json, the config notes 
       credentials: ["default", "embedding"],
       notes: ['engines.lab.apiKeyFile: its key moves to credentials.json as "default".'],
     },
-    taskFiles: { changed: 0, skipped: 2, blocked: 0 },
     assetEngineKeys: { changed: 3, skipped: 1 },
   });
 

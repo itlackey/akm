@@ -2259,8 +2259,10 @@ akm registry remove my-team --yes    # Skip the confirmation prompt
 Inspect or apply every pending migration in one plan. `akm migrate` is a thin
 wrapper over the standalone migrator (shipped in the package and embedded in
 the release binary), which owns every historical shape
-akm 0.9.15 and later wrote so the CLI proper reads only current schemas. The steps,
-in order:
+akm 0.9.32 and later wrote so the CLI proper reads only current schemas. A
+`state.db` from before that floor is refused whole (a `blocked` plan naming
+`npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync`) before any step
+runs. The steps, in order:
 
 1. config.json rewritten in its current shape (`configFile`): unknown keys
    dropped, `configVersion` bumped, and the `engines` / `defaults` form converted
@@ -2276,36 +2278,24 @@ in order:
    cache directory. A connection or harness akm cannot use stays in the file as
    written, with a note on what to fix. What each retired key becomes is the
    table in [Configuration](configuration.md#the-engines-form). A config older
-   than 0.9.15 (the legacy `stashDir`/`sources[]`/`installed` layout) is not
-   converted by 0.10 and blocks this step: run `akm migrate apply` under akm
-   0.9.x first;
-2. pending `state.db` migrations (`stateMigrations`), the ones that drop
-   schema (`018-drop-dead-lane-schema`, `028-improve-ledger`) included. Any
-   akm command that opens `state.db` applies them the same way: before the
-   first pending migration that drops schema, it copies the database beside
-   itself to `state.db.pre-<id>.bak` (`VACUUM INTO`). This step applies them
-   now and reports what it applied and the copy (`safetyCopyPath`);
-3. task files at version 2 or 3, and version 4 files still carrying the
-   retired `schedule[].enabled` key, rewritten as task source v4
-   (`taskFiles`) under one backup directory per run, each emitted document
-   re-parsed by the runtime v4 parser first; a file the planner cannot
-   convert unambiguously is reported `blocked` and left alone;
-4. the retired `engine:` key on commands, agents, workflows and task sources
+   than 0.9.32 (the legacy `stashDir`/`sources[]`/`installed` layout) is not
+   converted by 0.10 and blocks this step: run
+   `npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync` first;
+2. pending `state.db` migrations (`stateMigrations`). 0.10 adds none; any akm
+   command that opens `state.db` applies pending ones the same way, and this
+   step applies them now and reports what it applied;
+3. the retired `engine:` key on commands, agents, workflows and task sources
    rewritten to `connection:` or `harness:` by what the name is now
    (`assetEngineKeys`), under one backup directory per run. The run that has
    rewritten every such key it can reach forgets the old engine names and adds one
    note to `assetEngineKeys.notes` listing each renamed engine and the flag that
    replaces it (see [The `engines` form](configuration.md#the-engines-form));
-5. refs in the text files akm indexes in writable bundles that still use the spelling from
+4. refs in the text files akm indexes in writable bundles that still use the spelling from
    before refs became bundle paths (`knowledge/WORK/x`, now `WORK/x`; #1432),
    in frontmatter and body: `[bundle//]<folder>/<path>[.md]`, `<type>:<path>`
    and `wiki:<path>`, rewritten (`assetContentRefs`) under one backup directory
    per run. An old spelling that is now another file's ref is not rewritten
-   and is listed in `assetContentRefs.shadowed`;
-6. superseded residue removed (`deadResidue`): pre-0.9.0 `.akm` leftovers in
-   the stash, and the transaction-journal, maintenance-barrier, lock-mutex and
-   version-stamp files older releases kept under `$DATA`, `$STATE` and
-   `$CONFIG`.
+   and is listed in `assetContentRefs.shadowed`.
 
 ```sh
 akm migrate status

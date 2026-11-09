@@ -24,7 +24,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { inspectTaskFilesMigration } from "../../scripts/akm-migrate/task-migrate";
+import { inspectEngineKeysMigration } from "../../scripts/akm-migrate/engine-key-migrate";
 import { withPrimaryBundle } from "../../src/commands/sources/bundle-config-ops";
 import { type AkmConfig, bundleContentRoot, bundleKeyForContentRoot } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
@@ -123,7 +123,7 @@ describe("resolveWorkingStashTarget (issue #870 part 1, AKM_BUNDLE_DIR path)", (
 
 // ── Parts 2 & 3: migrate enumeration reconciles / fails clearly ─────────────
 
-describe("akm migrate task enumeration (issue #870 parts 2 & 3)", () => {
+describe("akm migrate file enumeration (issue #870 parts 2 & 3)", () => {
   test("two bundle ids resolving to the same directory are rejected before migration enumeration", () => {
     const storage = withIsolatedAkmStorage();
     try {
@@ -144,7 +144,7 @@ describe("akm migrate task enumeration (issue #870 parts 2 & 3)", () => {
         },
       });
 
-      expect(() => inspectTaskFilesMigration()).toThrow(/bundle-a.*bundle-b.*same physical content root/i);
+      expect(() => inspectEngineKeysMigration()).toThrow(/bundle-a.*bundle-b.*same physical content root/i);
     } finally {
       storage.cleanup();
     }
@@ -172,7 +172,7 @@ describe("akm migrate task enumeration (issue #870 parts 2 & 3)", () => {
 
       let caught: unknown;
       try {
-        inspectTaskFilesMigration();
+        inspectEngineKeysMigration();
       } catch (error) {
         caught = error;
       }

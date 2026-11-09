@@ -4,16 +4,15 @@
 
 import { Database as BunSqliteDatabase } from "bun:sqlite";
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { STATE_BASELINE_IDS, STATE_MIGRATIONS } from "../../../src/core/state/migrations";
 import {
-  getStateMigrationSafety,
-  STATE_MIGRATION_SAFETY_BY_ID,
-  STATE_MIGRATIONS,
-} from "../../../src/core/state/migrations";
-import { openStateDatabase, upgradeHistoricalStateDatabase } from "../../../src/core/state-db";
+  openStateDatabase,
+  stateDatabaseFloorBlocker,
+  upgradeHistoricalStateDatabase,
+} from "../../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { type Database, openDatabase } from "../../../src/storage/database";
 import { runMigrations } from "../../../src/storage/sqlite-migrations";
@@ -24,12 +23,6 @@ function statePath(prefix = "akm-state-migrations-"): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   roots.push(root);
   return path.join(root, "state.db");
-}
-
-function migrationIndex(id: string): number {
-  const index = STATE_MIGRATIONS.findIndex((migration) => migration.id === id);
-  if (index < 0) throw new Error(`Missing state migration fixture ${id}`);
-  return index;
 }
 
 /** Capture `warn()` calls made inside `fn`, resetting `warnOnce` gating first so a repeat fires. */
@@ -53,20 +46,57 @@ afterEach(() => {
 });
 
 describe("state.db automatic migration boundary", () => {
-  test("a managed open advances an exact older prefix and preserves unrelated durable rows", () => {
+  test("a ledger below the 0.9.32 floor is refused with the recipe, and the file is left as it was", () => {
     const file = statePath();
-    const prior = STATE_MIGRATIONS.slice(0, -1);
     const seeded = openDatabase(file);
-    runMigrations(seeded, prior);
+    seeded.exec(
+      "CREATE TABLE schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))",
+    );
+    for (const id of STATE_BASELINE_IDS.slice(0, -1))
+      seeded.prepare("INSERT INTO schema_migrations (id) VALUES (?)").run(id);
     seeded.exec("CREATE TABLE operator_probe (value TEXT NOT NULL); INSERT INTO operator_probe VALUES ('kept')");
     seeded.close();
 
-    const upgraded = openStateDatabase(file);
-    expect((upgraded.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get() as { count: number }).count).toBe(
-      STATE_MIGRATIONS.length,
+    expect(stateDatabaseFloorBlocker(file)).toMatch(
+      /predates akm 0\.9\.32.*akm-cli@0\.9\.32 && akm migrate apply && akm task sync/,
     );
-    expect((upgraded.prepare("SELECT value FROM operator_probe").get() as { value: string }).value).toBe("kept");
-    upgraded.close();
+    expect(() => openStateDatabase(file)).toThrow(/predates akm 0\.9\.32.*akm-cli@0\.9\.32/);
+    expect(() => upgradeHistoricalStateDatabase(file)).toThrow(/akm-cli@0\.9\.32/);
+
+    const after = openDatabase(file, { readonly: true });
+    expect((after.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get() as { count: number }).count).toBe(
+      STATE_BASELINE_IDS.length - 1,
+    );
+    expect((after.prepare("SELECT value FROM operator_probe").get() as { value: string }).value).toBe("kept");
+    after.close();
+  });
+
+  test("a database at the floor (the 29 released ids) is current: nothing pending, nothing refused, rows kept", () => {
+    const file = statePath();
+    const seeded = openStateDatabase(file);
+    seeded.exec("CREATE TABLE operator_probe (value TEXT NOT NULL); INSERT INTO operator_probe VALUES ('kept')");
+    seeded.close();
+
+    expect(stateDatabaseFloorBlocker(file)).toBeUndefined();
+    expect(upgradeHistoricalStateDatabase(file)).toEqual({ upgraded: false, applied: [] });
+    const db = openStateDatabase(file);
+    expect((db.prepare("SELECT value FROM operator_probe").get() as { value: string }).value).toBe("kept");
+    db.close();
+  });
+
+  test("the baseline schema is exactly the one the 29 released migrations produced", () => {
+    const expected = JSON.parse(
+      fs.readFileSync(path.join(import.meta.dir, "../../fixtures/state-db/floor-schema.json"), "utf8"),
+    ) as Array<{ type: string; name: string; sql: string }>;
+    const db = openStateDatabase(statePath());
+    const actual = db
+      .prepare(
+        "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name <> 'schema_migrations' ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END, rowid",
+      )
+      .all();
+    db.close();
+    expect(actual).toEqual(expected.filter((row) => row.name !== "schema_migrations"));
+    expect(STATE_BASELINE_IDS).toHaveLength(29);
   });
 
   test("a fresh managed open installs the complete current ledger", () => {
@@ -130,7 +160,7 @@ describe("state.db automatic migration boundary", () => {
     expect(fs.readdirSync(path.dirname(file)).some((name) => name.endsWith(".bak"))).toBe(false);
   });
 
-  test("applying pending migrations retries a phantom BEGIN before running a destructive one", () => {
+  test("applying pending migrations retries a phantom BEGIN before running a column-dropping one", () => {
     const file = statePath();
     const migrations = [
       {
@@ -210,131 +240,6 @@ describe("state.db automatic migration boundary", () => {
     expect(bodyCalls).toBe(1);
     expect(db.inTransaction).toBe(false);
     db.close();
-  });
-
-  test("applying 018 creates a sibling pre-018 safety copy first, and a second run is a no-op", () => {
-    const file = statePath();
-    const before018 = STATE_MIGRATIONS.slice(0, migrationIndex("018-drop-dead-lane-schema"));
-    const seeded = openDatabase(file);
-    seeded.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0");
-    runMigrations(seeded, before018);
-    seeded
-      .prepare("INSERT INTO consolidation_judged (entry_key, content_hash, judged_at, outcome) VALUES (?, ?, ?, ?)")
-      .run("memories/recoverable", "recover-me", "2026-08-24T01:00:00.000Z", "actioned");
-    expect(fs.existsSync(`${file}-wal`)).toBe(true);
-
-    const result = upgradeHistoricalStateDatabase(file);
-    seeded.close();
-
-    expect(result.upgraded).toBe(true);
-    expect(result.safetyCopyPath).toBe(`${file}.pre-018-drop-dead-lane-schema.bak`);
-
-    const current = openDatabase(file, { readonly: true });
-    expect((current.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get() as { count: number }).count).toBe(
-      STATE_MIGRATIONS.length,
-    );
-    expect(
-      (
-        current
-          .prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'consolidation_judged'")
-          .get() as { count: number }
-      ).count,
-    ).toBe(0);
-    current.close();
-
-    const safetyCopy = openDatabase(result.safetyCopyPath as string, { readonly: true });
-    expect(safetyCopy.prepare("PRAGMA quick_check").get()).toEqual({ quick_check: "ok" });
-    expect(
-      safetyCopy.prepare("SELECT entry_key, content_hash FROM consolidation_judged").get() as {
-        entry_key: string;
-        content_hash: string;
-      },
-    ).toEqual({ entry_key: "memories/recoverable", content_hash: "recover-me" });
-    expect(
-      (safetyCopy.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get() as { count: number }).count,
-    ).toBe(before018.length);
-    safetyCopy.close();
-
-    expect(upgradeHistoricalStateDatabase(file)).toEqual({ upgraded: false, applied: [] });
-  });
-
-  test("a failed 018 migration leaves the ledger and rows unchanged, with its pre-migration copy on disk", () => {
-    const file = statePath();
-    const before018 = STATE_MIGRATIONS.slice(0, migrationIndex("018-drop-dead-lane-schema"));
-    const seeded = openDatabase(file);
-    runMigrations(seeded, before018);
-    seeded
-      .prepare("INSERT INTO consolidation_judged (entry_key, content_hash, judged_at, outcome) VALUES (?, ?, ?, ?)")
-      .run("memories/recoverable", "recover-after-failure", "2026-08-24T02:00:00.000Z", "actioned");
-    // Exact ledger, deliberately divergent physical schema: 018 will fail at
-    // its final DROP COLUMN, after the pre-migration copy was already made.
-    seeded.exec(`
-      DROP INDEX idx_asset_outcome_review_pressure;
-      ALTER TABLE asset_outcome DROP COLUMN review_pressure;
-    `);
-    seeded.close();
-
-    const backupPath = `${file}.pre-018-drop-dead-lane-schema.bak`;
-    let error: unknown;
-    try {
-      openStateDatabase(file).close();
-    } catch (caught) {
-      error = caught;
-    }
-
-    // The raw driver failure propagates as-is — no wrapping, no fd aliases.
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toMatch(/review_pressure/i);
-
-    // The copy was made (VACUUM INTO, same connection) before the migration
-    // transaction opened, so it survives the failure untouched.
-    expect(fs.existsSync(backupPath)).toBe(true);
-    const safetyCopy = openDatabase(backupPath, { readonly: true });
-    expect(safetyCopy.prepare("PRAGMA quick_check").get()).toEqual({ quick_check: "ok" });
-    expect(
-      safetyCopy.prepare("SELECT content_hash FROM consolidation_judged").get() as { content_hash: string },
-    ).toEqual({ content_hash: "recover-after-failure" });
-    safetyCopy.close();
-
-    // The original database is untouched: the failed migration transaction rolled back.
-    const current = openDatabase(file, { readonly: true });
-    expect((current.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get() as { count: number }).count).toBe(
-      before018.length,
-    );
-    expect(current.prepare("SELECT content_hash FROM consolidation_judged").get() as { content_hash: string }).toEqual({
-      content_hash: "recover-after-failure",
-    });
-    current.close();
-  });
-
-  test("released 002 and 018 migration SQL remains byte-for-byte immutable", () => {
-    const expected = new Map([
-      ["002-task-history-per-run", "58aa34d3cd8726180de7b8691f14d40ee6729bf1541a9b81305c3ab66346cecc"],
-      ["018-drop-dead-lane-schema", "e7123d4efe86f66768fd15d905aefa95a7011961de9de8e806702e1fe70cc7c5"],
-    ]);
-
-    for (const [id, sha256] of expected) {
-      const migration = STATE_MIGRATIONS.find((candidate) => candidate.id === id);
-      expect(migration).toBeDefined();
-      expect(
-        createHash("sha256")
-          .update(migration?.up ?? "")
-          .digest("hex"),
-      ).toBe(sha256);
-    }
-  });
-
-  test("every ordered migration ID has an explicit safety classification", () => {
-    expect(Object.keys(STATE_MIGRATION_SAFETY_BY_ID)).toEqual(STATE_MIGRATIONS.map((migration) => migration.id));
-    expect(getStateMigrationSafety("002-task-history-per-run")).toBe("data-preserving-rebuild");
-    expect(getStateMigrationSafety("018-drop-dead-lane-schema")).toBe("historical-destructive");
-
-    for (const migration of STATE_MIGRATIONS) {
-      const executableSql = migration.up.replaceAll(/--.*$/gm, "");
-      if (/\bDROP\b|\bRENAME\s+TO\b/i.test(executableSql)) {
-        expect(getStateMigrationSafety(migration.id)).not.toBe("additive");
-      }
-    }
   });
 
   // #915-adjacent: two akm versions sharing one data directory is a supported

@@ -29,13 +29,7 @@ import { gte as semverGte } from "semver";
 import { openDatabase } from "../../../src/storage/database";
 import { resolveCandidateTarball } from "./candidate";
 import { requireUpgradeRehearsalCapabilities } from "./gate";
-import {
-  buildHome,
-  buildLegacyGrantHome,
-  INLINE_SCHEDULER_ROWS_SINCE,
-  type LegacyGrantHome,
-  type UpgradeHome,
-} from "./home";
+import { buildHome, INLINE_SCHEDULER_ROWS_SINCE, type UpgradeHome } from "./home";
 import { installAkmTarball, runLauncher } from "./install";
 import { fetchPreviousReleaseTarball, resolveUpgradeOriginVersion, type UpgradeOrigin } from "./previous-release";
 
@@ -532,87 +526,3 @@ for (const origin of ["previous", "0.9.32"] as const) {
     });
   });
 }
-
-/**
- * KNOWN_UPGRADE_ORIGINS' fixed `"0.9.15"` origin: the last
- * release before source-bound scheduler grants (0.9.16). A 0.9.15-built
- * home has a scheduled task installed by the OLD release's own direct
- * activation (`task add`, no `--disabled`) with NO `scheduler.enabled`
- * config grant at all — the exact 2026-09-24 scenario. Deliberately
- * separate from the full-home describe blocks above: it needs only the
- * minimal fixture `buildLegacyGrantHome` builds (see its own comment for
- * why), not the full five-bundle-kind home.
- */
-describe.skipIf(skipOrigin("0.9.15"))(
-  "upgrade rehearsal: candidate against a 0.9.15-built (pre-grant-model) home",
-  () => {
-    let workRoot: string;
-    let candidateLauncher: string;
-    let candidateVersion: string;
-    let home: LegacyGrantHome;
-
-    beforeAll(async () => {
-      workRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-upgrade-rehearsal-0915-"));
-      const cacheRoot = path.join(os.tmpdir(), "akm-upgrade-rehearsal");
-      fs.mkdirSync(cacheRoot, { recursive: true });
-
-      candidateVersion = candidatePackageVersion();
-      const originVersion = await resolveUpgradeOriginVersion("0.9.15", candidateVersion);
-
-      const [originTarball, candidateTarball] = await Promise.all([
-        fetchPreviousReleaseTarball(originVersion, cacheRoot),
-        resolveCandidateTarball(REPO_ROOT, workRoot),
-      ]);
-
-      const prefixRoot = path.join(workRoot, "prefixes");
-      fs.mkdirSync(prefixRoot, { recursive: true });
-
-      const originInstall = await installAkmTarball(originTarball, prefixRoot, "live", originVersion);
-      home = await buildLegacyGrantHome(originInstall.launcher, path.join(workRoot, "home"));
-
-      // Install the CANDIDATE over `live`, in the SAME prefix — an in-place
-      // swap, exactly like the "previous"-origin suite above.
-      const candidateInstall = await installAkmTarball(candidateTarball, prefixRoot, "live", candidateVersion);
-      candidateLauncher = candidateInstall.launcher;
-    }, 900_000);
-
-    afterAll(() => {
-      if (workRoot) fs.rmSync(workRoot, { recursive: true, force: true });
-    });
-
-    test("the crontab row installed by 0.9.15 runs the candidate before any `migrate` call, and the grant is carried forward", async () => {
-      const crontabBefore = fs.readFileSync(home.fakeCrontab, "utf8");
-      const command = extractCronCommandContaining(crontabBefore, home.taskId);
-
-      const executed = await runLauncher("/bin/sh", ["-c", command], home.env);
-      expect(executed.status, executed.stderr).toBe(0);
-
-      // A plain `task sync` afterward rewrites the now-granted row in place:
-      // an update, never an add or a removal, at the same time.
-      const sync = await runLauncher(candidateLauncher, ["task", "sync"], home.env);
-      expect(sync.status, sync.stderr).toBe(0);
-      const syncResult = JSON.parse(sync.stdout) as { installed?: string[]; updated?: string[]; removed?: string[] };
-      expect(syncResult.removed ?? []).toEqual([]);
-      expect(syncResult.installed ?? []).toEqual([]);
-      expect(syncResult.updated ?? []).toEqual([home.taskId]);
-      const crontabAfter = fs.readFileSync(home.fakeCrontab, "utf8");
-      expect(crontabAfter).toContain(home.taskId);
-      expect(crontabAfter).not.toContain("--scheduler-context");
-      expect(cronSchedules(crontabAfter)).toEqual(cronSchedules(crontabBefore));
-
-      // The rewritten row fires the candidate too.
-      const rewritten = await runLauncher(
-        "/bin/sh",
-        ["-c", extractCronCommandContaining(crontabAfter, home.taskId)],
-        home.env,
-      );
-      expect(rewritten.status, rewritten.stderr).toBe(0);
-
-      // The sync took the installed row as this host's choice: the list now names it.
-      const configGet = await runLauncher(candidateLauncher, ["config", "get", "scheduler.enabled"], home.env);
-      expect(configGet.status, configGet.stderr).toBe(0);
-      const enabled = (JSON.parse(configGet.stdout) as string[] | null) ?? [];
-      expect(enabled.some((ref) => ref.endsWith(`tasks/${home.taskId}`))).toBe(true);
-    });
-  },
-);

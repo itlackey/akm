@@ -270,8 +270,8 @@ describe("loadConfig", () => {
     expect(warnings.some((w) => w.includes("stashes") && w.includes("retired"))).toBe(true);
   });
 
-  // Older than the 0.9.15 floor: 0.10 does not convert these, it refuses them
-  // with one message naming `akm migrate apply` under akm 0.9.x (#1091).
+  // Older than the 0.9.32 floor: 0.10 does not convert these, it refuses them
+  // with one message naming the 0.9.32 recipe (#1091).
   test.each([
     ["sources", [{ type: "filesystem", path: "/keep", name: "keep" }]],
     ["installed", [{ id: "npm:left-pad", source: "npm", ref: "npm:left-pad" }]],
@@ -280,7 +280,7 @@ describe("loadConfig", () => {
     writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", [key]: value }));
 
     expect(() => loadConfig()).toThrow(
-      new RegExp(`${key}: .*predates akm 0\\.9\\.15.*akm migrate apply.* with akm 0\\.9\\.x`),
+      new RegExp(`${key}: .*predates akm 0\\.9\\.32.*akm-cli@0\\.9\\.32 && akm migrate apply`),
     );
   });
 });

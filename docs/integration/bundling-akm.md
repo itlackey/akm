@@ -35,38 +35,31 @@ In order, every run applies (or, under `status`/`--dry-run`, plans):
    form akm no longer reads move to `credentials.json` (`configFile.credentials`
    lists the entry names, never a value), and a leftover `models.json` is folded
    into the `models` of the connections and harnesses it names. A config older
-   than 0.9.15 (the legacy `stashDir`/`sources[]`/`installed` layout) is not
-   converted by 0.10: it blocks with a message to run `akm migrate apply` under
-   akm 0.9.x first. What each retired key becomes is the table in
+   than 0.9.32 (the legacy `stashDir`/`sources[]`/`installed` layout) is not
+   converted by 0.10: it blocks with a message to run
+   `npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync` first. What each retired key becomes is the table in
    [Configuration](../reference/configuration.md#the-engines-form).
 2. **Pending `state.db` migrations** (`stateMigrations`). Any command that opens
-   `state.db` applies them; this step does it up front and reports what ran. A
-   migration that drops schema first copies the file to
-   `state.db.pre-<migrationId>.bak`. See
-   [One-way state.db](#one-way-note-statedb-migrations-are-one-way) below.
-3. **Task files**: every task file at version 2 or 3, and every version 4
-   file still carrying the retired `schedule[].enabled` key, rewritten as
-   task source v4 (`taskFiles`) under one backup directory per run. A file
-   the planner cannot convert unambiguously is reported `blocked` and left
-   alone; the rest still convert.
-4. **Asset `engine:` keys** (`assetEngineKeys`): the retired `engine:` key on
+   `state.db` applies them; this step does it up front and reports what ran.
+   0.10 adds none. A `state.db` from before the 0.9.32 floor (a ledger shorter
+   than the 29 ids released through 0.9.32) is refused whole: the plan is
+   `blocked` with the 0.9.32 recipe as its one blocker, and no other step runs.
+   See [One-way state.db](#one-way-note-statedb-migrations-are-one-way) below.
+3. **Asset `engine:` keys** (`assetEngineKeys`): the retired `engine:` key on
    commands, agents, workflows and task sources rewritten to `connection:` or
    `harness:` by what the name is now, under one backup directory per run. A
    bundle akm may not change is skipped.
-5. **Content refs** (`assetContentRefs`): refs in the text files akm indexes in writable
+4. **Content refs** (`assetContentRefs`): refs in the text files akm indexes in writable
    bundles that still use the pre-#1432 spelling (`knowledge/WORK/x`, now
    `WORK/x`), in frontmatter and body, rewritten under one backup directory per
    run. An old spelling that is now another file's ref is listed in `shadowed`
    and left as written.
-6. **Residue sweep**: superseded pre-0.9.0 `.akm` files in the stash and the
-   transaction-journal, maintenance-barrier, lock-mutex and version-stamp
-   files older releases kept under `$DATA`/`$STATE`/`$CONFIG` (`deadResidue`).
 
 ### The plan JSON
 
 One JSON object on stdout, always, with one field per step. A current
 install, nothing to do, as `akm migrate status` prints it (under `apply` the
-per-step objects carry results instead — `applied`, `removed` — with the
+per-step objects carry results instead — `applied` — with the
 same step names):
 
 ```json
@@ -76,47 +69,30 @@ same step names):
   "blockers": [],
   "configFile": { "keys": [], "changed": false, "applied": false },
   "stateMigrations": { "pending": [] },
-  "taskFiles": { "schemaVersion": 1, "changed": 0, "skipped": 0, "blocked": 0, "files": [] },
   "assetEngineKeys": { "schemaVersion": 1, "changed": 0, "skipped": 0, "files": [] },
-  "assetContentRefs": { "schemaVersion": 1, "changed": 0, "skipped": 0, "refs": 0, "files": [], "shadowed": [] },
-  "deadResidue": { "pending": [] }
+  "assetContentRefs": { "schemaVersion": 1, "changed": 0, "skipped": 0, "refs": 0, "files": [], "shadowed": [] }
 }
 ```
 
-`akm migrate status` against a tree with one blocked task file:
+`akm migrate status` against a `state.db` from before the floor:
 
 ```json
 {
   "schemaVersion": 1,
   "status": "blocked",
-  "blockers": ["tasks/nightly.yml: with-on-non-command-target"],
-  "stateMigrations": { "pending": [] },
-  "taskFiles": {
-    "schemaVersion": 1,
-    "changed": 3,
-    "skipped": 1,
-    "blocked": 1,
-    "files": [
-      {
-        "filePath": "tasks/nightly.yml",
-        "status": "blocked",
-        "reason": "with-on-non-command-target",
-        "beforeHash": "…"
-      }
-    ]
-  }
+  "blockers": ["This state.db predates akm 0.9.32 and this akm does not upgrade it: run the 0.9.32 recipe, then upgrade."]
 }
 ```
 
 `status` is one of:
 
-- **`current`** — no task-source file needs converting, and no config
-  rewrite is pending. A no-op boot.
-- **`ready`** — task sources have eligible changes and no config-lift
-  conflict; a real `apply` will clear them.
+- **`current`** — no asset needs rewriting, and no config rewrite is pending.
+  A no-op boot.
+- **`ready`** — assets or the config have eligible changes; a real `apply`
+  will clear them.
 - **`blocked`** — at least one item cannot be applied automatically (a
-  genuine authoring problem, e.g. a task file the migrator can't rewrite
-  unambiguously, or a config that fails validation). `blockers` names each one. `apply` still applies
+  `state.db` below the floor, a config that fails validation, or a step that
+  failed). `blockers` names each one. `apply` still applies
   everything it *can*, then reports `blocked` and exits non-zero.
 
 A pending `state.db` migration needs no human decision, so it is never
@@ -128,24 +104,17 @@ Key fields:
 
 | Field | Meaning |
 | --- | --- |
-| `stateMigrations` | `{ pending: string[] }` under `status`/`--dry-run`; `{ applied: string[], safetyCopyPath?: string }` after a real `apply`. `safetyCopyPath` is present only when a historical-destructive migration ran — see below. |
-| `taskFiles` | `changed`/`skipped`/`blocked` counts and a `files[]` array with each file's `status` and `reason`. |
+| `stateMigrations` | `{ pending: string[] }` under `status`/`--dry-run`; `{ applied: string[] }` after a real `apply`. |
 | `assetEngineKeys` | `changed`/`skipped` counts and a `files[]` array with each rewritten file's `rewrites` (`at`, `from`, `to`). |
 | `assetContentRefs` | `changed`/`skipped` file counts, `refs` (old-spelling refs found), a `files[]` array with each file's `refs`, and `shadowed[]` (`bundleId`, `from`, `to`): old spellings another file holds as its ref, not rewritten. |
-| `backupPath` / `applied` | Present after a real apply that rewrote at least one task file: the run's backup directory and how many files it rewrote. |
-| `deadResidue` | `{ pending: [...] }` under a read-only run, `{ removed: [...] }` after apply. Each entry carries `relativePath` and `sizeBytes`; a removal entry adds `removed` (a boolean) and an `error` when the delete failed. A failed delete does not set `status` to `blocked`. |
 
 **Backups and their retention:**
 
-- Task-file backups go to `<dataDir>/backups/tasks/<timestamp>-<uuid>/`,
-  one directory per apply run that rewrote a file; nothing prunes them.
+- Asset backups go to `<dataDir>/backups/asset-engine-keys/` and
+  `<dataDir>/backups/asset-content-refs/` (`<timestamp>-<uuid>/`), one directory
+  per apply run that rewrote a file; nothing prunes them.
 - Config backups go to `<cacheDir>/config-backups/config-<ISO-ts>.json`; akm
   keeps the newest **5** and prunes older ones.
-- A `state.db` migration that drops schema writes a sibling copy next to
-  `state.db` itself: `state.db.pre-<migrationId>.bak`, where `<migrationId>` is
-  the first such pending migration. akm does not prune it. It is a rare,
-  one-time event, so clean it up yourself once you've confirmed the upgrade, if
-  disk space matters to your image.
 
 **Exit codes:**
 
@@ -222,19 +191,17 @@ that wording is not a stable interface.
 
 The check that replaces grepping akm's refusal text is a **hard check**
 named `state-db-migrations`. Every `state.db` open applies pending migrations
-(copying the file to `state.db.pre-<id>.bak` first when one drops schema), so
-after an upgrade the check passes and names what health's own open applied:
+so after an upgrade the check passes and names what health's own open applied:
 
 ```json
 {
   "name": "state-db-migrations",
   "status": "pass",
-  "message": "Applied 11 pending state.db migration(s) on open (018-drop-dead-lane-schema … 028-improve-ledger); the pre-migration copy is /data/akm/state.db.pre-018-drop-dead-lane-schema.bak.",
+  "message": "Applied 29 pending state.db migration(s) on open (001-initial-schema … 029-improve-ledger-content-hash).",
   "evidence": {
     "path": "/data/akm/state.db",
     "pending": [],
-    "applied": ["018-drop-dead-lane-schema", "…", "028-improve-ledger"],
-    "backupPath": "/data/akm/state.db.pre-018-drop-dead-lane-schema.bak"
+    "applied": ["001-initial-schema", "…", "029-improve-ledger-content-hash"]
   }
 }
 ```
@@ -308,5 +275,4 @@ Once a migration has run against `state.db`, there is no downgrade path. An
 and warns once that the database is newer; upgrade akm if its output looks
 incomplete. If you need the ability to roll back a bundled akm version, take
 your own backup of the whole data directory (`$AKM_DATA_DIR`) before running
-`akm upgrade`/`akm migrate apply`. The `state.db.pre-<migrationId>.bak` copy
-described above covers the one schema-dropping step, not a general rollback.
+`akm upgrade`/`akm migrate apply`.

@@ -1,7 +1,0 @@
-version: 3
-name: v3 to v4 fixture - on.schedule trigger
-uses: commands/publish-report
-on:
-  schedule:
-    - cron: "30 9 * * 2"
-    - cron: "0 0 1 * *"

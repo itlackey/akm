@@ -25,7 +25,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { planTaskToV4File } from "../../scripts/akm-migrate/migrate/task-to-v4";
 import { resolveImproveScope } from "../../src/commands/improve/eligibility";
 import { resetConfigCache } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
@@ -124,19 +123,5 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
     // which no longer equalled the stored ref and threw "not canonical".
     const proposal = proposalRowToProposal(row);
     expect(proposal.ref).toBe("adversarial//tables/customers");
-  });
-
-  test("task migration recognizes the opaque ref and blocks because task-v3 has no generic asset target", () => {
-    const filePath = path.join(storage.stashDir, "tasks", "opaque-prompt-source.yml");
-    const outcome = planTaskToV4File({
-      filePath,
-      bytes: Buffer.from('version: 2\nschedule: "@daily"\nprompt: adversarial//tables/customers\n', "utf8"),
-      mode: 0o644,
-      writable: true,
-    });
-    expect(outcome).toMatchObject({
-      status: "blocked",
-      reason: "non-command-asset-has-no-v3-command-ref-equivalent",
-    });
   });
 });

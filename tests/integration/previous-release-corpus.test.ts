@@ -22,17 +22,9 @@
  * spelled out in the commit message.
  *
  * Current coverage:
- *   - task source v2 (`fixtures/task-v2.yml`) — refused at runtime naming
- *     `akm migrate apply`, and convertible on disk through that command's
- *     v2->v3->v4 migrator.
- *   - task source v3 (`fixtures/task-v3.yml`) — refused at runtime naming
- *     `akm migrate apply`, and convertible on disk through its v3->v4
- *     migrator.
- *   - task source v4 with a retired `schedule[].enabled`
- *     (`fixtures/task-v4-schedule-enabled.yml`, exactly as 0.9.15's `akm
- *     task add --disabled` wrote it) — refused at runtime naming
- *     `akm migrate apply`, and converted through the explicit
- *     `akm-migrate` v4->v4 pass.
+ *   - task source v2, v3 and v4-with-`schedule[].enabled` (`fixtures/task-v*.yml`)
+ *     — refused at runtime naming the 0.9.32 recipe; 0.10 converts none of
+ *     them (the floor).
  *   - pre-envelope proposal rows (`metadata_json` missing `changes`,
  *     `proposedTarget`, `beforeHash`, `eligibilitySource`, `backupContent` —
  *     the REAL shape pulled from a live 24,358-row archive during the #859
@@ -96,9 +88,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { normalizeConfigFile } from "../../scripts/akm-migrate/config/normalize";
-import { planTaskToV4File } from "../../scripts/akm-migrate/migrate/task-to-v4";
+import { inspectEngineKeysMigration } from "../../scripts/akm-migrate/engine-key-migrate";
 import { runMigration } from "../../scripts/akm-migrate/run-migrate";
-import { inspectTaskFilesMigration } from "../../scripts/akm-migrate/task-migrate";
 import { akmHealth } from "../../src/commands/health";
 import { createProposal as createProposalImpl } from "../../src/commands/proposal/repository";
 import { akmTasksSync, akmTasksSyncPlan } from "../../src/commands/tasks/tasks";
@@ -134,14 +125,6 @@ const FIXTURES_DIR = path.join(import.meta.dir, "..", "fixtures", "previous-rele
 
 function readFixture(name: string): string {
   return fs.readFileSync(path.join(FIXTURES_DIR, name), "utf8");
-}
-
-function migrateLegacyTask(filePath: string, yaml: string) {
-  const input = { filePath, bytes: Buffer.from(yaml), mode: 0o640, writable: true };
-  const v4 = planTaskToV4File(input);
-  expect(v4.status).toBe("changed");
-  if (v4.status !== "changed") throw new Error(`expected migration to v4: ${v4.reason}`);
-  return parseTaskSource({ yaml: v4.after.toString("utf8"), filePath });
 }
 
 describe("previous-release corpus — upgrade must not break reads", () => {
@@ -193,7 +176,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
   }
 
   // The runtime reads only task source v4 (#987): each older shape is refused
-  // on its own, naming `akm migrate apply`, and that command converts it.
+  // on its own, naming the 0.9.32 recipe (the floor); 0.10 converts none of them.
   function expectRefusedNamingMigrate(yaml: string, filePath: string): void {
     let error: unknown;
     try {
@@ -202,56 +185,15 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       error = cause;
     }
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("akm migrate apply");
+    expect((error as Error).message).toContain("akm-cli@0.9.32 && akm migrate apply");
   }
 
-  describe("task source v2/v3 (refused at runtime, and explicitly migrated to v4)", () => {
-    test("a real-shaped task v2 file is refused naming `akm migrate apply` and converts via akm-migrate", () => {
-      const filePath = path.join(FIXTURES_DIR, "task-v2.yml");
-      const yaml = readFixture("task-v2.yml");
-      expectRefusedNamingMigrate(yaml, filePath);
-
-      const result = migrateLegacyTask(filePath, yaml);
-      expect(result.version).toBe(4);
-      expect(result.v4.schedule.length).toBeGreaterThan(0);
-      expect(result.v4.target.kind).toBe("run");
-      expect(Object.hasOwn(result.v4, "enabled")).toBe(false);
-    });
-
-    test("a real-shaped task v3 file is refused naming `akm migrate apply` and converts via akm-migrate", () => {
-      const filePath = path.join(FIXTURES_DIR, "task-v3.yml");
-      const yaml = readFixture("task-v3.yml");
-      expectRefusedNamingMigrate(yaml, filePath);
-
-      const result = migrateLegacyTask(filePath, yaml);
-      expect(result.version).toBe(4);
-      expect(result.v4.schedule.length).toBeGreaterThan(0);
-      expect(result.v4.target.kind).toBe("uses");
-      expect(Object.hasOwn(result.v4, "enabled")).toBe(false);
-    });
-  });
-
-  describe("task source v4 with a retired schedule[].enabled (0.9.15's own grammar)", () => {
-    test("a real-shaped 0.9.15 `task add --disabled` file is refused naming `akm migrate apply` and converts via akm-migrate", () => {
-      const filePath = path.join(FIXTURES_DIR, "task-v4-schedule-enabled.yml");
-      const yaml = readFixture("task-v4-schedule-enabled.yml");
-      expectRefusedNamingMigrate(yaml, filePath);
-
-      // `akm-migrate`'s second generation (task v3 -> task source v4) reaches
-      // a declared `version: 4` file directly through `planTaskToV4File` —
-      // there is no v3 hop for a file already declaring version 4, unlike
-      // `migrateLegacyTask` above.
-      const input = { filePath, bytes: Buffer.from(yaml), mode: 0o640, writable: true };
-      const v4 = planTaskToV4File(input);
-      expect(v4.status).toBe("changed");
-      if (v4.status !== "changed") throw new Error(`expected migration to v4: ${v4.reason}`);
-      expect(v4.reason).toBe("source-enablement-removed");
-      const migrated = parseTaskSource({ yaml: v4.after.toString("utf8"), filePath });
-      expect(migrated.version).toBe(4);
-      expect(migrated.v4.schedule.length).toBeGreaterThan(0);
-      expect(migrated.v4.target.kind).toBe("run");
-      for (const entry of migrated.v4.schedule) expect(Object.hasOwn(entry, "enabled")).toBe(false);
-    });
+  describe("task source below the 0.9.32 floor (refused at runtime, never converted)", () => {
+    for (const fixture of ["task-v2.yml", "task-v3.yml", "task-v2-env-prefixed.yml", "task-v4-schedule-enabled.yml"]) {
+      test(`${fixture} is refused naming the 0.9.32 recipe`, () => {
+        expectRefusedNamingMigrate(readFixture(fixture), path.join(FIXTURES_DIR, fixture));
+      });
+    }
   });
 
   describe("proposals state.db — pre-#858 legacy envelope", () => {
@@ -460,25 +402,6 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       await expect(akmHealth({ since: "7d" })).resolves.toBeDefined();
     });
   });
-
-  // #867: the existing "task source v2/v3" describe above only covers the
-  // plain `command: /path/to/akm ...` shape. On a real 0.9.4 install, every
-  // v2 task whose `command:` started with `env NAME=value... cmd args...`
-  // (a common, ordinary way to write a cron command) hit
-  // TASK_SCHEMA_VERSION_UNSUPPORTED instead of being migratable — this is
-  // exactly the gap that shipped in 0.9.4. `akm migrate apply` converts it.
-  describe("task source v2 — env-prefixed command (#867)", () => {
-    test("a real-shaped env-prefixed task is refused naming `akm migrate apply` and converts via akm-migrate", () => {
-      const filePath = path.join(FIXTURES_DIR, "task-v2-env-prefixed.yml");
-      const yaml = readFixture("task-v2-env-prefixed.yml");
-      expectRefusedNamingMigrate(yaml, filePath);
-
-      const result = migrateLegacyTask(filePath, yaml);
-      expect(result.version).toBe(4);
-      expect(result.v4.schedule.length).toBeGreaterThan(0);
-      expect(result.v4.target.kind).toBe("run");
-    });
-  });
 });
 
 // ── AKM_BUNDLE_DIR synthesized "stash" bundle duplicate (#870) ─────────────
@@ -521,7 +444,7 @@ describe("previous-release corpus — AKM_BUNDLE_DIR duplicate 'stash' bundle (#
       },
     });
 
-    expect(() => inspectTaskFilesMigration()).toThrow(/openpalm.*stash.*same physical content root/i);
+    expect(() => inspectEngineKeysMigration()).toThrow(/openpalm.*stash.*same physical content root/i);
   });
 });
 
@@ -531,7 +454,7 @@ describe("previous-release corpus — AKM_BUNDLE_DIR duplicate 'stash' bundle (#
 // older than the 0.9.15 floor (#1091): 0.10 converts nothing, and a real
 // 0.8-era config.json is refused with one message naming `akm migrate apply`
 // under akm 0.9.x rather than being silently misread.
-describe("previous-release corpus — retired 0.8 source-config keys (below the 0.9.15 floor, #1091)", () => {
+describe("previous-release corpus — retired 0.8 source-config keys (below the 0.9.32 floor, #1091)", () => {
   beforeEach(() => resetConfigCache());
   afterEach(() => resetConfigCache());
 
@@ -556,7 +479,7 @@ describe("previous-release corpus — retired 0.8 source-config keys (below the 
       }),
     );
 
-    expect(() => loadConfig()).toThrow(/predates akm 0\.9\.15.*akm migrate apply.* with akm 0\.9\.x/);
+    expect(() => loadConfig()).toThrow(/predates akm 0\.9\.32.*akm-cli@0\.9\.32 && akm migrate apply/);
   });
 });
 
@@ -687,7 +610,7 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
       }),
     );
 
-    const config = loadConfig();
+    const _config = loadConfig();
     const messages = (warnSpy.mock.calls as unknown[][]).map((call) => call.join(" "));
     expect(messages.some((m) => m.includes("experimental.improveAutonomyy"))).toBe(true);
   });
