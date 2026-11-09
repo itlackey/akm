@@ -111,8 +111,7 @@
     "typescript": "^5.9.3"
   },
   "optionalDependencies": {
-    "better-sqlite3": "13.0.3",
-    "sqlite-vec": "^0.1.9"
+    "better-sqlite3": "13.0.3"
   },
   "engines": {
     "node": ">=22"
