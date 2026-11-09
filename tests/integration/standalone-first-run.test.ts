@@ -122,7 +122,7 @@ describe.skipIf(unavailable !== undefined)("the standalone binary", () => {
       expect(result.ok).toBe(true);
       expect(model.requests[0]?.tools).toEqual(expect.arrayContaining(["akm_search", "akm_show", "akm_curate"]));
       // What akm's search printed, as JSON, came back as the tool's result.
-      expect(result.stdout).toMatch(/^AKM:\{[\s\S]*"hits"/);
+      expect(result.stdout).toMatch(/^AKM:\{[\s\S]*"results"/);
     } finally {
       storage.cleanup();
     }

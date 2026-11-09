@@ -103,12 +103,12 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     expect(result.ok, `${result.stdout}\n${result.stderr}`).toBe(true);
     expect(result.exitCode).toBe(0);
     // The call went to akm's CLI (the plugin shells out to it) and its JSON came back through the tool.
-    expect(result.stdout).toMatch(/^AKM:\{[\s\S]*"hits"/);
+    expect(result.stdout).toMatch(/^AKM:\{[\s\S]*"results"/);
     const [first, second] = model.requests;
     expect(first?.tools).toEqual(
       expect.arrayContaining(["akm_search", "akm_show", "akm_curate", "shell", "write", "edit"]),
     );
-    expect(second?.toolResult).toContain('"hits"');
+    expect(second?.toolResult).toContain('"results"');
     // The connection is the provider: its key, and its request fields over the request; OpenCode's own output cap is gone.
     expect(first?.authorization).toBe("Bearer sk-runtime-test");
     expect(first?.params).toMatchObject({ model: "fake-model", reasoning_effort: "high", top_p: 0.9 });
@@ -201,7 +201,7 @@ describe.skipIf(unavailable !== undefined)("akm's runtime on the real OpenCode b
     const texts = data.events.map((event) => [event.role, event.text]);
     expect(texts[0]).toEqual(["user", "MODE:akm please"]);
     expect(texts.some(([role, text]) => role === "assistant" && text?.startsWith("[tool:akm_search]"))).toBe(true);
-    expect(texts.some(([role, text]) => role === "tool" && text?.includes("hits"))).toBe(true);
+    expect(texts.some(([role, text]) => role === "tool" && text?.includes("results"))).toBe(true);
   });
 
   test("nothing is written outside akm's directories: not in the home directory, not in the temp directory", async () => {
