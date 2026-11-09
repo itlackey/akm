@@ -26,8 +26,12 @@ for that one file (a task source in an old grammar), and either message names
 happens. The only data a reader refuses outright is that written by a release
 *newer* than itself, and that refusal must name the remedy (upgrade akm).
 What the runtime still reads of older data, on purpose, is: the pre-path-ref
-spelling of refs (`src/indexer/legacy-refs.ts`, the link readers in
-`src/indexer/`), the per-task rows of akm 0.9 in the OS scheduler (found and
+spelling of refs *as authored in bundle files* (the link readers in
+`src/indexer/`, and the resolver's old-spelling fallback in
+`src/indexer/lookup/adapter-concept-owner.ts`: a bundle that arrives later by
+`bundle add` or a pull can still hold them; the `assetContentRefs` step rewrites
+those in writable bundles, and re-keys the `state.db` rows stored under the old
+spelling, which the runtime no longer does), the per-task rows of akm 0.9 in the OS scheduler (found and
 removed by `akm task sync`, and by the `scheduler` step of `akm migrate
 apply`), 0.9.16's `{kind, ref, sourceId}` `scheduler.enabled` entries, and the
 state.db migrations, which any command that opens the file applies. Bundle

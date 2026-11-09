@@ -53,7 +53,10 @@ In order, every run applies (or, under `status`, plans):
    bundles that still use the pre-#1432 spelling (`knowledge/WORK/x`, now
    `WORK/x`), in frontmatter and body, rewritten under one backup directory per
    run. An old spelling that is now another file's ref is listed in `shadowed`
-   and left as written.
+   and left as written. The same step re-keys the `state.db` rows (usage events,
+   proposals, events, task history, improve ledger, asset salience and outcome)
+   stored under an old spelling to the new one, `stateRows` of them; `index.db`
+   is rebuilt by the next `akm index`.
 5. **The OS scheduler** (`scheduler`): akm 0.10 keeps one scheduler entry that
    runs `akm task dispatch`; `apply` replaces akm 0.9's per-task rows with it
    in one write, the same as `akm task sync`. This is the only step that
@@ -122,7 +125,7 @@ Key fields:
 | --- | --- |
 | `stateMigrations` | `{ pending: string[] }` under `status`; `{ applied: string[] }` after a real `apply`. |
 | `assetEngineKeys` | `changed`/`skipped` counts and a `files[]` array with each rewritten file's `rewrites` (`at`, `from`, `to`). |
-| `assetContentRefs` | `changed`/`skipped` file counts, `refs` (old-spelling refs found), a `files[]` array with each file's `refs`, and `shadowed[]` (`bundleId`, `from`, `to`): old spellings another file holds as its ref, not rewritten. |
+| `assetContentRefs` | `changed`/`skipped` file counts, `refs` (old-spelling refs found), a `files[]` array with each file's `refs`, and `shadowed[]` (`bundleId`, `from`, `to`): old spellings another file holds as its ref, not rewritten; `stateRows`, the `state.db` rows keyed by an old spelling that move to the new one. |
 | `scheduler` | `backend`, `entry` (`installed`, `updated`, `unchanged`, `removed`, `absent` or `unmanaged`), `removedLegacy[]` (akm 0.9 per-task rows removed), `keptLegacy[]` (rows that name another installation), `warnings[]`. |
 
 **Backups and their retention:**
