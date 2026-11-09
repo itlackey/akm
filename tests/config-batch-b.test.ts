@@ -373,14 +373,19 @@ describe("a strategy `limit` is gone from the plan", () => {
       connections: CONNECTIONS,
       improve: { strategy: "mine", strategies: { mine: { limit: 5 } } },
     });
-    expect((await runCliCapture(["bundle", "create"])).code).toBe(0);
-    const result = await runCliCapture(["improve", "--dry-run", "--format", "json"]);
-    expect(result.code, result.stderr).toBe(0);
-    const limits = (JSON.parse(result.stdout) as { plan: { limits: { configured: object; effective?: number } } }).plan
-      .limits;
-    expect(limits.configured).not.toHaveProperty("profile");
-    // The shipped reflect limit (25) is what applies; the strategy's own `limit` never did anything.
-    expect(limits.effective).toBe(25);
+    const bundle = fs.mkdtempSync(path.join(os.tmpdir(), "akm-limits-bundle-"));
+    try {
+      expect((await runCliCapture(["bundle", "create", "--dir", bundle])).code).toBe(0);
+      const result = await runCliCapture(["improve", "--dry-run", "--format", "json"]);
+      expect(result.code, result.stderr).toBe(0);
+      const limits = (JSON.parse(result.stdout) as { plan: { limits: { configured: object; effective?: number } } })
+        .plan.limits;
+      expect(limits.configured).not.toHaveProperty("profile");
+      // The shipped reflect limit (25) is what applies; the strategy's own `limit` never did anything.
+      expect(limits.effective).toBe(25);
+    } finally {
+      fs.rmSync(bundle, { recursive: true, force: true });
+    }
   });
 });
 

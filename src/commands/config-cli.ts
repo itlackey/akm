@@ -130,6 +130,7 @@ export function redactSecretKeys(value: unknown, path: string[] = []): unknown {
   if (
     path.length > 2 &&
     last !== undefined &&
+    value != null &&
     isSecretKey(last, value) &&
     !(typeof value === "string" && isEnvReference(value))
   ) {
