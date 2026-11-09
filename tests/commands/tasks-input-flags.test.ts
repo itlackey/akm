@@ -466,7 +466,7 @@ describe("parseTaskInputFlags — akm task run's own declared flags are excluded
   });
 
   test("TASK_RUN_VALUE_FLAGS / TASK_RUN_BOOLEAN_FLAGS are exactly the closed sets spec §5.1 names", () => {
-    expect([...TASK_RUN_VALUE_FLAGS].sort()).toEqual(["bundle", "detail", "format", "output", "shape"].sort());
+    expect([...TASK_RUN_VALUE_FLAGS].sort()).toEqual(["bundle", "detail", "format", "output"].sort());
     expect([...TASK_RUN_BOOLEAN_FLAGS].sort()).toEqual(
       ["help", "no-quiet", "no-verbose", "quiet", "scheduled", "verbose"].sort(),
     );

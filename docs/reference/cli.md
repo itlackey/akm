@@ -223,7 +223,8 @@ unless `--yes` or `--from` is given.
 | `--embedding <model\|local\|off>` | Embeddings |
 | `--embedding-endpoint <url>`, `--embedding-api-key-env <NAME>` | Another endpoint serving the embedding model |
 | `--from <file>` | A config file (JSON or YAML) to merge |
-| `--dir <path>`, `--no-init` | The bundle directory; skip scaffolding it |
+| `--dir <path>` | The bundle directory |
+| `--init`, `--no-init` | Scaffold the bundle directory (the default), or skip scaffolding it |
 | `--learning <on\|off>` | Background learning, on its own: see [setup --learning](#setup---learning) |
 | `--no-probe` | Offline: nothing is contacted or downloaded. The endpoint's models are not listed, so a connection added this way has no model until `akm models set` names one, and the built-in embedder's runtime and model are downloaded by the first `akm index` |
 
@@ -1279,6 +1280,8 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--name` | The bundle key. A contract, not a hint: it must be a legal bundle slug (no `:` `.` `#` `/` or whitespace) and not already taken by a different bundle, or the add fails before any write. Re-adding an already-installed source under a different `--name` than it already carries also fails — use `akm bundle rename <old> <new>` instead. Omit it and akm derives a name (falling back to a `-<hash>` suffix on a collision). |
 | `--provider` | Explicit provider for declarative source configuration; normally inferred from the input |
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
+| `--adapter` | Component adapter for a local directory (one of the ids in [Bundle Types](bundle-types.md)); normally detected |
+| `--before`, `--after` | Insert the new bundle before or after this configured bundle, instead of at the end |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
 | `--allow-insecure-transport` | Allow a plain-HTTP source URL after explicitly accepting transport substitution risk |
 | `--allow-dangerous-env-keys` | Deprecated, no effect. `bundle add` no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
@@ -1987,12 +1990,13 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 | `--force` | Overwrite an existing memory with the same name |
 | `--description <text>` | Short description written to frontmatter (persisted as the memory's `description` field). Honoured by both the zero-flag form and the tagged form. |
 | `--tag <v>` | Tag to attach to the memory. Repeatable: `--tag foo --tag bar` |
-| `--expires <dur>` | Expiry shorthand (`30d`, `12h`, `6m`). Resolved to an ISO date |
+| `--expires <dur>` | Expiry shorthand: `30d`, `12h`, `5m` (minutes), `3M` (months, 30 days each). The case of `m`/`M` matters; every duration flag uses this grammar. Resolved to an ISO date |
 | `--source <s>` | Free-form source reference — URL, asset ref, file path, or any string |
 | `--xref <ref>` | Cross-reference ref recorded in the memory's `xrefs:` frontmatter list. Repeatable: `--xref knowledge/auth-flow --xref memories/vpn-note`. Each ref must resolve in the write target or a configured source (read-only sources count); an unresolvable ref fails with exit 2 before anything is written. More than 5 refs warns (soft cap) but still writes. Does not trigger the tags-required check. |
 | `--supersedes <ref>` | Ref of an existing asset this memory corrects. Repeatable. Writes the correction with the old ref folded into its `xrefs:` (correction provenance) AND demotes the old asset — `beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit that preserves every other key and the body — then reindexes it so `--belief current` hides the stale version immediately. An unresolvable ref fails with exit 2 before anything is written or demoted; so does a ref naming the asset being written itself (a correction cannot supersede itself, e.g. `--force` overwriting the same name). A ref that resolves only outside the write target and the working bundle still writes the correction but skips the demotion: stderr warns and the JSON output reports `superseded: [{ref, applied: false, reason}]` — the reason names the `--bundle` remedy when the old asset lives in a configured writable source. An old asset whose existing frontmatter is not parseable YAML is skipped the same way (`applied: false`) instead of being rewritten lossily. Re-running the same correction is idempotent. On a git write target the correction and the demoted old asset land in the same single boundary commit. |
 | `--auto` | Apply heuristic tagging from the body (opt-in, zero-latency, pure TS) |
 | `--enrich` | Call the configured LLM for tag/description proposals (opt-in, 10s timeout, fails soft) |
+| `--show-similar` | Return the top 3 similar memories in a `similar` array (`--showSimilar` also works) |
 | `--user <id>` | Scope this memory to a user id. Persisted as the canonical `scope_user` frontmatter key. |
 | `--agent <id>` | Scope this memory to an agent id. Persisted as `scope_agent`. |
 | `--run <id>` | Scope this memory to a run id. Persisted as `scope_run`. |
@@ -3331,7 +3335,7 @@ akm proposal extract --type claude --location /custom/path --session-id <id>
 | `--type <harness>` | Harness name (`claude`, `codex`, `opencode`). Required unless `--auto`. |
 | `--session-id <id>` | Process only this session ID. When absent, discover sessions via `--since`. |
 | `--location <path>` | Override the harness's default session-discovery location. |
-| `--since <cutoff>` | Discovery cutoff. ISO timestamp or duration (`24h`, `7d`, `30m`). Default `24h`. |
+| `--since <cutoff>` | Discovery cutoff. ISO timestamp or duration (`24h`, `7d`, `30m`, `3M`: `m` is minutes, `M` is months). Default `24h`. |
 | `--auto` | Iterate every available harness with the default `--since`. Mutually exclusive with `--type`. |
 | `--dry-run` | Show candidates without queuing proposals. |
 | `--force` | Re-process sessions even if they were already extracted and have no new events. Default: skip already-seen sessions. |
@@ -3815,7 +3819,7 @@ akm task prune --yes                        # Remove every currently-computed or
 akm task prune --id ghost,stale --yes       # Remove only the named orphan ids
 ```
 
-`task add` also accepts `--disabled` (write the task but leave its ref out of
+`task add` also accepts `--tags <a,b>` (comma-separated tags), `--when-to-use <text>` (guidance on when the task runs or should be used), `--disabled` (write the task but leave its ref out of
 this host's scheduler activation), `--force` (overwrite an existing task with
 the same id), and `--rebind` (also point the bundle's installed scheduler rows
 at this akm invocation, as `akm task sync --rebind` does).
@@ -3828,7 +3832,7 @@ secret-shaped value prints as `<redacted>`. See
 [`akm task explain`](tasks.md#akm-task-explain).
 
 `akm task run` is what cron / launchd / schtasks invoke at the scheduled
-time. Each run is recorded as a row in the durable `task_history` table
+time (they add the internal `--scheduled` marker; do not pass it yourself). Each run is recorded as a row in the durable `task_history` table
 (`state.db`), surfaced by `akm task history` — **not** by `akm log`; there is
 no `task_invoked`/`task_completed` event type on the `akm log` stream.
 

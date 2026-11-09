@@ -143,16 +143,11 @@ export const rememberCommand = defineJsonCommand({
     },
     "show-similar": {
       type: "boolean",
-      // R-062: canonical spelling is kebab-case, matching every other
-      // multi-word flag in the CLI (--fail-on-flagged, --auto-fix, …).
-      // `--showSimilar` (the pre-rename spelling) is kept as an explicit,
-      // documented alias rather than a silent citty auto-alias — citty
-      // registers BOTH the camelCase and kebab-case spelling of any
-      // declared flag name automatically, so this is a rename, not a
-      // breaking change: both spellings already worked, and both keep
-      // working.
-      alias: "showSimilar",
-      description: "Return the top 3 similar memories (alias: --showSimilar)",
+      // Canonical spelling is kebab-case. citty also accepts the camelCase
+      // `--showSimilar` for any declared flag, so no alias is declared: an
+      // alias is advertised in --help with ONE dash (`-showSimilar`), which
+      // parseArgs reads as bundled short flags and is rejected.
+      description: "Return the top 3 similar memories",
     },
   },
   async run({ args }) {

@@ -4,6 +4,7 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { ConfigError } from "./errors";
 import { getConfigPath, getDefaultStashDir, getRegistryCacheDir, getRegistryIndexCacheDir } from "./paths";
@@ -305,6 +306,21 @@ function isValidDirectory(dir: string): boolean {
  * Reads only the current `bundles`/`defaultBundle` shape. Unsupported older
  * keys are never interpreted as a second config architecture.
  */
+/**
+ * A configured bundle `path` as a directory: `~` or `~/...` expands to the home
+ * folder; a relative path means the folder of the config file that holds it, never
+ * the cwd. `undefined` when it cannot be placed: `~user/...`, or a relative path
+ * with no config file to resolve against.
+ */
+export function resolveConfiguredBundlePath(configured: string, configFilePath?: string): string | undefined {
+  if (configured === "~" || /^~[\\/]/.test(configured)) {
+    return path.resolve(path.join(os.homedir(), configured.slice(1)));
+  }
+  if (configured.startsWith("~")) return undefined;
+  if (path.isAbsolute(configured)) return path.resolve(configured);
+  return configFilePath === undefined ? undefined : path.resolve(path.dirname(configFilePath), configured);
+}
+
 function readStashDirFromConfig(): string | undefined {
   try {
     const configPath = getConfigPath();
@@ -326,7 +342,8 @@ function readStashDirFromConfig(): string | undefined {
     const selectedBundlePath = typeof selectedBundle?.path === "string" ? selectedBundle.path : undefined;
     if (bundles && typeof bundles === "object" && typeof defaultBundle === "string" && selectedBundlePath?.trim()) {
       const bundle = selectedBundle as { path: string; components?: unknown };
-      const bundlePath = bundle.path.trim();
+      const bundlePath = resolveConfiguredBundlePath(bundle.path.trim(), configPath);
+      if (bundlePath === undefined) return undefined;
       if (bundle.components !== undefined) {
         if (typeof bundle.components !== "object" || bundle.components === null) {
           throw new ConfigError("A bundle components map must contain exactly one component.", "INVALID_CONFIG_FILE");

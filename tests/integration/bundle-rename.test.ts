@@ -198,6 +198,27 @@ describe("akm bundle rename — dry-run", () => {
 });
 
 describe("akm bundle rename — applied", () => {
+  test("rewrites projects.*.write.bundle and projects.*.from that name the old bundle", async () => {
+    await seedBundleWithOneEntry();
+    const config = loadConfig();
+    saveConfig({
+      ...config,
+      bundles: { ...config.bundles, other: { path: path.join(storage.stashDir, "..", "other-bundle") } },
+      projects: {
+        one: { from: ["original", "other"], write: { bundle: "original" } },
+        two: { from: "original", write: { bundle: "other" } },
+      },
+    });
+
+    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+
+    const projects = loadConfig().projects ?? {};
+    expect(projects.one?.from).toEqual(["renamed", "other"]);
+    expect(projects.one?.write?.bundle).toBe("renamed");
+    expect(projects.two?.from).toBe("renamed");
+    expect(projects.two?.write?.bundle).toBe("other");
+  });
+
   test("moves config, index, lock, scheduler refs, and state rows; leaves and reports content refs", async () => {
     await seedBundleWithOneEntry();
 

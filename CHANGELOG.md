@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `bundles.*.path` is read like a project's `paths`: `~` expands to your home folder and a relative path means the folder of the config file that holds it, no longer the cwd of whoever ran akm. A path that cannot be placed (`~user/...`, or relative with no config file) warns once and that bundle is ignored.
+- `akm proposal extract --since` reads durations in the grammar every other duration flag uses: `m` is minutes and `M` is months (`3M` was three minutes there; it is three months, as for `akm health --since` and `akm remember --expires`).
+- `akm proposal accept|reject --older-than` and `--max-diff-lines`, `akm proposal extract --timeout-ms` and `akm workflow run --max-steps|--max-retries` reject a value with trailing text (`3x`, `3.5`) instead of truncating it, as `akm improve --limit` already did. One shared helper reads them.
+- `AKM_REGISTRY_URL` with no usable entry is ignored, with its per-entry warnings, and the configured registries stand; it used to leave registry search with none. `GITHUB_TOKEN` set to an empty string no longer hides `GH_TOKEN`.
+- `akm bundle rename` also rewrites `projects.*.write.bundle` and `projects.*.from` when they name the old bundle.
+- The retired `shape` is no longer a reserved flag name of `akm workflow run` and `akm task run`.
+
+### Fixed
+
+- `akm remember --help` advertised `-showSimilar`, which was rejected; it now shows `--show-similar` only, and `--showSimilar` still works.
+- `akm improve --auto-accept` names its replacement (`akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"`).
+- A `$schema` key in `config.json` is accepted without an unknown-key warning.
+- Wrong text: the feedback error named `akm.json` (the file is `config.json`); Desktop labelled `archiveRetentionDays` "archived assets" (it expires pending proposals) and `feedback.requireReason` as gating positive feedback (it gates negative feedback); `configuration.md` cited the gone `setup --config`; the comment at the top of `config-schema.ts` described behaviour the code does not have. Docs now state the `AKM_BUNDLE_DIR` temp-folder rule, the working-bundle order, `improve.eventRetentionDays` and `improve.stateGc.collect`; `STABILITY.md` lists `AKM_STATE_DIR` as Supported and `AKM_UPGRADE_SKIP_CHECKSUM` as Internal (as `cli.md` already said) and names the other Internal variables; the eight flags `cli.md` missed are listed.
+
 ## [0.10.261115] - 2026-11-08
 
 ### Added

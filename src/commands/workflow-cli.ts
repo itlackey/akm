@@ -10,7 +10,7 @@
  * with `akm lint --type workflows`.
  */
 
-import { getStringArg } from "../cli/parse-args";
+import { getStringArg, parseIntegerFlag } from "../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output, outputWithExitCode } from "../cli/shared";
 import { armAbortDeadline } from "../core/abort-deadline";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
@@ -296,7 +296,6 @@ const WORKFLOW_RUN_VALUE_FLAGS = new Set([
   "timeout",
   "format",
   "detail",
-  "shape",
   "output",
 ]);
 const WORKFLOW_RUN_BOOLEAN_FLAGS = new Set([
@@ -369,21 +368,6 @@ export function parseWorkflowParameterFlags(rawArgs: readonly string[], target: 
     }
   }
   return flags;
-}
-
-function parseIntegerFlag(
-  raw: string | undefined,
-  name: string,
-  minimum: number,
-  maximum?: number,
-): number | undefined {
-  if (raw === undefined) return undefined;
-  const value = Number.parseInt(raw, 10);
-  if (!/^\d+$/.test(raw) || value < minimum || (maximum !== undefined && value > maximum)) {
-    const range = maximum === undefined ? `at least ${minimum}` : `from ${minimum} through ${maximum}`;
-    throw new UsageError(`${name} must be an integer ${range}, got "${raw}".`, "INVALID_FLAG_VALUE");
-  }
-  return value;
 }
 
 function parseWorkflowTimeout(raw: string | undefined): number | undefined {

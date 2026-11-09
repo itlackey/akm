@@ -770,8 +770,7 @@ index and a warning from `akm health`.
   to a directory that holds them and `HF_HUB_OFFLINE=1`.
 - `opencode/2.2.0/opencode` (`opencode.exe` on Windows) for akm's own agent
   runtime.
-The default is `"off"` so a bare or headless install (`akm bundle create`, `--yes`,
-`--config`) never silently downloads the local embedding model on first
+The default is `"off"` so a bare or headless install (`akm bundle create`, `--yes`) never silently downloads the local embedding model on first
 index. A config that has an `embedding` block and sets no `semanticSearchMode`
 reads as `"auto"`: writing the block says semantic search is wanted.
 The interactive `akm setup` wizard pre-selects semantic search **on**
@@ -903,6 +902,18 @@ bundle's `components.<id>.adapter` key pins it to a specific format adapter
 instead of relying on auto-detection — see [Bundle Types](bundle-types.md)
 for the full adapter list and what each one reads/writes.
 
+A bundle's `path` is read like a project's `paths`: `~` expands to your home
+folder, and a relative path means the folder of the config file that holds it,
+never the folder you ran akm from. A relative path with no config file to
+resolve against warns once, and that bundle is ignored.
+
+**Which bundle is the working bundle** (the one short refs and bare commands
+use): `AKM_BUNDLE_DIR`, when set; else the path of `defaultBundle`; else the
+platform default (`~/akm`, or `Documents\akm` on Windows) if it exists; else
+`akm` stops with a `ConfigError`. A matching project's `write.bundle` and a
+command's `--bundle` choose a write destination on top of this (the write-target
+order is under [defaultWriteTarget](#defaultwritetarget)).
+
 Each physical content root has one bundle id. Duplicate paths and symbolic-link
 aliases are rejected because source ownership, scheduler authority, and default
 selection must not depend on which spelling a caller used. If an older config
@@ -919,6 +930,15 @@ already scoped to a specific source. It must name a configured bundle; setting i
 `config set` (or config load) time. The full write-target resolution order
 is the command's destination flag (`--bundle`) -> `defaultWriteTarget` ->
 working bundle (`defaultBundle`) -> `ConfigError`.
+
+### Improve housekeeping
+
+Two `improve` keys trim akm's own stores; neither chooses where model work runs.
+
+| Key | Effect |
+| --- | --- |
+| `improve.eventRetentionDays` | `akm improve` purges events, improve run rows, task logs and per-run task log files older than this many days (default `90`; `0` disables the purge) |
+| `improve.stateGc.collect` | Whether `akm improve` deletes salience and outcome rows whose asset has been gone from the index for more than 7 days. Default `false`: the rows are only marked and counted, never deleted. `true` turns deletion on |
 
 ### Memory scope
 
@@ -1158,15 +1178,17 @@ akm config diff fleet//config/shared.json
 | Variable | Purpose |
 | --- | --- |
 | `AKM_CONFIG_DIR` | Override the user config directory (or set `XDG_CONFIG_HOME`) |
-| `AKM_BUNDLE_DIR` | Override the bundle directory |
+| `AKM_BUNDLE_DIR` | Override the working bundle for this process (containers, sandboxes, CI). When it points under `/tmp`, `/var/tmp` or the macOS temp folders, and `AKM_CONFIG_DIR`/`XDG_CONFIG_HOME` (and the cache equivalents) are not set, config moves to `<bundle>/.akm` and the cache to `<bundle>/.akm/cache`, so a sandbox never touches your real config. Scheduled-task rows always carry the resolved bundle in it |
 | `AKM_DATA_DIR` | Override the data directory — `index.db`, durable `state.db`, and `akm.lock` (or set `XDG_DATA_HOME`) |
 | `AKM_CACHE_DIR` | Override the cache directory — regenerable caches (or set `XDG_CACHE_HOME`) |
 | `AKM_STATE_DIR` | Override the state directory — the scheduler lock and, per bundle, `akm improve`'s whole-run lock (or set `XDG_STATE_HOME`) |
 | `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror; replaces `registry.npmjs.org` for npm bundle resolution |
-| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm info` and the `egress-endpoints` health advisory still show the configured list (prefix an entry with `<provider>::` to choose a provider) |
+| `AKM_REGISTRY_URL` | Comma-separated registry URLs that replace the configured `registries` in every registry search akm performs; `akm registry list`, `akm info` and the `egress-endpoints` health advisory still show the configured list (prefix an entry with `<provider>::` to choose a provider). An entry that is not a usable URL warns and is skipped; a value with no usable entry is ignored, so the configured registries stand |
 | `AKM_VERBOSE` | Truthy value enables the same diagnostics as `--verbose` |
 | `AKM_DEBUG` | `1` prints a stack trace on unexpected internal errors |
+
+`AKM_EMBED_DETERMINISTIC` and `AKM_CLAUDE_PROJECTS_DIR` are Internal seams that akm-eval and the tests use (a hash embedder instead of a model; where Claude session logs are read from). They are not for product use and carry no compatibility guarantee ([STABILITY](../../STABILITY.md)).
 
 Use `AKM_SQLITE_JOURNAL_MODE=DELETE` or `TRUNCATE` when WAL is unavailable,
 such as on some NFS/SMB mounts. With the default `WAL` setting, AKM detects a

@@ -319,22 +319,19 @@ function emptyExtractResult(args: {
 }
 
 /**
- * A since-string as an epoch-ms cutoff: an ISO timestamp or `<n>m|h|d`
- * (case-insensitive here — `5M` is five minutes). Default 24h; anything else
- * is a usage error.
+ * A since-string as an epoch-ms cutoff: an ISO timestamp or a duration in the
+ * CLI-wide grammar (`m` minutes, `h` hours, `d` days, `M` months; case matters,
+ * see core/time.ts). Default 24h; anything else is a usage error.
  */
 export function parseSinceArg(value: string | undefined, now: number = Date.now()): number {
   if (!value || value.trim() === "") return now - 24 * 60 * 60 * 1000;
   const trimmed = value.trim();
-  const relMatch = trimmed.match(/^(\d+)\s*([mhd])$/i);
-  if (relMatch) {
-    const ms = parseDuration(`${relMatch[1] ?? "0"}${(relMatch[2] ?? "h").toLowerCase()}`, DURATION_UNITS);
-    if (ms !== null) return now - ms;
-  }
+  const ms = parseDuration(trimmed, DURATION_UNITS);
+  if (ms !== null) return now - ms;
   const iso = Date.parse(trimmed);
   if (!Number.isNaN(iso)) return iso;
   throw new UsageError(
-    `--since value "${value}" could not be parsed (expected ISO timestamp or duration like 24h / 7d / 30m)`,
+    `--since value "${value}" could not be parsed (expected ISO timestamp or duration like 24h / 7d / 30m / 3M)`,
     "INVALID_FLAG_VALUE",
   );
 }

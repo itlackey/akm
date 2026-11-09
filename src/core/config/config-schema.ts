@@ -19,23 +19,22 @@
  *    `AkmConfig` shape consumed by the rest of the codebase. Replaces the
  *    ~1.4k LOC of legacy per-shape parsers (parseLlmConfig, parseEmbeddingConfig,
  *    parseIndexConfig, etc.) — see `loadConfig` in `./config.ts`.
- * 2. **Reject hard-errored values** (openviking source type, legacy
- *    `stashes[]` key) at load time via `superRefine`.
+ * 2. **Reject hard-errored values** (the retired `stashDir`, `sources` and
+ *    `installed` source keys) at load time via `superRefine`.
  *
  * Design rules:
  * - Top-level uses `.passthrough()` so unknown future keys round-trip intact on
  *   read; `sanitizeConfigForWrite` decides what to persist.
- * - Most nested sub-objects use `.catch(undefined)` so malformed entries are
- *   silently dropped to keep cold-start working when a user has a field-level
- *   typo in an optional section.
- * - Unsupported top-level source shapes and provider kinds are hard-rejected;
- *   silently dropping them would mask user data loss.
- * - UNKNOWN-KEY POLICY: portable descriptive sections generally use
- *   passthrough so version skew round-trips newer settings. Small finite
- *   authority/toggle sections (`scheduler` and `experimental`)
- *   are strict: a misspelling there must not silently turn a
- *   safety decision off. The top level remains passthrough and warns on
- *   unknown keys.
+ * - A wrong value in a section is an error here (this schema is strict about
+ *   values); only `connections`, `harnesses` and `projects` entries are
+ *   dropped one by one before it runs (see `unusable-entries.ts` and
+ *   `schema/projects.ts`).
+ * - The retired source keys (`stashDir`, `sources`, `installed`) are
+ *   hard-rejected; silently dropping them would mask user data loss.
+ * - UNKNOWN-KEY POLICY: sections generally, including `scheduler` and
+ *   `experimental`, use passthrough so version skew round-trips newer
+ *   settings. An unknown key is never an error: the loader warns once per key
+ *   (`unknownConfigKeyPaths` in `config.ts`) and ignores it.
  * - `defaultWriteTarget` resolution and similar cross-field invariants are
  *   enforced at save time via `superRefine` on the top-level schema.
  */
