@@ -19,8 +19,8 @@
  *
  * Validation enters the canonical task source parser (`parseTaskSource`,
  * which reads only task source v4 — a `version: 2` or `version: 3`
- * document fails closed with `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming
- * `akm migrate apply`, which converts it). That parser owns the closed key sets,
+ * document fails closed with `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming the
+ * 0.9.32 recipe: nothing in 0.10 converts it). That parser owns the closed key sets,
  * the executable-selector XOR, hostile YAML policy, the `akm/command`
  * builtin, and bounds. The adapter only translates a parser failure into
  * the format-family diagnostic shape.
@@ -134,10 +134,9 @@ export const akmTaskAdapter: BundleAdapter = {
 
   /**
    * Install-time probe (§1.2): a root holding a top-level, valid task source
-   * v4 `.yml` file, or a task v2/v3 file that `akm migrate apply` has yet to
-   * convert (the runtime refuses those, so without this the migrator and
-   * `akm task sync` would not find them in a bundle whose adapter config does
-   * not record). The full parser keeps this disjoint from unrelated YAML and
+   * v4 `.yml` file, or a task v2/v3 file from before the 0.9.32 floor (the
+   * runtime refuses those, so without this `akm task sync` would not find and
+   * report them in a bundle whose adapter config does not record). The full parser keeps this disjoint from unrelated YAML and
    * prevents probe semantics from drifting from validation semantics.
    */
   looksLikeRoot(root: string): boolean {

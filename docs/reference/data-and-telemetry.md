@@ -83,9 +83,9 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 | `akm.lock` | The lockfile: resolved version, revision and integrity of each installed bundle. `akm.lock.lck` is its write sentinel. |
 | `index.rebuild.lock`, `index.db.write.lock` | Lock files for `akm index` and asset writes. |
 | `secret-locks/` | Per-secret lock files taken while a secret is written. |
-| `state.db.pre-<migration id>.bak` | A copy of `state.db` taken before a migration that drops schema (`018`, `028`) runs. Yours to delete. |
+| `state.db.pre-<migration id>.bak` | A copy of `state.db` an earlier release took before a migration that dropped schema (`018`, `028`). akm no longer writes it. Yours to delete. |
 | `workflow-run-locks/` | One lock file per running workflow run. |
-| `backups/tasks/` | Copies of task files made by `akm migrate apply` before it rewrites them. |
+| `backups/tasks/` | Copies of task files an earlier `akm migrate apply` made before it rewrote them. akm no longer writes it. Yours to delete. |
 | `backups/asset-engine-keys/` | Copies of commands, agents, workflows and task sources made by `akm migrate apply` before it rewrites their `engine:` key. |
 | `migrate/engine-targets.json` | The connection or harness each old engine name became, kept by `akm migrate apply` until every `engine:` key is rewritten. |
 | `opencode-runtime/` | Everything akm's own agent runtime keeps: OpenCode's `config/` (with akm's plugin), `data/` (logs, repositories, shell output, and `data/opencode/opencode.db`, the runtime's sessions, which `akm proposal extract --type opencode` reads back, read-only), `cache/`, `state/` and `tmp/` (the binary's own native pieces). Recreated on next use; deleting it loses the runtime's session history. |

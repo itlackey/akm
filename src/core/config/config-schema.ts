@@ -120,7 +120,7 @@ export const AkmConfigShape = {
   registries: z.array(RegistryConfigEntrySchema).optional(),
   // `bundles` + `defaultBundle` are the only source configuration shape. The
   // retired `stashDir`/`sources[]`/`installed[]` keys are rejected at load,
-  // naming the 0.9.x `akm migrate apply` that converts them; there is no
+  // naming the 0.9.32 recipe that converts them; there is no
   // runtime config translator. `defaultBundle` names the primary
   // bundle used for short-ref resolution.
   bundles: BundlesConfigSchema.optional(),
@@ -150,9 +150,9 @@ const RETIRED_SOURCE_SHAPE_KEY_MESSAGES: Record<string, string> = {
   stashDir: "stashDir is not supported; configure `bundles`, or use `akm info` to inspect current paths.",
 };
 
-/** The one message for a config older than 0.9.15: only akm 0.9.x converts it. */
+/** The one message for a config older than the 0.9.32 floor: only akm 0.9.32 converts it. */
 const PRE_FLOOR_CONFIG_REMEDY =
-  "This config predates akm 0.9.15 and 0.10 does not convert it: run `akm migrate apply` with akm 0.9.x, then upgrade.";
+  "This config predates akm 0.9.32 and 0.10 does not convert it: run `npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync`, then upgrade.";
 
 export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => {
   const raw = config as Record<string, unknown>;

@@ -2,91 +2,51 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// The state.db schema migration registry. The MIGRATIONS array is the single
-// append-only ordered source of truth: new migrations are APPENDED here and an
-// existing fragment is NEVER renumbered or reordered (that would corrupt the
-// schema_migrations ledger on already-deployed databases). The shared runner
-// at src/storage/sqlite-migrations.ts applies them in array order.
+// The state.db schema registry. Released databases carry a `schema_migrations`
+// ledger of the 29 ids below; the schema those 29 steps produced is the
+// baseline, created in one step on a fresh database. A ledger shorter than the
+// baseline predates akm 0.9.32 and is refused (`src/core/state-db.ts`). New
+// migrations are APPENDED after the baseline ids and an id is NEVER renumbered
+// or reordered; the shared runner at src/storage/sqlite-migrations.ts applies
+// them in array order.
 
 import { assertMigrationRegistry, type Migration } from "../../storage/sqlite-migrations";
 
-export type StateMigrationSafety = "additive" | "data-preserving-rebuild" | "historical-destructive";
+/** The released ledger: every id a database at the 0.9.32 floor has applied, in order. */
+export const STATE_BASELINE_IDS: readonly string[] = [
+  "001-initial-schema",
+  "002-task-history-per-run",
+  "003-improve-runs",
+  "004-extract-sessions-seen",
+  "005-proposal-fs-imports",
+  "006-proposals-pending-ref-source",
+  "007-consolidation-judged",
+  "008-body-embeddings",
+  "009-asset-salience",
+  "010-asset-outcome",
+  "011-asset-salience-homeostatic-demoted-at",
+  "012-improve-gate-thresholds",
+  "013-extract-sessions-content-hash",
+  "014-recombine-hypotheses",
+  "015-asset-salience-encoding-source",
+  "016-collapse-churn-detector",
+  "017-improve-run-strategy",
+  "018-drop-dead-lane-schema",
+  "019-proposal-fingerprints",
+  "020-three-db-cutover",
+  "021-asset-state-missing-since",
+  "022-workflow-unit-attempts",
+  "023-child-workflow-runs",
+  "024-workflow-run-outputs",
+  "025-task-history-vocabulary-backfill",
+  "026-proposals-strip-legacy-fragment-refs",
+  "027-extract-sessions-seen-harness-rename",
+  "028-improve-ledger",
+  "029-improve-ledger-content-hash",
+];
 
-/**
- * Explicit safety classification for every released state migration ID.
- *
- * This registry is deliberately separate from the immutable migration bodies:
- * released IDs, order, and SQL stay byte-for-byte unchanged. A runtime
- * assertion below requires this key order to match {@link STATE_MIGRATIONS}
- * exactly, so appending a migration also requires an explicit safety decision.
- * The one consumer of the classification is `openStateDatabase`
- * (src/core/state-db.ts): before a `historical-destructive` migration runs
- * against an existing database, the file is copied beside itself first.
- */
-export const STATE_MIGRATION_SAFETY_BY_ID: Readonly<Record<string, StateMigrationSafety>> = Object.freeze({
-  "001-initial-schema": "additive",
-  "002-task-history-per-run": "data-preserving-rebuild",
-  "003-improve-runs": "additive",
-  "004-extract-sessions-seen": "additive",
-  "005-proposal-fs-imports": "additive",
-  "006-proposals-pending-ref-source": "additive",
-  "007-consolidation-judged": "additive",
-  "008-body-embeddings": "additive",
-  "009-asset-salience": "additive",
-  "010-asset-outcome": "additive",
-  "011-asset-salience-homeostatic-demoted-at": "additive",
-  "012-improve-gate-thresholds": "additive",
-  "013-extract-sessions-content-hash": "additive",
-  "014-recombine-hypotheses": "additive",
-  "015-asset-salience-encoding-source": "additive",
-  "016-collapse-churn-detector": "additive",
-  "017-improve-run-strategy": "additive",
-  "018-drop-dead-lane-schema": "historical-destructive",
-  "019-proposal-fingerprints": "additive",
-  "020-three-db-cutover": "additive",
-  "021-asset-state-missing-since": "additive",
-  "022-workflow-unit-attempts": "additive",
-  "023-child-workflow-runs": "additive",
-  "024-workflow-run-outputs": "additive",
-  "025-task-history-vocabulary-backfill": "data-preserving-rebuild",
-  "026-proposals-strip-legacy-fragment-refs": "data-preserving-rebuild",
-  "027-extract-sessions-seen-harness-rename": "data-preserving-rebuild",
-  "028-improve-ledger": "historical-destructive",
-  "029-improve-ledger-content-hash": "additive",
-});
-
-export const STATE_MIGRATIONS: readonly Migration[] = [
-  // ── Migration 001 — initial schema ──────────────────────────────────────────
-  {
-    id: "001-initial-schema",
-    up: `
-      -- ── events ──────────────────────────────────────────────────────────────
-      --
-      -- Replaces events.jsonl. Indexed (query) columns:
-      --   id          INTEGER PK — monotonic rowid; replaces byte-offset cursor.
-      --                            Callers store this as "sinceId" for resume.
-      --   event_type  TEXT        — indexed; replaces the type filter in readEvents().
-      --   ts          TEXT        — ISO-8601 UTC ms; indexed for range queries.
-      --   ref         TEXT        — nullable asset ref; indexed for ref-scoped queries.
-      --
-      -- Extensible (metadata_json) columns:
-      --   metadata_json TEXT      — JSON object storing all non-indexed payload
-      --                             fields (tags, any future structured fields).
-      --                             Maps directly to EventEnvelope.metadata.
-      --
-      -- schema_version mirrors EventEnvelope.schemaVersion — always 1 for v1
-      -- rows. Stored as a column (not in the JSON blob) so future schema
-      -- changes can be detected and migrated row-by-row if ever needed.
-      --
-      -- TTL: rows where ts < NOW() - 90 days can be deleted by a maintenance job.
-      -- No automatic deletion occurs here — callers call purgeOldEvents().
-      --
-      -- ADD COLUMN extension points (future migrations):
-      --   ALTER TABLE events ADD COLUMN stash_dir TEXT DEFAULT NULL;
-      --   ALTER TABLE events ADD COLUMN correlation_id TEXT DEFAULT NULL;
-      --   ALTER TABLE events ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1;
-      --
-      CREATE TABLE IF NOT EXISTS events (
+const STATE_BASELINE_SCHEMA = `
+CREATE TABLE events (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
         event_type     TEXT    NOT NULL,
         ts             TEXT    NOT NULL,
@@ -94,51 +54,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         metadata_json  TEXT    NOT NULL DEFAULT '{}'
       );
 
-      -- Query patterns supported by these indexes:
-      --   SELECT … WHERE event_type = ?                 → idx_events_type
-      --   SELECT … WHERE ref = ?                        → idx_events_ref
-      --   SELECT … WHERE ts >= ? AND ts <= ?            → idx_events_ts
-      --   SELECT … WHERE event_type = ? AND ref = ?     → idx_events_type (prefix scan) + filter
-      --   SELECT … WHERE id > ?                         → PK (rowid) — no extra index needed
-      CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
-      CREATE INDEX IF NOT EXISTS idx_events_ref  ON events(ref);
-      CREATE INDEX IF NOT EXISTS idx_events_ts   ON events(ts);
-
-      -- ── proposals ────────────────────────────────────────────────────────────
-      --
-      -- Replaces per-uuid JSON directories under <stashDir>/.akm/proposals/.
-      --
-      -- Indexed (query) columns:
-      --   id          TEXT PK     — UUID (crypto.randomUUID()); stable directory name.
-      --   stash_dir   TEXT        — absolute stash root; multi-stash installs need
-      --                             this to partition proposal lists per stash.
-      --   ref         TEXT        — target asset ref (e.g. "lessons/alpha");
-      --                             indexed for ref-scoped queue views.
-      --   status      TEXT        — "pending" | "accepted" | "rejected"; indexed
-      --                             so pending-queue queries are fast.
-      --   source      TEXT        — human-readable origin tag (e.g. "reflect").
-      --   created_at  TEXT        — ISO-8601; used for ORDER BY created_at ASC.
-      --   updated_at  TEXT        — ISO-8601; updated on accept/reject.
-      --
-      -- Large payload columns (NOT indexed):
-      --   content     TEXT        — full markdown text; the proposal payload body.
-      --   frontmatter_json TEXT   — JSON of parsed frontmatter (may be NULL when
-      --                             the content has no frontmatter block).
-      --
-      -- Extensible (metadata_json) columns:
-      --   metadata_json TEXT      — JSON object for future proposal fields.
-      --                             Current fields stored here: sourceRun,
-      --                             review, confidence, gateDecision (#577),
-      --                             backupContent.
-      --
-      -- ADD COLUMN extension points (future migrations):
-      --   ALTER TABLE proposals ADD COLUMN source_run TEXT DEFAULT NULL;
-      --   ALTER TABLE proposals ADD COLUMN review_outcome TEXT DEFAULT NULL;
-      --   ALTER TABLE proposals ADD COLUMN review_reason TEXT DEFAULT NULL;
-      --   ALTER TABLE proposals ADD COLUMN review_decided_at TEXT DEFAULT NULL;
-      --   ALTER TABLE proposals ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
-      --
-      CREATE TABLE IF NOT EXISTS proposals (
+CREATE TABLE proposals (
         id               TEXT    PRIMARY KEY,
         stash_dir        TEXT    NOT NULL,
         ref              TEXT    NOT NULL,
@@ -151,87 +67,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         metadata_json    TEXT    NOT NULL DEFAULT '{}'
       );
 
-      -- Query patterns:
-      --   SELECT … WHERE stash_dir = ? AND status = ?   → idx_proposals_stash_status
-      --   SELECT … WHERE ref = ? AND status = ?         → idx_proposals_ref_status
-      --   SELECT … WHERE id = ?                         → PK
-      CREATE INDEX IF NOT EXISTS idx_proposals_stash_status
-        ON proposals(stash_dir, status);
-      CREATE INDEX IF NOT EXISTS idx_proposals_ref_status
-        ON proposals(ref, status);
-
-      -- ── task_history ─────────────────────────────────────────────────────────
-      --
-      -- Replaces per-task JSONL files under <cacheDir>/tasks/history/.
-      --
-      -- Indexed (query) columns:
-      --   task_id     TEXT PK     — stable task identifier string.
-      --   status      TEXT        — terminal status (e.g. "completed", "failed",
-      --                             "cancelled"); indexed for status-scoped queries.
-      --   started_at  TEXT        — ISO-8601; indexed for time-range queries.
-      --   target_kind TEXT        — kind of the target entity (e.g. "issue",
-      --                             "workflow", "agent"); indexed for kind-scoped queries.
-      --   target_ref  TEXT        — stable ref of the target entity; indexed for
-      --                             per-target history lookups.
-      --
-      -- Non-indexed time columns:
-      --   completed_at TEXT       — ISO-8601 or NULL if still running.
-      --   failed_at    TEXT       — ISO-8601 or NULL.
-      --
-      -- Non-indexed diagnostic columns:
-      --   log_path     TEXT       — absolute path to the task log file, if any.
-      --
-      -- Extensible (metadata_json) columns:
-      --   metadata_json TEXT      — JSON object for future task fields (exit_code,
-      --                             runner, priority, parent_task_id, …).
-      --
-      -- ADD COLUMN extension points (future migrations):
-      --   ALTER TABLE task_history ADD COLUMN exit_code INTEGER DEFAULT NULL;
-      --   ALTER TABLE task_history ADD COLUMN runner TEXT DEFAULT NULL;
-      --   ALTER TABLE task_history ADD COLUMN parent_task_id TEXT DEFAULT NULL;
-      --   ALTER TABLE task_history ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
-      --
-      CREATE TABLE IF NOT EXISTS task_history (
-        task_id       TEXT    PRIMARY KEY,
-        status        TEXT    NOT NULL,
-        started_at    TEXT    NOT NULL,
-        completed_at  TEXT,
-        failed_at     TEXT,
-        log_path      TEXT,
-        target_kind   TEXT,
-        target_ref    TEXT,
-        metadata_json TEXT    NOT NULL DEFAULT '{}'
-      );
-
-      -- Query patterns:
-      --   SELECT … WHERE task_id = ?                    → PK
-      --   SELECT … WHERE started_at >= ? AND started_at <= ? → idx_task_history_started
-      --   SELECT … WHERE target_kind = ? AND target_ref = ?  → idx_task_history_target
-      --   SELECT … WHERE status = ?                     → idx_task_history_status
-      CREATE INDEX IF NOT EXISTS idx_task_history_started
-        ON task_history(started_at);
-      CREATE INDEX IF NOT EXISTS idx_task_history_target
-        ON task_history(target_kind, target_ref);
-      CREATE INDEX IF NOT EXISTS idx_task_history_status
-        ON task_history(status);
-    `,
-  },
-
-  // Migration 002 — fix task_history to be a true per-run log.
-  //
-  // Migration 001 used task_id as PRIMARY KEY, meaning each task had exactly
-  // one row and every new run overwrote the previous one. This silently
-  // discarded all historical runs — the opposite of a history table.
-  //
-  // This migration recreates the table with an AUTOINCREMENT id so each run
-  // appends a new row. The old single-row table is renamed to _old, the new
-  // table is created, data is copied, and the old table is dropped.
-  {
-    id: "002-task-history-per-run",
-    up: `
-      ALTER TABLE task_history RENAME TO task_history_v1;
-
-      CREATE TABLE task_history (
+CREATE TABLE task_history (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id       TEXT    NOT NULL,
         status        TEXT    NOT NULL,
@@ -244,70 +80,7 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         metadata_json TEXT    NOT NULL DEFAULT '{}'
       );
 
-      INSERT INTO task_history
-        (task_id, status, started_at, completed_at, failed_at,
-         log_path, target_kind, target_ref, metadata_json)
-      SELECT task_id, status, started_at, completed_at, failed_at,
-             log_path, target_kind, target_ref, metadata_json
-      FROM task_history_v1;
-
-      DROP TABLE task_history_v1;
-
-      -- Unique constraint: same task cannot have two runs with the same start time.
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_task_history_run
-        ON task_history(task_id, started_at);
-      CREATE INDEX IF NOT EXISTS idx_task_history_task_id
-        ON task_history(task_id);
-      CREATE INDEX IF NOT EXISTS idx_task_history_started
-        ON task_history(started_at);
-      CREATE INDEX IF NOT EXISTS idx_task_history_target
-        ON task_history(target_kind, target_ref);
-      CREATE INDEX IF NOT EXISTS idx_task_history_status
-        ON task_history(status);
-    `,
-  },
-
-  // ── Migration 003 — improve_runs ────────────────────────────────────────────
-  //
-  // Records every `akm improve` invocation as a durable row, replacing the
-  // legacy `<stash>/.akm/runs/<runId>/improve-result.json` artifact files.
-  //
-  // The `dry_run` column is FIRST-CLASS and indexed so productivity audits can
-  // cleanly filter dry-run probes out of real-run analyses without parsing
-  // `result_json`. The dry-run/real-run artifact-trap (recorded in
-  // feedback_akm_dryrun_artifact_trap) was the specific motivating bug.
-  //
-  // Indexed (query) columns:
-  //   id            TEXT PK   — runId (`buildImproveRunId()` output).
-  //   started_at    TEXT      — ISO-8601; indexed for time-range queries.
-  //   stash_dir     TEXT      — absolute stash root; multi-stash scoping.
-  //   dry_run       INTEGER   — 0/1; indexed for productivity audits.
-  //   scope_mode    TEXT      — "all" | "type" | "ref"; indexed via composite
-  //                              with stash_dir for stash-scoped scope queries.
-  //
-  // Non-indexed payload:
-  //   completed_at  TEXT      — ISO-8601 or NULL if interrupted.
-  //   profile       TEXT      — improve profile name (nullable).
-  //   scope_value   TEXT      — type name or asset ref (nullable).
-  //   guidance      TEXT      — user-provided guidance text, if any.
-  //   ok            INTEGER   — 0/1; whether the run produced ok=true.
-  //   result_json   TEXT      — full AkmImproveResult JSON.
-  //   metrics_json  TEXT      — aggregate counts extracted from result, cheap
-  //                              to query without parsing result_json.
-  //
-  // Extensible (metadata_json) columns:
-  //   metadata_json TEXT      — JSON object for future improve-run fields.
-  //
-  // ADD COLUMN extension points (future migrations):
-  //   ALTER TABLE improve_runs ADD COLUMN duration_ms INTEGER DEFAULT NULL;
-  //   ALTER TABLE improve_runs ADD COLUMN host TEXT DEFAULT NULL;
-  //
-  // TTL: rows where started_at < NOW() - 90 days can be deleted by
-  // `purgeOldImproveRuns()`. No automatic deletion occurs here.
-  {
-    id: "003-improve-runs",
-    up: `
-      CREATE TABLE IF NOT EXISTS improve_runs (
+CREATE TABLE improve_runs (
         id            TEXT    PRIMARY KEY,
         started_at    TEXT    NOT NULL,
         completed_at  TEXT,
@@ -321,62 +94,9 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         result_json   TEXT    NOT NULL,
         metrics_json  TEXT,
         metadata_json TEXT    NOT NULL DEFAULT '{}'
-      );
+      , strategy TEXT);
 
-      -- Query patterns supported:
-      --   SELECT … WHERE started_at >= ? AND started_at <= ?
-      --     → idx_improve_runs_started
-      --   SELECT … WHERE dry_run = 0
-      --     → idx_improve_runs_dry_run (productivity audits filter trap)
-      --   SELECT … WHERE stash_dir = ? AND scope_mode = ?
-      --     → idx_improve_runs_stash_scope
-      CREATE INDEX IF NOT EXISTS idx_improve_runs_started
-        ON improve_runs(started_at);
-      CREATE INDEX IF NOT EXISTS idx_improve_runs_dry_run
-        ON improve_runs(dry_run);
-      CREATE INDEX IF NOT EXISTS idx_improve_runs_stash_scope
-        ON improve_runs(stash_dir, scope_mode);
-    `,
-  },
-
-  // ── Migration 004 — extract_sessions_seen ───────────────────────────────────
-  //
-  // Tracks which platform sessions the extractor has processed, so the discovery
-  // pass in `akm extract --since <window>` skips sessions whose content hasn't
-  // changed since the last successful run. Replaces the akm-plugin
-  // session-checkpoint hook's implicit "write-once" memory of what's been
-  // captured — but persistent and queryable.
-  //
-  // Indexed (query) columns:
-  //   harness          TEXT     — harness name (claude, opencode, ...).
-  //   session_id       TEXT     — platform-native session identifier.
-  //   processed_at     TEXT     — ISO-8601 UTC; when extract last ran on this session.
-  //   session_ended_at TEXT     — session.endedAt at processing time. When a
-  //                                later listSessions reports a *newer* endedAt
-  //                                for the same session_id, the extractor
-  //                                re-processes the appended events.
-  //   outcome          TEXT     — "candidates_queued" | "no_candidates" |
-  //                                "skipped" | "failed".
-  //
-  // Non-indexed columns:
-  //   candidate_count  INTEGER  — number of candidates the LLM produced.
-  //   proposal_count   INTEGER  — number of proposals actually queued
-  //                                (candidates may fail downstream validation).
-  //   rationale        TEXT     — for "no_candidates", the LLM's explanation.
-  //   source_run       TEXT     — sourceRun id for PROV-DM traceability.
-  //   metadata_json    TEXT     — future-proofing (pre-filter stats, LLM
-  //                                model+version, prompt token count, etc.).
-  //
-  // PK: (harness, session_id) — one row per session per harness. A re-extract
-  // updates the row in place via INSERT OR REPLACE.
-  //
-  // TTL: no automatic deletion. Sessions stay tracked as long as the source
-  // session files exist on disk. Operator can `DELETE FROM extract_sessions_seen
-  // WHERE processed_at < ?` for cleanup if desired.
-  {
-    id: "004-extract-sessions-seen",
-    up: `
-      CREATE TABLE IF NOT EXISTS extract_sessions_seen (
+CREATE TABLE extract_sessions_seen (
         harness          TEXT    NOT NULL,
         session_id       TEXT    NOT NULL,
         processed_at     TEXT    NOT NULL,
@@ -386,161 +106,18 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         proposal_count   INTEGER NOT NULL DEFAULT 0,
         rationale        TEXT,
         source_run       TEXT,
-        metadata_json    TEXT    NOT NULL DEFAULT '{}',
+        metadata_json    TEXT    NOT NULL DEFAULT '{}', content_hash TEXT DEFAULT NULL,
         PRIMARY KEY (harness, session_id)
       );
 
-      -- Query patterns:
-      --   SELECT … WHERE harness = ?                       → idx_extract_sessions_harness
-      --   SELECT … WHERE processed_at >= ?                 → idx_extract_sessions_processed
-      --   SELECT … WHERE harness = ? AND session_id = ?    → PK
-      CREATE INDEX IF NOT EXISTS idx_extract_sessions_harness
-        ON extract_sessions_seen(harness);
-      CREATE INDEX IF NOT EXISTS idx_extract_sessions_processed
-        ON extract_sessions_seen(processed_at);
-    `,
-  },
-
-  // ── Migration 005 — proposal_fs_imports ─────────────────────────────────────
-  //
-  // Released migration history is immutable. The filesystem proposal importer
-  // has been deleted from the current runtime, but existing databases can
-  // already contain this ledger id and table. Keeping the inert DDL here lets
-  // their migration prefix validate and lets fresh databases reproduce the
-  // same ordered schema history without restoring the importer.
-  {
-    id: "005-proposal-fs-imports",
-    up: `
-      CREATE TABLE IF NOT EXISTS proposal_fs_imports (
-        stash_dir      TEXT    PRIMARY KEY,
-        imported_at    TEXT    NOT NULL,
-        imported_count INTEGER NOT NULL DEFAULT 0
-      );
-    `,
-  },
-
-  // ── Migration 006 — pending proposal lookup index ──────────────────────────
-  //
-  // Supports the transaction-scoped dedup / queue-mutation hardening added in
-  // 0.9.x. The queue now acquires an IMMEDIATE write transaction before it
-  // reads pending proposals, so the hot path is a stash-scoped `status='pending'
-  // AND ref=?` probe followed by an update/insert. This composite index keeps
-  // that lookup index-covered under contention.
-  {
-    id: "006-proposals-pending-ref-source",
-    up: `
-      CREATE INDEX IF NOT EXISTS idx_proposals_stash_status_ref_source
-        ON proposals(stash_dir, status, ref, source);
-    `,
-  },
-
-  // ── Migration 007 — consolidation_judged ────────────────────────────────────
-  //
-  // Judged-state cache for nightly consolidation (#581). Lets one consolidation
-  // run cover the FULL memory corpus cheaply by SKIPPING memories already judged
-  // with unchanged content, instead of narrowing to a recent time-window slice
-  // (which leaves a near-duplicate backlog the corpus can never clear).
-  //
-  // The consolidate LLM judging loop UPSERTs a row for every memory it saw in a
-  // successfully-judged chunk; the next run hashes each candidate's current
-  // content and skips it when the hash equals the cached `content_hash`
-  // (judged-unchanged → no re-judge). A memory whose content changed produces a
-  // new hash and is re-judged. This converts coverage from O(window) to
-  // O(changed/new). DEFAULT OFF — gated behind
-  // `processes.consolidate.judgedCache.enabled`; when the feature is off this
-  // table is never read or written and behaviour is byte-identical to today.
-  //
-  // Indexed (query) columns:
-  //   entry_key    TEXT PK   — `memory:<name>` ref; one row per judged memory.
-  //
-  // Non-indexed columns:
-  //   content_hash TEXT      — sha256 of the frontmatter-stripped, trimmed body.
-  //   judged_at    TEXT      — ISO-8601 UTC; when the memory was last judged.
-  //   outcome      TEXT      — coarse outcome of the last judge ("actioned" |
-  //                            "no_action"); observability only, never gates.
-  //
-  // TTL: no automatic deletion. Rows for memories deleted on disk become
-  // harmless dead entries (their entry_key never recurs); operators can prune
-  // with `DELETE FROM consolidation_judged WHERE judged_at < ?` if desired.
-  {
-    id: "007-consolidation-judged",
-    up: `
-      CREATE TABLE IF NOT EXISTS consolidation_judged (
-        entry_key    TEXT    PRIMARY KEY,
-        content_hash TEXT    NOT NULL,
-        judged_at    TEXT    NOT NULL,
-        outcome      TEXT    NOT NULL
-      );
-    `,
-  },
-
-  // ── Migration 008 — body_embeddings ─────────────────────────────────────────
-  //
-  // cacheHash-keyed body-embedding cache (WS-3a). Stores the embedding of the
-  // case-preserving stripped body so the dedup pre-pass and the consolidation
-  // clustering step share one computed vector per unique body, eliminating
-  // redundant embedding calls across runs.
-  //
-  // Design:
-  //   - PK is the `cacheHash` (sha256 of the stripped, case-preserving body).
-  //   - `embedding` is a raw BLOB storing a Float32 array (384 floats × 4 B =
-  //     1 536 B per entry for the default bge-small-en-v1.5 model; ~20 MB at
-  //     13 k memories). This matches the native wire format and avoids JSON
-  //     round-trip overhead.
-  //   - `model_id` is MANDATORY. On mismatch (model changed) the entire table
-  //     is dropped and rebuilt — stale vectors from the wrong metric space would
-  //     produce silent cosine errors.
-  //   - `created_at` is an INTEGER Unix ms timestamp for lazy orphan purges.
-  //
-  // Writes: one bulk `WHERE content_hash IN (…)` lookup → embed only misses →
-  // upsert all results in one transaction per run.
-  //
-  // TTL: no automatic row deletion. Orphaned rows for bodies no longer in the
-  // stash stay until an operator prunes them. The table is ~1.5 KB per row
-  // (~20 MB at 13 k memories — acceptable).
-  {
-    id: "008-body-embeddings",
-    up: `
-      CREATE TABLE IF NOT EXISTS body_embeddings (
+CREATE TABLE body_embeddings (
         content_hash TEXT    PRIMARY KEY,
         embedding    BLOB    NOT NULL,
         model_id     TEXT    NOT NULL,
         created_at   INTEGER NOT NULL
       );
-    `,
-  },
 
-  // ── Migration 009 — asset_salience (WS-1 salience vector) ───────────────────
-  //
-  // Per-asset salience vector persisted in state.db (canonical store).
-  //
-  // Three independently-stored, independently-decayable sub-scores:
-  //   encoding_salience  — intrinsic importance (Gap 1; v1 = type-weight stub).
-  //   outcome_salience   — differential usefulness (WS-2; 0 until that lands).
-  //   retrieval_salience — frequency × recency (the decayable term).
-  //
-  // Plus the scalar projection for ranking:
-  //   rank_score = (w_e·encoding + w_o·outcome + w_r·retrieval) × sizePenalty,
-  //   normalized [0,1]. Every selector reads rank_score; individual sub-scores
-  //   are available for telemetry and per-dimension thresholding.
-  //
-  // Plasticity column:
-  //   consecutive_no_ops INTEGER — number of consecutive improve cycles where
-  //     this asset produced a no-op (reflect/distill produced no change).
-  //     Dampens CONSOLIDATION-SELECTION only — intentionally NOT applied to
-  //     rank_score (stable assets stay retrievable but skip LLM merge passes).
-  //
-  // updated_at is an INTEGER Unix-ms timestamp for recency queries.
-  //
-  // The canonical store is state.db, not frontmatter.  An optional frontmatter
-  // mirror of the stable encodingSalience is allowed for portability (#608).
-  //
-  // TTL: rows are overwritten on every run; orphaned rows for deleted assets
-  // accumulate harmlessly until an operator prunes them.
-  {
-    id: "009-asset-salience",
-    up: `
-      CREATE TABLE IF NOT EXISTS asset_salience (
+CREATE TABLE asset_salience (
         asset_ref          TEXT    PRIMARY KEY,
         encoding_salience  REAL    NOT NULL DEFAULT 0.5,
         outcome_salience   REAL    NOT NULL DEFAULT 0.0,
@@ -548,342 +125,20 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         rank_score         REAL    NOT NULL DEFAULT 0.0,
         consecutive_no_ops INTEGER NOT NULL DEFAULT 0,
         updated_at         INTEGER NOT NULL DEFAULT 0
-      );
+      , homeostatic_demoted_at INTEGER DEFAULT NULL, encoding_source TEXT DEFAULT NULL, missing_since INTEGER DEFAULT NULL);
 
-      -- Hot path: sort / filter by rank_score for selector queries.
-      CREATE INDEX IF NOT EXISTS idx_asset_salience_rank
-        ON asset_salience(rank_score DESC);
-    `,
-  },
-
-  // ── Migration 010 — asset_outcome (WS-2 outcome loop) ───────────────────────
-  //
-  // Per-asset outcome loop persisted in state.db (S2 seam, WS-2).
-  //
-  // Stores the differential "was this retrieval useful" signal so the salience
-  // vector's `outcomeSalience` sub-score (WS-1 `W_OUTCOME` term) is non-zero.
-  //
-  // Columns:
-  //   asset_ref TEXT PK             — `type:name` asset ref (FK to asset_salience).
-  //   last_retrieved_at INTEGER     — Unix-ms of the most recent retrieval.
-  //   retrieval_count INTEGER       — total retrieval count from the index DB.
-  //   expected_retrieval_rate REAL  — EMA-smoothed expected count per cycle.
-  //   negative_feedback_count INTEGER — cumulative negative-feedback events.
-  //   accepted_change_count INTEGER — cumulative accepted proposals.
-  //   review_pressure INTEGER       — #613 pressure counter: repeated low-satisfaction
-  //                                   retrievals increment it; feeds outcomeSalience.
-  //   outcome_score REAL            — differential outcome signal (can be negative).
-  //   updated_at INTEGER            — Unix-ms timestamp of last update.
-  //
-  // Design:
-  //   - outcome_score is differential (prediction-error shaped), NOT a raw count,
-  //     so it rewards assets that are retrieved MORE than their rolling mean AND
-  //     accepted for change when retrieved. See outcome-loop.ts for the formula.
-  //   - review_pressure (#613): repeated negative-feedback retrievals raise it,
-  //     non-negative cycles decay it. Never mutates asset content directly.
-  //   - warm_start: seeded from utility EMA at row creation, clipped to [0, 0.3]
-  //     so the first negative delta does not cause a spurious rank inversion.
-  //   - Orphaned rows (deleted assets) accumulate harmlessly; operators can prune
-  //     with `DELETE FROM asset_outcome WHERE updated_at < ?` if desired.
-  {
-    id: "010-asset-outcome",
-    up: `
-      CREATE TABLE IF NOT EXISTS asset_outcome (
+CREATE TABLE asset_outcome (
         asset_ref                TEXT    PRIMARY KEY,
         last_retrieved_at        INTEGER NOT NULL DEFAULT 0,
         retrieval_count          INTEGER NOT NULL DEFAULT 0,
         expected_retrieval_rate  REAL    NOT NULL DEFAULT 0.0,
         negative_feedback_count  INTEGER NOT NULL DEFAULT 0,
         accepted_change_count    INTEGER NOT NULL DEFAULT 0,
-        review_pressure          INTEGER NOT NULL DEFAULT 0,
         outcome_score            REAL    NOT NULL DEFAULT 0.0,
         updated_at               INTEGER NOT NULL DEFAULT 0
-      );
+      , missing_since INTEGER DEFAULT NULL);
 
-      -- Hot path: sort assets by review_pressure DESC for #613 admission.
-      CREATE INDEX IF NOT EXISTS idx_asset_outcome_review_pressure
-        ON asset_outcome(review_pressure DESC);
-
-      -- Secondary: sort by outcome_score DESC for outcomeSalience reads.
-      CREATE INDEX IF NOT EXISTS idx_asset_outcome_score
-        ON asset_outcome(outcome_score DESC);
-    `,
-  },
-  // ── Migration 011 — asset_salience: homeostatic_demoted_at column ─────────────
-  //
-  // WS-3b step 0a (homeostatic demotion). Records the last time `retrievalSalience`
-  // was demoted for this asset so:
-  //   (a) Each run can identify assets that have been demoted but not yet
-  //       re-retrieved (they stay in the demoted state until a retrieval
-  //       re-promotes them via `upsertAssetSalience`).
-  //   (b) The homeostatic pass can log "N assets demoted this run".
-  //
-  // NULL = never demoted (or was re-promoted after last demotion, since a fresh
-  // `upsertAssetSalience` call clears the flag by updating retrieval_salience
-  // from live data rather than the demoted value — the column is informational,
-  // not the canonical source of the salience value).
-  {
-    id: "011-asset-salience-homeostatic-demoted-at",
-    up: `
-      ALTER TABLE asset_salience ADD COLUMN homeostatic_demoted_at INTEGER DEFAULT NULL;
-    `,
-  },
-  // ── Migration 012 — improve_gate_thresholds (WS-4 per-phase threshold store) ─
-  //
-  // Persists the auto-tuned accept-gate threshold PER PHASE so that each phase
-  // (reflect, distill, extract, consolidate) maintains its own calibrated
-  // threshold rather than sharing a single global `options.autoAccept`.
-  //
-  // Schema:
-  //   phase TEXT PK        — phase label, e.g. "reflect", "distill", "extract",
-  //                          "consolidate".
-  //   threshold INTEGER    — tuned threshold (0-100), matches the integer
-  //                          scale used everywhere else in the gate pipeline.
-  //   updated_at INTEGER   — Unix milliseconds of the last update.
-  //
-  // `makeGateConfig` reads the stored threshold for its phase (falling back to
-  // the caller-supplied `globalThreshold` when no row exists yet). WS-4's
-  // `persistPhaseThreshold` writes it after each auto-tune step.
-  {
-    id: "012-improve-gate-thresholds",
-    up: `
-      CREATE TABLE IF NOT EXISTS improve_gate_thresholds (
-        phase       TEXT    NOT NULL PRIMARY KEY,
-        threshold   INTEGER NOT NULL,
-        updated_at  INTEGER NOT NULL
-      );
-    `,
-  },
-  // ── Migration 013 — extract_sessions_seen: content_hash column (#602) ────────
-  //
-  // Replaces the brittle timestamp-based incrementality (`session_ended_at`,
-  // compared against the live session metadata) with a content hash. The old
-  // clock/timestamp logic caused the Jun 11-12 double-extract + over-throttle
-  // incident (clock skew / out-of-order endedAt both double-processed AND
-  // over-suppressed sessions). The hash makes the skip decision byte-exact and
-  // clock-independent.
-  //
-  // Additive ADD COLUMN (migration-safe; mirrors migration 011's style). All
-  // pre-existing rows read back `content_hash = NULL`, which the skip logic
-  // treats as "seen before content-hash tracking existed → process once to
-  // backfill", after which the row gets a real hash and becomes hash-stable.
-  // Never mutate migration 004 (the original table) — this column is appended.
-  {
-    id: "013-extract-sessions-content-hash",
-    up: `
-      ALTER TABLE extract_sessions_seen ADD COLUMN content_hash TEXT DEFAULT NULL;
-    `,
-  },
-  // ── Migration 014 — recombine_hypotheses (#625 confirmation count) ───────────
-  //
-  // Second-pass promotion ledger for the recombine pass. The first pass (#609)
-  // only ever emits `type: hypothesis` proposals; this table tracks how many
-  // CONSECUTIVE runs re-induced the SAME generalization (keyed by the
-  // deterministic `deriveRecombineLessonRef` value — a hash of the sorted
-  // member entryKeys). Once `consecutive_count >= confirmThreshold`, the run
-  // promotes the generalization to a `type: lesson` proposal (through the same
-  // proposal queue + quality gate). A hypothesis NOT re-induced in a run has its
-  // consecutive streak reset (decay-to-zero), so confirmation is per exact
-  // member-set and conservative.
-  //
-  // Indexed columns:
-  //   hypothesis_ref TEXT PK — the `lesson:recombined/<slug>-<hash>` ref; one
-  //                            row per re-inducible generalization. The ref is
-  //                            the promotion TARGET (a lesson in both the
-  //                            hypothesis and promoted states), so the ref never
-  //                            encodes the proposal type.
-  //   last_seen_at   TEXT (idx) — for forensic / pruning queries.
-  //
-  // Non-indexed columns:
-  //   signature          TEXT — the cluster's shared relatedness signal (tag /
-  //                             entity) at induction time; forensics only.
-  //   member_key         TEXT — sorted member entryKeys joined; the membership
-  //                             fingerprint behind the ref hash. Stored so a
-  //                             membership change (which yields a DIFFERENT ref)
-  //                             is auditable.
-  //   consecutive_count  INTEGER — current confirmation streak (reset on decay
-  //                                and on promotion).
-  //   first_seen_at      TEXT — ISO-8601 UTC of the first induction.
-  //   last_run           TEXT — sourceRun token of the last induction; the
-  //                             same-run idempotency guard.
-  //   promoted_at        TEXT — non-null once promoted; guards against
-  //                             double-promoting on every subsequent run.
-  //   metadata_json      TEXT — reserved for future forensics; defaults to '{}'.
-  {
-    id: "014-recombine-hypotheses",
-    up: `
-      CREATE TABLE IF NOT EXISTS recombine_hypotheses (
-        hypothesis_ref    TEXT PRIMARY KEY,
-        signature         TEXT NOT NULL,
-        member_key        TEXT NOT NULL,
-        consecutive_count INTEGER NOT NULL DEFAULT 0,
-        first_seen_at     TEXT NOT NULL,
-        last_seen_at      TEXT NOT NULL,
-        last_run          TEXT,
-        promoted_at       TEXT,
-        metadata_json     TEXT NOT NULL DEFAULT '{}'
-      );
-      CREATE INDEX IF NOT EXISTS idx_recombine_hypotheses_last_seen
-        ON recombine_hypotheses(last_seen_at);
-    `,
-  },
-  // ── Migration 015 — asset_salience: encoding_source provenance column (#644) ──
-  //
-  // Records HOW the stored `encoding_salience` was derived so an improve run's
-  // type-weight fallback can no longer clobber a real content-derived score:
-  //
-  //   "content"   — written by the distill path from `scoreEncodingSalience`
-  //                 (novelty·0.40 + magnitude·0.35 + predictionError·0.25).
-  //   "type-stub" — written by `computeSalience`'s `DEFAULT_TYPE_ENCODING_WEIGHTS`
-  //                 fallback (no content-based score available for this ref yet).
-  //   NULL        — legacy row written before this migration; provenance unknown.
-  //                 Treated as a stub by readers UNLESS its stored value differs
-  //                 from the pure type-weight (best-effort heuristic for old data).
-  //
-  // Why a column rather than inference: before #644, every improve run overwrote
-  // the distill-written content score with the type-weight stub, so the stored
-  // value alone cannot distinguish a real score from a stub. The provenance flag
-  // is the single source of truth going forward; `upsertAssetSalience` refuses to
-  // lower a "content" row to a "type-stub" so the high-salience gate (#608) keys
-  // on genuine novelty/magnitude/prediction-error, not the asset type.
-  {
-    id: "015-asset-salience-encoding-source",
-    up: `
-      ALTER TABLE asset_salience ADD COLUMN encoding_source TEXT DEFAULT NULL;
-    `,
-  },
-  // ── Migration 016 — collapse/churn detector (R5) ─────────────────────────────
-  //
-  // Longitudinal store-health history for the improve pipeline
-  // (docs/architecture/specs/improve-collapse-churn-detector-design.md).
-  //
-  //   canary_queries — the fixed canary set, minted deterministically from the
-  //     live stash on first detector run and NEVER auto-refreshed (silent
-  //     re-baselining is how a slow collapse hides). `canary_set_id` groups one
-  //     mint; deactivated sets keep their rows (active = 0) so historical cycle
-  //     rows stay interpretable. Tens of rows; never purged.
-  //
-  //   improve_cycle_metrics — one row per qualifying improve cycle (a run where
-  //     consolidate processed ≥1 op). Every
-  //     column is a scalar or a size-capped JSON blob (< 2 KB/row by
-  //     construction — the result_json lesson applied). Retention: 365 days via
-  //     purgeOldCycleMetrics. Trend queries drive the collapse/churn alert
-  //     evaluation and the health advisory; `canary_set_id` scoping prevents
-  //     comparing across canary re-mints.
-  {
-    id: "016-collapse-churn-detector",
-    up: `
-      CREATE TABLE IF NOT EXISTS canary_queries (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        canary_set_id TEXT    NOT NULL,
-        anchor_ref    TEXT    NOT NULL,
-        query         TEXT    NOT NULL,
-        source        TEXT    NOT NULL DEFAULT 'auto',
-        active        INTEGER NOT NULL DEFAULT 1,
-        created_at    TEXT    NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_canary_queries_active
-        ON canary_queries(active, canary_set_id);
-
-      CREATE TABLE IF NOT EXISTS improve_cycle_metrics (
-        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id                  TEXT    NOT NULL,
-        ts                      TEXT    NOT NULL,
-        pass                    TEXT    NOT NULL,
-        canary_set_id           TEXT    NOT NULL,
-        mean_recall             REAL    NOT NULL,
-        mean_ndcg               REAL    NOT NULL,
-        mean_mrr                REAL    NOT NULL,
-        canary_ranks_json       TEXT    NOT NULL,
-        store_total             INTEGER NOT NULL,
-        store_by_type_json      TEXT    NOT NULL,
-        distinct_content_ratio  REAL    NOT NULL,
-        mean_bigram_diversity   REAL    NOT NULL,
-        over_generation_count   INTEGER NOT NULL,
-        accepted_actions        INTEGER NOT NULL,
-        merge_floor_violations  INTEGER NOT NULL DEFAULT 0,
-        alerts_json             TEXT    NOT NULL DEFAULT '[]'
-      );
-      CREATE INDEX IF NOT EXISTS idx_improve_cycle_metrics_ts
-        ON improve_cycle_metrics(ts);
-    `,
-  },
-  // Keep the historical profile column untouched. New 0.9 runs identify the
-  // selected improve strategy in this additive column.
-  {
-    id: "017-improve-run-strategy",
-    up: `
-      ALTER TABLE improve_runs ADD COLUMN strategy TEXT;
-      CREATE INDEX IF NOT EXISTS idx_improve_runs_strategy_started ON improve_runs(strategy, started_at);
-    `,
-  },
-  // ── Migration 018 — drop dead-lane schema (Chunk 7, WI-7.3) ──────────────────
-  //
-  // Drops the on-disk schema for three lanes deleted by the 0.9.0 bundle-adapter
-  // refactor. Append-only: migrations 007/010/014 above are left verbatim; this
-  // migration only removes what they created.
-  //
-  //   - recombine_hypotheses (+ its last-seen index) — the whole-corpus
-  //     cross-episodic synthesis pass (migration 014) was deleted in Chunk 7
-  //     WI-7.1 (R28).
-  //   - consolidation_judged — the judged-state cache (#581, migration 007) was
-  //     deleted in Chunk 7 WI-7.3 (plan §5). This is a LIVE behavior change:
-  //     every consolidate run now re-judges unchanged memories (more LLM calls)
-  //     instead of skipping them — see the chunk-7 ledger.
-  //   - asset_outcome.review_pressure (+ its DESC index) — the review-pressure
-  //     lane (#613, migration 010) was deleted in Chunk 7 WI-7.2 (R21); this
-  //     migration finishes the column/index drop the code-side deletion left
-  //     pending. `retrieval_count`/`outcome_score` and their index are untouched.
-  {
-    id: "018-drop-dead-lane-schema",
-    up: `
-      DROP INDEX IF EXISTS idx_recombine_hypotheses_last_seen;
-      DROP TABLE IF EXISTS recombine_hypotheses;
-
-      DROP TABLE IF EXISTS consolidation_judged;
-
-      DROP INDEX IF EXISTS idx_asset_outcome_review_pressure;
-      ALTER TABLE asset_outcome DROP COLUMN review_pressure;
-    `,
-  },
-
-  // ── Migration 019 — proposal input fingerprints (Chunk 6, WI-6.4) ────────────
-  //
-  // Durable store for the §23.6 input fingerprints that replace the
-  // dedup/cooldown content-hash machinery (plan §4.5): one row per processed
-  // fingerprint (scheme version + source + target ref + target before-hash +
-  // reserved evidence/guidance/evaluator terms + engine/model-id term). A
-  // matching fingerprint skips re-processing the same inputs unless
-  // explicitly forced; rows are pruned with the proposal retention window.
-  // Rejection backoff (the retained cooldown) keeps reading the proposals
-  // table itself and needs no schema.
-  {
-    id: "019-proposal-fingerprints",
-    up: `
-      CREATE TABLE IF NOT EXISTS proposal_fingerprints (
-        stash_dir TEXT NOT NULL,
-        fingerprint TEXT NOT NULL,
-        ref TEXT NOT NULL,
-        source TEXT NOT NULL,
-        model_id TEXT NOT NULL DEFAULT '',
-        proposal_id TEXT,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (stash_dir, fingerprint)
-      );
-      CREATE INDEX IF NOT EXISTS idx_proposal_fingerprints_ref
-        ON proposal_fingerprints(stash_dir, ref);
-    `,
-  },
-
-  // Migration 020 installs the durable workflow, usage, and quarantine tables
-  // in state.db. It is additive/idempotent DDL only: current managed databases
-  // advance through the ledger automatically, while unknown/divergent ledgers
-  // fail closed. There is no external data-movement coordinator.
-  {
-    id: "020-three-db-cutover",
-    up: `
-      -- ── workflow_runs (workflows/db.ts base + migrations 001/002/003/006/010) ──
-      CREATE TABLE IF NOT EXISTS workflow_runs (
+CREATE TABLE workflow_runs (
         id                  TEXT PRIMARY KEY,
         workflow_ref        TEXT NOT NULL,
         workflow_entry_id   INTEGER,
@@ -903,16 +158,9 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         engine_lease_until  TEXT,
         engine_lease_holder TEXT,
         plan_ir_version     INTEGER
-      );
-      CREATE INDEX IF NOT EXISTS idx_workflow_runs_ref ON workflow_runs(workflow_ref);
-      CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
-      CREATE INDEX IF NOT EXISTS idx_workflow_runs_scope_ref_status
-        ON workflow_runs(scope_key, workflow_ref, status);
-      CREATE INDEX IF NOT EXISTS idx_workflow_runs_agent_session
-        ON workflow_runs(agent_harness, agent_session_id);
+      , parent_run_id  TEXT, parent_unit_id TEXT, invocation_key TEXT, outputs_json TEXT);
 
-      -- ── workflow_run_steps (base + migration 003 summary) ─────────────────────
-      CREATE TABLE IF NOT EXISTS workflow_run_steps (
+CREATE TABLE workflow_run_steps (
         run_id          TEXT NOT NULL,
         step_id         TEXT NOT NULL,
         step_title      TEXT NOT NULL,
@@ -927,11 +175,8 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         PRIMARY KEY (run_id, step_id),
         FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
       );
-      CREATE INDEX IF NOT EXISTS idx_workflow_run_steps_run_sequence
-        ON workflow_run_steps(run_id, sequence_index);
 
-      -- ── workflow_run_units (migration 004 + 005/007/008/009/010 columns) ──────
-      CREATE TABLE IF NOT EXISTS workflow_run_units (
+CREATE TABLE workflow_run_units (
         run_id           TEXT NOT NULL,
         unit_id          TEXT NOT NULL,
         step_id          TEXT,
@@ -957,11 +202,8 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         PRIMARY KEY (run_id, unit_id),
         FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
       );
-      CREATE INDEX IF NOT EXISTS idx_workflow_run_units_run_step
-        ON workflow_run_units(run_id, step_id);
 
-      -- ── usage_events (index.db ensureUsageEventsSchema — the durable new home) ─
-      CREATE TABLE IF NOT EXISTS usage_events (
+CREATE TABLE usage_events (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         event_type TEXT NOT NULL,
         query      TEXT,
@@ -972,13 +214,8 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         source     TEXT NOT NULL DEFAULT 'user',
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
-      CREATE INDEX IF NOT EXISTS idx_usage_events_entry ON usage_events(entry_id);
-      CREATE INDEX IF NOT EXISTS idx_usage_events_type ON usage_events(event_type);
-      CREATE INDEX IF NOT EXISTS idx_usage_events_ref ON usage_events(entry_ref);
-      CREATE INDEX IF NOT EXISTS idx_usage_events_source ON usage_events(source);
 
-      -- ── legacy_state (ensureLegacyStateTable — the orphan quarantine archive) ──
-      CREATE TABLE IF NOT EXISTS legacy_state (
+CREATE TABLE legacy_state (
         surface        TEXT NOT NULL,
         old_ref        TEXT NOT NULL,
         row_count      INTEGER NOT NULL DEFAULT 0,
@@ -986,44 +223,8 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         quarantined_at TEXT NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (surface, old_ref)
       );
-    `,
-  },
 
-  // ── Migration 021 — asset_salience / asset_outcome: missing_since (#733) ────
-  //
-  // Orphan-GC grace clock (Workstream C / #733,
-  // docs/architecture/specs/0.9.0-close-out-plan.md). Neither table carries a
-  // column that records when a row's ref STOPPED resolving against
-  // `entries.item_ref` — `updated_at` is bumped by improve itself on every
-  // touch, so it cannot double as a "went missing" timestamp.
-  //
-  // `missing_since` is stamped by `runOrphanStateGcPass`
-  // (src/commands/improve/loop-stages.ts) the first time a row's ref fails to
-  // resolve against the live index, cleared the moment the ref resolves
-  // again, and used to gate deletion once `STATE_GC_GRACE_MS` (7 days) has
-  // elapsed — and ONLY when `improve.stateGc.collect` is true (default
-  // false). Mirrors the additive ADD-COLUMN style of migration 011.
-  //
-  // NULL = never missing (the steady-state default for every existing row —
-  // both a fresh row and a pre-migration row read back NULL here).
-  {
-    id: "021-asset-state-missing-since",
-    up: `
-      ALTER TABLE asset_salience ADD COLUMN missing_since INTEGER DEFAULT NULL;
-      ALTER TABLE asset_outcome ADD COLUMN missing_since INTEGER DEFAULT NULL;
-    `,
-  },
-
-  // ── Migration 022 — append-only durable workflow dispatch attempts ────────
-  //
-  // `workflow_run_units` is the current status/reuse projection. V4 writes
-  // every external dispatch reservation and terminal result here so
-  // retry/reclaim history, stable dispatch identity, and known usage cannot be
-  // erased by an upsert of that projection row.
-  {
-    id: "022-workflow-unit-attempts",
-    up: `
-      CREATE TABLE workflow_run_unit_attempts (
+CREATE TABLE workflow_run_unit_attempts (
         run_id           TEXT NOT NULL,
         unit_id          TEXT NOT NULL,
         attempt          INTEGER NOT NULL CHECK (attempt >= 1),
@@ -1048,196 +249,8 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         PRIMARY KEY (run_id, unit_id, attempt),
         FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
       );
-      CREATE UNIQUE INDEX idx_workflow_run_unit_attempts_dispatch
-        ON workflow_run_unit_attempts(dispatch_id);
-      CREATE INDEX idx_workflow_run_unit_attempts_run_step
-        ON workflow_run_unit_attempts(run_id, step_id, unit_id, attempt);
-      CREATE INDEX idx_workflow_run_unit_attempts_running_claim
-        ON workflow_run_unit_attempts(run_id, status, claim_expires_at);
-    `,
-  },
 
-  // ── Migration 023 — child workflow run parentage ──────────────────────────
-  //
-  // Adds the columns and partial unique index `publishChildWorkflowRun`
-  // (src/storage/repositories/workflow-runs-repository.ts) needs to record a
-  // durable child workflow run under the parent unit that spawned it, and to
-  // make that publication idempotent per invocation.
-  //
-  // Disambiguation: this migration's `workflow_runs.parent_unit_id` is the
-  // PARENT RUN's unit that spawned this CHILD RUN — a cross-run composition
-  // edge. It is NOT the same concept as the pre-existing
-  // `workflow_run_units.parent_unit_id` (migration 004, consolidated above
-  // into migration 020's `workflow_run_units` table, migrations.ts:934),
-  // which records MAP FAN-OUT TEMPLATE PARENTAGE — one expanded unit's row
-  // pointing back at the map-template unit it fanned out from, WITHIN a
-  // single run. Same column name, two tables, two different concepts. So the
-  // two are never confused at a call site, the TypeScript repository API
-  // deliberately never spells this one `parentUnitId`: it is always
-  // `spawnedByUnitId` on `PublishChildWorkflowRunInput` and on every child
-  // run row the repository returns.
-  //
-  // `invocation_key` is the deterministic identity of one spawn attempt
-  // (`computeChildInvocationKey`, src/workflows/exec/child-invocation.ts).
-  // The unique index is partial (`WHERE parent_run_id IS NOT NULL`) because a
-  // top-level run — every run before this migration, and every run started
-  // directly by `akm workflow run` — has no parent and no invocation key, and
-  // must never be constrained by this uniqueness rule.
-  {
-    id: "023-child-workflow-runs",
-    up: `
-      ALTER TABLE workflow_runs ADD COLUMN parent_run_id  TEXT;
-      ALTER TABLE workflow_runs ADD COLUMN parent_unit_id TEXT;
-      ALTER TABLE workflow_runs ADD COLUMN invocation_key TEXT;
-      CREATE INDEX idx_workflow_runs_parent ON workflow_runs(parent_run_id);
-      CREATE UNIQUE INDEX idx_workflow_runs_invocation_key
-        ON workflow_runs(parent_run_id, invocation_key)
-        WHERE parent_run_id IS NOT NULL;
-    `,
-  },
-
-  // ── Migration 024 — workflow run outputs ───────────────────────────────────
-  //
-  // Adds workflow_runs.outputs_json — the resolved map of a plan's declared
-  // outputs:, persisted once at run completion in the SAME transaction as the
-  // final step's completion. NULL for every run whose plan declares no outputs: (the
-  // overwhelming majority, including every run before this migration) and for
-  // every run that fails or blocks before completing — never `{}`.
-  // `WorkflowRunsRepository.setRunOutputs` is the only writer;
-  // `src/workflows/runtime/run-outputs.ts` is the only resolver.
-  {
-    id: "024-workflow-run-outputs",
-    up: `
-      ALTER TABLE workflow_runs ADD COLUMN outputs_json TEXT;
-    `,
-  },
-
-  // ── Migration 025 — task_history result-vocabulary backfill ────────────────
-  //
-  // The written `target_kind` vocabulary was renamed and every new row is
-  // marked `targetVocab: 2` in `metadata_json`, but every row written before
-  // that stayed in the OLD vocabulary, which would push the "which generation
-  // is this row" decision onto three separate read sites
-  // (src/tasks/run/task-history.ts, src/commands/health/
-  // improve-metrics.ts, src/commands/health/windows.ts). `task_history` is
-  // DB-owned data and the remap is deterministic and total, so it is a
-  // one-time migration, not three permanently-recurring read-side shims.
-  //
-  // The remap, applied only to rows with no `targetVocab` marker yet (a
-  // NULL/absent `$.targetVocab` in the JSON column — already-marked or
-  // malformed metadata_json is left untouched; malformed rows are a
-  // pre-existing, unrelated skip-and-warn concern at read time):
-  //   - target_kind 'prompt'  -> 'command' (the prepared command/agent-LLM
-  //     arm; its written label was renamed, this backfills the old one)
-  //   - target_kind 'command' -> 'shell'   (the legacy native shell/script
-  //     arm's shared old label; it was split into 'shell'/'script', and only
-  //     'shell' is reconstructable — the old vocabulary never distinguished
-  //     script from shell, matching the read mapping this migration retires)
-  // Only 'prompt' and legacy 'command' rows actually change meaning between
-  // vocabularies (see the read mapping this migration retires); every other
-  // target_kind ('workflow', NULL, or anything else) already reads
-  // identically in both, so it is left alone — including its metadata_json,
-  // since no reader consults `targetVocab` once the shim is deleted.
-  {
-    id: "025-task-history-vocabulary-backfill",
-    up: `
-      UPDATE task_history
-      SET target_kind = 'command',
-          metadata_json = json_set(metadata_json, '$.targetVocab', 2)
-      WHERE target_kind = 'prompt'
-        AND json_valid(metadata_json)
-        AND json_extract(metadata_json, '$.targetVocab') IS NULL;
-
-      UPDATE task_history
-      SET target_kind = 'shell',
-          metadata_json = json_set(metadata_json, '$.targetVocab', 2)
-      WHERE target_kind = 'command'
-        AND json_valid(metadata_json)
-        AND json_extract(metadata_json, '$.targetVocab') IS NULL;
-    `,
-  },
-
-  // ── Migration 026 — strip the retired proposal-ref export fragment (#898) ──
-  //
-  // Older releases could write a proposal `ref` carrying the export-fragment
-  // selector (`[bundle//]conceptId#fragment`, see src/core/asset/asset-ref.ts).
-  // `currentProposalRef` (proposals-repository.ts) now rejects any fragment, so
-  // those rows failed to parse on every read and could not be listed, repaired,
-  // or deleted through the CLI. Every surface that still reads an archived row
-  // is concept-scoped, so the fragment carries nothing they use.
-  //
-  // `#` is legal in a ref only as the fragment separator, so truncating at the
-  // first `#` is exactly the split `parseBundleRef` performs. `ref` has no
-  // UNIQUE constraint, and no writer ever produced an empty concept id, so
-  // every legacy row normalizes without a drop path.
-  {
-    id: "026-proposals-strip-legacy-fragment-refs",
-    up: `
-      UPDATE proposals
-      SET ref = substr(ref, 1, instr(ref, '#') - 1)
-      WHERE ref LIKE '%#%';
-    `,
-  },
-
-  // ── Migration 027 — claude-code -> claude harness rename (#915) ──
-  //
-  // The 0.9.2 rename shipped without a data migration, so rows written under
-  // the old key were invisible to every reader keyed on "claude".
-  //
-  // `extract_sessions_seen` has PRIMARY KEY (harness, session_id), so a
-  // session already recorded under "claude" (written by a run that really
-  // happened post-rename) collides with its "claude-code" counterpart on
-  // rename. `UPDATE OR IGNORE` keeps the newer "claude" row exactly as it
-  // was — the older row's outcome is superseded, not more correct — and the
-  // trailing DELETE drops that now-unreachable duplicate so the "claude-code"
-  // key space is fully empty afterwards, not just mostly-migrated.
-  //
-  // `workflow_runs.agent_harness` (migration 020) has no uniqueness
-  // constraint on that column, so a plain UPDATE is sufficient there. Both
-  // statements are kept in one migration so the rename is a single ledger
-  // event. `improve_runs.result_json` is deliberately untouched: the harness
-  // name embedded in those JSON blobs is reporting data about a past run, not
-  // a lookup key, so rewriting it would not fix anything a reader depends on.
-  {
-    id: "027-extract-sessions-seen-harness-rename",
-    up: `
-      UPDATE OR IGNORE extract_sessions_seen SET harness = 'claude' WHERE harness = 'claude-code';
-      DELETE FROM extract_sessions_seen WHERE harness = 'claude-code';
-      UPDATE workflow_runs SET agent_harness = 'claude' WHERE agent_harness = 'claude-code';
-    `,
-  },
-
-  // ── Migration 028 — the improve ledger ──
-  //
-  // One table records what improve last did with each (stash, ref, source) and
-  // when it may try again (`src/storage/repositories/improve-ledger-repository.ts`
-  // owns the outcome → cadence rule). Backfilled from the latest proposals row
-  // per (stash_dir, ref, source) so the rejection windows and pending state an
-  // upgrade inherits are the ones the previous release was already honouring:
-  //   pending  → proposed (revisit in 7 d)
-  //   accepted → accepted (eligible)
-  //   rejected → expired when the review reason is the expiry pass's
-  //              ("expired: …", 1 d grace), failed when the drain's
-  //              stale-target auto-reject or the orphan purge (eligible now —
-  //              neither was a content judgement), else rejected (reflect
-  //              14 d, distill 30 d, other 7 d)
-  //   reverted → rejected (the operator undid the content)
-  // `strftime` returns NULL for an unparseable timestamp, which reads as
-  // "eligible now" — the safe direction.
-  //
-  // The same migration drops the tables the ledger supersedes or whose code is
-  // gone: `proposal_fingerprints` was a dedup cache derived from proposals
-  // rows, `improve_gate_thresholds` has had no reader since 0.9.0,
-  // `proposal_fs_imports` lost its importer, `canary_queries` /
-  // `improve_cycle_metrics` belonged to the removed collapse detector, and
-  // `consolidation_judged` was already dropped by 018 (a no-op here for any
-  // ledger that ran it). None holds operator state, but dropping tables is
-  // destructive, so it is classified that way: `openStateDatabase` copies an
-  // existing state.db beside itself before it runs.
-  {
-    id: "028-improve-ledger",
-    up: `
-      CREATE TABLE IF NOT EXISTS improve_ledger (
+CREATE TABLE improve_ledger (
         stash_dir TEXT NOT NULL,
         ref TEXT NOT NULL,
         source TEXT NOT NULL,
@@ -1245,100 +258,106 @@ export const STATE_MIGRATIONS: readonly Migration[] = [
         outcome TEXT NOT NULL,
         next_eligible_at TEXT,
         proposal_id TEXT,
-        detail TEXT,
+        detail TEXT, content_hash TEXT DEFAULT NULL,
         PRIMARY KEY (stash_dir, ref, source)
       );
 
-      INSERT OR REPLACE INTO improve_ledger
-        (stash_dir, ref, source, last_attempt_at, outcome, next_eligible_at, proposal_id, detail)
-      SELECT
-        p.stash_dir,
-        p.ref,
-        p.source,
-        p.updated_at,
-        o.outcome,
-        CASE o.outcome
-          WHEN 'rejected' THEN strftime('%Y-%m-%dT%H:%M:%fZ', p.updated_at,
-            CASE p.source WHEN 'reflect' THEN '+14 days' WHEN 'distill' THEN '+30 days' ELSE '+7 days' END)
-          WHEN 'expired' THEN strftime('%Y-%m-%dT%H:%M:%fZ', p.updated_at, '+1 days')
-          WHEN 'proposed' THEN strftime('%Y-%m-%dT%H:%M:%fZ', p.updated_at, '+7 days')
-          ELSE NULL
-        END,
-        p.id,
-        CASE WHEN json_valid(p.metadata_json)
-          THEN json_extract(p.metadata_json, '$.review.reason') ELSE NULL END
-      FROM proposals p
-      JOIN (
-        SELECT stash_dir, ref, source, MAX(updated_at) AS latest_updated_at
-        FROM proposals GROUP BY stash_dir, ref, source
-      ) latest
-        ON latest.stash_dir = p.stash_dir AND latest.ref = p.ref AND latest.source = p.source
-       AND latest.latest_updated_at = p.updated_at
-      JOIN (
-        SELECT rowid AS proposal_rowid,
-          CASE status
-            WHEN 'pending' THEN 'proposed'
-            WHEN 'accepted' THEN 'accepted'
-            WHEN 'reverted' THEN 'rejected'
-            WHEN 'rejected' THEN
-              CASE WHEN json_valid(metadata_json) THEN
-                CASE
-                  WHEN json_extract(metadata_json, '$.review.reason') LIKE 'expired:%' THEN 'expired'
-                  WHEN json_extract(metadata_json, '$.gateDecision.reason') = 'stale-target' THEN 'failed'
-                  WHEN json_extract(metadata_json, '$.review.reason') = 'Asset no longer exists on disk' THEN 'failed'
-                  ELSE 'rejected'
-                END
-              ELSE 'rejected' END
-            ELSE NULL
-          END AS outcome
-        FROM proposals
-      ) o ON o.proposal_rowid = p.rowid
-      WHERE o.outcome IS NOT NULL
-      ORDER BY p.rowid ASC;
+CREATE INDEX idx_events_type ON events(event_type);
 
-      DROP INDEX IF EXISTS idx_proposal_fingerprints_ref;
-      DROP TABLE IF EXISTS proposal_fingerprints;
-      DROP TABLE IF EXISTS improve_gate_thresholds;
-      DROP TABLE IF EXISTS proposal_fs_imports;
-      DROP TABLE IF EXISTS consolidation_judged;
-      DROP TABLE IF EXISTS improve_cycle_metrics;
-      DROP TABLE IF EXISTS canary_queries;
-    `,
-  },
+CREATE INDEX idx_events_ref  ON events(ref);
 
-  // ── Migration 029 — improve_ledger.content_hash ───────────────────────────
-  //
-  // The consolidate pair pass (alpha.9) selects initiators by content change,
-  // not a time window: no row means eligible, a row whose content_hash
-  // differs from the asset's current body means eligible, otherwise not
-  // (src/commands/improve/consolidate/pair-pass.ts, selectInitiators). Every
-  // other source still uses next_eligible_at; this column is additional, not
-  // a replacement.
-  {
-    id: "029-improve-ledger-content-hash",
-    up: `
-      ALTER TABLE improve_ledger ADD COLUMN content_hash TEXT DEFAULT NULL;
-    `,
-  },
+CREATE INDEX idx_events_ts   ON events(ts);
+
+CREATE INDEX idx_proposals_stash_status
+        ON proposals(stash_dir, status);
+
+CREATE INDEX idx_proposals_ref_status
+        ON proposals(ref, status);
+
+CREATE UNIQUE INDEX idx_task_history_run
+        ON task_history(task_id, started_at);
+
+CREATE INDEX idx_task_history_task_id
+        ON task_history(task_id);
+
+CREATE INDEX idx_task_history_started
+        ON task_history(started_at);
+
+CREATE INDEX idx_task_history_target
+        ON task_history(target_kind, target_ref);
+
+CREATE INDEX idx_task_history_status
+        ON task_history(status);
+
+CREATE INDEX idx_improve_runs_started
+        ON improve_runs(started_at);
+
+CREATE INDEX idx_improve_runs_dry_run
+        ON improve_runs(dry_run);
+
+CREATE INDEX idx_improve_runs_stash_scope
+        ON improve_runs(stash_dir, scope_mode);
+
+CREATE INDEX idx_extract_sessions_harness
+        ON extract_sessions_seen(harness);
+
+CREATE INDEX idx_extract_sessions_processed
+        ON extract_sessions_seen(processed_at);
+
+CREATE INDEX idx_proposals_stash_status_ref_source
+        ON proposals(stash_dir, status, ref, source);
+
+CREATE INDEX idx_asset_salience_rank
+        ON asset_salience(rank_score DESC);
+
+CREATE INDEX idx_asset_outcome_score
+        ON asset_outcome(outcome_score DESC);
+
+CREATE INDEX idx_improve_runs_strategy_started ON improve_runs(strategy, started_at);
+
+CREATE INDEX idx_workflow_runs_ref ON workflow_runs(workflow_ref);
+
+CREATE INDEX idx_workflow_runs_status ON workflow_runs(status);
+
+CREATE INDEX idx_workflow_runs_scope_ref_status
+        ON workflow_runs(scope_key, workflow_ref, status);
+
+CREATE INDEX idx_workflow_runs_agent_session
+        ON workflow_runs(agent_harness, agent_session_id);
+
+CREATE INDEX idx_workflow_run_steps_run_sequence
+        ON workflow_run_steps(run_id, sequence_index);
+
+CREATE INDEX idx_workflow_run_units_run_step
+        ON workflow_run_units(run_id, step_id);
+
+CREATE INDEX idx_usage_events_entry ON usage_events(entry_id);
+
+CREATE INDEX idx_usage_events_type ON usage_events(event_type);
+
+CREATE INDEX idx_usage_events_ref ON usage_events(entry_ref);
+
+CREATE INDEX idx_usage_events_source ON usage_events(source);
+
+CREATE UNIQUE INDEX idx_workflow_run_unit_attempts_dispatch
+        ON workflow_run_unit_attempts(dispatch_id);
+
+CREATE INDEX idx_workflow_run_unit_attempts_run_step
+        ON workflow_run_unit_attempts(run_id, step_id, unit_id, attempt);
+
+CREATE INDEX idx_workflow_run_unit_attempts_running_claim
+        ON workflow_run_unit_attempts(run_id, status, claim_expires_at);
+
+CREATE INDEX idx_workflow_runs_parent ON workflow_runs(parent_run_id);
+
+CREATE UNIQUE INDEX idx_workflow_runs_invocation_key
+        ON workflow_runs(parent_run_id, invocation_key)
+        WHERE parent_run_id IS NOT NULL;
+`;
+
+export const STATE_MIGRATIONS: readonly Migration[] = [
+  // The first baseline id carries the whole baseline schema; the rest only complete the ledger.
+  ...STATE_BASELINE_IDS.map((id, index): Migration => ({ id, up: index === 0 ? STATE_BASELINE_SCHEMA : "" })),
 ];
 
 assertMigrationRegistry(STATE_MIGRATIONS);
-
-function assertStateMigrationSafetyRegistry(): void {
-  const migrationIds = STATE_MIGRATIONS.map((migration) => migration.id);
-  const classifiedIds = Object.keys(STATE_MIGRATION_SAFETY_BY_ID);
-  if (
-    migrationIds.length !== classifiedIds.length ||
-    migrationIds.some((migrationId, index) => classifiedIds[index] !== migrationId)
-  ) {
-    throw new Error("State migration safety classifications must match the exact ordered migration registry.");
-  }
-}
-
-assertStateMigrationSafetyRegistry();
-
-export function getStateMigrationSafety(migrationId: string): StateMigrationSafety {
-  const safety = STATE_MIGRATION_SAFETY_BY_ID[migrationId];
-  if (!safety) throw new Error(`State migration ${migrationId} has no safety classification.`);
-  return safety;
-}

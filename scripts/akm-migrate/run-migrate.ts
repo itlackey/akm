@@ -4,26 +4,19 @@
 
 /**
  * The whole migration, in order, as one plan: config.json in its current
- * shape, pending state.db migrations, task files to task source v4, assets'
- * retired `engine:` keys, refs in content that use the pre-#1432 spelling, then the residue sweep. `akm-migrate status` / `apply [--dry-run]` print exactly
+ * shape, pending state.db migrations, assets' retired `engine:` keys, then refs
+ * in content that use the pre-#1432 spelling. A state.db below the 0.9.32
+ * floor stops the run before any step. `akm-migrate status` / `apply [--dry-run]` print exactly
  * this; `akm migrate` and `akm upgrade` spawn that executable and re-emit
  * it. Every historical shape lives here or under `./migrate/`, so the CLI
  * proper only ever reads current schemas.
  */
 
-import { resolveStashDir } from "../../src/core/common";
-import { bundleKeyForContentRoot, isBundleEnabled, loadConfig, resetConfigCache } from "../../src/core/config/config";
-import { ConfigError } from "../../src/core/errors";
+import { resetConfigCache } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
-import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
+import { listPendingStateMigrations, stateDatabaseFloorBlocker, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
 import { resolveSecretFromStore } from "../../src/sources/snapshot-fetchers/secret-seam";
 import { type ConfigFileNormalization, normalizeConfigFile } from "./config/normalize";
-import {
-  type DeadResidueEntry,
-  type DeadResidueRemoval,
-  findDeadResidueEntries,
-  removeDeadResidue,
-} from "./migrate/dead-residue";
 import {
   applyEngineKeysMigration,
   type EngineKeysMigrationStatus,
@@ -34,7 +27,6 @@ import {
   type ContentRefsMigrationStatus,
   inspectContentRefsMigration,
 } from "./content-ref-migrate";
-import { applyTaskFilesMigration, inspectTaskFilesMigration, type TaskFilesMigrationStatus } from "./task-migrate";
 
 export type MigrationStatus = "current" | "ready" | "blocked";
 
@@ -66,15 +58,10 @@ export interface CombinedMigrationPlan {
   /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
   configFile?: ConfigFileNormalization;
   stateMigrations?: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
-  taskFiles?: TaskFilesMigrationStatus["taskFiles"];
   /** Assets whose retired `engine:` key becomes `connection:` or `harness:`. */
   assetEngineKeys?: EngineKeysMigrationStatus["assetEngineKeys"];
   /** Refs in writable bundles' files that still use the pre-#1432 spelling (`knowledge/WORK/x`, now `WORK/x`). */
   assetContentRefs?: ContentRefsMigrationStatus["assetContentRefs"];
-  /** Present after a real apply that rewrote at least one task file: the run's backup directory. */
-  backupPath?: string;
-  applied?: number;
-  deadResidue?: { pending: DeadResidueEntry[] } | { removed: DeadResidueRemoval[] };
 }
 
 function worstStatus(left: MigrationStatus, right: MigrationStatus): MigrationStatus {
@@ -135,22 +122,6 @@ export async function migrationStep<T>(
 }
 
 /**
- * The stash the residue sweep runs under. No configured bundle is an empty domain, not an error: migrate works
- * before `akm bundle create`. A stash a disabled bundle owns is left as written, as the task and asset steps leave it.
- */
-function stashDirIfConfigured(): string | undefined {
-  try {
-    const stashDir = resolveStashDir();
-    const config = loadConfig();
-    const owner = bundleKeyForContentRoot(config, stashDir);
-    return owner !== undefined && !isBundleEnabled(config, owner) ? undefined : stashDir;
-  } catch (error) {
-    if (error instanceof ConfigError && error.code === "STASH_DIR_NOT_FOUND") return undefined;
-    throw error;
-  }
-}
-
-/**
  * Run every migration step and return the combined plan. `apply: false` is
  * read-only (`status`, `apply --dry-run`); `apply: true` mutates, each step
  * under its own lock and backup.
@@ -158,6 +129,9 @@ function stashDirIfConfigured(): string | undefined {
 export async function runMigration(options: { apply: boolean }): Promise<CombinedMigrationPlan> {
   const { apply } = options;
   const configPath = getConfigPath();
+  // A state.db below the floor is refused before any step runs, so nothing is half-migrated.
+  const floorBlocker = stateDatabaseFloorBlocker();
+  if (floorBlocker) return { schemaVersion: 1, status: "blocked", blockers: [floorBlocker] };
   const failedSteps: FailedMigrationStep[] = [];
 
   // config.json: read through the same pipeline every load runs, written
@@ -177,14 +151,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? applyStateMigrations() : { pending: listPendingStateMigrations() }),
     apply ? () => ({ pending: listPendingStateMigrations() }) : undefined,
   );
-  const taskFiles = await migrationStep(
-    failedSteps,
-    "taskFiles",
-    () => (apply ? applyTaskFilesMigration() : inspectTaskFilesMigration()),
-    apply ? () => inspectTaskFilesMigration() : undefined,
-  );
-  // After the task files (a v2/v3 task file may still carry `engine:` until it is rewritten) and the
-  // config (the names an engine had before its conversion come from that step's result).
+  // After the config (the names an engine had before its conversion come from that step's result).
   // A config the step could not read or write leaves the names unsettled, so the assets wait for a run that can.
   const configFailed = failedSteps.some((failure) => failure.step.startsWith("configFile"));
   const engineTargets = configFile?.engineTargets;
@@ -203,17 +170,6 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? applyContentRefsMigration() : inspectContentRefsMigration()),
     apply ? () => inspectContentRefsMigration() : undefined,
   );
-  // Resolving the stash dir runs as its own step: a config that fails to
-  // load here is this step's own failure, not an uncaught throw out of
-  // `runMigration`.
-  const stashDir = await migrationStep(failedSteps, "stashDir", () => stashDirIfConfigured());
-  const deadResidue = await migrationStep(
-    failedSteps,
-    "deadResidue",
-    () => (apply ? { removed: removeDeadResidue(stashDir) } : { pending: findDeadResidueEntries(stashDir) }),
-    apply ? () => ({ pending: findDeadResidueEntries(stashDir) }) : undefined,
-  );
-
   // A pending state migration reads as "ready" under status/--dry-run, so the
   // preview says what apply will do; after a real apply it has been applied.
   const stateStatus: MigrationStatus =
@@ -224,25 +180,18 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
-      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus].reduce(worstStatus, taskFiles?.status ?? "blocked"),
+      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus].reduce(worstStatus, "current"),
       failedSteps,
     ),
-    blockers: [...(taskFiles?.blockers ?? []), ...failedStepBlockers(failedSteps)],
+    blockers: failedStepBlockers(failedSteps),
     ...(failedSteps.length > 0 ? { failedSteps } : {}),
     ...(configFile !== undefined ? { configFile } : {}),
     ...(stateMigrations !== undefined ? { stateMigrations } : {}),
-    ...(taskFiles !== undefined ? { taskFiles: taskFiles.taskFiles } : {}),
-    ...(taskFiles?.backupPath !== undefined ? { backupPath: taskFiles.backupPath } : {}),
-    ...(taskFiles?.applied !== undefined ? { applied: taskFiles.applied } : {}),
     ...(assetEngineKeys !== undefined ? { assetEngineKeys: assetEngineKeys.assetEngineKeys } : {}),
     ...(assetContentRefs !== undefined ? { assetContentRefs: assetContentRefs.assetContentRefs } : {}),
-    ...(deadResidue !== undefined ? { deadResidue } : {}),
   };
 }
 
-function applyStateMigrations(): { applied: string[]; safetyCopyPath?: string } {
-  const result = upgradeHistoricalStateDatabase();
-  return result.safetyCopyPath
-    ? { applied: result.applied, safetyCopyPath: result.safetyCopyPath }
-    : { applied: result.applied };
+function applyStateMigrations(): { applied: string[] } {
+  return { applied: upgradeHistoricalStateDatabase().applied };
 }

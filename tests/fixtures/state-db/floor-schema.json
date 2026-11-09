@@ -1,0 +1,252 @@
+[
+  {
+    "type": "table",
+    "name": "schema_migrations",
+    "sql": "CREATE TABLE schema_migrations (\n      id         TEXT    PRIMARY KEY,\n      applied_at TEXT    NOT NULL DEFAULT (datetime('now'))\n    )"
+  },
+  {
+    "type": "table",
+    "name": "events",
+    "sql": "CREATE TABLE events (\n        id             INTEGER PRIMARY KEY AUTOINCREMENT,\n        event_type     TEXT    NOT NULL,\n        ts             TEXT    NOT NULL,\n        ref            TEXT,\n        metadata_json  TEXT    NOT NULL DEFAULT '{}'\n      )"
+  },
+  {
+    "type": "table",
+    "name": "proposals",
+    "sql": "CREATE TABLE proposals (\n        id               TEXT    PRIMARY KEY,\n        stash_dir        TEXT    NOT NULL,\n        ref              TEXT    NOT NULL,\n        status           TEXT    NOT NULL DEFAULT 'pending',\n        source           TEXT    NOT NULL,\n        created_at       TEXT    NOT NULL,\n        updated_at       TEXT    NOT NULL,\n        content          TEXT    NOT NULL DEFAULT '',\n        frontmatter_json TEXT,\n        metadata_json    TEXT    NOT NULL DEFAULT '{}'\n      )"
+  },
+  {
+    "type": "table",
+    "name": "task_history",
+    "sql": "CREATE TABLE task_history (\n        id            INTEGER PRIMARY KEY AUTOINCREMENT,\n        task_id       TEXT    NOT NULL,\n        status        TEXT    NOT NULL,\n        started_at    TEXT    NOT NULL,\n        completed_at  TEXT,\n        failed_at     TEXT,\n        log_path      TEXT,\n        target_kind   TEXT,\n        target_ref    TEXT,\n        metadata_json TEXT    NOT NULL DEFAULT '{}'\n      )"
+  },
+  {
+    "type": "table",
+    "name": "improve_runs",
+    "sql": "CREATE TABLE improve_runs (\n        id            TEXT    PRIMARY KEY,\n        started_at    TEXT    NOT NULL,\n        completed_at  TEXT,\n        stash_dir     TEXT    NOT NULL,\n        dry_run       INTEGER NOT NULL DEFAULT 0,\n        profile       TEXT,\n        scope_mode    TEXT    NOT NULL,\n        scope_value   TEXT,\n        guidance      TEXT,\n        ok            INTEGER NOT NULL,\n        result_json   TEXT    NOT NULL,\n        metrics_json  TEXT,\n        metadata_json TEXT    NOT NULL DEFAULT '{}'\n      , strategy TEXT)"
+  },
+  {
+    "type": "table",
+    "name": "extract_sessions_seen",
+    "sql": "CREATE TABLE extract_sessions_seen (\n        harness          TEXT    NOT NULL,\n        session_id       TEXT    NOT NULL,\n        processed_at     TEXT    NOT NULL,\n        session_ended_at TEXT,\n        outcome          TEXT    NOT NULL,\n        candidate_count  INTEGER NOT NULL DEFAULT 0,\n        proposal_count   INTEGER NOT NULL DEFAULT 0,\n        rationale        TEXT,\n        source_run       TEXT,\n        metadata_json    TEXT    NOT NULL DEFAULT '{}', content_hash TEXT DEFAULT NULL,\n        PRIMARY KEY (harness, session_id)\n      )"
+  },
+  {
+    "type": "table",
+    "name": "body_embeddings",
+    "sql": "CREATE TABLE body_embeddings (\n        content_hash TEXT    PRIMARY KEY,\n        embedding    BLOB    NOT NULL,\n        model_id     TEXT    NOT NULL,\n        created_at   INTEGER NOT NULL\n      )"
+  },
+  {
+    "type": "table",
+    "name": "asset_salience",
+    "sql": "CREATE TABLE asset_salience (\n        asset_ref          TEXT    PRIMARY KEY,\n        encoding_salience  REAL    NOT NULL DEFAULT 0.5,\n        outcome_salience   REAL    NOT NULL DEFAULT 0.0,\n        retrieval_salience REAL    NOT NULL DEFAULT 0.0,\n        rank_score         REAL    NOT NULL DEFAULT 0.0,\n        consecutive_no_ops INTEGER NOT NULL DEFAULT 0,\n        updated_at         INTEGER NOT NULL DEFAULT 0\n      , homeostatic_demoted_at INTEGER DEFAULT NULL, encoding_source TEXT DEFAULT NULL, missing_since INTEGER DEFAULT NULL)"
+  },
+  {
+    "type": "table",
+    "name": "asset_outcome",
+    "sql": "CREATE TABLE asset_outcome (\n        asset_ref                TEXT    PRIMARY KEY,\n        last_retrieved_at        INTEGER NOT NULL DEFAULT 0,\n        retrieval_count          INTEGER NOT NULL DEFAULT 0,\n        expected_retrieval_rate  REAL    NOT NULL DEFAULT 0.0,\n        negative_feedback_count  INTEGER NOT NULL DEFAULT 0,\n        accepted_change_count    INTEGER NOT NULL DEFAULT 0,\n        outcome_score            REAL    NOT NULL DEFAULT 0.0,\n        updated_at               INTEGER NOT NULL DEFAULT 0\n      , missing_since INTEGER DEFAULT NULL)"
+  },
+  {
+    "type": "table",
+    "name": "workflow_runs",
+    "sql": "CREATE TABLE workflow_runs (\n        id                  TEXT PRIMARY KEY,\n        workflow_ref        TEXT NOT NULL,\n        workflow_entry_id   INTEGER,\n        workflow_title      TEXT NOT NULL,\n        status              TEXT NOT NULL CHECK (status IN ('active', 'completed', 'blocked', 'failed')),\n        params_json         TEXT NOT NULL DEFAULT '{}',\n        current_step_id     TEXT,\n        created_at          TEXT NOT NULL,\n        updated_at          TEXT NOT NULL,\n        completed_at        TEXT,\n        scope_key           TEXT,\n        agent_harness       TEXT,\n        agent_session_id    TEXT,\n        checkin_armed_at    TEXT,\n        plan_json           TEXT,\n        plan_hash           TEXT,\n        engine_lease_until  TEXT,\n        engine_lease_holder TEXT,\n        plan_ir_version     INTEGER\n      , parent_run_id  TEXT, parent_unit_id TEXT, invocation_key TEXT, outputs_json TEXT)"
+  },
+  {
+    "type": "table",
+    "name": "workflow_run_steps",
+    "sql": "CREATE TABLE workflow_run_steps (\n        run_id          TEXT NOT NULL,\n        step_id         TEXT NOT NULL,\n        step_title      TEXT NOT NULL,\n        instructions    TEXT NOT NULL,\n        completion_json TEXT,\n        sequence_index  INTEGER NOT NULL,\n        status          TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'blocked', 'failed', 'skipped')),\n        notes           TEXT,\n        evidence_json   TEXT,\n        completed_at    TEXT,\n        summary         TEXT,\n        PRIMARY KEY (run_id, step_id),\n        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE\n      )"
+  },
+  {
+    "type": "table",
+    "name": "workflow_run_units",
+    "sql": "CREATE TABLE workflow_run_units (\n        run_id           TEXT NOT NULL,\n        unit_id          TEXT NOT NULL,\n        step_id          TEXT,\n        node_id          TEXT NOT NULL,\n        parent_unit_id   TEXT,\n        phase            TEXT,\n        runner           TEXT,\n        model            TEXT,\n        status           TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),\n        input_hash       TEXT,\n        result_json      TEXT,\n        tokens           INTEGER,\n        failure_reason   TEXT,\n        worktree_path    TEXT,\n        started_at       TEXT,\n        finished_at      TEXT,\n        session_id       TEXT,\n        last_checkin_at  TEXT,\n        attempts         INTEGER NOT NULL DEFAULT 1,\n        claim_holder     TEXT,\n        claim_expires_at TEXT,\n        engine           TEXT,\n        PRIMARY KEY (run_id, unit_id),\n        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE\n      )"
+  },
+  {
+    "type": "table",
+    "name": "usage_events",
+    "sql": "CREATE TABLE usage_events (\n        id         INTEGER PRIMARY KEY AUTOINCREMENT,\n        event_type TEXT NOT NULL,\n        query      TEXT,\n        entry_id   INTEGER,\n        entry_ref  TEXT,\n        signal     TEXT,\n        metadata   TEXT,\n        source     TEXT NOT NULL DEFAULT 'user',\n        created_at TEXT NOT NULL DEFAULT (datetime('now'))\n      )"
+  },
+  {
+    "type": "table",
+    "name": "legacy_state",
+    "sql": "CREATE TABLE legacy_state (\n        surface        TEXT NOT NULL,\n        old_ref        TEXT NOT NULL,\n        row_count      INTEGER NOT NULL DEFAULT 0,\n        reason         TEXT NOT NULL,\n        quarantined_at TEXT NOT NULL DEFAULT (datetime('now')),\n        PRIMARY KEY (surface, old_ref)\n      )"
+  },
+  {
+    "type": "table",
+    "name": "workflow_run_unit_attempts",
+    "sql": "CREATE TABLE workflow_run_unit_attempts (\n        run_id           TEXT NOT NULL,\n        unit_id          TEXT NOT NULL,\n        attempt          INTEGER NOT NULL CHECK (attempt >= 1),\n        dispatch_id      TEXT NOT NULL,\n        step_id          TEXT NOT NULL,\n        node_id          TEXT NOT NULL,\n        phase            TEXT NOT NULL CHECK (phase IN ('unit', 'gate')),\n        runner           TEXT,\n        engine           TEXT,\n        model            TEXT,\n        input_hash       TEXT NOT NULL,\n        status           TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'skipped')),\n        result_json      TEXT,\n        tokens           INTEGER,\n        failure_reason   TEXT,\n        session_id       TEXT,\n        worktree_path    TEXT,\n        started_at       TEXT NOT NULL,\n        finished_at      TEXT,\n        claim_holder     TEXT NOT NULL,\n        claim_expires_at TEXT NOT NULL,\n        PRIMARY KEY (run_id, unit_id, attempt),\n        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE\n      )"
+  },
+  {
+    "type": "table",
+    "name": "improve_ledger",
+    "sql": "CREATE TABLE improve_ledger (\n        stash_dir TEXT NOT NULL,\n        ref TEXT NOT NULL,\n        source TEXT NOT NULL,\n        last_attempt_at TEXT NOT NULL,\n        outcome TEXT NOT NULL,\n        next_eligible_at TEXT,\n        proposal_id TEXT,\n        detail TEXT, content_hash TEXT DEFAULT NULL,\n        PRIMARY KEY (stash_dir, ref, source)\n      )"
+  },
+  {
+    "type": "index",
+    "name": "idx_events_type",
+    "sql": "CREATE INDEX idx_events_type ON events(event_type)"
+  },
+  {
+    "type": "index",
+    "name": "idx_events_ref",
+    "sql": "CREATE INDEX idx_events_ref  ON events(ref)"
+  },
+  {
+    "type": "index",
+    "name": "idx_events_ts",
+    "sql": "CREATE INDEX idx_events_ts   ON events(ts)"
+  },
+  {
+    "type": "index",
+    "name": "idx_proposals_stash_status",
+    "sql": "CREATE INDEX idx_proposals_stash_status\n        ON proposals(stash_dir, status)"
+  },
+  {
+    "type": "index",
+    "name": "idx_proposals_ref_status",
+    "sql": "CREATE INDEX idx_proposals_ref_status\n        ON proposals(ref, status)"
+  },
+  {
+    "type": "index",
+    "name": "idx_task_history_run",
+    "sql": "CREATE UNIQUE INDEX idx_task_history_run\n        ON task_history(task_id, started_at)"
+  },
+  {
+    "type": "index",
+    "name": "idx_task_history_task_id",
+    "sql": "CREATE INDEX idx_task_history_task_id\n        ON task_history(task_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_task_history_started",
+    "sql": "CREATE INDEX idx_task_history_started\n        ON task_history(started_at)"
+  },
+  {
+    "type": "index",
+    "name": "idx_task_history_target",
+    "sql": "CREATE INDEX idx_task_history_target\n        ON task_history(target_kind, target_ref)"
+  },
+  {
+    "type": "index",
+    "name": "idx_task_history_status",
+    "sql": "CREATE INDEX idx_task_history_status\n        ON task_history(status)"
+  },
+  {
+    "type": "index",
+    "name": "idx_improve_runs_started",
+    "sql": "CREATE INDEX idx_improve_runs_started\n        ON improve_runs(started_at)"
+  },
+  {
+    "type": "index",
+    "name": "idx_improve_runs_dry_run",
+    "sql": "CREATE INDEX idx_improve_runs_dry_run\n        ON improve_runs(dry_run)"
+  },
+  {
+    "type": "index",
+    "name": "idx_improve_runs_stash_scope",
+    "sql": "CREATE INDEX idx_improve_runs_stash_scope\n        ON improve_runs(stash_dir, scope_mode)"
+  },
+  {
+    "type": "index",
+    "name": "idx_extract_sessions_harness",
+    "sql": "CREATE INDEX idx_extract_sessions_harness\n        ON extract_sessions_seen(harness)"
+  },
+  {
+    "type": "index",
+    "name": "idx_extract_sessions_processed",
+    "sql": "CREATE INDEX idx_extract_sessions_processed\n        ON extract_sessions_seen(processed_at)"
+  },
+  {
+    "type": "index",
+    "name": "idx_proposals_stash_status_ref_source",
+    "sql": "CREATE INDEX idx_proposals_stash_status_ref_source\n        ON proposals(stash_dir, status, ref, source)"
+  },
+  {
+    "type": "index",
+    "name": "idx_asset_salience_rank",
+    "sql": "CREATE INDEX idx_asset_salience_rank\n        ON asset_salience(rank_score DESC)"
+  },
+  {
+    "type": "index",
+    "name": "idx_asset_outcome_score",
+    "sql": "CREATE INDEX idx_asset_outcome_score\n        ON asset_outcome(outcome_score DESC)"
+  },
+  {
+    "type": "index",
+    "name": "idx_improve_runs_strategy_started",
+    "sql": "CREATE INDEX idx_improve_runs_strategy_started ON improve_runs(strategy, started_at)"
+  },
+  {
+    "type": "index",
+    "name": "idx_workflow_runs_ref",
+    "sql": "CREATE INDEX idx_workflow_runs_ref ON workflow_runs(workflow_ref)"
+  },
+  {
+    "type": "index",
+    "name": "idx_workflow_runs_status",
+    "sql": "CREATE INDEX idx_workflow_runs_status ON workflow_runs(status)"
+  },
+  {
+    "type": "index",
+    "name": "idx_workflow_runs_scope_ref_status",
+    "sql": "CREATE INDEX idx_workflow_runs_scope_ref_status\n        ON workflow_runs(scope_key, workflow_ref, status)"
+  },
+  {
+    "type": "index",
+    "name": "idx_workflow_runs_agent_session",
+    "sql": "CREATE INDEX idx_workflow_runs_agent_session\n        ON workflow_runs(agent_harness, agent_session_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_workflow_run_steps_run_sequence",
+    "sql": "CREATE INDEX idx_workflow_run_steps_run_sequence\n        ON workflow_run_steps(run_id, sequence_index)"
+  },
+  {
+    "type": "index",
+    "name": "idx_workflow_run_units_run_step",
+    "sql": "CREATE INDEX idx_workflow_run_units_run_step\n        ON workflow_run_units(run_id, step_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_usage_events_entry",
+    "sql": "CREATE INDEX idx_usage_events_entry ON usage_events(entry_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_usage_events_type",
+    "sql": "CREATE INDEX idx_usage_events_type ON usage_events(event_type)"
+  },
+  {
+    "type": "index",
+    "name": "idx_usage_events_ref",
+    "sql": "CREATE INDEX idx_usage_events_ref ON usage_events(entry_ref)"
+  },
+  {
+    "type": "index",
+    "name": "idx_usage_events_source",
+    "sql": "CREATE INDEX idx_usage_events_source ON usage_events(source)"
+  },
+  {
+    "type": "index",
+    "name": "idx_workflow_run_unit_attempts_dispatch",
+    "sql": "CREATE UNIQUE INDEX idx_workflow_run_unit_attempts_dispatch\n        ON workflow_run_unit_attempts(dispatch_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_workflow_run_unit_attempts_run_step",
+    "sql": "CREATE INDEX idx_workflow_run_unit_attempts_run_step\n        ON workflow_run_unit_attempts(run_id, step_id, unit_id, attempt)"
+  },
+  {
+    "type": "index",
+    "name": "idx_workflow_run_unit_attempts_running_claim",
+    "sql": "CREATE INDEX idx_workflow_run_unit_attempts_running_claim\n        ON workflow_run_unit_attempts(run_id, status, claim_expires_at)"
+  },
+  {
+    "type": "index",
+    "name": "idx_workflow_runs_parent",
+    "sql": "CREATE INDEX idx_workflow_runs_parent ON workflow_runs(parent_run_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_workflow_runs_invocation_key",
+    "sql": "CREATE UNIQUE INDEX idx_workflow_runs_invocation_key\n        ON workflow_runs(parent_run_id, invocation_key)\n        WHERE parent_run_id IS NOT NULL"
+  }
+]

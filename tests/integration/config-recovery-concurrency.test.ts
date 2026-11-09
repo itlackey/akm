@@ -51,19 +51,16 @@ describe("raw recovery startup", () => {
   });
 
   test("top-level migrate status is wired through the real CLI process", async () => {
-    const stash = path.join(process.env.HOME as string, "task-migrate-source");
-    const task = path.join(stash, "tasks", "legacy.yml");
-    fs.mkdirSync(path.dirname(task), { recursive: true });
-    const taskV2 = "version: 2\nschedule: '@daily'\ncommand: /bin/echo ok\n";
-    fs.writeFileSync(task, taskV2);
-    fs.writeFileSync(
-      getConfigPath(),
-      `${JSON.stringify({
-        configVersion: "0.9.0",
-        bundles: { primary: { path: stash, writable: true } },
-        defaultBundle: "primary",
-      })}\n`,
-    );
+    // A key akm no longer reads is dropped by `apply`, so `status` reports the config step as ready and writes nothing.
+    const stash = path.join(process.env.HOME as string, "migrate-source");
+    fs.mkdirSync(stash, { recursive: true });
+    const config = `${JSON.stringify({
+      configVersion: "0.9.0",
+      bundles: { primary: { path: stash, writable: true } },
+      defaultBundle: "primary",
+      retiredKeyForTest: true,
+    })}\n`;
+    fs.writeFileSync(getConfigPath(), config);
 
     const child = Bun.spawn(["bun", "src/cli.ts", "migrate", "status"], {
       cwd: path.resolve(import.meta.dir, "../.."),
@@ -77,62 +74,8 @@ describe("raw recovery startup", () => {
       new Response(child.stderr).text(),
     ]);
     expect(exitCode, stderr).toBe(0);
-    expect(JSON.parse(stdout)).toMatchObject({ status: "ready", taskFiles: { changed: 1, blocked: 0 } });
-    expect(fs.readFileSync(task, "utf8")).toBe(taskV2);
-  });
-
-  test("migrate apply skips a blocked file and still migrates the rest of the batch, exiting non-zero", async () => {
-    const stash = path.join(process.env.HOME as string, "task-migrate-source");
-    const goodTask = path.join(stash, "tasks", "legacy.yml");
-    const badTask = path.join(stash, "tasks", "bad.yml");
-    fs.mkdirSync(path.dirname(goodTask), { recursive: true });
-    const taskV2 = "version: 2\nschedule: '@daily'\ncommand: /bin/echo ok\n";
-    fs.writeFileSync(goodTask, taskV2);
-    // Array-form `command` is rejected by the v2 -> v3 hop inside the one task-file planner, so this file plans as "blocked".
-    fs.writeFileSync(badTask, "version: 2\nschedule: '@daily'\ncommand: [echo, unsafe]\n");
-    fs.writeFileSync(
-      getConfigPath(),
-      `${JSON.stringify({
-        configVersion: "0.9.0",
-        bundles: { primary: { path: stash, writable: true } },
-        defaultBundle: "primary",
-      })}\n`,
-    );
-
-    // The standalone migrator runs every step in one plan; what this test
-    // pins is the task-file step's skip-and-report rule: a blocked file
-    // never stops the rest of the batch from migrating.
-    const child = Bun.spawn(["bun", "scripts/akm-migrate.ts", "apply"], {
-      cwd: path.resolve(import.meta.dir, "../.."),
-      env: { ...process.env },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    // A blocked file remains after apply -> exit 1 (EXIT_CODES.GENERAL, set by
-    // printPlan in scripts/akm-migrate.ts). Ground-truthed by probing the
-    // actual process exit code before pinning.
-    expect(exitCode, stderr).toBe(1);
-    const result = JSON.parse(stdout);
-    // The reported plan is re-inspected AFTER apply: the good file converged
-    // straight to task source v4 in one pass ("skipped", already v4), and
-    // `applied: 1` confirms it was rewritten this run. The bad file is still
-    // "blocked".
-    expect(result).toMatchObject({
-      status: "blocked",
-      applied: 1,
-      taskFiles: { changed: 0, skipped: 1, blocked: 1 },
-    });
-    // The good file was migrated all the way to v4 despite the blocked
-    // sibling (matched via regex, not a literal contiguous substring, so this
-    // file does not trip the task-fixture-vocabulary ratchet's two-needle scan).
-    expect(fs.readFileSync(goodTask, "utf8")).toMatch(/version:\s*4/);
-    // The blocked file was left untouched, not corrupted or written.
-    expect(fs.readFileSync(badTask, "utf8")).toContain("command: [echo, unsafe]");
+    expect(JSON.parse(stdout)).toMatchObject({ status: "ready", configFile: { changed: true } });
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(config);
   });
 
   test("setup rejects a config that fails to load before creating the stash or backup", async () => {

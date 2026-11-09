@@ -176,7 +176,7 @@ export function runPendingStateMigrationsCheck(
 
 /**
  * Hard check: state.db's ledger is current. Every open applies the pending
- * migrations (copying the file aside first when one drops schema), so after
+ * migrations, so after
  * health's own open nothing is pending; this names what that open applied, so
  * an upgrade that migrated state.db is visible in the report.
  */
@@ -184,7 +184,7 @@ export function appliedStateMigrationsCheck(
   stateDbPath: string,
   report: StateDatabaseMigrationReport,
 ): HealthCheckResult {
-  const { applied, backupPath } = report;
+  const { applied } = report;
   const range = applied.length > 1 ? `${applied[0]} … ${applied[applied.length - 1]}` : applied[0];
   return {
     name: "state-db-migrations",
@@ -194,9 +194,8 @@ export function appliedStateMigrationsCheck(
     message:
       applied.length === 0
         ? "state.db has no pending migrations."
-        : `Applied ${applied.length} pending state.db migration(s) on open (${range})` +
-          (backupPath ? `; the pre-migration copy is ${backupPath}.` : "."),
-    evidence: { path: stateDbPath, pending: [], applied, ...(backupPath ? { backupPath } : {}) },
+        : `Applied ${applied.length} pending state.db migration(s) on open (${range}).`,
+    evidence: { path: stateDbPath, pending: [], applied },
   };
 }
 

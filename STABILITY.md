@@ -4,11 +4,12 @@
 **with one caveat**: while the version is 0.x, minor releases (0.x → 0.x+1)
 may include breaking changes.
 
-**Version floor (0.10, #1091).** 0.10 reads what 0.9.15 and later wrote: config,
-`state.db`, task sources, frozen workflow plans and scheduler rows. It does not
-convert anything older. An install on an earlier release runs `akm migrate
-apply` under akm 0.9.x first, then upgrades; a 0.10 reader that meets an older
-shape refuses with one message saying so. See
+**Version floor (0.10, #1091).** 0.10 reads what 0.9.32 and later wrote: config,
+`state.db`, task sources and scheduler rows. It does not convert anything
+older. An install on an earlier release runs `npm i -g akm-cli@0.9.32 && akm
+migrate apply && akm task sync` first, then upgrades; a 0.10 reader that meets
+an older shape refuses with one message saying so, and a `state.db` below the
+floor is refused whole, never half-migrated. See
 [`docs/architecture/persisted-data-compat.md`](docs/architecture/persisted-data-compat.md).
 
 **CLI spellings merged in 0.10 (#1091).** Each of these is an unknown flag or
@@ -507,8 +508,8 @@ Not public interfaces. Listed so you can recognize them, not so you can rely
 on them.
 
 - **Migration surfaces** — the standalone migrator (`status`,
-  `apply`) rewrites config, `state.db`, task files and old on-disk residue to
-  the current shape, taking a backup first. `akm migrate` is a thin process
+  `apply`) rewrites config, pending `state.db` migrations, asset `engine:` keys
+  and old ref spellings to the current shape, taking a backup first. `akm migrate` is a thin process
   forwarder for it.
 - **`bun scripts/build-registry-index.ts`** — maintainer tooling for building a
   registry index. It is a repository script, not a CLI command.
@@ -550,9 +551,8 @@ around them.
   a compact `{ok, shape, key}` result; `akm config list` remains the full read.
 - **0.10 — migration extraction.** The migration machinery lives in its own
   bundle, `dist/scripts/akm-migrate{,-node}.js`, shipped inside the `akm-cli`
-  package (no separate npm package, and since 0.10 no `akm-migrate` bin). The task-source migrator (`task-to-v4.ts`,
-  `task-source-v3-frozen.ts`) lives with it under `scripts/akm-migrate/migrate/`,
-  out of `src/`.
+  package (no separate npm package, and since 0.10 no `akm-migrate` bin). The converters live with it under `scripts/akm-migrate/`, out of
+  `src/`. The task-source converter (`task-to-v4.ts`) was deleted at the 0.9.32 floor.
 - **0.10 — `BundleAdapter.placeNew()` is removed.** Nothing called it; writes use AKM's fixed type→directory table.
   Writable bundles in a non-akm layout would need per-adapter placement back
   ([#1163](https://github.com/itlackey/akm/issues/1163)).

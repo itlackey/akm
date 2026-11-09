@@ -604,18 +604,18 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
         "version: 2\nschedule: '0 2 * * *'\ncommand:\n  - /usr/local/bin/backup.sh\n  - --force\n",
         2,
       ],
-    ] as const)("%s raises TASK_SCHEMA_VERSION_UNSUPPORTED naming `akm migrate apply`, without converting it", (_label, yaml, version) => {
+    ] as const)("%s raises TASK_SCHEMA_VERSION_UNSUPPORTED naming the 0.9.32 recipe, without converting it", (_label, yaml, version) => {
       const filePath = "/bundle/tasks/legacy.yml";
       const error = refusal(yaml, filePath);
       expect(error.code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
       expect(error.message).toBe(
-        `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${filePath} uses task schema version ${version}; this release reads only version 4. Run \`akm migrate apply\` to convert it.`,
+        `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${filePath} uses task schema version ${version}; this release reads only version 4 and does not convert older files: run \`npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync\`, then upgrade.`,
       );
-      expect(error.hint()).toContain("akm migrate status");
+      expect(error.hint()).toContain("akm-cli@0.9.32");
       expect(warnCalls).toEqual([]);
     });
 
-    test("a v4 document with a retired schedule[].enabled raises TASK_SOURCE_INVALID naming `akm migrate apply`, whatever the value", () => {
+    test("a v4 document with a retired schedule[].enabled raises TASK_SOURCE_INVALID naming the 0.9.32 recipe, whatever the value", () => {
       for (const value of ["false", "true", "yes"]) {
         const filePath = `/bundle/tasks/retired-${value}.yml`;
         const error = refusal(
@@ -624,7 +624,7 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
         );
         expect(error.code).toBe("TASK_SOURCE_INVALID");
         expect(error.message).toBe(
-          `Invalid task source v4 at ${filePath}: schedule[].enabled was removed (scheduler activation is host-local config). Run \`akm migrate apply\` to rewrite it.`,
+          `Invalid task source v4 at ${filePath}: schedule[].enabled was removed (scheduler activation is host-local config); run \`npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync\`, then upgrade.`,
         );
       }
       expect(warnCalls).toEqual([]);

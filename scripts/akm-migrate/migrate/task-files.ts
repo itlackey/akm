@@ -3,26 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Filesystem boundary for the task-source migration: every task file under a
- * bundle's task directory, whatever version it declares, planned to task
- * source v4 and written back under one backup. The version-specific work is
- * the pure planner `scripts/akm-migrate/migrate/task-to-v4.ts`, which only this
- * migration runs — the runtime reads only task source v4; this module only
- * walks directories, snapshots bytes, and replaces files.
+ * Filesystem boundary shared by the migrator's file-rewriting steps (asset
+ * `engine:` keys, old-spelling refs): walk a bundle root's files without
+ * leaving it, then replace changed files under one backup.
  */
 
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ConfigError } from "../../../src/core/errors";
-import { parseTaskSourceV4 } from "../../../src/tasks/source/task-source-v4";
-import {
-  planTaskToV4File,
-  type TaskToV4Changed,
-  type TaskToV4FileInput,
-  type TaskToV4MigrationPlan,
-  taskToV4PlanFromOutcomes,
-} from "./task-to-v4";
 
 export interface TaskFileRoot {
   readonly bundleId: string;
@@ -30,12 +19,6 @@ export interface TaskFileRoot {
   readonly bundleRoot?: string;
   readonly writable: boolean;
   readonly layout?: "akm-stash" | "akm-task";
-}
-
-export interface AppliedTaskFilesPlan {
-  readonly changed: readonly string[];
-  /** Files that changed after they were planned: left as they now are. */
-  readonly conflicts: readonly string[];
 }
 
 function migrationError(detail: string): ConfigError {
@@ -51,15 +34,6 @@ function realDirectory(filePath: string): string {
   const stat = fs.lstatSync(filePath);
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw migrationError(`${filePath} must be a real directory.`);
   return fs.realpathSync(filePath);
-}
-
-function isWritable(filePath: string): boolean {
-  try {
-    fs.accessSync(filePath, fs.constants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -100,51 +74,6 @@ export function walkRootFiles(
     }
   };
   walk(directory);
-}
-
-function walkTasks(root: TaskFileRoot, tasksDir: string, out: TaskToV4FileInput[]): void {
-  walkRootFiles(
-    root,
-    tasksDir,
-    ".yml",
-    (link) => {
-      throw migrationError(`task migration does not follow symbolic link ${link}.`);
-    },
-    (candidate, directory) => {
-      const stat = fs.lstatSync(candidate);
-      const mode = stat.mode & 0o777;
-      out.push({
-        filePath: candidate,
-        bytes: fs.readFileSync(candidate),
-        mode,
-        writable: root.writable,
-        onDiskWritable: isWritable(candidate) && isWritable(directory) && (mode & 0o222) !== 0,
-      });
-    },
-  );
-}
-
-/** Every `.yml` under each root's task directory, as planner input. Read-only. */
-export function inspectTaskFiles(roots: readonly TaskFileRoot[]): TaskToV4FileInput[] {
-  const files: TaskToV4FileInput[] = [];
-  for (const root of [...roots].sort((a, b) => a.bundleId.localeCompare(b.bundleId))) {
-    const tasksDir = root.layout === "akm-task" ? root.root : path.join(root.root, "tasks");
-    try {
-      const stat = fs.lstatSync(tasksDir);
-      if (stat.isSymbolicLink()) throw migrationError(`task migration does not follow symbolic link ${tasksDir}.`);
-      if (!stat.isDirectory()) throw migrationError(`${tasksDir} must be a directory.`);
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw cause;
-    }
-    walkTasks(root, tasksDir, files);
-  }
-  return files.sort((a, b) => a.filePath.localeCompare(b.filePath));
-}
-
-/** Plan a complete, stable file set; input order cannot change the result. */
-export function planTaskFilesMigration(inputs: readonly TaskToV4FileInput[]): TaskToV4MigrationPlan {
-  return taskToV4PlanFromOutcomes(inputs.map(planTaskToV4File));
 }
 
 export function taskFileBackupPath(backupRoot: string, filePath: string): string {
@@ -264,25 +193,4 @@ export function replaceFilesWithBackups(
     );
   }
   return { replaced: replaced.map((change) => change.filePath), conflicts };
-}
-
-/**
- * Write every `changed` file in its v4 shape. Each emitted document is
- * re-parsed by the runtime v4 parser first, so nothing the runtime cannot
- * read reaches disk; the replacement is {@link replaceFilesWithBackups}.
- * Blocked files are left alone.
- */
-export function applyTaskFilesPlan(
-  plan: TaskToV4MigrationPlan,
-  options: { readonly backupRoot: string },
-): AppliedTaskFilesPlan {
-  const changes = plan.files.filter((file): file is TaskToV4Changed => file.status === "changed");
-  for (const change of changes) {
-    parseTaskSourceV4({
-      yaml: change.after.toString("utf8"),
-      filePath: change.filePath,
-    });
-  }
-  const { replaced, conflicts } = replaceFilesWithBackups(changes, options.backupRoot);
-  return { changed: replaced, conflicts };
 }

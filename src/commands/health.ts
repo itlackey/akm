@@ -716,7 +716,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
   // instead of dying before any check runs. The open itself applies every
   // pending migration; `state-db-migrations` reports what it applied.
   const readOnly = options.readOnly === true;
-  let opened: { db: Database; applied: string[]; backupPath?: string };
+  let opened: { db: Database; applied: string[] };
   try {
     if (readOnly) {
       const unavailable = readOnlyStateDbUnavailable(stateDbPath);
@@ -810,7 +810,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       probe,
       stateDbIntegrity: taskHistory.stateDbIntegrity,
       stateDbFreelist: taskHistory.stateDbFreelist,
-      stateDbMigrations: { applied: opened.applied, ...(opened.backupPath ? { backupPath: opened.backupPath } : {}) },
+      stateDbMigrations: { applied: opened.applied },
       taskRowCount: taskHistory.taskRowCount,
       taskFailRate: taskHistory.taskFailRate,
       stuckActiveRuns: taskHistory.stuckActiveRuns,

@@ -5,13 +5,9 @@
 /**
  * The prepare seam's document vocabulary.
  *
- * `src` no longer accepts task v3 source — the v3 grammar (`parseTaskV3Yaml`,
- * `parseTaskV3Document`, `classifyTaskV3Uses`, and the GitHub Action locator
- * grammar deleted from classification ahead of this file's own shrink)
- * survives only vendored, frozen, in
- * `scripts/akm-migrate/migrate/task-source-v3-frozen.ts` — the ONE place
- * left that reads a v3 document, reachable only through `akm migrate apply`
- * / `akm-migrate`.
+ * `src` no longer accepts task v3 source, and nothing in 0.10 converts it:
+ * the v3 grammar went with the converter at the 0.9.32 floor (akm 0.9.32's
+ * `akm migrate apply` was the last to read a v3 document).
  *
  * This file's surviving purpose is the `TaskV3*` type family
  * `src/tasks/prepare/prepare.ts` (`prepareTaskV3Execution`) and its

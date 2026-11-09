@@ -39,8 +39,7 @@ lives in `$STATE`, `$CACHE`, or `$DATA`.
 
 Older layouts under `.akm/` (`proposals/`, `runs.archived-*`, `archive/`,
 `graph.json`, `consolidate-journal.json`, `proposals.db`, `mv-transactions/`)
-are not read by akm. `akm migrate status` lists them and `akm migrate apply`
-removes them (`scripts/akm-migrate/migrate/dead-residue.ts`).
+are not read by akm and nothing removes them; they are inert and safe to delete.
 
 ## SQLite databases
 
