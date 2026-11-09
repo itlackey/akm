@@ -94,6 +94,20 @@ function withoutHarnessOverrides(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEn
   return env;
 }
 
+/**
+ * On Windows the profile folders decide every location, and the suite preload points them at its sandbox. Task
+ * Scheduler starts `akm task dispatch` with the account's real profile, so the CLI children must use that same
+ * profile (the runner's `AKM_NATIVE_HOME`, with the default `AppData` layout) for dispatch to find their config.
+ */
+function nativeProfile(nativeHome: string): NodeJS.ProcessEnv {
+  if (process.platform !== "win32") return {};
+  return {
+    USERPROFILE: nativeHome,
+    APPDATA: path.join(nativeHome, "AppData", "Roaming"),
+    LOCALAPPDATA: path.join(nativeHome, "AppData", "Local"),
+  };
+}
+
 /** The OS-side name of the one entry. */
 function nativeTarget(): string {
   if (process.platform === "win32") return "\\akm\\dispatch";
@@ -271,8 +285,14 @@ test.skipIf(!ENABLED)(
           ].join(path.delimiter)
         : "/usr/bin:/bin:/usr/sbin:/sbin";
     expect(restrictedPath.split(path.delimiter)).not.toContain(path.dirname(binary));
-    // The default installation: no AKM_* or XDG variable; HOME (and the Windows profile folders) decide every location.
-    const env = withoutHarnessOverrides({ HOME: nativeHome, PATH: restrictedPath, NO_COLOR: "1", CI: "true" });
+    // The default installation: no AKM_* or XDG variable; HOME (and the runner's real Windows profile folders) decide every location.
+    const env = withoutHarnessOverrides({
+      ...nativeProfile(nativeHome as string),
+      HOME: nativeHome,
+      PATH: restrictedPath,
+      NO_COLOR: "1",
+      CI: "true",
+    });
     const cli = (args: string[]) => run([binary, ...args], env);
 
     const version = cli(["--version"]);
@@ -301,11 +321,13 @@ test.skipIf(!ENABLED || process.platform !== "win32")(
     const launcher = path.resolve(process.env.AKM_NATIVE_PACKED_BIN ?? "");
     const nodeBinary = path.resolve(process.env.AKM_NATIVE_NODE_BIN ?? "");
     const gateDir = path.resolve(process.env.AKM_NATIVE_NODE_GATE_DIR ?? "");
+    const nativeHome = process.env.AKM_NATIVE_HOME;
     const id = process.env.AKM_NATIVE_NODE_TASK_ID;
     const candidateVersion = process.env.AKM_CANDIDATE_VERSION;
     expect(process.env.AKM_NATIVE_PACKED_BIN, "AKM_NATIVE_PACKED_BIN must name the packed npm launcher").toBeTruthy();
     expect(process.env.AKM_NATIVE_NODE_BIN, "AKM_NATIVE_NODE_BIN must name the Node executable").toBeTruthy();
     expect(process.env.AKM_NATIVE_NODE_GATE_DIR, "AKM_NATIVE_NODE_GATE_DIR must isolate gate-owned files").toBeTruthy();
+    expect(nativeHome, "AKM_NATIVE_HOME must preserve the runner's real profile before bun test preload").toBeTruthy();
     expect(id, "AKM_NATIVE_NODE_TASK_ID must uniquely identify the packed scheduler artifact").toBeTruthy();
     expect(candidateVersion, "AKM_CANDIDATE_VERSION must name the packed artifact version").toBeTruthy();
     expect(id).toMatch(/^akm-ci-node-win32-[0-9]+-[0-9]+$/);
@@ -341,6 +363,7 @@ test.skipIf(!ENABLED || process.platform !== "win32")(
     const npmGlobalPrefix = path.dirname(path.dirname(path.dirname(launcher)));
     // The default installation again: the profile folders decide every location, and HOME is absent.
     const env = withoutHarnessOverrides({
+      ...nativeProfile(nativeHome as string),
       PATH: restrictedPath,
       npm_config_prefix: npmGlobalPrefix,
       NO_COLOR: "1",
@@ -373,7 +396,7 @@ test.skipIf(!ENABLED || process.platform !== "win32")(
       stashDir: path.join(gateDir, "stash with spaces"),
       id: id as string,
       entryMentions: [nodeBinary, path.join("dist", "akm")],
-      nativeHome: process.env.USERPROFILE ?? "",
+      nativeHome: nativeHome as string,
     });
   },
   300_000,
