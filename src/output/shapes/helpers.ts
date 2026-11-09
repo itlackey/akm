@@ -298,7 +298,7 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
       // Renderers project optional hit-level `warnings` so providers can
       // surface non-fatal issues.
       return capDescription(
-        pickFields(hit, ["name", "description", "action", "installRef", "score", "warnings"]),
+        pickFields(hit, ["name", "description", "installRef", "score", "warnings"]),
         NORMAL_DESCRIPTION_LIMIT,
       );
     }
@@ -309,7 +309,10 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
   // `ref` is included at `brief` so agents can run `akm show <ref>` without
   // needing --detail full.
   if (detail === "brief") {
-    return pickFields(hit, ["type", "name", "ref", "action", "estimatedTokens", "keys"]);
+    return capDescription(
+      pickFields(hit, ["type", "name", "ref", "description", "estimatedTokens", "keys"]),
+      BRIEF_DESCRIPTION_LIMIT,
+    );
   }
   if (detail === "normal") {
     // `warnings` is projected at `normal` so non-fatal hit-level issues are
@@ -322,7 +325,6 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
         "name",
         "ref",
         "description",
-        "action",
         "score",
         "estimatedTokens",
         "warnings",
@@ -337,6 +339,9 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
   }
   return hit;
 }
+
+// Brief carries a short description in place of the removed `action` hint.
+export const BRIEF_DESCRIPTION_LIMIT = 85;
 
 export function capDescription(hit: Record<string, unknown>, limit: number): Record<string, unknown> {
   if (typeof hit.description !== "string") return hit;
