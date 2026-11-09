@@ -245,18 +245,6 @@ export function clearAssetSalienceMissing(db: Database, refs: readonly string[])
   return changed;
 }
 
-/**
- * Delete `asset_salience` rows whose `missing_since` is older than
- * `cutoffMs`. A single DELETE — SQLite runs it as one implicit transaction.
- * Returns the number of rows deleted.
- */
-export function deleteAssetSalienceMissingBefore(db: Database, cutoffMs: number): number {
-  return Number(
-    db.prepare(`DELETE FROM asset_salience WHERE missing_since IS NOT NULL AND missing_since < ?`).run(cutoffMs)
-      .changes,
-  );
-}
-
 /** Count `asset_salience` rows currently marked missing (the live backlog size). */
 export function countAssetSalienceMissing(db: Database): number {
   const row = db.prepare(`SELECT COUNT(*) AS n FROM asset_salience WHERE missing_since IS NOT NULL`).get() as {

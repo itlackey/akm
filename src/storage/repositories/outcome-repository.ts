@@ -193,17 +193,6 @@ export function clearAssetOutcomeMissing(db: Database, refs: readonly string[]):
   return changed;
 }
 
-/**
- * Delete `asset_outcome` rows whose `missing_since` is older than
- * `cutoffMs`. A single DELETE — SQLite runs it as one implicit transaction.
- * Returns the number of rows deleted.
- */
-export function deleteAssetOutcomeMissingBefore(db: Database, cutoffMs: number): number {
-  return Number(
-    db.prepare(`DELETE FROM asset_outcome WHERE missing_since IS NOT NULL AND missing_since < ?`).run(cutoffMs).changes,
-  );
-}
-
 /** Count `asset_outcome` rows currently marked missing (the live backlog size). */
 export function countAssetOutcomeMissing(db: Database): number {
   const row = db.prepare(`SELECT COUNT(*) AS n FROM asset_outcome WHERE missing_since IS NOT NULL`).get() as {

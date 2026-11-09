@@ -1081,15 +1081,6 @@
         "eventRetentionDays": {
           "type": "number",
           "minimum": 0
-        },
-        "stateGc": {
-          "type": "object",
-          "properties": {
-            "collect": {
-              "type": "boolean"
-            }
-          },
-          "additionalProperties": {}
         }
       },
       "additionalProperties": {}
@@ -2231,15 +2222,6 @@
             "eventRetentionDays": {
               "type": "number",
               "minimum": 0
-            },
-            "stateGc": {
-              "type": "object",
-              "properties": {
-                "collect": {
-                  "type": "boolean"
-                }
-              },
-              "additionalProperties": {}
             }
           },
           "additionalProperties": {}
