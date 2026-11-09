@@ -88,11 +88,10 @@ written are in [Core Principles](akm-core-principles.md).
   content reads, writes, indexing and execution; an explicit bundle lifecycle
   command may still update a named disabled bundle without activating it. The
   default bundle is carried as explicit identity and default status, never
-  taken from array position. Runtime code never invents authority: the one
-  host-local choice it fills in by itself is `scheduler.enabled`, and only from
-  evidence the operator already created on this host (a config without the list
-  takes the akm-written rows already in the native scheduler as the choice;
-  see [Configuration](../reference/configuration.md#scheduler-activation)).
+  taken from array position. Runtime code never invents authority: it
+  fills in no host-local choice by itself: `scheduler.enabled` is the operator's list, and a config
+  without it schedules nothing
+  (see [Configuration](../reference/configuration.md#scheduler-activation)).
   Anything else that would need a new trust decision is reported, never
   invented. Pinned by `tests/config.test.ts` and
   `tests/source-source.test.ts`.

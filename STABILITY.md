@@ -149,6 +149,7 @@ covers beyond the table.
 | `akm task add` | Evolving | |
 | `akm task enable` | Evolving | |
 | `akm task disable` | Evolving | |
+| `akm task dispatch` | Evolving | The one command the OS scheduler entry runs every minute. |
 | `akm task run` | Evolving | |
 | `akm task history` | Evolving | |
 | `akm task sync` | Evolving | |

@@ -12,6 +12,7 @@
  * proper only ever reads current schemas.
  */
 
+import { akmTasksSync, akmTasksSyncPlan, type TasksSyncResult } from "../../src/commands/tasks/tasks";
 import { resetConfigCache } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, stateDatabaseFloorBlocker, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
@@ -62,6 +63,11 @@ export interface CombinedMigrationPlan {
   assetEngineKeys?: EngineKeysMigrationStatus["assetEngineKeys"];
   /** Refs in writable bundles' files that still use the pre-#1432 spelling (`knowledge/WORK/x`, now `WORK/x`). */
   assetContentRefs?: ContentRefsMigrationStatus["assetContentRefs"];
+  /**
+   * The OS scheduler: akm 0.10 keeps one entry that runs `akm task dispatch`, and `apply` replaces akm 0.9's per-task
+   * rows with it in one write (what `akm task sync` does).
+   */
+  scheduler?: TasksSyncResult;
 }
 
 function worstStatus(left: MigrationStatus, right: MigrationStatus): MigrationStatus {
@@ -170,6 +176,14 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? applyContentRefsMigration() : inspectContentRefsMigration()),
     apply ? () => inspectContentRefsMigration() : undefined,
   );
+  // Last: it reads the config the steps above settled. Needs `crontab`/`launchctl`/`schtasks` only when it has
+  // something to write; an installation that moves its locations leaves the OS scheduler alone.
+  const scheduler = await migrationStep(
+    failedSteps,
+    "scheduler",
+    () => (apply ? akmTasksSync() : akmTasksSyncPlan()),
+    apply ? () => akmTasksSyncPlan() : undefined,
+  );
   // A pending state migration reads as "ready" under status/--dry-run, so the
   // preview says what apply will do; after a real apply it has been applied.
   const stateStatus: MigrationStatus =
@@ -177,10 +191,14 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const configFileStatus: MigrationStatus = configFile?.changed && !configFile.applied ? "ready" : "current";
   const engineKeysStatus: MigrationStatus = assetEngineKeys?.status ?? "current";
   const contentRefsStatus: MigrationStatus = assetContentRefs?.status ?? "current";
+  const schedulerStatus: MigrationStatus =
+    !apply && scheduler && (scheduler.removedLegacy.length > 0 || scheduler.entry === "installed" || scheduler.entry === "removed")
+      ? "ready"
+      : "current";
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
-      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus].reduce(worstStatus, "current"),
+      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus, schedulerStatus].reduce(worstStatus, "current"),
       failedSteps,
     ),
     blockers: failedStepBlockers(failedSteps),
@@ -189,6 +207,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     ...(stateMigrations !== undefined ? { stateMigrations } : {}),
     ...(assetEngineKeys !== undefined ? { assetEngineKeys: assetEngineKeys.assetEngineKeys } : {}),
     ...(assetContentRefs !== undefined ? { assetContentRefs: assetContentRefs.assetContentRefs } : {}),
+    ...(scheduler !== undefined ? { scheduler } : {}),
   };
 }
 

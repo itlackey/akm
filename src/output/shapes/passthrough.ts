@@ -78,6 +78,7 @@ const PASSTHROUGH_COMMANDS = [
   "sync",
   "task-add",
   "task-disable",
+  "task-dispatch",
   "task-doctor",
   "task-enable",
   "task-explain",

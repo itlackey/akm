@@ -235,7 +235,7 @@ on stdout and a plain exit code.
 set -e
 akm --version                 # optional: confirm the pinned version actually landed
 akm migrate apply             # offline, idempotent — exits 1 only if genuinely blocked
-akm task sync --rebind        # only if you schedule akm tasks inside this image
+# to schedule akm tasks inside this image, run `akm task dispatch` every minute from its supervisor (see the scheduling guide)
 akm health --format json      # read this JSON; act on ok/status, never on message text
 ```
 

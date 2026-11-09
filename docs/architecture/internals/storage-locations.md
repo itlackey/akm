@@ -397,7 +397,7 @@ A bundle recognized by the `llm-wiki` adapter (a root with `schema.md` and
 | `$CACHE/registry-index/git-<hash>/` | Mirror of a `git` bundle: `repo/` and an `index.json` freshness marker | Fetched on add and on `akm bundle update`, never on a timer; if a forced refresh fails, `akm bundle update` reports the error and the old copy stays on disk |
 | `$CACHE/registry-index/website-<hash>/` | A `website` bundle snapshot: `stash/` and `manifest.json` | Fetched on add and on `akm bundle update`, never on a timer; if a forced refresh fails, `akm bundle update` reports the error and the old copy stays on disk |
 | `$CACHE/index/unresolved-sources/<stash>/<name>` | Placeholder path for a configured source whose content root did not resolve; not created on disk | n/a |
-| `$CACHE/tasks/logs/<task-id>/<ISO-ts>.log` | Per-run task log file; each scheduler backend (cron, launchd, Task Scheduler) also writes `<id>.log` directly in `$CACHE/tasks/logs/`, which no retention pass deletes | `akm improve` deletes files older than `improve.eventRetentionDays` (default 90) |
+| `$CACHE/tasks/logs/<task-id>/<ISO-ts>.log` | Per-run task log file; `akm task dispatch` also writes the raw output of each task it starts to `<id>.log` there, and the OS entry writes `dispatch.log` (cron, launchd), neither of which a retention pass deletes | `akm improve` deletes files older than `improve.eventRetentionDays` (default 90) |
 | `$CACHE/logs/index/<ISO-ts>.log`, `$CACHE/logs/improve/<ISO-ts>.log` | Log of one `akm index` run or one non-dry-run `akm improve` run | `akm improve` deletes files older than `improve.eventRetentionDays` (default 90) |
 | `$CACHE/models/` | Hugging Face model cache for the local embedder; `$HF_HOME` is used instead when it is set | No automatic cleanup |
 | `$CACHE/opencode/<version>/opencode` | The OpenCode binary akm's own runtime runs (about 240 MB), fetched from the npm registry on its first use | Permanent; safe to delete (fetched again) |
@@ -407,17 +407,18 @@ A bundle recognized by the `llm-wiki` adapter (a root with `schema.md` and
 provider's `sync()` (`src/sources/providers/`) before indexing, then indexed
 like a local filesystem bundle.
 
-## Native scheduler entries
+## Native scheduler entry
 
-`akm task sync` writes rows into the OS scheduler. Each row runs `akm task run
-<id> --bundle <bundle> --scheduled` and sets `AKM_BUNDLE_DIR` to the syncing
-process's working bundle, plus any `AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
-`AKM_CACHE_DIR`, `AKM_STATE_DIR` that process set explicitly
-(`src/tasks/scheduler-invocation.ts`).
+`akm task sync` writes one entry into the OS scheduler, for the default installation only (see
+[Scheduling](../../guides/scheduling.md)). It runs `<launcher> task dispatch` every minute and names no bundle, task or
+`AKM_*` variable. `akm task dispatch` keeps the last minute it dispatched in `$STATE/scheduler/dispatch-minute`.
 
-- **macOS (launchd):** `~/Library/LaunchAgents/com.akm.task.<id>.plist`, registered with `launchctl bootstrap gui/<uid> <plist>`. The plist's `EnvironmentVariables` carries `PATH` and the variables above.
-- **Linux (cron):** no files. The user's crontab is edited through `crontab -l` and `crontab -`. Each task sits between `# akm:task <id> BEGIN` and `# akm:task <id> END` lines, under one `# akm:env BEGIN` / `# akm:env END` block that holds `PATH`. A disabled task's line is prefixed `# akm:disabled `. A command line over 1,000 bytes runs a wrapper script, `$CACHE/tasks/logs/.akm-cron-wrapper-<id>-<hash>.sh`.
-- **Windows (Task Scheduler):** `schtasks /Create /TN \akm\<id> /XML <file>` with a temporary `akm-task-<id>-<ts>.xml` in the OS temp directory.
+- **macOS (launchd):** `~/Library/LaunchAgents/com.akm.dispatch.plist`, registered with `launchctl bootstrap gui/<uid> <plist>`. `StartCalendarInterval` with no keys fires every clock minute; `AbandonProcessGroup` is true; the plist's `EnvironmentVariables` carries `PATH`.
+- **Linux (cron):** no files. The user's crontab is edited through `crontab -l` and `crontab -`. The entry sits at the end, between `# akm:dispatch BEGIN` and `# akm:dispatch END`, with a `PATH=` line and one `* * * * *` line that truncates `$CACHE/tasks/logs/dispatch.log`.
+- **Windows (Task Scheduler):** `schtasks /Create /TN \akm\dispatch /XML <file>` with a temporary `akm-dispatch-<ts>.xml` in the OS temp directory: a daily trigger repeating every minute, `IgnoreNew`, running the launcher directly.
+
+akm 0.9's per-task rows (`# akm:task <id>` crontab blocks and the `# akm:env` block, `com.akm.task.<id>.plist`, `\akm\<id>`
+tasks) are removed by `akm task sync` / `akm migrate apply`.
 
 ## Read-only inputs
 

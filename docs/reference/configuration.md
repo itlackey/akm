@@ -51,18 +51,16 @@ each process runs](#where-each-process-runs) say how models are added.
 listed is disabled, and removing a bundle drops its refs. The older
 `{kind, ref, sourceId}` entries are read as their `ref` and written back
 plain.
-A config without the list (written before 0.9.17) means "keep what is
-installed": the first `akm task sync`, `akm setup`, `akm task enable`, `akm task
-disable` or `akm task add` fills it from the akm-written native scheduler rows.
-There are no grants, source identities or fire-time checks. Authored
+A config without the list has never chosen and schedules nothing (akm 0.10 does not read the OS scheduler to
+seed it; upgrade a config older than 0.9.32 with akm 0.9.32 first). `akm task dispatch`, which the one OS scheduler
+entry runs every minute, reads this list. There are no grants, source identities or fire-time checks. Authored
 task/workflow files may describe schedules but cannot put themselves on the
 list.
 
 This key is deliberately local: only the config file itself can activate
 schedules. Prefer `akm task enable <ref>` and `akm task disable
-<ref>` over editing the JSON by hand; both update the allow-list and sync the
-affected bundle. An unscoped `akm task sync` reconciles enabled refs across all
-enabled configured bundles.
+<ref>` over editing the JSON by hand; both update the allow-list, which dispatch reads on
+the next minute. `akm task sync` installs the one OS entry while the list is non-empty and removes it when it is empty.
 
 ## Connections
 

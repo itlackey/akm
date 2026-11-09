@@ -1043,7 +1043,7 @@ describe("runTask — command target", () => {
 });
 
 describe("runTask — prompt target", () => {
-  test("forwards scheduled AKM directory context to an agent without trusting task or caller overrides", async () => {
+  test("a scheduled run treats the task's env like a manual run: nothing pins the AKM directories (dispatch inherits them)", async () => {
     writeTask(
       "scheduled-agent-context",
       [
@@ -1073,24 +1073,25 @@ describe("runTask — prompt target", () => {
       AKM_STATE_DIR: path.join(tmpRoot, "scheduled-state"),
     };
     for (const directory of Object.values(schedulerContext)) fs.mkdirSync(directory, { recursive: true });
-    let childEnv: Record<string, string> | undefined;
 
-    const result = await withEnv(schedulerContext, () =>
-      runTask("scheduled-agent-context", {
-        bundleDir,
-        logDir,
-        scheduled: true,
-        runAgentImpl: async (_profile, options) => {
-          childEnv = options.env;
-          return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
-        },
-      }),
-    );
+    for (const scheduled of [true, false]) {
+      let childEnv: Record<string, string> | undefined;
+      const result = await withEnv(schedulerContext, () =>
+        runTask("scheduled-agent-context", {
+          bundleDir,
+          logDir,
+          scheduled,
+          runAgentImpl: async (_profile, options) => {
+            childEnv = options.env;
+            return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
+          },
+        }),
+      );
 
-    expect(result.status).toBe("completed");
-    expect(childEnv).toMatchObject({ ...schedulerContext, TASK_FLAG: "retained" });
-    expect(childEnv?.AKM_BUNDLE_DIR).toBe(schedulerContext.AKM_BUNDLE_DIR);
-    expect(childEnv?.AKM_STATE_DIR).toBe(schedulerContext.AKM_STATE_DIR);
+      expect(result.status).toBe("completed");
+      // The task's own `env:` is the task's: a scheduled run no longer overrides it with the process's directories.
+      expect(childEnv).toMatchObject({ AKM_BUNDLE_DIR: "/authored-override", TASK_FLAG: "retained" });
+    }
   });
 
   test("a command task gets the 6-hour scheduled default timeout unless the task sets one", async () => {

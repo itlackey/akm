@@ -49,7 +49,8 @@ export function reserveTaskAttempt(taskId: string, requestedStartedAt: Date): Re
           log_path: null,
           target_kind: null,
           target_ref: null,
-          metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 0, detail: null }),
+          // `pid` lets `akm task dispatch` tell a running attempt from one a crash or reboot left behind.
+          metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 0, detail: null, pid: process.pid }),
         });
         if (reserved) return { startedAt, historyReserved: true };
       }

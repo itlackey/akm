@@ -52,8 +52,7 @@ import {
   renameTaskHistoryTargetRefs,
 } from "../storage/repositories/task-history-repository";
 import { countWorkflowRunRefsForRename, renameWorkflowRunRefs } from "../storage/repositories/workflow-runs-repository";
-import { selectBackend } from "../tasks/backends";
-import type { InstalledSchedulerBinding, SchedulerBackend } from "../tasks/backends/types";
+import type { SchedulerBackend } from "../tasks/backends/types";
 
 export interface BundleRenamePlan {
   oldId: string;
@@ -75,11 +74,8 @@ export interface BundleRenamePlan {
   /** Indexed files under the bundle whose content still spells `<old>//` — reported, not rewritten. */
   contentRefs: string[];
   /**
-   * Installed native scheduler rows (cron line, launchd plist, scheduled
-   * task) whose invocation still names the old bundle — best-effort, empty
-   * when the active backend cannot list its rows. A real
-   * run's post-rename `akm task sync` replaces these; `--dry-run` lists them
-   * so the plan shows what that sync will touch.
+   * Always empty: the OS scheduler holds one entry that runs `akm task dispatch`, which names no bundle, so a rename
+   * leaves nothing in it to replace. Kept so the plan's shape does not change before its consumers drop it.
    */
   nativeSchedulerRows: string[];
 }
@@ -88,15 +84,9 @@ export interface BundleRenameResult extends BundleRenamePlan {
   /** `false` for `--dry-run`: nothing below was written. */
   applied: boolean;
   /**
-   * Outcome of re-syncing native scheduler rows under the new bundle id,
-   * run immediately after the state rewrite below. Absent on `--dry-run`
-   * (nothing was renamed yet to sync against). `ok` is `false` both when
-   * the sync call itself threw (`error` carries the message, no `result`)
-   * and when it returned with one or more `result.failures` — a binding
-   * that failed to prepare has already lost its old native row (see
-   * `removeStaleNativeSchedulerRows`) and is not scheduled until
-   * `akm task sync` is re-run. Reported here, never thrown either way —
-   * config, index, and state are already renamed by the time this runs.
+   * Outcome of `akm task sync` run after the state rewrite below (the entry in the OS scheduler is the same for any
+   * bundle name, so this only repairs it). Absent on `--dry-run`. `ok` is `false` when the sync threw (`error` carries
+   * the message); reported here, never thrown — config, index, and state are already renamed by the time this runs.
    */
   taskSync?: { ok: boolean; result: TasksSyncResult } | { ok: false; error: string };
 }
@@ -183,46 +173,14 @@ function filesStillMentioning(filePaths: string[], oldId: string): string[] {
   return hits;
 }
 
-/** True when an installed binding's invocation names `bundleId` — either as a `task run` entry's `--bundle <id>` argument, or as a `workflow run <id>//…` ref. */
-function invocationNamesBundle(invocation: readonly string[] | undefined, bundleId: string): boolean {
-  if (!invocation) return false;
-  for (let i = 0; i < invocation.length; i++) {
-    const token = invocation[i];
-    if (token === bundleId && invocation[i - 1] === "--bundle") return true;
-    if (token?.startsWith(`${bundleId}//`)) return true;
-  }
-  return false;
-}
-
-/**
- * Installed native scheduler rows whose invocation names `oldId`, best-effort
- * (a backend whose listing throws reports none — this is a preview, not a
- * correctness requirement).
- */
-async function nativeSchedulerRowsNamingBundle(sched: SchedulerBackend, oldId: string): Promise<string[]> {
-  try {
-    return (await sched.list())
-      .filter((entry) => invocationNamesBundle(entry.invocation, oldId))
-      .map((entry) => entry.invocation?.join(" ") ?? entry.id);
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Build the rename plan — every count and ref this rename would touch — by
  * reading, never writing. Shared by `--dry-run` and a real run so the two
  * can never disagree about what was reported vs. what happened.
  */
-async function buildPlan(
-  config: AkmConfig,
-  oldId: string,
-  newId: string,
-  sched: SchedulerBackend,
-): Promise<BundleRenamePlan> {
+async function buildPlan(config: AkmConfig, oldId: string, newId: string): Promise<BundleRenamePlan> {
   const schedulerRefs = schedulerRefsToRewrite(config, oldId);
   const lockPresent = readLockfile().some((entry) => entry.id === oldId);
-  const nativeSchedulerRows = await nativeSchedulerRowsNamingBundle(sched, oldId);
 
   let indexEntries = 0;
   let contentRefs: string[] = [];
@@ -266,7 +224,7 @@ async function buildPlan(
     state: { proposalRefs, proposalTargets, taskHistoryRefs, workflowRunRefs },
     activeWorkflowRuns,
     contentRefs,
-    nativeSchedulerRows,
+    nativeSchedulerRows: [],
   };
 }
 
@@ -275,46 +233,11 @@ function taskSyncErrorMessage(cause: unknown): string {
 }
 
 /**
- * Remove every installed native row still naming `oldId`, best-effort,
- * before the sync below installs the new-named ones. Without this, a plain
- * `akmTasksSync(deps, newId)` alone cannot clean the old rows up: a task
- * binding's native id depends only on the task id, so the OLD row and the
- * new one it should become collide on that id, and `installedRowScope`
- * (scheduler-sync.ts) attributes a row by the bundle NAME it was installed
- * under — the physical-path check only confirms a name match, it never
- * substitutes for one — so the sync reports the old row as another bundle's
- * and leaves the new binding out instead of replacing it. A workflow binding's native id
- * depends on its fully-qualified ref instead, so old and new never collide
- * at all and the old row would otherwise be left installed forever. Both
- * fail the same way this function fixes: uninstall the exact native rows
- * `nativeSchedulerRowsNamingBundle` already found, by their native id, so
- * the sync that follows starts from a clean slate.
- */
-async function removeStaleNativeSchedulerRows(sched: SchedulerBackend, oldId: string): Promise<void> {
-  let installed: InstalledSchedulerBinding[];
-  try {
-    installed = await sched.list();
-  } catch {
-    return;
-  }
-  for (const entry of installed) {
-    if (!invocationNamesBundle(entry.invocation, oldId)) continue;
-    try {
-      await sched.uninstall(entry.nativeId ?? entry.id);
-    } catch {
-      // Best-effort: a row this process can't remove is left for the
-      // operator's own `akm task sync` to reconcile, same as every other
-      // per-item failure the sync itself reports rather than throws.
-    }
-  }
-}
-
-/**
  * Rename a configured bundle's key everywhere akm itself persists it. With
  * `dryRun: true`, only {@link buildPlan} runs — nothing is written, matching
  * a `applied: false` result the caller renders as the plan. `deps.backend`
  * lets a caller (tests) inject a fake scheduler backend instead of the real
- * OS one `selectBackend()` would otherwise pick. `deps.syncTasks` is how the
+ * `deps.syncTasks` is how the
  * caller runs the post-rename `akmTasksSync` — `src/core` sits below
  * `src/commands` (see `src/core/improve-types.ts`'s note on the same
  * direction), so this module never imports `akmTasksSync` itself; the real
@@ -327,13 +250,12 @@ export async function renameBundle(
   options: { dryRun?: boolean } = {},
   deps: {
     backend?: SchedulerBackend;
-    syncTasks: (newId: string, sched: SchedulerBackend) => Promise<TasksSyncResult>;
+    syncTasks: (sched?: SchedulerBackend) => Promise<TasksSyncResult>;
   },
 ): Promise<BundleRenameResult> {
   const config = loadConfig();
   validateRename(config, oldId, newId);
-  const sched = deps.backend ?? selectBackend();
-  const plan = await buildPlan(config, oldId, newId, sched);
+  const plan = await buildPlan(config, oldId, newId);
   if (options.dryRun) return { ...plan, applied: false };
 
   // Config: the bundles key, defaultBundle, the projects'
@@ -377,21 +299,11 @@ export async function renameBundle(
     });
   }
 
-  // Scheduler: remove native rows still naming `<old>//` (see
-  // removeStaleNativeSchedulerRows for why a plain sync alone can't do
-  // this), then re-sync so a scheduled run's invocation stops naming the
-  // old bundle the moment the rename applies, instead of waiting on the
-  // operator to run `akm task sync` by hand. Reported, never thrown:
-  // config/index/state above are already renamed by this point, so a sync
-  // problem must not make the rename itself look like it failed. `ok` is
-  // false both when the sync call throws and when it comes back with
-  // `result.failures` — a binding that failed to prepare has already lost
-  // its old native row above and is not scheduled until a retry.
+  // Scheduler: re-sync so the OS entry is repaired right after the rename instead of waiting on `akm task sync`.
+  // Reported, never thrown: config/index/state above are already renamed by this point.
   let taskSync: BundleRenameResult["taskSync"];
   try {
-    await removeStaleNativeSchedulerRows(sched, oldId);
-    const result = await deps.syncTasks(newId, sched);
-    taskSync = { ok: result.failures.length === 0, result };
+    taskSync = { ok: true, result: await deps.syncTasks(deps.backend) };
   } catch (cause) {
     taskSync = { ok: false, error: taskSyncErrorMessage(cause) };
   }

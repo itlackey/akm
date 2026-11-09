@@ -10,7 +10,7 @@ const ALLOWED_UPWARD: Record<string, number> = {
   "core>execution": 4,
   "core>indexer": 4,
   "core>integrations": 2,
-  "core>tasks": 8,
+  "core>tasks": 7,
   "core>workflows": 3,
   "storage>indexer": 6,
   "storage>llm": 1,

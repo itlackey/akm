@@ -52,46 +52,40 @@ import {
 import { renameTaskHistoryTargetRefs, upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
 import { renameWorkflowRunRefs } from "../../src/storage/repositories/workflow-runs-repository";
 import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
-import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
 import type { SchedulerBackend } from "../../src/tasks/backends/types";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { seedWorkflowRun } from "../_helpers/workflow";
 
-/** In-memory `crontab -l`/`crontab -` stand-in, same shape as tests/tasks-sync.test.ts. */
-function memoryExec(initial = ""): CronExec & { current: () => string } {
-  let store = initial;
+/** An in-memory scheduler backend holding one entry, so the rename's `akmTasksSync` call never touches the host's real crontab. */
+function fakeBackend(): SchedulerBackend & { applied: unknown[] } {
+  const applied: unknown[] = [];
   return {
-    read: (): CronExecResult => ({ status: 0, stdout: store, stderr: "" }),
-    write: (content: string): CronExecResult => {
-      store = content;
-      return { status: 0, stdout: "", stderr: "" };
+    name: "cron",
+    applied,
+    inspect: () => ({ entry: { launcher: ["/usr/local/bin/akm"] }, legacy: [] }),
+    apply: (change) => {
+      applied.push(change);
     },
-    current: () => store,
   };
 }
 
-/** A real CRON_BACKEND wired to an in-memory crontab, so the rename's `akmTasksSync` call never touches the host's real crontab. */
-function fakeCronBackend(exec: CronExec): SchedulerBackend {
-  return CRON_BACKEND({
-    exec,
-    fs: { ensureDir() {} },
-    logDir: "/var/log/akm",
-    akmArgv: ["/usr/local/bin/akm"],
-    envPath: false,
-  });
-}
-
-/** `renameBundle`'s deps for an applied (non-dry-run) rename: the real `akmTasksSync`, injected the way `bundle-cli.ts` injects it (`src/core` doesn't import `src/commands`). */
+/**
+ * `renameBundle`'s deps for an applied (non-dry-run) rename: the real `akmTasksSync`, injected the way
+ * `bundle-cli.ts` injects it (`src/core` doesn't import `src/commands`), judged by a default installation's environment.
+ */
 function renameDeps(backend: SchedulerBackend): {
   backend: SchedulerBackend;
-  syncTasks: (newId: string, sched: SchedulerBackend) => Promise<TasksSyncResult>;
+  syncTasks: (sched?: SchedulerBackend) => Promise<TasksSyncResult>;
 } {
-  return { backend, syncTasks: (newId, sched) => akmTasksSync({ backend: sched }, newId) };
+  return {
+    backend,
+    syncTasks: (sched) => akmTasksSync({ ...(sched ? { backend: sched } : {}), env: { HOME: "/home/nobody" } }),
+  };
 }
 
 /** `deps` for a call expected to throw during validation, before `syncTasks` would ever run. */
-const unreachableSyncTasks: { syncTasks: (newId: string, sched: SchedulerBackend) => Promise<TasksSyncResult> } = {
+const unreachableSyncTasks: { syncTasks: () => Promise<TasksSyncResult> } = {
   syncTasks: () => {
     throw new Error("syncTasks should not run: validation should have thrown first");
   },
@@ -181,7 +175,7 @@ describe("akm bundle rename — dry-run", () => {
   test("reports the plan and writes nothing", async () => {
     await seedBundleWithOneEntry();
     const configBefore = fs.readFileSync(path.join(storage.configDir, "akm", "config.json"), "utf8");
-    const backend = fakeCronBackend(memoryExec());
+    const backend = fakeBackend();
 
     const plan = await renameBundle("original", "renamed", { dryRun: true }, renameDeps(backend));
 
@@ -209,7 +203,7 @@ describe("akm bundle rename — applied", () => {
       },
     });
 
-    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+    await renameBundle("original", "renamed", {}, renameDeps(fakeBackend()));
 
     const projects = loadConfig().projects ?? {};
     expect(projects.one?.from).toEqual(["renamed", "other"]);
@@ -228,7 +222,7 @@ describe("akm bundle rename — applied", () => {
       }),
     );
 
-    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+    await renameBundle("original", "renamed", {}, renameDeps(fakeBackend()));
 
     const written = JSON.parse(fs.readFileSync(configPath, "utf8")).bundles;
     expect(written.renamed.path).toBe("~/akm-rename-home");
@@ -285,7 +279,7 @@ describe("akm bundle rename — applied", () => {
       closeDatabase(stateDb);
     }
 
-    const backend = fakeCronBackend(memoryExec());
+    const backend = fakeBackend();
     const result = await renameBundle("original", "renamed", {}, renameDeps(backend));
 
     expect(result.applied).toBe(true);
@@ -348,7 +342,7 @@ describe("akm bundle rename — applied", () => {
       closeDatabase(stateDb);
     }
 
-    const result = await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+    const result = await renameBundle("original", "renamed", {}, renameDeps(fakeBackend()));
 
     expect(result.state.workflowRunRefs).toBe(3);
     // A blocked run keeps the old refs in its frozen plan too, so it is listed with its status.
@@ -439,7 +433,7 @@ describe("akm bundle rename — applied", () => {
     }
     expect((await names())[0]).toBe(favourite);
 
-    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+    await renameBundle("original", "renamed", {}, renameDeps(fakeBackend()));
 
     expect((await names())[0]).toBe(favourite);
   });
@@ -479,7 +473,7 @@ describe("akm bundle rename — applied", () => {
       closeDatabase(stateDb);
     }
 
-    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+    await renameBundle("original", "renamed", {}, renameDeps(fakeBackend()));
 
     const readDb = openStateDatabase();
     try {
@@ -547,7 +541,7 @@ describe("akm bundle rename — applied", () => {
       closeDatabase(stateDb);
     }
 
-    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+    await renameBundle("original", "renamed", {}, renameDeps(fakeBackend()));
 
     const manifest = buildSnapshotManifest({
       postCleanupRefs: [
@@ -566,7 +560,7 @@ describe("akm bundle rename — applied", () => {
     const { code, stderr } = await runCliCapture(["feedback", "knowledge/hello", "--positive", "--format=json"]);
     expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
 
-    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+    await renameBundle("original", "renamed", {}, renameDeps(fakeBackend()));
     await akmIndex({ stashDir: storage.stashDir });
 
     const readDb = openStateDatabase();
@@ -674,7 +668,7 @@ describe("akm bundle rename — applied", () => {
     } finally {
       closeDatabase(stateDb);
     }
-    const deps = renameDeps(fakeCronBackend(memoryExec()));
+    const deps = renameDeps(fakeBackend());
 
     const plan = await renameBundle("team", "other", { dryRun: true }, deps);
     expect(plan.state).toEqual({ proposalRefs: 1, proposalTargets: 1, taskHistoryRefs: 1, workflowRunRefs: 1 });
@@ -707,7 +701,7 @@ describe("akm bundle rename — applied", () => {
   test("a bundle with no lock entry, no scheduler grants, and no state rows renames cleanly", async () => {
     await seedBundleWithOneEntry();
 
-    const backend = fakeCronBackend(memoryExec());
+    const backend = fakeBackend();
     const result = await renameBundle("original", "renamed", {}, renameDeps(backend));
 
     expect(result.applied).toBe(true);
@@ -721,8 +715,8 @@ describe("akm bundle rename — applied", () => {
   });
 });
 
-describe("akm bundle rename — native scheduler sync", () => {
-  test("moves an installed native row from the old bundle name to the new one; --dry-run reports it first", async () => {
+describe("akm bundle rename — scheduler", () => {
+  test("the OS entry names no bundle, so a rename leaves nothing in it to replace: no rows reported, entry untouched", async () => {
     await seedBundleWithOneEntry();
     const tasksDir = path.join(storage.stashDir, "tasks");
     fs.mkdirSync(tasksDir, { recursive: true });
@@ -732,66 +726,36 @@ describe("akm bundle rename — native scheduler sync", () => {
       "utf8",
     );
     setSchedulerRefEnabled("original//tasks/foo", true);
+    const backend = fakeBackend();
 
-    const exec = memoryExec();
-    const backend = fakeCronBackend(exec);
-    // Install the native row under the OLD name first, exactly as a real
-    // prior `akm task sync` would have.
-    await akmTasksSync({ backend }, "original");
-    expect(exec.current()).toContain("task run foo --bundle original --scheduled");
-
-    // --dry-run reports the stale row and leaves the crontab untouched.
     const plan = await renameBundle("original", "renamed", { dryRun: true }, renameDeps(backend));
-    expect(plan.nativeSchedulerRows.some((row) => row.includes("--bundle original"))).toBe(true);
-    expect(exec.current()).toContain("--bundle original");
+    expect(plan.nativeSchedulerRows).toEqual([]);
 
     const result = await renameBundle("original", "renamed", {}, renameDeps(backend));
     expect(result.applied).toBe(true);
     expect(result.taskSync?.ok).toBe(true);
-    expect(exec.current()).toContain("task run foo --bundle renamed --scheduled");
-    expect(exec.current()).not.toContain("--bundle original");
+    // The ref dispatch reads moved with the config rewrite; the installed entry is already right.
+    expect(loadConfig().scheduler?.enabled).toEqual(["renamed//tasks/foo"]);
+    expect(backend.applied).toEqual([]);
   });
 
-  // a binding that fails to re-sync must not be reported as success —
-  // its old native row is already gone (removeStaleNativeSchedulerRows runs
-  // before the sync), so a silent `ok: true` would leave it unscheduled
-  // until the operator happened to notice.
-  test("reports taskSync.ok false when a granted binding fails to re-sync, and still removes its old native row", async () => {
+  test("reports taskSync.ok false when the post-rename sync throws, and still reports the rename as applied", async () => {
     await seedBundleWithOneEntry();
-    const tasksDir = path.join(storage.stashDir, "tasks");
-    fs.mkdirSync(tasksDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(tasksDir, "foo.yml"),
-      'version: 4\nrun: echo foo\nname: foo\nschedule:\n  - cron: "*/15 * * * *"\n',
-      "utf8",
+    const backend = fakeBackend();
+
+    const result = await renameBundle(
+      "original",
+      "renamed",
+      {},
+      {
+        backend,
+        syncTasks: async () => {
+          throw new Error("crontab is not writable");
+        },
+      },
     );
-    setSchedulerRefEnabled("original//tasks/foo", true);
-
-    const exec = memoryExec();
-    const backend = fakeCronBackend(exec);
-    // Install the native row under the OLD name first, exactly as a real
-    // prior `akm task sync` would have.
-    await akmTasksSync({ backend }, "original");
-    expect(exec.current()).toContain("task run foo --bundle original --scheduled");
-
-    // An invalid schedule written before the rename — the same #867 shape
-    // `akmTasksSync` reports as a failure rather than installing.
-    fs.writeFileSync(
-      path.join(tasksDir, "foo.yml"),
-      'run: echo foo\nname: foo\nschedule:\n  - cron: "*/15 * * * *"\n',
-      "utf8",
-    );
-
-    const result = await renameBundle("original", "renamed", {}, renameDeps(backend));
 
     expect(result.applied).toBe(true);
-    expect(result.taskSync?.ok).toBe(false);
-    const syncResult = (result.taskSync as { result?: TasksSyncResult } | undefined)?.result;
-    expect(syncResult?.failures.length).toBe(1);
-    expect(syncResult?.failures[0]?.reason).toMatch(/version is required and must be 4/);
-    // The stale old-name row was still removed, even though the new one
-    // could not be installed in its place.
-    expect(exec.current()).not.toContain("--bundle original");
-    expect(exec.current()).not.toContain("--bundle renamed");
+    expect(result.taskSync).toEqual({ ok: false, error: "crontab is not writable" });
   });
 });

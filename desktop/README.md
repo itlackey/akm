@@ -239,8 +239,9 @@ Use **More → Rename or move** for a single-file asset. It copies the asset to
 the chosen bundle and name (AKM's copy, which never overwrites and records the
 original in the copy's `sources`), then retires the original, so the original
 is recoverable from Review. Links and refs to the old name are not rewritten;
-`akm lint` reports them. Installed schedules are not changed: after moving a
-task, run `akm task sync`. Existing usage/proposal history does not transfer to
+`akm lint` reports them. Enabled tasks are not carried over: after moving a
+task, run `akm task disable` for the old ref and `akm task enable` for the new
+one. Existing usage/proposal history does not transfer to
 the new identity. Skills can be copied (**Copy to bundle**) but not moved.
 Edits and copies follow AKM's write, Git and indexing policy, including
 embedding-provider calls on changed content when configured. Desktop keeps no

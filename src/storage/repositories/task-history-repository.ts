@@ -147,6 +147,38 @@ export function reserveTaskHistoryAttempt(db: Database, row: TaskHistoryRow): bo
   return Number(result.changes) === 1;
 }
 
+/** An unfinished attempt: its task, when it started, and the process that reserved it when that was recorded. */
+export interface ActiveTaskRun {
+  task_id: string;
+  started_at: string;
+  pid?: number;
+}
+
+/** The unfinished attempts of the given task ids (`akm task dispatch` skips a task that has one running). */
+export function listActiveTaskRuns(db: Database, taskIds: readonly string[]): ActiveTaskRun[] {
+  if (taskIds.length === 0) return [];
+  const placeholders = taskIds.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `SELECT task_id, started_at, metadata_json FROM task_history
+       WHERE status = 'active' AND completed_at IS NULL AND task_id IN (${placeholders})`,
+    )
+    .all(...taskIds) as Array<{ task_id: string; started_at: string; metadata_json: string }>;
+  return rows.map((row) => {
+    let pid: unknown;
+    try {
+      pid = (JSON.parse(row.metadata_json) as { pid?: unknown }).pid;
+    } catch {
+      pid = undefined;
+    }
+    return {
+      task_id: row.task_id,
+      started_at: row.started_at,
+      ...(typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? { pid } : {}),
+    };
+  });
+}
+
 /** Finalize a row previously created by {@link reserveTaskHistoryAttempt}. */
 export function finalizeTaskHistoryAttempt(db: Database, row: TaskHistoryRow): boolean {
   const result = db

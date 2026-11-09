@@ -7,5 +7,7 @@ import { akmTasksSync } from "../tasks/tasks";
 
 /** `akm bundle rename`: rename a configured bundle everywhere akm persists it, then re-sync its scheduled tasks. */
 export function akmBundleRename(oldId: string, newId: string, options: { dryRun?: boolean } = {}) {
-  return renameBundle(oldId, newId, options, { syncTasks: (id, backend) => akmTasksSync({ backend }, id) });
+  return renameBundle(oldId, newId, options, {
+    syncTasks: (backend) => akmTasksSync({ ...(backend ? { backend } : {}) }),
+  });
 }

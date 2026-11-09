@@ -35,7 +35,6 @@ import { assertBundleNotDisabled } from "../../sources/write-source";
 import type { TaskInvocation } from "../model/invocation";
 import { prepareTaskV3Execution } from "../prepare/prepare";
 import type { PreparedTaskV3Execution } from "../prepare/prepared-execution";
-import { scheduledTaskContextEnv } from "../scheduler-invocation";
 import { parseTaskSource } from "../source/parse-task-source";
 import { projectTaskSourceV4 } from "../source/project-v4";
 import { TASK_INPUT_DIAGNOSTICS } from "../source/task-input-diagnostics";
@@ -160,8 +159,6 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
     bundleName,
     bundleRoot: bundleDir,
     config,
-    // Freeze the AKM directory context the scheduled row set before command preparation.
-    ...(options.scheduled ? { schedulerContext: scheduledTaskContextEnv() } : {}),
     resolveAsset: async ({ bundle, type, name }) => {
       if (bundle === bundleName) {
         return { file: await resolveAssetPath(bundleDir, type, name), bundleRoot: bundleDir };

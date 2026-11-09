@@ -159,6 +159,11 @@ jobs:
             AKM_CANDIDATE_VERSION="$candidate_version" \
             bun test --timeout=180000 tests/integration/linux-standalone-scheduler.test.ts
 
+      # The macOS and Windows steps below run the gate in tests/integration/native-scheduler.test.ts against the real
+      # per-user scheduler: `task sync` installs the one `akm task dispatch` entry, the OS runs it, and the task it
+      # starts must still be running after the OS reports dispatch finished, then complete. To run it by hand on a
+      # disposable macOS or Windows machine, set the AKM_NATIVE_* variables exactly as the steps do and run
+      # `bun test --timeout=240000 tests/integration/native-scheduler.test.ts` (see the file's header).
       - name: Build and test the macOS launchd candidate
         if: matrix.runtime_platform == 'darwin'
         shell: bash
@@ -184,7 +189,8 @@ jobs:
         if: always() && matrix.runtime_platform == 'darwin'
         shell: bash
         run: |
-          label="com.akm.task.$AKM_NATIVE_TASK_ID"
+          # The gate installs the one dispatch entry; its task is cleaned by the test, this is the backstop.
+          label="com.akm.dispatch"
           launchctl bootout "gui/$(id -u)/$label" || true
           launchctl enable "gui/$(id -u)/$label" || true
           rm -f "$HOME/Library/LaunchAgents/$label.plist"
@@ -242,12 +248,11 @@ jobs:
         if: always() && matrix.runtime_platform == 'win32'
         shell: pwsh
         run: |
-          foreach ($taskName in @($env:AKM_NATIVE_TASK_ID, $env:AKM_NATIVE_NODE_TASK_ID)) {
-            $task = Get-ScheduledTask -TaskPath "\akm\" -TaskName $taskName -ErrorAction SilentlyContinue
-            if ($null -ne $task) {
-              Stop-ScheduledTask -InputObject $task -ErrorAction SilentlyContinue
-              Unregister-ScheduledTask -InputObject $task -Confirm:$false -ErrorAction SilentlyContinue
-            }
+          # The gate installs the one dispatch entry; its task is cleaned by the test, this is the backstop.
+          $task = Get-ScheduledTask -TaskPath "\akm\" -TaskName "dispatch" -ErrorAction SilentlyContinue
+          if ($null -ne $task) {
+            Stop-ScheduledTask -InputObject $task -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -InputObject $task -Confirm:$false -ErrorAction SilentlyContinue
           }
           foreach ($path in @(
             (Join-Path $env:RUNNER_TEMP "akm native win32 $env:GITHUB_RUN_ID $env:GITHUB_RUN_ATTEMPT"),

@@ -208,7 +208,12 @@ export async function retire(input: { ref: string; revision: string }) {
       ref: canonical,
       bundle: target.source.name,
       archiveDirs: accepted.retiredArchive?.dirs ?? [],
-      warnings: type === "task" ? ["Installed schedules are not changed. Run akm task sync to reconcile them."] : [],
+      warnings:
+        type === "task"
+          ? [
+              `If ${canonical} was enabled, it is still listed in scheduler.enabled and \`akm task dispatch\` reports it as missing: run \`akm task disable ${canonical}\`.`,
+            ]
+          : [],
     };
   });
 }

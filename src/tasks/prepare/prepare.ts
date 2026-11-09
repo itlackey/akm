@@ -28,7 +28,6 @@ import { warn } from "../../core/warn";
 import type { TaskV3SourceDocument } from "../source-v3";
 import {
   base,
-  commandEnvironmentSnapshot,
   currentExecutionValues,
   defaultTaskShell,
   environmentSnapshot,
@@ -46,7 +45,6 @@ export async function prepareTaskV3Execution(
   context: PrepareTaskV3ExecutionContext,
 ): Promise<PreparedTaskV3Execution> {
   const environment = environmentSnapshot(document.env);
-  const commandEnvironment = commandEnvironmentSnapshot(environment, context.schedulerContext);
   const common = base(document, context, environment);
   if (document.target.kind === "run") {
     return Object.freeze({
@@ -73,7 +71,7 @@ export async function prepareTaskV3Execution(
       await (context.prepareCommand ?? prepareCommandInvocation)({
         action,
         config: context.config,
-        current: currentExecutionValues(document, context, commandEnvironment),
+        current: currentExecutionValues(document, context, environment),
         ...(context.commandSourceLoader ? { sourceLoader: context.commandSourceLoader } : {}),
       }),
       context,
@@ -96,7 +94,7 @@ export async function prepareTaskV3Execution(
       await (context.prepareCommand ?? prepareCommandInvocation)({
         action: { ref: qualified },
         config: context.config,
-        current: currentExecutionValues(document, context, commandEnvironment),
+        current: currentExecutionValues(document, context, environment),
         ...(context.commandSourceLoader ? { sourceLoader: context.commandSourceLoader } : {}),
       }),
       context,

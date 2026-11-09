@@ -3,39 +3,22 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Cross-platform schedule parsing and translation.
+ * Schedule parsing and minute matching.
  *
- * Users always type cron-style expressions:
+ * Users always type cron-style expressions, on every OS:
  *
  *   • `m h dom mon dow`   — five-field cron (UNIX minute/hour/dom/mon/dow)
- *   • `@hourly` `@daily` `@weekly` `@monthly`
+ *   • `@hourly` `@daily` `@weekly` `@monthly` `@yearly`/`@annually` `@midnight`
  *
- * Each {@link ScheduleSpec} can then be translated to:
- *
- *   • a verbatim cron line (Linux backend),
- *   • a launchd plist `<StartCalendarInterval>` / `<StartInterval>` (macOS),
- *   • Task Scheduler XML triggers (Windows).
- *
- * The shared subset is `*`, single integers, `*\/N`, `A-B`, `A-B/N`, comma
- * lists, three-letter day/month names (`MON`, `JAN`) and name ranges
- * (`MON-FRI`), plus the `@hourly / @daily / @weekly / @monthly / @yearly /
- * @annually / @reboot` aliases. Day-of-month AND day-of-week combined in the
- * same expression are rejected with a {@link UsageError} — cron gives that
- * combination OR semantics no other backend can express portably, and it is
- * genuinely ambiguous to a person reading the schedule back.
- *
- * Cron is the most permissive of the three backends; some patterns it
- * accepts (e.g. `@hourly` = `0 * * * *`) have no clean schtasks primitive.
- * Validation runs against the *active* backend, so a task authored on
- * Linux may fail to translate when copied to macOS/Windows. `tasks sync`
- * re-validates against the local backend and surfaces any incompatibility.
+ * `akm task dispatch` is the only thing the OS scheduler runs; it evaluates
+ * every enabled task's expression against the clock with
+ * {@link scheduleMatchesMinute}. There is one grammar and no per-OS subset.
+ * Day-of-month and day-of-week both restricted means "either", as in vixie-cron.
  */
 
 import { UsageError } from "../core/errors";
 
-export type ScheduleBackend = "cron" | "launchd" | "schtasks";
-
-/** Parsed shape, before backend translation. */
+/** Parsed shape. */
 export interface ScheduleSpec {
   /** Original input as the user typed it (for error messages and storage). */
   raw: string;
@@ -66,11 +49,9 @@ export type ScheduleField =
   | { kind: "value"; value: number }
   | { kind: "step"; step: number }
   | { kind: "rangeStep"; start: number; end: number; step: number }
-  // 2026-05-27: cron-style comma list, e.g. `7,37 * * * *` (twice per hour).
+  // Cron-style comma list, e.g. `7,37 * * * *` (twice per hour).
   // `values` is the deduped, ascending list of valid integers within
-  // `[limit.min, limit.max]`. translateToCron emits the field verbatim;
-  // launchd / schtasks reject this kind with a clear error (no native
-  // multi-trigger primitive on those backends).
+  // `[limit.min, limit.max]`.
   | { kind: "list"; values: number[] };
 
 const ALIAS_TO_CRON: Record<string, string> = {
@@ -81,24 +62,6 @@ const ALIAS_TO_CRON: Record<string, string> = {
   "@monthly": "0 0 1 * *",
   "@yearly": "0 0 1 1 *",
   "@annually": "0 0 1 1 *",
-};
-
-/**
- * vixie-cron's one true nickname with no 5-field equivalent — it fires once at
- * daemon startup, not on a recurring calendar boundary. Passed straight
- * through, unexpanded, on the cron backend (a real crontab line is just
- * `@reboot <command>`); launchd and schtasks have no "run at boot" trigger in
- * the vocabulary this module targets, so those backends reject it.
- */
-const REBOOT_ALIAS = "@reboot";
-
-/** Placeholder fields for the `@reboot` `ScheduleSpec` — never read: cron's translator emits `spec.cron` verbatim, and launchd/schtasks refuse `@reboot` before touching `fields`. */
-const REBOOT_FIELDS: ScheduleFields = {
-  minute: { kind: "star" },
-  hour: { kind: "star" },
-  dom: { kind: "star" },
-  month: { kind: "star" },
-  dow: { kind: "star" },
 };
 
 const DOW_NAMES = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
@@ -143,36 +106,14 @@ const FIELD_LIMITS = {
   dow: { min: 0, max: 6 },
 } as const;
 
-const SUPPORTED_HINT =
+export const SCHEDULE_SUPPORTED_SUBSET_HINT =
   "Supported subset: `*`, single integers (`5`), ranges (`A-B`), steps (`*/N`, `A-B/N`), and comma lists " +
   "(`7,37`). Day-of-week and month fields also accept three-letter names and name ranges (`MON`, `MON-FRI`, " +
-  "`JAN`). Aliases: `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly`/`@annually`, `@reboot` (cron only).";
+  "`JAN`). Aliases: `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly`/`@annually`.";
 
-export function parseSchedule(input: string, backend: ScheduleBackend): ScheduleSpec {
-  const trimmed = input.trim();
-  if (trimmed.toLowerCase() === REBOOT_ALIAS) {
-    if (backend !== "cron") {
-      throw new UsageError(
-        `Schedule "${input}" (@reboot, run once at startup) has no ${
-          backend === "launchd" ? "macOS launchd" : "Windows Task Scheduler"
-        } equivalent this release expresses. Use a cron-backed install, or rewrite the task with a recurring schedule.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    return { raw: input, cron: REBOOT_ALIAS, fields: REBOOT_FIELDS };
-  }
+export function parseSchedule(input: string): ScheduleSpec {
   const cron = expandAlias(input);
-  const fields = parseCronFields(cron, input);
-  const spec: ScheduleSpec = { raw: input, cron, fields };
-  // Validate translatability for the active backend so the caller does not
-  // silently accept expressions that backend cannot run. Note: cron is the
-  // most permissive of the three (e.g. `@hourly` is `0 * * * *` which has
-  // no clean schtasks primitive), so a task authored on Linux may not be
-  // portable to macOS/Windows. `tasks sync` on the destination platform
-  // re-runs this with the local backend and will surface any incompatibility.
-  if (backend === "launchd") translateToLaunchd(spec);
-  if (backend === "schtasks") translateToSchtasks(spec);
-  return spec;
+  return { raw: input, cron, fields: parseCronFields(cron, input) };
 }
 
 function expandAlias(raw: string): string {
@@ -189,7 +130,7 @@ function parseCronFields(cron: string, original: string): ScheduleFields {
   const parts = cron.split(/\s+/);
   if (parts.length !== 5) {
     throw new UsageError(
-      `Invalid schedule "${original}": expected 5 fields, got ${parts.length}. ${SUPPORTED_HINT}`,
+      `Invalid schedule "${original}": expected 5 fields, got ${parts.length}. ${SCHEDULE_SUPPORTED_SUBSET_HINT}`,
       "INVALID_FLAG_VALUE",
     );
   }
@@ -221,7 +162,7 @@ function parseField(
     const range = limit.max - limit.min + 1;
     if (!Number.isInteger(step) || step <= 0 || step > range) {
       throw new UsageError(
-        `Invalid ${name} step "${raw}" in schedule "${original}". ${SUPPORTED_HINT}`,
+        `Invalid ${name} step "${raw}" in schedule "${original}". ${SCHEDULE_SUPPORTED_SUBSET_HINT}`,
         "INVALID_FLAG_VALUE",
       );
     }
@@ -288,356 +229,37 @@ function parseField(
   }
 
   throw new UsageError(
-    `Unsupported ${name} expression "${raw}" in schedule "${original}". ${SUPPORTED_HINT}`,
+    `Unsupported ${name} expression "${raw}" in schedule "${original}". ${SCHEDULE_SUPPORTED_SUBSET_HINT}`,
     "INVALID_FLAG_VALUE",
   );
 }
 
-// ── Backend translators ─────────────────────────────────────────────────────
+// ── Minute matching ─────────────────────────────────────────────────────────
 
-/** Verbatim cron line, alias-expanded. */
-export function translateToCron(spec: ScheduleSpec): string {
-  return spec.cron;
-}
-
-/**
- * Build the calendar entries for a launchd plist's `StartCalendarInterval`.
- * Steps are expanded to wall-clock values instead of using `StartInterval`,
- * whose phase is relative to load time rather than cron's clock boundaries.
- */
-export interface LaunchdTrigger {
-  /** Use `<dict>…</dict>` under `<key>StartCalendarInterval</key>`. */
-  calendar?: LaunchdCalendar;
-  /** Use `<array>` of dictionaries under `<key>StartCalendarInterval</key>`. */
-  calendars?: LaunchdCalendar[];
-}
-
-export interface LaunchdCalendar {
-  Minute?: number;
-  Hour?: number;
-  Day?: number; // day of month
-  Month?: number;
-  Weekday?: number; // 0 = Sunday
-}
-
-export function translateToLaunchd(spec: ScheduleSpec): LaunchdTrigger {
-  const f = spec.fields;
-  rejectDomDowCombination(spec, "macOS launchd");
-
-  // Expand minute steps into clock-minute anchors. StartInterval would drift
-  // from cron whenever the agent is loaded away from a matching boundary.
-  if (
-    (f.minute.kind === "step" || f.minute.kind === "rangeStep") &&
-    f.hour.kind === "star" &&
-    f.dom.kind === "star" &&
-    f.month.kind === "star" &&
-    f.dow.kind === "star"
-  ) {
-    return { calendars: expandFieldValues(f.minute, FIELD_LIMITS.minute).map((Minute) => ({ Minute })) };
-  }
-
-  // Likewise, anchor hour steps to the same hours cron selects each day.
-  if (
-    f.minute.kind === "value" &&
-    (f.hour.kind === "step" || f.hour.kind === "rangeStep") &&
-    f.dom.kind === "star" &&
-    f.month.kind === "star" &&
-    f.dow.kind === "star"
-  ) {
-    return {
-      calendars: expandFieldValues(f.hour, FIELD_LIMITS.hour).map((Hour) => ({
-        Minute: f.minute.kind === "value" ? f.minute.value : 0,
-        Hour,
-      })),
-    };
-  }
-
-  // A day-of-week or month range/list (`1-5` for Mon-Fri, `1,3,5`) has no
-  // single-dict launchd primitive either, but — unlike a step — it names a
-  // small, closed set of concrete values, so it genuinely IS expressible: one
-  // calendar dict per (month, weekday) combination, same trick as the
-  // minute/hour step expansion above. Only attempted when the remaining
-  // fields are already single values or `*`; anything else (e.g. a minute
-  // step combined with a weekday range) falls through to the generic path
-  // below, where `rejectStepInsideCalendar` reports the field it actually
-  // cannot express.
-  const dowValues = expandListLikeField(f.dow, FIELD_LIMITS.dow);
-  const monthValues = expandListLikeField(f.month, FIELD_LIMITS.month);
-  const remainingFieldsAreSimple =
-    (f.minute.kind === "value" || f.minute.kind === "star") &&
-    (f.hour.kind === "value" || f.hour.kind === "star") &&
-    (f.dom.kind === "value" || f.dom.kind === "star");
-  if ((dowValues || monthValues) && remainingFieldsAreSimple) {
-    const base: LaunchdCalendar = {};
-    if (f.minute.kind === "value") base.Minute = f.minute.value;
-    if (f.hour.kind === "value") base.Hour = f.hour.value;
-    if (f.dom.kind === "value") base.Day = f.dom.value;
-    const months = monthValues ?? (f.month.kind === "value" ? [f.month.value] : [undefined]);
-    const weekdays = dowValues ?? (f.dow.kind === "value" ? [f.dow.value] : [undefined]);
-    const calendars: LaunchdCalendar[] = [];
-    for (const month of months) {
-      for (const weekday of weekdays) {
-        calendars.push({
-          ...base,
-          ...(month !== undefined ? { Month: month } : {}),
-          ...(weekday !== undefined ? { Weekday: weekday } : {}),
-        });
-      }
-    }
-    return { calendars };
-  }
-
-  // Otherwise build a calendar dict from concrete values. launchd treats any
-  // omitted key as "every value", so a `*` field translates to "no key".
-  // Exception: launchd does not support arbitrary step values inside a
-  // calendar dict — reject those.
-  const calendar: LaunchdCalendar = {};
-  rejectStepInsideCalendar(f.minute, "minute", spec);
-  rejectStepInsideCalendar(f.hour, "hour", spec);
-  rejectStepInsideCalendar(f.dom, "day-of-month", spec);
-  rejectStepInsideCalendar(f.month, "month", spec);
-  rejectStepInsideCalendar(f.dow, "day-of-week", spec);
-
-  if (f.minute.kind === "value") calendar.Minute = f.minute.value;
-  if (f.hour.kind === "value") calendar.Hour = f.hour.value;
-  if (f.dom.kind === "value") calendar.Day = f.dom.value;
-  if (f.month.kind === "value") calendar.Month = f.month.value;
-  if (f.dow.kind === "value") calendar.Weekday = f.dow.value;
-
-  // launchd's CalendarInterval requires at least one specific key. If every
-  // Expand every-minute to explicit minute boundaries rather than a
-  // load-relative 60-second interval.
-  if (Object.keys(calendar).length === 0) {
-    return {
-      calendars: expandFieldValues({ kind: "step", step: 1 }, FIELD_LIMITS.minute).map((Minute) => ({ Minute })),
-    };
-  }
-  return { calendar };
-}
-
-function expandFieldValues(
-  field: Extract<ScheduleField, { kind: "step" | "rangeStep" }>,
-  limit: { min: number; max: number },
-): number[] {
-  const start = field.kind === "rangeStep" ? field.start : limit.min;
-  const end = field.kind === "rangeStep" ? field.end : limit.max;
-  const values: number[] = [];
-  for (let value = start; value <= end; value += field.step) values.push(value);
-  return values;
-}
-
-/** Discrete values named by a `list` or (stepless) `rangeStep` field; `null` for anything else (`*`, `value`, `step`). */
-function expandListLikeField(field: ScheduleField, limit: { min: number; max: number }): number[] | null {
-  if (field.kind === "list") return field.values;
-  if (field.kind === "rangeStep") return expandFieldValues(field, limit);
-  return null;
-}
-
-function rejectStepInsideCalendar(field: ScheduleField, name: string, spec: ScheduleSpec): void {
-  if (field.kind === "step") {
-    throw new UsageError(
-      `Schedule "${spec.raw}" uses step (${name} = */N) in a position macOS launchd cannot express. ${SUPPORTED_HINT}`,
-      "INVALID_FLAG_VALUE",
-      "Either restrict the step to the minute or hour field only, or rewrite the schedule with concrete values.",
-    );
-  }
-  if (field.kind === "rangeStep") {
-    const shape = field.step === 1 ? "A-B" : "A-B/N";
-    throw new UsageError(
-      `Schedule "${spec.raw}" uses a range (${name} = ${shape}) in a position macOS launchd cannot express. ${SUPPORTED_HINT}`,
-      "INVALID_FLAG_VALUE",
-      "Restrict the range to the minute, hour, day-of-week, or month field, or rewrite the schedule with a concrete value.",
-    );
-  }
-  if (field.kind === "list") {
-    throw new UsageError(
-      `Schedule "${spec.raw}" uses comma list (${name} = a,b,...) which macOS launchd cannot express as a single trigger. ${SUPPORTED_HINT}`,
-      "INVALID_FLAG_VALUE",
-      "Either install one task per list element, or rewrite the schedule with a step (`*/N`) or single value.",
-    );
+function fieldMatches(field: ScheduleField, value: number, min: number): boolean {
+  switch (field.kind) {
+    case "star":
+      return true;
+    case "value":
+      return field.value === value;
+    case "step":
+      return (value - min) % field.step === 0;
+    case "rangeStep":
+      return value >= field.start && value <= field.end && (value - field.start) % field.step === 0;
+    case "list":
+      return field.values.includes(value);
   }
 }
 
-/**
- * Translate to Windows Task Scheduler XML trigger fragment.
- *
- * The shape returned is consumed by `backends/schtasks.ts` to build the full
- * Task Scheduler XML. We deliberately return a simple union rather than a raw
- * XML string so the backend can compose it with the other XML elements
- * (Principal, Actions, Settings).
- */
-export type SchtasksTrigger =
-  | { kind: "minute"; everyMinutes: number }
-  | { kind: "minuteValues"; minutes: number[] }
-  | { kind: "hour"; everyHours: number; atMinute: number }
-  | { kind: "hourValues"; hours: number[]; atMinute: number }
-  | { kind: "daily"; atHour: number; atMinute: number }
-  | { kind: "weekly"; atHour: number; atMinute: number; daysOfWeek: number[] }
-  | { kind: "monthly"; atHour: number; atMinute: number; daysOfMonth: number[]; months: number[] };
+/** Whether a field began with `*` in the source: vixie-cron's rule for when dom and dow combine with AND. */
+const startsWithStar = (field: ScheduleField): boolean => field.kind === "star" || field.kind === "step";
 
-const MAX_SCHTASKS_TRIGGERS = 48;
-
-export function translateToSchtasks(spec: ScheduleSpec): SchtasksTrigger {
-  const f = spec.fields;
-  rejectDomDowCombination(spec, "Windows Task Scheduler");
-
-  // A repetition interval is cron-equivalent indefinitely only when it divides
-  // the field's wall-clock cycle. Other steps must reset at every hour.
-  if (
-    f.minute.kind === "step" &&
-    f.hour.kind === "star" &&
-    f.dom.kind === "star" &&
-    f.month.kind === "star" &&
-    f.dow.kind === "star"
-  ) {
-    if (60 % f.minute.step !== 0) {
-      return minuteValuesTrigger(expandFieldValues(f.minute, FIELD_LIMITS.minute), spec);
-    }
-    return { kind: "minute", everyMinutes: f.minute.step };
-  }
-
-  if (
-    f.minute.kind === "rangeStep" &&
-    f.hour.kind === "star" &&
-    f.dom.kind === "star" &&
-    f.month.kind === "star" &&
-    f.dow.kind === "star"
-  ) {
-    if (f.minute.start === FIELD_LIMITS.minute.min && f.minute.end === FIELD_LIMITS.minute.max) {
-      if (60 % f.minute.step === 0) return { kind: "minute", everyMinutes: f.minute.step };
-    }
-    return minuteValuesTrigger(expandFieldValues(f.minute, FIELD_LIMITS.minute), spec);
-  }
-
-  // Fixed-minute hour schedules can use one daily-reset repetition only when
-  // the interval divides 24 hours. Non-divisors become explicit daily times.
-  if (
-    f.minute.kind === "value" &&
-    f.hour.kind === "step" &&
-    f.dom.kind === "star" &&
-    f.month.kind === "star" &&
-    f.dow.kind === "star"
-  ) {
-    if (24 % f.hour.step === 0 && f.hour.step < 24) {
-      return { kind: "hour", everyHours: f.hour.step, atMinute: f.minute.value };
-    }
-    return {
-      kind: "hourValues",
-      hours: expandFieldValues(f.hour, FIELD_LIMITS.hour),
-      atMinute: f.minute.value,
-    };
-  }
-
-  if (
-    f.minute.kind === "value" &&
-    f.hour.kind === "rangeStep" &&
-    f.dom.kind === "star" &&
-    f.month.kind === "star" &&
-    f.dow.kind === "star"
-  ) {
-    if (f.hour.start === FIELD_LIMITS.hour.min && f.hour.end === FIELD_LIMITS.hour.max) {
-      if (24 % f.hour.step === 0 && f.hour.step < 24) {
-        return { kind: "hour", everyHours: f.hour.step, atMinute: f.minute.value };
-      }
-    }
-    return {
-      kind: "hourValues",
-      hours: expandFieldValues(f.hour, FIELD_LIMITS.hour),
-      atMinute: f.minute.value,
-    };
-  }
-
-  // `M * * * *` includes the shipped top-of-hour task and arbitrary fixed
-  // minutes. A daily calendar trigger resets the hourly repetition each day.
-  if (
-    f.minute.kind === "value" &&
-    f.hour.kind === "star" &&
-    f.dom.kind === "star" &&
-    f.month.kind === "star" &&
-    f.dow.kind === "star"
-  ) {
-    return { kind: "hour", everyHours: 1, atMinute: f.minute.value };
-  }
-
-  // `M H * * *` → DAILY at H:M.
-  if (
-    f.minute.kind === "value" &&
-    f.hour.kind === "value" &&
-    f.dom.kind === "star" &&
-    f.month.kind === "star" &&
-    f.dow.kind === "star"
-  ) {
-    return { kind: "daily", atHour: f.hour.value, atMinute: f.minute.value };
-  }
-
-  // `M H * * D` → WEEKLY at H:M on day(s) D — a single day, a plain range
-  // (`1-5`, e.g. from `MON-FRI`), or a comma list all name a small closed set
-  // of weekdays that Task Scheduler's native `<DaysOfWeek>` already takes as
-  // a set, so no expansion into multiple triggers is needed.
-  if (
-    f.minute.kind === "value" &&
-    f.hour.kind === "value" &&
-    f.dom.kind === "star" &&
-    f.month.kind === "star" &&
-    (f.dow.kind === "value" || f.dow.kind === "list" || f.dow.kind === "rangeStep")
-  ) {
-    const daysOfWeek = f.dow.kind === "value" ? [f.dow.value] : expandListLikeField(f.dow, FIELD_LIMITS.dow)!;
-    return {
-      kind: "weekly",
-      atHour: f.hour.value,
-      atMinute: f.minute.value,
-      daysOfWeek,
-    };
-  }
-
-  // `M H D * *` / `M H D m *` → MONTHLY at H:M on day(s)-of-month D, in the
-  // given month(s) m (or every month when `m` is `*`). Task Scheduler's
-  // `ScheduleByMonth` trigger takes both as native sets, same as `ScheduleByWeek`
-  // above.
-  if (
-    f.minute.kind === "value" &&
-    f.hour.kind === "value" &&
-    (f.dom.kind === "value" || f.dom.kind === "list") &&
-    (f.month.kind === "star" || f.month.kind === "value" || f.month.kind === "list") &&
-    f.dow.kind === "star"
-  ) {
-    const daysOfMonth = f.dom.kind === "value" ? [f.dom.value] : f.dom.values;
-    const months =
-      f.month.kind === "star"
-        ? Array.from({ length: 12 }, (_, i) => i + 1)
-        : f.month.kind === "value"
-          ? [f.month.value]
-          : f.month.values;
-    return { kind: "monthly", atHour: f.hour.value, atMinute: f.minute.value, daysOfMonth, months };
-  }
-
-  throw new UsageError(
-    `Schedule "${spec.raw}" cannot be expressed as a Windows Task Scheduler trigger. ${SUPPORTED_HINT}`,
-    "INVALID_FLAG_VALUE",
-    "Use one of: minute steps/range-steps, fixed-minute hour steps/range-steps, hourly, daily, weekly on one or more weekdays, or monthly on one or more days-of-month.",
-  );
+/** Whether `fields` fire at the wall-clock minute `at` (local time, whole minute). */
+export function scheduleMatchesMinute(fields: ScheduleFields, at: Date): boolean {
+  if (!fieldMatches(fields.minute, at.getMinutes(), FIELD_LIMITS.minute.min)) return false;
+  if (!fieldMatches(fields.hour, at.getHours(), FIELD_LIMITS.hour.min)) return false;
+  if (!fieldMatches(fields.month, at.getMonth() + 1, FIELD_LIMITS.month.min)) return false;
+  const domMatch = fieldMatches(fields.dom, at.getDate(), FIELD_LIMITS.dom.min);
+  const dowMatch = fieldMatches(fields.dow, at.getDay(), FIELD_LIMITS.dow.min);
+  return startsWithStar(fields.dom) || startsWithStar(fields.dow) ? domMatch && dowMatch : domMatch || dowMatch;
 }
-
-function minuteValuesTrigger(minutes: number[], spec: ScheduleSpec): SchtasksTrigger {
-  if (minutes.length > MAX_SCHTASKS_TRIGGERS) {
-    throw new UsageError(
-      `Schedule "${spec.raw}" requires ${minutes.length} native triggers; Windows Task Scheduler allows at most ${MAX_SCHTASKS_TRIGGERS}.`,
-      "INVALID_FLAG_VALUE",
-      "Use a full-field step whose interval divides 60, or reduce the minute range.",
-    );
-  }
-  return { kind: "minuteValues", minutes };
-}
-
-function rejectDomDowCombination(spec: ScheduleSpec, backend: string): void {
-  if (spec.fields.dom.kind !== "star" && spec.fields.dow.kind !== "star") {
-    throw new UsageError(
-      `Schedule "${spec.raw}": day-of-month and day-of-week use OR semantics in cron, which ${backend} cannot express portably.`,
-      "INVALID_FLAG_VALUE",
-      "Use either day-of-month or day-of-week, but not both.",
-    );
-  }
-}
-
-/** Human-readable summary used by `tasks doctor`. */
-export const SCHEDULE_SUPPORTED_SUBSET_HINT = SUPPORTED_HINT;
