@@ -64,6 +64,8 @@ describe("URL credentials", () => {
     for (const key of ["tokenizer", "prompt_cache_key", "monkey-small"]) expect(isSecretKey(key, "x")).toBe(false);
     expect(isSecretKey("maxTokens", 64)).toBe(false);
     expect(isSecretKey("headers_token", "x")).toBe(true);
+    for (const key of ["accesstoken", "clientsecret", "dbpassword", "secretkey"])
+      expect(isSecretKey(key, "x")).toBe(true);
     expect((redactForUi({ models: { "token-small": "m" }, token: "t" }) as Json).models["token-small"]).toBe("m");
   });
 });
