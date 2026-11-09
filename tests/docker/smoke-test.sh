@@ -270,18 +270,18 @@ assert_output_contains "models set changes an alias" "smoke-model" \
 	env XDG_CONFIG_HOME="$CONNECTION_CONFIG" akm models set fast smoke-model --no-probe
 assert_output_contains "models shows the alias on the connection" "smoke-model" \
 	env XDG_CONFIG_HOME="$CONNECTION_CONFIG" akm models --no-probe
-assert_status_output_contains "health --no-probe reports the connection" "0 4" '"type": "connection"' \
+assert_status_output_contains "health --no-probe reports the connection" "0 4" '"type": *"connection", *"name": *"default"' \
 	env XDG_CONFIG_HOME="$CONNECTION_CONFIG" akm health --no-probe
-assert_output_contains "info reports the connection" '"type": "connection"' \
+assert_output_contains "info reports the connection" '"type": *"connection", *"name": *"default"' \
 	env XDG_CONFIG_HOME="$CONNECTION_CONFIG" akm info
 
 assert_exit_zero "config set enables a harness with no connection" \
 	env XDG_CONFIG_HOME="$HARNESS_CONFIG" akm config set harnesses.claude '{}' --silent
 assert_status_output_contains "models with no connection points at setup" "78" "akm setup" \
 	env XDG_CONFIG_HOME="$HARNESS_CONFIG" akm models --no-probe
-assert_status_output_contains "health --no-probe reports the harness" "0 4" '"type": "harness"' \
+assert_status_output_contains "health --no-probe reports the harness" "0 4" '"type": *"harness", *"name": *"claude"' \
 	env XDG_CONFIG_HOME="$HARNESS_CONFIG" akm health --no-probe
-assert_output_contains "info reports the harness" '"type": "harness"' \
+assert_output_contains "info reports the harness" '"type": *"harness", *"name": *"claude"' \
 	env XDG_CONFIG_HOME="$HARNESS_CONFIG" akm info
 
 # ── 9. List ──────────────────────────────────────────────────────────────────
