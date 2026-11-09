@@ -1711,7 +1711,6 @@ describe("an accepted retirement leaves the search index at once (#1307)", () =>
           semanticSearchMode,
           bundles: { stash: { path: storage.stashDir, writable: true } },
           defaultBundle: "stash",
-          defaultWriteTarget: "stash",
           registries: [],
         });
         await akmIndex({ stashDir: storage.stashDir, full: true });

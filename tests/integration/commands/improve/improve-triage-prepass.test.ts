@@ -281,7 +281,6 @@ describe("akm improve — triage pre-pass", () => {
         ...triageEnabledConfig(true),
         bundles: { team: { path: stashDir, writable: true } },
         defaultBundle: "team",
-        defaultWriteTarget: "team",
       };
       let captured: import("../../../../src/commands/proposal/drain").DrainOptions | undefined;
 
@@ -296,7 +295,7 @@ describe("akm improve — triage pre-pass", () => {
       });
 
       expect(captured?.target).toBe("team");
-      expect(captured?.config?.defaultWriteTarget).toBe("team");
+      expect(captured?.config?.defaultBundle).toBe("team");
     },
     TIMEOUT_MS,
   );

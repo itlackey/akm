@@ -117,9 +117,9 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
       await expect(item).toBeFocused();
     },
   );
-  await t.test("read-only bundles are not selectable write targets", async () => {
+  await t.test("read-only bundles are not selectable as the default bundle", async () => {
     await navigate("/settings/config");
-    const target = page.getByRole("combobox", { name: "Default write target", exact: true });
+    const target = page.getByRole("combobox", { name: "Default bundle", exact: true });
     await expect(target.locator('option[value="vendor"]')).toBeDisabled();
     await expect(target.locator('option[value="shared"]')).toBeEnabled();
   });

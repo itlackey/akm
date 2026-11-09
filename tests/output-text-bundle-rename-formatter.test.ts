@@ -19,7 +19,7 @@ function baseResult(overrides: Record<string, unknown> = {}): Record<string, unk
     oldId: "old",
     newId: "new",
     applied: true,
-    config: { defaultBundleChanges: false, defaultWriteTargetChanges: false, schedulerRefs: [] },
+    config: { defaultBundleChanges: false, schedulerRefs: [] },
     index: { entries: 0 },
     state: { proposalRefs: 0, proposalTargets: 0, taskHistoryRefs: 0 },
     contentRefs: [],

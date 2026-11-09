@@ -45,7 +45,6 @@ async function seedProjects() {
       off: { path: path.join(ctx.storage.root, "off"), enabled: false },
     },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     semanticSearchMode: "off",
     projects: {
       alpha: { from: ["stash", "team"], filters: { project: "alpha" }, prefer: { project: "alpha" } },

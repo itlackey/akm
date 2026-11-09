@@ -8,8 +8,7 @@
  * The only module that branches on `source.kind` for writes. It does two
  * things:
  *
- *  1. Resolve the destination: `--bundle` → `defaultWriteTarget` → working
- *     stash (`defaultBundle`). `writable` defaults to true on `filesystem` and
+ *  1. Resolve the destination: `--bundle` → working stash (`defaultBundle`). `writable` defaults to true on `filesystem` and
  *     false on `git`; `website` / `npm` are never writable (the config loader
  *     rejects `writable: true` on them).
  *  2. Publish: write the file atomically inside the bundle root, and for a
@@ -126,9 +125,8 @@ export function assertBundleNotDisabled(akmConfig: AkmConfig, name: string): voi
 }
 
 /**
- * Resolve the destination for a write: explicit `--bundle`, then
- * `defaultWriteTarget`, then the working stash (`defaultBundle`). There is no
- * fallback to the first writable source.
+ * Resolve the destination for a write: explicit `--bundle`, then the
+ * working stash (`defaultBundle`). There is no fallback to the first writable source.
  */
 export function resolveWriteTarget(
   akmConfig: AkmConfig,
@@ -158,29 +156,10 @@ export function resolveWriteTarget(
     return adaptConfiguredSource(match);
   }
 
-  if (akmConfig.defaultWriteTarget) {
-    const match = configuredSources.find((s) => s.name === akmConfig.defaultWriteTarget);
-    if (!match) {
-      throw new ConfigError(
-        `defaultWriteTarget "${akmConfig.defaultWriteTarget}" does not match any configured source.`,
-        "INVALID_CONFIG_FILE",
-        "Update `defaultWriteTarget` in your config (run `akm config get defaultWriteTarget`) or run `akm bundle list` to see configured sources.",
-      );
-    }
-    if (requireWritable && !resolveWritable({ type: match.type, writable: match.writable })) {
-      throw new ConfigError(
-        `defaultWriteTarget "${akmConfig.defaultWriteTarget}" is not writable`,
-        "INVALID_CONFIG_FILE",
-        `Set \`writable: true\` on the "${akmConfig.defaultWriteTarget}" source in your config, or change \`defaultWriteTarget\` to a writable source.`,
-      );
-    }
-    return adaptConfiguredSource(match);
-  }
-
   return resolveWorkingStashTarget(akmConfig, options);
 }
 
-/** Resolve the implicit working stash without consulting `defaultWriteTarget`. */
+/** Resolve the implicit working stash: `AKM_BUNDLE_DIR`, else `defaultBundle`. */
 export function resolveWorkingStashTarget(
   akmConfig: AkmConfig,
   options: { requireWritable?: boolean } = {},
@@ -219,7 +198,7 @@ export function resolveWorkingStashTarget(
     throw new ConfigError(
       `defaultBundle "${akmConfig.defaultBundle}" is not writable`,
       "INVALID_CONFIG_FILE",
-      `Set \`writable: true\` on the "${akmConfig.defaultBundle}" bundle, or set \`defaultWriteTarget\` to a writable source.`,
+      `Set \`writable: true\` on the "${akmConfig.defaultBundle}" bundle, or point \`defaultBundle\` at a writable bundle.`,
     );
   }
   return { ...target, selector: undefined };

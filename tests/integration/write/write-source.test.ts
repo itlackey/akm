@@ -10,7 +10,7 @@
  *     complete commit + clean tree, pushes per the writable+remote+push gate,
  *     and is a no-op for filesystem targets
  *   - rejection of unsupported `kind` reaching the helper
- *   - resolveWriteTarget precedence (explicit → defaultWriteTarget → defaultBundle)
+ *   - resolveWriteTarget precedence (explicit → defaultBundle)
  *   - commit-message sanitization (issue #270) via the boundary commit
  */
 
@@ -478,18 +478,7 @@ describe("resolveWriteTarget", () => {
     expect(teamSource?.path).toBe(path.resolve(localRoot));
   });
 
-  test("falls back to defaultWriteTarget", () => {
-    const dir = makeTempDir("akm-target-default-");
-    const result = resolveWriteTarget({
-      semanticSearchMode: "off",
-      bundles: { "default-one": { path: dir, writable: true } },
-      defaultWriteTarget: "default-one",
-    });
-    expect(result.selector).toBe("default-one");
-    expect(result.source.name).toBe("default-one");
-  });
-
-  test("requires a default bundle when no explicit target or defaultWriteTarget exists", () => {
+  test("requires a default bundle when no explicit target exists", () => {
     // resolveWriteTarget falls back to process.env.AKM_BUNDLE_DIR (named
     // "stash") when nothing else is configured — unset it so this asserts
     // the true "nothing configured" path, not the isolated stash sandboxed
@@ -512,14 +501,16 @@ describe("resolveWriteTarget", () => {
     expect(result.source.path).toBe(stashDir);
   });
 
-  test("throws ConfigError when defaultWriteTarget points at a missing source", () => {
-    expect(() =>
-      resolveWriteTarget({
-        semanticSearchMode: "off",
-        bundles: { exists: { path: "/tmp/akm-missing", writable: true } },
-        defaultWriteTarget: "ghost",
-      }),
-    ).toThrow(ConfigError);
+  test("throws ConfigError when defaultBundle points at a missing source", () => {
+    withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => {
+      expect(() =>
+        resolveWriteTarget({
+          semanticSearchMode: "off",
+          bundles: { exists: { path: "/tmp/akm-missing", writable: true } },
+          defaultBundle: "ghost",
+        }),
+      ).toThrow(ConfigError);
+    });
   });
 
   test("throws UsageError when --target names a missing source", () => {

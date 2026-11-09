@@ -201,8 +201,8 @@ akm bundle rename old-name new-name
 ```
 
 `<new>` must be a legal, unused bundle slug, the same rule `akm bundle add
---name` enforces. The rename rewrites the config key, `defaultBundle` and
-`defaultWriteTarget` when they name the old id, scheduler refs, the lockfile
+--name` enforces. The rename rewrites the config key, `defaultBundle`
+when it names the old id, scheduler refs, the lockfile
 entry, indexed entries, and akm's own state rows, and re-syncs native
 scheduler bindings under the new name (`taskSync.ok` is `false` when a binding
 fails to re-sync). Refs inside the bundle's own content (cross-references, a
@@ -212,7 +212,7 @@ that still spell the old `<old>//` prefix so you can fix them by hand.
 ## akm clone
 
 `akm clone` copies a single asset from any bundle into the write target
-(`--bundle`, else `defaultWriteTarget`, else your working bundle) for local
+(`--bundle`, else your working bundle) for local
 editing. The copy is a separate asset with its own ref; `akm show` with a short ref prefers the copy in your default
 bundle, while the original stays where it was.
 

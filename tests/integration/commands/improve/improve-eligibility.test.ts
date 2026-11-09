@@ -103,7 +103,6 @@ async function buildIndex(stashDir: string): Promise<void> {
         semanticSearchMode: "off",
         bundles: { stash: { path: stashDir, writable: true } },
         defaultBundle: "stash",
-        defaultWriteTarget: "stash",
       }),
     ),
   );
@@ -142,7 +141,6 @@ function configWithoutProactiveLane(stashDir: string): import("../../../../src/c
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       improve: {
         strategies: {
           default: { processes: { proactiveMaintenance: { enabled: false } } },
@@ -314,7 +312,6 @@ test("a read-only nested bundle is never eligible through its writable ancestor"
         nested: { path: nested, writable: false },
       },
       defaultBundle: "primary",
-      defaultWriteTarget: "primary",
     }),
   );
   saveConfig(config);

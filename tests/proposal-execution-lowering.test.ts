@@ -31,7 +31,6 @@ function directConfig(stashDir: string, apiKey?: string): AkmConfig {
     semanticSearchMode: "auto",
     bundles: { work: { path: stashDir, writable: true } },
     defaultBundle: "work",
-    defaultWriteTarget: "work",
     connections: {
       direct: {
         endpoint: "https://proposal.invalid/v1/chat/completions",
