@@ -13,10 +13,7 @@
  */
 
 import { isApiKeyReference } from "../core/config/schema/primitives";
-import { REDACTED, redactUrlCredentials } from "../core/redaction";
-
-/** Key names whose string values are credentials, or sit in a bag of them. */
-const SECRET_KEY = /(api[-_]?key|token|password|passwd|secret|credential|authorization|bearer|private[-_]?key)/i;
+import { isSecretKey, REDACTED, redactUrlCredentials } from "../core/redaction";
 
 /** A whole subtree of values (`env`, `secrets`) that is data, not settings. */
 const SECRET_BAG_KEY = /^(env|secrets?)$/i;
@@ -39,7 +36,7 @@ export function scrubUrlCredentials(value: unknown): unknown {
 }
 
 /** Deep copy of `value` with every secret-like string masked. */
-export function redactForUi(value: unknown, inSecretBag = false): unknown {
+export function redactForUi(value: unknown, inSecretBag = false, aliasNames = false): unknown {
   if (Array.isArray(value)) return value.map((child) => redactForUi(child, inSecretBag));
   if (typeof value === "string") {
     if (isApiKeyReference(value)) return value;
@@ -48,16 +45,12 @@ export function redactForUi(value: unknown, inSecretBag = false): unknown {
   if (!value || typeof value !== "object") return inSecretBag && value !== null ? REDACTED : value;
   const result: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof child === "string" && SECRET_KEY.test(key) && !isApiKeyReference(child)) {
+    // The keys of a `models` map are alias names, not setting names: `token-small` is an alias.
+    if (!aliasNames && typeof child === "string" && isSecretKey(key, child) && !isApiKeyReference(child)) {
       result[key] = REDACTED;
     } else {
-      result[key] = redactForUi(child, inSecretBag || SECRET_BAG_KEY.test(key));
+      result[key] = redactForUi(child, inSecretBag || SECRET_BAG_KEY.test(key), key === "models");
     }
   }
   return result;
-}
-
-/** Whether an environment variable name looks like it holds a credential. */
-export function isSecretEnvName(name: string): boolean {
-  return SECRET_KEY.test(name);
 }
