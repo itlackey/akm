@@ -25,7 +25,7 @@ import {
   type EngineKeysMigrationStatus,
   inspectEngineKeysMigration,
 } from "./engine-key-migrate";
-import { legacyTaskBlockers } from "./legacy-task-check";
+import { legacyTasks as findLegacyTasks } from "./legacy-task-check";
 import {
   applyContentRefsMigration,
   type ContentRefsMigrationStatus,
@@ -71,6 +71,8 @@ export interface CombinedMigrationPlan {
    * rows with it in one write (what `akm task sync` does).
    */
   scheduler?: TasksSyncResult;
+  /** Task sources below version 4 that no `scheduler.enabled` entry names: nothing runs from them, so no blocker. */
+  legacyTaskWarnings?: string[];
 }
 
 /**
@@ -207,7 +209,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
     () => (apply ? syncScheduler() : akmTasksSyncPlan()),
     apply ? () => akmTasksSyncPlan() : undefined,
   );
-  const legacyTasks = await migrationStep(failedSteps, "legacyTasks", legacyTaskBlockers);
+  const legacyTasks = await migrationStep(failedSteps, "legacyTasks", findLegacyTasks);
   // A pending state migration reads as "ready" under status, so the
   // preview says what apply will do; after a real apply it has been applied.
   const stateStatus: MigrationStatus =
@@ -215,7 +217,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const configFileStatus: MigrationStatus = configFile?.changed && !configFile.applied ? "ready" : "current";
   const engineKeysStatus: MigrationStatus = assetEngineKeys?.status ?? "current";
   const contentRefsStatus: MigrationStatus = assetContentRefs?.status ?? "current";
-  const legacyTasksStatus: MigrationStatus = legacyTasks && legacyTasks.length > 0 ? "blocked" : "current";
+  const legacyTasksStatus: MigrationStatus = legacyTasks && legacyTasks.blockers.length > 0 ? "blocked" : "current";
   const schedulerStatus: MigrationStatus =
     !apply && scheduler && (scheduler.removedLegacy.length > 0 || scheduler.entry === "installed" || scheduler.entry === "removed")
       ? "ready"
@@ -226,7 +228,8 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
       [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus, schedulerStatus, legacyTasksStatus].reduce(worstStatus, "current"),
       failedSteps,
     ),
-    blockers: [...(legacyTasks ?? []), ...failedStepBlockers(failedSteps)],
+    blockers: [...(legacyTasks?.blockers ?? []), ...failedStepBlockers(failedSteps)],
+    ...(legacyTasks && legacyTasks.warnings.length > 0 ? { legacyTaskWarnings: legacyTasks.warnings } : {}),
     ...(failedSteps.length > 0 ? { failedSteps } : {}),
     ...(configFile !== undefined ? { configFile } : {}),
     ...(stateMigrations !== undefined ? { stateMigrations } : {}),

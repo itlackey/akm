@@ -19,8 +19,17 @@ let storage: IsolatedAkmStorage;
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
   resetConfigCache();
-  writeSandboxConfig({ defaultBundle: "primary", bundles: { primary: { path: storage.stashDir, writable: true } } });
+  configure(undefined);
 });
+
+function configure(enabled: string[] | undefined): void {
+  writeSandboxConfig({
+    defaultBundle: "primary",
+    bundles: { primary: { path: storage.stashDir, writable: true } },
+    ...(enabled ? { scheduler: { enabled } } : {}),
+  });
+  resetConfigCache();
+}
 
 afterEach(() => {
   resetConfigCache();
@@ -36,8 +45,9 @@ function writeTask(name: string, yaml: string): string {
 }
 
 for (const apply of [false, true]) {
-  test(`${apply ? "apply" : "status"}: a version 3 task is a blocker that names the 0.9.32 recipe`, async () => {
+  test(`${apply ? "apply" : "status"}: an enabled version 3 task is a blocker that names the 0.9.32 recipe`, async () => {
     const file = writeTask("old.yml", "version: 3\nid: old\nschedule: []\n");
+    configure(["primary//tasks/old"]);
 
     const plan = await runMigration({ apply });
 
@@ -47,11 +57,24 @@ for (const apply of [false, true]) {
     expect(line).toContain("npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync");
   });
 
-  test(`${apply ? "apply" : "status"}: a version 4 task is no blocker`, async () => {
-    writeTask("current.yml", "version: 4\nid: current\n");
+  test(`${apply ? "apply" : "status"}: a version 3 task that is not enabled is one warning and no blocker`, async () => {
+    const file = writeTask("old.yml", "version: 3\nid: old\nschedule: []\n");
 
     const plan = await runMigration({ apply });
 
     expect(plan.blockers).toEqual([]);
+    expect(plan.status).not.toBe("blocked");
+    expect(plan.legacyTaskWarnings).toHaveLength(1);
+    expect(plan.legacyTaskWarnings?.[0]).toContain(file);
+  });
+
+  test(`${apply ? "apply" : "status"}: a version 4 task is neither`, async () => {
+    writeTask("current.yml", "version: 4\nid: current\n");
+    configure(["primary//tasks/current"]);
+
+    const plan = await runMigration({ apply });
+
+    expect(plan.blockers).toEqual([]);
+    expect(plan.legacyTaskWarnings).toBeUndefined();
   });
 }

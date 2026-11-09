@@ -2262,8 +2262,8 @@ the current shapes (what it still reads of older data is listed in
 [Persisted-data compatibility](../architecture/persisted-data-compat.md)). A
 `state.db` from before the 0.9.32 floor is refused whole (a `blocked` plan naming
 `npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync`) before any step
-runs, and a task source below version 4 is a blocker with the same recipe: 0.10
-converts none. The steps, in order:
+runs, and an enabled task source below version 4 is a blocker with the same recipe: 0.10
+converts none (one that is not enabled is a `legacyTaskWarnings` line). The steps, in order:
 
 1. config.json rewritten in its current shape (`configFile`): unknown keys
    dropped (the 0.9 `configVersion` among them), and the `engines` / `defaults` form converted

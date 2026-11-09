@@ -65,8 +65,10 @@ In order, every run applies (or, under `status`, plans):
    with no `crontab` binary gets a warning in `scheduler.warnings` and exit
    `0`; a `crontab` that exists and fails blocks.
 
-A task source below version 4 blocks the plan too: 0.10 converts none, so
-`blockers` names each such file with the 0.9.32 recipe.
+A task source below version 4 that `scheduler.enabled` names blocks the plan
+(it would silently stop running): 0.10 converts none, so `blockers` names the
+file with the 0.9.32 recipe. One that is not enabled is a line in
+`legacyTaskWarnings` and does not change the status.
 
 ### The plan JSON
 

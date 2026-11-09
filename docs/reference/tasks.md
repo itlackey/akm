@@ -18,7 +18,7 @@ source v4 adds typed `inputs:` and a single bounded `output:` schema
 (command targets only), and makes scheduling OPTIONAL rather than
 mandatory. `akm task add` authors task source v4 directly.
 
-A `version: 2` or `version: 3` file is refused, and this release converts none: run `npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync` first, then upgrade. `akm migrate status` reports each such file as a blocker with that recipe.
+A `version: 2` or `version: 3` file is refused, and this release converts none: run `npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync` first, then upgrade. `akm migrate status` reports an enabled one as a blocker with that recipe, and any other as a `legacyTaskWarnings` line.
 
 ## Files and schema
 
