@@ -90,12 +90,10 @@ what each target holds and where a new test goes.
 bun run lint:fix   # Biome with --write; read git diff afterwards
 bun run lint       # what CI runs: Biome, the secret-resolver and shipped-assets lints, the doc-example lint, the lockfile lint
 ```
-What CI runs depends on the event. Every pull-request commit runs `check` (lint,
-types, the unit and integration suites, the build) and one Node smoke; marking
-the pull request ready for review, and every commit after that, adds the second
-Node version and the two upgrade rehearsals, which also run on every push to
-`main` and a release branch and on a manual run. Push a draft in batches that
-you have verified locally with `bun run check`: each push is a CI run.
+Every pull request runs the fast gate; a pull request into `main` is a release
+and runs the whole one (see the
+[release checklist](../docs/maintainers/release-checklist.md)). Push in batches
+that you have verified locally with `bun run check`: each push is a CI run.
 
 
 ### Building
@@ -148,20 +146,26 @@ while iterating on output-related changes.
 ## Shipping a release — migration notes
 
 Maintainers must also follow the
-[release checklist](../docs/maintainers/release-checklist.md). The Release
-workflow runs the semantic, Docker, and Linux/macOS/Windows native-scheduler
-gates on the commit it publishes.
+[release checklist](../docs/maintainers/release-checklist.md). The semantic,
+Docker and native-scheduler gates run on the commit that ships: on the release
+pull request for a stable release, and as the Release workflow's own jobs for a
+prerelease.
 
 Release notes live in `CHANGELOG.md`. When a release needs a manual upgrade
 step, add it to the current migration guide under `docs/migration/`.
 
 ## Submitting Changes
 
-1. Fork the repository and create a feature branch from `main`.
+1. Fork the repository and create a feature branch from the open release
+   branch (`release/<version>`).
 2. Make your changes, keeping commits focused and well-described.
 3. Ensure both test targets pass (`bun run test:unit` and
    `bun run test:integration`) and linting is clean (`bun run lint`).
-4. Open a pull request against `main` with a clear description of the change.
+4. Open a pull request against the release branch
+   (`gh pr create --base release/<version>`) with a clear description of the
+   change. Never against `main`, which is the default base: only a release
+   branch merges there, and that merge is a release (see the
+   [release checklist](../docs/maintainers/release-checklist.md#branch-model)).
 
 ## Code Style
 
@@ -206,9 +210,6 @@ step, add it to the current migration guide under `docs/migration/`.
 - `prepublishOnly` copies `.github/README.npm.md` over `README.md` before
   building, and `postpublish` restores `README.md` with
   `git checkout -- README.md`. That README churn is not a source edit.
-- `.github/workflows/ci.yml` ignores docs-only changes (`docs/**`, `README.md`,
-  any `CHANGELOG.md`, `CLAUDE.md`, `LICENSE`), so docs-only edits get no normal
-  CI coverage.
 
 ## Reporting Issues
 

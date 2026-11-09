@@ -2,9 +2,8 @@ name: Gated CI
 
 # These suites exercise real embeddings, container installs, and host-native
 # schedulers. They run weekly to catch drift, on demand from the Actions tab
-# (on the ref chosen there), and as the first job of every release: release.yml
-# calls this workflow on the commit it is about to publish, so the gates always
-# test exactly what ships.
+# (on the ref chosen there), and on the commit that ships: ci.yml calls this
+# workflow on a release pull request, release.yml on a prerelease dispatch.
 on:
   schedule:
     # Avoid the top of the hour, when scheduled Actions traffic is highest.

@@ -494,10 +494,8 @@ overrides:
 Fetched previous-release tarballs are cached under
 `${TMPDIR:-/tmp}/akm-upgrade-rehearsal/previous-release/<version>/` so repeat
 runs do not re-hit the network. It is wired into CI as the `upgrade-rehearsal`
-job (`.github/workflows/ci.yml`), which runs on pushes to `main` and release
-branches, on manual runs and on every commit of a pull request that is ready
-for review (a draft pull request skips it until it is marked ready). The Release
-workflow requires that CI run to pass on the commit it publishes.
+job (`.github/workflows/ci.yml`), which runs on a release pull request (a pull
+request into `main`), the gate a stable release merges through.
 
 ## Coverage Notes
 
