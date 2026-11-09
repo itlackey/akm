@@ -4,7 +4,7 @@
 
 /**
  * A harness's reply is its stdout, as it printed it, for every command that
- * dispatches one: `akm agent --prompt` and `akm command run` print the reply
+ * dispatches one: `akm agent --prompt` and `akm command` print the reply
  * (text, not an event stream or an envelope of the harness's own), and what the
  * harness writes on stderr stays on stderr. Integration: it spawns a fake CLI.
  */
@@ -74,17 +74,10 @@ describe.each(["codex", "claude", "gemini"])("a %s harness's reply", (platform) 
     expect(call?.argv.join(" ")).not.toMatch(/--json|--output-format|--mode json/);
   });
 
-  test("akm command run prints the reply as the harness wrote it", async () => {
+  test("akm command prints the reply as the harness wrote it", async () => {
     harness(platform, REPLY);
 
-    const result = await runCliCapture([
-      "command",
-      "run",
-      "commands/review",
-      "--arguments",
-      "the diff",
-      "--format=json",
-    ]);
+    const result = await runCliCapture(["command", "commands/review", "--arguments", "the diff", "--format=json"]);
 
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, stdout: `${REPLY}\n`, stderr: PROGRESS });

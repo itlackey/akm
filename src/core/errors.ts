@@ -227,7 +227,7 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   SECRET_REFERENCE_UNRESOLVED:
     "Check the secret exists (`akm secret list`) and the ref inside `${…}` matches it, or run `akm secret set secrets/<name>` to store it.",
   REGISTRY_URL_INVALID:
-    "Registry URLs must be credential-free http(s) URLs. Fix the entry with `akm registry list` / `akm registry add`, or the AKM_REGISTRY_URL / AKM_NPM_REGISTRY variable that supplied it.",
+    "Registry URLs must be credential-free http(s) URLs. Fix the entry with `akm registry list` / `akm registry add`, or the AKM_NPM_REGISTRY variable that supplied it.",
 };
 
 // COMPOSITION_INVALID covers several unrelated causes

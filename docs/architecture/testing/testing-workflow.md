@@ -156,7 +156,7 @@ owns the process state that crosses test boundaries:
   preload: `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_TEST_HOME`, the
   four `XDG_*_HOME` variables, `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`,
   `AKM_CACHE_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_VERBOSE`,
-  `AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY`, `AKM_REGISTRY_URL`,
+  `AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY`,
   `AKM_NPM_REGISTRY`), `process.cwd()` and `globalThis.fetch`, and restores them
   afterwards.
 - It resets the module-level singletons of production code between tests:

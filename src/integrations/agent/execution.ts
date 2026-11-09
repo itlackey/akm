@@ -98,7 +98,7 @@ export interface ResolvedExecution {
   readonly request: ResolvedExecutionRequestV1;
   /** Where the request runs. Credentials are still symbolic. */
   readonly runner: RunnerSpec;
-  /** The layer behind each request field, for `akm task explain` and `command run --dry-run`. */
+  /** The layer behind each request field, for `akm task explain` and `command --dry-run`. */
   readonly provenance: Readonly<Record<string, ExecutionFieldProvenance>>;
 }
 

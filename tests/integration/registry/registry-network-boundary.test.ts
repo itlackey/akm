@@ -98,7 +98,7 @@ describe("fetchRegistry / fetchRegistryJson (src/registry/network.ts)", () => {
 describe("akm registry add enforces HTTPS unless explicitly overridden", () => {
   let storage: IsolatedAkmStorage;
   beforeEach(() => {
-    storage = withIsolatedAkmStorage({ AKM_REGISTRY_URL: undefined });
+    storage = withIsolatedAkmStorage();
   });
   afterEach(() => {
     storage.cleanup();

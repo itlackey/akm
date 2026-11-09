@@ -20,7 +20,7 @@ export const SHIPPED_ALIAS = {
   improve: "fast",
   /** Judges: the reflect and distill quality gates, the triage judgment, a workflow gate. */
   judge: "balanced",
-  /** Agent work: `akm agent`, `command run`, `proposal new`, task dispatch, workflow agent units. */
+  /** Agent work: `akm agent`, `command`, `proposal new`, task dispatch, workflow agent units. */
   agent: "balanced",
   extract: "fast",
   enrich: "fast",

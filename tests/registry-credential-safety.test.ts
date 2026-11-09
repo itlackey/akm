@@ -440,7 +440,7 @@ function expectConfiguredProjectionsSafe(url: string): void {
 let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
-  storage = withIsolatedAkmStorage({ AKM_REGISTRY_URL: undefined });
+  storage = withIsolatedAkmStorage();
 });
 
 afterEach(() => {
@@ -704,25 +704,6 @@ describe("registry provider, search, warning, and log boundaries", () => {
         expect(result.warnings ?? []).toEqual([]);
       }
     }
-  });
-
-  test("AKM_REGISTRY_URL ignores userinfo without returning or warning with secrets", () => {
-    const warnings: unknown[][] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => warnings.push(args);
-    try {
-      const resolved = withEnvSync(
-        {
-          AKM_REGISTRY_URL: `${CREDENTIAL_URL},::${CREDENTIAL_URL},static-index::ftp://${USERNAME}:${PASSWORD}@registry.example.test`,
-        },
-        () => resolveRegistries(),
-      );
-      // No usable entry: the variable is ignored and the configured registries stand.
-      expect(resolved).toEqual(withEnvSync({ AKM_REGISTRY_URL: undefined }, () => resolveRegistries()));
-    } finally {
-      console.warn = originalWarn;
-    }
-    expectCredentialsAbsent(warnings);
   });
 
   test("fetch error objects sanitize nested, control, and punctuation userinfo before response and log sinks", async () => {

@@ -16,11 +16,12 @@ type DynamicCommand = {
 };
 
 describe("canonical command CLI surface", () => {
-  test("registers command run <ref> with one exact argument string", () => {
+  test("registers command <ref> as one leaf with one exact argument string", () => {
     const top = main.subCommands as unknown as Record<string, DynamicCommand>;
     expect(top.command).toBe(commandCommand as unknown as DynamicCommand);
 
-    const run = (commandCommand as unknown as DynamicCommand).subCommands?.run;
+    const run = commandCommand as unknown as DynamicCommand;
+    expect(run.subCommands).toBeUndefined();
     expect(run?.args?.ref).toMatchObject({ type: "positional", required: true });
     expect(run?.args?.arguments).toMatchObject({ type: "string" });
     expect(run?.args?.["dry-run"]).toMatchObject({ type: "boolean", default: false });

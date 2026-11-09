@@ -25,7 +25,7 @@ describe("--help leaves out the retired flags and lists their replacements", () 
 
   test.each([
     [["agent"], "--engine", "--harness"],
-    [["command", "run"], "--engine", "--harness"],
+    [["command"], "--engine", "--harness"],
     [["proposal", "new"], "--engine", "--harness"],
     [["proposal", "extract"], "--engine", "--harness"],
     [["task", "add"], "--engine", "--harness"],

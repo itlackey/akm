@@ -405,7 +405,7 @@ describe("akm task explain <ref> — where a task runs", () => {
   });
 });
 
-describe("akm task explain <ref> — the stored command is read the way `command run --dry-run` reads it", () => {
+describe("akm task explain <ref> — the stored command is read the way `command --dry-run` reads it", () => {
   const explain = async (id: string) => {
     const result = await runCliCapture(["task", "explain", id, "--format", "json"]);
     expect(result.code).toBe(0);
@@ -423,13 +423,13 @@ describe("akm task explain <ref> — the stored command is read the way `command
     resetConfigCache();
   });
 
-  test("a command whose frontmatter names a harness runs on it, as `command run --dry-run` says", async () => {
+  test("a command whose frontmatter names a harness runs on it, as `command --dry-run` says", async () => {
     write("commands/on-reviewer.md", "---\nname: on-reviewer\ntype: command\nharness: reviewer\n---\nReview.\n");
     await akmIndex({ stashDir: storage.stashDir, full: true });
     useCommand("explain-on-reviewer", "commands/on-reviewer");
 
     const { execution } = await explain("explain-on-reviewer");
-    const dryRun = await runCliCapture(["command", "run", "commands/on-reviewer", "--dry-run", "--format=json"]);
+    const dryRun = await runCliCapture(["command", "commands/on-reviewer", "--dry-run", "--format=json"]);
 
     expect(execution.engine).toMatchObject({ name: "reviewer", kind: "harness" });
     expect(execution.problem).toBeUndefined();

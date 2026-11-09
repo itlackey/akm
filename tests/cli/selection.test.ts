@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { SELECTION_ARGS, selectionFromArgs } from "../../src/cli/selection";
 import { agentCommand } from "../../src/commands/agent/contribute-cli";
-import { commandRunCommand } from "../../src/commands/command/command-cli";
+import { commandCommand } from "../../src/commands/command/command-cli";
 import { extractCommand } from "../../src/commands/improve/extract-cli";
 import { improveCommand } from "../../src/commands/improve/improve-cli";
 import { proposeCommand } from "../../src/commands/proposal/propose-cli";
@@ -28,7 +28,7 @@ describe("selectionFromArgs", () => {
 describe("the commands that choose where a call runs take the same three flags", () => {
   test.each([
     ["akm agent", agentCommand],
-    ["akm command run", commandRunCommand],
+    ["akm command", commandCommand],
     ["akm improve", improveCommand],
     ["akm proposal new", proposeCommand],
     ["akm proposal extract", extractCommand],
@@ -38,7 +38,7 @@ describe("the commands that choose where a call runs take the same three flags",
   });
 
   test("none of them has the retired --engine, and improve has no --require-engines", () => {
-    for (const command of [agentCommand, commandRunCommand, improveCommand, proposeCommand, extractCommand]) {
+    for (const command of [agentCommand, commandCommand, improveCommand, proposeCommand, extractCommand]) {
       expect(command.args).not.toHaveProperty("engine");
     }
     expect(improveCommand.args).not.toHaveProperty("require-engines");
