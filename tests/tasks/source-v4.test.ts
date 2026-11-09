@@ -630,6 +630,15 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
       expect(warnCalls).toEqual([]);
     });
 
+    test("a v4 document with a retired top-level engine raises TASK_SOURCE_INVALID naming `akm migrate apply`, never ignoring it", () => {
+      const filePath = "/bundle/tasks/engine.yml";
+      const error = refusal("version: 4\nuses: commands/review\nengine: lab\n", filePath);
+      expect(error.code).toBe("TASK_SOURCE_INVALID");
+      expect(error.message).toContain(`Invalid task source v4 at ${filePath}: engine is retired`);
+      expect(error.message).toContain("akm migrate apply");
+      expect(warnCalls).toEqual([]);
+    });
+
     test("a v4 document without schedule[].enabled parses directly and never warns", () => {
       const yaml = "version: 4\nuses: commands/review\nschedule:\n  - cron: '0 4 * * *'\n";
       const result = parseTaskSource({ yaml, filePath: "/bundle/tasks/z.yml" });

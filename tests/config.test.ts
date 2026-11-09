@@ -1195,15 +1195,13 @@ describe("extends inheritance (#945)", () => {
 
   test("a base config declaring a foreign configVersion is still merged underneath", () => {
     // The base gets the same per-file pipeline as the local file: its
-    // `configVersion` is read as current rather than gating the merge, and the retired
-    // engines/defaults form it is written in is read as connections.
+    // `configVersion` is read as current rather than gating the merge.
     const dir = path.dirname(getConfigPath());
     writeRawConfig(
       path.join(dir, "old-base.json"),
       JSON.stringify({
         configVersion: "0.8.0",
-        defaults: { llmEngine: "legacy" },
-        engines: { legacy: { kind: "llm", endpoint: "https://api.example.test/v1/chat/completions", model: "m" } },
+        connections: { default: { endpoint: "https://api.example.test/v1/chat/completions", models: { fast: "m" } } },
       }),
     );
     writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./old-base.json" }));

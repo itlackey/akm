@@ -5,13 +5,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { normalizeConfigFile } from "../scripts/akm-migrate/config/normalize";
 import type { AkmConfig } from "../src/core/config/config";
 import {
   bundlesToSourceEntries,
   loadConfig,
   loadUserConfig,
   mutateConfig,
-  normalizeConfigFile,
   resetConfigCache,
   resolveConfiguredSources,
   saveConfig,
@@ -140,7 +140,7 @@ describe("0.9 config contract", () => {
     expect(warnings).toEqual([]);
   });
 
-  test("secret://<name> is retired: read as ${secrets/<name>} with one warning per key, rewritten only by akm migrate apply", () => {
+  test("secret://<name> is retired: not read as a reference, named once per key, rewritten only by akm migrate apply", () => {
     writeConfig({
       configVersion: "0.9.0",
       bundles: {
@@ -149,14 +149,14 @@ describe("0.9 config contract", () => {
       },
     });
 
+    // A git credential must be a reference, so the file does not load; the warnings say why and what to run.
     const warnings = captureWarnings(() => {
-      const config = loadUserConfig();
-      expect(config.bundles?.private?.credential).toBe("${team//secrets/gitea}");
-      expect(config.bundles?.other?.credential).toBe("${secrets/other-key}");
-      loadUserConfig();
+      expect(() => loadUserConfig()).toThrow(/git credential must be a/);
+      expect(() => loadUserConfig()).toThrow(/git credential must be a/);
     });
     const named = warnings.filter((w) => w.includes("secret://"));
     expect(named).toHaveLength(2);
+    expect(named.every((w) => w.includes("akm migrate apply"))).toBe(true);
     expect(named.some((w) => w.includes("bundles.private.credential"))).toBe(true);
     expect(named.some((w) => w.includes("bundles.other.credential"))).toBe(true);
 

@@ -125,14 +125,13 @@ export function freezeWorkflow(
 }
 
 type ExecutionUnitLike = Partial<
-  Pick<WorkflowUnitSettings, "connection" | "harness" | "engine" | "model" | "llm" | "timeoutMs" | "output">
+  Pick<WorkflowUnitSettings, "connection" | "harness" | "model" | "llm" | "timeoutMs" | "output">
 >;
 
 function executionValues(unit: ExecutionUnitLike | undefined): UnresolvedExecutionDefaults {
   return {
     ...(unit && Object.hasOwn(unit, "connection") ? { connection: unit.connection } : {}),
     ...(unit && Object.hasOwn(unit, "harness") ? { harness: unit.harness } : {}),
-    ...(unit && Object.hasOwn(unit, "engine") ? { engine: unit.engine } : {}),
     ...(unit && Object.hasOwn(unit, "model") ? { model: unit.model } : {}),
     ...(unit && Object.hasOwn(unit, "llm") ? { inference: unit.llm as ExecutionJsonObject } : {}),
     ...(unit && Object.hasOwn(unit, "timeoutMs") ? { timeout: unit.timeoutMs } : {}),

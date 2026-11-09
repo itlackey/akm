@@ -95,19 +95,14 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { normalizeConfigFile } from "../../scripts/akm-migrate/config/normalize";
 import { planTaskToV4File } from "../../scripts/akm-migrate/migrate/task-to-v4";
 import { runMigration } from "../../scripts/akm-migrate/run-migrate";
 import { inspectTaskFilesMigration } from "../../scripts/akm-migrate/task-migrate";
 import { akmHealth } from "../../src/commands/health";
 import { createProposal as createProposalImpl } from "../../src/commands/proposal/repository";
 import { akmTasksSync, akmTasksSyncPlan } from "../../src/commands/tasks/tasks";
-import {
-  loadConfig,
-  normalizeConfigFile,
-  parseAndValidateConfigText,
-  resetConfigCache,
-  updateConfig,
-} from "../../src/core/config/config";
+import { loadConfig, parseAndValidateConfigText, resetConfigCache, updateConfig } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, resetQuiet, setQuiet } from "../../src/core/warn";
@@ -569,7 +564,7 @@ describe("previous-release corpus — a config as 0.9.15/0.9.16 wrote it", () =>
   beforeEach(() => resetConfigCache());
   afterEach(() => resetConfigCache());
 
-  test("bundles + an `engines` block with first-class engine fields + a 0.9.16 {kind, ref, sourceId} scheduler entry load, the engine read as a connection and the entry as its ref", () => {
+  test("bundles + an `engines` block with first-class engine fields + a 0.9.16 {kind, ref, sourceId} scheduler entry load, the entry as its ref and the engines block not read", () => {
     const configPath = getConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(
@@ -595,13 +590,8 @@ describe("previous-release corpus — a config as 0.9.15/0.9.16 wrote it", () =>
 
     const config = loadConfig();
     expect(config.defaultBundle).toBe("stash");
-    expect("engines" in config).toBe(false);
-    expect(config.connections?.fast).toMatchObject({
-      endpoint: "https://example.test/v1/chat/completions",
-      models: { fast: "test" },
-      temperature: 0.2,
-      reasoning_effort: "low",
-    });
+    // The `engines` block is not converted by a load: `akm migrate apply` does that.
+    expect(config.connections ?? {}).toEqual({});
     expect(config.scheduler?.enabled).toEqual(["stash//tasks/nightly"]);
   });
 });
@@ -1141,7 +1131,7 @@ describe("previous-release corpus — a 0.9 `engines` config converts end to end
 
   const read = (relative: string): string => fs.readFileSync(path.join(storage.stashDir, relative), "utf8");
 
-  test("loads in memory with one warning naming `akm migrate apply`, and the file is not touched", () => {
+  test("loads with no connection from it, one warning naming `akm migrate apply`, and the file is not touched", () => {
     const warnings: string[] = [];
     _resetWarnOnceForTests();
     _setWarnSinkForTests((level, args) => {
@@ -1151,10 +1141,9 @@ describe("previous-release corpus — a 0.9 `engines` config converts end to end
 
     const config = loadConfig();
 
-    expect(Object.keys(config.connections ?? {}).sort()).toEqual(["cloud", "default", "env", "hosted"]);
-    expect(Object.keys(config.harnesses ?? {})).toEqual(["claude"]);
-    expect(config.improve?.strategy).toBe("nightly");
-    expect(warnings.filter((warning) => warning.includes("retired engines/defaults form"))).toHaveLength(1);
+    expect(config.connections ?? {}).toEqual({});
+    expect(config.harnesses ?? {}).toEqual({});
+    expect(warnings.filter((warning) => warning.includes("retired engines form"))).toHaveLength(2);
     expect(warnings.join("\n")).toContain("akm migrate apply");
     for (const secret of [KEY_FILE_SECRET, STORED_SECRET, LITERAL]) expect(warnings.join("\n")).not.toContain(secret);
     expect(snapshot()).toEqual(before);

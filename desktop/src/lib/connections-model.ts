@@ -13,7 +13,6 @@ export type ModelEntry = string | ({ model: string } & Record<string, Json>);
 export interface ConnectionEntry {
   endpoint?: string;
   apiKey?: string;
-  apiKeyFile?: string;
   models?: Record<string, ModelEntry>;
   contextLength?: number;
   timeoutMs?: number | null;
@@ -53,7 +52,7 @@ export interface ConnectionDraft {
 }
 
 /** The keys akm owns on a connection; every other key is a request option sent as written. */
-export const OWN_KEYS = ["endpoint", "apiKey", "apiKeyFile", "models", "contextLength", "timeoutMs", "concurrency"];
+export const OWN_KEYS = ["endpoint", "apiKey", "models", "contextLength", "timeoutMs", "concurrency"];
 /** The longest timeout akm accepts (the workflow ceiling). */
 export const MAX_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 export const NAME_PATTERN = /^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -171,7 +170,7 @@ export function connectionChanges(draft: ConnectionDraft, base: ConnectionDraft)
 
 /**
  * The entry to write for a draft. A field the person did not change keeps its loaded value (a model keeps its string or
- * object shape, option order is kept, retired keys such as `apiKeyFile` stay). Call only for a draft with no errors.
+ * object shape, option order is kept). Call only for a draft with no errors.
  */
 export function connectionEntry(draft: ConnectionDraft, original: ConnectionEntry = {}): ConnectionEntry {
   const base = connectionDraft("", original);

@@ -216,20 +216,22 @@ for (const origin of ["previous", "0.9.32"] as const) {
       expect(plan.blockers ?? []).toEqual([]);
     });
 
-    test("2b. before `migrate apply` the origin model config loads; only the 0.9 engines form warns about migration", async () => {
+    test("2b. before `migrate apply` the origin model config loads; only the 0.9 engines form is named, and it is not converted", async () => {
       const info = await runLauncher(candidateLauncher, ["info"], home.env);
       expect(info.status, info.stderr).toBe(0);
-      const warnings = info.stderr
-        .split("\n")
-        .filter((line) => line.includes("uses the retired engines/defaults form"));
+      const warnings = info.stderr.split("\n").filter((line) => line.includes("is the retired engines form"));
       if (origin === "0.9.32") expect(home.modelConfig.legacyEngines).toBeDefined();
-      expect(warnings).toHaveLength(home.modelConfig.legacyEngines ? 1 : 0);
-      if (home.modelConfig.legacyEngines) expect(warnings[0]).toContain("akm migrate apply");
+      // One warning per retired key (`engines`, `defaults`), each naming the command that converts it.
+      expect(warnings).toHaveLength(home.modelConfig.legacyEngines ? 2 : 0);
+      for (const warning of warnings) expect(warning).toContain("akm migrate apply");
       const rows = (JSON.parse(info.stdout) as { connectionsAndHarnesses?: { type?: string; name?: string }[] })
         .connectionsAndHarnesses;
       const named = (rows ?? []).filter((row) => row.name).map((row) => `${row.type} ${row.name}`);
-      // The `opencode-sdk` engine `defaults.engine` named is the user's own OpenCode: the harness called `default`.
-      expect(named).toEqual(["connection default", "harness claude", "harness default"]);
+      // The 0.9 form yields nothing until it is migrated. The `opencode-sdk` engine `defaults.engine` named is the
+      // user's own OpenCode: after the migration, the harness called `default`.
+      expect(named).toEqual(
+        home.modelConfig.legacyEngines ? [] : ["connection default", "harness claude", "harness default"],
+      );
     });
 
     test("3. candidate migrate apply succeeds, removes experimental.workflowEngine, and status then reports current", async () => {
@@ -291,7 +293,7 @@ for (const origin of ["previous", "0.9.32"] as const) {
       // Converted once: the next load has nothing to warn about.
       const info = await runLauncher(candidateLauncher, ["info"], home.env);
       expect(info.status, info.stderr).toBe(0);
-      expect(info.stderr).not.toContain("retired engines/defaults form");
+      expect(info.stderr).not.toContain("is the retired engines form");
     });
 
     test("4. core read surfaces succeed: config get, bundle list, info, search, show, search --type task", async () => {

@@ -134,7 +134,7 @@ describe("F-2 (D8) — every NEW history row stores the result vocabulary and no
   test('a prepared command (agent/LLM) run stores target_kind "command", and engine in metadata', async () => {
     writeTask(
       "vocab-command",
-      ["version: 4", "uses: akm/command", "with:", "  content: say hi", "engine: opencode", ""].join("\n"),
+      ["version: 4", "uses: akm/command", "with:", "  content: say hi", "harness: opencode", ""].join("\n"),
     );
 
     const result = await runTask("vocab-command", {

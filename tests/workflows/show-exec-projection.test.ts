@@ -29,7 +29,7 @@ const WORKFLOW = [
   "type: workflow",
   "description: Runs the test suite as a shell command",
   "defaults:",
-  "  engine: default-engine",
+  "  connection: default-engine",
   "  model: default-model",
   "steps:",
   "  - id: test",

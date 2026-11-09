@@ -19,21 +19,22 @@
  * `credentials.json` already holds a different key or endpoint for, is not moved. It stays in the file: on the block that held
  * it, or, for an engine's `apiKey`, put back on the connection as `apiKey`
  * exactly as it was, so the rewrite never leaves it in the backups alone (akm
- * ignores a key held there, with a warning, until it is moved). An engine's
- * `apiKeyFile` is the exception: it names a file, not a key, and a connection
- * cannot hold it (an unowned key is sent as a request field), so a note names
- * the path. A note names the key's place and its entry, never its value.
+ * ignores a key held there, with a warning, until it is moved). An `apiKeyFile`
+ * is the exception: it names a file, not a key, and akm no longer reads or keeps it
+ * (an unowned key on a connection is sent as a request field), so one that cannot be
+ * moved is dropped and a note names the path. A note names the key's place and its
+ * entry, never its value.
  */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isRecord } from "../common";
-import { sameEndpoint } from "../endpoint-url";
-import { redactUrlCredentials } from "../redaction";
-import { isSecretRefToken } from "../ref-token";
+import { isRecord } from "../../../src/core/common";
+import { sameEndpoint } from "../../../src/core/endpoint-url";
+import { redactUrlCredentials } from "../../../src/core/redaction";
+import { isSecretRefToken } from "../../../src/core/ref-token";
 import type { ConvertEnginesResult } from "./convert-engines";
-import { type CredentialSlot, slotStanding } from "./credentials";
-import { isEnvReference } from "./schema/primitives";
+import { type CredentialSlot, slotStanding } from "../../../src/core/config/credentials";
+import { isEnvReference } from "../../../src/core/config/schema/primitives";
 
 type Dict = Record<string, unknown>;
 
@@ -98,6 +99,8 @@ interface Candidate {
   readonly restore?: () => void;
   /** Where it stays when it is not filed, for the note: on the connection as the key it was, or where the document holds it. */
   readonly stays: string;
+  /** An `apiKeyFile`: never kept, so it is dropped when it is not filed. */
+  readonly keyFile?: true;
 }
 
 /** The keys of the converted document that are not `$VAR` references. */
@@ -147,7 +150,11 @@ function documentCandidates(config: Dict, options: KeyMoveOptions): Candidate[] 
         remove: () => {
           delete block.apiKeyFile;
         },
-        stays: "in the file",
+        restore: () => {
+          delete block.apiKeyFile;
+        },
+        stays: "",
+        keyFile: true,
       });
     }
     return found;
@@ -173,7 +180,7 @@ function engineCandidates(
   options: KeyMoveOptions,
 ): Candidate[] {
   const engines = isRecord(original.engines) ? original.engines : {};
-  return converted.keys.flatMap(({ engine, connection, field }) => {
+  return converted.keys.flatMap(({ engine, connection, field }): Candidate[] => {
     const source = isRecord(engines[engine]) ? (engines[engine] as Dict) : {};
     const held = source[field];
     if (typeof held !== "string") return [];
@@ -188,11 +195,8 @@ function engineCandidates(
           from: `engines.${engine}.${field}`,
           read: () => readKeyFile(held),
           source: `its key file ${held}`,
-          restore: () => {
-            const block = isRecord(config.connections) ? config.connections[connection] : undefined;
-            if (isRecord(block)) block.apiKeyFile = held;
-          },
-          stays: "on the connection as apiKeyFile",
+          stays: "",
+          keyFile: true,
         },
       ];
     }
@@ -228,7 +232,9 @@ export function planKeyMoves(
     ...engineCandidates(original, converted, config, options),
     ...documentCandidates(config, options),
   ]) {
-    const stays = ` It stays ${candidate.stays}.`;
+    const stays = candidate.keyFile
+      ? " The key file path is dropped: akm does not read a key file."
+      : ` It stays ${candidate.stays}.`;
     const { owner } = candidate;
     if (owner !== undefined && candidate.endpoint !== undefined && !sameEndpoint(owner, candidate.endpoint)) {
       candidate.restore?.();
@@ -241,7 +247,7 @@ export function planKeyMoves(
     if (value === undefined) {
       candidate.restore?.();
       notes.push(
-        `${candidate.from}: ${candidate.source} could not be read, so no key moves and this is still to do.${stays} A later \`akm migrate apply\` moves it once it can be read.`,
+        `${candidate.from}: ${candidate.source} could not be read, so no key moves and this is still to do.${stays} ${candidate.keyFile ? "Store the key with `akm setup`." : "A later `akm migrate apply` moves it once it can be read."}`,
       );
       continue;
     }

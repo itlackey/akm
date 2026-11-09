@@ -252,7 +252,7 @@ describe("akm lint — decoder-only bounds now fail at lint time", () => {
         "type: workflow",
         "steps:",
         "  - id: only",
-        "    unit: { engine: My_Engine }",
+        "    unit: { connection: My_Engine }",
         "---",
         "",
         "## only",
@@ -265,7 +265,7 @@ describe("akm lint — decoder-only bounds now fail at lint time", () => {
     const result = await akmLint({ dir: stashDir, typeFilter: "workflows" });
     const structural = result.flagged.filter((i) => i.issue === "invalid-workflow-structure");
     expect(structural).toHaveLength(1);
-    expect(structural[0]!.detail).toContain('"engine" has an invalid name "My_Engine"');
+    expect(structural[0]!.detail).toContain('"connection" has an invalid name "My_Engine"');
   });
 });
 

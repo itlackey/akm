@@ -104,7 +104,7 @@ export function resolveImproveStrategy(name: string | undefined, config: AkmConf
   // falling through to the generic "resolve as a user strategy" path below
   // would silently merge it onto `default` and run a full, unplanned improve
   // pass instead of refusing. `akm migrate apply` drops the leftover block
-  // (src/core/config/config.ts, normalizeConfigFile) since it can never
+  // (scripts/akm-migrate/config/normalize.ts, normalizeConfigFile) since it can never
   // apply again.
   if (selectedName === "graph-refresh") {
     const hasLeftoverOverride = Boolean(userStrategies["graph-refresh"]);

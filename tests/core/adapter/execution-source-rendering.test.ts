@@ -222,6 +222,34 @@ describe("adapter-rendered execution sources", () => {
     }
   });
 
+  test("a retired `engine:` selects nothing and is named once, with the command that rewrites it", () => {
+    const warnings: string[] = [];
+    _resetWarnOnceForTests();
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      for (const metadata of ["engine: selected", "akm:\n  engine: selected"]) {
+        const rendered = renderMarkdownExecutionSource({
+          kind: "persona",
+          raw: `---\n${metadata}\n---\nDo work.\n`,
+          identity: {
+            ref: "fixture//agents/retired-engine",
+            bundle: "fixture",
+            adapter: "akm",
+            file: "agents/retired-engine.md",
+          },
+          defaults: (data) => executionDefaultsFromFrontmatter(data, { kind: "persona", allowTopLevelEngine: true }),
+        });
+        expect(rendered.defaults).toEqual({});
+      }
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("akm migrate apply");
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+  });
+
   test("an alias reference still fails via toJS's own maxAliasCount bound, now as a UsageError naming the file", () => {
     expect(() =>
       parseExecutionMarkdown("---\nmodel: &chosen one\nengine: *chosen\n---\nDo work.\n", "commands/aliased.md"),
@@ -252,9 +280,6 @@ describe("adapter-rendered execution sources", () => {
     expect(renderDefaults("akm:\n  inference: {}", "persona").defaults).toEqual({ inference: {} });
     expect(() => renderDefaults("temperature: false", "persona")).toThrow(/frontmatter\.temperature|number/i);
     expect(() => renderDefaults("effort: {}", "persona")).toThrow(/frontmatter\.effort|string/i);
-    expect(() => renderDefaults("engine: selected\nakm:\n  engine: false", "persona")).toThrow(
-      /frontmatter\.akm\.engine|engine.*string/i,
-    );
     expect(() => renderDefaults("schema: {}\nakm:\n  schema: false", "persona")).toThrow(
       /frontmatter\.akm\.schema|schema.*object/i,
     );

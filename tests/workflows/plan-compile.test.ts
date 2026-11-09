@@ -129,7 +129,7 @@ type: workflow
 description: Review changed files and triage the outcome
 params:
   changed_files: { type: array, items: { type: string } }
-defaults: { engine: default-agent, model: balanced, timeout: 10m, on_error: continue }
+defaults: { connection: default-agent, model: balanced, timeout: 10m, on_error: continue }
 steps:
   - id: discover
     unit:
@@ -139,7 +139,7 @@ steps:
       over: steps.discover.output.files
       concurrency: 8
       reducer: vote
-      unit: { engine: reviewer, model: deep, timeout: 5m, retry: { max: 1, on: [timeout, llm_rate_limit] }, on_error: fail }
+      unit: { connection: reviewer, model: deep, timeout: 5m, retry: { max: 1, on: [timeout, llm_rate_limit] }, on_error: fail }
     output: { type: object, properties: { verdict: { type: string } } }
     gate: { max_loops: 2 }
   - id: triage
@@ -190,7 +190,7 @@ describe("compiled and frozen plan — full-vocabulary golden", () => {
     expect(plan.title).toBe("review-changes");
     expect(plan.params).toEqual(["changed_files"]);
     expect(plan.defaults).toEqual({
-      engine: "default-agent",
+      connection: "default-agent",
       model: "balanced",
       timeoutMs: 600_000,
       onError: "continue",
@@ -203,7 +203,7 @@ describe("compiled and frozen plan — full-vocabulary golden", () => {
       spec: {
         map: { over: "steps.discover.output.files", concurrency: 8, reducer: "vote" },
         unit: {
-          engine: "reviewer",
+          connection: "reviewer",
           model: "deep",
           timeoutMs: 300_000,
           retry: { max: 1, on: ["timeout", "llm_rate_limit"] },
@@ -216,7 +216,10 @@ describe("compiled and frozen plan — full-vocabulary golden", () => {
   });
 
   test("freeze turns each step into its frozen node: unit ids, map template, defaults applied", () => {
-    const executable = FULL_WF.replace("default-agent", "test-llm").replace("engine: reviewer", "engine: test-llm");
+    const executable = FULL_WF.replace("default-agent", "test-llm").replace(
+      "connection: reviewer",
+      "connection: test-llm",
+    );
     const plan = freezeWorkflow(executable, "workflows/test.md");
     const [discover, review, triage, ship] = plan.steps;
     expect(discover?.root).toMatchObject({
@@ -529,7 +532,10 @@ Do the assigned item.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("computePlanHash", () => {
-  const executableWf = FULL_WF.replace("default-agent", "test-llm").replace("engine: reviewer", "engine: test-llm");
+  const executableWf = FULL_WF.replace("default-agent", "test-llm").replace(
+    "connection: reviewer",
+    "connection: test-llm",
+  );
 
   test("same workflow → same hash (deterministic across compiles)", () => {
     const a = freezeWorkflow(executableWf, "workflows/test.md");

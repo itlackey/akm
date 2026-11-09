@@ -591,8 +591,8 @@ harness directly and starts it with the terminal inherited; a connection has
 nothing to start.
 
 A config in the older `engines` form is converted to `connections` and
-`harnesses` by one pure function (`src/core/config/convert-engines.ts`), in
-memory on every load and permanently by `akm migrate apply`.
+`harnesses` by one pure function (`scripts/akm-migrate/config/convert-engines.ts`),
+run only by `akm migrate apply`; a load reads the current shape and names the retired form.
 
 Task source v4 execution and durable workflow dispatch use this runtime
 boundary. Markdown workflows compile through source IR v1; new starts freeze
@@ -742,7 +742,7 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/core/adapter/` | the `BundleAdapter` contract and the built-in adapters (see [Adapters](adapters.md)) |
 | `src/core/config/config.ts` | config loading, validation, env resolution; the default connection and harness |
 | `src/core/config/credentials.ts` | `credentials.json` and the dispatch-time resolution of a connection's key (`$VAR`, else the stored entry) |
-| `src/core/config/convert-engines.ts` | the one conversion of the older `engines` / `defaults` form to `connections` / `harnesses`, called by the loader and by `akm migrate apply` |
+| `scripts/akm-migrate/config/convert-engines.ts` | the one conversion of the older `engines` / `defaults` form to `connections` / `harnesses`, run only by `akm migrate apply` |
 | `src/core/errors.ts` | error classes with stable codes and hints |
 | `src/core/parse.ts` | shared JSON parsing: think/fence stripping, balanced-brace extraction |
 | `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 1 worker) and keyed serialization |

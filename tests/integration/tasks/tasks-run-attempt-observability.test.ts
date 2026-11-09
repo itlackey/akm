@@ -293,7 +293,7 @@ describe("tasks run attempt observability", () => {
     const errorSecret = "DISPATCH-ERROR-SECRET-SENTINEL";
     writeTask(
       "dispatch-throws",
-      ["version: 4", "uses: akm/command", "with:", `  content: ${promptSecret}`, "engine: opencode"].join("\n"),
+      ["version: 4", "uses: akm/command", "with:", `  content: ${promptSecret}`, "harness: opencode"].join("\n"),
     );
     writeRawConfig(
       JSON.stringify({

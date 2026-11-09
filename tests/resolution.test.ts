@@ -150,11 +150,6 @@ describe("the nearest layer that names a target decides", () => {
     expect(connectionFor(config, [{ connection: "cloud" }, { model: "fast" }]).name).toBe("cloud");
   });
 
-  test("the retired engine key is a connection by that name, else a harness", () => {
-    expect(connectionFor(config, [{ engine: "cloud" }]).name).toBe("cloud");
-    expect(harnessFor(config, [{ engine: "claude" }]).name).toBe("claude");
-  });
-
   describe("a name that is not configured", () => {
     const failure = (layers: UnresolvedExecutionDefaults[], modelWork = true) =>
       failureOf(() => resolveTarget({ config, layers, modelWork }));
@@ -176,8 +171,7 @@ describe("the nearest layer that names a target decides", () => {
       expect(failure([{ connection: "gone" }]).message).not.toContain("Did you mean");
     });
 
-    test("is an error for the retired engine spelling too, and for the nearest layer that names anything", () => {
-      expect(failure([{ engine: "gone" }]).message).toContain('"gone" is not configured');
+    test("is an error for the nearest layer that names anything", () => {
       // A nearer layer that is configured does not rescue a farther one; the nearest layer that names a target decides.
       expect(connectionFor(config, [{ connection: "gone" }, { connection: "cloud" }]).name).toBe("cloud");
       expect(failure([{ connection: "cloud" }, { connection: "gone" }]).message).toContain('"gone"');
@@ -348,14 +342,11 @@ describe("the request", () => {
           timeoutMs: 1000,
           concurrency: 2,
           temperature: 0.1,
-          // A key file an earlier migration could not read yet: kept as written, never sent.
-          apiKeyFile: "/run/secrets/key",
         },
       },
     });
     const runner = connectionFor(config);
     expect(runner.request).toEqual({ temperature: 0.1 });
-    expect(JSON.stringify(runner)).not.toContain("/run/secrets/key");
     expect(runner).toMatchObject({
       apiKey: "$CLOUD_KEY",
       contextLength: 8192,

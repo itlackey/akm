@@ -26,15 +26,17 @@ spelling is in the CHANGELOG entry and the CLI reference.
 | `--run` / `--since` on `akm improve` | `akm improve report --run` / `--since` |
 
 **Connections and harnesses (0.10, #1244).** `engines` and `defaults` are
-replaced by `connections` and `harnesses`. A config in the old form still loads
-(converted in memory, with a warning that names `akm migrate apply`), and `akm
-migrate apply` converts it.
+replaced by `connections` and `harnesses`. akm reads only the new shape: a config
+in the old form loads with no connections or harnesses from it and one warning
+that names `akm migrate apply`, which converts it (`akm upgrade` runs it).
 
 `--engine <name>` (on `agent`, `command run`, `task add`, `proposal new` and
-`proposal extract`) and `--require-engines` (on `improve`) are hidden from
-`--help` and still run, with one warning, through 0.10. `--require-engines`
-does nothing. Change a script to `--connection <name>` or `--harness <name>`,
-and `--model <alias|name>`; how an old engine name resolves is under
+`proposal extract`) and `--require-engines` (on `improve`) are removed: they are
+unknown flags (exit 2). Change a script to `--connection <name>` or `--harness
+<name>`, and `--model <alias|name>`. `engine:` in an asset is not read either: a
+workflow or task source that says it is refused, naming `akm migrate apply`, and
+a command or agent runs on the default with one warning. How an old engine name
+is rewritten is under
 [The `engines` form](docs/reference/configuration.md#the-engines-form).
 
 `AKM_ENGINE_<NAME>_API_KEY`, `AKM_LLM_API_KEY` and `AKM_EMBED_API_KEY` are no

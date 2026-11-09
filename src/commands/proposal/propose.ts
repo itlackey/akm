@@ -206,7 +206,7 @@ function proposeItemRef(bundleId: string, type: string, name: string): string {
  * (`proposeItemRef`), so the entry event and the stored proposal agree.
  */
 function emitProposeInvoked(bundleId: string, options: AkmProposeOptions): void {
-  const named = options.selection?.connection ?? options.selection?.harness ?? options.selection?.engine;
+  const named = options.selection?.connection ?? options.selection?.harness;
   appendEvent({
     eventType: "propose_invoked",
     ref: proposeItemRef(bundleId, options.type, options.name),

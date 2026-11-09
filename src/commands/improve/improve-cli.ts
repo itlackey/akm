@@ -15,7 +15,7 @@ import { UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
 import { getRunLogDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
-import { clearLogFile, setLogFile, warnOnce } from "../../core/warn";
+import { clearLogFile, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/stdout";
@@ -159,8 +159,6 @@ export const improveCommand = defineCommand({
       description: "Skip (exit 0, not 75) if another improve run holds the lock",
       default: false,
     },
-    // Retired: a run already stops at planning (exit 78) when no process has a connection or harness to run on.
-    "require-engines": { type: "boolean", hidden: true, description: "Retired: has no effect." },
     "show-prompt": {
       type: "boolean",
       description: "Print the composed reflect prompt for one asset ref and exit (no lock, index write or model call)",
@@ -184,12 +182,6 @@ export const improveCommand = defineCommand({
     await runWithJsonErrors(async () => {
       // citty runs this body after a subcommand it dispatched too.
       if (hasSubcommand(args, new Set(Object.keys(IMPROVE_SUBCOMMANDS)))) return;
-      if (args["require-engines"]) {
-        warnOnce(
-          "retired-flag:--require-engines",
-          "--require-engines is retired and has no effect: akm improve already stops at planning (exit 78) when no process has a connection or harness to run on, and `akm health` checks the connections and harnesses.",
-        );
-      }
       const jsonToStdout = args["json-to-stdout"];
       const targetArg = getStringArg(args, "bundle");
       const taskArg = getStringArg(args, "task");

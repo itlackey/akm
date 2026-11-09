@@ -142,6 +142,7 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
  * `commands` limits an entry to those command paths; absent means every command.
  */
 const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly string[] }> = [
+  { flag: "--engine", use: "`--connection <name>` or `--harness <name>`" },
   { flag: "--shape", use: "`--detail agent` (was `--shape agent`) or `--detail brief` (was `--shape summary`)" },
   {
     flag: "--target",

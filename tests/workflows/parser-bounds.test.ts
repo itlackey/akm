@@ -77,8 +77,8 @@ describe("bug 9 — parser enforces the decoder's bounds with line anchors", () 
     expect(parseErrors(workflowWith([`    unit: { timeout: ${WORKFLOW_MAX_TIMEOUT_MS} }`]))).toHaveLength(0);
   });
 
-  test("a connection, harness or engine name outside the frozen-plan grammar is a line-anchored parser error (unit and defaults)", () => {
-    for (const key of ["connection", "harness", "engine"]) {
+  test("a connection or harness name outside the frozen-plan grammar is a line-anchored parser error (unit and defaults)", () => {
+    for (const key of ["connection", "harness"]) {
       const unitCase = parseErrors(workflowWith([`    unit: { ${key}: My_Engine }`]));
       expect(unitCase).toHaveLength(1);
       expect(unitCase[0]!.line).toBe(5);

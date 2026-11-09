@@ -68,9 +68,7 @@ export function assertUnsettable(key: string): void {
     throw new UsageError(
       `Config key "${key}" is inside ${ignored.kind} "${ignored.name}", which akm ignores (${ignored.why}), so \`akm config\` cannot edit it.`,
       "TARGET_NOT_UPDATABLE",
-      ignored.inFile
-        ? `Remove or fix the ${ignored.group}.${ignored.name} entry in ${getConfigPath()} by hand.`
-        : `${getConfigPath()} is still in the retired engines form: run \`akm migrate apply\` first, then fix or remove the entry.`,
+      `Remove or fix the ${ignored.group}.${ignored.name} entry in ${getConfigPath()} by hand.`,
     );
   }
 }

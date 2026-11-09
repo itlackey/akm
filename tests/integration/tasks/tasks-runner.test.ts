@@ -1055,7 +1055,7 @@ describe("runTask — prompt target", () => {
         "env:",
         "  AKM_BUNDLE_DIR: /authored-override",
         "  TASK_FLAG: retained",
-        "engine: opencode",
+        "harness: opencode",
         "",
       ].join("\n"),
     );

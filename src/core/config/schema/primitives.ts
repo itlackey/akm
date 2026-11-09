@@ -97,8 +97,7 @@ export const envReferenceApiKey = z.string().transform((value) => {
 });
 
 /**
- * The retired `apiKeyFile` of an engine that `akm migrate apply` could not read yet: kept as written so a
- * later run can move the key it names, never read, sent or printed by akm.
+ * An `apiKeyFile` that `akm migrate apply` has not moved yet: named once, and never read, sent or printed by akm.
  */
 export const retiredApiKeyFile = z.string().transform((value) => {
   warnOnce(

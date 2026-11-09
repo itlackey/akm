@@ -7,9 +7,9 @@
  * few helpers more than one of them needs. See `convert-engines.ts`.
  */
 
-import { isRecord } from "../common";
-import { normalizeExtraParamKey } from "../extra-params";
-import { inferenceWireFields, type LlmInference } from "../llm-inference";
+import { isRecord } from "../../../src/core/common";
+import { normalizeExtraParamKey } from "../../../src/core/extra-params";
+import { inferenceWireFields, type LlmInference } from "../../../src/core/llm-inference";
 
 export type Dict = Record<string, unknown>;
 

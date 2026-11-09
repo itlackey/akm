@@ -7,14 +7,13 @@
  * and harnesses the engines became. See `convert-engines.ts`.
  */
 
-import { getHarness } from "../../integrations/harnesses";
-import { isRecord } from "../common";
-import type { LlmInference } from "../llm-inference";
+import { getHarness } from "../../../src/integrations/harnesses";
+import { isRecord } from "../../../src/core/common";
+import type { LlmInference } from "../../../src/core/llm-inference";
 import { type Conversion, type Dict, type Entries, str, wireFieldsOf } from "./convert-engines-shared";
-import { modelForEveryAlias } from "./model-aliases";
 
 const allAliases = (model: string | undefined): Dict | undefined =>
-  model === undefined ? undefined : modelForEveryAlias(model);
+  model === undefined ? undefined : { fast: model, balanced: model, reasoning: model };
 
 /** An overlay entry as a model entry: the bare name, or `{ model, ...fields }` when it sets more. */
 function modelEntry(model: string, fields: Dict): unknown {

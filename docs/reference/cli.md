@@ -2264,13 +2264,14 @@ in order:
 
 1. config.json rewritten in its current shape (`configFile`): unknown keys
    dropped, `configVersion` bumped, and the `engines` / `defaults` form converted
-   to `connections` / `harnesses` — the same conversion every load already
-   runs in memory, so this only persists it, under a backup. The keys akm no
+   to `connections` / `harnesses` — a conversion only this command makes: akm
+   reads only the current shape, and a load names a retired form and points
+   here. It is written under a backup. The keys akm no
    longer reads from config (an engine's `apiKeyFile`, a literal or
    `${secrets/...}` `apiKey`, and the same on a connection or `embedding`)
    move to `credentials.json`, one note per key and
    never its value; a key that cannot be moved stays where it was, with a
-   note. A leftover `models.json` is folded into the `models` of the
+   note (a key file that cannot be read is dropped, with a note naming its path). A leftover `models.json` is folded into the `models` of the
    connections and harnesses it names, then moved to `config-backups/` in the
    cache directory. A connection or harness akm cannot use stays in the file as
    written, with a note on what to fix. What each retired key becomes is the
@@ -3067,9 +3068,10 @@ can run at all (no connection or harness is configured, or several are and none
 is called `default`), there is nothing to degrade to: the run stops at planning
 with exit 78, naming what is missing, before it takes a lock, writes the index
 or opens a log, and `--dry-run` stops the same way. No flag asks for that. (The
-0.9 `--require-engines` is still accepted and does nothing, with one warning, so
-a task installed for 0.9 keeps running. It used to refuse the run unless every
-enabled process had a usable target; that check is gone, and `akm health`
+0.9 `--require-engines` is removed, so a task installed for 0.9 that passes it
+fails with an unknown flag; edit the task and run `akm task sync`. It used to
+refuse the run unless every enabled process had a usable target; that check is
+gone, and `akm health`
 (`akm health && akm improve`, which stops on exit 4) is what checks whether each
 connection answers and each harness is installed.)
 
