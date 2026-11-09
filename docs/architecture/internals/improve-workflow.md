@@ -43,7 +43,7 @@ A live run:
    4. validation: a ref whose file is missing, or a lesson without a `description`, is excluded; schema repair tries to fix those when `validation` is enabled;
    5. selection: the signal-delta filter, the proactive-maintenance lane, salience ranking, a disk check, and `--limit`.
 7. The per-asset loop (`runImproveLoopStage`, `loop-stages.ts`): for each selected ref, reflect, then distill for a distillable memory. The wall-clock budget is checked before each ref.
-8. Post-loop maintenance (`runImprovePostLoopStage`), skipped when the budget is spent: memory inference (reindex if it wrote anything), proposal hygiene (orphan purge and expiry), orphaned-state GC, the retention purges (events, `improve_runs`, `logs.db`, task log files, and the per-run improve and index log files under `$CACHE/logs/`; `improve.eventRetentionDays`, default 90), and, for a whole-bundle scope, a dead-link check on URLs in knowledge bodies.
+8. Post-loop maintenance (`runImprovePostLoopStage`), skipped when the budget is spent: memory inference (reindex if it wrote anything), proposal hygiene (orphan purge and expiry), orphaned-state marking (stamps `missing_since` and counts; never deletes a row), the retention purges (events, `improve_runs`, `logs.db`, task log files, and the per-run improve and index log files under `$CACHE/logs/`; `improve.eventRetentionDays`, default 90), and, for a whole-bundle scope, a dead-link check on URLs in knowledge bodies.
 9. Assemble the result, emit `improve_completed`, run the end-of-run sync, release the lock.
 
 A dry run skips steps 2 to 4. It collects refs (step 5), evaluates the preparation gates read-only (`planOnly`), and reports the plan; nothing is dispatched or persisted.

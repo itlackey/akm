@@ -178,6 +178,7 @@ describe("keys with no reader are unknown keys", () => {
   test.each([
     ["setup", { setup: {} }],
     ["improve.salience", { improve: { salience: {} } }],
+    ["improve.stateGc", { improve: { stateGc: { collect: true } } }],
     [
       "bundles.docs.website.refresh",
       { bundles: { docs: { website: { url: "https://example.com/", refresh: "1d" } } } },
@@ -213,6 +214,23 @@ describe("keys with no reader are unknown keys", () => {
     const found = unknownConfigKeyPaths({ ...fragment } as Record<string, unknown>).map((p) => p.join("."));
     expect(found).toEqual([dotted]);
     expect(() => loadUserConfig()).not.toThrow();
+  });
+});
+
+describe("a config still holding improve.stateGc.collect", () => {
+  test("loads with one unknown-key warning", () => {
+    writeConfig({ connections: CONNECTIONS, improve: { stateGc: { collect: true } } });
+    const warnings = loadWarnings().filter((w) => w.includes("Unknown config key"));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('"improve.stateGc"');
+  });
+
+  test("migrate apply drops it and keeps the rest of improve", async () => {
+    writeConfig({ connections: CONNECTIONS, improve: { eventRetentionDays: 30, stateGc: { collect: true } } });
+    const result = await runCliCapture(["migrate", "apply"]);
+    expect(result.code, result.stderr).toBe(0);
+    const stored = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as { improve: Record<string, unknown> };
+    expect(stored.improve).toEqual({ eventRetentionDays: 30 });
   });
 });
 

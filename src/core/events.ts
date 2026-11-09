@@ -143,10 +143,9 @@ export type EventType =
    * #733 — emitted by `runOrphanStateGcPass` (the orphan-state GC maintenance
    * pass) when a run has something to report: any `asset_salience` /
    * `asset_outcome` row currently pending (unresolved against
-   * `entries.item_ref`) or collected (deleted, only when
-   * `improve.stateGc.collect` is true) this run. A quiet run with nothing
-   * pending and nothing collected emits no event. Metadata carries
-   * `{pending, collected, byTable}`, where `byTable` breaks both counts down
+   * `entries.item_ref`). Rows are never deleted. A quiet run with nothing
+   * pending emits no event. Metadata carries
+   * `{pending, byTable}`, where `byTable` breaks the count down
    * per table (`asset_salience` / `asset_outcome`). Sentinel ref:
    * `asset_state/_gc` (same convention as `proposals/_orphan-purge`).
    */

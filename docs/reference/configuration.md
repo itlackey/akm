@@ -915,12 +915,11 @@ the other entry before running ordinary commands.
 
 ### Improve housekeeping
 
-Two `improve` keys trim akm's own stores; neither chooses where model work runs.
+One `improve` key trims akm's own stores; it does not choose where model work runs. Salience and outcome rows are improve history and are never deleted: a row whose asset has left the index is marked `missing_since` and counted in the `asset_state_gc` event, and stays.
 
 | Key | Effect |
 | --- | --- |
 | `improve.eventRetentionDays` | `akm improve` purges events, improve run rows, task logs and per-run task log files older than this many days (default `90`; `0` disables the purge) |
-| `improve.stateGc.collect` | Whether `akm improve` deletes salience and outcome rows whose asset has been gone from the index for more than 7 days. Default `false`: the rows are only marked and counted, never deleted. `true` turns deletion on |
 
 ### Memory scope
 
