@@ -195,7 +195,10 @@ published (an abandoned branch) stays unused.
 ## Repository settings
 
 The process is enforced by the repository's settings where GitHub allows it.
-Set these once. `main` stays the default branch.
+`bun scripts/github-settings.ts` applies everything in this section through
+`gh api` (logged in with admin rights; `--dry-run` prints the requests). It
+reads the required checks from the workflow files, so run it again after a CI
+matrix change. `main` stays the default branch.
 
 **Ruleset `main`** (Settings → Rules → Rulesets; rulesets are the current form
 of branch protection and are available on a public repository under the Free
