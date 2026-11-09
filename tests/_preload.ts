@@ -82,6 +82,8 @@ const HARNESSED: readonly string[] = [
   "XDG_STATE_HOME",
   // Home directory itself.
   "HOME",
+  // Windows ignores HOME and the XDG variables: its locations come from these (set below, on win32 only).
+  ...(process.platform === "win32" ? ["USERPROFILE", "APPDATA", "LOCALAPPDATA"] : []),
   // Codex and Claude Code session-log roots (pointed into the sandbox at preload).
   "CODEX_HOME",
   "CLAUDE_CONFIG_DIR",
@@ -113,6 +115,16 @@ function removeSuiteRoot(): void {
   }
 }
 
+/** The Windows profile folders, under the suite sandbox: what akm reads there instead of HOME and XDG_*. */
+function windowsProfileEnv(root: string): Record<string, string> {
+  const home = path.join(root, "home");
+  return {
+    USERPROFILE: home,
+    APPDATA: path.join(home, "AppData", "Roaming"),
+    LOCALAPPDATA: path.join(home, "AppData", "Local"),
+  };
+}
+
 function installSuiteWideSandbox(): void {
   suiteSandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-test-suite-"));
   registerTestRoot(suiteSandboxRoot);
@@ -128,6 +140,11 @@ function installSuiteWideSandbox(): void {
   process.env.XDG_CACHE_HOME = path.join(suiteSandboxRoot, "xdg-cache");
   process.env.XDG_DATA_HOME = path.join(suiteSandboxRoot, "xdg-data");
   process.env.XDG_STATE_HOME = path.join(suiteSandboxRoot, "xdg-state");
+  // On Windows akm resolves config, data, cache, state and the default bundle from the profile folders, not from
+  // HOME or XDG_*: without these the sandbox would not hold, and the afterEach tripwire would see the runner's own.
+  if (process.platform === "win32") {
+    for (const [name, value] of Object.entries(windowsProfileEnv(suiteSandboxRoot))) process.env[name] = value;
+  }
   // The AKM_*_DIR overrides take precedence over XDG in src/core/paths.ts.
   // If a developer's shell exports any of them, they would defeat the XDG
   // sandbox above and leak production paths into the suite. Delete them at
@@ -261,6 +278,7 @@ const SANDBOX_ENV: Record<string, string> = {
   XDG_CACHE_HOME: path.join(suiteSandboxRoot ?? "", "xdg-cache"),
   XDG_DATA_HOME: path.join(suiteSandboxRoot ?? "", "xdg-data"),
   XDG_STATE_HOME: path.join(suiteSandboxRoot ?? "", "xdg-state"),
+  ...(process.platform === "win32" ? windowsProfileEnv(suiteSandboxRoot ?? "") : {}),
 };
 
 const AKM_DIR_OVERRIDES: readonly string[] = [

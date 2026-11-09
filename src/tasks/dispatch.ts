@@ -121,6 +121,37 @@ function inputFlagTail(inputs: Readonly<Record<string, unknown>> | undefined): s
   return tail;
 }
 
+/** One enabled ref read as dispatch reads it: where it lives, and the schedule entries it carries. */
+function readEnabledTask(ref: string, sources: ReturnType<typeof activeTaskSources>) {
+  const parsedRef = parseBundleRef(ref);
+  const bundle = parsedRef.bundle as string;
+  const source = resolveSourcesForOrigin(bundle, sources)[0];
+  if (!source) throw new Error(`bundle ${JSON.stringify(bundle)} is not active on this host`);
+  const adapterId = source.adapterId ?? detectAdapterId(source.path);
+  const file = path.join(source.path, `${parsedRef.conceptId}.yml`);
+  const parsed = parseTaskSource({ yaml: fs.readFileSync(file, "utf8"), filePath: file });
+  const id = adapterId === "akm" ? parsedRef.conceptId.replace(/^tasks\//, "") : parsedRef.conceptId;
+  return { id, bundle, schedule: parsed.v4.schedule.map((entry) => ({ ...entry, spec: parseSchedule(entry.cron) })) };
+}
+
+/**
+ * The enabled tasks dispatch cannot run (a missing or unreadable file, an inactive bundle, a schedule the grammar
+ * rejects), each with the reason. Dispatch reports the same failures, but only in a log that is rewritten every
+ * minute; `task doctor` and `akm health` read them here.
+ */
+export function unrunnableTasks(config: AkmConfig = loadConfig()): { ref: string; reason: string }[] {
+  const sources = activeTaskSources(config);
+  const failures: { ref: string; reason: string }[] = [];
+  for (const ref of schedulerEnabledRefs(config) ?? []) {
+    try {
+      readEnabledTask(ref, sources);
+    } catch (cause) {
+      failures.push({ ref, reason: cause instanceof Error ? cause.message : String(cause) });
+    }
+  }
+  return failures;
+}
+
 /** The enabled tasks due in any of `minutes`, one entry per task: the first schedule entry that matched. */
 function dueTasks(
   config: AkmConfig,
@@ -132,20 +163,12 @@ function dueTasks(
   const due: DispatchedTask[] = [];
   for (const ref of refs) {
     try {
-      const parsedRef = parseBundleRef(ref);
-      const bundle = parsedRef.bundle as string;
-      const source = resolveSourcesForOrigin(bundle, sources)[0];
-      if (!source) throw new Error(`bundle ${JSON.stringify(bundle)} is not active on this host`);
-      const adapterId = source.adapterId ?? detectAdapterId(source.path);
-      const file = path.join(source.path, `${parsedRef.conceptId}.yml`);
-      const parsed = parseTaskSource({ yaml: fs.readFileSync(file, "utf8"), filePath: file });
-      const entry = parsed.v4.schedule.find((candidate) => {
-        const spec = parseSchedule(candidate.cron);
-        return minutes.some((minute) => scheduleMatchesMinute(spec.fields, new Date(minute * MINUTE_MS)));
-      });
+      const task = readEnabledTask(ref, sources);
+      const entry = task.schedule.find((candidate) =>
+        minutes.some((minute) => scheduleMatchesMinute(candidate.spec.fields, new Date(minute * MINUTE_MS))),
+      );
       if (!entry) continue;
-      const id = adapterId === "akm" ? parsedRef.conceptId.replace(/^tasks\//, "") : parsedRef.conceptId;
-      due.push({ ref, id, bundle, inputFlags: inputFlagTail(entry.inputs) });
+      due.push({ ref, id: task.id, bundle: task.bundle, inputFlags: inputFlagTail(entry.inputs) });
     } catch (cause) {
       failures.push({ ref, reason: cause instanceof Error ? cause.message : String(cause) });
     }
@@ -153,16 +176,17 @@ function dueTasks(
   return due;
 }
 
-/** A task run is in flight when its recorded process is alive; one without a pid (older akm) counts for the default timeout. */
+/**
+ * A task run is in flight when it is younger than the default scheduled timeout and its recorded process is alive
+ * (one without a pid, from an older akm, counts by age alone). A crashed run whose pid was reused by another process
+ * therefore blocks its task for that timeout, not forever.
+ */
 function runningTaskIds(ids: readonly string[], now: number): Set<string> {
   const running = new Set<string>();
   withStateDb((db) => {
     for (const run of listActiveTaskRuns(db, ids)) {
-      const alive =
-        run.pid !== undefined
-          ? isProcessAlive(run.pid)
-          : now - new Date(run.started_at).getTime() < DEFAULT_SCHEDULED_TASK_TIMEOUT_MS;
-      if (alive) running.add(run.task_id);
+      const young = now - new Date(run.started_at).getTime() < DEFAULT_SCHEDULED_TASK_TIMEOUT_MS;
+      if (young && (run.pid === undefined || isProcessAlive(run.pid))) running.add(run.task_id);
     }
   });
   return running;
@@ -231,7 +255,8 @@ export async function dispatchDueTasks(deps: DispatchDeps = {}): Promise<TaskDis
     }
     const argv = [...launcher, "task", "run", task.id, "--bundle", task.bundle, "--scheduled", ...task.inputFlags];
     try {
-      await start(argv, path.join(logDir, `${task.id.replace(/[\\/]/g, "__")}.log`));
+      const logName = `${task.bundle}__${task.id}`.replace(/[\\/]/g, "__");
+      await start(argv, path.join(logDir, `${logName}.log`));
       result.started.push(task.ref);
     } catch (cause) {
       result.failures.push({ ref: task.ref, reason: cause instanceof Error ? cause.message : String(cause) });

@@ -9,10 +9,11 @@
  * `src/cli.ts` wraps these in citty `defineCommand`s and shapes their return
  * values via `output()`.
  *
- * Only `sync` (and `prune`) write the OS scheduler, and what they write is one
- * entry that runs `akm task dispatch` every minute (`src/tasks/dispatch.ts`).
- * `add`, `enable` and `disable` edit task files and `scheduler.enabled`;
- * dispatch reads both on the next minute.
+ * The OS scheduler holds one entry that runs `akm task dispatch` every minute
+ * (`src/tasks/dispatch.ts`); `sync` and `prune` write it. `add`, `enable` and
+ * `disable` edit task files and `scheduler.enabled` (dispatch reads both on the
+ * next minute) and then run `sync`, so the first enabled task installs the entry
+ * and the last disabled one removes it.
  */
 
 import fs from "node:fs";
@@ -44,6 +45,7 @@ import {
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { selectBackend } from "../../tasks/backends";
 import type { DispatchEntry, EntryChange, LegacyRow, SchedulerBackend } from "../../tasks/backends/types";
+import { unrunnableTasks } from "../../tasks/dispatch";
 import { movedLocations } from "../../tasks/installation";
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
@@ -89,7 +91,7 @@ export interface TasksAddInput {
   tags?: string[];
   disabled?: boolean;
   force?: boolean;
-  /** Accepted and ignored: `add` no longer touches the OS scheduler (`akm task sync --rebind` points the entry at this akm). */
+  /** Accepted and ignored: `add` leaves the entry's launcher alone (`akm task sync --rebind` points it at this akm). */
   rebind?: boolean;
 }
 
@@ -101,11 +103,15 @@ export interface TasksAddResult {
   schedule: string;
   enabled: boolean;
   target: TaskV3SourceDocument["target"];
+  /** What the sync that followed did to the OS scheduler entry; absent when the scheduler was unavailable (see `warnings`). */
+  sync?: TasksSyncResult;
+  warnings?: string[];
 }
 
 export interface TaskMutationDeps {
   writeAsset?: typeof writeAssetToSource;
   commitBoundary?: typeof commitWriteTargetBoundary;
+  sync?: TaskSyncDeps;
 }
 
 export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps = {}): Promise<TasksAddResult> {
@@ -113,7 +119,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   assertTaskAddTargetShape(input);
   parseSchedule(input.schedule);
   if (input.rebind === true) {
-    warn("`task add --rebind` is ignored: `add` no longer touches the OS scheduler. Run `akm task sync --rebind`.");
+    warn("`task add --rebind` is ignored: `add` leaves the entry's launcher alone. Run `akm task sync --rebind`.");
   }
 
   const bundle = resolveTaskBundle(input.target);
@@ -165,6 +171,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   await (deps.writeAsset ?? writeAssetToSource)(bundle.resolved.source, bundle.resolved.config, taskAssetRef(id), yaml);
   (deps.commitBoundary ?? commitWriteTargetBoundary)(bundle.resolved, `Update tasks/${id}`);
   if (!input.disabled) setSchedulerRefEnabled(qualifiedRef, true);
+  const synced = await syncAfterSave(deps.sync);
   return {
     id,
     ref: conceptIdFromTypeName("task", id),
@@ -173,6 +180,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     schedule: first.cron,
     enabled: input.disabled !== true,
     target: task.target,
+    ...synced,
   };
 }
 
@@ -269,6 +277,9 @@ export interface TasksActivationResult {
   readonly ref: string;
   readonly enabled: boolean;
   readonly changed: boolean;
+  /** What the sync that followed did to the OS scheduler entry; absent when the scheduler was unavailable (see `warnings`). */
+  readonly sync?: TasksSyncResult;
+  readonly warnings?: string[];
 }
 
 function resolveTaskActivation(
@@ -300,21 +311,53 @@ function resolveTaskActivation(
     if (parsedSource.v4.schedule.length === 0) {
       throw new UsageError(`Task ${JSON.stringify(ref)} has no schedule to enable.`, "INVALID_FLAG_VALUE");
     }
+    // Dispatch would fail on a schedule it cannot parse every minute, where only a log records it.
+    for (const entry of parsedSource.v4.schedule) parseSchedule(entry.cron);
   }
   return { qualifiedRef: makeBundleRef(bundle.source.name, conceptId), sourcePath, bundleName: bundle.source.name };
 }
 
-export function akmTasksEnable(ref: string, options: { target?: string } = {}): TasksActivationResult {
-  return setTaskActivation(resolveTaskActivation(ref, options.target, true), true);
+/** Add the task to `scheduler.enabled`, then sync the OS entry (installed with the first enabled task). */
+export async function akmTasksEnable(
+  ref: string,
+  options: { target?: string; sync?: TaskSyncDeps } = {},
+): Promise<TasksActivationResult> {
+  return setTaskActivation(resolveTaskActivation(ref, options.target, true), true, options.sync);
 }
 
-export function akmTasksDisable(ref: string, options: { target?: string } = {}): TasksActivationResult {
-  return setTaskActivation(resolveTaskActivation(ref, options.target, false), false);
+/** Remove the task from `scheduler.enabled`, then sync the OS entry (removed with the last enabled task). */
+export async function akmTasksDisable(
+  ref: string,
+  options: { target?: string; sync?: TaskSyncDeps } = {},
+): Promise<TasksActivationResult> {
+  return setTaskActivation(resolveTaskActivation(ref, options.target, false), false, options.sync);
 }
 
-function setTaskActivation(resolved: { qualifiedRef: string }, enabled: boolean): TasksActivationResult {
+async function setTaskActivation(
+  resolved: { qualifiedRef: string },
+  enabled: boolean,
+  syncDeps: TaskSyncDeps | undefined,
+): Promise<TasksActivationResult> {
   const activation = setSchedulerRefEnabled(resolved.qualifiedRef, enabled);
-  return { ref: resolved.qualifiedRef, enabled, changed: activation.changed };
+  return { ref: resolved.qualifiedRef, enabled, changed: activation.changed, ...(await syncAfterSave(syncDeps)) };
+}
+
+/**
+ * Sync the OS entry after a task change is saved. A host with no usable scheduler (no `crontab`, a refusal) warns:
+ * the change stays saved, and an explicit `akm task sync` still fails loudly.
+ */
+async function syncAfterSave(
+  deps: TaskSyncDeps | undefined,
+): Promise<{ sync: TasksSyncResult } | { warnings: string[] }> {
+  try {
+    return { sync: await akmTasksSync(deps) };
+  } catch (err) {
+    if (!(err instanceof ConfigError)) throw err;
+    const reason = err.message.replace(/\.$/, "");
+    return {
+      warnings: [`Task saved, but the OS scheduler was not updated: ${reason}. Fix that, then run \`akm task sync\`.`],
+    };
+  }
 }
 
 export interface TasksHistoryResult {
@@ -457,6 +500,22 @@ async function planSync(
     const launcher = deps.launcher?.() ?? resolveAkmInvocation();
     const wanted: DispatchEntry = { launcher: launcher.argv, ...(env.PATH ? { path: env.PATH } : {}) };
     const installed = inspection.entry;
+    if (launcher.via === "package-local" && (!installed || options.rebind === true)) {
+      // A copy carried inside a plugin or an app moves when its host updates: the entry must not name it.
+      return {
+        sched,
+        result: {
+          backend: sched.name,
+          entry: "unmanaged",
+          removedLegacy: [],
+          keptLegacy: [],
+          warnings: [
+            `This akm is carried inside another package or app (${launcher.argv.join(" ")}), which moves or changes when it updates, so akm did not write the scheduler entry from it. ` +
+              "If you run a separate akm, run `akm task sync` from it; otherwise run `akm task dispatch` every minute from your own supervisor (cron, supercronic, a systemd timer).",
+          ],
+        },
+      };
+    }
     if (!installed) {
       outcome = "installed";
       entry = wanted;
@@ -618,6 +677,9 @@ export async function akmTasksDoctor(
         `Unable to inspect the installed ${backend} entry: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+  for (const failure of unrunnableTasks(config)) {
+    warnings.push(`Enabled task ${failure.ref} cannot run: ${failure.reason}`);
   }
   // Report the EFFECTIVE view — the default harness (else connection) agent work runs on, and what is configured.
   const defaultEngine = (defaultHarness(config) ?? defaultConnection(config))?.name;

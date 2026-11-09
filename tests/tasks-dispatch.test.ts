@@ -107,7 +107,7 @@ describe("dispatchDueTasks", () => {
     expect(started).toEqual([
       {
         argv: ["/opt/akm", "task", "run", "due", "--bundle", "stash", "--scheduled"],
-        logPath: path.join(logDir, "due.log"),
+        logPath: path.join(logDir, "stash__due.log"),
       },
     ]);
   });
@@ -227,6 +227,22 @@ describe("dispatchDueTasks", () => {
   });
 });
 
+describe("the log of a started task", () => {
+  test("is named with the bundle, so the same task id in two bundles does not share one", async () => {
+    writeTask("dup", "30 9 * * *");
+    fs.mkdirSync(path.join(storage.root, "b2", "tasks"), { recursive: true });
+    fs.writeFileSync(
+      path.join(storage.root, "b2", "tasks", "dup.yml"),
+      "version: 4\nrun: 'true'\nschedule: \"30 9 * * *\"\n",
+    );
+    configure(["stash//tasks/dup", "b2//tasks/dup"], { b2: { path: path.join(storage.root, "b2"), writable: true } });
+
+    await dispatchAt(NINE_THIRTY);
+
+    expect(started.map((run) => path.basename(run.logPath)).sort()).toEqual(["b2__dup.log", "stash__dup.log"]);
+  });
+});
+
 describe("a run still in flight", () => {
   const reserve = (taskId: string, startedAt: Date, metadata: Record<string, unknown>) =>
     withStateDb((db) =>
@@ -270,6 +286,12 @@ describe("a run still in flight", () => {
     const result = await dispatchAt(NINE_THIRTY);
 
     expect(result.started).toEqual(["stash//tasks/busy"]);
+  });
+
+  test("a pid that is alive does not block the task forever: past the default timeout the row is stale (a reused pid)", async () => {
+    reserve("busy", new Date(NINE_THIRTY.getTime() - 7 * 60 * MINUTE), { pid: process.pid });
+
+    expect((await dispatchAt(NINE_THIRTY)).started).toEqual(["stash//tasks/busy"]);
   });
 
   test("a row written without a pid counts for the default six-hour timeout, then no longer", async () => {

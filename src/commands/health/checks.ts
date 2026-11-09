@@ -93,6 +93,8 @@ export interface HealthCheckContext {
    * other check.
    */
   schedulerBinaryDrift: HealthCheckResult;
+  /** The `unrunnable-tasks` advisory: enabled tasks dispatch cannot read or schedule. */
+  unrunnableTasks: HealthCheckResult;
 }
 
 /** Who owns the primary stash's proposal queue, and whether the active strategy extracts. */
@@ -370,6 +372,11 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     name: "semantic-search",
     channel: "hard",
     run: (ctx) => semanticSearchCheck(ctx.semanticSearch),
+  },
+  {
+    name: "unrunnable-tasks",
+    channel: "advisory",
+    run: (ctx) => ctx.unrunnableTasks,
   },
   {
     // C2 (13-bus-factor): the cron task-failure rate was computed but never

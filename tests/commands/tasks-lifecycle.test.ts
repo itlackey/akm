@@ -51,11 +51,10 @@ afterEach(() => {
 });
 
 describe("task lifecycle", () => {
-  test("add writes the task and enables its ref, and touches nothing else (dispatch reads both next minute)", async () => {
+  test("add writes the task and enables its ref (dispatch reads both next minute)", async () => {
     const result = await akmTasksAdd({ id: "ready", schedule: "0 3 * * *", command: "echo ready" });
 
     expect(result.enabled).toBe(true);
-    expect(result).not.toHaveProperty("backend");
     expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/ready")).toBe(true);
     expect(fs.readFileSync(result.path, "utf8")).toContain("0 3 * * *");
   });
@@ -118,16 +117,16 @@ describe("task lifecycle", () => {
     expect(fs.existsSync(path.join(storage.stashDir, "tasks", "bad.yml"))).toBe(false);
   });
 
-  test("enable and disable edit scheduler.enabled and return no OS result", () => {
+  test("enable and disable edit scheduler.enabled, and report the sync that follows", async () => {
     writeTask("toggle", taskYaml("echo t", "@daily"));
 
-    const enabled = akmTasksEnable("toggle");
-    expect(enabled).toEqual({ ref: "stash//tasks/toggle", enabled: true, changed: true });
+    const enabled = await akmTasksEnable("toggle");
+    expect(enabled).toMatchObject({ ref: "stash//tasks/toggle", enabled: true, changed: true });
     expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/toggle")).toBe(true);
-    expect(akmTasksEnable("toggle").changed).toBe(false);
+    expect((await akmTasksEnable("toggle")).changed).toBe(false);
 
-    const disabled = akmTasksDisable("toggle");
-    expect(disabled).toEqual({ ref: "stash//tasks/toggle", enabled: false, changed: true });
+    const disabled = await akmTasksDisable("toggle");
+    expect(disabled).toMatchObject({ ref: "stash//tasks/toggle", enabled: false, changed: true });
     expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/toggle")).toBe(false);
   });
 

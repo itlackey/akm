@@ -65,28 +65,28 @@ afterEach(() => {
 });
 
 describe("bundle-targeted tasks via --bundle", () => {
-  test("enable and disable mutate only host-local config for a task in any configured bundle", () => {
+  test("enable and disable mutate only host-local config for a task in any configured bundle", async () => {
     const source = taskYaml();
     writeTaskFile(work.dir, "foo", source);
     setSchedulerRefEnabled("work//tasks/foo", false);
 
-    const enabled = akmTasksEnable("work//tasks/foo");
+    const enabled = await akmTasksEnable("work//tasks/foo");
     expect(enabled).toMatchObject({ ref: "work//tasks/foo", enabled: true, changed: true });
     expect(fs.readFileSync(path.join(work.dir, "tasks", "foo.yml"), "utf8")).toBe(source);
     expect(schedulerEnabledRefs(loadConfig())).toContain("work//tasks/foo");
 
-    const disabled = akmTasksDisable("work//tasks/foo");
+    const disabled = await akmTasksDisable("work//tasks/foo");
     expect(disabled).toMatchObject({ ref: "work//tasks/foo", enabled: false, changed: true });
     expect(fs.readFileSync(path.join(work.dir, "tasks", "foo.yml"), "utf8")).toBe(source);
     expect(schedulerEnabledRefs(loadConfig())).not.toContain("work//tasks/foo");
   });
 
-  test("a task from a read-only bundle can be enabled without modifying its source", () => {
+  test("a task from a read-only bundle can be enabled without modifying its source", async () => {
     const source = taskYaml();
     writeTaskFile(readonlyDir.dir, "vendor-job", source);
     setSchedulerRefEnabled("readonly//tasks/vendor-job", false);
 
-    const result = akmTasksEnable("readonly//tasks/vendor-job");
+    const result = await akmTasksEnable("readonly//tasks/vendor-job");
 
     expect(result).toMatchObject({ ref: "readonly//tasks/vendor-job", enabled: true, changed: true });
     expect(fs.readFileSync(path.join(readonlyDir.dir, "tasks", "vendor-job.yml"), "utf8")).toBe(source);

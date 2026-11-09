@@ -4,7 +4,7 @@
 
 /** The default bundle's scheduled tasks, and the actions that enable or disable one on this host. */
 
-import { akmTasksDisable, akmTasksEnable, akmTasksSync } from "../commands/tasks/tasks";
+import { akmTasksDisable, akmTasksEnable } from "../commands/tasks/tasks";
 import { loadConfig } from "../core/config/config";
 import { UsageError } from "../core/errors";
 import { listSetupTaskDefinitions } from "../setup/steps/tasks";
@@ -24,19 +24,14 @@ function target(input: { task: string }) {
   return { ref: input.task.trim(), options: { target: bundle } };
 }
 
-/**
- * `akm task enable`, then `akm task sync`: the task joins this host's `scheduler.enabled`, and the OS scheduler entry
- * that runs it (`akm task dispatch`) is installed if it is not there yet. Desktop has no terminal to run the sync from.
- */
+/** `akm task enable`: the task joins this host's `scheduler.enabled`, and the OS entry that runs it is installed if needed. */
 export async function enable(input: { task: string }) {
   const { ref, options } = target(input);
-  const activation = akmTasksEnable(ref, options);
-  return redactForUi({ ...activation, sync: await akmTasksSync() }) as Record<string, unknown>;
+  return redactForUi(await akmTasksEnable(ref, options)) as Record<string, unknown>;
 }
 
-/** `akm task disable`, then `akm task sync`: the entry goes when no task is left enabled. */
+/** `akm task disable`: the entry goes when no task is left enabled. */
 export async function disable(input: { task: string }) {
   const { ref, options } = target(input);
-  const activation = akmTasksDisable(ref, options);
-  return redactForUi({ ...activation, sync: await akmTasksSync() }) as Record<string, unknown>;
+  return redactForUi(await akmTasksDisable(ref, options)) as Record<string, unknown>;
 }

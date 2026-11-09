@@ -337,14 +337,17 @@ report only the violated constraint.
   and a schedule entry whose `inputs` leave a required
   input unsatisfied. It is read-only and needs no configured connection or harness.
 - `akm task add` validates a task source v4 document, writes it, and adds its ref
-  to `scheduler.enabled`. It does not touch the OS scheduler. `--params` renders
+  to `scheduler.enabled`, then syncs the OS scheduler entry (as `akm task sync`
+  does). On a host where that sync fails (no `crontab` on `PATH`, say) the task
+  stays saved and the result carries a warning instead of an error. `--params` renders
   typed `inputs:` declarations instead of a `with:` bag; `--schedule` is
   required on every invocation. `--disabled` writes the same source but
   leaves the ref out of the list. `--force` overwrites an existing task of
   the same id; without it add refuses.
 - `akm task history` reads durable run history from `state.db`.
-- `akm task enable <ref>` / `akm task disable <ref>` change only
-  `scheduler.enabled`.
+- `akm task enable <ref>` / `akm task disable <ref>` change `scheduler.enabled`,
+  then sync the OS entry; if the sync fails the change stays and the result warns
+  (`akm task sync` then reports the error).
 - Delete the `.yml` source and `akm task disable` its ref; until then dispatch
   reports the missing file.
 - `akm task sync` keeps the one OS entry in step with the list: installed when any
