@@ -232,7 +232,7 @@ redact: [TOKEN]
   exclusive with `default`). Declaration names follow the same identifier
   grammar as workflow parameters, and additionally may not name a flag `akm
   task run` already declares for itself — `bundle`, `format`, `detail`,
-  `shape`, `output`, `scheduled`, `quiet`, `verbose`, `help`, `no-quiet`, or
+  `output`, `scheduled`, `quiet`, `verbose`, `help`, `no-quiet`, or
   `no-verbose`. Parsing rejects a colliding name with `TASK_SOURCE_INVALID`
   at declaration time, since `akm task run --<name>`, `akm task explain
   --<name>`, and a `schedule[].inputs` entry would otherwise route the value

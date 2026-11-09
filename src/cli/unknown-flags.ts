@@ -159,6 +159,11 @@ const GONE_FLAGS: ReadonlyArray<{ flag: string; use: string; commands?: readonly
   { flag: "--all", use: "`akm info`", commands: ["config path"] },
   { flag: "--run", use: "`akm improve report --run`", commands: ["improve"] },
   { flag: "--since", use: "`akm improve report --since`", commands: ["improve"] },
+  {
+    flag: "--auto-accept",
+    use: '`akm improve && akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"` in your strategy',
+    commands: ["improve"],
+  },
   { flag: "--config", use: "`--endpoint <url> --yes` and the other answer flags", commands: ["setup"] },
   { flag: "--probe", use: "no flag: probing is the default, and `--no-probe` runs offline", commands: ["setup"] },
 ];

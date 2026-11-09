@@ -34,7 +34,7 @@
  */
 
 /** Every VALUE-taking flag `akm task run` declares (GLOBAL_OUTPUT_ARGS' value flags plus `--bundle`). */
-export const TASK_RUN_VALUE_FLAGS: readonly string[] = ["bundle", "format", "detail", "shape", "output"];
+export const TASK_RUN_VALUE_FLAGS: readonly string[] = ["bundle", "format", "detail", "output"];
 
 /** Every BOOLEAN flag `akm task run` declares, including citty's `--no-` negations of the boolean pair above. */
 export const TASK_RUN_BOOLEAN_FLAGS: readonly string[] = [

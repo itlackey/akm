@@ -9,13 +9,10 @@ export const GITHUB_API_BASE = "https://api.github.com";
 const GITHUB_TOKEN_DOMAINS = new Set(["api.github.com", "github.com", "uploads.github.com"]);
 
 function readGithubTokenFromEnv(): string | undefined {
-  if (process.env.GITHUB_TOKEN !== undefined) {
-    return process.env.GITHUB_TOKEN.trim();
-  }
-  if (process.env.GH_TOKEN !== undefined) {
-    return process.env.GH_TOKEN.trim();
-  }
-  return undefined;
+  const tokens = [process.env.GITHUB_TOKEN, process.env.GH_TOKEN].filter((t): t is string => t !== undefined);
+  // A set but empty `GITHUB_TOKEN` does not hide a usable `GH_TOKEN`. When every
+  // variable that is set is empty, the result is "" (no auth, no `gh` lookup).
+  return tokens.map((t) => t.trim()).find((t) => t !== "") ?? (tokens.length > 0 ? "" : undefined);
 }
 
 function readGithubTokenFromGhCli(): string | undefined {

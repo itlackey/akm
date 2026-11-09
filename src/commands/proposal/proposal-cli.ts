@@ -15,7 +15,7 @@
  * registration remains for either spelling.
  */
 
-import { parsePositiveIntFlag } from "../../cli/parse-args";
+import { getStringArg, parseIntegerFlag, parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
@@ -49,14 +49,8 @@ import { proposeCommand } from "./propose-cli";
  * copies that lived in the accept and reject bulk branches (WI-6.6).
  */
 function parseBulkFilterFlags(args: Record<string, unknown>): { maxDiffLines?: number; olderThanMs?: number } {
-  const rawMaxDiff = args["max-diff-lines"] ? Number.parseInt(String(args["max-diff-lines"]), 10) : undefined;
-  if (rawMaxDiff !== undefined && (Number.isNaN(rawMaxDiff) || rawMaxDiff < 0)) {
-    throw new UsageError("--max-diff-lines must be a non-negative integer", "INVALID_FLAG_VALUE");
-  }
-  const rawOlderThan = args["older-than"] ? Number.parseInt(String(args["older-than"]), 10) : undefined;
-  if (rawOlderThan !== undefined && (Number.isNaN(rawOlderThan) || rawOlderThan < 0)) {
-    throw new UsageError("--older-than must be a non-negative integer (days)", "INVALID_FLAG_VALUE");
-  }
+  const rawMaxDiff = parseIntegerFlag(getStringArg(args, "max-diff-lines"), "--max-diff-lines", 0);
+  const rawOlderThan = parseIntegerFlag(getStringArg(args, "older-than"), "--older-than", 0);
   return {
     maxDiffLines: rawMaxDiff,
     olderThanMs: rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined,

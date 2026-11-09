@@ -9,16 +9,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - `improve.model`, `improve.llm` and `improve.timeoutMs` are named config keys. They were already honoured, yet warned "ignored" and refused by `akm config get`. `improve.*` (`connection`, `harness`, `model`, `llm`, `timeoutMs`) is the base for improve's processes, the quality-gate and triage judges, `akm remember --enrich`, extraction and the proposal drain; a workflow gate's judge does not read it and runs on the default connection, else the default harness. An `engine` in `improve` or in `improve.processes.<process>` / `improve.qualityGate` still selects where the work runs, as the retired spelling of `connection` / `harness`, and its warning now says so instead of calling it unknown.
-- `akm config get`, `config list` and `config diff` redact a literal secret under any secret-shaped key (`key`, `token`, `secret`, `password` or `authorization` in the name, any case, nested included) inside `connections`, not only `apiKey`. An env reference (`$VAR`) stays visible.
+- `akm config get`, `list`, `set`, `unset` and `diff` hide the whole value of a secret-shaped key (`token`, `secret`, `password`, `authorization`, `api_key` and the like, judged by the words of the name, nested included) inside `connections`, not only `apiKey`. An env reference (`$VAR`) stays visible, and the `models` alias map is left alone. AKM Desktop's saves are unaffected.
 - `akm task doctor` inspects the OS scheduler like every other run; it no longer skips the inspection when `BUN_TEST=1` is set. A bundle added directly on a private or loopback host warns once whatever `NODE_ENV` says.
 - A strategy's profile-level `limit` is gone from `akm improve --dry-run`'s `plan.limits.configured` (it never took effect: the shipped `reflect.limit` of 25 always won); set `processes.reflect.limit`.
 - `akm registry add --options` is accepted, warns that it does nothing and stores nothing.
+- `bundles.*.path` is read like a project's `paths`: `~` expands to your home folder and a relative path means the folder of the config file that holds it, no longer the cwd of whoever ran akm. A path that cannot be placed (`~user/...`, or relative with no config file) warns once and that bundle is ignored; the file keeps what you wrote, and `akm migrate apply` and `akm bundle rename` leave `path` as written. `~/x` and the same absolute path now count as one root, so listing both is a duplicate-root error.
+- `akm proposal extract --since` and a strategy's `processes.extract.defaultSince` read durations in the grammar every other duration flag uses: `m` is minutes and `M` is months (`3M` was three minutes there; it is three months, as for `akm health --since` and `akm remember --expires`). Uppercase `H` and `D` (`24H`, `7D`) and a space before the unit are no longer accepted by `--since`, which is a usage error. A `defaultSince` that does not parse warns once and the default window is used.
+- `akm proposal accept|reject --older-than` and `--max-diff-lines`, and `akm proposal extract --timeout-ms`, reject a value with trailing text (`3x`, `3.5`) instead of truncating it, as `akm improve --limit` and `akm workflow run --max-steps|--max-retries` already did. One shared helper reads them.
+- `AKM_REGISTRY_URL` with no usable entry is ignored, with its per-entry warnings, and the configured registries stand; it used to leave registry search with none. `GITHUB_TOKEN` set to an empty string no longer hides `GH_TOKEN`.
+- `akm bundle rename` also rewrites `projects.*.write.bundle` and `projects.*.from` when they name the old bundle.
+- The retired `shape` is no longer a reserved flag name of `akm workflow run` and `akm task run`. On `workflow run` it is now a normal parameter: it used to be ignored, and is a usage error when the workflow does not declare it.
 
 ### Removed
 
 - The `index` config section (20 leaf paths, `index.connection`, `index.model`, `index.<pass>.*`, `index.memory.enabled`) and the `index` row of the work table `akm info` and `akm health` print: no caller read it, so it never took effect. Where memory inference runs is `improve.processes.memoryInference` over `improve.*`. A config that still has an `index` section names it once as an unknown key; `akm migrate apply` drops it.
 - Config keys with no reader: `setup`, `improve.salience`, `bundles.<name>.website.refresh`, a registry's `options`, and a strategy's `description` and `limit`. They are named once as unknown keys and dropped by `akm migrate apply`.
 - `NODE_ENV=test` and `BUN_TEST` are no longer read by akm. In a shell, `NODE_ENV=test` no longer makes akm refuse to resolve its data directory (`TEST_ISOLATION_MISSING`, with `akm info` printing `dataDir: ""`). What stopped a test run reaching a developer's real directories now lives in the test harness (`tests/_preload.ts`, `tests/_helpers/isolation-guard.ts`). `AKM_FORCE_INIT_TMP_STASH`, which nothing read, is no longer listed in `STABILITY.md`.
+
+### Fixed
+
+- `akm remember --help` advertised `-showSimilar`, which was rejected; it now shows `--show-similar` only, and `--showSimilar` still works.
+- `akm improve --auto-accept` names its replacement (`akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"`).
+- A `$schema` key in `config.json` is accepted without an unknown-key warning.
+- Wrong text: the feedback error named `akm.json` (the file is `config.json`); Desktop labelled `archiveRetentionDays` "archived assets" (it expires pending proposals) and `feedback.requireReason` as gating positive feedback (it gates negative feedback); `configuration.md` cited the gone `setup --config`; the comment at the top of `config-schema.ts` described behaviour the code does not have. Docs now state the `AKM_BUNDLE_DIR` temp-folder rule, the working-bundle order, `improve.eventRetentionDays` and `improve.stateGc.collect`; `STABILITY.md` lists `AKM_STATE_DIR` as Supported and `AKM_UPGRADE_SKIP_CHECKSUM` as Internal (as `cli.md` already said) and names the other Internal variables; the eight flags `cli.md` missed are listed.
 
 ## [0.10.261115] - 2026-11-08
 

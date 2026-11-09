@@ -521,17 +521,26 @@ on them.
 
 | Variable | Purpose |
 | --- | --- |
-| `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` | Filesystem layout overrides |
+| `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Filesystem layout overrides |
 | `AKM_VERBOSE`, `AKM_DEBUG` | Diagnostics |
 | `AKM_REGISTRY_URL` | Comma-separated registry URL override; replaces the configured registries in every registry search akm performs (`akm registry list` and `akm info` still show the configured list) |
 | `AKM_NPM_REGISTRY` | npm mirror base URL; replaces `registry.npmjs.org` for package lookups |
 | `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode (network filesystems) |
-| `AKM_INSTALL_DIR` | Install-script prefix |
-| `AKM_UPGRADE_SKIP_CHECKSUM` | Recovery hatch for a broken upgrade checksum |
+| `AKM_INSTALL_DIR` | Install-script prefix (read by `install.sh` and `install.ps1`, not by akm itself) |
 
 **Internal** — no compatibility guarantee, may vanish without notice:
-`AKM_NODE_ENTRY`, `AKM_EVENT_SOURCE`, `AKM_SESSION_ID`, `AKM_AGENT_HARNESS`,
-`AKM_EMBED_DETERMINISTIC`, `AKM_CLAUDE_PROJECTS_DIR`, `AKM_STATE_DIR`.
+`AKM_UPGRADE_SKIP_CHECKSUM` (the upgrade recovery hatch; see `akm upgrade`),
+`AKM_NODE_ENTRY`, `AKM_STANDALONE_ENTRY`, `AKM_MIGRATE_ENTRY`,
+`AKM_LAUNCHER_PID`, `AKM_LAUNCHER_NODE`, `AKM_LAUNCHER_PATH`,
+`AKM_EVENT_SOURCE`, `AKM_SESSION_ID`, `AKM_AGENT_HARNESS`,
+`AKM_OPENCODE_CLI`, `AKM_CLAUDE_PLUGINS_DIR`, `AKM_OPENCODE_CACHE_DIR`,
+and the eight handed to a workflow unit's script
+(`AKM_RUN_ID`, `AKM_STEP_ID`, `AKM_UNIT_ID`, `AKM_PARAMS`, `AKM_ITEM`,
+`AKM_ITEM_INDEX`, `AKM_INPUTS`, `AKM_TASK_INPUTS`).
+
+Internal seams used by akm-eval and the tests, never for product use:
+`AKM_EMBED_DETERMINISTIC` (a hash embedder instead of a model) and
+`AKM_CLAUDE_PROJECTS_DIR` (where Claude session logs are read from).
 
 ## On the horizon
 
