@@ -113,6 +113,9 @@ export const AkmConfigShape = {
   output: OutputConfigSchema.optional(),
   // Named places the user works on (see ./schema/projects.ts); malformed pieces are dropped at load.
   projects: ProjectsSchema.optional(),
+  // Settings for the akm plugins (Claude, Codex, OpenCode). The plugins read this file themselves and own
+  // the keys and their validation; akm only keeps the section and never warns about what is inside it.
+  plugins: z.record(z.string(), z.unknown()).optional(),
   search: SearchConfigSchema.optional(),
   feedback: FeedbackConfigSchema.optional(),
   archiveRetentionDays: nonNegativeNumber.optional(),
