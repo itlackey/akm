@@ -99,8 +99,7 @@ by `--detail` level:
 | `full` | the whole hit: `type`, `name`, `id`, `description`, `installRef`, `score`, `registryName`, and `warnings` when present |
 
 `installRef` is the ref to pass to `akm bundle add`, for example
-`github:itlackey/akm-stash`. `action` holds the whole install command, for
-example `akm bundle add github:itlackey/akm-stash -> then search again`.
+`github:itlackey/akm-stash`.
 Registry scores are normalized to 0 to 1 within each registry's results;
 compare them only within one registry, never with local scores. Search returns
 bundle-level hits only; it does not list the individual assets inside a
@@ -193,8 +192,8 @@ The index is cached for 1 hour.
 
 Searches skills.sh through its server-side API
 (`GET {url}/api/search?q={query}&limit={limit}`). Hit ids carry a `skills-sh:`
-prefix (not installable; use the `akm bundle add` command in the hit's
-`action`, which names the skill's GitHub repo). Scores are install counts
+prefix (not installable; pass the hit's `installRef`, which names the skill's
+GitHub repo, to `akm bundle add`). Scores are install counts
 normalized to 0 to 1. Responses are cached per query for 15 minutes.
 
 ## Hosting your own registry
