@@ -384,7 +384,7 @@ describe("akm propose", () => {
         name: "nothing-configured",
         task: "Author a skill without mutating state before dispatch",
         stashDir: stash,
-        agentConfig: { configVersion: "0.9.0", semanticSearchMode: "off" },
+        agentConfig: { semanticSearchMode: "off" },
       }),
     ).rejects.toMatchObject({ name: "ConfigError", code: "AGENT_NOT_CONFIGURED" });
 

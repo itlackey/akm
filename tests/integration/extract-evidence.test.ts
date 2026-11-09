@@ -33,7 +33,6 @@ const evidence = 'The operator said: "connect VPN first".\nThe next deploy succe
 function setup(indexSessions = true) {
   const stash = storage.stashDir;
   const config = {
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",

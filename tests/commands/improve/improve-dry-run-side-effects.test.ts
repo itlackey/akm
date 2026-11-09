@@ -38,7 +38,6 @@ import {
 
 const TIMEOUT_MS = 15_000;
 const dryRunConfig = {
-  configVersion: "0.9.0" as const,
   semanticSearchMode: "off" as const,
   connections: {
     test: { endpoint: "https://example.test/v1/chat/completions", models: { fast: "test" } },
@@ -160,7 +159,6 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
             strategyFilteredRefs: [],
           })) as never,
           config: {
-            configVersion: "0.9.0",
             semanticSearchMode: "off",
             bundles: { stash: { path: stashDir, writable: true } },
             defaultBundle: "stash",
@@ -336,7 +334,6 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
             strategyFilteredRefs: [],
           })) as never,
           config: {
-            configVersion: "0.9.0",
             semanticSearchMode: "off",
             bundles: { stash: { path: stashDir, writable: true } },
             defaultBundle: "stash",

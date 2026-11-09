@@ -52,7 +52,7 @@ describe("a symlinked script keeps its authored interpreter", () => {
   for (const targetName of ["real-script.txt", "real-script"]) {
     test(`same bundle: scripts/deploy.sh -> ${targetName}`, async () => {
       const bundle = bundleWithLinkedScript(targetName);
-      const config = { configVersion: "0.9.0", semanticSearchMode: "off" } as AkmConfig;
+      const config = { semanticSearchMode: "off" } as AkmConfig;
       const prepared = await prepareTaskV3Execution(task("work//scripts/deploy.sh", bundle), {
         taskId: "nightly",
         taskRef: "work//tasks/nightly",
@@ -71,7 +71,6 @@ describe("a symlinked script keeps its authored interpreter", () => {
       const work = sandbox("akm-script-ext-work");
       const shared = bundleWithLinkedScript(targetName);
       const config = {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "work",
         bundles: { work: { path: work }, shared: { path: shared, writable: false } },

@@ -131,7 +131,6 @@ console.log(JSON.stringify({ before: before ?? null, after: process.exitCode }))
     fs.writeFileSync(
       path.join(configHome, "akm", "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         harnesses: { test: { platform: "aider", bin } },
       }),

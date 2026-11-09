@@ -40,7 +40,6 @@ function makeStashDir(): string {
 
 function configEnabled(stashDir: string): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",

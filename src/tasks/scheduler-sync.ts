@@ -64,7 +64,6 @@ export interface CompiledSchedulerSources {
 }
 
 const SCHEDULER_PROJECTION_CONFIG: AkmConfig = Object.freeze({
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
 });
 

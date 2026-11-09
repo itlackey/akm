@@ -40,7 +40,6 @@ function installFixture(adapter: "akm" | "claude" | "opencode", kind: "command" 
 
 function fixtureConfig(root: string, adapter: string): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     defaultBundle: "fixture",
     bundles: {
@@ -136,7 +135,7 @@ describe("adapter-owned execution source loading", () => {
 
     const loaded = await withEnv({ AKM_BUNDLE_DIR: fixture.root }, () =>
       loadAdapterExecutionSource(`${bundleId}//${fixture.conceptId}`, "persona", {
-        config: { configVersion: "0.9.0", semanticSearchMode: "off" },
+        config: { semanticSearchMode: "off" },
         lookup: lookupFor(entry),
       }),
     );
@@ -282,7 +281,6 @@ describe("adapter-owned execution source loading", () => {
     await expect(
       loadAdapterExecutionSource("fixture//commands/escaped", "command", {
         config: {
-          configVersion: "0.9.0",
           semanticSearchMode: "off",
           defaultBundle: "fixture",
           bundles: {
@@ -301,7 +299,6 @@ describe("adapter-owned execution source loading", () => {
     await expect(
       loadAdapterExecutionSource("fixture//commands/escaped", "command", {
         config: {
-          configVersion: "0.9.0",
           semanticSearchMode: "off",
           defaultBundle: "fixture",
           bundles: {

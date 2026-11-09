@@ -29,7 +29,6 @@ describe("detectAgentCliProfiles", () => {
   test("includes user-defined profiles via the resolver", () => {
     const results = detectAgentCliProfiles(
       {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         harnesses: { rover: { platform: "opencode", bin: "rover-cli" } },
       },

@@ -22,8 +22,7 @@ import { withEnv } from "../_helpers/sandbox";
 
 const LAB = { endpoint: "http://lab:8080/v1/chat/completions", models: { fast: "qwen3-8b" } };
 
-const configOf = (extra: Record<string, unknown>): AkmConfig =>
-  ({ configVersion: "0.9.0", semanticSearchMode: "off", ...extra }) as AkmConfig;
+const configOf = (extra: Record<string, unknown>): AkmConfig => ({ semanticSearchMode: "off", ...extra }) as AkmConfig;
 
 let warnings: string[] = [];
 

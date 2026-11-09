@@ -47,7 +47,7 @@ import { FeedbackConfigSchema } from "./schema/feedback";
 import { HarnessesSchema } from "./schema/harnesses";
 import { ImproveConfigSchema } from "./schema/improve";
 import { OutputConfigSchema } from "./schema/output";
-import { CURRENT_CONFIG_VERSION, nonEmptyString, nonNegativeNumber } from "./schema/primitives";
+import { nonEmptyString, nonNegativeNumber } from "./schema/primitives";
 import { ProjectsSchema } from "./schema/projects";
 import { SchedulerConfigSchema } from "./schema/scheduler";
 import { SearchConfigSchema } from "./schema/search";
@@ -75,7 +75,7 @@ export {
   ValidationProcessConfigSchema,
 } from "./schema/improve-processes";
 export { OutputConfigSchema } from "./schema/output";
-export { CURRENT_CONFIG_VERSION, LlmInvocationOverridesSchema } from "./schema/primitives";
+export { LlmInvocationOverridesSchema } from "./schema/primitives";
 export { SchedulerConfigSchema } from "./schema/scheduler";
 export { SearchConfigSchema } from "./schema/search";
 export {
@@ -98,7 +98,6 @@ export { WorkflowConfigSchema } from "./schema/workflow";
  * configuration loss. There is no pre-schema compatibility transform.
  */
 export const AkmConfigShape = {
-  configVersion: z.literal(CURRENT_CONFIG_VERSION),
   connections: ConnectionsSchema.optional(),
   harnesses: HarnessesSchema.optional(),
   semanticSearchMode: z.enum(["off", "auto"]).default("off"),

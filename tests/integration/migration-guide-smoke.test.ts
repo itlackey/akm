@@ -36,7 +36,6 @@ beforeEach(() => {
   fs.writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       defaultBundle: "stash",
       bundles: { stash: { path: storage.stashDir, writable: true } },

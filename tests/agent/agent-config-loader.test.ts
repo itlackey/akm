@@ -26,7 +26,6 @@ describe("AkmConfig loader — harnesses", () => {
       cfgPath,
       JSON.stringify(
         {
-          configVersion: "0.9.0",
           semanticSearchMode: "auto",
           harnesses: { claude: { args: ["--print"], timeoutMs: 45000 } },
         },
@@ -48,7 +47,6 @@ describe("AkmConfig loader — harnesses", () => {
     fs.writeFileSync(
       cfgPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         harnesses: { default: { platform: "opencode", bin: "opencode-cli" }, claude: {} },
       }),

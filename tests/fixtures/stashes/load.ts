@@ -128,10 +128,7 @@ export function loadFixtureStash(name: string, options: LoadFixtureStashOptions 
     // hangs or times out on slow/blocked CI runners. Every caller of this
     // helper wants deterministic FTS-only ranking anyway.
     fs.mkdirSync(path.join(configHome, "akm"), { recursive: true });
-    fs.writeFileSync(
-      path.join(configHome, "akm", "config.json"),
-      '{"configVersion":"0.9.0","semanticSearchMode":"off"}\n',
-    );
+    fs.writeFileSync(path.join(configHome, "akm", "config.json"), '{"semanticSearchMode":"off"}\n');
     const result = Bun.spawnSync({
       cmd: ["bun", "run", CLI_ENTRY, "index"],
       cwd: stashDir,

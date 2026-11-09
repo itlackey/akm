@@ -42,7 +42,6 @@ describe("improve plan boundaries", () => {
       akmImprove({
         strategy: "default",
         config: {
-          configVersion: "0.9.0",
           semanticSearchMode: "off",
           // Deterministic triage (the default's) needs no connection or harness and would let the
           // plan resolve; switch it off so every enabled process wants one.
@@ -62,7 +61,6 @@ describe("improve plan boundaries", () => {
       const filePath = path.join(lessonDir, "broken.md");
       fs.writeFileSync(filePath, "---\nwhen_to_use: Testing\n---\n\nBody.\n");
       const config: AkmConfig = {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: { stash: { path: stash.dir, writable: true } },
         defaultBundle: "stash",
@@ -97,7 +95,6 @@ describe("improve plan boundaries", () => {
       const original = "---\nwhen_to_use: Testing queued repair\n---\n\nBody.\n";
       fs.writeFileSync(filePath, original);
       const config: AkmConfig = {
-        configVersion: "0.9.0",
         stashDir: stash.dir,
         semanticSearchMode: "off",
         connections: { repair: lab("repair-model") },
@@ -140,7 +137,6 @@ describe("improve plan boundaries", () => {
     const stash = makeStashDir();
     try {
       const config: AkmConfig = {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: { stash: { path: stash.dir, writable: true } },
         defaultBundle: "stash",
@@ -188,7 +184,6 @@ describe("improve plan boundaries", () => {
       fs.mkdirSync(memoryDir, { recursive: true });
       fs.writeFileSync(path.join(memoryDir, "source.md"), "---\ntype: memory\n---\n\nSource.\n");
       const config: AkmConfig = {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: { stash: { path: stash.dir, writable: true } },
         defaultBundle: "stash",
@@ -298,7 +293,6 @@ describe("improve plan boundaries", () => {
     const stash = makeStashDir();
     try {
       const config: AkmConfig = {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: { stash: { path: stash.dir, writable: true } },
         defaultBundle: "stash",

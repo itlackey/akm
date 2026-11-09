@@ -27,7 +27,6 @@ function proposalStash(): string {
 
 function directConfig(stashDir: string, apiKey?: string): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     bundles: { work: { path: stashDir, writable: true } },
     defaultBundle: "work",

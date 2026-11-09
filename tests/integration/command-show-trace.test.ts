@@ -18,7 +18,6 @@ beforeEach(() => {
 afterEach(() => storage.cleanup());
 
 const config: AkmConfig = {
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
   harnesses: { reviewer: { platform: "claude", bin: "/bin/true" } },
 };

@@ -214,10 +214,6 @@ function hasPath(config: Record<string, unknown>, path: Path): boolean {
  */
 export function configSet(config: Record<string, unknown>, dotted: string, raw: string): Record<string, unknown> {
   const path = parsePath(dotted);
-  if (path.length === 1 && path[0] === "configVersion") {
-    throw new UsageError("configVersion cannot be changed through config set.", "INVALID_FLAG_VALUE");
-  }
-
   // #454: a literal apiKey is not persistable. Throw at set time.
   rejectApiKeyPath(path, raw, dotted);
   rejectLiteralApiKeyInWholeObjectSet(path, raw, dotted);
@@ -295,9 +291,6 @@ function isTriageJudgmentPath(path: Path): boolean {
  */
 export function configUnset(config: Record<string, unknown>, dotted: string): Record<string, unknown> {
   const path = parsePath(dotted);
-  if (path.length === 1 && path[0] === "configVersion") {
-    throw new UsageError("configVersion cannot be removed through config unset.", "INVALID_FLAG_VALUE");
-  }
   // A key the schema does not know is removable when the file holds it (a stored typo); otherwise there is nothing to remove.
   if (!resolveSchemaAt(path, config) && !hasPath(config, path)) {
     warnOnce(

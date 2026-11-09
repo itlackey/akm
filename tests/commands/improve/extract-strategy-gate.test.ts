@@ -77,7 +77,6 @@ function makeConfig(args: { defaultExtractEnabled: boolean; strategy?: { name: s
   }
   return {
     config: withTestImproveLlm({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       improve: { strategy: "default", strategies: improve },
     } as AkmConfig),

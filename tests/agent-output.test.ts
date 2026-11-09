@@ -213,7 +213,6 @@ describe("--detail agent field projection", () => {
     const assetPath = path.join(teamDir, "knowledge", "readonly-guide.md");
     writeFile(assetPath, "# Read-only guide\n\nUse this reference.\n");
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { team: { path: teamDir, writable: false } },
     };
@@ -336,7 +335,6 @@ describe("--format jsonl", () => {
     writeFile(bin, '#!/bin/sh\necho "$@"\ncat\n');
     fs.chmodSync(bin, 0o755);
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       harnesses: { test: { platform: "claude", bin } },
     };
@@ -366,7 +364,6 @@ describe("--format jsonl", () => {
     );
 
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       defaultBundle: "fixture",
       bundles: {

@@ -37,7 +37,6 @@ const noOperations = () =>
 
 function targetConfig(primary: string, team: string, readonly: string): AkmConfig {
   return withTestImproveLlm({
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     bundles: {
       primary: { path: primary, writable: true },
@@ -88,7 +87,6 @@ describe("improve named target integration", () => {
     const team = stash();
     // No explicit target, so both runs start from the working bundle, which AKM_BUNDLE_DIR overrides.
     const config = withTestImproveLlm({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { primary: { path: primary, writable: true }, team: { path: team, writable: true } },
       defaultBundle: "primary",
@@ -244,7 +242,6 @@ describe("improve named target integration", () => {
         seedLockEntries([{ id: "vendor", source: "npm", ref: "npm:improve-read-only@1.0.0", localRoot: vendor }]);
       }
       const config = withTestImproveLlm({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: {
           primary: { path: primary, writable: true },
@@ -311,7 +308,6 @@ describe("improve named target integration", () => {
       const expectedRoot = layout === "content" ? path.join(paths.repoDir, "content") : paths.repoDir;
       fs.mkdirSync(expectedRoot, { recursive: true });
       const config = withTestImproveLlm({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: {
           stash: { path: primary, writable: true },

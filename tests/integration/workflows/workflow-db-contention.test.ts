@@ -40,7 +40,6 @@ let markerDir: string;
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
   writeSandboxConfig({
-    configVersion: "0.9.0",
     connections: { "test-agent": { endpoint: "http://127.0.0.1:1/v1", models: { fast: "test-model" } } },
   });
   markerDir = path.join(storage.root, "markers");

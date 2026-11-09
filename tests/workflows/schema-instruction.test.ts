@@ -44,7 +44,7 @@ const TARGETS: Record<string, { key: "connection" | "harness"; config: Record<st
  */
 function deliveredPrompt(name: string): { delivered: string; expected: string; instruction: string } {
   const { key, config: targetConfig } = TARGETS[name]!;
-  const config = { configVersion: "0.9.0", ...targetConfig } as unknown as AkmConfig;
+  const config = { ...targetConfig } as unknown as AkmConfig;
   const markdown = [
     "---",
     "type: workflow",

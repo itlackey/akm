@@ -412,7 +412,6 @@ describe("registry remove", () => {
       userConfigPath,
       `${JSON.stringify(
         {
-          configVersion: "0.9.0",
           registries: [{ url: "https://user.example/index.json", name: "user" }],
         },
         null,
@@ -425,7 +424,6 @@ describe("registry remove", () => {
       projectConfigPath,
       `${JSON.stringify(
         {
-          configVersion: "0.9.0",
           registries: [{ url: "https://project.example/index.json", name: "project" }],
         },
         null,

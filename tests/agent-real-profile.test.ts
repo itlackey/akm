@@ -61,7 +61,6 @@ describe.skipIf(!REAL_AGENT_TESTS)("real-profile integration (opt-in via AKM_REA
       task: "Author a one-line skill that says hello.",
       stashDir: stash,
       agentConfig: {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         harnesses: { opencode: { platform: "opencode" } },
       },
@@ -79,7 +78,6 @@ describe.skipIf(!REAL_AGENT_TESTS)("real-profile integration (opt-in via AKM_REA
       ref: "lessons/real-profile-tip",
       stashDir: stash,
       config: {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         harnesses: { claude: { platform: "claude" } },
         improve: {

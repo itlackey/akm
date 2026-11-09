@@ -211,7 +211,7 @@ const ALL_TRANSPORTS: [string, Transport][] = [CHAT, ...CLI_HARNESSES, RUNTIME].
 const STAGE_TRANSPORTS: [string, Transport][] = ALL_TRANSPORTS.filter(([, transport]) => transport !== RUNTIME);
 
 function configFor(transport: Transport, scenario: string, connection?: Record<string, unknown>): AkmConfig {
-  return { configVersion: "0.9.0", semanticSearchMode: "off", ...transport.config(scenario, connection) } as AkmConfig;
+  return { semanticSearchMode: "off", ...transport.config(scenario, connection) } as AkmConfig;
 }
 
 /** The resolved runner that runs `scenario` on `transport`, for a stage call. */

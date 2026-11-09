@@ -20,7 +20,7 @@
 import { describe, expect, test } from "bun:test";
 import { resolveImprovePlan } from "../src/commands/improve/improve-strategies";
 
-const BASE = { configVersion: "0.9.0" } as unknown as Parameters<typeof resolveImprovePlan>[1];
+const BASE = {} as unknown as Parameters<typeof resolveImprovePlan>[1];
 
 function configWith(
   experimental?: { improveAutonomy?: boolean },

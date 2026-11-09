@@ -72,7 +72,7 @@ async function spawnedFor(input: ResolveExecutionInput): Promise<Spawned> {
 }
 
 function config(partial: Record<string, unknown>): AkmConfig {
-  return { configVersion: "0.9.0", ...partial } as unknown as AkmConfig;
+  return { ...partial } as unknown as AkmConfig;
 }
 
 const LAB = {

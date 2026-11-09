@@ -85,7 +85,6 @@ afterEach(() => {
 
 function configEnabled(stashDir: string): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
@@ -111,7 +110,6 @@ function configEnabled(stashDir: string): AkmConfig {
 }
 function configDisabled(stashDir: string): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
@@ -2035,7 +2033,6 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
     const placed = Object.fromEntries(Object.entries(processOverride).filter(([key]) => where.includes(key)));
     const strategyProcess = Object.fromEntries(Object.entries(processOverride).filter(([key]) => !where.includes(key)));
     return {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",

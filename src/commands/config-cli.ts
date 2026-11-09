@@ -9,7 +9,7 @@
  * new config field is one line of Zod schema in `core/config-schema.ts` and
  * zero lines here — the walker handles get/set/unset/coercion uniformly.
  *
- * `configVersion` is controlled by the config lifecycle. All execution
+ * All execution
  * settings use their canonical connection, harness and strategy paths; retired aliases are not
  * rewritten at this boundary.
  */

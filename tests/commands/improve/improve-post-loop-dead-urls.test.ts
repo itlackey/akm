@@ -48,7 +48,6 @@ describe("runImprovePostLoopStage dead-URL scan coverage (#892)", () => {
       }
 
       const config: AkmConfig = {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: { stash: { path: stash.dir, writable: true } },
         defaultBundle: "stash",

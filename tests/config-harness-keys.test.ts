@@ -37,7 +37,7 @@ test.each([
   "contextLength",
   "reasoning_effort",
 ])("%s is not read by a harness: the load warns once and ignores it", (key) => {
-  const text = JSON.stringify({ configVersion: "0.9.0", harnesses: { opencode: { [key]: "x" } } });
+  const text = JSON.stringify({ harnesses: { opencode: { [key]: "x" } } });
   const warnings = captureWarnings(() => {
     expect(() => parseAndValidateConfigText(text)).not.toThrow();
   });
@@ -47,7 +47,6 @@ test.each([
 // `agent` names the harness's default native agent, so it needs a platform that can run one.
 describe("a harness's default agent", () => {
   const configWith = (platform: string, agent: string) => ({
-    configVersion: "0.9.0" as const,
     semanticSearchMode: "off" as const,
     harnesses: { h: { platform: platform as "claude", agent } },
   });
@@ -72,7 +71,6 @@ describe("a harness's default agent", () => {
 
 describe("a harness's models", () => {
   const configWith = (models: unknown) => ({
-    configVersion: "0.9.0" as const,
     semanticSearchMode: "off" as const,
     harnesses: { claude: { models } },
   });

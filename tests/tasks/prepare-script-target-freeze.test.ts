@@ -41,7 +41,7 @@ import { projectTaskSourceV4 } from "../../src/tasks/source/project-v4";
 import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
 
 /** No `config.engines`/`defaults` needed — neither the script nor the shell arm reads them. */
-const config: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "off" };
+const config: AkmConfig = { semanticSearchMode: "off" };
 
 const sandboxes: SandboxedDir[] = [];
 afterEach(() => {

@@ -19,7 +19,6 @@ import { WORKFLOW_MAX_CONCURRENCY } from "../../src/workflows/resource-limits";
 import { freezeWorkflow } from "../_helpers/workflow";
 
 const BASE_CONFIG = {
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
   connections: {
     remote: { endpoint: "https://api.example.test/v1/chat/completions", models: { fast: "test-model" } },

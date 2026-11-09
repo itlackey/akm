@@ -135,7 +135,6 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
     fs.chmodSync(judgeBin, 0o755);
     replaceFrozenPlan(
       manualJudgePlan({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         harnesses: {
           reviewer: { platform: "claude", bin: judgeBin, models: { fast: "frozen/exact-judge-model" } },
@@ -149,7 +148,7 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
       // before dispatch. The frozen plan is the sole authority for the judge.
       fs.writeFileSync(
         path.join(config.dir, "akm", "config.json"),
-        JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off" }),
+        JSON.stringify({ semanticSearchMode: "off" }),
         "utf8",
       );
       const result = await completeWorkflowStep({
@@ -188,7 +187,6 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
     try {
       replaceFrozenPlan(
         manualJudgePlan({
-          configVersion: "0.9.0",
           semanticSearchMode: "off",
           connections: {
             reviewer: {
@@ -222,7 +220,6 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
     try {
       replaceFrozenPlan(
         manualJudgePlan({
-          configVersion: "0.9.0",
           semanticSearchMode: "off",
           connections: {
             reviewer: { endpoint: `http://127.0.0.1:${provider.port}/v1`, models: { fast: "frozen/judge-model" } },

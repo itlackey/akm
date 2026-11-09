@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * 08 "surfaces" advisory group for `akm health` (binary-config-skew,
- * egress-endpoints). Every collector is silent (`undefined`) when there is
+ * 08 "surfaces" advisory group for `akm health` (egress-endpoints). Every collector is silent (`undefined`) when there is
  * nothing to report, mirroring the shipped `stash-git-exposure` advisory; only
  * `egress-endpoints` emits a pass-status informational entry whenever any
  * remote endpoint is configured.
@@ -14,52 +13,11 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { collectConfigSkewAdvisory } from "../../../src/commands/health/config-skew";
 import { collectEgressAdvisory } from "../../../src/commands/health/egress";
 
 function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
-
-describe("collectConfigSkewAdvisory (08-F3)", () => {
-  test("warns when the on-disk configVersion is newer than this binary's", () => {
-    const dir = makeTempDir("akm-surfaces-skew-");
-    const configPath = path.join(dir, "config.json");
-    fs.writeFileSync(configPath, JSON.stringify({ configVersion: "99.0.0" }));
-
-    const adv = collectConfigSkewAdvisory(configPath);
-    expect(adv?.name).toBe("binary-config-skew");
-    expect(adv?.status).toBe("warn");
-    expect(adv?.message).toContain("99.0.0");
-  });
-
-  test("warns on an unorderable configVersion written by a foreign akm", () => {
-    const dir = makeTempDir("akm-surfaces-skew-");
-    const configPath = path.join(dir, "config.json");
-    fs.writeFileSync(configPath, JSON.stringify({ configVersion: "not-a-version" }));
-
-    const adv = collectConfigSkewAdvisory(configPath);
-    expect(adv?.status).toBe("warn");
-  });
-
-  test("silent when configVersion matches or predates the binary", () => {
-    const dir = makeTempDir("akm-surfaces-skew-");
-    const configPath = path.join(dir, "config.json");
-    fs.writeFileSync(configPath, JSON.stringify({ configVersion: "0.8.0" }));
-    expect(collectConfigSkewAdvisory(configPath)).toBeUndefined();
-
-    fs.writeFileSync(configPath, JSON.stringify({ configVersion: 1 }));
-    expect(collectConfigSkewAdvisory(configPath)).toBeUndefined();
-  });
-
-  test("silent when the config file is missing or malformed", () => {
-    const dir = makeTempDir("akm-surfaces-skew-");
-    expect(collectConfigSkewAdvisory(path.join(dir, "missing.json"))).toBeUndefined();
-    const bad = path.join(dir, "bad.json");
-    fs.writeFileSync(bad, "{nope");
-    expect(collectConfigSkewAdvisory(bad)).toBeUndefined();
-  });
-});
 
 describe("collectEgressAdvisory (08 surfaces 3/9)", () => {
   test("lists enabled registries, remote sources, LLM and embedding endpoints", () => {

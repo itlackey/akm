@@ -14,7 +14,6 @@ import { z } from "zod";
 import {
   AkmConfigSchema,
   ConnectionSchema,
-  CURRENT_CONFIG_VERSION,
   EmbeddingConnectionConfigSchema,
   ImproveProcessConfigSchema,
   ImproveProfileConfigSchema,
@@ -55,7 +54,7 @@ function generate(): JsonSchema {
 
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
-    $id: `https://itlackey.github.io/akm/schemas/akm-config.${CURRENT_CONFIG_VERSION}.json`,
+    $id: `https://itlackey.github.io/akm/schemas/akm-config.0.9.0.json`,
     title: "AKM Configuration",
     description:
       "Configuration file for the akm CLI (Agent Knowledge Manager). Stored at " +

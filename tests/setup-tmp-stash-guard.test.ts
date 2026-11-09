@@ -134,7 +134,7 @@ describe("setup pre-sets AKM_BUNDLE_DIR when --dir is given (so layer 2 fires)",
     const hostConfigPath = path.join(hostConfigDir, "config.json");
     // Canary uses a real schema key — the host config must round-trip cleanly
     // through strict validation as part of the protected pre-condition.
-    const hostConfigContent = '{"configVersion":"0.9.0","semanticSearchMode":"off"}\n';
+    const hostConfigContent = '{"semanticSearchMode":"off"}\n';
     fs.writeFileSync(hostConfigPath, hostConfigContent);
     const hostMtimeBefore = fs.statSync(hostConfigPath).mtimeMs;
 

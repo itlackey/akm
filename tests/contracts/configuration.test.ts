@@ -10,7 +10,6 @@ describe("current connection, harness and strategy configuration contract", () =
   test("accepts connections, harnesses and improve strategies", () => {
     expect(() =>
       AkmConfigSchema.parse({
-        configVersion: "0.9.0",
         connections: { fast: { endpoint: "https://example.test/v1", models: { fast: "qwen3" } } },
         harnesses: { opencode: {} },
         improve: {
@@ -24,7 +23,7 @@ describe("current connection, harness and strategy configuration contract", () =
 
   test("retired profile-based execution configuration is an unknown key", () => {
     // `profiles` is an unknown key: warned about by the loader and ignored, never a schema error.
-    expect(AkmConfigSchema.safeParse({ configVersion: "0.9.0", profiles: { llm: {} } }).success).toBe(true);
+    expect(AkmConfigSchema.safeParse({ profiles: { llm: {} } }).success).toBe(true);
   });
 
   test("rejects writable cache-backed website and npm bundles (#37: sources key itself is retired)", () => {

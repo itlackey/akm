@@ -291,7 +291,6 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
     fs.writeFileSync(path.join(storage.stashDir, "commands", `${id}.md`), "Notify the team.\n", "utf8");
     writeTask(id, ["version: 4", `uses: commands/${id}`, "harness: cli-audit", ""].join("\n"));
     const base = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { fixture: { path: storage.stashDir, writable: true } },
       defaultBundle: "fixture",

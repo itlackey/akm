@@ -78,7 +78,6 @@ describe("akm proposal drain strategy selector", () => {
   test("uses defaults.improveStrategy and reports the effective strategy/output buckets", async () => {
     const stashDir = makeStashDir();
     writeSandboxConfig({
-      configVersion: "0.9.0",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       improve: {
@@ -112,7 +111,6 @@ describe("akm proposal drain strategy selector", () => {
   test("an explicitly selected strategy enables its judgment tier, while the implicit default does not", async () => {
     const stashDir = makeStashDir();
     writeSandboxConfig({
-      configVersion: "0.9.0",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       harnesses: { reviewer: { platform: "claude" } },
@@ -143,7 +141,6 @@ describe("akm proposal drain strategy selector", () => {
   test("--judgment overrides a disabled selected strategy", async () => {
     const stashDir = makeStashDir();
     writeSandboxConfig({
-      configVersion: "0.9.0",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       harnesses: { reviewer: { platform: "claude" } },
@@ -215,7 +212,6 @@ describe("akm proposal drain strategy selector", () => {
     const stashDir = makeStashDir();
     const bundleId = slugForPath(stashDir);
     writeSandboxConfig({
-      configVersion: "0.9.0",
       bundles: { [bundleId]: { path: stashDir, writable: true } },
       defaultBundle: bundleId,
       improve: {
@@ -908,7 +904,6 @@ describe("akm proposal noun group (canonical)", () => {
 describe("akm proposal multi-bundle queues", () => {
   function multiBundleConfig(primary: string, secondary: string): AkmConfig {
     return {
-      configVersion: "0.9.0",
       bundles: {
         primary: { path: primary, writable: true },
         secondary: { path: secondary, writable: true },

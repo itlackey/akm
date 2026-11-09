@@ -124,7 +124,6 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
   testHappy("LLM stub returns valid lesson → outcome=queued, proposal in queue", async () => {
     const stash = happyStash(happyStorage);
     const config: AkmConfig = {
-      configVersion: "0.9.0",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
       connections: {
@@ -154,7 +153,6 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
   testHappy("--source-run sourceRun param threads onto the queued proposal", async () => {
     const stash = happyStash(happyStorage);
     const config: AkmConfig = {
-      configVersion: "0.9.0",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
       connections: {

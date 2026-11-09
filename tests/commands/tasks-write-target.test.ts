@@ -47,7 +47,6 @@ describe("task asset mutations honor write-target resolution", () => {
     const target = makeSandboxDir("akm-task-okf-target");
     try {
       saveConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "target",
         bundles: {
@@ -78,7 +77,6 @@ describe("task asset mutations honor write-target resolution", () => {
     const target = makeSandboxDir("akm-task-target");
     try {
       saveConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "target",
         bundles: { target: { path: target.dir, writable: true } },
@@ -109,7 +107,6 @@ describe("task asset mutations honor write-target resolution", () => {
     const target = makeSandboxDir("akm-task-target");
     try {
       saveConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "target",
         bundles: { target: { path: target.dir, writable: true } },

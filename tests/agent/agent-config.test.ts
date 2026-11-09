@@ -5,7 +5,7 @@ import { resolveTarget } from "../../src/integrations/agent/resolution";
 import { HARNESS_REGISTRY } from "../../src/integrations/harnesses";
 
 function makeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
-  return { configVersion: "0.9.0", semanticSearchMode: "auto", ...overrides };
+  return { semanticSearchMode: "auto", ...overrides };
 }
 
 describe("built-in agent harness profiles", () => {

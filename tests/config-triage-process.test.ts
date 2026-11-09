@@ -91,7 +91,6 @@ describe("triage improve-process config schema", () => {
 
   test("triage may select any connection or harness by name; whether it is configured is resolved when it is used", () => {
     const base = {
-      configVersion: "0.9.0",
       harnesses: { reviewer: { platform: "claude" } },
     } as const;
     for (const selection of [{ harness: "reviewer" }, { connection: "missing" }, { harness: "missing" }]) {

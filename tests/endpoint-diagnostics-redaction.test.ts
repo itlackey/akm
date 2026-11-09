@@ -38,7 +38,6 @@ describe("an endpoint that embeds a username and password", () => {
   test("is warned about at config load without the credential, once for the same server", () => {
     parseAndValidateConfigText(
       JSON.stringify({
-        configVersion: "0.9.0",
         connections: {
           one: { endpoint: WITH_USERINFO, models: { fast: "m" } },
           two: { endpoint: `https://review-user:another-password@example.invalid/v1`, models: { fast: "m" } },

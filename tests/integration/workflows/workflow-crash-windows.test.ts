@@ -50,7 +50,6 @@ let markerDir: string;
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
   writeSandboxConfig({
-    configVersion: "0.9.0",
     connections: {
       "test-llm": { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "test-model" } },
     },

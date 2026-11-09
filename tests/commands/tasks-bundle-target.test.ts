@@ -91,7 +91,6 @@ beforeEach(() => {
   readonlyDir = makeSandboxDir("akm-bundle-ro");
   exec = memoryExec();
   saveConfig({
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     defaultBundle: "stash",
     bundles: {
@@ -351,7 +350,6 @@ describe("bundle-targeted tasks via --bundle", () => {
 
   test("a disabled bundle selector is reported as disabled, not as unconfigured", () => {
     saveConfig({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       defaultBundle: "stash",
       bundles: {

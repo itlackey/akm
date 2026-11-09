@@ -24,7 +24,6 @@ const CONNECTION = {
 
 function configFor(connection: Record<string, unknown>): AkmConfig {
   return {
-    configVersion: "0.9.0",
     connections: { x: connection },
     improve: {
       strategies: { s: { processes: { reflect: { enabled: true } } } },

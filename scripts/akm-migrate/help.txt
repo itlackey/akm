@@ -7,8 +7,8 @@ order, and print one combined JSON plan (exit 1 when any step is blocked):
 
   1. config.json rewritten in its current shape (unknown keys dropped, the
      `engines`/`defaults` form converted to `connections`/`harnesses` with
-     `defaults.improveStrategy` as `improve.strategy`, `configVersion` set
-     to the current value) -- backed up first. A config in the pre-0.9.32
+     `defaults.improveStrategy` as `improve.strategy`, the 0.9 `configVersion`
+     key dropped) -- backed up first. A config in the pre-0.9.32
      source layout is refused, not converted: run `npm i -g akm-cli@0.9.32 &&
      akm migrate apply && akm task sync` first. Keys akm no longer reads from config (an engine's
      `apiKeyFile`, a literal or `${secrets/...}` `apiKey`, and the same on a

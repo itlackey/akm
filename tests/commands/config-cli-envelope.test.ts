@@ -43,7 +43,6 @@ describe("akm config — JSON envelope snapshot (WS6)", () => {
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
     expect(env.semanticSearchMode).toBe("off");
-    expect(env.configVersion).toBe("0.9.0");
     expect(env.profiles).toBeUndefined();
     // #918: every success envelope carries ok:true, matching the {ok:false,...}
     // shape a failure throws before output() is reached.

@@ -45,7 +45,6 @@ import { DEFAULT_EXEC_TIMEOUT_MS } from "../../src/workflows/resource-limits";
 import { decodeWorkflowPlan, frozenStepRows } from "../../src/workflows/runtime/run-plan";
 
 export const WORKFLOW_TEST_CONFIG = {
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
   connections: {
     "test-llm": {

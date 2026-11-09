@@ -45,7 +45,7 @@ function captureWarnings<T>(run: () => T): { value: T; warnings: string[] } {
 }
 
 const configText = (bundles: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
-  JSON.stringify({ configVersion: "0.9.0", bundles, ...extra });
+  JSON.stringify({ bundles, ...extra });
 
 describe("bundles.*.path", () => {
   test("`~` expands to the home directory", () => {
@@ -81,17 +81,14 @@ describe("akm migrate apply keeps bundles as written", () => {
 
   test("`~/x` stays `~/x`, an unplaceable bundle stays in the file", () => {
     const bundles = { a: { path: "~/x" }, bad: { path: "~nobody/y" } };
-    fs.writeFileSync(configPath(), JSON.stringify({ configVersion: "0.9.0", bundles }));
+    fs.writeFileSync(configPath(), JSON.stringify({ bundles }));
     const { warnings } = captureWarnings(() => normalizeConfigFile(configPath(), { apply: true }));
     expect(warnings.length).toBeGreaterThan(0);
     expect(JSON.parse(fs.readFileSync(configPath(), "utf8")).bundles).toEqual(bundles);
   });
 
   test("a healthy file reports current", () => {
-    fs.writeFileSync(
-      configPath(),
-      JSON.stringify({ configVersion: "0.9.0", bundles: { a: { path: "~/x" }, b: { path: "/abs/b/" } } }),
-    );
+    fs.writeFileSync(configPath(), JSON.stringify({ bundles: { a: { path: "~/x" }, b: { path: "/abs/b/" } } }));
     const result = normalizeConfigFile(configPath(), { apply: false });
     expect(result.keys).not.toContain("bundles");
   });
@@ -220,7 +217,7 @@ describe("readStashDirFromConfig", () => {
     fs.mkdirSync(bundleDir);
     fs.writeFileSync(
       path.join(storage.configDir, "akm", "config.json"),
-      JSON.stringify({ configVersion: "0.9.0", defaultBundle: "a", bundles: { a: { path: "my-bundle" } } }),
+      JSON.stringify({ defaultBundle: "a", bundles: { a: { path: "my-bundle" } } }),
     );
     expect(resolveStashDir({})).toBe(bundleDir);
   });
@@ -229,9 +226,7 @@ describe("readStashDirFromConfig", () => {
 describe("$schema", () => {
   test("is accepted without an unknown-key warning", () => {
     const { warnings } = captureWarnings(() =>
-      parseAndValidateConfigText(
-        JSON.stringify({ configVersion: "0.9.0", $schema: "https://example.test/akm-config.json" }),
-      ),
+      parseAndValidateConfigText(JSON.stringify({ $schema: "https://example.test/akm-config.json" })),
     );
     expect(warnings.filter((w) => w.includes("$schema"))).toEqual([]);
   });
@@ -240,7 +235,6 @@ describe("$schema", () => {
 describe("retired-settings warning", () => {
   test("a strategy that says where a process runs is not blamed on a models.json that does not exist", () => {
     const text = JSON.stringify({
-      configVersion: "0.9.0",
       connections: { lab: { endpoint: "http://lab.example.test/v1" } },
       improve: { strategies: { mine: { processes: { reflect: { connection: "lab" } } } } },
     });

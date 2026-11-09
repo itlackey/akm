@@ -78,7 +78,7 @@ describe("error hint rendering (#8)", () => {
 // backing `akm config set`.
 
 describe("config-cli setConfigValue sources error message (#16)", () => {
-  const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+  const base: AkmConfig = { semanticSearchMode: "auto" };
 
   test("unrecognized 'sources' warns naming 'sources', not 'stashes'", () => {
     let result!: ReturnType<typeof setConfigValue>;

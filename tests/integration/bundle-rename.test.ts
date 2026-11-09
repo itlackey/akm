@@ -223,7 +223,6 @@ describe("akm bundle rename — applied", () => {
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: { original: { path: "~/akm-rename-home" }, rel: { path: "./rel-bundle" } },
       }),

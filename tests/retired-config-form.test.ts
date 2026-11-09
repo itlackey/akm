@@ -38,7 +38,6 @@ function loadWarnings(): string[] {
 }
 
 const ENGINES = {
-  configVersion: "0.9.0",
   engines: { lab: { kind: "llm", endpoint: "http://lab:8080/v1/chat/completions", model: "m" } },
   defaults: { llmEngine: "lab" },
 };
@@ -75,7 +74,6 @@ describe("a config still in the retired engines form", () => {
 describe("a models.json beside the config", () => {
   test("is not read: the runtime folds nothing from it", () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "mine" } } },
     });
     fs.writeFileSync(
@@ -93,7 +91,6 @@ describe("a models.json beside the config", () => {
 describe("a connection that still holds an apiKeyFile", () => {
   test("is told once, and the path never becomes a request field", () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: {
         default: { endpoint: "https://x.test/v1", apiKeyFile: "/run/key", models: { fast: "m" } },
       },

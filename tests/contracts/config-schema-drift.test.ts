@@ -12,12 +12,6 @@ function readSchema(): Record<string, unknown> {
 }
 
 describe("config schema drift pins", () => {
-  test("requires the exact 0.9.0 configVersion const", () => {
-    const root = readSchema();
-    const properties = root.properties as Record<string, Record<string, unknown>>;
-    expect(properties.configVersion).toEqual({ type: "string", const: "0.9.0" });
-    expect(root.required).toContain("configVersion");
-  });
   test("ImproveProcessConfig schema includes the qualityGate sub-object and no longer declares contradictionDetection", () => {
     const schema = readSchema();
     const defs = schema.$defs as Record<string, unknown>;
@@ -71,7 +65,7 @@ describe("config schema drift pins", () => {
     const validate = new Ajv2020({ allErrors: true, strict: false }).compile(readSchema());
     // An unknown key is never a schema error; the loader names it once at runtime.
     for (const unknown of [{ llm: { temperature: 0.2 } }, { futureTopLevelKnob: true }]) {
-      expect(validate({ configVersion: "0.9.0", improve: { processes: { triage: unknown } } })).toBe(true);
+      expect(validate({ improve: { processes: { triage: unknown } } })).toBe(true);
     }
   });
 

@@ -18,7 +18,7 @@ import {
   withConfigLock,
   writeConfigAtomic,
 } from "./config-io";
-import { AkmConfigSchema, CURRENT_CONFIG_VERSION } from "./config-schema";
+import { AkmConfigSchema } from "./config-schema";
 import {
   bundleContentRoots,
   bundleSourceId,
@@ -73,7 +73,6 @@ export { VALID_HARNESS_IDS } from "./config-types";
 // ── Defaults ────────────────────────────────────────────────────────────────
 
 export const DEFAULT_CONFIG: AkmConfig = {
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
   registries: [
     { url: "https://raw.githubusercontent.com/itlackey/akm-registry/main/index.json", name: "akm-registry" },
@@ -163,7 +162,7 @@ export function loadUserConfig(): AkmConfig {
 }
 
 /**
- * A config file as it says it: parsed, with `configVersion` read, and nothing else
+ * A config file as it says it: parsed, and nothing else
  * converted. Every raw config object goes through it before it is validated. Unknown keys are not an error: the schema drops them in memory.
  * A retired form (the `engines` form, `secret://`) is not converted here: it is named
  * once ({@link warnUnknownConfigKeys}, {@link warnRetiredSecretRefs}), and `akm migrate apply` rewrites it. An ordinary
@@ -172,7 +171,7 @@ export function loadUserConfig(): AkmConfig {
 export function readConfigFile(text: string, sourcePath?: string): Record<string, unknown> {
   const raw = parseConfigText(text, sourcePath);
   warnRetiredSecretRefs(raw, [], sourcePath);
-  return readConfigVersion(raw, sourcePath);
+  return raw;
 }
 
 /**
@@ -192,25 +191,6 @@ function warnRetiredSecretRefs(node: unknown, keyPath: readonly string[], source
   } else if (isPlainConfigObject(node)) {
     for (const [key, child] of Object.entries(node)) warnRetiredSecretRefs(child, [...keyPath, key], sourcePath);
   }
-}
-
-/**
- * `configVersion` is read, never gated on. `"0.9.0"` is the only value akm
- * has ever shipped, and a document without the field is that same document.
- * Any other value is named once and the file is read as the current shape
- * anyway; every ordinary config write and `akm migrate apply`'s `configFile`
- * step then persist `"0.9.0"`.
- */
-function readConfigVersion(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
-  const version = raw.configVersion;
-  if (version === CURRENT_CONFIG_VERSION) return raw;
-  if (version !== undefined) {
-    warnOnce(
-      `config:config-version${sourcePath ? `:${sourcePath}` : ""}`,
-      `${sourcePath ?? "config.json"} declares configVersion ${JSON.stringify(version)}; this release reads it as ${CURRENT_CONFIG_VERSION}.`,
-    );
-  }
-  return { ...raw, configVersion: CURRENT_CONFIG_VERSION };
 }
 
 /**
@@ -342,8 +322,8 @@ export function unknownConfigKeyPaths(
   const found: string[][] = [];
   for (const key of Object.keys(node).sort()) {
     const keyPath = [...prefix, key];
-    // `$schema` is the editor hint every JSON-schema-aware config carries; akm ignores it silently.
-    if (prefix.length === 0 && key === "$schema") continue;
+    // `$schema` is the editor hint every JSON-schema-aware config carries, and `configVersion` is a key 0.9 wrote; akm ignores both silently.
+    if (prefix.length === 0 && (key === "$schema" || key === "configVersion")) continue;
     const schema = resolveSchemaAt(keyPath, root);
     if (schema === undefined) {
       found.push(keyPath);
@@ -413,9 +393,6 @@ function assertUniquePhysicalBundleRoots(config: AkmConfig, sourcePath?: string)
 /**
  * Parse raw config text and validate via Zod.
  * ({@link AkmConfigSchema}). Returns the merged-with-defaults AkmConfig.
- *
- * `configVersion` is read as the current version whatever it says (see
- * {@link readConfigVersion}).
  */
 export function parseAndValidateConfigText(text: string, sourcePath?: string): AkmConfig {
   const liftedConfig = readConfigFile(text, sourcePath);
@@ -516,9 +493,7 @@ export function loadConfig(): AkmConfig {
 }
 
 export function saveConfig(config: AkmConfig): void {
-  // Every lifecycle write produces the only config version this binary can load.
-  const currentConfig = { ...config, configVersion: CURRENT_CONFIG_VERSION } as AkmConfig;
-  saveConfigReal(currentConfig);
+  saveConfigReal(config);
 }
 
 function saveConfigReal(config: AkmConfig): void {
@@ -675,7 +650,6 @@ function editedConfigFile(
   for (const key of persistTopLevelKeys) {
     if (Object.hasOwn(next, key)) body[key] = next[key];
   }
-  body.configVersion = CURRENT_CONFIG_VERSION;
   return body;
 }
 
@@ -719,7 +693,7 @@ export function mutateConfig(
       document === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(document, configPath);
     const mutated = mutate(current);
     if (mutated === current) return { config: current, written: false };
-    const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
+    const next = validateCompleteConfig(mutated);
     const body = editedConfigFile(document, current, next, [], options?.writeProjects);
     if (text !== undefined) backupExistingConfig(configPath);
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -747,7 +721,7 @@ export async function mutateConfigWithPrecommit<T>(
     const current =
       document === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(document, configPath);
     const mutated = mutate(current);
-    const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
+    const next = validateCompleteConfig(mutated);
     const body = editedConfigFile(document, current, next, options?.persistTopLevelKeys);
     if (text !== undefined) backupExistingConfig(configPath);
     const precommitResult = await precommit(next);

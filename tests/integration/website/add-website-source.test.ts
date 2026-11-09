@@ -86,7 +86,7 @@ describe("akm bundle add website", () => {
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(
         path.join(configDir, "config.json"),
-        `${JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off" }, null, 2)}\n`,
+        `${JSON.stringify({ semanticSearchMode: "off" }, null, 2)}\n`,
       );
 
       const child = spawn(

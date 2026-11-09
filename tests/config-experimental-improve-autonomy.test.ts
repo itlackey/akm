@@ -21,7 +21,7 @@ import { describe, expect, test } from "bun:test";
 import { AkmConfigSchema } from "../src/core/config/config-schema";
 import { isImproveAutonomyEnabled } from "../src/core/config/experimental";
 
-const BASE = { configVersion: "0.9.0" as const };
+const BASE = {};
 
 describe("experimental.improveAutonomy schema", () => {
   test("accepts the key and round-trips true", () => {

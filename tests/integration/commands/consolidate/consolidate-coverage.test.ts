@@ -337,7 +337,6 @@ describe("akmConsolidate — a covered memory is not promoted, an uncovered one 
       indexAsset(db, "knowledge", "handbook", guideFile, 3);
     });
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",

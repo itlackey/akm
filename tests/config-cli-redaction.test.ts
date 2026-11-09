@@ -37,7 +37,6 @@ describe("config command apiKey redaction", () => {
 
     const outputs = await withEnv(env, async () => {
       writeSandboxConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         embedding: {
           endpoint: "https://emb.example.test/v1/embeddings",
@@ -90,7 +89,7 @@ describe("config get --show-source", () => {
     const env = freshEnv();
 
     const outputs = await withEnv(env, async () => {
-      writeSandboxConfig({ configVersion: "0.9.0", semanticSearchMode: "auto" });
+      writeSandboxConfig({ semanticSearchMode: "auto" });
 
       const local = await runCliCapture(["config", "get", "semanticSearchMode", "--show-source"]);
       const fallback = await runCliCapture(["config", "get", "output.format", "--show-source"]);
@@ -106,7 +105,7 @@ describe("config get --show-source", () => {
   test("omitting --show-source keeps the bare value shape", async () => {
     const env = freshEnv();
     const result = await withEnv(env, async () => {
-      writeSandboxConfig({ configVersion: "0.9.0", semanticSearchMode: "auto" });
+      writeSandboxConfig({ semanticSearchMode: "auto" });
       return runCliCapture(["config", "get", "semanticSearchMode"]);
     });
     expect(result.code).toBe(0);
@@ -126,7 +125,6 @@ describe("config diff", () => {
       fs.writeFileSync(
         path.join(configDir, "other.json"),
         JSON.stringify({
-          configVersion: "0.9.0",
           connections: {
             fast: {
               endpoint: "https://api.example.test/v1",
@@ -137,7 +135,6 @@ describe("config diff", () => {
         }),
       );
       writeSandboxConfig({
-        configVersion: "0.9.0",
         connections: {
           fast: {
             endpoint: "https://api.example.test/v1",
@@ -166,7 +163,7 @@ describe("config diff", () => {
     const env = freshEnv();
 
     const result = await withEnv(env, async () => {
-      writeSandboxConfig({ configVersion: "0.9.0" });
+      writeSandboxConfig({});
       return runCliCapture(["config", "diff", path.join(env.XDG_CONFIG_HOME as string, "akm", "missing.json")]);
     });
 
@@ -180,7 +177,7 @@ describe("config diff", () => {
     const outputs = await withEnv(env, async () => {
       const configDir = path.join(env.XDG_CONFIG_HOME as string, "akm");
       fs.mkdirSync(configDir, { recursive: true });
-      const shared = { configVersion: "0.9.0" as const, semanticSearchMode: "auto" as const };
+      const shared = { semanticSearchMode: "auto" as const };
       fs.writeFileSync(path.join(configDir, "same.json"), JSON.stringify(shared));
       writeSandboxConfig(shared);
 
@@ -198,11 +195,8 @@ describe("config diff", () => {
     const outputs = await withEnv(env, async () => {
       const configDir = path.join(env.XDG_CONFIG_HOME as string, "akm");
       fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(configDir, "other.json"),
-        JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "auto" }),
-      );
-      writeSandboxConfig({ configVersion: "0.9.0", semanticSearchMode: "off" });
+      fs.writeFileSync(path.join(configDir, "other.json"), JSON.stringify({ semanticSearchMode: "auto" }));
+      writeSandboxConfig({ semanticSearchMode: "off" });
 
       return runCliCapture(["config", "diff", path.join(configDir, "other.json"), "--detail", "agent"]);
     });

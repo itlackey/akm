@@ -17,7 +17,6 @@ import type { AkmConfig } from "../../../src/core/config/config";
 
 const config = (improve: Record<string, unknown> = {}): AkmConfig =>
   ({
-    configVersion: "0.9.0",
     connections: {
       default: { endpoint: "http://lab:1/v1", models: { fast: "default-model" } },
       wide: { endpoint: "http://lab:2/v1", models: { fast: "wide-model" } },

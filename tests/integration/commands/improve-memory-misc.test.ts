@@ -488,7 +488,6 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
     fs.writeFileSync(lessonFile, "---\nwhen_to_use: trigger\n---\n\nBody text.\n", "utf8");
     await buildIndex(stashDir);
     saveConfig({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",

@@ -38,7 +38,6 @@ beforeEach(() => {
   fs.writeFileSync(
     getConfigPath(),
     JSON.stringify({
-      configVersion: "0.9.0",
       engines: {
         default: llm(A, "model-a"),
         lab: llm(B, "model-b"),

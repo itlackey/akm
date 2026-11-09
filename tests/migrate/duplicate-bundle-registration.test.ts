@@ -51,7 +51,6 @@ describe("bundleContentRoot / bundleKeyForContentRoot", () => {
 
   test("finds the bundle id owning a resolved content root, honoring a non-trivial component root", () => {
     const config: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: {
         openpalm: { path: "/home/user/openpalm", components: { main: { root: "catalog" } } },
@@ -67,7 +66,6 @@ describe("bundleContentRoot / bundleKeyForContentRoot", () => {
 describe("withPrimaryBundle (issue #870 part 1)", () => {
   test("reuses the existing bundle id when its resolved content root already matches", () => {
     const config: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { openpalm: { path: "/home/user/openpalm", writable: true } },
       // No defaultBundle set yet — this is exactly the shape a container
@@ -80,7 +78,7 @@ describe("withPrimaryBundle (issue #870 part 1)", () => {
   });
 
   test("still mints a fresh id when no configured bundle owns that root", () => {
-    const config: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "off", bundles: {} };
+    const config: AkmConfig = { semanticSearchMode: "off", bundles: {} };
     const next = withPrimaryBundle(config, "/home/user/brand-new-stash");
     expect(Object.keys(next.bundles ?? {})).toHaveLength(1);
     expect(next.defaultBundle).toBeDefined();
@@ -92,7 +90,6 @@ describe("resolveWorkingStashTarget (issue #870 part 1, AKM_BUNDLE_DIR path)", (
     const storage = withIsolatedAkmStorage();
     try {
       const config: AkmConfig = {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: { openpalm: { path: storage.stashDir, writable: true } },
       };
@@ -109,7 +106,6 @@ describe("resolveWorkingStashTarget (issue #870 part 1, AKM_BUNDLE_DIR path)", (
     try {
       fs.symlinkSync(storage.stashDir, alias, "dir");
       const config: AkmConfig = {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: { dormant: { path: alias, enabled: false } },
       };
