@@ -255,6 +255,72 @@ describe("task sync: an installation that moves its locations", () => {
   });
 });
 
+describe("task sync: the default installation, as every 0.9.32 and 0.10 row names it", () => {
+  test("AKM_BUNDLE_DIR equal to the configured default bundle does not move the installation", async () => {
+    configure(["stash//tasks/a"]);
+    state.legacy = [{ id: "a", environment: { AKM_BUNDLE_DIR: storage.stashDir } }];
+
+    const result = await akmTasksSync(
+      {
+        backend: fakeBackend(state),
+        launcher: launcher("/opt/akm"),
+        env: { ...DEFAULT_ENV, AKM_BUNDLE_DIR: storage.stashDir },
+      },
+      {},
+    );
+
+    expect(result).toMatchObject({ entry: "installed", removedLegacy: ["a"] });
+    expect(state.entry).toBeDefined();
+  });
+
+  test("AKM_BUNDLE_DIR naming some other directory still does", async () => {
+    configure(["stash//tasks/a"]);
+    const result = await akmTasksSync(
+      {
+        backend: fakeBackend(state),
+        launcher: launcher("/opt/akm"),
+        env: { ...DEFAULT_ENV, AKM_BUNDLE_DIR: path.join(storage.root, "elsewhere") },
+      },
+      {},
+    );
+    expect(result.entry).toBe("unmanaged");
+    expect(result.warnings?.[0]).toContain("bundle");
+  });
+});
+
+describe("task sync: an akm carried inside another package or app", () => {
+  const carried = () => ({
+    argv: ["/usr/bin/bun", "/cache/akm/0.10.1/node_modules/akm-cli/dist/cli.js"],
+    via: "package-local",
+  });
+
+  test("never writes the entry, and says so without telling the user to install akm or calling it a checkout", async () => {
+    configure(["stash//tasks/a"]);
+
+    const result = await akmTasksSync({ backend: fakeBackend(state), launcher: carried, env: DEFAULT_ENV }, {});
+
+    expect(result.entry).toBe("unmanaged");
+    expect(state.applied).toEqual([]);
+    const message = result.warnings?.join("\n") ?? "";
+    expect(message).toContain("/cache/akm/0.10.1/node_modules/akm-cli/dist/cli.js");
+    expect(message).toContain("akm task dispatch");
+    expect(message).not.toMatch(/install/i);
+    expect(message).not.toContain("checkout");
+  });
+
+  test("an entry that is already installed is left alone by a sync from it, and is removed when no task is enabled", async () => {
+    state.entry = { launcher: ["/opt/akm"] };
+    configure(["stash//tasks/a"]);
+    expect((await akmTasksSync({ backend: fakeBackend(state), launcher: carried, env: DEFAULT_ENV }, {})).entry).toBe(
+      "unchanged",
+    );
+    configure([]);
+    expect((await akmTasksSync({ backend: fakeBackend(state), launcher: carried, env: DEFAULT_ENV }, {})).entry).toBe(
+      "removed",
+    );
+  });
+});
+
 describe("task prune", () => {
   const dead = path.join("/nonexistent", "akm-dead-bundle");
 
@@ -317,6 +383,24 @@ describe("task doctor", () => {
     expect(report.warnings.join("\n")).toContain("entry is not installed");
     expect(report.bindings).toEqual([{ argv: [], taskIds: ["old"], status: ["legacy"] }]);
     expect(report.remediation).toBe("akm task sync");
+  });
+
+  test("an enabled task that cannot run is a warning naming the task and why, for a bad schedule and for a missing file", async () => {
+    fs.mkdirSync(path.join(storage.stashDir, "tasks"), { recursive: true });
+    fs.writeFileSync(
+      path.join(storage.stashDir, "tasks", "reboot.yml"),
+      'version: 4\nrun: "true"\nschedule: "@reboot"\n',
+    );
+    fs.writeFileSync(path.join(storage.stashDir, "tasks", "fine.yml"), 'version: 4\nrun: "true"\nschedule: "@daily"\n');
+    configure(["stash//tasks/reboot", "stash//tasks/gone", "stash//tasks/fine"]);
+    state.entry = { launcher: [process.execPath] };
+
+    const report = await akmTasksDoctor({ backend: fakeBackend(state), env: DEFAULT_ENV });
+
+    const text = report.warnings.join("\n");
+    expect(text).toContain("stash//tasks/reboot");
+    expect(text).toContain("stash//tasks/gone");
+    expect(text).not.toContain("stash//tasks/fine");
   });
 
   test("a non-default installation reports that it owns no entry and reads nothing from the OS", async () => {

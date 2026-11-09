@@ -11,6 +11,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { CRON_BACKEND, type CronExec, type CronExecResult, renderEntryBlock } from "../src/tasks/backends/cron";
+import { decodeCommandOutput } from "../src/tasks/backends/exec-utils";
 import { buildPlistXml, LAUNCHD_BACKEND, type LaunchdExec, type LaunchdFs } from "../src/tasks/backends/launchd";
 import { buildSchtasksXml, SCHTASKS_BACKEND, type SchtasksExec, type SchtasksFs } from "../src/tasks/backends/schtasks";
 import { legacyCronBlock, legacyCrontab } from "./_helpers/legacy-scheduler";
@@ -515,5 +516,108 @@ describe("schtasks backend", () => {
   test("null deletes the entry; deleting what is already gone is not an error", async () => {
     const { backend } = fakeSchtasks();
     await expect(settle(() => backend.apply({ entry: null, removeLegacy: [] }))).resolves.toBeUndefined();
+  });
+});
+
+// ── the safety branches: what must never be read as empty, written, or mangled ──────────────────────────────────
+
+describe("cron: a crontab that cannot be read is never an empty crontab", () => {
+  const writes: string[] = [];
+  const failing = (result: CronExecResult): CronExec => ({
+    read: () => result,
+    write: (content) => {
+      writes.push(content);
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+
+  test("a refusal that says something other than 'no crontab' fails both the read and every write, and writes nothing", async () => {
+    writes.length = 0;
+    const backend = cron(failing({ status: 1, stdout: "", stderr: "crontab: permission denied" }));
+
+    await expect(settle(() => backend.inspect())).rejects.toThrow(/crontab -l failed \(exit 1\).*permission denied/);
+    await expect(settle(() => backend.apply({ entry: { launcher: LAUNCHER }, removeLegacy: [] }))).rejects.toThrow(
+      /crontab -l failed/,
+    );
+    await expect(settle(() => backend.apply({ entry: null, removeLegacy: [] }))).rejects.toThrow(/crontab -l failed/);
+    expect(writes).toEqual([]);
+  });
+
+  test("an unexplained non-zero exit with output on stdout is a failure, not an empty crontab", async () => {
+    const backend = cron(failing({ status: 2, stdout: "0 3 * * * /usr/local/bin/mine\n", stderr: "" }));
+    await expect(settle(() => backend.inspect())).rejects.toThrow(/crontab -l failed \(exit 2\)/);
+  });
+
+  test("under no-new-privileges a permission refusal says why, and still writes nothing", async () => {
+    writes.length = 0;
+    const backend = cron(
+      failing({ status: 1, stdout: "", stderr: "crontab: fopen: Permission denied", noNewPrivileges: true }),
+    );
+    await expect(settle(() => backend.apply({ entry: { launcher: LAUNCHER }, removeLegacy: [] }))).rejects.toThrow(
+      /no-new-privileges/,
+    );
+    expect(writes).toEqual([]);
+  });
+
+  test("without no-new-privileges the same refusal is reported as what it said", async () => {
+    const backend = cron(failing({ status: 1, stdout: "", stderr: "crontab: fopen: Permission denied" }));
+    const error = await settle(() => backend.inspect()).catch((e: Error) => e);
+    expect((error as Error).message).toContain("Permission denied");
+    expect((error as Error).message).not.toContain("no-new-privileges");
+  });
+});
+
+describe("cron: a control character never reaches a crontab line", () => {
+  test.each([
+    ["a newline in the launcher", { launcher: ["/opt/akm\ninjected"] }],
+    ["a bell in the launcher", { launcher: ["/opt/ak\x07m"] }],
+    ["a DEL-range character in the PATH", { launcher: LAUNCHER, path: "/usr/bin:/b\x85in" }],
+  ])("%s is refused and nothing is written", async (_name, entry) => {
+    const exec = memoryCron("0 3 * * * /usr/local/bin/mine\n");
+    await expect(settle(() => cron(exec).apply({ entry, removeLegacy: [] }))).rejects.toThrow(/control characters/);
+    expect(exec.writes).toEqual([]);
+    expect(exec.current()).toBe("0 3 * * * /usr/local/bin/mine\n");
+  });
+});
+
+describe("launchd: a control character never reaches the plist", () => {
+  test("the plist builder refuses XML-forbidden control characters, in the launcher and in PATH", () => {
+    expect(() => buildPlistXml({ launcher: ["/opt/ak\x07m"] }, LOG_DIR)).toThrow(/control characters/);
+    expect(() => buildPlistXml({ launcher: LAUNCHER, path: "/usr/bin:\x1b/bin" }, LOG_DIR)).toThrow(
+      /control characters/,
+    );
+    expect(buildPlistXml({ launcher: ["/opt/with\ttab"] }, LOG_DIR)).toContain("/opt/with\ttab");
+  });
+});
+
+describe("decodeCommandOutput: Task Scheduler writes UTF-16", () => {
+  const xml = '<Task><Source>akm:v2:["C:\\akm.exe"]</Source></Task>';
+  test("UTF-16LE with a BOM, UTF-16LE without one, UTF-16BE with a BOM, UTF-8 with a BOM and plain text all decode", () => {
+    const le = Buffer.from(xml, "utf16le");
+    expect(decodeCommandOutput(Buffer.concat([Buffer.from([0xff, 0xfe]), le]))).toBe(xml);
+    expect(decodeCommandOutput(le)).toBe(xml);
+    const be = Buffer.from(le).swap16();
+    expect(decodeCommandOutput(Buffer.concat([Buffer.from([0xfe, 0xff]), be]))).toBe(xml);
+    expect(decodeCommandOutput(be)).toBe(xml);
+    expect(decodeCommandOutput(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(xml)]))).toBe(xml);
+    expect(decodeCommandOutput(Buffer.from(xml))).toBe(xml);
+    expect(decodeCommandOutput("\uFEFF" + xml)).toBe(xml);
+    expect(decodeCommandOutput(null)).toBe("");
+    expect(decodeCommandOutput(Buffer.alloc(0))).toBe("");
+  });
+
+  test("an entry whose XML was emitted as UTF-16 is read back through the exec seam's decoder", async () => {
+    const utf16 = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from(buildSchtasksXml({ launcher: ["C:\\akm.exe"] }, { userSid: "S-1-5-21-1-2-3-1001" }), "utf16le"),
+    ]);
+    const exec: SchtasksExec = {
+      run: (args) =>
+        args.includes("/FO")
+          ? { status: 0, stdout: '"\\akm\\dispatch","N/A","Ready"', stderr: "" }
+          : { status: 0, stdout: decodeCommandOutput(utf16), stderr: "" },
+    };
+    const reader = SCHTASKS_BACKEND({ exec, userSid: "S-1-5-21-1-2-3-1001" });
+    expect((await reader.inspect()).entry).toEqual({ launcher: ["C:\\akm.exe"] });
   });
 });

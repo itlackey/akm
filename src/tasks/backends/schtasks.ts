@@ -16,9 +16,13 @@
  * Platform notes:
  *   • `LogonType=InteractiveToken`: runs as the registering user while they
  *     are logged in; no stored password.
- *   • The action runs the launcher directly (no shell), so no console shell
- *     flashes every minute. Task Scheduler runs with the account's own
- *     environment, so PATH is not carried anywhere.
+ *   • The action runs the launcher directly, with no shell in between.
+ *     InteractiveToken runs it in the user's desktop session, and a console
+ *     program (a Bun standalone, node.exe) may show a console window every
+ *     minute there: Microsoft's docs do not say, and the CI gate cannot see
+ *     windows. `<Hidden>` only hides the task from the Task Scheduler UI.
+ *     Task Scheduler runs with the account's own environment, so PATH is not
+ *     carried anywhere.
  *   • The launcher argv is stored as JSON in `<Source>`, which is how
  *     `inspect()` reads it back.
  *

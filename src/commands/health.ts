@@ -56,6 +56,7 @@ import {
   type WindowResult,
   type WindowSpec,
 } from "./health/types";
+import { collectUnrunnableTasksAdvisory } from "./health/unrunnable-tasks";
 import { collectVersionDriftAdvisory } from "./health/version-drift";
 import {
   buildImproveWindowSummary,
@@ -822,6 +823,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       semanticSearch: readSemanticSearchState(gatherSemanticSearchMode()),
       versionDrift,
       schedulerBinaryDrift,
+      unrunnableTasks: collectUnrunnableTasksAdvisory(),
     };
     for (const check of HEALTH_CHECKS) {
       const result = check.run(checkContext);

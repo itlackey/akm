@@ -16,14 +16,18 @@ current minute, and starts every task that is due as a separate, detached
 `akm task run`, then exits. Nothing about a task is copied into the OS:
 
 - editing a task's `schedule:` takes effect on the next minute;
-- `akm task enable`, `disable` and `add` edit your config and task files, not the OS;
+- `akm task enable`, `disable` and `add` edit your config and task files, then sync the entry:
+  the first enabled task installs it and the last disabled one removes it;
 - a task that is still running from an earlier minute is not started again
   (overlap is skipped on every OS);
 - one cron grammar works everywhere; the OS never limits which expressions you can use;
 - a dispatch that starts late (a busy host, a short sleep) evaluates the minutes
   it missed, at most the last five, and runs a task due in several of them once.
   A task whose minute passed while the machine was off does not run when it comes
-  back.
+  back;
+- times are read as wall-clock time in the host's time zone, so across a daylight-saving
+  change a task set inside the skipped hour (`30 2 * * *` in spring) does not run that
+  day, and one set inside the repeated hour (`30 1 * * *` in autumn) runs twice.
 
 The OS entry is written, and kept, by `akm task sync`:
 
@@ -32,11 +36,13 @@ akm task sync            # install the entry when a task is enabled, remove it w
 akm task sync --rebind   # point the entry at this akm and this shell's PATH
 ```
 
-Run `akm task sync` once after the first `akm task enable` or `akm task add` on a
-host. After that, enabling and disabling tasks needs no further sync. `akm task
-sync` records an absolute launcher and the `PATH` of the shell that writes the
-entry (cron, launchd and Task Scheduler start jobs with almost no `PATH`), and
-keeps both until `--rebind`.
+`akm task enable`, `disable` and `add` run the sync themselves, so it is only needed
+to repair the entry or to rebind it. The entry records an absolute launcher and the
+`PATH` of the shell that writes it (cron, launchd and Task Scheduler start jobs with
+almost no `PATH`), and keeps both until `--rebind`. An akm that is carried inside
+another package or app (a plugin's bundled copy, Desktop's own binary) does not
+write the entry, because its path moves when that package updates; run
+`akm task sync` from an akm of your own, or `akm task dispatch` from your own supervisor.
 
 ## Review tasks during setup
 
@@ -61,7 +67,9 @@ akm task doctor
 ```
 
 `akm task doctor` reports the scheduler backend, the installed entry (its
-launcher and the tasks it fires), and warnings — run it after any setup pass,
+launcher and the tasks it fires), and warnings (including any enabled task that
+cannot run: a deleted file, an inactive bundle, a schedule that does not parse;
+`akm health` reports the same) — run it after any setup pass,
 and again after a `--rebind`, to confirm the scheduler state matches what you
 expect. `akm task history` shows what ran.
 
