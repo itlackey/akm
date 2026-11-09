@@ -31,8 +31,8 @@ import type { TaskRunResult, TaskRunStatus } from "./task-result";
 /**
  * Resolve the host shell to something spawnable in a scheduler-fired process.
  *
- * A scheduled run restores the PATH captured at install time
- * (scheduler-invocation.ts), which can be minimal — the native-scheduler CI
+ * A scheduled run restores the PATH captured when the dispatch entry was written
+ * (`akm task sync`), which can be minimal — the native-scheduler CI
  * gate installs with PATH = System32 + SystemRoot, modeling what a real
  * scheduler hands a job. powershell.exe does not live in System32 itself but
  * in the WindowsPowerShell\v1.0 subdirectory, so a bare "powershell" spawn

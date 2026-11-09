@@ -8,7 +8,7 @@
  * declared `inputs:` name that collides with one, without creating an import
  * cycle back through the CLI layer.
  *
- * `schedulerInputFlagTail` (`../tasks/scheduler-binding.ts`) and
+ * `inputFlagTail` (`./dispatch.ts`) and
  * `akm task run <id> --<name> <value>` both let an authored/declared input
  * NAME collide with a flag `akm task run` already binds to itself
  * (`--bundle`, `--scheduled`, …). `parseTaskInputFlags`

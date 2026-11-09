@@ -13,7 +13,7 @@
  * be reread when a delayed or resumed dispatch begins.
  *
  * `prepareTaskV3Execution`'s three production callers are
- * `src/tasks/run/load-task.ts`, `src/tasks/scheduler-sync.ts`, and
+ * `src/tasks/run/load-task.ts`, `src/commands/tasks/tasks.ts` (`task add`), and
  * `src/workflows/freeze/targets/task.ts`'s `taskDispatch`. The name and the
  * `TaskV3*` type family it takes stay; only task source v4 ever reaches this
  * function now, always via `src/tasks/source/project-v4.ts`'s

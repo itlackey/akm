@@ -15,8 +15,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { saveConfig } from "../src/core/config/config";
 import { getStateDbPath, withStateDb } from "../src/core/state-db";
-import { reserveTaskHistoryAttempt } from "../src/storage/repositories/task-history-repository";
+import { listActiveTaskRuns, reserveTaskHistoryAttempt } from "../src/storage/repositories/task-history-repository";
 import { DISPATCH_WINDOW_MINUTES, dispatchDueTasks, minutesToEvaluate } from "../src/tasks/dispatch";
+import { reserveTaskAttempt } from "../src/tasks/run/attempt-lifecycle";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 const MINUTE = 60_000;
@@ -284,5 +285,13 @@ describe("a run still in flight", () => {
     reserve("someone-else", new Date(NINE_THIRTY.getTime() - 60 * MINUTE), { pid: process.pid });
 
     expect((await dispatchAt(NINE_THIRTY)).started).toEqual(["stash//tasks/busy"]);
+  });
+
+  test("a run records the process that reserved its history row, which is what dispatch looks for", () => {
+    reserveTaskAttempt("busy", new Date());
+
+    const [run] = withStateDb((db) => listActiveTaskRuns(db, ["busy"]));
+
+    expect(run).toMatchObject({ task_id: "busy", pid: process.pid });
   });
 });

@@ -541,8 +541,8 @@ function targetConsumesOutputSchema(target: TaskSourceV4Target): boolean {
 /**
  * Every schedule binding must be independently runnable.
  *
- * A scheduled firing supplies NO input flags — `compileTaskSchedulerBindings`
- * (../scheduler-binding.ts) appends only the entry's own
+ * A scheduled firing supplies NO input flags — `akm task dispatch`
+ * (../dispatch.ts) appends only the entry's own
  * `schedule[i].inputs` to the `["task","run",id,"--bundle",b,"--scheduled"]`
  * tail — so that literal PLUS the declared defaults is the complete value set
  * `akm task run --scheduled` will see, and it is checked there by the very
@@ -553,12 +553,10 @@ function targetConsumesOutputSchema(target: TaskSourceV4Target): boolean {
  *
  * The source document alone knows both halves of that contradiction, so it is
  * a grammar error: TASK_SOURCE_INVALID at the entry's own field path, naming
- * the unsatisfied input(s). `akm task sync`'s projectability proof
- * (../scheduler-sync.ts) keeps its own independent copy of this check over
- * the DEFAULTED view — that gate is what makes such a schedule unreachable
- * rather than merely ill-advised, and it still guards a task source reaching
- * sync through any other path — but an author should not have to run `akm
- * task sync` to learn that a document contradicts itself, so it is rejected at
+ * the unsatisfied input(s). `akm lint --type tasks`
+ * (../schedule-gates.ts) keeps its own independent copy of this check over
+ * the DEFAULTED view, but an author should not have to run it
+ * to learn that a document contradicts itself, so it is rejected at
  * parse time. Manual `akm task
  * run` is deliberately unaffected: a manual run takes the value from the
  * input's own `--<name>` flag, so a required, default-less input plus NO
