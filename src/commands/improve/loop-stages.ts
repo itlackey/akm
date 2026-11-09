@@ -14,6 +14,7 @@ import { getDbPath, getTaskLogDir } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
 import { info } from "../../core/warn";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
+import { foldBeforePurge } from "../../indexer/metrics/fold";
 import { type MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { Database } from "../../storage/database";
@@ -23,6 +24,7 @@ import {
   isRefLiveInSnapshot,
   type LiveRefSnapshot,
 } from "../../storage/repositories/index-entries-repository";
+import { purgeFoldedEvents, purgeFoldedImproveRuns } from "../../storage/repositories/metrics-rollup-repository";
 import {
   clearAssetOutcomeMissing,
   countAssetOutcomeMissing,
@@ -37,7 +39,6 @@ import {
 } from "../../storage/repositories/salience-repository";
 import { readFreelistInfo, STATE_DB_VACUUMED_EVENT, vacuumIfReclaimable } from "../../storage/state-db-integrity";
 import { purgeOldRunLogFiles, purgeOldTaskLogFiles } from "../../tasks/run/task-log";
-import { foldBeforePurge, purgeFoldedEvents, purgeFoldedImproveRuns } from "../metrics/fold";
 import { expireStaleProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl, type DeadUrlCoverage } from "../url-checker";
 import { isDistillCandidateRef } from "./eligibility";

@@ -2,10 +2,11 @@ import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { foldBeforePurge, purgeFoldedUsageEvents } from "../../src/commands/metrics/fold";
 import { openStateDatabase } from "../../src/core/state-db";
+import { foldBeforePurge } from "../../src/indexer/metrics/fold";
 import { insertUsageEvent, type UsageEventRow } from "../../src/indexer/usage/usage-events";
 import type { Database } from "../../src/storage/database";
+import { purgeFoldedUsageEvents } from "../../src/storage/repositories/metrics-rollup-repository";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
 /** Read back inserted rows directly — `getUsageEvents` was dropped as dead code (no production reader). */

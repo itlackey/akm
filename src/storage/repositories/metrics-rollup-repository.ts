@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Read side of metrics.db (`core/metrics-db.ts`; the fold in `commands/metrics/fold.ts` writes it), for the
+ * Read side of metrics.db (`core/metrics-db.ts`; the fold in `indexer/metrics/fold.ts` writes it), for the
  * readers that need a window older than state.db's raw rows.
  *
  * One rule decides where each day comes from, so a window spanning both stores neither double counts nor
@@ -19,10 +19,13 @@ import type { MetricsLlmRow } from "../../commands/metrics/types";
 import { warnOnce } from "../../core/warn";
 import { type Database, openDatabase } from "../database";
 import { applyReadonlyPragmas } from "../sqlite-pragmas";
+import { withImmediateTransaction } from "../sqlite-transaction";
+import { FOLD_SOURCES, type FoldSourceKey, type ImproveRunSourceRow } from "./metrics-repository";
 
 const DAY_MS = 86_400_000;
 
-function utcDay(ms: number): string {
+/** `YYYY-MM-DD` (UTC) of an epoch-ms instant. */
+export function utcDay(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
@@ -269,4 +272,229 @@ export function readSkipDaily(
 export function firstFoldedDay(db: Database): string | undefined {
   const row = db.prepare("SELECT MIN(day) AS day FROM folded_day").get() as { day: string | null } | undefined;
   return row?.day ?? undefined;
+}
+
+// ── Fold writes (metrics.db) ────────────────────────────────────────────────
+
+/** Source rows folded for one day, per table: what the day's marker covers. */
+export interface FoldedCounts {
+  events: number;
+  usage: number;
+  runs: number;
+}
+
+/** Every folded day with the counts its marker covers: the purge guard. */
+export type FoldedDays = ReadonlyMap<string, FoldedCounts>;
+
+export function readFoldedDays(metricsDb: Database): Map<string, FoldedCounts> {
+  const rows = metricsDb.prepare("SELECT day, src_events, src_usage, src_runs FROM folded_day").all() as Array<{
+    day: string;
+    src_events: number;
+    src_usage: number;
+    src_runs: number;
+  }>;
+  return new Map(rows.map((r) => [r.day, { events: r.src_events, usage: r.src_usage, runs: r.src_runs }]));
+}
+
+/** One day's marker; read inside the day's transaction, where no other writer can change it. */
+export function readFoldedDay(metricsDb: Database, day: string): FoldedCounts | undefined {
+  return readFoldedDays(metricsDb).get(day);
+}
+
+export function writeFoldedDay(metricsDb: Database, day: string, foldedAt: string, counts: FoldedCounts): void {
+  metricsDb
+    .prepare(
+      "INSERT OR REPLACE INTO folded_day (day, folded_at, src_events, src_usage, src_runs) VALUES (?, ?, ?, ?, ?)",
+    )
+    .run(day, foldedAt, counts.events, counts.usage, counts.runs);
+}
+
+export interface EventsDayRollup {
+  byType: Array<{ eventType: string; n: number }>;
+  llm: Array<MetricsLlmRow & { histJson: string }>;
+  selects: Array<{ ref: string; source: string; n: number; lastAt: string }>;
+  skips: Array<{ reason: string; summed: number; snapshot: number | null }>;
+  /** The index-run duration histogram, when the day had index runs. */
+  indexHistJson?: string;
+}
+
+/** Replace one day's event-derived rollups (never added to, so a refold cannot double count). */
+export function replaceEventsDayRollup(metricsDb: Database, day: string, data: EventsDayRollup): void {
+  for (const table of ["event_daily", "llm_daily", "select_daily", "improve_skip_daily"]) {
+    metricsDb.prepare(`DELETE FROM ${table} WHERE day = ?`).run(day);
+  }
+  metricsDb.prepare("DELETE FROM latency_daily WHERE day = ? AND kind = 'index'").run(day);
+
+  const insertType = metricsDb.prepare("INSERT INTO event_daily (day, event_type, n) VALUES (?, ?, ?)");
+  for (const row of data.byType) insertType.run(day, row.eventType, row.n);
+
+  const insertLlm = metricsDb.prepare(
+    `INSERT INTO llm_daily (day, stage, process, engine, model, outcome, calls, duration_ms, prompt_tokens,
+       completion_tokens, total_tokens, reasoning_tokens, usage_calls, reasoning_calls, duration_hist_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const row of data.llm) {
+    insertLlm.run(
+      day,
+      row.stage ?? "",
+      row.process ?? "",
+      row.engine ?? "",
+      row.model ?? "",
+      row.outcome,
+      row.calls,
+      row.durationMs,
+      row.promptTokens,
+      row.completionTokens,
+      row.totalTokens,
+      row.reasoningTokens,
+      row.usageCalls,
+      row.reasoningCalls,
+      row.histJson,
+    );
+  }
+
+  const insertSelect = metricsDb.prepare(
+    "INSERT INTO select_daily (day, ref, source, n, last_at) VALUES (?, ?, ?, ?, ?)",
+  );
+  for (const entry of data.selects) insertSelect.run(day, entry.ref, entry.source, entry.n, entry.lastAt);
+
+  const insertSkip = metricsDb.prepare(
+    "INSERT INTO improve_skip_daily (day, reason, summed, snapshot) VALUES (?, ?, ?, ?)",
+  );
+  for (const skip of data.skips) insertSkip.run(day, skip.reason, skip.summed, skip.snapshot);
+
+  if (data.indexHistJson !== undefined) {
+    metricsDb
+      .prepare("INSERT INTO latency_daily (day, kind, source, hist_json) VALUES (?, 'index', '', ?)")
+      .run(day, data.indexHistJson);
+  }
+}
+
+export interface UsageDayRollup {
+  usage: Array<UsageDailyRow & { source: string }>;
+  queries: Array<QueryDailyRow & { source: string }>;
+  tags: Array<TagDailyRow & { source: string }>;
+  latency: Array<{ source: string; histJson: string }>;
+}
+
+/** Replace one day's usage-derived rollups. */
+export function replaceUsageDayRollup(metricsDb: Database, day: string, data: UsageDayRollup): void {
+  for (const table of ["usage_daily", "query_daily", "feedback_tag_daily"]) {
+    metricsDb.prepare(`DELETE FROM ${table} WHERE day = ?`).run(day);
+  }
+  metricsDb.prepare("DELETE FROM latency_daily WHERE day = ? AND kind = 'search'").run(day);
+
+  const insertUsage = metricsDb.prepare(
+    "INSERT INTO usage_daily (day, event_type, source, ref, n, positive, negative, hits, zero, last_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  );
+  for (const u of data.usage) {
+    insertUsage.run(day, u.event_type, u.source, u.ref, u.n, u.positive, u.negative, u.hits, u.zero, u.last_at);
+  }
+  const insertQuery = metricsDb.prepare(
+    "INSERT INTO query_daily (day, source, query, n, results_n, results_sum, zero_n, last_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  );
+  for (const q of data.queries) {
+    insertQuery.run(day, q.source, q.query, q.n, q.results_n, q.results_sum, q.zero_n, q.last_at);
+  }
+  const insertTag = metricsDb.prepare(
+    "INSERT INTO feedback_tag_daily (day, source, tag, positive, negative) VALUES (?, ?, ?, ?, ?)",
+  );
+  for (const t of data.tags) insertTag.run(day, t.source, t.tag, t.positive, t.negative);
+  const insertLatency = metricsDb.prepare(
+    "INSERT INTO latency_daily (day, kind, source, hist_json) VALUES (?, 'search', ?, ?)",
+  );
+  for (const l of data.latency) insertLatency.run(day, l.source, l.histJson);
+}
+
+/** A run never changes once recorded: the row already folded is kept. */
+export function insertImproveRunsOnce(metricsDb: Database, rows: readonly ImproveRunSourceRow[]): void {
+  const insert = metricsDb.prepare(
+    `INSERT OR IGNORE INTO improve_runs (id, started_at, completed_at, stash_dir, dry_run, strategy, scope_mode,
+       scope_value, guidance, ok, result_json, metrics_json, metadata_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const r of rows) {
+    insert.run(
+      r.id,
+      r.started_at,
+      r.completed_at,
+      r.stash_dir,
+      r.dry_run,
+      r.strategy,
+      r.scope_mode,
+      r.scope_value,
+      r.guidance,
+      r.ok,
+      r.result_json,
+      r.metrics_json,
+      r.metadata_json,
+    );
+  }
+}
+
+// ── Guarded purge (state.db) ────────────────────────────────────────────────
+
+/** Days per DELETE, under SQLite's bound-parameter ceiling. */
+const PURGE_CHUNK = 400;
+
+/**
+ * Delete rows of whole UTC days older than `retentionDays`, but only the days
+ * whose marker covers every row about to go. A day with no marker, or fewer
+ * folded rows than the table now holds, keeps its rows. The cutoff is the start
+ * of the UTC day `retentionDays` ago, so a day is kept or purged whole. The
+ * count and the delete share one transaction, so a row that lands between them
+ * is not deleted unfolded.
+ */
+function purgeFoldedDays(
+  db: Database,
+  key: FoldSourceKey,
+  retentionDays: number,
+  folded: FoldedDays,
+  nowMs: number,
+): number {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
+  const { table, column } = FOLD_SOURCES[key];
+  const cutoffDay = utcDay(nowMs - retentionDays * DAY_MS);
+  return withImmediateTransaction(db, () => {
+    const counts = db
+      .prepare(`SELECT substr(${column}, 1, 10) AS day, COUNT(*) AS n FROM ${table} WHERE ${column} < ? GROUP BY day`)
+      .all(cutoffDay) as Array<{ day: string; n: number }>;
+    const purgeable = counts.filter((c) => (folded.get(c.day)?.[key] ?? 0) >= c.n).map((c) => c.day);
+    let deleted = 0;
+    for (let i = 0; i < purgeable.length; i += PURGE_CHUNK) {
+      const chunk = purgeable.slice(i, i + PURGE_CHUNK);
+      const result = db
+        .prepare(
+          `DELETE FROM ${table} WHERE ${column} < ? AND substr(${column}, 1, 10) IN (${chunk.map(() => "?").join(",")})`,
+        )
+        .run(cutoffDay, ...chunk);
+      deleted += Number(result.changes ?? 0);
+    }
+    return deleted;
+  });
+}
+
+/** Folded-day-guarded replacement for the plain age purge of `events`. */
+export function purgeFoldedEvents(db: Database, retentionDays: number, folded: FoldedDays, nowMs = Date.now()): number {
+  return purgeFoldedDays(db, "events", retentionDays, folded, nowMs);
+}
+
+/** Folded-day-guarded replacement for the plain age purge of `improve_runs`. */
+export function purgeFoldedImproveRuns(
+  db: Database,
+  retentionDays: number,
+  folded: FoldedDays,
+  nowMs = Date.now(),
+): number {
+  return purgeFoldedDays(db, "runs", retentionDays, folded, nowMs);
+}
+
+/** Folded-day-guarded replacement for the plain age purge of `usage_events`. */
+export function purgeFoldedUsageEvents(
+  db: Database,
+  retentionDays: number,
+  folded: FoldedDays,
+  nowMs = Date.now(),
+): number {
+  return purgeFoldedDays(db, "usage", retentionDays, folded, nowMs);
 }

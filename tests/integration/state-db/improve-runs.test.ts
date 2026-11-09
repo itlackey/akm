@@ -15,9 +15,10 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmImproveResult } from "../../../src/commands/improve/improve";
-import { foldBeforePurge, purgeFoldedImproveRuns } from "../../../src/commands/metrics/fold";
 import { openStateDatabase } from "../../../src/core/state-db";
+import { foldBeforePurge } from "../../../src/indexer/metrics/fold";
 import { computeImproveRunMetrics, recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
+import { purgeFoldedImproveRuns } from "../../../src/storage/repositories/metrics-rollup-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

@@ -17,6 +17,7 @@
 
 import type { UsageEventRow } from "../../indexer/usage/usage-events";
 import type { Database } from "../database";
+import type { EventRow } from "./events-repository";
 import type { AssetOutcomeRow } from "./outcome-repository";
 
 /** The half-open window `[sinceIso, untilIso)` plus the source every usage query shares. */
@@ -178,4 +179,80 @@ export function summarizeWorkflowRuns(
     tokens: modelRows.reduce((sum, row) => sum + row.tokens, 0),
     byModel: Object.fromEntries(modelRows.map((row) => [row.model, row.tokens])),
   };
+}
+
+// ── Fold reads (state.db, one closed UTC day at a time) ─────────────────────
+
+/** The state.db tables the fold counts, with the column that dates a row. */
+export const FOLD_SOURCES = {
+  events: { table: "events", column: "ts" },
+  usage: { table: "usage_events", column: "created_at" },
+  runs: { table: "improve_runs", column: "started_at" },
+} as const;
+export type FoldSourceKey = keyof typeof FOLD_SOURCES;
+
+export function hasTable(db: Database, name: string): boolean {
+  return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+}
+
+/** Row counts per UTC day for the rows of `key`'s table before `beforeDay`; empty when the table is missing. */
+export function countRowsByDay(db: Database, key: FoldSourceKey, beforeDay: string): Map<string, number> {
+  const { table, column } = FOLD_SOURCES[key];
+  if (!hasTable(db, table)) return new Map();
+  const rows = db
+    .prepare(`SELECT substr(${column}, 1, 10) AS day, COUNT(*) AS n FROM ${table} WHERE ${column} < ? GROUP BY day`)
+    .all(beforeDay) as Array<{ day: string; n: number }>;
+  return new Map(rows.map((r) => [r.day, r.n]));
+}
+
+/** Rows of `key`'s table dated in `[day, nextDay)`; 0 when the table is missing. */
+export function countRowsInDay(db: Database, key: FoldSourceKey, day: string, nextDay: string): number {
+  const { table, column } = FOLD_SOURCES[key];
+  if (!hasTable(db, table)) return 0;
+  const row = db
+    .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} >= ? AND ${column} < ?`)
+    .get(day, nextDay) as { n: number };
+  return row.n;
+}
+
+export function countEventsByType(db: Database, day: string, nextDay: string): Array<{ eventType: string; n: number }> {
+  const rows = db
+    .prepare("SELECT event_type, COUNT(*) AS n FROM events WHERE ts >= ? AND ts < ? GROUP BY event_type")
+    .all(day, nextDay) as Array<{ event_type: string; n: number }>;
+  return rows.map((r) => ({ eventType: r.event_type, n: r.n }));
+}
+
+/** The raw events of one type in `[day, nextDay)`, oldest first. */
+export function listEventsOfType(db: Database, eventType: string, day: string, nextDay: string): EventRow[] {
+  return db
+    .prepare(
+      "SELECT id, event_type, ts, ref, metadata_json FROM events WHERE event_type = ? AND ts >= ? AND ts < ? ORDER BY id",
+    )
+    .all(eventType, day, nextDay) as EventRow[];
+}
+
+export interface ImproveRunSourceRow {
+  id: string;
+  started_at: string;
+  completed_at: string | null;
+  stash_dir: string;
+  dry_run: number;
+  strategy: string | null;
+  scope_mode: string;
+  scope_value: string | null;
+  guidance: string | null;
+  ok: number;
+  result_json: string;
+  metrics_json: string | null;
+  metadata_json: string;
+}
+
+export function listImproveRunsStartedIn(db: Database, day: string, nextDay: string): ImproveRunSourceRow[] {
+  return db
+    .prepare(
+      `SELECT id, started_at, completed_at, stash_dir, dry_run, strategy, scope_mode, scope_value, guidance, ok,
+              result_json, metrics_json, metadata_json
+       FROM improve_runs WHERE started_at >= ? AND started_at < ?`,
+    )
+    .all(day, nextDay) as ImproveRunSourceRow[];
 }

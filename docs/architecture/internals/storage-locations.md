@@ -325,7 +325,7 @@ in [Workflow Engine](../workflow-engine.md).
 ### `$DATA/metrics.db` (long-lived history)
 
 `src/core/metrics-db.ts` (`getMetricsDbPath`, `openMetricsDatabase`), written only by the fold in
-`src/commands/metrics/fold.ts`, read by `akm metrics`, `akm health` and AKM Desktop through
+`src/indexer/metrics/fold.ts`, read by `akm metrics`, `akm health` and AKM Desktop through
 `src/storage/repositories/metrics-rollup-repository.ts`. Never purged, about 50 MB a year. Not
 regenerable, so it is backed up with `state.db`. No `ATTACH`: it is a second handle, and a crash
 between the two files just re-folds the day.

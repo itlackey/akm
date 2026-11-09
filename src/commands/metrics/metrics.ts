@@ -23,6 +23,7 @@ import { emptyHistogram, histogramCount, mergeHistogram } from "../../core/metri
 import { getDbPath } from "../../core/paths";
 import { getStateDbPath, listPendingStateMigrations } from "../../core/state-db";
 import { lookupBundleRefsReadonly } from "../../indexer/indexer";
+import { indexRunsFromEvents, llmRowsFromEvents, toUsageRow } from "../../indexer/metrics/rows";
 import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import { LLM_USAGE_EVENT } from "../../llm/usage-persist";
 import type { OutputMode } from "../../output/context";
@@ -59,12 +60,9 @@ import { addLlmRows, emptyLlmUsageAggregate, oldestTs, summarizeLlmUsage } from 
 import {
   buildMetricsResult,
   DEFAULT_EVENT_RETENTION_DAYS,
-  indexRunsFromEvents,
-  llmRowsFromEvents,
   type MetricsInput,
   type MetricsRollup,
   retentionNotes,
-  toUsageRow,
 } from "./collect";
 import type { AkmMetricsResult, MetricsLlmRow, MetricsUsageRow } from "./types";
 
