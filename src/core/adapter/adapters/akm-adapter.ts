@@ -420,7 +420,7 @@ function buildOverlayContext(root: string, relPathInput: string, raw: string): F
  * Per change (non-delete, readable): the `type` is recovered by running the
  * SAME sync matcher arbitration ({@link recognizeMatch}) over an OVERLAY
  * FileContext ({@link buildOverlayContext}) — no live-FS read. `task` files
- * keep raw YAML for the canonical task-v3 parser and use no frontmatter;
+ * keep raw YAML for the canonical task source parser and use no frontmatter;
  * everything else parses via `parseFrontmatter`.
  * Base checks (shared) then the per-type extra checks run; a `skills/` directory
  * pass reproduces `SkillLinter.lintDirectory` across the change set.

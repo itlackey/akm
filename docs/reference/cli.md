@@ -57,7 +57,7 @@ documented shell-substitution primitive — wrapping it in an envelope would
 break `$(akm env path <ref>)` substitutions). Passing `--format` to one of
 those **warns on stderr** and is otherwise ignored; the exempt set is declared
 in `src/output/format-exempt.ts`. `migrate status`/`apply` invoke the packaged
-task migrator but are NOT exempt: the CLI parses its task plan and renders it
+migrator but are NOT exempt: the CLI parses its plan and renders it
 through the normal `--format` pipeline, so `text`/`md`/`yaml` genuinely
 reformat it.
 
@@ -2256,11 +2256,14 @@ akm registry remove my-team --yes    # Skip the confirmation prompt
 
 Inspect or apply every pending migration in one plan. `akm migrate` is a thin
 wrapper over the standalone migrator (shipped in the package and embedded in
-the release binary), which owns every historical shape
-akm 0.9.32 and later wrote so the CLI proper reads only current schemas. A
-`state.db` from before that floor is refused whole (a `blocked` plan naming
+the release binary). It converts the retired config forms, the `engine:` key
+and the old ref spelling, and settles the OS scheduler entry; the runtime reads
+the current shapes (what it still reads of older data is listed in
+[Persisted-data compatibility](../architecture/persisted-data-compat.md)). A
+`state.db` from before the 0.9.32 floor is refused whole (a `blocked` plan naming
 `npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync`) before any step
-runs. The steps, in order:
+runs, and a task source below version 4 is a blocker with the same recipe: 0.10
+converts none. The steps, in order:
 
 1. config.json rewritten in its current shape (`configFile`): unknown keys
    dropped (the 0.9 `configVersion` among them), and the `engines` / `defaults` form converted
@@ -2293,20 +2296,23 @@ runs. The steps, in order:
    in frontmatter and body: `[bundle//]<folder>/<path>[.md]`, `<type>:<path>`
    and `wiki:<path>`, rewritten (`assetContentRefs`) under one backup directory
    per run. An old spelling that is now another file's ref is not rewritten
-   and is listed in `assetContentRefs.shadowed`.
+   and is listed in `assetContentRefs.shadowed`;
+5. the OS scheduler (`scheduler`): akm 0.10 keeps one entry that runs `akm task
+   dispatch`, and `apply` replaces akm 0.9's per-task rows with it in one
+   write, as `akm task sync` does. It runs `crontab`, `launchctl` or
+   `schtasks` only when it has something to write. An installation that moves a
+   location (an `AKM_*` directory or an XDG variable) is left alone, with a
+   warning; a machine with no `crontab` binary gets a warning and exit 0; a
+   `crontab` that exists and fails blocks.
 
 ```sh
 akm migrate status
 akm migrate apply
 ```
 
-`status` and `apply --dry-run` are read-only. Apply skips blocked task
-sources rather than failing (and exits 1 while any remain), backs up each
-changed file immediately before replacement, and atomically publishes strict
-task source v4 YAML; it is idempotent, so a current installation is a no-op.
-`akm upgrade` runs `apply` after its install step. See [Tasks: Migrating to
-task source v4](tasks.md#migrating-to-task-source-v4) for the full
-blocked-reason table and worked examples, and
+`status` is read-only. `apply` backs up each changed file immediately before
+replacement and is idempotent, so a current installation is a no-op.
+`akm upgrade` runs `apply` after its install step. See
 [Bundling akm](../integration/bundling-akm.md) for the plan JSON shape and
 how to drive this from a container/image boot step.
 
@@ -3856,10 +3862,9 @@ agents and task refs are not executable. `run` accepts a shell string with the
 closed shell and working-directory contract. Task source v4 has no
 `akm:` options bag or `on:` trigger block — scheduling, resolver overrides,
 `timeout`, `maxSteps`, `maxRetries`, and redaction names are all top-level
-keys on the document itself. Normal execution rejects v2 and v3 and points to
-`akm migrate status` followed by `akm migrate apply`. See
-[Tasks](tasks.md#migrating-to-task-source-v4) for the complete grammar and
-fail-closed migration behavior.
+keys on the document itself. Normal execution rejects v2 and v3 and names the
+0.9.32 recipe (`npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync`).
+See [Tasks](tasks.md) for the complete grammar.
 
 **Task-log redaction and `redact:`.** A task's persisted output — the run `.log`
 file and its `logs.db` rows — is scrubbed before it is written. Two passes run:

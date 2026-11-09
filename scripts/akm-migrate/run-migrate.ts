@@ -4,16 +4,18 @@
 
 /**
  * The whole migration, in order, as one plan: config.json in its current
- * shape, pending state.db migrations, assets' retired `engine:` keys, then refs
- * in content that use the pre-#1432 spelling. A state.db below the 0.9.32
- * floor stops the run before any step. `akm-migrate status` / `apply [--dry-run]` print exactly
+ * shape, pending state.db migrations, assets' retired `engine:` keys, refs
+ * in content that use the pre-#1432 spelling, then the OS scheduler entry. A state.db below the 0.9.32
+ * floor stops the run before any step. `akm-migrate status` / `apply` print exactly
  * this; `akm migrate` and `akm upgrade` spawn that executable and re-emit
- * it. Every historical shape lives here or under `./migrate/`, so the CLI
- * proper only ever reads current schemas.
+ * it. Config, `engine:` keys and content refs are converted here, so the CLI
+ * reads only the current config and asset shapes. What the runtime still reads of
+ * older data is listed in docs/architecture/persisted-data-compat.md.
  */
 
 import { akmTasksSync, akmTasksSyncPlan, type TasksSyncResult } from "../../src/commands/tasks/tasks";
 import { resetConfigCache } from "../../src/core/config/config";
+import { ConfigError } from "../../src/core/errors";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, stateDatabaseFloorBlocker, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
 import { resolveSecretFromStore } from "../../src/sources/snapshot-fetchers/secret-seam";
@@ -23,6 +25,7 @@ import {
   type EngineKeysMigrationStatus,
   inspectEngineKeysMigration,
 } from "./engine-key-migrate";
+import { legacyTaskBlockers } from "./legacy-task-check";
 import {
   applyContentRefsMigration,
   type ContentRefsMigrationStatus,
@@ -70,6 +73,26 @@ export interface CombinedMigrationPlan {
   scheduler?: TasksSyncResult;
 }
 
+/**
+ * `akmTasksSync`, except that a machine with no scheduler binary (an image with no `crontab`) gets a warning instead of
+ * a failure: there is nothing to replace, and `akm task sync` writes the entry where the binary exists.
+ */
+async function syncScheduler(): Promise<TasksSyncResult> {
+  try {
+    return await akmTasksSync();
+  } catch (cause) {
+    if (!(cause instanceof ConfigError) || !/binary was not found on PATH/.test(cause.message)) throw cause;
+    const plan = await akmTasksSyncPlan();
+    return {
+      ...plan,
+      warnings: [
+        ...(plan.warnings ?? []),
+        `The scheduler entry was not written: ${cause.message} Run \`akm task sync\` where it is installed.`,
+      ],
+    };
+  }
+}
+
 function worstStatus(left: MigrationStatus, right: MigrationStatus): MigrationStatus {
   if (left === "blocked" || right === "blocked") return "blocked";
   if (left === "ready" || right === "ready") return "ready";
@@ -94,7 +117,7 @@ function statusWithFailedSteps(status: MigrationStatus, failedSteps: readonly Fa
  * Run one migration step under its own catch: a step's own throw is
  * recorded in `failedSteps` instead of ending `runMigration` for every
  * OTHER step too. `apply` mode's mutation falling back to `probe` (the same
- * read-only inspector `status`/`--dry-run` already uses for this step) means
+ * read-only inspector `status` already uses for this step) means
  * a step that fails to WRITE can usually still report what it would have
  * done; if even that throws, the section is simply absent and `failedSteps`
  * is the only record of it. A later step that genuinely needs an earlier
@@ -129,7 +152,7 @@ export async function migrationStep<T>(
 
 /**
  * Run every migration step and return the combined plan. `apply: false` is
- * read-only (`status`, `apply --dry-run`); `apply: true` mutates, each step
+ * read-only (`status`); `apply: true` mutates, each step
  * under its own lock and backup.
  */
 export async function runMigration(options: { apply: boolean }): Promise<CombinedMigrationPlan> {
@@ -181,16 +204,18 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   const scheduler = await migrationStep(
     failedSteps,
     "scheduler",
-    () => (apply ? akmTasksSync() : akmTasksSyncPlan()),
+    () => (apply ? syncScheduler() : akmTasksSyncPlan()),
     apply ? () => akmTasksSyncPlan() : undefined,
   );
-  // A pending state migration reads as "ready" under status/--dry-run, so the
+  const legacyTasks = await migrationStep(failedSteps, "legacyTasks", legacyTaskBlockers);
+  // A pending state migration reads as "ready" under status, so the
   // preview says what apply will do; after a real apply it has been applied.
   const stateStatus: MigrationStatus =
     stateMigrations && "pending" in stateMigrations && stateMigrations.pending.length > 0 ? "ready" : "current";
   const configFileStatus: MigrationStatus = configFile?.changed && !configFile.applied ? "ready" : "current";
   const engineKeysStatus: MigrationStatus = assetEngineKeys?.status ?? "current";
   const contentRefsStatus: MigrationStatus = assetContentRefs?.status ?? "current";
+  const legacyTasksStatus: MigrationStatus = legacyTasks && legacyTasks.length > 0 ? "blocked" : "current";
   const schedulerStatus: MigrationStatus =
     !apply && scheduler && (scheduler.removedLegacy.length > 0 || scheduler.entry === "installed" || scheduler.entry === "removed")
       ? "ready"
@@ -198,10 +223,10 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
-      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus, schedulerStatus].reduce(worstStatus, "current"),
+      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus, schedulerStatus, legacyTasksStatus].reduce(worstStatus, "current"),
       failedSteps,
     ),
-    blockers: failedStepBlockers(failedSteps),
+    blockers: [...(legacyTasks ?? []), ...failedStepBlockers(failedSteps)],
     ...(failedSteps.length > 0 ? { failedSteps } : {}),
     ...(configFile !== undefined ? { configFile } : {}),
     ...(stateMigrations !== undefined ? { stateMigrations } : {}),

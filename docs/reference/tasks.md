@@ -18,14 +18,7 @@ source v4 adds typed `inputs:` and a single bounded `output:` schema
 (command targets only), and makes scheduling OPTIONAL rather than
 mandatory. `akm task add` authors task source v4 directly.
 
-If you have `version: 3` or `version: 2` files on disk (from an earlier
-akm release), see [Migrating to task source v4](#migrating-to-task-source-v4)
-below — `akm migrate apply` converts both generations in one pass and
-rewrites the file on disk (`akm upgrade` runs it after an install). The
-retired v3 grammar itself is documented at the bottom of this page
-([Task v3 (retired): grammar reference for migration](#task-v3-retired-grammar-reference-for-migration))
-purely so you can read an old file while migrating it; it is no longer
-accepted as a standing grammar by any command in this release.
+A `version: 2` or `version: 3` file is refused, and this release converts none: run `npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync` first, then upgrade. `akm migrate status` reports each such file as a blocker with that recipe.
 
 ## Files and schema
 
@@ -35,8 +28,7 @@ document with no `version:` key, or a `version:` that is not a number,
 fails with `TASK_SOURCE_INVALID` (`must be exactly 4.` / `is required and
 must be exactly 4.`) — a genuinely malformed v4 document, not a legacy one.
 `version: 3` and `version: 2` fail with `TASK_SCHEMA_VERSION_UNSUPPORTED`
-naming `akm migrate apply` (see
-[Migrating to task source v4](#migrating-to-task-source-v4)).
+naming the 0.9.32 recipe above.
 The published [task schema](../../schemas/akm-task.json) describes the
 hand-authored contract; `src/tasks/source/task-source-v4.ts` is the
 authoritative bounded parser.
@@ -131,7 +123,7 @@ shell.
 Every field that used to live under v3's `akm:` options bag is a top-level
 key in task source v4: `agent`, `connection`, `harness`, `model`, `inference`, `timeout`,
 `redact`, `maxSteps`, and `maxRetries`, plus `description`, `when_to_use`, and
-`tags`. A v3 `akm.tools` is dropped by the migration, and a v4 `tools` is
+`tags`. A v4 `tools` is
 ignored with a warning. Environment entries (`env`) are literal string,
 number, or boolean values. Keep credentials out of task source; `redact`
 contains environment variable names, never secret values.
@@ -331,73 +323,6 @@ value in its error envelope, whether it fails typed-flag coercion or the
 declared schema (an `enum`/`minimum`/`maximum` mismatch included); both paths
 report only the violated constraint.
 
-## Migrating to task source v4
-
-`akm migrate status` and `akm migrate apply` run **both**
-migration generations against your task tree in one pass: task-v2 → task-v3
-first, then task-v3 → task source v4 against the resulting files. Each
-generation keeps its own lock, backup, prevalidation, and rollback — a file
-blocked in the first generation does not stop the second generation from
-converting files that are already `version: 3`.
-
-```sh
-akm migrate status
-akm migrate apply
-```
-
-The planner reports every input file as `changed`, `skipped`, or `blocked`,
-for both generations combined. Resolve every blocked file manually, then
-preview again. Apply validates a complete replacement before writing and
-backs up each original immediately before replacement.
-
-Common v2 → v3 blocked reasons and what to do about each — these need a
-hand-authored replacement, not a re-run (`command:` array → `run:` + `shell:`, `timeoutMs:` →
-`timeout:`). Source-owned `enabled` fields are removed; native bindings that
-are provably enabled seed the host-local activation list:
-
-| Reason | Meaning | Fix |
-|---|---|---|
-| `argv-array-has-no-portable-shell-string` | The task's `command:` is an argv array; no single shell string is provably equivalent. | Rewrite the file by hand — a `run:` string plus `shell:` — using the field mapping above. |
-| `shell-quoting-changes-v2-whitespace-split-semantics`, `shell-operators-change-v2-literal-argv-semantics`, `shell-command-resolution-changes-v2-literal-argv-semantics` | The `command:` string contains quoting, shell operators, or a bare executable name whose v2 argv-exec behavior a v3 `run:` (host-shell) invocation cannot reproduce unambiguously. | Review the command's intended shell semantics and author the v3/v4 `run:`/`shell:` fields by hand. |
-
-Common v3 → v4 blocked reasons and what to do about each:
-
-| Reason | Meaning | Fix |
-|---|---|---|
-| `github-action-target-removed` | The task's `uses:` is a GitHub Action locator (`owner/repo[/path]@ref`); that spelling has no task source v4 equivalent. | Rewrite the target as `commands/`, `scripts/`, `workflows/`, or `akm/command` by hand. |
-| `with-on-non-command-target` | A `with:` block is authored on a target other than `uses: akm/command`. | Task-call inputs are declared and bound separately in v4 — author `inputs:` on the task and, if it is a workflow step's own composition, bind them with the step's `with:` instead. |
-| `ambiguous-scheduling-source` | The document declares both `akm.schedule` and `on:`. | Pick one; the migrator will not guess which one wins. |
-| `read-only-source` | The owning source or file is not writable. | Move or re-source the file somewhere writable, or edit it by hand. |
-| `invalid-v3-task` | The v3 document itself is structurally invalid (unknown fields, missing selector, malformed trigger, etc). | Fix the underlying v3 document first — the migrator translates structure, it does not repair it. |
-| `generated-v4-validation-failed` | The converted bytes fail the real task source v4 parser; the detail carries the parse error. | Read the detail — it names the offending field and why v4 refuses it — then fix that field in the v3 file and preview again. |
-
-The migrator translates structure, never intent: it never invents an
-`inputs:` declaration on a file's behalf, regardless of how inferable a
-`with:` value's shape looks — declaring `inputs:` (and rewriting a step to
-bind it) is left to the person editing the migrated file by hand.
-
-A `changed` file can still carry an informational **notice** alongside its
-converted bytes, for a translation that is faithful but not one-to-one. Each
-notice is reported on that file's own plan entry, and it is the only record of
-a field the migrator resolved by dropping rather than rewriting — read them.
-Two cases produce one today:
-
-- **`akm.outputSchema` on a `run:`, `uses: scripts/`, or `uses: workflows/`
-  target is dropped, not hoisted to `output:`.** v4 accepts `output:` only on
-  a command target (`uses: commands/<ref>` or `uses: akm/command`) — the only
-  kinds whose runtime enforces it — and on the other three v3 never enforced
-  it either, so nothing enforceable is lost. The file migrates as `changed`
-  with a notice naming the dropped field; it is not blocked, and there is
-  nothing to edit by hand first. If you *wanted* that schema enforced, move
-  the work behind a command target and author `output:` there.
-- **`on.workflow_dispatch` with no `on.schedule` drops silently**, since every
-  v4 task is runnable manually with `akm task run` whether or not it has a
-  `schedule:`. The migrated document simply has no `schedule:` key.
-
-`akm migrate status` / `apply` runs the migrator, and
-`akm upgrade` runs `apply` after installing a release. A tree that is already
-all `version: 3` simply reports the first generation as current.
-
 ## Operations
 
 - `akm search --type task` and
@@ -461,47 +386,6 @@ Scheduler execution is at least once. Backends provide a stable invocation
 identity and AKM fences stale attempts, but an ambiguous process crash can be
 observed only after the external work has started. Make scheduled side effects
 idempotent where possible.
-
-## Task v3 (retired): grammar reference for migration
-
-Nothing in this section is accepted by `src/` in this release — it exists
-only so you can read an already-authored `version: 3` file while deciding
-how to migrate it. The v3 grammar used an `akm:` options bag, an `on:`
-trigger block, and exactly one required scheduling source:
-
-```yaml
-version: 3
-name: Nightly review
-uses: workflows/nightly-review
-with:
-  strict: true
-akm:
-  schedule: "0 4 * * *"
-  enabled: true
-  timeout: 30m
-```
-
-or, with the GitHub-shaped local trigger subset:
-
-```yaml
-version: 3
-uses: commands/review
-on:
-  schedule:
-    - cron: "0 6 * * *"
-  workflow_dispatch: {}
-```
-
-`with:` on any `uses:` target carried v3's untyped params bag (workflow
-refs consumed it as run params; command/script refs rejected it outright).
-A GitHub Action locator (`owner/repo[/path]@ref`) was a recognized `uses:`
-shape that was always rejected before dispatch. `akm.enabled` was source-owned
-scheduling state. `akm migrate apply` removes it; migration preserves actual
-host activation only when the native scheduler proves that the corresponding
-binding is enabled.
-
-See [Migrating to task source v4](#migrating-to-task-source-v4) above to
-convert a file out of this grammar.
 
 ## See also
 
