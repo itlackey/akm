@@ -166,7 +166,6 @@ export function LAUNCHD_BACKEND(options: LaunchdBackendOptions = {}): SchedulerB
           signature: launchdFingerprint(raw, enabled, loaded),
           ...(parsed.target !== undefined ? { target: parsed.target } : {}),
           binding: parsed.binding,
-          ...(parsed.contextPath !== undefined ? { contextPath: parsed.contextPath } : {}),
           ...(parsed.environment !== undefined ? { environment: parsed.environment } : {}),
           invocation: parsed.invocation,
         });

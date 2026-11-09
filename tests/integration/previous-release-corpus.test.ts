@@ -583,7 +583,7 @@ describe("previous-release corpus — a config as 0.9.15/0.9.16 wrote it", () =>
           },
         },
         scheduler: {
-          enabled: [{ kind: "task", ref: "stash//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` }],
+          enabled: ["stash//tasks/nightly"],
         },
       }),
     );

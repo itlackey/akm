@@ -62,7 +62,7 @@ import {
   type SchedulerBinding,
   schedulerBindingNativeId,
 } from "../../tasks/scheduler-binding";
-import { readLegacySchedulerContext, scheduledRowEnvironment } from "../../tasks/scheduler-invocation";
+import { scheduledRowEnvironment } from "../../tasks/scheduler-invocation";
 import { withSchedulerLock } from "../../tasks/scheduler-lock";
 import {
   compileSchedulerSources,
@@ -670,24 +670,9 @@ function prepareSchedulerRuntime(deps: SchedulerDeps): {
 /** One read of the akm-owned rows, each attributed to the bundle path it names (#846). */
 async function listInstalledRows(sched: SchedulerBackend): Promise<InstalledSchedulerBinding[]> {
   return (await sched.list()).map((row) => {
-    const ownerBundlePath = installedRowBundleDir(row);
+    const ownerBundlePath = row.environment?.AKM_BUNDLE_DIR;
     return ownerBundlePath !== undefined ? { ...row, ownerBundlePath } : row;
   });
-}
-
-/**
- * The `AKM_BUNDLE_DIR` an installed row names: its inline one, or the one in
- * the descriptor a row written before 0.9.17-alpha.7 references. Undefined
- * when it names none, or its descriptor cannot be read — which never means
- * "mine".
- */
-function installedRowBundleDir(row: InstalledSchedulerBinding): string | undefined {
-  if (row.contextPath === undefined) return row.environment?.AKM_BUNDLE_DIR;
-  try {
-    return readLegacySchedulerContext(row.contextPath).AKM_BUNDLE_DIR;
-  } catch {
-    return undefined;
-  }
 }
 
 /** The primary bundle proves its rows by path (#846); any other bundle by its config name. */
@@ -702,7 +687,7 @@ function installedSchedulerBundle(config: AkmConfig, row: InstalledSchedulerBind
   return bundleKeyForContentRoot(config, row.ownerBundlePath);
 }
 
-export type TasksPruneReason = "invalid-context" | "dead-bundle-path";
+export type TasksPruneReason = "dead-bundle-path";
 
 export interface TasksPruneResult {
   readonly backend: string;
@@ -712,24 +697,12 @@ export interface TasksPruneResult {
 }
 
 /**
- * Why `akm task prune` (#851) would remove an installed row: a row written
- * before 0.9.17-alpha.7 whose descriptor cannot be read (`invalid-context`),
- * or one naming a bundle directory that is gone (`dead-bundle-path`). A row
- * that still resolves to a live bundle is never a candidate.
+ * Why `akm task prune` (#851) would remove an installed row: it names a
+ * bundle directory that is gone (`dead-bundle-path`). A row that still
+ * resolves to a live bundle is never a candidate.
  */
 function classifyPruneCandidate(entry: InstalledSchedulerBinding): TasksPruneReason | undefined {
-  let bundleDir: string | undefined;
-  if (entry.contextPath !== undefined) {
-    try {
-      bundleDir = readLegacySchedulerContext(entry.contextPath).AKM_BUNDLE_DIR;
-    } catch {
-      return "invalid-context";
-    }
-    // Every descriptor akm wrote names the bundle; one that does not cannot be attributed.
-    if (bundleDir === undefined) return "invalid-context";
-  } else {
-    bundleDir = entry.environment?.AKM_BUNDLE_DIR;
-  }
+  const bundleDir = entry.environment?.AKM_BUNDLE_DIR;
   if (bundleDir !== undefined && !fs.existsSync(bundleDir)) return "dead-bundle-path";
   return undefined;
 }
@@ -784,8 +757,6 @@ export interface TasksDoctorResult {
   caller: { argv: string[]; via: string };
   bindings: Array<{
     argv: string[];
-    /** A row written before 0.9.17-alpha.7: the descriptor it names. The next `akm task sync` rewrites it. */
-    contextPath?: string;
     taskIds: string[];
     status: string[];
   }>;
@@ -892,7 +863,7 @@ function groupInstalledBindings(entries: readonly InstalledSchedulerBinding[]): 
   for (const entry of entries) {
     const argv = [...entry.binding];
     const status = inspectInstalledBinding(entry);
-    const key = JSON.stringify([argv, entry.contextPath, status]);
+    const key = JSON.stringify([argv, status]);
     const existing = groups.get(key);
     if (existing) {
       existing.taskIds.push(entry.id);
@@ -900,7 +871,6 @@ function groupInstalledBindings(entries: readonly InstalledSchedulerBinding[]): 
     }
     groups.set(key, {
       argv,
-      ...(entry.contextPath !== undefined ? { contextPath: entry.contextPath } : {}),
       taskIds: [entry.id],
       status,
     });
@@ -913,13 +883,6 @@ function inspectInstalledBinding(entry: InstalledSchedulerBinding): string[] {
   const binding = entry.binding;
   if (isCheckoutInvocation(binding)) status.push("checkout");
   if (binding.some((part) => part === "akm" || part === "bun" || part === "node")) status.push("path-selected");
-  if (entry.contextPath !== undefined) {
-    try {
-      readLegacySchedulerContext(entry.contextPath);
-    } catch {
-      status.push("invalid-context");
-    }
-  }
   const absolutePaths = binding.filter((part) => path.isAbsolute(part));
   if (absolutePaths.some((part) => !fs.existsSync(part))) status.push("missing-path");
   if (status.length === 0) status.push("ok");

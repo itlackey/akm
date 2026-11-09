@@ -233,9 +233,7 @@ function keepUnusableEntries(
 }
 
 /**
- * The migrator's one config step. The reader already tolerates every shape
- * 0.9.15 and later wrote (`configVersion` read as current, 0.9.16
- * `{kind, ref, sourceId}` scheduler entries, unknown keys dropped); this
+ * The migrator's one config step. The reader drops unknown keys; this
  * writes the current shape back to `config.json` so the tolerance becomes
  * durable: the retired `engines` form converted to `connections` / `harnesses`,
  * every key akm no longer reads from config filed in `credentials.json`

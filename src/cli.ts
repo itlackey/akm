@@ -130,7 +130,6 @@ import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
 import { getOutputMode, initOutputMode, parseDetailLevel } from "./output/context";
 import { isFormatExemptCommand } from "./output/format-exempt";
-import { consumeSchedulerContextArg } from "./tasks/scheduler-invocation";
 import { pkgVersion } from "./version";
 
 function applyEarlyStderrFlags(argv: string[]): void {
@@ -1069,12 +1068,6 @@ export function insertBareListSubcommand(argv: string[]): string[] {
  * stop the rest of startup from running after a fatal early error.
  */
 export async function runCli(): Promise<void> {
-  try {
-    process.argv = consumeSchedulerContextArg(process.argv);
-  } catch (error: unknown) {
-    emitJsonError(error);
-    return;
-  }
   process.argv = insertBareListSubcommand(process.argv);
   // Mint the ParsedInvocation singleton from the (normalized) argv — the ONE
   // place argv is parsed for the whole process.

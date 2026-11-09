@@ -15,7 +15,7 @@
  * frozen plan is what `workflow_runs.plan_json` stores.
  *
  * `decodeWorkflowPlan` (`runtime/run-plan.ts`) is the one decoder that reads
- * a stored plan back into this type, from this release or an earlier one.
+ * a stored plan back into this type.
  */
 
 import type { LlmInference as LlmInvocationOverrides } from "../core/llm-inference";
@@ -24,11 +24,9 @@ import type { ResolvedExecutionRequestV1 } from "../execution/resolved-request";
 import type { RunnerSpec } from "../integrations/agent/runner";
 
 /**
- * Stored plans record this; 0.9.15 and 0.9.16 wrote 5 and early 0.10 wrote 6,
- * which still decode (the 0.9.15 floor, #1091). 7 stopped freezing locations:
- * the plan names the refs the engine dereferences, never a directory or file.
- * 8 freezes a connection or harness where 7 froze an engine: a plan of 7 or
- * earlier that holds a command target cannot be decoded, and its run starts afresh.
+ * Stored plans record this. A plan frozen with any earlier value is not decoded:
+ * its run starts afresh. 8 freezes a connection or harness where 7 froze an
+ * engine; 7 stopped freezing locations.
  */
 export const WORKFLOW_PLAN_VERSION = 8 as const;
 
@@ -112,26 +110,14 @@ export interface WorkflowExecSpec {
   timeoutMs: number | null;
 }
 
-/**
- * A location a plan before irVersion 7 froze (a directory identity, an env file's owner, its key and secret
- * names). A stored plan keeps it exactly as stored, because the unit `input_hash` and the child invocation key
- * are derived from the whole target; dispatch never reads it.
- */
+/** A frozen directory identity. A command target freezes `{}`, carried as stored: it is part of the unit `input_hash`. */
 export type FrozenLegacyField = Readonly<Record<string, unknown>>;
 
 export type FrozenWorkflowEnvironmentBinding =
   | { readonly kind: "literal"; readonly name: string; readonly value: string }
   | { readonly kind: "pass-through"; readonly name: string }
   // The bundle-qualified env ref. Its file, keys and secrets are read live at dispatch.
-  | {
-      readonly kind: "env-ref";
-      readonly ref: string;
-      readonly precedence: number;
-      /** Before irVersion 7 only: carried as stored, never read. */
-      readonly owner?: FrozenLegacyField;
-      readonly keys?: readonly string[];
-      readonly secretNames?: readonly string[];
-    };
+  | { readonly kind: "env-ref"; readonly ref: string; readonly precedence: number };
 
 export interface FrozenWorkflowCommandTarget {
   readonly kind: "command";
@@ -142,9 +128,8 @@ export interface FrozenWorkflowCommandTarget {
   /** Frozen provider concurrency cap for this resolved target, when applicable. */
   readonly concurrency?: number;
   /**
-   * Before irVersion 7 a frozen directory, carried as stored and never read. A v7 command target freezes `{}`:
-   * akm 0.10.0 and earlier decode a v7 command-only plan and would run it in the invoking directory, but their
-   * dispatch refuses a directory identity it cannot verify.
+   * Frozen as `{}` and never read: akm 0.10.0 and earlier decode a command-only plan and would run it in the
+   * invoking directory, but their dispatch refuses a directory identity it cannot verify.
    */
   readonly cwdIdentity?: FrozenLegacyField;
   /** A composing step's frozen `with:` bindings. Absent, never `[]`, when empty. */
@@ -155,8 +140,6 @@ export interface FrozenWorkflowShellTarget {
   readonly kind: "shell";
   readonly contentHash: string;
   readonly exec: WorkflowExecSpec;
-  /** Before irVersion 7 only: carried as stored, never read. */
-  readonly cwdIdentity?: FrozenLegacyField;
   readonly inputBindings?: readonly TaskInputBinding[];
 }
 
@@ -168,9 +151,6 @@ export interface FrozenChildWorkflowTarget {
   readonly planHash: string;
   readonly frozenPlan: WorkflowPlan;
   readonly contentHash: string;
-  /** Written by releases before 0.10 (`"direct" | "task"`); never written now, kept so a stored plan decodes unchanged. */
-  readonly via?: "direct" | "task";
-  readonly taskRef?: string;
   readonly inputBindings?: readonly TaskInputBinding[];
 }
 

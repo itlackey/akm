@@ -155,7 +155,6 @@ export function CRON_BACKEND(options: CronBackendOptions = {}): SchedulerBackend
           signature: normalizeSignature(body),
           ...(parsed.target !== undefined ? { target: parsed.target } : {}),
           binding: parsed.binding,
-          ...(parsed.contextPath !== undefined ? { contextPath: parsed.contextPath } : {}),
           ...(parsed.environment !== undefined ? { environment: parsed.environment } : {}),
           invocation: parsed.invocation,
         });
@@ -291,9 +290,7 @@ export function extractInstalledTarget(body: string): string | undefined {
 
 /**
  * Parse an installed cron body: its inline `VAR=value` environment, its
- * launcher, and its public tail — a current row, a row naming a
- * `--scheduler-context` descriptor (0.9.0 – 0.9.17-alpha.6), or an older
- * row with neither (#881). This only ever runs on a body already isolated
+ * launcher, and its public tail. This only ever runs on a body already isolated
  * between akm's own BEGIN/END markers, so no trust extends to unmarked lines.
  */
 export function extractCronInvocation(body: string): ParsedScheduledInvocation | undefined {

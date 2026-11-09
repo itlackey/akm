@@ -43,7 +43,12 @@ import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow
 import { driveChildWorkflowUnit } from "../../../src/workflows/exec/child-workflow";
 import { workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
 import { canonicalJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
-import type { FrozenChildWorkflowTarget, FrozenWorkflowTarget, WorkflowPlan } from "../../../src/workflows/plan";
+import {
+  type FrozenChildWorkflowTarget,
+  type FrozenWorkflowTarget,
+  WORKFLOW_PLAN_VERSION,
+  type WorkflowPlan,
+} from "../../../src/workflows/plan";
 import { frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 import { freezeWorkflow, runWorkflowSteps, WORKFLOW_FIXTURE_ROOT } from "../../_helpers/workflow";
@@ -88,7 +93,6 @@ function buildChildTarget(childPlan: WorkflowPlan, options: { ref?: string } = {
     planHash,
     frozenPlan: childPlan,
     contentHash: childContentHash({ ref, planHash, via: "direct" }),
-    via: "direct",
   };
 }
 
@@ -264,7 +268,7 @@ describe("A-30 — aborting the parent's drive mid-dispatch aborts the child dri
     const childPlan = twoStepChildPlan();
     const target = buildChildTarget(childPlan, { ref: "workflows/lease-loss-child" });
     const parentPlan: WorkflowPlan = {
-      irVersion: 5,
+      irVersion: WORKFLOW_PLAN_VERSION,
       title: "Parent",
       execution: { maxConcurrency: 1 },
       steps: [
@@ -298,7 +302,7 @@ describe("A-30 — aborting the parent's drive mid-dispatch aborts the child dri
         `INSERT INTO workflow_runs
            (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
             params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version)
-         VALUES (?, 'workflows/parent', 'dir:v1:parent', NULL, 'Parent', 'active', '{}', ?, ?, ?, ?, ?, 5)`,
+         VALUES (?, 'workflows/parent', 'dir:v1:parent', NULL, 'Parent', 'active', '{}', ?, ?, ?, ?, ?, ${WORKFLOW_PLAN_VERSION})`,
       ).run(parentRunId, parentStepId, now, now, canonicalJson(parentPlan), computePlanHash(parentPlan));
       const parentStepRow = frozenStepRows(parentPlan)[0]!;
       db.prepare(

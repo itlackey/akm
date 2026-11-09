@@ -178,12 +178,11 @@ describe("plan freezing at workflow start (migration 006)", () => {
     expect(prompts[0]).toContain("Do the stored thing.");
   });
 
-  test("an older plan runs: plan_ir_version and plan_hash are informational", async () => {
+  test("an older plan is abandoned, not run: start afresh, nothing dispatched", async () => {
     writeWorkflow("older-plan", "Do work.");
     const started = await startWorkflowRun("workflows/older-plan", {});
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    // An older release's row: a lower irVersion on the row AND in the plan
-    // bytes, non-canonical JSON, and a hash that matches nothing.
+    // An older release's row: a lower irVersion on the row AND in the plan bytes.
     const older = JSON.stringify({ ...JSON.parse(row?.plan_json ?? "{}"), irVersion: 5 }, null, 2);
     execOnWorkflowDb(
       "UPDATE workflow_runs SET plan_json = ?, plan_hash = ?, plan_ir_version = 5 WHERE id = ?",
@@ -194,7 +193,6 @@ describe("plan freezing at workflow start (migration 006)", () => {
 
     expect((await getWorkflowStatus(started.run.id)).run.planIrVersion).toBe(5);
     expect((await listWorkflowRuns()).runs.find((run) => run.id === started.run.id)?.planIrVersion).toBe(5);
-    expect((await getNextWorkflowStep(started.run.id)).step?.id).toBe("only-step");
 
     let dispatches = 0;
     const result = await runWorkflowSteps({
@@ -204,8 +202,12 @@ describe("plan freezing at workflow start (migration 006)", () => {
         return { ok: true, text: "done" };
       },
     });
-    expect(result.run.status).toBe("completed");
-    expect(dispatches).toBe(1);
+    expect(dispatches).toBe(0);
+    expect(result.run.status).toBe("failed");
+    const message = result.warnings?.find((w) => w.includes("frozen as plan irVersion 5"));
+    expect(message).toContain(started.run.id);
+    expect(message).toContain("The run was abandoned");
+    expect(message).toContain("akm workflow run stash//workflows/older-plan");
   });
 
   /** Rewrite the stored plan's one unit target as an irVersion 7 release froze it, and run on it. */
@@ -278,7 +280,7 @@ describe("plan freezing at workflow start (migration 006)", () => {
       const { result, dispatches, runId } = await runAsFrozenByIrVersion7(name, runner, engine);
       expect(dispatches).toBe(0);
       expect(result.run.status).toBe("failed");
-      const message = result.warnings?.find((w) => w.includes("cannot decode"));
+      const message = result.warnings?.find((w) => w.includes("frozen as plan irVersion 7"));
       expect(message).toContain(runId);
       expect(message).toContain("The run was abandoned");
       expect(message).toContain(`akm workflow run stash//workflows/${name}`);

@@ -54,7 +54,7 @@ function configureStash(stashDir: string): void {
   } as AkmConfig;
   writeSandboxConfig({
     ...base,
-    scheduler: { enabled: [{ kind: "task", ref: "stash//tasks/ping", sourceId: bundleSourceId(base, "stash") }] },
+    scheduler: { enabled: ["stash//tasks/ping"] },
   });
 }
 
@@ -259,10 +259,6 @@ describe("scheduler runtime binding", () => {
     const storage = withIsolatedAkmStorage();
     try {
       fs.mkdirSync(storage.stashDir, { recursive: true });
-      // Rows written before 0.9.17-alpha.7 name a descriptor; one that cannot be read is flagged.
-      const contextPath = path.join(storage.stashDir, "legacy-context.json");
-      fs.writeFileSync(contextPath, JSON.stringify({ version: 1, environment: { AKM_BUNDLE_DIR: storage.stashDir } }));
-      const missingContextPath = path.join(storage.stashDir, "gone-context.json");
       const backend: SchedulerBackend = {
         name: "cron",
         install() {},
@@ -271,8 +267,7 @@ describe("scheduler runtime binding", () => {
         list: () => [
           { id: "alpha", binding: [process.execPath] },
           { id: "beta", binding: [process.execPath] },
-          { id: "legacy", binding: [process.execPath], contextPath },
-          { id: "orphaned", binding: [process.execPath], contextPath: missingContextPath },
+          { id: "orphaned", binding: ["/gone/akm"] },
         ],
       };
       const result = await akmTasksDoctor({
@@ -281,18 +276,7 @@ describe("scheduler runtime binding", () => {
       });
 
       expect(result.bindings).toContainEqual({ argv: [process.execPath], taskIds: ["alpha", "beta"], status: ["ok"] });
-      expect(result.bindings).toContainEqual({
-        argv: [process.execPath],
-        contextPath,
-        taskIds: ["legacy"],
-        status: ["ok"],
-      });
-      expect(result.bindings).toContainEqual({
-        argv: [process.execPath],
-        contextPath: missingContextPath,
-        taskIds: ["orphaned"],
-        status: ["invalid-context"],
-      });
+      expect(result.bindings).toContainEqual({ argv: ["/gone/akm"], taskIds: ["orphaned"], status: ["missing-path"] });
       expect(result.caller.via).toBe("standalone");
       expect(result.remediation).toBe("akm task sync --rebind");
     } finally {

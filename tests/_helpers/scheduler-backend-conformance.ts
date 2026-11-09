@@ -80,7 +80,6 @@ export function schedulerBackendConformance(adapter: SchedulerBackendContractAda
         signature: backend.expectedSignature?.(binding),
       });
       expect(rows[0]?.binding.length).toBeGreaterThan(0);
-      expect(rows[0]?.contextPath).toBeUndefined();
       expect(rows[0]?.environment).toBeUndefined();
     });
 

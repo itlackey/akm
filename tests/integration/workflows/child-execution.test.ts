@@ -120,7 +120,6 @@ function buildChildTarget(
     planHash,
     frozenPlan: childPlan,
     contentHash: childContentHash({ ref, planHash, via: "direct", inputBindings: options.inputBindings }),
-    via: "direct",
     ...(options.inputBindings ? { inputBindings: options.inputBindings } : {}),
   };
 }
@@ -623,7 +622,7 @@ describe("A-18, A-19 — an active child is driven to completion; the exported r
     const parentStepId = "compose";
     const target = buildChildTarget(leafChildPlan(), { ref: "workflows/evidence-child" });
     const parentPlan: WorkflowPlan = {
-      irVersion: 5,
+      irVersion: WORKFLOW_PLAN_VERSION,
       title: "Parent",
       execution: { maxConcurrency: 1 },
       steps: [
@@ -657,7 +656,7 @@ describe("A-18, A-19 — an active child is driven to completion; the exported r
         `INSERT INTO workflow_runs
            (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
             params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version)
-         VALUES (?, 'workflows/parent', 'dir:v1:parent', NULL, 'Parent', 'active', '{}', ?, ?, ?, ?, ?, 5)`,
+         VALUES (?, 'workflows/parent', 'dir:v1:parent', NULL, 'Parent', 'active', '{}', ?, ?, ?, ?, ?, ${WORKFLOW_PLAN_VERSION})`,
       ).run(parentRunId, parentStepId, now, now, canonicalJson(parentPlan), computePlanHash(parentPlan));
       const parentStepRow = frozenStepRows(parentPlan)[0]!;
       db.prepare(
@@ -746,7 +745,7 @@ describe("A-21 — a blocked child blocks the parent RUN, with the exact resume 
     // (run-workflow.ts's runStepGateLoop, on the PARENT's own spine) that
     // turns a childBlocked unit outcome into a blocked STEP with notes.
     const parentPlan: WorkflowPlan = {
-      irVersion: 5,
+      irVersion: WORKFLOW_PLAN_VERSION,
       title: "Parent",
       execution: { maxConcurrency: 1 },
       steps: [
@@ -780,7 +779,7 @@ describe("A-21 — a blocked child blocks the parent RUN, with the exact resume 
         `INSERT INTO workflow_runs
            (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
             params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version)
-         VALUES (?, 'workflows/parent', 'dir:v1:parent', NULL, 'Parent', 'active', '{}', ?, ?, ?, ?, ?, 5)`,
+         VALUES (?, 'workflows/parent', 'dir:v1:parent', NULL, 'Parent', 'active', '{}', ?, ?, ?, ?, ?, ${WORKFLOW_PLAN_VERSION})`,
       ).run(parentRunId, parentStepId, now, now, canonicalJson(parentPlan), computePlanHash(parentPlan));
       const parentStepRow = frozenStepRows(parentPlan)[0]!;
       db.prepare(
@@ -998,7 +997,7 @@ describe("A-26 — a composing step consumes exactly one parent maxSteps allowan
     const parentStepId = "compose";
     const target = buildChildTarget(fourStepChildPlan(), { ref: "workflows/four-step-child" });
     const parentPlan: WorkflowPlan = {
-      irVersion: 5,
+      irVersion: WORKFLOW_PLAN_VERSION,
       title: "Parent",
       execution: { maxConcurrency: 1 },
       steps: [
@@ -1032,7 +1031,7 @@ describe("A-26 — a composing step consumes exactly one parent maxSteps allowan
         `INSERT INTO workflow_runs
            (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
             params_json, current_step_id, created_at, updated_at, plan_json, plan_hash, plan_ir_version)
-         VALUES (?, 'workflows/parent', 'dir:v1:parent', NULL, 'Parent', 'active', '{}', ?, ?, ?, ?, ?, 5)`,
+         VALUES (?, 'workflows/parent', 'dir:v1:parent', NULL, 'Parent', 'active', '{}', ?, ?, ?, ?, ?, ${WORKFLOW_PLAN_VERSION})`,
       ).run(parentRunId, parentStepId, now, now, canonicalJson(parentPlan), computePlanHash(parentPlan));
       const parentStepRow = frozenStepRows(parentPlan)[0]!;
       db.prepare(

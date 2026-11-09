@@ -102,7 +102,6 @@ function buildChildTarget(
     planHash,
     frozenPlan: childPlan,
     contentHash: childContentHash({ ref, planHash, via: "direct", inputBindings: options.inputBindings }),
-    via: "direct",
     ...(options.inputBindings ? { inputBindings: options.inputBindings } : {}),
   };
 }

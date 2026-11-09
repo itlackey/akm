@@ -107,20 +107,6 @@ console.log(JSON.stringify({ before: before ?? null, after: process.exitCode }))
     expect(result.stderr).toContain("'--format' has no effect on 'akm env run'");
   });
 
-  test("scheduler-context discovery ignores a child argument after `--`", () => {
-    const stash = tempDir("akm-scheduler-child-arg-");
-    fs.mkdirSync(path.join(stash, "env"), { recursive: true });
-    fs.writeFileSync(path.join(stash, "env", "prod.env"), "FOO=bar\n");
-
-    const result = spawnCli(
-      ["env", "run", "env/prod", "--", "/bin/true", "--scheduler-context", "/does/not/exist.json"],
-      { AKM_BUNDLE_DIR: stash },
-    );
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-  });
-
   test("scripted setup formats its result instead of warning as exempt", () => {
     const stash = tempDir("akm-setup-format-");
     const result = spawnCli(["--format", "text", "setup", "--yes", "--no-init", "--dir", stash], {
