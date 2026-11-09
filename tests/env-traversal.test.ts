@@ -8,7 +8,7 @@
  *   Fix A — validateName (asset-ref.ts): rejects traversal patterns such as
  *            "../../foo", "foo/../../bar", and ".." during ref parsing.
  *
- *   Fix B — the lexical name check in resolveEnvPath (core/env-secret-ref.ts):
+ *   Fix B — the lexical name check in resolveEnvPath (sources/env-secret-ref.ts):
  *            even if the name somehow survived validateName, the resolved
  *            path must stay inside <stash>/env/. It does not follow symlinks:
  *            an env file that is a symlink elsewhere is a legitimate setup.

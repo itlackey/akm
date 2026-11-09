@@ -34,7 +34,7 @@
  *   - LLM access is exclusively via the frozen runner improve resolves for
  *     `memoryInference` and passes in as `llmRunner`.
  *   - All child memory writes go through `writeAssetToSource` in
- *     `src/core/write-source.ts`. The parent's frontmatter rewrite is an
+ *     `src/sources/write-source.ts`. The parent's frontmatter rewrite is an
  *     explicit narrow exception — see {@link markParentProcessed}.
  */
 

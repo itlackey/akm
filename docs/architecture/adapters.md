@@ -154,7 +154,7 @@ writable bundles in another layout would need it back: see
 ## Write allowlists
 
 Which bundles AKM-native write commands may touch is decided by a small
-allowlist check, `assertAkmAssetWrite` (`src/core/write-source.ts`), run before
+allowlist check, `assertAkmAssetWrite` (`src/sources/write-source.ts`), run before
 any write command touches the filesystem. It compares the target
 bundle's detected (or configured) adapter id against an allowlist and throws
 a `UsageError` on a miss.

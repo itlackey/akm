@@ -6,7 +6,7 @@
  * `akm env` command family. Extracted verbatim from src/cli.ts (WS6) so the God
  * Module shrinks; the `main.subCommands.env` key and every subcommand's
  * args/output shape are byte-identical. The ref-resolution helpers
- * (parseEnvRef / makeEnvRef / resolveEnvPath) live in src/core/env-secret-ref.ts so env + secret share one
+ * (parseEnvRef / makeEnvRef / resolveEnvPath) live in src/sources/env-secret-ref.ts so env + secret share one
  * copy.
  *
  * `akm env` manages whole `.env` files under each stash's env/ directory.

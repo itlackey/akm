@@ -433,7 +433,7 @@ function runEnvDangerousKeyPass(
  * Refuse `--fix` against a bundle the config marks `writable: false`, BEFORE
  * the sweep touches a single file (issue #761).
  *
- * Every other mutating command routes through `core/write-source.ts`'s
+ * Every other mutating command routes through `sources/write-source.ts`'s
  * `ensureWritable`/`resolveWritable` pair; `akm lint --fix` writes and deletes
  * directly and never consulted the flag, so it happily rewrote frontmatter in a
  * bundle explicitly configured read-only. `SearchSource.writable` is already the

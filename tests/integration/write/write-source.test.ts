@@ -1,5 +1,5 @@
 /**
- * Tests for src/core/write-source.ts — the single dispatch point for writes.
+ * Tests for src/sources/write-source.ts — the single dispatch point for writes.
  *
  * Covers the locked v1 contract from spec §2.6 / §2.7 / §5.4 / §10 step 5:
  *

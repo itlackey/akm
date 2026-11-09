@@ -431,7 +431,7 @@ describe("akmTasksSync — schedule drift", () => {
 });
 
 // U2: writes (and therefore scheduler state) are only ever defined for
-// filesystem/git sources (adaptConfiguredSource, src/core/write-source.ts).
+// filesystem/git sources (adaptConfiguredSource, src/sources/write-source.ts).
 // An enabled website/npm bundle must not crash unscoped `akm task sync`, and
 // a scoped sync naming one must fail with a clear usage error rather than
 // the write-target ConfigError that used to escape from resolveWriteTarget.

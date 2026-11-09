@@ -99,7 +99,7 @@ function existsOnDiskOrOverlay(relPath: string, root: string, overlay: Map<strin
  * absolute paths and any `..` segment before joining, so content can never
  * probe for existence outside its own bundle (nor report a resolved `path`
  * pointing there). Mirrors the `isWithin` containment rule the write path
- * already enforces in `core/write-source.ts`.
+ * already enforces in `sources/write-source.ts`.
  */
 function refEscapesBundle(conceptId: string): boolean {
   if (path.isAbsolute(conceptId) || conceptId.startsWith("/")) return true;

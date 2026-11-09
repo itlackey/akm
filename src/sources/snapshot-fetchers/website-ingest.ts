@@ -115,7 +115,7 @@ export interface FetchSnapshotOptions {
   resolveHostname?: HostnameResolver;
   /**
    * Secret-store reader for fetchers that need credentials. Injected by
-   * command-layer callers (which can import `core/env-secret-ref`); this
+   * command-layer callers (which can import `sources/env-secret-ref`); this
    * module cannot import it without closing a cycle through the source
    * providers. Omitted means environment variables only.
    */

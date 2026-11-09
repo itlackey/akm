@@ -41,7 +41,7 @@ For a bundle selected as `adapter: okf`:
    become part of durable identity.
 7. AKM-native write commands refuse an OKF target before touching disk, because
    the adapter has no authoring path (`assertAkmAssetWrite` in
-   `src/core/write-source.ts` allows only the `akm` adapter by default).
+   `src/sources/write-source.ts` allows only the `akm` adapter by default).
 
 The `okf` adapter is consumer-only. It does not infer task, command, script,
 environment, or secret capabilities from an arbitrary OKF `type` value. Its

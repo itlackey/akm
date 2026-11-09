@@ -14,7 +14,7 @@ import { parseFrontmatterBlock, replaceFrontmatterLine, spliceFrontmatterLine } 
  *
  * Stamps BOTH `type` and `updated`, because both are required of a conformant
  * document and this is the one chokepoint every `.md` write passes through
- * (`core/write-source.ts`). Without the `updated` stamp, every asset akm
+ * (`sources/write-source.ts`). Without the `updated` stamp, every asset akm
  * created for you — `akm remember`, `akm import`, accepted proposals,
  * authored workflows — was immediately flagged `missing-updated` by akm's own
  * `akm lint`, so the tool disagreed with itself about its own output.

@@ -205,7 +205,7 @@ describe("akm task explain <ref> — text output (B-52)", () => {
     // owning-bundle name this exact sandbox resolves to whether Implement
     // reuses akm task run's own DEFAULT_BUNDLE_NAME fallback
     // (src/tasks/run/load-task.ts) or the working-stash write-target path
-    // (src/core/write-source.ts's deriveBundleId, which slugifies stashDir's
+    // (src/sources/write-source.ts's deriveBundleId, which slugifies stashDir's
     // OWN basename — withIsolatedAkmStorage's stash dir is literally named
     // "stash") — the two independent resolution paths agree here.
     expect(text).toContain(path.join(tasksDir, "explain-demo.yml"));
