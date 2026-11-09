@@ -9,7 +9,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmExtract, resolveStandaloneExtractPlan } from "../../../src/commands/improve/extract";
 import { loadConfig } from "../../../src/core/config/config";
-import { IMPROVE_ENGINE_PROCESSES } from "../../../src/core/config/engine-semantics";
 import { getConfigPath } from "../../../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
 import { setup, tasks } from "../../../src/workspace";
@@ -44,8 +43,6 @@ function claudeOnPath() {
   };
 }
 
-const PROCESSES = IMPROVE_ENGINE_PROCESSES;
-
 type Detected = Awaited<ReturnType<typeof setup.detect>>;
 
 describe("setup.apply", () => {
@@ -63,18 +60,18 @@ describe("setup.apply", () => {
     expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
   });
 
-  test("learning off switches every learning process off, disables the improve task, and routes nothing", async () => {
+  test("learning off writes only the switch: no task, no placement, nothing routed", async () => {
     const restore = claudeOnPath();
     const cron = fakeCrontab();
     try {
       const after = await setup.apply({ dir: library(), harness: ["claude"], learning: { on: false } });
       const config = savedConfig();
-      for (const name of PROCESSES) expect(config.improve.strategies.default.processes[name].enabled).toBe(false);
+      expect(config.improve).toEqual({ enabled: false });
       expect(config.improve.connection).toBeUndefined();
       expect(config.improve.harness).toBeUndefined();
       expect(config.harnesses.claude.modelWork).toBeUndefined();
       expect(after.enabled).toEqual(["claude"]);
-      expect(after.learning).toEqual({ on: false, agent: null });
+      expect(after.learning).toEqual({ on: false, harness: "claude", scheduled: false });
       expect(tasks.list().tasks).toEqual([]);
       expect(fs.existsSync(cron.file)).toBe(false);
     } finally {
@@ -98,7 +95,7 @@ describe("setup.apply", () => {
     fetched.mockRestore();
   });
 
-  test("learning on through akm itself writes the connection, clears the switches and enables the improve task", async () => {
+  test("learning on through akm itself writes the connection, removes the switch and enables the improve task", async () => {
     const cron = fakeCrontab();
     try {
       await setup.apply({ dir: library(), learning: { on: false } });
@@ -115,18 +112,19 @@ describe("setup.apply", () => {
       });
       expect(config.improve.connection).toBe("default");
       expect(config.improve.harness).toBeUndefined();
-      expect(JSON.stringify(config.improve.strategies ?? {})).not.toContain("false");
+      expect(config.improve.enabled).toBeUndefined();
       expect(config.scheduler.enabled).toEqual([expect.stringMatching(/\/\/tasks\/improve$/)]);
       expect(fs.readFileSync(cron.file, "utf8")).toContain("improve");
-      expect(after.learning).toEqual({ on: true, agent: null });
+      expect(after.learning).toEqual({ on: true, harness: null, scheduled: true });
       expect(after.connection).toBe("default");
       expect(after.modelCalls.description).toContain('connection "default"');
       expect(tasks.list().tasks).toEqual([expect.objectContaining({ id: "improve", enabled: true })]);
 
-      // Off again disables the task and switches the processes off; the connection stays.
+      // Off again writes the switch; the schedule and the connection stay.
       const off = await setup.apply({ dir: library(), learning: { on: false } });
-      expect(off.learning.on).toBe(false);
-      expect(tasks.list().tasks[0]?.enabled).toBe(false);
+      expect(off.learning).toEqual({ on: false, harness: null, scheduled: true });
+      expect(savedConfig().improve.enabled).toBe(false);
+      expect(tasks.list().tasks[0]?.enabled).toBe(true);
       expect(savedConfig().connections.default.apiKey).toBe("$LAB_KEY");
     } finally {
       cron.restore();
@@ -145,7 +143,7 @@ describe("setup.apply", () => {
       unset: [],
     });
     // No improve task and no switch: a session-end extract would still call the model, so learning is on.
-    expect((await setup.detect()).learning).toEqual({ on: true, agent: null });
+    expect((await setup.detect()).learning).toEqual({ on: true, harness: null, scheduled: false });
     await setup.apply({ dir: library(), connection: { endpoint: "http://new:1", model: "m" } });
     const connection = savedConfig().connections.default;
     // As `akm setup`: the old endpoint's key is not sent to the new one, and an alias keeps its request fields.
@@ -185,32 +183,17 @@ describe("setup.apply", () => {
     }
   });
 
-  test("learning off also disables akm's optional improve task when it is installed and enabled, and never adds it", async () => {
+  test("learning off leaves the schedule alone", async () => {
     const cron = fakeCrontab();
     try {
       const dir = library();
       await setup.apply({ dir });
       change({ set: { "connections.default.endpoint": "http://old:1/v1" }, unset: [] });
-      // `learning on` adds only the improve task: the consolidate template is not created.
       await setup.apply({ dir, learning: { on: true } });
-      expect(tasks.list().tasks.map((task) => task.id)).toEqual(["improve"]);
-      const template = fs.readFileSync(
-        path.join(import.meta.dir, "../../../src/assets/tasks/improve/akm-improve-consolidate.yml"),
-        "utf8",
-      );
-      fs.writeFileSync(path.join(dir, "tasks", "akm-improve-consolidate.yml"), template);
-      await tasks.enable({ task: "akm-improve-consolidate" });
-      expect(fs.readFileSync(cron.file, "utf8")).toContain("consolidate");
+      const scheduled = fs.readFileSync(cron.file, "utf8");
       await setup.apply({ dir, learning: { on: false } });
-      expect(tasks.list().tasks.map((task) => [task.id, task.enabled])).toEqual([
-        ["akm-improve-consolidate", false],
-        ["improve", false],
-      ]);
-      expect(fs.readFileSync(cron.file, "utf8")).not.toContain("improve");
-      // Off with the template not installed adds nothing.
-      fs.rmSync(path.join(dir, "tasks", "akm-improve-consolidate.yml"));
-      await setup.apply({ dir, learning: { on: false } });
-      expect(tasks.list().tasks.map((task) => task.id)).toEqual(["improve"]);
+      expect(tasks.list().tasks).toEqual([expect.objectContaining({ id: "improve", enabled: true })]);
+      expect(fs.readFileSync(cron.file, "utf8")).toBe(scheduled);
     } finally {
       cron.restore();
     }
@@ -225,44 +208,18 @@ describe("setup.apply", () => {
         dir: library(),
         harness: ["claude", "codex"],
         connection: { endpoint: "http://localhost:1/v1", model: "m" },
-        learning: { on: true, agent: "codex" },
+        learning: { on: true, harness: "codex" },
       });
       // Several agents leave one default harness, named `default`; the other keeps its platform name.
       expect(Object.keys(savedConfig().harnesses).sort()).toEqual(["codex", "default"]);
       expect(savedConfig().harnesses.default.platform).toBe("claude");
       expect(savedConfig().improve.harness).toBe("codex");
       expect(savedConfig().improve.connection).toBeUndefined();
-      expect(after.learning).toEqual({ on: true, agent: "codex" });
+      expect(after.learning).toEqual({ on: true, harness: "codex", scheduled: true });
       expect(after.modelCalls.platform).toBe("codex");
     } finally {
       cron.restore();
       restore();
-    }
-  });
-
-  test("turning learning on clears the switches off wrote, in the active strategy only", async () => {
-    const cron = fakeCrontab();
-    try {
-      await setup.apply({ dir: library() });
-      change({
-        set: {
-          "connections.lab.endpoint": "http://localhost:1/v1",
-          "improve.strategy": "mine",
-          "improve.strategies.consolidate.processes.reflect.enabled": "false",
-          "improve.strategies.mine.processes.reflect.limit": "7",
-        },
-        unset: [],
-      });
-      await setup.apply({ dir: library(), learning: { on: false } });
-      expect(savedConfig().improve.strategies.mine.processes.reflect).toEqual({ enabled: false, limit: 7 });
-      await setup.apply({ dir: library(), learning: { on: true } });
-      const strategies = savedConfig().improve.strategies;
-      // The person's own limit stays, and so does another strategy's switch.
-      expect(strategies.mine.processes.reflect).toEqual({ limit: 7 });
-      expect(strategies.consolidate.processes.reflect.enabled).toBe(false);
-      expect(strategies.default).toBeUndefined();
-    } finally {
-      cron.restore();
     }
   });
 
@@ -290,7 +247,11 @@ describe("setup.apply", () => {
     const restore = claudeOnPath();
     const cron = fakeCrontab();
     try {
-      const after = await setup.apply({ dir: library(), harness: ["claude"], learning: { on: true, agent: "codex" } });
+      const after = await setup.apply({
+        dir: library(),
+        harness: ["claude"],
+        learning: { on: true, harness: "codex" },
+      });
       expect(after.learning.on).toBe(false);
       expect(savedConfig().improve.harness).toBeUndefined();
       expect(warned.some((line) => line.includes("codex is not enabled"))).toBe(true);

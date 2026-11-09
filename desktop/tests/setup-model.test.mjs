@@ -11,6 +11,7 @@ import {
   isUnconfigured,
   learnPlan,
   learnReceipt,
+  learningRuns,
   pluginChannel,
   pluginMatches,
   searchCount,
@@ -44,7 +45,7 @@ const detected = (over = {}) => ({
   enabled: [],
   modelCalls: { platform: null, description: "off" },
   connection: null,
-  learning: { on: false, agent: null },
+  learning: { on: false, harness: null, scheduled: false },
   ...over,
 });
 const host = (bun, harnesses) => ({ cli: { installed: true, runnable: true }, bun, harnesses });
@@ -70,7 +71,7 @@ test("one card per harness found, with the plugin's version, the Bun gate and ak
       enabled: ["opencode"],
       modelCalls: { platform: "opencode", description: "harness" },
       connection: null,
-      learning: { on: false, agent: null },
+      learning: { on: false, harness: null, scheduled: false },
     },
   );
   assert.deepEqual(
@@ -130,9 +131,17 @@ test("learning is off unless turned on, and setup writes the off state with what
   const off = learnPlan(detected(), ["claude"], blank);
   assert.deepEqual([off.on, off.changed, off.learning, off.problem], [false, false, { on: false }, undefined]);
   // An on state nobody touched is left as it is: it may run somewhere this page does not list.
-  const on = learnPlan(detected({ learning: { on: true, agent: null }, connection: "lab" }), [], blank);
+  const on = learnPlan(detected({ learning: { on: true, harness: null, scheduled: false }, connection: "lab" }), [], blank);
   // An on state is sent whenever setup applies, so a save gives it its improve task.
   assert.deepEqual([on.on, on.changed, on.learning], [true, false, { on: true }]);
+});
+
+test("the switch alone is not running: a host with nowhere to run reads off", () => {
+  const nowhere = detected({ learning: { on: true, harness: null, scheduled: false } });
+  assert.equal(learningRuns(nowhere), false);
+  assert.deepEqual(learnPlan(nowhere, [], blank).learning, { on: false });
+  assert.equal(learningRuns({ ...nowhere, connection: "lab" }), true);
+  assert.equal(learningRuns(detected({ learning: { on: false, harness: "claude", scheduled: false } })), false);
 });
 
 test("learning on needs a connection or an agent, and says why in one line", () => {
@@ -140,7 +149,7 @@ test("learning on needs a connection or an agent, and says why in one line", () 
   assert.match(none.problem, /needs a model connection/);
   // Not turned on: off is written still, so that an agent enabled in the same apply does not take akm's model calls.
   assert.deepEqual([none.changed, none.learning], [false, { on: false }]);
-  const wasOn = learnPlan(detected({ learning: { on: true, agent: "claude" } }), [], { ...blank, where: "internal" });
+  const wasOn = learnPlan(detected({ learning: { on: true, harness: "claude", scheduled: false } }), [], { ...blank, where: "internal" });
   assert.deepEqual([wasOn.problem !== undefined, wasOn.learning], [true, undefined]);
   const typed = learnPlan(detected(), [], {
     learn: true,
@@ -162,16 +171,16 @@ test("learning on needs a connection or an agent, and says why in one line", () 
 
 test("learning on an agent names its platform, and an agent that is not allowed falls back to akm itself", () => {
   const agent = learnPlan(detected(), ["claude", "codex"], { ...blank, learn: true, where: "codex" });
-  assert.deepEqual([agent.where, agent.learning], ["codex", { on: true, agent: "codex" }]);
+  assert.deepEqual([agent.where, agent.learning], ["codex", { on: true, harness: "codex" }]);
   const gone = learnPlan(detected({ connection: "lab" }), ["claude"], { ...blank, learn: true, where: "codex" });
   assert.deepEqual([gone.where, gone.learning], ["internal", { on: true }]);
   // On through an agent the page has no card for: left as it is, with no problem, until the person picks.
-  const elsewhere = learnPlan(detected({ learning: { on: true, agent: "aider" } }), ["claude"], blank);
+  const elsewhere = learnPlan(detected({ learning: { on: true, harness: "aider", scheduled: false } }), ["claude"], blank);
   assert.deepEqual(
     [elsewhere.where, elsewhere.problem, elsewhere.learning],
-    ["aider", undefined, { on: true, agent: "aider" }],
+    ["aider", undefined, { on: true, harness: "aider" }],
   );
-  const back = learnPlan(detected({ learning: { on: true, agent: "codex" } }), ["codex"], { ...blank, learn: false });
+  const back = learnPlan(detected({ learning: { on: true, harness: "codex", scheduled: false } }), ["codex"], { ...blank, learn: false });
   assert.deepEqual([back.changed, back.learning], [true, { on: false }]);
 });
 
@@ -179,7 +188,8 @@ test("the receipt says only what akm reports afterwards", () => {
   assert.equal(learnReceipt(detected(), false, undefined), "Background learning is off.");
   assert.equal(learnReceipt(detected(), true, undefined), "Background learning stays off.");
   const on = detected({
-    learning: { on: true, agent: null },
+    learning: { on: true, harness: null, scheduled: false },
+    connection: "lab",
     modelCalls: { platform: null, description: 'connection "lab" (m).' },
   });
   assert.equal(
@@ -187,7 +197,7 @@ test("the receipt says only what akm reports afterwards", () => {
     'Background learning is on and runs on akm itself: connection "lab" (m).',
   );
   const agent = detected({
-    learning: { on: true, agent: "claude" },
+    learning: { on: true, harness: "claude", scheduled: false },
     modelCalls: { platform: "claude", description: 'harness "default", limited to reading and searching' },
   });
   assert.match(learnReceipt(agent, true, "Claude Code"), /runs on Claude Code: harness "default", limited/);

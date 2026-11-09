@@ -18,9 +18,12 @@ export interface Detected {
   modelCalls: { platform: string | null; description: string };
   /** The connection that takes akm's model calls when no agent does; null when none is configured. */
   connection: string | null;
-  /** Background learning is on, and the platform it runs on (null: akm itself). */
-  learning: { on: boolean; agent: string | null };
+  /** Background learning: the host-wide switch, the platform improve runs on (null: a connection, or nowhere) and whether its task is scheduled. */
+  learning: { on: boolean; harness: string | null; scheduled: boolean };
 }
+
+/** Background learning is switched on and has somewhere to run. `learning.on` alone is only the switch. */
+export const learningRuns = (d: Detected) => d.learning.on && (d.learning.harness !== null || d.connection !== null);
 
 export interface HostHarness {
   id: string;
@@ -151,7 +154,7 @@ export interface LearnPlan {
   changed: boolean;
   /** What `setup.apply` is sent for the connection and for learning; absent when there is nothing to write. */
   connection?: { endpoint: string; model: string; apiKeyEnv?: string };
-  learning?: { on: boolean; agent?: string };
+  learning?: { on: boolean; harness?: string };
   /** Learning is wanted but nowhere to run: the one line that says why. */
   problem?: string;
 }
@@ -162,9 +165,10 @@ export interface LearnPlan {
  * person changed it. `agents` are the platforms akm may use (enabled, or ticked now).
  */
 export function learnPlan(detected: Detected, agents: string[], input: LearnInput): LearnPlan {
-  const on = input.learn ?? detected.learning.on;
+  const runs = learningRuns(detected);
+  const on = input.learn ?? runs;
   // Where it runs now stands until the person picks: it may be an agent this page has no card for.
-  const wanted = input.where ?? detected.learning.agent ?? "internal";
+  const wanted = input.where ?? detected.learning.harness ?? "internal";
   const where = wanted === "internal" || agents.includes(wanted) || input.where === undefined ? wanted : "internal";
   const endpoint = input.endpoint.trim(),
     model = input.model.trim(),
@@ -177,17 +181,17 @@ export function learnPlan(detected: Detected, agents: string[], input: LearnInpu
   const target = on && where !== "internal" ? where : null;
   const changed =
     connection !== undefined ||
-    (!problem && (on !== detected.learning.on || (on && target !== detected.learning.agent)));
+    (!problem && (on !== runs || (on && target !== detected.learning.harness)));
   // An on state is sent whenever setup applies, so a save also gives it its scheduled improve task. Wanted on with
   // nowhere to run, learning is not turned on; while it is off, setup keeps writing off, so that an agent
   // enabled in the same apply does not take akm's model calls.
   const learning = problem
-    ? detected.learning.on
+    ? runs
       ? undefined
       : { on: false }
     : !on
       ? { on: false }
-      : { on: true, ...(target ? { agent: target } : {}) };
+      : { on: true, ...(target ? { harness: target } : {}) };
   return {
     on,
     where,
@@ -200,10 +204,10 @@ export function learnPlan(detected: Detected, agents: string[], input: LearnInpu
 
 /** What setup says after turning learning on or off: only what `setup.detect` reports afterwards. */
 export function learnReceipt(next: Detected, wantedOn: boolean, agentName: string | undefined): string {
-  if (!next.learning.on) {
+  if (!learningRuns(next)) {
     return wantedOn ? "Background learning stays off." : "Background learning is off.";
   }
-  const where = next.learning.agent ? (agentName ?? next.learning.agent) : "akm itself";
+  const where = next.learning.harness ? (agentName ?? next.learning.harness) : "akm itself";
   return `Background learning is on and runs on ${where}: ${next.modelCalls.description.replace(/\.$/, "")}.`;
 }
 

@@ -234,38 +234,19 @@ akm setup --learning off
 akm setup --learning on
 ```
 
-`--learning on|off` turns background learning on or off and does nothing else:
-it needs no `--yes`, creates no bundle, enables no agent program and runs no
-other setup step. `--yes`, `--no-probe` and `--no-init` are ignored with a
-warning; a flag that asks for work this run would drop (`--endpoint`,
-`--api-key-env`, `--name`, `--harness`, `--embedding*`, `--from`, `--dir`) is a
-usage error. It keeps learning where it runs now: an agent program that runs improve
-stays it, and a connection stays the connection. `akm info` shows the current state (its `learning` field). **Experimental**
-for its first release.
-
-- **Off** sets `enabled: false` on each model-calling improve process
-  (`reflect`, `distill`, `consolidate`, `memoryInference`, `extract`,
-  `validation`, `triage`) of the **active** `improve.strategy` (which also makes
-  `akm proposal extract` a no-op), and disables the scheduled `improve` task and
-  any installed `improve/…` task templates. Changing `improve.strategy` later
-  brings the other strategy's processes back.
-- **On** removes every `enabled: false` of the active strategy, a person's own
-  included, points improve at the agent program or the default connection, and
-  enables the `improve` task, adding it from akm's template when the bundle has
-  none. It can start model spending, so run it as an explicit action, not at
-  container boot. With nowhere to run learning (no connection and no enabled
-  agent program) it warns and leaves learning off. On a host with no `crontab`
-  (or whose scheduler cannot be written) it warns, keeps the config change and
-  reports what the config now says (`scheduled: false`).
-  A scheduler lock held by another akm process exits 75 as `akm task enable` does.
-
-The result is JSON naming what changed; unrelated config is kept:
+`--learning off` writes `improve.enabled: false` and nothing else; `--learning on` removes that key and nothing else
+(no task, schedule, connection or harness is written). It is one step: no `--yes`, no bundle, no agent program.
+`--yes`, `--no-probe` and `--no-init` are ignored with a warning; any other setup flag is a usage error. The switch is
+per host and covers all bundles. While it is off, every `akm improve` run (scheduled or by hand, `--dry-run` too) and
+`akm proposal extract` do nothing: improve prints one line to stderr and returns `skipped: { reason: "learning-off" }`
+at exit 0. The `improve` task stays scheduled (`akm task enable improve` and `disable` change that). A plugin can hold
+the switch: with Claude's `auto_learning` option off, the plugin turns learning off again at each session start, so
+`--learning on` by hand reverts until the option is on. A process's own `enabled: false` is not touched either way.
+**Experimental** for its first release.
 
 ```json
-{ "learning": { "on": true, "agent": null, "processes": ["reflect", "..."], "tasksEnabled": ["improve"], "tasksDisabled": [], "scheduled": true } }
+{ "ok": true, "learning": { "on": false, "harness": null, "scheduled": true } }
 ```
-
-`processes` lists the switches written (off) or cleared (on).
 
 The detected defaults are: when no agent program is configured yet, every one
 found on `PATH` is enabled and the first found is the default. If no connection
@@ -405,7 +386,7 @@ Returns a JSON object with:
 | `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
 | `registries` | Configured registries |
 | `connectionsAndHarnesses` | The connections, harnesses and work that runs on them, as the rows `akm health` reports under its `connections-and-harnesses` check, without contacting anything: each connection's endpoint and whether its key is held, each harness's platform and whether its binary is on `PATH`, and for each kind of work the connection or harness and model it resolves to |
-| `learning` | Background learning, read from the config and the bundle's task files alone (nothing is scheduled, probed or written): `on` (the same test as `setup.detect`'s `learning.on`: akm's model calls run somewhere and the active strategy's learning processes are not all switched off), `agent` (the agent program platform they run on; `null` for akm itself, or when off) and `scheduled` (whether the `improve` task is enabled; the config's word, not the OS scheduler's). **Experimental** for its first release |
+| `learning` | Background learning, read from the config alone: `on` (the `improve.enabled` switch, not whether anything is set up to run), `harness` (the platform improve runs on; `null` for a connection or nowhere) and `scheduled` (whether the `improve` task is enabled; the config's word, not the OS scheduler's). **Experimental** for its first release |
 | `sourceProviders` | Configured sources (filesystem, git, website, npm) |
 | `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `links` (declared links per kind with `total` and `unresolved`; absent when the index holds none), `lastBuiltAt`, `hasEmbeddings`, `unreadable` (index.db exists but the filesystem refuses to read it — a permissions problem), `unavailable` (index.db is readable but the SQLite-level read didn't complete: locked by another akm process, a newer layout this akm can't understand, or a corrupt file) |
 

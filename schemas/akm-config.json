@@ -680,6 +680,9 @@
     "improve": {
       "type": "object",
       "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
         "strategy": {
           "type": "string",
           "maxLength": 63,
@@ -2230,6 +2233,9 @@
         "improve": {
           "type": "object",
           "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
             "strategy": {
               "type": "string",
               "maxLength": 63,

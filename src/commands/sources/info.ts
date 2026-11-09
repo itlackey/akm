@@ -185,7 +185,7 @@ function safeLearning(config: AkmConfig): InfoResponse["learning"] {
   try {
     return learningStatus(config);
   } catch {
-    return { on: false, agent: null, scheduled: false };
+    return { on: false, harness: null, scheduled: false };
   }
 }
 

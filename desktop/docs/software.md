@@ -94,9 +94,7 @@ Nothing runs until you press a button.
      several never leave the default ambiguous. Enabling does not turn learning on: while learning is off, setup writes
      off with it, so the agent takes none of akm's learning calls.
    - **Let akm learn in the background** is a separate choice, off unless you turn it on, because learning (improve,
-     judging, extraction) uses model quota. Off means every model-calling improve process is switched off in the active
-     strategy (`enabled: false`, which also stops the plugins' end-of-session `akm proposal extract`) and the scheduled
-     `improve` task, and akm's optional `akm-improve-consolidate` task if installed and enabled, are disabled. Turned on, it removes those switches (so the strategy's own defaults apply again),
+     judging, extraction) uses model quota. Off writes the one host-wide switch (`improve.enabled: false`), which stops `akm improve` and the plugins' end-of-session `akm proposal extract`; the schedule is left alone. Turned on, it removes the switch (and the seven per-process switches earlier Desktop versions wrote),
      ensures the `improve` task exists and is enabled on every save (adding it from akm's template when the library has none) and asks where to run:
      **akm itself** (the default: a model reached through a connection, not an agent program; `improve.connection`) or
      any enabled agent (`improve.harness`), with akm's own note on whether that agent can be limited to reading and

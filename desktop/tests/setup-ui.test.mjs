@@ -52,7 +52,6 @@ case "$1" in -l) [ -f "${path.join(root, "crontab.txt")}" ] && /bin/cat "${path.
 const table = async (server) => readFile(path.join(server.root, "crontab.txt"), "utf8").catch(() => "");
 const savedConfig = async (server) =>
   JSON.parse(await readFile(path.join(server.env.AKM_CONFIG_DIR, "config.json"), "utf8"));
-const PROCESSES = ["reflect", "distill", "consolidate", "memoryInference", "extract", "validation", "triage"];
 
 const commands = async (server) =>
   (await readFile(path.join(server.root, "commands.jsonl"), "utf8").catch(() => ""))
@@ -125,8 +124,8 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   assert.equal(tries, 2);
   const config = await savedConfig(server);
   assert.equal(config.harnesses, undefined, "nothing is enabled until the agents step is run");
-  // Learning is off from the start: every learning process is switched off, so even a session-end extract is silent.
-  for (const name of PROCESSES) assert.equal(config.improve.strategies.default.processes[name].enabled, false);
+  // Learning is off from the start: the one host-wide switch, so even a session-end extract is silent.
+  assert.deepEqual(config.improve, { enabled: false });
 
   // 2. The CLI is pre-ticked with the version and place it installs to; Claude's plugin waits for Bun.
   const cli = page.getByRole("checkbox", { name: /Install .*akm.* to ~\/.local\/bin/ });
@@ -143,7 +142,7 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   await expect(page.getByRole("radio")).toHaveCount(0);
   await page.getByRole("button", { name: "Install 2 selected" }).click();
   await expect(page.getByText(/AKM CLI installed in ~\/.local\/bin/)).toBeVisible();
-  // Enabled, and learning stays off: nothing is scheduled, and every learning process stays switched off.
+  // Enabled, and learning stays off: nothing is scheduled, and the learning switch stays off.
   await expect(page.getByText(/1 agent is enabled for akm. Background learning is off./)).toBeVisible();
   const enabledOnly = await savedConfig(server);
   assert.equal(enabledOnly.harnesses.claude.modelWork, undefined);
@@ -184,7 +183,7 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   assert.equal(onItself.improve.harness, undefined);
   assert.equal(onItself.connections.default.endpoint, "http://localhost:11434/v1");
   assert.equal(onItself.connections.default.apiKey, "$LAB_KEY");
-  assert.equal(onItself.improve.strategies, undefined);
+  assert.equal(onItself.improve.enabled, undefined);
   assert.match(onItself.scheduler.enabled[0], /tasks\/improve$/);
   assert.match(await table(server), /improve/);
 
@@ -205,21 +204,21 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   assert.equal(onAgent.improve.connection, undefined);
   assert.equal(onAgent.harnesses.claude.modelWork, undefined);
 
-  // Off again: the processes are switched off and the task is disabled, so nothing runs; the connection stays.
+  // Off again: the one switch is written, so nothing runs; the schedule and the connection stay.
   await learning.uncheck();
   await page.getByRole("button", { name: "Install 1 selected" }).click();
   await expect(page.getByText("Background learning is off.")).toBeVisible();
   const off = await savedConfig(server);
-  for (const name of PROCESSES) assert.equal(off.improve.strategies.default.processes[name].enabled, false);
-  assert.deepEqual(off.scheduler.enabled, []);
-  assert.doesNotMatch(await table(server), /improve/);
+  assert.equal(off.improve.enabled, false);
+  assert.match(off.scheduler.enabled[0], /tasks\/improve$/);
+  assert.match(await table(server), /improve/);
   assert.equal(off.connections.default.apiKey, "$LAB_KEY");
-  // And on again restores akm's own defaults: no switch is left behind.
+  // And on again removes the switch: nothing is left behind.
   await learning.check();
   await page.getByRole("radio", { name: /akm itself/ }).check();
   await page.getByRole("button", { name: "Install 1 selected" }).click();
   await expect(page.getByText(/Background learning is on and runs on akm itself/)).toBeVisible();
-  assert.equal((await savedConfig(server)).improve.strategies, undefined);
+  assert.equal((await savedConfig(server)).improve.enabled, undefined);
 
   // 3. Try it: a real search, and the agent check, which claims nothing until akm's count rises.
   await expect(page.getByRole("searchbox", { name: "Search your library" })).toHaveValue(/\w/);

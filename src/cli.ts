@@ -239,7 +239,7 @@ const setupCommand = defineCommand({
     learning: {
       type: "string",
       description:
-        "on|off: turn background learning (improve processes and the scheduled improve task) on or off, and nothing else. Alone it needs no --yes. `on` clears learning switches set to false and can start model spending",
+        "on|off: turn background learning on or off on this host, for all bundles. Writes improve.enabled and nothing else; alone it needs no --yes",
     },
     // Declared as the POSITIVE name with `default: true` so citty's native
     // `--no-<name>` negation (it strips a leading `--no-` from ANY token and
@@ -265,39 +265,6 @@ const setupCommand = defineCommand({
     await runWithJsonErrors(async () => {
       const noInit = !args.init;
       const noProbe = (args as { probe?: boolean }).probe === false;
-      if (args.learning !== undefined) {
-        // Alone it is one step: no bundle, no harness, no other setup question.
-        if (args.learning !== "on" && args.learning !== "off")
-          throw new UsageError("--learning takes `on` or `off`.", "INVALID_FLAG_VALUE");
-        // Flags that ask for real work this run would drop are errors; the rest are ignored with a warning.
-        const work = [
-          "endpoint",
-          "api-key-env",
-          "name",
-          "harness",
-          "embedding",
-          "embedding-endpoint",
-          "embedding-api-key-env",
-          "from",
-          "dir",
-        ] as const;
-        if (work.some((flag) => args[flag] !== undefined))
-          throw new UsageError(
-            "--learning runs on its own; do not combine it with --endpoint, --harness, --dir or the other answer flags.",
-            "INVALID_FLAG_VALUE",
-          );
-        for (const [given, flag] of [
-          [args.yes, "--yes"],
-          [noProbe, "--no-probe"],
-          [noInit, "--no-init"],
-        ] as const)
-          if (given) warnOnce(`setup-learning:${flag}`, `[setup] ${flag} is ignored with --learning.`);
-        const { learningState, setLearning } = await import("./setup/learning");
-        // Keep learning where it runs now: an agent program stays one, and akm's own runtime stays akm's.
-        const agent = learningState().runsOn ?? undefined;
-        output("setup", { learning: await setLearning({ on: args.learning === "on", agent }) });
-        return;
-      }
       const { hasSetupFlags, parseSetupFlags } = await import("./setup/setup-flags");
       const flags = parseSetupFlags({
         endpoint: args.endpoint,
@@ -308,6 +275,25 @@ const setupCommand = defineCommand({
         embeddingEndpoint: args["embedding-endpoint"],
         embeddingApiKeyEnv: args["embedding-api-key-env"],
       });
+      if (args.learning !== undefined) {
+        // Alone it is one step: it writes the one switch and nothing else.
+        if (args.learning !== "on" && args.learning !== "off")
+          throw new UsageError("--learning takes `on` or `off`.", "INVALID_FLAG_VALUE");
+        if (hasSetupFlags(flags) || args.from || args.dir)
+          throw new UsageError(
+            "--learning runs on its own; do not combine it with --endpoint, --harness, --dir or the other answer flags.",
+            "INVALID_FLAG_VALUE",
+          );
+        for (const [given, flag] of [
+          [args.yes, "--yes"],
+          [noProbe, "--no-probe"],
+          [noInit, "--no-init"],
+        ] as const)
+          if (given) warnOnce(`setup-learning:${flag}`, `[setup] ${flag} is ignored with --learning.`);
+        const { setLearning } = await import("./setup/learning");
+        output("setup", { learning: setLearning(args.learning === "on") });
+        return;
+      }
       if (args.from) {
         if (hasSetupFlags(flags) && !args.yes) {
           throw new UsageError(

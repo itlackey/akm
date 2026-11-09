@@ -474,6 +474,7 @@ These settings, all optional, choose another place for one piece of work:
 
 | Key | Chooses where |
 | --- | --- |
+| `improve.enabled` | `false`: background learning is off on this host, and `akm improve` and `akm proposal extract` do nothing. Written by `akm setup --learning off`; absent means on |
 | `improve.connection`, `improve.harness` | All of `akm improve`'s model work |
 | `improve.processes.<process>` | One improve process: `reflect`, `distill`, `consolidate`, `memoryInference`, `extract`, `validation`, or `triage` (its judgment) |
 | `improve.qualityGate` | The judge of the reflect and distill quality gates |

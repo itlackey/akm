@@ -225,8 +225,12 @@ export function resolveStandaloneExtractPlan(
   const selected = resolveImproveStrategy(selection.strategy, config);
   const process = cloneAndFreeze(getImproveProcessConfig("extract", selected.config) ?? {});
   // The built-in strategies turn the improve-stage extract off because sessions are extracted when they end, so only
-  // the person's own `enabled: false` for this strategy stops the standalone run. Nothing then resolves a runner.
-  if (config.improve?.strategies?.[selected.name]?.processes?.extract?.enabled === false) {
+  // the person's own `enabled: false` for this strategy, or the host-wide `improve.enabled: false`, stops the
+  // standalone run. Nothing then resolves a runner.
+  if (
+    config.improve?.enabled === false ||
+    config.improve?.strategies?.[selected.name]?.processes?.extract?.enabled === false
+  ) {
     return Object.freeze({
       strategy: selected.name,
       engine: "",
@@ -1225,7 +1229,8 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
       ok: true,
       dryRun,
       type: options.type,
-      warning: "extract is disabled by improve.strategies.<strategy>.processes.extract.enabled: false in your config",
+      warning:
+        "extract is disabled: improve.enabled or improve.strategies.<strategy>.processes.extract.enabled is false in your config",
       startMs,
     });
   }

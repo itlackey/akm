@@ -62,6 +62,11 @@ const ImproveProcessesSchema = z
 
 export const ImproveConfigSchema = z
   .object({
+    /**
+     * `false`: background learning is off on this host. `akm improve` and `akm proposal extract` do nothing, whoever
+     * runs them. `akm setup --learning off` writes it and `on` removes it. Absent means on.
+     */
+    enabled: z.boolean().optional(),
     /** The strategy `akm improve` runs when `--strategy` names none. */
     strategy: engineName.optional(),
     /** Where improve's model work runs: a connection, or a harness, over the default. */

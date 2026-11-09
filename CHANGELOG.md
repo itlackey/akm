@@ -8,12 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- Learning status and controls on the CLI (#1506), Experimental for their first release. `akm info` gains a `learning` field (`on`, `agent`, `scheduled`), read from the config and the bundle's task files only. `akm setup --learning on|off` turns background learning on or off and does nothing else (no `--yes`, no bundle, no agent program, no other step; `--yes`, `--no-probe` and `--no-init` are ignored with a warning, other setup flags are a usage error; it keeps learning where it runs now), and prints what it changed (`processes`, `tasksEnabled`, `tasksDisabled`, `scheduled`). `on` clears `enabled: false` switches of the active strategy and can start model spending; `off` covers the active `improve.strategy` only. The learning code moved from `src/workspace/setup.ts` to `src/setup/learning.ts`.
+- Learning status and one switch for it (#1506), Experimental for their first release. `akm setup --learning on|off` writes the config key `improve.enabled: false` (off) or removes it (on) and nothing else: no task, schedule, connection or harness is written, so on is a true undo and a process's own `enabled: false` survives. It needs no `--yes`; `--yes`, `--no-probe` and `--no-init` are ignored with a warning and other setup flags are a usage error. While the key is `false`, `akm improve` (scheduled or by hand, `--dry-run` too) does nothing and returns `skipped: { reason: "learning-off" }` at exit 0, and `akm proposal extract` is a no-op. `akm info` gains `learning` (`on`, `harness`, `scheduled`), read from the config alone; `on` is the switch only. A host whose Desktop turned learning off before this (all seven improve processes `enabled: false` on the active strategy) reads as off, and `--learning on` clears those.
 
-### Fixed
+### Changed
 
-- `setup.apply` with only `learning` no longer runs `akm bundle create` first (a call with `dir`, `harness` or `connection` is unchanged).
-- Turning learning on on a host with no `crontab` binary no longer writes the config and then fails: it warns and reports what the config says (`scheduled: false`); a failed scheduler write puts the config back to what the OS scheduler holds, and a held scheduler lock exits 75 as before.
+- `setup.detect` and `setup.apply` `learning.agent` is renamed `harness`, and `learning.on` is now the switch alone: Desktop reads "running" as on with a harness or a connection. Turning learning off in Desktop writes the one switch and no longer disables the `improve` task or akm's `improve/…` task templates; the scheduled run exits doing nothing. The learning code moved from `src/workspace/setup.ts` to `src/setup/learning.ts`.
 
 ## [0.10.261114] - 2026-11-08
 
