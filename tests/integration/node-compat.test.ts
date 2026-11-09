@@ -388,8 +388,8 @@ describe("config path parity", () => {
 
 // ── history ───────────────────────────────────────────────────────────────────
 
-// `history` was removed in the 0.9 CLI overhaul (folded into `log`/dropped —
-// see docs/migration/v0.8-to-v0.9.md); its per-asset trail is `log --ref`,
+// `history` was removed in the 0.9 CLI overhaul (folded into `log`/dropped);
+// its per-asset trail is `log --ref`,
 // the same code path "events parity" below already exercises. No replacement
 // parity test is needed.
 
@@ -476,8 +476,7 @@ describe("stash parity", () => {
   });
 });
 
-// `graph` was removed entirely in the 0.9 CLI overhaul (docs/migration/
-// v0.8-to-v0.9.md), and the LLM entity-graph extraction engine it inspected
+// `graph` was removed entirely in the 0.9 CLI overhaul, and the LLM entity-graph extraction engine it inspected
 // was itself retired in 0.9.17-alpha.9 (with the `graph-refresh` strategy
 // that used to run it). No replacement parity test is needed.
 
