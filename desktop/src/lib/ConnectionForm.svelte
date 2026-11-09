@@ -97,9 +97,6 @@
   {#if inherited}<p class="notice">
       This connection comes from a config this one extends. Saving creates a local copy that overrides it.
     </p>{/if}
-  {#if original?.apiKeyFile}<p class="notice">
-      This connection still has apiKeyFile, which akm no longer reads. Remove it in Advanced or the config file.
-    </p>{/if}
   <div class="settings-fields">
     {#if creating}<label class="field">
         <span class="field-label">Name</span>

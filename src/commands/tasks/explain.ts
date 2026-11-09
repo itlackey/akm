@@ -271,7 +271,7 @@ function currentExecutionValues(document: PreparableTaskDocument, bundleName: st
   const akm = document.akm;
   if (!akm) return {};
   const out: Record<string, unknown> = {};
-  for (const key of ["connection", "harness", "engine", "model", "inference", "outputSchema", "timeout"] as const) {
+  for (const key of ["connection", "harness", "model", "inference", "outputSchema", "timeout"] as const) {
     if (Object.hasOwn(akm, key)) out[key] = akm[key];
   }
   if (Object.hasOwn(akm, "agent")) {

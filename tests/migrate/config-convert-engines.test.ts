@@ -3,34 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The pre-0.10 `engines` / `defaults` config, read as `connections` / `harnesses`.
- * One row per row of the conversion table, then the three example configs the
- * rework is specified by, which must load unchanged.
+ * The pre-0.10 `engines` / `defaults` config, converted to `connections` / `harnesses` by the
+ * migrator: one row per row of the conversion table, then what `akm migrate apply` writes.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { setConfigValue, unsetConfigValue } from "../src/commands/config-cli";
-import { resolveImprovePlan } from "../src/commands/improve/improve-strategies";
-import { resolveQualityGateJudge } from "../src/commands/improve/stage";
-import { stripJsonComments } from "../src/core/common";
-import {
-  type AkmConfig,
-  type ConnectionConfig,
-  loadConfig,
-  loadUserConfig,
-  mutateConfig,
-  normalizeConfigFile,
-  resetConfigCache,
-  unknownConfigKeyPaths,
-} from "../src/core/config/config";
-import { AkmConfigSchema } from "../src/core/config/config-schema";
-import { convertEngineConfig } from "../src/core/config/convert-engines";
-import { UsageError } from "../src/core/errors";
-import { getConfigPath } from "../src/core/paths";
-import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
-import { withEnvSync } from "./_helpers/sandbox";
+import { convertEngineConfig } from "../../scripts/akm-migrate/config/convert-engines";
+import { normalizeConfigFile } from "../../scripts/akm-migrate/config/normalize";
+import { resetConfigCache, unknownConfigKeyPaths } from "../../src/core/config/config";
+import { AkmConfigSchema } from "../../src/core/config/config-schema";
+import { getConfigPath } from "../../src/core/paths";
 
 type Dict = Record<string, unknown>;
 
@@ -502,7 +486,8 @@ describe("the defaults become the entries named default", () => {
     expect(moved.notes.join("\n")).toContain(
       'engines.default is now connections.legacy-default, and "default" names another engine',
     );
-    expect(moved.notes.join("\n")).toContain("--engine default");
+    expect(moved.notes.join("\n")).toContain("--engine is removed");
+    expect(moved.notes.join("\n")).toContain("--connection legacy-default");
     // Nothing moved aside, nothing to say.
     const kept = convert({ engines: { lab: llm() }, defaults: { llmEngine: "lab" } });
     expect(kept.notes.join("\n")).not.toContain("names another engine");
@@ -1060,221 +1045,16 @@ describe("what is already current is left alone", () => {
   });
 });
 
-describe("the loader reads the retired form in memory", () => {
-  function captureWarnings(run: () => void): string[] {
-    const warnings: string[] = [];
-    _resetWarnOnceForTests();
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-    try {
-      run();
-    } finally {
-      _setWarnSinkForTests(undefined);
-    }
-    return warnings;
-  }
-
+describe("akm migrate apply writes the converted config", () => {
   beforeEach(() => resetConfigCache());
-  afterEach(() => {
-    resetConfigCache();
-    fs.rmSync(path.join(path.dirname(getConfigPath()), "models.json"), { force: true });
-  });
+  afterEach(() => resetConfigCache());
 
   function writeConfig(value: unknown): void {
     fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
     fs.writeFileSync(getConfigPath(), JSON.stringify(value));
   }
 
-  test("loads an engines config as connections with one warning naming akm migrate apply, and never rewrites the file", () => {
-    writeConfig({
-      configVersion: "0.9.0",
-      engines: { lab: llm(), claude: { kind: "agent", platform: "claude" } },
-      defaults: { llmEngine: "lab" },
-    });
-    const before = fs.readFileSync(getConfigPath(), "utf8");
-    let config!: ReturnType<typeof loadUserConfig>;
-    const warnings = captureWarnings(() => {
-      config = loadUserConfig();
-    });
-    expect(Object.keys(config.connections ?? {})).toEqual(["default"]);
-    expect(Object.keys(config.harnesses ?? {})).toEqual(["claude"]);
-    const retired = warnings.filter((w) => w.includes("retired engines/defaults form"));
-    expect(retired).toHaveLength(1);
-    expect(retired[0]).toContain("akm migrate apply");
-    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
-  });
-
-  test("a models.json beside a config already in the connections form is folded in, with one warning that says so", () => {
-    writeConfig({
-      configVersion: "0.9.0",
-      connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "mine" } } },
-    });
-    fs.writeFileSync(
-      path.join(path.dirname(getConfigPath()), "models.json"),
-      JSON.stringify({ version: 1, aliases: { fast: { lab: "ignored" }, balanced: { "*": "wild" } } }),
-    );
-    let config!: ReturnType<typeof loadUserConfig>;
-    const warnings = captureWarnings(() => {
-      config = loadUserConfig();
-    });
-    expect(config.connections?.lab?.models).toEqual({ fast: "mine", balanced: "wild" });
-    const folded = warnings.filter((w) => w.includes("models.json"));
-    expect(folded).toHaveLength(1);
-    expect(folded[0]).toContain("akm migrate apply");
-    expect(folded[0]).not.toContain("retired engines/defaults form");
-  });
-
-  test("the one warning names each key the file holds that akm no longer reads, never its value", () => {
-    writeConfig({
-      configVersion: "0.9.0",
-      engines: { lab: llm({ apiKeyFile: "/run/lab-key" }), other: llm({ apiKey: "sk-secret-literal" }) },
-      defaults: { llmEngine: "lab" },
-    });
-    const warnings = captureWarnings(() => {
-      loadUserConfig();
-    });
-    const text = warnings.join("\n");
-    expect(text).toContain("engines.lab: its apiKeyFile is not read from config any more");
-    expect(text).toContain("engines.other: its apiKey is not read from config any more");
-    expect(text).toContain("credentials.json");
-    expect(text).not.toContain("sk-secret-literal");
-  });
-
-  test("an engine's implicit key variables, set in the environment, keep working through the loader", () => {
-    writeConfig({
-      configVersion: "0.9.0",
-      engines: { lab: llm(), other: llm() },
-      defaults: { llmEngine: "lab" },
-    });
-    const loaded = withEnvSync({ AKM_LLM_API_KEY: "a", AKM_ENGINE_OTHER_API_KEY: "b" }, () => {
-      resetConfigCache();
-      return loadUserConfig();
-    });
-    expect(loaded.connections?.default?.apiKey).toBe("$AKM_LLM_API_KEY");
-    expect(loaded.connections?.other?.apiKey).toBe("$AKM_ENGINE_OTHER_API_KEY");
-    resetConfigCache();
-    expect(loadUserConfig().connections?.default?.apiKey).toBeUndefined();
-  });
-
-  test("a connection written beside engines is read with the converted ones", () => {
-    writeConfig({
-      configVersion: "0.9.0",
-      engines: { lab: llm() },
-      defaults: { llmEngine: "lab" },
-    });
-    mutateConfig((current) => ({
-      ...current,
-      connections: {
-        ...current.connections,
-        extra: { endpoint: "http://extra/v1", models: { fast: "x" } },
-        // A leaf of a converted entry: only that leaf is written.
-        default: { ...(current.connections?.default as ConnectionConfig), timeoutMs: 5000 },
-      },
-    }));
-    const after = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as Dict;
-    expect(after.engines).toBeDefined();
-    expect(after.connections).toEqual({
-      extra: { endpoint: "http://extra/v1", models: { fast: "x" } },
-      default: { timeoutMs: 5000 },
-    });
-    resetConfigCache();
-    const loaded = loadUserConfig();
-    expect(Object.keys(loaded.connections ?? {}).sort()).toEqual(["default", "extra"]);
-    expect(loaded.connections?.default).toMatchObject({
-      endpoint: "http://lab:8080/v1/chat/completions",
-      timeoutMs: 5000,
-    });
-  });
-
-  test("reads the user models.json as the overlay", () => {
-    writeConfig({ configVersion: "0.9.0", engines: { lab: llm() }, defaults: { llmEngine: "lab" } });
-    fs.writeFileSync(
-      path.join(path.dirname(getConfigPath()), "models.json"),
-      JSON.stringify({ version: 1, aliases: { fast: { lab: "qwen3-8b" } } }),
-    );
-    expect(loadUserConfig().connections?.default?.models).toMatchObject({ fast: "qwen3-8b", balanced: "qwen3-32b" });
-  });
-
-  test("an ordinary write leaves the retired form in the file: engines, defaults, apiKeyFile and judgeEngine stay", () => {
-    const document = {
-      configVersion: "0.9.0",
-      semanticSearchMode: "off",
-      engines: { lab: llm({ apiKeyFile: "/run/lab-key" }), claude: { kind: "agent", platform: "claude" } },
-      defaults: { llmEngine: "lab", improveStrategy: "nightly" },
-      workflow: { judgeEngine: "lab", maxConcurrency: 2 },
-      improve: { strategies: { nightly: { processes: { reflect: { engine: "lab", model: "fast" } } } } },
-    };
-    writeConfig(document);
-
-    const written = mutateConfig((current) => ({ ...current, output: { format: "text" } })).written;
-
-    expect(written).toBe(true);
-    const after = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as Dict;
-    // Everything the reader converts in memory is exactly as the file had it…
-    expect(after.engines).toEqual(document.engines);
-    expect(after.defaults).toEqual(document.defaults);
-    expect(after.workflow).toEqual(document.workflow);
-    expect(after.improve).toEqual(document.improve);
-    expect(after).not.toHaveProperty("connections");
-    expect(after).not.toHaveProperty("harnesses");
-    // …and the edit is the only thing added.
-    expect(after.output).toEqual({ format: "text" });
-    // The retired form still reads as it did.
-    resetConfigCache();
-    expect(Object.keys(loadUserConfig().connections ?? {})).toEqual(["default"]);
-  });
-
-  describe("removing what the engines form supplies", () => {
-    const engines = {
-      configVersion: "0.9.0",
-      engines: { lab: llm(), other: llm({ endpoint: "http://other/v1/chat/completions" }), claude: { kind: "agent" } },
-      defaults: { llmEngine: "lab", improveStrategy: "default" },
-    };
-
-    /** The one refusal an edit that removes converted keys gets, and the file it leaves alone. */
-    function refused(edit: (current: AkmConfig) => AkmConfig): string {
-      writeConfig(engines);
-      const before = fs.readFileSync(getConfigPath(), "utf8");
-      let message = "";
-      try {
-        mutateConfig(edit);
-      } catch (error) {
-        expect(error).toBeInstanceOf(UsageError);
-        message = (error as Error).message;
-      }
-      expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
-      return message;
-    }
-
-    test.each([
-      ["config unset connections.other", (current: AkmConfig) => unsetConfigValue(current, "connections.other")],
-      ["config unset improve.strategy", (current: AkmConfig) => unsetConfigValue(current, "improve.strategy")],
-      ["setup disabling agentic features", (current: AkmConfig) => ({ ...current, harnesses: {} })],
-    ])("%s is refused, naming akm migrate apply, and changes nothing", (_name, edit) => {
-      expect(refused(edit)).toContain("akm migrate");
-    });
-
-    test("one message names every converted key the edit removes", () => {
-      const message = refused((current) => ({ ...current, connections: {}, harnesses: {} }));
-      expect(message).toContain("connections.default");
-      expect(message).toContain("connections.other");
-      expect(message).toContain("harnesses.claude");
-    });
-
-    test("adding or changing a converted key still writes, and removal works once the file is converted", () => {
-      writeConfig(engines);
-      mutateConfig((current) => setConfigValue(current, "connections.other.timeoutMs", "5000"));
-      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).connections.other).toEqual({ timeoutMs: 5000 });
-
-      expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
-      resetConfigCache();
-      mutateConfig((current) => unsetConfigValue(current, "connections.other"));
-      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).connections.other).toBeUndefined();
-    });
-  });
-
-  test("akm migrate apply writes the converted config, dropping nothing it could carry over", () => {
+  test("dropping nothing it could carry over", () => {
     writeConfig({
       configVersion: "0.9.0",
       engines: { lab: llm({ apiKey: "$LAB_KEY", temperature: 0.2 }), claude: { kind: "agent", platform: "claude" } },
@@ -1295,62 +1075,5 @@ describe("the loader reads the retired form in memory", () => {
     expect(written.harnesses).toEqual({ claude: {} });
     expect((written.improve as Dict).strategy).toBe("default");
     expect(normalizeConfigFile(getConfigPath(), { apply: false }).changed).toBe(false);
-  });
-});
-
-describe("the example configs load unchanged and validate", () => {
-  const examples = path.join(import.meta.dir, "fixtures", "config-examples");
-
-  test.each(["1-basic", "2-harness", "3-power"])("%s.jsonc", (name) => {
-    const raw = JSON.parse(stripJsonComments(fs.readFileSync(path.join(examples, `${name}.jsonc`), "utf8"))) as Dict;
-    // Already the current form: the converter leaves it alone.
-    expect(convertEngineConfig(raw).changed).toBe(false);
-    expect(AkmConfigSchema.safeParse({ configVersion: "0.9.0", semanticSearchMode: "off", ...raw }).success).toBe(true);
-    // Every key is one akm reads or a request field.
-    expect(unknownConfigKeyPaths({ configVersion: "0.9.0", ...raw })).toEqual([]);
-  });
-
-  test.each([
-    ["1-basic", "off"],
-    ["2-harness", "auto"],
-    ["3-power", "auto"],
-  ] as const)("%s.jsonc, loaded as written, reads semantic search as %s", (name, mode) => {
-    // The examples carry no semanticSearchMode: an `embedding` block alone says semantic search is wanted.
-    fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
-    fs.copyFileSync(path.join(examples, `${name}.jsonc`), getConfigPath());
-    resetConfigCache();
-    expect(loadConfig().semanticSearchMode).toBe(mode);
-    resetConfigCache();
-  });
-
-  test("3-power.jsonc, loaded from a file: triage judges on the anthropic connection's reasoning model, the quality gate on anthropic's balanced one", () => {
-    const raw = JSON.parse(stripJsonComments(fs.readFileSync(path.join(examples, "3-power.jsonc"), "utf8"))) as Dict;
-    const improve = raw.improve as Dict;
-    fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
-    fs.writeFileSync(
-      getConfigPath(),
-      JSON.stringify({
-        ...raw,
-        improve: {
-          ...improve,
-          strategy: "nightly",
-          strategies: {
-            nightly: { processes: { triage: { enabled: true, judgment: true }, distill: { enabled: true } } },
-          },
-        },
-      }),
-    );
-    resetConfigCache();
-    const config = loadConfig();
-    const plan = resolveImprovePlan("nightly", config);
-    expect(plan.triageJudgment).toMatchObject({ kind: "connection", name: "anthropic", model: "claude-opus-4-7" });
-    expect(plan.processes.distill.runner).toMatchObject({ kind: "connection", name: "default", model: "qwen3-32b" });
-    // Nothing names a model for the gate's judge, so it asks for the shipped judge alias: `balanced`.
-    expect(resolveQualityGateJudge(config, undefined, "reflect")).toMatchObject({
-      kind: "connection",
-      name: "anthropic",
-      model: "claude-sonnet-4-5",
-    });
-    resetConfigCache();
   });
 });

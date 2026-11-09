@@ -65,8 +65,6 @@ export interface WorkflowBudget {
 export interface WorkflowUnitSettings {
   connection?: string;
   harness?: string;
-  /** The retired spelling of `connection` / `harness`. */
-  engine?: string;
   model?: string;
   llm?: LlmInvocationOverrides;
   /** `null` = explicitly no timeout; absent = inherit. */

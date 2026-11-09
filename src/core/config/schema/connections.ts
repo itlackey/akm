@@ -6,7 +6,7 @@
  * `connections`: the OpenAI-compatible endpoints akm reaches models through.
  *
  * akm owns `endpoint`, `apiKey`, `models`, `contextLength`, `timeoutMs` and
- * `concurrency` (and keeps the retired `apiKeyFile` as written, never reading it). Every other key on a connection, or on a model entry, is a
+ * `concurrency`. Every other key on a connection, or on a model entry, is a
  * request field in the endpoint's own spelling and is sent with each request as
  * written: the connection's fields apply to all its models, a model entry's
  * override them.
@@ -20,7 +20,6 @@ import {
   nonEmptyString,
   OpaqueFieldSchema,
   positiveInt,
-  retiredApiKeyFile,
 } from "./primitives";
 
 /**
@@ -47,7 +46,6 @@ export const ConnectionSchema = z
   .object({
     endpoint: connectionEndpoint,
     apiKey: envReferenceApiKey.optional(),
-    apiKeyFile: retiredApiKeyFile.optional(),
     models: ModelAliasesSchema.optional(),
     contextLength: positiveInt.optional(),
     timeoutMs: timeoutMsField,

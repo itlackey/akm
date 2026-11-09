@@ -13,6 +13,7 @@
  *   |------------------------|-----------------------------------------------------------------|
  *   | `4`                    | `parseTaskSourceV4Document` — the current grammar               |
  *   | `4`, some `schedule[]` entry carries `enabled` (0.9.15's grammar) | `TASK_SOURCE_INVALID` naming `akm migrate apply`, which removes the key |
+ *   | `4`, a top-level `engine` key | `TASK_SOURCE_INVALID` naming `akm migrate apply`, which rewrites it as `connection` or `harness` |
  *   | `2` or `3`             | `TASK_SCHEMA_VERSION_UNSUPPORTED` naming `akm migrate apply`, which converts the file |
  *   | any other number       | `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming the migrator          |
  *   | absent / not a number  | `parseTaskSourceV4Document` — its own `TASK_SOURCE_INVALID` "version is required and must be 4" / "must be exactly 4" wording |
@@ -30,7 +31,9 @@
  * render with the label `task source`.
  */
 
+import { isRecord } from "../../core/common";
 import { UsageError } from "../../core/errors";
+import { RETIRED_ENGINE_KEY_MESSAGE } from "../../execution/source";
 import { readBoundedTaskSourceYaml } from "./bounded-document";
 import { parseTaskSourceV4Document, TASK_SOURCE_V4_VERSION, type TaskSourceV4Document } from "./task-source-v4";
 
@@ -95,6 +98,15 @@ export function parseTaskSource(input: ParseTaskSourceInput): ParsedTaskSource {
   if (version === TASK_SOURCE_V4_VERSION && v4ScheduleHasRetiredEnabledKey(root)) {
     throw new UsageError(
       `Invalid task source v4 at ${input.filePath}: schedule[].enabled was removed (scheduler activation is host-local config). Run \`akm migrate apply\` to rewrite it.`,
+      "TASK_SOURCE_INVALID",
+      TASK_MIGRATE_HINT,
+    );
+  }
+  // The document grammar still accepts `engine` so the migrator can read a file before it rewrites the key; a run
+  // would ignore it and move the task to another model, so the runtime refuses it here.
+  if (version === TASK_SOURCE_V4_VERSION && isRecord(root) && Object.hasOwn(root, "engine")) {
+    throw new UsageError(
+      `Invalid task source v4 at ${input.filePath}: engine ${RETIRED_ENGINE_KEY_MESSAGE}`,
       "TASK_SOURCE_INVALID",
       TASK_MIGRATE_HINT,
     );

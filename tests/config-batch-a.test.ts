@@ -14,6 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs, renderUsage } from "citty";
+import { normalizeConfigFile } from "../scripts/akm-migrate/config/normalize";
 import { main } from "../src/cli";
 import { parseIntegerFlag } from "../src/cli/parse-args";
 import { assertKnownFlags, type FlagScanCommand } from "../src/cli/unknown-flags";
@@ -21,7 +22,7 @@ import { parseSinceArg, usableDefaultSince } from "../src/commands/improve/extra
 import { resolveRegistries, searchRegistry } from "../src/commands/read/registry-search";
 import { parseWorkflowParameterFlags } from "../src/commands/workflow-cli";
 import { resolveConfiguredBundlePath, resolveStashDir } from "../src/core/common";
-import { normalizeConfigFile, parseAndValidateConfigText } from "../src/core/config/config";
+import { parseAndValidateConfigText } from "../src/core/config/config";
 import { UsageError } from "../src/core/errors";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { githubHeaders } from "../src/integrations/github";

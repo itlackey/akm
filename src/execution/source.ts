@@ -2,10 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { warnOnce } from "../core/warn";
 import { cloneExecutionJsonObject, type ExecutionJsonObject } from "./json";
 
 export const EXECUTION_SOURCE_SCHEMA_VERSION = 1 as const;
+
+/** What a workflow or task source that still says `engine:` is told: ignoring the key would move the work to another model. */
+export const RETIRED_ENGINE_KEY_MESSAGE =
+  "is retired and no longer read. Run `akm migrate apply` to rewrite it as `connection:` or `harness:`.";
 
 /** Exact identity of the authoritative native file from which content was rendered. */
 export interface ExecutionSourceIdentity {
@@ -19,18 +22,11 @@ export interface ExecutionSourceIdentity {
   readonly hash: string;
 }
 
-/** What an asset that still says `engine:` is told, once. */
-export function warnRetiredEngineKey(): void {
-  warnOnce("asset-engine-key-retired", "`engine` is retired; use `connection:` or `harness:`.");
-}
-
 /** Ordinary defaults contributed by one command or persona source layer. */
 export interface UnresolvedExecutionDefaults {
   readonly agent?: string | null;
   readonly connection?: string | null;
   readonly harness?: string | null;
-  /** The retired spelling of `connection` / `harness`: a connection by this name, else a harness. */
-  readonly engine?: string | null;
   readonly model?: string | null;
   readonly inference?: ExecutionJsonObject | null;
   readonly outputSchema?: ExecutionJsonObject | null;
@@ -44,7 +40,6 @@ export interface UnresolvedExecutionDefaults {
 export interface ConfiguredExecutionSettings {
   readonly connection?: string;
   readonly harness?: string;
-  readonly engine?: string;
   readonly model?: string;
   readonly llm?: object;
   /** `null` runs unbounded. */
@@ -57,7 +52,6 @@ export function executionDefaultsOf(settings: ConfiguredExecutionSettings | unde
   return {
     ...(settings.connection !== undefined ? { connection: settings.connection } : {}),
     ...(settings.harness !== undefined ? { harness: settings.harness } : {}),
-    ...(settings.engine !== undefined ? { engine: settings.engine } : {}),
     ...(settings.model !== undefined ? { model: settings.model } : {}),
     ...(settings.llm !== undefined ? { inference: cloneExecutionJsonObject(settings.llm, "inference") } : {}),
     ...(settings.timeoutMs !== undefined ? { timeout: settings.timeoutMs } : {}),
@@ -127,7 +121,7 @@ export function cloneUnresolvedExecutionDefaults(
   const record = requireRecord(input, path);
   const present = (key: string): boolean => Object.hasOwn(record, key) && record[key] !== undefined;
   const out: Record<string, unknown> = {};
-  for (const key of ["agent", "connection", "harness", "engine", "model", "workspace"] as const) {
+  for (const key of ["agent", "connection", "harness", "model", "workspace"] as const) {
     if (!present(key)) continue;
     const value = record[key];
     if (value !== null && typeof value !== "string") throw new TypeError(`${path}.${key} must be a string or null`);

@@ -10,8 +10,8 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { getConfigDir } from "../paths";
-import { copyToConfigBackups } from "./config-io";
+import { getConfigDir } from "../../../src/core/paths";
+import { copyToConfigBackups } from "../../../src/core/config/config-io";
 
 function modelsFilePath(): string {
   return path.join(getConfigDir(), "models.json");

@@ -20,7 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineCommand } from "citty";
 import { getStringArg, PROJECT_ARG, parsePositiveIntFlag, SCOPE_ARGS, scopeFromArgs } from "../../cli/parse-args";
-import { RETIRED_ENGINE_ARG, SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
+import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
 import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { loadConfig } from "../../core/config/config";
@@ -60,7 +60,6 @@ export const proposeCommand = defineCommand({
     },
     ...PROJECT_ARG,
     ...SELECTION_ARGS,
-    ...RETIRED_ENGINE_ARG,
     ...SCOPE_ARGS,
     "timeout-ms": { type: "string", description: "Override the engine timeout in milliseconds" },
   },

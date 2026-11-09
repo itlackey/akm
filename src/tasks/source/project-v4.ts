@@ -57,7 +57,6 @@ function projectAkm(document: TaskSourceV4Document): Readonly<TaskV3AkmOptions> 
   if (execution.agent !== undefined) out.agent = execution.agent;
   if (execution.connection !== undefined) out.connection = execution.connection;
   if (execution.harness !== undefined) out.harness = execution.harness;
-  if (execution.engine !== undefined) out.engine = execution.engine;
   if (execution.model !== undefined) out.model = execution.model;
   if (execution.inference !== undefined) out.inference = execution.inference;
   if (execution.timeout !== undefined) out.timeout = execution.timeout;

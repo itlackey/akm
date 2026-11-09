@@ -18,7 +18,6 @@ import {
   createAdapterRenderedExecutionSource,
   type ExecutionSourceIdentity,
   type UnresolvedExecutionDefaults,
-  warnRetiredEngineKey,
 } from "../../execution/source";
 import { UsageError } from "../errors";
 import { warnOnce } from "../warn";
@@ -200,14 +199,20 @@ export function executionDefaultsFromFrontmatter(
   if (kind === "command" && own(frontmatter, "agent")) {
     out.agent = nullableString(frontmatter.agent, "frontmatter.agent");
   }
-  // `engine` is the retired spelling of `connection` / `harness`; the resolver reads it as whichever it names.
-  for (const key of ["connection", "harness", "engine"] as const) {
+  for (const key of ["connection", "harness"] as const) {
     const topLevel =
       allowTopLevelEngine && own(frontmatter, key) ? nullableString(frontmatter[key], `frontmatter.${key}`) : undefined;
     const namespaced = own(namespace, key) ? nullableString(namespace[key], `frontmatter.akm.${key}`) : undefined;
     if (topLevel !== undefined) out[key] = topLevel;
     else if (namespaced !== undefined) out[key] = namespaced;
-    if (key === "engine" && out.engine !== undefined) warnRetiredEngineKey();
+  }
+  // `engine` is the retired spelling of `connection` / `harness`. It is not read, so the work would run on the default
+  // connection or harness: say so, and name the command that rewrites it.
+  if ((allowTopLevelEngine && own(frontmatter, "engine")) || own(namespace, "engine")) {
+    warnOnce(
+      "asset-engine-key-retired",
+      "An asset says `engine:`, which is not read any more, so it runs on the default connection or harness. Run `akm migrate apply` to rewrite it as `connection:` or `harness:`.",
+    );
   }
   if (own(frontmatter, "model")) {
     out.model = nullableString(frontmatter.model, "frontmatter.model");

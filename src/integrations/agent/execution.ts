@@ -195,7 +195,7 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
   const provenance: Record<string, ExecutionFieldProvenance> = {};
   const targetLayer = [...layers]
     .reverse()
-    .find((layer) => has(layer.values, "connection") || has(layer.values, "harness") || has(layer.values, "engine"));
+    .find((layer) => has(layer.values, "connection") || has(layer.values, "harness"));
   provenance.target = targetLayer
     ? explicit(targetLayer)
     : { layer: "installation-defaults", kind: "installation", via: "explicit" };

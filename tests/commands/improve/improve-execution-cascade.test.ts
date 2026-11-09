@@ -80,17 +80,6 @@ describe("resolveImproveExecution — the nearest layer that names a target wins
       model: "default-model",
     });
   });
-
-  test("the retired `engine` key (a connection by that name, else a harness) replaces a process's choice of the other kind", () => {
-    expect(resolve(reflect({ connection: "near" }), { current: { engine: "claude" } })).toMatchObject({
-      kind: "harness",
-      name: "claude",
-    });
-    expect(resolve(reflect({ harness: "claude" }), { current: { engine: "near" } })).toMatchObject({
-      kind: "connection",
-      name: "near",
-    });
-  });
 });
 
 describe("resolveImprovePlan — what the run selected reaches every call in it", () => {

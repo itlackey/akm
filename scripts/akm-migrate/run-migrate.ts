@@ -12,18 +12,12 @@
  */
 
 import { resolveStashDir } from "../../src/core/common";
-import {
-  bundleKeyForContentRoot,
-  type ConfigFileNormalization,
-  isBundleEnabled,
-  loadConfig,
-  normalizeConfigFile,
-  resetConfigCache,
-} from "../../src/core/config/config";
+import { bundleKeyForContentRoot, isBundleEnabled, loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
 import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
 import { resolveSecretFromStore } from "../../src/sources/snapshot-fetchers/secret-seam";
+import { type ConfigFileNormalization, normalizeConfigFile } from "./config/normalize";
 import {
   type DeadResidueEntry,
   type DeadResidueRemoval,

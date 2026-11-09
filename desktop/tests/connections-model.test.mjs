@@ -26,10 +26,9 @@ const lab = {
   concurrency: 2,
   top_p: 0.9,
   chat_template_kwargs: { enable_thinking: false },
-  apiKeyFile: "/old/key",
 };
 
-test("an untouched draft writes the entry back exactly: custom aliases, object models, options, retired keys, order", () => {
+test("an untouched draft writes the entry back exactly: custom aliases, object models, options, order", () => {
   const entry = connectionEntry(connectionDraft("lab", lab), lab);
   assert.deepEqual(entry, lab);
   assert.equal(JSON.stringify(entry), JSON.stringify(lab));
@@ -49,7 +48,7 @@ test("only what changed is rewritten; a string model gains object form only with
     extra: { model: "x", max_tokens: 50 },
   });
   assert.equal(entry.concurrency, 4);
-  assert.deepEqual([entry.top_p, entry.chat_template_kwargs, entry.apiKeyFile], [0.5, undefined, "/old/key"]);
+  assert.deepEqual([entry.top_p, entry.chat_template_kwargs], [0.5, undefined]);
   assert.equal(entry.endpoint, lab.endpoint);
   assert.equal(connectionChanges(draft, connectionDraft("lab", lab)), 4);
 });

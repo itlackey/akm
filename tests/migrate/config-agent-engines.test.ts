@@ -13,14 +13,13 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { runMigration } from "../../scripts/akm-migrate/run-migrate";
 import { resolveImproveExecution } from "../../src/commands/improve/execution";
 import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
 import { getConfigDir, getConfigPath } from "../../src/core/paths";
-import { resolveTarget, retiredEngineSelection } from "../../src/integrations/agent/resolution";
-import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import { resolveTarget } from "../../src/integrations/agent/resolution";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 type Dict = Record<string, unknown>;
 
@@ -151,19 +150,6 @@ describe("a config that ran agent work on the user's own OpenCode", () => {
     expect(notes).not.toContain("opencode-sdk is akm's own runtime");
   });
 
-  test("the file read in memory and the file migrated are the same configuration", async () => {
-    writeOwnerShaped();
-    const inMemory = JSON.parse(JSON.stringify(loadUserConfig())) as Dict;
-    resetConfigCache();
-
-    await runMigration({ apply: true });
-    resetConfigCache();
-    const migrated = JSON.parse(JSON.stringify(loadUserConfig())) as Dict;
-
-    expect(migrated).toEqual(inMemory);
-    expect(Object.keys(inMemory.harnesses as Dict)).toEqual(["default", "opencode-workflow", "opencode-lab"]);
-  });
-
   test("agent work runs on the default harness with its model, not on akm's runtime; model work stays on the connection", async () => {
     writeOwnerShaped();
     await runMigration({ apply: true });
@@ -195,15 +181,6 @@ describe("a config that ran agent work on the user's own OpenCode", () => {
     });
   });
 
-  test("an engine: selector keeps its meaning before the file is migrated, and afterwards names the same harness", async () => {
-    writeOwnerShaped();
-    resetConfigCache();
-    const before = loadUserConfig();
-    expect(retiredEngineSelection(before, "opencode")).toEqual({ kind: "harness", name: "default" });
-    expect(retiredEngineSelection(before, "opencode-lab")).toEqual({ kind: "harness", name: "opencode-lab" });
-    expect(retiredEngineSelection(before, "default")).toEqual({ kind: "connection", name: "default" });
-  });
-
   test("assets and workflow units that name the engines are written as the harnesses they are now", async () => {
     writeOwnerShaped();
     write("commands/summarize.md", "---\nname: summarize\nengine: opencode-workflow\n---\nSummarize.\n");
@@ -226,27 +203,6 @@ describe("a config that ran agent work on the user's own OpenCode", () => {
       "---\ntype: workflow\ndefaults:\n  harness: opencode-workflow\nsteps:\n  - id: pick\n    unit: { harness: opencode-lab }\n  - id: judge\n    unit: { harness: default }\n---\n",
     );
     expect(plan.assetEngineKeys?.notes?.join("\n")).toContain("--engine opencode is now --harness default");
-  });
-
-  test("a copy of the config from before the migration is converted the same way by reading it", async () => {
-    writeOwnerShaped();
-    const plan = await runMigration({ apply: true });
-    const backup = plan.configFile?.backupPath;
-    expect(backup).toBeDefined();
-
-    // What a beta user does: put the pre-migration copy in a scratch config directory and read what it converts to.
-    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "akm-premigration-"));
-    try {
-      fs.mkdirSync(path.join(scratch, "akm"), { recursive: true });
-      fs.copyFileSync(backup as string, path.join(scratch, "akm", "config.json"));
-      resetConfigCache();
-      const harnesses = withEnvSync({ XDG_CONFIG_HOME: scratch }, () => loadUserConfig().harnesses);
-      expect(Object.keys(harnesses ?? {})).toEqual(["default", "opencode-workflow", "opencode-lab"]);
-      expect(harnesses?.default?.models?.fast).toBe("openai/gpt-x");
-    } finally {
-      resetConfigCache();
-      fs.rmSync(scratch, { recursive: true, force: true });
-    }
   });
 });
 
@@ -276,8 +232,6 @@ describe("a config with only an agent engine and no defaults.llmEngine", () => {
       engines: { opencode: { kind: "agent", platform: "opencode-sdk", model: "openai/gpt-x" } },
       defaults: { engine: "opencode" },
     });
-    const inMemory = JSON.parse(JSON.stringify(loadUserConfig())) as Dict;
-    resetConfigCache();
 
     const plan = await runMigration({ apply: true });
     expect(writtenConfig().harnesses).toEqual({
@@ -288,7 +242,6 @@ describe("a config with only an agent engine and no defaults.llmEngine", () => {
     expect(notes).toContain("`modelWork: false`");
     resetConfigCache();
     const config = loadUserConfig();
-    expect(JSON.parse(JSON.stringify(config))).toEqual(inMemory);
 
     expect(resolveTarget({ config, layers: [] })).toMatchObject({
       kind: "harness",

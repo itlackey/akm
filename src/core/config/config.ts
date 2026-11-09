@@ -9,8 +9,8 @@ import { isDeepStrictEqual } from "node:util";
 import { isBundleSlug } from "../asset/asset-ref";
 import { deriveBundleId } from "../bundle-id";
 import { isRecord, resolveStashDir } from "../common";
-import { ConfigError, UsageError } from "../errors";
-import { isRefToken, substituteRefTokens } from "../ref-token";
+import { ConfigError } from "../errors";
+import { substituteRefTokens } from "../ref-token";
 import { formatRegistryLabel, hasRegistryUrlCredentials } from "../registry-url";
 import {
   acquireConfigLock,
@@ -41,12 +41,7 @@ import type {
   SourceConfigEntry,
 } from "./config-types";
 import { isOpaqueSchema, resolveSchemaAt } from "./config-walker";
-import { convertEngineConfig, type EngineTarget } from "./convert-engines";
-import { fileFlatCredentials, writeCredential } from "./credentials";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
-import { documentEndpoint, planKeyMoves } from "./migrate-keys";
-import { modelsFileExists, readModelsFile, retireModelsFile } from "./models-file";
-import { type EngineTargets, rememberEngineTargets, rememberedEngineTargets } from "./retired-engines";
 import { ImproveConfigSchema } from "./schema/improve";
 import { dropUnusableProjects } from "./schema/projects";
 import { RegistryConfigEntrySchema } from "./schema/sources-bundles";
@@ -174,7 +169,7 @@ export function loadUserConfig(): AkmConfig {
     return { ...DEFAULT_CONFIG };
   }
 
-  const lifted = runConfigFilePipeline(text, configPath);
+  const lifted = readConfigFile(text, configPath);
   const finalConfig = buildEffectiveConfig(lifted, configPath);
   const written = isPlainConfigObject(lifted.connections) ? lifted.connections : {};
   const inheritedConnections = new Set(
@@ -199,150 +194,37 @@ export function loadUserConfig(): AkmConfig {
 }
 
 /**
- * Run the per-file config pipeline every raw config object goes through
- * before it is either validated (the local/top-level file) or merged in as
- * an `extends` base: JSONC parse already done by the caller, then the retired
- * `engines` form read as `connections`/`harnesses` ({@link readRetiredEngines})
- * and the `configVersion` read ({@link readConfigVersion}). Unknown keys are not an
- * error: the schema drops them in memory. A shape older than 0.9.15 is not
- * converted here; it fails validation with a message naming `akm migrate
- * apply` under akm 0.9.x. Shared by {@link parseAndValidateConfigText} (the
- * local file) and {@link resolveExtendsChain} (each base in the chain) so a
- * fleet-shared base config can carry its own `configVersion` independently of
- * the file that extends it.
+ * A config file as it says it: parsed, with `configVersion` read, and nothing else
+ * converted. Every raw config object goes through it before it is validated (the
+ * local file) or merged in as an `extends` base, so a fleet-shared base can carry its
+ * own `configVersion`. Unknown keys are not an error: the schema drops them in memory.
+ * A retired form (the `engines` form, `secret://`) is not converted here: it is named
+ * once ({@link warnUnknownConfigKeys}, {@link warnRetiredSecretRefs}), and `akm migrate apply` rewrites it. An ordinary
+ * write edits this document, so nothing a read does not understand is rewritten either.
  */
-function runConfigFilePipeline(text: string, sourcePath?: string): Record<string, unknown> {
-  return readRetiredEngines(readConfigFile(text, sourcePath), sourcePath);
-}
-
-/**
- * A config file as it says it: parsed, with the retired `secret://` forms and
- * `configVersion` read, and nothing else converted. An ordinary write edits this
- * document, so what a read converts in memory (the retired `engines` form) is
- * not rewritten until `akm migrate apply`.
- */
-function readConfigFile(text: string, sourcePath?: string): Record<string, unknown> {
+export function readConfigFile(text: string, sourcePath?: string): Record<string, unknown> {
   const raw = parseConfigText(text, sourcePath);
-  const lifted = readRetiredSecretRefs(raw, [], sourcePath) as Record<string, unknown>;
-  return readConfigVersion(lifted, sourcePath);
-}
-
-/** The overlay every file read folds in, unless the migrator is reading an `extends` base without it. */
-let modelsOverlayOverride: { readonly overlay: unknown } | undefined;
-
-function modelsOverlay(): unknown {
-  return modelsOverlayOverride ? modelsOverlayOverride.overlay : readModelsFile();
+  warnRetiredSecretRefs(raw, [], sourcePath);
+  return readConfigVersion(raw, sourcePath);
 }
 
 /**
- * The connections and harnesses an `extends` base defines on its own, without the
- * models.json overlay the loader folds into them: what the migrator folds into
- * entries only the base defines, as partial local entries, once the file is gone.
+ * `secret://<name>` is retired in favour of `${secrets/<name>}`. A value in that form is not read as a reference, so
+ * each one is named once, by key; `akm migrate apply` rewrites it.
  */
-function inheritedEntries(
-  document: Record<string, unknown>,
-  configPath: string,
-): { connections: Record<string, unknown>; harnesses: Record<string, unknown> } | undefined {
-  if (document.extends === undefined) return undefined;
-  modelsOverlayOverride = { overlay: undefined };
-  try {
-    const base = buildEffectiveConfig({ configVersion: document.configVersion, extends: document.extends }, configPath);
-    return { connections: { ...base.connections }, harnesses: { ...base.harnesses } };
-  } finally {
-    modelsOverlayOverride = undefined;
-  }
-}
-
-/**
- * What each old engine name now is, so an `engine:` selector (a flag, or a key in an asset or a task source)
- * keeps meaning the service it always named: the conversion renames the engine `defaults` named to `default`
- * and moves an old `default` aside. While the file is still in the `engines` form the answer is the
- * conversion's own; after `akm migrate apply` has rewritten it, the names the migrator remembered, until
- * every reference it can rewrite is rewritten. Resolution and the migrator both ask here.
- */
-export function retiredEngineTargets(): EngineTargets {
-  const configPath = getConfigPath();
-  const text = readConfigText(configPath);
-  if (text === undefined) return {};
-  const live = convertEngineConfig(readConfigFile(text, configPath), {
-    modelsOverlay: modelsOverlay(),
-    env: process.env,
-  }).targets;
-  return Object.keys(live).length > 0 ? live : rememberedEngineTargets();
-}
-
-/**
- * `engines` / `defaults` are retired in favour of `connections` / `harnesses`.
- * A config in the old form is read as the new one, in memory, with one warning;
- * `akm migrate apply` writes it back (it runs {@link convertEngineConfig} too,
- * through this pipeline, before it deletes the keys the schema does not know).
- */
-function readRetiredEngines(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
-  const overlay = modelsOverlay();
-  const { config, notes, changed, keys } = convertEngineConfig(raw, {
-    modelsOverlay: overlay,
-    env: process.env,
-  });
-  if (!changed) return raw;
-  const keyNotes = keys.map(
-    ({ engine, field }) =>
-      `engines.${engine}: its ${field} is not read from config any more; \`akm migrate apply\` moves it to credentials.json.`,
-  );
-  const retiredForm = raw.engines !== undefined || raw.defaults !== undefined;
-  // Without the engines/defaults form, a conversion comes from a `models.json` beside the config, or from
-  // retired settings on an improve strategy; the notes below name those.
-  const foldsModelsFile = !retiredForm && overlay !== undefined;
-  const what = retiredForm
-    ? "uses the retired engines/defaults form; reading it as connections/harnesses"
-    : foldsModelsFile
-      ? "is read with the retired models.json folded into its models"
-      : "carries retired settings; reading them in their current form";
-  warnOnce(
-    `config:retired-engines:${sourcePath ?? "inline"}`,
-    `${sourcePath ?? "config.json"} ${what}. \`akm migrate apply\` rewrites config.json${foldsModelsFile ? " and moves models.json aside" : ""}.${[...notes, ...keyNotes].map((note) => `\n  - ${note}`).join("")}`,
-  );
-  return config;
-}
-
-/** The retired `secret://<name>` credential form; it survives only in {@link readRetiredSecretRefs}. */
-const SECRET_STORE_REFERENCE_PATTERN = /^secret:\/\/(.+)$/;
-
-/**
- * The `${ref}` a retired `secret://<x>` value reads as: `${<x>}` when `<x>` is
- * already a full ref, else `${secrets/<x>}`. `undefined` for any other string.
- * Shared by the config reader and the frozen workflow runner decoder.
- */
-export function liftRetiredSecretRef(value: string): string | undefined {
-  const name = SECRET_STORE_REFERENCE_PATTERN.exec(value)?.[1];
-  if (name === undefined) return undefined;
-  return isRefToken(`\${${name}}`) ? `\${${name}}` : `\${secrets/${name}}`;
-}
-
-/**
- * `secret://<x>` is retired in favour of `${ref}`. A value in that form is read
- * as its {@link liftRetiredSecretRef} with one warning naming the key; every
- * ordinary config write and `akm migrate apply`'s `configFile` step then
- * persist the new form.
- */
-function readRetiredSecretRefs(node: unknown, keyPath: readonly string[], sourcePath?: string): unknown {
+function warnRetiredSecretRefs(node: unknown, keyPath: readonly string[], sourcePath?: string): void {
   if (typeof node === "string") {
-    const lifted = liftRetiredSecretRef(node);
-    if (lifted === undefined) return node;
+    if (!node.startsWith("secret://") || node.length === "secret://".length) return;
     const dotted = keyPath.join(".");
     warnOnce(
       `config:secret-scheme:${sourcePath ?? "inline"}:${dotted}`,
-      `${dotted}${sourcePath ? ` at ${sourcePath}` : ""} uses the retired ${JSON.stringify(node)} form; reading it as ${JSON.stringify(lifted)}. \`akm migrate apply\` rewrites config.json.`,
+      `${dotted}${sourcePath ? ` at ${sourcePath}` : ""} uses the retired "secret://" form, which this release does not read as a reference. Run \`akm migrate apply\` to rewrite config.json.`,
     );
-    return lifted;
+  } else if (Array.isArray(node)) {
+    for (const [i, child] of node.entries()) warnRetiredSecretRefs(child, [...keyPath, String(i)], sourcePath);
+  } else if (isPlainConfigObject(node)) {
+    for (const [key, child] of Object.entries(node)) warnRetiredSecretRefs(child, [...keyPath, key], sourcePath);
   }
-  if (Array.isArray(node))
-    return node.map((child, i) => readRetiredSecretRefs(child, [...keyPath, String(i)], sourcePath));
-  if (isPlainConfigObject(node)) {
-    return Object.fromEntries(
-      Object.entries(node).map(([key, child]) => [key, readRetiredSecretRefs(child, [...keyPath, key], sourcePath)]),
-    );
-  }
-  return node;
 }
 
 /**
@@ -385,7 +267,7 @@ function dropRetiredOutputFormat(raw: Record<string, unknown>, sourcePath?: stri
  * refuses (an empty model, a non-positive or over-ceiling timeout, a malformed `llm`) is safely ignorable: the base
  * falls back to the default, one warning says why, and the config keeps loading. A read does not rewrite the file.
  */
-function dropInvalidImproveBase(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
+export function dropInvalidImproveBase(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
   const improve = raw.improve;
   if (!isPlainConfigObject(improve)) return raw;
   const rest = { ...improve };
@@ -405,14 +287,14 @@ function dropInvalidImproveBase(raw: Record<string, unknown>, sourcePath?: strin
 /**
  * Resolve a local file's `extends` chain and validate the merged result
  * (deep-merged under `DEFAULT_CONFIG`) via Zod ({@link AkmConfigSchema}).
- * `liftedLocalRaw` must already be through {@link runConfigFilePipeline}.
+ * `liftedLocalRaw` must already be through {@link readConfigFile}.
  *
  * Split out of {@link parseAndValidateConfigText} so `mutateConfig` (#945
  * finding: baking extends-inherited fields into the local file on every
  * write) can build the same effective config from a `localRaw` it also
  * keeps around, instead of only getting the final merged `AkmConfig` back.
  */
-function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePath?: string): AkmConfig {
+export function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePath?: string): AkmConfig {
   const chained = dropInvalidImproveBase(
     dropRetiredOutputFormat(
       dropUnusableProjects(
@@ -494,40 +376,29 @@ export function unknownConfigKeyPaths(
   return found;
 }
 
-/** `engine` is the retired spelling of `connection` / `harness`; a model-work block still honours it. */
-const RETIRED_ENGINE_KEY = /^improve(\.processes\.[^.]+|\.qualityGate)?\.engine$/;
+/**
+ * What a key this release does not read is told, once. The retired `engines` / `defaults` form and an `engine` key in
+ * a model-work block say where model work runs: ignoring them runs that work on the default connection or harness, or
+ * on none, so their message says what stops and names the command that rewrites the file.
+ */
+const RETIRED_ENGINE_KEY = /^(engines|defaults|improve(\.processes\.[^.]+|\.qualityGate)?\.engine)$/;
 
 function warnUnknownConfigKeys(raw: Record<string, unknown>, sourcePath?: string): void {
   for (const keyPath of unknownConfigKeyPaths(raw)) {
     const dotted = keyPath.join(".");
+    const at = sourcePath ? ` at ${sourcePath}` : "";
     if (RETIRED_ENGINE_KEY.test(dotted)) {
-      const parent = keyPath
-        .slice(0, -1)
-        .reduce<unknown>((node, k) => (isPlainConfigObject(node) ? node[k] : undefined), raw);
-      const shadowed = isPlainConfigObject(parent) && (parent.connection !== undefined || parent.harness !== undefined);
       warnOnce(
         `config:retired-engine-key:${sourcePath ?? "inline"}:${dotted}`,
-        `Config key ${JSON.stringify(dotted)}${sourcePath ? ` at ${sourcePath}` : ""} is the retired spelling of \`connection\` / \`harness\`. ` +
-          (shadowed
-            ? "It is ignored here, because the same block names a `connection` or `harness`, and `akm migrate apply` drops it."
-            : "It still selects where this model work runs, but `akm migrate apply` drops it: name a `connection` or `harness` instead."),
+        `Config key ${JSON.stringify(dotted)}${at} is the retired engines form, which this release does not read: its connections and harnesses are not configured, so model work runs on the default connection or harness, or not at all. Run \`akm migrate apply\` to convert the file.`,
       );
       continue;
     }
     warnOnce(
       `config:unknown-key:${sourcePath ?? "inline"}:${dotted}`,
-      `Unknown config key ${JSON.stringify(dotted)}${sourcePath ? ` at ${sourcePath}` : ""} has no defined akm behavior and is ignored. Check the spelling; a key retired by this release or added by a newer one is dropped by \`akm migrate apply\`.`,
+      `Unknown config key ${JSON.stringify(dotted)}${at} has no defined akm behavior and is ignored. Check the spelling; a key retired by this release or added by a newer one is dropped by \`akm migrate apply\`.`,
     );
   }
-}
-
-function deleteConfigPath(node: Record<string, unknown>, keyPath: readonly string[]): void {
-  let cursor: unknown = node;
-  for (const segment of keyPath.slice(0, -1)) {
-    if (!isPlainConfigObject(cursor) && !Array.isArray(cursor)) return;
-    cursor = (cursor as Record<string, unknown>)[segment];
-  }
-  if (isPlainConfigObject(cursor)) delete cursor[keyPath[keyPath.length - 1] as string];
 }
 
 function isPlainConfigObject(value: unknown): value is Record<string, unknown> {
@@ -559,7 +430,7 @@ function assertUniquePhysicalBundleRoots(config: AkmConfig, sourcePath?: string)
  * {@link resolveExtendsChain}.
  */
 export function parseAndValidateConfigText(text: string, sourcePath?: string): AkmConfig {
-  const liftedConfig = runConfigFilePipeline(text, sourcePath);
+  const liftedConfig = readConfigFile(text, sourcePath);
   return buildEffectiveConfig(liftedConfig, sourcePath);
 }
 
@@ -569,13 +440,13 @@ export function parseAndValidateConfigText(text: string, sourcePath?: string): A
 interface ConfigLayer {
   /** The `extends` value that led here; `undefined` for the local/topmost layer. */
   ref: string | undefined;
-  /** This layer's raw config, already through {@link runConfigFilePipeline}. */
+  /** This layer's raw config, already through {@link readConfigFile}. */
   raw: Record<string, unknown>;
 }
 
 /**
  * Walk an `extends` chain starting at `localRaw` (already through
- * {@link runConfigFilePipeline}), returning every layer from the local file
+ * {@link readConfigFile}), returning every layer from the local file
  * outward to the chain's root, local first. A chain is allowed (a base may
  * itself set `extends`); a cycle (a resolved source repeating) throws
  * {@link ConfigError} instead of recursing forever.
@@ -604,7 +475,7 @@ function collectExtendsLayers(localRaw: Record<string, unknown>, configPath: str
       );
     }
     visited.add(resolvedPath);
-    const baseRaw = runConfigFilePipeline(text, resolvedPath);
+    const baseRaw = readConfigFile(text, resolvedPath);
     warnUnknownConfigKeys(baseRaw, resolvedPath);
     layers.push({ ref, raw: baseRaw });
     current = baseRaw;
@@ -889,7 +760,7 @@ export function getConfigValueSource(dotted: string): string {
   const configPath = getConfigPath();
   const text = readConfigText(configPath);
   if (text === undefined) return "default";
-  const liftedConfig = runConfigFilePipeline(text, configPath);
+  const liftedConfig = readConfigFile(text, configPath);
   const segments = dotted.split(".").filter((s) => s.length > 0);
   for (const layer of collectExtendsLayers(liftedConfig, configPath)) {
     const effectiveLayer = layer.ref === undefined ? layer.raw : sanitizeInheritedConfig(layer.raw, layer.ref);
@@ -1032,47 +903,6 @@ export interface ConfigMutationResult {
 }
 
 /**
- * `mutateConfig` must not write the entire extends-merged *effective* config
- * (`next`) back to the local file on every `config set`/`unset`: that would
- * duplicate every inherited `connections`/`improve.strategies`
- * field into the local file on the very first ordinary write after adopting
- * `extends` — defeating the feature (shared config, ≤20-line local files)
- * and silently freezing the local copy against future upstream changes.
- *
- * Reduces `after` (the mutated effective config) down to only what the
- * mutation actually changed relative to `before` (the effective config
- * *before* the mutation), plus whatever `localRaw` — the local file's own
- * raw content, pre-`extends`-merge — already had explicitly. Everything
- * else that only came along for the ride from `extends`/`DEFAULT_CONFIG` is
- * left out, so it keeps being read from the base on the next load instead
- * of being frozen as a local literal.
- */
-function pruneUnchangedInheritedFields(before: unknown, after: unknown, localRaw: unknown): unknown {
-  if (!isPlainObject(after) || !isPlainObject(before)) return after;
-  const localRecord = isPlainObject(localRaw) ? localRaw : undefined;
-  const result: Record<string, unknown> = {};
-  for (const key of Object.keys(after)) {
-    const afterValue = after[key];
-    const beforeValue = before[key];
-    const localHasKey = localRecord ? Object.hasOwn(localRecord, key) : false;
-    if (isPlainObject(afterValue) && isPlainObject(beforeValue)) {
-      const pruned = pruneUnchangedInheritedFields(
-        beforeValue,
-        afterValue,
-        localHasKey ? localRecord?.[key] : undefined,
-      );
-      const prunedHasContent = isPlainObject(pruned) ? Object.keys(pruned).length > 0 : pruned !== undefined;
-      if (prunedHasContent || localHasKey) result[key] = pruned;
-      continue;
-    }
-    if (localHasKey || !isDeepStrictEqual(afterValue, beforeValue)) {
-      result[key] = afterValue;
-    }
-  }
-  return result;
-}
-
-/**
  * Apply the edit `before` → `after` to `target` (the file's own document) and
  * nothing else: a key that is the same on both sides is left as the file has it,
  * whatever shape that is, so an unrelated write neither converts nor drops what
@@ -1081,20 +911,17 @@ function pruneUnchangedInheritedFields(before: unknown, after: unknown, localRaw
  * path in `target`; an object the file lacks gets only the changed part. The
  * keys of a nested map follow `after`, which is how a mutation says where it
  * inserted one (`bundles`); the top level keeps the file's authored order. A
- * removal of a key the document does not hold is left undone and recorded in
- * `unremoved`, with the path of the key. A `projects` entry is one value, as an array is.
+ * removal of a key the document does not hold is left undone. A `projects` entry is one value, as an array is.
  */
 function applyEdit(
   target: Record<string, unknown>,
   before: Record<string, unknown>,
   after: Record<string, unknown>,
-  unremoved: string[][] = [],
   at: readonly string[] = [],
 ): void {
   for (const key of Object.keys(before)) {
     if (Object.hasOwn(after, key)) continue;
     if (Object.hasOwn(target, key)) delete target[key];
-    else unremoved.push([...at, key]);
   }
   for (const [key, value] of Object.entries(after)) {
     const was = before[key];
@@ -1114,7 +941,7 @@ function applyEdit(
       continue;
     }
     const part = existing ?? {};
-    applyEdit(part, isPlainObject(was) ? was : {}, value, unremoved, [...at, key]);
+    applyEdit(part, isPlainObject(was) ? was : {}, value, [...at, key]);
     followKeyOrder(part, value);
     if (existing !== undefined || Object.keys(part).length > 0) target[key] = part;
   }
@@ -1167,7 +994,6 @@ function editedConfigFile(
   current: AkmConfig,
   next: AkmConfig,
   persistTopLevelKeys: readonly (keyof AkmConfig)[] = [],
-  unremoved: string[][] = [],
   writeProjects: readonly string[] = [],
 ): Record<string, unknown> {
   // A first write keeps the established full-default scaffold. Besides being
@@ -1179,7 +1005,7 @@ function editedConfigFile(
   // add -> remove lifecycle writes the same logical object twice and must come
   // back byte for byte.
   const body = structuredClone(document);
-  applyEdit(body, current, next, unremoved);
+  applyEdit(body, current, next);
   keepRenamedBundlePaths(body, document, current, next);
   // A project the caller names is written whole even when it equals the effective entry: the file's own may hold parts the reader ignores.
   for (const name of writeProjects) {
@@ -1199,237 +1025,23 @@ function editedConfigFile(
 }
 
 /**
- * A file still in the retired `engines` form holds `engines` and `defaults`, not
- * the `connections`, `harnesses` and `improve` keys the reader makes of them, so
- * removing one of those is a change the file cannot take: the next load would
- * bring it back. Refuse it, once, until `akm migrate apply` has converted the file.
- */
-function refuseRemovalFromRetiredForm(
-  unremoved: readonly string[][],
-  document: Record<string, unknown> | undefined,
-  converted: Record<string, unknown> | undefined,
-): void {
-  const fromRetiredForm = unremoved.filter(
-    (keyPath) => hasRawPath(converted, [...keyPath]) && !hasRawPath(document, [...keyPath]),
-  );
-  if (fromRetiredForm.length === 0) return;
-  throw new UsageError(
-    `Cannot remove ${fromRetiredForm.map((keyPath) => keyPath.join(".")).join(", ")}: it comes from the retired engines form or models.json, which this config.json still reads. ` +
-      "Run `akm migrate apply` to convert the file, then repeat the change.",
-  );
-}
-
-/**
- * What `akm migrate apply` persists: the file read as the current shape
- * (the retired `engines` form converted, the schema's own normalizations), only
- * the changed-or-already-local fields.
- */
-function configWriteBody(
-  localRaw: Record<string, unknown> | undefined,
-  current: AkmConfig,
-  next: AkmConfig,
-  persistTopLevelKeys: readonly (keyof AkmConfig)[] = [],
-): AkmConfig {
-  // A first write keeps the established full-default scaffold. Besides being
-  // useful to a new user, the add -> rejected-install -> remove lifecycle
-  // relies on that symmetry to return a pristine install to DEFAULT_CONFIG.
-  if (localRaw === undefined) return next;
-
-  const pruned = pruneUnchangedInheritedFields(current, next, localRaw) as Record<string, unknown>;
-  // A caller may need to persist an explicit user choice even when it equals
-  // the schema default. Interactive setup uses this for semanticSearchMode:
-  // "off" means the user declined the opt-in, not an incidental default that
-  // should disappear from the saved configuration.
-  for (const key of persistTopLevelKeys) {
-    if (Object.hasOwn(next, key)) pruned[key] = next[key];
-  }
-  pruned.configVersion = CURRENT_CONFIG_VERSION;
-
-  // Keep existing top-level keys in their authored order. Lifecycle rollback
-  // writes the same logical object twice (add, then remove); reordering those
-  // surviving keys would violate its byte-parity guarantee even though the
-  // parsed JSON is equivalent. Newly changed keys follow in `next` order,
-  // while nested maps (notably `bundles`) retain mutation-selected ordering.
-  const ordered: Record<string, unknown> = {};
-  for (const key of Object.keys(localRaw)) {
-    if (Object.hasOwn(pruned, key)) ordered[key] = pruned[key];
-  }
-  for (const [key, value] of Object.entries(pruned)) {
-    if (!Object.hasOwn(ordered, key)) ordered[key] = value;
-  }
-  return ordered as AkmConfig;
-}
-
-/**
  * The connection or harness that `key` (`connections.<name>[.…]`,
  * `harnesses.<name>[.…]`) is inside, when the reader drops it: this file holds it
  * and nothing, an `extends` base included, completes it. `akm config` cannot edit
- * an entry it cannot see. `inFile` says whether the file itself holds the entry
- * under that name, or it comes from the retired `engines` form.
+ * an entry it cannot see.
  */
-export function unusableEntryAt(
-  key: string,
-): (UnusableEntry & { group: "connections" | "harnesses"; inFile: boolean }) | undefined {
+export function unusableEntryAt(key: string): (UnusableEntry & { group: "connections" | "harnesses" }) | undefined {
   const [group, name] = key.split(".");
   if (group !== "connections" && group !== "harnesses") return undefined;
   const configPath = getConfigPath();
   const text = readConfigText(configPath);
   if (text === undefined) return undefined;
   const document = readConfigFile(text, configPath);
-  const localRaw = readRetiredEngines(document, configPath);
-  const entry = findUnusableEntries(localRaw).find(
+  const entry = findUnusableEntries(document).find(
     (found) => found.name === name && found.kind === (group === "connections" ? "connection" : "harness"),
   );
-  if (!entry || Object.hasOwn(buildEffectiveConfig(localRaw, configPath)[group] ?? {}, entry.name)) return undefined;
-  return { ...entry, group, inFile: isRecord(document[group]) && Object.hasOwn(document[group], entry.name) };
-}
-
-export interface ConfigFileNormalization {
-  /** Top-level keys whose stored shape differs from the current one. */
-  readonly keys: readonly string[];
-  readonly changed: boolean;
-  readonly applied: boolean;
-  readonly backupPath?: string;
-  /** The `credentials.json` entries the config's keys move to (names only), when any do. */
-  readonly credentials?: readonly string[];
-  /** Where `credentials.json` was copied to before its older entries were filed, when any were. */
-  readonly credentialsBackupPath?: string;
-  /** Where the retired `models.json` was moved to, after its aliases were folded in. */
-  readonly modelsFileBackupPath?: string;
-  /** What each engine of the retired `engines` form became, for the step that rewrites assets' `engine:` keys. */
-  readonly engineTargets?: Readonly<Record<string, EngineTarget>>;
-  /** What the conversion could not carry, and each key and entry the step left alone or moved. */
-  readonly notes?: readonly string[];
-}
-
-/** What `akm migrate apply` needs from outside the config module to read a key the config holds as a secret reference. */
-export interface NormalizeConfigOptions {
-  readonly apply: boolean;
-  readonly resolveFromStore?: SecretStoreResolver;
-}
-
-/**
- * A connection or harness the reader drops stays in the file exactly as written,
- * with a note on what to fix. One this file only half says, which an `extends`
- * base completes, is not dropped (it is in `current`) and gets no note.
- */
-function keepUnusableEntries(
-  body: Record<string, unknown>,
-  localRaw: Record<string, unknown>,
-  current: AkmConfig,
-  notes: string[],
-): void {
-  for (const { kind, name, why } of findUnusableEntries(localRaw)) {
-    const holder = kind === "connection" ? "connections" : "harnesses";
-    if (Object.hasOwn(current[holder] ?? {}, name)) continue;
-    const entries = isRecord(body[holder]) ? (body[holder] as Record<string, unknown>) : {};
-    body[holder] = { ...entries, [name]: (localRaw[holder] as Record<string, unknown>)[name] };
-    notes.push(`${holder}.${name}: kept as written, and ignored by akm because ${why}. Fix it, or remove it.`);
-  }
-}
-
-/**
- * The migrator's one config step. The reader already tolerates every shape
- * 0.9.15 and later wrote (`configVersion` read as current, 0.9.16
- * `{kind, ref, sourceId}` scheduler entries, unknown keys dropped); this
- * writes the current shape back to `config.json` so the tolerance becomes
- * durable: the retired `engines` form converted to `connections` / `harnesses`,
- * every key akm no longer reads from config filed in `credentials.json`
- * ({@link planKeyMoves}), and a connection or harness the reader drops kept as
- * written. Reports without writing unless `apply` is set.
- */
-export function normalizeConfigFile(configPath: string, options: NormalizeConfigOptions): ConfigFileNormalization {
-  return withConfigLock(() => {
-    const text = readConfigText(configPath);
-    if (text === undefined) return { keys: [], changed: false, applied: false };
-    const raw = parseConfigText(text, configPath);
-    const document = readConfigFile(text, configPath);
-    // The conversion runs before the unknown-key sweep below deletes what the
-    // schema does not know (inventory surprise 8).
-    const overlay = readModelsFile();
-    const inherited = overlay === undefined ? undefined : inheritedEntries(document, configPath);
-    const converted = convertEngineConfig(document, {
-      modelsOverlay: overlay,
-      env: process.env,
-      ...(inherited ? { inherited } : {}),
-    });
-    const plan = planKeyMoves(document, converted, {
-      resolveSecretRef: (ref) => resolveSecret(ref, options.resolveFromStore),
-    });
-    const localRaw = plan.config;
-    const current = buildEffectiveConfig(localRaw, configPath);
-    const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });
-    const body = configWriteBody(localRaw, current, next) as Record<string, unknown>;
-    // The reader resolves each bundle `path` and drops an unplaceable one; the file keeps what was written.
-    if (isPlainObject(localRaw.bundles)) body.bundles = localRaw.bundles;
-    for (const keyPath of unknownConfigKeyPaths(body)) deleteConfigPath(body, keyPath);
-    // A model-base value the reader ignores is dropped here, as every other retired value is.
-    if (isPlainConfigObject(body.improve)) body.improve = dropInvalidImproveBase(body, configPath).improve;
-    // `improve.strategies["graph-refresh"]` is schema-valid (any name is a
-    // legal custom-strategy key), so it never reaches the unknown-key sweep
-    // above. It can only be a leftover override of the deleted graph-refresh
-    // built-in (0.9.17-alpha.9) — resolveImproveStrategy now refuses that
-    // name unconditionally, so the override can never apply again. Drop it
-    // the same way any other retired key is dropped: only by `akm migrate
-    // apply`, never by an ordinary write.
-    const strategies = (body.improve as Record<string, unknown> | undefined)?.strategies as
-      | Record<string, unknown>
-      | undefined;
-    if (strategies && Object.hasOwn(strategies, "graph-refresh")) delete strategies["graph-refresh"];
-    // A key in the older flat form is filed only under an endpoint this file itself gives the block.
-    const flat = fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), false, plan.moves);
-    const notes = [...converted.notes, ...plan.notes, ...flat.notes];
-    const retiredTarget = localRaw.defaultWriteTarget;
-    if (typeof retiredTarget === "string" && retiredTarget !== localRaw.defaultBundle) {
-      notes.push(
-        `defaultWriteTarget "${retiredTarget}" is dropped. It named a different bundle from defaultBundle ${JSON.stringify(localRaw.defaultBundle ?? null)}; writes now go to defaultBundle.`,
-      );
-    }
-    keepUnusableEntries(body, localRaw, current, notes);
-    const hasModelsFile = modelsFileExists();
-    if (hasModelsFile) {
-      notes.push(
-        "models.json: its aliases are folded in where they name a configured connection or harness (the ones that do not are listed above), then the file moves to the config-backups directory.",
-      );
-    }
-    const keys = [...new Set([...Object.keys(raw), ...Object.keys(body)])]
-      .filter((key) => JSON.stringify(raw[key]) !== JSON.stringify(body[key]))
-      .sort();
-    const reported = {
-      keys,
-      ...(plan.moves.length > 0 || flat.filed.length > 0
-        ? { credentials: [...plan.moves.map((move) => move.name), ...flat.filed] }
-        : {}),
-      ...(notes.length > 0 ? { notes } : {}),
-      ...(Object.keys(converted.targets).length > 0 ? { engineTargets: converted.targets } : {}),
-    };
-    const changed = keys.length > 0 || hasModelsFile || flat.filed.length > 0;
-    if (!changed || !options.apply) return { ...reported, changed, applied: false };
-    let backup: ReturnType<typeof backupExistingConfig>;
-    const credentialsBackupPath =
-      flat.filed.length > 0
-        ? fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), true, plan.moves).backupPath
-        : undefined;
-    if (keys.length > 0) {
-      // The keys are filed before the file that holds them is rewritten; a store
-      // that cannot take them (malformed, unwritable) throws here and loses none.
-      for (const move of plan.moves) writeCredential(move.slot, move.value, move.endpoint);
-      // The old engine names outlive the file that had them, until the references to them are migrated.
-      if (Object.keys(converted.targets).length > 0) rememberEngineTargets(converted.targets);
-      backup = backupExistingConfig(configPath);
-      writeConfigAtomic(configPath, body);
-      cachedConfig = undefined;
-    }
-    const modelsFileBackupPath = hasModelsFile ? retireModelsFile() : undefined;
-    return {
-      ...reported,
-      changed: true,
-      applied: true,
-      ...(backup ? { backupPath: backup.timestamped } : {}),
-      ...(credentialsBackupPath ? { credentialsBackupPath } : {}),
-      ...(modelsFileBackupPath ? { modelsFileBackupPath } : {}),
-    };
-  });
+  if (!entry || Object.hasOwn(buildEffectiveConfig(document, configPath)[group] ?? {}, entry.name)) return undefined;
+  return { ...entry, group };
 }
 
 /**
@@ -1448,15 +1060,12 @@ export function mutateConfig(
       return { config: { ...DEFAULT_CONFIG }, written: false };
     }
     const document = text === undefined ? undefined : readConfigFile(text, configPath);
-    const localRaw = document === undefined ? undefined : readRetiredEngines(document, configPath);
     const current =
-      localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
+      document === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(document, configPath);
     const mutated = mutate(current);
     if (mutated === current) return { config: current, written: false };
     const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
-    const unremoved: string[][] = [];
-    const body = editedConfigFile(document, current, next, [], unremoved, options?.writeProjects);
-    refuseRemovalFromRetiredForm(unremoved, document, localRaw);
+    const body = editedConfigFile(document, current, next, [], options?.writeProjects);
     if (text !== undefined) backupExistingConfig(configPath);
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     writeConfigAtomic(configPath, sanitizeConfigForWrite(body as AkmConfig));
@@ -1480,14 +1089,11 @@ export async function mutateConfigWithPrecommit<T>(
   try {
     const text = readConfigText(configPath);
     const document = text === undefined ? undefined : readConfigFile(text, configPath);
-    const localRaw = document === undefined ? undefined : readRetiredEngines(document, configPath);
     const current =
-      localRaw === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(localRaw, configPath);
+      document === undefined ? ({ ...DEFAULT_CONFIG } as AkmConfig) : buildEffectiveConfig(document, configPath);
     const mutated = mutate(current);
     const next = validateCompleteConfig({ ...mutated, configVersion: CURRENT_CONFIG_VERSION });
-    const unremoved: string[][] = [];
-    const body = editedConfigFile(document, current, next, options?.persistTopLevelKeys, unremoved);
-    if (mutated !== current) refuseRemovalFromRetiredForm(unremoved, document, localRaw);
+    const body = editedConfigFile(document, current, next, options?.persistTopLevelKeys);
     if (text !== undefined) backupExistingConfig(configPath);
     const precommitResult = await precommit(next);
     if (mutated === current) return { config: current, written: false, precommit: precommitResult };

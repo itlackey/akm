@@ -31,8 +31,7 @@ describe("current improvement CLI documentation contract", () => {
     const args = improveCommand.args as Record<string, { hidden?: boolean }>;
     expect(args["require-targets"]).toBeUndefined();
     expect(args.preflight).toBeUndefined();
-    // The retired spelling of the 0.9 flag still parses, so an installed task keeps running, and is never advertised.
-    expect(args["require-engines"]?.hidden).toBe(true);
+    expect(args["require-engines"]).toBeUndefined();
   });
 
   test("improve documents plan.processes and has no --plan alias (#947, #1091)", () => {

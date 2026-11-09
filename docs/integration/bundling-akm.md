@@ -31,8 +31,8 @@ In order, every run applies (or, under `status`/`--dry-run`, plans):
 
 1. **config.json in its current shape** (`configFile`): unknown keys dropped,
    `configVersion` set, and the `engines` / `defaults` form converted to
-   `connections` / `harnesses`. Config loading already does this in memory;
-   this persists it under a backup. The API keys a config still holds in any
+   `connections` / `harnesses`. Config loading does not convert it (it warns
+   and names this command); this writes the conversion under a backup. The API keys a config still holds in any
    form akm no longer reads move to `credentials.json` (`configFile.credentials`
    lists the entry names, never a value), and a leftover `models.json` is folded
    into the `models` of the connections and harnesses it names. A config older

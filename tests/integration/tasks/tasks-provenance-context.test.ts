@@ -192,7 +192,7 @@ describe("workflow arm threads an explicit provenance.eventSource to the eventSo
 describe("command/prompt arm threads an explicit provenance.eventSource end to end", () => {
   function writeStoredCommandTask(id: string): void {
     fs.writeFileSync(path.join(storage.stashDir, "commands", `${id}.md`), "Notify the team.\n", "utf8");
-    writeTask(id, ["version: 4", `uses: commands/${id}`, "engine: opencode", ""].join("\n"));
+    writeTask(id, ["version: 4", `uses: commands/${id}`, "harness: opencode", ""].join("\n"));
   }
 
   test('an explicit provenance.eventSource=user overrides the "task" default in the dispatched engine env and the recorded usage-event row', async () => {
@@ -289,7 +289,7 @@ describe('CLI boundary (D5 "Construction", spec §5.2): `akm task run` builds { 
   ])('akm task run %s stamps a stored command dispatch\'s usage as "task"', async (...extraArgs) => {
     const id = `cli-prompt-${extraArgs.length > 0 ? "scheduled" : "unscheduled"}`;
     fs.writeFileSync(path.join(storage.stashDir, "commands", `${id}.md`), "Notify the team.\n", "utf8");
-    writeTask(id, ["version: 4", `uses: commands/${id}`, "engine: cli-audit", ""].join("\n"));
+    writeTask(id, ["version: 4", `uses: commands/${id}`, "harness: cli-audit", ""].join("\n"));
     const base = {
       configVersion: "0.9.0",
       semanticSearchMode: "off",

@@ -102,7 +102,6 @@ akm reads these keys of a connection:
 | --- | --- |
 | `endpoint` | Required. The OpenAI-compatible base URL (`http://localhost:11434/v1`) or the chat-completions URL itself, starting with `http://` or `https://`. Requests go to `<base>/chat/completions` and the model list is read from `<base>/models`; a query string on the URL (a gateway's `api-version`, say) stays after the path on every request, and a `#fragment` is dropped. A username or password in the URL is warned about; put the key in `apiKey` or `credentials.json`. |
 | `apiKey` | A `$VAR` or `${VAR}` reference to an environment variable. Absent, the key is the one stored in `credentials.json` for the connection and its endpoint. See [Credentials](#credentials). |
-| `apiKeyFile` | Retired. `akm migrate apply` leaves an engine's key file here, as written, when it cannot read the file yet; akm ignores it (never reads it or sends it) and a later `akm migrate apply` moves the key it names into `credentials.json`. |
 | `models` | Alias to model. See [Aliases](#aliases). |
 | `contextLength` | The model's context window in tokens. `akm improve` sizes its prompts from it (consolidate's chunks, reflect's asset content); unset, it assumes 4096. |
 | `timeoutMs` | How long one call may take, in milliseconds; `null` runs unbounded. Unset, a model call stops after 600 000 (ten minutes) and agent work runs until it finishes; akm's own runtime also tells a model that keeps repeating one tool call and result, and ends the run if it goes on, but does not stop one that keeps making different calls ([Without a harness](#without-a-harness)). The ceiling is 2 147 483 647. |
@@ -455,8 +454,7 @@ Anywhere a connection or harness can be named (config, a flag, an asset's
 `connection:` or `harness:`) and none is, the default is used. A name that is
 not configured is an error (exit 78), never a reason to use the default: the
 message names the selector, says it is not configured, lists the configured
-connections (or harnesses) and the nearest name when one is close, and the same
-holds for the retired `engine:` and `--engine`. Defaults apply only when nothing
+connections (or harnesses) and the nearest name when one is close. Defaults apply only when nothing
 was named, so a call for a private connection is never sent to a remote service,
 nor a call that must not touch files to a harness that can, by a typo, a removed
 entry, or an entry akm ignored when it loaded the config (`akm health` lists
@@ -1193,11 +1191,13 @@ holds an override; `akm migrate apply` drops the override.
 
 ### The `engines` form
 
-A config that holds `engines` or `defaults` loads: akm reads it in memory as
-`connections` and `harnesses`, with one warning that names `akm migrate apply`.
-`akm migrate apply` makes the same conversion permanent, under a backup, and
-prints a note for everything it cannot carry. Credentials, `models.json` and
-asset keys move as the table says.
+akm reads only the current shape. A config that holds `engines` or `defaults`
+loads with no connections or harnesses from them, so model work has nowhere to
+run, and one warning says so and names `akm migrate apply`. `akm migrate apply`
+(which `akm upgrade` runs) converts the file, under a backup, and prints a note
+for everything it cannot carry. Credentials, `models.json` and asset keys move
+as the table says. The conversion covers a config written by 0.9.32 through
+0.10.261013-beta; one written before 0.9.32 steps through 0.9.32 first.
 
 | In the file | What `akm migrate apply` does |
 | --- | --- |
@@ -1210,7 +1210,7 @@ asset keys move as the table says.
 | No `defaults.engine` | 0.9 ran agent work on your own OpenCode, when it was installed. A note says where agent work runs now: on the harness if one is configured, else on akm's own runtime, and then how to enable the harness (`akm setup --harness opencode`). |
 | `defaults.improveStrategy` | `improve.strategy`. |
 | `models.json` | Folded into the `models` of the connections and harnesses it names; what it cannot place is listed in the notes. The `opencode-sdk` column names the harnesses that were `opencode-sdk` engines, and the `opencode` column those that were `platform: "opencode"`. A harness whose engine had a `model` of its own keeps it for every alias, over any column: it is what ran when a request named none. The file moves to `config-backups/` in the cache directory. |
-| `apiKeyFile`, a literal `apiKey`, a `${secrets/...}` `apiKey` | The key moves to `credentials.json` for the connection and its endpoint; a note names where it was, never its value. A key that cannot be read stays on the connection as it was (`apiKey`, or `apiKeyFile` for a key file), with a note that it is still to do; a later run moves it once it can be read. |
+| `apiKeyFile`, a literal `apiKey`, a `${secrets/...}` `apiKey` | The key moves to `credentials.json` for the connection and its endpoint; a note names where it was, never its value. A key that cannot be read stays on the connection as `apiKey`, with a note that it is still to do; a later run moves it once it can be read. A key file that cannot be read is dropped, with a note naming its path: akm does not read a key file. |
 | `AKM_ENGINE_<NAME>_API_KEY` or `AKM_LLM_API_KEY` set in the environment | `apiKey: "$AKM_ENGINE_<NAME>_API_KEY"` (or `$AKM_LLM_API_KEY`) on that connection. Set in no variable, an engine that names no key gets none, and a note names the variables 0.9 read. |
 | `improve.strategies.<name>.engine`, `model`, `llm`, `timeoutMs` | Dropped, with a note: a strategy says which processes run, not where. |
 | `engine`, `model`, `llm`, `timeoutMs` on a strategy's process, its `qualityGate` or its `triage.judgment` | Moved to `improve.processes.<process>` or `improve.qualityGate`, with `engine` becoming `connection` or `harness` by what it named. When that place already says, the first one is kept, with a note. |
@@ -1218,22 +1218,18 @@ asset keys move as the table says.
 | `workflow.judgeEngine` | Dropped, with a note: a gate's judge runs on the default connection, else the default harness. The note says whether the engine it named is that default, or the judge has moved. With none set, 0.9 ran the judge on `defaults.engine`; a note says when that is not where it runs now. |
 | `engine:` in an asset's frontmatter, a workflow step or a task source | `connection:` or `harness:`, by what the configured target is; a name it cannot place becomes `harness:`, with a note. A bundle akm may not change, and an asset that is a symbolic link, are skipped. |
 
-An `engine:` key on an asset that has not been migrated is read the same way,
-with a one-time notice, and so is `--engine NAME` (hidden from `--help`): both
-name a connection by that name, else a harness. While the config file is still
-in the `engines` form they name the connection or harness that engine became, so
-`engine: lab` still means the engine called `lab` after the conversion has
-renamed it `default`. Once `akm migrate apply` has rewritten the file, the names
-the engines had are kept in akm's data directory
-(`migrate/engine-targets.json`), and the key and the flag go on meaning the same
-engine until the migrator has rewritten every `engine:` key it can reach; an
-asset in a read-only bundle, or a block it could not splice, is rewritten under
-the same names by a later run, and an asset that is a symbolic link is read but
-never rewritten, so it is listed as skipped and keeps the names until you change
-the file it leads to. Then the names are forgotten, an old name that is
-neither a connection nor a harness fails like any unconfigured name (exit 78),
-and the run that forgets them prints one note listing each renamed engine and
-the flag that replaces it. A script or scheduled command that passes `--engine`
-is not one the migrator can reach: change it to `--connection` or `--harness`. A
-remembered name whose connection is no longer configured fails like any
-selection of an unconfigured name.
+akm does not read `engine:` or `--engine NAME`. A workflow or task source that
+still says `engine:` is refused, naming `akm migrate apply`; a command or agent
+that still says it runs on the default connection or harness, with one warning
+that names the same command. `--engine` and `--require-engines` are unknown
+flags (exit 2). The conversion renames the engine `defaults` named to `default`
+and moves an old `default` aside, so the migrator keeps the old names in akm's
+data directory (`migrate/engine-targets.json`) until it has rewritten every
+`engine:` key it can reach; an asset in a read-only bundle, or a block it could
+not splice, is rewritten under the same names by a later run, and an asset that
+is a symbolic link is read but never rewritten, so it is listed as skipped and
+keeps the names until you change the file it leads to. Then the names are
+forgotten, and the run that forgets them prints one note listing each renamed
+engine and the flag that replaces it. A script or scheduled command that passes
+`--engine` is not one the migrator can reach: change it to `--connection` or
+`--harness`.

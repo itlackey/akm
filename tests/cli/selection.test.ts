@@ -2,16 +2,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { beforeEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { SELECTION_ARGS, selectionFromArgs } from "../../src/cli/selection";
 import { agentCommand } from "../../src/commands/agent/contribute-cli";
 import { commandRunCommand } from "../../src/commands/command/command-cli";
 import { extractCommand } from "../../src/commands/improve/extract-cli";
 import { improveCommand } from "../../src/commands/improve/improve-cli";
 import { proposeCommand } from "../../src/commands/proposal/propose-cli";
-import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { runCliCapture } from "../_helpers/cli";
-import { overrideSeam } from "../_helpers/seams";
 
 describe("selectionFromArgs", () => {
   test("names only what a flag named", () => {
@@ -27,22 +25,6 @@ describe("selectionFromArgs", () => {
   });
 });
 
-describe("the retired --engine", () => {
-  beforeEach(() => _resetWarnOnceForTests());
-
-  test("names a connection or harness like the other flags, with one warning naming what replaces it", () => {
-    const warnings: string[] = [];
-    overrideSeam(_setWarnSinkForTests, (level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-    expect(selectionFromArgs({ engine: "lab", model: "fast" })).toEqual({ engine: "lab", model: "fast" });
-    selectionFromArgs({ engine: "lab" });
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain("--connection");
-    expect(warnings[0]).toContain("--harness");
-  });
-});
-
 describe("the commands that choose where a call runs take the same three flags", () => {
   test.each([
     ["akm agent", agentCommand],
@@ -55,11 +37,11 @@ describe("the commands that choose where a call runs take the same three flags",
     for (const flag of Object.keys(SELECTION_ARGS)) expect(args).toHaveProperty(flag);
   });
 
-  test("the commands that had --engine still parse it, and improve is the only one without it", () => {
-    for (const command of [agentCommand, commandRunCommand, proposeCommand, extractCommand]) {
-      expect(command.args).toHaveProperty("engine", expect.objectContaining({ type: "string", hidden: true }));
+  test("none of them has the retired --engine, and improve has no --require-engines", () => {
+    for (const command of [agentCommand, commandRunCommand, improveCommand, proposeCommand, extractCommand]) {
+      expect(command.args).not.toHaveProperty("engine");
     }
-    expect(improveCommand.args).not.toHaveProperty("engine");
+    expect(improveCommand.args).not.toHaveProperty("require-engines");
   });
 });
 

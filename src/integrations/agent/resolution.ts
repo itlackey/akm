@@ -30,7 +30,6 @@ import {
   defaultConnection,
   defaultHarness,
   inheritedConnectionsOf,
-  retiredEngineTargets,
   unusableEntryAt,
 } from "../../core/config/config";
 import type { ConnectionConfig, HarnessConfig } from "../../core/config/config-types";
@@ -57,15 +56,7 @@ export interface ResolveTargetInput {
 }
 
 /** The keys of a connection that akm reads; every other key is a request field. */
-const CONNECTION_OWNED_KEYS = new Set([
-  "endpoint",
-  "apiKey",
-  "apiKeyFile",
-  "models",
-  "contextLength",
-  "timeoutMs",
-  "concurrency",
-]);
+const CONNECTION_OWNED_KEYS = new Set(["endpoint", "apiKey", "models", "contextLength", "timeoutMs", "concurrency"]);
 
 function present(layer: UnresolvedExecutionDefaults, key: keyof UnresolvedExecutionDefaults): boolean {
   return layer[key] !== undefined;
@@ -137,25 +128,8 @@ type Target =
   | { readonly kind: "connection"; readonly name: string; readonly connection: ConnectionConfig }
   | { readonly kind: "harness"; readonly name: string; readonly harness: HarnessConfig };
 
-/**
- * What the retired `engine` spelling names. While the config file is still in the `engines` form, the connection
- * or harness that engine became (it may have been renamed); otherwise a connection by that name, else a harness.
- */
-export function retiredEngineSelection(
-  config: AkmConfig,
-  name: string,
-): { kind: "connection" | "harness"; name: string } {
-  const became = retiredEngineTargets()[name];
-  if (became)
-    return "harness" in became
-      ? { kind: "harness", name: became.harness }
-      : { kind: "connection", name: became.connection };
-  return { kind: config.harnesses?.[name] && !config.connections?.[name] ? "harness" : "connection", name };
-}
-
 /** The name the nearest layer that names anything gives, and the kind it gave it as. */
 function namedByLayers(
-  config: AkmConfig,
   layers: readonly UnresolvedExecutionDefaults[],
   modelWork: boolean,
 ): { kind: "connection" | "harness"; name: string } | undefined {
@@ -167,8 +141,6 @@ function namedByLayers(
       const name = layer[kind];
       if (typeof name === "string" && name) return { kind, name };
     }
-    const engine = layer.engine;
-    if (typeof engine === "string" && engine) return retiredEngineSelection(config, engine);
   }
   return undefined;
 }
@@ -238,7 +210,7 @@ export function selectionNotConfigured(config: AkmConfig, kind: "connection" | "
 
 function selectTarget(input: ResolveTargetInput): Target {
   const modelWork = input.modelWork === true;
-  const named = namedByLayers(input.config, input.layers, modelWork);
+  const named = namedByLayers(input.layers, modelWork);
   if (named) {
     const connection = named.kind === "connection" ? input.config.connections?.[named.name] : undefined;
     const harness = named.kind === "harness" ? harnessNamed(input.config, named.name) : undefined;

@@ -4,7 +4,7 @@
 
 /**
  * Settings that said one thing and did another: `improve.model/llm/timeoutMs` named, the inert `index` section and the
- * keys with no reader gone, a retired `engine` spelled honestly, and the redaction of secret-shaped connection fields.
+ * keys with no reader gone, a retired `engine` named honestly, and the redaction of secret-shaped connection fields.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -130,7 +130,7 @@ describe("a bad improve.model, improve.llm or improve.timeoutMs is warned about 
 });
 
 describe("a retired `engine` in a model-work block", () => {
-  test("is no longer called unknown: the warning says what it is, and it still selects where the work runs", () => {
+  test("is named once per key, as not read, with the command that rewrites the file", () => {
     writeConfig({
       configVersion: "0.9.0",
       connections: CONNECTIONS,
@@ -140,29 +140,18 @@ describe("a retired `engine` in a model-work block", () => {
     for (const key of ["improve.engine", "improve.qualityGate.engine", "improve.processes.reflect.engine"]) {
       const named = warnings.filter((w) => w.includes(`"${key}"`));
       expect(named).toHaveLength(1);
-      expect(named[0]).toContain("retired spelling");
+      expect(named[0]).toContain("does not read");
+      expect(named[0]).toContain("akm migrate apply");
       expect(named[0]).not.toContain("has no defined akm behavior");
     }
-    const config = loadUserConfig();
-    expect(asLlmRunner(resolveImproveExecution({ config, processName: "extract", alias: "fast" })?.runner).model).toBe(
-      "c-fast",
-    );
-    expect(asLlmRunner(resolveImproveExecution({ config, processName: "reflect", alias: "fast" })?.runner).model).toBe(
-      "m-fast",
-    );
   });
-});
 
-describe("a retired `engine` next to a `connection`", () => {
-  test("the warning says it is ignored, because the connection wins", () => {
+  test("selects nothing: the work runs on the default connection, whatever the key names", () => {
     writeConfig({
       configVersion: "0.9.0",
       connections: CONNECTIONS,
-      improve: { processes: { reflect: { connection: "default", engine: "cloud" } } },
+      improve: { processes: { reflect: { engine: "cloud" } } },
     });
-    const warning = loadWarnings().find((w) => w.includes('"improve.processes.reflect.engine"'));
-    expect(warning).toContain("is ignored here");
-    expect(warning).not.toContain("still selects");
     const config = loadUserConfig();
     expect(asLlmRunner(resolveImproveExecution({ config, processName: "reflect", alias: "fast" })?.runner).model).toBe(
       "m-fast",

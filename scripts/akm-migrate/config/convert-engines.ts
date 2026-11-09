@@ -3,17 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The pre-0.10 `engines` / `defaults` config read as `connections` / `harnesses`.
+ * The pre-0.10 `engines` / `defaults` config converted to `connections` / `harnesses`.
  *
- * One pure function, two call sites: the loader runs it in memory on every read
- * (`runConfigFilePipeline`) and `akm migrate apply` writes its result back.
- * Whatever it cannot carry over is named in `notes` and dropped. One step per row of
+ * One pure function, run only by `akm migrate apply` (`normalizeConfigFile`), which writes its result back;
+ * the CLI proper reads only the current shape. Whatever it cannot carry over is named in `notes` and dropped. One step per row of
  * the migration table in `docs/reference/configuration.md`; `models.json` and the
  * references in strategies and gates are folded in by their own modules.
  */
 
-import { isRecord } from "../common";
-import type { LlmInference } from "../llm-inference";
+import { isRecord } from "../../../src/core/common";
+import type { LlmInference } from "../../../src/core/llm-inference";
 import {
   dropJudgeEngine,
   improveStrategyDefault,
@@ -30,8 +29,8 @@ import {
   wireFieldsOf,
 } from "./convert-engines-shared";
 import { foldEngineModels, foldModelsOverlay, type OwnModels } from "./convert-models-overlay";
-import { deepMergeConfig } from "./deep-merge";
-import { isEnvReference } from "./schema/primitives";
+import { deepMergeConfig } from "../../../src/core/config/deep-merge";
+import { isEnvReference } from "../../../src/core/config/schema/primitives";
 
 export type { EngineTarget };
 
@@ -383,7 +382,7 @@ function nameDefaults(defaults: Dict, converted: Converted, conversion: Conversi
     const aside = rename("default");
     if (aside === "default") continue;
     conversion.notes.push(
-      `engines.default is now ${kind}.${aside}, and "default" names another engine: an engine: default key is rewritten by \`akm migrate apply\` where it can be, but a script or scheduled command that passes --engine default now reaches the new "default"; change it to the name ${aside}.`,
+      `engines.default is now ${kind}.${aside}, and "default" names another engine: an engine: default key is rewritten by \`akm migrate apply\` where it can be, but --engine is removed, so a script or scheduled command that passes it must change: use ${kind === "connections" ? "--connection" : "--harness"} ${aside} for the old "default".`,
     );
   }
   const target = (engine: string): EngineTarget | undefined => {

@@ -112,8 +112,8 @@ with the bundle that owns the env file, and warns once naming the env ref. The
 env file is bundle content and is not rewritten; write the full ref.
 
 `secret://name` was the config spelling of the same thing. It is retired:
-config still reads it as `${secrets/name}` and names the key once, and `akm
-migrate apply` rewrites the file.
+config no longer reads it as a reference, and names the key once; `akm
+migrate apply` rewrites it as `${secrets/name}`.
 
 ## Running commands
 

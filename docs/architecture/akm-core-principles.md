@@ -92,10 +92,10 @@ shapes. A reader uses the converter and keeps no tolerance of its own. A user's
 file (`config.json`, a task source, bundle content) is rewritten only by
 `akm migrate apply`, with a backup, running that same converter; akm's own
 stores (`state.db`, `index.db`) migrate forward when opened, with a backup
-before any destructive step. Reads reach back to the 0.9.15 floor: above it a
-reader converts in memory, warns once and names `akm migrate apply`; below it,
-and for an older task source (the one named exception), the command stops and
-names the migrator. What happens to data from a newer release differs by
+before any destructive step. A reader reads only the current shape: a retired
+form is named once, with `akm migrate apply` (which `akm upgrade` runs), and is
+not converted; a task source or config older than the 0.9.32 floor stops the
+command and names the recipe. What happens to data from a newer release differs by
 format (a newer index layout or frozen plan is refused with "upgrade akm";
 `state.db` and `config.json` warn and continue, and `akm health` reports the
 config skew), so [Persisted-Data Compatibility](persisted-data-compat.md)

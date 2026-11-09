@@ -75,7 +75,9 @@ describe("the shipped default strategy drains deterministically without autonomy
   test("a default strategy with judgment on and no autonomy is downgraded to queue and reported", () => {
     const config = {
       ...configWith(undefined, true),
-      improve: { strategies: { default: { processes: { triage: { judgment: { enabled: true, engine: "test" } } } } } },
+      improve: {
+        strategies: { default: { processes: { triage: { judgment: { enabled: true, connection: "test" } } } } },
+      },
     } as Parameters<typeof resolveImprovePlan>[1];
     const plan = resolveImprovePlan("default", config);
 

@@ -29,9 +29,6 @@
           "apiKey": {
             "type": "string"
           },
-          "apiKeyFile": {
-            "type": "string"
-          },
           "models": {
             "type": "object",
             "propertyNames": {
@@ -1482,9 +1479,6 @@
               "apiKey": {
                 "type": "string"
               },
-              "apiKeyFile": {
-                "type": "string"
-              },
               "models": {
                 "type": "object",
                 "propertyNames": {
@@ -2915,9 +2909,6 @@
           "type": "string"
         },
         "apiKey": {
-          "type": "string"
-        },
-        "apiKeyFile": {
           "type": "string"
         },
         "models": {

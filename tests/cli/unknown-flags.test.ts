@@ -56,9 +56,9 @@ describe("rejects undeclared flags", () => {
     expect(errorFor(["search", "foo", "--target", "b"]).hint() ?? "").not.toContain("is gone");
   });
 
-  test("a hidden flag is accepted but never suggested", () => {
-    // `--require-engines` is a hidden no-op on `improve`: pointing a typo at it would send the user to a flag that does nothing.
-    expect(() => check(["improve", "--require-engines"])).not.toThrow();
+  test("rejects the retired --require-engines and --engine, and never suggests them", () => {
+    expect(errorFor(["improve", "--require-engines"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["agent", "--engine", "lab"]).code).toBe("UNKNOWN_FLAG");
     const err = errorFor(["improve", "--require-targets"]);
     expect(err.code).toBe("UNKNOWN_FLAG");
     expect(err.hint()).not.toContain("--require-engines");

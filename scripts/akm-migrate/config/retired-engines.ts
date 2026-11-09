@@ -7,16 +7,16 @@
  * directory (`migrate/engine-targets.json`) after `akm migrate apply` has rewritten
  * the config. The conversion renames the engine `defaults` named to `default` and
  * moves an old `default` aside, so an `engine:` selector that is still in a file the
- * migration has not rewritten (a read-only bundle, a block it could not splice) keeps
- * its meaning only if the old names outlive the config that had them. The migrator
- * writes and removes this file; the resolver of `engine:` selectors reads it
- * ({@link retiredEngineTargets}); nothing else does.
+ * migration has not rewritten (a read-only bundle, a block it could not splice) is
+ * rewritten to the right name on a retry only if the old names outlive the config that
+ * had them. The migrator writes, reads ({@link retiredEngineTargets}) and removes this file;
+ * nothing else does.
  */
 
 import fs from "node:fs";
 import path from "node:path";
-import { isRecord } from "../common";
-import { getDataDir } from "../paths";
+import { isRecord } from "../../../src/core/common";
+import { getDataDir } from "../../../src/core/paths";
 import type { EngineTarget } from "./convert-engines-shared";
 
 export type EngineTargets = Readonly<Record<string, EngineTarget>>;

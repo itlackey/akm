@@ -8,7 +8,7 @@
  */
 
 import { isDeepStrictEqual } from "node:util";
-import { isRecord } from "../common";
+import { isRecord } from "../../../src/core/common";
 import { type Conversion, type Dict, type EngineTarget, objectAt, str } from "./convert-engines-shared";
 
 /** What a strategy's process, quality gate or judgment once said about where it runs and how. */

@@ -24,7 +24,7 @@ The design and rationale are in [Improvement Loop](../improvement.md). This page
 | `--json-to-stdout` | Also print the full persisted run result as JSON. |
 | `--run`, `--since` | Only for `akm improve report`. |
 
-`--require-engines` is retired: it is parsed, warned about once, and ignored. A run already stops at planning (exit 78) when no model-calling process has a connection or harness to run on.
+`--require-engines` is removed (an unknown flag). A run already stops at planning (exit 78) when no model-calling process has a connection or harness to run on.
 
 ## Run order
 

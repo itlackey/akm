@@ -14,6 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { rememberEngineTargets, rememberedEngineTargets } from "../../scripts/akm-migrate/config/retired-engines";
 import { applyEngineKeysPlan, inspectEngineKeyFiles } from "../../scripts/akm-migrate/migrate/engine-key-files";
 import {
   planEngineKeyFile,
@@ -21,11 +22,8 @@ import {
   type ResolveEngineKey,
 } from "../../scripts/akm-migrate/migrate/engine-key-planner";
 import { runMigration } from "../../scripts/akm-migrate/run-migrate";
-import { selectionFromArgs } from "../../src/cli/selection";
 import { executionDefaultsFromFrontmatter } from "../../src/core/adapter/execution-source";
 import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
-import { rememberEngineTargets, rememberedEngineTargets } from "../../src/core/config/retired-engines";
-import { executionDefaultsOf } from "../../src/execution/source";
 import { resolveTarget } from "../../src/integrations/agent/resolution";
 import { freezeWorkflow } from "../../src/workflows/freeze/freeze";
 import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
@@ -461,7 +459,7 @@ describe("the step", () => {
     expect(third.assetEngineKeys).toMatchObject({ changed: 0, skipped: 0 });
   });
 
-  test("a selector in a skipped asset, and the retired flag, keep their meaning between the migration and the retry", async () => {
+  test("a selector in a skipped asset is rewritten, on the retry, to the name it always meant", async () => {
     const A = "http://old:8080/v1/chat/completions";
     const B = "http://lab:8080/v1/chat/completions";
     writeSandboxConfig({
@@ -488,20 +486,13 @@ describe("the step", () => {
       const frontmatter = parseYaml(frontmatterBlock(fs.readFileSync(command, "utf8"))) as Record<string, unknown>;
       return where([executionDefaultsFromFrontmatter(frontmatter, { kind: "command" })]);
     };
-    const flagSays = (engine: string): string => where([executionDefaultsOf(selectionFromArgs({ engine }))]);
-
-    // Before the migration the old `default` is service A.
-    expect(assetSays()).toBe(A);
 
     const first = await runMigration({ apply: true });
     expect(first.assetEngineKeys).toMatchObject({ changed: 0, skipped: 1 });
     resetConfigCache();
 
-    // The config now calls B `default`, and the asset still says `engine: default`: it still means A.
+    // The config now calls B `default`, and the asset still says `engine: default`, which the runtime does not read.
     expect(loadUserConfig().connections?.default?.endpoint).toBe(B);
-    expect(assetSays()).toBe(A);
-    expect(flagSays("default")).toBe(A);
-    expect(flagSays("lab")).toBe(B);
 
     // Once the asset can be rewritten it is, to the name it always meant; nothing remembers the old names after.
     const configPath = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
@@ -696,9 +687,10 @@ describe("the step", () => {
     return target?.kind === "command" ? target.runner.name : undefined;
   };
 
-  test("a standalone workflow bundle's workflow is rewritten under a backup, and still freezes to the connection it named", async () => {
+  test("a standalone workflow bundle's workflow is rewritten under a backup, and then freezes to the connection it named", async () => {
     const file = workflowBundle(true);
-    expect(await workflowRunsOn()).toBe("default");
+    // Not rewritten yet: the runtime does not read `engine`, and says which command does.
+    await expect(workflowRunsOn()).rejects.toThrow(/akm migrate apply/);
 
     const plan = await runMigration({ apply: true });
 
@@ -716,7 +708,7 @@ describe("the step", () => {
     expect(await workflowRunsOn()).toBe("default");
   });
 
-  test("a read-only standalone workflow bundle is skipped and keeps the old names, so its workflow still freezes", async () => {
+  test("a read-only standalone workflow bundle is skipped and keeps the old names, and its workflow is refused until it is rewritten", async () => {
     const file = workflowBundle(false);
 
     const plan = await runMigration({ apply: true });
@@ -728,7 +720,7 @@ describe("the step", () => {
     expect(plan.assetEngineKeys?.notes).toBeUndefined();
     expect(fs.readFileSync(file, "utf8")).toBe(STANDALONE_WORKFLOW);
     expect(rememberedEngineTargets()).toEqual({ lab: { connection: "default" } });
-    expect(await workflowRunsOn()).toBe("default");
+    await expect(workflowRunsOn()).rejects.toThrow(/akm migrate apply/);
   });
 
   test("a Claude or OpenCode bundle's command has its akm.engine rewritten, and a top-level key it does not read is left", async () => {
@@ -755,7 +747,6 @@ describe("the step", () => {
       harnesses: {},
     });
     rememberEngineTargets({ lab: { connection: "gpu" } });
-    for (const file of files) expect(commandSelects(file, false)).toBe("gpu");
 
     const plan = await runMigration({ apply: true });
 
