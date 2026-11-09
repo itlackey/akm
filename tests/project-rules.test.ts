@@ -86,7 +86,7 @@ afterEach(() => {
 const search = async (...args: string[]) => {
   const { code, stdout } = await runCliCapture(["search", ...args, "--format", "json"]);
   expect(code).toBe(0);
-  return JSON.parse(stdout) as { hits: Array<{ ref: string; type: string }>; warnings?: string[] };
+  return JSON.parse(stdout) as { results: Array<{ ref: string; type: string }>; warnings?: string[] };
 };
 const refs = (hits: Array<{ ref: string }>) => hits.map((h) => h.ref);
 
@@ -94,17 +94,17 @@ describe("search", () => {
   test("an untyped page holds ordinary hits only: no rule is forced in; a matching query returns only applicable rules", async () => {
     await setup();
     const plain = await search("invoice export", "--project", "acme");
-    expect(refs(plain.hits)).toEqual(["knowledge/invoice-export", "knowledge/invoice-tax"]);
+    expect(refs(plain.results)).toEqual(["knowledge/invoice-export", "knowledge/invoice-tax"]);
     expect(plain.warnings).toBeUndefined();
     const limited = await search("invoice export", "--project", "acme", "--limit", "1");
-    expect(refs(limited.hits)).toEqual(["knowledge/invoice-export"]);
+    expect(refs(limited.results)).toEqual(["knowledge/invoice-export"]);
     const matching = await search("Rules", "--project", "acme");
-    expect(refs(matching.hits).sort()).toEqual(["rules/acme/development", "rules/shared"]);
+    expect(refs(matching.results).sort()).toEqual(["rules/acme/development", "rules/shared"]);
   });
 
   test("two projects get their own rules", async () => {
     await setup();
-    expect(refs((await search("Rules", "--project", "globex")).hits).sort()).toEqual([
+    expect(refs((await search("Rules", "--project", "globex")).results).sort()).toEqual([
       "rules/globex/development",
       "rules/shared",
     ]);
@@ -116,8 +116,8 @@ describe("search", () => {
     const original = process.cwd;
     process.cwd = () => acmeDir;
     try {
-      expect(refs((await search("Rules")).hits)).toEqual(refs(explicit.hits));
-      expect(refs(explicit.hits)).toHaveLength(2);
+      expect(refs((await search("Rules")).results)).toEqual(refs(explicit.results));
+      expect(refs(explicit.results)).toHaveLength(2);
     } finally {
       process.cwd = original;
     }
@@ -125,38 +125,38 @@ describe("search", () => {
 
   test("with no project only shared rules apply", async () => {
     await setup();
-    expect(refs((await search("Rules", "--project", "none")).hits)).toEqual(["rules/shared"]);
+    expect(refs((await search("Rules", "--project", "none")).results)).toEqual(["rules/shared"]);
   });
 
   test('search "rules/" lists exactly the applicable rules under the project', async () => {
     await setup();
-    expect(refs((await search("rules/", "--project", "acme")).hits)).toEqual([
+    expect(refs((await search("rules/", "--project", "acme")).results)).toEqual([
       "rules/acme/development",
       "rules/shared",
     ]);
-    expect(refs((await search("rules/", "--project", "none")).hits)).toEqual(["rules/shared"]);
+    expect(refs((await search("rules/", "--project", "none")).results)).toEqual(["rules/shared"]);
   });
 
   test('search "" --type rule lists exactly the applicable rules, with descriptions', async () => {
     write(stashDir, "rules/README.md", { description: "readme" }, "readme");
     await setup();
     const result = await search("", "--type", "rule", "--limit", "200", "--project", "acme", "--detail", "normal");
-    expect(refs(result.hits)).toEqual(["rules/acme/development", "rules/shared"]);
-    expect((result.hits[0] as { description?: string }).description).toBe("Rules acme/development");
-    expect(refs((await search("", "--type", "rule", "--project", "none")).hits)).toEqual(["rules/shared"]);
+    expect(refs(result.results)).toEqual(["rules/acme/development", "rules/shared"]);
+    expect((result.results[0] as { description?: string }).description).toBe("Rules acme/development");
+    expect(refs((await search("", "--type", "rule", "--project", "none")).results)).toEqual(["rules/shared"]);
   });
 
   test("a query that matches nothing keeps the no-match tip", async () => {
     await setup();
-    const result = (await search("zzqxjnomatch", "--project", "acme")) as { hits: unknown[]; tip?: string };
+    const result = (await search("zzqxjnomatch", "--project", "acme")) as { results: unknown[]; tip?: string };
     expect(result.tip).toBeTruthy();
-    expect(result.hits).toEqual([]);
+    expect(result.results).toEqual([]);
   });
 
   test("a bundle without rules/ is unchanged", async () => {
     fs.rmSync(path.join(stashDir, "rules"), { recursive: true });
     await setup();
-    expect(refs((await search("invoice export", "--project", "acme")).hits)).toEqual([
+    expect(refs((await search("invoice export", "--project", "acme")).results)).toEqual([
       "knowledge/invoice-export",
       "knowledge/invoice-tax",
     ]);
@@ -170,10 +170,10 @@ describe("search", () => {
     await setup({
       bundles: { main: { path: stashDir }, team: { path: team }, off: { path: off, enabled: false } },
     });
-    const all = refs((await search("rules/", "--project", "acme")).hits);
+    const all = refs((await search("rules/", "--project", "acme")).results);
     expect(all).toContain("team//rules/acme/team");
     expect(all.some((ref) => ref.includes("acme/off"))).toBe(false);
-    expect(refs((await search("rules/", "--project", "acme", "--from", "main")).hits)).toEqual([
+    expect(refs((await search("rules/", "--project", "acme", "--from", "main")).results)).toEqual([
       "rules/acme/development",
       "rules/shared",
     ]);
@@ -182,7 +182,7 @@ describe("search", () => {
 
 describe("curate", () => {
   const run = (args: Record<string, unknown>) =>
-    runCurate({ query: "fix invoice export", limit: "10", ...args }, { detail: "normal", shape: "human" });
+    runCurate({ query: "fix invoice export", limit: "10", ...args }, { detail: "normal" });
 
   test("an untyped page holds limit ordinary hits; a directory and --project agree", async () => {
     await setup();
@@ -214,12 +214,12 @@ describe("classification", () => {
     write(stashDir, "lessons/rules/l.md", { description: "lesson in rules", when_to_use: "always" }, "marker text");
     write(stashDir, "docs/rules/d.md", { description: "docs rules" }, "marker text");
     await setup();
-    const of = async (type: string) => refs((await search("", "--type", type, "--project", "none")).hits);
+    const of = async (type: string) => refs((await search("", "--type", type, "--project", "none")).results);
     expect(await of("knowledge")).toContain("knowledge/x/rules/y");
     expect(await of("knowledge")).toContain("docs/rules/d");
     expect(await of("memory")).toContain("memories/rules/n");
     expect(await of("lesson")).toContain("lessons/rules/l");
-    expect(refs((await search("", "--type", "rule", "--project", "none")).hits)).toEqual(["rules/shared"]);
+    expect(refs((await search("", "--type", "rule", "--project", "none")).results)).toEqual(["rules/shared"]);
   });
 });
 
@@ -232,7 +232,7 @@ describe("the project's own value", () => {
         web2: { paths: [web], prefer: { project: "platform" }, write: { metadata: { project: "platform" } } },
       },
     });
-    expect(refs((await search("", "--type", "rule", "--project", "web2")).hits)).toEqual([
+    expect(refs((await search("", "--type", "rule", "--project", "web2")).results)).toEqual([
       "rules/platform/dev",
       "rules/shared",
     ]);
@@ -241,7 +241,7 @@ describe("the project's own value", () => {
   test("a project filter on project decides eligibility; the comparison is skipped", async () => {
     rule(stashDir, "platform/dev", "platform");
     await setup({ projects: { web: { paths: [tmp("rules-web")], filters: { project: "platform" } } } });
-    expect(refs((await search("", "--type", "rule", "--project", "web")).hits)).toEqual(["rules/platform/dev"]);
+    expect(refs((await search("", "--type", "rule", "--project", "web")).results)).toEqual(["rules/platform/dev"]);
   });
 
   test("usage is recorded and compared by the stamped value", async () => {
@@ -250,7 +250,7 @@ describe("the project's own value", () => {
       projects: { web2: { paths: [tmp("rules-web2u")], write: { metadata: { project: "platform" } } } },
     });
     await runCliCapture(["show", "knowledge/platform-doc", "--project", "web2", "--format", "json"]);
-    expect(refs((await search("--by-usage", "--project", "web2")).hits)).toEqual(["knowledge/platform-doc"]);
+    expect(refs((await search("--by-usage", "--project", "web2")).results)).toEqual(["knowledge/platform-doc"]);
   });
 });
 
@@ -265,7 +265,7 @@ describe("search --by-usage", () => {
     }
   };
   const show = (ref: string) => runCliCapture(["show", ref, "--format", "json"]);
-  const usage = async (...args: string[]) => refs((await search("--by-usage", ...args)).hits);
+  const usage = async (...args: string[]) => refs((await search("--by-usage", ...args)).results);
 
   beforeEach(async () => {
     write(stashDir, "knowledge/globex-only.md", { description: "Globex only", project: "globex" }, "globex only");
@@ -317,7 +317,7 @@ describe("search --by-usage", () => {
     const count = () => (db.prepare("SELECT COUNT(*) AS n FROM usage_events").get() as { n: number }).n;
     const before = count();
     const result = await search("--by-usage", "invoice", "--project", "acme");
-    expect(refs(result.hits)).toEqual(["knowledge/invoice-tax"]);
+    expect(refs(result.results)).toEqual(["knowledge/invoice-tax"]);
     expect(result.warnings?.join(" ")).toContain("ignores the query");
     expect(count()).toBe(before);
     db.close();

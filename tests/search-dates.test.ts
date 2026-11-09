@@ -180,7 +180,9 @@ describe("--since and --until", () => {
       });
     const ok = await run(["search", "gateway", "--since", "2026-09-01", "--format=json"]);
     expect(ok.code).toBe(0);
-    expect((JSON.parse(ok.stdout).hits as Array<{ name: string }>).map((hit) => hit.name)).toEqual(["observed-late"]);
+    expect((JSON.parse(ok.stdout).results as Array<{ name: string }>).map((hit) => hit.name)).toEqual([
+      "observed-late",
+    ]);
 
     for (const bad of ["yesterday", "2026-02-30", "2026-9-1"]) {
       const result = await run(["search", "gateway", "--until", bad, "--format=json"]);

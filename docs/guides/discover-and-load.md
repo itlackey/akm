@@ -42,7 +42,7 @@ what you're trying to do.
 
 ```sh
 akm search "deploy" --type script
-# → {"hits":[{"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh",
+# → {"results":[{"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh",
 #             "action":"akm show scripts/deploy.sh -> ...","estimatedTokens":240}]}
 ```
 
@@ -56,7 +56,7 @@ akm curate "review an architecture proposal" --type skill
 ```
 
 At the default `--detail brief` both commands return a `ref` for every hit, which
-is all an agent needs to call `akm show`. `--detail agent` adds each hit's `path`
+is all an agent needs to call `akm show`. `akm curate --detail normal` adds each result's `path`
 and `editable` flag, for agents that read or edit the file directly. To list a
 subtree instead of keyword-matching, end the query with a slash:
 `akm search "knowledge/"` or `akm search "team//skills/"`. See

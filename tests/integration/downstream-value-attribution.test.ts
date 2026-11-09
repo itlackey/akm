@@ -194,8 +194,8 @@ describe("downstream value attribution", () => {
     clearUsageRows();
     const result = await runCliCapture(["search", "surface-parent-needle", "--detail", "brief", "--format", "json"]);
     expect(result.code).toBe(0);
-    const output = JSON.parse(result.stdout) as { hits: Array<Record<string, unknown>> };
-    expect(output.hits.find((hit) => hit.name === "parent")?.description).toBeUndefined();
+    const output = JSON.parse(result.stdout) as { results: Array<Record<string, unknown>> };
+    expect(output.results.find((hit) => hit.name === "parent")?.description).toBeUndefined();
     expect(metadataFor("surface-parent-needle", "stash//memories/parent")).toEqual({
       downstreamAttribution: { version: 1, control: true },
     });
@@ -345,8 +345,8 @@ test("tag-only fallback is attributed only by full search; curate never emits ta
     clearUsageRows();
     const result = await runCliCapture(["search", "tagonlyneedle", "--detail", detail, "--format", "json"]);
     expect(result.code).toBe(0);
-    const output = JSON.parse(result.stdout) as { hits: Array<Record<string, unknown>> };
-    const hit = output.hits.find((candidate) => candidate.name === "tag-only");
+    const output = JSON.parse(result.stdout) as { results: Array<Record<string, unknown>> };
+    const hit = output.results.find((candidate) => candidate.name === "tag-only");
     expect(hit?.tags).toEqual(detail === "full" ? ["derived tag"] : undefined);
     if (detail !== "brief") expect(hit?.description).toBe("tagonlyneedle Restart remains unverified; staging only.");
     expect(metadataFor("tagonlyneedle", "stash//memories/tag-only")).toEqual({
@@ -371,7 +371,7 @@ test("tag-only fallback is attributed only by full search; curate never emits ta
     "json",
   ]);
   expect(curated.code).toBe(0);
-  expect(JSON.parse(curated.stdout).items[0]?.description).toBe(
+  expect(JSON.parse(curated.stdout).results[0]?.description).toBe(
     "tagonlyneedle Restart remains unverified; staging only.",
   );
   expect(metadataFor("tagonlyneedle", "stash//memories/tag-only")).toEqual({

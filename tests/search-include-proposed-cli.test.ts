@@ -94,14 +94,14 @@ describe("akm search --include-proposed (CLI)", () => {
     const baseline = await runCli(["search", "deploy", "--format=json"], stash);
     expect(baseline.status).toBe(0);
     const baselineJson = JSON.parse(baseline.stdout);
-    const baselineNames = (baselineJson.hits as Array<{ name: string }>).map((h) => h.name);
+    const baselineNames = (baselineJson.results as Array<{ name: string }>).map((h) => h.name);
     expect(baselineNames).toContain("stable-deploy");
     expect(baselineNames).not.toContain("proposed-deploy");
 
     const withProposed = await runCli(["search", "deploy", "--include-proposed", "--format=json"], stash);
     expect(withProposed.status).toBe(0);
     const withProposedJson = JSON.parse(withProposed.stdout);
-    const withProposedNames = (withProposedJson.hits as Array<{ name: string }>).map((h) => h.name);
+    const withProposedNames = (withProposedJson.results as Array<{ name: string }>).map((h) => h.name);
     expect(withProposedNames).toContain("stable-deploy");
     expect(withProposedNames).toContain("proposed-deploy");
   });

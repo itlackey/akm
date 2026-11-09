@@ -173,7 +173,7 @@ export const GLOBAL_OUTPUT_ARGS = {
   format: { type: "string", description: "Output format: json|jsonl|yaml|text|md" },
   detail: {
     type: "string",
-    description: "Detail level: brief|normal|full, or agent (trims search, curate and show to essential fields)",
+    description: "Detail level: brief|normal|full",
   },
   output: { type: "string", description: "Write output to a file instead of stdout (not jsonl)" },
   // S11: declared at every leaf so a command's flags parse wherever they sit;
@@ -319,7 +319,7 @@ export function output(command: string, result: unknown): void {
   const mode: OutputMode = getOutputMode();
   const { format } = mode;
   if (format === "jsonl") {
-    outputJsonl(command, shapeForCommand(command, result, mode.detail, mode.shape));
+    outputJsonl(command, shapeForCommand(command, result, mode.detail));
     return;
   }
   // Compact JSON when stdout is piped (agents, scripts); `--output <path>` files and a TTY stay pretty.
@@ -328,7 +328,7 @@ export function output(command: string, result: unknown): void {
 }
 
 /** An output mode with a single-document format (everything but `jsonl`, a line-streaming protocol). */
-type DocumentOutputMode = Pick<OutputMode, "detail" | "shape"> & {
+type DocumentOutputMode = Pick<OutputMode, "detail"> & {
   format: Exclude<OutputFormat, "jsonl">;
   /** Print `json` on one line. Default: the 2-space form. */
   compact?: boolean;
@@ -341,7 +341,7 @@ type DocumentOutputMode = Pick<OutputMode, "detail" | "shape"> & {
  * explicit `mode`.
  */
 export function renderOutput(command: string, result: unknown, mode: DocumentOutputMode): string {
-  const shaped = shapeForCommand(command, result, mode.detail, mode.shape);
+  const shaped = shapeForCommand(command, result, mode.detail);
   switch (mode.format) {
     case "json":
       return mode.compact ? JSON.stringify(shaped) : JSON.stringify(shaped, null, 2);

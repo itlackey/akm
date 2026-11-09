@@ -114,7 +114,7 @@ describe("akm search --from <name> filters hits to that source", () => {
       // Baseline: no --from filter. Both sources should contribute hits.
       const baseline = await runCli(["search", "shared-keyword", "--format=json"], primary);
       expect(baseline.status).toBe(0);
-      const baselineHits = (JSON.parse(baseline.stdout).hits as Array<{ name: string; ref: string }>) ?? [];
+      const baselineHits = (JSON.parse(baseline.stdout).results as Array<{ name: string; ref: string }>) ?? [];
       const baselineNames = baselineHits.map((h) => h.name);
       expect(baselineNames).toContain("primary-skill");
       expect(baselineNames).toContain("library-skill");
@@ -125,7 +125,7 @@ describe("akm search --from <name> filters hits to that source", () => {
       // post-filter by the narrowed source list.
       const narrowed = await runCli(["search", "shared-keyword", "--from", "library", "--format=json"], primary);
       expect(narrowed.status).toBe(0);
-      const narrowedHits = (JSON.parse(narrowed.stdout).hits as Array<{ name: string; ref: string }>) ?? [];
+      const narrowedHits = (JSON.parse(narrowed.stdout).results as Array<{ name: string; ref: string }>) ?? [];
       const narrowedNames = narrowedHits.map((h) => h.name);
       expect(narrowedNames).toContain("library-skill");
       expect(narrowedNames).not.toContain("primary-skill");
@@ -140,7 +140,7 @@ describe("akm search --from <name> filters hits to that source", () => {
       const narrowedPrimary = await runCli(["search", "shared-keyword", "--from", "primary", "--format=json"], primary);
       expect(narrowedPrimary.status).toBe(0);
       const narrowedPrimaryHits =
-        (JSON.parse(narrowedPrimary.stdout).hits as Array<{ name: string; ref: string }>) ?? [];
+        (JSON.parse(narrowedPrimary.stdout).results as Array<{ name: string; ref: string }>) ?? [];
       const narrowedPrimaryNames = narrowedPrimaryHits.map((h) => h.name);
       expect(narrowedPrimaryNames).toContain("primary-skill");
       expect(narrowedPrimaryNames).not.toContain("library-skill");

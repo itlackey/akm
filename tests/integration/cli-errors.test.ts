@@ -102,25 +102,25 @@ describe("CLI error handling", () => {
     expect(stderr).toContain("hint");
   });
 
-  test("search --detail invalid prints hint about detail", async () => {
+  test("search --format invalid prints hint about format", async () => {
     const stash = makeStashDir();
     disposers.push(stash);
     const { stderr, status } = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () =>
-      runCli("search", "test", "--detail", "invalid"),
+      runCli("search", "test", "--format", "invalid"),
     );
-    // Usage error (INVALID_DETAIL_VALUE) -> exit 2. Ground-truthed by probing
+    // Usage error (INVALID_FORMAT_VALUE) -> exit 2. Ground-truthed by probing
     // the actual CLI output before pinning.
     expect(status).toBe(2);
-    expect(stderr).toContain("Invalid value for --detail");
+    expect(stderr).toContain("Invalid value for --format");
     expect(stderr).toContain("hint");
   });
 
-  test("health --detail invalid value yields UsageError with exit 2", async () => {
-    const { stderr, status } = await runCli("health", "--detail", "verbose");
+  test("health --format invalid value yields UsageError with exit 2", async () => {
+    const { stderr, status } = await runCli("health", "--format", "verbose");
     expect(status).toBe(2);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("INVALID_DETAIL_VALUE");
+    expect(parsed.code).toBe("INVALID_FORMAT_VALUE");
   });
 
   test("health --window-compare with bad duration yields UsageError exit 2", async () => {
@@ -332,9 +332,6 @@ describe("error class hints", () => {
     );
     expect(new UsageError("bad format", "INVALID_FORMAT_VALUE").hint()).toBe(
       "Pick one of: json, jsonl, yaml, text, md.",
-    );
-    expect(new UsageError("bad detail", "INVALID_DETAIL_VALUE").hint()).toBe(
-      "Pick one of: brief, normal, full, agent.",
     );
     expect(new UsageError("bad json", "INVALID_JSON_CONFIG_VALUE").hint()).toContain("JSON array like");
     expect(new UsageError("bad target", "MISSING_OR_AMBIGUOUS_TARGET").hint()).toContain("akm bundle update --all");

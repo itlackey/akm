@@ -79,7 +79,7 @@ export async function runCurate(
     /** The working directory that selects a project; default: the process's. */
     cwd?: string;
   },
-  outputMode: Pick<OutputMode, "detail" | "shape">,
+  outputMode: Pick<OutputMode, "detail">,
 ): Promise<CurateResponse> {
   if (!args.query || !String(args.query).trim()) {
     throw new UsageError(
@@ -104,7 +104,7 @@ export async function runCurate(
     prefer,
     belief: parseBeliefFilterMode(args.belief ?? "current"),
     eventSource: args.eventSource ?? resolveUsageEventSource(),
-    attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
+    attributionProjection: outputMode.detail,
     project: projectContext(project, filters),
   });
   return view ? { ...curated, project: view } : curated;

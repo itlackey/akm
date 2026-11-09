@@ -71,7 +71,6 @@ export type UsageErrorCode =
   | "INVALID_FLAG_VALUE"
   | "INVALID_SOURCE_VALUE"
   | "INVALID_FORMAT_VALUE"
-  | "INVALID_DETAIL_VALUE"
   | "INVALID_JSON_CONFIG_VALUE"
   | "INVALID_JSON_ARGUMENT"
   | "MISSING_REQUIRED_ARGUMENT"
@@ -251,7 +250,6 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   INVALID_FLAG_VALUE: "Run `akm <command> --help` to see accepted values.",
   INVALID_SOURCE_VALUE: "Pick one of: local, registry, all, or a configured source name.",
   INVALID_FORMAT_VALUE: "Pick one of: json, jsonl, yaml, text, md.",
-  INVALID_DETAIL_VALUE: "Pick one of: brief, normal, full, agent.",
   INVALID_JSON_CONFIG_VALUE:
     'Array and object values take JSON, quoted for the shell: a JSON array like `akm config set projects.x.filters.project \'["x"]\'` or a JSON object like `akm config set connections.fast \'{"endpoint":"http://localhost:11434/v1"}\'`. `akm config unset <key>` removes a key.',
   MISSING_OR_AMBIGUOUS_TARGET:

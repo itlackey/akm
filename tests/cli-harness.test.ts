@@ -62,10 +62,10 @@ describe("in-process CLI harness", () => {
   });
 
   test("maps a UsageError to exit code 2", async () => {
-    const { code, stderr } = await runCliCapture(["health", "--detail", "verbose"]);
+    const { code, stderr } = await runCliCapture(["health", "--format", "verbose"]);
     expect(code).toBe(2);
     const parsed = JSON.parse(stderr.trim());
-    expect(parsed.code).toBe("INVALID_DETAIL_VALUE");
+    expect(parsed.code).toBe("INVALID_FORMAT_VALUE");
   });
 
   test("back-to-back runs in one test do not leak singleton state", async () => {

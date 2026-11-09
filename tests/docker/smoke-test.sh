@@ -222,7 +222,7 @@ assert_exit_zero "akm search 'deploy' exits 0" akm search deploy
 assert_output_contains "search 'deploy' finds deploy script" "deploy" akm search deploy
 
 # Search with JSON output
-assert_json_field "search JSON has hits" "hits" akm search deploy --format json
+assert_json_field "search JSON has results" "results" akm search deploy --format json
 
 # Search with type filter
 assert_output_contains "search type:skill finds code-review" "code-review\|review" akm search review --type skill
@@ -237,10 +237,10 @@ RESULT_STATUS=$?
 set -e
 if [ "$RESULT_STATUS" -ne 0 ]; then
 	fail "search with --limit 1 failed — command exited $RESULT_STATUS: ${RESULT:0:200}"
-elif echo "$RESULT" | grep -q "hits"; then
-	pass "search with --limit 1 returns JSON with hits"
+elif echo "$RESULT" | grep -q "results"; then
+	pass "search with --limit 1 returns JSON with results"
 else
-	fail "search with --limit 1 failed — no 'hits' field in output"
+	fail "search with --limit 1 failed — no 'results' field in output"
 fi
 
 # ── 6. Show ──────────────────────────────────────────────────────────────────

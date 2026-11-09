@@ -21,7 +21,7 @@ written are in [Core Principles](akm-core-principles.md).
 - **One local retrieval layer.** Every source materializes to disk and is
   indexed the same way; `show` resolves through the index and reads from
   disk. Registry results are opt-in and arrive in `registryHits`, never
-  merged into `hits`. A source provider fetches and refreshes and implements
+  merged into `results`. A source provider fetches and refreshes and implements
   no search or show, so source resolution, registry install and provider
   plumbing stay behind indexing and the path from `search` or `curate` to
   `show` is a lookup in the local index. Pinned by the `SourceProvider`
@@ -29,8 +29,9 @@ written are in [Core Principles](akm-core-principles.md).
   `tests/integration/output-baseline.test.ts`.
 - **Discovery chooses, show delivers.** `search` and `curate` return enough
   to pick an asset and its `ref` at every detail level (a registry hit
-  carries `installRef` instead); `show` returns the payload; `--detail agent`
-  results also carry `path` and `editable`. Pinned by
+  carries `installRef` instead); `show` returns the payload; both commands list
+  their matches under `results`, and `curate` at `normal` also carries `path`
+  and `editable`. Pinned by
   `tests/output-shapes-unit.test.ts` and `tests/output-baseline.test.ts`.
 - **Every token earns its place.** Default output is lean: `--detail brief`
   lists only what is needed to choose the next asset, and `normal`, `full`
@@ -268,7 +269,7 @@ Notes:
 - `content` is bounded body text plus TOC headings and parameter metadata; `env`
   and `secret` entries index key names and file names only, and session bodies
   are not indexed
-- registry results live in `registryHits`, never in `hits`
+- registry results live in `registryHits`, never in `results`
 - `--from all` keeps registry results in `registryHits` — they are not
   rank-merged with source hits
 - curate carries search's normalized scope/source/type/belief controls through
@@ -280,7 +281,7 @@ Notes:
 - local search and curate expose the actual execution in `searchMode`:
   `semantic`, intentional/unavailable `keyword`, or `fts-fallback` when a
   ready semantic runtime failed during the query; that degradation also
-  surfaces as one `warnings[]` entry, including in agent shape
+  surfaces as one `warnings[]` entry, including at `normal`
 - usage-event writes are best-effort; a read-only filesystem drops them
   silently and does not change `searchMode`
 

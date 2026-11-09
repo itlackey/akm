@@ -40,7 +40,7 @@ interface FlagValueRule {
 
 const FLAG_VALUES: Record<string, FlagValueRule[]> = {
   "--format": [{ values: ["json", "jsonl", "yaml", "text", "md"] }],
-  "--detail": [{ values: ["brief", "normal", "full", "agent"] }],
+  "--detail": [{ values: ["brief", "normal", "full"] }],
   "--type": [{ values: () => [...placementTypes(), "any"] }],
   "--shell": [{ values: ["bash"] }],
   "--from": [{ paths: ["akm search", "akm curate"], values: ["local", "registry", "all"] }],

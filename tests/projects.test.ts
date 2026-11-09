@@ -222,7 +222,7 @@ describe("curate", () => {
   });
 
   const run = (args: Record<string, unknown>) =>
-    runCurate({ query: "widget", limit: "10", ...args }, { detail: "normal", shape: "human" });
+    runCurate({ query: "widget", limit: "10", ...args }, { detail: "normal" });
 
   test("the directory selects a project: prefer by name, reported in the response", async () => {
     const result = await run({ cwd: work });
@@ -362,7 +362,7 @@ describe("curate", () => {
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout);
     expect(parsed.project.name).toBe("scoped");
-    expect(parsed.hits.map((h: { name: string }) => h.name).sort()).toEqual(["other-note", "plain-note"]);
+    expect(parsed.results.map((h: { name: string }) => h.name).sort()).toEqual(["other-note", "plain-note"]);
     const bad = await runCliCapture(["search", "widget", "--project", "nope"]);
     expect(bad.code).toBe(2);
   });

@@ -189,7 +189,7 @@ describe("config diff", () => {
     expect(parsed.rows).toEqual([]);
   });
 
-  test("diff --detail agent carries rows without a results alias", async () => {
+  test("diff --detail normal carries rows without a results alias", async () => {
     const env = freshEnv();
 
     const outputs = await withEnv(env, async () => {
@@ -198,7 +198,7 @@ describe("config diff", () => {
       fs.writeFileSync(path.join(configDir, "other.json"), JSON.stringify({ semanticSearchMode: "auto" }));
       writeSandboxConfig({ semanticSearchMode: "off" });
 
-      return runCliCapture(["config", "diff", path.join(configDir, "other.json"), "--detail", "agent"]);
+      return runCliCapture(["config", "diff", path.join(configDir, "other.json"), "--detail", "normal"]);
     });
 
     expect(outputs.code).toBe(0);

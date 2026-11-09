@@ -29,7 +29,7 @@ function put(ref: string, fields: Record<string, unknown> = {}, body = "quartz d
   return file;
 }
 function cli(flags: string[] = [], query = "quartz deployment") {
-  return spawnSync("bun", [CLI, "-q", "--detail", "agent", "curate", query, ...flags], {
+  return spawnSync("bun", [CLI, "-q", "--detail", "normal", "curate", query, ...flags], {
     encoding: "utf8",
     env: { ...process.env },
   });
@@ -308,7 +308,7 @@ test("repeated --from searches several bundles, in either spelling, and curate r
     registries: [],
   });
   await akmIndex({ stashDir: storage.stashDir, full: true });
-  for (const detail of ["agent", "full"]) {
+  for (const detail of ["normal", "full"]) {
     const out = spawnSync(
       "bun",
       [CLI, "-q", "--detail", detail, "curate", "quartz deployment", "--from", "one", "--from=two", "--limit", "10"],
@@ -317,7 +317,7 @@ test("repeated --from searches several bundles, in either spelling, and curate r
     expect(out.status).toBe(0);
     const json = JSON.parse(out.stdout);
     expect(json.bundles).toEqual(["one", "two"]);
-    expect(json.items).toHaveLength(2);
+    expect(json.results).toHaveLength(2);
   }
   const result = await akmCurate({ query: "quartz deployment", source: ["one", "two"], limit: 10 });
   expect(refs(result)).toEqual(["one//knowledge/a", "two//knowledge/b"]);
@@ -366,7 +366,7 @@ test("registry/all source and free-form type controls keep CLI/API parity withou
       const out = cli(["--from", source, "--type", type, "--filter", "user=alice"]);
       expect(out.status).toBe(0);
       expectSameJson(await curate("quartz deployment", options), out.stdout);
-      const items = JSON.parse(out.stdout).items;
+      const items = JSON.parse(out.stdout).results;
       expect(items.length).toBe(source === "all" && type === "knowledge" ? 1 : 0);
     }
   }

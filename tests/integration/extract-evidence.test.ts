@@ -160,7 +160,6 @@ for (const type of ["memory", "lesson", "knowledge"] as const) {
     const shown = await akmShowUnified({ ref: accepted.ref });
     expect(shown.evidence).toBe(evidence);
     expect(shown.evidenceSources).toEqual([source]);
-    expect(shapeShowOutput({ ...shown }, "full", "agent").evidence).toBe(evidence);
     expect(shapeShowOutput({ ...shown }, "full").evidence).toBe(evidence);
     expect((await akmShowUnified({ ref: source })).ref).toBe(source);
     expect((await akmShowUnified({ ref: accepted.ref, detail: "brief" })).evidence).toBeUndefined();

@@ -143,7 +143,7 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 async function searchHits(args: string[]): Promise<Hit[]> {
   const res = await runCli(args);
   expect(res.code).toBe(0);
-  return (JSON.parse(res.stdout).hits as Hit[]) ?? [];
+  return (JSON.parse(res.stdout).results as Hit[]) ?? [];
 }
 
 beforeEach(() => {

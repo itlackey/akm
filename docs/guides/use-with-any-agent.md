@@ -51,8 +51,9 @@ akm feedback workflows/deploy-to-prod --positive --reason "Completed without iss
 
 **Get refs from search.** Agents should call `akm search` or `akm curate` to
 discover refs rather than guess them. Both return a `ref` at the default detail
-level; pass it to `akm show`. `--detail agent` additionally returns each hit's
-`path` and `editable` flag, for agents that read or edit the file directly. For
+level; pass it to `akm show`. Both list their matches under `results`;
+`akm curate --detail normal` also returns each result's `path` and `editable`
+flag, for agents that read or edit the file directly. For
 a long document, `akm show <ref> --detail brief` returns its outline (`toc`, no
 body), and `akm show <ref>#<slug>` then loads only the sections the task needs.
 

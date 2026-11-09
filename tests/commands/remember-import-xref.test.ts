@@ -275,7 +275,7 @@ describe("remember --xref", () => {
     // xrefs into the FTS hints — the conventions' provenance channel.
     const search = await runCliCapture(["search", "oauth-refresh-dance", "--type", "memory"]);
     expect(search.code).toBe(0);
-    const hits = (JSON.parse(search.stdout).hits ?? []) as Array<{ ref: string }>;
+    const hits = (JSON.parse(search.stdout).results ?? []) as Array<{ ref: string }>;
     expect(hits.map((h) => conceptId(h.ref))).toContain(conceptId(written.ref));
   });
 });

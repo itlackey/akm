@@ -2,7 +2,7 @@
 
 The CLI is called `akm` (Agent Knowledge Manager). Commands default to structured
 JSON at `--detail brief`. Use `--format json|jsonl|yaml|text|md`,
-`--detail brief|normal|full|agent` when you want a
+`--detail brief|normal|full` when you want a
 different presentation. Errors include `error` and `hint` fields.
 
 This page is authoritative for the current CLI. For per-release behavior
@@ -19,13 +19,13 @@ These flags are accepted by all commands:
 | --- | --- | --- | --- |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md` | `json` | Output format |
 | `--output` | path | _(none)_ | Write rendered output to a file instead of stdout (all formats except `jsonl`) |
-| `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output **verbosity** level, or the `agent` projection |
+| `--detail` | `brief`, `normal`, `full` | `brief` | Output **verbosity** level. An unknown value warns once and uses `normal` |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
 | `--verbose` | boolean | `false` | Enable verbose diagnostics gated behind `isVerbose()`. Also prints the stack trace on an unexpected internal error. Parsed globally before any subcommand runs. The `AKM_VERBOSE` env var honours the same setting and wins when both are present (see `src/core/warn.ts`). |
 
-`--detail brief|normal|full` controls **how much** is returned. `--detail agent`
-selects the token-lean action view on `search`, `curate` and `show`; every other
-command ignores it.
+`--detail brief|normal|full` controls **how much** is returned. A value other than
+these three (the retired `agent` included) warns once on stderr and uses `normal`.
+`search` and `curate` return their list under one key, `results`.
 
 ### `--format jsonl`
 
@@ -65,18 +65,14 @@ Scripted `setup` modes emit a normal format-aware result. Interactive `setup`
 is a terminal UI and emits no result document. `agent` leaves inherited child
 streams raw, then formats its final `agent-result` envelope normally.
 
-### `--detail agent`
+### Local access fields
 
-Strips output to only action-relevant fields:
-
-- **search**: keeps `name`, canonical `ref`, absolute `path`, `editable`, `type`, `description`, `action`, `score`, and optional `estimatedTokens`/`keys`
-- **show**: adds absolute `path`, `editable`, and the existing type-specific action/content fields on top of the canonical `ref` that every `show` shape returns (`ref` is not agent-exclusive; every `show` response carries it)
-- **curate**: local items keep canonical `ref`, absolute `path`, `editable`, and their follow-up fields
-
-For local materialized assets, `editHint` is added only when `editable` is
-`false`. It is supplemental guidance and does not replace the normal show, run,
-or use `action` (or curate `followUp`). Registry-only results have no local
-`path`, `editable`, or `editHint`.
+For local materialized assets, `show` carries the absolute `path` and `editable` at
+every level, and `curate` at `normal` and `full`. `editHint` is added only when
+`editable` is `false` (`show`: at `full`; `curate`: at `normal` and `full`). It is
+supplemental guidance and does not replace the normal show, run, or use `action`
+(or curate `followUp`). Registry-only results have no local `path`, `editable`, or
+`editHint`.
 
 ## Exit Codes and Error Envelope
 
@@ -643,7 +639,7 @@ ran, `keyword` when keyword-only search was intentional or semantic search was
 not ready, and `fts-fallback` when a ready semantic backend failed during this
 query. The last case also adds one sanitized, endpoint-naming entry to
 `warnings`; it never repeats the provider/runtime error text. Both fields are
-preserved by `--detail agent` so machine consumers can lower their confidence
+preserved at every `--detail` level so machine consumers can lower their confidence
 instead of treating keyword fallback as healthy semantic ranking.
 
 Ranking fuses two candidate lists by reciprocal rank (k = 60, equal weights):
@@ -688,7 +684,7 @@ it.
 | `--include-sessions` | flag | `false` | Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
 | `--by-usage` | flag | `false` | List instead of search: the eligible assets that were shown (`akm show`) in the [project](#projects) in force, most shown first, ties by ref. See [Usage list](#usage-list-by-usage) |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md` | `json` | Output format |
-| `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output verbosity level, or the `agent` projection |
+| `--detail` | `brief`, `normal`, `full` | `brief` | Output verbosity level. An unknown value warns once and uses `normal` |
 
 `--filter` flags AND-join: every supplied key must match the entry for it
 to appear in the result set. Entries without a supplied key are excluded as
@@ -707,7 +703,7 @@ Local paths are absolute materialized `file_path` values. Key fields by
 availability:
 
 - **`ref`** -- The asset handle to pass to `akm show` (for example
-  `team//scripts/deploy.sh`); present at `brief`, `full`, and `agent` for local
+  `team//scripts/deploy.sh`); present at every level for local
   hits
 - **`name`** -- The asset's filename or identifier; present at all levels
 - **`origin`** -- The source bundle (e.g. `npm:@scope/pkg`), present only for
@@ -717,8 +713,8 @@ availability:
   it (`lexical rank 3`, `vector rank 12`); surfaced at `full`
 
 The default brief shape is intentionally small. The exact field set per
-detail level (and for `--detail agent`) is authoritative in
-`src/output/shapes/helpers.ts` (`shapeSearchHit` / `shapeSearchHitForAgent`),
+detail level is authoritative in
+`src/output/shapes/helpers.ts` (`shapeSearchHit`),
 assembled into the shape registry by the `src/output/shapes.ts` barrel:
 
 | Level | Local bundle hits | Registry hits |
@@ -726,7 +722,6 @@ assembled into the shape registry by the `src/output/shapes.ts` barrel:
 | `brief` (default) | `type`, `name`, `ref`, `action`, `estimatedTokens` | `name`, `installRef`, `score` |
 | `normal` | `type`, `name`, `ref`, `description`, `action`, `score`, `estimatedTokens`, optional `warnings`/`quality`/`observed`/`updated`/`keys` | `name`, `description`, `action`, `installRef`, `score`, optional `warnings` |
 | `full` | full hit object (includes `ref`, the durable `itemRef` (`bundle//conceptId`), `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, optional `observed`/`created`/`updated`/`expires`, timings, bundle metadata) | full hit object |
-| `agent` | `name`, `ref`, `type`, `path`, `editable`, conditional `editHint`, `description`, `action`, `score`, optional `estimatedTokens`/`keys`/`observed`/`updated` | no local access fields |
 
 There is no registry `curated` boolean. Renderers surface an optional
 `warnings: string[]` field on hits when a provider has non-fatal issues to
@@ -782,7 +777,11 @@ kinds `akm show` lists under `links`), what it links to before what links to
 it, skipping assets curate already selected. Curate includes direct follow-up
 commands such as `akm show <ref>` or `akm bundle add <ref>` so you can
 immediately inspect or install what it found.
-`--detail` (including `agent`) works on curate output.
+`--detail` works on curate output; the list is `results`, as on search. `normal` keeps
+`source`, `type`, `name`, `ref`, `path`, `editable`, `id`, a capped `description`,
+`supportRefs`, `beliefState`, `followUp`, `reason` and `score` (plus `editHint` for
+read-only items); `brief` keeps the refs and `followUp`; `full` keeps everything,
+including the `preview` and run details.
 Curate preserves the underlying search's `searchMode` and warnings.
 Scope, named source, type and belief controls also constrain derived surfaces,
 support refs and packed content; an empty eligible pool stays empty. Missing or
@@ -793,7 +792,7 @@ output). Direct `show <ref>` remains available for deliberate inspection.
 Ordinary knowledge without a belief label stays usable. Belief labels are
 metadata, not evidence of factual truth. Existing prose within an eligible
 asset is preserved; filters select assets rather than fact-checking their body.
-Agent-shaped local items include `ref`, `path`, and `editable`, plus `editHint`
+Local items at `normal` include `ref`, `path`, and `editable`, plus `editHint`
 only for read-only items. Their `followUp` remains `akm show <ref>` rather than
 being replaced by clone guidance.
 Use `--type workflow` when you want curated step-by-step procedures instead of
@@ -859,20 +858,18 @@ appear in `akm search`. See [Concepts](../guides/concepts.md) for the full
 convention.
 
 The default `show` JSON includes the asset body when applicable. Canonical
-`ref` is always present, at every `--detail` level, `agent` included. Absolute `path` and `editable` are
+`ref` is always present, at every `--detail` level. Absolute `path` and `editable` are
 always present too. None of `ref`/`path`/
 `editable` are gated behind `--detail full`. Use `--detail brief` for a
 reduced metadata-first view without `content`/`template`/`prompt`;
 `--detail full` adds verbose extras such as `schemaVersion` and, when
-`editable` is `false`, `editHint`; `--detail agent` strips non-action metadata
-(e.g. `origin`, `tags`) down to the action-relevant field set while still
-including `ref`/`path`/`editable`, plus the optional fragment metadata
+`editable` is `false`, `editHint`, plus the optional fragment metadata
 described below.
 
 `toc` is the outline of a whole Markdown document (knowledge, and every other
 Markdown asset whose `#fragment` selects a section): one
 `{ "level", "text", "slug", "startLine" }` entry per heading, in order, at every
-`--detail` level, `brief` and `agent` included. `slug` is exactly what
+`--detail` level, `brief` included. `slug` is exactly what
 `<ref>#<slug>` selects, duplicate headings included (`notes`, `notes-1`, ...),
 and `startLine` is the heading's 1-based line in the file. It is read from the
 same file the section is cut from, so it never lists a slug the show cannot

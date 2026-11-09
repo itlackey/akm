@@ -633,7 +633,7 @@ describe("reads", () => {
 
     // ...and the same refs `akm search` prints.
     const cli = await runCliCapture(["search", "deploy", "--limit", "10", "--format", "json"]);
-    const cliRefs = (JSON.parse(cli.stdout) as { hits: Array<{ ref: string }> }).hits.map((h) => h.ref);
+    const cliRefs = (JSON.parse(cli.stdout) as { results: Array<{ ref: string }> }).results.map((h) => h.ref);
     expect(viaOp.hits.map((h: { ref: string }) => h.ref)).toEqual(cliRefs);
 
     // A blank scope value is omitted, not "without the key".

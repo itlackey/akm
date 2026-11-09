@@ -79,12 +79,12 @@ describe("output baseline", () => {
     );
 
     const output = await runCli(stashDir, ["search", "architect", "--format=json"]);
-    const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
+    const json = JSON.parse(output) as { results: Array<Record<string, unknown>> };
 
-    // hits is always present; warnings may appear when semantic search is pending
-    expect(Object.keys(json)).toContain("hits");
+    // results is always present; warnings may appear when semantic search is pending
+    expect(Object.keys(json)).toContain("results");
     // REC-03: ref is now included at brief detail so agents can run `akm show <ref>`
-    expect(Object.keys(json.hits[0] ?? {}).sort()).toEqual(["action", "estimatedTokens", "name", "ref", "type"]);
+    expect(Object.keys(json.results[0] ?? {}).sort()).toEqual(["action", "estimatedTokens", "name", "ref", "type"]);
   });
 
   test("search normal detail includes description capped at 250 characters", async () => {
@@ -97,12 +97,12 @@ describe("output baseline", () => {
     );
 
     const output = await runCli(stashDir, ["search", "architect", "--format=json", "--detail=normal"]);
-    const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
+    const json = JSON.parse(output) as { results: Array<Record<string, unknown>> };
 
-    expect(json.hits[0]?.score).toBeDefined();
-    expect(typeof json.hits[0]?.description).toBe("string");
-    expect(String(json.hits[0]?.description).length).toBeLessThanOrEqual(253); // 250 + "..."
-    expect(typeof json.hits[0]?.ref).toBe("string");
+    expect(json.results[0]?.score).toBeDefined();
+    expect(typeof json.results[0]?.description).toBe("string");
+    expect(String(json.results[0]?.description).length).toBeLessThanOrEqual(253); // 250 + "..."
+    expect(typeof json.results[0]?.ref).toBe("string");
   });
 
   test("search text output includes score for local hits at normal detail", async () => {
@@ -126,8 +126,7 @@ describe("output baseline", () => {
     const json = JSON.parse(output) as Record<string, unknown>;
 
     // QA #7: path and editable are now always projected in JSON shape.
-    // R-020: canonical `ref` is now always projected too, not just under
-    // `--detail agent` — every show shape (human/summary/agent) carries it.
+    // R-020: canonical `ref` is now always projected too, at every detail level.
     expect(Object.keys(json).sort()).toEqual([
       "action",
       "description",

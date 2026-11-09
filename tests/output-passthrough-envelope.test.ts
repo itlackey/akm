@@ -16,12 +16,12 @@ import { describe, expect, it } from "bun:test";
 import { shapeForCommand } from "../src/output/shapes";
 
 describe("passthrough envelope stamping (#484)", () => {
-  it("adds schemaVersion + shape to curate responses", () => {
+  it("adds schemaVersion + shape to curate responses (results key)", () => {
     const result = { query: "q", summary: "Selected 1", items: [{ source: "stash", ref: "skills/foo" }] };
     const shaped = shapeForCommand("curate", result, "normal") as Record<string, unknown>;
     expect(shaped.shape).toBe("curate");
     expect(shaped.schemaVersion).toBe(1);
-    expect(Array.isArray(shaped.items)).toBe(true);
+    expect(Array.isArray(shaped.results)).toBe(true);
   });
 
   it("adds schemaVersion + shape to clone (passthrough)", () => {

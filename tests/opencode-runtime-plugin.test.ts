@@ -107,7 +107,7 @@ describe.skipIf(process.platform === "win32")("akm's read tools", () => {
     ],
     ["akm_curate", { query: "deploy a service" }, ["curate", "deploy a service", "--project", "none"]],
     ["akm_show", { ref: "knowledge/deploy#Rollback", type: "ignored" }, ["show", "knowledge/deploy#Rollback"]],
-  ])("%s calls akm with the agent detail and JSON, and returns what it printed", async (name, input, args) => {
+  ])("%s calls akm with the normal detail and JSON, and returns what it printed", async (name, input, args) => {
     const { tools } = await load();
     const akm = installAkm();
 
@@ -116,7 +116,7 @@ describe.skipIf(process.platform === "win32")("akm's read tools", () => {
     );
 
     expect(JSON.parse(result?.content as string)).toEqual({
-      argv: [...args, "--detail", "agent", "--format", "json"],
+      argv: [...args, "--detail", "normal", "--format", "json"],
       // The run's environment is the call's: its provenance reaches akm.
       source: "improve",
     });
@@ -151,7 +151,7 @@ describe.skipIf(process.platform === "win32")("akm's read tools", () => {
     );
 
     expect(JSON.parse(result?.content as string)).toEqual({
-      argv: ["show", "knowledge/deploy", "--detail", "agent", "--format", "json"],
+      argv: ["show", "knowledge/deploy", "--detail", "normal", "--format", "json"],
       source: null,
     });
   });

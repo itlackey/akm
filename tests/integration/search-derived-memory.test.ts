@@ -326,7 +326,7 @@ for (const fixture of fallbackFixtures) {
       expect(getSearchHitAttribution(curated)?.memoryInference?.surfaceFields ?? []).toEqual(
         fixture.fields.includes("description") ? ["description"] : [],
       );
-      for (const projection of ["brief", "normal", "agent", "full"] as const) {
+      for (const projection of ["brief", "normal", "full"] as const) {
         const visible =
           projection === "full"
             ? fixture.fields.length > 0

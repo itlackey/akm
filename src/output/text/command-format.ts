@@ -246,7 +246,7 @@ export function formatEventLine(event: Record<string, unknown>): string {
 }
 
 export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLevel): string {
-  const hits = (r.hits as Record<string, unknown>[]) ?? [];
+  const hits = (r.results as Record<string, unknown>[]) ?? [];
   const registryHits = (r.registryHits as Record<string, unknown>[]) ?? [];
   const allHits = [...hits, ...registryHits];
 
@@ -329,7 +329,7 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
 export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLevel): string {
   const query = typeof r.query === "string" ? r.query : "";
   const summary = typeof r.summary === "string" ? r.summary : "";
-  const items = Array.isArray(r.items) ? (r.items as Record<string, unknown>[]) : [];
+  const items = Array.isArray(r.results) ? (r.results as Record<string, unknown>[]) : [];
 
   const lines: string[] = [`Curated results for "${query}"`];
   if (summary) lines.push(summary);

@@ -110,10 +110,10 @@ describe("issue #191 — memory search misses freshly-added memory", () => {
     const searched = await runCli(["search", phrase, "--format", "json", "--detail", "full"], env);
     expect(searched.status).toBe(0);
     const json = JSON.parse(searched.stdout) as {
-      hits: Array<{ type: string; name: string; score?: number }>;
+      results: Array<{ type: string; name: string; score?: number }>;
     };
-    expect(json.hits[0]?.type).toBe("memory");
-    expect(json.hits[0]?.score ?? 0).toBeGreaterThan(0);
+    expect(json.results[0]?.type).toBe("memory");
+    expect(json.results[0]?.score ?? 0).toBeGreaterThan(0);
   });
 });
 
