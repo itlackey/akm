@@ -5,8 +5,8 @@
 /**
  * Small config and CLI fixes: `bundles.*.path` resolution, strict integer
  * flags, the shared duration grammar, `-showSimilar` in help, the
- * `--auto-accept` gone hint, empty `GITHUB_TOKEN`, an unusable
- * `AKM_REGISTRY_URL`, and an accepted `$schema`.
+ * `--auto-accept` gone hint, empty `GITHUB_TOKEN`
+ * and an accepted `$schema`.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -19,7 +19,6 @@ import { main } from "../src/cli";
 import { parseIntegerFlag } from "../src/cli/parse-args";
 import { assertKnownFlags, type FlagScanCommand } from "../src/cli/unknown-flags";
 import { parseSinceArg, usableDefaultSince } from "../src/commands/improve/extract";
-import { resolveRegistries, searchRegistry } from "../src/commands/read/registry-search";
 import { parseWorkflowParameterFlags } from "../src/commands/workflow-cli";
 import { resolveConfiguredBundlePath, resolveStashDir } from "../src/core/common";
 import { parseAndValidateConfigText } from "../src/core/config/config";
@@ -41,25 +40,6 @@ function captureWarnings<T>(run: () => T): { value: T; warnings: string[] } {
   try {
     return { value: run(), warnings };
   } finally {
-    _setWarnSinkForTests(undefined);
-  }
-}
-
-async function withEnv<T>(env: Record<string, string>, run: () => Promise<T> | T) {
-  const warnings: string[] = [];
-  _resetWarnOnceForTests();
-  _setWarnSinkForTests((level, args) => {
-    if (level === "warn") warnings.push(args.map(String).join(" "));
-  });
-  const saved = Object.keys(env).map((k) => [k, process.env[k]] as const);
-  Object.assign(process.env, env);
-  try {
-    return { value: await run(), warnings };
-  } finally {
-    for (const [k, v] of saved) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
     _setWarnSinkForTests(undefined);
   }
 }
@@ -237,44 +217,6 @@ describe("GITHUB_TOKEN set but empty", () => {
       string
     >;
     expect(headers.Authorization).toBe("Bearer ghs_from_gh_token");
-  });
-});
-
-describe("AKM_REGISTRY_URL with no usable entry", () => {
-  test("falls back to the configured registries instead of none", () => {
-    const configured = [{ url: "https://registry.example.test/index.json", name: "mine" }];
-    const { value } = captureWarnings(() =>
-      withEnvSync({ AKM_REGISTRY_URL: "not-a-url, ftp://x.example.test" }, () => resolveRegistries(configured)),
-    );
-    expect(value).toEqual(configured);
-  });
-
-  test("a usable entry still outranks the configured list", () => {
-    const configured = [{ url: "https://registry.example.test/index.json", name: "mine" }];
-    const value = withEnvSync({ AKM_REGISTRY_URL: "https://ci.example.test/index.json" }, () =>
-      resolveRegistries(configured),
-    );
-    expect(value).toEqual([{ url: "https://ci.example.test/index.json" }]);
-  });
-});
-
-describe("AKM_REGISTRY_URL in searchRegistry", () => {
-  const configured = [{ url: "https://registry.example.test/index.json", name: "mine", provider: "no-such-provider" }];
-
-  test("an unusable value falls back to the registries the caller passed", async () => {
-    const { value } = await withEnv({ AKM_REGISTRY_URL: "not-a-url" }, () =>
-      searchRegistry("anything", { registries: configured }),
-    );
-    expect(value.warnings.join("\n")).toContain("no-such-provider");
-  });
-
-  test("each env warning prints once, however many readers see the variable", async () => {
-    const { warnings } = await withEnv({ AKM_REGISTRY_URL: "not-a-url" }, async () => {
-      resolveRegistries(configured);
-      await searchRegistry("anything", { registries: configured });
-      resolveRegistries(configured);
-    });
-    expect(warnings.filter((w) => w.includes("AKM_REGISTRY_URL"))).toHaveLength(1);
   });
 });
 

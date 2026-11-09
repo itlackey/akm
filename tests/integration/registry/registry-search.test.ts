@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { searchRegistry } from "../../../src/commands/read/registry-search";
-import { akmSearch } from "../../../src/commands/read/search";
-import { saveConfig } from "../../../src/core/config/config";
 import type { RegistryIndex } from "../../../src/registry/providers/static-index";
-import { type Cleanup, sandboxXdgCacheHome, sandboxXdgDataHome, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type Cleanup, sandboxXdgCacheHome, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
 
@@ -100,8 +98,6 @@ function serveError(status: number): { url: string; close: () => void } {
   };
 }
 
-const originalRegistryUrl = process.env.AKM_REGISTRY_URL;
-
 let envCleanup: Cleanup = () => {};
 
 beforeEach(() => {
@@ -116,17 +112,11 @@ beforeEach(() => {
   // making queries like "openkit" return zero hits and flaking hits[0] reads.
   const dataResult = sandboxXdgDataHome(cacheResult.cleanup);
   envCleanup = dataResult.cleanup;
-  delete process.env.AKM_REGISTRY_URL;
 });
 
 afterEach(() => {
   envCleanup();
   envCleanup = () => {};
-  if (originalRegistryUrl === undefined) {
-    delete process.env.AKM_REGISTRY_URL;
-  } else {
-    process.env.AKM_REGISTRY_URL = originalRegistryUrl;
-  }
 });
 
 // ── Empty / blank queries ───────────────────────────────────────────────────
@@ -471,19 +461,18 @@ describe("hit shape", () => {
 
 // ── Environment variable override ───────────────────────────────────────────
 
-describe("AKM_REGISTRY_URL env var", () => {
-  test("uses env var when no explicit URLs provided", async () => {
+describe("registries passed to searchRegistry", () => {
+  test("searches the registries it is given", async () => {
     const srv = serveIndex(FIXTURE_INDEX);
-    process.env.AKM_REGISTRY_URL = srv.url;
     try {
-      const result = await searchRegistry("azure");
+      const result = await searchRegistry("azure", { registries: [{ url: srv.url }] });
       expect(result.hits.length).toBeGreaterThan(0);
     } finally {
       srv.close();
     }
   });
 
-  test("supports comma-separated URLs in env var", async () => {
+  test("searches several registries and merges the hits", async () => {
     const srv1 = serveIndex(FIXTURE_INDEX);
     const srv2 = serveIndex({
       version: 3,
@@ -498,9 +487,8 @@ describe("AKM_REGISTRY_URL env var", () => {
         },
       ],
     });
-    process.env.AKM_REGISTRY_URL = `${srv1.url},${srv2.url}`;
     try {
-      const result = await searchRegistry("azure");
+      const result = await searchRegistry("azure", { registries: [{ url: srv1.url }, { url: srv2.url }] });
       const ids = result.hits.map((h) => h.id);
       expect(ids).toContain("github:someone/azure-ops-stash");
       expect(ids).toContain("npm:extra-stash");
@@ -510,8 +498,7 @@ describe("AKM_REGISTRY_URL env var", () => {
     }
   });
 
-  // Problem A: env-based override must preserve provider type
-  test("provider::url syntax routes to the declared provider type", async () => {
+  test("a registry entry routes to its declared provider type", async () => {
     // Stand up a skills-sh-shaped endpoint
     const skillsSrv = Bun.serve({
       port: 0,
@@ -524,9 +511,10 @@ describe("AKM_REGISTRY_URL env var", () => {
         );
       },
     });
-    process.env.AKM_REGISTRY_URL = `skills-sh::http://localhost:${skillsSrv.port}`;
     try {
-      const result = await searchRegistry("my-skill");
+      const result = await searchRegistry("my-skill", {
+        registries: [{ url: `http://localhost:${skillsSrv.port}`, provider: "skills-sh" }],
+      });
       // skills-sh provider should have handled this — hits use skills-sh id format
       expect(result.hits.length).toBeGreaterThan(0);
       expect(result.hits[0]!.id).toBe("skills-sh:org/tools/my-skill");
@@ -537,11 +525,10 @@ describe("AKM_REGISTRY_URL env var", () => {
     }
   });
 
-  test("bare URL in env var defaults to static-index provider", async () => {
+  test("an entry with no provider defaults to static-index", async () => {
     const srv = serveIndex(FIXTURE_INDEX);
-    process.env.AKM_REGISTRY_URL = srv.url;
     try {
-      const result = await searchRegistry("openkit");
+      const result = await searchRegistry("openkit", { registries: [{ url: srv.url }] });
       expect(result.hits.length).toBeGreaterThan(0);
       // static-index uses the stash id directly
       expect(result.hits[0]!.id).toBe("npm:@itlackey/openkit");
@@ -550,13 +537,7 @@ describe("AKM_REGISTRY_URL env var", () => {
     }
   });
 
-  // "unknown provider type in env var produces warning, not crash" moved into
-  // the parameterized "unknown provider type via %s" test in the "provider
-  // routing" describe below (DUP-10): it asserted the same three things
-  // (empty hits, exactly one warning, warning names the bad provider) as the
-  // options.registries path, just reached through AKM_REGISTRY_URL instead.
-
-  test("mixed provider types in comma-separated env var", async () => {
+  test("mixed provider types in one registry list", async () => {
     const staticSrv = serveIndex({
       version: 3,
       updatedAt: "2026-01-01T00:00:00Z",
@@ -581,9 +562,10 @@ describe("AKM_REGISTRY_URL env var", () => {
         );
       },
     });
-    process.env.AKM_REGISTRY_URL = `${staticSrv.url},skills-sh::http://localhost:${skillsSrv.port}`;
     try {
-      const result = await searchRegistry("env");
+      const result = await searchRegistry("env", {
+        registries: [{ url: staticSrv.url }, { url: `http://localhost:${skillsSrv.port}`, provider: "skills-sh" }],
+      });
       const ids = result.hits.map((h) => h.id);
       expect(ids).toContain("npm:env-static-stash");
       expect(ids).toContain("skills-sh:user/tools/env-skill");
@@ -591,65 +573,6 @@ describe("AKM_REGISTRY_URL env var", () => {
     } finally {
       staticSrv.close();
       skillsSrv.stop(true);
-    }
-  });
-});
-
-// The block above calls searchRegistry() without a list, which never reaches the
-// path `akm search` takes: it passes `config.registries`. These cover that path.
-describe("AKM_REGISTRY_URL outranks the registry list the caller passes", () => {
-  /** An index with one stash whose only tag is "mirror", so the query "mirror" finds it. */
-  function mirrorIndex(name: string): RegistryIndex {
-    return {
-      version: 3,
-      updatedAt: "2026-01-01T00:00:00Z",
-      stashes: [{ id: `npm:${name}`, name, ref: name, source: "npm", tags: ["mirror"] }],
-    };
-  }
-
-  test("searchRegistry searches the override and never the explicit list", async () => {
-    const configured = serveIndex(mirrorIndex("configured-stash"));
-    const override = serveIndex(mirrorIndex("override-stash"));
-    process.env.AKM_REGISTRY_URL = override.url;
-    try {
-      const result = await searchRegistry("mirror", { registries: [{ url: configured.url, name: "configured" }] });
-      expect(result.hits.map((h) => h.id)).toEqual(["npm:override-stash"]);
-      expect(override.calls()).toBe(1);
-      expect(configured.calls()).toBe(0);
-    } finally {
-      configured.close();
-      override.close();
-    }
-  });
-
-  test("akmSearch --from registry searches the override, not config.registries", async () => {
-    const configured = serveIndex(mirrorIndex("configured-stash"));
-    const override = serveIndex(mirrorIndex("override-stash"));
-    const storage = withIsolatedAkmStorage({ AKM_REGISTRY_URL: override.url });
-    try {
-      saveConfig({ semanticSearchMode: "off", registries: [{ url: configured.url, name: "configured" }] });
-      const result = await akmSearch({ query: "mirror", source: "registry" });
-      expect((result.registryHits ?? []).map((h) => h.id)).toEqual(["npm:override-stash"]);
-      expect(override.calls()).toBe(1);
-      expect(configured.calls()).toBe(0);
-    } finally {
-      storage.cleanup();
-      configured.close();
-      override.close();
-    }
-  });
-
-  test("without the override, akmSearch --from registry searches config.registries", async () => {
-    const configured = serveIndex(mirrorIndex("configured-stash"));
-    const storage = withIsolatedAkmStorage({ AKM_REGISTRY_URL: undefined });
-    try {
-      saveConfig({ semanticSearchMode: "off", registries: [{ url: configured.url, name: "configured" }] });
-      const result = await akmSearch({ query: "mirror", source: "registry" });
-      expect((result.registryHits ?? []).map((h) => h.id)).toEqual(["npm:configured-stash"]);
-      expect(configured.calls()).toBe(1);
-    } finally {
-      storage.cleanup();
-      configured.close();
     }
   });
 });
@@ -823,14 +746,6 @@ describe("provider routing", () => {
           registries: [{ url: "http://example.com", provider: "nonexistent-type" }],
         }),
       "nonexistent-type",
-    ],
-    [
-      "AKM_REGISTRY_URL env var",
-      async () => {
-        process.env.AKM_REGISTRY_URL = `no-such-provider::http://127.0.0.1:1/index.json`;
-        return searchRegistry("anything");
-      },
-      "no-such-provider",
     ],
   ] as const)("unknown provider type via %s produces warning, not crash", async (_label, run, needle) => {
     const result = await run();

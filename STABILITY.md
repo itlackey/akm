@@ -31,7 +31,7 @@ replaced by `connections` and `harnesses`. akm reads only the new shape: a confi
 in the old form loads with no connections or harnesses from it and one warning
 that names `akm migrate apply`, which converts it (`akm upgrade` runs it).
 
-`--engine <name>` (on `agent`, `command run`, `task add`, `proposal new` and
+`--engine <name>` (on `agent`, `command`, `task add`, `proposal new` and
 `proposal extract`) and `--require-engines` (on `improve`) are removed: they are
 unknown flags (exit 2). Change a script to `--connection <name>` or `--harness
 <name>`, and `--model <alias|name>`. `engine:` in an asset is not read either: a
@@ -136,7 +136,7 @@ covers beyond the table.
 | `akm feedback` | Stable | |
 | `akm log` | Evolving | |
 | `akm agent` | Evolving | |
-| `akm command run` | Evolving | Runs stored command templates through the same agent dispatch as `akm agent`. |
+| `akm command` | Evolving | Runs stored command templates through the same agent dispatch as `akm agent`. |
 | `akm models` | Evolving | The alias picks of a connection, then the models its endpoint lists, and `set` to change one. |
 | `akm lint` | Evolving | |
 | `akm improve` | Evolving | Review-first by default; mutating lanes require `experimental.improveAutonomy` — see below. |
@@ -360,7 +360,7 @@ CHANGELOG with a migration note.
   `log.md` / `raw/` / `pages/` and its ingest flow); wiki pages are addressed
   as ordinary concepts inside their bundle. Adapter behavior and page
   conventions are still iterating.
-- **Agent dispatch** — `akm agent` and `akm command run`. Supported
+- **Agent dispatch** — `akm agent` and `akm command`. Supported
   harnesses: `claude`, `codex`, `opencode` (through `opencode run`, for OpenCode 2
   and for the legacy OpenCode 1, which keeps working with no removal date),
   `copilot`, `pi`, `gemini`, `aider`, `amazonq` and `openhands`. Every harness is Evolving: a harness is a thin shell that turns a
@@ -523,8 +523,7 @@ on them.
 | Variable | Purpose |
 | --- | --- |
 | `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | Filesystem layout overrides |
-| `AKM_VERBOSE`, `AKM_DEBUG` | Diagnostics |
-| `AKM_REGISTRY_URL` | Comma-separated registry URL override; replaces the configured registries in every registry search akm performs (`akm registry list` and `akm info` still show the configured list) |
+| `AKM_VERBOSE` | Diagnostics |
 | `AKM_NPM_REGISTRY` | npm mirror base URL; replaces `registry.npmjs.org` for package lookups |
 | `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode (network filesystems) |
 | `AKM_INSTALL_DIR` | Install-script prefix (read by `install.sh` and `install.ps1`, not by akm itself) |

@@ -95,16 +95,7 @@ beforeEach(() => {
   // previous test's cached index (observed: a v2 query returning a stale v1
   // index — duplicate hits). A per-test AKM_DATA_DIR keeps the cache empty.
   const dataResult = sandboxEnvDir("akm-registry-v2-data", "AKM_DATA_DIR", cacheResult.cleanup);
-  const originalRegistryUrl = process.env.AKM_REGISTRY_URL;
-  delete process.env.AKM_REGISTRY_URL;
-  envCleanup = () => {
-    dataResult.cleanup();
-    if (originalRegistryUrl === undefined) {
-      delete process.env.AKM_REGISTRY_URL;
-    } else {
-      process.env.AKM_REGISTRY_URL = originalRegistryUrl;
-    }
-  };
+  envCleanup = dataResult.cleanup;
 });
 
 afterEach(() => {

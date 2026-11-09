@@ -567,7 +567,7 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
   // removed entirely.
   // Groups with a read-only `list` (config, bundle, env, secret, proposal, registry,
   // workflow) run it instead; see the bare-listing test below.
-  for (const group of ["migrate", "task", "command"]) {
+  for (const group of ["migrate", "task"]) {
     test(`bare akm ${group} emits the canonical usage envelope and exits 2`, () => {
       const { status, stderr } = spawnCli([group], { cwd: repoRoot });
       expect(status).toBe(2);
@@ -577,6 +577,14 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
       expect(parsed.error).toContain(`\`akm ${group}\` requires a subcommand`);
     });
   }
+
+  test("bare akm command is a leaf: it asks for the ref and exits 2", () => {
+    const { status, stderr } = spawnCli(["command"], { cwd: repoRoot });
+    expect(status).toBe(2);
+    const parsed = JSON.parse(stderr.trim());
+    expect(parsed.code).toBe("MISSING_REQUIRED_ARGUMENT");
+    expect(parsed.error).toContain("REF");
+  });
 
   for (const group of ["config", "bundle", "env", "secret", "proposal", "registry", "workflow"]) {
     test(`bare akm ${group} runs its list and exits 0`, () => {
