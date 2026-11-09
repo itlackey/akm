@@ -300,13 +300,6 @@ function isValidDirectory(dir: string): boolean {
 }
 
 /**
- * Read the primary stash path directly from config.json without pulling in the
- * full config module, to avoid circular dependencies.
- *
- * Reads only the current `bundles`/`defaultBundle` shape. Unsupported older
- * keys are never interpreted as a second config architecture.
- */
-/**
  * A configured bundle `path` as a directory: `~` or `~/...` expands to the home
  * folder; a relative path means the folder of the config file that holds it, never
  * the cwd. `undefined` when it cannot be placed: `~user/...`, or a relative path
@@ -321,6 +314,13 @@ export function resolveConfiguredBundlePath(configured: string, configFilePath?:
   return configFilePath === undefined ? undefined : path.resolve(path.dirname(configFilePath), configured);
 }
 
+/**
+ * Read the primary stash path directly from config.json without pulling in the
+ * full config module, to avoid circular dependencies.
+ *
+ * Reads only the current `bundles`/`defaultBundle` shape. Unsupported older
+ * keys are never interpreted as a second config architecture.
+ */
 function readStashDirFromConfig(): string | undefined {
   try {
     const configPath = getConfigPath();
