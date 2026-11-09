@@ -10,9 +10,7 @@
  *
  * A key is stored for one endpoint and is read for that endpoint alone: the
  * entry records the endpoint it was stored for, and a block whose endpoint is
- * now another gets no key, with a word saying so. Only the connections this
- * host's own config file defines have a stored key: one that only an `extends`
- * base defines gets none, whatever the store holds under its name. A connection's name and a
+ * now another gets no key, with a word saying so. A connection's name and a
  * service's slot are different namespaces, so a connection called `embedding`
  * and the embedding service hold different keys. A block whose `apiKey` is a
  * `$VAR` reference reads that variable and never touches this file. The bundle's
@@ -27,7 +25,6 @@ import { ConfigError } from "../errors";
 import { getConfigDir } from "../paths";
 import { collectSensitiveValues, redactUrlCredentials } from "../redaction";
 import { warnOnce } from "../warn";
-import { isInheritedConnection } from "./config";
 import { copyToConfigBackups } from "./config-io";
 import type { AkmConfig } from "./config-types";
 import { envReferenceName, isEnvReference } from "./schema/primitives";
@@ -133,14 +130,8 @@ export function storedCredential(slot: CredentialSlot): StoredCredential | undef
 /**
  * The key stored for `slot` and `endpoint`. A key stored for another endpoint is
  * not read: it is named once, without its value, and the block goes without.
- * `storedKey` is a connection's eligibility already decided (a runner carries it);
- * absent, the config on this host decides now.
  */
-export function readCredential(slot: CredentialSlot, endpoint: string, storedKey?: boolean): string | undefined {
-  if ("connection" in slot) {
-    const eligible = storedKey ?? !isInheritedConnection(slot.connection);
-    if (!eligible) return undefined;
-  }
+export function readCredential(slot: CredentialSlot, endpoint: string): string | undefined {
   const held = storedCredential(slot);
   if (!held) return undefined;
   if (!sameEndpoint(held.endpoint, endpoint)) {
@@ -317,8 +308,7 @@ export function fileFlatCredentials(
  * The key of the block stored in `slot`, whose config `apiKey` is `apiKey` and
  * whose endpoint is `endpoint`: the variable it references, else the key stored
  * for that endpoint. An unset variable is named once and sends no key. `quiet`
- * is for callers that only collect values to redact; `storedKey` is as for
- * {@link readCredential}.
+ * is for callers that only collect values to redact.
  */
 export function resolveApiKey(
   apiKey: string | undefined,
@@ -326,10 +316,9 @@ export function resolveApiKey(
   endpoint: string,
   env: NodeJS.ProcessEnv = process.env,
   quiet = false,
-  storedKey?: boolean,
 ): string | undefined {
   const variable = apiKey === undefined ? undefined : envReferenceName(apiKey);
-  if (variable === undefined) return readCredential(slot, endpoint, storedKey);
+  if (variable === undefined) return readCredential(slot, endpoint);
   const value = env[variable]?.trim();
   if (!value && !quiet) {
     warnOnce(

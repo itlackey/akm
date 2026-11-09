@@ -12,9 +12,7 @@
  * header at all — silently, not as a resolution error. This suite reproduces
  * the standalone `akm index` materializer path in-process AND as a real CLI
  * child process (since the field failure was specifically the CLI), plus
- * every other path that reaches `RemoteEmbedder`: an inherited `$VAR`
- * reference that must not cross the host-local config boundary while adapter
- * detection persists mid-run; `akm bundle update`'s reindex (reached via
+ * every other path that reaches `RemoteEmbedder`: `akm bundle update`'s reindex (reached via
  * `akmUpdate`); the `remember` write path (`indexWrittenAssets`, which calls
  * `generateEmbeddingsForDb` at its own fresh `loadConfig()`); and the improve
  * consolidate path as the known-good control.
@@ -39,7 +37,7 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import * as syncFromRefModule from "../../src/sources/providers/sync-from-ref";
 import { seedLockEntries } from "../_helpers/lockfile";
-import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 /** Absolute path to the repo's CLI entrypoint, for the child-process variant. */
 const CLI_ENTRYPOINT = path.join(import.meta.dir, "..", "..", "src", "cli.ts");
@@ -175,57 +173,6 @@ describe("akm index embedding requests carry the stored credential (#953)", () =
     expectEveryRequestCarriedCredential(capture.authHeaders, "Bearer cli-store-secret-value");
     void stderr; // available for debugging on failure; not asserted on
   }, 60_000);
-
-  test("an inherited apiKey reference cannot authorize a locally configured embedding endpoint", async () => {
-    const capture = createAuthCapturingEmbeddingServer();
-    server = capture.server;
-
-    writeMemory("entry-1.md", "Entry for the extends-inherited apiKey test.");
-
-    const xdgConfigHome = process.env.XDG_CONFIG_HOME;
-    if (!xdgConfigHome) throw new Error("XDG_CONFIG_HOME must be set by withIsolatedAkmStorage()");
-    const baseConfigPath = path.join(xdgConfigHome, "akm", "base-config.json");
-    fs.writeFileSync(
-      baseConfigPath,
-      `${JSON.stringify(
-        {
-          configVersion: "0.9.0",
-          embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "$LAB_API_KEY" },
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-
-    // The local file only sets `extends` and the source `bundles` block — no
-    // adapter is declared on the filesystem source, so
-    // detectAndPersistBundleAdapters must run a real mutateConfig round-trip
-    // mid-run (the #945 candidate).
-    writeSandboxConfig({
-      extends: baseConfigPath,
-      semanticSearchMode: "auto",
-      bundles: { stash: { path: storage.stashDir, writable: true } },
-      defaultBundle: "stash",
-      embedding: { endpoint: capture.url, model: "mock", dimension: 8 },
-    });
-    resetConfigCache();
-
-    const result = await withEnv({ LAB_API_KEY: "extends-env-secret-value" }, () =>
-      akmIndex({ stashDir: storage.stashDir, full: true }),
-    );
-
-    expect(result.configUpdated?.detectedAdapters).toEqual({ stash: "akm" });
-    expect(result.verification.ok).toBe(true);
-    expect(capture.authHeaders.length).toBeGreaterThan(0);
-    expect(capture.authHeaders.every((header) => header === null)).toBe(true);
-
-    // #945: adapter persistence must retain the local connection without
-    // baking the inherited credential into config.json.
-    const localRaw = JSON.parse(fs.readFileSync(path.join(xdgConfigHome, "akm", "config.json"), "utf8"));
-    expect(localRaw.embedding).toMatchObject({ endpoint: capture.url, model: "mock", dimension: 8 });
-    expect(localRaw.embedding.apiKey).toBeUndefined();
-  });
 });
 
 describe("akm bundle update: the update's embedding phase carries the stored credential (#953)", () => {

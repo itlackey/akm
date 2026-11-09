@@ -59,7 +59,6 @@
 </nav>
 <div class="head">
   <h1 tabindex="-1" id="project-title">{row.name}</h1>
-  <span class="badge">{row.inherited ? "Inherited" : "Local"}</span>
   <div class="btn-row actions">
     <a class="btn btn-secondary" href={`${base}/edit`}><Icon name="edit" size={16} /> Edit project</a>
     <a class="btn" href={`${base}/assets`}>Browse assets</a>

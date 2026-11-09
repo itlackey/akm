@@ -47,8 +47,6 @@
   // The form is keyed by the project, so what it starts from never changes while it is open.
   // svelte-ignore state_referenced_locally
   const base = $state.snapshot(projectDraft(original?.name ?? "", original?.entry));
-  // svelte-ignore state_referenced_locally
-  const inherited = !!original?.inherited;
   let draft = $state<ProjectDraft>($state.snapshot(base));
   let submitted = $state(false),
     removing = $state(false),
@@ -75,7 +73,7 @@
       : "",
   );
   const listErrors = $derived(draftErrors(draft));
-  const nameProblem = $derived(inherited ? "" : nameError(draft.name, existing, original?.name ?? ""));
+  const nameProblem = $derived(nameError(draft.name, existing, original?.name ?? ""));
   const problems = $derived(listErrors.length + (nameProblem ? 1 : 0) + (pathsProblem ? 1 : 0));
   const changes = $derived(draftChanges(draft, base));
   $effect(() => {
@@ -167,27 +165,21 @@
 <!-- Esc cancels the inline removal confirmation; the form's own controls are the interactive elements. -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <form class="project-form" bind:this={form} onsubmit={submit} onkeydown={keydown} aria-busy={busy} novalidate>
-  {#if inherited}<p class="notice">
-      This project comes from a config this one extends. Saving creates a local copy with the same name that overrides
-      it.
-    </p>{/if}
   <div class="settings-fields">
     <label class="field">
       <span class="field-label">Name</span>
       <input
         bind:value={draft.name}
-        disabled={busy || inherited}
+        disabled={busy}
         autocomplete="off"
         spellcheck="false"
         aria-invalid={submitted && nameProblem ? "true" : undefined}
         aria-describedby={submitted && nameProblem ? "project-name-error" : undefined}
       />
       <span class="field-hint"
-        >{inherited
-          ? "An inherited project keeps its name."
-          : original
-            ? "Renaming moves its settings to the new name. Filter and preference values stay as written."
-            : "Used with --project and shown in Desktop."}</span
+        >{original
+          ? "Renaming moves its settings to the new name. Filter and preference values stay as written."
+          : "Used with --project and shown in Desktop."}</span
       >
       {#if submitted && nameProblem}<span class="field-error" id="project-name-error">{nameProblem}</span>{/if}
     </label>
@@ -284,8 +276,7 @@
     </div>
     {#if original}<div class="project-removal">
         <h2 class="group">Remove</h2>
-        {#if inherited}<p class="muted small">To remove it, edit the config that defines it.</p>
-        {:else if !removing}<button
+        {#if !removing}<button
             type="button"
             class="btn-quiet danger-action"
             data-remove

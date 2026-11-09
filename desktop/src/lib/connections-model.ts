@@ -22,14 +22,13 @@ export interface ConnectionEntry {
 /** A row of `config.get().connections`: the entry plus what akm adds about it. */
 export interface ConnectionRow extends ConnectionEntry {
   name: string;
-  inherited?: boolean;
   usedBy?: string[];
-  /** `file` (this install's config.json) or `extends:<ref>`: the config that defines it. */
+  /** `file` when this install's config.json sets it, else `default`. */
   source?: string;
 }
 /** The configured entry of a row: `config.get()` adds the name, provenance and consumers, which are not the entry's. */
 export function entryOf(row: ConnectionRow): ConnectionEntry {
-  const { name: _name, inherited: _inherited, usedBy: _usedBy, source: _source, ...entry } = row;
+  const { name: _name, usedBy: _usedBy, source: _source, ...entry } = row;
   return entry;
 }
 export interface ModelRowDraft {
@@ -252,7 +251,7 @@ export function deletionImpact(
   row: ConnectionRow,
   others: string[],
   defaultName: string | null,
-): { references: string[]; defaultLine: string; inherited: boolean } {
+): { references: string[]; defaultLine: string } {
   const rest = others.filter((name) => name !== row.name);
   return {
     references: row.usedBy ?? [],
@@ -262,7 +261,6 @@ export function deletionImpact(
         : rest.length === 1
           ? `It is the default connection, used by model work that names none. Afterwards ${rest[0]} becomes the default (the only connection left).`
           : "It is the default connection, used by model work that names none. Afterwards no connection is the default, so that work runs on the default harness, if one is set.",
-    inherited: false,
   };
 }
 

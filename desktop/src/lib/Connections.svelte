@@ -140,10 +140,6 @@
   }
   const status = $derived(defaultStatement(names, config?.defaultConnection ?? null));
   const impact = $derived(row ? deletionImpact(row, names, config?.defaultConnection ?? null) : null);
-  /** The config this one extends that defines it, as AKM reports it (`extends:<ref>`). */
-  const inheritedFrom = (r: ConnectionRow) =>
-    r.source?.startsWith("extends:") ? r.source.slice("extends:".length) : "a config this one extends";
-  const provenanceOf = (r: ConnectionRow) => (r.inherited ? "Inherited" : "This computer");
   const number = (value: unknown, fallback: string, unit = "") =>
     typeof value === "number" ? `${value.toLocaleString("en-US")}${unit}` : fallback;
 </script>
@@ -155,16 +151,7 @@
     </div>
   {:else if view === "add"}
     <h2 class="conn-title" tabindex="-1">Add a connection</h2>
-    <ConnectionForm
-      name=""
-      original={null}
-      existing={names}
-      inherited={false}
-      {busy}
-      {failure}
-      cancelHref={LIST}
-      {save}
-    />
+    <ConnectionForm name="" original={null} existing={names} {busy} {failure} cancelHref={LIST} {save} />
   {:else if view === "edit" && row}
     <nav class="crumbs" aria-label="Breadcrumb">
       <a href={LIST}>Connections</a> › <a href={detailHref(row.name)}>{row.name}</a> ›
@@ -175,7 +162,6 @@
         name={row.name}
         original={entryOf(row)}
         existing={names}
-        inherited={!!row.inherited}
         {busy}
         {failure}
         cancelHref={detailHref(row.name)}
@@ -188,13 +174,11 @@
     <div class="conn-head">
       <h2 class="conn-title" tabindex="-1">{row.name}</h2>
       {#if config?.defaultConnection === row.name}<span class="badge accent">Default</span>{/if}
-      <span class="badge">{provenanceOf(row)}</span>
       <div class="btn-row conn-actions">
         <a class="btn btn-secondary" href={`${detailHref(row.name)}&edit`}><Icon name="edit" size={16} /> Edit</a>
-        {#if !row.inherited}<button class="btn-secondary danger" onclick={askDelete}>Delete…</button>{/if}
+        <button class="btn-secondary danger" onclick={askDelete}>Delete…</button>
       </div>
     </div>
-    {#if row.inherited}<p class="muted small">Inherited from {inheritedFrom(row)}. Delete it there.</p>{/if}
     <dl class="kv conn-facts">
       <dt>Endpoint</dt>
       <dd class="mono wrap">{row.endpoint ?? "Not set"}</dd>
@@ -239,7 +223,7 @@
           ].join(" · ")}{:else}<span class="sans">Nothing names this connection.</span>{/if}
       </dd>
       <dt>Source</dt>
-      <dd class="mono wrap">{row.inherited ? inheritedFrom(row) : config?.path}</dd>
+      <dd class="mono wrap">{config?.path}</dd>
     </dl>
     <p class="muted small">Desktop does not test connections. Saving only checks the configuration.</p>
     <dialog
@@ -299,7 +283,7 @@
               <span class="row-main"
                 ><strong>{r.name}</strong>{#if config?.defaultConnection === r.name}<span class="badge accent"
                     >Default</span
-                  >{/if}<span class="muted small provenance">{provenanceOf(r)}</span></span
+                  >{/if}</span
               >
               <span class="mono small endpoint" title={r.endpoint}>{r.endpoint ?? "No endpoint"}</span>
               <span class="muted small">{connectionSummary(r)}</span>
@@ -355,9 +339,6 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-  }
-  .provenance {
-    margin-inline-start: auto;
   }
   .endpoint {
     overflow: hidden;

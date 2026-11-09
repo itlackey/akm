@@ -81,12 +81,9 @@ written are in [Core Principles](akm-core-principles.md).
   config, so editing config changes the next run and not the one in flight.
   The journaled runner is symbolic (a `$VAR` reference, or a connection's name
   for its stored key), so a credential is not frozen: dispatch materializes the
-  current key, for the frozen endpoint only, and only if the runner was frozen
-  eligible for one (`storedKey: false` marks a connection an `extends` base
-  alone defines). Pinned by `tests/workflows/child-plan-immutability.test.ts`
+  current key, for the frozen endpoint only. Pinned by `tests/workflows/child-plan-immutability.test.ts`
   and `tests/workflows/immutable-execution-v4-red.test.ts`.
-- **Host authority is local and never inferred.** Inherited config shares
-  portable policy only. A disabled bundle (`enabled: false`) is inert across
+- **Host authority is local and never inferred.** A disabled bundle (`enabled: false`) is inert across
   content reads, writes, indexing and execution; an explicit bundle lifecycle
   command may still update a named disabled bundle without activating it. The
   default bundle is carried as explicit identity and default status, never

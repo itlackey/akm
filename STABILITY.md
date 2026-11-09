@@ -132,7 +132,7 @@ covers beyond the table.
 | `akm config get` | Stable | Default bare-value shape unchanged; `--show-source` (opt-in) wraps it as `{ value, source }`. |
 | `akm config set` | Stable | |
 | `akm config unset` | Stable | |
-| `akm config diff` | Evolving | Compares effective (post-`extends`) configs. |
+| `akm config diff` | Evolving | Compares the effective config with another config file. |
 | `akm feedback` | Stable | |
 | `akm log` | Evolving | |
 | `akm agent` | Evolving | |

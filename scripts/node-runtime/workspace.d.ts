@@ -122,7 +122,6 @@ export namespace config {
     references: string[];
     wasDefault: boolean;
     defaultConnection: string | null;
-    stillInherited: boolean;
   };
 }
 export namespace documents {

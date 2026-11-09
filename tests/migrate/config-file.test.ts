@@ -482,16 +482,20 @@ describe("the entries the reader drops", () => {
     expect(notes).toContain("harnesses.Claude_Work: kept as written");
   });
 
-  test("are not claimed when an extends base completes them: no note, nothing kept as an orphan", () => {
+  test("are not claimed when an extends base completes them: merged in, so no note and nothing kept as an orphan", () => {
     fs.writeFileSync(
       path.join(path.dirname(getConfigPath()), "base.json"),
       JSON.stringify({ configVersion: "0.9.0", connections: { lab: { endpoint: "http://lab:8080/v1" } } }),
     );
     writeConfig({ extends: "base.json", connections: { lab: { models: { fast: "m" } } } });
 
-    const result = normalizeConfigFile(getConfigPath(), { apply: false, resolveFromStore });
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
 
-    expect(result.notes?.join("\n") ?? "").not.toContain("connections.lab");
+    expect(result.notes?.join("\n") ?? "").not.toContain("kept as written");
+    expect((readConfig().connections as Record<string, Dict>).lab).toEqual({
+      endpoint: "http://lab:8080/v1",
+      models: { fast: "m" },
+    });
   });
 
   test("are kept when they are all the file holds", () => {
@@ -501,6 +505,134 @@ describe("the entries the reader drops", () => {
 
     expect((readConfig().connections as Dict).draft).toEqual(draft);
     expect(result.notes?.join("\n")).toContain("connections.draft: kept as written");
+  });
+});
+
+describe("a config with extends", () => {
+  const dir = (): string => path.dirname(getConfigPath());
+  const writeBase = (name: string, value: Dict): void => {
+    fs.mkdirSync(path.dirname(path.join(dir(), name)), { recursive: true });
+    fs.writeFileSync(path.join(dir(), name), JSON.stringify({ configVersion: "0.9.0", ...value }));
+  };
+  const lab = { endpoint: "http://lab:8080/v1", models: { fast: "base-model" } };
+
+  test("has its base merged in once, local winning, and the key removed", () => {
+    writeBase("base.json", {
+      connections: { lab },
+      output: { format: "text", detail: "full" },
+      archiveRetentionDays: 30,
+    });
+    writeConfig({ extends: "./base.json", output: { detail: "brief" } });
+
+    const dry = normalizeConfigFile(getConfigPath(), { apply: false, resolveFromStore });
+    expect(dry).toMatchObject({ changed: true, applied: false });
+    expect(dry.keys).toContain("extends");
+    expect(readConfig()).toHaveProperty("extends");
+
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+    expect(result).toMatchObject({ changed: true, applied: true });
+    expect(result.notes?.join("\n")).toContain("merged into this file");
+    const written = readConfig();
+    expect(written).not.toHaveProperty("extends");
+    expect(written.connections).toEqual({ lab });
+    expect(written.output).toEqual({ format: "text", detail: "brief" });
+    expect(written.archiveRetentionDays).toBe(30);
+    resetConfigCache();
+    expect(loadConfig().archiveRetentionDays).toBe(30);
+    // The base file is untouched, and a second run has nothing left to do.
+    expect(JSON.parse(fs.readFileSync(path.join(dir(), "base.json"), "utf8")).archiveRetentionDays).toBe(30);
+    expect(normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore })).toMatchObject({ changed: false });
+  });
+
+  test("has a chain merged, each layer winning over the one beyond it", () => {
+    writeBase("c.json", { archiveRetentionDays: 10, output: { format: "text" } });
+    writeBase("b.json", { extends: "./c.json", archiveRetentionDays: 20 });
+    writeConfig({ extends: "./b.json" });
+
+    normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    const written = readConfig();
+    expect(written).not.toHaveProperty("extends");
+    expect(written.archiveRetentionDays).toBe(20);
+    expect(written.output).toEqual({ format: "text" });
+  });
+
+  test("has a bundle//path base read from the bundle's content root", () => {
+    const content = path.join(storage.root, "fleet-bundle");
+    fs.mkdirSync(path.join(content, "config"), { recursive: true });
+    fs.writeFileSync(
+      path.join(content, "config", "shared.json"),
+      JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 14 }),
+    );
+    writeConfig({ extends: "fleet//config/shared.json", bundles: { fleet: { path: content } } });
+
+    normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    const written = readConfig();
+    expect(written).not.toHaveProperty("extends");
+    expect(written.archiveRetentionDays).toBe(14);
+    expect(written.bundles).toEqual({ fleet: { path: content } });
+  });
+
+  test("has the engines a base holds converted with the rest, the local file naming the default", () => {
+    writeBase("base.json", { engines: { lab: llm() } });
+    writeConfig({ extends: "./base.json", defaults: { llmEngine: "lab" } });
+
+    normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    const written = readConfig();
+    expect(written).not.toHaveProperty("extends");
+    expect(written).not.toHaveProperty("engines");
+    expect(Object.keys(written.connections as Dict)).toEqual(["default"]);
+    expect((written.connections as Record<string, Dict>).default?.endpoint).toBe("http://lab:8080/v1/chat/completions");
+  });
+
+  test("leaves out of the merge what the runtime never took from a base, saying so", () => {
+    writeBase("base.json", {
+      scheduler: { enabled: ["fleet//tasks/untrusted"] },
+      connections: { lab: { ...lab, apiKey: "$TEAM_KEY" } },
+      harnesses: { claude: { platform: "claude", bin: "/opt/claude", models: { fast: "haiku" } } },
+    });
+    writeConfig({ extends: "./base.json" });
+
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    const written = readConfig();
+    expect(written).not.toHaveProperty("scheduler");
+    expect(written.connections).toEqual({ lab });
+    expect(written.harnesses).toEqual({ claude: { platform: "claude", models: { fast: "haiku" } } });
+    const notes = result.notes?.join("\n") ?? "";
+    expect(notes).toContain("scheduler not merged");
+    expect(notes).toContain("connection credentials, harness bin, args and workspace not merged");
+  });
+
+  test("a project in the local file replaces the base's of the same name whole", () => {
+    writeBase("base.json", { projects: { shared: { paths: ["/srv/a"], from: "team" }, only: { paths: ["/srv/o"] } } });
+    writeConfig({ extends: "./base.json", projects: { shared: { paths: ["/srv/mine"] } } });
+
+    normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
+
+    expect(readConfig().projects).toEqual({ only: { paths: ["/srv/o"] }, shared: { paths: ["/srv/mine"] } });
+  });
+
+  test("with a base that does not exist is reported, naming the file, and changes nothing", () => {
+    writeConfig({ extends: "./gone.json", archiveRetentionDays: 5 });
+    const before = fs.readFileSync(getConfigPath(), "utf8");
+
+    expect(() => normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore })).toThrow(
+      /extends ".\/gone.json" resolves to .*gone\.json, which does not exist/,
+    );
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
+  });
+
+  test("with a cycle is reported and changes nothing", () => {
+    writeBase("a.json", { extends: "./b.json" });
+    writeBase("b.json", { extends: "./a.json" });
+    writeConfig({ extends: "./a.json" });
+    const before = fs.readFileSync(getConfigPath(), "utf8");
+
+    expect(() => normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore })).toThrow(/cycle/);
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toBe(before);
   });
 });
 
@@ -554,7 +686,7 @@ describe("the retired models.json", () => {
     expect(notes).toContain("models.json coder.nowhere: names no configured connection or harness");
   });
 
-  test("is folded into a connection only an extends base defines, as a partial entry the base completes", () => {
+  test("is folded into a connection only an extends base defined, which is merged in whole", () => {
     fs.writeFileSync(
       path.join(path.dirname(getConfigPath()), "base.json"),
       JSON.stringify({
@@ -578,10 +710,12 @@ describe("the retired models.json", () => {
     const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
 
     expect(fs.existsSync(modelsFile())).toBe(false);
-    // The local file carries what only the overlay put there; the base still completes the entry.
+    // The base's entry is in the file, with what only the overlay put there.
     expect((readConfig().connections as Record<string, Dict>).shared).toEqual({
-      models: { reasoning: "s-big", balanced: "wild" },
+      endpoint: "http://shared:1/v1",
+      models: { fast: "s-fast", reasoning: "s-big", balanced: "wild" },
     });
+    expect(readConfig()).not.toHaveProperty("extends");
     resetConfigCache();
     expect(loadConfig().connections?.shared?.models).toEqual({ fast: "s-fast", reasoning: "s-big", balanced: "wild" });
     expect(loadConfig().connections?.lab?.models).toEqual({ fast: "m", balanced: "wild" });

@@ -2342,12 +2342,12 @@ Subcommands:
 
 | Subcommand | Description |
 | --- | --- |
-| `get <key>` | Read one config key (the effective, post-`extends` value). `--show-source` wraps it as `{ value, source }`, where `source` is `local`, `extends:<ref>`, or `default`. |
+| `get <key>` | Read one config key (the effective value). `--show-source` wraps it as `{ value, source }`, where `source` is `local` or `default`. |
 | `list` | List current configuration |
 | `set <key> <value>` | Set one config key; prints the resulting config with `ok: true` |
 | `unset <key>` | Unset an optional key, or a whole `embedding`, connection or harness section; prints the resulting config with `ok: true` |
 | `path` | Print the config file path (`akm info` reports the bundle, config, data, cache and state directories). Load-bearing: `config path` is the one subcommand the CLI still allows to run when the on-disk config itself fails to load, so you always have a way to locate a broken config. |
-| `diff <path\|bundle//path>` | Compare this instance's effective config (its own `extends` already applied) against another config file or bundle-relative file (loaded through the same loader — its `extends` honoured too); prints sorted `{ path, local, other }` rows for every differing leaf, secrets redacted on both sides. |
+| `diff <path>` | Compare this instance's effective config against another config file; prints sorted `{ path, local, other }` rows for every differing leaf, secrets redacted on both sides. |
 
 A key that holds an API key (`connections.<name>.apiKey`, `embedding.apiKey`) accepts a `$VAR` reference and rejects a literal
 key: keys live in the environment or in `credentials.json`, never in
@@ -2359,10 +2359,6 @@ platform, is refused before anything is written.
 entirely — nothing is printed on stdout, and the exit code is the status (the
 write still happens and errors still print) — use it from hooks and CI
 scripts.
-
-See [configuration.md](configuration.md)'s "Sharing configuration across
-installs" for the `extends` config key that `diff` and `get --show-source`
-work with.
 
 See [configuration.md](configuration.md) for details.
 

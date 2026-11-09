@@ -154,7 +154,7 @@ describe("assets.projectOverview", () => {
 
 describe("config.removeConnection", () => {
   const saved = () => JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
-  function seedConnections(extra: Record<string, unknown> = {}) {
+  function seedConnections() {
     writeSandboxConfig({
       bundles: { stash: { path: ctx.storage.stashDir, writable: true } },
       defaultBundle: "stash",
@@ -168,7 +168,6 @@ describe("config.removeConnection", () => {
       },
       improve: { connection: "lab", processes: { reflect: { connection: "lab" }, distill: { connection: "default" } } },
       unrelated: { keep: [1] },
-      ...extra,
     });
     resetConfigCache();
   }
@@ -177,9 +176,9 @@ describe("config.removeConnection", () => {
     seedConnections();
     const before = config.get();
     expect(before.defaultConnection).toBe("default");
-    expect(before.connections.map((connection: Json) => [connection.name, connection.inherited])).toEqual([
-      ["default", false],
-      ["lab", false],
+    expect(before.connections.map((connection: Json) => [connection.name, connection.source])).toEqual([
+      ["default", "file"],
+      ["lab", "file"],
     ]);
     expect(before.connections.find((connection: Json) => connection.name === "lab")?.usedBy).toEqual([
       "improve.connection",
@@ -192,7 +191,6 @@ describe("config.removeConnection", () => {
       references: ["improve.connection", "improve.processes.reflect.connection"],
       wasDefault: false,
       defaultConnection: "default",
-      stillInherited: false,
     });
     expect(saved().connections).toEqual({
       default: { endpoint: "http://127.0.0.1:1/v1", apiKey: "$SYNTH_KEY", models: { fast: "small" } },
@@ -277,16 +275,10 @@ describe("config.removeConnection", () => {
     expect(saved().connections ?? {}).toEqual({});
   });
 
-  test("refuses an unknown or blank name, and a connection only an extends base defines", async () => {
-    const base = path.join(ctx.storage.root, "base.json");
-    fs.writeFileSync(base, JSON.stringify({ connections: { shared: { endpoint: "http://127.0.0.1:3/v1" } } }));
-    seedConnections({ extends: base });
-    const shared = config.get().connections.find((connection: Json) => connection.name === "shared");
-    expect([shared?.inherited, shared?.source]).toEqual([true, `extends:${base}`]);
-    expect(config.get().connections.find((connection: Json) => connection.name === "lab")?.source).toBe("file");
+  test("refuses an unknown or blank name", async () => {
+    seedConnections();
     await expectUsage(() => config.removeConnection({ name: "nope" }));
     await expectUsage(() => config.removeConnection({ name: " " }));
-    await expectUsage(() => config.removeConnection({ name: "shared" }), "TARGET_NOT_UPDATABLE");
     expect(Object.keys(saved().connections)).toEqual(["default", "lab"]);
   });
 });

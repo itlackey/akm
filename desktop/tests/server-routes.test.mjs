@@ -127,7 +127,6 @@ test("writes reach their operations and unknown fields are ignored", async (t) =
     references: [],
     wasDefault: true,
     defaultConnection: null,
-    stillInherited: false,
   });
   assert.equal((await app.call("/api/config/connections/remove", { name: "lab" })).status, 400);
   ok(await app.call("/api/bundles/settings", { bundle: "vendor", enabled: true }));

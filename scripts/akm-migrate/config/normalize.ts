@@ -39,6 +39,7 @@ import { fileFlatCredentials, writeCredential } from "../../../src/core/config/c
 import { isPlainObject } from "../../../src/core/config/deep-merge";
 import { findUnusableEntries } from "../../../src/core/config/unusable-entries";
 import { convertEngineConfig, type EngineTarget } from "./convert-engines";
+import { inlineExtends } from "./inline-extends";
 import { documentEndpoint, planKeyMoves } from "./migrate-keys";
 import { modelsFileExists, readModelsFile, retireModelsFile } from "./models-file";
 import { type EngineTargets, rememberEngineTargets, rememberedEngineTargets } from "./retired-engines";
@@ -46,20 +47,6 @@ import { type EngineTargets, rememberEngineTargets, rememberedEngineTargets } fr
 /** The file as it says it: parsed, with the retired `secret://` forms and `configVersion` read, and nothing else converted. */
 function readConfigDocument(text: string, sourcePath?: string): Record<string, unknown> {
   return liftRetiredSecretRefs(readConfigFile(text, sourcePath)) as Record<string, unknown>;
-}
-
-/**
- * The connections and harnesses an `extends` base defines on its own, as the
- * loader reads them: what the migrator folds into
- * entries only the base defines, as partial local entries, once the file is gone.
- */
-function inheritedEntries(
-  document: Record<string, unknown>,
-  configPath: string,
-): { connections: Record<string, unknown>; harnesses: Record<string, unknown> } | undefined {
-  if (document.extends === undefined) return undefined;
-  const base = buildEffectiveConfig({ configVersion: document.configVersion, extends: document.extends }, configPath);
-  return { connections: { ...base.connections }, harnesses: { ...base.harnesses } };
 }
 
 /**
@@ -73,7 +60,7 @@ export function retiredEngineTargets(): EngineTargets {
   const configPath = getConfigPath();
   const text = readConfigText(configPath);
   if (text === undefined) return {};
-  const live = convertEngineConfig(readConfigDocument(text, configPath), {
+  const live = convertEngineConfig(inlineExtends(readConfigDocument(text, configPath), configPath, readConfigDocument).document, {
     modelsOverlay: readModelsFile(),
     env: process.env,
   }).targets;
@@ -108,9 +95,8 @@ function liftRetiredSecretRefs(node: unknown): unknown {
 /**
  * Reduce `after` (the effective config with the change applied) to what the file
  * should hold: what changed relative to `before`, plus whatever `localRaw` (the
- * local file's own content, before the `extends` merge) already had. What only
- * came along from `extends` or a default is left out, so it keeps being read from
- * the base instead of being frozen as a local literal.
+ * local file's own content) already had. What only a default supplies is left out,
+ * so it is not frozen into the file as a literal.
  */
 function pruneUnchangedInheritedFields(before: unknown, after: unknown, localRaw: unknown): unknown {
   if (!isPlainObject(after) || !isPlainObject(before)) return after;
@@ -217,8 +203,7 @@ export interface NormalizeConfigOptions {
 
 /**
  * A connection or harness the reader drops stays in the file exactly as written,
- * with a note on what to fix. One this file only half says, which an `extends`
- * base completes, is not dropped (it is in `current`) and gets no note.
+ * with a note on what to fix.
  */
 function keepUnusableEntries(
   body: Record<string, unknown>,
@@ -280,15 +265,15 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       return { keys: homeKeys, changed: true, applied: true, notes: homeNotes };
     }
     const raw = parseConfigText(text, configPath);
-    const document = readConfigDocument(text, configPath);
+    // A base the file `extends` is merged in first, so everything below reads one document, as the file will hold it.
+    const inlined = inlineExtends(readConfigDocument(text, configPath), configPath, readConfigDocument);
+    const document = inlined.document;
     // The conversion runs before the unknown-key sweep below deletes what the
     // schema does not know (inventory surprise 8).
     const overlay = readModelsFile();
-    const inherited = overlay === undefined ? undefined : inheritedEntries(document, configPath);
     const converted = convertEngineConfig(document, {
       modelsOverlay: overlay,
       env: process.env,
-      ...(inherited ? { inherited } : {}),
     });
     const plan = planKeyMoves(document, converted, {
       resolveSecretRef: (ref) => resolveSecret(ref, options.resolveFromStore),
@@ -315,7 +300,7 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     if (strategies && Object.hasOwn(strategies, "graph-refresh")) delete strategies["graph-refresh"];
     // A key in the older flat form is filed only under an endpoint this file itself gives the block.
     const flat = fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), false, plan.moves);
-    const notes = [...converted.notes, ...plan.notes, ...flat.notes];
+    const notes = [...inlined.notes, ...converted.notes, ...plan.notes, ...flat.notes];
     const retiredTarget = localRaw.defaultWriteTarget;
     if (typeof retiredTarget === "string" && retiredTarget !== localRaw.defaultBundle) {
       notes.push(

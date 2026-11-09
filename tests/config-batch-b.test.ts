@@ -397,17 +397,6 @@ describe("a strategy `limit` is gone from the plan", () => {
   });
 });
 
-describe("settings that are not host-local", () => {
-  test("`setup` in an extends base is an unknown key like any other, not an ignored host-local one", () => {
-    const dir = path.dirname(getConfigPath());
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, "base.json"), JSON.stringify({ configVersion: "0.9.0", setup: { done: true } }));
-    writeConfig({ configVersion: "0.9.0", extends: "./base.json" });
-    const warnings = loadWarnings().join("\n");
-    expect(warnings).not.toContain("host-local");
-  });
-});
-
 describe("akm bundle create --dir on a temporary path", () => {
   test("says nothing about a test runner: production does not know it is under one", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-init-tmp-"));

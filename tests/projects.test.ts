@@ -201,27 +201,6 @@ describe("config", () => {
     const config = { projects: { p: { paths: [`${dir}/`] } } };
     expect(resolveProject(config, { cwd: path.join(dir, "sub") })).toMatchObject({ name: "p", path: `${dir}/` });
   });
-
-  test("extends replaces a project whole by name, local winning", () => {
-    const base = path.join(tmp("proj-base"), "base.json");
-    fs.writeFileSync(
-      base,
-      JSON.stringify({
-        configVersion: "0.9.0",
-        projects: { shared: { paths: ["/srv/a"], from: "team" }, only: { paths: ["/srv/o"] } },
-      }),
-    );
-    saveConfig({
-      semanticSearchMode: "off",
-      extends: base,
-      projects: { shared: { paths: ["/srv/mine"] }, local: { paths: ["/srv/l"] } },
-    } as never);
-    resetConfigCache();
-    const projects = loadConfig().projects ?? {};
-    expect(Object.keys(projects).sort()).toEqual(["local", "only", "shared"]);
-    expect(projects.shared).toEqual({ paths: ["/srv/mine"] });
-    expect(projects.only).toEqual({ paths: ["/srv/o"] });
-  });
 });
 
 describe("curate", () => {

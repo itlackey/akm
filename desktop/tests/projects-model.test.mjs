@@ -109,15 +109,11 @@ test("a key named twice in one list is a form error, not a silent overwrite", ()
   assert.deepEqual(draftErrors(projectDraft("p", acme)), []);
 });
 
-test("rows are inherited unless the config file holds them, and summaries name what a project sets", () => {
-  const rows = projectRows({ acme: {}, "acme.corp": {}, base: {} }, ["acme"]);
+test("rows keep config order, and summaries name what a project sets", () => {
+  const rows = projectRows({ acme: {}, "acme.corp": {}, base: {} });
   assert.deepEqual(
-    rows.map((row) => [row.name, row.inherited]),
-    [
-      ["acme", false],
-      ["acme.corp", true],
-      ["base", true],
-    ],
+    rows.map((row) => row.name),
+    ["acme", "acme.corp", "base"],
   );
   assert.deepEqual(projectSummary(acme), [
     "Reads acme-team, personal",

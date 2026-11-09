@@ -83,35 +83,23 @@ describe("config command apiKey redaction", () => {
   });
 });
 
-// ── `config get --show-source` (#945) ────────────────────────────────────────
+// ── `config get --show-source` ────────────────────────────────────────
 
 describe("config get --show-source", () => {
-  test("reports local, extends:<ref>, and default sources", async () => {
+  test("reports local and default sources", async () => {
     const env = freshEnv();
 
     const outputs = await withEnv(env, async () => {
-      const configDir = path.join(env.XDG_CONFIG_HOME as string, "akm");
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(configDir, "base.json"),
-        JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 21 }),
-      );
-      writeSandboxConfig({
-        configVersion: "0.9.0",
-        extends: "./base.json",
-        semanticSearchMode: "auto",
-      });
+      writeSandboxConfig({ configVersion: "0.9.0", semanticSearchMode: "auto" });
 
       const local = await runCliCapture(["config", "get", "semanticSearchMode", "--show-source"]);
-      const inherited = await runCliCapture(["config", "get", "archiveRetentionDays", "--show-source"]);
       const fallback = await runCliCapture(["config", "get", "output.format", "--show-source"]);
-      return { local, inherited, fallback };
+      return { local, fallback };
     });
 
     for (const result of Object.values(outputs)) expect(result.code).toBe(0);
 
     expect(JSON.parse(outputs.local.stdout)).toMatchObject({ value: "auto", source: "local" });
-    expect(JSON.parse(outputs.inherited.stdout)).toMatchObject({ value: 21, source: "extends:./base.json" });
     expect(JSON.parse(outputs.fallback.stdout)).toMatchObject({ value: "json", source: "default" });
   });
 
@@ -126,61 +114,7 @@ describe("config get --show-source", () => {
   });
 });
 
-// ── `config unset` refuses an extends-inherited key (#945) ──────────────────
-
-describe("config unset against an extends-inherited key", () => {
-  test("rejects unsetting a key only the extends base supplies", async () => {
-    const env = freshEnv();
-
-    const result = await withEnv(env, async () => {
-      const configDir = path.join(env.XDG_CONFIG_HOME as string, "akm");
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(configDir, "base.json"),
-        JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 21 }),
-      );
-      writeSandboxConfig({ configVersion: "0.9.0", extends: "./base.json" });
-
-      return runCliCapture(["config", "unset", "archiveRetentionDays"]);
-    });
-
-    expect(result.code).toBe(2);
-    const error = JSON.parse(result.stderr) as { ok: boolean; error: string; code?: string };
-    expect(error.ok).toBe(false);
-    expect(error.error).toContain("archiveRetentionDays");
-    expect(error.error).toContain("extends:./base.json");
-
-    // The value is unchanged: unset never silently no-oped, and the local
-    // file was never touched.
-    const after = await withEnv(env, () => runCliCapture(["config", "get", "archiveRetentionDays"]));
-    expect(JSON.parse(after.stdout)).toBe(21);
-  });
-
-  test("still unsets a key the local file itself sets, even with extends active", async () => {
-    const env = freshEnv();
-
-    const outputs = await withEnv(env, async () => {
-      const configDir = path.join(env.XDG_CONFIG_HOME as string, "akm");
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(configDir, "base.json"),
-        JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 21 }),
-      );
-      writeSandboxConfig({ configVersion: "0.9.0", extends: "./base.json", semanticSearchMode: "auto" });
-
-      const unset = await runCliCapture(["config", "unset", "semanticSearchMode"]);
-      const after = await runCliCapture(["config", "get", "semanticSearchMode"]);
-      return { unset, after };
-    });
-
-    expect(outputs.unset.code).toBe(0);
-    expect(outputs.after.code).toBe(0);
-    // semanticSearchMode falls back to its schema default once no layer sets it.
-    expect(JSON.parse(outputs.after.stdout)).toBe("off");
-  });
-});
-
-// ── `config diff` (#945) ─────────────────────────────────────────────────────
+// ── `config diff` ─────────────────────────────────────────────────────
 
 describe("config diff", () => {
   test("lists differing leaves, with a literal apiKey on either side never read, never shown", async () => {
@@ -226,6 +160,18 @@ describe("config diff", () => {
     // A literal apiKey is read as absent on both sides, so it never appears as its own diff row.
     expect(parsed.rows.some((row) => row.path === "connections.fast.apiKey")).toBe(false);
     expect(parsed.rows).toEqual(parsed.rows.slice().sort((a, b) => a.path.localeCompare(b.path)));
+  });
+
+  test("a file that does not exist is an error naming it", async () => {
+    const env = freshEnv();
+
+    const result = await withEnv(env, async () => {
+      writeSandboxConfig({ configVersion: "0.9.0" });
+      return runCliCapture(["config", "diff", path.join(env.XDG_CONFIG_HOME as string, "akm", "missing.json")]);
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("missing.json");
   });
 
   test("identical configs produce empty rows", async () => {

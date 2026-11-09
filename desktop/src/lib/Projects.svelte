@@ -23,7 +23,6 @@
   let config = $state<{
     path: string;
     config: { projects?: Record<string, ProjectEntry>; defaultBundle?: string };
-    localProjects?: string[];
     projectWarnings?: string[];
     automaticWriteTarget?: { name: string } | null;
   } | null>(null);
@@ -33,7 +32,7 @@
     failure = $state(""),
     root = $state<HTMLElement>();
 
-  const rows = $derived(projectRows(config?.config.projects, config?.localProjects ?? []));
+  const rows = $derived(projectRows(config?.config.projects));
   const row = $derived<ProjectRow | undefined>(rows.find((r) => r.name === name));
   const adding = $derived(!name && query.has("add"));
   const defaultTarget = $derived(config?.config.defaultBundle || config?.automaticWriteTarget?.name || "");
@@ -165,7 +164,6 @@
     </nav>
     <div class="head">
       <h1 tabindex="-1">Edit {row.name}</h1>
-      <span class="badge">{row.inherited ? "Inherited" : "Local"}</span>
     </div>
     {#key row.name}<ProjectForm
         original={row}

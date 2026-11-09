@@ -39,8 +39,6 @@ export interface ProjectDraft {
 export interface ProjectRow {
   name: string;
   entry: ProjectEntry;
-  /** Set in this install's config.json, or only inherited from an `extends` base (a local save overrides it). */
-  inherited: boolean;
 }
 
 const list = (value: string | string[] | undefined): string[] =>
@@ -76,9 +74,9 @@ function scopeOf(rows: ScopeRow[], original: Scope | undefined): Scope | undefin
     : undefined;
 }
 
-/** The project rows, in config order; `local` names the projects this install's config.json holds. */
-export function projectRows(projects: Record<string, ProjectEntry> | undefined, local: string[]): ProjectRow[] {
-  return Object.entries(projects ?? {}).map(([name, entry]) => ({ name, entry, inherited: !local.includes(name) }));
+/** The project rows, in config order. */
+export function projectRows(projects: Record<string, ProjectEntry> | undefined): ProjectRow[] {
+  return Object.entries(projects ?? {}).map(([name, entry]) => ({ name, entry }));
 }
 
 export function projectDraft(name: string, entry: ProjectEntry = {}): ProjectDraft {
