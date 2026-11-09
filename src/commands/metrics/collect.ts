@@ -43,7 +43,7 @@ const UTILITY_BUCKETS = 10;
  * search is one select. Rows from before selects carried a `searchId` have no
  * key to dedupe on and are all kept.
  */
-function dedupeSelects(selects: SelectEventRow[]): SelectEventRow[] {
+export function dedupeSelects(selects: SelectEventRow[]): SelectEventRow[] {
   const seen = new Set<string>();
   return selects.filter((select) => {
     if (select.searchId === undefined) return true;
