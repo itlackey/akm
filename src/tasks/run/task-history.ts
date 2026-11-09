@@ -24,7 +24,6 @@
  * imports appendHistory or readTaskHistory from here.
  */
 
-import { rethrowIfTestIsolationError } from "../../core/errors";
 import { withStateDb } from "../../core/state-db";
 import { warn } from "../../core/warn";
 import {
@@ -62,7 +61,6 @@ export function appendHistory(result: TaskRunResult, historyReserved = false): v
       upsertTaskHistory(db, row);
     });
   } catch (error) {
-    rethrowIfTestIsolationError(error);
     // History recording must not alter the task's own result/exit status —
     // the task already ran and its outcome is independent of whether we can
     // persist a history row. But silence would make a failed write

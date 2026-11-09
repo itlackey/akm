@@ -47,7 +47,9 @@ import { deepMergeConfig, isPlainObject } from "./deep-merge";
 import { documentEndpoint, planKeyMoves } from "./migrate-keys";
 import { modelsFileExists, readModelsFile, retireModelsFile } from "./models-file";
 import { type EngineTargets, rememberEngineTargets, rememberedEngineTargets } from "./retired-engines";
+import { ImproveConfigSchema } from "./schema/improve";
 import { dropUnusableProjects } from "./schema/projects";
+import { RegistryConfigEntrySchema } from "./schema/sources-bundles";
 import { dropUnusableEntries, findUnusableEntries, resolveBundlePaths, type UnusableEntry } from "./unusable-entries";
 
 export { stripJsonComments } from "./config-io";
@@ -69,8 +71,6 @@ export type {
   ImproveProcessConfig,
   ImproveProfileConfig,
   ImproveWhere,
-  IndexConfig,
-  IndexPassConfig,
   OutputConfig,
   RegistryConfigEntry,
   SchedulerConfig,
@@ -381,6 +381,28 @@ function dropRetiredOutputFormat(raw: Record<string, unknown>, sourcePath?: stri
 }
 
 /**
+ * `improve.model`, `improve.llm` and `improve.timeoutMs` set the base for every model call. A value the schema
+ * refuses (an empty model, a non-positive or over-ceiling timeout, a malformed `llm`) is safely ignorable: the base
+ * falls back to the default, one warning says why, and the config keeps loading. A read does not rewrite the file.
+ */
+function dropInvalidImproveBase(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
+  const improve = raw.improve;
+  if (!isPlainConfigObject(improve)) return raw;
+  const rest = { ...improve };
+  for (const key of ["model", "llm", "timeoutMs"] as const) {
+    if (!(key in improve)) continue;
+    const parsed = ImproveConfigSchema.shape[key].safeParse(improve[key]);
+    if (parsed.success) continue;
+    warnOnce(
+      `config:improve-base-invalid:${sourcePath ?? "inline"}:${key}`,
+      `improve.${key} is invalid${sourcePath ? ` (${sourcePath})` : ""} and is ignored: ${parsed.error.issues.map((i) => i.message).join("; ")}.`,
+    );
+    delete rest[key];
+  }
+  return Object.keys(rest).length === Object.keys(improve).length ? raw : { ...raw, improve: rest };
+}
+
+/**
  * Resolve a local file's `extends` chain and validate the merged result
  * (deep-merged under `DEFAULT_CONFIG`) via Zod ({@link AkmConfigSchema}).
  * `liftedLocalRaw` must already be through {@link runConfigFilePipeline}.
@@ -391,11 +413,14 @@ function dropRetiredOutputFormat(raw: Record<string, unknown>, sourcePath?: stri
  * keeps around, instead of only getting the final merged `AkmConfig` back.
  */
 function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePath?: string): AkmConfig {
-  const chained = dropRetiredOutputFormat(
-    dropUnusableProjects(
-      dropUnusableEntries(
-        resolveBundlePaths(
-          resolveExtendsChain(dropUnusableProjects(liftedLocalRaw, sourcePath), sourcePath),
+  const chained = dropInvalidImproveBase(
+    dropRetiredOutputFormat(
+      dropUnusableProjects(
+        dropUnusableEntries(
+          resolveBundlePaths(
+            resolveExtendsChain(dropUnusableProjects(liftedLocalRaw, sourcePath), sourcePath),
+            sourcePath,
+          ),
           sourcePath,
         ),
         sourcePath,
@@ -431,22 +456,8 @@ function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePat
 }
 
 /**
- * Retired `index.<passName>` keys that still validate against the generic
- * per-pass catchall schema (`IndexPassConfigSchema`), so `resolveSchemaAt`
- * below never returns `undefined` for them and the walk would otherwise
- * treat them as a live, ordinary pass. Named here so the same three
- * guarantees apply as any other retired config key: a config setting one keeps
- * loading, is named once by
- * the unknown-key warning, and is dropped only by `akm migrate apply`.
- * `index.graph` (the LLM entity-graph extraction pass) and
- * `index.metadataEnhance` (LLM metadata enrichment) were retired in
- * 0.9.17-alpha.9; `index.stalenessDetection` before them.
- */
-const RETIRED_CATCHALL_KEY_PATHS = new Set(["index.graph", "index.metadataEnhance", "index.stalenessDetection"]);
-
-/**
  * Every dotted key in `raw` the schema does not know, at any depth (arrays
- * are not descended). Unknown keys are never an error: they are a typo, or a
+ * are not descended, except the entries of `registries`). Unknown keys are never an error: they are a typo, or a
  * key another release used. Reads keep them (they round-trip through
  * ordinary writes, so a newer release's settings survive a downgrade);
  * `akm migrate apply` drops them.
@@ -462,7 +473,7 @@ export function unknownConfigKeyPaths(
     // `$schema` is the editor hint every JSON-schema-aware config carries; akm ignores it silently.
     if (prefix.length === 0 && key === "$schema") continue;
     const schema = resolveSchemaAt(keyPath, root);
-    if (RETIRED_CATCHALL_KEY_PATHS.has(keyPath.join(".")) || schema === undefined) {
+    if (schema === undefined) {
       found.push(keyPath);
       continue;
     }
@@ -470,13 +481,39 @@ export function unknownConfigKeyPaths(
     if (isOpaqueSchema(schema)) continue;
     const value = node[key];
     if (isPlainConfigObject(value)) found.push(...unknownConfigKeyPaths(root, value, keyPath));
+    // `registries` is the one array of keyed entries: a key its entries no longer have (`options`) is named too.
+    if (keyPath.join(".") === "registries" && Array.isArray(value)) {
+      value.forEach((entry, index) => {
+        if (!isPlainConfigObject(entry)) return;
+        for (const field of Object.keys(entry).sort()) {
+          if (!(field in RegistryConfigEntrySchema.shape)) found.push([...keyPath, String(index), field]);
+        }
+      });
+    }
   }
   return found;
 }
 
+/** `engine` is the retired spelling of `connection` / `harness`; a model-work block still honours it. */
+const RETIRED_ENGINE_KEY = /^improve(\.processes\.[^.]+|\.qualityGate)?\.engine$/;
+
 function warnUnknownConfigKeys(raw: Record<string, unknown>, sourcePath?: string): void {
   for (const keyPath of unknownConfigKeyPaths(raw)) {
     const dotted = keyPath.join(".");
+    if (RETIRED_ENGINE_KEY.test(dotted)) {
+      const parent = keyPath
+        .slice(0, -1)
+        .reduce<unknown>((node, k) => (isPlainConfigObject(node) ? node[k] : undefined), raw);
+      const shadowed = isPlainConfigObject(parent) && (parent.connection !== undefined || parent.harness !== undefined);
+      warnOnce(
+        `config:retired-engine-key:${sourcePath ?? "inline"}:${dotted}`,
+        `Config key ${JSON.stringify(dotted)}${sourcePath ? ` at ${sourcePath}` : ""} is the retired spelling of \`connection\` / \`harness\`. ` +
+          (shadowed
+            ? "It is ignored here, because the same block names a `connection` or `harness`, and `akm migrate apply` drops it."
+            : "It still selects where this model work runs, but `akm migrate apply` drops it: name a `connection` or `harness` instead."),
+      );
+      continue;
+    }
     warnOnce(
       `config:unknown-key:${sourcePath ?? "inline"}:${dotted}`,
       `Unknown config key ${JSON.stringify(dotted)}${sourcePath ? ` at ${sourcePath}` : ""} has no defined akm behavior and is ignored. Check the spelling; a key retired by this release or added by a newer one is dropped by \`akm migrate apply\`.`,
@@ -487,8 +524,8 @@ function warnUnknownConfigKeys(raw: Record<string, unknown>, sourcePath?: string
 function deleteConfigPath(node: Record<string, unknown>, keyPath: readonly string[]): void {
   let cursor: unknown = node;
   for (const segment of keyPath.slice(0, -1)) {
-    if (!isPlainConfigObject(cursor)) return;
-    cursor = cursor[segment];
+    if (!isPlainConfigObject(cursor) && !Array.isArray(cursor)) return;
+    cursor = (cursor as Record<string, unknown>)[segment];
   }
   if (isPlainConfigObject(cursor)) delete cursor[keyPath[keyPath.length - 1] as string];
 }
@@ -620,7 +657,6 @@ const HOST_LOCAL_CONFIG_KEYS = new Set([
   "experimental",
   "registries",
   "scheduler",
-  "setup",
 ]);
 
 /**
@@ -1328,6 +1364,8 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     // The reader resolves each bundle `path` and drops an unplaceable one; the file keeps what was written.
     if (isPlainObject(localRaw.bundles)) body.bundles = localRaw.bundles;
     for (const keyPath of unknownConfigKeyPaths(body)) deleteConfigPath(body, keyPath);
+    // A model-base value the reader ignores is dropped here, as every other retired value is.
+    if (isPlainConfigObject(body.improve)) body.improve = dropInvalidImproveBase(body, configPath).improve;
     // `improve.strategies["graph-refresh"]` is schema-valid (any name is a
     // legal custom-strategy key), so it never reaches the unknown-key sweep
     // above. It can only be a leftover override of the deleted graph-refresh

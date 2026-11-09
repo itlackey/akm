@@ -43,7 +43,7 @@ export interface UnresolvedExecutionDefaults {
   readonly environment?: Readonly<Record<string, string>> | null;
 }
 
-/** What a config block (`improve.processes.<name>`, `index.<pass>`) or a flag says about where a call runs and how. */
+/** What a config block (`improve.processes.<name>`) or a flag says about where a call runs and how. */
 export interface ConfiguredExecutionSettings {
   readonly connection?: string;
   readonly harness?: string;

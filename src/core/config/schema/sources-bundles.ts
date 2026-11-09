@@ -81,7 +81,6 @@ export const RegistryConfigEntrySchema = z
     name: z.string().min(1).optional(),
     enabled: z.boolean().optional(),
     provider: z.string().min(1).optional(),
-    options: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
@@ -103,7 +102,6 @@ export const RegistryConfigEntrySchema = z
 const BundleWebsiteDescriptorSchema = z
   .object({
     url: httpUrl,
-    refresh: z.string().min(1).optional(),
     maxPages: positiveInt.optional(),
     maxDepth: positiveInt.optional(),
     // Default true: crawl-scoped robots.txt compliance (Disallow/Crawl-delay

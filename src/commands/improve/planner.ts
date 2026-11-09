@@ -102,7 +102,7 @@ export interface ImprovePlanProjectionInput {
   selectedRefs: readonly ImproveEligibleRef[];
   effectiveRefs: readonly ImproveEligibleRef[];
   distillOnlyRefs: ReadonlySet<string>;
-  configuredLimits: { cli?: number; profile?: number; reflect?: number };
+  configuredLimits: { cli?: number; reflect?: number };
   effectiveLimit?: number;
   gates: readonly ImprovePlanGate[];
   processes: readonly ProcessRoutingRow[];

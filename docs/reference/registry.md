@@ -61,7 +61,6 @@ Registries are stored in the `registries` array of `config.json`:
 | `name` | string | none | Label |
 | `enabled` | boolean | `true` | Set `false` to keep the entry but skip it when searching |
 | `provider` | string | `static-index` | `static-index` or `skills-sh` |
-| `options` | object | none | Provider-specific options |
 
 A registry URL with a username or password is dropped with a warning, and the
 built-in providers send no credentials; host the index at a credential-free

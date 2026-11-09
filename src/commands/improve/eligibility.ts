@@ -12,7 +12,7 @@ import { type AssetRef, conceptIdFromTypeName, parsePlacementRef, resolveRef } f
 import { closestMatch } from "../../core/closest-match";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
-import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import type { ImproveEligibleRef, ImproveIndexSnapshot } from "../../core/improve-types";
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
@@ -46,8 +46,7 @@ export function withIndexDb<T>(readOnly: boolean, fn: (db: Database) => T): T | 
   try {
     db = readOnly ? openReadonlyExistingDatabase(undefined, { isolatedSnapshot: true }) : openExistingDatabase();
     return db ? fn(db) : undefined;
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
+  } catch {
     return undefined;
   } finally {
     if (db) closeDatabase(db);
@@ -124,8 +123,7 @@ export function namesIndexedRootAsset(word: string): boolean {
     if (!db) return false;
     const entries = getAllEntries(db);
     return entries.some((e) => e.conceptId === word) && !entries.some((e) => e.entry.type === word);
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
+  } catch {
     return false;
   } finally {
     if (db) closeDatabase(db);
@@ -326,7 +324,6 @@ async function collectEligibleRefsFromIndex(
       indexSnapshot: ready,
     };
   } catch (error) {
-    rethrowIfTestIsolationError(error);
     const snapshot = unreadableSnapshot(readOnly, error);
     if (snapshot) return empty(snapshot);
     throw error;

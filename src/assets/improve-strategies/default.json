@@ -1,5 +1,4 @@
 {
-  "description": "Standard improve pass — reflect (rewrites only from negative feedback), distill, consolidation (promotion plus the reviewed pair-pass retire/supersede proposals), and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract off. Proactive maintenance plans up to 15 assets not reflected or distilled for 30 days.",
   "processes": {
     "reflect": {
       "enabled": true,

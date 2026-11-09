@@ -112,11 +112,9 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     ...(s.enabled !== undefined ? { enabled: s.enabled } : {}),
   }));
 
-  // Data directory. `getDataDir()` can itself throw (e.g. TEST_ISOLATION_MISSING
-  // when NODE_ENV=test leaks into a real invocation — a JS test runner's
-  // child process — with no XDG_DATA_HOME/AKM_DATA_DIR override), caught
-  // here so that failure degrades only `dataDir`/`indexStats` rather than
-  // the whole report. Always attempted, even when `options.dbPath` (a
+  // Data directory. `getDataDir()` can itself throw (e.g. no resolvable
+  // home on Windows), caught here so that failure degrades only
+  // `dataDir`/`indexStats` rather than the whole report. Always attempted, even when `options.dbPath` (a
   // test-only override, see the param doc above) means it is not needed to
   // resolve the index path below — `dataDir` is its own reported field.
   let dataDir = "";

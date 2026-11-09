@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { daysToMs, resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
-import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../core/errors";
+import { ConfigError, UsageError } from "../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
 import {
@@ -213,7 +213,6 @@ export function probeStateDbRoundTrip(stateDbPath: string): {
       { path: stateDbPath },
     );
   } catch (err) {
-    rethrowIfTestIsolationError(err);
     return { ok: false, durationMs: Date.now() - started, error: err instanceof Error ? err.message : String(err) };
   }
 }

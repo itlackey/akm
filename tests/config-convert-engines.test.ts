@@ -458,7 +458,6 @@ describe("the defaults become the entries named default", () => {
     const { config } = convert({
       engines: { lab: llm(), cloud: llm({ endpoint: "https://api.openai.com/v1/chat/completions" }) },
       defaults: { llmEngine: "lab" },
-      index: { memory: { engine: "lab" } },
       improve: {
         strategies: {
           nightly: { processes: { reflect: { engine: "lab" }, triage: { judgment: { engine: "cloud" } } } },
@@ -466,7 +465,6 @@ describe("the defaults become the entries named default", () => {
       },
     });
     expect(Object.keys(config.connections as Dict)).toEqual(["default", "cloud"]);
-    expect((config.index as Dict).memory).toEqual({ connection: "default" });
     const processes = (config.improve as Dict).processes as Dict;
     expect(processes.reflect).toEqual({ connection: "default" });
     expect(processes.triage).toEqual({ connection: "cloud" });
@@ -871,28 +869,13 @@ describe("what a strategy no longer decides, and per-process names", () => {
     }
   });
 
-  test("index.defaults is flattened into index, an index.<pass> engine becomes its connection", () => {
-    const { config } = convert({
-      engines: { lab: llm(), claude: { kind: "agent", platform: "claude" } },
-      index: {
-        defaults: { engine: "lab", model: "fast", timeoutMs: 1000, llm: { temperature: 0 } },
-        memory: { engine: "lab" },
-      },
-    });
-    expect(config.index).toEqual({
-      memory: { connection: "lab" },
-      connection: "lab",
-      model: "fast",
-      timeoutMs: 1000,
-      llm: { temperature: 0 },
-    });
-    // An index pass runs on connections only; a harness there is dropped with a note.
-    const withHarness = convert({
-      engines: { claude: { kind: "agent", platform: "claude" } },
-      index: { memory: { engine: "claude", enabled: true } },
-    });
-    expect((withHarness.config.index as Dict).memory).toEqual({ enabled: true });
-    expect(withHarness.notes.join("\n")).toContain("index.memory.engine");
+  test("an `index` section is not touched: it is inert, and migrate drops it whole", () => {
+    const index = {
+      defaults: { engine: "lab", model: "fast" },
+      memory: { engine: "lab", enabled: true },
+    };
+    const { config } = convert({ engines: { lab: llm() }, index: structuredClone(index) });
+    expect(config.index).toEqual(index);
   });
 
   test("a strategy process's engine becomes connection or harness by the target's kind, and moves to improve.processes with its model, llm and timeoutMs", () => {

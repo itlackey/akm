@@ -35,7 +35,8 @@ import { formatRegistryUrl } from "../core/registry-url";
 // ── Public API ──────────────────────────────────────────────────────────────
 
 export function getConfigValue(config: AkmConfig, key: string): unknown {
-  return redactConfigValue(configGet(config as unknown as Record<string, unknown>, key), key.split("."));
+  const path = key.split(".");
+  return redactSecretKeys(redactConfigValue(configGet(config as unknown as Record<string, unknown>, key), path), path);
 }
 
 export function setConfigValue(config: AkmConfig, key: string, rawValue: string): AkmConfig {
@@ -80,7 +81,8 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
 }
 
 function redactConfigValue(value: unknown, path: string[] = []): unknown {
-  if (path.at(-1) === "apiKey" && typeof value === "string" && !isEnvReference(value)) return undefined;
+  const last = path.at(-1);
+  if (last === "apiKey" && typeof value === "string" && !isEnvReference(value)) return undefined;
   if (typeof value === "string" && isRegistryUrlPath(path)) return formatRegistryUrl(value);
   if (Array.isArray(value)) return value.map((child, index) => redactConfigValue(child, [...path, String(index)]));
   if (!value || typeof value !== "object") return value;
@@ -89,6 +91,57 @@ function redactConfigValue(value: unknown, path: string[] = []): unknown {
     if (key !== "apiKey" || (typeof child === "string" && isEnvReference(child))) {
       result[key] = redactConfigValue(child, [...path, key]);
     }
+  }
+  return result;
+}
+
+/**
+ * True when `key` names a secret, judged by the words of the name (camelCase, `_` and `-` split it), never by
+ * substring: `api_keys`, `client_secret`, `access_token` match; `monkey-small`, `prompt_cache_key`, `tokenizer` and
+ * `maxTokens` do not. `key`/`keys` match only alone or after `api`, `access`, `private` or `auth`; `tokens` only
+ * when its value is not a number.
+ */
+function isSecretKey(key: string, value: unknown): boolean {
+  const words = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[\s_-]+/)
+    .map((word) => word.toLowerCase())
+    .filter(Boolean);
+  return words.some((word, index) => {
+    if (["token", "secret", "secrets", "password", "authorization", "apikey"].includes(word)) return true;
+    if (word === "tokens") return typeof value !== "number";
+    if (word === "key" || word === "keys") {
+      return words.length === 1 || ["api", "access", "private", "auth"].includes(words[index - 1] ?? "");
+    }
+    return false;
+  });
+}
+
+/**
+ * What `akm config get`, `list`, `set`, `unset` and `diff` print: under `connections`, where the wire fields are the
+ * endpoint's own and any name can carry a credential, the whole value of a secret-shaped key is dropped, whatever its
+ * type, unless it is a `$VAR` reference. The `models` alias map is names, not secrets, and is left alone. Kept out of
+ * `listConfig`, which Desktop saves from: a save must never lose a setting.
+ */
+export function redactSecretKeys(value: unknown, path: string[] = []): unknown {
+  if (path.length > 0 && path[0] !== "connections") return value;
+  if (path.includes("models")) return value;
+  const last = path.at(-1);
+  if (
+    path.length > 2 &&
+    last !== undefined &&
+    value != null &&
+    isSecretKey(last, value) &&
+    !(typeof value === "string" && isEnvReference(value))
+  ) {
+    return undefined;
+  }
+  if (Array.isArray(value)) return value.map((child, index) => redactSecretKeys(child, [...path, String(index)]));
+  if (!value || typeof value !== "object") return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const redacted = redactSecretKeys(child, [...path, key]);
+    if (redacted !== undefined || child === undefined) result[key] = redacted;
   }
   return result;
 }
@@ -157,7 +210,7 @@ export function akmConfigDiff(ref: string): { rows: ConfigDiffRow[] } {
     getConfigPath(),
   );
   const other = parseAndValidateConfigText(text, resolvedPath);
-  const rows = diffConfigs(redactConfigValue(current), redactConfigValue(other));
+  const rows = diffConfigs(redactSecretKeys(redactConfigValue(current)), redactSecretKeys(redactConfigValue(other)));
   return { rows };
 }
 
@@ -184,7 +237,7 @@ export const configCommand = defineGroupCommand({
     list: defineJsonCommand({
       meta: { name: "list", description: "List current configuration" },
       run() {
-        output("config", listConfig(loadConfig()));
+        output("config", redactSecretKeys(listConfig(loadConfig())));
       },
     }),
     get: defineJsonCommand({
@@ -199,7 +252,10 @@ export const configCommand = defineGroupCommand({
       },
       run({ args }) {
         const value = getConfigValue(loadConfig(), args.key);
-        output("config", args["show-source"] ? { value, source: getConfigValueSource(args.key) } : value);
+        output(
+          "config",
+          args["show-source"] ? { value: value ?? null, source: getConfigValueSource(args.key) } : (value ?? null),
+        );
       },
     }),
     set: defineJsonCommand({
@@ -229,7 +285,7 @@ export const configCommand = defineGroupCommand({
       run({ args }) {
         const updated = mutateConfig((current) => setConfigValue(current, args.key, args.value)).config;
         if (!args.silent) {
-          output("config", listConfig(updated));
+          output("config", redactSecretKeys(listConfig(updated)));
         }
       },
     }),
@@ -252,7 +308,7 @@ export const configCommand = defineGroupCommand({
         const result = mutateConfig((current) => unsetConfigValue(current, args.key), { absentNoop: true });
         const updated = result.config;
         if (!args.silent) {
-          output("config", listConfig(updated));
+          output("config", redactSecretKeys(listConfig(updated)));
         }
       },
     }),

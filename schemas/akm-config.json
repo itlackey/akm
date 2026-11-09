@@ -265,116 +265,6 @@
       },
       "additionalProperties": {}
     },
-    "index": {
-      "type": "object",
-      "properties": {
-        "connection": {
-          "type": "string",
-          "minLength": 1
-        },
-        "model": {
-          "type": "string",
-          "minLength": 1
-        },
-        "timeoutMs": {
-          "anyOf": [
-            {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "llm": {
-          "type": "object",
-          "properties": {
-            "temperature": {
-              "type": "number"
-            },
-            "maxTokens": {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            },
-            "extraParams": {
-              "type": "object",
-              "propertyNames": {
-                "type": "string"
-              },
-              "additionalProperties": {}
-            },
-            "enableThinking": {
-              "type": "boolean"
-            },
-            "reasoningEffort": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "additionalProperties": {}
-        }
-      },
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "connection": {
-            "type": "string",
-            "minLength": 1
-          },
-          "model": {
-            "type": "string",
-            "minLength": 1
-          },
-          "timeoutMs": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "llm": {
-            "type": "object",
-            "properties": {
-              "temperature": {
-                "type": "number"
-              },
-              "maxTokens": {
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "extraParams": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {}
-              },
-              "enableThinking": {
-                "type": "boolean"
-              },
-              "reasoningEffort": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "additionalProperties": {}
-          }
-        },
-        "additionalProperties": {}
-      }
-    },
     "registries": {
       "type": "array",
       "items": {
@@ -393,13 +283,6 @@
           "provider": {
             "type": "string",
             "minLength": 1
-          },
-          "options": {
-            "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {}
           }
         },
         "required": [
@@ -430,10 +313,6 @@
             "properties": {
               "url": {
                 "type": "string"
-              },
-              "refresh": {
-                "type": "string",
-                "minLength": 1
               },
               "maxPages": {
                 "type": "integer",
@@ -695,6 +574,50 @@
         "harness": {
           "type": "string",
           "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "llm": {
+          "type": "object",
+          "properties": {
+            "temperature": {
+              "type": "number"
+            },
+            "maxTokens": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "extraParams": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "enableThinking": {
+              "type": "boolean"
+            },
+            "reasoningEffort": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": {}
+        },
+        "timeoutMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "processes": {
           "type": "object",
@@ -1176,10 +1099,6 @@
           "additionalProperties": {
             "type": "object",
             "properties": {
-              "description": {
-                "type": "string",
-                "minLength": 1
-              },
               "processes": {
                 "type": "object",
                 "properties": {
@@ -1443,11 +1362,6 @@
                 },
                 "additionalProperties": {}
               },
-              "limit": {
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
               "sync": {
                 "type": "object",
                 "properties": {
@@ -1471,11 +1385,6 @@
         "eventRetentionDays": {
           "type": "number",
           "minimum": 0
-        },
-        "salience": {
-          "type": "object",
-          "properties": {},
-          "additionalProperties": {}
         },
         "stateGc": {
           "type": "object",
@@ -1533,11 +1442,6 @@
           }
         }
       },
-      "additionalProperties": {}
-    },
-    "setup": {
-      "type": "object",
-      "properties": {},
       "additionalProperties": {}
     },
     "experimental": {
@@ -1818,116 +1722,6 @@
           },
           "additionalProperties": {}
         },
-        "index": {
-          "type": "object",
-          "properties": {
-            "connection": {
-              "type": "string",
-              "minLength": 1
-            },
-            "model": {
-              "type": "string",
-              "minLength": 1
-            },
-            "timeoutMs": {
-              "anyOf": [
-                {
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "llm": {
-              "type": "object",
-              "properties": {
-                "temperature": {
-                  "type": "number"
-                },
-                "maxTokens": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "extraParams": {
-                  "type": "object",
-                  "propertyNames": {
-                    "type": "string"
-                  },
-                  "additionalProperties": {}
-                },
-                "enableThinking": {
-                  "type": "boolean"
-                },
-                "reasoningEffort": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "additionalProperties": {}
-            }
-          },
-          "additionalProperties": {
-            "type": "object",
-            "properties": {
-              "connection": {
-                "type": "string",
-                "minLength": 1
-              },
-              "model": {
-                "type": "string",
-                "minLength": 1
-              },
-              "timeoutMs": {
-                "anyOf": [
-                  {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "enabled": {
-                "type": "boolean"
-              },
-              "llm": {
-                "type": "object",
-                "properties": {
-                  "temperature": {
-                    "type": "number"
-                  },
-                  "maxTokens": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "extraParams": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "additionalProperties": {}
-                  },
-                  "enableThinking": {
-                    "type": "boolean"
-                  },
-                  "reasoningEffort": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "additionalProperties": {}
-              }
-            },
-            "additionalProperties": {}
-          }
-        },
         "registries": {
           "type": "array",
           "items": {
@@ -1946,13 +1740,6 @@
               "provider": {
                 "type": "string",
                 "minLength": 1
-              },
-              "options": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {}
               }
             },
             "required": [
@@ -1983,10 +1770,6 @@
                 "properties": {
                   "url": {
                     "type": "string"
-                  },
-                  "refresh": {
-                    "type": "string",
-                    "minLength": 1
                   },
                   "maxPages": {
                     "type": "integer",
@@ -2248,6 +2031,50 @@
             "harness": {
               "type": "string",
               "minLength": 1
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "llm": {
+              "type": "object",
+              "properties": {
+                "temperature": {
+                  "type": "number"
+                },
+                "maxTokens": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "extraParams": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                "enableThinking": {
+                  "type": "boolean"
+                },
+                "reasoningEffort": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": {}
+            },
+            "timeoutMs": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 2147483647
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "processes": {
               "type": "object",
@@ -2729,10 +2556,6 @@
               "additionalProperties": {
                 "type": "object",
                 "properties": {
-                  "description": {
-                    "type": "string",
-                    "minLength": 1
-                  },
                   "processes": {
                     "type": "object",
                     "properties": {
@@ -2996,11 +2819,6 @@
                     },
                     "additionalProperties": {}
                   },
-                  "limit": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
                   "sync": {
                     "type": "object",
                     "properties": {
@@ -3024,11 +2842,6 @@
             "eventRetentionDays": {
               "type": "number",
               "minimum": 0
-            },
-            "salience": {
-              "type": "object",
-              "properties": {},
-              "additionalProperties": {}
             },
             "stateGc": {
               "type": "object",
@@ -3086,11 +2899,6 @@
               }
             }
           },
-          "additionalProperties": {}
-        },
-        "setup": {
-          "type": "object",
-          "properties": {},
           "additionalProperties": {}
         },
         "experimental": {
@@ -3424,10 +3232,6 @@
     "ImproveProfileConfig": {
       "type": "object",
       "properties": {
-        "description": {
-          "type": "string",
-          "minLength": 1
-        },
         "processes": {
           "type": "object",
           "properties": {
@@ -3691,11 +3495,6 @@
           },
           "additionalProperties": {}
         },
-        "limit": {
-          "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991
-        },
         "sync": {
           "type": "object",
           "properties": {
@@ -3731,13 +3530,6 @@
         "provider": {
           "type": "string",
           "minLength": 1
-        },
-        "options": {
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
-          },
-          "additionalProperties": {}
         }
       },
       "required": [

@@ -867,6 +867,11 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
   });
 });
 
+/** The retired `index` section: no longer in the schema, so a config that still has one carries it as an unknown key. */
+function retiredIndexSection(config: object): Record<string, unknown> | undefined {
+  return (config as { index?: Record<string, unknown> }).index;
+}
+
 describe("previous-release corpus — retired index.graph.lazyGraphExtraction key", () => {
   beforeEach(() => {
     resetConfigCache();
@@ -895,14 +900,11 @@ describe("previous-release corpus — retired index.graph.lazyGraphExtraction ke
 
     const config = loadConfig();
 
-    // 0.9.17-alpha.9 retires the whole `index.graph` pass (see the describe
-    // block below), not just these two alpha.5-era sub-fields. The unknown-
-    // key walk now stops at `index.graph` itself, so the coarser whole-key
-    // warning supersedes the old per-field "lazyGraphExtraction" message —
-    // one warning, not two.
-    expect(warnings.filter((w) => w.includes("index.graph"))).toHaveLength(1);
+    // The whole `index` section is retired, so the unknown-key walk stops at `index` itself: one warning
+    // for the section, not one per sub-field.
+    expect(warnings.filter((w) => w.includes('Unknown config key "index"'))).toHaveLength(1);
     expect(warnings.filter((w) => w.includes("lazyGraphExtraction"))).toHaveLength(0);
-    const graph = config.index?.graph as Record<string, unknown> | undefined;
+    const graph = retiredIndexSection(config)?.graph as Record<string, unknown> | undefined;
     expect(graph?.graphExtractionBatchSize).toBe(2);
     expect(graph?.lazyGraphExtraction).toBe(true);
   });
@@ -936,8 +938,8 @@ describe("previous-release corpus — retired index.graph key (whole pass, 0.9.1
 
     const config = loadConfig();
 
-    expect(warnings.filter((w) => w.includes("index.graph"))).toHaveLength(1);
-    expect((config.index?.graph as Record<string, unknown> | undefined)?.lazyGraphExtraction).toBe(true);
+    expect(warnings.filter((w) => w.includes('Unknown config key "index"'))).toHaveLength(1);
+    expect((retiredIndexSection(config)?.graph as Record<string, unknown> | undefined)?.lazyGraphExtraction).toBe(true);
   });
 
   test("index.graph survives an unrelated ordinary config write", () => {

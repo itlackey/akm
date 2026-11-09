@@ -1496,7 +1496,6 @@ function safeCodePointToString(value: number): string | undefined {
 export {
   getWebsiteCachePaths,
   normalizeSiteUrl,
-  shouldAllowPrivateWebsiteHostsForTests,
   shouldAllowPrivateWebsiteUrlForTests,
   validateWebsiteInputUrl,
   validateWebsiteUrl,

@@ -117,7 +117,8 @@ test("a row written before 0.9.17-alpha.7 keeps firing: the CLI applies its desc
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout).warnings).toContain(
+    // BUN_TEST=1 changes nothing: the doctor inspected the scheduler (the harness's crontab stub on PATH reports no crontab) and said nothing about a test harness.
+    expect(JSON.parse(result.stdout).warnings).not.toContain(
       "Native scheduler inspection is skipped inside the bun test harness.",
     );
 

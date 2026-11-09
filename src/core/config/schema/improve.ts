@@ -8,12 +8,11 @@
  * tolerated as unknown keys.
  */
 import { z } from "zod";
+import { timeoutMsField } from "./connections";
 import { ImproveProfileConfigSchema } from "./improve-processes";
 import { engineName, LlmInvocationOverridesSchema, nonEmptyString, nonNegativeNumber, positiveInt } from "./primitives";
 
 // ── Improve top-level (event retention, salience, state GC) ────────────────
-
-const ImproveSalienceSchema = z.object({}).passthrough();
 
 // #733 — orphan-GC pass (Workstream C, lean by design: one config gate).
 // The pass ALWAYS runs and ALWAYS reports counts (via the `asset_state_gc`
@@ -69,16 +68,24 @@ export const ImproveConfigSchema = z
     enabled: z.boolean().optional(),
     /** The strategy `akm improve` runs when `--strategy` names none. */
     strategy: engineName.optional(),
-    /** Where improve's model work runs: a connection, or a harness, over the default. */
+    /**
+     * The base for improve's processes, the quality-gate and triage judges, `akm remember --enrich`, extract and the
+     * proposal drain, whichever command makes the call; not a workflow gate's judge, which runs on the default. A
+     * connection, or a harness, over the default, with the model (an alias or a name), inference settings and a
+     * timeout every call under it starts from. `processes` and `qualityGate` below
+     * are nearer; the run's `--connection`, `--harness` and `--model` are nearest.
+     */
     connection: nonEmptyString.optional(),
     harness: nonEmptyString.optional(),
+    model: nonEmptyString.optional(),
+    llm: LlmInvocationOverridesSchema.optional(),
+    timeoutMs: timeoutMsField,
     /** Where each improve process runs, over `connection` / `harness` above. */
     processes: ImproveProcessesSchema.optional(),
     /** Where the judge of the reflect and distill quality gates runs, over `connection` / `harness` above (not over the process's own settings, which are the writer's). */
     qualityGate: ImproveWhereSchema.optional(),
     strategies: z.record(engineName, ImproveProfileConfigSchema).optional(),
     eventRetentionDays: nonNegativeNumber.optional(),
-    salience: ImproveSalienceSchema.optional(),
     stateGc: ImproveStateGcSchema.optional(),
   })
   .passthrough();

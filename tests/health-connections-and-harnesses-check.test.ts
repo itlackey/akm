@@ -67,7 +67,6 @@ describe("runConnectionsAndHarnessesCheck", () => {
       "process:agents",
       "process:extract",
       "process:enrich",
-      "process:index",
       "process:embedding",
     ]);
     expect(rows[0]).toMatchObject({ reachable: true, key: "none", default: true });
@@ -190,7 +189,7 @@ describe("runConnectionsAndHarnessesCheck", () => {
       // Said once for the work that has nowhere to run, not once per kind of work.
       expect(result.message.match(/name one default/g)).toHaveLength(1);
       const work = rowsOf(result).filter((row) => row.type === "process" && row.problem);
-      expect(work.map((row) => row.process)).toEqual(["improve", "judges", "agents", "extract", "enrich", "index"]);
+      expect(work.map((row) => row.process)).toEqual(["improve", "judges", "agents", "extract", "enrich"]);
     });
 
     test("naming one default makes the same installation ready", async () => {
@@ -199,16 +198,6 @@ describe("runConnectionsAndHarnessesCheck", () => {
       });
       const result = await runConnectionsAndHarnessesCheck({ loadConfig: () => named, which: onPath() });
       expect(result.status).toBe("pass");
-    });
-
-    test("work switched off on purpose is not waiting for a default", async () => {
-      const result = await runConnectionsAndHarnessesCheck({
-        loadConfig: () => ({ ...ambiguous, index: { memory: { enabled: false } } }) as AkmConfig,
-        which: onPath(),
-      });
-      const index = rowsOf(result).find((row) => row.process === "index");
-      expect(index?.problem).toBeUndefined();
-      expect(rowsOf(result).find((row) => row.process === "improve")?.problem).toBeTruthy();
     });
 
     test("is still reported with a harness, which gives the work a place to run but does not make the connections' default clear", async () => {
@@ -229,7 +218,6 @@ describe("runConnectionsAndHarnessesCheck", () => {
       loadConfig: () =>
         cfg({
           connections: { default: { endpoint: "http://a/v1", models: MODELS } },
-          index: { memory: { enabled: false } },
         }),
       which: onPath(),
     });

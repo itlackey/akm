@@ -24,7 +24,6 @@ import { EmbeddingConnectionConfigSchema } from "../src/core/config/config-schem
 import { ConfigError } from "../src/core/errors";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
-import { resolveIndexPassExecution } from "../src/llm/index-passes";
 import { schedulerEnabledRefs } from "../src/tasks/activation-config";
 import {
   type Cleanup,
@@ -1027,8 +1026,6 @@ describe("0.9 config shape parsing", () => {
       "improve",
     ],
     ["improve.qualityGate.connection", { improve: { qualityGate: { connection: "Anthropic" } } }, "gate"],
-    ["index.connection", { index: { connection: "Anthropic" } }, "index"],
-    ["index.<pass>.connection", { index: { graph: { connection: "Anthropic" } } }, "index"],
   ])("a miscased name at %s loads, and is an error at resolution naming it", (_where, pointer, resolves) => {
     writeCurrentConfig({
       connections: { default: { endpoint: "http://lab:1/v1", models: { fast: "m" } } },
@@ -1044,8 +1041,7 @@ describe("0.9 config shape parsing", () => {
           alias: "fast",
           ...(loaded.improve?.qualityGate ? { current: loaded.improve.qualityGate } : {}),
         }),
-      index: () => resolveIndexPassExecution("graph", loaded),
-    }[resolves as "improve" | "gate" | "index"];
+    }[resolves as "improve" | "gate"];
     expect(resolution).toThrow(/"Anthropic" is not configured/);
   });
 

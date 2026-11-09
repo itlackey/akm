@@ -156,16 +156,12 @@ describe("akm info on a genuinely fresh install — no config, no bundle dir yet
 });
 
 describe("akm info when environment resolution itself fails (a10-info, infoCommand backstop)", () => {
-  test("NODE_ENV=test leaking into a real invocation (e.g. from a JS test runner) with no data-dir override still exits 0", async () => {
+  test("NODE_ENV=test in the shell changes nothing: the data directory resolves from HOME like any other run", async () => {
     const home = sandboxHome();
     const cleanup = sandboxXdgConfigHome(home.cleanup).cleanup;
     try {
-      // getDataDir() refuses to guess under NODE_ENV=test unless XDG_DATA_HOME
-      // or AKM_DATA_DIR is set (core/paths.ts's TEST_ISOLATION_MISSING guard,
-      // there to stop a REAL test suite from writing into a developer's
-      // ~/.local/share/akm) — a real, reachable shape when akm is invoked as
-      // a subprocess from Jest/Vitest/etc, which set NODE_ENV=test on their
-      // own process and whose children inherit it.
+      // A JS test runner (Jest, Vitest) sets NODE_ENV=test on its own process and its children inherit it. akm does
+      // not read it: with no XDG_DATA_HOME or AKM_DATA_DIR the data directory is under HOME, and `info` is whole.
       const result = await spawnAkm(["info", "--format", "json"], {
         NODE_ENV: "test",
         XDG_DATA_HOME: undefined,
@@ -175,11 +171,8 @@ describe("akm info when environment resolution itself fails (a10-info, infoComma
       expect(result.elapsedMs).toBeLessThan(MAX_MS);
       const parsed = JSON.parse(result.stdout);
       expect(parsed.ok).toBe(true);
-      // Only the data-dir-derived sections degrade; everything else still
-      // reports normally (assembleInfo's per-section degradation, not the
-      // whole-report backstop).
-      expect(parsed.dataDir).toBe("");
-      expect(parsed.indexStats.unavailable).toBeDefined();
+      expect(parsed.dataDir).toBe(path.join(process.env.HOME as string, ".local", "share", "akm"));
+      expect(parsed.configError).toBeUndefined();
       expect(Array.isArray(parsed.assetTypes)).toBe(true);
       expect(parsed.assetTypes.length).toBeGreaterThan(0);
     } finally {
@@ -199,13 +192,6 @@ describe("akm info when environment resolution itself fails (a10-info, infoComma
       AKM_DATA_DIR: undefined,
       AKM_CACHE_DIR: undefined,
       AKM_STATE_DIR: undefined,
-      // This test's own process runs under `bun test`, which sets BUN_TEST
-      // (inherited by spawnAkm's child otherwise) — clearing it isolates
-      // "HOME unset" from the SEPARATE NODE_ENV=test/TEST_ISOLATION_MISSING
-      // scenario covered above, so getDataDir()/getCacheDir()/getStateDir()
-      // exercise their real "homeless" fallback here, not that guard.
-      BUN_TEST: undefined,
-      NODE_ENV: undefined,
     });
     expect(result.code, result.stderr).toBe(0);
     expect(result.elapsedMs).toBeLessThan(MAX_MS);

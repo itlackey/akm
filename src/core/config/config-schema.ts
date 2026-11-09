@@ -7,7 +7,7 @@
  *
  * ASSEMBLY BARREL: the individual section schemas live under `./schema/*` (one
  * cohesive module per config area — connections, harnesses, embedding, improve, sources/
- * bundles, index, search, output, feedback, workflow, setup, plus shared
+ * bundles, search, output, feedback, workflow, plus shared
  * `primitives`). This file assembles them into the top-level {@link AkmConfigShape}
  * / {@link AkmConfigSchema}, owns the cross-field {@link AkmConfigSchema.superRefine},
  * and RE-EXPORTS every section schema so all existing `./config-schema` imports
@@ -46,13 +46,11 @@ import { ExperimentalConfigSchema } from "./schema/experimental";
 import { FeedbackConfigSchema } from "./schema/feedback";
 import { HarnessesSchema } from "./schema/harnesses";
 import { ImproveConfigSchema } from "./schema/improve";
-import { IndexConfigSchema } from "./schema/index-config";
 import { OutputConfigSchema } from "./schema/output";
 import { CURRENT_CONFIG_VERSION, nonEmptyString, nonNegativeNumber } from "./schema/primitives";
 import { ProjectsSchema } from "./schema/projects";
 import { SchedulerConfigSchema } from "./schema/scheduler";
 import { SearchConfigSchema } from "./schema/search";
-import { SetupConfigSchema } from "./schema/setup";
 import { BundlesConfigSchema, RegistryConfigEntrySchema } from "./schema/sources-bundles";
 import { WorkflowConfigSchema } from "./schema/workflow";
 
@@ -76,12 +74,10 @@ export {
   TriageProcessConfigSchema,
   ValidationProcessConfigSchema,
 } from "./schema/improve-processes";
-export { IndexConfigSchema, IndexPassConfigSchema } from "./schema/index-config";
 export { OutputConfigSchema } from "./schema/output";
 export { CURRENT_CONFIG_VERSION, LlmInvocationOverridesSchema } from "./schema/primitives";
 export { SchedulerConfigSchema } from "./schema/scheduler";
 export { SearchConfigSchema } from "./schema/search";
-export { SetupConfigSchema } from "./schema/setup";
 export {
   BundleConfigEntrySchema,
   BundlesConfigSchema,
@@ -121,7 +117,6 @@ export const AkmConfigShape = {
   harnesses: HarnessesSchema.optional(),
   semanticSearchMode: z.enum(["off", "auto"]).default("off"),
   embedding: EmbeddingConnectionConfigSchema.optional(),
-  index: IndexConfigSchema.optional(),
   registries: z.array(RegistryConfigEntrySchema).optional(),
   // `bundles` + `defaultBundle` are the only source configuration shape. The
   // retired `stashDir`/`sources[]`/`installed[]` keys are rejected at load,
@@ -142,7 +137,6 @@ export const AkmConfigShape = {
   // Host-local scheduler grants. Inherited layers are stripped by
   // `resolveExtendsChain`; bundle-provided config never activates code.
   scheduler: SchedulerConfigSchema.optional(),
-  setup: SetupConfigSchema.optional(),
   // D8 — explicit opt-ins for behaviour outside the stability contract. Every
   // key defaults to OFF; see `src/core/config/experimental.ts` for the readers.
   experimental: ExperimentalConfigSchema.optional(),

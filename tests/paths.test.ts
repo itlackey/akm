@@ -314,63 +314,29 @@ describe("getDataDir", () => {
     expect(result).toBe(path.join("/test-data-xdg", "akm"));
   });
 
-  // ── Test-isolation write-guard ────────────────────────────────────────────
+  // ── No test sentinel ──────────────────────────────────────────────────────
   //
-  // Defense-in-depth: under `bun test` / NODE_ENV=test, every call to
-  // getDataDir() must resolve through an explicit XDG_DATA_HOME or
-  // AKM_DATA_DIR override. Falling through to the developer's real
-  // ~/.local/share/akm silently writes SQLite databases, lockfiles, and
-  // snapshots into their personal data dir (observed: 4,183-row
-  // registry-cache pollution). The guard catches that by throwing
-  // TEST_ISOLATION_MISSING regardless of whether AKM_BUNDLE_DIR is set.
+  // akm does not ask whether it runs under a test. `NODE_ENV=test` or `BUN_TEST=1` in a shell resolves the same
+  // directories as without them. What stops a test run reaching the developer's real directories is the harness
+  // (tests/_preload.ts, tests/_helpers/isolation-guard.ts; tests/isolation-guard.test.ts).
 
-  test("test-isolation guard fires when BUN_TEST=1 and XDG_DATA_HOME missing", () => {
-    expect(() => getDataDir({ BUN_TEST: "1", HOME: "/home/user" }, "linux")).toThrow(
-      /Refusing to resolve data directory under bun test/,
+  test("NODE_ENV=test and BUN_TEST=1 do not change the data directory", () => {
+    const plain = getDataDir({ HOME: "/home/user" }, "linux");
+    expect(plain).toBe(path.join("/home/user", ".local", "share", "akm"));
+    expect(getDataDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux")).toBe(plain);
+    expect(getDataDir({ BUN_TEST: "1", HOME: "/home/user" }, "linux")).toBe(plain);
+  });
+
+  test("XDG_DATA_HOME and AKM_DATA_DIR still win, test sentinel or not", () => {
+    expect(getDataDir({ NODE_ENV: "test", XDG_DATA_HOME: "/tmp/xdg-data", HOME: "/home/user" }, "linux")).toBe(
+      path.join("/tmp/xdg-data", "akm"),
     );
-  });
-
-  test("test-isolation guard fires when NODE_ENV=test and XDG_DATA_HOME missing", () => {
-    expect(() => getDataDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux")).toThrow(
-      /Refusing to resolve data directory under bun test/,
-    );
-  });
-
-  test("test-isolation guard does NOT fire when both AKM_BUNDLE_DIR and XDG_DATA_HOME are set", () => {
-    const result = getDataDir(
-      { NODE_ENV: "test", AKM_BUNDLE_DIR: "/tmp/stash", XDG_DATA_HOME: "/tmp/xdg-data", HOME: "/home/user" },
-      "linux",
-    );
-    expect(result).toBe(path.join("/tmp/xdg-data", "akm"));
-  });
-
-  test("test-isolation guard does NOT fire when XDG_DATA_HOME alone is set", () => {
-    const result = getDataDir({ NODE_ENV: "test", XDG_DATA_HOME: "/tmp/xdg-data", HOME: "/home/user" }, "linux");
-    expect(result).toBe(path.join("/tmp/xdg-data", "akm"));
-  });
-
-  test("test-isolation guard does NOT fire when AKM_DATA_DIR override is set", () => {
-    const result = getDataDir(
-      { NODE_ENV: "test", AKM_BUNDLE_DIR: "/tmp/stash", AKM_DATA_DIR: "/tmp/akm-data", HOME: "/home/user" },
-      "linux",
-    );
-    expect(result).toBe("/tmp/akm-data");
-  });
-
-  test("test-isolation guard does NOT fire outside tests (no BUN_TEST / NODE_ENV=test)", () => {
-    // Real CLI invocation with custom stash but no XDG override is legal.
-    const result = getDataDir({ AKM_BUNDLE_DIR: "/home/user/my-stash", HOME: "/home/user" }, "linux");
-    expect(result).toBe(path.join("/home/user", ".local", "share", "akm"));
-  });
-
-  test("test-isolation guard surfaces the TEST_ISOLATION_MISSING code", () => {
-    try {
-      getDataDir({ NODE_ENV: "test", HOME: "/home/user" }, "linux");
-      throw new Error("expected guard to throw");
-    } catch (err) {
-      // ConfigError carries a stable machine-readable code.
-      expect((err as { code?: string }).code).toBe("TEST_ISOLATION_MISSING");
-    }
+    expect(
+      getDataDir(
+        { NODE_ENV: "test", AKM_BUNDLE_DIR: "/tmp/stash", AKM_DATA_DIR: "/tmp/akm-data", HOME: "/home/user" },
+        "linux",
+      ),
+    ).toBe("/tmp/akm-data");
   });
 });
 

@@ -27,7 +27,6 @@
 import fs from "node:fs";
 import { type Database, openDatabase } from "../storage/database";
 import { insertEvent, readStateEvents } from "../storage/repositories/events-repository";
-import { rethrowIfTestIsolationError } from "./errors";
 import type { EventEnvelope } from "./events-types";
 import { getStateDbPath, openStateDatabase, withStateDb } from "./state-db";
 import { borrowScopedStateDb } from "./state-db-scope";
@@ -257,7 +256,6 @@ export function appendEvent(input: AppendEventInput, ctx?: EventsContext): void 
     withStateDb((db) => insertEvent(db, row), { path: dbPath });
   } catch (err) {
     // Never mask the bun-test isolation guard as a silent "events failed".
-    rethrowIfTestIsolationError(err);
     // Read-only sandboxes can serve an existing index but cannot create the
     // maintenance lock or state DB used by best-effort usage tracking. That is
     // expected for a read verb; unrelated storage failures remain visible.
@@ -337,9 +335,8 @@ export function readEvents(options: ReadEventsOptions = {}, ctx?: EventsContext)
       db = openStateDatabase(dbPath);
       ownsDb = true;
     }
-  } catch (err) {
+  } catch {
     // Never mask the bun-test isolation guard as "no events".
-    rethrowIfTestIsolationError(err);
     // DB does not exist yet or cannot be opened — return empty result.
     return { events: [], nextOffset: 0 };
   }

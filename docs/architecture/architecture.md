@@ -48,7 +48,7 @@ written are in [Core Principles](akm-core-principles.md).
   `tests/contracts/ref-resolver-contract.test.ts`.
 - **Execution happens only through named surfaces.** Workflow runs, tasks,
   agent and command dispatch, `env run` and `secret run`, the improve and
-  proposal processes, index passes, and fetcher modules in the working
+  proposal processes, and fetcher modules in the working
   bundle's `scripts/wiki-fetchers/` directory during website sync. `search`
   and `show` execute nothing; a script runs only as a task or workflow
   target. Held by review.
@@ -516,7 +516,7 @@ names a connection or a harness, never a profile, and
 
 What runs where follows from the kind of work:
 
-- **Model work** (the improve processes, judges, index passes, extraction,
+- **Model work** (the improve processes, judges, extraction,
   `remember --enrich`) runs on the default connection as a direct request to its
   endpoint; with no connection, on the default harness, with its tools restricted
   where the harness can be.
@@ -528,8 +528,8 @@ What runs where follows from the kind of work:
   command that needs one says so and points at `akm setup`. There is no fallback
   and nothing hidden.
 
-Every execution — direct commands, tasks, workflows, improve, proposals, and
-index passes — takes the same steps
+Every execution — direct commands, tasks, workflows, improve, and proposals —
+takes the same steps
 (`src/integrations/agent/resolution.ts`, `execution.ts`, `runner-dispatch.ts`):
 
 ```text
@@ -615,8 +615,8 @@ Every helper under `src/llm/` is a **bounded, single-shot, stateless** call.
 Concretely:
 
 - Each public export is either a stateless function (`chatCompletion` performs
-  one HTTP request and keeps nothing between calls; `resolveIndexPassExecution`,
-  `parseJsonResponse` in `src/core/parse.ts`, …) or a factory that returns a
+  one HTTP request and keeps nothing between calls; `parseJsonResponse` in
+  `src/core/parse.ts`, …) or a factory that returns a
   one-shot client tied to the symbolic runner/config the caller passes in.
 - No module under `src/llm/` keeps session, conversation, or response state at
   module scope. The module-level state is the local embedder pipeline and the
@@ -627,10 +627,9 @@ Concretely:
   structured-LLM seam: it adapts an already-resolved symbolic runner into an
   inline resolved request, lowers it, and dispatches it through `runExecution`,
   which materializes the connection's key at dispatch like every other dispatch
-  and re-runs no alias resolution. Index callers use
-  `resolveIndexPassExecution()` (`src/llm/index-passes.ts`) to freeze the typed
-  `{ runner, notices }` selection once per invocation; there is no separate
-  readiness projection. Which improve processes run is chosen by
+  and re-runs no alias resolution. Improve resolves the typed `{ runner, notices }`
+  selection once per call (`resolveImproveExecution()`, `src/commands/improve/execution.ts`)
+  and passes the runner in; there is no separate readiness projection. Which improve processes run is chosen by
   `improve.strategies`, and where each runs by `improve.processes`; see
   `docs/reference/configuration.md` for canonical config paths.
 
@@ -779,8 +778,7 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/workflows/runtime/runs.ts` | workflow run persistence (raw SQL lives in `src/storage/repositories/workflow-runs-repository.ts`) |
 | `src/workflows/runtime/` | run lifecycle: runs, run-plan decoding, run outputs, agent-identity |
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
-| `src/llm/index-passes.ts` | per-pass connection or harness resolution for `akm index` (`index.*`) |
-| `src/llm/memory-infer.ts` | atomic-fact split helper (runs where `improve.processes.memoryInference` or `index.memory` says) |
+| `src/llm/memory-infer.ts` | atomic-fact split helper (runs where `improve.processes.memoryInference` says) |
 | `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
 | `src/integrations/agent/spawn.ts` | agent CLI shell-out entry point (`runAgent`) |
 | `src/integrations/harnesses/opencode/runtime/` | akm's own runtime: the pinned OpenCode binary, fetched and run as a process |

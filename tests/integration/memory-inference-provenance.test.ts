@@ -14,14 +14,19 @@ import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
-import { runMemoryInferencePass } from "../../src/indexer/passes/memory-inference";
+import { runMemoryInferencePass as runMemoryInferencePassImpl } from "../../src/indexer/passes/memory-inference";
 import { applyProvenanceFrontmatter, type IndexDocument } from "../../src/indexer/passes/metadata";
 import { _setChatCompletionForTests } from "../../src/llm/client";
 import { formatShowPlain } from "../../src/output/text/show-format";
 import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { pkgVersion } from "../../src/version";
+import { withImproveRunner } from "../_helpers/memory-inference-runner";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
+
+function runMemoryInferencePass(ctx: Parameters<typeof runMemoryInferencePassImpl>[0]) {
+  return runMemoryInferencePassImpl(withImproveRunner(ctx));
+}
 
 const NOW = "2026-10-21T09:30:00.000Z";
 const TODAY = "2026-10-21";
@@ -61,7 +66,7 @@ function config() {
     bundles: { stash: { path: storage.stashDir } },
     defaultBundle: "stash",
     connections: { memory: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "scripted" } } },
-    index: { connection: "memory" },
+    improve: { connection: "memory" },
   };
 }
 const parentFile = () => path.join(storage.stashDir, "memories", "tunnel.md");
@@ -81,7 +86,7 @@ async function infer() {
 }
 /** The child as the index stores it. */
 async function indexedChild() {
-  saveConfig({ ...config(), index: { memory: { enabled: false } } });
+  saveConfig(config());
   await akmIndex({ stashDir: storage.stashDir, full: true });
   const db = openExistingDatabase(getDbPath());
   try {

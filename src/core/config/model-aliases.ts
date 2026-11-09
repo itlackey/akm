@@ -24,8 +24,6 @@ export const SHIPPED_ALIAS = {
   agent: "balanced",
   extract: "fast",
   enrich: "fast",
-  /** The index passes. */
-  index: "fast",
 } as const satisfies Record<string, StandardAlias>;
 
 /** One model answering to every standard alias: what a connection with a single model has. */

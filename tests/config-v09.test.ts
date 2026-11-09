@@ -359,8 +359,7 @@ describe("0.9 config contract", () => {
     for (const key of [
       "llm",
       "agent",
-      "index.stalenessDetection",
-      "index.memory.endpoint",
+      "index",
       "improve.strategies.mine.processes.feedbackDistillation",
       "improve.strategies.mine.processes.reflect.excludeRefPrefixes",
     ]) {
@@ -369,7 +368,7 @@ describe("0.9 config contract", () => {
     }
   });
 
-  test("index.metadataEnhance is retired: a single warning, an ordinary write keeps it, only akm migrate apply drops it", () => {
+  test("the retired index section: a single warning, an ordinary write keeps it, only akm migrate apply drops it", () => {
     writeConfig({
       configVersion: "0.9.0",
       connections: { index: { endpoint: "https://example.test/v1", models: { fast: "test" } } },
@@ -377,9 +376,9 @@ describe("0.9 config contract", () => {
     });
 
     const warnings = captureWarnings(() => {
-      expect(loadUserConfig().index?.connection).toBe("index");
+      loadUserConfig();
     });
-    const named = warnings.filter((w) => w.includes("index.metadataEnhance"));
+    const named = warnings.filter((w) => w.includes('Unknown config key "index"'));
     expect(named).toHaveLength(1);
     expect(named[0]).toContain("dropped by `akm migrate apply`");
 
@@ -389,13 +388,13 @@ describe("0.9 config contract", () => {
     mutateConfig((current) => ({ ...current, archiveRetentionDays: 30 }));
     const afterOrdinaryWrite = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
     expect(afterOrdinaryWrite.index.metadataEnhance).toEqual({ enabled: true });
+    expect(afterOrdinaryWrite.index.connection).toBe("index");
     expect(afterOrdinaryWrite.archiveRetentionDays).toBe(30);
 
     // Only an explicit `akm migrate apply` removes it.
     expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
     const afterMigrateApply = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
-    expect(afterMigrateApply.index.metadataEnhance).toBeUndefined();
-    expect(afterMigrateApply.index.connection).toBe("index");
+    expect(afterMigrateApply.index).toBeUndefined();
   });
 
   test("feedback.allowedFailureModes is retired: a config that sets it still loads with one warning, and only akm migrate apply drops it", () => {
@@ -417,8 +416,7 @@ describe("0.9 config contract", () => {
 
   test("the improve knobs removed in 0.10 (#1131, #1129) still load, with one warning apiece, and only akm migrate apply drops them", () => {
     const removed = [
-      "improve.salience.outcomeWeightEnabled",
-      "improve.salience.salienceThreshold",
+      "improve.salience",
       "improve.strategies.default.processes.consolidate.antiCollapse",
       "improve.strategies.default.processes.consolidate.p90ChunkSecondsDefault",
       "improve.strategies.default.processes.consolidate.minPoolSize",
@@ -462,7 +460,7 @@ describe("0.9 config contract", () => {
 
     expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
     const after = read();
-    expect(after.salience).toEqual({});
+    expect(after.salience).toBeUndefined();
     expect(after.strategies.default.processes.consolidate).toEqual({ limit: 7 });
     expect(after.strategies.default.processes.distill).toEqual({});
     expect(after.strategies.default.processes.reflect).toEqual({});

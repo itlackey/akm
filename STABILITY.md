@@ -438,7 +438,7 @@ for scripted use.
   in 0.10 (#1130), as were `proactive-maintenance` and the high-salience lane (#1129); a user-defined strategy of the same name keeps working.
 - **Improve tuning config** — `improve.strategies.*.processes.*` (limits,
   gates, and the CLS knobs), `improve.processes.*` and `improve.qualityGate`
-  (where each process runs) and the `index.*` per-pass config. The 0.9.x series is explicitly still settling
+  (where each process runs; `improve.*` is the base for all model work). The 0.9.x series is explicitly still settling
   the design of the improve processes, so **keys in these two families may be
   added, renamed, or dropped in any 0.9.x or 0.10.x release**. The `akm
   improve` *command* surface is Evolving (above); its tuning config is not.
@@ -534,7 +534,7 @@ on them.
 `AKM_LAUNCHER_PID`, `AKM_LAUNCHER_NODE`, `AKM_LAUNCHER_PATH`,
 `AKM_EVENT_SOURCE`, `AKM_SESSION_ID`, `AKM_AGENT_HARNESS`,
 `AKM_OPENCODE_CLI`, `AKM_CLAUDE_PLUGINS_DIR`, `AKM_OPENCODE_CACHE_DIR`,
-`AKM_FORCE_INIT_TMP_STASH`, and the eight handed to a workflow unit's script
+and the eight handed to a workflow unit's script
 (`AKM_RUN_ID`, `AKM_STEP_ID`, `AKM_UNIT_ID`, `AKM_PARAMS`, `AKM_ITEM`,
 `AKM_ITEM_INDEX`, `AKM_INPUTS`, `AKM_TASK_INPUTS`).
 

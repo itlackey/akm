@@ -30,6 +30,11 @@ if (REQUESTED && !ENABLED) {
   throw new Error("AKM_STANDALONE_SCHEDULER_TESTS=1 requires a Linux runner");
 }
 
+/** `/usr/bin:/bin` behind the harness's crontab stub, so a shell or child that names akm cannot reach the real scheduler binary. */
+const SCHEDULER_PATH = [(process.env.PATH ?? "").split(path.delimiter)[0] ?? "", "/usr/bin", "/bin"].join(
+  path.delimiter,
+);
+
 interface RunResult {
   status: number;
   stdout: string;
@@ -166,7 +171,7 @@ test.skipIf(!ENABLED)(
       expect(fs.existsSync(path.join(dataHome, "akm", "tasks", "context"))).toBe(false);
 
       const scheduledCommand = generatedCronCommand(crontab, id);
-      const scheduled = run(["/bin/sh", "-c", scheduledCommand], { ...env, PATH: "/usr/bin:/bin" });
+      const scheduled = run(["/bin/sh", "-c", scheduledCommand], { ...env, PATH: SCHEDULER_PATH });
       expectSuccess(scheduled, "generated standalone cron command");
 
       const history = run([binary, "task", "history", "--id", id, "--limit", "1"], env);
@@ -313,7 +318,7 @@ function binarySandbox(binary: string): { env: NodeJS.ProcessEnv; run: SmokeRun;
   const dirs = { home: "home", config: "config", data: "data", cache: "cache", state: "state", stash: "stash" };
   for (const dir of Object.values(dirs)) fs.mkdirSync(path.join(sandbox.dir, dir), { recursive: true });
   const env: NodeJS.ProcessEnv = {
-    PATH: "/usr/bin:/bin",
+    PATH: SCHEDULER_PATH,
     HOME: path.join(sandbox.dir, dirs.home),
     XDG_CONFIG_HOME: path.join(sandbox.dir, dirs.config),
     XDG_DATA_HOME: path.join(sandbox.dir, dirs.data),

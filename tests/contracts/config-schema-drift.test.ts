@@ -99,13 +99,11 @@ describe("config schema drift pins", () => {
     expect(Object.keys(processes)).not.toContain("feedbackDistillation");
   });
 
-  test("top-level index and search expose the new feature sections", () => {
+  test("the retired index and setup sections are gone; search and embedding expose their feature sections", () => {
     const schema = readSchema();
     const props = schema.properties as Record<string, unknown>;
-    const index = props.index as { properties?: Record<string, unknown> };
-    expect(Object.keys(index.properties ?? {})).not.toContain("metadataEnhance");
-    expect(Object.keys(index.properties ?? {})).not.toContain("stalenessDetection");
-    expect(Object.keys(index.properties ?? {})).not.toContain("indexBodyOpening");
+    expect(Object.keys(props)).not.toContain("index");
+    expect(Object.keys(props)).not.toContain("setup");
     const search = props.search as { properties?: Record<string, unknown> };
     expect(Object.keys(search.properties ?? {})).toEqual(["defaultExcludeTypes"]);
     const embedding = props.embedding as { properties?: Record<string, unknown> };

@@ -135,7 +135,10 @@ describe("akm bundle add website", () => {
       });
 
       expect(exitCode).toBe(0);
-      expect(stderr.trim()).toBe("");
+      // A loopback source added directly is allowed, and says so once (NODE_ENV=test does not hush it).
+      expect(stderr.trim()).toBe(
+        '[akm] "127.0.0.1" is not a publicly routable host, but you added it as a source directly — proceeding. Links discovered elsewhere are still checked.',
+      );
       const parsed = JSON.parse(stdout.trim()) as {
         sourceAdded?: { type?: string; url?: string; name?: string; stashRoot?: string };
         index?: { totalEntries?: number };

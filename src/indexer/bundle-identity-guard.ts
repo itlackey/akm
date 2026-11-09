@@ -33,7 +33,6 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../core/config/config";
 import { loadConfig } from "../core/config/config";
-import { rethrowIfTestIsolationError } from "../core/errors";
 import { getDbPath } from "../core/paths";
 import { warn } from "../core/warn";
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
@@ -65,8 +64,7 @@ function indexedBundlePaths(dbPath: string): IndexedBundlePath[] | undefined {
           "WHERE bundle_id IS NOT NULL AND bundle_id != '' AND file_path IS NOT NULL AND file_path != ''",
       )
       .all() as IndexedBundlePath[];
-  } catch (error) {
-    rethrowIfTestIsolationError(error);
+  } catch {
     // Best-effort startup diagnostic: a locked/corrupted index just means this
     // pass skips the drift check (retried on the next command) rather than
     // blocking every command on a heuristic warning.

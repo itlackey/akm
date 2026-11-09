@@ -9,7 +9,6 @@
  *   id, event_type, query, entry_id (nullable), entry_ref, signal, metadata, source, created_at
  */
 
-import { rethrowIfTestIsolationError } from "../../core/errors";
 import type { Database } from "../../storage/database";
 import { SQLITE_CHUNK_SIZE } from "../../storage/repositories/index-sql";
 
@@ -100,8 +99,7 @@ export function ensureUsageEventsSchema(db: Database): void {
 export function insertUsageEvent(db: Database, event: UsageEvent): void {
   try {
     insertUsageEventStrict(db, event);
-  } catch (error) {
-    rethrowIfTestIsolationError(error);
+  } catch {
     /* fire-and-forget: silently ignore errors */
   }
 }
