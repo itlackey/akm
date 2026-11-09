@@ -17,7 +17,6 @@ import { projectForDirectory, resolveProject } from "../src/core/projects";
 import { _setWarnSinkForTests } from "../src/core/warn";
 import { akmIndex } from "../src/indexer/indexer";
 import { fillMetadata } from "../src/indexer/passes/metadata";
-import { AKM_READ_TOOLS } from "../src/integrations/agent/akm-read-tools";
 import { search as workspaceSearch } from "../src/workspace/assets";
 import { runCliCapture } from "./_helpers/cli";
 import {
@@ -345,11 +344,13 @@ describe("curate", () => {
     expect(json.stdout).not.toContain('"project"');
   });
 
-  test("model work ignores a registered project", async () => {
+  // The OpenCode runtime's akm_curate and akm_search pass `--project none` (assets/opencode/akm-plugin.js).
+  test("curate --project none ignores the project the directory selects", async () => {
     const spy = spyOn(process, "cwd").mockReturnValue(work);
     try {
-      const curateTool = AKM_READ_TOOLS.find((tool) => tool.name === "akm_curate");
-      const out = JSON.parse(await curateTool!.run({ query: "widget" }));
+      const out = JSON.parse(
+        (await runCliCapture(["curate", "widget", "--project", "none", "--format", "json"])).stdout,
+      );
       expect(out.project).toBeUndefined();
       const user = await run({});
       expect(user.project?.name).toBe("akm");

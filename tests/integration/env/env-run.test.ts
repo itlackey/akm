@@ -209,18 +209,18 @@ describe("env run", () => {
     expect(stderr).not.toContain("Refusing to inject");
   });
 
-  test("--allow-dangerous-env-keys is accepted as a deprecated no-op (#1237)", () => {
+  test("--allow-dangerous-env-keys is an unknown flag (#1237)", () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "env", "danger.env"), "GIT_SSH_COMMAND=/evil\n", "utf8");
 
-    const { stdout, status } = spawnCli(
+    const { stderr, status } = spawnCli(
       ["env", "run", "env/danger", "--allow-dangerous-env-keys", "--", "bash", "-lc", 'printf "%s" "$GIT_SSH_COMMAND"'],
       { AKM_BUNDLE_DIR: stashDir },
     );
 
-    expect(status).toBe(0);
-    expect(stdout.trim()).toBe("/evil");
+    expect(status).not.toBe(0);
+    expect(stderr).toContain("--allow-dangerous-env-keys");
   });
 
   test("--only injects just the named keys", () => {

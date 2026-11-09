@@ -14,8 +14,7 @@
  *   - `akm lint` reports findings as `dangerous-env-key` (non-blocking warn).
  *   - Nothing else consults this list. Installing a bundle is the trust
  *     decision, so `akm bundle add` and `akm bundle update` do not scan env
- *     files, and `akm env run` does not refuse a key. The
- *     `--allow-dangerous-env-keys` flag is a deprecated no-op.
+ *     files, and `akm env run` does not refuse a key.
  *   - Local env writes do NOT consult this list — by design, the operator may
  *     legitimately store any key locally.
  *

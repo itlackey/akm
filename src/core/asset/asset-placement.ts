@@ -202,11 +202,6 @@ export function placementSpecFor(type: string): AssetSpec | undefined {
   return PLACEMENT_SPECS[type];
 }
 
-/** Every registered placement spec (for whole-registry sweeps). */
-export function placementSpecList(): readonly AssetSpec[] {
-  return Object.values(PLACEMENT_SPECS);
-}
-
 /** Every registered placement type key (the set of types that have a stash subdir). */
 export function placementTypes(): readonly string[] {
   return Object.keys(PLACEMENT_SPECS);

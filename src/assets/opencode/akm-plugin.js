@@ -92,6 +92,8 @@ function cliArguments(tool, input) {
     value,
     ...(type && tool.positional !== "ref" ? ["--type", type] : []),
     ...(limit && tool.positional !== "ref" ? ["--limit", limit] : []),
+    // Model work is not a place the user works: no project's defaults apply, whatever directory the run is in.
+    ...(tool.positional !== "ref" ? ["--project", "none"] : []),
     "--detail",
     tool.positional === "ref" && input?.detail === "brief" ? "brief" : "agent",
     "--format",

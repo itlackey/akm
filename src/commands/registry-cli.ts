@@ -32,7 +32,6 @@ export const registryCommand = defineGroupCommand({
         url: { type: "positional", description: "Registry index URL", required: true },
         name: { type: "string", description: "Human-friendly name for the registry" },
         provider: { type: "string", description: "Provider type (e.g. static-index, skills-sh)" },
-        options: { type: "string", description: "Accepted and ignored: no registry provider reads options." },
         "allow-insecure-transport": {
           type: "boolean",
           description: "Allow a plain HTTP registry URL (otherwise rejected)",
@@ -65,11 +64,6 @@ export const registryCommand = defineGroupCommand({
         const entry: RegistryConfigEntry = { url: args.url };
         if (args.name) entry.name = args.name;
         if (args.provider) entry.provider = args.provider;
-        if (args.options) {
-          warn(
-            "--options is accepted for compatibility and does nothing: no registry provider reads provider options.",
-          );
-        }
         let added = false;
         const updated = mutateConfig((config) => {
           const registries = [...(config.registries ?? [])];
