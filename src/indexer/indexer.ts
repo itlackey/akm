@@ -4,7 +4,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { foldBeforePurge, purgeFoldedUsageEvents } from "../commands/metrics/fold";
 import type { BundleAdapter } from "../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
@@ -17,6 +16,7 @@ import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
+import { foldBeforePurge } from "../indexer/metrics/fold";
 import { localEmbeddingRuntime } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
@@ -75,6 +75,7 @@ import {
 } from "../storage/repositories/index-meta-repository";
 import { upsertUtilityScore } from "../storage/repositories/index-utility-repository";
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
+import { purgeFoldedUsageEvents } from "../storage/repositories/metrics-rollup-repository";
 import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "../storage/state-db-integrity";
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";

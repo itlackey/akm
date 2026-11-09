@@ -8,6 +8,7 @@
  */
 
 import { readEvents } from "../../core/events";
+import { hasTokenUsage } from "../../indexer/metrics/rows";
 import { LLM_USAGE_EVENT } from "../../llm/usage-persist";
 import { decodeLlmUsageRecord, type LlmUsageRecord } from "../../llm/usage-telemetry";
 import { readLlmDaily, rollupDayRange, withMetricsHistory } from "../../storage/repositories/metrics-rollup-repository";
@@ -27,16 +28,6 @@ function emptyLlmUsageStageAggregate(): LlmUsageStageAggregate {
     reasoningTokens: 0,
     failures: 0,
   };
-}
-
-/** True when the provider response carried any token count. Absent usage is unknown, not zero. */
-export function hasTokenUsage(record: LlmUsageRecord): boolean {
-  return (
-    record.promptTokens !== undefined ||
-    record.completionTokens !== undefined ||
-    record.totalTokens !== undefined ||
-    record.reasoningTokens !== undefined
-  );
 }
 
 /** A zeroed aggregate — also the value health reports when it could not read state.db at all (#791). */

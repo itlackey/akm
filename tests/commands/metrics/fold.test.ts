@@ -2,25 +2,23 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** The fold into metrics.db and the folded-day purge guard (`commands/metrics/fold.ts`). */
+/** The fold into metrics.db and the folded-day purge guard (`indexer/metrics/fold.ts`). */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { openMetricsDatabase } from "../../../src/core/metrics-db";
+import { openStateDatabase } from "../../../src/core/state-db";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
+import { foldBeforePurge, foldClosedDays, slimImproveResultJson } from "../../../src/indexer/metrics/fold";
+import type { Database } from "../../../src/storage/database";
+import { insertEvent } from "../../../src/storage/repositories/events-repository";
 import {
-  foldBeforePurge,
-  foldClosedDays,
   purgeFoldedEvents,
   purgeFoldedImproveRuns,
   purgeFoldedUsageEvents,
   readFoldedDays,
-  slimImproveResultJson,
-} from "../../../src/commands/metrics/fold";
-import { openMetricsDatabase } from "../../../src/core/metrics-db";
-import { openStateDatabase } from "../../../src/core/state-db";
-import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
-import type { Database } from "../../../src/storage/database";
-import { insertEvent } from "../../../src/storage/repositories/events-repository";
+} from "../../../src/storage/repositories/metrics-rollup-repository";
 import { count, insertLlm, insertRun, insertUsage } from "../../_helpers/metrics-fixtures";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
