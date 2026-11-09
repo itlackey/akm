@@ -5,31 +5,21 @@
 /**
  * The derived `entries` layout: DDL plus the layout marker.
  *
- * `index_meta.version` is a layout marker. An older layout is never refused:
- * readers serve what is there, and the writable opener (`ensureSchema`,
- * `index-schema.ts`) brings it up to date in place — added and dropped
- * columns, retired tables dropped, a one-time full-text rebuild — without
- * touching embeddings, utility scores, or the LLM enrichment cache (the one
- * exception is the LLM entity graph, unconditionally dropped since its
- * retirement in 0.9.17-alpha.9). A newer layout is refused, naming the
+ * `index_meta.version` is a layout marker. There is no in-place upgrade: an
+ * index below {@link MIN_INDEX_LAYOUT} is deleted and rebuilt by the writable
+ * opener (`openIndexDatabase`), and readers treat it as unservable
+ * ({@link hasCurrentEntriesTable}). A newer layout is refused, naming the
  * upgrade.
  */
 
 // 26: declared links (#935) live in `asset_links`, one row per link, owned by
-// the entry that declares it. The writable opener derives them in place from
-// each entry's stored `document_json` (`migrateToDeclaredLinks`,
-// index-schema.ts); releases before 26 did not store them.
-// 25: vectors live only in `embeddings`; the sqlite-vec mirror `entries_vec`
-// is dropped (`dropVecMirror`, index-schema.ts), and so is the fragment FTS
-// table `entry_fragments_fts`, which search no longer reads. `entries` keeps
-// a hash of each entry's embedding input (`embed_hash`) instead of the text
-// (`search_text`); the text is derived from `document_json` when embedding.
-// 24: the FTS5 tables are contentless (`content=''`) — the indexed text lives
-// once, in `entries` / `entry_fragments`, and FTS rows are keyed by rowid only.
-// 23 and earlier stored a second copy of every indexed field in FTS5's own
-// content shadow tables. `ensureFtsLayout` (index-schema.ts) rebuilds the FTS
-// tables from the stored entries when it finds the older layout.
+// the entry that declares it; vectors live only in `embeddings`; `entries`
+// keeps a hash of each entry's embedding input (`embed_hash`); the FTS5 table
+// is contentless (`content=''`) where the linked SQLite supports it.
 export const CANONICAL_INDEX_DB_VERSION = 26;
+
+/** The oldest layout a writable open accepts; anything older is rebuilt from the sources. */
+export const MIN_INDEX_LAYOUT = 26;
 
 export const CANONICAL_ENTRY_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS entries (
@@ -125,57 +115,14 @@ export function tableExists(db: EntrySchemaInspectionDatabase, name: string): bo
 }
 
 /**
- * Columns this release's readers need in `entries` (layout 21+). The writable
- * opener adds `embed_hash` to an older table, so it is not required here.
- */
-const REQUIRED_ENTRY_COLUMNS = [
-  "id",
-  "item_ref",
-  "bundle_id",
-  "component_id",
-  "concept_id",
-  "adapter_id",
-  "type",
-  "file_path",
-  "content_hash",
-  "document_json",
-  "derived_from",
-] as const;
-
-/**
- * The transitional columns layout 20 and earlier kept beside the current ones
- * and layout 21 removed (`entry_key` was the key). They are NOT NULL, so a
- * table that still has one takes none of this release's inserts, and its
- * `document_json` is empty (the entry sat in `entry_json`), so none of its rows
- * can be read either. A 0.9.1 index is such a table.
- */
-const RETIRED_ENTRY_COLUMNS = ["entry_key", "dir_path", "stash_dir", "entry_json", "entry_type"] as const;
-
-function entryColumnNames(db: EntrySchemaInspectionDatabase): Set<string> {
-  return new Set((db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>).map((c) => c.name));
-}
-
-/** Required `entries` columns the table lacks; every column when there is no `entries` table. */
-export function missingEntryColumns(db: EntrySchemaInspectionDatabase): string[] {
-  const present = entryColumnNames(db);
-  return REQUIRED_ENTRY_COLUMNS.filter((column) => !present.has(column));
-}
-
-/** Retired `entries` columns the table still has: it was written by layout 20 or earlier. */
-export function retiredEntryColumns(db: EntrySchemaInspectionDatabase): string[] {
-  const present = entryColumnNames(db);
-  return RETIRED_ENTRY_COLUMNS.filter((column) => present.has(column));
-}
-
-/**
- * Whether an index database has an `entries` table this release can read. A
- * fresh or empty file has none; an index older than layout 21 has one keyed
- * by columns this release no longer reads (or lacks the ones it does), and
- * serves nothing until the next `akm index` recreates it.
+ * Whether an index database has an `entries` table this release can read: one
+ * written at {@link MIN_INDEX_LAYOUT} or later. A fresh or empty file, or an
+ * older layout, serves nothing until the next `akm index` rebuilds it.
  */
 export function hasCurrentEntriesTable(db: EntrySchemaInspectionDatabase): boolean {
   try {
-    return missingEntryColumns(db).length === 0 && retiredEntryColumns(db).length === 0;
+    const row = db.prepare("SELECT value FROM index_meta WHERE key = 'version'").get() as { value: string } | undefined;
+    return tableExists(db, "entries") && Number(row?.value) >= MIN_INDEX_LAYOUT;
   } catch {
     return false;
   }

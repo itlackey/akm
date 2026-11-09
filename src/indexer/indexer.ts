@@ -67,13 +67,11 @@ import { rebuildFtsIfTotalsStale } from "../storage/repositories/index-fts-repos
 import { clearStaleCacheEntries } from "../storage/repositories/index-llm-cache-repository";
 import {
   deleteIndexDirState,
-  deleteMeta,
   getIndexDirState,
   getMeta,
   setMeta,
   upsertIndexDirState,
 } from "../storage/repositories/index-meta-repository";
-import { VACUUM_PENDING_META } from "../storage/repositories/index-schema";
 import { upsertUtilityScore } from "../storage/repositories/index-utility-repository";
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "../storage/state-db-integrity";
@@ -414,19 +412,13 @@ function finalizeIndex(args: {
 }
 
 /**
- * Compact index.db once a layout migration has left tables and columns'
- * pages free, or whenever more than half its pages are free (the same
+ * Compact index.db whenever more than half its pages are free (the same
  * threshold improve applies to state.db). Nothing else ever VACUUMs this
  * file, and a delete-heavy history leaves it mostly free pages.
  */
 function vacuumIndexDb(db: Database, onProgress: (event: IndexProgressEvent) => void): void {
-  const migrated = getMeta(db, VACUUM_PENDING_META) === "1";
-  const outcome = vacuumIfReclaimable(db, readFreelistInfo(db), {
-    eventType: INDEX_DB_VACUUMED_EVENT,
-    force: migrated,
-  });
+  const outcome = vacuumIfReclaimable(db, readFreelistInfo(db), { eventType: INDEX_DB_VACUUMED_EVENT });
   if (!outcome.ran) return;
-  if (migrated) deleteMeta(db, VACUUM_PENDING_META);
   onProgress({
     phase: "finalize",
     message: `Compacted index.db with VACUUM: ${outcome.pagesBefore} → ${outcome.pagesAfter} pages.`,

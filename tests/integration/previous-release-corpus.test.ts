@@ -112,8 +112,6 @@ import { getConfigPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, resetQuiet, setQuiet } from "../../src/core/warn";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
-import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";
-import { _setEmbedderForTests } from "../../src/llm/embedder";
 import {
   closeDatabase,
   openIndexDatabase,
@@ -121,11 +119,7 @@ import {
 } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import { CANONICAL_INDEX_DB_VERSION, hasCurrentEntriesTable } from "../../src/storage/repositories/index-entry-schema";
-import { searchFts } from "../../src/storage/repositories/index-fts-repository";
-import { countLinksByKind, readEntryLinks } from "../../src/storage/repositories/index-links-repository";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
-import { VACUUM_PENDING_META } from "../../src/storage/repositories/index-schema";
-import { getEmbeddingCount } from "../../src/storage/repositories/index-vec-repository";
 import { listStateProposals } from "../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
 import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
@@ -140,7 +134,6 @@ import {
   withIsolatedAkmStorage,
   writeSandboxConfig,
 } from "../_helpers/sandbox";
-import { overrideSeam } from "../_helpers/seams";
 
 const FIXTURES_DIR = path.join(import.meta.dir, "..", "fixtures", "previous-release-corpus");
 
@@ -157,209 +150,52 @@ function migrateLegacyTask(filePath: string, yaml: string) {
 }
 
 describe("previous-release corpus — upgrade must not break reads", () => {
-  test("v22 parent-only index is migrated in place: its entries stay searchable and the fragment source table is added", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v22-index-"));
-    try {
-      const dbPath = path.join(root, "index.db");
-      const legacy = new Database(dbPath);
-      legacy.exec(readFixture("index-v22.sql"));
-      legacy.close();
-      const upgraded = openIndexDatabase(dbPath);
+  // index.db is derived, so a layout below the floor (26) is rebuilt, not upgraded in place.
+  for (const fixture of ["index-v20.sql", "index-v22.sql", "index-v22-with-embedding.sql", "index-v25.sql"]) {
+    test(`${fixture}: a reader finds it unservable without failing, and the writable open rebuilds it empty`, () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-old-index-"));
       try {
-        expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
-        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entry_fragments'").get()).toEqual({
-          name: "entry_fragments",
-        });
-        expect(upgraded.prepare("SELECT count(*) AS count FROM entries").get()).toEqual({ count: 1 });
-        expect(searchFts(upgraded, "evidence", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/v22-note"]);
-      } finally {
-        closeDatabase(upgraded);
-      }
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+        const dbPath = path.join(root, "index.db");
+        const legacy = new Database(dbPath);
+        legacy.exec(readFixture(fixture));
+        legacy.close();
 
-  test("a v22 embedding survives the upgrade in place, labelled with its model, with zero provider calls", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v22-embedding-"));
-    try {
-      const dbPath = path.join(root, "index.db");
-      const legacy = new Database(dbPath);
-      legacy.exec(readFixture("index-v22-with-embedding.sql"));
-      legacy.close();
-
-      const upgraded = openIndexDatabase(dbPath);
-      try {
-        expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
-        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 1 });
-        expect(upgraded.prepare("SELECT model FROM embeddings").all()).toEqual([{ model: "local:test-model" }]);
-
-        overrideSeam(_setEmbedderForTests, {
-          embedBatch: async () => {
-            throw new Error("the provider must never be called — the stored vector is still current");
-          },
-        });
-        const result = await generateEmbeddingsForDb(
-          upgraded,
-          { semanticSearchMode: "auto", embedding: { localModel: "test-model" } },
-          () => {},
-        );
-
-        expect(result.success).toBe(true);
-        expect(getEmbeddingCount(upgraded)).toBe(1);
-        const row = upgraded.prepare("SELECT embedding FROM embeddings LIMIT 1").get() as
-          | { embedding: Buffer }
-          | undefined;
-        if (!row) throw new Error("expected an embedding row");
-        const vec = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, 3);
-        expect(Array.from(vec)).toEqual([1, 2, 3]);
-      } finally {
-        closeDatabase(upgraded);
-      }
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test("a layout-25 index (0.9.17-alpha.7) migrates in place: its stored relations become links, with no reparse", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v25-index-"));
-    try {
-      const dbPath = path.join(root, "index.db");
-      const legacy = new Database(dbPath);
-      legacy.exec(readFixture("index-v25.sql"));
-      legacy.close();
-
-      // A reader serves the older layout as-is: no links yet, and no failure.
-      const reader = openReadonlyExistingDatabase(dbPath);
-      if (!reader) throw new Error("expected a read handle");
-      try {
-        expect(readEntryLinks(reader, "stash//memories/deploy-window")).toEqual({ outgoing: [], incoming: [] });
-        expect(countLinksByKind(reader)).toEqual({});
-      } finally {
-        closeDatabase(reader);
-      }
-
-      const upgraded = openIndexDatabase(dbPath);
-      try {
-        expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
-        expect(getMeta(upgraded, VACUUM_PENDING_META)).toBe("1");
-        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 10 });
-
-        // Every relation alpha.7 kept in document_json is now a link; targets
-        // resolve against the index, and legacy spellings convert in memory.
-        const links = (
-          upgraded
-            .prepare(
-              `SELECT o.item_ref AS owner, l.kind AS kind, l.raw AS raw, t.item_ref AS target
-                 FROM asset_links l
-                 JOIN entries o ON o.id = l.entry_id
-                 LEFT JOIN entries t ON t.item_ref = COALESCE(l.dst_bundle, o.bundle_id) || '//' || l.dst_concept
-                ORDER BY owner, l.ord`,
-            )
-            .all() as Array<{ owner: string; kind: string; raw: string; target: string | null }>
-        ).map((row) => `${row.owner} ${row.kind} ${row.raw} -> ${row.target}`);
-        expect(links).toEqual([
-          "stash//knowledge/release-guide xref knowledge/missing-page -> null",
-          "stash//knowledge/release-guide superseded_by stash//knowledge/release-guide-v2 -> stash//knowledge/release-guide-v2",
-          "stash//knowledge/wikis/notes/pages/release-train xref wiki:notes/raw/train-source -> stash//knowledge/wikis/notes/raw/train-source",
-          "stash//knowledge/wikis/notes/pages/release-train cites raw/train-source.md -> stash//knowledge/wikis/notes/raw/train-source",
-          "stash//memories/deploy-window xref memories/release-checklist -> null",
-          "stash//memories/deploy-window xref wiki:notes/pages/release-train -> stash//knowledge/wikis/notes/pages/release-train",
-          "stash//memories/deploy-window contradicted_by memory:deploy-window-moved -> stash//memories/deploy-window-moved",
-          "stash//memories/deploy-window-moved.derived derived_from memories/deploy-window-moved -> stash//memories/deploy-window-moved",
-        ]);
-
-        // alpha.7 never stored workflow and task targets, so only their
-        // directories re-drain on the next `akm index`; every other directory
-        // keeps its cursor.
-        const dirs = (
-          upgraded.prepare("SELECT dir_path FROM index_dir_state ORDER BY dir_path").all() as Array<{
-            dir_path: string;
-          }>
-        ).map((row) => row.dir_path);
-        expect(dirs).toEqual([
-          "/fixture/stash/commands",
-          "/fixture/stash/knowledge",
-          "/fixture/stash/memories",
-          "/fixture/stash/wikis/notes/pages",
-          "/fixture/stash/wikis/notes/raw",
-        ]);
-      } finally {
-        closeDatabase(upgraded);
-      }
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  describe("a layout-20 index (0.9.1) is recreated, not migrated in place (#1053)", () => {
-    // What the 0.9.17+ opener had already committed when it died on this index (`search_text` hashed away,
-    // `asset_links` created) with the layout stamp still at 20.
-    const HALF_MIGRATED = `
-      ALTER TABLE entries ADD COLUMN embed_hash TEXT;
-      ALTER TABLE entries DROP COLUMN search_text;
-      CREATE TABLE asset_links (
-        entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE, ord INTEGER NOT NULL,
-        kind TEXT NOT NULL, raw TEXT NOT NULL, dst_bundle TEXT, dst_concept TEXT NOT NULL,
-        PRIMARY KEY (entry_id, ord)
-      ) WITHOUT ROWID;
-    `;
-
-    for (const [shape, extraSql] of [
-      ["as 0.9.1 wrote it", ""],
-      ["after a failed 0.9.17+ open left it half-migrated", HALF_MIGRATED],
-    ] as const) {
-      test(`the index ${shape} opens: its entries-keyed tables are recreated and take new entries`, () => {
-        const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v20-index-"));
+        const reader = openReadonlyExistingDatabase(dbPath);
+        if (!reader) throw new Error("expected a read handle");
         try {
-          const dbPath = path.join(root, "index.db");
-          const legacy = new Database(dbPath);
-          legacy.exec(readFixture("index-v20.sql"));
-          if (extraSql) legacy.exec(extraSql);
-          legacy.close();
-
-          // Every row's document_json is NULL and the transitional columns remain: a reader cannot serve it.
-          const reader = openReadonlyExistingDatabase(dbPath);
-          if (!reader) throw new Error("expected a read handle");
-          try {
-            expect(hasCurrentEntriesTable(reader)).toBe(false);
-          } finally {
-            closeDatabase(reader);
-          }
-
-          // Migrating its links in place died here with "null is not an object (evaluating 'doc.xrefs')".
-          const upgraded = openIndexDatabase(dbPath);
-          try {
-            expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
-            expect(hasCurrentEntriesTable(upgraded)).toBe(true);
-            // Recreated empty: the next `akm index` re-walks every source.
-            expect(upgraded.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 0 });
-            expect(upgraded.prepare("SELECT COUNT(*) AS count FROM index_dir_state").get()).toEqual({ count: 0 });
-
-            // The retired NOT NULL columns used to refuse every insert ("NOT NULL constraint failed: entries.entry_key").
-            const entry = { type: "knowledge" as const, name: "new-note", description: "Added after the upgrade." };
-            upsertEntry(
-              upgraded,
-              "/fixture/stash/knowledge/new-note.md",
-              entry,
-              deriveEntryProvenance(
-                { bundleId: "stash", componentId: "stash", adapterId: "akm" },
-                entry.type,
-                entry.name,
-              ),
-            );
-            expect(upgraded.prepare("SELECT item_ref FROM entries").all()).toEqual([
-              { item_ref: "stash//knowledge/new-note" },
-            ]);
-          } finally {
-            closeDatabase(upgraded);
-          }
+          expect(hasCurrentEntriesTable(reader)).toBe(false);
         } finally {
-          fs.rmSync(root, { recursive: true, force: true });
+          closeDatabase(reader);
         }
-      });
-    }
-  });
+
+        const rebuilt = openIndexDatabase(dbPath);
+        try {
+          expect(getMeta(rebuilt, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
+          expect(hasCurrentEntriesTable(rebuilt)).toBe(true);
+          expect(rebuilt.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 0 });
+          expect(rebuilt.prepare("SELECT COUNT(*) AS count FROM embeddings").get()).toEqual({ count: 0 });
+          const entry = { type: "knowledge" as const, name: "new-note", description: "Added after the rebuild." };
+          upsertEntry(
+            rebuilt,
+            "/fixture/stash/knowledge/new-note.md",
+            entry,
+            deriveEntryProvenance(
+              { bundleId: "stash", componentId: "stash", adapterId: "akm" },
+              entry.type,
+              entry.name,
+            ),
+          );
+          expect(rebuilt.prepare("SELECT item_ref FROM entries").all()).toEqual([
+            { item_ref: "stash//knowledge/new-note" },
+          ]);
+        } finally {
+          closeDatabase(rebuilt);
+        }
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
 
   // The runtime reads only task source v4 (#987): each older shape is refused
   // on its own, naming `akm migrate apply`, and that command converts it.

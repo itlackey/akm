@@ -23,7 +23,7 @@ import { openManagedDatabase } from "../managed-db";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../sqlite-pragmas";
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../sqlite-read-snapshot";
 import { CANONICAL_INDEX_DB_VERSION } from "./index-entry-schema";
-import { ensureSchema, newerIndexLayoutError } from "./index-schema";
+import { ensureSchema, IndexLayoutBelowFloorError, newerIndexLayoutError } from "./index-schema";
 
 /**
  * Whether `error` is SQLite reporting on-disk corruption (`SQLITE_CORRUPT`,
@@ -57,11 +57,15 @@ export function openIndexDatabase(dbPath?: string, options?: { beforeSchema?: (d
     // (see src/core/state-db.ts's "Why a separate database from index.db"
     // note) — so real on-disk corruption is recovered by deleting the file
     // and rebuilding, not by surfacing a raw SQLITE_CORRUPT to the caller or
-    // quietly falling through to an unreadable index (#865). This is the ONE
-    // from-scratch rebuild: an older layout is migrated in place by
-    // ensureSchema, never dropped.
-    if (!isCorruptionError(error)) throw error;
-    warn(`Index database is corrupt at ${resolvedPath} — rebuilding.`);
+    // quietly falling through to an unreadable index (#865). An index below the
+    // oldest layout ensureSchema upgrades is rebuilt the same way.
+    const belowFloor = error instanceof IndexLayoutBelowFloorError;
+    if (!belowFloor && !isCorruptionError(error)) throw error;
+    warn(
+      belowFloor
+        ? `Index database at ${resolvedPath} uses layout ${error.storedVersion}, older than this akm upgrades — rebuilding it from the sources (embeddings are regenerated).`
+        : `Index database is corrupt at ${resolvedPath} — rebuilding.`,
+    );
     for (const suffix of ["", "-wal", "-shm"]) {
       try {
         fs.rmSync(`${resolvedPath}${suffix}`, { force: true });
@@ -76,7 +80,7 @@ export function openIndexDatabase(dbPath?: string, options?: { beforeSchema?: (d
 
 export function openExistingDatabase(dbPath?: string): Database {
   // Existing-DB callers do not mutate schema or embedding metadata on open;
-  // they serve an older layout as-is and refuse a newer one (see checkIndexLayout).
+  // they warn about an older layout and refuse a newer one (see checkIndexLayout).
   //
   // "Existing" is load-bearing: a missing file throws instead of being
   // created. Create-on-open used to leave a schema-less index.db behind (a
@@ -104,7 +108,7 @@ export function openExistingDatabase(dbPath?: string): Database {
  * A reader serves an older layout as-is (the FTS readers understand both
  * layouts, and a missing table degrades at the caller — keyword-only search,
  * an inline rebuild, or a "run akm index" notice) and names it once per
- * process; the next writable open migrates it in place. A newer layout is
+ * process; the next writable open rebuilds it. A newer layout is
  * refused, naming the upgrade ({@link newerIndexLayoutError}).
  */
 function checkIndexLayout(db: Database, resolvedPath: string): void {
@@ -121,7 +125,7 @@ function checkIndexLayout(db: Database, resolvedPath: string): void {
   warnOnce(
     `index-db-layout:${resolvedPath}`,
     `Index database at ${resolvedPath} uses an older layout (${stored}; this akm writes ${CANONICAL_INDEX_DB_VERSION}). ` +
-      "Serving it as-is; the next 'akm index' migrates it in place.",
+      "Run 'akm index' to rebuild it.",
   );
 }
 
