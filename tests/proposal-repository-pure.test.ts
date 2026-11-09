@@ -12,7 +12,12 @@ import {
   isValidProposalSource,
   PROPOSAL_SOURCES,
 } from "../src/commands/proposal/repository";
-import { proposalRowToProposal, proposalToRowValues } from "../src/storage/repositories/proposals-repository";
+import { validateProposal } from "../src/commands/proposal/validators/proposals";
+import {
+  isLegacyProposalRef,
+  proposalRowToProposal,
+  proposalToRowValues,
+} from "../src/storage/repositories/proposals-repository";
 
 const historicalRow = {
   id: "historical",
@@ -442,6 +447,85 @@ describe("proposal repository — pure helpers (post-split)", () => {
     const reverted = { ...legacyAccepted, status: "reverted" as const };
     const row = proposalToRowValues(reverted, historicalRow.stash_dir);
     expect(row.metadata_json).not.toContain("proposedTarget");
-    expect(JSON.parse(row.metadata_json).changes).toEqual([]);
+    // An empty `changes` list is never written: an absent key is the legacy shape the reader tolerates, an empty
+    // array is corruption it refuses, so writing `[]` made the row unreadable after the transition (#1513).
+    expect(row.metadata_json).not.toContain("changes");
+    expect(proposalRowToProposal({ ...terminalRow, ...row }).status).toBe("reverted");
+  });
+
+  // The row from itlackey/akm#1513: a pending distillation recorded before concept IDs, with the retired
+  // `<type>:<name>` ref and none of the current envelope.
+  const legacyColonRow = {
+    id: "00000000-0000-4000-8000-000000000001",
+    stash_dir: "/tmp/example-stash",
+    ref: "lesson:example-legacy-note",
+    status: "pending",
+    source: "distill",
+    created_at: "2026-07-05T03:03:28.486Z",
+    updated_at: "2026-07-05T03:03:28.486Z",
+    content: "Synthetic legacy content; no private source text.",
+    frontmatter_json: null,
+    metadata_json: "{}",
+  };
+
+  test("a pending row with a pre-concept-ID `<type>:<name>` ref is read as written and marked non-applicable (#1513)", () => {
+    const proposal = proposalRowToProposal(legacyColonRow);
+    expect(proposal.ref).toBe("lesson:example-legacy-note");
+    expect(proposal.status).toBe("pending");
+    expect(proposal.payload.content).toBe(legacyColonRow.content);
+    expect(proposal.changes).toEqual([]);
+    expect(proposal.proposedTarget).toBeUndefined();
+    // Reading is idempotent: the same row gives the same proposal.
+    expect(proposalRowToProposal(legacyColonRow)).toEqual(proposal);
+    expect(proposalRowToProposal({ ...legacyColonRow, ref: "stash//lesson:example-legacy-note" }).ref).toBe(
+      "stash//lesson:example-legacy-note",
+    );
+
+    // `akm proposal show` names what the row lacks and how to retire it; `accept` refuses on the same finding.
+    const report = validateProposal(proposal);
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((f) => f.kind)).toEqual(["legacy-ref"]);
+    const message = report.findings[0]?.message ?? "";
+    expect(message).toContain('"lesson:example-legacy-note"');
+    expect(message).toContain("changes");
+    expect(message).toContain("proposedTarget");
+    expect(message).toContain(`akm proposal reject ${legacyColonRow.id}`);
+
+    expect(isLegacyProposalRef("lesson:example-legacy-note")).toBe(true);
+    expect(isLegacyProposalRef("stash//knowledge:guide")).toBe(true);
+    expect(isLegacyProposalRef("stash//lessons/example-legacy-note")).toBe(false);
+    // An opaque colon concept that is not an akm asset type is current identity syntax, not a legacy ref.
+    expect(isLegacyProposalRef("stash//external:record")).toBe(false);
+    expect(isLegacyProposalRef("")).toBe(false);
+
+    // Every other ref defect is still refused: a fragment (#898), and a ref that does not parse.
+    expect(() => proposalRowToProposal({ ...legacyColonRow, ref: "lesson:example-legacy-note#section" })).toThrow(
+      /fragment/,
+    );
+    expect(() => proposalRowToProposal({ ...legacyColonRow, ref: "stash//" })).toThrow(/invalid current ref/);
+  });
+
+  test("a decision on a legacy-ref row keeps its ref and content and reads back; a pending write is still refused (#1513)", () => {
+    const proposal = proposalRowToProposal(legacyColonRow);
+    // Nothing mints a pending proposal in this shape: the write path keeps requiring the full envelope.
+    expect(() => proposalToRowValues(proposal, legacyColonRow.stash_dir)).toThrow(/no file changes/i);
+
+    const decidedAt = "2026-11-09T12:00:00.000Z";
+    const rejected = {
+      ...proposal,
+      status: "rejected" as const,
+      updatedAt: decidedAt,
+      review: { outcome: "rejected" as const, reason: "predates concept IDs", decidedAt, decidedBy: "human" as const },
+    };
+    const values = proposalToRowValues(rejected, legacyColonRow.stash_dir);
+    expect(values.ref).toBe("lesson:example-legacy-note");
+    expect(values.content).toBe(legacyColonRow.content);
+    expect(values.created_at).toBe(legacyColonRow.created_at);
+    expect(JSON.parse(values.metadata_json)).toEqual({ review: rejected.review });
+
+    const reread = proposalRowToProposal({ ...legacyColonRow, ...values });
+    expect(reread.status).toBe("rejected");
+    expect(reread.ref).toBe("lesson:example-legacy-note");
+    expect(reread.review).toEqual(rejected.review);
   });
 });
