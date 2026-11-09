@@ -41,7 +41,6 @@ export interface ConfiguredExecutionSettings {
   readonly connection?: string;
   readonly harness?: string;
   readonly model?: string;
-  readonly llm?: object;
   /** `null` runs unbounded. */
   readonly timeoutMs?: number | null;
 }
@@ -53,7 +52,6 @@ export function executionDefaultsOf(settings: ConfiguredExecutionSettings | unde
     ...(settings.connection !== undefined ? { connection: settings.connection } : {}),
     ...(settings.harness !== undefined ? { harness: settings.harness } : {}),
     ...(settings.model !== undefined ? { model: settings.model } : {}),
-    ...(settings.llm !== undefined ? { inference: cloneExecutionJsonObject(settings.llm, "inference") } : {}),
     ...(settings.timeoutMs !== undefined ? { timeout: settings.timeoutMs } : {}),
   };
 }

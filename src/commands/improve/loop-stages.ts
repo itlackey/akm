@@ -15,11 +15,7 @@ import { getDbPath, getTaskLogDir } from "../../core/paths";
 import { withStateDb } from "../../core/state-db";
 import { info } from "../../core/warn";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import {
-  countPendingMemoriesNeedingDecision,
-  type MemoryInferenceResult,
-  runMemoryInferencePass,
-} from "../../indexer/passes/memory-inference";
+import { type MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { Database } from "../../storage/database";
 import { purgeOldEvents } from "../../storage/repositories/events-repository";
@@ -579,14 +575,6 @@ export async function runMemoryInferenceMaintenancePass(
   if (settings?.enabled === false) {
     info("[improve] memory inference skipped (disabled by improve profile)");
     return { durationMs: 0, warnings: [] };
-  }
-  const minPendingCount = settings?.minPendingCount;
-  if (primaryStashDir && minPendingCount !== undefined && minPendingCount > 0) {
-    const pending = countPendingMemoriesNeedingDecision(primaryStashDir, dbCell.current);
-    if (pending < minPendingCount) {
-      info(`[improve] memory inference skipped (${pending} pending < minPendingCount ${minPendingCount})`);
-      return { durationMs: 0, warnings: [] };
-    }
   }
   const hintRefs = memoryRefsForInference.size;
   info(

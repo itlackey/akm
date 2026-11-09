@@ -9,12 +9,6 @@
 import { z } from "zod";
 import { envReferenceApiKey, positiveInt } from "./primitives";
 
-const EmbeddingOllamaOptionsSchema = z
-  .object({
-    num_ctx: positiveInt.optional(),
-  })
-  .passthrough();
-
 /**
  * Embedding connection config. Both `endpoint` and `model` are optional:
  *   - Remote: provide `endpoint` (http/https URL) + `model`.
@@ -58,7 +52,6 @@ export const EmbeddingConnectionConfigSchema = z
      * window silently changed request batching too.
      */
     contextLength: positiveInt.optional(),
-    ollamaOptions: EmbeddingOllamaOptionsSchema.optional(),
     /**
      * Per-request timeout in milliseconds for a remote embedding request
      * (default 120_000, `DEFAULT_EMBEDDING_TIMEOUT_MS` in

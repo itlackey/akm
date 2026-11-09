@@ -418,23 +418,6 @@ describe("resolveImprovePlan", () => {
     expect(plan.processes.reflect.runner?.name).toBe("default");
     expect(plan.processes.validation).toMatchObject({ enabled: true, runner: null });
   });
-
-  test("a harness triage judgment takes llm overrides as inference it reports untranslated", () => {
-    const plan = resolveImprovePlan("reflect-distill", {
-      configVersion: "0.9.0",
-      semanticSearchMode: "auto",
-      connections: { default: lab },
-      harnesses: { reviewer: { platform: "claude" } },
-      improve: {
-        processes: { triage: { harness: "reviewer", llm: { temperature: 0 } } },
-        strategies: { "reflect-distill": strategy(REFLECT_DISTILL) },
-      },
-    });
-    expect(plan.triageJudgment).toMatchObject({ kind: "harness", name: "reviewer" });
-    expect(plan.triageJudgmentNotices).toContainEqual(
-      expect.objectContaining({ code: "untranslated-field", adapter: "claude", field: "inference.temperature" }),
-    );
-  });
 });
 
 describe("projectResolvedProcessRouting (#947)", () => {

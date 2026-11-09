@@ -280,15 +280,15 @@ function dropDanglingDefaultBundle(raw: Record<string, unknown>, sourcePath?: st
 }
 
 /**
- * `improve.model`, `improve.llm` and `improve.timeoutMs` set the base for every model call. A value the schema
- * refuses (an empty model, a non-positive or over-ceiling timeout, a malformed `llm`) is safely ignorable: the base
+ * `improve.model` and `improve.timeoutMs` set the base for every model call. A value the schema
+ * refuses (an empty model, a non-positive or over-ceiling timeout) is safely ignorable: the base
  * falls back to the default, one warning says why, and the config keeps loading. A read does not rewrite the file.
  */
 export function dropInvalidImproveBase(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
   const improve = raw.improve;
   if (!isPlainConfigObject(improve)) return raw;
   const rest = { ...improve };
-  for (const key of ["model", "llm", "timeoutMs"] as const) {
+  for (const key of ["model", "timeoutMs"] as const) {
     if (!(key in improve)) continue;
     const parsed = ImproveConfigSchema.shape[key].safeParse(improve[key]);
     if (parsed.success) continue;

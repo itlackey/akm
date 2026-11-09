@@ -1019,7 +1019,7 @@ export function normalizeEmbeddingEndpoint(endpoint: string): string {
   // Ollama's NATIVE embedding route is `/api/embed` (and the older
   // `/api/embeddings`). Appending "/embeddings" to it produced
   // `/api/embed/embeddings`, a 404 — so pointing akm at the native endpoint,
-  // which is what its own options like ollamaOptions and contextLength are
+  // which is what its own options like contextLength are
   // for, could never work. An explicit path that is already an embedding route
   // is left alone.
   if (normalizedPath.endsWith("/embed")) {
@@ -1041,19 +1041,14 @@ function embeddingEndpointPathHint(endpoint: string): string {
 /**
  * Resolve Ollama-native `options` from the embedding config.
  *
- * Resolution order:
- *   1. `ollamaOptions` — forwarded verbatim (explicit opt-in, takes precedence).
- *   2. `contextLength` — wrapped as `{ num_ctx: contextLength }`.
- *   3. Neither set → returns `undefined` (no `options` field in the request body).
+ * `contextLength` is wrapped as `{ num_ctx: contextLength }`; unset returns `undefined` (no `options` field in the
+ * request body).
  *
  * These options are only meaningful for Ollama's native `/api/embed` endpoint.
  * OpenAI-compatible endpoints ignore unknown request fields, so passing them to
  * other providers is harmless but has no effect.
  */
 function resolveOllamaOptions(config: EmbeddingConnectionConfig): { num_ctx?: number } | undefined {
-  if (config.ollamaOptions && Object.keys(config.ollamaOptions).length > 0) {
-    return config.ollamaOptions;
-  }
   if (config.contextLength) {
     return { num_ctx: config.contextLength };
   }

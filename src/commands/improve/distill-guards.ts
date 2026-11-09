@@ -11,7 +11,6 @@ export const DEFAULT_CLS_ADJACENT_COUNT = 3;
 
 export interface ClsConfig {
   enabled?: boolean;
-  adjacentCount?: number;
 }
 
 /** The CLS prompt section (each entry capped at 600 chars); empty when disabled (on unless `enabled: false`) or nothing is related. */

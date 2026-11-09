@@ -872,8 +872,8 @@ describe("what a strategy no longer decides, and per-process names", () => {
     expect(config.index).toEqual(index);
   });
 
-  test("a strategy process's engine becomes connection or harness by the target's kind, and moves to improve.processes with its model, llm and timeoutMs", () => {
-    const { config } = convert({
+  test("a strategy process's engine becomes connection or harness by the target's kind, and moves to improve.processes with its model and timeoutMs; its llm is dropped with a note", () => {
+    const { config, notes } = convert({
       engines: {
         lab: llm(),
         claude: { kind: "agent", platform: "claude" },
@@ -900,12 +900,13 @@ describe("what a strategy no longer decides, and per-process names", () => {
     });
     const improve = config.improve as Dict;
     expect(improve.processes).toEqual({
-      reflect: { connection: "lab", model: "balanced", llm: { temperature: 0.1 }, timeoutMs: 100 },
+      reflect: { connection: "lab", model: "balanced", timeoutMs: 100 },
       // The removed runtime engine is the connection it ran over; a name that is nothing is read as a connection.
       distill: { connection: "lab" },
       triage: { connection: "gone" },
     });
     expect(improve.qualityGate).toEqual({ harness: "claude" });
+    expect(notes.join("\n")).toContain("improve.strategies.nightly.processes.reflect.llm");
     // What stays in the strategy is which processes run and how.
     expect(improve.strategies).toEqual({
       nightly: {

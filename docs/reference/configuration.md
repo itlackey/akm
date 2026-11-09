@@ -36,7 +36,7 @@ are handled by `akm migrate` (which `akm upgrade` also runs); ordinary runtime c
   "improve": {
     "strategy": "nightly",
     "processes": {
-      "memoryInference": { "model": "qwen3-8b", "llm": { "temperature": 0.1 } }
+      "memoryInference": { "model": "qwen3-8b" }
     },
     "strategies": {
       "nightly": {
@@ -165,8 +165,8 @@ warning.
 
 Improve's `consolidate` and `reflect` always ask for thinking off, for a
 machine-readable payload, and the quality-gate and triage judges do too unless
-the judge's connection turns thinking on (`enable_thinking: true` as a request
-field, or `llm.enableThinking: true`).
+the judge's connection or model alias turns thinking on (`enable_thinking: true`, or
+`chat_template_kwargs.enable_thinking: true`, as a request field).
 
 When a call asks for JSON that matches a schema, a connection receives the
 schema as `response_format` (`json_schema`, strict). If the endpoint rejects it
@@ -472,12 +472,12 @@ These settings, all optional, choose another place for one piece of work:
 | Key | Chooses where |
 | --- | --- |
 | `improve.enabled` | `false`: background learning is off on this host, and `akm improve` and `akm proposal extract` do nothing. Written by `akm setup --learning off`; absent means on |
-| `improve.connection`, `improve.harness`, `improve.model`, `improve.llm`, `improve.timeoutMs` | The base for improve's processes, the quality-gate and triage judges, `akm remember --enrich`, extraction and the proposal drain. A workflow gate's judge does not read it: it runs on the default connection, else the default harness |
+| `improve.connection`, `improve.harness`, `improve.model`, `improve.timeoutMs` | The base for improve's processes, the quality-gate and triage judges, `akm remember --enrich`, extraction and the proposal drain. A workflow gate's judge does not read it: it runs on the default connection, else the default harness |
 | `improve.processes.<process>` | One improve process: `reflect`, `distill`, `consolidate`, `memoryInference`, `extract`, `validation`, or `triage` (its judgment) |
 | `improve.qualityGate` | The judge of the reflect and distill quality gates |
 
-Each takes `connection` or `harness`, `model` (an alias or a name), `llm` (the
-[settings a call asks for](#settings-a-call-asks-for)) and `timeoutMs`.
+Each takes `connection` or `harness`, `model` (an alias or a name) and `timeoutMs`. Settings a call asks for
+(temperature, thinking) go on the model alias, not here ([settings a call asks for](#settings-a-call-asks-for)).
 `improve.*` is the base for improve's processes, the quality-gate and triage
 judges, `akm remember --enrich`, extraction and the proposal drain, whichever
 command makes the call; the entries below it are nearer. A workflow gate's judge
@@ -492,15 +492,15 @@ runs, a warning says so, and `akm migrate apply` drops it, so name a
     "connection": "default",
     "processes": {
       "reflect": { "connection": "cloud", "model": "reasoning" },
-      "memoryInference": { "model": "qwen3-8b", "llm": { "temperature": 0.1 } }
+      "memoryInference": { "model": "qwen3-8b" }
     },
-    "qualityGate": { "connection": "judge", "llm": { "enableThinking": true } }
+    "qualityGate": { "connection": "judge", "model": "thinking" }
   }
 }
 ```
 
 The nearest setting wins, farthest to nearest: the shipped alias of the kind of
-work, `improve.*` (`connection`, `harness`, `model`, `llm`, `timeoutMs`), the process's entry in
+work, `improve.*` (`connection`, `harness`, `model`, `timeoutMs`), the process's entry in
 `improve.processes`, and `--connection`, `--harness` and `--model` on the run,
 which reach every call in it, the quality-gate and triage judges included. The quality-gate judge is the
 exception: a process's own entry is the writer's, so `improve.qualityGate`
@@ -571,7 +571,7 @@ drain, set `processes.triage` (`enabled`, `applyMode: "promote"`,
 `processes.triage.judgment` controls the optional judgment tier: `true` enables
 it, `false` disables it, and an object holds `enabled` (default `true`). The
 judgment is a model call; it runs where `improve.processes.triage` says
-(`connection` or `harness`, `model`, `llm`, `timeoutMs`), over `improve.connection`
+(`connection` or `harness`, `model`, `timeoutMs`), over `improve.connection`
 and `improve.harness`, and over the defaults. Enabling it with no connection or
 harness configured fails before the run starts, naming `akm setup`.
 
@@ -611,7 +611,7 @@ judge passes is staged for the triage drain to accept; a distill lesson it
 passes is deferred for a person (reason `distill-review`), which the drain and
 its judgment tier leave alone. With the distill gate off nothing is judged, and
 the drain decides. The judge is a model call that
-runs where `improve.qualityGate` says (`connection` or `harness`, `model`, `llm`,
+runs where `improve.qualityGate` says (`connection` or `harness`, `model`,
 `timeoutMs`), for both gates, over `improve.connection` and `improve.harness`
 and the defaults: with no `qualityGate`, the default connection answers with its
 `balanced` model. The process's own entry in `improve.processes` is the writer's
@@ -629,11 +629,14 @@ judge's connection at the server directly.
   "connections": {
     "judge": {
       "endpoint": "http://127.0.0.1:8080/v1",
-      "models": { "balanced": "qwen3-27b" }
+      "models": {
+        "balanced": "qwen3-27b",
+        "thinking": { "model": "qwen3-27b", "chat_template_kwargs": { "enable_thinking": true } }
+      }
     }
   },
   "improve": {
-    "qualityGate": { "connection": "judge", "llm": { "enableThinking": true } }
+    "qualityGate": { "connection": "judge", "model": "thinking" }
   }
 }
 ```
@@ -785,8 +788,7 @@ embedding model: `provider`, `endpoint`, `model`, `apiKey` (a `$VAR` reference,
 or the `embedding` service's entry in `credentials.json`; see
 [Credentials](#credentials)), `dimension`, `localModel`,
 `maxInputTokens`, `maxTokens`, `batchSize`, `contextLength`, `timeoutMs`,
-`queryTimeoutMs`, `queryTemplate`, `documentTemplate`, `concurrency`, and
-`ollamaOptions.num_ctx`. An `embedding` with a `model` and no `endpoint` names a
+`queryTimeoutMs`, `queryTemplate`, `documentTemplate`, `concurrency`. An `embedding` with a `model` and no `endpoint` names a
 model the default connection serves, at its endpoint and with its key; with no
 default connection there is nothing to serve it, and the built-in local embedder
 runs, with a warning.
@@ -1215,7 +1217,8 @@ as the table says. The conversion covers a config written by 0.9.32 through
 | `apiKeyFile`, a literal `apiKey`, a `${secrets/...}` `apiKey` | The key moves to `credentials.json` for the connection and its endpoint; a note names where it was, never its value. A key that cannot be read stays on the connection as `apiKey`, with a note that it is still to do; a later run moves it once it can be read. A key file that cannot be read is dropped, with a note naming its path: akm does not read a key file. |
 | `AKM_ENGINE_<NAME>_API_KEY` or `AKM_LLM_API_KEY` set in the environment | `apiKey: "$AKM_ENGINE_<NAME>_API_KEY"` (or `$AKM_LLM_API_KEY`) on that connection. Set in no variable, an engine that names no key gets none, and a note names the variables 0.9 read. |
 | `improve.strategies.<name>.engine`, `model`, `llm`, `timeoutMs` | Dropped, with a note: a strategy says which processes run, not where. |
-| `engine`, `model`, `llm`, `timeoutMs` on a strategy's process, its `qualityGate` or its `triage.judgment` | Moved to `improve.processes.<process>` or `improve.qualityGate`, with `engine` becoming `connection` or `harness` by what it named. When that place already says, the first one is kept, with a note. |
+| `engine`, `model`, `timeoutMs` on a strategy's process, its `qualityGate` or its `triage.judgment` | Moved to `improve.processes.<process>` or `improve.qualityGate`, with `engine` becoming `connection` or `harness` by what it named. When that place already says, the first one is kept, with a note. |
+| `llm` on a strategy's process, its `qualityGate` or its `triage.judgment` | Dropped, with a note: improve reads no inference settings there. Set them on a model alias of the connection and name it with `model` ([Settings a call asks for](#settings-a-call-asks-for)). |
 | `index.defaults.*`, `index.<pass>.engine` | Dropped with the rest of the `index` section: it is retired and no longer read, so it is named once as an unknown key until then. Where memory inference runs is `improve.processes.memoryInference` over `improve.*`. |
 | `workflow.judgeEngine` | Dropped, with a note: a gate's judge runs on the default connection, else the default harness. The note says whether the engine it named is that default, or the judge has moved. With none set, 0.9 ran the judge on `defaults.engine`; a note says when that is not where it runs now. |
 | `engine:` in an asset's frontmatter, a workflow step or a task source | `connection:` or `harness:`, by what the configured target is; a name it cannot place becomes `harness:`, with a note. A bundle akm may not change, and an asset that is a symbolic link, are skipped. |

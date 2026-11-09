@@ -4,8 +4,8 @@
 
 /**
  * A harness takes no connection or inference of its own: inference for opencode
- * belongs in opencode's own config, and an improve process's `llm` overlay carries
- * it into model work. A key a harness does not read is warned about once and
+ * belongs in opencode's own config, and a connection's model alias carries it into
+ * model work. A key a harness does not read is warned about once and
  * ignored; it never fails the load.
  */
 

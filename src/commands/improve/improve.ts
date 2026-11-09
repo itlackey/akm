@@ -39,7 +39,6 @@ import { type Notice, noticeSet } from "../../execution/notices";
 import { ensureIndex } from "../../indexer/ensure-index";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { akmIndex } from "../../indexer/indexer";
-import { countPendingMemoriesNeedingDecision } from "../../indexer/passes/memory-inference";
 import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { type LlmUsageRecord, withLlmStage } from "../../llm/usage-telemetry";
@@ -577,18 +576,6 @@ function recordImproveFailure(err: unknown, run: ImproveRunSetup, eventsCtx: Eve
   );
 }
 
-/**
- * The `minPendingCount` gate's count. Reads index.db read-only for cached no-change
- * decisions; with no usable index it counts every pending parent.
- */
-function countUndecidedPendingMemories(stashDir: string): number {
-  try {
-    return withIndexDb((db) => countPendingMemoriesNeedingDecision(stashDir, db), { readOnly: true });
-  } catch {
-    return countPendingMemoriesNeedingDecision(stashDir);
-  }
-}
-
 function probeEntryCount(): number | undefined {
   try {
     if (!fs.existsSync(getDbPath())) return undefined;
@@ -793,14 +780,6 @@ function buildResultExecutionPlan(
   const { improveProfile, configuredImproveProfile, resolvedPlan, scope } = run;
   const { strategyFilteredRefs } = collected;
   const configuredTriage = configuredImproveProfile.processes?.triage;
-  const inferenceMinPending = improveProfile.processes?.memoryInference?.minPendingCount;
-  const pendingMemories =
-    run.primaryStashDir && inferenceMinPending !== undefined && inferenceMinPending > 0
-      ? countUndecidedPendingMemories(run.primaryStashDir)
-      : undefined;
-  const belowMinPending =
-    pendingMemories !== undefined && inferenceMinPending !== undefined && pendingMemories < inferenceMinPending;
-  const memoryInferenceEnabled = resolvedPlan.processes.memoryInference.enabled && !belowMinPending;
   // Per-process routing, plus how many effective refs each ref-scoped process would act on (#947).
   const processes = projectResolvedProcessRouting(resolvedPlan).map((row) => {
     const eligibleRefs = eligibleRefCount(preparation.loopRefs, row.process, resolvedPlan.strategy.config);
@@ -845,12 +824,10 @@ function buildResultExecutionPlan(
     stageConfig: {
       extract: { enabled: preparation.planning.extract.wouldRun, reason: preparation.planning.extract.reason },
       memoryInference: {
-        enabled: memoryInferenceEnabled,
-        reason: !resolvedPlan.processes.memoryInference.enabled
-          ? "disabled"
-          : !memoryInferenceEnabled
-            ? `${pendingMemories ?? 0} pending memories is below minPendingCount ${inferenceMinPending}`
-            : "enabled; the pass discovers pending memories independently of selected refs",
+        enabled: resolvedPlan.processes.memoryInference.enabled,
+        reason: resolvedPlan.processes.memoryInference.enabled
+          ? "enabled; the pass discovers pending memories independently of selected refs"
+          : "disabled",
       },
     },
     triage: {

@@ -10,7 +10,7 @@
 import { z } from "zod";
 import { timeoutMsField } from "./connections";
 import { ImproveProfileConfigSchema } from "./improve-processes";
-import { engineName, LlmInvocationOverridesSchema, nonEmptyString, nonNegativeNumber, positiveInt } from "./primitives";
+import { engineName, nonEmptyString, nonNegativeNumber, positiveInt } from "./primitives";
 
 // ── Improve top-level (event retention, salience, state GC) ────────────────
 
@@ -33,7 +33,7 @@ const ImproveStateGcSchema = z
 
 /**
  * Where one improve call runs: a connection or a harness, the model (an alias or
- * a name), inference settings and a timeout. Strategies say which processes run;
+ * a name) and a timeout. Strategies say which processes run;
  * this says where, whichever strategy is selected.
  */
 export const ImproveWhereSchema = z
@@ -41,7 +41,6 @@ export const ImproveWhereSchema = z
     connection: nonEmptyString.optional(),
     harness: nonEmptyString.optional(),
     model: nonEmptyString.optional(),
-    llm: LlmInvocationOverridesSchema.optional(),
     timeoutMs: z.union([positiveInt, z.null()]).optional(),
   })
   .passthrough();
@@ -71,14 +70,13 @@ export const ImproveConfigSchema = z
     /**
      * The base for improve's processes, the quality-gate and triage judges, `akm remember --enrich`, extract and the
      * proposal drain, whichever command makes the call; not a workflow gate's judge, which runs on the default. A
-     * connection, or a harness, over the default, with the model (an alias or a name), inference settings and a
+     * connection, or a harness, over the default, with the model (an alias or a name) and a
      * timeout every call under it starts from. `processes` and `qualityGate` below
      * are nearer; the run's `--connection`, `--harness` and `--model` are nearest.
      */
     connection: nonEmptyString.optional(),
     harness: nonEmptyString.optional(),
     model: nonEmptyString.optional(),
-    llm: LlmInvocationOverridesSchema.optional(),
     timeoutMs: timeoutMsField,
     /** Where each improve process runs, over `connection` / `harness` above. */
     processes: ImproveProcessesSchema.optional(),
