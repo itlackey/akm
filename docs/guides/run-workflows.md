@@ -164,7 +164,7 @@ any other run.
 ## List runs
 
 `akm workflow list` shows every workflow run on this host, most recently
-updated first. `--all-scopes` is a deprecated no-op, kept through 0.10.
+updated first.
 
 ```sh
 akm workflow list              # All runs (any status)

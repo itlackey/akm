@@ -997,8 +997,8 @@ Subcommands:
 | --- | --- |
 | `create <name>` | Validate and write a Markdown workflow under `workflows/`. `--path <dir>` places it in a subdirectory; `--from <file>` imports content; `--force` overwrites; `--print` prints the template that would be written instead of writing it |
 | `run <run-id\|ref>` | Canonical start/execute command. A ref always starts a new run (other active runs of the ref produce one warning, see below); a run id continues that exact active run. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
-| `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. A ref shows its most recently updated run. `--all-scopes` is a deprecated no-op |
-| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. Lists every run on the host, most recently updated first, from any working directory. `--all-scopes` is a deprecated no-op |
+| `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. A ref shows its most recently updated run. |
+| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. Lists every run on the host, most recently updated first, from any working directory. |
 | `resume <run-id>` | Flip a `blocked` or `failed` run back to `active` so `run <run-id>` can continue it; it executes nothing. Completed runs cannot be resumed |
 | `abandon <run-id>` | Mark a run failed so it stops counting as active (`resume` can reopen it) |
 | `plan <ref>` | **Evolving.** Compile and freeze a workflow WITHOUT publishing a run: the canonical step graph, per-step frozen target kinds, task/child expansion, input bindings, source read set, and lowering notices — zero durable writes. Returns the full JSON envelope by default, like every other command; pass `--format text` for a human-readable summary |
@@ -1139,7 +1139,7 @@ akm workflow status <run-id> --units    # also list per-unit rows from the run j
 
 Accepts a run id, a unique 8+ character run-id prefix, or a workflow ref.
 When given a workflow ref, resolves to the most-recently-updated run for that
-ref on this host. `--all-scopes` is a deprecated no-op. `--units` adds per-unit rows
+ref on this host. `--units` adds per-unit rows
 (unit id, status, failure reason, and any result/error diagnostic text) from
 the run journal — diagnostics only; step evidence stays deterministic and is
 unaffected. A failed unit's row also carries an `orchestration` object (in
@@ -1284,7 +1284,6 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--before`, `--after` | Insert the new bundle before or after this configured bundle, instead of at the end |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
 | `--allow-insecure-transport` | Allow a plain-HTTP source URL after explicitly accepting transport substitution risk |
-| `--allow-dangerous-env-keys` | Deprecated, no effect. `bundle add` no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
 | `--credential` | Git HTTPS bearer credential, stored as a reference and never a literal token: `$VAR`, `${VAR}`, or an akm ref such as `${secrets/gitea_token}` (`${team//secrets/gitea_token}` for a secret in another bundle). Resolved only when git runs |
@@ -1404,8 +1403,6 @@ akm bundle update --all --force   # Force fresh download even if version is unch
 | --- | --- |
 | `--all` | Update all managed sources |
 | `--force` | Fetch again even when the upstream revision is unchanged |
-| `--allow-dangerous-env-keys` | Deprecated, no effect. An update no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
-| `-y`, `--yes` | Deprecated, no effect. An update never asks before pruning old install directories of a read-only bundle; they are a re-fetchable cache. Accepted through 0.10 so existing scripts keep working. |
 
 A read-only git or npm bundle whose upstream revision still matches its lock
 is left exactly as it is: nothing is fetched or replaced, and the update
@@ -2256,7 +2253,6 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 | --- | --- |
 | `--name` | Human-friendly label for the registry |
 | `--provider` | Provider type (e.g. `static-index`, `skills-sh`). Default: `static-index` |
-| `--options` | Accepted for compatibility and ignored, with a warning: no provider reads options |
 | `--allow-insecure-transport` | Allow a plain HTTP registry URL (rejected by default) |
 
 Duplicate URLs are rejected.
@@ -2566,8 +2562,7 @@ environment (PATH/HOME/locale/terminal basics, and the names Windows needs to
 start a process) instead of inheriting the full parent environment; use `--inherit KEY1,KEY2` to pass specific parent vars
 through in clean mode. Installing a bundle is the trust decision, so `env run`
 injects what the env file defines whichever bundle it comes from, including keys
-such as `PATH` or `LD_PRELOAD`; it does not warn or block. `--allow-dangerous-env-keys`
-is a deprecated no-op, accepted through 0.10 so existing scripts keep working.
+such as `PATH` or `LD_PRELOAD`; it does not warn or block.
 
 > The single-key `run <ref>/KEY` form was removed. To inject one value, store it
 > as a [secret](#secret) and use `akm secret run secrets/<name> <VAR> -- …`, or

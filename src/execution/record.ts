@@ -64,8 +64,3 @@ export function assertSnapshotKeys(
     }
   }
 }
-
-export function requireSnapshotField(value: StrictRecordSnapshot, key: string, path: string): unknown {
-  if (!Object.hasOwn(value, key)) throw new TypeError(`${path}.${key} is required`);
-  return value[key];
-}

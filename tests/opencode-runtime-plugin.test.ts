@@ -103,9 +103,9 @@ describe.skipIf(process.platform === "win32")("akm's read tools", () => {
     [
       "akm_search",
       { query: "backup", type: "skill", limit: 3 },
-      ["search", "backup", "--type", "skill", "--limit", "3"],
+      ["search", "backup", "--type", "skill", "--limit", "3", "--project", "none"],
     ],
-    ["akm_curate", { query: "deploy a service" }, ["curate", "deploy a service"]],
+    ["akm_curate", { query: "deploy a service" }, ["curate", "deploy a service", "--project", "none"]],
     ["akm_show", { ref: "knowledge/deploy#Rollback", type: "ignored" }, ["show", "knowledge/deploy#Rollback"]],
   ])("%s calls akm with the agent detail and JSON, and returns what it printed", async (name, input, args) => {
     const { tools } = await load();

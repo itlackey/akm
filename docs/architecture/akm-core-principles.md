@@ -221,7 +221,7 @@ functions rather than duplicating policy and export no primitive (writers, lease
 index readers); the host owns transport authentication. It is the
 seam for local hosts: its operations own all akm policy and a host owns only its
 transport and its own features. The
-`exports` map lists `./api`, `./workspace`, `./package.json` and `./dist/*`. Bun is the
+`exports` map lists `./api`, `./workspace`, and `./package.json`. Bun is the
 preferred runtime and the toolchain. Node 22 is the floor (`engines.node`):
 the npm package bootstraps through Node, and its launcher falls back to Node
 when no usable Bun is on `PATH`. Anything that would become another API for

@@ -92,9 +92,10 @@ describe("bundle add and update carry no env-key gate (#1237)", () => {
     }
   }, 30_000);
 
-  test("--allow-dangerous-env-keys is still accepted as a deprecated no-op", async () => {
+  test("--allow-dangerous-env-keys is an unknown flag", async () => {
     const root = bundleWithPathEnv("akm-1237-noop");
     const result = await withTTY(false, () => runCliCapture(["bundle", "add", root, "--allow-dangerous-env-keys"]));
-    expect(result.code).toBe(0);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("--allow-dangerous-env-keys");
   }, 30_000);
 });

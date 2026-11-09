@@ -68,8 +68,7 @@
       "bun": "./dist/api.js",
       "default": "./dist/api-node.mjs"
     },
-    "./package.json": "./package.json",
-    "./dist/*": "./dist/*"
+    "./package.json": "./package.json"
   },
   "bin": {
     "akm": "dist/akm",

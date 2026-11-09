@@ -40,13 +40,6 @@ const workflowStatusCommand = defineJsonCommand({
       description: "Also list per-unit rows from the run journal",
       default: false,
     },
-    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
-    // fail with UNKNOWN_FLAG. Runs are no longer scoped to a directory.
-    "all-scopes": {
-      type: "boolean",
-      description: "Deprecated, no effect (accepted through 0.10)",
-      default: false,
-    },
   },
   async run({ args }) {
     const target = args.target;
@@ -86,13 +79,6 @@ const workflowListCommand = defineJsonCommand({
     children: {
       type: "boolean",
       description: "Also include child workflow runs (hidden by default, P3b)",
-      default: false,
-    },
-    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
-    // fail with UNKNOWN_FLAG. Runs are no longer scoped to a directory.
-    "all-scopes": {
-      type: "boolean",
-      description: "Deprecated, no effect (accepted through 0.10)",
       default: false,
     },
   },
@@ -193,13 +179,6 @@ const workflowRunCommand = defineJsonCommand({
     "max-steps": { type: "string", description: "Stop after executing this many steps" },
     "max-retries": { type: "string", description: "Retry a failed workflow step this many additional times" },
     timeout: { type: "string", description: "Whole-run timeout: N, Nms, Ns, or Nm (bare N is milliseconds)" },
-    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
-    // fail with UNKNOWN_FLAG. A workflow ref always starts a new run now.
-    new: {
-      type: "boolean",
-      description: "Deprecated, no effect (accepted through 0.10)",
-      default: false,
-    },
     "skip-if-locked": {
       type: "boolean",
       description: "Skip (exit 0, not 75) if another akm process holds this run or state.db is busy",
@@ -304,8 +283,6 @@ const WORKFLOW_RUN_BOOLEAN_FLAGS = new Set([
   "help",
   "no-quiet",
   "no-verbose",
-  "new",
-  "no-new",
   "skip-if-locked",
   "no-skip-if-locked",
 ]);

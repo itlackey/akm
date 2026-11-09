@@ -168,9 +168,6 @@ fetched or replaced again (`--force` fetches it anyway), so a task or workflow
 running from it keeps its directory. When the revision does change, the
 previous revision directory is kept and older ones are removed.
 
-`--allow-dangerous-env-keys` and `--yes` are deprecated no-ops on update,
-accepted through 0.10 so existing scripts keep working.
-
 With `--all`, a bundle that fails is reported and the rest continue; a failed
 bundle keeps its previous contents and index. If an update is interrupted, rerun
 `akm bundle update <name>`, then `akm health`, and `akm index --full` if health
