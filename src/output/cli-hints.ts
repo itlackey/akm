@@ -6,12 +6,10 @@
  * Embedded agent CLI guide rendered by `akm hints`.
  *
  * Extracted from `src/cli.ts` so it does not bloat the CLI module and so
- * docs/CI tooling can re-use the same constants. Two flavors:
- * `EMBEDDED_HINTS` (the default, `--detail brief`, short reference, ~3,000 characters) and
- * `EMBEDDED_HINTS_FULL` (`--detail normal|full`, complete reference).
+ * docs/CI tooling can re-use the same constant: `EMBEDDED_HINTS`, the short
+ * reference (~3,000 characters).
  */
 
-import EMBEDDED_HINTS_FULL from "../assets/hints/cli-hints-full.md" with { type: "text" };
 import EMBEDDED_HINTS from "../assets/hints/cli-hints-short.md" with { type: "text" };
 
-export { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL };
+export { EMBEDDED_HINTS };

@@ -127,7 +127,7 @@ import { DURATION_UNITS, parseDuration } from "./core/time";
 import { plainize } from "./core/tty";
 import { info, isQuiet, setQuiet, setVerbose, warn, warnOnce } from "./core/warn";
 import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
-import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
+import { EMBEDDED_HINTS } from "./output/cli-hints";
 import { getOutputMode, initOutputMode, parseDetailLevel } from "./output/context";
 import { isFormatExemptCommand } from "./output/format-exempt";
 import { pkgVersion } from "./version";
@@ -475,21 +475,11 @@ const healthCommand = defineCommand({
 const hintsCommand = defineCommand({
   meta: {
     name: "hints",
-    description:
-      "Print agent instructions on how to use akm — the short guide by default; pass --detail full for the complete one",
+    description: "Print agent instructions on how to use akm",
   },
-  args: {
-    detail: {
-      type: "string",
-      description:
-        "Hints detail level (brief|normal|full). `brief` (default) prints the short guide; `normal`/`full` print the complete guide.",
-      default: "brief",
-    },
-  },
-  run({ args }) {
+  run() {
     return runWithJsonErrors(() => {
-      const detail = parseDetailLevel(args.detail as string | undefined) ?? "brief";
-      process.stdout.write(detail === "brief" ? EMBEDDED_HINTS : EMBEDDED_HINTS_FULL);
+      process.stdout.write(EMBEDDED_HINTS);
     });
   },
 });
@@ -941,7 +931,7 @@ async function renderSectionedRootHelp(): Promise<string> {
       "`akm search` output rather than synthesizing them.",
     "",
     "Run `akm help <command>` or `akm <command> --help` for details on any command.",
-    "Agents: run `akm hints` for the short guide, or `akm hints --detail full` for the complete one.",
+    "Agents: run `akm hints` for the short guide.",
   ].join("\n");
   return [head, "", renderCommandSections(), "", epilogue].join("\n");
 }

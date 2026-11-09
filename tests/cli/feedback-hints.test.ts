@@ -15,21 +15,14 @@
 
 import { describe, expect, test } from "bun:test";
 import { feedbackCommand } from "../../src/commands/feedback-cli";
-import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "../../src/output/cli-hints";
+import { EMBEDDED_HINTS } from "../../src/output/cli-hints";
 
 describe("shipped hints on recording feedback (#999)", () => {
-  for (const [name, hints] of [
-    ["brief", EMBEDDED_HINTS],
-    ["full", EMBEDDED_HINTS_FULL],
-  ] as const) {
+  for (const [name, hints] of [["brief", EMBEDDED_HINTS]] as const) {
     test(`${name} hints say a failing akm command is not feedback on the asset`, () => {
       // The hints are hard-wrapped prose; compare with line breaks folded.
       const prose = hints.replace(/\s+/g, " ");
-      expect(prose).toContain(
-        name === "brief"
-          ? "A failed akm command (e.g. `akm show` erroring) is not feedback on the asset."
-          : "An akm command that fails says nothing about the asset; don't record it as feedback.",
-      );
+      expect(prose).toContain("A failed akm command (e.g. `akm show` erroring) is not feedback on the asset.");
     });
 
     test(`${name} hints no longer tell agents to give feedback when something "fails"`, () => {
@@ -43,10 +36,7 @@ describe("shipped hints on recording feedback (#999)", () => {
     expect(EMBEDDED_HINTS).toContain("A failed akm command (e.g. `akm show` erroring) is not feedback on the asset");
   });
 
-  for (const [name, hints] of [
-    ["brief", EMBEDDED_HINTS],
-    ["full", EMBEDDED_HINTS_FULL],
-  ] as const) {
+  for (const [name, hints] of [["brief", EMBEDDED_HINTS]] as const) {
     test(`${name} hints keep --negative for wrong or stale content, record nothing for a note that did not fit the task, and attach a verified fix`, () => {
       const prose = hints.replace(/\s+/g, " ");
       expect(prose).toContain(
@@ -61,10 +51,7 @@ describe("shipped hints on recording feedback (#999)", () => {
     });
   }
 
-  for (const [name, hints] of [
-    ["brief", EMBEDDED_HINTS],
-    ["full", EMBEDDED_HINTS_FULL],
-  ] as const) {
+  for (const [name, hints] of [["brief", EMBEDDED_HINTS]] as const) {
     test(`${name} hints say improve repairs only the frontmatter, name the exact-fix flags and how to mark an outdated note, and positive triggers no rewrite`, () => {
       const prose = hints.replace(/\s+/g, " ");
       expect(prose).toContain('--negative --reason "<what is wrong and what should change>"');
