@@ -2,5 +2,8 @@
 set -eu
 # AppImage sets APPDIR. The fallback also supports an extracted AppDir.
 app_dir=${APPDIR:-$(dirname "$(readlink -f "$0")")}
+# electron-updater runs the replacement AppImage with this set while the old instance quits, so the launcher can
+# integrate itself and return. akm's has nothing to integrate, and starting Electron here would be a second instance.
+if [ -n "${APPIMAGE_EXIT_AFTER_INSTALL:-}" ]; then exit 0; fi
 export LD_LIBRARY_PATH="$app_dir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$app_dir/akm-desktop" "$@"

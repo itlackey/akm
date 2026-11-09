@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- AKM Desktop (Linux AppImage): the launcher honours electron-updater's `APPIMAGE_EXIT_AFTER_INSTALL`, so an update installed on quit no longer starts a second AKM Desktop while the quitting one still holds the single-instance lock. Ordinary launches, and the updater's silent runs that are not install-only, start Electron with their arguments as before (#1517).
+
 ## [0.10.261115] - 2026-11-08
 
 ### Added
