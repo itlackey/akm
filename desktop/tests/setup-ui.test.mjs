@@ -346,7 +346,7 @@ test("errors that say the library is missing lead to setup", { timeout: 120000 }
   await mkdir(screenshots, { recursive: true });
   await page.goto(server.url);
   await page.getByRole("link", { name: "Library", exact: true }).click();
-  const alert = page.getByRole("alert").filter({ hasText: "No bundle directory found" });
+  const alert = page.getByRole("alert").filter({ hasText: "No default bundle is configured" });
   await expect(alert).toBeVisible();
   await page.screenshot({ path: path.join(screenshots, "library-search-no-library.png"), fullPage: true });
   await alert.getByRole("link", { name: "Set up akm" }).click();
