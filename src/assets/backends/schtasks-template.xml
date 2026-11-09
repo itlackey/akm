@@ -1,13 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>akm scheduled task: {{TASK_ID}}</Description>
-    <URI>{{FOLDER}}{{TASK_ID}}</URI>
+    <Description>akm: runs `akm task dispatch` every minute</Description>
+    <URI>{{FOLDER}}dispatch</URI>
     <Source>{{SIGNATURE}}</Source>
-    <Documentation>Log target (informational only; schtasks doesn't redirect): {{LOG_PATH}}</Documentation>
   </RegistrationInfo>
   <Triggers>
-{{TRIGGER_XML}}
+    <CalendarTrigger>
+      <Repetition>
+        <Interval>PT1M</Interval>
+        <Duration>PT23H59M</Duration>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <StartBoundary>{{START_BOUNDARY}}</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
+    </CalendarTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">
@@ -16,7 +24,7 @@
     </Principal>
   </Principals>
   <Settings>
-    <Enabled>{{ENABLED}}</Enabled>
+    <Enabled>true</Enabled>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>

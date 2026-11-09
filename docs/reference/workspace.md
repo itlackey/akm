@@ -783,7 +783,7 @@ The `documents.retire` receipt is `{proposalId, ref, bundle, archiveDirs, warnin
 id: the archive moves back without overwriting an occupied path and its tombstone is removed. Like any accepted
 retirement, the archived bytes are purged after the grace period at the next `akm improve` (git-backed bundles only), and
 the row is listed in Review and Activity. If the accept is refused, the proposal is rejected and the operation fails.
-Task definitions do not change installed schedules until explicit `akm task sync`.
+Task definitions are read by `akm task dispatch` every minute; an edit takes effect on the next one, and retiring an enabled task leaves its ref in `scheduler.enabled` until `akm task disable`.
 
 Configuration-affecting actions do not round-trip the redacted configuration. Existing mutation helpers retain
 unknown/unrelated fields, local overrides and supported `$VAR`/`${ref}` credential references. If the existing

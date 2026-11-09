@@ -458,14 +458,15 @@ a real `npm i -g akm-cli@…` or `bun add -g` upgrade does. It then runs the
 candidate against that home (`migrate status` / `apply`, which converts the
 `engines` form, files its key and rewrites the `engine:` keys, or preserves
 native connections/harnesses, `bundle list`,
-`search` / `show`, `task sync` dry-run and real — plain, no `--rebind`, as an
-upgrading user runs it — executing the generated cron command and confirming it
-ran the candidate, `task run`, `health`, `improve --dry-run`), and finally runs a
+`search` / `show`, the previous release's cron row run as cron runs it (`--scheduled`),
+`migrate apply` replacing every row with the one dispatch entry in a single
+crontab write, `task sync` finding nothing left to do, the entry's command run as
+cron runs it and starting a due task detached, `task run`, `health`,
+`improve --dry-run`), and finally runs a
 separate untouched copy of the origin release back against the candidate-written
-home to check that read-back still works. Plain `task sync` is clean because the
-candidate lands inside the same prefix the previous release's scheduler rows
-already point at; a side-by-side install (a separate prefix) would need
-`--rebind`. `tests/integration/previous-release-corpus.test.ts` covers
+home to check that read-back still works. The home uses the default layout
+(HOME alone decides every location), because the candidate writes the OS
+scheduler for the default installation only. `tests/integration/previous-release-corpus.test.ts` covers
 persisted-data shapes read in isolation; this gate covers the whole CLI surface
 across two real installed releases.
 

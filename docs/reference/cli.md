@@ -1471,15 +1471,12 @@ a blocked one) or give up with `akm workflow abandon <id>`. Reported, never
 rewritten: refs inside the bundle's own CONTENT (cross-references, `uses:` in
 a task, `supersededBy`) — the result's `contentRefs` lists the indexed files
 that still spell the old `<old>//` prefix so you can fix them by hand. A real
-run also re-syncs native scheduler bindings under the new name (`taskSync` in
-the result reports the outcome, never thrown, since config/index/state are
-already renamed by then). `taskSync.ok` is `false` both when the sync call
-itself fails and when it comes back reporting one or more
-`taskSync.result.failures` — a binding that failed to prepare has already
-lost its old native row and stays unscheduled until you re-run
-`akm task sync`; `--dry-run` lists the installed native rows that still name
-the old bundle (`nativeSchedulerRows`) so you can see what that sync will
-replace.
+run also runs `akm task sync` afterwards (`taskSync` in the result reports the
+outcome, never thrown, since config/index/state are already renamed by then):
+`scheduler.enabled` refs are renamed with the config, and the one OS scheduler
+entry names no bundle, so the sync only repairs the entry. `taskSync.ok` is
+`false` when the sync call itself fails; re-run `akm task sync`.
+`nativeSchedulerRows` is always empty.
 
 ### upgrade
 
@@ -1697,11 +1694,11 @@ Shipping akm inside your own product (a Docker image, a plugin's own
 `node_modules`)? See [Bundling akm](../integration/bundling-akm.md) for the
 full boot contract, JSON shapes, and exit codes.
 
-`akm upgrade` replaces the binary in place for its own install method, but a
-scheduler binding recorded by an earlier `akm task sync` under a *different*
+`akm upgrade` replaces the binary in place for its own install method, but the
+scheduler entry recorded by an earlier `akm task sync` under a *different*
 install method is not repointed automatically — the scheduler runs the
 binary path recorded at sync time, not whichever akm `upgrade` just
-installed. Run `akm task sync` after switching installers so scheduled runs
+installed. Run `akm task sync --rebind` after switching installers so scheduled runs
 pick up the new binary; see [`task sync`](#task) and `akm health`'s
 `scheduler-binary` advisory.
 
@@ -3055,7 +3052,7 @@ is called `default`), there is nothing to degrade to: the run stops at planning
 with exit 78, naming what is missing, before it takes a lock, writes the index
 or opens a log, and `--dry-run` stops the same way. No flag asks for that. (The
 0.9 `--require-engines` is removed, so a task installed for 0.9 that passes it
-fails with an unknown flag; edit the task and run `akm task sync`. It used to
+fails with an unknown flag; edit the task. It used to
 refuse the run unless every enabled process had a usable target; that check is
 gone, and `akm health`
 (`akm health && akm improve`, which stops on exit 4) is what checks whether each
@@ -3716,42 +3713,45 @@ not a reason to record against it.
 
 `akm task` is the scheduling surface for workflows, agent prompts, and
 shell commands. It manages on-disk task definitions under
-`<bundle>/tasks/<id>.yml` and reconciles them with the OS-native scheduler
-(cron / launchd / schtasks). Task source v4 YAML (`version: 4`) is the only
+`<bundle>/tasks/<id>.yml`, and **one** OS-scheduler entry (cron / launchd /
+schtasks) that runs `akm task dispatch` every minute; dispatch decides which
+tasks are due. Task source v4 YAML (`version: 4`) is the only
 executable source contract this release accepts; `akm task add` writes v4 —
 see the canonical [Tasks reference](tasks.md). The
-group is `add | enable | disable | run | explain | validate | sync | doctor | history | prune`
+group is `add | enable | disable | dispatch | run | explain | validate | sync | doctor | history | prune`
 — there is no `show` or `remove`; use `akm show tasks/<id>` to inspect one
 task. Use `task enable` / `task disable` for host-local activation; edit the
 file only to change the authored schedule or remove the task.
-List tasks with `akm search --type task`.
+List tasks with `akm search --type task`. How the entry works, and what an
+installation that does not own it does, is in the
+[scheduling guide](../guides/scheduling.md).
 
 ```sh
 akm search --type task                       # List tasks (cross-bundle)
 akm show tasks/<id>                          # Inspect one task
-akm task add <id> --schedule "@daily" \     # Register a new task and install it
+akm task add <id> --schedule "@daily" \     # Register a new task and enable it
   --command "akm improve --strategy default"
 akm task add review --schedule "@daily" --prompt "Review recent changes" --harness reviewer
 akm task add nightly --schedule "@daily" --command "akm improve" --disabled  # register but leave off
 akm task add nightly --schedule "@daily" --command "akm improve" --force    # overwrite an existing task id
-akm task enable team//tasks/nightly       # Add local activation and sync its bundle
-akm task disable team//tasks/nightly      # Remove local activation and unschedule it
-akm task run <id>                           # Execute now (what the scheduler calls)
+akm task enable team//tasks/nightly       # Add the ref to scheduler.enabled
+akm task disable team//tasks/nightly      # Remove the ref from scheduler.enabled
+akm task dispatch                           # Start the tasks due this minute, detached, and exit
+akm task run <id>                           # Execute now
 akm task explain <ref>                      # Read-only: declared inputs, target, schedule — spawns nothing
 akm task history [<id>] [--id <id>] [--limit <n>]  # Recent runs from state.db (positional id == --id)
-akm task sync                               # Reconcile activated refs from all enabled configured bundles
-akm task sync --dry-run                     # Preview the reconcile — zero scheduler writes
-akm task sync --rebind                      # Also capture the current installed runtime
-akm task doctor                             # Report scheduler backend + paths
-akm task prune                              # Preview orphaned scheduler entries — zero writes
-akm task prune --yes                        # Remove every currently-computed orphan
-akm task prune --id ghost,stale --yes       # Remove only the named orphan ids
+akm task sync                               # Install, keep or remove the one OS scheduler entry
+akm task sync --dry-run                     # Preview it — zero scheduler writes
+akm task sync --rebind                      # Re-point the entry at this akm and this shell's PATH
+akm task doctor                             # Report the scheduler backend, entry and paths
+akm task prune                              # Preview akm 0.9 rows naming a bundle directory that is gone
+akm task prune --yes                        # Remove them
 ```
 
 `task add` also accepts `--tags <a,b>` (comma-separated tags), `--when-to-use <text>` (guidance on when the task runs or should be used), `--disabled` (write the task but leave its ref out of
-this host's scheduler activation), `--force` (overwrite an existing task with
-the same id), and `--rebind` (also point the bundle's installed scheduler rows
-at this akm invocation, as `akm task sync --rebind` does).
+this host's `scheduler.enabled`), `--force` (overwrite an existing task with
+the same id), and `--rebind` (ignored with a warning: `add` no longer touches
+the OS scheduler; use `akm task sync --rebind`).
 
 `akm task explain <ref> [input flags]` prints a task's declared `inputs:`,
 the values that would actually be supplied (with provenance), the resolved
@@ -3760,92 +3760,93 @@ it never spawns anything, writes history, or touches the scheduler. A
 secret-shaped value prints as `<redacted>`. See
 [`akm task explain`](tasks.md#akm-task-explain).
 
-`akm task run` is what cron / launchd / schtasks invoke at the scheduled
-time (they add the internal `--scheduled` marker; do not pass it yourself). Each run is recorded as a row in the durable `task_history` table
+**`akm task dispatch`** is the one command the OS scheduler entry runs, every
+minute. It reads `scheduler.enabled`, reads only those task files, matches each
+`schedule:` against the current minute, and starts every due task as a detached
+`akm task run <id> --bundle <bundle> --scheduled`, with the entry's
+`schedule[i].inputs` as flags. It then exits; the tasks it started keep running
+and finish on their own. A task with a run still in flight is skipped. It opens no
+database unless something is due. A late start evaluates the minutes since the
+last dispatch, at most five; a task due in several of them runs once. Its
+result lists `started`, `skipped` (`{ref, reason}`) and `failures` (`{ref,
+reason}`: an enabled ref whose file is gone or does not parse, or a task that
+could not be started; it exits non-zero when there are any). The last dispatched minute is kept in a small file under the state directory.
+Run it yourself, every minute, from your own supervisor on an installation that
+does not own the OS scheduler (see below).
+
+`akm task run` executes one task now; dispatch starts due tasks this way, adding the
+`--scheduled` marker (a hidden flag that selects the unattended default timeout;
+akm 0.9's per-task scheduler rows pass it too, so it stays). Each run is recorded as a row in the durable `task_history` table
 (`state.db`), surfaced by `akm task history` — **not** by `akm log`; there is
 no `task_invoked`/`task_completed` event type on the `akm log` stream.
 
 Task source cannot enable itself. `akm task enable <fully-qualified-ref>` adds
-the ref to this host's `scheduler.enabled` list and syncs that bundle; `akm task disable` removes it and unschedules the task.
+the ref to this host's `scheduler.enabled` list; `akm task disable` removes it. Both
+only edit config: dispatch reads it on the next minute.
 Manual `akm task run` remains available. To remove a task, delete its file
-(`<bundle>/tasks/<id>.yml`) and run `akm task sync` — sync uninstalls the
-orphaned scheduler entry.
+(`<bundle>/tasks/<id>.yml`) and `akm task disable` its ref: until then, dispatch
+reports the missing file as a failure.
 
-A config with no `scheduler.enabled` list at all (written before 0.9.17)
-means "keep what is installed": `akm task sync` takes the akm-written rows
-already in the scheduler as this host's choice and writes the list; an
-explicit list is never second-guessed. `akm task sync --dry-run` prints the
-planned adds/updates/removes (removals carry their owning bundle) without
-touching the scheduler — zero writes. Exits non-zero when removals are pending, so it can
-gate a CI/health check on "sync would change something."
+**`akm task sync`** keeps the one OS entry in step with `scheduler.enabled`:
+installed when any task is enabled, removed when none is. An installed entry keeps its launcher
+and the `PATH` it captured; `--rebind` rewrites both from the current akm and
+shell. In the same write it removes akm 0.9's per-task rows (the `# akm:task`
+crontab blocks and the `# akm:env` block, `com.akm.task.*` LaunchAgents,
+`\akm\<id>` tasks), so nothing fires twice; `akm migrate apply` runs it. Its
+result is `{backend, entry, removedLegacy, keptLegacy, warnings?}` where `entry`
+is `installed`, `updated`, `unchanged`, `removed`, `absent` or `unmanaged`. A row that names
+another installation's directories (an `AKM_BUNDLE_DIR` that is not this
+installation's, or any `AKM_*_DIR`) is left and reported in `keptLegacy`. A crontab whose
+akm markers are malformed is refused unmodified. `--dry-run` prints the same
+result (plus `hasRemovals`) without writing, and exits non-zero when it would
+remove anything. `--bundle` is ignored with a warning: one entry serves every bundle.
 
-`sync`'s (and `sync --dry-run`'s) result always carries `failures: [{path,
-ref?, reason}]` — one entry per item sync could not reconcile: a task/workflow
-source that failed to parse or prepare (its installed row is left as it is),
-two sources claiming the same scheduler id, a desired binding whose id is
-already scheduled from a different bundle or installation, a row whose
-install or removal failed, or — for an unscoped, multi-bundle sync — a whole
-bundle whose sources could not be read. Every one of these is a per-item
-failure: the item is left exactly as it was and reported here, while every
-OTHER item and bundle in the same sync still reconciles; with `--bundle`,
-that one bundle IS the whole sync, so a bundle that cannot be read raises
-instead of being reported here. `failures` is empty on a fully clean sync; a
-non-empty `failures` still exits non-zero, same as a pending removal. A
-crontab whose akm markers are malformed is refused unmodified, and another
-akm process holding the scheduler lock makes sync exit 75 (retry shortly).
+An installation that moves any location (`AKM_BUNDLE_DIR`, an `AKM_*_DIR`, or an
+`XDG_*_HOME` that changes where config, data, cache or state go) is **not**
+the default installation, and never writes the OS scheduler: `task sync`
+returns `entry: "unmanaged"` and says to run `akm task dispatch` every minute from
+your own supervisor, with that installation's environment. `task doctor` and the
+`scheduler-binary` health advisory read nothing from the OS for it.
 
-`akm task prune` reclaims installed scheduler entries that `sync` can never
-clean up on its own: entries that no longer resolve to a live bundle (a row
-whose `AKM_BUNDLE_DIR` names a directory that is gone). It never touches an entry that
-still resolves to a live bundle — that's `sync`'s job. Like `sync
---dry-run`, the default is a dry-run preview (zero scheduler writes) that
-exits non-zero when there are candidates to remove; `--yes` executes the
-printed plan, and `--id <id1,id2,...>` narrows a `--yes` run (or a preview)
-to specific binding ids — naming an id that isn't a current orphan
-candidate (not installed, or it still resolves to a live bundle) is
-refused with a usage error and removes nothing.
+`akm task prune` removes the akm 0.9 per-task rows that `sync` left because they
+name a bundle directory that is gone (`AKM_BUNDLE_DIR` of a deleted sandbox).
+The default is a dry-run preview (zero scheduler writes) that exits non-zero
+when there are candidates; `--yes` executes the printed plan, and `--id
+<id1,id2,...>` narrows it to specific row ids — naming an id that isn't a
+current candidate is refused with a usage error and removes nothing.
 
-Scheduler activation is host-local config and captures the installed akm
-runtime. Ordinary `task sync` reconciles activated refs from all enabled
-configured bundles while preserving that runtime binding. Use `task sync
---rebind` only after intentionally moving or
-replacing the installation, or to repair a stale runtime path, then verify the
-result with `akm task doctor`. Interactive `akm setup` reviews every embedded
+Interactive `akm setup` reviews every embedded
 task template (both the core set and the improve-schedule set) and asks once
 before changing task files or scheduler state; non-interactive setup changes
 neither.
 
-Because the scheduler runs the exact binary path recorded at the last `task
-sync`, upgrading akm through a different installer than the one active at
+Because the entry runs the exact binary path recorded at the last `task sync`,
+upgrading akm through a different installer than the one active at
 that sync (npm-global to a standalone download, or vice versa) leaves
-scheduled runs invoking the old, now-stale binary — `task sync` re-resolves
-the current path and repoints them. `akm health --probe`'s `scheduler-binary`
+the entry invoking the old, now-stale binary — `task sync --rebind` re-resolves
+the current path. `akm health --probe`'s `scheduler-binary`
 advisory warns when the two diverge, naming both versions.
 
-Setup reconfiguration preserves existing scheduler runtime bindings. Changing
+Setup reconfiguration does not rebind an installed entry. Changing
 the AKM storage path or installed runtime path therefore requires an explicit
-`akm task sync --rebind`; setup does not silently migrate those entries.
+`akm task sync --rebind`.
 
 **Bundle targeting (`--bundle <bundle>`).** By default read/write commands
-operate on the primary/default bundle, while an unscoped `sync` reconciles all
-enabled configured bundles. `add`, `enable`, `disable`, `history`, `sync`,
-`run`, and `explain` accept `--bundle <bundle>` to schedule, reconcile, or inspect
+operate on the primary/default bundle. `add`, `enable`, `disable`, `history`,
+`run`, and `explain` accept `--bundle <bundle>` to write or inspect
 tasks that live in another configured bundle (`doctor` reports scheduler-wide
 state and takes no `--bundle`; `validate` takes a bare filesystem path
-instead of a ref, so it has no bundle to target either):
+instead of a ref, so it has no bundle to target either; `dispatch` covers every
+bundle with an enabled ref):
 
 ```sh
 akm task add nightly --schedule "@daily" --command "akm improve" --bundle team-bundle
-akm task sync --bundle team-bundle             # reconcile only that bundle
 ```
 
-A non-default bundle is recorded in the installed scheduler entry as a
-`--bundle <bundle>` token, so the scheduled `akm task run` resolves the task
-(and its relative asset refs) from that bundle. `sync --bundle` limits a run to
-one bundle; unscoped `sync` reconciles every configured bundle as one
-transaction. Scheduler ids are the bare task id and
-are never namespaced: registering a task whose id is already scheduled from a
-different bundle is a hard error.
+`scheduler.enabled` holds the fully-qualified ref, so dispatch starts the task
+with `--bundle <bundle>` and the run resolves the task (and its relative asset
+refs) from that bundle. Task history is keyed by the bare task id, and so is
+the run-in-flight check: two bundles' tasks that share an id also share it.
 
 `task add` accepts exactly one CLI target selector (`--workflow <ref>`,
 `--prompt <text-or-ref>`, or `--command <shell>`) and writes a task source v4

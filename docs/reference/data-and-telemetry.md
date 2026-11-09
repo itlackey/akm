@@ -104,7 +104,7 @@ instead of reporting success for feedback it could not store.
 
 | Path | Contents |
 | --- | --- |
-| `locks/scheduler.lock` | Serializes writes to the native scheduler (`akm task`). |
+| `scheduler/dispatch-minute` | The last minute `akm task dispatch` evaluated (an epoch minute). |
 | `locks/<bundle-key>/improve.lock` | Whole-run lock for `akm improve`, one directory per bundle. |
 
 ### Cache directory

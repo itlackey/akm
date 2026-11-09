@@ -116,13 +116,12 @@ function boundedWithEnv<T>(overrides: Record<string, string | undefined>, fn: ()
   return withEnv(overrides, fn, WITH_ENV_SAFETY_MS);
 }
 
-function generatedCronCommand(crontab: string, id: string): string {
+function generatedCronCommand(crontab: string): string {
   const lines = crontab.split(/\r?\n/);
-  const begin = lines.indexOf(`# akm:task ${id} BEGIN`);
-  const body = lines[begin + 1] ?? "";
-  const match = body.match(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(.+)$/);
-  if (!match) throw new Error(`Could not extract generated cron command for ${id}: ${body}`);
-  return match[1]!;
+  const begin = lines.indexOf("# akm:dispatch BEGIN");
+  const body = lines.slice(begin + 1).find((line) => line.startsWith("* * * * * ")) ?? "";
+  if (begin === -1 || !body) throw new Error(`Could not extract the generated dispatch command:\n${crontab}`);
+  return body.slice("* * * * * ".length);
 }
 
 function parseJson(text: string): unknown {
@@ -672,18 +671,27 @@ describe("tasks parity", () => {
 
       const schedulerPath = [fakeBin, path.dirname(launcher), isolatedNodeDir, "/usr/bin", "/bin"].join(path.delimiter);
       expect(schedulerPath.split(path.delimiter)).not.toContain(path.dirname(process.execPath));
-      const schedulerEnv = {
-        ...nodeEnv,
+      // The default installation: HOME alone decides every location, so `task sync` owns the (fake) crontab.
+      const home = path.join(root, "home");
+      const defaultStash = path.join(home, "akm");
+      fs.mkdirSync(path.join(home, ".config", "akm"), { recursive: true });
+      fs.mkdirSync(defaultStash, { recursive: true });
+      fs.writeFileSync(
+        path.join(home, ".config", "akm", "config.json"),
+        `${JSON.stringify({ bundles: { stash: { path: defaultStash, writable: true } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
+      );
+      const schedulerProcessEnv: NodeJS.ProcessEnv = { ...process.env };
+      for (const name of Object.keys(schedulerProcessEnv)) {
+        if (name.startsWith("AKM_") || name.startsWith("XDG_")) delete schedulerProcessEnv[name];
+      }
+      Object.assign(schedulerProcessEnv, {
+        HOME: home,
         FAKE_CRONTAB: fakeCrontab,
         PATH: schedulerPath,
-      };
-      const schedulerProcessEnv: NodeJS.ProcessEnv = {
-        ...process.env,
-        ...schedulerEnv,
         AKM_OUTPUT: "json",
         NO_COLOR: "1",
         CI: "1",
-      };
+      });
       const launcherRun = (args: string[]): NodeResult => {
         const result = nodeSpawnSync(isolatedNode, [launcher, ...args], {
           env: schedulerProcessEnv,
@@ -698,8 +706,6 @@ describe("tasks parity", () => {
         };
       };
       const id = `node-fallback-${process.pid}-${Date.now()}`;
-      let taskAdded = false;
-
       try {
         const crontabProbe = nodeSpawnSync("crontab", ["-"], {
           env: schedulerProcessEnv,
@@ -715,19 +721,23 @@ describe("tasks parity", () => {
         expect(doctor.status).toBe(0);
         expect((parseJson(doctor.stdout) as { akm?: { argv?: string[] } })?.akm?.argv?.[1]).toBe(launcher);
 
-        const add = launcherRun(["task", "add", id, "--schedule", "@daily", "--command", "akm --version", "--rebind"]);
+        // `add` writes the task and enables it; `sync` writes the one dispatch entry.
+        const add = launcherRun(["task", "add", id, "--schedule", "* * * * *", "--command", "akm --version"]);
         assertNoBoundaryLeak(add, "Node fallback tasks add");
         expect(add.status).toBe(0);
-        taskAdded = true;
+        const sync = launcherRun(["task", "sync"]);
+        assertNoBoundaryLeak(sync, "Node fallback tasks sync");
+        expect(sync.status, `${sync.stdout}\n${sync.stderr}`).toBe(0);
 
         expect(
           fs.existsSync(fakeCrontab),
-          `scheduler output missing\nadd stdout:\n${add.stdout}\nadd stderr:\n${add.stderr}`,
+          `scheduler output missing\nsync stdout:\n${sync.stdout}\nsync stderr:\n${sync.stderr}`,
         ).toBe(true);
         const crontab = fs.readFileSync(fakeCrontab, "utf8");
         expect(crontab).toContain(launcher);
-        const scheduledCommand = generatedCronCommand(crontab, id);
-        const scheduledLog = path.join(nodeEnv.XDG_CACHE_HOME!, "akm", "tasks", "logs", `${id}.log`);
+        // The entry runs `task dispatch`; dispatch starts the due task as a nested akm through the Node fallback.
+        const scheduledCommand = generatedCronCommand(crontab);
+        const scheduledLog = path.join(home, ".cache", "akm", "tasks", "logs", "dispatch.log");
         const scheduled = nodeSpawnSync("/bin/sh", ["-c", scheduledCommand], {
           env: schedulerProcessEnv,
           encoding: "utf8",
@@ -739,15 +749,19 @@ describe("tasks parity", () => {
           `generated Node scheduler command\ncommand:\n${scheduledCommand}\ncrontab:\n${crontab}\nstdout:\n${scheduled.stdout}\nstderr:\n${scheduled.stderr}\nlog:\n${fs.existsSync(scheduledLog) ? fs.readFileSync(scheduledLog, "utf8") : "<missing>"}`,
         ).toBe(0);
 
-        const history = launcherRun(["task", "history", "--id", id, "--limit", "1"]);
-        expect(history.status).toBe(0);
-        const row = (parseJson(history.stdout) as { rows?: Array<{ status: string; log: string }> })?.rows?.[0];
+        let row: { status: string; log: string } | undefined;
+        for (let attempt = 0; attempt < 240; attempt += 1) {
+          const history = launcherRun(["task", "history", id, "--limit", "1"]);
+          row = (parseJson(history.stdout) as { rows?: Array<{ status: string; log: string }> })?.rows?.[0];
+          if (row && row.status !== "active") break;
+          Bun.sleepSync(500);
+        }
         expect(row?.status).toBe("completed");
         expect(fs.readFileSync(row?.log as string, "utf8")).toContain(
           (JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as { version: string }).version,
         );
       } finally {
-        if (taskAdded) launcherRun(["task", "remove", id]);
+        launcherRun(["task", "disable", `stash//tasks/${id}`]);
       }
     },
     180_000,

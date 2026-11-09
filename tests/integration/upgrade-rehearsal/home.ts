@@ -32,11 +32,10 @@ export const HOME_DEVIATIONS: readonly string[] = [
     "every 0.9.17 candidate), ignore `--name` on a registry add (npm, `github:`, git) and key the bundle " +
     "`extracted`, a slug of its extracted cache directory's basename. For those origins the key is read back " +
     "from `bundle list`: an upgraded home really carries it, and the candidate keeps an installed bundle's key.",
-  "Steps 5 and 6 expect the candidate to rewrite the previous release's scheduler rows only when the origin " +
-    "predates 0.9.17-alpha.7: until then a row named a `--scheduler-context` descriptor, so the first " +
-    "`task sync` shows each row as an update. From 0.9.17-alpha.7 on (0.9.17 is the `previous` origin of every " +
-    "0.9.18 candidate) the origin already writes the inline `AKM_BUNDLE_DIR=… task run …` row the candidate " +
-    "writes, so a dry run lists each row as unchanged and a plain sync updates nothing.",
+  "The previous release's scheduler rows are replaced by the candidate's one dispatch entry by `migrate apply` " +
+    "(step 3), whichever shape the origin wrote: a `--scheduler-context` descriptor row before 0.9.17-alpha.7, an " +
+    "inline `AKM_BUNDLE_DIR=… task run …` row since. The home uses the default layout (HOME alone decides every " +
+    "location) because the candidate writes the OS scheduler for the default installation only.",
 ];
 
 /**
@@ -48,9 +47,6 @@ export const HOME_DEVIATIONS: readonly string[] = [
  * `git:…`) is never a legal bundle slug.
  */
 const REGISTRY_ADD_HONORS_NAME_SINCE = "0.9.17-alpha.4";
-
-/** The first release whose scheduler rows set their environment inline (#987); 0.9.0 – 0.9.17-alpha.6 name a `--scheduler-context` file. */
-export const INLINE_SCHEDULER_ROWS_SINCE = "0.9.17-alpha.7";
 
 export interface UpgradeHomeTaskIds {
   readonly a: string;
@@ -146,10 +142,12 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
   const fakeBin = path.join(root, "fake-bin");
   const fakeCrontab = path.join(root, "crontab");
   const home = path.join(root, "home");
-  const configHome = path.join(root, "config");
-  const dataHome = path.join(root, "data");
-  const cacheHome = path.join(root, "cache");
-  const stateHome = path.join(root, "state");
+  // The default installation: every location is where HOME alone puts it, so the candidate's `task sync` owns the
+  // (fake) crontab, as it does on a real host. The variables name those same default locations.
+  const configHome = path.join(home, ".config");
+  const dataHome = path.join(home, ".local", "share");
+  const cacheHome = path.join(home, ".cache");
+  const stateHome = path.join(home, ".local", "state");
   const stashDir = path.join(root, "stash");
   const configPath = path.join(configHome, "akm", "config.json");
 
@@ -192,7 +190,6 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
     XDG_DATA_HOME: dataHome,
     XDG_CACHE_HOME: cacheHome,
     XDG_STATE_HOME: stateHome,
-    AKM_BUNDLE_DIR: stashDir,
     FAKE_CRONTAB: fakeCrontab,
     PATH: [fakeBin, process.env.PATH ?? ""].join(path.delimiter),
     NO_COLOR: "1",

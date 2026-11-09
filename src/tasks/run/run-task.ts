@@ -14,9 +14,9 @@
  * immutable command, workflow, shell, or script projection to its own arm
  * module (run-command-task.ts, run-workflow-task.ts, run-native-task.ts) and
  * records that actual attempt. Task source v4 has no document-level disabled
- * state to skip at fire time — a schedule binding that should not
- * fire is never installed with the OS scheduler in the first place
- * (scheduler-sync.ts), so every invocation that reaches `runTask` dispatches.
+ * state to skip at fire time — `akm task dispatch` only starts a task whose
+ * ref is in `scheduler.enabled`, so every invocation that reaches `runTask`
+ * dispatches.
  *
  * Orchestration only.
  *

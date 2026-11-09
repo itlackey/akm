@@ -71,15 +71,10 @@
  *     the writable opener recreates its entries-keyed tables instead of
  *     migrating it in place (#1053), from the pristine file and from the
  *     half-migrated one a failed 0.9.17+ open left behind.
- *   - a pre-`--scheduler-context` crontab row (akm < 0.9.2, #881): the
- *     scheduled invocation still sits inside akm's own `# akm:task …
- *     BEGIN/END` sentinels but predates `--bundle` and the
- *     `--scheduler-context` marker 0.9.0 – 0.9.17-alpha.6 wrote — read via
- *     `CRON_BACKEND().list()`/`akmTasksSync` (`src/tasks/backends/cron.ts`),
- *     which recognizes the row from inside its own sentinel and reconciles
- *     it instead of treating it as absent and colliding with the
- *     still-present artifact. (The `--scheduler-context` rows themselves are
- *     covered in `tests/tasks-sync.test.ts` and the upgrade rehearsal.)
+ *   - old crontab rows (akm < 0.9.2, #881, and the `--scheduler-context` rows of
+ *     0.9.0 – 0.9.17-alpha.6): akm 0.10 never parses a row. `akm task sync`
+ *     finds the `# akm:task … BEGIN/END` sentinels (akm's own proof of
+ *     ownership) and replaces every row with the one dispatch entry.
  */
 
 import { Database } from "bun:sqlite";
@@ -92,7 +87,7 @@ import { inspectEngineKeysMigration } from "../../scripts/akm-migrate/engine-key
 import { runMigration } from "../../scripts/akm-migrate/run-migrate";
 import { akmHealth } from "../../src/commands/health";
 import { createProposal as createProposalImpl } from "../../src/commands/proposal/repository";
-import { akmTasksSync, akmTasksSyncPlan } from "../../src/commands/tasks/tasks";
+import { akmTasksSync } from "../../src/commands/tasks/tasks";
 import { loadConfig, parseAndValidateConfigText, resetConfigCache, updateConfig } from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
@@ -884,20 +879,15 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
   });
 });
 
-// ── pre-`--scheduler-context` crontab row (akm < 0.9.2, #881) ──────────────
+// ── old crontab rows (akm < 0.9.2, #881; 0.9.0 – 0.9.17-alpha.6) ──────────
 //
-// The REAL shape a pre-0.9.2 install wrote to the user's crontab: the row is
-// still wrapped in akm's own `# akm:task <id> BEGIN`/`END` sentinels — akm's
-// unambiguous, self-authored proof of ownership — but the scheduled
-// invocation predates `--scheduler-context`, which `extractCronInvocation`
-// otherwise requires to parse a row at all. Before the fix, an unparseable
-// row was invisible to `inspectCronState().installed`, so `akm task sync`
-// treated the task as absent, tried to install it, and collided with the
-// still-physically-present artifact — permanently blocking sync for every
-// task on any install upgrading past v0.9.2. #880 could not add this
-// fixture because writing it requires the fix (`src/tasks/backends/cron.ts`)
-// to exist first.
-describe("previous-release corpus — pre-`--scheduler-context` crontab row (#881)", () => {
+// The REAL shapes older installs wrote: each row is wrapped in akm's own
+// `# akm:task <id> BEGIN`/`END` sentinels, but the invocation predates
+// `--bundle` and the inline environment, or carries `--scheduler-context`.
+// Before 0.10 an unparseable row was invisible to sync, which collided with
+// the still-present artifact and blocked sync for every task (#881). Now the
+// sentinels alone are enough: the rows are removed, never read.
+describe("previous-release corpus — old crontab rows are replaced by the one entry, never parsed (#881)", () => {
   function memoryExec(initial = ""): CronExec & { current: () => string } {
     let store = initial;
     return {
@@ -910,9 +900,9 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
     };
   }
 
-  test("a real-shaped pre-0.9.2 row (no --scheduler-context) is reconciled by sync, not treated as absent", async () => {
+  test("pre-0.9.2 rows (no inline environment, no --bundle, `>>`) and 0.9.0-0.9.17 `--scheduler-context` rows go in one write", async () => {
     // Isolated from the real crontab throughout: `CRON_BACKEND` is given an
-    // in-memory `exec` (see `memoryExec` above), never `spawnSync("crontab", …)`.
+    // in-memory `exec`, never `spawnSync("crontab", …)`.
     let chain = () => {};
     chain = sandboxXdgConfigHome(chain).cleanup;
     chain = sandboxXdgStateHome(chain).cleanup;
@@ -929,45 +919,28 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
       setSchedulerRefEnabled(`${defaultBundle}//tasks/ping`, true);
       expect(loadConfig().scheduler?.enabled).toEqual([`${defaultBundle}//tasks/ping`]);
 
-      // The real pre-0.9.2 shape: akm's own sentinels wrap a scheduled
-      // invocation with no `--scheduler-context <path>` marker at all.
       const exec = memoryExec(
         [
           "# akm:task ping BEGIN",
           "*/15 * * * * /usr/local/bin/akm task run ping --scheduled >> /home/user/.local/state/akm/tasks/logs/ping.log 2>&1",
           "# akm:task ping END",
+          "# akm:task pong BEGIN",
+          "0 * * * * /usr/local/bin/akm task run pong --bundle stash --scheduler-context /home/user/.local/share/akm/tasks/context/pong.json > /home/user/.local/state/akm/tasks/logs/pong.log 2>&1",
+          "# akm:task pong END",
           "",
         ].join("\n"),
       );
-      const backend = CRON_BACKEND({
-        exec,
-        fs: { ensureDir() {} },
-        logDir: "/home/user/.local/state/akm/tasks/logs",
-        akmArgv: ["/usr/local/bin/akm"],
-        envPath: false,
+      const backend = CRON_BACKEND({ exec, logDir: "/home/user/.local/state/akm/tasks/logs", ensureDir: () => {} });
+
+      const result = await akmTasksSync({
+        backend,
+        launcher: () => ({ argv: ["/usr/local/bin/akm"] }),
+        env: { HOME: "/home/nobody", PATH: "/usr/bin" },
       });
 
-      const inspected = await backend.list();
-      expect(inspected.map((entry) => entry.id)).toEqual(["ping"]);
-
-      const preview = await akmTasksSyncPlan({ backend });
-      expect(preview).toMatchObject({
-        adds: [],
-        updates: [{ id: "ping", kind: "update" }],
-        removes: [],
-        failures: [],
-      });
-      const result = await akmTasksSync({ backend });
-      expect(result.installed).toEqual([]);
-      expect(result.updated).toEqual(["ping"]);
-      expect(result.failures).toEqual([]);
-      // The crontab now carries a current row for the same task, not a
-      // second, colliding one: the sandbox stash is configured nowhere, so the
-      // row names it inline.
-      expect((exec.current().match(/# akm:task ping BEGIN/g) ?? []).length).toBe(1);
-      expect(exec.current()).toContain(
-        `AKM_BUNDLE_DIR=${path.resolve(stash.dir)} /usr/local/bin/akm task run ping --bundle ${defaultBundle} --scheduled`,
-      );
+      expect(result).toMatchObject({ entry: "installed", removedLegacy: ["ping", "pong"], keptLegacy: [] });
+      expect((exec.current().match(/# akm:dispatch BEGIN/g) ?? []).length).toBe(1);
+      expect(exec.current()).not.toContain("# akm:task");
       expect(exec.current()).not.toContain("--scheduler-context");
     } finally {
       stash.cleanup();

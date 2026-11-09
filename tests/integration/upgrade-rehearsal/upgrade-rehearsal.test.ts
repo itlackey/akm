@@ -25,11 +25,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { gte as semverGte } from "semver";
 import { openDatabase } from "../../../src/storage/database";
 import { resolveCandidateTarball } from "./candidate";
 import { requireUpgradeRehearsalCapabilities } from "./gate";
-import { buildHome, INLINE_SCHEDULER_ROWS_SINCE, type UpgradeHome } from "./home";
+import { buildHome, type UpgradeHome } from "./home";
 import { installAkmTarball, runLauncher } from "./install";
 import { fetchPreviousReleaseTarball, resolveUpgradeOriginVersion, type UpgradeOrigin } from "./previous-release";
 
@@ -76,30 +75,6 @@ function candidatePackageVersion(): string {
   return version;
 }
 
-/** Each akm row's id with its five cron fields. */
-function cronSchedules(crontab: string): string[] {
-  const lines = crontab.split(/\r?\n/);
-  return lines.flatMap((line, index) => {
-    const id = /^# akm:task (.+) BEGIN$/.exec(line)?.[1];
-    const fields = (lines[index + 1] ?? "").split(/\s+/).slice(0, 5).join(" ");
-    return id ? [`${id} ${fields}`] : [];
-  });
-}
-
-/** Each akm row's id with its launcher: the words after its `NAME=value` environment, up to `--scheduler-context` or `task run`. */
-function cronLaunchers(crontab: string): string[] {
-  const lines = crontab.split(/\r?\n/);
-  return lines.flatMap((line, index) => {
-    const id = /^# akm:task (.+) BEGIN$/.exec(line)?.[1];
-    if (!id) return [];
-    const words = withoutAssignments((lines[index + 1] ?? "").split(/\s+/).slice(5));
-    const end = words.findIndex(
-      (word, at) => word === "--scheduler-context" || (word === "task" && words[at + 1] === "run"),
-    );
-    return [`${id} ${words.slice(0, end).join(" ")}`];
-  });
-}
-
 /** A row's command without the leading `NAME=value` assignments it sets for itself. */
 function withoutAssignments(words: string[]): string[] {
   const start = words.findIndex((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
@@ -127,8 +102,6 @@ for (const origin of ["previous", "0.9.32"] as const) {
     let candidateLauncher: string;
     let livePrefix: string;
     let candidateVersion: string;
-    /** Whether the previous release already writes the inline scheduler row the candidate writes. */
-    let originWritesInlineRows: boolean;
     let home: UpgradeHome;
     /** `migrate apply`'s plan, from test 3. */
     let applied: { assetEngineKeys?: { notes?: string[] } };
@@ -140,7 +113,6 @@ for (const origin of ["previous", "0.9.32"] as const) {
 
       candidateVersion = candidatePackageVersion();
       previousVersion = await resolveUpgradeOriginVersion(origin, candidateVersion);
-      originWritesInlineRows = semverGte(previousVersion, INLINE_SCHEDULER_ROWS_SINCE);
 
       const [previousTarball, candidateTarball] = await Promise.all([
         fetchPreviousReleaseTarball(previousVersion, cacheRoot),
@@ -185,15 +157,41 @@ for (const origin of ["previous", "0.9.32"] as const) {
       if (workRoot) fs.rmSync(workRoot, { recursive: true, force: true });
     });
 
-    test("0. scheduled-a's generated cron command survives the upgrade with no manual step: it runs the candidate before any `migrate` call, and `migrate status` then reports current for every host-local section", async () => {
+    test("0. scheduled-a's old cron row (`--scheduled`) survives the upgrade with no manual step: run as cron runs it, before any `migrate` call, it runs the candidate, completes, and writes a task log", async () => {
       // Runs BEFORE test 2/3's own `migrate status`/`apply` calls: a scheduled
       // task must survive an upgrade by ANY install method with no human ever
-      // running `akm migrate apply` first — the candidate reads what the old
-      // release wrote.
+      // running `akm migrate apply` first — the old rows keep firing, and the
+      // candidate reads what the old release wrote, until the first `task sync`
+      // (or `migrate apply`) replaces them with the one dispatch entry.
       const crontab = fs.readFileSync(home.fakeCrontab, "utf8");
+      expect(crontab).toContain("--scheduled");
       const command = extractCronCommandContaining(crontab, home.taskIds.a);
       const executed = await runLauncher("/bin/sh", ["-c", command], home.env);
       expect(executed.status, executed.stderr).toBe(0);
+
+      const history = await runLauncher(
+        candidateLauncher,
+        ["task", "history", `stash//tasks/${home.taskIds.a}`, "--limit", "1"],
+        home.env,
+      );
+      expect(history.status, history.stderr).toBe(0);
+      const rows = (JSON.parse(history.stdout) as { rows?: { status?: string; log?: string }[] }).rows ?? [];
+      expect(rows.length).toBeGreaterThan(0);
+      const row = rows[0] as { status?: string; log?: string };
+      expect(row.status).toBe("completed");
+      expect(row.log && fs.existsSync(row.log)).toBe(true);
+
+      // Prove the row that just ran was the CANDIDATE, not the previous release still installed at
+      // `previous-readback`: the row's command is the resolved launcher argv followed by `task run <id>`. Strip
+      // that tail and re-invoke the same launcher with `--version`.
+      const tokens = withoutAssignments(command.split(/\s+/));
+      const taskIndex = tokens.indexOf("task");
+      if (taskIndex <= 0) throw new Error(`Could not find the "task" subcommand in generated command: ${command}`);
+      const [rowRuntime, ...rowRuntimeArgs] = tokens.slice(0, taskIndex);
+      if (!rowRuntime) throw new Error(`Could not extract an invocation from command: ${command}`);
+      const version = await runLauncher(rowRuntime, [...rowRuntimeArgs, "--version"], home.env);
+      expect(version.status, version.stderr).toBe(0);
+      expect(version.stdout).toContain(candidateVersion);
     });
 
     test("1. candidate --version prints the candidate version", async () => {
@@ -205,9 +203,17 @@ for (const origin of ["previous", "0.9.32"] as const) {
     test("2. candidate migrate status is current or ready with no blockers", async () => {
       const result = await runLauncher(candidateLauncher, ["migrate", "status"], home.env);
       expect(result.status, result.stderr).toBe(0);
-      const plan = JSON.parse(result.stdout) as { status?: string; blockers?: string[] };
+      const plan = JSON.parse(result.stdout) as {
+        status?: string;
+        blockers?: string[];
+        scheduler?: { entry?: string; removedLegacy?: string[]; keptLegacy?: unknown[] };
+      };
       expect(["current", "ready"]).toContain(plan.status ?? "");
       expect(plan.blockers ?? []).toEqual([]);
+      // Read-only: the plan says the one entry would replace both of the previous release's rows; the crontab is untouched.
+      expect(plan.scheduler).toMatchObject({ entry: "installed", keptLegacy: [] });
+      expect([...(plan.scheduler?.removedLegacy ?? [])].sort()).toEqual([home.taskIds.a, home.taskIds.b].sort());
+      expect(fs.readFileSync(home.fakeCrontab, "utf8")).not.toContain("akm:dispatch");
     });
 
     test("2b. before `migrate apply` the origin model config loads; only the 0.9 engines form is named, and it is not converted", async () => {
@@ -231,7 +237,23 @@ for (const origin of ["previous", "0.9.32"] as const) {
     test("3. candidate migrate apply succeeds, removes experimental.workflowEngine, and status then reports current", async () => {
       const apply = await runLauncher(candidateLauncher, ["migrate", "apply"], home.env);
       expect(apply.status, apply.stderr).toBe(0);
-      applied = JSON.parse(apply.stdout) as typeof applied;
+      applied = JSON.parse(apply.stdout) as typeof applied & {
+        scheduler?: { entry?: string; removedLegacy?: string[]; keptLegacy?: unknown[] };
+      };
+
+      // `migrate apply` also runs `task sync`: the one entry replaces every row of the previous release, in the
+      // crontab write that installs it, so nothing fires twice.
+      const scheduler = (
+        applied as { scheduler?: { entry?: string; removedLegacy?: string[]; keptLegacy?: unknown[] } }
+      ).scheduler;
+      expect(scheduler).toMatchObject({ entry: "installed", keptLegacy: [] });
+      expect([...(scheduler?.removedLegacy ?? [])].sort()).toEqual([home.taskIds.a, home.taskIds.b].sort());
+      const replaced = fs.readFileSync(home.fakeCrontab, "utf8");
+      expect((replaced.match(/# akm:dispatch BEGIN/g) ?? []).length).toBe(1);
+      expect(replaced).not.toContain("# akm:task");
+      expect(replaced).not.toContain("# akm:env");
+      expect(replaced).not.toContain("--scheduled");
+      expect(replaced).not.toContain(home.taskIds.c);
 
       // `home.ts` writes `experimental.workflowEngine` into config.json to
       // model a value carried over from 0.9.15 (see its comment) — this is
@@ -334,110 +356,68 @@ for (const origin of ["previous", "0.9.32"] as const) {
       expect(taskList.status, taskList.stderr).toBe(0);
     });
 
-    test("5. task sync --dry-run reconciles each previous-release row in place: an update for a descriptor row, unchanged for an inline row; no adds, no removals, no failures", async () => {
-      // A release before INLINE_SCHEDULER_ROWS_SINCE wrote rows that name a
-      // `--scheduler-context` descriptor; the candidate rewrites each one in
-      // place, never adding or removing a row. A release since then already
-      // writes the inline row the candidate writes, so every row is current.
-      const crontab = fs.readFileSync(home.fakeCrontab, "utf8");
-      if (originWritesInlineRows) {
-        expect(crontab).not.toContain("--scheduler-context");
-        for (const id of [home.taskIds.a, home.taskIds.b]) {
-          const command = extractCronCommandContaining(crontab, id);
-          expect(command.startsWith(`AKM_BUNDLE_DIR=${home.stashDir} `), command).toBe(true);
-        }
-      } else {
-        expect(crontab).toContain("--scheduler-context");
-      }
-      const result = await runLauncher(candidateLauncher, ["task", "sync", "--dry-run"], home.env);
-      expect(result.status, result.stderr).toBe(0);
-      const preview = JSON.parse(result.stdout) as {
-        adds?: { id: string }[];
-        updates?: { id: string }[];
-        removes?: { id: string }[];
-        unchanged?: string[];
-        failures?: unknown[];
-      };
-      expect(preview.failures ?? []).toEqual([]);
-      expect(preview.adds ?? []).toEqual([]);
-      expect(preview.removes ?? []).toEqual([]);
-      const bothRows = [home.taskIds.a, home.taskIds.b].sort();
-      expect((preview.updates ?? []).map((update) => update.id).sort()).toEqual(originWritesInlineRows ? [] : bothRows);
-      if (originWritesInlineRows) expect([...(preview.unchanged ?? [])].sort()).toEqual(bothRows);
-    });
-
-    test("6. task sync (plain, no --rebind) keeps a/b scheduled inside `live`; c stays absent", async () => {
-      // Plain `task sync` is what an upgrading user actually runs — no other
-      // command sits between "install the new package" and "the scheduler
-      // keeps working". An installed binding whose schedule/inputs already
-      // match the desired state is left exactly as recorded, not implicitly
-      // repointed at whichever binary is running sync today (`--rebind` is
-      // the explicit "replace installed bindings with the current invocation"
-      // flag; see tasks-cli.ts) — there is nothing here for it to fix: the
-      // candidate was installed OVER `live` in place, so the launcher path a/b
-      // already embed still resolves inside `live` unchanged.
+    test("5. task sync after migrate apply has nothing left to do: the dry run and a plain sync both report the entry unchanged and leave the crontab byte-identical", async () => {
       const before = fs.readFileSync(home.fakeCrontab, "utf8");
+      const dry = await runLauncher(candidateLauncher, ["task", "sync", "--dry-run"], home.env);
+      expect(dry.status, dry.stderr).toBe(0);
+      expect(JSON.parse(dry.stdout)).toMatchObject({
+        entry: "unchanged",
+        removedLegacy: [],
+        keptLegacy: [],
+        hasRemovals: false,
+        failures: [],
+      });
+
       const result = await runLauncher(candidateLauncher, ["task", "sync"], home.env);
       expect(result.status, result.stderr).toBe(0);
-      const synced = JSON.parse(result.stdout) as { installed?: string[]; updated?: string[]; removed?: string[] };
-      expect(synced.installed ?? []).toEqual([]);
-      expect(synced.removed ?? []).toEqual([]);
-      // A descriptor row is rewritten in place; a row the origin already wrote
-      // inline is current, so sync leaves it alone.
-      expect([...(synced.updated ?? [])].sort()).toEqual(
-        originWritesInlineRows ? [] : [home.taskIds.a, home.taskIds.b].sort(),
-      );
-
-      const crontab = fs.readFileSync(home.fakeCrontab, "utf8");
-      const commandA = extractCronCommandContaining(crontab, home.taskIds.a);
-      const commandB = extractCronCommandContaining(crontab, home.taskIds.b);
-      expect(commandA).toContain(livePrefix);
-      expect(commandB).toContain(livePrefix);
-      expect(crontab.includes(home.taskIds.c)).toBe(false);
-      // Each row is its command plus its schedule: the descriptor argument is
-      // gone (rewritten away, or never written by an inline origin), its one
-      // value (the working stash) is set inline, and every row keeps its
-      // launcher and its time.
-      expect(crontab).not.toContain("--scheduler-context");
-      expect(commandA.startsWith(`AKM_BUNDLE_DIR=${home.stashDir} `)).toBe(true);
-      expect(cronSchedules(crontab)).toEqual(cronSchedules(before));
-      expect(cronLaunchers(crontab)).toEqual(cronLaunchers(before));
+      expect(JSON.parse(result.stdout)).toMatchObject({ entry: "unchanged", removedLegacy: [], keptLegacy: [] });
+      expect(fs.readFileSync(home.fakeCrontab, "utf8")).toBe(before);
     });
 
-    test("7. the generated cron command for scheduled-a runs the CANDIDATE and writes a task log", async () => {
+    test("6. the entry names the CANDIDATE inside `live`, with the PATH it was written from", async () => {
       const crontab = fs.readFileSync(home.fakeCrontab, "utf8");
-      const command = extractCronCommandContaining(crontab, home.taskIds.a);
-      const executed = await runLauncher("/bin/sh", ["-c", command], home.env);
-      expect(executed.status, executed.stderr).toBe(0);
-
-      const history = await runLauncher(
-        candidateLauncher,
-        ["task", "history", `stash//tasks/${home.taskIds.a}`, "--limit", "1"],
-        home.env,
-      );
-      expect(history.status, history.stderr).toBe(0);
-      const rows = (JSON.parse(history.stdout) as { rows?: { status?: string; log?: string }[] }).rows ?? [];
-      expect(rows.length).toBeGreaterThan(0);
-      const row = rows[0] as { status?: string; log?: string };
-      expect(row.status).toBe("completed");
-      expect(row.log && fs.existsSync(row.log)).toBe(true);
-
-      // Prove the row that just ran was the CANDIDATE, not the previous
-      // release still installed at `previous-readback`: the generated command
-      // is the resolved invocation argv (one token per element — see
-      // buildScheduledInvocation/resolveAkmInvocation in
-      // src/tasks/backends/cron.ts and src/tasks/resolve-akm-bin.ts, unquoted
-      // via quoteForCron since fixture paths never contain shell-special
-      // characters) followed by `task run <ref>`. Strip the `task run …` tail
-      // and re-invoke the same resolved argv with `--version` instead.
-      const tokens = withoutAssignments(command.split(/\s+/));
-      const taskIndex = tokens.indexOf("task");
-      if (taskIndex <= 0) throw new Error(`Could not find the "task" subcommand in generated command: ${command}`);
-      const [rowRuntime, ...rowRuntimeArgs] = tokens.slice(0, taskIndex);
-      if (!rowRuntime) throw new Error(`Could not extract an invocation from command: ${command}`);
-      const version = await runLauncher(rowRuntime, [...rowRuntimeArgs, "--version"], home.env);
+      const lines = crontab.split(/\r?\n/);
+      const begin = lines.indexOf("# akm:dispatch BEGIN");
+      expect(begin).toBeGreaterThan(-1);
+      const block = lines.slice(begin, lines.indexOf("# akm:dispatch END") + 1);
+      expect(block.some((line) => line.startsWith("PATH="))).toBe(true);
+      const entry = block.find((line) => line.startsWith("* * * * * ")) as string;
+      expect(entry).toContain(livePrefix);
+      expect(entry).toContain("task dispatch");
+      // The crontab's own lines (the fake crontab the home was built against) are still there, untouched.
+      expect(crontab.indexOf("# akm:dispatch BEGIN")).toBe(crontab.lastIndexOf("# akm:dispatch BEGIN"));
+      const command = entry.slice("* * * * * ".length).replace(/ > .*$/, "");
+      const [runtime, ...args] = command.split(/\s+/).slice(0, -2);
+      const version = await runLauncher(runtime as string, [...args, "--version"], home.env);
       expect(version.status, version.stderr).toBe(0);
       expect(version.stdout).toContain(candidateVersion);
+    });
+
+    test("7. the entry, run as cron runs it, starts a due task detached, and the task completes with a log", async () => {
+      const id = "rehearsal-every-minute";
+      const added = await runLauncher(
+        candidateLauncher,
+        ["task", "add", id, "--schedule", "* * * * *", "--command", "echo dispatched-by-the-entry"],
+        home.env,
+      );
+      expect(added.status, added.stderr).toBe(0);
+
+      const crontab = fs.readFileSync(home.fakeCrontab, "utf8");
+      const line = crontab.split(/\r?\n/).find((candidate) => candidate.startsWith("* * * * * ")) as string;
+      const command = line.slice("* * * * * ".length);
+      const dispatched = await runLauncher("/bin/sh", ["-c", command], home.env);
+      expect(dispatched.status, dispatched.stderr).toBe(0);
+
+      const deadline = Date.now() + 60_000;
+      let row: { status?: string; log?: string } | undefined;
+      while (Date.now() < deadline) {
+        const history = await runLauncher(candidateLauncher, ["task", "history", id, "--limit", "1"], home.env);
+        row = (JSON.parse(history.stdout || '{"rows":[]}') as { rows?: { status?: string; log?: string }[] }).rows?.[0];
+        if (row && row.status !== "active") break;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      expect(row?.status).toBe("completed");
+      expect(row?.log && fs.readFileSync(row.log, "utf8")).toContain("dispatched-by-the-entry");
     });
 
     test("8. task run stash//tasks/manual succeeds", async () => {

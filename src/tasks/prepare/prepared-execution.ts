@@ -14,7 +14,6 @@ import type {
   prepareCommandInvocation,
 } from "../../commands/command/command-execution";
 import type { AkmConfig } from "../../core/config/config-types";
-import type { SCHEDULED_TASK_CONTEXT_KEYS } from "../scheduler-invocation";
 import type { TaskV3HostShell, TaskV3SourceDocument } from "../source-v3";
 
 /**
@@ -96,12 +95,6 @@ export interface PrepareTaskV3ExecutionContext {
   readonly bundleName: string;
   readonly bundleRoot: string;
   readonly config: AkmConfig;
-  /**
-   * The scheduled process's AKM directory values (the row sets them) to freeze into nested agent dispatch.
-   * Only the closed AKM directory-key set is accepted; arbitrary operational
-   * environment overrides remain outside the immutable command request.
-   */
-  readonly schedulerContext?: Readonly<Partial<Record<(typeof SCHEDULED_TASK_CONTEXT_KEYS)[number], string>>>;
   readonly prepareCommand?: typeof prepareCommandInvocation;
   readonly commandSourceLoader?: PrepareCommandInvocationOptions["sourceLoader"];
   readonly resolveAsset?: (input: {

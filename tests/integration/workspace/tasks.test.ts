@@ -15,7 +15,7 @@ import { ctx, expectAkmError, fakeCrontab, useSandbox } from "./workspace-behavi
 useSandbox();
 
 describe("tasks", () => {
-  test("lists the default bundle's tasks, enables one in the scheduler and disables it again", async () => {
+  test("lists the default bundle's tasks, enables one, runs the sync that installs the entry, and disables it again", async () => {
     const dir = path.join(ctx.storage.root, "library");
     await setup.apply({ dir });
     expect(tasks.list()).toEqual({ tasks: [] });
@@ -26,12 +26,22 @@ describe("tasks", () => {
 
     const cron = fakeCrontab();
     try {
-      expect(await tasks.enable({ task: "nightly" })).toMatchObject({ enabled: true, changed: true });
+      // The sandbox moves akm's directories, so it is not the default installation: the sync reports that and never
+      // writes the OS scheduler (the stand-in crontab stays as it was).
+      const before = fs.existsSync(cron.file) ? fs.readFileSync(cron.file, "utf8") : undefined;
+      expect(await tasks.enable({ task: "nightly" })).toMatchObject({
+        enabled: true,
+        changed: true,
+        sync: { entry: "unmanaged" },
+      });
       expect(tasks.list().tasks[0]?.enabled).toBe(true);
-      expect(fs.readFileSync(cron.file, "utf8")).toContain("nightly");
-      expect(await tasks.disable({ task: "nightly" })).toMatchObject({ enabled: false, changed: true });
+      expect(await tasks.disable({ task: "nightly" })).toMatchObject({
+        enabled: false,
+        changed: true,
+        sync: { entry: "unmanaged" },
+      });
       expect(tasks.list().tasks[0]?.enabled).toBe(false);
-      expect(fs.readFileSync(cron.file, "utf8")).not.toContain("nightly");
+      expect(fs.existsSync(cron.file) ? fs.readFileSync(cron.file, "utf8") : undefined).toBe(before);
     } finally {
       cron.restore();
     }

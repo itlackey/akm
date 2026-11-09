@@ -1,17 +1,36 @@
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
-
 /**
- * CI-only acceptance for real per-user launchd and Windows Task Scheduler
- * jobs. The double opt-in prevents a developer from touching a live scheduler:
+ * CI-only acceptance for the real per-user launchd and Windows Task Scheduler
+ * entry. The double opt-in prevents a developer from touching a live scheduler:
  * the explicit gate is rejected unless this is a disposable GitHub runner.
+ *
+ * The scenario is the one the design rests on, with nothing faked: `task sync`
+ * installs the one entry; the OS itself runs `akm task dispatch` (kickstart /
+ * `schtasks /Run`); dispatch starts a due task detached and exits; and that
+ * task is still running after the OS reports dispatch finished, and completes.
+ * A child the OS reaps with its parent would leave the history row `active` and
+ * the marker unwritten, and this fails.
+ *
+ * `task sync` writes the OS scheduler only for the default installation, so
+ * the gate runs with HOME (and, on Windows, the profile folders) deciding every
+ * location, and cleans those directories up afterwards. That is safe because
+ * the gate refuses to run anywhere but a disposable runner, and refuses to
+ * start when akm already has a config there.
+ *
+ * To run it (macOS and Windows runners only; `.github/workflows/gated-ci.yml`,
+ * job `Gated / Native Scheduler`, does exactly this):
+ *   macOS:   bun scripts/build-standalone.ts --outfile $RUNNER_TEMP/akm-darwin --version <v>
+ *            AKM_NATIVE_SCHEDULER_TESTS=1 AKM_NATIVE_TEST_BIN=... AKM_CANDIDATE_ARCH=<arch> AKM_CANDIDATE_VERSION=<v>
+ *            AKM_NATIVE_HOME=$HOME AKM_NATIVE_GATE_DIR=<fresh dir> CI=true GITHUB_ACTIONS=true
+ *            bun test --timeout=240000 tests/integration/native-scheduler.test.ts
+ *   Windows: the same, plus the packed npm launcher variables the workflow sets (AKM_NATIVE_PACKED_BIN,
+ *            AKM_NATIVE_NODE_BIN, AKM_NATIVE_NODE_GATE_DIR).
  */
 
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../src/core/paths";
 
 const REQUESTED = process.env.AKM_NATIVE_SCHEDULER_TESTS === "1";
 const SUPPORTED = process.platform === "darwin" || process.platform === "win32";
@@ -75,40 +94,149 @@ function withoutHarnessOverrides(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEn
   return env;
 }
 
-function nativeTarget(id: string): string {
-  if (process.platform === "win32") return `\\akm\\${id}`;
+/** The OS-side name of the one entry. */
+function nativeTarget(): string {
+  if (process.platform === "win32") return "\\akm\\dispatch";
   if (typeof process.getuid !== "function") throw new Error("launchd gate cannot resolve the current uid");
-  return `gui/${process.getuid()}/com.akm.task.${id}`;
+  return `gui/${process.getuid()}/com.akm.dispatch`;
 }
 
-async function waitForCompletedHistory(
-  runCli: (args: string[]) => RunResult,
-  id: string,
-): Promise<{
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitFor(check: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return true;
+    await sleep(500);
+  }
+  return check();
+}
+
+interface HistoryRow {
   status: string;
+  startedAt: string;
   log: string;
   detail?: { exitCode?: number };
-}> {
-  const deadline = Date.now() + 60_000;
-  let diagnostic = "no history response";
-  while (Date.now() < deadline) {
-    const history = runCli(["task", "history", "--id", id, "--limit", "1"]);
-    diagnostic = `${history.stdout}\n${history.stderr}`;
-    if (history.status === 0) {
-      const rows = (
-        JSON.parse(history.stdout) as {
-          rows: Array<{ status: string; log: string; detail?: { exitCode?: number } }>;
-        }
-      ).rows;
-      if (rows[0] && rows[0].status !== "active") return rows[0];
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+}
+
+function history(cli: (args: string[]) => RunResult, id: string): HistoryRow[] {
+  const result = cli(["task", "history", id, "--limit", "10"]);
+  if (result.status !== 0) return [];
+  return (JSON.parse(result.stdout) as { rows: HistoryRow[] }).rows.sort((a, b) =>
+    a.startedAt.localeCompare(b.startedAt),
+  );
+}
+
+/** Whether the OS reports the dispatch entry itself as running (the child it started is not the entry). */
+function entryRunning(env: NodeJS.ProcessEnv): boolean {
+  if (process.platform === "win32") {
+    return run(["schtasks", "/Query", "/TN", nativeTarget(), "/FO", "CSV", "/NH"], env).stdout.includes("Running");
   }
-  throw new Error(`Native scheduler did not record task ${id} within 60s:\n${diagnostic}`);
+  return /state = running/.test(run(["launchctl", "print", nativeTarget()], env).stdout);
+}
+
+function entryInstalled(env: NodeJS.ProcessEnv): boolean {
+  if (process.platform === "win32") return run(["schtasks", "/Query", "/TN", nativeTarget()], env).status === 0;
+  return run(["launchctl", "print", nativeTarget()], env).status === 0;
+}
+
+/**
+ * The whole scenario against one launcher. `launcher` is what the entry must name (argv of akm, as `task doctor`
+ * reports it); `cli` runs akm with the gate's environment.
+ */
+async function scenario(input: {
+  cli: (args: string[]) => RunResult;
+  env: NodeJS.ProcessEnv;
+  gateDir: string;
+  stashDir: string;
+  id: string;
+  /** Strings the OS-side definition of the entry must contain. */
+  entryMentions: string[];
+  nativeHome: string;
+}): Promise<void> {
+  const { cli, env, gateDir, stashDir, id } = input;
+  const defaults = [getConfigDir(env), getDataDir(env), getCacheDir(env), getStateDir(env)];
+  const marker = path.join(gateDir, "outlived.txt");
+  const plistPath = path.join(input.nativeHome, "Library", "LaunchAgents", "com.akm.dispatch.plist");
+  let enabled = false;
+  try {
+    for (const dir of defaults) {
+      expect(fs.existsSync(dir), `the gate needs a runner with no akm state, found ${dir}`).toBe(false);
+    }
+    expect(entryInstalled(env), "no dispatch entry may exist before the gate installs it").toBe(false);
+    fs.mkdirSync(path.join(stashDir, "tasks"), { recursive: true });
+    fs.mkdirSync(getConfigDir(env), { recursive: true });
+    fs.writeFileSync(
+      path.join(getConfigDir(env), "config.json"),
+      `${JSON.stringify({ bundles: { stash: { path: stashDir, writable: true } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
+      { mode: 0o600 },
+    );
+    // Due every minute; runs for twelve seconds, so it is still going after dispatch has exited.
+    // JSON.stringify is a valid YAML double-quoted scalar: backslashes in a Windows path stay literal.
+    const command =
+      process.platform === "win32"
+        ? `Start-Sleep -Seconds 12; Set-Content -LiteralPath '${marker}' -Value outlived`
+        : `sleep 12 && echo outlived > '${marker}'`;
+    const body = `${process.platform === "win32" ? "shell: powershell\n" : ""}run: ${JSON.stringify(command)}`;
+    fs.writeFileSync(path.join(stashDir, "tasks", `${id}.yml`), `version: 4\n${body}\nschedule: "* * * * *"\n`);
+
+    expectSuccess(cli(["task", "enable", `stash//tasks/${id}`]), "task enable");
+    enabled = true;
+    const sync = cli(["task", "sync"]);
+    expectSuccess(sync, "task sync");
+    expect(JSON.parse(sync.stdout)).toMatchObject({ entry: "installed", removedLegacy: [] });
+    expect(entryInstalled(env)).toBe(true);
+    const definition =
+      process.platform === "win32"
+        ? run(["schtasks", "/Query", "/TN", nativeTarget(), "/XML"], env).stdout
+        : fs.readFileSync(plistPath, "utf8");
+    for (const mention of input.entryMentions) expect(definition).toContain(mention);
+    expect(definition).not.toContain(id);
+    if (process.platform === "darwin") expect(definition).toContain("<key>AbandonProcessGroup</key>");
+
+    // The OS runs the entry now, not at the next minute.
+    expectSuccess(
+      process.platform === "win32"
+        ? run(["schtasks", "/Run", "/TN", nativeTarget()], env)
+        : run(["launchctl", "kickstart", "-k", nativeTarget()], env),
+      "start the entry through the OS",
+    );
+
+    // Dispatch started the task: its history row is reserved (active) while the task sleeps.
+    expect(
+      await waitFor(() => history(cli, id).some((row) => row.status === "active"), 90_000),
+      "the task started",
+    ).toBe(true);
+    // From now on nothing else may start it; the run in flight is the one under test.
+    expectSuccess(cli(["task", "disable", `stash//tasks/${id}`]), "task disable");
+    enabled = false;
+    // The dispatch process has exited by then: the OS no longer reports the entry running, and the task still is.
+    expect(await waitFor(() => !entryRunning(env), 30_000), "the OS reports dispatch finished").toBe(true);
+    expect(fs.existsSync(marker), "the task is still running after dispatch has exited").toBe(false);
+
+    expect(await waitFor(() => fs.existsSync(marker), 60_000), "the detached task finished").toBe(true);
+    expect(await waitFor(() => history(cli, id).every((row) => row.status !== "active"), 30_000)).toBe(true);
+    const [first] = history(cli, id);
+    expect(first).toMatchObject({ status: "completed", detail: { exitCode: 0 } });
+    expect(fs.readFileSync(marker, "utf8")).toContain("outlived");
+  } finally {
+    if (enabled) cli(["task", "disable", `stash//tasks/${id}`]);
+    // With nothing enabled, sync removes the entry (and `--rebind` makes no difference).
+    cli(["task", "sync"]);
+    if (process.platform === "win32") run(["schtasks", "/Delete", "/TN", nativeTarget(), "/F"], env);
+    else {
+      run(["launchctl", "bootout", nativeTarget()], env);
+      run(["launchctl", "enable", nativeTarget()], env);
+      fs.rmSync(plistPath, { force: true });
+    }
+    for (const dir of defaults) fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(gateDir, { recursive: true, force: true });
+  }
+  expect(entryInstalled(env), "the entry is gone after cleanup").toBe(false);
 }
 
 test.skipIf(!ENABLED)(
-  "the packaged standalone runs through the native per-user scheduler and is cleaned up",
+  "the packaged standalone's dispatch entry runs through the native per-user scheduler, starts a detached task that outlives it, and is cleaned up",
   async () => {
     const binary = path.resolve(process.env.AKM_NATIVE_TEST_BIN ?? "");
     const candidateArch = process.env.AKM_CANDIDATE_ARCH;
@@ -118,22 +246,15 @@ test.skipIf(!ENABLED)(
     const gateDir = path.resolve(process.env.AKM_NATIVE_GATE_DIR ?? "");
     expect(process.env.AKM_NATIVE_TEST_BIN, "AKM_NATIVE_TEST_BIN must name the compiled artifact").toBeTruthy();
     expect(nativeHome, "AKM_NATIVE_HOME must preserve the runner's real home before bun test preload").toBeTruthy();
-    expect(id, "AKM_NATIVE_TASK_ID must uniquely identify the scheduler artifact").toBeTruthy();
+    expect(id, "AKM_NATIVE_TASK_ID must uniquely identify the gate's task").toBeTruthy();
     expect(candidateArch, "AKM_CANDIDATE_ARCH must name the compiled artifact architecture").toBeTruthy();
     expect(candidateVersion, "AKM_CANDIDATE_VERSION must name the compiled artifact version").toBeTruthy();
     expect(process.env.AKM_NATIVE_GATE_DIR, "AKM_NATIVE_GATE_DIR must isolate gate-owned files").toBeTruthy();
     expect(id).toMatch(new RegExp(`^akm-ci-${process.platform}-[0-9]+-[0-9]+$`));
     expect(candidateArch === process.arch).toBe(true);
     expect(fs.existsSync(binary)).toBe(true);
+    expect(fs.existsSync(gateDir), `Native gate directory must be unique: ${gateDir}`).toBe(false);
 
-    const configDir = path.join(gateDir, "config");
-    const dataDir = path.join(gateDir, "data");
-    const cacheDir = path.join(gateDir, "cache");
-    const stateDir = path.join(gateDir, "state");
-    const stashDir = path.join(gateDir, "stash");
-    const configPath = path.join(configDir, "config.json");
-    const plistPath = path.join(nativeHome as string, "Library", "LaunchAgents", `com.akm.task.${id}.plist`);
-    const target = nativeTarget(id as string);
     const restrictedPath =
       process.platform === "win32"
         ? [
@@ -142,92 +263,32 @@ test.skipIf(!ENABLED)(
           ].join(path.delimiter)
         : "/usr/bin:/bin:/usr/sbin:/sbin";
     expect(restrictedPath.split(path.delimiter)).not.toContain(path.dirname(binary));
+    // The default installation: no AKM_* or XDG variable; HOME (and the Windows profile folders) decide every location.
+    const env = withoutHarnessOverrides({ HOME: nativeHome, PATH: restrictedPath, NO_COLOR: "1", CI: "true" });
+    const cli = (args: string[]) => run([binary, ...args], env);
 
-    const env = withoutHarnessOverrides({
-      HOME: nativeHome,
-      AKM_BUNDLE_DIR: stashDir,
-      AKM_CONFIG_DIR: configDir,
-      AKM_DATA_DIR: dataDir,
-      AKM_CACHE_DIR: cacheDir,
-      AKM_STATE_DIR: stateDir,
-      PATH: restrictedPath,
-      NO_COLOR: "1",
-      CI: "true",
+    const version = cli(["--version"]);
+    expectSuccess(version, "native standalone candidate --version");
+    expect(version.stdout).toContain(candidateVersion as string);
+    const doctor = cli(["task", "doctor"]);
+    expectSuccess(doctor, "native standalone tasks doctor");
+    expect(JSON.parse(doctor.stdout)).toMatchObject({ akm: { argv: [binary], via: "standalone" } });
+
+    await scenario({
+      cli,
+      env,
+      gateDir,
+      stashDir: path.join(gateDir, "stash"),
+      id: id as string,
+      entryMentions: [binary],
+      nativeHome: nativeHome as string,
     });
-    let ownsGateDir = false;
-    let taskAdded = false;
-
-    try {
-      expect(fs.existsSync(gateDir), `Native gate directory must be unique: ${gateDir}`).toBe(false);
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.mkdirSync(stashDir, { recursive: true });
-      ownsGateDir = true;
-      fs.writeFileSync(
-        configPath,
-        `${JSON.stringify({ bundles: { stash: { path: stashDir } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
-        { mode: 0o600 },
-      );
-
-      const version = run([binary, "--version"], env);
-      expectSuccess(version, "native standalone candidate --version");
-      expect(version.stdout).toContain(candidateVersion as string);
-
-      const doctor = run([binary, "task", "doctor"], env);
-      expectSuccess(doctor, "native standalone tasks doctor");
-      expect(JSON.parse(doctor.stdout)).toMatchObject({ akm: { argv: [binary], via: "standalone" } });
-
-      const add = run([binary, "task", "add", id as string, "--schedule", "@daily", "--command", "akm --version"], env);
-      expectSuccess(add, "native tasks add");
-      taskAdded = true;
-
-      const installedXml =
-        process.platform === "win32" ? run(["schtasks", "/Query", "/TN", target, "/XML"], env) : undefined;
-      if (installedXml) expectSuccess(installedXml, "schtasks query before sync");
-      const sync = run([binary, "task", "sync"], env);
-      expectSuccess(sync, "native tasks sync after scheduler materialization");
-      expect(JSON.parse(sync.stdout), installedXml?.stdout).toMatchObject({
-        installed: [],
-        updated: [],
-        unchanged: [id],
-      });
-
-      const taskPath = path.join(stashDir, "tasks", `${id}.yml`);
-      const originalTask = fs.readFileSync(taskPath);
-      if (process.platform === "darwin") {
-        const plist = fs.readFileSync(plistPath, "utf8");
-        expect(plist).toContain(binary);
-        expect(plist).toContain(`<string>${id}</string>`);
-        expectSuccess(run(["launchctl", "kickstart", "-k", target], env), "launchctl kickstart");
-      } else {
-        const query = run(["schtasks", "/Query", "/TN", target, "/XML"], env);
-        expectSuccess(query, "schtasks query generated XML");
-        expect(query.stdout).toContain(binary);
-        expectSuccess(run(["schtasks", "/Run", "/TN", target], env), "schtasks run");
-      }
-
-      const row = await waitForCompletedHistory((args) => run([binary, ...args], env), id as string);
-      expect(row).toMatchObject({ status: "completed", detail: { exitCode: 0 } });
-      expect(fs.readFileSync(row.log, "utf8")).toContain(candidateVersion as string);
-      expect(fs.readFileSync(taskPath)).toEqual(originalTask);
-    } finally {
-      if (taskAdded) run([binary, "task", "remove", id as string], env);
-      if (process.platform === "darwin") {
-        run(["launchctl", "bootout", target], env);
-        run(["launchctl", "enable", target], env);
-        fs.rmSync(plistPath, { force: true });
-      } else {
-        run(["schtasks", "/End", "/TN", target], env);
-        run(["schtasks", "/Delete", "/TN", target, "/F"], env);
-      }
-      fs.rmSync(path.join(stashDir, "tasks", `${id}.yml`), { force: true });
-      if (ownsGateDir) fs.rmSync(gateDir, { recursive: true, force: true });
-    }
   },
-  180_000,
+  300_000,
 );
 
 test.skipIf(!ENABLED || process.platform !== "win32")(
-  "the packed npm launcher registers and runs its Node fallback with HOME absent and path spaces",
+  "the packed npm launcher's dispatch entry runs its Node fallback with HOME absent and path spaces, and its detached task outlives it",
   async () => {
     const launcher = path.resolve(process.env.AKM_NATIVE_PACKED_BIN ?? "");
     const nodeBinary = path.resolve(process.env.AKM_NATIVE_NODE_BIN ?? "");
@@ -245,14 +306,8 @@ test.skipIf(!ENABLED || process.platform !== "win32")(
     expect(gateDir).toContain(" ");
     expect(fs.existsSync(launcher)).toBe(true);
     expect(fs.existsSync(nodeBinary)).toBe(true);
+    expect(fs.existsSync(gateDir), `Native Node gate directory must be unique: ${gateDir}`).toBe(false);
 
-    const configDir = path.join(gateDir, "config with spaces");
-    const dataDir = path.join(gateDir, "data with spaces");
-    const cacheDir = path.join(gateDir, "cache with spaces");
-    const stateDir = path.join(gateDir, "state with spaces");
-    const stashDir = path.join(gateDir, "stash with spaces");
-    const configPath = path.join(configDir, "config.json");
-    const target = nativeTarget(id as string);
     const restrictedPath = [
       path.dirname(launcher),
       path.dirname(nodeBinary),
@@ -276,12 +331,8 @@ test.skipIf(!ENABLED || process.platform !== "win32")(
     // prefix.
     expect(launcher.toLowerCase().endsWith(path.join("node_modules", ".bin", "akm.cmd"))).toBe(true);
     const npmGlobalPrefix = path.dirname(path.dirname(path.dirname(launcher)));
+    // The default installation again: the profile folders decide every location, and HOME is absent.
     const env = withoutHarnessOverrides({
-      AKM_BUNDLE_DIR: stashDir,
-      AKM_CONFIG_DIR: configDir,
-      AKM_DATA_DIR: dataDir,
-      AKM_CACHE_DIR: cacheDir,
-      AKM_STATE_DIR: stateDir,
       PATH: restrictedPath,
       npm_config_prefix: npmGlobalPrefix,
       NO_COLOR: "1",
@@ -289,9 +340,7 @@ test.skipIf(!ENABLED || process.platform !== "win32")(
     });
     delete env.HOME;
     expect(env.HOME).toBeUndefined();
-    let ownsGateDir = false;
-    let taskAdded = false;
-    const runPackedCli = (args: string[]): RunResult => {
+    const cli = (args: string[]): RunResult => {
       const comspec = process.env.ComSpec ?? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe");
       const quotedArgs = args.map((arg) => `"${arg.replaceAll('"', '""')}"`).join(" ");
       return run([comspec, "/d", "/s", "/c", `""${launcher}" ${quotedArgs}"`], env, {
@@ -299,52 +348,25 @@ test.skipIf(!ENABLED || process.platform !== "win32")(
       });
     };
 
-    try {
-      expect(fs.existsSync(gateDir), `Native Node gate directory must be unique: ${gateDir}`).toBe(false);
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.mkdirSync(stashDir, { recursive: true });
-      ownsGateDir = true;
-      fs.writeFileSync(
-        configPath,
-        `${JSON.stringify({ bundles: { stash: { path: stashDir } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
-        { mode: 0o600 },
-      );
+    const version = cli(["--version"]);
+    expectSuccess(version, "packed Node candidate --version");
+    expect(version.stdout).toContain(candidateVersion as string);
+    const doctor = cli(["task", "doctor"]);
+    expectSuccess(doctor, "packed Node tasks doctor");
+    const doctorJson = JSON.parse(doctor.stdout) as { akm: { argv: string[]; via: string } };
+    expect(fs.realpathSync(doctorJson.akm.argv[0]!)).toBe(fs.realpathSync(nodeBinary));
+    expect(doctorJson.akm.argv[1]).toEndWith(path.join("dist", "akm"));
+    expect(doctorJson.akm).toMatchObject({ via: "npm" });
 
-      const version = runPackedCli(["--version"]);
-      expectSuccess(version, "packed Node candidate --version");
-      expect(version.stdout).toContain(candidateVersion as string);
-
-      const doctor = runPackedCli(["task", "doctor"]);
-      expectSuccess(doctor, "packed Node tasks doctor");
-      const doctorJson = JSON.parse(doctor.stdout) as { akm: { argv: string[]; via: string } };
-      expect(fs.realpathSync(doctorJson.akm.argv[0]!)).toBe(fs.realpathSync(nodeBinary));
-      expect(doctorJson.akm.argv[1]).toEndWith(path.join("dist", "akm"));
-      expect(doctorJson.akm).toMatchObject({ via: "npm" });
-
-      const add = runPackedCli(["task", "add", id as string, "--schedule", "@daily", "--command", "akm --version"]);
-      expectSuccess(add, "packed Node tasks add");
-      taskAdded = true;
-
-      const taskPath = path.join(stashDir, "tasks", `${id}.yml`);
-      const originalTask = fs.readFileSync(taskPath);
-      const query = run(["schtasks", "/Query", "/TN", target, "/XML"], env);
-      expectSuccess(query, "schtasks query packed Node XML");
-      expect(query.stdout).toContain(nodeBinary);
-      expect(query.stdout).toContain(path.join("dist", "akm"));
-      expect(query.stdout).toContain(" ");
-      expectSuccess(run(["schtasks", "/Run", "/TN", target], env), "schtasks run packed Node task");
-
-      const row = await waitForCompletedHistory(runPackedCli, id as string);
-      expect(row).toMatchObject({ status: "completed", detail: { exitCode: 0 } });
-      expect(fs.readFileSync(row.log, "utf8")).toContain(candidateVersion as string);
-      expect(fs.readFileSync(taskPath)).toEqual(originalTask);
-    } finally {
-      if (taskAdded) runPackedCli(["task", "remove", id as string]);
-      run(["schtasks", "/End", "/TN", target], env);
-      run(["schtasks", "/Delete", "/TN", target, "/F"], env);
-      fs.rmSync(path.join(stashDir, "tasks", `${id}.yml`), { force: true });
-      if (ownsGateDir) fs.rmSync(gateDir, { recursive: true, force: true });
-    }
+    await scenario({
+      cli,
+      env,
+      gateDir,
+      stashDir: path.join(gateDir, "stash with spaces"),
+      id: id as string,
+      entryMentions: [nodeBinary, path.join("dist", "akm")],
+      nativeHome: process.env.USERPROFILE ?? "",
+    });
   },
-  240_000,
+  300_000,
 );

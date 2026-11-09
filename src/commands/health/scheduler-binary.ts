@@ -5,8 +5,8 @@
 /**
  * `scheduler-binary` advisory for `akm health` (#953).
  *
- * `akm task sync` records an absolute akm invocation path in the OS
- * scheduler (`src/tasks/resolve-akm-bin.ts`) because cron/launchd/schtasks
+ * `akm task sync` records an absolute akm invocation path in the one OS
+ * scheduler entry (`src/tasks/resolve-akm-bin.ts`) because cron/launchd/schtasks
  * all run jobs with a minimal PATH. A field report showed that path going
  * stale after upgrading akm through a different installer than the one
  * active at the last `task sync` (e.g. npm-global to a standalone binary):
@@ -18,13 +18,14 @@
  * best-effort, `--probe`-gated so an air-gapped host's `--no-probe` habit
  * suppresses this too, and `unknown` on any uncertainty rather than a false
  * `pass`/`warn`. Reads the scheduler's recorded binding via
- * `SchedulerBackend.list()` — the same reader `akm task doctor` uses — never
+ * `SchedulerBackend.inspect()` — the same reader `akm task doctor` uses — never
  * a second crontab/launchd/schtasks text parser.
  */
 
 import { spawnSync } from "node:child_process";
 import { selectBackend } from "../../tasks/backends";
 import type { SchedulerBackend } from "../../tasks/backends/types";
+import { movedLocations } from "../../tasks/installation";
 import { pkgVersion } from "../../version";
 import type { HealthCheckResult } from "./types";
 
@@ -41,6 +42,8 @@ const SCHEDULER_BINARY_VERSION_PROBE_TIMEOUT_MS = 5_000;
 export interface SchedulerBinaryDriftDependencies {
   /** Injectable scheduler backend; defaults to the real platform backend. */
   backend?: SchedulerBackend;
+  /** The environment the installation is judged by. */
+  env?: NodeJS.ProcessEnv;
   /** Injectable process runner for the `--version` probe. */
   spawnSync?: typeof spawnSync;
   /** The running akm-cli version to compare against. Defaults to {@link pkgVersion}. */
@@ -68,33 +71,40 @@ export async function collectSchedulerBinaryAdvisory(
     };
   }
 
-  let installed: Awaited<ReturnType<SchedulerBackend["list"]>>;
+  // An installation that moves its locations has no entry of its own in the OS scheduler (its supervisor runs
+  // `akm task dispatch`), and the entry there belongs to the default installation: nothing to compare.
+  if (movedLocations(deps.env ?? process.env).length > 0) {
+    return {
+      name: "scheduler-binary",
+      kind: "deterministic",
+      status: "unknown",
+      confidence: "high",
+      message: "This installation does not own the OS scheduler entry.",
+    };
+  }
+  let installed: Awaited<ReturnType<SchedulerBackend["inspect"]>>;
   try {
-    installed = await (deps.backend ?? selectBackend()).list();
+    installed = await (deps.backend ?? selectBackend()).inspect();
   } catch (error) {
     return {
       name: "scheduler-binary",
       kind: "deterministic",
       status: "unknown",
       confidence: "high",
-      message: `Installed scheduled tasks could not be inspected: ${error instanceof Error ? error.message : String(error)}`,
+      message: `The scheduler entry could not be inspected: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
-  // task sync rewrites every installed binding to the same current
-  // invocation atomically, so the first entry's binding represents the
-  // whole schedule under normal operation.
-  const [firstInstalled] = installed;
-  const [binaryPath, ...leadingArgs] = firstInstalled?.binding ?? [];
-  if (!firstInstalled || !binaryPath) {
+  const [binaryPath, ...leadingArgs] = installed.entry?.launcher ?? [];
+  if (!installed.entry || !binaryPath) {
     return {
       name: "scheduler-binary",
       kind: "deterministic",
       status: "unknown",
       confidence: "high",
-      message: "No scheduled task is installed.",
+      message: "No scheduler entry is installed.",
     };
   }
-  const binding = firstInstalled.binding;
+  const binding = installed.entry.launcher;
 
   const run = deps.spawnSync ?? spawnSync;
   let scheduledVersion: string | undefined;
@@ -114,7 +124,7 @@ export async function collectSchedulerBinaryAdvisory(
       kind: "deterministic",
       status: "unknown",
       confidence: "high",
-      message: "The scheduler's recorded akm binary could not be executed.",
+      message: "The scheduler entry's akm binary could not be executed.",
       evidence: { binding },
     };
   }
@@ -125,7 +135,7 @@ export async function collectSchedulerBinaryAdvisory(
       kind: "deterministic",
       status: "pass",
       confidence: "high",
-      message: `Scheduled tasks are bound to akm v${scheduledVersion}, matching the running CLI.`,
+      message: `The scheduler entry is bound to akm v${scheduledVersion}, matching the running CLI.`,
       evidence: { binding, scheduledVersion, cliVersion },
     };
   }
@@ -135,7 +145,7 @@ export async function collectSchedulerBinaryAdvisory(
     kind: "deterministic",
     status: "warn",
     confidence: "high",
-    message: `Scheduled tasks are bound to akm v${scheduledVersion}, but the running CLI is v${cliVersion} — run \`akm task sync\` to rebind the schedule.`,
+    message: `The scheduler entry is bound to akm v${scheduledVersion}, but the running CLI is v${cliVersion} — run \`akm task sync --rebind\` to rebind it.`,
     evidence: { binding, scheduledVersion, cliVersion },
   };
 }

@@ -115,7 +115,8 @@ describe("setup.apply", () => {
       expect(config.improve.harness).toBeUndefined();
       expect(config.improve.enabled).toBeUndefined();
       expect(config.scheduler.enabled).toEqual([expect.stringMatching(/\/\/tasks\/improve$/)]);
-      expect(fs.readFileSync(cron.file, "utf8")).toContain("improve");
+      // The sandbox is not the default installation, so the sync that follows the add leaves the OS scheduler alone.
+      expect(fs.existsSync(cron.file)).toBe(false);
       expect(after.learning).toEqual({ on: true, harness: null, scheduled: true });
       expect(after.connection).toBe("default");
       expect(after.modelCalls.description).toContain('connection "default"');
@@ -173,7 +174,7 @@ describe("setup.apply", () => {
       expect(tasks.list().tasks).toEqual([]);
       await setup.apply({ dir: library(), learning: { on: true } });
       expect(tasks.list().tasks).toEqual([expect.objectContaining({ id: "improve", enabled: true })]);
-      expect(fs.readFileSync(cron.file, "utf8")).toContain("improve");
+      expect(fs.existsSync(cron.file)).toBe(false);
       expect(savedConfig().improve.connection).toBe("other");
       // A save with it already enabled changes nothing.
       const before = fs.readFileSync(getConfigPath(), "utf8");
@@ -191,10 +192,10 @@ describe("setup.apply", () => {
       await setup.apply({ dir });
       change({ set: { "connections.default.endpoint": "http://old:1/v1" }, unset: [] });
       await setup.apply({ dir, learning: { on: true } });
-      const scheduled = fs.readFileSync(cron.file, "utf8");
+      const scheduled = savedConfig().scheduler.enabled;
       await setup.apply({ dir, learning: { on: false } });
       expect(tasks.list().tasks).toEqual([expect.objectContaining({ id: "improve", enabled: true })]);
-      expect(fs.readFileSync(cron.file, "utf8")).toBe(scheduled);
+      expect(savedConfig().scheduler.enabled).toEqual(scheduled);
     } finally {
       cron.restore();
     }

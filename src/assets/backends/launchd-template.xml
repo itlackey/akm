@@ -14,6 +14,9 @@
   <string>{{LOG_PATH}}</string>
   <key>RunAtLoad</key>
   <false/>
-{{ENV_VARS}}{{TRIGGER_XML}}
+  <key>AbandonProcessGroup</key>
+  <true/>
+{{ENV_VARS}}  <key>StartCalendarInterval</key>
+  <dict/>
 </dict>
 </plist>

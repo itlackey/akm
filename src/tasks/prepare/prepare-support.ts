@@ -18,7 +18,6 @@ import { resolveAssetPath } from "../../sources/resolve";
 import { checkWorkflowPlan, compileWorkflowSource } from "../../workflows/compile";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { isInferredSecretName } from "../log-redaction";
-import { SCHEDULED_TASK_CONTEXT_KEYS } from "../scheduler-invocation";
 import type { TaskV3Environment, TaskV3HostShell, TaskV3SourceDocument } from "../source-v3";
 import type { PrepareTaskV3ExecutionContext, TaskV3PreparedBase } from "./prepared-execution";
 
@@ -38,23 +37,6 @@ export function environmentSnapshot(environment: TaskV3Environment | undefined):
       );
     }
     Object.defineProperty(out, key, { value, enumerable: true, configurable: false, writable: false });
-  }
-  return Object.freeze(out);
-}
-
-/** Merge source env with the authoritative, closed scheduler directory context. */
-export function commandEnvironmentSnapshot(
-  environment: Readonly<Record<string, string>>,
-  schedulerContext: PrepareTaskV3ExecutionContext["schedulerContext"],
-): Readonly<Record<string, string>> {
-  const out = Object.create(null) as Record<string, string>;
-  for (const key of Object.keys(environment)) {
-    Object.defineProperty(out, key, { value: environment[key], enumerable: true, configurable: true, writable: true });
-  }
-  for (const key of SCHEDULED_TASK_CONTEXT_KEYS) {
-    const value = schedulerContext?.[key];
-    if (!value) continue;
-    Object.defineProperty(out, key, { value, enumerable: true, configurable: true, writable: true });
   }
   return Object.freeze(out);
 }

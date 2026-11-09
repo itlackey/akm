@@ -185,7 +185,9 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   assert.equal(onItself.connections.default.apiKey, "$LAB_KEY");
   assert.equal(onItself.improve.enabled, undefined);
   assert.match(onItself.scheduler.enabled[0], /tasks\/improve$/);
-  assert.match(await table(server), /improve/);
+  // The fixture moves akm's directories (AKM_*_DIR), so it is not the default installation: the sync that follows
+  // enabling the task reports that and leaves the OS scheduler (the fixture's crontab) alone.
+  assert.equal(await table(server), "");
 
   // Choose the agent instead: improve runs on it, and akm's own words say what it can do there.
   await page.getByRole("radio", { name: "Claude Code" }).check();
@@ -211,7 +213,7 @@ test("first run on an empty computer ends with a library, the CLI, a connected a
   const off = await savedConfig(server);
   assert.equal(off.improve.enabled, false);
   assert.match(off.scheduler.enabled[0], /tasks\/improve$/);
-  assert.match(await table(server), /improve/);
+  assert.equal(await table(server), "");
   assert.equal(off.connections.default.apiKey, "$LAB_KEY");
   // And on again removes the switch: nothing is left behind.
   await learning.check();

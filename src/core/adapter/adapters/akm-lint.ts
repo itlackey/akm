@@ -53,7 +53,6 @@
 
 import path from "node:path";
 import { isDangerousEnvKey } from "../../../commands/lint/env-key-rules";
-import { backendNameForPlatform } from "../../../tasks/backends";
 import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } from "../../../tasks/schedule-gates";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
 import { taskSourceErrorDetail } from "../../../tasks/source-v3";
@@ -295,10 +294,10 @@ export function factDiagnostics(relPath: string, data: Record<string, unknown>):
  * Keeping raw YAML at this boundary preserves duplicate-key, alias/tag,
  * source-location, descriptor, resource-bound, and migration-hint behavior.
  *
- * A file that parses must also pass the two per-source gates `akm task sync`
- * runs before it installs a schedule (the schedule inputs satisfy the declared
- * contract; the cron suits the local scheduler backend), so `akm lint --type
- * tasks` never reports clean a task that sync would refuse.
+ * A file that parses must also pass the two per-source schedule gates (the
+ * schedule inputs satisfy the declared contract; the cron parses), so `akm lint
+ * --type tasks` never reports clean a task that `akm task dispatch` would
+ * refuse to start.
  */
 export function taskDiagnostics(relPath: string, raw: string): Diagnostic[] {
   try {
@@ -307,7 +306,7 @@ export function taskDiagnostics(relPath: string, raw: string): Diagnostic[] {
       yaml: raw,
     });
     assertTaskScheduleInputsSatisfyContract(parsed.v4, relPath);
-    assertTaskScheduleCronValid(parsed.v4, backendNameForPlatform());
+    assertTaskScheduleCronValid(parsed.v4);
     return [];
   } catch (cause) {
     return [

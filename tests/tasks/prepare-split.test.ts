@@ -85,7 +85,7 @@ function shellDocument(root: string) {
 }
 
 describe("prepare/prepare.ts's entry — three-caller shape parity (P1b spec §4.1/§4.2, D4; P4 shim deletion)", () => {
-  test("run/load-task.ts's context shape — bundleName/bundleRoot/config + resolveAsset({bundle,type,name}) + conditional schedulerContext", async () => {
+  test("run/load-task.ts's context shape — bundleName/bundleRoot/config + resolveAsset({bundle,type,name})", async () => {
     const root = sandboxRoot();
     const document = shellDocument(root);
     const bundleName = "bundle";

@@ -9,11 +9,10 @@
  * `src/cli.ts` wraps these in citty `defineCommand`s and shapes their return
  * values via `output()`.
  *
- * Every command that writes the native scheduler (`add`, `enable`,
- * `disable`, `sync`, `prune --yes`) runs under the one scheduler lock
- * (`withSchedulerLock`): read the installed rows once, plan against the
- * sources, then install, update, or remove row by row. One row that fails is
- * reported and the rest still apply.
+ * Only `sync` (and `prune`) write the OS scheduler, and what they write is one
+ * entry that runs `akm task dispatch` every minute (`src/tasks/dispatch.ts`).
+ * `add`, `enable` and `disable` edit task files and `scheduler.enabled`;
+ * dispatch reads both on the next minute.
  */
 
 import fs from "node:fs";
@@ -25,59 +24,36 @@ import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { defaultConnection, defaultHarness, loadConfig } from "../../core/config/config";
-import { bundleKeyForContentRoot, resolveConfiguredSources } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import type { InputFlag } from "../../execution/input-contract";
-import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
 import {
   assertBundleNotDisabled,
   commitWriteTargetBoundary,
-  isWriteCapableSourceKind,
   prepareWriteTargetForMutation,
   type ResolvedWriteTarget,
   resolveWorkingStashTarget,
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../sources/write-source";
-import { initializeSchedulerChoice, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
-import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
-import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptions } from "../../tasks/backends/types";
+import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
+import { selectBackend } from "../../tasks/backends";
+import type { DispatchEntry, EntryChange, LegacyRow, SchedulerBackend } from "../../tasks/backends/types";
+import { movedLocations } from "../../tasks/installation";
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
-import { isCheckoutInvocation, type ResolvedAkmInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
+import { isCheckoutInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
 import { activeTaskSources, resolveBundleAsset } from "../../tasks/run/load-task";
 import { createExecutionProvenanceContext } from "../../tasks/run/provenance";
 import { runTask } from "../../tasks/run/run-task";
 import { readTaskHistory } from "../../tasks/run/task-history";
 import { exitCodeForStatus, type RunTaskOptions, type TaskRunResult } from "../../tasks/run/task-result";
 import { parseSchedule, SCHEDULE_SUPPORTED_SUBSET_HINT } from "../../tasks/schedule";
-import {
-  compileTaskSchedulerBindings,
-  type SchedulerBinding,
-  schedulerBindingNativeId,
-} from "../../tasks/scheduler-binding";
-import { scheduledRowEnvironment } from "../../tasks/scheduler-invocation";
-import { withSchedulerLock } from "../../tasks/scheduler-lock";
-import {
-  compileSchedulerSources,
-  installedRowNativeId,
-  installedRowOwner,
-  installedRowScope,
-  planSchedulerSync,
-  renderSchedulerPlanPreview,
-  type SchedulerBundleScope,
-  type SchedulerPlanPreview,
-  type SchedulerSourceFailure,
-  type SchedulerSyncOperation,
-  type SchedulerSyncPlan,
-  scheduledInvocationBundle,
-} from "../../tasks/scheduler-sync";
 import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
 import type { TaskV3SourceDocument } from "../../tasks/source-v3";
@@ -113,7 +89,7 @@ export interface TasksAddInput {
   tags?: string[];
   disabled?: boolean;
   force?: boolean;
-  /** Also point the bundle's installed rows at this akm invocation, as `task sync --rebind` does. */
+  /** Accepted and ignored: `add` no longer touches the OS scheduler (`akm task sync --rebind` points the entry at this akm). */
   rebind?: boolean;
 }
 
@@ -124,33 +100,21 @@ export interface TasksAddResult {
   bundleDir: string;
   schedule: string;
   enabled: boolean;
-  backend: string;
   target: TaskV3SourceDocument["target"];
 }
 
 export interface TaskMutationDeps {
-  backend?: SchedulerBackend;
   writeAsset?: typeof writeAssetToSource;
   commitBoundary?: typeof commitWriteTargetBoundary;
-  schedulerRuntime?: () => PreparedSchedulerRuntime;
 }
-
-/** The launcher rows are written with. Tests inject one. */
-export interface PreparedSchedulerRuntime {
-  binding: string[];
-  via?: ResolvedAkmInvocation["via"];
-}
-
-type SchedulerDeps = Pick<TaskMutationDeps, "backend" | "schedulerRuntime">;
 
 export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps = {}): Promise<TasksAddResult> {
   const id = normaliseTaskId(input.id);
   assertTaskAddTargetShape(input);
-
-  // Validate the schedule for the active backend before writing anything. An
-  // injected backend (tests) carries its own name.
-  const backend = deps.backend?.name ?? backendNameForPlatform();
-  parseSchedule(input.schedule, backend);
+  parseSchedule(input.schedule);
+  if (input.rebind === true) {
+    warn("`task add --rebind` is ignored: `add` no longer touches the OS scheduler. Run `akm task sync --rebind`.");
+  }
 
   const bundle = resolveTaskBundle(input.target);
   const stashDir = bundle.stashDir;
@@ -188,71 +152,28 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     config: bundle.config,
     resolveAsset: taskProjectionAssetResolver(bundle.config, bundle.bundleName, stashDir),
   });
-  const bindings = compileTaskSchedulerBindings({
-    id,
-    qualifiedRef,
-    schedules: parsedTask.v4.schedule.map((schedule) => ({
-      cron: schedule.cron,
-      ordinal: schedule.ordinal,
-      source: schedule.source,
-      inputs: schedule.inputs,
-    })),
-  });
-  const first = bindings[0];
+  const first = parsedTask.v4.schedule[0];
   if (!first) throw new UsageError(`Task "${id}" has no schedulable trigger.`, "INVALID_FLAG_VALUE");
 
-  const sched = deps.backend ?? selectBackend();
-  return withSchedulerLock(async () => {
-    if (fs.existsSync(assetPath) && !input.force) {
-      throw new UsageError(
-        `Task "${id}" already exists. Pass --force to overwrite, or delete its file and run \`akm task sync\` first.`,
-        "RESOURCE_ALREADY_EXISTS",
-      );
-    }
-    // Native ids are shared by every bundle and installation: refuse before
-    // writing anything when another one already schedules this id.
-    const scope = bundleScope(bundle.bundleName, stashDir);
-    const installed = await listInstalledRows(sched);
-    for (const binding of bindings) {
-      const row = installed.find((candidate) => installedRowNativeId(candidate) === schedulerBindingNativeId(binding));
-      if (row && !installedRowScope(row, [scope])) {
-        throw new UsageError(
-          `Task id "${id}" is already scheduled from ${installedRowOwner(row)}; rename the task or disable the existing one first.`,
-          "RESOURCE_ALREADY_EXISTS",
-        );
-      }
-    }
-    await ensureSchedulerChoice({ backend: sched });
-    if (input.disabled) setSchedulerRefEnabled(qualifiedRef, false);
-    await (deps.writeAsset ?? writeAssetToSource)(
-      bundle.resolved.source,
-      bundle.resolved.config,
-      taskAssetRef(id),
-      yaml,
+  if (fs.existsSync(assetPath) && !input.force) {
+    throw new UsageError(
+      `Task "${id}" already exists. Pass --force to overwrite, or delete its file first.`,
+      "RESOURCE_ALREADY_EXISTS",
     );
-    (deps.commitBoundary ?? commitWriteTargetBoundary)(bundle.resolved, `Update tasks/${id}`);
-    if (!input.disabled) setSchedulerRefEnabled(qualifiedRef, true);
-    const sync = await akmTasksSync(deps, bundle.bundleName, { rebind: input.rebind === true });
-    for (const warning of sync.warnings ?? []) warn(warning);
-    const failure = sync.failures.find((candidate) => candidate.ref === qualifiedRef);
-    if (failure) {
-      throw new ConfigError(
-        `Task "${id}" was written to ${assetPath}${input.disabled ? "" : " and enabled"}, but it could not be scheduled: ${failure.reason}`,
-        "INVALID_CONFIG_FILE",
-        "Fix the cause and run `akm task sync`.",
-      );
-    }
-    return {
-      id,
-      ref: conceptIdFromTypeName("task", id),
-      path: assetPath,
-      bundleDir: stashDir,
-      schedule: first.cron,
-      enabled: input.disabled !== true,
-      backend,
-      target: task.target,
-    };
-  });
+  }
+  if (input.disabled) setSchedulerRefEnabled(qualifiedRef, false);
+  await (deps.writeAsset ?? writeAssetToSource)(bundle.resolved.source, bundle.resolved.config, taskAssetRef(id), yaml);
+  (deps.commitBoundary ?? commitWriteTargetBoundary)(bundle.resolved, `Update tasks/${id}`);
+  if (!input.disabled) setSchedulerRefEnabled(qualifiedRef, true);
+  return {
+    id,
+    ref: conceptIdFromTypeName("task", id),
+    path: assetPath,
+    bundleDir: stashDir,
+    schedule: first.cron,
+    enabled: input.disabled !== true,
+    target: task.target,
+  };
 }
 
 function assertTaskAddTargetShape(input: TasksAddInput): void {
@@ -348,7 +269,6 @@ export interface TasksActivationResult {
   readonly ref: string;
   readonly enabled: boolean;
   readonly changed: boolean;
-  readonly sync: TasksSyncResult;
 }
 
 function resolveTaskActivation(
@@ -384,44 +304,17 @@ function resolveTaskActivation(
   return { qualifiedRef: makeBundleRef(bundle.source.name, conceptId), sourcePath, bundleName: bundle.source.name };
 }
 
-/**
- * A config that predates `scheduler.enabled` means "keep what is installed":
- * write that as the host's explicit list before one ref is added or removed,
- * so enabling or disabling a single task never silently drops the others.
- */
-async function ensureSchedulerChoice(deps: { backend?: SchedulerBackend }): Promise<void> {
-  const config = loadConfig();
-  if (schedulerEnabledRefs(config) !== undefined) return;
-  initializeSchedulerChoice(await (deps.backend ?? selectBackend()).list(), config, { write: true });
+export function akmTasksEnable(ref: string, options: { target?: string } = {}): TasksActivationResult {
+  return setTaskActivation(resolveTaskActivation(ref, options.target, true), true);
 }
 
-export async function akmTasksEnable(
-  ref: string,
-  options: { target?: string } = {},
-  deps: SchedulerDeps = {},
-): Promise<TasksActivationResult> {
-  return setTaskActivation(resolveTaskActivation(ref, options.target, true), true, deps);
+export function akmTasksDisable(ref: string, options: { target?: string } = {}): TasksActivationResult {
+  return setTaskActivation(resolveTaskActivation(ref, options.target, false), false);
 }
 
-export async function akmTasksDisable(
-  ref: string,
-  options: { target?: string } = {},
-  deps: SchedulerDeps = {},
-): Promise<TasksActivationResult> {
-  return setTaskActivation(resolveTaskActivation(ref, options.target, false), false, deps);
-}
-
-async function setTaskActivation(
-  resolved: { qualifiedRef: string; bundleName: string },
-  enabled: boolean,
-  deps: SchedulerDeps,
-): Promise<TasksActivationResult> {
-  return withSchedulerLock(async () => {
-    await ensureSchedulerChoice(deps);
-    const activation = setSchedulerRefEnabled(resolved.qualifiedRef, enabled);
-    const sync = await akmTasksSync(deps, resolved.bundleName);
-    return { ref: resolved.qualifiedRef, enabled, changed: activation.changed, sync };
-  });
+function setTaskActivation(resolved: { qualifiedRef: string }, enabled: boolean): TasksActivationResult {
+  const activation = setSchedulerRefEnabled(resolved.qualifiedRef, enabled);
+  return { ref: resolved.qualifiedRef, enabled, changed: activation.changed };
 }
 
 export interface TasksHistoryResult {
@@ -442,325 +335,220 @@ export async function akmTasksHistory(input: {
   return { rows: readTaskHistory({ id, limit }) };
 }
 
+/** What `akm task sync` did to the one dispatch entry. `unmanaged`: this installation does not own the OS scheduler. */
+export type TaskSyncEntryOutcome = "installed" | "updated" | "unchanged" | "removed" | "absent" | "unmanaged";
+
 export interface TasksSyncResult {
-  installed: string[];
-  /** Rows whose installed definition differed from the one the source renders and were rewritten. */
-  updated: string[];
-  removed: string[];
-  unchanged: string[];
-  skipped: { id: string; reason: string }[];
   backend: string;
-  /**
-   * Sources, bundles, and rows that could not be reconciled (#867) — excluded
-   * from install/update/remove/unchanged above, never silently dropped. Every
-   * OTHER task/workflow still reconciles; the CLI exits non-zero whenever
-   * this is non-empty. Named `failures` to match the `--dry-run` preview
-   * shape (#906).
-   */
-  failures: { path: string; ref?: string; reason: string }[];
-  /** Present only when this sync wrote a source-checkout launcher into a row. */
+  entry: TaskSyncEntryOutcome;
+  /** Per-task rows of akm 0.9 removed in the same operation. */
+  removedLegacy: string[];
+  /** Per-task rows of akm 0.9 that name another installation, left alone. */
+  keptLegacy: { id: string; reason: string }[];
+  /** Present when this sync wrote a source-checkout launcher into the entry, or the installation is unmanaged. */
   warnings?: string[];
 }
 
+export interface TaskSyncDeps {
+  backend?: SchedulerBackend;
+  /** The launcher the entry is written with; resolved from this process when absent. */
+  launcher?: () => { argv: readonly string[]; via?: string };
+  /** The environment the installation is judged by, and whose PATH the entry captures. */
+  env?: NodeJS.ProcessEnv;
+}
+
 /**
- * Reconcile host-local scheduler activation with authored tasks/workflows.
+ * Reconcile the OS scheduler with `scheduler.enabled`: exactly one entry, which
+ * runs `akm task dispatch` every minute, present when any task is enabled and
+ * absent when none is. An entry that is installed keeps its launcher and PATH
+ * unless `rebind`. In the same write, the per-task rows of akm 0.9 are removed
+ * (`# akm:task` blocks and the `# akm:env` block on cron, `com.akm.task.*`
+ * plists, `\akm\<id>` tasks), except those that name another installation.
  *
- *   • without a bundle, every enabled configured filesystem/git bundle; with
- *     one, only that bundle
- *   • only refs listed in `scheduler.enabled` are read and scheduled
- *   • a row is installed when missing, rewritten when its rendered definition
- *     differs, and removed when its source is gone or no longer enabled
- *   • rows another bundle or installation owns are never touched, and a row
- *     whose source fails to compile is left as it is
- *   • a disabled bundle's rows are removed by an unscoped sync
+ * An installation that moves any location (an `AKM_*` directory or an XDG
+ * variable) never writes the OS scheduler: its supervisor runs
+ * `akm task dispatch` itself.
  */
 export async function akmTasksSync(
-  deps: SchedulerDeps = {},
-  bundleTarget?: string,
+  deps: TaskSyncDeps = {},
   options: { rebind?: boolean } = {},
 ): Promise<TasksSyncResult> {
-  return withSchedulerLock(async () => {
-    const { sched, plan, warnings } = await buildSchedulerSyncPlan(deps, bundleTarget, options);
-    const failed = new Set<string>();
-    const failures = [...plan.failures];
-    for (const operation of plan.operations) {
-      try {
-        if (operation.kind === "remove") await sched.uninstall(operation.nativeId);
-        else await sched.install(operation.binding, operation.options);
-      } catch (cause) {
-        if (operation.kind === "remove") {
-          failed.add(operation.id);
-          failures.push({ path: operation.nativeId, reason: errorMessage(cause) });
-        } else {
-          failed.add(operation.binding.id);
-          failures.push({
-            path: operation.binding.source,
-            ref: operation.binding.logicalSource.ref,
-            reason: errorMessage(cause),
-          });
-        }
-      }
-    }
-    const applied = (ids: readonly string[]) => ids.filter((id) => !failed.has(id));
-    return {
-      installed: applied(plan.installed),
-      updated: applied(plan.updated),
-      removed: applied(plan.removed),
-      unchanged: [...plan.unchanged],
-      skipped: [],
-      backend: sched.name,
-      failures: failures.map((failure) => ({ ...failure })),
-      ...(warnings.length > 0 ? { warnings } : {}),
-    };
-  });
+  const plan = await planSync(deps, options);
+  if (plan.change) await plan.sched.apply(plan.change);
+  return plan.result;
 }
 
-/**
- * `akm task sync --dry-run` (#849): the exact plan `akmTasksSync` would
- * apply, previewed. It writes nothing: no config, no row.
- */
+/** `akm task sync --dry-run` (#849): what `akmTasksSync` would do, written nowhere. */
 export async function akmTasksSyncPlan(
-  deps: SchedulerDeps = {},
-  bundleTarget?: string,
+  deps: TaskSyncDeps = {},
   options: { rebind?: boolean } = {},
-): Promise<SchedulerPlanPreview> {
-  const { sched, plan } = await buildSchedulerSyncPlan(deps, bundleTarget, { ...options, dryRun: true });
-  return renderSchedulerPlanPreview(sched.name, plan.operations, plan.unchanged, plan.failures);
+): Promise<TasksSyncResult & { hasRemovals: boolean; failures: never[] }> {
+  const { result } = await planSync(deps, options);
+  return {
+    ...result,
+    hasRemovals: result.removedLegacy.length > 0 || result.entry === "removed",
+    failures: [],
+  };
 }
 
-async function buildSchedulerSyncPlan(
-  deps: SchedulerDeps,
-  bundleTarget: string | undefined,
-  options: { rebind?: boolean; dryRun?: boolean },
-): Promise<{ sched: SchedulerBackend; plan: SchedulerSyncPlan; warnings: string[] }> {
-  let config = loadConfig();
-  const sched = deps.backend ?? selectBackend();
-  const installed = await listInstalledRows(sched);
+function legacyRowKeepReason(row: LegacyRow, workingStash: string | undefined): string | undefined {
+  const named = row.environment;
+  if (
+    named.AKM_BUNDLE_DIR !== undefined &&
+    (workingStash === undefined || path.resolve(named.AKM_BUNDLE_DIR) !== workingStash)
+  ) {
+    return `it names another installation's bundle directory (${named.AKM_BUNDLE_DIR})`;
+  }
+  const moved = ["AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"].find(
+    (name) => named[name] !== undefined,
+  );
+  return moved === undefined ? undefined : `it sets ${moved}, so another installation wrote it`;
+}
 
-  // A config that predates `scheduler.enabled` means "keep what is
-  // installed": the akm-written rows become the host's choice (written
-  // unless this is a dry run) before the desired set, which would otherwise
-  // remove them, is computed.
-  let enabledRefs = schedulerEnabledRefs(config);
-  if (enabledRefs === undefined) {
-    enabledRefs = initializeSchedulerChoice(installed, config, { write: options.dryRun !== true });
-    if (options.dryRun !== true) config = loadConfig();
+function workingStashPath(env: NodeJS.ProcessEnv): string | undefined {
+  try {
+    return path.resolve(resolveStashDir(env));
+  } catch {
+    return undefined;
+  }
+}
+
+async function planSync(
+  deps: TaskSyncDeps,
+  options: { rebind?: boolean },
+): Promise<{ sched: SchedulerBackend; result: TasksSyncResult; change?: EntryChange }> {
+  const env = deps.env ?? process.env;
+  const sched = deps.backend ?? selectBackend();
+  const moved = movedLocations(env);
+  if (moved.length > 0) {
+    return {
+      sched,
+      result: {
+        backend: sched.name,
+        entry: "unmanaged",
+        removedLegacy: [],
+        keptLegacy: [],
+        warnings: [
+          `This installation moves its ${moved.join(", ")} location${moved.length === 1 ? "" : "s"} away from the defaults, so akm does not write the OS scheduler for it. ` +
+            "Run `akm task dispatch` every minute from your own supervisor (cron, supercronic, a systemd timer), with this installation's environment.",
+        ],
+      },
+    };
   }
 
-  // The one active-bundle set search, show and workflows walk, working stash included.
-  // A working stash that is a disabled configured bundle is left out: an
-  // unscoped sync still removes that bundle's rows (below) and syncs the others,
-  // and a scoped sync reports it as disabled only when it is the selected one.
-  const sources = activeTaskSources(config);
-  const ids = deriveInstallations(sources).map((installation) => installation.id);
-  const kinds = sources.map((source) => source.type);
-  const configuredSources = resolveConfiguredSources(config);
-  if (bundleTarget) {
-    // Only filesystem and git bundles can carry scheduler state.
-    const targetType = kinds[ids.indexOf(bundleTarget)];
-    if (targetType !== undefined && !isWriteCapableSourceKind(targetType)) {
-      throw new UsageError(
-        `Bundle "${bundleTarget}" has kind "${targetType}"; task scheduling is only supported for filesystem and git bundles.`,
-        "INVALID_FLAG_VALUE",
+  const inspection = await sched.inspect();
+  const enabled = (schedulerEnabledRefs(loadConfig()) ?? []).length > 0;
+  const workingStash = workingStashPath(env);
+  const removeLegacy: string[] = [];
+  const keptLegacy: TasksSyncResult["keptLegacy"] = [];
+  for (const row of inspection.legacy) {
+    const reason = legacyRowKeepReason(row, workingStash);
+    if (reason === undefined) removeLegacy.push(row.id);
+    else keptLegacy.push({ id: row.id, reason });
+  }
+
+  const warnings: string[] = [];
+  let entry: DispatchEntry | null | undefined;
+  let outcome: TaskSyncEntryOutcome;
+  if (!enabled) {
+    outcome = inspection.entry ? "removed" : "absent";
+    if (inspection.entry) entry = null;
+  } else {
+    const launcher = deps.launcher?.() ?? resolveAkmInvocation();
+    const wanted: DispatchEntry = { launcher: launcher.argv, ...(env.PATH ? { path: env.PATH } : {}) };
+    const installed = inspection.entry;
+    if (!installed) {
+      outcome = "installed";
+      entry = wanted;
+    } else if (options.rebind === true && !sameEntry(installed, wanted)) {
+      outcome = "updated";
+      entry = wanted;
+    } else {
+      outcome = "unchanged";
+    }
+    if (entry && launcher.via === "checkout") {
+      warnings.push(
+        `The scheduler entry now runs akm from a source checkout (${launcher.argv.join(" ")}); it runs whatever the checkout holds when it fires. Install akm with \`npm install --global akm-cli\` or a standalone release, then run \`akm task sync --rebind\`.`,
       );
     }
   }
-  const schedulable = ids.filter((_, index) => {
-    const type = kinds[index];
-    return type !== undefined && isWriteCapableSourceKind(type);
-  });
-  const selected: string[] = bundleTarget ? [bundleTarget] : schedulable;
-
-  const enabledRefSet = new Set(enabledRefs);
-  const desired: SchedulerBinding[] = [];
-  const failures: SchedulerSourceFailure[] = [];
-  const keepRefs = new Set<string>();
-  const scopes: SchedulerBundleScope[] = [];
-  // Each bundle is its own item: one that cannot be read is reported and
-  // left untouched while the others reconcile. A scoped sync has only that
-  // bundle, so its failure is the whole operation's.
-  for (const name of selected) {
-    try {
-      const resolved = resolveTaskReadBundle(undefined, name);
-      const stashDir = resolved.source.path;
-      const adapterId = resolved.source.adapterId ?? detectAdapterId(stashDir);
-      const compiled = await compileSchedulerSources({
-        sourceRoot: stashDir,
-        adapterId,
-        bundleName: resolved.source.name,
-        backend: sched.name,
-        config,
-        resolveAsset: taskProjectionAssetResolver(config, resolved.source.name, stashDir),
-        enabledRefs: enabledRefSet,
-      });
-      desired.push(...compiled.desired);
-      failures.push(...compiled.failures);
-      for (const failure of compiled.failures) if (failure.ref) keepRefs.add(failure.ref);
-      scopes.push({ ...bundleScope(resolved.source.name, stashDir), adapterId });
-    } catch (cause) {
-      if (bundleTarget) throw cause;
-      failures.push({ path: name ?? "(default bundle)", reason: errorMessage(cause) });
-    }
-  }
-
-  // An enabled ref of a synced bundle that produced nothing names a source
-  // that is gone or has no schedule; its row, if any, is removed below.
-  const represented = new Set([...desired.map((binding) => binding.logicalSource.ref), ...keepRefs]);
-  const synced = new Set(scopes.map((scope) => scope.bundleName));
-  for (const ref of enabledRefs) {
-    const bundle = parseBundleRef(ref).bundle;
-    if (bundle !== undefined && synced.has(bundle) && !represented.has(ref)) {
-      failures.push({ path: ref, ref, reason: `Enabled ref ${JSON.stringify(ref)} was not found or has no schedule.` });
-    }
-  }
-
-  // A disabled bundle's rows go on an unscoped sync, without reading its content.
-  const inactive = new Set(configuredSources.filter((source) => source.enabled === false).map((source) => source.name));
-  const extraRemovals = bundleTarget
-    ? []
-    : installed.filter((row) => {
-        const bundle = installedSchedulerBundle(config, row);
-        return bundle !== undefined && inactive.has(bundle);
-      });
-
-  const runtime = prepareSchedulerRuntime(deps);
-  const plan = planSchedulerSync({
-    desired,
-    installed,
-    scopes,
-    ...(sched.expectedSignature ? { expectedSignature: sched.expectedSignature.bind(sched) } : {}),
-    installOptions: runtime.options,
-    rebind: options.rebind === true,
-    extraRemovals,
-    keepRefs,
-  });
-  const warnings: string[] = [];
-  const writesLauncher =
-    options.rebind === true
-      ? plan.operations.some((operation) => operation.kind !== "remove")
-      : plan.installed.length > 0;
-  if (runtime.via === "checkout" && writesLauncher) {
+  for (const kept of keptLegacy) {
     warnings.push(
-      `Scheduled tasks now run akm from a source checkout (${runtime.options.binding?.join(" ")}); they run whatever the checkout holds when they fire. Install akm with \`npm install --global akm-cli\` or a standalone release, then run \`akm task sync --rebind\`.`,
+      `Left the akm 0.9 scheduler row "${kept.id}": ${kept.reason}. Run \`akm task prune\` if its bundle is gone.`,
     );
   }
-  return { sched, plan: { ...plan, failures: [...failures, ...plan.failures] }, warnings };
+
+  const change: EntryChange | undefined =
+    entry !== undefined || removeLegacy.length > 0
+      ? { ...(entry !== undefined ? { entry } : {}), removeLegacy }
+      : undefined;
+  return {
+    sched,
+    result: {
+      backend: sched.name,
+      entry: outcome,
+      removedLegacy: removeLegacy,
+      keptLegacy,
+      ...(warnings.length > 0 ? { warnings } : {}),
+    },
+    ...(change ? { change } : {}),
+  };
 }
 
-/**
- * The launcher and environment rows are written with. The environment
- * follows the current policy on every sync; a row that is already installed
- * keeps its launcher unless `--rebind` (see `installOptionsFor`). An injected
- * backend (tests) renders with its own launcher.
- */
-function prepareSchedulerRuntime(deps: SchedulerDeps): {
-  options: SchedulerInstallOptions;
-  via?: ResolvedAkmInvocation["via"];
-} {
-  const environment = scheduledRowEnvironment();
-  if (deps.schedulerRuntime) {
-    const runtime = deps.schedulerRuntime();
-    return { options: { binding: runtime.binding, environment }, ...(runtime.via ? { via: runtime.via } : {}) };
-  }
-  if (deps.backend) return { options: { environment } };
-  const invocation = resolveAkmInvocation();
-  return { options: { binding: invocation.argv, environment }, via: invocation.via };
+function sameEntry(left: DispatchEntry, right: DispatchEntry): boolean {
+  return JSON.stringify([left.launcher, left.path ?? null]) === JSON.stringify([right.launcher, right.path ?? null]);
 }
-
-/** One read of the akm-owned rows, each attributed to the bundle path it names (#846). */
-async function listInstalledRows(sched: SchedulerBackend): Promise<InstalledSchedulerBinding[]> {
-  return (await sched.list()).map((row) => {
-    const ownerBundlePath = row.environment?.AKM_BUNDLE_DIR;
-    return ownerBundlePath !== undefined ? { ...row, ownerBundlePath } : row;
-  });
-}
-
-/** The primary bundle proves its rows by path (#846); any other bundle by its config name. */
-function bundleScope(bundleName: string, stashDir: string): SchedulerBundleScope {
-  return isPrimaryStashPath(stashDir) ? { bundleName, bundlePath: path.resolve(stashDir) } : { bundleName };
-}
-
-function installedSchedulerBundle(config: AkmConfig, row: InstalledSchedulerBinding): string | undefined {
-  const direct = row.target ?? scheduledInvocationBundle(row.invocation);
-  if (direct !== undefined) return direct;
-  if (row.ownerBundlePath === undefined) return undefined;
-  return bundleKeyForContentRoot(config, row.ownerBundlePath);
-}
-
-export type TasksPruneReason = "dead-bundle-path";
 
 export interface TasksPruneResult {
   readonly backend: string;
   readonly dryRun: boolean;
-  readonly preview: SchedulerPlanPreview;
+  readonly preview: { hasRemovals: boolean; removals: { id: string; reason: string }[] };
   readonly removed: readonly string[];
 }
 
 /**
- * Why `akm task prune` (#851) would remove an installed row: it names a
- * bundle directory that is gone (`dead-bundle-path`). A row that still
- * resolves to a live bundle is never a candidate.
- */
-function classifyPruneCandidate(entry: InstalledSchedulerBinding): TasksPruneReason | undefined {
-  const bundleDir = entry.environment?.AKM_BUNDLE_DIR;
-  if (bundleDir !== undefined && !fs.existsSync(bundleDir)) return "dead-bundle-path";
-  return undefined;
-}
-
-/**
- * `akm task prune` (#851): remove installed rows `sync` can never reclaim
- * because they no longer resolve to a live bundle. It scans
- * every installed row, not one bundle's. Without `--yes` it only previews and
- * writes nothing; `--id` narrows it to named candidates.
+ * `akm task prune` (#851): remove akm 0.9 per-task scheduler rows that name a
+ * bundle directory that is gone, which `task sync` leaves because they name
+ * another installation. Without `--yes` it only previews; `--id` narrows it.
  */
 export async function akmTasksPrune(
   deps: { backend?: SchedulerBackend } = {},
   options: { yes?: boolean; id?: readonly string[] } = {},
 ): Promise<TasksPruneResult> {
-  const prune = async (): Promise<TasksPruneResult> => {
-    const sched = deps.backend ?? selectBackend();
-    const operations = pruneOperations(await sched.list(), options.id ?? []);
-    const preview = renderSchedulerPlanPreview(sched.name, operations);
-    if (!options.yes) return { backend: sched.name, dryRun: true, preview, removed: [] };
-    for (const operation of operations) await sched.uninstall(operation.nativeId);
-    return { backend: sched.name, dryRun: false, preview, removed: operations.map((operation) => operation.id) };
-  };
-  return options.yes ? withSchedulerLock(prune) : prune();
-}
-
-function pruneOperations(
-  installed: readonly InstalledSchedulerBinding[],
-  requestedIds: readonly string[],
-): Extract<SchedulerSyncOperation, { kind: "remove" }>[] {
-  const candidates = installed.flatMap((row) => {
-    const reason = classifyPruneCandidate(row);
-    return reason ? [{ row, reason }] : [];
+  const sched = deps.backend ?? selectBackend();
+  const candidates = (await sched.inspect()).legacy.filter((row) => {
+    const dir = row.environment.AKM_BUNDLE_DIR;
+    return dir !== undefined && !fs.existsSync(dir);
   });
-  const ids = requestedIds.filter((id) => id.length > 0);
-  for (const id of ids) {
-    if (!candidates.some(({ row }) => row.id === id)) {
+  const requested = (options.id ?? []).filter((id) => id.length > 0);
+  for (const id of requested) {
+    if (!candidates.some((row) => row.id === id)) {
       throw new UsageError(
-        `Scheduler binding ${JSON.stringify(id)} is not an orphaned prune candidate ` +
+        `Scheduler row ${JSON.stringify(id)} is not an orphaned prune candidate ` +
           "(either not installed, or it still resolves to a live bundle) — refusing to prune it.",
         "INVALID_FLAG_VALUE",
       );
     }
   }
-  return candidates
-    .filter(({ row }) => ids.length === 0 || ids.includes(row.id))
-    .map(({ row, reason }) => ({ kind: "remove" as const, id: row.id, nativeId: installedRowNativeId(row), reason }));
+  const chosen = candidates.filter((row) => requested.length === 0 || requested.includes(row.id));
+  const removals = chosen.map((row) => ({ id: row.id, reason: "dead-bundle-path" }));
+  const preview = { hasRemovals: removals.length > 0, removals };
+  if (options.yes !== true) return { backend: sched.name, dryRun: true, preview, removed: [] };
+  if (chosen.length > 0) await sched.apply({ removeLegacy: chosen.map((row) => row.id) });
+  return { backend: sched.name, dryRun: false, preview, removed: chosen.map((row) => row.id) };
 }
 
 export interface TasksDoctorResult {
   backend: string;
   akm: { argv: string[]; via: string };
   caller: { argv: string[]; via: string };
+  /** The dispatch entry (`taskIds`: the enabled tasks it fires), then any akm 0.9 per-task rows (`status: legacy`). */
   bindings: Array<{
     argv: string[];
     taskIds: string[];
     status: string[];
   }>;
-  remediation?: "akm task sync --rebind";
+  remediation?: "akm task sync" | "akm task sync --rebind";
   logDir: string;
   engine: { defaultEngine?: string; available: string[] };
   scheduleSubset: string;
@@ -787,7 +575,7 @@ export interface TasksDoctorResult {
 }
 
 export async function akmTasksDoctor(
-  deps: { backend?: SchedulerBackend; resolveInvocation?: typeof resolveAkmInvocation } = {},
+  deps: { backend?: SchedulerBackend; resolveInvocation?: typeof resolveAkmInvocation; env?: NodeJS.ProcessEnv } = {},
 ): Promise<TasksDoctorResult> {
   const warnings: string[] = [];
   let invocation: TasksDoctorResult["akm"] = { argv: [], via: "unresolved" };
@@ -799,17 +587,39 @@ export async function akmTasksDoctor(
   }
   const sched = deps.backend ?? selectBackend();
   const backend = sched.name;
-  let installed: InstalledSchedulerBinding[] = [];
-  try {
-    installed = await sched.list();
-  } catch (error) {
-    warnings.push(
-      `Unable to inspect installed ${backend} definitions: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  const bindings = groupInstalledBindings(installed);
-  // Report the EFFECTIVE view — the default harness (else connection) agent work runs on, and what is configured.
   const config = loadConfig();
+  const enabledIds = (schedulerEnabledRefs(config) ?? []).map((ref) =>
+    parseBundleRef(ref).conceptId.replace(/^tasks\//, ""),
+  );
+  const bindings: TasksDoctorResult["bindings"] = [];
+  const moved = movedLocations(deps.env ?? process.env);
+  if (moved.length > 0) {
+    // Nothing of this installation's is in the OS scheduler; its own supervisor runs `akm task dispatch`.
+    warnings.push(
+      `This installation moves its ${moved.join(", ")} location${moved.length === 1 ? "" : "s"} away from the defaults: akm does not write the OS scheduler for it. Run \`akm task dispatch\` every minute from your own supervisor.`,
+    );
+  } else {
+    try {
+      const inspection = await sched.inspect();
+      if (inspection.entry) {
+        bindings.push({
+          argv: [...inspection.entry.launcher],
+          taskIds: [...enabledIds].sort(),
+          status: inspectLauncher(inspection.entry.launcher),
+        });
+      } else if (enabledIds.length > 0) {
+        warnings.push("Tasks are enabled but the scheduler entry is not installed: run `akm task sync`.");
+      }
+      if (inspection.legacy.length > 0) {
+        bindings.push({ argv: [], taskIds: inspection.legacy.map((row) => row.id).sort(), status: ["legacy"] });
+      }
+    } catch (error) {
+      warnings.push(
+        `Unable to inspect the installed ${backend} entry: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  // Report the EFFECTIVE view — the default harness (else connection) agent work runs on, and what is configured.
   const defaultEngine = (defaultHarness(config) ?? defaultConnection(config))?.name;
   const engines = [...Object.keys(config.connections ?? {}), ...Object.keys(config.harnesses ?? {})];
 
@@ -839,14 +649,18 @@ export async function akmTasksDoctor(
       }
     : undefined;
 
+  const legacyOnly = bindings.some((binding) => binding.status.includes("legacy"));
+  const unhealthy = bindings.some((binding) => !binding.status.includes("ok") && !binding.status.includes("legacy"));
   return {
     backend,
     akm: invocation,
     caller: invocation,
     bindings,
-    ...(bindings.some((binding) => !binding.status.includes("ok"))
+    ...(unhealthy
       ? { remediation: "akm task sync --rebind" as const }
-      : {}),
+      : legacyOnly
+        ? { remediation: "akm task sync" as const }
+        : {}),
     logDir: getTaskLogDir(),
     engine: { defaultEngine, available: engines },
     scheduleSubset: SCHEDULE_SUPPORTED_SUBSET_HINT,
@@ -858,33 +672,12 @@ export async function akmTasksDoctor(
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-function groupInstalledBindings(entries: readonly InstalledSchedulerBinding[]): TasksDoctorResult["bindings"] {
-  const groups = new Map<string, TasksDoctorResult["bindings"][number]>();
-  for (const entry of entries) {
-    const argv = [...entry.binding];
-    const status = inspectInstalledBinding(entry);
-    const key = JSON.stringify([argv, status]);
-    const existing = groups.get(key);
-    if (existing) {
-      existing.taskIds.push(entry.id);
-      continue;
-    }
-    groups.set(key, {
-      argv,
-      taskIds: [entry.id],
-      status,
-    });
-  }
-  return [...groups.values()].map((group) => ({ ...group, taskIds: group.taskIds.sort() }));
-}
-
-function inspectInstalledBinding(entry: InstalledSchedulerBinding): string[] {
+function inspectLauncher(launcher: readonly string[]): string[] {
   const status: string[] = [];
-  const binding = entry.binding;
-  if (isCheckoutInvocation(binding)) status.push("checkout");
-  if (binding.some((part) => part === "akm" || part === "bun" || part === "node")) status.push("path-selected");
-  const absolutePaths = binding.filter((part) => path.isAbsolute(part));
-  if (absolutePaths.some((part) => !fs.existsSync(part))) status.push("missing-path");
+  if (isCheckoutInvocation(launcher)) status.push("checkout");
+  if (launcher.some((part) => part === "akm" || part === "bun" || part === "node")) status.push("path-selected");
+  if (launcher.filter((part) => path.isAbsolute(part)).some((part) => !fs.existsSync(part)))
+    status.push("missing-path");
   if (status.length === 0) status.push("ok");
   return status;
 }
@@ -966,7 +759,7 @@ export function resolveTaskReadBundle(
 }
 
 /** True when `candidate` resolves to the same directory as the primary stash. */
-function isPrimaryStashPath(candidate: string): boolean {
+function _isPrimaryStashPath(candidate: string): boolean {
   let primary: string | undefined;
   try {
     primary = path.resolve(resolveStashDir());
@@ -976,7 +769,7 @@ function isPrimaryStashPath(candidate: string): boolean {
   return path.resolve(candidate) === primary;
 }
 
-function errorMessage(cause: unknown): string {
+function _errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 

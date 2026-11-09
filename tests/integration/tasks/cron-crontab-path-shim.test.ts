@@ -32,23 +32,14 @@ import { makeSandboxDir } from "../../_helpers/sandbox";
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 const cronBackendModule = path.join(repoRoot, "src", "tasks", "backends", "cron.ts");
 
-/** A tiny Bun script that calls the real `CRON_BACKEND().list()` and reports the outcome as JSON. */
+/** A tiny Bun script that calls the real `CRON_BACKEND().inspect()` (and `apply` when PROBE_WRITE=1) and reports the outcome as JSON. */
 const PROBE_SCRIPT = `
 import { CRON_BACKEND } from ${JSON.stringify(cronBackendModule)};
 try {
-  const backend = CRON_BACKEND({
-    akmArgv: ["/usr/local/bin/akm"],
-    logDir: "/tmp/akm-cron-shim-test/logs",
-    fs: { ensureDir() {} },
-    scheduledContext: {
-      AKM_BUNDLE_DIR: "/srv/akm-stash",
-      AKM_CONFIG_DIR: "/srv/akm-config",
-      AKM_DATA_DIR: "/srv/akm-data",
-      AKM_CACHE_DIR: "/srv/akm-cache",
-      AKM_STATE_DIR: "/srv/akm-state",
-    },
-  });
-  const result = backend.list();
+  const backend = CRON_BACKEND({ logDir: "/tmp/akm-cron-shim-test/logs", ensureDir() {} });
+  const result = backend.inspect();
+  // A missing \`crontab\` binary is an empty crontab to read; only writing the entry needs it.
+  const wrote = process.env.PROBE_WRITE === "1" ? backend.apply({ entry: { launcher: ["/usr/local/bin/akm"] }, removeLegacy: [] }) : undefined;
   console.log(JSON.stringify({ ok: true, result }));
 } catch (err) {
   console.log(JSON.stringify({ ok: false, message: err instanceof Error ? err.message : String(err), hint: typeof err?.hint === "function" ? err.hint() : undefined }));
@@ -66,7 +57,7 @@ function writeFakeCrontab(dir: string, script: string): void {
  * `env.PATH` to the fake-crontab-only directory would otherwise make this
  * spawnSync unable to resolve "bun" itself.
  */
-function runProbe(pathDir: string): { ok: boolean; result?: unknown; message?: string; hint?: string } {
+function runProbe(pathDir: string, write = false): { ok: boolean; result?: unknown; message?: string; hint?: string } {
   const probeDir = makeSandboxDir("akm-cron-probe");
   try {
     const scriptFile = path.join(probeDir.dir, "probe.ts");
@@ -75,7 +66,7 @@ function runProbe(pathDir: string): { ok: boolean; result?: unknown; message?: s
       encoding: "utf8",
       timeout: 15_000,
       cwd: repoRoot,
-      env: { ...process.env, PATH: pathDir },
+      env: { ...process.env, PATH: pathDir, PROBE_WRITE: write ? "1" : "0" },
     });
     if (proc.error) throw proc.error;
     const stdout = proc.stdout?.trim();
@@ -89,10 +80,11 @@ function runProbe(pathDir: string): { ok: boolean; result?: unknown; message?: s
 }
 
 describe("cron backend — real crontab exec (#910)", () => {
-  test("no crontab binary anywhere on PATH (ENOENT) reports a missing binary", () => {
+  test("no crontab binary anywhere on PATH (ENOENT) reads as an empty crontab, and reports a missing binary when an entry has to be written", () => {
     const empty = makeSandboxDir("akm-cron-empty-path");
     try {
-      const outcome = runProbe(empty.dir);
+      expect(runProbe(empty.dir)).toEqual({ ok: true, result: { legacy: [] } });
+      const outcome = runProbe(empty.dir, true);
       expect(outcome.ok).toBe(false);
       expect(outcome.message).toMatch(/crontab.*binary was not found on PATH/i);
       expect(outcome.hint).toMatch(/install.*crontab.*binary|add one to PATH/i);
@@ -108,7 +100,7 @@ describe("cron backend — real crontab exec (#910)", () => {
     writeFakeCrontab(shimDir.dir, "#!/bin/sh\nexit 1\n");
     try {
       const outcome = runProbe(shimDir.dir);
-      expect(outcome).toEqual({ ok: true, result: [] });
+      expect(outcome).toEqual({ ok: true, result: { legacy: [] } });
     } finally {
       shimDir.cleanup();
     }

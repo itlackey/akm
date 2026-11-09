@@ -17,7 +17,6 @@ import { saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeLockfile } from "../../../src/integrations/lockfile";
 import { renameBundle } from "../../../src/sources/bundle-rename";
-import type { SchedulerBackend } from "../../../src/tasks/backends/types";
 import { assets, documents } from "../../../src/workspace";
 import { git, makeGitRepo } from "../../_helpers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
@@ -111,21 +110,7 @@ test("revert refuses to overwrite newer work at the original path", async () => 
   expect(fs.existsSync(dir!)).toBe(true);
 });
 
-const noTasks: SchedulerBackend = {
-  name: "cron",
-  list: () => [],
-  install: () => {
-    throw new Error("No task installation expected");
-  },
-  uninstall: () => {
-    throw new Error("No task removal expected");
-  },
-  setEnabled: () => {
-    throw new Error("No task toggle expected");
-  },
-};
-const rename = () =>
-  renameBundle("stash", "renamed", {}, { backend: noTasks, syncTasks: async () => ({ ok: true }) as never });
+const rename = () => renameBundle("stash", "renamed", {}, { syncTasks: async () => ({ ok: true }) as never });
 
 test("revert still works after the bundle is renamed, for a manual retirement and for an ordinary proposal", async () => {
   const receipt = await retireAsset(ref, hash());

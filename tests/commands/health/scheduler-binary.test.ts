@@ -12,13 +12,13 @@
 import { describe, expect, test } from "bun:test";
 import { collectSchedulerBinaryAdvisory } from "../../../src/commands/health/scheduler-binary";
 
-function fakeBackend(binding: string[]) {
+const DEFAULT_ENV = { HOME: "/home/nobody" };
+
+function fakeBackend(launcher: string[]) {
   return {
     name: "cron" as const,
-    install: () => {},
-    uninstall: () => {},
-    setEnabled: () => {},
-    list: () => [{ id: "improve-nightly", binding }],
+    apply: () => {},
+    inspect: () => ({ entry: { launcher }, legacy: [] }),
   };
 }
 
@@ -26,15 +26,14 @@ describe("collectSchedulerBinaryAdvisory (#953)", () => {
   test("not probed: unknown, never inspects the scheduler", async () => {
     let listed = false;
     const result = await collectSchedulerBinaryAdvisory(false, {
-      cliVersion: "0.9.15",
+      cliVersion: "0.10.0",
+      env: DEFAULT_ENV,
       backend: {
         name: "cron",
-        install: () => {},
-        uninstall: () => {},
-        setEnabled: () => {},
-        list: () => {
+        apply: () => {},
+        inspect: () => {
           listed = true;
-          return [];
+          return { legacy: [] };
         },
       },
     });
@@ -44,41 +43,45 @@ describe("collectSchedulerBinaryAdvisory (#953)", () => {
     expect(result.message.toLowerCase()).toContain("not probed");
   });
 
-  test("no scheduled task installed: unknown", async () => {
+  test("no scheduler entry installed: unknown", async () => {
     const result = await collectSchedulerBinaryAdvisory(true, {
-      cliVersion: "0.9.15",
-      backend: { ...fakeBackend([]), list: () => [] },
+      cliVersion: "0.10.0",
+      env: DEFAULT_ENV,
+      backend: { ...fakeBackend([]), inspect: () => ({ legacy: [] }) },
     });
     expect(result.status).toBe("unknown");
-    expect(result.message.toLowerCase()).toContain("no scheduled task");
+    expect(result.message.toLowerCase()).toContain("no scheduler entry");
   });
 
   test("matching versions pass", async () => {
     const result = await collectSchedulerBinaryAdvisory(true, {
-      cliVersion: "0.9.15",
+      cliVersion: "0.10.0",
+      env: DEFAULT_ENV,
       backend: fakeBackend(["/usr/bin/node", "/opt/akm/dist/akm"]),
-      spawnSync: (() => ({ status: 0, stdout: "0.9.15\n", stderr: "" })) as never,
+      spawnSync: (() => ({ status: 0, stdout: "0.10.0\n", stderr: "" })) as never,
     });
     expect(result.status).toBe("pass");
-    expect(result.evidence).toMatchObject({ scheduledVersion: "0.9.15", cliVersion: "0.9.15" });
+    expect(result.evidence).toMatchObject({ scheduledVersion: "0.10.0", cliVersion: "0.10.0" });
   });
 
   test("mismatched versions warn, naming both versions and the remedy", async () => {
     const result = await collectSchedulerBinaryAdvisory(true, {
-      cliVersion: "0.9.15",
+      cliVersion: "0.10.0",
+      env: DEFAULT_ENV,
       backend: fakeBackend(["/usr/bin/node", "/opt/akm/dist/akm"]),
-      spawnSync: (() => ({ status: 0, stdout: "0.9.14\n", stderr: "" })) as never,
+      spawnSync: (() => ({ status: 0, stdout: "0.9.32\n", stderr: "" })) as never,
     });
     expect(result.status).toBe("warn");
-    expect(result.message).toContain("0.9.14");
-    expect(result.message).toContain("0.9.15");
-    expect(result.message).toContain("akm task sync");
-    expect(result.evidence).toMatchObject({ scheduledVersion: "0.9.14", cliVersion: "0.9.15" });
+    expect(result.message).toContain("0.9.32");
+    expect(result.message).toContain("0.10.0");
+    expect(result.message).toContain("akm task sync --rebind");
+    expect(result.evidence).toMatchObject({ scheduledVersion: "0.9.32", cliVersion: "0.10.0" });
   });
 
   test("the recorded binary cannot be executed: unknown", async () => {
     const result = await collectSchedulerBinaryAdvisory(true, {
-      cliVersion: "0.9.15",
+      cliVersion: "0.10.0",
+      env: DEFAULT_ENV,
       backend: fakeBackend(["/usr/bin/node", "/opt/akm/dist/akm"]),
       spawnSync: () => {
         throw new Error("ENOENT");
@@ -90,17 +93,35 @@ describe("collectSchedulerBinaryAdvisory (#953)", () => {
 
   test("backend inspection failure degrades to unknown, never a false warn", async () => {
     const result = await collectSchedulerBinaryAdvisory(true, {
-      cliVersion: "0.9.15",
+      cliVersion: "0.10.0",
+      env: DEFAULT_ENV,
       backend: {
         name: "cron",
-        install: () => {},
-        uninstall: () => {},
-        setEnabled: () => {},
-        list: () => {
+        apply: () => {},
+        inspect: () => {
           throw new Error("crontab not found");
         },
       },
     });
     expect(result.status).toBe("unknown");
+  });
+
+  test("an installation that moves its locations does not own the entry: unknown, never inspected", async () => {
+    let inspected = false;
+    const result = await collectSchedulerBinaryAdvisory(true, {
+      cliVersion: "0.10.0",
+      env: { ...DEFAULT_ENV, AKM_STATE_DIR: "/srv/state" },
+      backend: {
+        name: "cron",
+        apply: () => {},
+        inspect: () => {
+          inspected = true;
+          return { legacy: [] };
+        },
+      },
+    });
+    expect(inspected).toBe(false);
+    expect(result.status).toBe("unknown");
+    expect(result.message).toContain("does not own");
   });
 });

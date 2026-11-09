@@ -173,10 +173,6 @@ export type TransientErrorCode =
   // by a live process for the whole wait window. Previously a bare Error
   // (exit 70) for the same ordinary contention.
   | "ASSET_MUTATION_LEASE_HELD"
-  // The one lock around native scheduler writes (`src/tasks/scheduler-lock.ts`)
-  // is held by another live akm process running `task sync|add|enable|
-  // disable|prune`. Ordinary contention: retry once it finishes.
-  | "SCHEDULER_LOCK_HELD"
   // A registry request failed for a reason a retry can fix: the connection,
   // DNS lookup or TLS handshake failed, the request timed out, or the server
   // answered 429/5xx after the boundary's own retries (`src/registry/network.ts`).
@@ -296,8 +292,6 @@ const TRANSIENT_HINTS: Partial<Record<TransientErrorCode, string>> = {
   LOCKFILE_CONTENDED: "Another akm process is updating its bundle lockfile right now. Wait a few seconds and retry.",
   ASSET_MUTATION_LEASE_HELD:
     "Another akm process is writing bundle content right now. Wait for it to finish and retry.",
-  SCHEDULER_LOCK_HELD:
-    "Another `akm task sync`, `add`, `enable`, `disable` or `prune` is writing the scheduler right now. Wait for it to finish and retry.",
   REGISTRY_UNREACHABLE:
     "The registry did not answer in time. Check the network and the registry URL (`akm registry list`), then retry.",
 };
