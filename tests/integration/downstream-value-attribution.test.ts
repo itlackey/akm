@@ -190,14 +190,18 @@ describe("downstream value attribution", () => {
     });
   });
 
-  test("brief search output does not attribute stripped derived surface content", async () => {
+  test("brief search output shows the derived description and attributes it", async () => {
     clearUsageRows();
     const result = await runCliCapture(["search", "surface-parent-needle", "--detail", "brief", "--format", "json"]);
     expect(result.code).toBe(0);
     const output = JSON.parse(result.stdout) as { results: Array<Record<string, unknown>> };
-    expect(output.results.find((hit) => hit.name === "parent")?.description).toBeUndefined();
+    expect(output.results.find((hit) => hit.name === "parent")?.description).toBe("direct-child-needle");
     expect(metadataFor("surface-parent-needle", "stash//memories/parent")).toEqual({
-      downstreamAttribution: { version: 1, control: true },
+      downstreamAttribution: {
+        version: 1,
+        control: false,
+        memoryInference: { exposure: "surface", childRef: "stash//memories/parent.derived" },
+      },
     });
   });
 
