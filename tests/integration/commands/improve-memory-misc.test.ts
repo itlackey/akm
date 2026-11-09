@@ -29,7 +29,6 @@ function configureStash(stashDir: string): void {
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
     }),
   );
 }
@@ -493,7 +492,6 @@ describe("M-3: schema-repair routes through proposal queue (#387)", () => {
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       connections: { default: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "test" } } },
     });
 

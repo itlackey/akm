@@ -81,14 +81,6 @@ export const addCommand = defineJsonCommand({
       description: "Allow a plain HTTP source URL after explicitly accepting transport substitution risk.",
       default: false,
     },
-    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
-    // fail with UNKNOWN_FLAG. Installing a bundle is the trust decision: its
-    // env files are no longer scanned for process-hijacking keys.
-    "allow-dangerous-env-keys": {
-      type: "boolean",
-      description: "Deprecated, no effect (accepted through 0.10)",
-      default: false,
-    },
   },
   async run({ args }) {
     const ref = args.ref.trim();

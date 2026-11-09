@@ -107,9 +107,9 @@ covers beyond the table.
 | `akm search` | Stable | |
 | `akm curate` | Stable | |
 | `akm show` | Stable | |
-| `akm workflow status` | Experimental | `--all-scopes` added in 0.9.15 (#942); a deprecated no-op since 0.10 (#1239), accepted through 0.10. |
+| `akm workflow status` | Experimental | `--all-scopes` added in 0.9.15 (#942) and removed in 0.10 (#1239). |
 | `akm workflow plan` | Experimental | New in 0.9.2; secret-free provenance output; envelope shape may change. |
-| `akm workflow list` | Experimental | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942); since 0.10 (#1239) `--all-scopes` is a deprecated no-op, accepted through 0.10, and the `scopeKey` field is removed from the list result. |
+| `akm workflow list` | Experimental | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942); since 0.10 (#1239) `--all-scopes` is removed, and the `scopeKey` field is removed from the list result. |
 | `akm workflow create` | Experimental | |
 | `akm workflow resume` | Experimental | |
 | `akm workflow abandon` | Experimental | |
@@ -150,7 +150,6 @@ covers beyond the table.
 | `akm proposal extract` | Evolving | Former top-level `akm extract`. Promoted from Experimental in 0.10 (#1133): the extract eval measures it. Evolving, not Stable, because 0.10 is still settling the improve defaults. |
 | `akm proposal new` | Evolving | Former top-level `akm propose`. |
 | `akm help` | Stable | |
-| `akm help migrate` | Stable | Only renders release notes. |
 | `akm hints` | Stable | Format-exempt agent guide; the brief guide is the default; `--detail full` selects the complete version. |
 | `akm completions` | Stable | Format-exempt (emits shell script source). |
 | `akm env list` | Stable | Read-and-inject surface. |
@@ -247,8 +246,7 @@ covers beyond the table.
   `search`, `curate` and `show`; see Experimental). A small set of commands is **format-exempt** because their
   output is not a result envelope at all: `completions` (shell script source),
   child-process passthrough in `env run` / `secret run`, a bare-path payload
-  from `env path` and `config path`, and document payloads from `help` (bare and
-  `help migrate`). The set is declared in
+  from `env path` and `config path`, and document payloads from `help`. The set is declared in
   `src/output/format-exempt.ts`, and
   passing `--format` to one of them warns rather than silently doing something
   else. Scripted `setup` modes emit a normal format-aware result; interactive
@@ -507,7 +505,7 @@ selection only stage proposals. These writes are not gated by the opt-in:
 Not public interfaces. Listed so you can recognize them, not so you can rely
 on them.
 
-- **Migration surfaces** — the standalone `akm-migrate` tool (`status`,
+- **Migration surfaces** — the standalone migrator (`status`,
   `apply`) rewrites config, `state.db`, task files and old on-disk residue to
   the current shape, taking a backup first. `akm migrate` is a thin process
   forwarder for it.
@@ -551,8 +549,8 @@ around them.
 - **0.10 — `config set`/`config unset` may drop the config dump** in favor of
   a compact `{ok, shape, key}` result; `akm config list` remains the full read.
 - **0.10 — migration extraction.** The migration machinery lives in its own
-  `akm-migrate` executable, which ships inside the `akm-cli` package next to
-  `akm` (no separate npm package). The task-source migrator (`task-to-v4.ts`,
+  bundle, `dist/scripts/akm-migrate{,-node}.js`, shipped inside the `akm-cli`
+  package (no separate npm package, and since 0.10 no `akm-migrate` bin). The task-source migrator (`task-to-v4.ts`,
   `task-source-v3-frozen.ts`) lives with it under `scripts/akm-migrate/migrate/`,
   out of `src/`.
 - **0.10 — `BundleAdapter.placeNew()` is removed.** Nothing called it; writes use AKM's fixed type→directory table.

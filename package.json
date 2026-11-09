@@ -51,7 +51,6 @@
     "docs/guides",
     "docs/integration",
     "docs/maintainers",
-    "docs/migration",
     "docs/posts",
     "docs/reference",
     "docs/product-surface.md",
@@ -68,12 +67,10 @@
       "bun": "./dist/api.js",
       "default": "./dist/api-node.mjs"
     },
-    "./package.json": "./package.json",
-    "./dist/*": "./dist/*"
+    "./package.json": "./package.json"
   },
   "bin": {
-    "akm": "dist/akm",
-    "akm-migrate": "dist/akm-migrate"
+    "akm": "dist/akm"
   },
   "scripts": {
     "desktop:setup": "cd desktop && bun run prepare:core",

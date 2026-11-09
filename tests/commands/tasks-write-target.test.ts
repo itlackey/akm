@@ -42,13 +42,14 @@ afterEach(() => {
 
 describe("task asset mutations honor write-target resolution", () => {
   test("rejects a writable OKF target before writing or installing a task", async () => {
-    const iso = withIsolatedAkmStorage();
+    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
+    const iso = withIsolatedAkmStorage({ AKM_BUNDLE_DIR: undefined });
     const target = makeSandboxDir("akm-task-okf-target");
     try {
       saveConfig({
         configVersion: "0.9.0",
         semanticSearchMode: "off",
-        defaultWriteTarget: "target",
+        defaultBundle: "target",
         bundles: {
           target: {
             path: target.dir,
@@ -71,14 +72,15 @@ describe("task asset mutations honor write-target resolution", () => {
     }
   });
 
-  test("add writes to defaultWriteTarget instead of the primary stash", async () => {
-    const iso = withIsolatedAkmStorage();
+  test("add writes to defaultBundle instead of the primary stash", async () => {
+    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
+    const iso = withIsolatedAkmStorage({ AKM_BUNDLE_DIR: undefined });
     const target = makeSandboxDir("akm-task-target");
     try {
       saveConfig({
         configVersion: "0.9.0",
         semanticSearchMode: "off",
-        defaultWriteTarget: "target",
+        defaultBundle: "target",
         bundles: { target: { path: target.dir, writable: true } },
       });
 
@@ -102,13 +104,14 @@ describe("task asset mutations honor write-target resolution", () => {
   });
 
   test("add reports an install failure and keeps the task it wrote", async () => {
-    const iso = withIsolatedAkmStorage();
+    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
+    const iso = withIsolatedAkmStorage({ AKM_BUNDLE_DIR: undefined });
     const target = makeSandboxDir("akm-task-target");
     try {
       saveConfig({
         configVersion: "0.9.0",
         semanticSearchMode: "off",
-        defaultWriteTarget: "target",
+        defaultBundle: "target",
         bundles: { target: { path: target.dir, writable: true } },
       });
       backendState.failInstallFor.add("broken");

@@ -15,7 +15,6 @@
     route={page.params.view}
     query={new URLSearchParams(page.url.search)}
     bundles={workspace.bundles}
-    defaultWriteTarget={workspace.defaultWriteTarget}
     bundleRevision={workspace.bundleRevision}
   />
 </div>

@@ -170,7 +170,7 @@ For script assets, akm resolves execution hints in this order:
 - All asset content is plain files inside the bundle directory. The search
   index (`index.db`) is a derived cache rebuilt by `akm index`.
 - `akm lint` only operates on writable sources, and `akm improve` on one of
-  them: the bundle it writes to (`--bundle`, else `defaultWriteTarget`, else the
+  them: the bundle it writes to (`--bundle`, else the
   working bundle). Read-only registry caches (`git`, `npm`, `website`) are
   excluded from improvement and lint passes even when they are indexed.
 

@@ -19,7 +19,7 @@
   export let ref = "";
   export let file: { bundle: string; path: string } | undefined = undefined;
   export let bundles: Bundle[] = [];
-  export let defaultWriteTarget = "";
+  export let defaultBundle = "";
   export let query = new URLSearchParams();
   export let returnTo = "/library/search";
   export let cancelHref = "";
@@ -76,7 +76,7 @@
       } else {
         bundle =
           writable.find((b) => b.name === query.get("bundle"))?.name ??
-          writable.find((b) => b.name === defaultWriteTarget)?.name ??
+          writable.find((b) => b.name === defaultBundle)?.name ??
           writable[0]?.name ??
           "";
         const wanted = query.get("q") || "New document";

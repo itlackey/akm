@@ -652,7 +652,6 @@ function resolveExtendsChain(
 const HOST_LOCAL_CONFIG_KEYS = new Set([
   "bundles",
   "defaultBundle",
-  "defaultWriteTarget",
   "embedding",
   "experimental",
   "registries",
@@ -1380,6 +1379,12 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     // A key in the older flat form is filed only under an endpoint this file itself gives the block.
     const flat = fileFlatCredentials((slot) => documentEndpoint(plan.config, slot), false, plan.moves);
     const notes = [...converted.notes, ...plan.notes, ...flat.notes];
+    const retiredTarget = localRaw.defaultWriteTarget;
+    if (typeof retiredTarget === "string" && retiredTarget !== localRaw.defaultBundle) {
+      notes.push(
+        `defaultWriteTarget "${retiredTarget}" is dropped. It named a different bundle from defaultBundle ${JSON.stringify(localRaw.defaultBundle ?? null)}; writes now go to defaultBundle.`,
+      );
+    }
     keepUnusableEntries(body, localRaw, current, notes);
     const hasModelsFile = modelsFileExists();
     if (hasModelsFile) {

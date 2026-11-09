@@ -142,7 +142,6 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   "ok": true,
   "data": {
     "defaultBundle": "stash",
-    "defaultWriteTarget": null,
     "workingStash": null,
     "bundles": [
       {
@@ -243,7 +242,7 @@ The effective configuration, as `akm config list` shows it, with where each valu
 - `config` is the redacted effective config tree. `entries` is the same data flattened to one row per leaf (arrays are
   leaves) with `source`: `default` (no config file sets it), `file` (this install's `config.json`),
   `extends:<ref>` (a config it extends), or `null` when the key cannot be traced (a key containing a `.`).
-- `automaticWriteTarget` is `{ name, path, workingStash }` for where a write goes when `defaultWriteTarget` is empty:
+- `automaticWriteTarget` is `{ name, path, workingStash }` for where a write goes:
   `AKM_BUNDLE_DIR` when set (even with a `defaultBundle`), otherwise the default bundle. `workingStash` is `true` when
   that directory is the one `bundles.list` reports as the working stash. It is `null` when neither exists, so writes
   need a target.
@@ -504,7 +503,7 @@ person, `null` for a decision recorded before `decidedBy` existed).
 
 ## `proposals.recentChanges`
 
-Recent commits of the write-target stash (`defaultWriteTarget`, else the default bundle), from its git log. Input:
+Recent commits of the write-target stash (the default bundle), from its git log. Input:
 `limit` (default 50).
 
 ```json
@@ -798,7 +797,7 @@ would write config, is refused with `INVALID_FLAG_VALUE` and the user is asked t
 the CLI first. A settings request that changes nothing writes nothing and is not refused. It never writes
 `"[redacted]"` back as a credential. Bundle update writes only the lockfile, and feedback, knowledge creation and
 document editing do not save config, so none of them use that config-sanitizer check. Unsetting an inherited
-`defaultBundle` or `defaultWriteTarget` through `config.change` is refused with `TARGET_NOT_UPDATABLE`, as
+`defaultBundle` through `config.change` is refused with `TARGET_NOT_UPDATABLE`, as
 `akm config unset` refuses it.
 
 The shared Markdown writer participates in the existing mutation lease, including CLI import/remember callers;

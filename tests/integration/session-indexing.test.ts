@@ -95,7 +95,6 @@ function configFor(stash: string, indexSessions?: boolean, extractEnabled = true
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       default: {
         endpoint: "http://localhost:11434/v1/chat/completions",

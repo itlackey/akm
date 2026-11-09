@@ -394,8 +394,7 @@ Two cases produce one today:
   v4 task is runnable manually with `akm task run` whether or not it has a
   `schedule:`. The migrated document simply has no `schedule:` key.
 
-The migrator is also installed as its own executable, `akm-migrate`, with the
-same `status` / `apply [--dry-run]` surface; `akm migrate` wraps it, and
+`akm migrate status` / `apply [--dry-run]` runs the migrator, and
 `akm upgrade` runs `apply` after installing a release. A tree that is already
 all `version: 3` simply reports the first generation as current.
 

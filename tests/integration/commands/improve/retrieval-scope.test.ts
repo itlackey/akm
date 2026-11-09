@@ -180,7 +180,6 @@ function proactiveConfig(stashDir: string): AkmConfig {
     semanticSearchMode: "off",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     improve: {
       strategies: {
         default: {
@@ -278,7 +277,6 @@ describe("the consolidation pool is the retrieval scope", () => {
         semanticSearchMode: "off",
         bundles: { stash: { path: stash, writable: true } },
         defaultBundle: "stash",
-        defaultWriteTarget: "stash",
       }),
     );
     saveConfig(config);

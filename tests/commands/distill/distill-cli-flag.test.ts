@@ -127,7 +127,6 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       configVersion: "0.9.0",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       connections: {
         default: {
           endpoint: "http://localhost:11434/v1/chat/completions",
@@ -158,7 +157,6 @@ describeHappy("akm distill happy-path (#284 CRIT 3)", () => {
       configVersion: "0.9.0",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       connections: {
         default: {
           endpoint: "http://localhost:11434/v1/chat/completions",

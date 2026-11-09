@@ -45,7 +45,6 @@ function targetConfig(primary: string, team: string, readonly: string): AkmConfi
       vendor: { path: readonly, writable: false },
     },
     defaultBundle: "primary",
-    defaultWriteTarget: "primary",
   } as AkmConfig);
 }
 
@@ -87,7 +86,7 @@ describe("improve named target integration", () => {
   test("a dry run without a selector previews the working bundle the live run writes to (AKM_BUNDLE_DIR first)", async () => {
     const primary = stash();
     const team = stash();
-    // No `defaultWriteTarget`, so both runs start from the working bundle, which AKM_BUNDLE_DIR overrides.
+    // No explicit target, so both runs start from the working bundle, which AKM_BUNDLE_DIR overrides.
     const config = withTestImproveLlm({
       configVersion: "0.9.0",
       semanticSearchMode: "off",
@@ -252,7 +251,6 @@ describe("improve named target integration", () => {
           vendor: kind === "website" ? { website: { url: websiteUrl } } : { npm: "npm:improve-read-only@1.0.0" },
         },
         defaultBundle: "primary",
-        defaultWriteTarget: "primary",
       } as AkmConfig);
       let selectedRoot: string | undefined;
 
@@ -319,8 +317,7 @@ describe("improve named target integration", () => {
           stash: { path: primary, writable: true },
           team: { git: url, writable: true },
         },
-        defaultBundle: "stash",
-        defaultWriteTarget: "team",
+        defaultBundle: "team",
       } as AkmConfig);
       let selectedRoot: string | undefined;
 

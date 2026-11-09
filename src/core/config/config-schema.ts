@@ -35,7 +35,7 @@
  *   `experimental`, use passthrough so version skew round-trips newer
  *   settings. An unknown key is never an error: the loader warns once per key
  *   (`unknownConfigKeyPaths` in `config.ts`) and ignores it.
- * - `defaultWriteTarget` resolution and similar cross-field invariants are
+ * - `defaultBundle` resolution and similar cross-field invariants are
  *   enforced at save time via `superRefine` on the top-level schema.
  */
 import { z } from "zod";
@@ -126,7 +126,6 @@ export const AkmConfigShape = {
   bundles: BundlesConfigSchema.optional(),
   defaultBundle: nonEmptyString.optional(),
   output: OutputConfigSchema.optional(),
-  defaultWriteTarget: nonEmptyString.optional(),
   // Named places the user works on (see ./schema/projects.ts); malformed pieces are dropped at load.
   projects: ProjectsSchema.optional(),
   search: SearchConfigSchema.optional(),
@@ -190,22 +189,6 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       });
     }
   }
-  if (config.defaultWriteTarget !== undefined) {
-    const target = config.bundles?.[config.defaultWriteTarget];
-    if (!target) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["defaultWriteTarget"],
-        message: `defaultWriteTarget "${config.defaultWriteTarget}" does not name a configured bundle`,
-      });
-    } else if (target.enabled === false) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["defaultWriteTarget"],
-        message: `defaultWriteTarget "${config.defaultWriteTarget}" is disabled`,
-      });
-    }
-  }
   const improveStrategy = config.improve?.strategy;
   if (
     improveStrategy &&
@@ -227,28 +210,6 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       path: ["improve", "strategy"],
       message: "strategy does not name a built-in or configured improve strategy",
     });
-  }
-  // #464.a: defaultWriteTarget must name a configured source. 0.9.0 (spec
-  // §10.1): sources are `bundles` keys, so it must name a bundle. With no
-  // bundles configured, error out instead of silently accepting (no implicit
-  // "first writable" fallback — see locked decision 3).
-  if (config.defaultWriteTarget !== undefined) {
-    const knownNames = Object.keys(config.bundles ?? {});
-    if (knownNames.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["defaultWriteTarget"],
-        message:
-          `defaultWriteTarget "${config.defaultWriteTarget}" cannot be resolved: no bundles configured. ` +
-          "Add at least one entry to `bundles` first.",
-      });
-    } else if (!knownNames.includes(config.defaultWriteTarget)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["defaultWriteTarget"],
-        message: `defaultWriteTarget "${config.defaultWriteTarget}" does not match any configured bundle: ${knownNames.map((n) => `"${n}"`).join(", ")}.`,
-      });
-    }
   }
 });
 

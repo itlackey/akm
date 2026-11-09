@@ -54,8 +54,7 @@ ignored (the default format applies).
 
 A small set of commands is **format-exempt** because their output is not a
 result envelope at all — `completions`, child-process passthrough (`env run`
-and `secret run`), document payloads (`help`,
-`help migrate`), and `env path` and `config path` (a bare filesystem path is the payload, the
+and `secret run`), document payloads (`help`), and `env path` and `config path` (a bare filesystem path is the payload, the
 documented shell-substitution primitive — wrapping it in an envelope would
 break `$(akm env path <ref>)` substitutions). Passing `--format` to one of
 those **warns on stderr** and is otherwise ignored; the exempt set is declared
@@ -997,8 +996,8 @@ Subcommands:
 | --- | --- |
 | `create <name>` | Validate and write a Markdown workflow under `workflows/`. `--path <dir>` places it in a subdirectory; `--from <file>` imports content; `--force` overwrites; `--print` prints the template that would be written instead of writing it |
 | `run <run-id\|ref>` | Canonical start/execute command. A ref always starts a new run (other active runs of the ref produce one warning, see below); a run id continues that exact active run. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
-| `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. A ref shows its most recently updated run. `--all-scopes` is a deprecated no-op |
-| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. Lists every run on the host, most recently updated first, from any working directory. `--all-scopes` is a deprecated no-op |
+| `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. A ref shows its most recently updated run. |
+| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. Lists every run on the host, most recently updated first, from any working directory. |
 | `resume <run-id>` | Flip a `blocked` or `failed` run back to `active` so `run <run-id>` can continue it; it executes nothing. Completed runs cannot be resumed |
 | `abandon <run-id>` | Mark a run failed so it stops counting as active (`resume` can reopen it) |
 | `plan <ref>` | **Evolving.** Compile and freeze a workflow WITHOUT publishing a run: the canonical step graph, per-step frozen target kinds, task/child expansion, input bindings, source read set, and lowering notices — zero durable writes. Returns the full JSON envelope by default, like every other command; pass `--format text` for a human-readable summary |
@@ -1139,7 +1138,7 @@ akm workflow status <run-id> --units    # also list per-unit rows from the run j
 
 Accepts a run id, a unique 8+ character run-id prefix, or a workflow ref.
 When given a workflow ref, resolves to the most-recently-updated run for that
-ref on this host. `--all-scopes` is a deprecated no-op. `--units` adds per-unit rows
+ref on this host. `--units` adds per-unit rows
 (unit id, status, failure reason, and any result/error diagnostic text) from
 the run journal — diagnostics only; step evidence stays deterministic and is
 unaffected. A failed unit's row also carries an `orchestration` object (in
@@ -1284,7 +1283,6 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--before`, `--after` | Insert the new bundle before or after this configured bundle, instead of at the end |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
 | `--allow-insecure-transport` | Allow a plain-HTTP source URL after explicitly accepting transport substitution risk |
-| `--allow-dangerous-env-keys` | Deprecated, no effect. `bundle add` no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
 | `--credential` | Git HTTPS bearer credential, stored as a reference and never a literal token: `$VAR`, `${VAR}`, or an akm ref such as `${secrets/gitea_token}` (`${team//secrets/gitea_token}` for a secret in another bundle). Resolved only when git runs |
@@ -1404,8 +1402,6 @@ akm bundle update --all --force   # Force fresh download even if version is unch
 | --- | --- |
 | `--all` | Update all managed sources |
 | `--force` | Fetch again even when the upstream revision is unchanged |
-| `--allow-dangerous-env-keys` | Deprecated, no effect. An update no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
-| `-y`, `--yes` | Deprecated, no effect. An update never asks before pruning old install directories of a read-only bundle; they are a re-fetchable cache. Accepted through 0.10 so existing scripts keep working. |
 
 A read-only git or npm bundle whose upstream revision still matches its lock
 is left exactly as it is: nothing is fetched or replaced, and the update
@@ -1469,7 +1465,7 @@ akm bundle rename old-name new-name --dry-run   # Show the plan; write nothing
 
 `<new>` must be a legal, unused bundle slug (the same `--name` contract `akm
 bundle add` enforces) or the rename fails before any write. Rewritten: the
-config `bundles` key; `defaultBundle`/`defaultWriteTarget` when they name the
+config `bundles` key; `defaultBundle` when it names the
 old id; every `scheduler.enabled[].ref` with the old `<old>//` prefix; the
 lockfile entry id; every indexed entry's `bundle_id`/ref; and this tool's own
 state rows that name the old bundle (`proposals.ref`, a pending proposal's
@@ -1502,7 +1498,7 @@ checksummed, and staged before replacement; npm, Bun, and pnpm global installs
 use their package manager.
 
 Upgrade replaces the installed program when a newer release exists, then runs
-`akm-migrate apply` — the migrator that shipped with whatever is now installed
+`akm migrate apply` — the migrator that shipped with whatever is now installed
 — and rebuilds the derived index. The migration step runs on every
 `akm upgrade`, install or no install, and its plan is reported under
 `migration`; an upgrade whose migration is blocked or could not run exits 1.
@@ -1738,7 +1734,7 @@ akm clone "npm:@scope/pkg//scripts/deploy.sh" --dest /tmp/preview
 | --- | --- |
 | `--name` | New name for the cloned asset |
 | `--force` | Overwrite if the asset already exists at the destination |
-| `--bundle <name>` | Managed destination bundle. When omitted, clone falls back to `defaultWriteTarget`, then the working bundle |
+| `--bundle <name>` | Managed destination bundle. When omitted, clone falls back to the working bundle |
 | `--dest <path>` | Unmanaged destination directory. Bypasses managed target resolution and cannot be combined with `--bundle`; the type subdirectory is appended automatically |
 
 Skills (directories) are copied recursively. Other types copy a single file.
@@ -1775,7 +1771,7 @@ akm clone "/path/to/bundle//skills/code-review" --dest ./project/.claude
 ```
 
 Without `--dest`, clone uses normal write-target resolution: explicit
-`--bundle` -> `defaultWriteTarget` -> working bundle. Managed clones use the
+`--bundle` -> working bundle. Managed clones use the
 destination bundle's canonical ref and are indexed immediately. When `--dest`
 is provided, no managed write target is required, which keeps clone usable in
 CI or fresh environments without running `akm setup` first.
@@ -1937,10 +1933,8 @@ Record a memory. This writes a markdown file into `memories/` in the configured
 write target and returns the resulting ref.
 
 **Write target resolution:** the destination is the working bundle
-(`defaultBundle`) unless `defaultWriteTarget` is set in config, which
-overrides it to a named source. An explicit `--bundle <name>` flag overrides
-both. The full order is `--bundle` → `defaultWriteTarget` → working bundle →
-`ConfigError`. See [Configuration](configuration.md#bundles-and-write-target) for
+(`defaultBundle`). An explicit `--bundle <name>` flag overrides it. The full
+order is `--bundle` → working bundle → `ConfigError`. See [Configuration](configuration.md#bundles-and-write-target) for
 details.
 
 A bundle-qualified mutation ref implies that bundle. In particular, a
@@ -2001,7 +1995,7 @@ akm remember "Deployment needs VPN access" --bundle team-bundle
 | `--agent <id>` | Scope this memory to an agent id. Persisted as `scope_agent`. |
 | `--run <id>` | Scope this memory to a run id. Persisted as `scope_run`. |
 | `--channel <name>` | Scope this memory to a channel name. Persisted as `scope_channel`. |
-| `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to the project's `write.bundle`, then `defaultWriteTarget`, then the working bundle. |
+| `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to the project's `write.bundle`, then the working bundle. |
 | `--project <name>` | Use this [project](#projects)'s write defaults instead of the one the working directory selects; `none` uses none. |
 
 Pass the content as a quoted positional argument for short notes, or pipe
@@ -2054,10 +2048,8 @@ the configured write target and returns the resulting ref. The source may be a
 file path, a single HTTP/HTTPS URL, or `-` for stdin.
 
 **Write target resolution:** the destination is the working bundle
-(`defaultBundle`) unless `defaultWriteTarget` is set in config, which
-overrides it to a named source. An explicit `--bundle <name>` flag overrides
-both. The full order is `--bundle` → `defaultWriteTarget` → working bundle →
-`ConfigError`. See [Configuration](configuration.md#bundles-and-write-target) for
+(`defaultBundle`). An explicit `--bundle <name>` flag overrides it. The full
+order is `--bundle` → working bundle → `ConfigError`. See [Configuration](configuration.md#bundles-and-write-target) for
 details.
 
 ```sh
@@ -2080,7 +2072,7 @@ akm import ./docs/auth-flow.md --bundle team-bundle
 | --- | --- |
 | `--name` | Optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
-| `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working bundle. |
+| `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to the working bundle. |
 | `--xref <ref>` | Cross-reference ref merged into the document's `xrefs:` frontmatter list. Repeatable. A document without frontmatter gains a block; a document with valid frontmatter keeps every existing key and value and gets the refs dedupe-appended (never a nested second block). Each ref must resolve in the write target or a configured source; an unresolvable ref fails with exit 2 before anything is written. If the document's existing frontmatter is not a parseable YAML mapping, the import fails (exit 2) rather than rewriting the block lossily — fix the frontmatter or import without `--xref`, which preserves the file verbatim. |
 | `--supersedes <ref>` | Ref of an existing asset this document corrects. Repeatable. Imports the correction with the old ref merged into its `xrefs:` AND demotes the old asset (`beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit), then reindexes it. Same validation (including the self-supersede rejection), skipped-demotion (`applied: false`), idempotence, and git-boundary-commit behaviour as on `remember` (see above). |
 
@@ -2256,7 +2248,6 @@ akm registry add https://skills.sh --name skills.sh --provider skills-sh
 | --- | --- |
 | `--name` | Human-friendly label for the registry |
 | `--provider` | Provider type (e.g. `static-index`, `skills-sh`). Default: `static-index` |
-| `--options` | Accepted for compatibility and ignored, with a warning: no provider reads options |
 | `--allow-insecure-transport` | Allow a plain HTTP registry URL (rejected by default) |
 
 Duplicate URLs are rejected.
@@ -2278,8 +2269,8 @@ akm registry remove my-team --yes    # Skip the confirmation prompt
 ### migrate
 
 Inspect or apply every pending migration in one plan. `akm migrate` is a thin
-wrapper over the standalone `akm-migrate` executable (installed alongside
-`akm`, and embedded in the release binary), which owns every historical shape
+wrapper over the standalone migrator (shipped in the package and embedded in
+the release binary), which owns every historical shape
 akm 0.9.15 and later wrote so the CLI proper reads only current schemas. The steps,
 in order:
 
@@ -2331,7 +2322,6 @@ in order:
 akm migrate status
 akm migrate apply --dry-run
 akm migrate apply
-akm-migrate apply          # the same, without the akm wrapper
 ```
 
 `status` and `apply --dry-run` are read-only. Apply skips blocked task
@@ -2426,29 +2416,17 @@ does: exit 78, the configured connections listed and the closest name suggested.
 
 ### help
 
-Print the sectioned command overview, detailed help for any command, or a
-release's migration guidance.
+Print the sectioned command overview or detailed help for any command.
 
 ```sh
 akm help                       # Sectioned command overview (same as `akm --help`)
 akm help bundle                # Detailed options and subcommands for `bundle`
 akm help env                   # Detailed options and subcommands for `env`
-akm help migrate 0.6.0         # Notes for a specific release
-akm help migrate v0.6.0        # v-prefix accepted
-akm help migrate v0.6.0-rc1    # Prereleases normalize to the stable note
-akm help migrate latest        # Resolve against the most recent CHANGELOG entry
 ```
 
 `akm help <command>` is equivalent to `akm <command> --help`. Bare `akm help`
 prints the same sectioned overview as `akm --help` and exits
 `0`.
-
-Migration notes live as one markdown file per release in
-[`docs/migration/release-notes/`](../migration/release-notes/). Adding notes for a
-future version is a one-file drop — no code edit required. Requesting an
-unknown version prints the list of bundled notes so you can pick one that
-exists. See [`CONTRIBUTING.md`](https://github.com/itlackey/akm/blob/main/.github/CONTRIBUTING.md#shipping-a-release--migration-notes)
-for the per-release workflow.
 
 ### hints
 
@@ -2522,8 +2500,8 @@ is injected. See [Environment & Secrets](env-and-secrets.md#the-ref-token).
 
 Env mutations (`create`, `remove`) pick their write destination the same way
 every other write command does: an explicit `--bundle <source>` wins, else
-`defaultWriteTarget`, else the working bundle. The chosen source must be
-writable — a non-writable `--bundle`/`defaultWriteTarget` fails with a
+the working bundle. The chosen source must be
+writable — a non-writable target fails with a
 `ConfigError` before anything is written — and on a git-backed writable target
 the mutation lands in a single boundary commit (filesystem targets are
 committed by `akm sync`; `env/` stays out of git when your bundle `.gitignore`
@@ -2566,8 +2544,7 @@ environment (PATH/HOME/locale/terminal basics, and the names Windows needs to
 start a process) instead of inheriting the full parent environment; use `--inherit KEY1,KEY2` to pass specific parent vars
 through in clean mode. Installing a bundle is the trust decision, so `env run`
 injects what the env file defines whichever bundle it comes from, including keys
-such as `PATH` or `LD_PRELOAD`; it does not warn or block. `--allow-dangerous-env-keys`
-is a deprecated no-op, accepted through 0.10 so existing scripts keep working.
+such as `PATH` or `LD_PRELOAD`; it does not warn or block.
 
 > The single-key `run <ref>/KEY` form was removed. To inject one value, store it
 > as a [secret](#secret) and use `akm secret run secrets/<name> <VAR> -- …`, or
@@ -2596,7 +2573,7 @@ akm env create env/prod --bundle team     # write to the `team` source
 | `--from-file <path>` | Seed the env file from an existing `.env` at this path |
 | `--from-stdin` | Seed the env file from stdin |
 | `--sensitive` | Exclude this env file from `env list` output and the search index |
-| `--bundle <source>` | Override the write destination (falls back to `defaultWriteTarget` then the working bundle) |
+| `--bundle <source>` | Override the write destination (falls back to the working bundle) |
 
 Creates `env/prod.env` with mode 0600. Empty `create` is a no-op if the file
 exists; `--from-file`/`--from-stdin` **refuse to clobber** an existing env (remove
@@ -2694,7 +2671,7 @@ Subcommands:
 > roots); use `akm secret run` to consume the value without touching disk.
 > `secret remove`, removed with it, is back as of 0.10. Like `akm env remove`,
 > it names its file through the write-target resolver only (`--bundle`, then
-> `defaultWriteTarget`, then the working bundle), so for a ref present in more
+> the working bundle), so for a ref present in more
 > than one bundle name the bundle with `--bundle`.
 
 #### secret set
@@ -2717,7 +2694,7 @@ of multi-line material. Writes are atomic (mode 0600) under an exclusive
 `<secret>.lock`. Maximum size is 5 MB.
 
 `secret set` selects its write destination like every other write command: an
-explicit `--bundle <source>` wins, else `defaultWriteTarget`, else the working
+explicit `--bundle <source>` wins, else the working
 bundle. The chosen source must be writable (a non-writable target fails with a
 `ConfigError`), and on a git-backed writable target the mutation lands in a
 single boundary commit. Reads (`list`, `run`) still span all configured sources.
@@ -2999,7 +2976,7 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | --- | --- |
 | `--task` | Optional extra guidance for this improvement pass |
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
-| `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
+| `--bundle` | Select the bundle the run improves and writes to (default: the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
 | `--require-feedback-signal` | Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned |

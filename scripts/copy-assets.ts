@@ -53,7 +53,6 @@ for await (const entry of yamlTemplateGlob.scan(".")) {
 //    and fall back to Node.
 const runtimeFiles = [
   "scripts/node-runtime/akm",
-  "scripts/node-runtime/akm-migrate",
   "scripts/node-runtime/cli-node.mjs",
   "scripts/node-runtime/text-import-hook.mjs",
   "scripts/node-runtime/api-node.mjs",

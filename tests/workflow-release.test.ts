@@ -54,16 +54,9 @@ describe("release workflow", () => {
   test("the changelog is cut: its newest released section names the shipping version", () => {
     // The release-cut step nothing else enforces. `release.yml` verifies
     // package.json against the workflow input, and the test above pins that —
-    // but nothing checks the CHANGELOG was cut alongside it, and the failure is
-    // silent and shipped: `resolveLatestVersion()`
-    // (src/commands/sources/migration-help.ts) resolves release notes by
-    // SKIPPING the `## [Unreleased]` heading, so a released binary whose
-    // changelog still says `Unreleased` answers `akm help migrate latest` with
-    // the PREVIOUS release's notes.
-    //
-    // Lives here rather than beside the renderer's own tests because this is a
-    // property of the release, not of `renderMigrationHelp`. CI runs it on the
-    // release commit, and release.yml refuses to publish until that CI passed.
+    // but nothing checks the CHANGELOG was cut alongside it. CI runs this on
+    // the release commit, and release.yml refuses to publish until that CI
+    // passed.
     const root = path.resolve(import.meta.dir, "..");
     // A release's -alpha/-beta/-rc stage is stamped in at release time (#1089): its changelog section is the
     // release's, so the committed package.json carries no stage.

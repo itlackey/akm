@@ -1494,7 +1494,6 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
         other: { path: other, writable: true },
       } as AkmConfig["bundles"],
       defaultBundle: "primary",
-      defaultWriteTarget: "primary",
     } as AkmConfig;
     const original =
       "---\ndescription: Bound original content\nwhen_to_use: Testing target ownership binding\n---\n\nORIGINAL.\n";

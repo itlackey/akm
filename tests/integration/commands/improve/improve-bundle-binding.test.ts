@@ -53,7 +53,7 @@ function writeMemory(root: string, name: string): void {
   fs.writeFileSync(file, `---\ndescription: ${name}\n---\n\n${name} body.\n`, "utf8");
 }
 
-/** Two writable bundles; `primary` is where the run writes. No judge is configured, so proposals queue unjudged. */
+/** Two writable bundles; `primary` is where the run writes unless a caller names another default. No judge is configured, so proposals queue unjudged. */
 function twoBundleConfig(defaultBundle = "primary"): AkmConfig {
   return withTestImproveLlm({
     semanticSearchMode: "off",
@@ -62,7 +62,6 @@ function twoBundleConfig(defaultBundle = "primary"): AkmConfig {
       team: { path: team, writable: true },
     },
     defaultBundle,
-    defaultWriteTarget: "primary",
     improve: {
       strategies: {
         default: {

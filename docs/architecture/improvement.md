@@ -330,7 +330,7 @@ old proposals and events still decode; nothing assigns or emits it any more.
 Dry and live improve runs call the same selectors for signal-delta eligibility,
 the proactive-maintenance lane, the retrieval scope, salience ranking, disk presence, and the
 final cap, and resolve the bundle they plan the same way: `--bundle`, else
-`defaultWriteTarget`, else the working bundle (`AKM_BUNDLE_DIR`, else
+the working bundle (`AKM_BUNDLE_DIR`, else
 `defaultBundle`). Each invocation reports a best-effort observation assembled
 while it runs; it is not an atomic cross-store snapshot, a reservation, or a
 durable frozen plan. A later live invocation re-inspects mutable index, state,

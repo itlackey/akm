@@ -62,9 +62,9 @@ plan.
 ## A scheduled `akm improve` covers one bundle
 
 An `akm improve` run improves one bundle, the one it writes to: `--bundle`,
-else `defaultWriteTarget`, else the working bundle. A scheduled row sets
+else the working bundle. A scheduled row sets
 `AKM_BUNDLE_DIR` to the working bundle of the shell that synced it, so a
-scheduled `akm improve` covers that bundle (or `defaultWriteTarget`, when set)
+scheduled `akm improve` covers that bundle
 and leaves your other bundles alone, even the writable ones. To improve
 another bundle on a schedule, give it a task of its own; the `--bundle` inside
 the command is `akm improve`'s own:

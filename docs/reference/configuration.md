@@ -19,8 +19,7 @@ current shape anyway — nothing is rewritten on disk. The next config write
 `"0.9.0"`, which silences the note. When a newer akm wrote the shared
 config, `akm health`'s `binary-config-skew` advisory is what says so. Pre-0.9
 config and database layouts are not runtime inputs. Historical task sources
-are handled by the standalone `akm-migrate` executable, also invoked by `akm
-migrate` / `akm upgrade`; ordinary runtime code reads only the current shape.
+are handled by `akm migrate` (which `akm upgrade` also runs); ordinary runtime code reads only the current shape.
 
 ```jsonc
 {
@@ -913,24 +912,13 @@ use): `AKM_BUNDLE_DIR`, when set; else the path of `defaultBundle`; else the
 platform default (`~/akm`, or `Documents\akm` on Windows) if it exists; else
 `akm` stops with a `ConfigError`. A matching project's `write.bundle` and a
 command's `--bundle` choose a write destination on top of this (the write-target
-order is under [defaultWriteTarget](#defaultwritetarget)).
+order is `--bundle`, then the working bundle).
 
 Each physical content root has one bundle id. Duplicate paths and symbolic-link
 aliases are rejected because source ownership, scheduler authority, and default
 selection must not depend on which spelling a caller used. If an older config
 contains aliases, choose the id whose durable refs should survive and remove
 the other entry before running ordinary commands.
-
-### defaultWriteTarget
-
-`defaultWriteTarget` names the bundle that write commands (`akm remember`,
-`akm import`, `akm env create`, `akm secret set`, `akm improve`, etc.) fall
-back to when no explicit destination flag is given and the command isn't
-already scoped to a specific source. It must name a configured bundle; setting it with no
-`bundles` configured, or naming an unconfigured bundle, is rejected at
-`config set` (or config load) time. The full write-target resolution order
-is the command's destination flag (`--bundle`) -> `defaultWriteTarget` ->
-working bundle (`defaultBundle`) -> `ConfigError`.
 
 ### Improve housekeeping
 
@@ -988,7 +976,7 @@ what akm reads and writes there:
   `--from`, `--filter` and `--prefer` (a value or a list; an empty string matches assets
   without the key).
 - `write`: `bundle` (a default for `remember` and `proposal new`, between `--bundle` and
-  `defaultWriteTarget`; an explicit `--bundle` or a `--supersedes` ref decides first), `user`,
+  the working bundle; an explicit `--bundle` or a `--supersedes` ref decides first), `user`,
   `agent`, `channel` (each fills a flag you left out) and `metadata` (frontmatter keys a write
   lacks; the body's own keys win, and akm's own keys win over both; keys akm sets itself, such
   as `description` or `tags`, are ignored with a warning). `proposal extract` uses `user`,

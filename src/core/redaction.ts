@@ -345,6 +345,39 @@ function identifierWords(identifier: string): string[] {
 }
 
 /**
+ * True when the config key `key` names a secret, judged by the words of the name (camelCase, `_` and `-` split it),
+ * never by substring: `api_keys`, `client_secret`, `access_token`, `Authorization` match; `monkey-small`,
+ * `prompt_cache_key`, `tokenizer` and `maxTokens` do not. A word ending in `token`, `secret`, `password`, `passwd` or
+ * `apikey` matches, so a glued `accesstoken` or `clientsecret` does. `key`/`keys` match only alone or after `api`,
+ * `access`, `private` or `auth`; `tokens` only when its value is not a number. The one definition for a key that holds
+ * a credential: the CLI's config output and the Workspace's config view both mask by it. (Free text and URLs have no
+ * typed value and a different vocabulary, so {@link isCredentialLikeKeyName} and the query-parameter rule stay apart.)
+ */
+export function isSecretKey(key: string, value: unknown): boolean {
+  const words = identifierWords(key);
+  return words.some((word, index) => {
+    if (SECRET_KEY_WORDS.has(word) || SECRET_WORD_ENDING.test(word)) return true;
+    if (word === "tokens") return typeof value !== "number";
+    if (word === "key" || word === "keys") {
+      return words.length === 1 || ["api", "access", "private", "auth"].includes(words[index - 1] ?? "");
+    }
+    return false;
+  });
+}
+
+const SECRET_WORD_ENDING = /(token|secret|password|passwd|apikey)$/;
+const SECRET_KEY_WORDS = new Set([
+  "secrets",
+  "authorization",
+  "bearer",
+  "credential",
+  "credentials",
+  "privatekey",
+  "accesskey",
+  "secretkey",
+]);
+
+/**
  * True when `identifier` names a credential by shape: a whole word from
  * {@link CREDENTIAL_KEY_WORDS}, or `api[_-]?key` / `private[_-]?key` in any
  * of their glued, snake_case, kebab-case or camelCase spellings.

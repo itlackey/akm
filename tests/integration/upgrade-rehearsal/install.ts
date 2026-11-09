@@ -25,7 +25,6 @@ const PACKAGE_NAME = "akm-cli";
 export interface InstalledAkm {
   readonly prefix: string;
   readonly launcher: string;
-  readonly migrateLauncher: string;
   readonly version: string;
 }
 
@@ -47,7 +46,6 @@ export async function installAkmTarball(
   return {
     prefix,
     launcher: verified.launchers.akm,
-    migrateLauncher: verified.launchers["akm-migrate"],
     version: verified.version,
   };
 }

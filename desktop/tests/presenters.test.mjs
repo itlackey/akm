@@ -28,12 +28,12 @@ test("activity/settings presentation keeps measured zero separate from missing o
     configurationChanges(
       [
         { key: "search.defaultExcludeTypes", label: "Hide", kind: "list" },
-        { key: "defaultWriteTarget", label: "Target" },
+        { key: "defaultBundle", label: "Bundle" },
       ],
-      { "search.defaultExcludeTypes": "", defaultWriteTarget: "personal" },
-      { "search.defaultExcludeTypes": "memory, script", defaultWriteTarget: "" },
+      { "search.defaultExcludeTypes": "", defaultBundle: "personal" },
+      { "search.defaultExcludeTypes": "memory, script", defaultBundle: "" },
     ),
-    { set: { "search.defaultExcludeTypes": '["memory","script"]' }, unset: ["defaultWriteTarget"] },
+    { set: { "search.defaultExcludeTypes": '["memory","script"]' }, unset: ["defaultBundle"] },
   );
 });
 

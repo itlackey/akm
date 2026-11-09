@@ -25,7 +25,6 @@ beforeEach(async () => {
     semanticSearchMode: "off",
     bundles: { stash: { path: storage.stashDir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     registries: [],
   });
   fs.mkdirSync(path.dirname(note()), { recursive: true });

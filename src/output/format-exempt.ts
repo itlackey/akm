@@ -37,9 +37,8 @@ const EXEMPT_COMMANDS: ReadonlySet<string> = new Set([
   // progress-event lines the child prints during a real `apply` still print
   // verbatim ahead of the formatted result — those are operational logging,
   // not part of the result envelope, the same way a progress spinner would be.
-  // Document payload group: bare `help` prints the sectioned overview and
-  // `help migrate <version>` prints release notes — neither renders a result
-  // envelope.
+  // Document payload group: `help` prints the sectioned overview or a
+  // command's usage — neither renders a result envelope.
   "help",
   // Embedded agent guide document (`src/output/cli-hints.ts`).
   "hints",
