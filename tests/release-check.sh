@@ -147,8 +147,9 @@ verify_model_surface() {
 
 # Release acceptance for the packaged artifact. Lint, typecheck, the unit and
 # integration suites and the upgrade rehearsal run in CI, and the
-# native-scheduler gates in Gated CI, on the same commit; release.yml requires
-# both before it publishes.
+# native-scheduler gates in Gated CI, on the commit that ships: on the release
+# pull request for a stable release, as the Release workflow's own jobs for a
+# prerelease.
 run_step "Workflow Syntax" validate_workflow_syntax
 run_step "Build Package" bun run build
 run_step \

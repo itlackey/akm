@@ -1,7 +1,7 @@
 # akm — Agent Knowledge Manager
 
 [![npm version](https://img.shields.io/npm/v/akm-cli)](https://www.npmjs.com/package/akm-cli)
-[![CI](https://github.com/itlackey/akm/actions/workflows/ci.yml/badge.svg)](https://github.com/itlackey/akm/actions/workflows/ci.yml)
+[![Release](https://github.com/itlackey/akm/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/itlackey/akm/actions/workflows/release.yml)
 [![license](https://img.shields.io/npm/l/akm-cli)](LICENSE)
 
 **Give every coding agent the capabilities your team has already built.**

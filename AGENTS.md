@@ -39,6 +39,9 @@ The failure to avoid is treating something other than the user's stated intent a
 - Before committing: `bun run lint:fix`, `bunx tsc --noEmit`, the focused tests (`bun test tests/<file>.test.ts`), `bun run check:changed`. CI runs `bun run check`.
 - Run the working tree as `bun src/cli.ts …`. A bare `akm` is the installed copy, using the real config and bundles.
 
+## Branches
+- Pull requests target the default branch, the open `release/<cut date>` branch, never `main`. Only a release branch merges to `main`, and that merge is a release: `docs/maintainers/release-checklist.md`.
+
 ## Where the details live
 - Contributing, code style, lint and commit rules, and known gotchas: `.github/CONTRIBUTING.md`.
 - How code here is written (guards, one place per policy, formats, comments, harnesses): `docs/architecture/akm-core-principles.md`.
