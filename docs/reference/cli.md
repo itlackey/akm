@@ -2404,11 +2404,10 @@ prints the same sectioned overview as `akm --help` and exits
 ### hints
 
 Print the agent-facing CLI guide. Add this output to your `AGENTS.md`,
-`CLAUDE.md`, or system prompt so your agent knows how to use the CLI. The
-short guide is the default; use `--detail full` for the complete version.
+`CLAUDE.md`, or system prompt so your agent knows how to use the CLI. For
+detail on one command, use `akm help <command>`.
 ```sh
 akm hints
-akm hints --detail full
 ```
 
 ### env vs secret — which do I use?
