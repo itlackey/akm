@@ -18,6 +18,7 @@ interface MigrationPlanResult {
     changed: number;
     skipped: number;
     refs: number;
+    stateRows?: number;
     shadowed?: { bundleId: string; from: string; to: string }[];
   };
 }
@@ -52,7 +53,7 @@ export function formatMigratePlain(result: unknown): string | null {
   if (plan.assetContentRefs) {
     const refs = plan.assetContentRefs;
     lines.push(
-      `    asset content refs: ${refs.refs} in ${refs.changed} file(s) change, ${refs.skipped} skipped, ${refs.shadowed?.length ?? 0} shadowed`,
+      `    asset content refs: ${refs.refs} in ${refs.changed} file(s) change, ${refs.skipped} skipped, ${refs.shadowed?.length ?? 0} shadowed, ${refs.stateRows ?? 0} history row(s) re-keyed`,
     );
   }
 

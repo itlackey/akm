@@ -104,7 +104,7 @@ for (const origin of ["previous", "0.9.32"] as const) {
     let candidateVersion: string;
     let home: UpgradeHome;
     /** `migrate apply`'s plan, from test 3. */
-    let applied: { assetEngineKeys?: { notes?: string[] } };
+    let applied: { assetEngineKeys?: { notes?: string[] }; assetContentRefs?: { stateRows?: number } };
 
     beforeAll(async () => {
       workRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-upgrade-rehearsal-"));
@@ -240,6 +240,10 @@ for (const origin of ["previous", "0.9.32"] as const) {
       applied = JSON.parse(apply.stdout) as typeof applied & {
         scheduler?: { entry?: string; removedLegacy?: string[]; keptLegacy?: unknown[] };
       };
+
+      // The feedback the previous release recorded under the loose file's old spelling (`knowledge/reports/<name>`)
+      // is re-keyed by this step, not by the index.
+      expect(applied.assetContentRefs?.stateRows).toBeGreaterThanOrEqual(1);
 
       // `migrate apply` also runs `task sync`: the one entry replaces every row of the previous release, in the
       // crontab write that installs it, so nothing fires twice.

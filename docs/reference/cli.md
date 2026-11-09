@@ -2296,7 +2296,8 @@ converts none (one that is not enabled is a `legacyTaskWarnings` line). The step
    in frontmatter and body: `[bundle//]<folder>/<path>[.md]`, `<type>:<path>`
    and `wiki:<path>`, rewritten (`assetContentRefs`) under one backup directory
    per run. An old spelling that is now another file's ref is not rewritten
-   and is listed in `assetContentRefs.shadowed`;
+   and is listed in `assetContentRefs.shadowed`. The same step re-keys the
+   `state.db` history stored under an old spelling (`assetContentRefs.stateRows`);
 5. the OS scheduler (`scheduler`): akm 0.10 keeps one entry that runs `akm task
    dispatch`, and `apply` replaces akm 0.9's per-task rows with it in one
    write, as `akm task sync` does. It runs `crontab`, `launchctl` or
