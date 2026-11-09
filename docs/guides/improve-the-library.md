@@ -157,7 +157,7 @@ akm config set experimental.improveAutonomy true
 
 With the key off (the default), memory inference is skipped, memory cleanup is
 analyzed but not applied, and a judged promote is downgraded to `queue`; each downgrade is reported on
-stderr and by `akm task doctor`. `akm proposal drain --promote` is a
+stderr and by `akm info` (`improveAutonomy`). `akm proposal drain --promote` is a
 separate, explicit way to accept judged proposals and does not need the key.
 
 Some writes happen either way: session summaries under `sessions/**`, the purge

@@ -205,19 +205,18 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
       expect(run.code, run.stderr).toBe(0);
       expect(JSON.parse(run.stdout).result).toMatchObject({ id: taskId, status: "completed" });
 
-      const history = await runCliCapture(["task", "history", "--id", `scheduled//${taskId}`]);
+      const history = await runCliCapture(["task", "history", `scheduled//${taskId}`]);
       expect(history.code, history.stderr).toBe(0);
       expect(JSON.parse(history.stdout).rows[0]).toMatchObject({ id: taskId, status: "completed" });
 
-      // #911: a positional id means the same as --id instead of being
-      // silently discarded (which answered with every task's newest rows).
+      // #911: the positional id filters (it was once silently discarded); `--id` no longer exists.
       const positional = await runCliCapture(["task", "history", `scheduled//${taskId}`, "--limit", "1"]);
       expect(positional.code, positional.stderr).toBe(0);
       expect(JSON.parse(positional.stdout).rows).toEqual(JSON.parse(history.stdout).rows.slice(0, 1));
 
-      const conflict = await runCliCapture(["task", "history", "other-task", "--id", `scheduled//${taskId}`]);
-      expect(conflict.code).toBe(2);
-      expect(`${conflict.stdout}${conflict.stderr}`).toContain("two task ids");
+      const removed = await runCliCapture(["task", "history", "--id", `scheduled//${taskId}`]);
+      expect(removed.code).toBe(2);
+      expect(`${removed.stdout}${removed.stderr}`).toContain("--id");
     } finally {
       storage.cleanup();
     }
@@ -251,7 +250,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
       expect(run.code, run.stderr).toBe(0);
       expect(JSON.parse(run.stdout).result).toMatchObject({ id: taskId, status: "completed" });
 
-      const history = await runCliCapture(["task", "history", "--id", `scheduled//${taskId}`]);
+      const history = await runCliCapture(["task", "history", `scheduled//${taskId}`]);
       expect(history.code, history.stderr).toBe(0);
       expect(JSON.parse(history.stdout).rows[0]).toMatchObject({ id: taskId, status: "completed" });
     } finally {
@@ -291,7 +290,7 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
       expect(run.code, run.stderr).toBe(0);
       expect(JSON.parse(run.stdout).result).toMatchObject({ id: taskId, status: "completed" });
 
-      const history = await runCliCapture(["task", "history", "--id", `scheduled//${taskId}`]);
+      const history = await runCliCapture(["task", "history", `scheduled//${taskId}`]);
       expect(history.code, history.stderr).toBe(0);
       expect(JSON.parse(history.stdout).rows[0]).toMatchObject({ id: taskId, status: "completed" });
     } finally {

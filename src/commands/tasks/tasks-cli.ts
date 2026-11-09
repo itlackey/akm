@@ -38,7 +38,6 @@ import {
   runWithJsonErrors,
 } from "../../cli/shared";
 import { UsageError } from "../../core/errors";
-import { warn } from "../../core/warn";
 import type { InputFlag } from "../../execution/input-contract";
 import { dispatchDueTasks } from "../../tasks/dispatch";
 import { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS } from "../../tasks/task-run-reserved-flags";
@@ -49,10 +48,8 @@ import {
   akmTasksDoctor,
   akmTasksEnable,
   akmTasksHistory,
-  akmTasksPrune,
   akmTasksRun,
   akmTasksSync,
-  akmTasksSyncPlan,
 } from "./tasks";
 
 /** Shared `--bundle <bundle>` arg wired onto every task subcommand. */
@@ -217,11 +214,6 @@ const tasksAddCommand = defineJsonCommand({
     tags: { type: "string", description: "Comma-separated tags" },
     disabled: { type: "boolean", description: "Register but leave disabled: dispatch will not run it", default: false },
     force: { type: "boolean", description: "Overwrite an existing task with the same id", default: false },
-    rebind: {
-      type: "boolean",
-      description: "Ignored: `add` leaves the entry's launcher alone; use `akm task sync --rebind`",
-      default: false,
-    },
   },
   async run({ args }) {
     const result = await akmTasksAdd({
@@ -245,7 +237,6 @@ const tasksAddCommand = defineJsonCommand({
         : undefined,
       disabled: args.disabled === true,
       force: args.force === true,
-      rebind: args.rebind === true,
     });
     output("task-add", result);
   },
@@ -320,54 +311,19 @@ const tasksDisableCommand = defineJsonCommand({
   },
 });
 
-/**
- * #911: `task run <id>` and `task explain <ref>` take the id positionally, so
- * `task history <id>` is the natural thing to write — and it used to be
- * accepted and silently discarded, answering with every task's newest rows.
- * A positional id now means the same as `--id`; giving both with different
- * values is a usage error rather than a silent pick.
- */
-export function resolveTaskHistoryId(positional: string | undefined, flag: string | undefined): string | undefined {
-  if (positional !== undefined && flag !== undefined && positional !== flag) {
-    throw new UsageError(
-      `\`akm task history\` was given two task ids: "${positional}" and --id "${flag}". Pass one.`,
-      "INVALID_FLAG_VALUE",
-    );
-  }
-  return flag ?? positional;
-}
-
 const tasksHistoryCommand = defineJsonCommand({
   meta: { name: "history", description: "Show recent task run history" },
   args: {
-    task: { type: "positional", description: "Task id to filter to (same as --id)", required: false },
-    id: { type: "string", description: "Filter to one task id" },
+    task: { type: "positional", description: "Task id to filter to", required: false },
     limit: { type: "string", description: "Maximum rows to return (default 50)" },
     ...bundleArg,
   },
   async run({ args }) {
     const limit = parsePositiveIntFlag(args.limit ?? undefined);
-    const id = resolveTaskHistoryId(args.task, args.id);
-    const result = await akmTasksHistory({ id, limit, target: args.bundle });
+    const result = await akmTasksHistory({ id: args.task, limit, target: args.bundle });
     output("task-history", result);
   },
 });
-
-/**
- * #849: `task sync --dry-run`'s exit-code contract, "non-zero when the plan
- * contains removals" — factored out as a pure function (rather than left
- * inline in the command's `run()`) so it's directly unit-testable without
- * driving the whole CLI through a real scheduler backend. #867: also
- * non-zero when any source failed to parse/prepare — sync degrades (still
- * reconciles the tasks/workflows that DID parse) rather than rejecting the
- * whole set, but a dropped source must still surface as a failing exit.
- */
-export function taskSyncDryRunExitCode(preview: {
-  hasRemovals: boolean;
-  failures?: readonly unknown[];
-}): number | undefined {
-  return preview.hasRemovals || (preview.failures?.length ?? 0) > 0 ? EXIT_CODES.GENERAL : undefined;
-}
 
 const tasksSyncCommand = defineJsonCommand({
   meta: {
@@ -377,31 +333,14 @@ const tasksSyncCommand = defineJsonCommand({
       "and remove akm 0.9's per-task scheduler rows",
   },
   args: {
-    bundle: {
-      type: "string",
-      description: "Ignored: the one entry serves every bundle",
-    },
     rebind: {
       type: "boolean",
       description: "Point the installed entry at this akm invocation and PATH instead of keeping them",
       default: false,
     },
-    "dry-run": {
-      type: "boolean",
-      description:
-        "Print what sync would do without touching the OS scheduler; exits non-zero if it would remove anything",
-      default: false,
-    },
   },
   async run({ args }) {
-    const rebind = args.rebind === true;
-    if (args.bundle !== undefined) warn("`task sync --bundle` is ignored: one scheduler entry serves every bundle.");
-    if (args["dry-run"] === true) {
-      const preview = await akmTasksSyncPlan({}, { rebind });
-      outputWithExitCode("task-sync-dry-run", preview, taskSyncDryRunExitCode(preview));
-      return;
-    }
-    output("task-sync", await akmTasksSync({}, { rebind }));
+    output("task-sync", await akmTasksSync({}, { rebind: args.rebind === true }));
   },
 });
 
@@ -467,48 +406,6 @@ const tasksDoctorCommand = defineJsonCommand({
   },
 });
 
-/**
- * #851: `akm task prune`'s exit-code contract mirrors `task sync --dry-run`'s
- * (`taskSyncDryRunExitCode` above) — non-zero whenever the preview lists
- * removals the invocation didn't (or couldn't, without `--yes`) execute, so
- * `akm task prune` is usable as a CI/health check the same way `sync
- * --dry-run` is.
- */
-export function taskPruneExitCode(result: { dryRun: boolean; preview: { hasRemovals: boolean } }): number | undefined {
-  return result.dryRun && result.preview.hasRemovals ? EXIT_CODES.GENERAL : undefined;
-}
-
-const tasksPruneCommand = defineJsonCommand({
-  meta: {
-    name: "prune",
-    description:
-      "Remove akm 0.9 per-task scheduler rows that `sync` left because they name a bundle directory that is gone. " +
-      "Defaults to a dry-run preview — zero scheduler writes. Requires --yes to remove anything; " +
-      "--id narrows removal to specific row ids (comma-separated).",
-  },
-  args: {
-    yes: {
-      type: "boolean",
-      description: "Execute removal of every currently-computed orphan (the plan is still printed first)",
-      default: false,
-    },
-    id: {
-      type: "string",
-      description: "Comma-separated scheduler row id(s) to limit pruning to (must already be orphan candidates)",
-    },
-  },
-  async run({ args }) {
-    const id = args.id
-      ? args.id
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean)
-      : undefined;
-    const result = await akmTasksPrune({}, { yes: args.yes === true, id });
-    outputWithExitCode("task-prune", result, taskPruneExitCode(result));
-  },
-});
-
 export const taskCommand = defineGroupCommand({
   meta: {
     name: "task",
@@ -527,7 +424,6 @@ export const taskCommand = defineGroupCommand({
     explain: tasksExplainCommand,
     history: tasksHistoryCommand,
     sync: tasksSyncCommand,
-    prune: tasksPruneCommand,
     doctor: tasksDoctorCommand,
   },
   // Bare `akm task` reports scheduler diagnostics. Deeper inspection of

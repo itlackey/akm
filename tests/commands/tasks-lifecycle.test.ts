@@ -93,20 +93,6 @@ describe("task lifecycle", () => {
     });
   });
 
-  test("add ignores --rebind with a warning: it no longer touches the OS scheduler", async () => {
-    const warnings: string[] = [];
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-    try {
-      await akmTasksAdd({ id: "rebound", schedule: "@daily", command: "echo x", rebind: true });
-    } finally {
-      _setWarnSinkForTests(undefined);
-      _resetWarnOnceForTests();
-    }
-    expect(warnings.some((line) => line.includes("--rebind") && line.includes("task sync --rebind"))).toBe(true);
-  });
-
   test("add validates the schedule with the one cron grammar", async () => {
     await expect(akmTasksAdd({ id: "bad", schedule: "0 25 * * *", command: "echo x" })).rejects.toMatchObject({
       code: "INVALID_FLAG_VALUE",

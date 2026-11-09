@@ -153,7 +153,6 @@ covers beyond the table.
 | `akm task run` | Evolving | |
 | `akm task history` | Evolving | |
 | `akm task sync` | Evolving | |
-| `akm task prune` | Evolving | |
 | `akm task doctor` | Evolving | |
 | `akm task explain` | Evolving | New in 0.9.2; secret-shaped values in provenance output are redacted on a best-effort heuristic basis (not a guarantee). |
 
@@ -439,9 +438,9 @@ read as off. Without the opt-in, these three lanes are downgraded (the triage la
 judgment tier is on), and each downgrade is **reported,
 not silent**: it warns on stderr naming the lane and the key, appends an
 `improve_skipped` event with `reason: "autonomy_gated"`, is counted in
-`akm health`'s improve skip-reason summary, and is listed by `akm task doctor`
+`akm health`'s improve skip-reason summary, and is listed by `akm info`
 under `improveAutonomy.gatedLanes` — which is where to look when a *scheduled*
-run stops doing something it used to. `akm task doctor` also reports the
+run stops doing something it used to. `akm info` also reports the
 **effective** `improveTriage.applyMode`, so a `promote` strategy under a
 review-first config correctly shows `queue`.
 

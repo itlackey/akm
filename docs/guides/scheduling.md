@@ -150,7 +150,7 @@ so nothing fires twice: `akm migrate apply` (which `akm upgrade` runs) does it,
 and so does `akm task sync`. The old rows keep working until then — they run
 `akm task run <id> --scheduled`, which still exists. A row that names another
 installation's directories (a sandbox's `AKM_BUNDLE_DIR` or `AKM_STATE_DIR`) is
-left where it is and reported; `akm task prune` removes such rows once their
+left where it is and reported; remove it from the OS scheduler by hand once its
 bundle directory is gone.
 
 ## Migrating or repairing the entry (`--rebind`)

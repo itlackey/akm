@@ -415,7 +415,7 @@ describe("akm task run — end to end (B-26, §0: a valid flag set is byte-ident
     const flaggedEnvelope = JSON.parse(flagged.stdout) as { result: Record<string, unknown> };
     expect(stableResult(flaggedEnvelope.result)).toEqual(stableResult(bareEnvelope.result));
 
-    const history = await runCliCapture(["task", "history", "--id", "review", "--limit", "2"]);
+    const history = await runCliCapture(["task", "history", "review", "--limit", "2"]);
     const rows = (JSON.parse(history.stdout) as { rows: Record<string, unknown>[] }).rows;
     expect(rows).toHaveLength(2);
     expect(stableResult(rows[0] as Record<string, unknown>)).toEqual(stableResult(rows[1] as Record<string, unknown>));

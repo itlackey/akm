@@ -3,24 +3,17 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * D8 — `akm task doctor` reports the autonomy gate.
+ * D8: `akm info` reports the autonomy gate (it moved here from `akm task doctor`).
  *
- * `tasks doctor` is where an operator checks what a scheduled `akm improve` will
- * actually do. Two requirements follow from that:
- *
- *  1. It must list the lanes the gate is suppressing.
- *  2. Its existing `improveTriage.applyMode` must report the EFFECTIVE mode, not
- *     the strategy's raw value. It resolved the raw strategy before D8, so a
- *     `promote` strategy under a review-first config would have reported
- *     "promote" while the run used "queue" — a doctor command lying about the
- *     thing it exists to diagnose.
+ * `info` is where an operator checks what a scheduled `akm improve` will actually do. It must list the lanes the gate
+ * is suppressing, and `improveTriage.applyMode` must report the EFFECTIVE mode, not the strategy's raw value: a
+ * `promote` strategy under a review-first config would otherwise say "promote" while the run used "queue".
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { akmTasksDoctor } from "../src/commands/tasks/tasks";
+import { assembleInfo } from "../src/commands/sources/info";
 import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { IMPROVE_AUTONOMY_CONFIG_KEY } from "../src/core/config/experimental";
-import { getTaskLogDir } from "../src/core/paths";
 import {
   type Cleanup,
   sandboxStashDir,
@@ -51,12 +44,12 @@ const PROMOTING = {
   },
 };
 
-describe("tasks doctor autonomy reporting", () => {
-  test("reports autonomy off and names the gated lanes and the config key", async () => {
+describe("info reports the improve autonomy gate", () => {
+  test("reports autonomy off and names the gated lanes and the config key", () => {
     saveConfig({ semanticSearchMode: "off", improve: { strategy: "consolidate" } });
     resetConfigCache();
 
-    const result = await akmTasksDoctor();
+    const result = assembleInfo();
 
     expect(result.improveAutonomy?.enabled).toBe(false);
     expect(result.improveAutonomy?.configKey).toBe(IMPROVE_AUTONOMY_CONFIG_KEY);
@@ -64,17 +57,7 @@ describe("tasks doctor autonomy reporting", () => {
     expect(result.improveAutonomy?.gatedLanes.every((lane) => lane.reason.length > 0)).toBe(true);
   });
 
-  test("reports the task log directory and no history directory (run history lives in state.db)", async () => {
-    saveConfig({ semanticSearchMode: "off" });
-    resetConfigCache();
-
-    const result = await akmTasksDoctor();
-
-    expect(result.logDir).toBe(getTaskLogDir());
-    expect(result).not.toHaveProperty("historyDir");
-  });
-
-  test("does not report advisory consolidation operations as gated writers", async () => {
+  test("does not report advisory consolidation operations as gated writers", () => {
     saveConfig({
       semanticSearchMode: "off",
       improve: {
@@ -97,12 +80,12 @@ describe("tasks doctor autonomy reporting", () => {
     });
     resetConfigCache();
 
-    const result = await akmTasksDoctor();
+    const result = assembleInfo();
 
     expect(result.improveAutonomy?.gatedLanes.map((lane) => lane.lane)).toEqual(["memoryCleanup"]);
   });
 
-  test("reports autonomy on with no gated lanes", async () => {
+  test("reports autonomy on with no gated lanes", () => {
     saveConfig({
       semanticSearchMode: "off",
       improve: { strategy: "consolidate" },
@@ -110,29 +93,29 @@ describe("tasks doctor autonomy reporting", () => {
     });
     resetConfigCache();
 
-    const result = await akmTasksDoctor();
+    const result = assembleInfo();
 
     expect(result.improveAutonomy?.enabled).toBe(true);
     expect(result.improveAutonomy?.gatedLanes).toEqual([]);
   });
 
-  test("improveTriage.applyMode reports the effective mode, not the strategy's raw value", async () => {
+  test("improveTriage.applyMode reports the effective mode, not the strategy's raw value", () => {
     // A strategy that enables triage in promote mode WITH judgment. With autonomy
-    // off the run uses queue, so doctor must say queue.
+    // off the run uses queue, so info must say queue.
     saveConfig({ semanticSearchMode: "off", improve: { ...PROMOTING, strategy: "promoting" } });
     resetConfigCache();
 
-    const result = await akmTasksDoctor();
+    const result = assembleInfo();
 
     expect(result.improveTriage?.applyMode).toBe("queue");
     expect(result.improveAutonomy?.gatedLanes.map((lane) => lane.lane)).toContain("triagePromote");
   });
 
-  test("the default strategy reports deterministic promote with no triagePromote gate (#1143)", async () => {
+  test("the default strategy reports deterministic promote with no triagePromote gate (#1143)", () => {
     saveConfig({ semanticSearchMode: "off" });
     resetConfigCache();
 
-    const result = await akmTasksDoctor();
+    const result = assembleInfo();
 
     expect(result.improveTriage?.enabled).toBe(true);
     expect(result.improveTriage?.applyMode).toBe("promote");
@@ -140,7 +123,7 @@ describe("tasks doctor autonomy reporting", () => {
     expect(result.improveAutonomy?.gatedLanes.map((lane) => lane.lane)).toContain("memoryInference");
   });
 
-  test("improveTriage.applyMode reports promote once autonomy is opted into", async () => {
+  test("improveTriage.applyMode reports promote once autonomy is opted into", () => {
     saveConfig({
       semanticSearchMode: "off",
       improve: { ...PROMOTING, strategy: "promoting" },
@@ -148,30 +131,8 @@ describe("tasks doctor autonomy reporting", () => {
     });
     resetConfigCache();
 
-    const result = await akmTasksDoctor();
+    const result = assembleInfo();
 
     expect(result.improveTriage?.applyMode).toBe("promote");
-  });
-});
-
-describe("tasks doctor without a default bundle", () => {
-  beforeEach(() => {
-    delete process.env.AKM_BUNDLE_DIR;
-  });
-
-  test("succeeds when nothing is enabled", async () => {
-    saveConfig({ semanticSearchMode: "off" });
-    resetConfigCache();
-    const result = await akmTasksDoctor();
-    expect(result.warnings.filter((warning) => warning.includes("cannot run"))).toEqual([]);
-  });
-
-  test("succeeds and warns naming an enabled ref", async () => {
-    saveConfig({ semanticSearchMode: "off", scheduler: { enabled: ["stash//tasks/ok"] } });
-    resetConfigCache();
-    const result = await akmTasksDoctor();
-    expect(
-      result.warnings.some((warning) => warning.includes("stash//tasks/ok") && warning.includes("cannot run")),
-    ).toBe(true);
   });
 });

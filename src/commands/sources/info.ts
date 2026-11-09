@@ -7,6 +7,7 @@ import { placementTypes } from "../../core/asset/asset-placement";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { DEFAULT_CONFIG, getSources, loadConfig } from "../../core/config/config";
+import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError } from "../../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../../core/path-access";
 import { getCacheDir, getConfigDir, getDataDir, getDefaultStashDir, getStateDir } from "../../core/paths";
@@ -21,6 +22,8 @@ import { countLinksByKind } from "../../storage/repositories/index-links-reposit
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { isSqliteContentionError } from "../../storage/sqlite-transaction";
 import { pkgVersion } from "../../version";
+import { applyAutonomyGate, configuredDirectAutonomyLanes, describeGatedLanes } from "../improve/autonomy-gate";
+import { resolveImproveStrategy } from "../improve/improve-strategies";
 import { type TargetRow, targetRows } from "../targets";
 
 /**
@@ -164,6 +167,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     registries,
     connectionsAndHarnesses: safeTargets(config),
     learning: safeLearning(config),
+    ...safeImproveGate(config),
     sourceProviders,
     indexStats,
   };
@@ -184,6 +188,42 @@ function safeLearning(config: AkmConfig): InfoResponse["learning"] {
     return learningStatus(config);
   } catch {
     return { on: false, harness: null, scheduled: false };
+  }
+}
+
+/**
+ * What the default improve strategy will actually do on this config. A scheduled run that quietly stopped
+ * consolidating is the silent no-op the autonomy gate exists to prevent, and this is where an operator looks for why.
+ * Reports the EFFECTIVE strategy (after the gate), not the raw one: the raw one would say `applyMode: "promote"` for a
+ * promote strategy under a review-first config while the run uses "queue". Nothing when it cannot be read: `akm info`
+ * never throws.
+ */
+function safeImproveGate(
+  config: AkmConfig,
+): Pick<InfoResponse, "improveAutonomy" | "improveTriage"> | Record<string, never> {
+  try {
+    const rawStrategy = resolveImproveStrategy(config.improve?.strategy, config).config;
+    const { config: effectiveStrategy, gated } = applyAutonomyGate(rawStrategy, config);
+    const enabled = isImproveAutonomyEnabled(config);
+    // Memory cleanup has no strategy flag to downgrade, so add that direct lane to the strategy-derived report.
+    const gatedLanes = (enabled ? [] : [...gated, ...describeGatedLanes(configuredDirectAutonomyLanes())]).map(
+      (entry) => ({ lane: entry.lane as string, reason: entry.reason }),
+    );
+    const triage = effectiveStrategy.processes?.triage;
+    return {
+      improveAutonomy: { enabled, configKey: IMPROVE_AUTONOMY_CONFIG_KEY, gatedLanes },
+      ...(triage
+        ? {
+            improveTriage: {
+              defaultStrategy: config.improve?.strategy ?? "default",
+              enabled: triage.enabled === true,
+              applyMode: triage.applyMode ?? "queue",
+            },
+          }
+        : {}),
+    };
+  } catch {
+    return {};
   }
 }
 

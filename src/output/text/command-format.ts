@@ -74,6 +74,14 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
       `learning: ${learning.on ? "on" : "off"}${typeof learning.harness === "string" ? ` (harness: ${learning.harness})` : ""}, improve task ${learning.scheduled ? "scheduled" : "not scheduled"}`,
     );
   }
+  const autonomy = r.improveAutonomy as { enabled?: boolean; configKey?: string; gatedLanes?: unknown[] } | undefined;
+  if (autonomy) {
+    lines.push(
+      `improveAutonomy: ${autonomy.enabled ? "on" : `off (${autonomy.gatedLanes?.length ?? 0} gated lanes; set ${String(autonomy.configKey)})`}`,
+    );
+  }
+  const triage = r.improveTriage as { enabled?: boolean; applyMode?: string } | undefined;
+  if (triage) lines.push(`improveTriage: ${triage.enabled ? "on" : "off"}, applyMode ${String(triage.applyMode)}`);
   const indexStats = r.indexStats as Record<string, unknown> | undefined;
   if (indexStats) {
     lines.push("indexStats:");
