@@ -172,14 +172,10 @@ const MIGRATIONS: Migration[] = [
         hist_json  TEXT NOT NULL,
         PRIMARY KEY (day, kind, source)
       );
-    `,
-  },
-  {
-    id: "002-improve-skip-daily",
-    // `akm health` counts skips from improve_skipped events: one per occurrence (summed), and, for a
-    // reason that carries a `count`, the latest run's snapshot. A day keeps both, so a window can be
-    // rebuilt the same way: sums add up, the latest day's snapshot wins.
-    up: `
+
+      -- akm health counts skips from improve_skipped events: one per occurrence (summed), and, for a
+      -- reason that carries a count, the latest run's snapshot. A day keeps both, so a window can be
+      -- rebuilt the same way: sums add up, the latest day's snapshot wins.
       CREATE TABLE improve_skip_daily (
         day       TEXT NOT NULL,
         reason    TEXT NOT NULL,
