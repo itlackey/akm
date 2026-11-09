@@ -22,6 +22,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- `akm improve judge`: it duplicated `akm judge reflect.quality` (same judge, older input and output shape) and failed on empty stdin with a raw parse error, exit 70. Use `akm judge reflect.quality`. `akm improve report` stays.
+- `akm lint --auto-fix` (a second spelling of `--fix`) and `akm migrate apply --dry-run` (it printed exactly what `akm migrate status` prints); both now fail as unknown flags.
+- The `AKM_AGENT_HARNESS`, `AKM_SESSION_ID` and `AKM_CLAUDE_PLUGINS_DIR` environment variables. The agent harness and session id of a workflow run come from the harness's own session variables; Claude's plugin folder is read from `CLAUDE_CODE_PLUGIN_CACHE_DIR`.
 - In-place upgrades of an `index.db` below layout 26 (written before 0.9.17-alpha.9; the floor is 0.9.32). Opening one with a writing command deletes the file and rebuilds it from the sources, the way a corrupt index is recovered; the next `akm index` re-walks everything and re-embeds. It does not corrupt or crash, and readers report it unservable until then. The `vacuumPending` marker is gone with it (`akm index` still compacts a file that is more than half free pages). Leftover retired tables in a layout-26 index (`entries_vec`, `graph_*`) are no longer dropped; they are unread.
 - `akm help migrate` and the release notes the npm package bundled for it: `docs/migration` is no longer in the package's `files`. The notes stay in the repository, and `akm help <command>` still prints a command's usage. `akm migrate status` and `apply` are unchanged.
 - The `akm-migrate` bin of the npm package (`npx akm-migrate`, `akm-migrate` on `PATH`). Use `akm migrate status` / `akm migrate apply`. The `dist/scripts/akm-migrate{,-node}.js` files stay, because `akm upgrade` from 0.9.32 and from 0.10 looks for those exact paths.

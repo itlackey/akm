@@ -226,14 +226,20 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     const sourceSkillDir = safeRealpath(path.dirname(sourcePath));
     const destSkillDir = safeRealpath(path.join(destRoot, typeDir, destName));
     if (sourceSkillDir === destSkillDir) {
-      throw new Error(`Source and destination are the same path. Use --name to provide a new name for the clone.`);
+      throw new UsageError(
+        "Source and destination are the same path. Use --name to provide a new name for the clone.",
+        "INVALID_FLAG_VALUE",
+      );
     }
   } else {
     const resolvedSource = safeRealpath(sourcePath);
     const effectiveDestName = !path.extname(destFileName) && sourceExt ? destFileName + sourceExt : destFileName;
     const resolvedDest = safeRealpath(path.join(destRoot, typeDir, effectiveDestName));
     if (resolvedSource === resolvedDest) {
-      throw new Error(`Source and destination are the same path. Use --name to provide a new name for the clone.`);
+      throw new UsageError(
+        "Source and destination are the same path. Use --name to provide a new name for the clone.",
+        "INVALID_FLAG_VALUE",
+      );
     }
   }
 

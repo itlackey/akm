@@ -394,7 +394,7 @@ host-local config allow-list and sync. To remove one, delete the YAML and run
 `akm task sync` — the scheduler entry is unbound. Top-level
 `timeout:` may be `null` (disable the invocation timer) or a duration/number
 overriding the selected connection's or harness's timeout. Preview old task-v2/v3
-conversion with `akm migrate apply --dry-run`.
+conversion with `akm migrate status`.
 
 ## Agent Dispatch
 

@@ -23,7 +23,6 @@ Everything below is detail in service of those three lines.
 
 ```sh
 akm migrate status        # read-only: what would change
-akm migrate apply --dry-run
 akm migrate apply
 ```
 
@@ -121,7 +120,7 @@ same step names):
   everything it *can*, then reports `blocked` and exits non-zero.
 
 A pending `state.db` migration needs no human decision, so it is never
-`blocked`: under `akm migrate status` or `apply --dry-run` it reads as
+`blocked`: under `akm migrate status` it reads as
 `ready` (the run would change `state.db`) and is listed in
 `stateMigrations.pending`; a real `apply` always applies it.
 

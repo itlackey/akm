@@ -2320,7 +2320,6 @@ in order:
 
 ```sh
 akm migrate status
-akm migrate apply --dry-run
 akm migrate apply
 ```
 
@@ -2931,7 +2930,7 @@ akm lint --prune-dangling-edges # Opt-in: drop belief edges whose target is gone
 
 | Flag | Description |
 | --- | --- |
-| `--fix` (alias `--auto-fix`) | Apply auto-fixes in place. Refused with a usage error when the target bundle is configured `writable: false`. |
+| `--fix` | Apply auto-fixes in place. Refused with a usage error when the target bundle is configured `writable: false`. |
 | `--dir` | Override the bundle root directory (default: from config) |
 | `--type` | Only lint assets of this type (e.g. `workflows`, `tasks`, `memories`). **akm bundles only** — every other adapter validates the whole bundle and warns on stderr that the flag had no effect. |
 | `--fail-on-flagged` | Exit non-zero when `summary.flagged > 0`. Default: exit 0 regardless of findings. |
@@ -2969,7 +2968,6 @@ akm improve lessons/my-lesson --show-prompt --format text # print the composed r
 akm improve report                     # LLM usage/routing report for the most recent real run
 akm improve report --run <id>          # ...for one specific improve_runs id
 akm improve report --since 7d          # ...aggregated over every real run started in the last 7 days
-akm improve judge < revision.json      # reflect's quality judge on one revision (same as akm judge reflect.quality); writes nothing
 ```
 
 | Flag | Description |
@@ -3206,18 +3204,6 @@ that run's stored `llm_usage` events (`summarizeLlmUsageCrossTab`) instead of er
 (eligibility reasons are not reconstructable after the fact), and adds a
 `notes` entry saying so rather than fabricating precision the old row can't
 support.
-
-#### improve judge
-
-`akm improve judge` (a real subcommand; no flags) is `akm judge reflect.quality`
-for one revision, kept for callers that read its older shape. It reads
-`{"source": "...", "candidate": "...", "feedback": "...", "ref": "..."}` JSON from
-stdin (`feedback` and `ref` are optional; `ref` names the revised asset, which a
-judge on a harness may read), judges with the connection or harness
-`improve.qualityGate` names (the default when it names none), and prints `{ engine,
-pass, score, reason, criteria }`, where `engine` is the name of the connection or
-harness that judged. A `score` of `-1` means the judge gave no verdict. It writes
-nothing. Its `--strategy` flag is gone: a strategy never chose where a judge runs.
 
 ### judge
 
@@ -3906,7 +3892,7 @@ closed shell and working-directory contract. Task source v4 has no
 `akm:` options bag or `on:` trigger block — scheduling, resolver overrides,
 `timeout`, `maxSteps`, `maxRetries`, and redaction names are all top-level
 keys on the document itself. Normal execution rejects v2 and v3 and points to
-`akm migrate apply --dry-run` followed by `akm migrate apply`. See
+`akm migrate status` followed by `akm migrate apply`. See
 [Tasks](tasks.md#migrating-to-task-source-v4) for the complete grammar and
 fail-closed migration behavior.
 

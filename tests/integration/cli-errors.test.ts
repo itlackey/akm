@@ -239,7 +239,7 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     expect(parsed.code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
     expect(typeof parsed.error).toBe("string");
     expect(parsed.error).toContain("akm migrate apply");
-    expect(parsed.hint).toContain("akm migrate apply --dry-run");
+    expect(parsed.hint).toContain("akm migrate status");
   });
 
   test("akm workflow run of a workflow that composes itself emits {ok:false,code:COMPOSITION_INVALID} on stderr, exit 2", async () => {

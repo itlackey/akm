@@ -75,7 +75,7 @@ function fakeTags(tags: string[] | undefined): ListRemoteTagsFn {
  * A guaranteed-empty OpenCode cache root, so these Claude-plugin-only tests
  * never pick up a real `~/.cache/opencode` on the host running them — `os.
  * homedir()` under bun does not honor a sandboxed `HOME`, same reason
- * `claudePluginsDir()` needs `AKM_CLAUDE_PLUGINS_DIR`.
+ * `claudePluginsDir()` needs `CLAUDE_CODE_PLUGIN_CACHE_DIR`.
  */
 function noOpencode(pluginsRoot: string): string {
   return path.join(pluginsRoot, "no-opencode-cache");
