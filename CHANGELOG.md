@@ -6303,7 +6303,7 @@ install's cron schedule, not their worth.
   is what makes a resumed run whose upstream step output changed under a
   `{from: "steps.<id>.output"}` binding fail loudly as a replay divergence
   instead of silently reusing the completed unit's stale result.
-  See [Migrating from akm 0.9.1 to 0.9.2](docs/migration/v0.9.1-to-v0.9.2.md#workflow-cutover).
+  See Migrating from akm 0.9.1 to 0.9.2.
 - A workflow step that passes `with:` to a `tasks/<ref>` target whose task
   declares **no** `inputs:` (a `version: 4` task with no `inputs:` key at
   all) is now **rejected** (`UsageError` code
@@ -6481,7 +6481,7 @@ install's cron schedule, not their worth.
   `akm.enabled` flag — `akm task add --disabled` writes
   `schedule: [{cron: …, enabled: false}]` instead of a document-level
   `akm.enabled: false`. See
-  [Migrating task v3 to task source v4](docs/migration/v0.9.1-to-v0.9.2.md#migrating-task-v3-to-task-source-v4).
+  Migrating task v3 to task source v4.
 - **GitHub Action locators are no longer recognized anywhere.** A task's
   `uses: owner/repo[/path]@rev` is now a source error at parse
   (`TASK_SOURCE_INVALID`); a workflow step's `uses: owner/repo[/path]@rev`
@@ -6654,7 +6654,7 @@ install's cron schedule, not their worth.
   sources no longer parse" above) — `task-v4-status`/`task-v4-apply` remain
   as the standalone, single-generation entry points the frozen migrator
   always exposes. See the
-  [0.9.1 to 0.9.2 migration guide](docs/migration/v0.9.1-to-v0.9.2.md#migrating-task-v3-to-task-source-v4).
+  0.9.1 to 0.9.2 migration guide.
 
 ### Fixed
 
@@ -10610,7 +10610,7 @@ The 0.8 line is the clean-break window for CLI ergonomics. Every rename below
 keeps the **old spelling working** as a deprecated alias that prints a stderr
 warning (never on stdout, so JSON consumers are unaffected) and delegates to the
 canonical form. **All of these deprecated aliases are removed in 0.9.0.** See
-[`docs/migration/v0.8-to-v0.9.md`](docs/migration/v0.8-to-v0.9.md) for the full
+`docs/migration/v0.8-to-v0.9.md` for the full
 old → new table.
 
 - **Proposal queue is now a noun group**: `akm proposal {list,show,diff,accept,reject,revert}`.
@@ -10921,7 +10921,7 @@ See `docs/migration/v0.7-to-v0.8.md` for the user-facing migration guide.
 
 ### Migration
 
-- See [`docs/migration/release-notes/0.7.0.md`](docs/migration/release-notes/0.7.0.md) for the operator summary and the [archived pre-1.0 plan](https://github.com/itlackey/akm/blob/be3a6a632b0cbe7a63ce71b7d093d8ac266e857c/docs/archive/pre-1.0-migration.md) for the historical per-surface delta from any 0.6.x baseline.
+- See `docs/migration/release-notes/0.7.0.md` for the operator summary and the [archived pre-1.0 plan](https://github.com/itlackey/akm/blob/be3a6a632b0cbe7a63ce71b7d093d8ac266e857c/docs/archive/pre-1.0-migration.md) for the historical per-surface delta from any 0.6.x baseline.
 
 ## [0.6.0] - 2026-04-23
 
