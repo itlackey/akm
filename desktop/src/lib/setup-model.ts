@@ -180,8 +180,7 @@ export function learnPlan(detected: Detected, agents: string[], input: LearnInpu
       : undefined;
   const target = on && where !== "internal" ? where : null;
   const changed =
-    connection !== undefined ||
-    (!problem && (on !== runs || (on && target !== detected.learning.harness)));
+    connection !== undefined || (!problem && (on !== runs || (on && target !== detected.learning.harness)));
   // An on state is sent whenever setup applies, so a save also gives it its scheduled improve task. Wanted on with
   // nowhere to run, learning is not turned on; while it is off, setup keeps writing off, so that an agent
   // enabled in the same apply does not take akm's model calls.
