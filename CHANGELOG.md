@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `akm index --export-vectors <file>` and `akm index --import-vectors <file>` (#1507, Experimental) let a host with an empty index skip embedding. Export writes the current model's vectors to a small SQLite file (`model`, SHA-256 of the exact embedded text, vector; no document text or paths), reading the index only. Import runs the normal index and stores a vector from the file instead of embedding that entry when the model and text match; any other entry is embedded as usual. A missing, unreadable or foreign file, or one with nothing for the current model, warns and indexes normally; `--reembed` and semantic search off ignore the import with a warning.
+
 ## [0.10.261114] - 2026-11-08
 
 ### Added

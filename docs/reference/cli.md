@@ -254,6 +254,8 @@ akm index --verbose  # Print phase progress to stderr
 akm index --clean    # Normal index + remove stale entries from the DB
 akm index --clean --dry-run # Report stale entries without deleting
 akm index --reembed  # Discard stored vectors and re-embed every entry
+akm index --export-vectors vectors.db  # Experimental: write the current model's vectors to a file (reads the index only)
+akm index --import-vectors vectors.db  # Experimental: index, storing vectors from the file instead of embedding matching entries
 akm index --skip-if-locked  # for scheduled/opportunistic runs: skip (exit 0) if a run is already in progress
 ```
 
@@ -302,7 +304,26 @@ meantime.
 
 **`--reembed` flag:** Discards every stored vector and re-embeds all entries
 under the configured model. Run it after changing `embedding.maxInputTokens`:
-a cap change re-embeds nothing by itself.
+a cap change re-embeds nothing by itself. Run it before
+`--export-vectors` too: after a cap change, old vectors would otherwise be
+exported under the hash of the new, longer text.
+
+**`--export-vectors <file>` / `--import-vectors <file>` flags (Experimental):**
+`--export-vectors` writes the vectors of the configured embedding model to a
+standalone SQLite file with one table, `vectors(model, text_hash, embedding)`:
+`model` is the provider fingerprint, `text_hash` the SHA-256 hex of the exact
+text sent to the embedder (after `embedding.maxInputTokens` and the document
+template), `embedding` the float32 bytes. It reads the index only (no model
+calls, no source walk, no rebuild), writes a temporary file and renames it into
+place, and with no vectors writes an empty file with a warning. The file holds
+no document text and no paths. `--import-vectors` runs the normal index; in the
+embedding pass an entry whose current model and text hash are in the file is
+stored from it and never reaches the embedder, and any other entry is embedded
+as usual. A missing, unreadable or foreign file, or a
+file with nothing usable for the current model (a different model) warns and
+indexes normally; a single row of the wrong width is a silent miss. `--reembed` ignores the import (it regenerates every vector), and so
+does semantic search off; both warn. With both flags, the export runs and the
+import is ignored with a warning.
 
 **`--skip-if-locked` flag:** Every explicit `akm index` run acquires an
 opt-in, PID-liveness-only rebuild lock and releases it on exit — this is

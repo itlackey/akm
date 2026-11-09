@@ -392,6 +392,8 @@ export function formatInitPlain(r: Record<string, unknown>): string {
 }
 
 export function formatIndexPlain(r: Record<string, unknown>): string {
+  const exported = r.exported as { file?: string; vectors?: number } | undefined;
+  if (exported) return `Exported ${exported.vectors ?? 0} vectors to ${exported.file}`;
   const indexResult = r as Partial<IndexResponse>;
   let out = `Indexed ${indexResult.totalEntries ?? 0} entries from ${indexResult.directoriesScanned ?? 0} directories (mode: ${indexResult.mode ?? "unknown"})`;
   const warnings = indexResult.warnings;

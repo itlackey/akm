@@ -290,6 +290,18 @@ Set all five to paths that persist across container restarts (a mounted
 volume), or `akm migrate apply` will see an empty `state.db` on every boot
 and never actually converge.
 
+## Cold starts: carrying embedding vectors (Experimental)
+
+A host with no persistent disk starts with an empty index, and nearly all of a
+cold start is embedding. To carry the vectors over: at a checkpoint on a host
+with a built index, run `akm index --export-vectors vectors.db`; copy
+`vectors.db` to the fresh host; there run `akm index --import-vectors vectors.db`.
+The keyword index is rebuilt as usual, and each entry whose embedded text is
+unchanged takes its vector from the file instead of the embedder. The file holds
+hashes and vectors only, no document text or paths. A different embedding model
+or edited content is simply a miss and is embedded normally; a missing or
+unusable file warns and indexes normally.
+
 ## One-way note: `state.db` migrations are one-way
 
 Once a migration has run against `state.db`, there is no downgrade path. An
