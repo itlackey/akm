@@ -7,7 +7,7 @@ import { loadConfig, resetConfigCache, saveConfig } from "../../../src/core/conf
 import { getConfigPath } from "../../../src/core/paths";
 import type { RegistryIndex } from "../../../src/registry/providers/static-index";
 import { runCliCapture } from "../../_helpers/cli";
-import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ beforeEach(() => {
   // the DB cache. Without these the guard throws TEST_ISOLATION_MISSING,
   // which surfaces as a warning + zero hits — see
   // tests/test-isolation-no-swallow.test.ts.
-  storage = withIsolatedAkmStorage({ AKM_REGISTRY_URL: undefined });
+  storage = withIsolatedAkmStorage();
 });
 
 afterEach(() => {
@@ -201,14 +201,6 @@ describe("resolveRegistries", () => {
     const resolved = resolveRegistries(entries);
     expect(resolved.length).toBe(2);
     expect(resolved.map((r) => r.name)).toEqual(["a", "c"]);
-  });
-
-  test("AKM_REGISTRY_URL env var overrides config", () => {
-    return withEnv({ AKM_REGISTRY_URL: "https://override.com/index.json" }, () => {
-      const resolved = resolveRegistries([{ url: "https://config.com/index.json" }]);
-      expect(resolved.length).toBe(1);
-      expect(resolved[0]!.url).toBe("https://override.com/index.json");
-    });
   });
 
   test("returns empty array when passed empty array", () => {

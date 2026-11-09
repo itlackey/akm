@@ -33,10 +33,10 @@
  *     `with.content`, an inline `akm/command` prompt body, or a stored
  *     command's own rendered content is never read, let alone printed;
  *   - effective execution settings (engine/model/timeout) come from the SAME
- *     entry point `akm command run` uses (`prepareCommandInvocation`), so a
+ *     entry point `akm command` uses (`prepareCommandInvocation`), so a
  *     stored command's own frontmatter (its `harness:`, `model:`, `agent:`) and
  *     the persona it names contribute their layers and the target named is the
- *     target `command run --dry-run` names. An inline `akm/command` prompt has
+ *     target `command --dry-run` names. An inline `akm/command` prompt has
  *     no frontmatter: it goes through `resolveExecution` with a BLANK inline
  *     command. The cascade's "current" layer is built from the TASK's own
  *     `execution` overrides ONLY — connection/harness/engine/model/agent/inference/
@@ -298,7 +298,7 @@ function storedCommandRef(document: PreparableTaskDocument): string | undefined 
 
 /**
  * Effective execution settings + field-level provenance for a command-kind
- * target. A stored command is prepared the way `akm command run --dry-run`
+ * target. A stored command is prepared the way `akm command --dry-run`
  * prepares it; one that cannot be (a missing command or persona) falls back to
  * the cascade without it, with the reason in `problem`.
  */

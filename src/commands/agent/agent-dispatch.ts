@@ -6,7 +6,7 @@
  * `akm agent [--connection <name> | --harness <name>] [--prompt <text>]`
  *
  * Dispatch an agent on a named harness (or connection), optionally injecting an inline prompt.
- * Stored commands execute only through `akm command run`; workflows execute
+ * Stored commands execute only through `akm command`; workflows execute
  * only through the workflow runtime.
  *
  * With a prompt the agent runs it and its reply is printed. Without one the harness

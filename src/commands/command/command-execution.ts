@@ -116,7 +116,7 @@ export interface DispatchPreparedCommandOptions {
    * ref, and (b) stamps `AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE ??
    * eventSource` into the child env handed to the dispatched harness (the
    * `env` bag `runAgent`/`runSdk` receive), matching the native arm. Absent
-   * (every non-task caller: `akm command run`, `akm agent`, …) this function
+   * (every non-task caller: `akm command`, `akm agent`, …) this function
    * is unaffected.
    */
   readonly eventSource?: UsageEventSource;

@@ -44,13 +44,13 @@ process.on("unhandledRejection", (reason) => {
         ok: false,
         error: `Unhandled rejection: ${err.message}`,
         code: "UNHANDLED_REJECTION",
-        hint: "Re-run with AKM_DEBUG=1 for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
+        hint: "Re-run with --verbose (or AKM_VERBOSE=1) for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
       },
       null,
       2,
     ),
   );
-  if (process.env.AKM_DEBUG === "1" && err.stack) console.error(err.stack);
+  if (isVerbose() && err.stack) console.error(err.stack);
   process.exit(EXIT_CODES.INTERNAL);
 });
 process.on("uncaughtException", (err) => {
@@ -60,13 +60,13 @@ process.on("uncaughtException", (err) => {
         ok: false,
         error: `Uncaught exception: ${err.message}`,
         code: "UNCAUGHT_EXCEPTION",
-        hint: "Re-run with AKM_DEBUG=1 for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
+        hint: "Re-run with --verbose (or AKM_VERBOSE=1) for a stack trace, or report at https://github.com/itlackey/akm/issues with the failing command.",
       },
       null,
       2,
     ),
   );
-  if (process.env.AKM_DEBUG === "1" && err.stack) console.error(err.stack);
+  if (isVerbose() && err.stack) console.error(err.stack);
   process.exit(EXIT_CODES.INTERNAL);
 });
 
@@ -125,7 +125,7 @@ import { startParentDeathWatchdog } from "./core/parent-watchdog";
 import { getConfigPath } from "./core/paths";
 import { DURATION_UNITS, parseDuration } from "./core/time";
 import { plainize } from "./core/tty";
-import { info, isQuiet, setQuiet, setVerbose, warn, warnOnce } from "./core/warn";
+import { info, isQuiet, isVerbose, setQuiet, setVerbose, warn, warnOnce } from "./core/warn";
 import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
 import { EMBEDDED_HINTS } from "./output/cli-hints";
 import { getOutputMode, initOutputMode, parseDetailLevel } from "./output/context";

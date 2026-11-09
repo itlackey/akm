@@ -90,8 +90,7 @@ const HARNESSED: readonly string[] = [
   "AKM_VERBOSE",
   "AKM_LLM_API_KEY",
   "AKM_EMBED_API_KEY",
-  // Registry overrides used by registry-providers tests.
-  "AKM_REGISTRY_URL",
+  // Registry install override used by registry-providers tests.
   "AKM_NPM_REGISTRY",
 ];
 

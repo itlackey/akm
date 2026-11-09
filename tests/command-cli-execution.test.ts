@@ -80,7 +80,12 @@ async function installHostileInferenceKey(): Promise<void> {
 }
 
 describe("command CLI execution convergence", () => {
-  test("command run --dry-run authorizes and lowers without dispatch, credentials, usage, or persistent writes", async () => {
+  test("`command run` is gone: `run` is read as the ref and fails", async () => {
+    const result = await runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json"]);
+    expect(result.code).not.toBe(0);
+  });
+
+  test("command --dry-run authorizes and lowers without dispatch, credentials, usage, or persistent writes", async () => {
     writeSandboxConfig({
       harnesses: undefined, // only the connection: agent work would prefer a harness
       connections: {
@@ -96,7 +101,6 @@ describe("command CLI execution convergence", () => {
 
     const result = await runCliCapture([
       "command",
-      "run",
       "commands/review",
       "--dry-run",
       "--cwd",
@@ -122,12 +126,12 @@ describe("command CLI execution convergence", () => {
     expect(snapshotTree(storage.root)).toEqual(before);
   });
 
-  test("command run --dry-run runs where --connection or --harness says, and refuses both together", async () => {
+  test("command --dry-run runs where --connection or --harness says, and refuses both together", async () => {
     writeSandboxConfig({
       connections: { lab: { endpoint: "https://lab.invalid/v1/chat/completions", models: { fast: "lab-model" } } },
     });
     const dryRun = (...flags: string[]) =>
-      runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json", ...flags]);
+      runCliCapture(["command", "commands/review", "--dry-run", "--format=json", ...flags]);
 
     const harness = await dryRun("--harness", "reviewer");
     expect(harness.code).toBe(0);
@@ -162,7 +166,7 @@ describe("command CLI execution convergence", () => {
         ].join("\n"),
       );
       await akmIndex({ stashDir: storage.stashDir, full: true });
-      return runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json"]);
+      return runCliCapture(["command", "commands/review", "--dry-run", "--format=json"]);
     };
 
     test("the only claude harness, which setup named default, runs an asset that says claude", async () => {
@@ -199,7 +203,6 @@ describe("command CLI execution convergence", () => {
 
       const result = await runCliCapture([
         "command",
-        "run",
         "commands/review",
         "--dry-run",
         "--format=json",
@@ -215,7 +218,6 @@ describe("command CLI execution convergence", () => {
   test("live --verbose reports only safe dry-run diagnostics before preserving the dispatch envelope", async () => {
     const ordinary = await runCliCapture([
       "command",
-      "run",
       "commands/review",
       "--arguments",
       "private argument",
@@ -223,7 +225,6 @@ describe("command CLI execution convergence", () => {
     ]);
     const verbose = await runCliCapture([
       "command",
-      "run",
       "commands/review",
       "--arguments",
       "private argument",
@@ -243,10 +244,10 @@ describe("command CLI execution convergence", () => {
     expect(verbose.stderr).not.toContain(storage.stashDir);
   });
 
-  test("command run --dry-run canonicalizes user-authored inference keys in provenance and notices", async () => {
+  test("command --dry-run canonicalizes user-authored inference keys in provenance and notices", async () => {
     await installHostileInferenceKey();
 
-    const result = await runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json"]);
+    const result = await runCliCapture(["command", "commands/review", "--dry-run", "--format=json"]);
 
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
@@ -260,10 +261,10 @@ describe("command CLI execution convergence", () => {
     expect(JSON.stringify(envelope.notices)).not.toContain("DO-NOT-LEAK-secret-key");
   });
 
-  test("command run --verbose canonicalizes user-authored inference keys in stderr diagnostics", async () => {
+  test("command --verbose canonicalizes user-authored inference keys in stderr diagnostics", async () => {
     await installHostileInferenceKey();
 
-    const result = await runCliCapture(["command", "run", "commands/review", "--verbose", "--format=json"]);
+    const result = await runCliCapture(["command", "commands/review", "--verbose", "--format=json"]);
 
     expect(result.code).toBe(0);
     expect(result.stderr).toContain('"field":"/inference/*"');
@@ -276,7 +277,7 @@ describe("command CLI execution convergence", () => {
     fs.writeFileSync(commandFile, "---\nname: review\ntype: command\nupdated: 2026-08-19\n---\nBudget is $1 per run\n");
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
-    const result = await runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json", "-q"]);
+    const result = await runCliCapture(["command", "commands/review", "--dry-run", "--format=json", "-q"]);
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
     const envelope = JSON.parse(result.stdout) as Record<string, unknown>;

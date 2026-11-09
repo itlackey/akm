@@ -4,7 +4,7 @@
 
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { SELECTION_ARGS, selectionFromArgs } from "../../cli/selection";
-import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
+import { defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
 import { isVerbose, setVerbose, warn, warnVerbose } from "../../core/warn";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
@@ -20,11 +20,11 @@ function exactStringArg(args: unknown, key: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-export const commandRunCommand = defineJsonCommand({
+export const commandCommand = defineJsonCommand({
   meta: {
-    name: "run",
+    name: "command",
     description:
-      "Resolve a stored command through its bundle adapter, apply portable arguments, and execute one fresh session",
+      "Run a stored command: resolve it through its bundle adapter, apply portable arguments, and execute one fresh session",
   },
   args: {
     ref: {
@@ -90,12 +90,4 @@ export const commandRunCommand = defineJsonCommand({
     output("agent-result", result);
     if (!result.ok) process.exitCode = EXIT_CODES.GENERAL;
   },
-});
-
-export const commandCommand = defineGroupCommand({
-  meta: {
-    name: "command",
-    description: "Run reusable agent prompt templates through AKM's common execution resolver",
-  },
-  subCommands: { run: commandRunCommand },
 });

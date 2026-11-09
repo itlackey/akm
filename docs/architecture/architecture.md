@@ -520,7 +520,7 @@ What runs where follows from the kind of work:
   `remember --enrich`) runs on the default connection as a direct request to its
   endpoint; with no connection, on the default harness, with its tools restricted
   where the harness can be.
-- **Agent work** (`akm agent`, `command run`, `proposal new`, agent tasks,
+- **Agent work** (`akm agent`, `command`, `proposal new`, agent tasks,
   workflow agent steps) runs on the default harness; with no harness, on **akm's
   own runtime** over the default connection. The runtime is a pinned OpenCode 2
   binary that akm runs as a process, has no name in config, and is not a harness.
@@ -554,7 +554,7 @@ and the model entry's are sent as written, under the portable settings
 in `src/core/llm-inference.ts` writes in the endpoint's own spelling. Omitted,
 explicit `null`, zero, and empty values stay distinct. The result's
 `provenance` names the layer behind each field (`akm task explain`,
-`command run --dry-run`).
+`command --dry-run`).
 
 An agent asset is a persona (a system prompt), not executable work. An
 `agents/<name>` selector (optionally `bundle//`-qualified) is resolved by akm

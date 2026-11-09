@@ -21,7 +21,7 @@ These flags are accepted by all commands:
 | `--output` | path | _(none)_ | Write rendered output to a file instead of stdout (all formats except `jsonl`) |
 | `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output **verbosity** level, or the `agent` projection |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
-| `--verbose` | boolean | `false` | Enable verbose diagnostics gated behind `isVerbose()`. Parsed globally before any subcommand runs. The `AKM_VERBOSE` env var honours the same setting and wins when both are present (see `src/core/warn.ts`). |
+| `--verbose` | boolean | `false` | Enable verbose diagnostics gated behind `isVerbose()`. Also prints the stack trace on an unexpected internal error. Parsed globally before any subcommand runs. The `AKM_VERBOSE` env var honours the same setting and wins when both are present (see `src/core/warn.ts`). |
 
 `--detail brief|normal|full` controls **how much** is returned. `--detail agent`
 selects the token-lean action view on `search`, `curate` and `show`; every other
@@ -2750,7 +2750,7 @@ source <(akm completions)
 
 These commands define the self-improvement and agent-dispatch surface.
 
-### command run
+### command
 
 Resolve a stored command through its owning bundle adapter and execute one
 fresh session. It runs on the default harness, else on akm's own runtime over
@@ -2758,7 +2758,7 @@ the default connection, unless a flag or the command's own frontmatter names a
 connection or harness (see [Configuration](configuration.md#where-each-process-runs)):
 
 ```sh
-akm command run <command-ref> [--arguments <exact-text>] [--agent <selector>] [--connection <name> | --harness <name>] [--model <id-or-alias>] [--timeout-ms <ms>] [--cwd <path>] [--dry-run]
+akm command <command-ref> [--arguments <exact-text>] [--agent <selector>] [--connection <name> | --harness <name>] [--model <id-or-alias>] [--timeout-ms <ms>] [--cwd <path>] [--dry-run]
 ```
 
 `--dry-run` does not dispatch and does not materialize credentials.
@@ -2782,7 +2782,7 @@ dispatch; invoke those templates through their native tool.
 Omitting `--arguments` and passing an explicit empty string both substitute
 empty text, but remain distinct in the resolved request.
 
-`akm command run ... --dry-run` performs the real adapter read, target and model
+`akm command ... --dry-run` performs the real adapter read, target and model
 resolution, and request lowering. It
 returns a successful JSON result with `schemaVersion: 1`,
 `shape: "command-dry-run"`, `ok: true`, `dryRun: true`, `engine` (the name of
@@ -2810,7 +2810,7 @@ that consume stdout.
 
 Run an agent on a harness, or on akm's own runtime over a connection, optionally
 embodying a bundle agent persona. Run `akm agent --help` for the options. Stored
-command assets execute only through `akm command run`; `akm agent` has no
+command assets execute only through `akm command`; `akm agent` has no
 command compatibility alias.
 
 ```sh
@@ -3105,7 +3105,7 @@ allowedTypes/process-disabled check; a count,
 not a per-ref matrix, to keep the envelope bounded). A row whose process has no
 connection or harness carries `unavailable: {configKey, reason}` — the same data
 behind `skippedProcesses` above, reshaped per process. Wherever a result says
-where work ran (`agent`, `command run`, `extract`, `llm_usage` rows, a workflow
+where work ran (`agent`, `command`, `extract`, `llm_usage` rows, a workflow
 step's summary) the field is named `engine` and always holds a connection or
 harness name; scripts can rely on it. This table is resolved
 before any dispatch on every invocation (dry or live), so
