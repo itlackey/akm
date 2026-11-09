@@ -326,11 +326,11 @@ for (const fixture of fallbackFixtures) {
       expect(getSearchHitAttribution(curated)?.memoryInference?.surfaceFields ?? []).toEqual(
         fixture.fields.includes("description") ? ["description"] : [],
       );
-      for (const projection of ["brief", "normal", "full"] as const) {
+      for (const projection of ["ref", "brief", "normal", "full"] as const) {
         const visible =
           projection === "full"
             ? fixture.fields.length > 0
-            : projection !== "brief" && fixture.fields.includes("description");
+            : projection !== "ref" && fixture.fields.includes("description");
         expect(
           buildUsageEventAttribution(attribution, `stash//memories/${fixture.name}`, projection)?.memoryInference
             ?.exposure,

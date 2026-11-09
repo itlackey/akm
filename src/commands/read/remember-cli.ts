@@ -46,7 +46,7 @@ async function fetchSimilarMemories(
       type: "memory",
       limit: 4,
       eventSource,
-      attributionProjection: "brief",
+      attributionProjection: "ref",
     });
     return (result.hits ?? [])
       .filter((h): h is SourceSearchHit => "ref" in h && (h as { ref: string }).ref !== excludeRef)
