@@ -8,12 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- `bundles.*.path` is read like a project's `paths`: `~` expands to your home folder and a relative path means the folder of the config file that holds it, no longer the cwd of whoever ran akm. A path that cannot be placed (`~user/...`, or relative with no config file) warns once and that bundle is ignored.
-- `akm proposal extract --since` reads durations in the grammar every other duration flag uses: `m` is minutes and `M` is months (`3M` was three minutes there; it is three months, as for `akm health --since` and `akm remember --expires`).
-- `akm proposal accept|reject --older-than` and `--max-diff-lines`, `akm proposal extract --timeout-ms` and `akm workflow run --max-steps|--max-retries` reject a value with trailing text (`3x`, `3.5`) instead of truncating it, as `akm improve --limit` already did. One shared helper reads them.
+- `bundles.*.path` is read like a project's `paths`: `~` expands to your home folder and a relative path means the folder of the config file that holds it, no longer the cwd of whoever ran akm. A path that cannot be placed (`~user/...`, or relative with no config file) warns once and that bundle is ignored; the file keeps what you wrote, and `akm migrate apply` and `akm bundle rename` leave `path` as written. `~/x` and the same absolute path now count as one root, so listing both is a duplicate-root error.
+- `akm proposal extract --since` and a strategy's `processes.extract.defaultSince` read durations in the grammar every other duration flag uses: `m` is minutes and `M` is months (`3M` was three minutes there; it is three months, as for `akm health --since` and `akm remember --expires`). Uppercase `H` and `D` (`24H`, `7D`) and a space before the unit are no longer accepted by `--since`, which is a usage error. A `defaultSince` that does not parse warns once and the default window is used.
+- `akm proposal accept|reject --older-than` and `--max-diff-lines`, and `akm proposal extract --timeout-ms`, reject a value with trailing text (`3x`, `3.5`) instead of truncating it, as `akm improve --limit` and `akm workflow run --max-steps|--max-retries` already did. One shared helper reads them.
 - `AKM_REGISTRY_URL` with no usable entry is ignored, with its per-entry warnings, and the configured registries stand; it used to leave registry search with none. `GITHUB_TOKEN` set to an empty string no longer hides `GH_TOKEN`.
 - `akm bundle rename` also rewrites `projects.*.write.bundle` and `projects.*.from` when they name the old bundle.
-- The retired `shape` is no longer a reserved flag name of `akm workflow run` and `akm task run`.
+- The retired `shape` is no longer a reserved flag name of `akm workflow run` and `akm task run`. On `workflow run` it is now a normal parameter: it used to be ignored, and is a usage error when the workflow does not declare it.
 
 ### Fixed
 

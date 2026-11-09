@@ -904,8 +904,8 @@ for the full adapter list and what each one reads/writes.
 
 A bundle's `path` is read like a project's `paths`: `~` expands to your home
 folder, and a relative path means the folder of the config file that holds it,
-never the folder you ran akm from. A relative path with no config file to
-resolve against warns once, and that bundle is ignored.
+never the folder you ran akm from. `~user/...`, or a relative path with no
+config file to resolve against, warns once and that bundle is ignored.
 
 **Which bundle is the working bundle** (the one short refs and bare commands
 use): `AKM_BUNDLE_DIR`, when set; else the path of `defaultBundle`; else the

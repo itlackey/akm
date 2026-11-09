@@ -1097,6 +1097,30 @@ function followKeyOrder(target: Record<string, unknown>, order: Record<string, u
 }
 
 /**
+ * A bundle that `next` holds under a new name came from the loaded entry, whose
+ * `path` is the resolved one. Write the path the file spelled for the entry it
+ * replaced (`~/x` stays `~/x`).
+ */
+function keepRenamedBundlePaths(
+  body: Record<string, unknown>,
+  document: Record<string, unknown>,
+  current: AkmConfig,
+  next: AkmConfig,
+): void {
+  const written = document.bundles;
+  if (!isPlainObject(written) || !isPlainObject(body.bundles)) return;
+  for (const [name, entry] of Object.entries(next.bundles ?? {})) {
+    if (Object.hasOwn(current.bundles ?? {}, name)) continue;
+    const from = Object.entries(current.bundles ?? {}).find(([, old]) => isDeepStrictEqual(old, entry))?.[0];
+    const asWritten = from === undefined ? undefined : written[from];
+    const target = (body.bundles as Record<string, unknown>)[name];
+    if (isPlainObject(asWritten) && typeof asWritten.path === "string" && isPlainObject(target)) {
+      target.path = asWritten.path;
+    }
+  }
+}
+
+/**
  * What an ordinary `mutateConfig`/`mutateConfigWithPrecommit` write persists:
  * the file's own document with the edit `current` → `next` applied
  * ({@link applyEdit}). Lifecycle mutations must not serialize every schema
@@ -1121,6 +1145,7 @@ function editedConfigFile(
   // back byte for byte.
   const body = structuredClone(document);
   applyEdit(body, current, next, unremoved);
+  keepRenamedBundlePaths(body, document, current, next);
   // A project the caller names is written whole even when it equals the effective entry: the file's own may hold parts the reader ignores.
   for (const name of writeProjects) {
     const entry = next.projects?.[name];
@@ -1300,6 +1325,8 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     const current = buildEffectiveConfig(localRaw, configPath);
     const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });
     const body = configWriteBody(localRaw, current, next) as Record<string, unknown>;
+    // The reader resolves each bundle `path` and drops an unplaceable one; the file keeps what was written.
+    if (isPlainObject(localRaw.bundles)) body.bundles = localRaw.bundles;
     for (const keyPath of unknownConfigKeyPaths(body)) deleteConfigPath(body, keyPath);
     // `improve.strategies["graph-refresh"]` is schema-valid (any name is a
     // legal custom-strategy key), so it never reaches the unknown-key sweep

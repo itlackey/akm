@@ -43,7 +43,7 @@ import { resolveTypeConventions, typeConventionRef } from "../../core/standards/
 import { getStateDbPath, openStateDatabase } from "../../core/state-db";
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
-import { warn, warnVerbose } from "../../core/warn";
+import { warn, warnOnce, warnVerbose } from "../../core/warn";
 import { noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
@@ -334,6 +334,21 @@ export function parseSinceArg(value: string | undefined, now: number = Date.now(
     `--since value "${value}" could not be parsed (expected ISO timestamp or duration like 24h / 7d / 30m / 3M)`,
     "INVALID_FLAG_VALUE",
   );
+}
+
+/** A strategy's `defaultSince` that parses, else `undefined` with one warning: a bad config value is ignored, never a flag error. */
+export function usableDefaultSince(value: string | undefined): string | undefined {
+  if (!value) return value;
+  try {
+    parseSinceArg(value);
+    return value;
+  } catch {
+    warnOnce(
+      `extract:defaultSince:${value}`,
+      `Ignoring processes.extract.defaultSince "${value}": expected an ISO timestamp or a duration like 24h / 7d / 30m / 3M.`,
+    );
+    return undefined;
+  }
 }
 
 /**
@@ -1129,7 +1144,7 @@ function resolveExtractRun(
       : typeof process?.maxSessionsPerRun === "number"
         ? process.maxSessionsPerRun
         : DEFAULT_MAX_SESSIONS_PER_RUN,
-    effectiveSince: options.since ?? process?.defaultSince,
+    effectiveSince: options.since ?? usableDefaultSince(process?.defaultSince),
     sessionIndexing: {
       enabled: process?.indexSessions ?? true,
       minDurationMinutes:
@@ -1407,7 +1422,8 @@ export async function countNewExtractCandidates(
   _config: AkmConfig,
   options: CountNewExtractCandidatesOptions = {},
 ): Promise<number> {
-  const effectiveSince = options.since ?? getImproveProcessConfig("extract", options.improveProfile)?.defaultSince;
+  const effectiveSince =
+    options.since ?? usableDefaultSince(getImproveProcessConfig("extract", options.improveProfile)?.defaultSince);
   const explicitSinceMs = effectiveSince ? parseSinceArg(effectiveSince) : undefined;
   const harnesses = (options.harnesses ?? getAvailableHarnesses()).filter((h) => h.isAvailable());
   let stateDb: Database | undefined = options.stateDb;

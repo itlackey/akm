@@ -534,7 +534,9 @@ on them.
 `AKM_LAUNCHER_PID`, `AKM_LAUNCHER_NODE`, `AKM_LAUNCHER_PATH`,
 `AKM_EVENT_SOURCE`, `AKM_SESSION_ID`, `AKM_AGENT_HARNESS`,
 `AKM_OPENCODE_CLI`, `AKM_CLAUDE_PLUGINS_DIR`, `AKM_OPENCODE_CACHE_DIR`,
-`AKM_FORCE_INIT_TMP_STASH`.
+`AKM_FORCE_INIT_TMP_STASH`, and the eight handed to a workflow unit's script
+(`AKM_RUN_ID`, `AKM_STEP_ID`, `AKM_UNIT_ID`, `AKM_PARAMS`, `AKM_ITEM`,
+`AKM_ITEM_INDEX`, `AKM_INPUTS`, `AKM_TASK_INPUTS`).
 
 Internal seams used by akm-eval and the tests, never for product use:
 `AKM_EMBED_DETERMINISTIC` (a hash embedder instead of a model) and

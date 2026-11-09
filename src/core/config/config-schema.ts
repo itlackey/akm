@@ -26,8 +26,8 @@
  * - Top-level uses `.passthrough()` so unknown future keys round-trip intact on
  *   read; `sanitizeConfigForWrite` decides what to persist.
  * - A wrong value in a section is an error here (this schema is strict about
- *   values); only `connections`, `harnesses` and `projects` entries are
- *   dropped one by one before it runs (see `unusable-entries.ts` and
+ *   values); only `connections`, `harnesses`, `projects` and `bundles`
+ *   entries are dropped one by one before it runs (see `unusable-entries.ts` and
  *   `schema/projects.ts`).
  * - The retired source keys (`stashDir`, `sources`, `installed`) are
  *   hard-rejected; silently dropping them would mask user data loss.
