@@ -19,7 +19,6 @@ import type { Proposal } from "../../src/commands/proposal/proposal-types";
 import { akmSearch } from "../../src/commands/read/search";
 import { akmShowUnified as akmShow } from "../../src/commands/read/show";
 import { akmTasksSync, type TasksSyncResult } from "../../src/commands/tasks/tasks";
-import { renameBundle } from "../../src/core/bundle-rename";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { NotFoundError, UsageError } from "../../src/core/errors";
 import { openStateDatabase } from "../../src/core/state-db";
@@ -30,6 +29,7 @@ import {
   renameUsageEventRefs,
 } from "../../src/indexer/usage/usage-events";
 import { readLockfile, upsertLockEntry } from "../../src/integrations/lockfile";
+import { renameBundle } from "../../src/sources/bundle-rename";
 import type { Database } from "../../src/storage/database";
 import { insertEventStrict, renameEventRefs } from "../../src/storage/repositories/events-repository";
 import {

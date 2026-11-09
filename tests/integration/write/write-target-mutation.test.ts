@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// `withWriteTargetMutation` (src/core/write-source.ts): lease → mutate → one
+// `withWriteTargetMutation` (src/sources/write-source.ts): lease → mutate → one
 // exact-path commit. Integration test — it drives real git repositories with
 // spawnSync.
 
@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
-import { type ResolvedWriteTarget, withWriteTargetMutation } from "../../../src/core/write-source";
+import { type ResolvedWriteTarget, withWriteTargetMutation } from "../../../src/sources/write-source";
 
 const roots: string[] = [];
 

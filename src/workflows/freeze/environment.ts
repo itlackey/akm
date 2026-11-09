@@ -3,10 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { parseEnvRef } from "../../core/env-secret-ref";
 import { UsageError } from "../../core/errors";
 import { resolveConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { parseEnvRef } from "../../sources/env-secret-ref";
 import type { FrozenWorkflowEnvironmentBinding, WorkflowExec } from "../plan";
 import type { FreezeStep, ResolutionContext } from "./step-values";
 

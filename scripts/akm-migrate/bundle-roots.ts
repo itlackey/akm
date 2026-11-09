@@ -20,7 +20,7 @@ import {
   bundlesToSourceEntries,
 } from "../../src/core/config/config-sources";
 import { ConfigError } from "../../src/core/errors";
-import { resolveWritable } from "../../src/core/write-source";
+import { resolveWritable } from "../../src/sources/write-source";
 import { implicitStashDir } from "../../src/indexer/search/search-source";
 import { lockContentRootFor } from "../../src/integrations/lockfile";
 

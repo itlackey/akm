@@ -6,7 +6,7 @@
  * Pure aggregation behind `akm metrics`: rows read from the stores in, the
  * {@link AkmMetricsResult} envelope out. Nothing here touches a database, the
  * clock or the config, so every section is unit-testable from plain rows.
- * `metrics-cli.ts` reads the rows and calls {@link buildMetricsResult}.
+ * `metrics.ts` reads the rows and calls {@link buildMetricsResult}.
  */
 
 import type { EventEnvelope } from "../../core/events-types";

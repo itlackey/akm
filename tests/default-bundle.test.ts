@@ -18,9 +18,9 @@ import { NO_DEFAULT_BUNDLE_MESSAGE, resolveStashDir } from "../src/core/common";
 import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
-import { resolveWorkingStashTarget } from "../src/core/write-source";
 import { akmIndex } from "../src/indexer/indexer";
 import { resolveSourceEntries } from "../src/indexer/search/search-source";
+import { resolveWorkingStashTarget } from "../src/sources/write-source";
 import { runCliCapture } from "./_helpers/cli";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 

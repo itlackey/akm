@@ -26,7 +26,6 @@
  */
 
 import { resolveRefToken } from "../../commands/env/env-binding";
-import { isInstalledBundle } from "../../core/env-secret-ref";
 import { NotFoundError } from "../../core/errors";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { substituteRefTokens } from "../../core/ref-token";
@@ -34,6 +33,7 @@ import { warn } from "../../core/warn";
 import { mergeNotices } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { type Dispatched, isRefused, jsonParser, structuredLoop } from "../../llm/structured";
+import { isInstalledBundle } from "../../sources/env-secret-ref";
 import {
   type WorkflowRunUnitAttemptRowV4,
   type WorkflowRunUnitRow,

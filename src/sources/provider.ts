@@ -15,7 +15,7 @@
  *   - sync?()   refresh the directory from upstream (no-op for filesystem)
  *
  * All other writing/reading concerns live outside this interface:
- *   - Writes:    src/core/write-source.ts
+ *   - Writes:    src/sources/write-source.ts
  *   - Reads:     src/indexer/indexer.ts
  *   - Install:   src/sources/providers/sync-from-ref.ts
  */
@@ -28,7 +28,7 @@ import type { SourceKind } from "./types";
  * null when absent.
  *
  * This is a leaf abstraction on purpose. The concrete store reader
- * (`core/env-secret-ref.ts`) transitively imports the source providers, which
+ * (`sources/env-secret-ref.ts`) transitively imports the source providers, which
  * import the fetcher registry — so any module inside that subgraph that
  * imported the reader directly would close the import cycle the ratchet
  * forbids. Consumers (fetchers, provider `sync()`) depend on this interface;

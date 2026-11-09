@@ -8,7 +8,7 @@
  * Two gaps, both about a write nobody could see:
  *
  *   1. NO WRITABLE CHECK. Every other mutating command routes through
- *      `core/write-source.ts`'s `ensureWritable`; `--fix` wrote directly and
+ *      `sources/write-source.ts`'s `ensureWritable`; `--fix` wrote directly and
  *      never consulted the flag, so it happily rewrote frontmatter in a bundle
  *      configured `writable: false`.
  *   2. NO TRANSACTIONAL CONTRACT. A single file's fix-write throwing

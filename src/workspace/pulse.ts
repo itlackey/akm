@@ -8,7 +8,7 @@
  * range is only claimed when there is enough data to have a usual.
  */
 
-import { metricsWindow, readLlmRows, readUsageRows } from "../commands/metrics/metrics-cli";
+import { metricsWindow, readLlmRows, readUsageRows } from "../commands/metrics/metrics";
 import type { MetricsUsageRow } from "../commands/metrics/types";
 import { proposalWaitingSince } from "../commands/proposal/proposal-types";
 import { loadConfig } from "../core/config/config";

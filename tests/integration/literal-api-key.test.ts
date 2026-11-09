@@ -13,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { getConfigValue, listConfig, setConfigValue } from "../../src/commands/config-cli";
+import { getConfigValue, listConfig, setConfigValue } from "../../src/commands/config";
 import { loadUserConfig, mutateConfig, resetConfigCache } from "../../src/core/config/config";
 import { collectCredentialValues, writeCredential } from "../../src/core/config/credentials";
 import { getConfigPath } from "../../src/core/paths";

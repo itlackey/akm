@@ -15,25 +15,25 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
+import { assetPathForName, refForFile, stashDirFor } from "../core/asset/asset-placement";
+import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
+import type { AssetRef } from "../core/asset/resolve-ref";
+import { conceptIdFromTypeName, displayRef } from "../core/asset/resolve-ref";
+import { isWithin } from "../core/common";
+import { type AkmConfig, loadConfig } from "../core/config/config";
+import { NotFoundError, UsageError } from "../core/errors";
+import { sensitiveMarkerPath } from "../core/sensitive-marker-path";
 import { type ConceptOwnerMatch, resolveConceptOwner } from "../indexer/lookup/adapter-concept-owner";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
 import { buildFileContext } from "../indexer/walk/file-context";
 import { declaredTypeForPath } from "../indexer/walk/matchers";
 import { isFileOrFileSymlink } from "../indexer/walk/walker";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
-import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
-import { assetPathForName, refForFile, stashDirFor } from "./asset/asset-placement";
-import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
-import type { AssetRef } from "./asset/resolve-ref";
-import { conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
-import { isWithin } from "./common";
-import { type AkmConfig, loadConfig } from "./config/config";
-import { NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
-import { sensitiveMarkerPath } from "./sensitive-marker-path";
 import { formatRefForMessage, type ResolvedWriteTarget, withWriteTargetMutation } from "./write-source";
 
-export { sensitiveMarkerPath } from "./sensitive-marker-path";
+export { sensitiveMarkerPath } from "../core/sensitive-marker-path";
 export type { IndexSearchSource };
 
 /**

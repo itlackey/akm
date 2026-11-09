@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { setConfigValue } from "../src/commands/config-cli";
+import { setConfigValue } from "../src/commands/config";
 import { resolveImproveExecution } from "../src/commands/improve/execution";
 import {
   DEFAULT_CONFIG,

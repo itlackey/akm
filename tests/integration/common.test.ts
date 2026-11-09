@@ -17,8 +17,8 @@ import {
   toPosix,
 } from "../../src/core/common";
 import { loadConfig } from "../../src/core/config/config";
-import { resolveWorkingStashTarget } from "../../src/core/write-source";
 import { writeResponseToFileCapped } from "../../src/runtime";
+import { resolveWorkingStashTarget } from "../../src/sources/write-source";
 import { type Cleanup, sandboxHome, sandboxXdgConfigHome, withEnvSync, withMockedFetch } from "../_helpers/sandbox";
 
 describe("fetchWithTimeout", () => {

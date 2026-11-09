@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { akmMetrics } from "../../src/commands/metrics/metrics-cli";
+import { akmMetrics } from "../../src/commands/metrics/metrics";
 import type { AkmMetricsResult } from "../../src/commands/metrics/types";
 import { resetConfigCache } from "../../src/core/config/config";
 import { appendEvent } from "../../src/core/events";

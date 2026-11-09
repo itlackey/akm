@@ -6,7 +6,7 @@
 
 import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
-import { assertUnsettable, listConfig, setConfigValue, unsetConfigValue } from "../commands/config-cli";
+import { assertUnsettable, listConfig, setConfigValue, unsetConfigValue } from "../commands/config";
 import { isRecord } from "../core/common";
 import { type AkmConfig, defaultConnection, loadConfig, mutateConfig, resetConfigCache } from "../core/config/config";
 import { parseConfigText, readConfigText } from "../core/config/config-io";

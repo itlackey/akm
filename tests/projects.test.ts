@@ -10,7 +10,7 @@ import path from "node:path";
 import { curate } from "../src/api";
 import { deriveExtractCandidateRef } from "../src/commands/improve/extract";
 import { buildSessionAssetContent } from "../src/commands/improve/session-asset";
-import { runCurate } from "../src/commands/read/search-cli";
+import { runCurate } from "../src/commands/read/curate-run";
 import { parseFrontmatter } from "../src/core/asset/frontmatter";
 import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { projectForDirectory, resolveProject } from "../src/core/projects";

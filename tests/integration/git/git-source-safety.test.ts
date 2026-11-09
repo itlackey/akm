@@ -21,12 +21,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { parsePlacementRef } from "../../../src/core/asset/resolve-ref";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { saveGitStash } from "../../../src/sources/providers/git";
 import {
   commitWriteTargetBoundary,
   prepareWriteTargetForMutation,
   writeAssetToSource,
-} from "../../../src/core/write-source";
-import { saveGitStash } from "../../../src/sources/providers/git";
+} from "../../../src/sources/write-source";
 import { seedLockEntries } from "../../_helpers/lockfile";
 import {
   type Cleanup,

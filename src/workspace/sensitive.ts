@@ -14,6 +14,7 @@ import path from "node:path";
 import { removeEnv, writeEnv } from "../commands/env/env";
 import { removeSecret, setSecret } from "../commands/env/secret";
 import { deriveCanonicalAssetName } from "../core/asset/asset-placement";
+import { UsageError } from "../core/errors";
 import {
   resolveEnvPath,
   resolveEnvWriteTarget,
@@ -21,8 +22,7 @@ import {
   resolveSecretWriteTarget,
   sensitiveMarkerPath,
   withEnvSecretWrite,
-} from "../core/env-secret-ref";
-import { UsageError } from "../core/errors";
+} from "../sources/env-secret-ref";
 import { interactive } from "./lease";
 
 /** The file: its ref, or its bundle-relative path in a named bundle. */

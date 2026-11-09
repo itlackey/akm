@@ -8,7 +8,7 @@
  * the cards that do not depend on it. Nothing here writes.
  */
 
-import { metricsWindow, readLlmRows, readUsageRows } from "../commands/metrics/metrics-cli";
+import { metricsWindow, readLlmRows, readUsageRows } from "../commands/metrics/metrics";
 import type { MetricsUsageRow } from "../commands/metrics/types";
 import { isRetireProposal, type Proposal } from "../commands/proposal/proposal-types";
 import { readStateEvents } from "../storage/repositories/events-repository";

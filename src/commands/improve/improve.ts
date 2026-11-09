@@ -28,13 +28,11 @@ import type {
   ImproveMemoryCleanupResult,
 } from "../../core/improve-types";
 import { classifyImproveAction, foldDistillSkipped } from "../../core/improve-types";
-import { resolveMutationTarget } from "../../core/mutation-target";
 import { getDbPath, getStashLocksDir, getStateDbPathInDataDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { openStateDatabase } from "../../core/state-db";
 import { info, warn, warnVerbose } from "../../core/warn";
 import { beginWriteProvenance, relativeWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
-import { resolveWorkingStashTarget, resolveWritable, resolveWriteTarget } from "../../core/write-source";
 import { type Notice, noticeSet } from "../../execution/notices";
 import { ensureIndex } from "../../indexer/ensure-index";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
@@ -42,6 +40,7 @@ import { akmIndex } from "../../indexer/indexer";
 import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { type LlmUsageRecord, withLlmStage } from "../../llm/usage-telemetry";
+import { resolveMutationTarget } from "../../sources/mutation-target";
 import {
   GitStashPushError,
   isGitBackedStash,
@@ -50,6 +49,7 @@ import {
   resolveWritableOverride,
   saveGitStash,
 } from "../../sources/providers/git";
+import { resolveWorkingStashTarget, resolveWritable, resolveWriteTarget } from "../../sources/write-source";
 import type { Database } from "../../storage/database";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { withIndexDb } from "../../storage/repositories/index-db";

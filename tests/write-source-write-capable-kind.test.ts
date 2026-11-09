@@ -3,16 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Pins `isWriteCapableSourceKind` (src/core/write-source.ts), the single
+ * Pins `isWriteCapableSourceKind` (src/sources/write-source.ts), the single
  * predicate for the write-capable source kinds. `assertSupportedKind` and
  * `adaptConfiguredSource` (same module) and `akmTasksSync`'s scheduler-kind
  * guard/filter (src/commands/tasks/tasks.ts) all defer to it now, rather than
  * each spelling the filesystem/git list separately (all write-target
- * branching by `source.kind` belongs in `src/core/write-source.ts`).
+ * branching by `source.kind` belongs in `src/sources/write-source.ts`).
  */
 
 import { describe, expect, test } from "bun:test";
-import { isWriteCapableSourceKind } from "../src/core/write-source";
+import { isWriteCapableSourceKind } from "../src/sources/write-source";
 
 describe("isWriteCapableSourceKind", () => {
   test("filesystem and git are write-capable", () => {

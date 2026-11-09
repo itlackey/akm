@@ -17,10 +17,10 @@ import {
 import { ConfigError } from "../../core/errors";
 import { getUnresolvedSourcesDir } from "../../core/paths";
 import { warn } from "../../core/warn";
-import { resolveGitContentRoot, resolveWritable } from "../../core/write-source";
 import { lockContentRootFor } from "../../integrations/lockfile";
 import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 import { ensureWebsiteMirror } from "../../sources/snapshot-fetchers/website-ingest";
+import { resolveGitContentRoot, resolveWritable } from "../../sources/write-source";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

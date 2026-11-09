@@ -1,5 +1,5 @@
 /**
- * Tests for src/core/write-source.ts — the single dispatch point for writes.
+ * Tests for src/sources/write-source.ts — the single dispatch point for writes.
  *
  * Covers the locked v1 contract from spec §2.6 / §2.7 / §5.4 / §10 step 5:
  *
@@ -24,6 +24,9 @@ import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import type { SourceConfigEntry } from "../../../src/core/config/config";
 import { ConfigError, UsageError } from "../../../src/core/errors";
 import { sanitizeCommitMessage } from "../../../src/core/git-message";
+import { resolveSourceEntries } from "../../../src/indexer/search/search-source";
+import { writeLockfile } from "../../../src/integrations/lockfile";
+import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import {
   commitWriteTargetBoundary,
   deleteAssetFromSource,
@@ -33,10 +36,7 @@ import {
   resolveWriteTarget,
   type WriteTargetSource,
   writeAssetToSource,
-} from "../../../src/core/write-source";
-import { resolveSourceEntries } from "../../../src/indexer/search/search-source";
-import { writeLockfile } from "../../../src/integrations/lockfile";
-import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
+} from "../../../src/sources/write-source";
 import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────

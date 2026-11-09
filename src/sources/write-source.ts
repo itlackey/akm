@@ -28,6 +28,29 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { detectAdapterId } from "../core/adapter/detect-adapter";
+import { normalizeAkmMarkdown } from "../core/asset/akm-markdown";
+import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
+import type { AssetRef } from "../core/asset/resolve-ref";
+import { conceptIdFromTypeName, displayRef } from "../core/asset/resolve-ref";
+import { deriveBundleId } from "../core/bundle-id";
+import {
+  existingFileMode,
+  isWithin,
+  NO_DEFAULT_BUNDLE_MESSAGE,
+  resolveStashDir,
+  writeFileAtomic,
+} from "../core/common";
+import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "../core/config/config";
+import {
+  bundleKeyForContentRoot,
+  resolveActiveConfiguredSources,
+  resolveConfiguredSources,
+} from "../core/config/config";
+import { ConfigError, UsageError } from "../core/errors";
+import { sanitizeCommitMessage } from "../core/git-message";
+import { warn, warnOnce } from "../core/warn";
+import { recordWrittenPath } from "../core/write-provenance";
 import { withAssetMutationLeaseSync } from "../indexer/index-writer-lock";
 import { lockContentRootFor } from "../integrations/lockfile";
 import {
@@ -38,21 +61,8 @@ import {
   parseGitRepoUrl,
   runGit,
   saveGitStash,
-} from "../sources/providers/git";
-import { listIgnoredExactPaths } from "../sources/providers/git-stash";
-import { detectAdapterId } from "./adapter/detect-adapter";
-import { normalizeAkmMarkdown } from "./asset/akm-markdown";
-import { assetPathForName, stashDirFor } from "./asset/asset-placement";
-import type { AssetRef } from "./asset/resolve-ref";
-import { conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
-import { deriveBundleId } from "./bundle-id";
-import { existingFileMode, isWithin, NO_DEFAULT_BUNDLE_MESSAGE, resolveStashDir, writeFileAtomic } from "./common";
-import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
-import { bundleKeyForContentRoot, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
-import { ConfigError, UsageError } from "./errors";
-import { sanitizeCommitMessage } from "./git-message";
-import { warn, warnOnce } from "./warn";
-import { recordWrittenPath } from "./write-provenance";
+} from "./providers/git";
+import { listIgnoredExactPaths } from "./providers/git-stash";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

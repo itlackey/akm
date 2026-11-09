@@ -4,10 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
-import { prepareWriteTargetForMutation } from "../../../src/core/write-source";
 import type { ParsedGitRef } from "../../../src/registry/types";
 import { classifyCloneFailure, cloneRepo, syncExistingWritableCheckout } from "../../../src/sources/providers/git";
 import { buildInstallCacheDir } from "../../../src/sources/providers/provider-utils";
+import { prepareWriteTargetForMutation } from "../../../src/sources/write-source";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

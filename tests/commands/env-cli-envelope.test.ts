@@ -7,7 +7,7 @@
  * envelope (stdout payload shape + the {ok:false,…} error envelope on stderr /
  * exit code) for the representative subcommands list/create/remove,
  * proving the extraction of the family from cli.ts into src/commands/env-cli.ts
- * (helpers in src/core/env-secret-ref.ts) is byte-identical. Crucially it
+ * (helpers in src/sources/env-secret-ref.ts) is byte-identical. Crucially it
  * asserts that env VALUES never appear on stdout or stderr — only key NAMES.
  */
 

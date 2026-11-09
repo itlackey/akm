@@ -8,7 +8,6 @@ import path from "node:path";
 import { _setClackForTests } from "../src/cli/clack";
 import { akmTasksSync, type TasksSyncResult } from "../src/commands/tasks/tasks";
 import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
-import { deleteAssetFromSource, writeAssetToSource } from "../src/core/write-source";
 import { buildSetupSteps } from "../src/setup/setup";
 import {
   _setScheduledTasksEnvForTests,
@@ -17,6 +16,7 @@ import {
   prepareSetupTaskDefinitions,
   stepScheduledTasks,
 } from "../src/setup/steps/tasks";
+import { deleteAssetFromSource, writeAssetToSource } from "../src/sources/write-source";
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import { listEmbeddedTasks } from "../src/tasks/embedded";

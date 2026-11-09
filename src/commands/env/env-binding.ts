@@ -17,12 +17,12 @@
  *   - Resolved values must never be written to stdout or logs by callers.
  */
 
-import { isInstalledBundle, makeEnvRef, resolveEnvPath, resolveRefOwner } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { substituteRefTokens } from "../../core/ref-token";
 import { readValue } from "../../core/secret-value";
 import { warnOnce } from "../../core/warn";
+import { isInstalledBundle, makeEnvRef, resolveEnvPath, resolveRefOwner } from "../../sources/env-secret-ref";
 import { loadEnv } from "./env";
 
 /** The retired `${secret:NAME}` env-value token (see `resolveEnvBinding`). */

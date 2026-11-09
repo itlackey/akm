@@ -40,19 +40,19 @@ import { lookupBundleRef } from "../../indexer/indexer";
 import { resolveOwnedType, resolveWriteAddress, type WriteAddress } from "../../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { AgentFailureReason } from "../../integrations/agent";
-import {
-  buildReflectOutputRepairPrompt,
-  buildReflectPrompt,
-  REFLECT_CONTENT_CAP,
-  type ReflectOutputMode,
-  type ReflectPromptInput,
-} from "../../integrations/agent/prompts";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { getHarness } from "../../integrations/harnesses";
 import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported } from "../../llm/client";
 import { isRefused, structuredLoop } from "../../llm/structured";
 import type { StructuredOutcome } from "../../llm/structured-call";
 import { enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
+import {
+  buildReflectOutputRepairPrompt,
+  buildReflectPrompt,
+  REFLECT_CONTENT_CAP,
+  type ReflectOutputMode,
+  type ReflectPromptInput,
+} from "../prompts";
 import type { EligibilitySource } from "../proposal/proposal-types";
 import type { CreateProposalInput, ProposalsContext } from "../proposal/repository";
 import { isValidDescription } from "../proposal/validators/proposal-quality-validators";

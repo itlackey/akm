@@ -6,7 +6,6 @@ import type { AkmConfig, BundleConfigEntry } from "../src/core/config/config";
 import { saveConfig } from "../src/core/config/config";
 import { getUnresolvedSourcesDir } from "../src/core/paths";
 import { _setWarnSinkForTests } from "../src/core/warn";
-import { resolveWritable } from "../src/core/write-source";
 import { buildDbHit } from "../src/indexer/search/db-search";
 import {
   ensureSourceCaches,
@@ -15,6 +14,7 @@ import {
   resolveSourceEntries,
 } from "../src/indexer/search/search-source";
 import type { InstallKind } from "../src/registry/types";
+import { resolveWritable } from "../src/sources/write-source";
 import { seedLockEntries } from "./_helpers/lockfile";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 import { withSeam } from "./_helpers/seams";

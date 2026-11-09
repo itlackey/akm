@@ -59,7 +59,7 @@ Enforced by: review.
 ### 2. One place per policy
 
 A rule lives in exactly one module and everything else calls it. Write
-destinations branch on source kind only in `src/core/write-source.ts`.
+destinations branch on source kind only in `src/sources/write-source.ts`.
 Fan-out widths are decided once in `src/workflows/concurrency-policy.ts`.
 A call's timeout is resolved once in `src/integrations/agent/resolution.ts`,
 and no other layer adds one.

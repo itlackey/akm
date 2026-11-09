@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { setConfigValue } from "../../../src/commands/config-cli";
+import { setConfigValue } from "../../../src/commands/config";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../../src/core/errors";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";

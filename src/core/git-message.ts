@@ -5,8 +5,8 @@
 /**
  * Leaf util for sanitizing git commit messages.
  *
- * Split out of `core/write-source.ts` so that `sources/providers/git-stash.ts`
- * (which `core/write-source.ts` imports `getCachePaths`/`listGitChangedPaths`/
+ * Split out of `sources/write-source.ts` so that `sources/providers/git-stash.ts`
+ * (which `sources/write-source.ts` imports `getCachePaths`/`listGitChangedPaths`/
  * `parseGitRepoUrl`/`saveGitStash` from, via the `sources/providers/git`
  * barrel, by value) does not need to import back into `write-source.ts` just
  * for this helper — that back-edge was a 3-file static-graph cycle

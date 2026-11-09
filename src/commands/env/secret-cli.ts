@@ -6,7 +6,7 @@
  * `akm secret` command family. Extracted verbatim from src/cli.ts (WS6) so the
  * God Module shrinks; the `main.subCommands.secret` key and every subcommand's
  * args/output shape are byte-identical. The ref-resolution helpers
- * (parseSecretRef / makeSecretRef / resolveSecretPath) live in src/core/env-secret-ref.ts so env + secret share one
+ * (parseSecretRef / makeSecretRef / resolveSecretPath) live in src/sources/env-secret-ref.ts so env + secret share one
  * copy.
  *
  * `akm secret` manages whole-file secrets under each stash's secrets/ directory.
@@ -31,18 +31,18 @@ import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { refForFile } from "../../core/asset/asset-placement";
 import { loadConfig } from "../../core/config/config";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { isFileOrFileSymlink } from "../../indexer/walk/walker";
+import { readStdin } from "../../runtime";
 import {
   makeSecretRef,
   resolveSecretPath,
   resolveSecretWriteTarget,
   sensitiveMarkerPath,
   withEnvSecretWrite,
-} from "../../core/env-secret-ref";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { appendEvent } from "../../core/events";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { isFileOrFileSymlink } from "../../indexer/walk/walker";
-import { readStdin } from "../../runtime";
+} from "../../sources/env-secret-ref";
 import { buildChildEnv } from "./child-env";
 
 function parseKeyListFlag(raw: string | undefined): string[] | undefined {

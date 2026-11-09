@@ -16,7 +16,7 @@ import { listProposals } from "../../src/commands/proposal/repository";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import type { readEvents } from "../../src/core/events";
-import { resolveWriteTarget } from "../../src/core/write-source";
+import { resolveWriteTarget } from "../../src/sources/write-source";
 import { writeFakeHarness } from "../_helpers/engine-stubs";
 import { quietQualityGateConfig, reflectReply } from "../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";

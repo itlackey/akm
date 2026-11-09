@@ -22,7 +22,7 @@ import { validateConfigShape } from "../src/core/config/config-schema";
 import { configSet } from "../src/core/config/config-walker";
 import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
-import { resolveWriteTarget } from "../src/core/write-source";
+import { resolveWriteTarget } from "../src/sources/write-source";
 
 beforeEach(() => resetConfigCache());
 afterEach(() => resetConfigCache());

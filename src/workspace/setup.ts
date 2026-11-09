@@ -5,7 +5,7 @@
 /** First-run setup for a host: what this computer offers, the library, and the agent programs akm may use. */
 
 import path from "node:path";
-import { setConfigValue, unsetConfigValue } from "../commands/config-cli";
+import { setConfigValue, unsetConfigValue } from "../commands/config";
 import {
   type AkmConfig,
   defaultConnection,

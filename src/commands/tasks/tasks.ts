@@ -31,6 +31,10 @@ import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../cor
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
 import { warn } from "../../core/warn";
+import type { InputFlag } from "../../execution/input-contract";
+import { deriveInstallations } from "../../indexer/installations";
+import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
+import { resolveAssetPath } from "../../sources/resolve";
 import {
   assertBundleNotDisabled,
   commitWriteTargetBoundary,
@@ -40,11 +44,7 @@ import {
   resolveWorkingStashTarget,
   resolveWriteTarget,
   writeAssetToSource,
-} from "../../core/write-source";
-import type { InputFlag } from "../../execution/input-contract";
-import { deriveInstallations } from "../../indexer/installations";
-import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
-import { resolveAssetPath } from "../../sources/resolve";
+} from "../../sources/write-source";
 import { initializeSchedulerChoice, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
 import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptions } from "../../tasks/backends/types";

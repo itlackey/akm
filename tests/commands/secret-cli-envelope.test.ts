@@ -6,7 +6,7 @@
  * WS6 characterization test for the `akm secret` command family. Pins the full
  * JSON envelope (stdout payload shape + the {ok:false,…} error envelope on
  * stderr / exit code) for `list`, proving the extraction of the family from
- * cli.ts into src/commands/secret-cli.ts (helpers in src/core/env-secret-ref.ts)
+ * cli.ts into src/commands/secret-cli.ts (helpers in src/sources/env-secret-ref.ts)
  * is byte-identical. Crucially it asserts the secret VALUE (file contents)
  * never appears on stdout or stderr — only the ref NAME is surfaced.
  *

@@ -17,11 +17,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmReflect, REFLECT_JSON_SCHEMA } from "../../../../src/commands/improve/reflect";
 import { splitFrontmatter } from "../../../../src/commands/improve/reflect-noise";
+import { REFLECT_CONTENT_CAP, REFLECT_TRUNCATION_MARKER } from "../../../../src/commands/prompts";
 import { listProposals } from "../../../../src/commands/proposal/repository";
 import { parseFrontmatter } from "../../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
-import { REFLECT_CONTENT_CAP, REFLECT_TRUNCATION_MARKER } from "../../../../src/integrations/agent/prompts";
 import {
   clearHarnessCalls,
   fakeHarness,

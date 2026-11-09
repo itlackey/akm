@@ -34,9 +34,9 @@ import os from "node:os";
 import path from "node:path";
 import { buildDistillPrompt } from "../src/commands/improve/distill";
 import { buildExtractPrompt } from "../src/commands/improve/extract-prompt";
+import { buildProposePrompt, buildReflectPrompt } from "../src/commands/prompts";
 import { resolveStandardsContext } from "../src/core/standards/resolve-standards-context";
 import { resolveStashStandards } from "../src/core/standards/resolve-stash-standards";
-import { buildProposePrompt, buildReflectPrompt } from "../src/integrations/agent/prompts";
 
 /** The lead-in line shared by every authoring prompt's standards section. */
 const LEAD_IN = "Standards to follow (the rulebook for this target)";

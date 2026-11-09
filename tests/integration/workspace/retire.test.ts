@@ -13,10 +13,10 @@ import {
 } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
-import { renameBundle } from "../../../src/core/bundle-rename";
 import { saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { writeLockfile } from "../../../src/integrations/lockfile";
+import { renameBundle } from "../../../src/sources/bundle-rename";
 import type { SchedulerBackend } from "../../../src/tasks/backends/types";
 import { assets, documents } from "../../../src/workspace";
 import { git, makeGitRepo } from "../../_helpers/git";

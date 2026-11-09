@@ -5,12 +5,12 @@ import { resolveRefToken } from "../src/commands/env/env-binding";
 import { akmAdapter } from "../src/core/adapter/adapters/akm-adapter";
 import { assetPathCandidatesForName, filesForRef, placementTypes, refForFile } from "../src/core/asset/asset-placement";
 import { loadConfig, resetConfigCache } from "../src/core/config/config";
-import { isInstalledBundle, resolveEnvPath, resolveRefOwner } from "../src/core/env-secret-ref";
 import { substituteRefTokens } from "../src/core/ref-token";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { resolveAdapterConceptOwner, resolveConceptOwner } from "../src/indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../src/indexer/search/search-source";
 import { buildFileContext } from "../src/indexer/walk/file-context";
+import { isInstalledBundle, resolveEnvPath, resolveRefOwner } from "../src/sources/env-secret-ref";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 import { withSeam } from "./_helpers/seams";
 

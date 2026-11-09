@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getConfigValue, listConfig, redactSecretKeys } from "../src/commands/config-cli";
+import { getConfigValue, listConfig, redactSecretKeys } from "../src/commands/config";
 import { resolveImproveExecution } from "../src/commands/improve/execution";
 import { loadUserConfig, resetConfigCache, unknownConfigKeyPaths } from "../src/core/config/config";
 import { configGet } from "../src/core/config/config-walker";

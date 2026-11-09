@@ -460,7 +460,7 @@ whose archive directory is entirely git-tracked and clean (`git ls-files`
 plus `git status --porcelain -uall`, checked once per sweep, not once per
 directory). A `.git` directory alone does not mean a retirement was committed:
 an accept commits its own paths, once per process (`commitAcceptedPaths` in
-`src/core/write-source.ts`), on a `kind: "filesystem"` source with a `.git`
+`src/sources/write-source.ts`), on a `kind: "filesystem"` source with a `.git`
 directory too, but a commit that failed only warns. A directory with even one
 untracked or modified file (the tombstone included) is left whole for a later
 sweep, so the purge removes only bytes git can recover. If git cannot report

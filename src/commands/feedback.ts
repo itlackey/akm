@@ -14,17 +14,17 @@ import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../cor
 import { loadConfig } from "../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
-import { resolveMutationTarget } from "../core/mutation-target";
 import { isPathAbsent } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { getStateDbPath, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
-import { withWriteTargetMutation } from "../core/write-source";
 import { recomputeUtilityScores } from "../indexer/indexer";
 import { currentConceptId, resolveWriteAddress } from "../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
 import { insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
+import { resolveMutationTarget } from "../sources/mutation-target";
+import { withWriteTargetMutation } from "../sources/write-source";
 import type { Database } from "../storage/database";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
 import {

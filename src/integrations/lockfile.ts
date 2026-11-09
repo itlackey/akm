@@ -203,7 +203,7 @@ function readLockfileOrThrow(): LockfileEntry[] {
  *
  * This is the SINGLE lock-first resolution point shared by the indexer READ
  * path (`resolveEntryContentDir` in indexer/search) and the command-layer WRITE
- * path (`adaptConfiguredSource` in core/write-source): consulting it first makes
+ * path (`adaptConfiguredSource` in sources/write-source): consulting it first makes
  * a write land in exactly the directory a read walks. Returns `undefined` for a
  * bundle with no lock `localRoot` or a non-managed type, so both callers fall
  * back to the identical provider-path derivation.
