@@ -615,8 +615,8 @@ Every helper under `src/llm/` is a **bounded, single-shot, stateless** call.
 Concretely:
 
 - Each public export is either a stateless function (`chatCompletion` performs
-  one HTTP request and keeps nothing between calls; `resolveIndexPassExecution`,
-  `parseJsonResponse` in `src/core/parse.ts`, …) or a factory that returns a
+  one HTTP request and keeps nothing between calls; `parseJsonResponse` in
+  `src/core/parse.ts`, …) or a factory that returns a
   one-shot client tied to the symbolic runner/config the caller passes in.
 - No module under `src/llm/` keeps session, conversation, or response state at
   module scope. The module-level state is the local embedder pipeline and the
@@ -627,10 +627,9 @@ Concretely:
   structured-LLM seam: it adapts an already-resolved symbolic runner into an
   inline resolved request, lowers it, and dispatches it through `runExecution`,
   which materializes the connection's key at dispatch like every other dispatch
-  and re-runs no alias resolution. Index callers use
-  `resolveIndexPassExecution()` (`src/llm/index-passes.ts`) to freeze the typed
-  `{ runner, notices }` selection once per invocation; there is no separate
-  readiness projection. Which improve processes run is chosen by
+  and re-runs no alias resolution. Improve resolves the typed `{ runner, notices }`
+  selection once per call (`resolveImproveExecution()`, `src/commands/improve/execution.ts`)
+  and passes the runner in; there is no separate readiness projection. Which improve processes run is chosen by
   `improve.strategies`, and where each runs by `improve.processes`; see
   `docs/reference/configuration.md` for canonical config paths.
 

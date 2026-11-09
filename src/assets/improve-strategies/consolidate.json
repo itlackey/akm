@@ -1,5 +1,4 @@
 {
-  "description": "Consolidation-only pass — merges, deduplicates, and prunes memories every 4h.",
   "processes": {
     "reflect": { "enabled": false },
     "distill": { "enabled": false },

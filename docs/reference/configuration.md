@@ -475,14 +475,16 @@ These settings, all optional, choose another place for one piece of work:
 | Key | Chooses where |
 | --- | --- |
 | `improve.enabled` | `false`: background learning is off on this host, and `akm improve` and `akm proposal extract` do nothing. Written by `akm setup --learning off`; absent means on |
-| `improve.connection`, `improve.harness`, `improve.model`, `improve.llm`, `improve.timeoutMs` | The base for all of akm's model work: improve's processes, the judges, `akm remember --enrich`, extraction and the proposal drain |
+| `improve.connection`, `improve.harness`, `improve.model`, `improve.llm`, `improve.timeoutMs` | The base for improve's processes, the quality-gate and triage judges, `akm remember --enrich`, extraction and the proposal drain. A workflow gate's judge does not read it: it runs on the default connection, else the default harness |
 | `improve.processes.<process>` | One improve process: `reflect`, `distill`, `consolidate`, `memoryInference`, `extract`, `validation`, or `triage` (its judgment) |
 | `improve.qualityGate` | The judge of the reflect and distill quality gates |
 
 Each takes `connection` or `harness`, `model` (an alias or a name), `llm` (the
 [settings a call asks for](#settings-a-call-asks-for)) and `timeoutMs`.
-`improve.*` is the base every model-work call starts from, whichever command
-makes it; the entries below it are nearer. An `engine` in one of these blocks is
+`improve.*` is the base for improve's processes, the quality-gate and triage
+judges, `akm remember --enrich`, extraction and the proposal drain, whichever
+command makes the call; the entries below it are nearer. A workflow gate's judge
+reads none of it: it runs on the default connection, else the default harness. An `engine` in one of these blocks is
 the retired spelling of `connection` or `harness`: it still selects where the work
 runs, a warning says so, and `akm migrate apply` drops it, so name a
 `connection` or `harness` instead.
@@ -503,7 +505,7 @@ runs, a warning says so, and `akm migrate apply` drops it, so name a
 The nearest setting wins, farthest to nearest: the shipped alias of the kind of
 work, `improve.*` (`connection`, `harness`, `model`, `llm`, `timeoutMs`), the process's entry in
 `improve.processes`, and `--connection`, `--harness` and `--model` on the run,
-which reach every call in it, the judges included. The quality-gate judge is the
+which reach every call in it, the quality-gate and triage judges included. The quality-gate judge is the
 exception: a process's own entry is the writer's, so `improve.qualityGate`
 replaces it, and a `reasoning` model chosen for reflect is not the one that
 judges it. A strategy adds no layer: it says which processes run, never where.
@@ -1202,7 +1204,7 @@ asset keys move as the table says.
 | `AKM_ENGINE_<NAME>_API_KEY` or `AKM_LLM_API_KEY` set in the environment | `apiKey: "$AKM_ENGINE_<NAME>_API_KEY"` (or `$AKM_LLM_API_KEY`) on that connection. Set in no variable, an engine that names no key gets none, and a note names the variables 0.9 read. |
 | `improve.strategies.<name>.engine`, `model`, `llm`, `timeoutMs` | Dropped, with a note: a strategy says which processes run, not where. |
 | `engine`, `model`, `llm`, `timeoutMs` on a strategy's process, its `qualityGate` or its `triage.judgment` | Moved to `improve.processes.<process>` or `improve.qualityGate`, with `engine` becoming `connection` or `harness` by what it named. When that place already says, the first one is kept, with a note. |
-| `index.defaults.*`, `index.<pass>.engine` | Left as written: the `index` section is retired and no longer read, so it is named once as an unknown key. Where memory inference runs is `improve.processes.memoryInference` over `improve.*`. |
+| `index.defaults.*`, `index.<pass>.engine` | Dropped with the rest of the `index` section: it is retired and no longer read, so it is named once as an unknown key until then. Where memory inference runs is `improve.processes.memoryInference` over `improve.*`. |
 | `workflow.judgeEngine` | Dropped, with a note: a gate's judge runs on the default connection, else the default harness. The note says whether the engine it named is that default, or the judge has moved. With none set, 0.9 ran the judge on `defaults.engine`; a note says when that is not where it runs now. |
 | `engine:` in an asset's frontmatter, a workflow step or a task source | `connection:` or `harness:`, by what the configured target is; a name it cannot place becomes `harness:`, with a note. A bundle akm may not change, and an asset that is a symbolic link, are skipped. |
 

@@ -869,6 +869,15 @@ describe("what a strategy no longer decides, and per-process names", () => {
     }
   });
 
+  test("an `index` section is not touched: it is inert, and migrate drops it whole", () => {
+    const index = {
+      defaults: { engine: "lab", model: "fast" },
+      memory: { engine: "lab", enabled: true },
+    };
+    const { config } = convert({ engines: { lab: llm() }, index: structuredClone(index) });
+    expect(config.index).toEqual(index);
+  });
+
   test("a strategy process's engine becomes connection or harness by the target's kind, and moves to improve.processes with its model, llm and timeoutMs", () => {
     const { config } = convert({
       engines: {

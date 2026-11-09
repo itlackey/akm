@@ -439,7 +439,7 @@ function modelWorkTarget(
   if (harness === undefined || !isRecord(entry)) return undefined;
   if (str(defaults.llmEngine) === undefined && harness in naming.harnesses && entry.modelWork === undefined) {
     conversion.notes.push(
-      `harnesses.${harness}: akm's own model work (improve, index passes, extraction, judges) now runs on this harness, the default for it with no connection. Without defaults.llmEngine, 0.9 ran none of it unless a setting named an engine (a workflow gate's judge ran on defaults.engine). To keep the 0.9 behaviour, set \`modelWork: false\` on this harness: a call that names it still runs there, but a workflow gate's judge then needs a connection (\`akm setup --endpoint URL\`).`,
+      `harnesses.${harness}: akm's own model work (improve, extraction, judges) now runs on this harness, the default for it with no connection. Without defaults.llmEngine, 0.9 ran none of it unless a setting named an engine (a workflow gate's judge ran on defaults.engine). To keep the 0.9 behaviour, set \`modelWork: false\` on this harness: a call that names it still runs there, but a workflow gate's judge then needs a connection (\`akm setup --endpoint URL\`).`,
     );
   }
   return entry.modelWork === false ? undefined : { harness };

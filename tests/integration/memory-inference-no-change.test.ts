@@ -439,3 +439,14 @@ describe("the prompt", () => {
     expect(prompt.slice(prompt.indexOf("\n\nBody:\n") + "\n\nBody:\n".length)).toBe(CHECKPOINT_NOTE);
   });
 });
+
+describe("a pass handed no runner", () => {
+  test("makes no model call: it does not read the config to find where to run", async () => {
+    writeMemory("note", TOOL_COUNT_NOTE);
+    await withDb(async (db) => {
+      // No `llmRunner` key at all, on a config that has a connection the pass could once have resolved itself.
+      await runMemoryInferencePassImpl({ config: config(), sources: sources(), db });
+    });
+    expect(chatCalls).toHaveLength(0);
+  });
+});
