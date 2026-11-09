@@ -90,13 +90,10 @@ what each target holds and where a new test goes.
 bun run lint:fix   # Biome with --write; read git diff afterwards
 bun run lint       # what CI runs: Biome, the secret-resolver and shipped-assets lints, the doc-example lint, the lockfile lint
 ```
-Every pull request, whatever branch it targets, runs `check` (lint, types, the
-unit and integration suites, the build), the Node fallback smoke on Node 22 and
-24, and Desktop's tests on Linux. A pull request into `main` is a release and
-also runs Desktop packaging on all three platforms, the upgrade rehearsals and
-Gated CI (see the [release checklist](../docs/maintainers/release-checklist.md)).
-Push in batches that you have verified locally with `bun run check`: each push
-is a CI run.
+Every pull request runs the fast gate; a pull request into `main` is a release
+and runs the whole one (see the
+[release checklist](../docs/maintainers/release-checklist.md)). Push in batches
+that you have verified locally with `bun run check`: each push is a CI run.
 
 
 ### Building

@@ -6,16 +6,14 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
+import { WORKFLOWS_DIR } from "./_helpers/pinned-action";
 
-const source = fs.readFileSync(path.resolve(import.meta.dir, "../.github/workflows/ci.yml"), "utf8");
+const source = fs.readFileSync(path.join(WORKFLOWS_DIR, "ci.yml"), "utf8");
 const workflow = YAML.parse(source) as {
   on: Record<string, unknown>;
   concurrency: { group: string; "cancel-in-progress": boolean };
-  jobs: Record<string, { if?: string; uses?: string; steps?: Array<{ run?: string }> }>;
+  jobs: Record<string, { if?: string; needs?: string; uses?: string; steps?: Array<{ run?: string }> }>;
 };
-
-// A pull request into main is a release (docs/maintainers/release-checklist.md): the platform jobs run there only.
-const RELEASE_PULL_REQUEST = "github.event_name == 'pull_request' && github.base_ref == 'main'";
 
 describe("CI workflow", () => {
   test("runs on every pull request, whatever its base, on dispatch, and when Release calls it; never on a push", () => {
@@ -23,30 +21,34 @@ describe("CI workflow", () => {
     // No base filter (a pull request into a release branch or a feature branch runs it) and no path filter (a
     // required check that path filtering skips never reports, and blocks the merge).
     expect(workflow.on.pull_request).toBeNull();
-    expect(source).not.toContain("paths-ignore");
   });
 
   test("the fast gate runs unconditionally: check, the Node smoke on both versions, Desktop on Linux", () => {
     for (const job of ["check", "node-smoke", "desktop"]) {
       expect(workflow.jobs[job]?.if, job).toBeUndefined();
+      expect(workflow.jobs[job]?.needs, job).toBeUndefined();
     }
     expect(source).toContain('node-version: ["22", "24"]');
     expect(workflow.jobs.check?.steps?.some((step) => step.run === "bun run check")).toBe(true);
   });
 
-  test("the platform jobs and Gated CI run on a release pull request only", () => {
-    for (const job of ["desktop-package", "upgrade-rehearsal", "gated"]) {
-      expect(workflow.jobs[job]?.if, job).toBe(RELEASE_PULL_REQUEST);
-    }
-    expect(workflow.jobs.gated?.uses).toBe("./.github/workflows/gated-ci.yml");
+  test("only a release branch merges to main, and it ships the version it is named for", () => {
+    // A pull request into main is a release (docs/maintainers/release-checklist.md). This check runs there only;
+    // the ruleset on main requires it, and a skipped `needs` would skip the platform jobs below.
+    const guard = workflow.jobs["release-branch-only"];
+    expect(guard?.if).toBe("github.event_name == 'pull_request' && github.base_ref == 'main'");
+    const run = guard?.steps?.find((step) => step.run)?.run ?? "";
+    expect(run).toContain("release/*)");
+    expect(run).toContain(`VERSION="$(node -p "require('./package.json').version")"`);
+    expect(run).toContain('[ "$VERSION" != "$' + '{HEAD#release/}" ]');
   });
 
-  test("only a release branch merges to main", () => {
-    const guard = workflow.jobs["release-branch-only"];
-    expect(guard?.if).toBe(RELEASE_PULL_REQUEST);
-    const run = guard?.steps?.[0]?.run ?? "";
-    expect(run).toContain("release/*)");
-    expect(run).toContain("exit 1");
+  test("the platform jobs and Gated CI follow the release-branch check, so they run on a release pull request only", () => {
+    for (const job of ["desktop-package", "upgrade-rehearsal", "gated"]) {
+      expect(workflow.jobs[job]?.needs, job).toBe("release-branch-only");
+      expect(workflow.jobs[job]?.if, job).toBeUndefined();
+    }
+    expect(workflow.jobs.gated?.uses).toBe("./.github/workflows/gated-ci.yml");
   });
 
   test("one run per pull request; a dispatch or a call from Release cancels nothing", () => {

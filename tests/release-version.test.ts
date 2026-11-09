@@ -104,7 +104,6 @@ describe("deriveVersion", () => {
 describe("resolveVersion", () => {
   test("a release is published as itself, or as the first prerelease of a stage", () => {
     expect(resolveVersion("0.10.261001", "")).toBe("0.10.261001");
-    expect(resolveVersion("0.10.261001", "none")).toBe("0.10.261001");
     for (const stage of STAGES) expect(resolveVersion("0.10.261001", stage, [])).toBe(`0.10.261001-${stage}.1`);
   });
 
@@ -116,7 +115,7 @@ describe("resolveVersion", () => {
     // A bare stage published before the counter counts as 1.
     expect(resolveVersion("0.10.261001", "beta", ["0.10.261001-beta"])).toBe("0.10.261001-beta.2");
     // The stable release never takes a counter.
-    expect(resolveVersion("0.10.261001", "none", published)).toBe("0.10.261001");
+    expect(resolveVersion("0.10.261001", "", published)).toBe("0.10.261001");
   });
 
   test("prereleases sort by stage then counter, below their release and below the next release", () => {
@@ -132,7 +131,7 @@ describe("resolveVersion", () => {
   });
 
   test("the 0.9 line still releases with a plain version", () => {
-    expect(resolveVersion("0.9.32", "none")).toBe("0.9.32");
+    expect(resolveVersion("0.9.32", "")).toBe("0.9.32");
     expect(resolveVersion("0.9.32-rc.1", "")).toBe("0.9.32-rc.1");
   });
 

@@ -36,14 +36,10 @@ jobs:
   ci:
     if: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}
     uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
 
   gated:
     if: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run }}
     uses: ./.github/workflows/gated-ci.yml
-    permissions:
-      contents: read
 
   release:
     needs: [ci, gated]
@@ -57,8 +53,8 @@ jobs:
     timeout-minutes: 30
     environment: release
     env:
-      # A push to main carries no inputs: a stable release of the committed version.
-      STAGE_INPUT: ${{ inputs.stage || 'none' }}
+      # Empty on a push to main: a stable release of the committed version.
+      STAGE_INPUT: ${{ inputs.stage }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
         with:
@@ -75,17 +71,13 @@ jobs:
       - run: bun install --frozen-lockfile
 
       # A release's version is its branch name, release/<version>. A stable (the push to main) publishes the version
-      # committed in package.json by the `release: <version>` commit; a prerelease (a dispatch on the release
-      # branch) publishes the branch's version with the stage and the next counter appended (one above the highest
-      # on npm for that release and stage), stamped into this run's package.json only. scripts/release-version.ts
-      # validates the format (0.10+: 0.<minor>.YYMMNN; older lines: X.Y.Z[-prerelease]) and appends the stage (#1089).
-      # A version already released from another commit is refused: a merge into main without the release commit
-      # would otherwise rebuild that release's assets. A rerun on the same commit goes on.
+      # committed in package.json, which the pull request's release-branch-only check matched to the branch; a
+      # prerelease (a dispatch on the release branch) publishes the branch's version with the stage and the next
+      # counter appended (one above the highest on npm for that release and stage), stamped into this run's
+      # package.json only. scripts/release-version.ts validates the format (0.10+: 0.<minor>.YYMMNN; older lines:
+      # X.Y.Z[-prerelease]) and appends the stage (#1089).
       - name: Resolve version
         id: version
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             case "$GITHUB_REF_NAME" in
@@ -100,10 +92,6 @@ jobs:
           fi
           export VERSION_INPUT
           CANDIDATE_VERSION="$(bun scripts/release-version.ts resolve)"
-          if [ "$DRY_RUN" != "true" ] && released="$(gh release view "v$CANDIDATE_VERSION" --json targetCommitish --jq .targetCommitish 2>/dev/null)" && [ "$released" != "$GITHUB_SHA" ]; then
-            echo "v$CANDIDATE_VERSION was already released from $released; a version publishes once" >&2
-            exit 1
-          fi
           if [ "$CANDIDATE_VERSION" != "$VERSION_INPUT" ]; then
             npm pkg set version="$CANDIDATE_VERSION"
           fi

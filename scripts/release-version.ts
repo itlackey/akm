@@ -81,13 +81,13 @@ export function deriveVersion(line: string, now: Date, published: readonly strin
 
 /**
  * The version to publish: the release's number (the release branch's name for a prerelease, package.json for a
- * stable release), with `stage` and a counter appended for a prerelease (`stage` empty or `none` for a stable
- * release). The counter is one above the highest already in `published` for that release and stage; a published
- * bare stage counts as 1. Throws an Error naming what is wrong.
+ * stable release), with `stage` and a counter appended for a prerelease (`stage` empty for a stable release). The
+ * counter is one above the highest already in `published` for that release and stage; a published bare stage
+ * counts as 1. Throws an Error naming what is wrong.
  */
 export function resolveVersion(versionInput: string, stageInput: string, published: readonly string[] = []): string {
   const given = versionInput.trim();
-  const stage = stageInput.trim() === "none" ? "" : stageInput.trim();
+  const stage = stageInput.trim();
   if (stage !== "" && !(STAGES as readonly string[]).includes(stage)) {
     throw new Error(`stage "${stage}" is not one of ${STAGES.join(", ")}`);
   }
@@ -141,7 +141,7 @@ function main(argv: string[]): number {
     }
     if (command === "resolve") {
       const stage = (process.env.STAGE_INPUT ?? "").trim();
-      const published = stage === "" || stage === "none" ? [] : npmVersions(packageJson().name);
+      const published = stage === "" ? [] : npmVersions(packageJson().name);
       console.log(resolveVersion(process.env.VERSION_INPUT ?? "", stage, published));
       return 0;
     }

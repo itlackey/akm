@@ -32,7 +32,7 @@
 
 Each step is one command: `bun run release:start [0.<minor>]`, `bun run
 release:prerelease [alpha|beta|rc]` and `bun run release:stable`
-(`scripts/release/`). Each refuses to run from the wrong branch or with
+(`scripts/release.sh`). Each refuses to run from the wrong branch or with
 unpushed changes, and says why.
 
 The release branch is always shippable: a pull request merges when the branch
@@ -111,8 +111,8 @@ On the release branch with everything pushed:
    That pull request is the whole gate: everything a pull request runs, plus
    Desktop packaged on all three platforms, the upgrade rehearsals from the
    previous stable and from the oldest supported releases, Gated CI, and the
-   check that the head is a release branch. Fix on the release branch until it
-   is green. Rerun failed jobs on a flake.
+   check that the head is a release branch whose version package.json carries.
+   Fix on the release branch until it is green. Rerun failed jobs on a flake.
 3. Merge it (a merge commit, so `main` carries the branch's commits). The push
    to `main` runs the Release workflow, which publishes `<version>` to npm
    `latest`, creates the GitHub release with the binaries, the installers and
@@ -122,9 +122,7 @@ On the release branch with everything pushed:
 4. Cut the next release branch ([section 1](#1-cut-a-release-branch)).
 
 If Release fails on a flake, rerun the failed jobs: a rerun on the same commit
-skips what is already published. If the version it would publish is already
-released from another commit (a merge into `main` without the release commit),
-it stops before building anything. A fix that needs a code change is the next
+skips what is already published. A fix that needs a code change is the next
 release.
 
 To rehearse the packaging without publishing anything, dispatch a dry run on
@@ -183,21 +181,14 @@ Actions tab on any ref. Only the weekly run saves the Hugging Face model cache.
 
 ## Versions
 
-0.10 and later use monthly release numbers, `0.10.YYMMNN`: `YY` the UTC year,
-`MM` the month and `NN` the release in that month (`01` to `99`), two digits
-each (see [`STABILITY.md`](../../STABILITY.md)). A release takes its number when
-its branch is cut: `bun scripts/release-version.ts next` prints one above the
-highest `NN` already on npm for this UTC month, at any stage, and
-`bun scripts/release-version.ts validate <version>` checks one by hand. The
-retired 8-digit daily builds (`0.10.26101001-alpha` to `0.10.26101202-alpha`)
-are not counted. 0.9 and older use `X.Y.Z`.
-
-A release's prereleases are its number with the stage and a counter appended
-(`0.10.261116-beta.1`, then `-beta.2`, then `-rc.1`), published from the release
-branch by dispatch; the stable release is the bare number, published by the
-merge into `main`. The stage is never committed. A number that never published
-(an abandoned branch) stays unused. Prereleases published before the counter
-carry a bare stage (`0.10.261115-beta`).
+The scheme is in [`STABILITY.md`](../../STABILITY.md): `0.<minor>.YYMMNN`, a
+release's number taken when its branch is cut, its prereleases that number with
+the stage and a counter appended. `bun scripts/release-version.ts next
+[0.<minor>]` prints the next free number of a line from the versions on npm
+(the retired 8-digit daily builds are not counted), `validate <version>`
+checks one by hand, and the Release workflow appends the stage and the next
+counter at publish time; the stage is never committed. A number that never
+published (an abandoned branch) stays unused.
 
 ## Repository settings
 
@@ -213,20 +204,15 @@ plan). Target branch `main`, enforcement active, no bypass list:
   only, so `main` carries the release branch's commits and the next cut
   descends from them.
 - Require status checks to pass, with "Require branches to be up to date
-  before merging" on. The required checks, as CI names them (a check must have
-  run once before it can be selected):
-  `check`, `release-branch-only`, `desktop`, `node-smoke (22)`,
-  `node-smoke (24)`, `desktop-package (ubuntu-latest)`,
-  `desktop-package (macos-latest)`, `desktop-package (windows-latest)`,
-  `upgrade-rehearsal (previous)`, `upgrade-rehearsal (0.9.32)`,
-  `upgrade-rehearsal (0.9.15)`, `gated / Gated / Semantic Search`,
-  `gated / Gated / Docker Install`, `gated / Gated / Native Scheduler / Linux`,
-  `gated / Gated / Native Scheduler / macOS`,
-  `gated / Gated / Native Scheduler / Windows`.
+  before merging" on. Require every check a release pull request reports: the
+  CI jobs (`check`, `release-branch-only`, `desktop`, and each `node-smoke`,
+  `desktop-package` and `upgrade-rehearsal` matrix entry) and the five Gated CI
+  jobs. GitHub lists them by name once the first release pull request has run.
 
 Rulesets cannot restrict which branch a pull request comes from; the
-`release-branch-only` check does that, and requiring it makes a pull request
-from any other branch unmergeable into `main`.
+`release-branch-only` check does that, and also checks that package.json
+carries the branch's version. Requiring it makes a pull request from any other
+branch, or one without its release commit, unmergeable into `main`.
 
 **Ruleset `release/*`.** Target `release/*`: block force pushes. Direct pushes
 stay allowed, for the `release: <version>` commit; everything else arrives by

@@ -42,22 +42,29 @@ jobs:
       - run: bun run build
 
   release-branch-only:
-    # Only a release branch merges to main. The ruleset on main requires this check, so a pull request from any
-    # other branch cannot be merged there (docs/maintainers/release-checklist.md, "Repository settings").
+    # Only a release branch merges to main, and it ships the version it is named for: package.json carries it (the
+    # release commit, `bun run release:stable`). The ruleset on main requires this check, and the platform jobs
+    # below run after it (docs/maintainers/release-checklist.md, "Repository settings").
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - env:
           HEAD: ${{ github.head_ref }}
         run: |
           case "$HEAD" in
-            release/*) echo "$HEAD is a release branch" ;;
+            release/*) ;;
             *)
               echo "Only a release branch merges to main; this pull request comes from $HEAD" >&2
               exit 1
               ;;
           esac
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "$VERSION" != "${HEAD#release/}" ]; then
+            echo "package.json is $VERSION; $HEAD ships ${HEAD#release/}. Run bun run release:stable first." >&2
+            exit 1
+          fi
 
   desktop:
     # Desktop's type check, unit, browser, usability, server, package and Electron tests, on Linux, on every pull
@@ -66,8 +73,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
-        with:
-          fetch-depth: 0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
           bun-version: 1.3.14
@@ -112,7 +117,7 @@ jobs:
     # Builds Desktop's installers (Linux AppImage, macOS dmg and zip, Windows NSIS; unsigned) and starts each packaged
     # app headless, on all three platforms. Release pull requests only: the Release workflow builds the installers
     # that ship from the published tarball.
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    needs: release-branch-only
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -124,8 +129,6 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
-        with:
-          fetch-depth: 0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
           bun-version: 1.3.14
@@ -184,7 +187,7 @@ jobs:
 
   upgrade-rehearsal:
     # Two origin-release installs per job, on release pull requests only.
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    needs: release-branch-only
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -208,7 +211,5 @@ jobs:
 
   gated:
     # Real embeddings, the Docker install matrix and the native schedulers, on release pull requests only.
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    needs: release-branch-only
     uses: ./.github/workflows/gated-ci.yml
-    permissions:
-      contents: read
