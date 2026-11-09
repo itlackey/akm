@@ -14,7 +14,7 @@ ones.
 | `$CACHE` | `~/.cache/akm` | `%LOCALAPPDATA%\akm` | `paths.cache` in the config file, then `XDG_CACHE_HOME` |
 | `$DATA` | `~/.local/share/akm` | `%LOCALAPPDATA%\akm\data` | `paths.data` in the config file, then `XDG_DATA_HOME` |
 | `$STATE` | `~/.local/state/akm` | `%LOCALAPPDATA%\akm\state` | `paths.state` in the config file, then `XDG_STATE_HOME` |
-| `$STASH` | `~/akm` | `%USERPROFILE%\Documents\akm` | `AKM_BUNDLE_DIR` |
+| `$STASH` | `~/akm` (where `akm bundle create` puts a new bundle) | `%USERPROFILE%\Documents\akm` | `defaultBundle` and `bundles.<id>.path` in the config file, or `--bundle <name>` |
 
 `akm setup --dir <a directory under /tmp, /var/tmp, or a macOS temp directory>`
 (`isTransientStashPath`) keeps its config in `$STASH/.akm/config.json`, with

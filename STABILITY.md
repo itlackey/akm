@@ -502,8 +502,8 @@ on them.
 | Variable | Purpose |
 | --- | --- |
 | `AKM_CONFIG_FILE` (and the global `--config <file>`) | The config file this run uses; its `paths` key (`data`, `state`, `cache`) places the rest |
-| `AKM_BUNDLE_DIR` | Overrides the working bundle for this process (to be retired) |
-| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | **Retired** (0.10.x): replaced by `AKM_CONFIG_FILE` and `paths`. Set without `AKM_CONFIG_FILE`, akm exits 78 (`RETIRED_LOCATION_VARIABLE`) naming `akm migrate apply` and `AKM_CONFIG_FILE`; `akm migrate`, `akm upgrade`, `akm info`, `--version` and `--help` still run. The error goes at 0.11 |
+| `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` | **Retired** (0.11): replaced by `AKM_CONFIG_FILE` and `paths`. Set without `AKM_CONFIG_FILE`, akm exits 78 (`RETIRED_LOCATION_VARIABLE`) naming `akm migrate apply` and `AKM_CONFIG_FILE`; `akm migrate`, `akm upgrade`, `akm info`, `--version` and `--help` still run. |
+| `AKM_BUNDLE_DIR` | **Retired** (0.11): the working bundle is `defaultBundle` (or `--bundle`). Naming the directory of the bundle akm resolves without it, or set with `AKM_CONFIG_FILE`, it is ignored; naming any other directory, akm exits 78 (`RETIRED_LOCATION_VARIABLE`) naming `akm migrate apply` (which registers that directory as `defaultBundle`). |
 | `AKM_NPM_REGISTRY` | npm mirror base URL; replaces `registry.npmjs.org` for package lookups |
 | `AKM_INSTALL_DIR` | Install-script prefix (read by `install.sh` and `install.ps1`, not by akm itself) |
 

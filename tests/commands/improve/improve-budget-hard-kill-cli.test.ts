@@ -14,7 +14,14 @@ import type { akmImprove } from "../../../src/commands/improve/improve";
 import { _setAkmImproveForTests } from "../../../src/commands/improve/improve-cli";
 import { getStateDbPath } from "../../../src/core/state-db";
 import { runCliCapture } from "../../_helpers/cli";
-import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv, writeSandboxConfig } from "../../_helpers/sandbox";
+import {
+  makeSandboxDir,
+  makeStashDir,
+  type SandboxedDir,
+  withBundle,
+  withEnv,
+  writeSandboxConfig,
+} from "../../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -43,29 +50,29 @@ test("the hard-kill hook persists a terminated improve run with reason budget_ex
 
   const row = await withEnv(
     {
-      AKM_BUNDLE_DIR: stash.dir,
       HOME: home.dir,
       XDG_CONFIG_HOME: cfg.dir,
       XDG_CACHE_HOME: cache.dir,
       XDG_DATA_HOME: data.dir,
       XDG_STATE_HOME: state.dir,
     },
-    async () => {
-      writeSandboxConfig({
-        semanticSearchMode: "off",
-        connections: { ready: { endpoint: "https://example.test/v1/chat/completions", models: { fast: "m" } } },
-      });
-      await runCliCapture(["improve"]);
-      const db = new Database(getStateDbPath(), { readonly: true });
-      try {
-        return db.prepare("SELECT ok, result_json FROM improve_runs").all() as Array<{
-          ok: number;
-          result_json: string;
-        }>;
-      } finally {
-        db.close();
-      }
-    },
+    () =>
+      withBundle(stash.dir, async () => {
+        writeSandboxConfig({
+          semanticSearchMode: "off",
+          connections: { ready: { endpoint: "https://example.test/v1/chat/completions", models: { fast: "m" } } },
+        });
+        await runCliCapture(["improve"]);
+        const db = new Database(getStateDbPath(), { readonly: true });
+        try {
+          return db.prepare("SELECT ok, result_json FROM improve_runs").all() as Array<{
+            ok: number;
+            result_json: string;
+          }>;
+        } finally {
+          db.close();
+        }
+      }),
   );
 
   expect(row).toHaveLength(1);

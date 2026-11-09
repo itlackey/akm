@@ -94,7 +94,7 @@ function seedRuns(fixture) {
       "synthetic-improve",
       at(30),
       at(29),
-      fixture.env.AKM_BUNDLE_DIR,
+      path.join(fixture.root, "personal"),
       JSON.stringify({
         usageReport: { byProcessEngineModel: [{ process: "reflect", calls: 3, failures: 0 }] },
         triage: { promoted: 2, rejected: 1, failed: 0 },

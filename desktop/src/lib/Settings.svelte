@@ -338,15 +338,7 @@
         <p>Sources, indexed contents and Git status.</p>
       </div>
       <div class="bundle-panels" class:managing={!!manageName}>
-        {#if listing?.workingStash}<article class="card" hidden={!!manageName}>
-            <h3>Working stash</h3>
-            <p class="mono wrap">{listing.workingStash.path}</p>
-            <p>
-              {listing.workingStash.git
-                ? `Branch ${listing.workingStash.git.branch ?? "detached HEAD"} · ${listing.workingStash.git.dirtyPaths} uncommitted paths`
-                : "Not a Git repository."}
-            </p>
-          </article>{/if}{#each listing?.bundles ?? [] as bundle (bundle.name)}<SettingsBundleCard
+        {#each listing?.bundles ?? [] as bundle (bundle.name)}<SettingsBundleCard
             {bundle}
             {action}
             busy={busy || loading}

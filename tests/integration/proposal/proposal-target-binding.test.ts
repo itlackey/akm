@@ -160,7 +160,8 @@ describe("proposal queue target binding", () => {
       bundles: { team: { path: team, writable: true } } as AkmConfig["bundles"],
       defaultBundle: "team",
     } as AkmConfig;
-    writeSandboxConfig(cfg);
+    // The file names only `team`: the sandbox's own stash is not a configured bundle here.
+    fs.writeFileSync(path.join(storage.configDir, "akm", "config.json"), JSON.stringify(cfg), "utf8");
 
     expect(() =>
       createProposal(storage.stashDir, {

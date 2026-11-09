@@ -62,7 +62,6 @@ test.skipIf(process.env.AKM_WORKSPACE_PACKAGE_TESTS !== "1")(
           XDG_DATA_HOME: path.join(home, "xdg-data"),
           XDG_CACHE_HOME: path.join(home, "xdg-cache"),
           XDG_STATE_HOME: path.join(home, "xdg-state"),
-          AKM_BUNDLE_DIR: path.join(home, "stash"),
           CODEX_HOME: path.join(home, "codex"),
           CLAUDE_CONFIG_DIR: path.join(home, "claude"),
           OPENCODE_TEST_HOME: path.join(home, "opencode"),

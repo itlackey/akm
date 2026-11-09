@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveEnvPath, resolveSecretPath } from "../src/sources/env-secret-ref";
 import { resolveAssetPath } from "../src/sources/resolve";
-import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
+import { makeSandboxDir, makeStashDir, type SandboxedDir, withBundle } from "./_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -34,14 +34,14 @@ function stashWithLink(typeDir: string, fileName: string, targetName: string, bo
 describe("reads follow symlinks that leave their directory", () => {
   test("resolveSecretPath resolves a symlinked secret", async () => {
     const { stash } = stashWithLink("secrets", "token", "real-secret", "s3cret");
-    const resolved = await withEnv({ AKM_BUNDLE_DIR: stash }, async () => resolveSecretPath("secrets/token"));
+    const resolved = await withBundle(stash, async () => resolveSecretPath("secrets/token"));
     expect(resolved.absPath).toBe(path.join(stash, "secrets", "token"));
     expect(fs.readFileSync(resolved.absPath, "utf8")).toBe("s3cret");
   });
 
   test("resolveEnvPath resolves a symlinked env file", async () => {
     const { stash } = stashWithLink("env", "prod.env", "real.env", "A=1\n");
-    const resolved = await withEnv({ AKM_BUNDLE_DIR: stash }, async () => resolveEnvPath("env/prod"));
+    const resolved = await withBundle(stash, async () => resolveEnvPath("env/prod"));
     expect(resolved.absPath).toBe(path.join(stash, "env", "prod.env"));
     expect(fs.readFileSync(resolved.absPath, "utf8")).toBe("A=1\n");
   });
@@ -61,7 +61,7 @@ describe("reads follow symlinks that leave their directory", () => {
     await expect(resolveAssetPath(stash.dir, "script", "../outside.sh")).rejects.toThrow(
       "Ref resolves outside the stash root.",
     );
-    await withEnv({ AKM_BUNDLE_DIR: stash.dir }, async () => {
+    await withBundle(stash.dir, async () => {
       expect(() => resolveSecretPath("secrets/../outside")).toThrow(/relative path segments/);
       expect(() => resolveEnvPath("env/../outside")).toThrow(/relative path segments/);
     });

@@ -2974,8 +2974,7 @@ inside the write target only. To improve another bundle, name it
 (`akm improve --bundle team`, or `akm improve team//skills/code-review`). A
 scheduled `akm improve` therefore covers only its write target: schedule one
 `akm improve --bundle <name>` run per other bundle. `--dry-run`
-resolves the bundle the way a live run does (the working bundle starts from
-`AKM_BUNDLE_DIR`, then `defaultBundle`), so it previews the bundle a live run
+resolves the bundle the way a live run does (the working bundle is `defaultBundle`), so it previews the bundle a live run
 improves.
 
 Every stage records what it did with each asset in the improve ledger
@@ -3803,10 +3802,10 @@ crontab blocks and the `# akm:env` block, `com.akm.task.*` LaunchAgents,
 result is `{backend, entry, removedLegacy, keptLegacy, warnings?}` where `entry`
 is `installed`, `updated`, `unchanged`, `removed`, `absent` or `unmanaged`. A row that names
 another installation's directories (an `AKM_BUNDLE_DIR` that is not this
-installation's, or one that sets a retired `AKM_*_DIR` variable, which akm no longer reads) is left and reported in `keptLegacy`. A crontab whose
+installation's, or one that sets a retired `AKM_*_DIR` variable; akm no longer reads either, so such a row fails when it fires) is left and reported in `keptLegacy`. A row whose `AKM_BUNDLE_DIR` names the working bundle is replaced. A crontab whose
 akm markers are malformed is refused unmodified. `akm migrate status` reports what sync would do without writing it.
 
-An installation that moves any location (`AKM_BUNDLE_DIR`, an
+An installation that moves any location (an
 `XDG_*_HOME` that changes where config, data, cache or state go, or a config file
 other than the default, by `--config` or `AKM_CONFIG_FILE`) is **not**
 the default installation, and never writes the OS scheduler: `task sync`

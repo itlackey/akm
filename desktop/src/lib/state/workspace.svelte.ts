@@ -50,7 +50,6 @@ export async function refreshPending() {
 export async function refreshBundles(onlyIfChanged = false) {
   const data = await api<{
     bundles: Bundle[];
-    workingStash: unknown | null;
     defaultBundle?: string;
   }>("/bundles");
   const target = data.defaultBundle ?? "";

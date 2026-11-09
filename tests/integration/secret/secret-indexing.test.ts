@@ -26,7 +26,7 @@ import {
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
-  withEnv,
+  withBundle,
   writeSandboxConfig,
 } from "../../_helpers/sandbox";
 
@@ -135,7 +135,7 @@ describe("secret indexer safety", () => {
     const stashDir = currentStashDir;
     setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from(SECRET_VALUE));
 
-    const { stdout, code } = await withEnv({ AKM_BUNDLE_DIR: stashDir }, () =>
+    const { stdout, code } = await withBundle(stashDir, () =>
       runCliCapture(["show", "secrets/demo", "--format", "json"]),
     );
     expect(code).toBe(0);

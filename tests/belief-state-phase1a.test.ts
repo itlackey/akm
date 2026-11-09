@@ -23,7 +23,7 @@ import { saveConfig } from "../src/core/config/config";
 import { akmIndex } from "../src/indexer/indexer";
 import { writeMemory } from "./_helpers/assets";
 import { withImproveAutonomy, withTestImproveLlm } from "./_helpers/improve-config";
-import { type IsolatedAkmStorage, makeSandboxDir, mutateScopedEnv, withIsolatedAkmStorage } from "./_helpers/sandbox";
+import { type IsolatedAkmStorage, makeSandboxDir, withDefaultBundle, withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 const dirCleanups: (() => void)[] = [];
 
@@ -34,8 +34,7 @@ function makeTempDir(prefix: string): string {
 }
 
 async function buildIndex(stashDir: string): Promise<void> {
-  mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
-  saveConfig(withImproveAutonomy(withTestImproveLlm({ semanticSearchMode: "off" })));
+  saveConfig(withDefaultBundle(withImproveAutonomy(withTestImproveLlm({ semanticSearchMode: "off" })), stashDir));
   await akmIndex({ stashDir, full: true });
 }
 

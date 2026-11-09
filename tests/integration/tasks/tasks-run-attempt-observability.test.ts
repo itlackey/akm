@@ -47,7 +47,6 @@ function writeRawConfig(contents: string): void {
 
 function capturedSchedulerContext(): Record<string, string> {
   return {
-    AKM_BUNDLE_DIR: storage.stashDir,
     AKM_CONFIG_FILE: path.join(storage.configDir, "akm", "config.json"),
   };
 }

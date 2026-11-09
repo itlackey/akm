@@ -51,10 +51,7 @@ async function runCli(
   args: string[],
   options: { stashDir: string; env?: Record<string, string | undefined> } = { stashDir: "" },
 ): Promise<{ stdout: string; stderr: string; status: number }> {
-  const { code, stdout, stderr } = await withEnv(
-    { AKM_BUNDLE_DIR: options.stashDir || undefined, ...options.env },
-    () => runCliCapture(args),
-  );
+  const { code, stdout, stderr } = await withEnv({ ...options.env }, () => runCliCapture(args));
   return { stdout, stderr, status: code };
 }
 

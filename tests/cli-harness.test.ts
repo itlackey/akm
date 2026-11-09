@@ -16,7 +16,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { runCliCapture } from "./_helpers/cli";
-import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
+import { makeSandboxDir, makeStashDir, type SandboxedDir, withBundle, withEnv } from "./_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 afterEach(() => {
@@ -84,9 +84,8 @@ describe("in-process CLI harness", () => {
     // exercised deterministically regardless of suite ordering.
     const freshHome = makeSandboxDir("akm-harness-home");
     disposers.push(freshHome);
-    const noStash = await withEnv(
-      { HOME: freshHome.dir, XDG_CONFIG_HOME: path.join(freshHome.dir, "config"), AKM_BUNDLE_DIR: undefined },
-      () => runCliCapture(["search", "test"]),
+    const noStash = await withEnv({ HOME: freshHome.dir, XDG_CONFIG_HOME: path.join(freshHome.dir, "config") }, () =>
+      runCliCapture(["search", "test"]),
     );
     // ConfigError (no stash dir configured) -> exit 78. Ground-truthed by
     // probing the actual CLI output before pinning.
@@ -98,7 +97,7 @@ describe("in-process CLI harness", () => {
     // resolved (missing) stash.
     const stash = makeStashDir();
     disposers.push(stash);
-    const withStash = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () => runCliCapture(["search", "test"]));
+    const withStash = await withBundle(stash.dir, () => runCliCapture(["search", "test"]));
     expect(withStash.code).toBe(0);
     expect(withStash.stderr).not.toContain("STASH_DIR_NOT_FOUND");
   });

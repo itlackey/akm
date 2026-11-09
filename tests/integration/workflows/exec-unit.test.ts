@@ -386,11 +386,10 @@ describe("exec unit — the child environment is akm's own", () => {
     expect(env.AKM_PARAMS).toBe("{}");
   });
 
-  test("the child sees the config file the parent resolved, including one that comes from XDG_CONFIG_HOME", async () => {
+  test("the child sees the config file the parent resolved, including one that comes from XDG_CONFIG_HOME, and no other location", async () => {
     // The sandbox sets XDG_*_HOME and no AKM_CONFIG_FILE, as an operator using XDG does.
     expect(process.env.AKM_CONFIG_FILE).toBeUndefined();
     expect(process.env.XDG_CONFIG_HOME).toBeTruthy();
-    expect(process.env.AKM_BUNDLE_DIR).toBeTruthy();
     expect(
       await reportEnv([
         "AKM_BUNDLE_DIR",
@@ -401,23 +400,13 @@ describe("exec unit — the child environment is akm's own", () => {
         "AKM_STATE_DIR",
       ]),
     ).toEqual({
-      AKM_BUNDLE_DIR: process.env.AKM_BUNDLE_DIR as string,
+      AKM_BUNDLE_DIR: null,
       AKM_CONFIG_FILE: getConfigPath(),
       AKM_CONFIG_DIR: null,
       AKM_DATA_DIR: null,
       AKM_CACHE_DIR: null,
       AKM_STATE_DIR: null,
     });
-  });
-
-  test("a bundle dir the parent never set is not invented for the child", async () => {
-    const prior = process.env.AKM_BUNDLE_DIR;
-    delete process.env.AKM_BUNDLE_DIR;
-    try {
-      expect((await reportEnv(["AKM_BUNDLE_DIR"])).AKM_BUNDLE_DIR).toBeNull();
-    } finally {
-      if (prior !== undefined) process.env.AKM_BUNDLE_DIR = prior;
-    }
   });
 });
 

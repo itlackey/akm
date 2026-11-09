@@ -9,7 +9,7 @@ import { getStateDbPath } from "../../src/core/state-db";
 import { parseGitRepoUrl } from "../../src/sources/providers/git";
 import { type CliResult, runCliCapture } from "../_helpers/cli";
 import { seedIgnoredTrackedChanges } from "../_helpers/git-ignored-tracked";
-import { withEnv } from "../_helpers/sandbox";
+import { withBundle, withEnv } from "../_helpers/sandbox";
 
 // INTEGRATION TEST — lives in tests/integration/ because real subprocesses are
 // inherent to every test here. The `akm` invocations use the in-process
@@ -41,14 +41,8 @@ async function runCli(args: string[], stashDir: string): Promise<CliResult> {
   const xdgData = makeTempDir("akm-save-data-");
   const xdgState = makeTempDir("akm-save-state-");
   return withEnv(
-    {
-      AKM_BUNDLE_DIR: stashDir,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_STATE_HOME: xdgState,
-    },
-    () => runCliCapture(args),
+    { XDG_CACHE_HOME: xdgCache, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, XDG_STATE_HOME: xdgState },
+    () => withBundle(stashDir, () => runCliCapture(args)),
   );
 }
 
@@ -63,14 +57,13 @@ async function runCliWithEnv(
   const xdgState = makeTempDir("akm-save-state-");
   return withEnv(
     {
-      AKM_BUNDLE_DIR: stashDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_CONFIG_HOME: xdgConfig,
       XDG_DATA_HOME: xdgData,
       XDG_STATE_HOME: xdgState,
       ...extraEnv,
     },
-    () => runCliCapture(args),
+    () => withBundle(stashDir, () => runCliCapture(args)),
   );
 }
 
@@ -201,19 +194,14 @@ describe("akm sync", () => {
     // command AND reading state.db back — must happen inside the same
     // withEnv scope; env is restored the moment the callback returns.
     const syncEvents = await withEnv(
-      {
-        AKM_BUNDLE_DIR: stashDir,
-        XDG_CACHE_HOME: xdgCache,
-        XDG_CONFIG_HOME: xdgConfig,
-        XDG_DATA_HOME: xdgData,
-        XDG_STATE_HOME: xdgState,
-      },
-      async () => {
-        const result = await runCliCapture(["sync", "-m", "eventtype probe"]);
-        expect(result.code).toBe(0);
-        const dbPath = getStateDbPath();
-        return readEvents({}, { dbPath }).events;
-      },
+      { XDG_CACHE_HOME: xdgCache, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData, XDG_STATE_HOME: xdgState },
+      () =>
+        withBundle(stashDir, async () => {
+          const result = await runCliCapture(["sync", "-m", "eventtype probe"]);
+          expect(result.code).toBe(0);
+          const dbPath = getStateDbPath();
+          return readEvents({}, { dbPath }).events;
+        }),
     );
 
     expect(syncEvents.some((e) => e.eventType === "sync")).toBe(true);
@@ -340,13 +328,12 @@ describe("akm sync", () => {
 
     const result = await withEnv(
       {
-        AKM_BUNDLE_DIR: primaryStashDir,
         XDG_CACHE_HOME: xdgCacheHome,
         XDG_CONFIG_HOME: configRoot,
         XDG_DATA_HOME: makeTempDir("akm-save-data-"),
         XDG_STATE_HOME: makeTempDir("akm-save-state-"),
       },
-      () => runCliCapture(["sync", namedRepoName, "-m", "slash target commit"]),
+      () => withBundle(primaryStashDir, () => runCliCapture(["sync", namedRepoName, "-m", "slash target commit"])),
     );
 
     expect(result.code).toBe(0);
@@ -377,13 +364,12 @@ describe("akm sync", () => {
 
     const result = await withEnv(
       {
-        AKM_BUNDLE_DIR: primaryStashDir,
         XDG_CONFIG_HOME: configRoot,
         XDG_CACHE_HOME: makeTempDir("akm-save-cache-installed-"),
         XDG_DATA_HOME: makeTempDir("akm-save-data-installed-"),
         XDG_STATE_HOME: makeTempDir("akm-save-state-installed-"),
       },
-      () => runCliCapture(["sync", "installed-stash"]),
+      () => withBundle(primaryStashDir, () => runCliCapture(["sync", "installed-stash"])),
     );
 
     expect(result.code).toBe(0);

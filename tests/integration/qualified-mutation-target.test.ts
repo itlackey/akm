@@ -98,9 +98,6 @@ describe("qualified mutation targets", () => {
   });
 
   test("a short ref falls back to defaultBundle and returns its short ref", async () => {
-    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
-
-    delete process.env.AKM_BUNDLE_DIR;
     const team = sandbox("akm-qualified-fallback");
     configure(team, "team");
     const value = seed(storage.root, "value.txt", "secret-value");

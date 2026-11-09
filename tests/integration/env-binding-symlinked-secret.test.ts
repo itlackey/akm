@@ -12,7 +12,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveEnvBinding } from "../../src/commands/env/env-binding";
-import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv } from "../_helpers/sandbox";
+import { makeSandboxDir, makeStashDir, type SandboxedDir, withBundle } from "../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -37,7 +37,7 @@ describe("resolveEnvBinding secret substitution", () => {
     fs.writeFileSync(path.join(outside, "real"), "s3cret");
     fs.symlinkSync(path.join(outside, "real"), path.join(stash, "secrets", "token"));
 
-    const binding = await withEnv({ AKM_BUNDLE_DIR: stash }, async () => resolveEnvBinding("env/prod"));
+    const binding = await withBundle(stash, async () => resolveEnvBinding("env/prod"));
     expect(binding.values.TOKEN).toBe("s3cret");
     expect(binding.secretValues).toEqual(["s3cret"]);
   });
@@ -46,7 +46,7 @@ describe("resolveEnvBinding secret substitution", () => {
     const { stash } = stashWithEnv("TOKEN=${secrets/../outside}\n");
     fs.writeFileSync(path.join(stash, "outside"), "leak");
 
-    const binding = await withEnv({ AKM_BUNDLE_DIR: stash }, async () => resolveEnvBinding("env/prod"));
+    const binding = await withBundle(stash, async () => resolveEnvBinding("env/prod"));
     expect(binding.values.TOKEN).toBe("${secrets/../outside}");
     expect(binding.secretValues).toEqual([]);
   });

@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { configNamingBundle } from "../../_helpers/sandbox";
 
 const CLI = path.join(__dirname, "..", "..", "..", "src", "cli.ts");
 const tempDirs: string[] = [];
@@ -76,7 +77,6 @@ describe("akm bundle add website", () => {
       const websiteUrl = serveWebsite();
       const env = {
         ...process.env,
-        AKM_BUNDLE_DIR: stashDir,
         XDG_CACHE_HOME: xdgCache,
         XDG_CONFIG_HOME: xdgConfig,
         XDG_DATA_HOME: xdgData,
@@ -86,7 +86,7 @@ describe("akm bundle add website", () => {
       fs.mkdirSync(configDir, { recursive: true });
       fs.writeFileSync(
         path.join(configDir, "config.json"),
-        `${JSON.stringify({ semanticSearchMode: "off" }, null, 2)}\n`,
+        configNamingBundle(JSON.stringify({ semanticSearchMode: "off" }), stashDir),
       );
 
       const child = spawn(

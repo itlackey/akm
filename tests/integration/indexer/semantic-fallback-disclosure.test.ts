@@ -24,7 +24,7 @@ import { upsertEntry } from "../../../src/storage/repositories/index-entries-rep
 import { rebuildFts } from "../../../src/storage/repositories/index-fts-repository";
 import { setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
-import { withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { withIsolatedAkmStorage, withDefaultBundle } from "../../_helpers/sandbox";
 import { overrideSeam } from "../../_helpers/seams";
 
 test("query-embedding failure preserves FTS results and returns one sanitized fts-fallback disclosure", async () => {
@@ -94,7 +94,7 @@ test("query-embedding failure preserves FTS results and returns one sanitized ft
     expect(serialized).not.toContain("sk-runtime-secret");
     expect(serialized).not.toContain("typo in the url or port");
 
-    saveConfig(config);
+    saveConfig(withDefaultBundle(config, storage.stashDir));
     const publicSearch = await akmSearch({ query: "deploy", skipLogging: true });
     expect(publicSearch.searchMode).toBe("fts-fallback");
     expect(publicSearch.warnings).toEqual(result.warnings);

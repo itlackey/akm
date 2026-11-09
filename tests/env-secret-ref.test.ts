@@ -3,7 +3,7 @@ import { loadConfig } from "../src/core/config/config";
 import { UsageError } from "../src/core/errors";
 import { resolveSourceEntries } from "../src/indexer/search/search-source";
 import { isInstalledBundle, parseEnvRef, parseSecretRef } from "../src/sources/env-secret-ref";
-import { makeStashDir, withEnv, writeSandboxConfig } from "./_helpers/sandbox";
+import { makeStashDir, withBundle, writeSandboxConfig } from "./_helpers/sandbox";
 
 describe("env and secret refs are full akm refs", () => {
   test("a full ref parses, with or without a bundle", () => {
@@ -39,7 +39,7 @@ describe("isInstalledBundle", () => {
     const stash = makeStashDir();
     try {
       writeSandboxConfig({ bundles: { mine: { path: stash.dir, enabled: false } } });
-      await withEnv({ AKM_BUNDLE_DIR: stash.dir }, async () => {
+      await withBundle(stash.dir, async () => {
         expect(() => resolveSourceEntries(undefined, loadConfig())).toThrow(/disabled/);
         expect(isInstalledBundle("mine")).toBe(false);
       });

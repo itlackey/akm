@@ -264,8 +264,9 @@ beforeEach(() => {
     throw new Error(`process.exit(${code}) during setup wizard test — prompt queue misaligned`);
   }) as typeof process.exit;
   resetPromptState();
-  storage = withIsolatedAkmStorage();
-  DEFAULT_STASH_DIR = storage.stashDir;
+  storage = withIsolatedAkmStorage({}, { bundle: false });
+  // No `AKM_BUNDLE_DIR`: the wizard's default stash is `~/akm`, under the sandbox's HOME.
+  DEFAULT_STASH_DIR = path.join(process.env.HOME as string, "akm");
   DEFAULT_CONFIG_PATH = path.join(storage.configDir, "akm", "config.json");
   resetSetupState();
 });

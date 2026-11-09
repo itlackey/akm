@@ -205,7 +205,7 @@ describe("the step", () => {
   const stash = (): string => storage.stashDir;
 
   beforeEach(() => {
-    storage = withIsolatedAkmStorage();
+    storage = withIsolatedAkmStorage({}, { bundle: false });
     resetConfigCache();
   });
   afterEach(() => {
@@ -779,7 +779,7 @@ describe("the step", () => {
     expect(fs.readFileSync(file, "utf8")).toContain("engine: lab");
   });
 
-  test("the default stash is rewritten too when neither a bundle nor AKM_BUNDLE_DIR names it", async () => {
+  test("the default stash is rewritten too when no bundle names it", async () => {
     // The runtime reads `~/akm` in this case, so an `engine:` there must not outlive the retired-name map.
     const home = path.join(storage.root, "home");
     const file = path.join(home, "akm", FILES.command[0]);
@@ -790,7 +790,7 @@ describe("the step", () => {
       harnesses: { claude: {} },
     });
 
-    const plan = await withEnv({ HOME: home, AKM_BUNDLE_DIR: undefined }, () => runMigration({ apply: true }));
+    const plan = await withEnv({ HOME: home }, () => runMigration({ apply: true }));
 
     expect(plan.failedSteps).toBeUndefined();
     expect(plan.assetEngineKeys).toMatchObject({ changed: 1, applied: 1 });
@@ -820,58 +820,13 @@ describe("the step", () => {
       connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
     });
 
-    const plan = await withEnv({ HOME: home, AKM_BUNDLE_DIR: undefined }, () => runMigration({ apply: true }));
+    const plan = await withEnv({ HOME: home }, () => runMigration({ apply: true }));
 
     expect(plan.failedSteps).toBeUndefined();
     expect(plan.assetEngineKeys).toMatchObject({ changed: 1, applied: 1 });
     expect(plan.assetEngineKeys?.files.map((row) => row.filePath)).toEqual([other.file]);
     expect(fs.readFileSync(file, "utf8")).toBe(FILES.command[1]);
     expect(fs.readFileSync(other.file, "utf8")).toContain("connection: lab");
-  });
-
-  test("a disabled bundle AKM_BUNDLE_DIR names, under any spelling of its path, is left as written", async () => {
-    const file = write(FILES.command[0], FILES.command[1]);
-    const other = otherBundle();
-    const alias = path.join(storage.root, "stash-alias");
-    fs.symlinkSync(stash(), alias, "dir");
-    writeSandboxConfig({
-      bundles: {
-        dormant: { path: stash(), enabled: false, components: { main: { root: ".", adapter: "akm" } } },
-        active: { path: other.root, components: { main: { root: ".", adapter: "akm" } } },
-      },
-      connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } },
-    });
-
-    for (const spelling of [stash(), alias]) {
-      const plan = await withEnv({ AKM_BUNDLE_DIR: spelling }, () => runMigration({ apply: false }));
-      expect(plan.failedSteps).toBeUndefined();
-      expect(plan.assetEngineKeys?.files.map((row) => row.filePath)).toEqual([other.file]);
-    }
-    const plan = await withEnv({ AKM_BUNDLE_DIR: alias }, () => runMigration({ apply: true }));
-    expect(plan.assetEngineKeys).toMatchObject({ changed: 1, applied: 1 });
-    expect(fs.readFileSync(file, "utf8")).toBe(FILES.command[1]);
-  });
-
-  test("a read-only bundle AKM_BUNDLE_DIR names under another spelling keeps its policy", async () => {
-    const file = write(FILES.command[0], FILES.command[1]);
-    const alias = path.join(storage.root, "stash-alias");
-    fs.symlinkSync(stash(), alias, "dir");
-    configure({
-      bundles: {
-        primary: {
-          path: stash(),
-          writable: false,
-          components: { main: { root: ".", adapter: "akm", writable: false } },
-        },
-      },
-    });
-
-    const plan = await withEnv({ AKM_BUNDLE_DIR: alias }, () => runMigration({ apply: true }));
-
-    expect(plan.failedSteps).toBeUndefined();
-    expect(plan.assetEngineKeys).toMatchObject({ changed: 0, skipped: 1 });
-    expect(plan.assetEngineKeys?.files[0]?.reason).toContain("read-only");
-    expect(fs.readFileSync(file, "utf8")).toBe(FILES.command[1]);
   });
 
   test("a bundle with no engine keys is current, and a config with no bundle is no error", async () => {

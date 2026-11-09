@@ -16,7 +16,6 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { runCliStatus as runCli } from "../_helpers/cli";
-import { durableItemRef } from "../_helpers/durable-ref";
 import { type Cleanup, sandboxStashDir, writeSandboxConfig } from "../_helpers/sandbox";
 
 let stashCleanup: Cleanup = () => {};
@@ -41,7 +40,7 @@ describe("akm env — JSON envelope snapshot (WS6)", () => {
     const { stdout, status } = await runCli(["env", "create", "env/prod"]);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
-    expect(env.ref).toBe(durableItemRef(stashDir, "env", "prod"));
+    expect(env.ref).toBe("env/prod");
     expect(fs.existsSync(path.join(stashDir, "env", "prod.env"))).toBe(true);
   });
 
@@ -66,7 +65,7 @@ describe("akm env — JSON envelope snapshot (WS6)", () => {
     const { stdout, status } = await runCli(["env", "remove", "env/prod", "--yes"]);
     expect(status).toBe(0);
     const env = JSON.parse(stdout);
-    expect(env.ref).toBe(durableItemRef(stashDir, "env", "prod"));
+    expect(env.ref).toBe("env/prod");
     expect(env.removed).toBe(true);
     expect(stdout).not.toContain("topsecret-value");
     expect(fs.existsSync(path.join(stashDir, "env", "prod.env"))).toBe(false);

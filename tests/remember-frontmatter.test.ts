@@ -20,7 +20,7 @@ import { parseFrontmatter } from "../src/core/asset/frontmatter";
 import type { IndexDocument } from "../src/indexer/passes/metadata";
 import { buildFileContext } from "../src/indexer/walk/file-context";
 import { runCliCapture } from "./_helpers/cli";
-import { withEnv } from "./_helpers/sandbox";
+import { configHomeWithBundle, withEnv } from "./_helpers/sandbox";
 
 // ── CLI harness ──────────────────────────────────────────────────────────────
 //
@@ -48,9 +48,8 @@ function freshDirs(options?: { stashDir?: string }) {
   return {
     stashDir,
     env: {
-      AKM_BUNDLE_DIR: stashDir,
       XDG_CACHE_HOME: makeTempDir("akm-rmfm-cache-"),
-      XDG_CONFIG_HOME: makeTempDir("akm-rmfm-config-"),
+      XDG_CONFIG_HOME: configHomeWithBundle(makeTempDir("akm-rmfm-config-"), stashDir),
       XDG_DATA_HOME: makeTempDir("akm-rmfm-data-"),
       XDG_STATE_HOME: makeTempDir("akm-rmfm-state-"),
     } satisfies Record<string, string>,

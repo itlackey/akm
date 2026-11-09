@@ -98,12 +98,6 @@ describe("getConfigPath", () => {
 
   test("defaults to ~/.config/akm when XDG_CONFIG_HOME is unset", () => {
     delete process.env.XDG_CONFIG_HOME;
-    // Defense against CI environments where AKM_BUNDLE_DIR is inherited
-    // from outer test isolation: if it points at a transient path,
-    // getConfigDir's isolation rule fires and overrides the HOME-based
-    // fallback this test is verifying (the 2026-05-23
-    // setup-clobbers-user-config incident).
-    delete process.env.AKM_BUNDLE_DIR;
     const home = sandboxHome();
 
     expect(getConfigPath()).toBe(path.join(home.dir, ".config", "akm", "config.json"));
@@ -169,8 +163,7 @@ describe("loadConfig", () => {
     expect(loadConfig().semanticSearchMode).toBe("off");
   });
 
-  test("loads config without requiring AKM_BUNDLE_DIR", () => {
-    delete process.env.AKM_BUNDLE_DIR;
+  test("loads config without a working bundle", () => {
     writeCurrentConfig({ semanticSearchMode: "off" });
 
     const config = loadConfig();

@@ -142,7 +142,6 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   "ok": true,
   "data": {
     "defaultBundle": "stash",
-    "workingStash": null,
     "bundles": [
       {
         "name": "stash",
@@ -181,9 +180,6 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
 - `kind` is `filesystem`, `git`, `npm` or `website`. `source` describes where the bundle comes from; `path` is its local
   root (`null` if it has none).
 - The default bundle's card comes first; the rest keep their configured order.
-- `workingStash` is `{ path, git }` for the directory akm reads besides the configured bundles (`AKM_BUNDLE_DIR`, or the
-  platform stash when no `defaultBundle` is set). `git` has the same shape as a card's `git`. It is `null` when a
-  configured bundle already covers that directory or it cannot be resolved.
 - `git` is `null` unless the bundle's root is itself a git repository. `upstream`, `ahead` and `behind` are `null` without an
   upstream; `branch` is `null` on a detached HEAD; `lastCommit` is `null` for a repository with no commits. `dirtyPaths`
   counts paths with uncommitted changes.
@@ -226,7 +222,7 @@ The effective configuration, as `akm config list` shows it, with where each valu
       "harnesses": { "claude": {} },
       "defaultBundle": "stash"
     },
-    "automaticWriteTarget": { "name": "stash", "path": "/home/me/akm", "workingStash": false },
+    "automaticWriteTarget": { "name": "stash", "path": "/home/me/akm" },
     "projectWarnings": [],
     "entries": [
       { "path": "semanticSearchMode", "value": "off", "source": "file" },
@@ -234,7 +230,7 @@ The effective configuration, as `akm config list` shows it, with where each valu
     ],
     "connections": [{ "name": "default", "endpoint": "https://llm.example.test/v1?token=%5Bredacted%5D", "models": { "fast": "chat-model" } }],
     "harnesses": [{ "name": "claude" }],
-    "env": [{ "name": "AKM_BUNDLE_DIR", "value": "/home/me/akm" }]
+    "env": [{ "name": "AKM_CONFIG_FILE", "value": "/home/me/.config/akm/config.json" }]
   }
 }
 ```
@@ -242,10 +238,8 @@ The effective configuration, as `akm config list` shows it, with where each valu
 - `config` is the redacted effective config tree. `entries` is the same data flattened to one row per leaf (arrays are
   leaves) with `source`: `default` (no config file sets it), `file` (this install's `config.json`), or `null` when
   the key cannot be traced (a key containing a `.`).
-- `automaticWriteTarget` is `{ name, path, workingStash }` for where a write goes:
-  `AKM_BUNDLE_DIR` when set (even with a `defaultBundle`), otherwise the default bundle. `workingStash` is `true` when
-  that directory is the one `bundles.list` reports as the working stash. It is `null` when neither exists, so writes
-  need a target.
+- `automaticWriteTarget` is `{ name, path }` for where a write goes: the default bundle. It is `null` when there is
+  none, so writes need a target.
 - `projectWarnings` lists, in akm's own words, what it ignores in the `projects` of this install's `config.json` (a
   relative path, a filter of the wrong shape, a reserved name). Project values are not redacted: they hold no credentials.
 - `connections` and `harnesses` are `config.connections` and `config.harnesses` as lists, each entry with its `name`
@@ -734,7 +728,7 @@ User searches that found nothing, grouped by normalised query: `query`, `count`,
 
 What first-run setup could use on this computer, read from the file system and `PATH` only: nothing is contacted and
 nothing is written. It returns `stashDir`, the library directory the config already names, else `~/akm` or another
-existing candidate, else the default (`AKM_BUNDLE_DIR`, else `~/akm`, or `Documents\akm` on Windows); `harnesses`, the agent
+existing candidate, else the default (`~/akm`, or `Documents\akm` on Windows); `harnesses`, the agent
 programs found on `PATH` that akm can run work on, each `{platform, path, modelWorkNote}` (akm's words for whether its
 model calls on that program can be limited to reading and searching); `enabled`, the platforms the config already
 enables; `modelCalls`, where akm's own model calls

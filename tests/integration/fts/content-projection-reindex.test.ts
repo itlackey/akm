@@ -28,7 +28,8 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
-  withEnv,
+  withBundle,
+  withDefaultBundle,
 } from "../../_helpers/sandbox";
 
 let cleanup: Cleanup = () => {};
@@ -125,11 +126,16 @@ describe("content projection version (akm#1260)", () => {
       }
     };
     try {
-      await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
-        saveConfig({
-          semanticSearchMode: "auto",
-          embedding: { endpoint: `http://localhost:${server.port}`, model: "stub", dimension: 3 },
-        });
+      await withBundle(stashDir, async () => {
+        saveConfig(
+          withDefaultBundle(
+            {
+              semanticSearchMode: "auto",
+              embedding: { endpoint: `http://localhost:${server.port}`, model: "stub", dimension: 3 },
+            },
+            stashDir,
+          ),
+        );
         await akmIndex({ stashDir, full: true });
         const current = readEntry();
         // Reproduce content2's repeated fence tokens while retaining the exact source hash and vector.
@@ -167,8 +173,8 @@ describe("content projection version (akm#1260)", () => {
 
   test("an incremental index re-projects unchanged directories written by the previous projection", async () => {
     const stashDir = stashWithFencedName();
-    await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
-      saveConfig({ semanticSearchMode: "off" });
+    await withBundle(stashDir, async () => {
+      saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
       await akmIndex({ stashDir, full: true });
       const found = await akmSearch({ query: "QuokkaInitFailure", source: "local" });
       expect(found.hits.map((hit) => hit.name)).toContain("provider-errors");

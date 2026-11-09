@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { withAssetMutationLease } from "../../../src/indexer/index-writer-lock";
+import { configHomeWithBundle } from "../../_helpers/sandbox";
 
 const WORKER = path.resolve(import.meta.dir, "../../fixtures/write-mutation-lease-worker.ts");
 const roots: string[] = [];
@@ -96,8 +97,7 @@ describe("write mutation lease", () => {
 
     const child = worker(["workflow", stash, "# Workflow: Leased\n\n## Step: One\nDo it.\n", "-", "-"], {
       ...process.env,
-      AKM_BUNDLE_DIR: stash,
-      XDG_CONFIG_HOME: config,
+      XDG_CONFIG_HOME: configHomeWithBundle(config, stash),
     });
     await Bun.sleep(250);
     expect(fs.existsSync(path.join(stash, "workflows", "leased.md"))).toBe(false);

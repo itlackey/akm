@@ -13,10 +13,19 @@
  * expected spelling here rather than a legacy `type:name` literal.
  */
 
+import { parseBundleRef } from "../../src/core/asset/asset-ref";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 
 /** The durable `<bundle>//<conceptId>` item_ref for `type`/`name` in `stashDir`. */
 export function durableItemRef(stashDir: string, type: string, name: string): string {
   const bundleId = deriveInstallations([{ path: stashDir, writable: true }])[0]?.id ?? slugForPath(stashDir);
   return deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, name).itemRef;
+}
+
+/**
+ * The ref the CLI prints for `type`/`name` in the working (default) bundle: the bare `<conceptId>`, which names that
+ * bundle without qualifying it. {@link durableItemRef} is the stored `<bundle>//<conceptId>` spelling.
+ */
+export function workingItemRef(stashDir: string, type: string, name: string): string {
+  return parseBundleRef(durableItemRef(stashDir, type, name)).conceptId;
 }

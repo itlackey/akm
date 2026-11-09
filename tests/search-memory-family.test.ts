@@ -14,7 +14,7 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
-  withEnv,
+  withBundle,
 } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
@@ -39,7 +39,7 @@ async function index(build: (stash: string) => void): Promise<string> {
   const stash = fs.mkdtempSync(path.join(os.tmpdir(), "akm-search-family-"));
   tempDirs.push(stash);
   build(stash);
-  await withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+  await withBundle(stash, async () => {
     resetConfigCache();
     saveConfig({ semanticSearchMode: "off" });
     await akmIndex({ stashDir: stash, full: true });
@@ -48,7 +48,7 @@ async function index(build: (stash: string) => void): Promise<string> {
 }
 
 async function search(stash: string, input: Partial<Parameters<typeof akmSearch>[0]>) {
-  return withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+  return withBundle(stash, async () => {
     resetConfigCache();
     const result = await akmSearch({ query: "gateway", ...input });
     return result.hits.map((hit) => ("name" in hit ? String(hit.name) : ""));
@@ -79,7 +79,7 @@ describe("akmSearch memory families", () => {
       writeMemory(s, "beta", {}, "gateway gateway gateway");
       writeMemory(s, "gamma", {}, "gateway gateway");
     });
-    const hits = await withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+    const hits = await withBundle(stash, async () => {
       resetConfigCache();
       return (await akmSearch({ query: "gateway", limit: 10 })).hits as Array<{ name: string; expandTo?: string }>;
     });

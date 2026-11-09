@@ -188,7 +188,7 @@ describe("runAgent — the command", () => {
 
 describe("runAgent — the child's environment", () => {
   test("is akm's own, the config file akm resolved, and the call's env", async () => {
-    const env = await withEnv({ FOO: "bar", AKM_BUNDLE_DIR: "/sandbox/bundle" }, async () => {
+    const env = await withEnv({ FOO: "bar" }, async () => {
       const result = await runAgent(profileFor("probe"), {
         dispatch: { prompt: "go" },
         env: { CALL_VAR: "2" },
@@ -197,10 +197,7 @@ describe("runAgent — the child's environment", () => {
     });
     expect(env.FOO).toBe("bar");
     expect(env.CALL_VAR).toBe("2");
-    expect(env).toMatchObject({
-      AKM_CONFIG_FILE: getConfigPath(),
-      AKM_BUNDLE_DIR: "/sandbox/bundle",
-    });
+    expect(env).toMatchObject({ AKM_CONFIG_FILE: getConfigPath() });
   });
 
   test("the call's env wins over the ambient environment and over the resolved config file", async () => {

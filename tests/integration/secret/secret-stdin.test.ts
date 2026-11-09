@@ -15,7 +15,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { makeStashDir, type SandboxedDir } from "../../_helpers/sandbox";
+import { makeStashDir, type SandboxedDir, withBundleSync } from "../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 const cliPath = path.join(repoRoot, "src", "cli.ts");
@@ -34,27 +34,25 @@ afterAll(() => {
 
 function spawnCli(
   args: string[],
-  extraEnv: Record<string, string | undefined> = {},
+  options: { stashDir?: string; env?: Record<string, string | undefined> } = {},
   stdinInput?: string,
 ): { stdout: string; stderr: string; status: number } {
-  const result = spawnSync("bun", [cliPath, ...args], {
-    encoding: "utf8",
-    timeout: 15_000,
-    cwd: repoRoot,
-    input: stdinInput,
-    env: { ...process.env, AKM_BUNDLE_DIR: undefined, ...extraEnv },
-  });
+  const result = withBundleSync(options.stashDir, () =>
+    spawnSync("bun", [cliPath, ...args], {
+      encoding: "utf8",
+      timeout: 15_000,
+      cwd: repoRoot,
+      input: stdinInput,
+      env: { ...process.env, ...options.env },
+    }),
+  );
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status ?? 1 };
 }
 
 describe("secret set (stdin)", () => {
   test("reads the value from stdin and stores it", () => {
     const stashDir = makeStash();
-    const { stderr, status } = spawnCli(
-      ["secret", "set", "secrets/demo"],
-      { AKM_BUNDLE_DIR: stashDir },
-      "tok-from-stdin",
-    );
+    const { stderr, status } = spawnCli(["secret", "set", "secrets/demo"], { stashDir: stashDir }, "tok-from-stdin");
     expect(status).toBe(0);
     expect(stderr.trim()).toBe("");
     const fp = path.join(stashDir, "secrets", "demo");
@@ -63,7 +61,7 @@ describe("secret set (stdin)", () => {
 
   test("strips a single trailing newline from the stdin value", () => {
     const stashDir = makeStash();
-    spawnCli(["secret", "set", "secrets/demo"], { AKM_BUNDLE_DIR: stashDir }, "tok\n");
+    withBundleSync(stashDir, () => spawnCli(["secret", "set", "secrets/demo"], {}, "tok\n"));
     expect(fs.readFileSync(path.join(stashDir, "secrets", "demo"), "utf8")).toBe("tok");
   });
 });

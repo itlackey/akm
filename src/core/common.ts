@@ -4,7 +4,6 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { ConfigError } from "./errors";
 import { stripJsonComments } from "./jsonc";
@@ -203,20 +202,10 @@ export const NO_DEFAULT_BUNDLE_MESSAGE =
   'No default bundle is configured. Run "akm bundle create" to create one, or set `defaultBundle`.';
 
 /**
- * Resolve the working stash directory:
- *   1. AKM_BUNDLE_DIR environment variable (override for CI/scripts)
- *   2. The configured default bundle path
- *
- * Throws if neither names a valid directory. There is no implicit `~/akm`.
+ * Resolve the working stash directory: the configured default bundle's path.
+ * Throws if there is none or it is not a valid directory. There is no implicit `~/akm`.
  */
-export function resolveStashDir(env: NodeJS.ProcessEnv = process.env): string {
-  // 1. Env var override (for CI, scripts, testing)
-  const envDir = env.AKM_BUNDLE_DIR?.trim();
-  if (envDir) {
-    return validateStashDir(envDir);
-  }
-
-  // 2. Configured default bundle path
+export function resolveStashDir(): string {
   const configStashDir = readStashDirFromConfig();
   if (configStashDir) return validateStashDir(configStashDir);
 

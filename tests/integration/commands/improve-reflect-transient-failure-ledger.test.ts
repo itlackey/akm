@@ -22,7 +22,7 @@ import { withImproveAutonomy, withTestImproveLlm } from "../../_helpers/improve-
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
-  mutateScopedEnv,
+  useBundleConfig,
   withIsolatedAkmStorage,
 } from "../../_helpers/sandbox";
 
@@ -50,7 +50,7 @@ async function runWithReflectFailure(reason: string): Promise<{ stash: string; m
     "---\ndescription: Deploy guide\nwhen_to_use: When deploying\n---\n\nDeploy carefully.\n",
     "utf8",
   );
-  mutateScopedEnv("AKM_BUNDLE_DIR", stash);
+  useBundleConfig(stash);
   saveConfig(
     withImproveAutonomy(
       withTestImproveLlm({

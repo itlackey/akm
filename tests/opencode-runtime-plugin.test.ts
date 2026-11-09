@@ -264,7 +264,6 @@ console.log(JSON.stringify({ config: getConfigPath(), data: getDataDir(), state:
         TMPDIR: path.join(runtime, "tmp"),
         // What akm hands any child: the file, and nothing the user's XDG could not give.
         AKM_CONFIG_FILE: configFile,
-        AKM_BUNDLE_DIR: undefined,
       },
       () => tools.get("akm_search")?.execute({ query: "x" }),
     );

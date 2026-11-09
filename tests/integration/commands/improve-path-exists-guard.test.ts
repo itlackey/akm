@@ -35,7 +35,7 @@ import { withTestImproveLlm } from "../../_helpers/improve-config";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
-  mutateScopedEnv,
+  useBundleConfig,
   withIsolatedAkmStorage,
 } from "../../_helpers/sandbox";
 
@@ -48,7 +48,7 @@ function makeTempDir(prefix: string): string {
 }
 
 async function buildIndex(stashDir: string): Promise<void> {
-  mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+  useBundleConfig(stashDir);
   saveConfig(
     withTestImproveLlm({
       semanticSearchMode: "off",

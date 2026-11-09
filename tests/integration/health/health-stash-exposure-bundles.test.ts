@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmHealth } from "../../../src/commands/health";
 import { STASH_GITIGNORE_TRACK_SECRETS_MARKER } from "../../../src/commands/sources/stash-skeleton";
-import { makeSandboxDir, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
+import { makeSandboxDir, useBundleConfig, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 function git(dir: string, args: string[]): void {
   const result = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
@@ -79,7 +79,7 @@ describe("stash-git-exposure across bundles (#1291)", () => {
   test("an unreadable working stash skips the advisory without failing the report", async () => {
     const storage = withIsolatedAkmStorage();
     try {
-      process.env.AKM_BUNDLE_DIR = path.join(storage.stashDir, "does-not-exist");
+      useBundleConfig(path.join(storage.stashDir, "does-not-exist"));
       writeSandboxConfig({ semanticSearchMode: "off" });
       const result = await akmHealth({ since: "7d" });
       expect(result.advisories.some((check) => check.name === "stash-git-exposure")).toBe(false);

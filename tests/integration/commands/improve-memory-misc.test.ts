@@ -13,7 +13,13 @@ import { writeMemory } from "../../_helpers/assets";
 import { makeProposal } from "../../_helpers/factories";
 import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { testLlmRunner } from "../../_helpers/llm-runner";
-import { type IsolatedAkmStorage, mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  mutateScopedEnv,
+  useBundleConfig,
+  withEnv,
+  withIsolatedAkmStorage,
+} from "../../_helpers/sandbox";
 
 const tempDirs: string[] = [];
 
@@ -34,7 +40,7 @@ function configureStash(stashDir: string): void {
 }
 
 async function buildIndex(stashDir: string): Promise<void> {
-  mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+  useBundleConfig(stashDir);
   configureStash(stashDir);
   await akmIndex({ stashDir, full: true });
 }

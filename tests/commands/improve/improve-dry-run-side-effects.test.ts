@@ -32,7 +32,7 @@ import {
   sandboxAkmDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
-  withEnv,
+  withBundle,
   withMockedFetch,
 } from "../../_helpers/sandbox";
 
@@ -256,7 +256,7 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
       const stashDir = makeTempDir("akm-dryrun-stash-");
       writeMemory(stashDir, "alpha", "Remember alpha details.");
       writeMemory(stashDir, "beta", "Remember beta details too.");
-      await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+      await withBundle(stashDir, async () => {
         saveConfig(dryRunConfig);
         await akmIndex({ stashDir, full: true });
 
@@ -286,7 +286,7 @@ describe("akm improve --dry-run writes no AKM artifacts", () => {
     async () => {
       const stashDir = makeTempDir("akm-dryrun-empty-");
       fs.mkdirSync(path.join(stashDir, "memories"), { recursive: true });
-      await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+      await withBundle(stashDir, async () => {
         const before = snapshotSandboxRoots(stashDir);
 
         const result = await akmImprove({ stashDir, dryRun: true, config: dryRunConfig });

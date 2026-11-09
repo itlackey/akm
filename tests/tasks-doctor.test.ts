@@ -46,7 +46,8 @@ describe("tasks doctor", () => {
 
 describe("tasks doctor without a default bundle", () => {
   beforeEach(() => {
-    delete process.env.AKM_BUNDLE_DIR;
+    saveConfig({ semanticSearchMode: "off" });
+    resetConfigCache();
   });
 
   test("succeeds when nothing is enabled", async () => {

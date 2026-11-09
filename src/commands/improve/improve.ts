@@ -49,10 +49,9 @@ import {
   resolveWritableOverride,
   saveGitStash,
 } from "../../sources/providers/git";
-import { resolveWorkingStashTarget, resolveWritable, resolveWriteTarget } from "../../sources/write-source";
+import { resolveWritable, resolveWriteTarget } from "../../sources/write-source";
 import type { Database } from "../../storage/database";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
-import { withIndexDb } from "../../storage/repositories/index-db";
 import { getEntryCount } from "../../storage/repositories/index-entries-repository";
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
 import { summarizeLlmUsageRecordsCrossTab } from "../health/llm-usage";
@@ -425,11 +424,6 @@ export function resolveImproveReadSource(
   }
   const selector = scopedRef?.origin ?? explicitTarget;
   if (!selector && fallbackStashDir) return { source: { name: "stash", path: fallbackStashDir } };
-  if (!selector && process.env.AKM_BUNDLE_DIR?.trim()) {
-    // A live run's working bundle starts from AKM_BUNDLE_DIR (`resolveWorkingStashTarget`), so its preview does too.
-    const { source } = resolveWorkingStashTarget(config, { requireWritable: false });
-    return { source: { name: source.name, path: source.path } };
-  }
   const configuredSelector = selector ?? config.defaultBundle;
   if (configuredSelector) {
     const entry = bundlesToSourceEntries(config)?.find((source) => source.name === configuredSelector);

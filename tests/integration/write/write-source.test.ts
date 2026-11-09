@@ -483,7 +483,7 @@ describe("resolveWriteTarget", () => {
     // "stash") when nothing else is configured — unset it so this asserts
     // the true "nothing configured" path, not the isolated stash sandboxed
     // by withIsolatedAkmStorage above.
-    withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => {
+    withEnvSync({}, () => {
       expect(() => resolveWriteTarget({ semanticSearchMode: "off" })).toThrow(ConfigError);
     });
   });
@@ -502,7 +502,7 @@ describe("resolveWriteTarget", () => {
   });
 
   test("throws ConfigError when defaultBundle points at a missing source", () => {
-    withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => {
+    withEnvSync({}, () => {
       expect(() =>
         resolveWriteTarget({
           semanticSearchMode: "off",

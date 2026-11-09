@@ -8,10 +8,8 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { resolveStashDir } from "../core/common";
 import { type AkmConfig, getConfigValueSource, loadConfig, sanitizeConfigForWrite } from "../core/config/config";
-import { bundleKeyForContentRoot } from "../core/config/config-sources";
 import { UsageError } from "../core/errors";
 import { getStateDbPath, listPendingStateMigrations } from "../core/state-db";
-import { implicitStashDir } from "../indexer/search/search-source";
 import { resolveWorkingStashTarget } from "../sources/write-source";
 import { type Database, openDatabase } from "../storage/database";
 import { applyReadonlyPragmas } from "../storage/sqlite-pragmas";
@@ -83,19 +81,6 @@ export function capSide(text: string | null): { text: string | null; truncated: 
   return { text: text.slice(0, DIFF_SIDE_MAX_CHARS), truncated: true };
 }
 
-/**
- * The working stash is the directory akm reads besides the configured bundles (`implicitStashDir`).
- * It is described only when no configured bundle already covers that directory.
- */
-export function workingStashDir(config: AkmConfig): string | undefined {
-  try {
-    const dir = implicitStashDir(config);
-    return dir && !bundleKeyForContentRoot(config, dir) ? dir : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /** Refuse a write that the config sanitizer would turn into a silent credential removal. */
 export function preserveUnrelatedConfig(config = loadConfig()) {
   if (!isDeepStrictEqual(sanitizeConfigForWrite(config, { quiet: true }), config)) {
@@ -116,13 +101,13 @@ export function configSource(path: string[]): string | null {
   }
 }
 
-/** Where an automatic write goes: AKM_BUNDLE_DIR first, then the default bundle. */
+/** Where an automatic write goes: the default bundle. */
 export function automaticWriteTarget(config: AkmConfig) {
   try {
     const { source } = resolveWorkingStashTarget(config, { requireWritable: false });
     const path = source.path ?? null;
-    return { name: source.name, path, workingStash: path !== null && path === workingStashDir(config) };
+    return { name: source.name, path };
   } catch {
-    return null; // No AKM_BUNDLE_DIR and no usable default bundle: writes need an explicit target.
+    return null; // No usable default bundle: writes need an explicit target.
   }
 }

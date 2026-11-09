@@ -26,7 +26,7 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
-  withEnv,
+  withBundle,
 } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
@@ -43,7 +43,7 @@ function writeFile(filePath: string, content: string): void {
 }
 
 async function runCli(args: string[], stashDir: string): Promise<{ stdout: string; stderr: string; status: number }> {
-  return withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
+  return withBundle(stashDir, async () => {
     resetConfigCache();
     const res = await runCliCapture(args);
     return { stdout: res.stdout, stderr: res.stderr, status: res.code };
@@ -86,7 +86,7 @@ describe("akm search --include-proposed (CLI)", () => {
       "---\ndescription: deploy widgets experimentally\ntags:\n  - deploy\nquality: proposed\n---\n# Proposed deploy\n",
     );
 
-    await withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+    await withBundle(stash, async () => {
       saveConfig({ semanticSearchMode: "off" });
       await akmIndex({ stashDir: stash, full: true });
     });

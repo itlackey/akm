@@ -34,6 +34,7 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
+  withDefaultBundle,
 } from "../_helpers/sandbox";
 
 const createdTmpDirs: string[] = [];
@@ -128,7 +129,7 @@ beforeEach(() => {
   stashDir = stashResult.dir;
   envCleanup = stashResult.cleanup;
   resetConfigCache();
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
   resetConfigCache();
 });
 
@@ -219,15 +220,20 @@ describe("Phase 4 parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
     const body = ["---", "name: embed-skill", "description: Test", "---", "# embed"].join("\n");
     writeFile(path.join(stashDir, "skills", "embed-skill", "SKILL.md"), body);
 
-    saveConfig({
-      semanticSearchMode: "auto",
-      embedding: {
-        provider: "openai-compatible",
-        endpoint: url,
-        model: "test-embed",
-        dimension: 4,
-      },
-    });
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "auto",
+          embedding: {
+            provider: "openai-compatible",
+            endpoint: url,
+            model: "test-embed",
+            dimension: 4,
+          },
+        },
+        stashDir,
+      ),
+    );
     resetConfigCache();
 
     try {

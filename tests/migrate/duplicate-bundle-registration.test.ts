@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Regression coverage for itlackey/akm#870: `AKM_BUNDLE_DIR` (or `--dir`)
+ * Regression coverage for itlackey/akm#870: `--dir`
  * pointing at a directory that is ALREADY configured under a different
  * bundle id must not register a second bundle for it, and if two bundle
  * ids already exist for the same directory (as happened in the wild before
@@ -28,7 +28,6 @@ import { inspectEngineKeysMigration } from "../../scripts/akm-migrate/engine-key
 import { withPrimaryBundle } from "../../src/commands/sources/bundle-config-ops";
 import { type AkmConfig, bundleContentRoot, bundleKeyForContentRoot } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
-import { resolveWorkingStashTarget } from "../../src/sources/write-source";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 function writeV2Task(tasksDir: string, name: string): void {
@@ -69,7 +68,7 @@ describe("withPrimaryBundle (issue #870 part 1)", () => {
       semanticSearchMode: "off",
       bundles: { openpalm: { path: "/home/user/openpalm", writable: true } },
       // No defaultBundle set yet — this is exactly the shape a container
-      // entrypoint hits: AKM_BUNDLE_DIR == an already-configured bundle's
+      // entrypoint hits: `--dir` == an already-configured bundle's
       // path, but defaultBundle hasn't been pointed at it yet.
     };
     const next = withPrimaryBundle(config, "/home/user/openpalm");
@@ -82,38 +81,6 @@ describe("withPrimaryBundle (issue #870 part 1)", () => {
     const next = withPrimaryBundle(config, "/home/user/brand-new-stash");
     expect(Object.keys(next.bundles ?? {})).toHaveLength(1);
     expect(next.defaultBundle).toBeDefined();
-  });
-});
-
-describe("resolveWorkingStashTarget (issue #870 part 1, AKM_BUNDLE_DIR path)", () => {
-  test("AKM_BUNDLE_DIR equal to an already-configured bundle's resolved root does not synthesize a second bundle", () => {
-    const storage = withIsolatedAkmStorage();
-    try {
-      const config: AkmConfig = {
-        semanticSearchMode: "off",
-        bundles: { openpalm: { path: storage.stashDir, writable: true } },
-      };
-      const target = resolveWorkingStashTarget(config, { requireWritable: false });
-      expect(target.source.name).toBe("openpalm");
-    } finally {
-      storage.cleanup();
-    }
-  });
-
-  test("a symlink spelling cannot reactivate a disabled configured bundle", () => {
-    const storage = withIsolatedAkmStorage();
-    const alias = path.join(path.dirname(storage.stashDir), `${path.basename(storage.stashDir)}-alias`);
-    try {
-      fs.symlinkSync(storage.stashDir, alias, "dir");
-      const config: AkmConfig = {
-        semanticSearchMode: "off",
-        bundles: { dormant: { path: alias, enabled: false } },
-      };
-      expect(() => resolveWorkingStashTarget(config, { requireWritable: false })).toThrow(/disabled/i);
-    } finally {
-      fs.rmSync(alias, { force: true });
-      storage.cleanup();
-    }
   });
 });
 

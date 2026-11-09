@@ -14,7 +14,8 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
-  withEnv,
+  withBundle,
+  withDefaultBundle,
 } from "./_helpers/sandbox";
 
 // ── Temp directory management ───────────────────────────────────────────────
@@ -54,8 +55,8 @@ function tmpStash(): string {
  * inside `run` so it reads back the stash that was just indexed.
  */
 async function withTestIndex<T>(stashDir: string, run: () => Promise<T> | T): Promise<T> {
-  return withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
-    saveConfig({ semanticSearchMode: "off" });
+  return withBundle(stashDir, async () => {
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     await akmIndex({ stashDir, full: true });
     return run();
   });

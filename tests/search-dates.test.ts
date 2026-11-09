@@ -26,7 +26,7 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
-  withEnv,
+  withBundle,
 } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
@@ -49,7 +49,7 @@ async function indexStash(setup: (stash: string) => void): Promise<string> {
   const stash = fs.mkdtempSync(path.join(os.tmpdir(), "akm-search-dates-"));
   tempDirs.push(stash);
   setup(stash);
-  await withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+  await withBundle(stash, async () => {
     resetConfigCache();
     saveConfig({ semanticSearchMode: "off" });
     await akmIndex({ stashDir: stash, full: true });
@@ -58,7 +58,7 @@ async function indexStash(setup: (stash: string) => void): Promise<string> {
 }
 
 async function search(stash: string, input: Parameters<typeof akmSearch>[0]) {
-  return withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+  return withBundle(stash, async () => {
     resetConfigCache();
     return akmSearch(input);
   });
@@ -174,7 +174,7 @@ describe("--since and --until", () => {
   test("the CLI takes the flags and rejects a value that is not a day", async () => {
     const stash = await indexStash(writeDatedStash);
     const run = (args: string[]) =>
-      withEnv({ AKM_BUNDLE_DIR: stash }, async () => {
+      withBundle(stash, async () => {
         resetConfigCache();
         return runCliCapture(args);
       });

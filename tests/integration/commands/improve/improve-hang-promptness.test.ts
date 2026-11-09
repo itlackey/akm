@@ -46,7 +46,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isProcessAlive } from "../../../../src/core/common";
 import { saveConfig } from "../../../../src/core/config/config";
-import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  makeSandboxDir,
+  withDefaultBundle,
+  withIsolatedAkmStorage,
+} from "../../../_helpers/sandbox";
 
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
 
@@ -107,11 +112,16 @@ const REFLECT_ONLY_STRATEGIES = {
 };
 
 function configureHungEngine(port: number): void {
-  saveConfig({
-    semanticSearchMode: "off",
-    connections: { hung: { endpoint: `http://localhost:${port}/v1`, models: { fast: "hung-model" } } },
-    improve: { strategies: REFLECT_ONLY_STRATEGIES },
-  });
+  saveConfig(
+    withDefaultBundle(
+      {
+        semanticSearchMode: "off",
+        connections: { hung: { endpoint: `http://localhost:${port}/v1`, models: { fast: "hung-model" } } },
+        improve: { strategies: REFLECT_ONLY_STRATEGIES },
+      },
+      storage.stashDir,
+    ),
+  );
 }
 
 /**
@@ -167,12 +177,17 @@ function fastReflectServer() {
 }
 
 function configureSlowPrepassFastEngine(embedPort: number, chatPort: number): void {
-  saveConfig({
-    semanticSearchMode: "auto",
-    embedding: { endpoint: `http://localhost:${embedPort}/v1`, model: "slow-embed-model" },
-    connections: { fast: { endpoint: `http://localhost:${chatPort}/v1`, models: { fast: "fast-model" } } },
-    improve: { strategies: REFLECT_ONLY_STRATEGIES },
-  });
+  saveConfig(
+    withDefaultBundle(
+      {
+        semanticSearchMode: "auto",
+        embedding: { endpoint: `http://localhost:${embedPort}/v1`, model: "slow-embed-model" },
+        connections: { fast: { endpoint: `http://localhost:${chatPort}/v1`, models: { fast: "fast-model" } } },
+        improve: { strategies: REFLECT_ONLY_STRATEGIES },
+      },
+      storage.stashDir,
+    ),
+  );
 }
 
 /**

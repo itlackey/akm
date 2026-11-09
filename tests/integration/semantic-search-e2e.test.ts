@@ -30,6 +30,7 @@ import {
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
+  useBundleConfig,
 } from "../_helpers/sandbox";
 
 // ── Gate ───────────────────────────────────────────────────────────────────
@@ -336,7 +337,7 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
   beforeEach(() => {
     mutateScopedEnv("XDG_CACHE_HOME", savedCacheDir);
     mutateScopedEnv("XDG_CONFIG_HOME", savedConfigDir);
-    mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+    useBundleConfig(stashDir);
     resetConfigCache();
   });
 
@@ -591,7 +592,7 @@ describe("Semantic search graceful degradation", () => {
   beforeEach(() => {
     mutateScopedEnv("XDG_CACHE_HOME", degradationCacheDir);
     mutateScopedEnv("XDG_CONFIG_HOME", degradationConfigDir);
-    mutateScopedEnv("AKM_BUNDLE_DIR", stashDir);
+    useBundleConfig(stashDir);
     resetConfigCache();
   });
 

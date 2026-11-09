@@ -23,7 +23,13 @@ import type { SourceSearchHit } from "../../src/sources/types";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getItemRefById, upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import { getUtilityScore, upsertUtilityScore } from "../../src/storage/repositories/index-utility-repository";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  withDefaultBundle,
+} from "../_helpers/sandbox";
 import { recordUsageEvent } from "../_helpers/usage-events";
 
 // ── Temp directory tracking ─────────────────────────────────────────────────
@@ -62,7 +68,7 @@ async function buildTestIndex(stashDir: string, files: Record<string, string> = 
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
     fs.writeFileSync(fullPath, content);
   }
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
   await akmIndex({ stashDir, full: true });
 }
 

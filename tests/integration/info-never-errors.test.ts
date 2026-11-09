@@ -210,7 +210,6 @@ describe("akm info when environment resolution itself fails (a10-info, infoComma
       XDG_DATA_HOME: undefined,
       XDG_CACHE_HOME: undefined,
       XDG_STATE_HOME: undefined,
-      AKM_BUNDLE_DIR: undefined,
     });
     expect(result.code, result.stderr).toBe(0);
     expect(result.elapsedMs).toBeLessThan(MAX_MS);

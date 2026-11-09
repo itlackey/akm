@@ -21,7 +21,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { curate } from "../../../src/api";
 import { isQuiet, isVerbose, setQuiet } from "../../../src/core/warn";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  withDefaultBundle,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+} from "../../_helpers/sandbox";
 
 // The CLI prints compact JSON to a pipe; the API keeps its pretty-printed string. The documents are what must match.
 function expectSameJson(actual: string, expected: string) {
@@ -180,7 +185,9 @@ describe("repeated calls inside one long-lived process", () => {
     );
     expect(broken?.code).toBe("INVALID_CONFIG_FILE");
 
-    writeSandboxConfig({ semanticSearchMode: "off", search: { defaultExcludeTypes: ["skill"] } });
+    writeSandboxConfig(
+      withDefaultBundle({ semanticSearchMode: "off", search: { defaultExcludeTypes: ["skill"] } }, storage.stashDir),
+    );
     // writeSandboxConfig merges over the broken file's fallback ({}), so this is a valid config again.
     const cli = cliCurate("deploy production", ["--format", "json"]);
     const edited = await curate("deploy production", { format: "json" });

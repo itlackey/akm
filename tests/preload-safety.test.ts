@@ -46,16 +46,4 @@ describe("preload safety invariants", () => {
       expect(source).toContain('HOME="$runtime_home" bun test');
     }
   });
-
-  test("the AKM_BUNDLE_DIR override, if set, are always live dirs under the temp root (heal drops leaked ones)", () => {
-    // The cross-file leak signature is an AKM_BUNDLE_DIR pointing at a now-deleted
-    // /tmp dir. The beforeEach self-heal drops any such dangling pointer before
-    // the test runs, so by the time any test body executes, an override that is
-    // still set must resolve to a live dir under the temp root — never a
-    // dangling pointer that would surface as STASH_DIR_UNREADABLE.
-    for (const k of ["AKM_BUNDLE_DIR"]) {
-      const v = process.env[k];
-      if (v !== undefined) expect(underTmp(v)).toBe(true);
-    }
-  });
 });

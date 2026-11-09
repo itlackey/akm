@@ -2,6 +2,7 @@
  * Projects (#1461): the resolver, precedence per kind, the name convention, config handling, curate()'s
  * cwd/project, write defaults and extract naming. No project must leave every output byte-identical.
  */
+
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -12,6 +13,7 @@ import { deriveExtractCandidateRef } from "../src/commands/improve/extract";
 import { buildSessionAssetContent } from "../src/commands/improve/session-asset";
 import { runCurate } from "../src/commands/read/curate-run";
 import { parseFrontmatter } from "../src/core/asset/frontmatter";
+import { slugForPath } from "../src/core/bundle-id";
 import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { projectForDirectory, resolveProject } from "../src/core/projects";
 import { _setWarnSinkForTests } from "../src/core/warn";
@@ -26,6 +28,7 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
+  withDefaultBundle,
   writeSandboxConfig,
 } from "./_helpers/sandbox";
 
@@ -211,13 +214,18 @@ describe("curate", () => {
     note(stashDir, "akm-note", { project: "akm" });
     note(stashDir, "other-note", { project: "other" });
     note(stashDir, "plain-note", { team: "t" });
-    saveConfig({
-      semanticSearchMode: "off",
-      projects: {
-        akm: { paths: [work] },
-        scoped: { paths: [tmp("proj-scoped")], filters: { project: ["other", ""] } },
-      },
-    } as never);
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          projects: {
+            akm: { paths: [work] },
+            scoped: { paths: [tmp("proj-scoped")], filters: { project: ["other", ""] } },
+          },
+        } as never,
+        stashDir,
+      ),
+    );
     await akmIndex({ stashDir, full: true });
   });
 
@@ -243,12 +251,17 @@ describe("curate", () => {
   });
 
   test("the reported project is the one applied: each kind replaced alone, then together, then none", async () => {
-    saveConfig({
-      semanticSearchMode: "off",
-      projects: {
-        full: { paths: [tmp("proj-full")], from: "local", filters: { team: ["t"] }, prefer: { project: "akm" } },
-      },
-    } as never);
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          projects: {
+            full: { paths: [tmp("proj-full")], from: "local", filters: { team: ["t"] }, prefer: { project: "akm" } },
+          },
+        } as never,
+        stashDir,
+      ),
+    );
     resetConfigCache();
     const base = { name: "full", from: "local", filters: { team: ["t"] }, prefer: { project: "akm" } };
     expect((await run({ project: "full" })).project).toEqual(base);
@@ -281,10 +294,15 @@ describe("curate", () => {
   });
 
   test("workspace search reports the from/filters its bundle and scope override", async () => {
-    saveConfig({
-      semanticSearchMode: "off",
-      projects: { full: { paths: [tmp("proj-ws")], from: "local", filters: { team: ["t"] } } },
-    } as never);
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          projects: { full: { paths: [tmp("proj-ws")], from: "local", filters: { team: ["t"] } } },
+        } as never,
+        stashDir,
+      ),
+    );
     resetConfigCache();
     const base = { name: "full", from: "local", filters: { team: ["t"] }, prefer: { project: "full" } };
     expect((await workspaceSearch({ q: "widget", project: "full" })).project).toEqual(base);
@@ -298,7 +316,7 @@ describe("curate", () => {
     const elsewhere = tmp("proj-nowhere");
     const withProjects = await curate("widget", { cwd: elsewhere, format: "json" });
     const text = await curate("widget", { cwd: elsewhere, format: "text" });
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     resetConfigCache();
     expect(await curate("widget", { cwd: elsewhere, format: "json" })).toBe(withProjects);
     expect(await curate("widget", { cwd: elsewhere, format: "text" })).toBe(text);
@@ -347,7 +365,7 @@ describe("curate", () => {
         (await runCliCapture(["search", "widget", "--format", "text"])).stdout,
       ];
       const withProjects = await outputs();
-      saveConfig({ semanticSearchMode: "off" });
+      saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
       resetConfigCache();
       expect(await outputs()).toEqual(withProjects);
       expect(withProjects[0]).not.toContain('"project"');
@@ -371,15 +389,20 @@ describe("curate", () => {
 describe("write defaults", () => {
   test("remember: write.bundle, scope fill one at a time, metadata, flags over project", async () => {
     const team = tmp("proj-team");
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { team: { path: team, writable: true } },
-      projects: {
-        acme: {
-          write: { bundle: "team", user: "u1", channel: "acme", metadata: { client: "acme", kind: "meta" } },
-        },
-      },
-    } as never);
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { team: { path: team, writable: true } },
+          projects: {
+            acme: {
+              write: { bundle: "team", user: "u1", channel: "acme", metadata: { client: "acme", kind: "meta" } },
+            },
+          },
+        } as never,
+        stashDir,
+      ),
+    );
     const { code, stdout, stderr } = await runCliCapture([
       "remember",
       "acme note body",
@@ -402,10 +425,15 @@ describe("write defaults", () => {
   });
 
   test("remember: body frontmatter beats project metadata, and akm's own keys beat both (stdin)", () => {
-    saveConfig({
-      semanticSearchMode: "off",
-      projects: { acme: { write: { metadata: { kind: "meta", tier: "meta", client: "acme" } } } },
-    } as never);
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          projects: { acme: { write: { metadata: { kind: "meta", tier: "meta", client: "acme" } } } },
+        } as never,
+        stashDir,
+      ),
+    );
     const result = spawnSync("bun", ["src/cli.ts", "remember", "--project", "acme", "--name", "stdin-note"], {
       input: "---\nkind: body\ncaptureMode: background\ndescription: from body\n---\nnote text\n",
       encoding: "utf8",
@@ -424,21 +452,32 @@ describe("write defaults", () => {
 
   test("remember: the project's write.bundle never raises a conflict the user did not type", async () => {
     const team = tmp("proj-team2");
-    saveConfig({
-      semanticSearchMode: "off",
-      bundles: { team: { path: team, writable: true } },
-      projects: { acme: { write: { bundle: "team" } } },
-    } as never);
+    saveConfig(
+      withDefaultBundle(
+        {
+          semanticSearchMode: "off",
+          bundles: { team: { path: team, writable: true } },
+          projects: { acme: { write: { bundle: "team" } } },
+        } as never,
+        stashDir,
+      ),
+    );
     const first = await runCliCapture(["remember", "base note", "--name", "base"]);
     expect(first.code).toBe(0);
-    const ref = JSON.parse(first.stdout).ref as string;
+    // A ref that names its bundle: the project's write.bundle must not override where it already lives.
+    const ref = `${slugForPath(stashDir)}//${JSON.parse(first.stdout).ref as string}`;
     const second = await runCliCapture(["remember", "fix", "--project", "acme", "--supersedes", ref, "--name", "fix"]);
     expect(second.code).toBe(0);
     expect(JSON.parse(second.stdout).path.startsWith(team)).toBe(false);
   });
 
   test("remember: an unwritable write.bundle fails with --bundle's error", async () => {
-    saveConfig({ semanticSearchMode: "off", projects: { p: { write: { bundle: "ghost" } } } } as never);
+    saveConfig(
+      withDefaultBundle(
+        { semanticSearchMode: "off", projects: { p: { write: { bundle: "ghost" } } } } as never,
+        stashDir,
+      ),
+    );
     const { code, stderr } = await runCliCapture(["remember", "text", "--project", "p"]);
     expect(code).toBe(2);
     expect(stderr).toContain("--bundle must reference a source name");

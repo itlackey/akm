@@ -54,7 +54,6 @@ export async function createFixture({
     TEMP: path.join(root, "tmp"),
     TMP: path.join(root, "tmp"),
     AKM_CONFIG_FILE: path.join(root, "config", "config.json"),
-    AKM_BUNDLE_DIR: path.join(root, "personal"),
     NO_PROXY: "127.0.0.1,localhost",
     HTTP_PROXY: "http://127.0.0.1:1",
     HTTPS_PROXY: "http://127.0.0.1:1",
@@ -79,7 +78,6 @@ export async function createFixture({
     if (!process.env.AKM_DESKTOP_KEEP_FIXTURES) await rm(root, { recursive: true, force: true });
   };
   if (empty) {
-    delete env.AKM_BUNDLE_DIR;
     return { root, env, launcher, cleanup };
   }
   const bundles = Object.fromEntries(
@@ -150,7 +148,11 @@ export async function createFixture({
     );
   if (git) {
     const command = (/** @type {string[]} */ args) =>
-      execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], { cwd: env.AKM_BUNDLE_DIR, env, stdio: "pipe" });
+      execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
+        cwd: path.join(root, "personal"),
+        env,
+        stdio: "pipe",
+      });
     command(["init", "--quiet"]);
     command(["config", "user.name", "Synthetic UI test"]);
     command(["config", "user.email", "fixture@example.test"]);

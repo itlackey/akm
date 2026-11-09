@@ -158,23 +158,23 @@ describe("remember --supersedes", () => {
 
     const json = JSON.parse(stdout) as WriteOutput;
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe(stashRef("memory", "projectA/new-endpoint"));
+    expect(json.ref).toBe(conceptId(stashRef("memory", "projectA/new-endpoint")));
 
     // Additive output key: the demotion is reported as applied.
     expect(Array.isArray(json.superseded)).toBe(true);
     expect(json.superseded).toHaveLength(1);
-    expect(json.superseded?.[0]?.ref).toBe(old.ref);
+    expect(json.superseded?.[0]?.ref).toBe(stashRef("memory", "projectA/old-endpoint"));
     expect(json.superseded?.[0]?.applied).toBe(true);
 
     // Correction provenance: the superseded ref folds into the NEW asset's
     // xrefs automatically (no --xref flag was passed).
     const newParsed = parseFrontmatter(fs.readFileSync(json.path, "utf8"));
-    expect(newParsed.data.xrefs).toContain(old.ref);
+    expect(newParsed.data.xrefs).toContain(stashRef("memory", "projectA/old-endpoint"));
 
     // The OLD asset gains exactly the two demotion keys...
     const oldParsedAfter = parseFrontmatter(fs.readFileSync(old.path, "utf8"));
     expect(oldParsedAfter.data.beliefState).toBe("superseded");
-    expect(oldParsedAfter.data.supersededBy).toEqual([json.ref]);
+    expect(oldParsedAfter.data.supersededBy).toEqual([stashRef("memory", "projectA/new-endpoint")]);
     // ...while every other frontmatter key survives (metadata edit, not a rewrite)...
     expect(oldParsedAfter.data.captureMode).toBe("hot");
     // ...and the body is untouched.
@@ -196,7 +196,7 @@ describe("remember --supersedes", () => {
     ]);
     expect(code).toBe(0);
     const newRef = (JSON.parse(stdout) as WriteOutput).ref;
-    expect(newRef).toBe(stashRef("memory", "quantum-rotation-new-endpoint"));
+    expect(newRef).toBe(conceptId(stashRef("memory", "quantum-rotation-new-endpoint")));
 
     // The demoted incumbent must drop out of `--belief current` immediately —
     // this only holds if the mutated old file was reindexed by the writer.
@@ -243,7 +243,7 @@ describe("remember --supersedes", () => {
 
     const oldParsed = parseFrontmatter(fs.readFileSync(old.path, "utf8"));
     expect(oldParsed.data.beliefState).toBe("superseded");
-    expect(oldParsed.data.supersededBy).toEqual([newRef]);
+    expect(oldParsed.data.supersededBy).toEqual([stashRef("memory", "rotation-cadence-new")]);
   });
 
   test("unresolvable --supersedes fails with exit 2 usage envelope; nothing written, nothing demoted", async () => {
@@ -305,7 +305,7 @@ describe("remember --supersedes", () => {
     expect(oldRaw.startsWith("---")).toBe(true);
     const oldParsed = parseFrontmatter(oldRaw);
     expect(oldParsed.data.beliefState).toBe("superseded");
-    expect(oldParsed.data.supersededBy).toEqual([json.ref]);
+    expect(oldParsed.data.supersededBy).toEqual([stashRef("memory", "vpn-note-correction")]);
     expect(oldParsed.content.replace(/^\n+/, "")).toBe("VPN is required for staging.\n");
   });
 
@@ -528,7 +528,7 @@ describe("--supersedes refuses non-markdown demotion targets before any write", 
     expect(json.superseded?.[0]?.applied).toBe(true);
     const parsed = parseFrontmatter(fs.readFileSync(wfPath, "utf8"));
     expect(parsed.data.beliefState).toBe("superseded");
-    expect(parsed.data.supersededBy).toEqual([json.ref]);
+    expect(parsed.data.supersededBy).toEqual([stashRef("memory", "release-flow-fix")]);
   });
 });
 
@@ -550,7 +550,7 @@ describe("a demotion fs error still commits and indexes the correction", () => {
       supersedes: [{ ref: ghostRef, filePath: ghostPath, stashRoot: stashDir, writable: true }],
     });
 
-    expect(result.ref).toBe(stashRef("memory", "corrected-fact"));
+    expect(result.ref).toBe(conceptId(stashRef("memory", "corrected-fact")));
     expect(result.superseded).toHaveLength(1);
     expect(result.superseded?.[0]?.ref).toBe(ghostRef);
     expect(result.superseded?.[0]?.applied).toBe(false);
@@ -602,7 +602,7 @@ describe("import --supersedes", () => {
 
     const json = JSON.parse(stdout) as WriteOutput;
     expect(json.ok).toBe(true);
-    expect(json.ref).toBe(stashRef("knowledge", "modern-guide"));
+    expect(json.ref).toBe(conceptId(stashRef("knowledge", "modern-guide")));
     expect(json.superseded).toHaveLength(1);
     expect(json.superseded?.[0]?.ref).toBe(oldRef);
     expect(json.superseded?.[0]?.applied).toBe(true);
@@ -617,7 +617,7 @@ describe("import --supersedes", () => {
     // The old doc: demoted, other keys preserved, body untouched.
     const oldParsedAfter = parseFrontmatter(fs.readFileSync(oldPath, "utf8"));
     expect(oldParsedAfter.data.beliefState).toBe("superseded");
-    expect(oldParsedAfter.data.supersededBy).toEqual([json.ref]);
+    expect(oldParsedAfter.data.supersededBy).toEqual([stashRef("knowledge", "modern-guide")]);
     expect(oldParsedAfter.data.description).toBe("Legacy auth guide");
     expect(oldParsedAfter.data.tags).toEqual(["auth"]);
     expect(oldParsedAfter.content).toBe(oldParsedBefore.content);

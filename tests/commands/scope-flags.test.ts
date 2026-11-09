@@ -21,7 +21,13 @@ import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SourceSearchHit } from "../../src/sources/types";
 import { runCliCapture } from "../_helpers/cli";
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  withDefaultBundle,
+} from "../_helpers/sandbox";
 
 // Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
 // (tests/_helpers/cli.ts). The preload (tests/_preload.ts) sandboxes HOME / XDG
@@ -136,7 +142,7 @@ describe("parseScopeFilterFlags", () => {
 describe("akm search --filter narrows by scope", () => {
   test("filter user=alice returns only alice's memory", async () => {
     const stashDir = tmpStash();
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     writeFile(
       path.join(stashDir, "memories", "alice-note.md"),
@@ -173,7 +179,7 @@ describe("akm search --filter narrows by scope", () => {
 
   test("a repeated key matches any value; different keys must all match", async () => {
     const stashDir = tmpStash();
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     const note = (name: string, user: string, channel: string) =>
       writeFile(
         path.join(stashDir, "memories", `${name}.md`),
@@ -197,7 +203,7 @@ describe("akm search --filter narrows by scope", () => {
 
   test("legacy memories without scope still match unfiltered queries", async () => {
     const stashDir = tmpStash();
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     writeFile(
       path.join(stashDir, "memories", "legacy.md"),
@@ -213,7 +219,7 @@ describe("akm search --filter narrows by scope", () => {
 
   test("scope filter on a key the entry lacks excludes it", async () => {
     const stashDir = tmpStash();
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     writeFile(
       path.join(stashDir, "memories", "legacy.md"),
@@ -235,7 +241,7 @@ describe("akm search --filter narrows by scope", () => {
 describe("akm show is a direct reader and never filters", () => {
   test("shows a scoped asset whatever the caller's scope", async () => {
     const stashDir = tmpStash();
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     writeFile(
       path.join(stashDir, "memories", "scoped.md"),
       "---\ntags: [scoped]\nscope_user: alice\n---\nAlice's note\n",
@@ -249,7 +255,7 @@ describe("akm show is a direct reader and never filters", () => {
 
   test("the CLI shows a scoped asset, and --filter and the removed --scope are unknown flags", async () => {
     const stashDir = tmpStash();
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
     writeFile(
       path.join(stashDir, "memories", "cli-scoped.md"),
       "---\ntags: [cli]\nscope_user: alice\n---\nCli scoped body\n",

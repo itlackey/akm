@@ -17,7 +17,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { makeSandboxDir, type SandboxedDir, makeStashDir as sandboxMakeStashDir } from "../../../_helpers/sandbox";
+import {
+  configHomeWithBundle,
+  makeSandboxDir,
+  type SandboxedDir,
+  makeStashDir as sandboxMakeStashDir,
+} from "../../../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -55,8 +60,7 @@ function spawnImprove(
     timeout: 30_000,
     env: {
       ...process.env,
-      AKM_BUNDLE_DIR: stashDir,
-      XDG_CONFIG_HOME: config.dir,
+      XDG_CONFIG_HOME: configHomeWithBundle(config.dir, stashDir),
       XDG_DATA_HOME: data.dir,
     },
   });

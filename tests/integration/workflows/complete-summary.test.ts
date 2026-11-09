@@ -15,7 +15,14 @@ import {
   type SummaryValidationFailure,
 } from "../../../src/workflows/runtime/runs";
 import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
-import { type Cleanup, sandboxAkmDir, sandboxEnvDir, sandboxXdgConfigHome, withEnv } from "../../_helpers/sandbox";
+import {
+  type Cleanup,
+  configNamingBundle,
+  sandboxAkmDir,
+  sandboxStashDir,
+  sandboxXdgConfigHome,
+  withEnv,
+} from "../../_helpers/sandbox";
 import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
 beforeEach(() => fakeOpencodeMajor(1));
@@ -104,7 +111,7 @@ Thing is done, Tests pass
 beforeEach(() => {
   const sandboxed = sandboxAkmDir("akm-complete-summary-", "data");
   // The judge works in the root of the bundle that holds the run's workflow, found when it is built.
-  const bundle = sandboxEnvDir("akm-complete-summary-bundle-", "AKM_BUNDLE_DIR", sandboxed.cleanup);
+  const bundle = sandboxStashDir(sandboxed.cleanup);
   bundleDir = bundle.dir;
   fs.mkdirSync(path.join(bundleDir, "workflows"), { recursive: true });
   fs.writeFileSync(path.join(bundleDir, "workflows", "demo.md"), PLAN_SOURCE, "utf8");
@@ -148,7 +155,7 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
       // before dispatch. The frozen plan is the sole authority for the judge.
       fs.writeFileSync(
         path.join(config.dir, "akm", "config.json"),
-        JSON.stringify({ semanticSearchMode: "off" }),
+        configNamingBundle(JSON.stringify({ semanticSearchMode: "off" }), bundleDir),
         "utf8",
       );
       const result = await completeWorkflowStep({

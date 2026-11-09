@@ -53,7 +53,7 @@ export const ctx = {} as { storage: IsolatedAkmStorage };
 /** Register a fresh isolated sandbox for each test of the calling file. */
 export function useSandbox(): void {
   beforeEach(() => {
-    ctx.storage = withIsolatedAkmStorage();
+    ctx.storage = withIsolatedAkmStorage({}, { bundle: false });
   });
   afterEach(() => {
     ctx.storage.cleanup();

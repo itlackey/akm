@@ -29,7 +29,7 @@ let home: string;
 let warnings: string[];
 
 beforeEach(() => {
-  storage = withIsolatedAkmStorage({ AKM_BUNDLE_DIR: undefined });
+  storage = withIsolatedAkmStorage({}, { bundle: false });
   home = path.join(storage.root, "home");
   fs.mkdirSync(home, { recursive: true });
   resetConfigCache();
@@ -170,21 +170,6 @@ describe("the migrator registers an existing ~/akm", () => {
     expect(done.applied).toBe(true);
     const written = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
     expect(written.bundles[written.defaultBundle].path).toBe(homeStash);
-  });
-
-  test("AKM_BUNDLE_DIR set: a stray ~/akm is not registered, with or without a config file", async () => {
-    seedDir("home/akm");
-    const envDir = seedDir("env-bundle");
-    await withEnv({ HOME: home, AKM_BUNDLE_DIR: envDir }, () => {
-      writeSandboxConfig({ connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } } });
-      const withFile = normalizeConfigFile(getConfigPath(), { apply: true });
-      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).defaultBundle).toBeUndefined();
-      expect(withFile.notes?.join("\n") ?? "").not.toContain("registered");
-      fs.rmSync(getConfigPath(), { force: true });
-      const noFile = normalizeConfigFile(getConfigPath(), { apply: true });
-      expect(noFile.changed).toBe(false);
-      expect(fs.existsSync(getConfigPath())).toBe(false);
-    });
   });
 
   test("no ~/akm, or a default already set, or the bundle disabled: nothing is registered", async () => {

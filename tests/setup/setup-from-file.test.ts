@@ -23,7 +23,7 @@ import { ConfigError } from "../../src/core/errors";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
 import { loadSetupConfigFromFile } from "../../src/setup/setup";
 import { runCliCapture } from "../_helpers/cli";
-import { withEnv } from "../_helpers/sandbox";
+import { configHomeWithBundle, withEnv } from "../_helpers/sandbox";
 
 let workDir: string;
 
@@ -226,10 +226,9 @@ describe("akm setup --from <file> CLI integration", () => {
     const xdgState = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-cli-state-"));
     try {
       const result = await runCli(["setup", "--from", configFile, "--endpoint", "http://localhost:11434/v1"], {
-        XDG_CONFIG_HOME: xdgConfig,
+        XDG_CONFIG_HOME: configHomeWithBundle(xdgConfig, workDir),
         XDG_DATA_HOME: xdgData,
         XDG_STATE_HOME: xdgState,
-        AKM_BUNDLE_DIR: workDir,
       });
 
       // Usage error -> exit 2 / INVALID_FLAG_VALUE, before the file is read or anything is written.
@@ -250,10 +249,9 @@ describe("akm setup --from <file> CLI integration", () => {
     const xdgState = fs.mkdtempSync(path.join(os.tmpdir(), "akm-setup-cli-state-"));
     try {
       const result = await runCli(["setup", "--from", path.join(workDir, "missing.json")], {
-        XDG_CONFIG_HOME: xdgConfig,
+        XDG_CONFIG_HOME: configHomeWithBundle(xdgConfig, workDir),
         XDG_DATA_HOME: xdgData,
         XDG_STATE_HOME: xdgState,
-        AKM_BUNDLE_DIR: workDir,
       });
       // ConfigError (--from file does not exist) -> exit 78 / INVALID_CONFIG_FILE.
       // Ground-truthed by probing the actual CLI output before pinning.

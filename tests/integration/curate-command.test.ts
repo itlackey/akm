@@ -10,8 +10,8 @@ import {
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
+  withBundle,
   withEnv,
-  writeSandboxConfig,
 } from "../_helpers/sandbox";
 
 // Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process harness
@@ -44,17 +44,11 @@ async function runCliWithDataDir(stashDir: string, args: string[]): Promise<{ st
   const xdgCache = makeTempDir("akm-curate-cache-");
   const xdgConfig = makeTempDir("akm-curate-config-");
   const xdgData = makeTempDir("akm-curate-data-");
-  const res = await withEnv(
-    {
-      AKM_BUNDLE_DIR: stashDir,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-    },
-    async () => {
+  const res = await withEnv({ XDG_CACHE_HOME: xdgCache, XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData }, () =>
+    withBundle(stashDir, async () => {
       resetConfigCache();
       return runCliCapture(args);
-    },
+    }),
   );
   expect(res.code).toBe(0);
   return { stdout: res.stdout.trim(), dataDir: xdgData };

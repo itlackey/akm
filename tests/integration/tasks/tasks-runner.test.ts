@@ -51,7 +51,7 @@ const logDir = path.join(cacheDir, "tasks", "logs");
 const tasksDir = path.join(bundleDir, "tasks");
 const configDir = path.join(xdgRoots.XDG_CONFIG_HOME, "akm");
 
-const TRACKED_ENV_KEYS = [...Object.keys(xdgRoots), "AKM_BUNDLE_DIR"];
+const TRACKED_ENV_KEYS = Object.keys(xdgRoots);
 const PRESERVED_ENV: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -1047,7 +1047,7 @@ describe("runTask — command target", () => {
 });
 
 describe("runTask — prompt target", () => {
-  test("a scheduled run treats the task's env like a manual run: nothing pins the AKM directories (dispatch inherits them)", async () => {
+  test("a scheduled run treats the task's env like a manual run: nothing pins the config file (dispatch inherits it)", async () => {
     writeTask(
       "scheduled-agent-context",
       [
@@ -1056,7 +1056,7 @@ describe("runTask — prompt target", () => {
         "with:",
         "  content: keep nested akm calls in this scheduled installation",
         "env:",
-        "  AKM_BUNDLE_DIR: /authored-override",
+        "  AKM_CONFIG_FILE: /authored-override",
         "  TASK_FLAG: retained",
         "harness: opencode",
         "",
@@ -1070,10 +1070,8 @@ describe("runTask — prompt target", () => {
       }),
     );
     const schedulerContext = {
-      AKM_BUNDLE_DIR: path.join(tmpRoot, "scheduled-bundle"),
       AKM_CONFIG_FILE: path.join(configDir, "config.json"),
     };
-    fs.mkdirSync(schedulerContext.AKM_BUNDLE_DIR, { recursive: true });
 
     for (const scheduled of [true, false]) {
       let childEnv: Record<string, string> | undefined;
@@ -1091,7 +1089,7 @@ describe("runTask — prompt target", () => {
 
       expect(result.status).toBe("completed");
       // The task's own `env:` is the task's: a scheduled run no longer overrides it with the process's directories.
-      expect(childEnv).toMatchObject({ AKM_BUNDLE_DIR: "/authored-override", TASK_FLAG: "retained" });
+      expect(childEnv).toMatchObject({ AKM_CONFIG_FILE: "/authored-override", TASK_FLAG: "retained" });
     }
   });
 

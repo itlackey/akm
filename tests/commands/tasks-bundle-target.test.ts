@@ -12,13 +12,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  akmTasksAdd,
-  akmTasksDisable,
-  akmTasksEnable,
-  akmTasksRun,
-  resolveTaskReadBundle,
-} from "../../src/commands/tasks/tasks";
+import { akmTasksAdd, akmTasksDisable, akmTasksEnable, resolveTaskReadBundle } from "../../src/commands/tasks/tasks";
 import { loadConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import {
@@ -110,22 +104,7 @@ describe("bundle-targeted tasks via --bundle", () => {
     expect(again.bundleDir).toBe(iso.stashDir);
   });
 
-  test("a scheduled run resolves an environment-only working stash by --bundle stash", async () => {
-    fs.rmSync(path.join(iso.configDir, "akm", "config.json"));
-    resetConfigCache();
-
-    await akmTasksAdd({ id: "implicit-owner", schedule: "@daily", command: "true" });
-
-    const result = await akmTasksRun("implicit-owner", { target: "stash", scheduled: true });
-    expect(result.exitCode).toBe(0);
-    expect(result.result.status).toBe("completed");
-
-    await expect(akmTasksRun("implicit-owner", { target: "other" })).rejects.toMatchObject({
-      code: "INVALID_FLAG_VALUE",
-    });
-  });
-
-  test("a read selector resolves the working stash, another bundle and an environment-only stash through the active set", () => {
+  test("a read selector resolves the working stash and another bundle through the active set", () => {
     expect(resolveTaskReadBundle("stash", undefined).source).toMatchObject({ name: "stash", path: iso.stashDir });
     expect(resolveTaskReadBundle(undefined, "work").source).toMatchObject({ name: "work", path: work.dir });
     expect(resolveTaskReadBundle("readonly", "readonly").source).toMatchObject({
@@ -133,12 +112,6 @@ describe("bundle-targeted tasks via --bundle", () => {
       path: readonlyDir.dir,
     });
 
-    fs.rmSync(path.join(iso.configDir, "akm", "config.json"));
-    resetConfigCache();
-    expect(resolveTaskReadBundle(undefined, "stash").source).toMatchObject({
-      name: "stash",
-      path: path.resolve(iso.stashDir),
-    });
     expect(() => resolveTaskReadBundle(undefined, "other")).toThrow(/No source named "other"/);
   });
 

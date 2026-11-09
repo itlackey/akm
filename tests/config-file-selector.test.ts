@@ -9,7 +9,7 @@
  *   - the path resolution (`core/paths.ts`): precedence, credentials and the lock beside the file;
  *   - the `paths` key: absolute, `~`, file-relative, cached per file and mtime, a bad value fatal;
  *   - the `--config` prescan (`applyEarlyConfigFlag`) and the flag as the CLI takes it;
- *   - what children are handed (`akmLocations`, dispatch to `task run`) and which installation owns
+ *   - what children are handed (`childProcessEnv`, dispatch to `task run`) and which installation owns
  *     the OS scheduler (`movedLocations`).
  */
 
@@ -22,15 +22,7 @@ import { applyEarlyConfigFlag } from "../src/cli";
 import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getConfigLockPath } from "../src/core/config/config-io";
 import { ConfigError } from "../src/core/errors";
-import {
-  akmLocations,
-  childProcessEnv,
-  getCacheDir,
-  getConfigDir,
-  getConfigPath,
-  getDataDir,
-  getStateDir,
-} from "../src/core/paths";
+import { childProcessEnv, getCacheDir, getConfigDir, getConfigPath, getDataDir, getStateDir } from "../src/core/paths";
 import { dispatchDueTasks } from "../src/tasks/dispatch";
 import { movedLocations } from "../src/tasks/installation";
 import { runCliCapture } from "./_helpers/cli";
@@ -65,7 +57,7 @@ describe("the selected config file", () => {
     expect(getConfigPath({ AKM_CONFIG_FILE: "rel/akm.json" })).toBe(path.resolve("rel/akm.json"));
   });
 
-  test("it beats XDG_CONFIG_HOME, and a transient AKM_BUNDLE_DIR moves nothing", () => {
+  test("it beats XDG_CONFIG_HOME, and with it set AKM_BUNDLE_DIR is ignored", () => {
     const file = path.join(dir, "chosen.json");
     const env = {
       AKM_CONFIG_FILE: file,
@@ -287,13 +279,13 @@ describe("--config on the CLI", () => {
 });
 
 describe("what a child is handed", () => {
-  test("akmLocations names the config file, absolute, whichever way it was found", () => {
+  test("childProcessEnv names the config file, absolute, whichever way it was found", () => {
     const file = path.join(dir, "akm.json");
     process.env.AKM_CONFIG_FILE = file;
-    expect(akmLocations().AKM_CONFIG_FILE).toBe(file);
+    expect(childProcessEnv().AKM_CONFIG_FILE).toBe(file);
     delete process.env.AKM_CONFIG_FILE;
-    expect(akmLocations().AKM_CONFIG_FILE).toBe(getConfigPath());
-    expect(path.isAbsolute(akmLocations().AKM_CONFIG_FILE as string)).toBe(true);
+    expect(childProcessEnv().AKM_CONFIG_FILE).toBe(getConfigPath());
+    expect(path.isAbsolute(childProcessEnv().AKM_CONFIG_FILE as string)).toBe(true);
   });
 
   test("childProcessEnv carries it, and a remapped XDG cannot move it", () => {

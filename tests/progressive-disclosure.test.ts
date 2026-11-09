@@ -7,7 +7,13 @@ import { saveConfig } from "../src/core/config/config";
 import type { IndexDocument } from "../src/indexer/passes/metadata";
 import { buildDbHit } from "../src/indexer/search/db-search";
 
-import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
+import {
+  type Cleanup,
+  sandboxStashDir,
+  sandboxXdgCacheHome,
+  sandboxXdgConfigHome,
+  withDefaultBundle,
+} from "./_helpers/sandbox";
 
 // Generic fixture dirs (not AKM env paths) — raw mkdtempSync is fine here.
 const fixtureDirs: string[] = [];
@@ -57,7 +63,7 @@ describe("summary show", () => {
       `---\ndescription: Reviews code for quality issues\ntags:\n  - code\n  - review\n  - quality\n---\n${longContent}`,
     );
 
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "skills/code-review", detail: "summary" });
 
@@ -77,7 +83,7 @@ describe("summary show", () => {
       "---\ndescription: Release a new version\ntags:\n  - release\n  - deploy\n---\nRelease $ARGUMENTS to production with {{env}}.",
     );
 
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "commands/release", detail: "summary" });
 
@@ -102,7 +108,7 @@ describe("summary token budget", () => {
       `---\ndescription: A moderately described skill for testing\n---\n${longContent}`,
     );
 
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "skills/big-skill", detail: "summary" });
 
@@ -120,7 +126,7 @@ describe("full show unchanged", () => {
     const content = "# Full Skill\n\nDo all the things in detail.";
     writeFile(path.join(stashDir, "skills", "full-skill", "SKILL.md"), content);
 
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "skills/full-skill" });
 
@@ -132,7 +138,7 @@ describe("full show unchanged", () => {
     const content = "# Full Skill\n\nDo all the things in detail.";
     writeFile(path.join(stashDir, "skills", "full-skill", "SKILL.md"), content);
 
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "skills/full-skill", detail: "full" });
 
@@ -156,7 +162,7 @@ describe("estimatedTokens in search hits", () => {
     const tmpDir = createTmpDir("akm-prog-hit-");
     const filePath = path.join(tmpDir, "scripts", "test-script.sh");
     writeFile(filePath, "#!/bin/bash\necho hello");
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const hit = await buildDbHit({
       entry,
@@ -189,7 +195,7 @@ describe("estimatedTokens approximation", () => {
     const tmpDir = createTmpDir("akm-prog-tokens-");
     const filePath = path.join(tmpDir, "scripts", "sized-script.sh");
     writeFile(filePath, "x".repeat(1000));
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const hit = await buildDbHit({
       entry,
@@ -216,7 +222,7 @@ describe("estimatedTokens approximation", () => {
     const tmpDir = createTmpDir("akm-prog-nosize-");
     const filePath = path.join(tmpDir, "scripts", "no-size.sh");
     writeFile(filePath, "echo hi");
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const hit = await buildDbHit({
       entry,
@@ -242,7 +248,7 @@ describe("summary show for different asset types", () => {
       path.join(stashDir, "skills", "analyze", "SKILL.md"),
       "---\ndescription: Analyze code patterns\n---\n# Analysis Skill\n\nDetailed instructions here.",
     );
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "skills/analyze", detail: "summary" });
     expect(result.type).toBe("skill");
@@ -255,7 +261,7 @@ describe("summary show for different asset types", () => {
       path.join(stashDir, "commands", "deploy.md"),
       "---\ndescription: Deploy to env\n---\nDeploy $ARGUMENTS to {{env}}.",
     );
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "commands/deploy", detail: "summary" });
     expect(result.type).toBe("command");
@@ -269,7 +275,7 @@ describe("summary show for different asset types", () => {
       path.join(stashDir, "agents", "architect.md"),
       "---\ndescription: Architecture advisor\n---\nYou are an architecture advisor. Provide detailed guidance.",
     );
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "agents/architect", detail: "summary" });
     expect(result.type).toBe("agent");
@@ -280,7 +286,7 @@ describe("summary show for different asset types", () => {
 
   test("script summary omits content", async () => {
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy");
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "scripts/deploy.sh", detail: "summary" });
     expect(result.type).toBe("script");
@@ -294,7 +300,7 @@ describe("summary show for different asset types", () => {
       path.join(stashDir, "knowledge", "api-guide.md"),
       "---\ndescription: API reference guide\n---\n# API Guide\n\nLots of detailed API documentation here.",
     );
-    saveConfig({ semanticSearchMode: "off" });
+    saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
 
     const result = await akmShow({ ref: "knowledge/api-guide", detail: "summary" });
     expect(result.type).toBe("knowledge");

@@ -15,7 +15,7 @@ import { closeDatabase, openReadonlyExistingDatabase } from "../storage/reposito
 import { getEmbeddingCount } from "../storage/repositories/index-vec-repository";
 import { runCli } from "./cli-child";
 import { readBundleGitStatus } from "./git-read";
-import { configSource, preserveUnrelatedConfig, tryStashDir, workingStashDir } from "./readers";
+import { configSource, preserveUnrelatedConfig, tryStashDir } from "./readers";
 import { redactForUi } from "./redact";
 
 export async function list() {
@@ -44,10 +44,7 @@ export async function list() {
     })),
   );
 
-  const stashDir = workingStashDir(config);
-  const workingStash = stashDir ? { path: stashDir, git: await readBundleGitStatus(stashDir) } : null;
-
-  // The default bundle is the working stash when one is configured: list it first.
+  // The default bundle is the working bundle: list it first.
   cards.sort((a, b) => Number(b.default) - Number(a.default));
 
   const info = assembleInfo();
@@ -68,7 +65,6 @@ export async function list() {
   return {
     defaultBundle: config.defaultBundle ?? null,
     bundles: cards,
-    workingStash,
     index: {
       entryCount,
       byType: info.indexStats.byType,

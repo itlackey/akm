@@ -5,8 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { deriveBundleId } from "../bundle-id";
-import { isRecord, resolveStashDir } from "../common";
+import { isRecord } from "../common";
 import { ConfigError } from "../errors";
 import { substituteRefTokens } from "../ref-token";
 import { formatRegistryLabel, hasRegistryUrlCredentials } from "../registry-url";
@@ -19,13 +18,7 @@ import {
   writeConfigAtomic,
 } from "./config-io";
 import { AkmConfigSchema } from "./config-schema";
-import {
-  bundleContentRoots,
-  bundleSourceId,
-  bundlesToSourceEntries,
-  filesystemBundleSourceId,
-  isBundleEnabled,
-} from "./config-sources";
+import { bundleContentRoots, bundlesToSourceEntries } from "./config-sources";
 import type {
   AkmConfig,
   ConnectionConfig,
@@ -729,23 +722,6 @@ export async function mutateConfigWithPrecommit<T>(
     return { config: next, written: true, precommit: precommitResult };
   } finally {
     release();
-  }
-}
-
-/**
- * The source identity 0.9.16 bound a scheduler grant to: the configured
- * bundle's source id, or the implicit `AKM_BUNDLE_DIR` stash's. `undefined`
- * when the bundle is not active on this host.
- */
-export function schedulerSourceIdFor(config: AkmConfig, bundleId: string): string | undefined {
-  if (isBundleEnabled(config, bundleId)) return bundleSourceId(config, bundleId);
-  if (config.bundles?.[bundleId] !== undefined || !process.env.AKM_BUNDLE_DIR?.trim()) return undefined;
-  try {
-    const root = resolveStashDir();
-    const implicitId = deriveBundleId(undefined, root, new Set(Object.keys(config.bundles ?? {})));
-    return implicitId === bundleId ? filesystemBundleSourceId(root) : undefined;
-  } catch {
-    return undefined;
   }
 }
 

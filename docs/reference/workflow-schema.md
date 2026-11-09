@@ -827,8 +827,8 @@ toolchain variables, and any credential or proxy setting of the process that ran
 
 The config file is `AKM_CONFIG_FILE`, set (absolute) to the one the akm that started
 the command resolved (from `--config`, `AKM_CONFIG_FILE`, `XDG_CONFIG_HOME` or the
-platform default); it names the data, state and cache in its `paths`. `AKM_BUNDLE_DIR`
-is set too when that akm had one. A step that runs `akm` therefore uses the same bundle,
+platform default); it names the data, state and cache in its `paths` and the working
+bundle in `defaultBundle`. A step that runs `akm` therefore uses the same bundle,
 config, data, cache and state. Binding one of them in `env:` overrides it. When a scheduled
 task runs the workflow, `AKM_EVENT_SOURCE` is set (when the environment has
 none), so a command that calls `akm` records machine traffic, not user demand; a

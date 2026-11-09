@@ -77,7 +77,7 @@ import { clearLogFile, resetQuiet, resetVerbose } from "../../src/core/warn";
 import { resetLocalEmbedder } from "../../src/llm/embedder";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import { initOutputMode, resetOutputMode } from "../../src/output/context";
-import { withEnv } from "./sandbox";
+import { withBundle } from "./sandbox";
 
 /**
  * Reset every module-level process singleton the CLI caches, so an in-process
@@ -372,6 +372,6 @@ export async function runCliStatusWithBundleDir(
   args: string[],
   stashDir: string,
 ): Promise<{ stdout: string; stderr: string; status: number }> {
-  const { code, stdout, stderr } = await withEnv({ AKM_BUNDLE_DIR: stashDir }, () => runCliCapture(args));
+  const { code, stdout, stderr } = await withBundle(stashDir, () => runCliCapture(args));
   return { stdout, stderr, status: code };
 }

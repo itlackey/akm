@@ -65,7 +65,7 @@ Use an explicit invocation for the behavior you intend to test:
 
 Running `akm` by hand, outside `bun test`, uses the real `HOME` and your
 bundles. To try something against scratch data instead, point `HOME`, `XDG_*`,
-`AKM_CONFIG_FILE` and `AKM_BUNDLE_DIR` at a scratch directory first.
+and `AKM_CONFIG_FILE` (a config file whose `defaultBundle` is a scratch bundle) at a scratch directory first.
 
 The global checkout install deliberately replaces the globally resolved `akm`;
 do not use it for routine inner-loop testing.

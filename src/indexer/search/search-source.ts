@@ -43,14 +43,13 @@ export interface SearchSource {
 // ── Resolution ──────────────────────────────────────────────────────────────
 
 /**
- * The working stash read besides the configured bundles: an explicit argument,
- * else `AKM_BUNDLE_DIR`. With no override there is none: the configured bundles
- * (the `defaultBundle` first) are the sources. With no override and no bundles
- * at all, throws as `resolveStashDir` does, naming the missing default bundle.
+ * The working stash read besides the configured bundles: an explicit argument.
+ * With no override there is none: the configured bundles (the `defaultBundle`
+ * first) are the sources. With no override and no bundles at all, throws as
+ * `resolveStashDir` does, naming the missing default bundle.
  */
 export function implicitStashDir(config: AkmConfig, overrideStashDir?: string): string | undefined {
   if (overrideStashDir !== undefined) return path.resolve(overrideStashDir);
-  if (process.env.AKM_BUNDLE_DIR?.trim()) return resolveStashDir();
   return config.defaultBundle || Object.keys(config.bundles ?? {}).length > 0 ? undefined : resolveStashDir();
 }
 
@@ -58,7 +57,7 @@ export function implicitStashDir(config: AkmConfig, overrideStashDir?: string): 
  * Build the ordered list of stash sources, walking every configured stash
  * once. Iteration order:
  *
- *   1. An explicit argument or `AKM_BUNDLE_DIR`, when present.
+ *   1. An explicit argument, when present.
  *   2. The configured `defaultBundle`, after component-root validation.
  *   3. Remaining configured bundles in installation-priority order.
  *
@@ -80,7 +79,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     );
   }
 
-  // Explicit and environment overrides stay first. Without either override,
+  // An explicit override stays first. Without one,
   // the configured default enters through the validated loop below.
   const sources: SearchSource[] = implicitStash
     ? [{ path: implicitStash, writable: true, isDefault: true, type: "filesystem" }]

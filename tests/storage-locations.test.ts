@@ -34,7 +34,6 @@ const isolatedEnv = {
   APPDATA: undefined,
   LOCALAPPDATA: undefined,
   USERPROFILE: undefined,
-  AKM_BUNDLE_DIR: undefined,
   HOME: SANDBOX_ROOT,
 } as const;
 

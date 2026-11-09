@@ -12,7 +12,7 @@ import { makeSandboxDir, withIsolatedAkmStorage } from "../_helpers/sandbox";
 describe("task asset mutations honor write-target resolution", () => {
   test("rejects a writable OKF target before writing a task", async () => {
     // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
-    const iso = withIsolatedAkmStorage({ AKM_BUNDLE_DIR: undefined });
+    const iso = withIsolatedAkmStorage({}, { bundle: false });
     const target = makeSandboxDir("akm-task-okf-target");
     try {
       saveConfig({
@@ -38,7 +38,7 @@ describe("task asset mutations honor write-target resolution", () => {
 
   test("add writes to defaultBundle instead of the primary stash", async () => {
     // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
-    const iso = withIsolatedAkmStorage({ AKM_BUNDLE_DIR: undefined });
+    const iso = withIsolatedAkmStorage({}, { bundle: false });
     const target = makeSandboxDir("akm-task-target");
     try {
       saveConfig({

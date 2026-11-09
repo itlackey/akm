@@ -44,6 +44,7 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
+  withDefaultBundle,
 } from "./_helpers/sandbox";
 
 let stashDir = "";
@@ -146,7 +147,7 @@ beforeEach(async () => {
     "Transcript summary body.",
   );
 
-  saveConfig({ semanticSearchMode: "off" });
+  saveConfig(withDefaultBundle({ semanticSearchMode: "off" }, stashDir));
   await reindex();
 });
 
@@ -261,10 +262,15 @@ describe("akm search conceptId-prefix enumeration (D4)", () => {
         { description: "Companion observation from the extra stash" },
         "Extra stash body.",
       );
-      saveConfig({
-        semanticSearchMode: "off",
-        bundles: { extra: { path: extra.dir } },
-      });
+      saveConfig(
+        withDefaultBundle(
+          {
+            semanticSearchMode: "off",
+            bundles: { extra: { path: extra.dir } },
+          },
+          stashDir,
+        ),
+      );
       await reindex();
 
       // Fixture sanity (existing behavior): the extra source is indexed and

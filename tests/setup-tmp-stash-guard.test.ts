@@ -27,7 +27,7 @@ import { getCacheDir } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { assertSetupSandbox, runSetupFromConfig, runSetupWithDefaults } from "../src/setup/setup";
 import { fakeOpencodeMajor } from "./_helpers/opencode-version";
-import { makeSandboxDir, withEnv } from "./_helpers/sandbox";
+import { makeSandboxDir, withBundle, withEnv } from "./_helpers/sandbox";
 
 // Setup asks the PATH `opencode` which major it is; no suite runs a real one.
 beforeEach(() => fakeOpencodeMajor(1));
@@ -53,19 +53,14 @@ describe("setup tmp-stash guard (layer 1: assertSetupSandbox)", () => {
     const { dir: tmpDir, cleanup } = makeSandboxDir("akm-setup-guard-");
     const { warnings, restore } = captureWarnings();
     try {
-      await withEnv(
-        {
-          AKM_BUNDLE_DIR: tmpDir,
-          XDG_DATA_HOME: path.join(tmpDir, "data"),
-          XDG_STATE_HOME: path.join(tmpDir, "state"),
-        },
-        async () => {
+      await withEnv({ XDG_DATA_HOME: path.join(tmpDir, "data"), XDG_STATE_HOME: path.join(tmpDir, "state") }, () =>
+        withBundle(tmpDir, async () => {
           await expect(runSetupWithDefaults({ dir: tmpDir, noInit: true })).resolves.toMatchObject({
             bundleDir: tmpDir,
           });
           expect(warnings.some((w) => w.includes("transient/sandbox"))).toBe(true);
           expect(warnings.some((w) => w.includes(tmpDir))).toBe(true);
-        },
+        }),
       );
     } finally {
       restore();
@@ -77,16 +72,11 @@ describe("setup tmp-stash guard (layer 1: assertSetupSandbox)", () => {
     const { dir: tmpDir, cleanup } = makeSandboxDir("akm-setup-guard-");
     const { warnings, restore } = captureWarnings();
     try {
-      await withEnv(
-        {
-          AKM_BUNDLE_DIR: tmpDir,
-          XDG_DATA_HOME: path.join(tmpDir, "data"),
-          XDG_STATE_HOME: path.join(tmpDir, "state"),
-        },
-        async () => {
+      await withEnv({ XDG_DATA_HOME: path.join(tmpDir, "data"), XDG_STATE_HOME: path.join(tmpDir, "state") }, () =>
+        withBundle(tmpDir, async () => {
           await expect(runSetupFromConfig({ configJson: "{}", dir: tmpDir, noInit: true })).resolves.toBeDefined();
           expect(warnings.some((w) => w.includes("transient/sandbox"))).toBe(true);
-        },
+        }),
       );
     } finally {
       restore();

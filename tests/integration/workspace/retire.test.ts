@@ -257,6 +257,19 @@ test("Git retirement commits only its paths and the manual archive is grace-purg
   expect(purgeGracedArchive(storage.stashDir, new Date("2100-01-01"))).toEqual({ purgedDirs: 1, purgedFiles: 1 });
   expect(fs.existsSync(path.join(dir!, "memories/manual.md"))).toBe(false);
   expect(fs.existsSync(path.join(dir!, "cleanup.md"))).toBe(true);
+  // The proposal queue is found through the default bundle's `path`, which a git-managed bundle does not have: name the
+  // checkout as a plain bundle for the revert.
+  saveConfig({
+    semanticSearchMode: "off",
+    defaultBundle: "stash",
+    bundles: {
+      stash: {
+        path: storage.stashDir,
+        writable: true,
+        components: { main: { root: ".", adapter: "akm", writable: true } },
+      },
+    },
+  });
   // Past the purge, revert rewrites the asset from the proposal's recorded bytes.
   await revert(receipt);
   expect(fs.readFileSync(file(), "utf8")).toBe(body);

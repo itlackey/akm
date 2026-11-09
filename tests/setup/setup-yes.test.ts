@@ -37,7 +37,7 @@ let storage: IsolatedAkmStorage;
 let warnings: string[];
 
 beforeEach(() => {
-  storage = withIsolatedAkmStorage();
+  storage = withIsolatedAkmStorage({}, { bundle: false });
   resetConfigCache();
   warnings = [];
   _setWarnSinkForTests((level, args) => {

@@ -12,7 +12,12 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import { assets } from "../../../src/workspace";
 import { bundleFileLocation, listBundleFiles } from "../../../src/workspace/bundle-files";
 import { makeConfig } from "../../_helpers/factories";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  useBundleConfig,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+} from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 beforeEach(() => {
@@ -112,7 +117,7 @@ test("internal folder and file links retain their indexed asset identity", async
 test("a symlinked bundle root keeps its configured identity when browsing internal links", async () => {
   const alias = path.join(path.dirname(storage.stashDir), "bundle-link");
   fs.symlinkSync(storage.stashDir, alias);
-  process.env.AKM_BUNDLE_DIR = alias;
+  useBundleConfig(alias);
   writeSandboxConfig({ ...makeConfig(alias), semanticSearchMode: "off" });
   resetConfigCache();
   fs.writeFileSync(path.join(alias, "knowledge/guide.md"), "---\ndescription: A guide\n---\n# A guide\n");

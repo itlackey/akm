@@ -255,16 +255,20 @@ pass `--config <file>`) and name the rest in that file, rather than rely on
 `$HOME`-derived defaults. `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR` and
 `AKM_CACHE_DIR` are retired: with one set and `AKM_CONFIG_FILE` unset, akm exits 78 and
 names `akm migrate apply`, which writes what they named into the file's `paths`.
+`AKM_BUNDLE_DIR` is retired too: the working bundle is the config's `defaultBundle`. An
+image that still sets it to that bundle works unchanged (the value is ignored); one that
+sets it to anything else exits 78 until `akm migrate apply` has registered the directory
+as `defaultBundle` and the variable is unset.
 
 | Variable or key | What it points at |
 | --- | --- |
-| `AKM_BUNDLE_DIR` | The content bundle (`$STASH`) — assets akm indexes and serves. |
+| `defaultBundle` and `bundles.<id>.path` | The content bundle (`$STASH`) — assets akm indexes and serves. |
 | `AKM_CONFIG_FILE` | The config file; `credentials.json` and the config lock sit beside it. |
 | `paths.data` | Durable, non-regenerable data: **`index.db` and `state.db` live here.** This is the directory a migration snapshot's safety copy sits beside. |
 | `paths.cache` | Regenerable cache: installed git, npm and website bundles, config backups, task logs. If it is discarded, `akm bundle update --all` restores the bundles. |
 | `paths.state` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds, per bundle, `akm improve`'s whole-run lock (`locks/`) — see [Storage locations](../architecture/internals/storage-locations.md). Set it too, so those locks sit on the same persistent volume as the rest of akm's state rather than under `$HOME/.local/state/akm`. |
 
-Set the file and its `paths` (and `AKM_BUNDLE_DIR`) to paths that persist across container restarts (a mounted
+Set the file and its `paths` (and the bundle `path`) to paths that persist across container restarts (a mounted
 volume), or `akm migrate apply` will see an empty `state.db` on every boot
 and never actually converge.
 

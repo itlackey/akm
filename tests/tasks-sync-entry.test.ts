@@ -223,7 +223,6 @@ describe("task sync: an installation that moves its locations", () => {
   test.each([
     ["AKM_CONFIG_FILE", { AKM_CONFIG_FILE: "/srv/akm/config/config.json" }, "config"],
     ["XDG_STATE_HOME", { XDG_STATE_HOME: "/srv/akm/state" }, "state"],
-    ["AKM_BUNDLE_DIR", { AKM_BUNDLE_DIR: "/srv/akm/stash" }, "bundle"],
     ["XDG_DATA_HOME", { XDG_DATA_HOME: "/srv/xdg/data" }, "data"],
   ])("%s: never writes the OS scheduler, and says to run `akm task dispatch` from its own supervisor", async (_name, moved, location) => {
     configure(["stash//tasks/a"]);
@@ -281,20 +280,6 @@ describe("task sync: the default installation, as every 0.9.32 and 0.10 row name
 
     expect(result).toMatchObject({ entry: "installed", removedLegacy: ["a"] });
     expect(state.entry).toBeDefined();
-  });
-
-  test("AKM_BUNDLE_DIR naming some other directory still does", async () => {
-    configure(["stash//tasks/a"]);
-    const result = await akmTasksSync(
-      {
-        backend: fakeBackend(state),
-        launcher: launcher("/opt/akm"),
-        env: { ...DEFAULT_ENV, AKM_BUNDLE_DIR: path.join(storage.root, "elsewhere") },
-      },
-      {},
-    );
-    expect(result.entry).toBe("unmanaged");
-    expect(result.warnings?.[0]).toContain("bundle");
   });
 });
 

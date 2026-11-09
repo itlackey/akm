@@ -93,13 +93,16 @@ the temp root or starts akm, `crontab` or `launchctl` against the real ones):
 
 1. **Do not mutate `AKM_*` / `XDG_*` / `HOME` on `process.env` directly.** Use the
    helpers in `tests/_helpers/sandbox.ts`:
-   - `sandboxStashDir`, `sandboxXdgConfigHome`, `sandboxXdgDataHome`,
-     `sandboxXdgCacheHome`, `sandboxXdgStateHome`, `sandboxHome` — set the env var
-     to an isolated temp dir and return a `cleanup` that restores the prior value.
-     Chain them and call `cleanup()` in `afterEach`.
-   - `withEnv({ AKM_BUNDLE_DIR }, async () => …)` — scoped override that always
+   - `sandboxXdgConfigHome`, `sandboxXdgDataHome`, `sandboxXdgCacheHome`,
+     `sandboxXdgStateHome`, `sandboxHome` — set the env var to an isolated temp dir
+     and return a `cleanup` that restores the prior value. `sandboxStashDir` makes a
+     temp stash and names it as `defaultBundle` in the config file akm resolves (akm
+     reads no environment variable for the working bundle). Chain them and call
+     `cleanup()` in `afterEach`.
+   - `withEnv({ XDG_… }, async () => …)` — scoped override that always
      restores in a `finally`, even on throw. Use this for per-call overrides
-     around an in-process CLI invocation.
+     around an in-process CLI invocation. `withBundle(dir, fn)` is the same for the
+     working bundle: it names `dir` as `defaultBundle` for the call.
    - `makeStashDir` / `makeSandboxDir` — temp dirs that are not wired into env
      (pass them to `withEnv` or a subprocess env object yourself).
    - `writeSandboxConfig(partial)` — merges `partial` into the sandboxed
@@ -141,7 +144,7 @@ the temp root or starts akm, `crontab` or `launchctl` against the real ones):
 owns the process state that crosses test boundaries:
 
 - At preload time `HOME` and all four `XDG_*_HOME` variables point at a
-  per-process sandbox directory, the `AKM_BUNDLE_DIR` and retired `AKM_*_DIR` overrides are cleared, and so
+  per-process sandbox directory, the retired `AKM_BUNDLE_DIR` and `AKM_*_DIR` variables are cleared, and so
   are `AKM_CONFIG_FILE`, `AKM_LLM_API_KEY` and `AKM_EMBED_API_KEY`. A test file never
   reads the developer's real `~/.config/akm/` or `~/.cache/akm/`.
 - Bun's `os.homedir()` ignores a runtime `HOME` change, so the preload cannot
@@ -154,8 +157,8 @@ owns the process state that crosses test boundaries:
   `OPENCODE_TEST_HOME` for OpenCode.
 - Before each test it snapshots the harnessed environment (`HARNESSED` in the
   preload: `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_TEST_HOME`, the
-  four `XDG_*_HOME` variables, `AKM_CONFIG_FILE`, `AKM_BUNDLE_DIR`, the four retired
-  `AKM_*_DIR` variables (akm refuses to start with one set, so the preload removes a
+  four `XDG_*_HOME` variables, `AKM_CONFIG_FILE`, the retired `AKM_BUNDLE_DIR` and
+  the four retired `AKM_*_DIR` variables (akm refuses to start with one set, so the preload removes a
   developer's exported ones),
   `AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY`,
   `AKM_NPM_REGISTRY`), `process.cwd()` and `globalThis.fetch`, and restores them

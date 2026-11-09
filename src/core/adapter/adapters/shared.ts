@@ -239,7 +239,7 @@ export async function runBaseValidateChecks(
     const found = await ctx.readFile(candidate);
     if (found !== null) continue;
     const portableHint = candidate.startsWith(componentRoot)
-      ? ` (portable form: $AKM_BUNDLE_DIR${candidate.slice(componentRoot.length)})`
+      ? ` (portable form: relative to the bundle root, ${candidate.slice(componentRoot.length).replace(/^[\\/]/, "")})`
       : "";
     diagnostics.push({
       file: relPath,

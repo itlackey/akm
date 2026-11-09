@@ -62,7 +62,7 @@ export interface CombinedMigrationPlan {
   failedSteps?: readonly FailedMigrationStep[];
   /**
    * Present when the host located its installation with a retired variable (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
-   * `AKM_STATE_DIR`, `AKM_CACHE_DIR`): akm refuses to start with one set, so these are the changes to make where the
+   * `AKM_STATE_DIR`, `AKM_CACHE_DIR`, `AKM_BUNDLE_DIR`): akm refuses to start with one set, so these are the changes to make where the
    * host sets them (an image, a compose file, a supervisor, a shell profile) once `apply` has run.
    */
   environment?: RetiredEnvironment;
@@ -210,9 +210,10 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   );
   // Last: it reads the config the steps above settled. Needs `crontab`/`launchctl`/`schtasks` only when it has
   // something to write; an installation that moves its locations leaves the OS scheduler alone.
-  // A file that could not take `paths` leaves the host's locations out of it: an entry written now would run
+  // A file that could not take `paths` or the working bundle leaves the host's locations out of it: an entry written now would run
   // `akm task dispatch` against the default locations, so none is written until the file names them.
-  const pathsUnwritten = apply && configFile?.paths !== undefined && !configFile.applied;
+  const hostLocations = configFile && { ...(configFile.paths ? { paths: configFile.paths } : {}), ...configFile.bundle };
+  const pathsUnwritten = apply && hostLocations !== undefined && Object.keys(hostLocations).length > 0 && !configFile?.applied;
   const scheduler = pathsUnwritten
     ? undefined
     : await migrationStep(
@@ -253,7 +254,7 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
       ...failedStepBlockers(failedSteps),
       ...(pathsUnwritten
         ? [
-            `${configPath} cannot be written, so its \`paths\` could not be added and the scheduler entry was not written. Add ${JSON.stringify({ paths: configFile?.paths })} where the file is made, then run again.`,
+            `${configPath} cannot be written, so the locations and bundle this host names with environment variables could not be added, and the scheduler entry was not written. Add ${JSON.stringify(hostLocations)} where the file is made, then run again.`,
           ]
         : []),
     ],

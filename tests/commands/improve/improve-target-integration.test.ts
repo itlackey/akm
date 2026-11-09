@@ -13,7 +13,6 @@ import { seedLockEntries } from "../../_helpers/lockfile";
 import {
   type Cleanup,
   makeStashDir,
-  mutateScopedEnv,
   type SandboxedDir,
   sandboxXdgDataHome,
   withMockedFetch,
@@ -82,16 +81,15 @@ describe("improve named target integration", () => {
     expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(team));
   });
 
-  test("a dry run without a selector previews the working bundle the live run writes to (AKM_BUNDLE_DIR first)", async () => {
+  test("a dry run without a selector previews the working bundle the live run writes to", async () => {
     const primary = stash();
     const team = stash();
-    // No explicit target, so both runs start from the working bundle, which AKM_BUNDLE_DIR overrides.
+    // No explicit target, so both runs start from the working bundle: the default one.
     const config = withTestImproveLlm({
       semanticSearchMode: "off",
       bundles: { primary: { path: primary, writable: true }, team: { path: team, writable: true } },
       defaultBundle: "primary",
     } as AkmConfig);
-    mutateScopedEnv("AKM_BUNDLE_DIR", team);
     let selectedRoot: string | undefined;
 
     await akmImprove({
@@ -104,7 +102,7 @@ describe("improve named target integration", () => {
     });
 
     expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(resolveWriteTarget(config).source.path));
-    expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(team));
+    expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(primary));
   });
 
   test("a qualified scope selects its bundle and conflicts with a different --bundle", async () => {

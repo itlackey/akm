@@ -215,7 +215,7 @@ bindings.
 
 What asks for a harness decides how akm runs it.
 
-**Agent work** (`akm agent`, `akm command`, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the directories this akm resolved (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR`, and `AKM_BUNDLE_DIR` when you set one), so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
+**Agent work** (`akm agent`, `akm command`, `akm proposal new`, agent tasks and workflow agent steps) runs your program the way you would run it yourself. It gets your environment as it is, with nothing filtered out, and your configuration, plugins, settings and logins as they are. akm sets only its own variables for the run: the config file this akm resolved (`AKM_CONFIG_FILE`, which names the other locations and the default bundle), so a program that runs `akm` uses the same installation, and, when a task runs it, `AKM_EVENT_SOURCE` (unless already set), so the akm commands the program runs count as machine use, not yours. A workflow unit's or task's own `env:` bindings are set over them. A run given a directory (`--cwd`, a harness's `workspace`) starts there, and `PWD` names it too, as your shell sets it when you `cd` there; OpenCode takes its directory from `PWD`. On the command line, after your `args` as you wrote them, akm adds the model or agent the asset or flag names, the agent asset's persona where the program takes one there, and what the program needs to run without a person at the terminal: its print or exec mode and its approve-all switch where it asks before acting. Codex runs with the sandbox your Codex configuration sets, or the one your `args` name; model work runs it with `--sandbox read-only` (below). The prompt goes on standard input where the program reads it there and on the command line where it does not; standard output is the reply. `akm agent` with no `--prompt` starts the program interactively instead. What akm scrubs from the output it captures is in [Architecture: Connections and Harnesses](../architecture/architecture.md#connections-and-harnesses) and, for a workflow, [Workflow Schema](workflow-schema.md#the-childs-environment).
 
 **Model work** (see [Where each process runs](#where-each-process-runs)) is akm's own process, so akm sets the call up as it needs it. The program has the same environment. akm runs it in a scratch directory that it creates for the call and removes after it, stamps the akm commands it runs `improve`, and runs no native agent of yours. Where the program can be restricted, akm also limits its tools. The "Restricted model work" column of the table says on which platforms:
 
@@ -897,7 +897,7 @@ never the folder you ran akm from. `~user/...`, or a relative path with no
 config file to resolve against, warns once and that bundle is ignored.
 
 **Which bundle is the working bundle** (the one short refs and bare commands
-use): `AKM_BUNDLE_DIR`, when set; else the path of `defaultBundle`; else
+use): the path of `defaultBundle`; else
 `akm` stops with a `ConfigError` ("No default bundle is configured"), for reads
 and writes alike. There is no implicit `~/akm`: `akm bundle create` registers
 one (and `akm migrate apply` registers an existing `~/akm` on a host that relied
@@ -1147,8 +1147,8 @@ reports the resolved `configFile`, `dataDir`, `stateDir` and `cacheDir`.
 
 ### Retired location variables
 
-`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR` and `AKM_CACHE_DIR` are no longer
-read. With any of them set and `AKM_CONFIG_FILE` unset, akm stops with an error
+`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR` and
+`AKM_BUNDLE_DIR` are no longer read. With one of the first four set and `AKM_CONFIG_FILE` unset, akm stops with an error
 that names the variable, `akm migrate apply` and `AKM_CONFIG_FILE` (exit 78,
 `RETIRED_LOCATION_VARIABLE`); ignoring one would open empty databases at the default
 locations. `akm migrate`, `akm upgrade`, `akm info`, `--version` and `--help` still
@@ -1163,12 +1163,26 @@ an older akm may set `AKM_CONFIG_FILE` as well: akm then ignores them. A schedul
 row an older akm wrote that sets one of them fails when it fires; `akm migrate`
 and `akm task sync` list such rows with what to do instead.
 
+`AKM_BUNDLE_DIR` named the working bundle; now only `defaultBundle` and
+`bundles.<id>.path` (or `--bundle`) do. Every scheduler row akm 0.9.32 and 0.10 wrote
+sets it to the working bundle, and many hosts set it equal to `defaultBundle`, so a
+value that names the bundle akm resolves without it (the same directory by resolved
+path, or that bundle's component root) is ignored, with no error and no warning, as is
+any value while `AKM_CONFIG_FILE` is set. Any other directory is the same fatal
+`RETIRED_LOCATION_VARIABLE` error (exit 78): ignoring it would work in a different
+bundle than the host meant. `akm migrate apply` registers that directory as
+`defaultBundle` (a bundle already configured there is reused; a different default
+stays configured as a bundle; a file that cannot be written gets the entries to add
+to its template), and lists `AKM_BUNDLE_DIR` among the variables to unset. A scheduler
+row that names another bundle's directory is left in place and reported by
+`akm migrate` and `akm task sync`: it fails when it fires. To work in a bundle for
+one run, pass `--bundle <name>`; to isolate a run, use `--config <file>`.
+
 ## Environment
 
 | Variable | Purpose |
 | --- | --- |
 | `AKM_CONFIG_FILE` | The config file to use (same as `--config <file>`, which wins); see [Choosing the config file](#choosing-the-config-file) |
-| `AKM_BUNDLE_DIR` | Override the working bundle for this process (containers, sandboxes, CI). Scheduled-task rows always carry the resolved bundle in it |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror; replaces `registry.npmjs.org` for npm bundle resolution |
 
 The config file's `paths` (and, below it, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`) place the rest. `akm setup --dir <a directory under /tmp, /var/tmp or the macOS temp folders>` keeps its config and cache under `<dir>/.akm` for that run (`AKM_CONFIG_FILE` points there), unless you chose a config file or `XDG_CONFIG_HOME` yourself, so a sandbox never touches your real config.

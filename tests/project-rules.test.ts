@@ -18,6 +18,7 @@ import {
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
+  withDefaultBundle,
   withEnv,
 } from "./_helpers/sandbox";
 
@@ -53,11 +54,16 @@ let acmeDir = "";
 let globexDir = "";
 
 async function setup(extra: Record<string, unknown> = {}): Promise<void> {
-  saveConfig({
-    semanticSearchMode: "off",
-    projects: { acme: { paths: [acmeDir] }, globex: { paths: [globexDir] } },
-    ...extra,
-  } as never);
+  saveConfig(
+    withDefaultBundle(
+      {
+        semanticSearchMode: "off",
+        projects: { acme: { paths: [acmeDir] }, globex: { paths: [globexDir] } },
+        ...extra,
+      } as never,
+      stashDir,
+    ),
+  );
   resetConfigCache();
   await akmIndex({ stashDir, full: true });
 }

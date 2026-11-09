@@ -38,6 +38,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
   sandboxXdgStateHome,
+  useBundleConfig,
 } from "../_helpers/sandbox";
 
 // ── Environment isolation ───────────────────────────────────────────────────
@@ -89,7 +90,7 @@ beforeEach(() => {
   process.env.XDG_CONFIG_HOME = fileConfigHome;
   process.env.XDG_DATA_HOME = fileDataHome;
   process.env.XDG_STATE_HOME = fileStateHome;
-  process.env.AKM_BUNDLE_DIR = stashDir;
+  useBundleConfig(stashDir);
   resetConfigCache();
 });
 

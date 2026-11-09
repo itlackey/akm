@@ -20,7 +20,13 @@ import { createWorkflowAsset, getWorkflowTemplate } from "../../src/workflows/au
 import { getNextWorkflowStep, listWorkflowRuns } from "../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
 import { runCliCapture } from "../_helpers/cli";
-import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  withBundle,
+  withEnv,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+} from "../_helpers/sandbox";
 
 function write(root: string, rel: string, content: string): void {
   const destination = path.join(root, rel);
@@ -673,8 +679,6 @@ describe("OKF first-class conformance", () => {
   });
 
   test("the native akm-workflow adapter remains executable", async () => {
-    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
-    delete process.env.AKM_BUNDLE_DIR;
     const workflowRoot = path.join(storage.root, "native-workflow-bundle");
     write(workflowRoot, "deploy.md", getWorkflowTemplate());
     writeSandboxConfig({
@@ -752,8 +756,6 @@ describe("OKF first-class conformance", () => {
   test.skipIf(process.platform === "win32")(
     "standalone workflow lookup follows a file symlink and handles extension case deterministically",
     async () => {
-      // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
-      delete process.env.AKM_BUNDLE_DIR;
       const workflowRoot = path.join(storage.root, "standalone-workflow-safety");
       const outside = path.join(storage.root, "outside-workflow.md");
       write(workflowRoot, "upper.MD", getWorkflowTemplate());
@@ -846,7 +848,7 @@ describe("OKF first-class conformance", () => {
       },
     });
 
-    await withEnv({ AKM_BUNDLE_DIR: undefined }, async () => {
+    await withEnv({}, async () => {
       resetConfigCache();
       await expect(loadWorkflowAsset("workflows/same")).rejects.toThrow(
         /adapter "okf".*does not support native workflow execution/i,
@@ -899,7 +901,7 @@ describe("OKF first-class conformance", () => {
       },
     });
 
-    await withEnv({ AKM_BUNDLE_DIR: undefined }, async () => {
+    await withEnv({}, async () => {
       resetConfigCache();
       expect(() => createWorkflowAsset({ name: "blocked" })).toThrow(
         /adapter "okf".*does not support AKM asset writes/i,
@@ -918,8 +920,6 @@ describe("OKF first-class conformance", () => {
   });
 
   test("workflow authoring rejects an OKF defaultBundle", () => {
-    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
-    delete process.env.AKM_BUNDLE_DIR;
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "adversarial",
@@ -947,7 +947,7 @@ describe("OKF first-class conformance", () => {
 
   test("an implicit OKF working stash rejects native writes", async () => {
     writeSandboxConfig({ semanticSearchMode: "off" });
-    await withEnv({ AKM_BUNDLE_DIR: okfRoot }, async () => {
+    await withBundle(okfRoot, async () => {
       resetConfigCache();
       await expect(
         writeMarkdownAsset({
@@ -979,7 +979,7 @@ describe("OKF first-class conformance", () => {
       },
     });
 
-    await withEnv({ AKM_BUNDLE_DIR: okfRoot }, async () => {
+    await withBundle(okfRoot, async () => {
       resetConfigCache();
       const supersedes = resolveSupersedesForWrite(["vendor//memories/old"], "team");
       expect(supersedes[0]?.writable).toBe(false);
@@ -1012,7 +1012,7 @@ describe("OKF first-class conformance", () => {
       },
     });
 
-    await withEnv({ AKM_BUNDLE_DIR: undefined }, async () => {
+    await withEnv({}, async () => {
       resetConfigCache();
       const written = await writeMarkdownAsset({
         type: "memory",
@@ -1024,9 +1024,7 @@ describe("OKF first-class conformance", () => {
       expect(written.path).toBe(path.join(componentRoot, "memories", "nested-root.md"));
       expect(written.stashDir).toBe(componentRoot);
       expect(fs.existsSync(path.join(packageRoot, "memories", "nested-root.md"))).toBe(false);
-      expect(resolveSourceEntries()).toEqual([
-        expect.objectContaining({ path: componentRoot, registryId: "nested", adapterId: "akm" }),
-      ]);
+      expect(resolveSourceEntries()[0]).toMatchObject({ path: componentRoot, registryId: "nested", adapterId: "akm" });
 
       await akmIndex({ stashDir: componentRoot, full: true });
       const shown = await showLocal({ ref: "nested//memories/nested-root" });

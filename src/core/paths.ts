@@ -81,25 +81,84 @@ export const RETIRED_LOCATION_VARIABLES = {
   cache: "AKM_CACHE_DIR",
 } as const;
 
+/** The variable that named the working bundle before `defaultBundle` and `--bundle` were the only ways. */
+export const RETIRED_BUNDLE_VARIABLE = "AKM_BUNDLE_DIR";
+
 /**
- * A retired location variable (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR`) set while
- * `AKM_CONFIG_FILE` is not is fatal: ignoring it would open empty databases at the default locations. Every location
- * resolver below calls this first, so a library caller (`akm-cli/api`, `akm-cli/workspace`) gets the same error as the
- * CLI. `akm-migrate` (the executable `akm migrate` and `akm upgrade` run) is the one reader of these variables: it
- * carries them over first (`carryOverRetiredLocations`, `scripts/akm-migrate/`), so it never reaches this check.
+ * A retired variable that still places something is fatal: `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR` or
+ * `AKM_CACHE_DIR` set while `AKM_CONFIG_FILE` is not (ignoring it would open empty databases at the default locations),
+ * or `AKM_BUNDLE_DIR` naming a directory other than the bundle akm resolves without it (ignoring it would work on a
+ * different bundle than the host meant). `AKM_BUNDLE_DIR` naming that same bundle is ignored with no message: every
+ * scheduler row akm 0.9.32 and 0.10 wrote inlines it, and hosts set it equal to `defaultBundle`. With
+ * `AKM_CONFIG_FILE` set the installation is already named, so none of them is checked.
+ *
+ * Every location resolver below calls this first, so a library caller (`akm-cli/api`, `akm-cli/workspace`) gets the same
+ * error as the CLI. `akm-migrate` (the executable `akm migrate` and `akm upgrade` run) is the one reader of these
+ * variables: it carries them over first (`carryOverRetiredLocations`, `scripts/akm-migrate/`), so it never reaches this check.
  */
 function assertNoRetiredLocationVariables(env: NodeJS.ProcessEnv): void {
   if (selectedConfigFile(env)) return;
   const named = Object.values(RETIRED_LOCATION_VARIABLES).find((name) => env[name]?.trim());
-  if (named === undefined) return;
-  throw new ConfigError(
-    `${named} is no longer read. Run \`akm migrate apply\` (it moves the location into the config file's \`paths\`), then set AKM_CONFIG_FILE to the config file and unset ${named}.`,
-    "RETIRED_LOCATION_VARIABLE",
-  );
+  if (named !== undefined) {
+    throw new ConfigError(
+      `${named} is no longer read. Run \`akm migrate apply\` (it moves the location into the config file's \`paths\`), then set AKM_CONFIG_FILE to the config file and unset ${named}.`,
+      "RETIRED_LOCATION_VARIABLE",
+    );
+  }
+  const bundleDir = env[RETIRED_BUNDLE_VARIABLE]?.trim();
+  if (bundleDir && !isConfiguredWorkingBundle(bundleDir, env)) {
+    throw new ConfigError(
+      `${RETIRED_BUNDLE_VARIABLE} is no longer read, and it names ${path.resolve(bundleDir)}, which is not the bundle akm resolves without it. Run \`akm migrate apply\` (it registers that bundle as \`defaultBundle\` in the config file), then unset ${RETIRED_BUNDLE_VARIABLE}; pass \`--bundle <name>\` to work in another bundle.`,
+      "RETIRED_LOCATION_VARIABLE",
+    );
+  }
+}
+
+/** The same directory, by resolved path or, when both exist, by real path. */
+export function sameDirectory(left: string, right: string): boolean {
+  const a = path.resolve(left);
+  const b = path.resolve(right);
+  if (a === b) return true;
+  try {
+    return fs.realpathSync.native(a) === fs.realpathSync.native(b);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether `dir` is the working bundle the config file names: `defaultBundle`'s `path`, or its single component's root.
+ * A raw read of the file, like `paths` below: the config module cannot load while a location is still being checked.
+ * A missing or unreadable file, or no `defaultBundle`, names none.
+ */
+function isConfiguredWorkingBundle(dir: string, env: NodeJS.ProcessEnv): boolean {
+  const file = selectedConfigFile(env) ?? path.join(unguardedConfigDir(env, process.platform), "config.json");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripJsonComments(fs.readFileSync(file, "utf8")));
+  } catch {
+    return false;
+  }
+  if (typeof parsed !== "object" || parsed === null) return false;
+  const { bundles, defaultBundle } = parsed as { bundles?: Record<string, unknown>; defaultBundle?: unknown };
+  const bundle = typeof defaultBundle === "string" && bundles ? bundles[defaultBundle] : undefined;
+  const raw =
+    typeof bundle === "object" && bundle !== null ? (bundle as { path?: unknown; components?: unknown }) : undefined;
+  if (typeof raw?.path !== "string" || !raw.path.trim()) return false;
+  const bundlePath = resolveConfiguredBundlePath(raw.path.trim(), file);
+  if (bundlePath === undefined) return false;
+  if (sameDirectory(dir, bundlePath)) return true;
+  const components = typeof raw.components === "object" && raw.components !== null ? Object.values(raw.components) : [];
+  const root = (components[0] as { root?: unknown } | undefined)?.root;
+  return typeof root === "string" && sameDirectory(dir, path.resolve(bundlePath, root));
 }
 
 export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
   assertNoRetiredLocationVariables(env);
+  return unguardedConfigDir(env, platform);
+}
+
+function unguardedConfigDir(env: NodeJS.ProcessEnv, platform: string): string {
   const selected = selectedConfigFile(env);
   if (selected) return path.dirname(selected);
 
@@ -455,30 +514,19 @@ export function getStashLocksDir(stashDir: string): string {
 }
 
 /**
- * The installation this akm resolved, as the `AKM_*` variables that name it, so a
- * child that runs `akm` (an exec unit, an agent CLI) uses the same installation even
- * when the parent found it through `--config`, `XDG_*_HOME`, or a runtime that remaps
- * them. `AKM_CONFIG_FILE` is always absolute: the file names the other locations (its
- * `paths` key). `AKM_BUNDLE_DIR` is passed only when the parent set one (until it is retired).
- */
-export function akmLocations(): Record<string, string> {
-  const locations: Record<string, string> = { AKM_CONFIG_FILE: getConfigPath() };
-  const bundleDir = process.env.AKM_BUNDLE_DIR?.trim();
-  if (bundleDir) locations.AKM_BUNDLE_DIR = bundleDir;
-  return locations;
-}
-
-/**
  * The environment of a process akm starts for the user: akm's own, as the program
- * has it when the user runs it from their shell, with {@link akmLocations} set over
- * it. akm filters nothing.
+ * has it when the user runs it from their shell, with `AKM_CONFIG_FILE` set over it
+ * so a child that runs `akm` (an exec unit, an agent CLI) uses the same installation
+ * even when the parent found it through `--config`, `XDG_*_HOME`, or a runtime that
+ * remaps them. The file is absolute: it names the other locations (its `paths` key)
+ * and the working bundle (`defaultBundle`). akm filters nothing.
  */
 export function childProcessEnv(): Record<string, string> {
   const inherited: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (value !== undefined) inherited[name] = value;
   }
-  return { ...inherited, ...akmLocations() };
+  return { ...inherited, AKM_CONFIG_FILE: getConfigPath() };
 }
 
 // ── Scheduled-task runtime directory (logs; run history lives in state.db) ───
@@ -494,10 +542,8 @@ export function getRunLogDir(kind: "improve" | "index"): string {
 
 // ── Default stash directory ──────────────────────────────────────────────────
 
+/** Where a new bundle is created when nothing says otherwise: `~/akm`. Never read as the working bundle. */
 export function getDefaultStashDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.AKM_BUNDLE_DIR?.trim();
-  if (override) return override;
-
   if (IS_WINDOWS) {
     const userProfile = env.USERPROFILE?.trim();
     if (userProfile) return path.join(userProfile, "Documents", "akm");
