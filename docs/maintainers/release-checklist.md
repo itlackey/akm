@@ -108,10 +108,9 @@ On the release branch with everything pushed:
    `## [Unreleased]` entries become `## [<version>] - <UTC date>` under a fresh
    empty Unreleased heading; `tests/workflow-release.test.ts` pins the two
    against each other), commits `release: <version>`, pushes, and opens the
-   pull request into `main` (`gh pr create --base main`). To run the full
-   gate on every change before that, open the pull request earlier as a
-   draft (`gh pr create --base main --draft`); `release:stable` then marks it
-   ready instead.
+   pull request into `main` (`gh pr create --base main`). Open that pull
+   request only through this step: one opened earlier reruns CI on every
+   merge into the release branch for changes that already passed it.
 
    That pull request is the whole gate: everything a pull request runs, plus
    Desktop packaged on all three platforms, the upgrade rehearsals from the

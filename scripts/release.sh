@@ -71,7 +71,8 @@ stable() {
   git add package.json CHANGELOG.md
   git commit -m "release: $version"
   git push
-  # A draft opened earlier (to run the full gate on every change) becomes the release pull request.
+  # A pull request already open from this branch (a rerun after a failure, or one opened by hand) is the release
+  # pull request; it is marked ready and retitled rather than duplicated.
   existing="$(gh pr list --base main --head "$branch" --state open --json number,url --jq '.[0] | "\(.number) \(.url)"')"
   if [ -n "$existing" ]; then
     gh pr ready "${existing%% *}"
