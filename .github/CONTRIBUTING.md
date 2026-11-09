@@ -179,7 +179,7 @@ files at runtime from the release-notes directory.
 ## Submitting Changes
 
 1. Fork the repository and create a feature branch from the default branch,
-   the open release branch (`release/<cut date>`).
+   the open release branch (`release/<version>`).
 2. Make your changes, keeping commits focused and well-described.
 3. Ensure both test targets pass (`bun run test:unit` and
    `bun run test:integration`) and linting is clean (`bun run lint`).

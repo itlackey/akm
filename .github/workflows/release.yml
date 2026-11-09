@@ -3,15 +3,16 @@ name: Release
 # A stable release is the merge of a release branch into main. The push publishes the version committed in
 # package.json to npm `latest` and a GitHub release, then builds Desktop and akm-web from that tarball. The pull
 # request that merged it ran the whole gate (CI, including Gated CI), so nothing is tested again here.
-# A prerelease is a dispatch on a release branch with a stage: CI and Gated CI run as jobs of this run on the
-# commit, then <version>-<stage> goes to npm `next` and a GitHub prerelease. docs/maintainers/release-checklist.md.
+# A prerelease is a dispatch on a release branch, release/<version>, with a stage: CI and Gated CI run as jobs of
+# this run on the commit, then <version>-<stage> goes to npm `next` and a GitHub prerelease.
+# docs/maintainers/release-checklist.md describes the branch model.
 on:
   push:
     branches: [main]
   workflow_dispatch:
     inputs:
       stage:
-        description: "Prerelease stage: publishes <package.json version>-<stage> to the npm next tag and a GitHub prerelease. A stable release is the merge of a release branch into main, not a dispatch."
+        description: "Prerelease stage: publishes the release branch's version with the stage appended (release/<version> publishes <version>-<stage>) to the npm next tag and a GitHub prerelease. A stable release is the merge of a release branch into main, not a dispatch."
         required: true
         default: beta
         type: choice
@@ -73,23 +74,35 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # The version is the one committed in package.json (the `release: <version>` commit on the release branch).
+      # A release's version is its branch name, release/<version>. A stable (the push to main) publishes the version
+      # committed in package.json by the `release: <version>` commit; a prerelease (a dispatch on the release
+      # branch) publishes the branch's version with the stage appended, stamped into this run's package.json only.
       # scripts/release-version.ts validates the format (0.10+: 0.<minor>.YYMMNN; older lines: X.Y.Z[-prerelease])
-      # and appends the stage (#1089), which is stamped into this run's package.json only. Each release takes its
-      # own number: a build is not promoted through stages.
-      # A version already released from another commit is refused: a merge into main without a new version would
-      # otherwise rebuild that release's assets. A rerun on the same commit goes on.
+      # and appends the stage (#1089).
+      # A version already released from another commit is refused: each stage of a release publishes once, and a
+      # merge into main without a new version would otherwise rebuild that release's assets. A rerun on the same
+      # commit goes on.
       - name: Resolve version
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          VERSION_INPUT="$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            case "$GITHUB_REF_NAME" in
+              release/*) VERSION_INPUT="${GITHUB_REF_NAME#release/}" ;;
+              *)
+                echo "A prerelease is dispatched on a release branch (release/<version>); this is $GITHUB_REF_NAME" >&2
+                exit 1
+                ;;
+            esac
+          else
+            VERSION_INPUT="$(node -p "require('./package.json').version")"
+          fi
           export VERSION_INPUT
           CANDIDATE_VERSION="$(bun scripts/release-version.ts resolve)"
           if [ "$DRY_RUN" != "true" ] && released="$(gh release view "v$CANDIDATE_VERSION" --json targetCommitish --jq .targetCommitish 2>/dev/null)" && [ "$released" != "$GITHUB_SHA" ]; then
-            echo "v$CANDIDATE_VERSION was already released from $released; this commit needs a new version" >&2
+            echo "v$CANDIDATE_VERSION was already released from $released; a version publishes once" >&2
             exit 1
           fi
           if [ "$CANDIDATE_VERSION" != "$VERSION_INPUT" ]; then

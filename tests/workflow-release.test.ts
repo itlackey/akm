@@ -63,8 +63,12 @@ describe("release workflow", () => {
     expect(source).toContain("gh release create");
   });
 
-  test("publishes the exact version already committed in package.json", () => {
-    expect(source).toContain(`VERSION_INPUT="$(node -p "require('./package.json').version")"`);
+  test("a stable publishes the version committed in package.json; a prerelease the release branch's version", () => {
+    const resolve = workflow.jobs.release?.steps?.find((step) => step.name === "Resolve version");
+    expect(resolve?.run).toContain(`VERSION_INPUT="$(node -p "require('./package.json').version")"`);
+    expect(resolve?.run).toContain(`release/*) VERSION_INPUT="$` + `{GITHUB_REF_NAME#release/}" ;;`);
+    // A dispatch anywhere but a release branch publishes nothing.
+    expect(resolve?.run).toContain("A prerelease is dispatched on a release branch");
     expect(source).not.toContain("inputs.version");
     expect(source).not.toContain("npm version");
   });

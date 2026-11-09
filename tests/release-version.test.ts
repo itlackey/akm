@@ -58,7 +58,7 @@ describe("deriveVersion", () => {
     expect(deriveVersion("0.10", at("2027-01-01T00:00:00Z"), ["0.10.261201"])).toBe("0.10.270101");
   });
 
-  test("every release takes a new number, whatever its stage", () => {
+  test("the next number is one above the highest published that month, at any stage", () => {
     const published = ["0.10.261001-alpha", "0.10.261002-beta", "0.10.261003-rc", "0.10.261004"];
     expect(deriveVersion("0.10", at("2026-10-12T05:00:00Z"), published)).toBe("0.10.261005");
     expect(deriveVersion("0.10", at("2026-10-12T05:00:00Z"), ["0.10.261001-beta"])).toBe("0.10.261002");
@@ -102,7 +102,7 @@ describe("resolveVersion", () => {
     for (const stage of STAGES) expect(resolveVersion("0.10.261001", stage)).toBe(`0.10.261001-${stage}`);
   });
 
-  test("the stage names the release; the next release has the next number and sorts above it", () => {
+  test("a stage sorts below its release, and below the next release's stages", () => {
     for (const stage of STAGES) {
       expect(semver.lt(resolveVersion("0.10.261001", stage), resolveVersion("0.10.261001", ""))).toBe(true);
       expect(semver.lt(resolveVersion("0.10.261001", stage), resolveVersion("0.10.261002", stage))).toBe(true);
