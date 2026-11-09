@@ -50,7 +50,6 @@ const PASSTHROUGH_COMMANDS = [
   "extract",
   "health",
   "improve",
-  "improve-judge",
   "improve-report",
   "judge",
   "judge-list",

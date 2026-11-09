@@ -52,7 +52,7 @@ export function peekTaskSourceVersion(root: unknown): number | undefined {
 }
 
 const TASK_MIGRATE_HINT =
-  "Run `akm migrate apply --dry-run` to preview the task-v3 to task-source-v4 conversion, then run `akm migrate apply`.";
+  "Run `akm migrate status` to preview the task-v3 to task-source-v4 conversion, then run `akm migrate apply`.";
 
 /** A v2/v3 document: `akm migrate apply` converts it; this release reads only v4. */
 function legacyVersionError(filePath: string, version: number): UsageError {

@@ -61,16 +61,12 @@ export function parseCommandResponse(stdout: string, expectedShape: string): Rec
   }
 }
 
-/** `bundle create` and `bundle rename` are the `bundle` subcommands whose output shape is not their name. */
-const bundleShape = (subcommand: string) =>
-  subcommand === "create" || subcommand === "rename" ? `bundle-${subcommand}` : subcommand;
-
 /**
- * Run the bundled CLI for an action whose validation and orchestration live in its `run()` body (feedback's argv-dependent
- * tag validation, the bundle install audits), and return its typed result. Bundle add and update also do network and git
- * work, which would block the single-threaded host in process.
+ * Run the bundled CLI for an action that must not run in this process, and return its typed result, expected under
+ * the output shape `shape`: `bundle add` and `bundle update` do network and git work that would block the
+ * single-threaded host, `bundle remove` reindexes, and `setup` probes the machine.
  */
-export async function runCli(args: string[], input?: string, userFeedback = false): Promise<Record<string, unknown>> {
+export async function runCli(args: string[], shape: string): Promise<Record<string, unknown>> {
   const [bin, ...prefix] = resolveAkmInvocation().argv;
   // Options go before a `--` that ends them, so a positional name may begin with a dash.
   const end = args.indexOf("--");
@@ -79,12 +75,7 @@ export async function runCli(args: string[], input?: string, userFeedback = fals
     const child = execFile(
       bin!,
       [...prefix, ...argv],
-      {
-        encoding: "utf8",
-        maxBuffer: 16 * 1024 * 1024,
-        // An ambient event source (an improve or task run) wins, as for every akm child.
-        ...(userFeedback ? { env: { ...process.env, AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE || "user" } } : {}),
-      },
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
       (error, stdout, stderr) => {
         resetConfigCache();
         if (error) {
@@ -102,21 +93,12 @@ export async function runCli(args: string[], input?: string, userFeedback = fals
           return;
         }
         try {
-          resolve(
-            parseCommandResponse(
-              stdout,
-              args[0] === "bundle" ? bundleShape(args[1]!) : args[0] === "task" ? `task-${args[1]}` : args[0]!,
-            ),
-          );
+          resolve(parseCommandResponse(stdout, shape));
         } catch (error) {
           reject(error);
         }
       },
     );
-    // Argument validation can close the child before a Markdown body finishes writing.
-    child.stdin?.on("error", (error: NodeJS.ErrnoException) => {
-      if (error.code !== "EPIPE") reject(error);
-    });
-    child.stdin?.end(input);
+    child.stdin?.end();
   });
 }

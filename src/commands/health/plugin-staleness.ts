@@ -27,14 +27,12 @@ import type { HealthCheckResult } from "./types";
 
 /**
  * Root directory holding Claude Code's plugin cache + marketplace clones.
- * Resolved per call (not memoized) so `AKM_CLAUDE_PLUGINS_DIR` can be set
- * after import — the override exists so tests point this at an empty
- * fixture directory instead of the real `~/.claude/plugins`, matching
- * `AKM_CLAUDE_PROJECTS_DIR` in `../../integrations/harnesses/claude/session-log.ts`.
+ * Resolved per call (not memoized) so Claude's own `CLAUDE_CODE_PLUGIN_CACHE_DIR`
+ * can be set after import; tests point it at an empty fixture directory instead
+ * of the real `~/.claude/plugins`.
  */
 function claudePluginsDir(): string {
   return (
-    process.env.AKM_CLAUDE_PLUGINS_DIR ??
     process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR ??
     path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"), "plugins")
   );
@@ -188,9 +186,6 @@ function detectInstalledPlugins(pluginsRoot: string): DetectedPlugin[] | undefin
       timeout: 30_000,
       env: {
         ...process.env,
-        ...(process.env.AKM_CLAUDE_PLUGINS_DIR
-          ? { CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR ?? path.dirname(pluginsRoot) }
-          : {}),
         CLAUDE_CODE_PLUGIN_CACHE_DIR: pluginsRoot,
       },
     });

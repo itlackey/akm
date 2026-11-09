@@ -24,13 +24,7 @@ import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
-import {
-  defaultConnection,
-  defaultHarness,
-  loadConfig,
-  mutateConfig,
-  resetConfigCache,
-} from "../../core/config/config";
+import { defaultConnection, defaultHarness, loadConfig } from "../../core/config/config";
 import { bundleKeyForContentRoot, resolveConfiguredSources } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
@@ -51,7 +45,7 @@ import type { InputFlag } from "../../execution/input-contract";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
-import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
+import { initializeSchedulerChoice, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
 import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptions } from "../../tasks/backends/types";
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
@@ -399,24 +393,6 @@ async function ensureSchedulerChoice(deps: { backend?: SchedulerBackend }): Prom
   const config = loadConfig();
   if (schedulerEnabledRefs(config) !== undefined) return;
   initializeSchedulerChoice(await (deps.backend ?? selectBackend()).list(), config, { write: true });
-}
-
-function initializeSchedulerChoice(
-  installed: readonly InstalledSchedulerBinding[],
-  config: AkmConfig,
-  options: { write: boolean },
-): readonly string[] {
-  const refs = enabledRefsFromInstalled(installed, config);
-  if (options.write) {
-    mutateConfig((current) => ({ ...current, scheduler: { ...current.scheduler, enabled: [...refs] } }));
-    resetConfigCache();
-  }
-  warn(
-    `This host had no scheduler.enabled list; ${options.write ? "it was" : "it would be"} initialized from the ` +
-      `${refs.length} installed akm scheduler ${refs.length === 1 ? "binding" : "bindings"}` +
-      `${refs.length > 0 ? `: ${refs.join(", ")}` : ""}. Use \`akm task enable\`/\`akm task disable <ref>\` to change it.`,
-  );
-  return refs;
 }
 
 export async function akmTasksEnable(

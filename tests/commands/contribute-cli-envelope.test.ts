@@ -112,4 +112,17 @@ describe("akm contribution cluster — JSON envelope snapshot (WS6)", () => {
     expect(env.code).toBe("INVALID_FLAG_VALUE");
     expect(env.error).toMatch(/exactly one of --task or --file/);
   });
+
+  test("proposal new (--file that does not exist): {ok:false} FILE_NOT_FOUND on stderr (exit 1, not 70)", async () => {
+    const { stderr, status } = await runCli([
+      "proposal",
+      "new",
+      "skill",
+      "demo",
+      "--file",
+      "/nonexistent/akm-task.txt",
+    ]);
+    expect(status).toBe(1);
+    expect(JSON.parse(stderr)).toMatchObject({ ok: false, code: "FILE_NOT_FOUND" });
+  });
 });

@@ -24,13 +24,12 @@
  */
 
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
-import { renameBundle } from "../../core/bundle-rename";
 import { NotFoundError, TransientError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";
 import type { SourceKind } from "../../sources/types";
-import { akmTasksSync } from "../tasks/tasks";
 import { addCommand } from "./add-cli";
+import { akmBundleRename } from "./bundle-rename";
 import { akmInit } from "./init";
 import { akmListSources, akmRemove, akmUpdate } from "./installed-stashes";
 
@@ -189,15 +188,7 @@ const renameCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const result = await renameBundle(
-      args.old,
-      args.new,
-      { dryRun: args["dry-run"] },
-      {
-        syncTasks: (newId, backend) => akmTasksSync({ backend }, newId),
-      },
-    );
-    output("bundle-rename", result);
+    output("bundle-rename", await akmBundleRename(args.old, args.new, { dryRun: args["dry-run"] }));
   },
 });
 

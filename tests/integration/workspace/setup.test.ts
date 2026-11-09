@@ -11,8 +11,9 @@ import { akmExtract, resolveStandaloneExtractPlan } from "../../../src/commands/
 import { loadConfig } from "../../../src/core/config/config";
 import { getConfigPath } from "../../../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../../src/core/warn";
-import { setup, tasks } from "../../../src/workspace";
+import { setup } from "../../../src/workspace";
 import { change } from "../../../src/workspace/config";
+import * as tasks from "../../../src/workspace/tasks";
 import { ctx, expectUsage, fakeCrontab, useSandbox } from "./workspace-behaviour-helpers";
 
 useSandbox();

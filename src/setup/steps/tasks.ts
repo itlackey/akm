@@ -11,7 +11,7 @@ import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import * as p from "../../cli/clack";
 import { akmTasksSync } from "../../commands/tasks/tasks";
 import { makeBundleRef } from "../../core/asset/asset-ref";
-import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import {
   commitWriteTargetBoundary,
@@ -20,7 +20,7 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
-import { enabledRefsFromInstalled, isSchedulerBundleActive, schedulerEnabledRefs } from "../../tasks/activation-config";
+import { initializeSchedulerChoice, schedulerEnabledRefs, setSchedulerRefs } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";
 import { parseSchedule } from "../../tasks/schedule";
@@ -232,18 +232,7 @@ export async function prepareSetupTaskDefinitions(
     tasks.filter((plan) => plan.enabled).map((plan) => makeBundleRef(target.source.name, `tasks/${plan.task.id}`)),
   );
   const managed = new Set(tasks.map((plan) => makeBundleRef(target.source.name, `tasks/${plan.task.id}`)));
-  mutateConfig((current) => {
-    const existing = schedulerEnabledRefs(current) ?? [];
-    const next = existing.filter((ref) => !managed.has(ref));
-    if (selected.size > 0 && !isSchedulerBundleActive(current, target.source.name)) {
-      throw new UsageError(`Cannot activate setup tasks from disabled bundle ${JSON.stringify(target.source.name)}.`);
-    }
-    next.push(...selected);
-    next.sort((left, right) => left.localeCompare(right));
-    if (current.scheduler?.enabled !== undefined && JSON.stringify([...existing]) === JSON.stringify(next))
-      return current;
-    return { ...current, scheduler: { ...current.scheduler, enabled: next } };
-  });
+  setSchedulerRefs([...managed], [...selected]);
 
   return changed.length;
 }
@@ -279,9 +268,7 @@ export async function stepScheduledTasks(
   if (schedulerEnabledRefs(loadConfig()) === undefined) {
     try {
       const inspection = await deps.inspectInstalled();
-      const refs = enabledRefsFromInstalled(inspection.installed, loadConfig());
-      mutateConfig((current) => ({ ...current, scheduler: { ...current.scheduler, enabled: [...refs] } }));
-      resetConfigCache();
+      initializeSchedulerChoice(inspection.installed, loadConfig(), { write: true });
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       p.log.warn(`Native scheduler bindings could not be inspected: ${message}`);

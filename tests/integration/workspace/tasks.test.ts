@@ -8,7 +8,8 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getConfigPath } from "../../../src/core/paths";
-import { setup, tasks } from "../../../src/workspace";
+import { setup } from "../../../src/workspace";
+import * as tasks from "../../../src/workspace/tasks";
 import { ctx, expectAkmError, fakeCrontab, useSandbox } from "./workspace-behaviour-helpers";
 
 useSandbox();

@@ -8,7 +8,7 @@ The design and rationale are in [Improvement Loop](../improvement.md). This page
 
 | Option | Purpose |
 |---|---|
-| `[scope]` (positional) | A single ref (`[bundle//]conceptId`), an asset type, or omitted for all assets. `akm improve report` and `akm improve judge` are subcommands, not scopes. |
+| `[scope]` (positional) | A single ref (`[bundle//]conceptId`), an asset type, or omitted for all assets. `akm improve report` is a subcommand, not a scope. |
 | `--strategy <name>` | A named strategy from `improve.strategies` or a built-in: `default` or `consolidate`. It chooses which processes run, never where. |
 | `--connection <name>` / `--harness <name>` | Run every call of this run, judges included, on this connection or harness instead of the default. They are mutually exclusive. |
 | `--model <alias\|name>` | The model for every call of this run: an alias (`fast`, `balanced`, `reasoning`) or an exact name. |

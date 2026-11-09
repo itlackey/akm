@@ -157,7 +157,7 @@ describe("feedback", () => {
     );
     // A reload observes the stored event; there is no in-memory vote store.
     expect((await out(assets.show({ ref: "knowledge/guide" }))).feedback.counts.positive).toBe(2);
-    // An ambient event source (an improve or task run driving the host) wins over the default, as for every akm child.
+    // An ambient event source (an improve or task run driving the host) wins over the default, as for every akm run.
     await withEnv({ AKM_EVENT_SOURCE: "improve" }, () =>
       feedback.record({ ref: "stash//knowledge/guide", signal: "positive", reason: "Ambient run" }),
     );

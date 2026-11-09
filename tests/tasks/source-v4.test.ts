@@ -611,7 +611,7 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
       expect(error.message).toBe(
         `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${filePath} uses task schema version ${version}; this release reads only version 4. Run \`akm migrate apply\` to convert it.`,
       );
-      expect(error.hint()).toContain("akm migrate apply --dry-run");
+      expect(error.hint()).toContain("akm migrate status");
       expect(warnCalls).toEqual([]);
     });
 

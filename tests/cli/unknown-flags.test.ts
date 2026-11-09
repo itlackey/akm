@@ -126,6 +126,11 @@ describe("accepts every legitimate spelling", () => {
     expect(() => check(["log", "--limit", "-5"])).not.toThrow();
   });
 
+  test("the removed duplicate flags are unknown: lint --auto-fix, migrate apply --dry-run", () => {
+    expect(errorFor(["lint", "--auto-fix"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["migrate", "apply", "--dry-run"]).code).toBe("UNKNOWN_FLAG");
+  });
+
   test("one-dash long names are parsed as short bundles, not accepted as long flags", () => {
     expect(errorFor(["lint", "-auto-fix"]).code).toBe("UNKNOWN_FLAG");
   });

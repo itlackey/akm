@@ -75,17 +75,6 @@ test("status forwards the child's argv and re-emits its plan at exit 0", async (
   expect(process.exitCode).toBe(priorExitCode);
 });
 
-test("apply --dry-run reaches the child verbatim", async () => {
-  const { runTool, calls } = fakeTool({ status: EXIT_CODES.SUCCESS, stdout: JSON.stringify({ status: "current" }) });
-  const out = capture();
-  try {
-    await runMigrateSubcommand("migrate-apply", ["apply", "--dry-run"], runTool);
-  } finally {
-    out.restore();
-  }
-  expect(calls).toEqual([["apply", "--dry-run"]]);
-});
-
 test("a blocked plan is re-emitted and the child's exit code is mirrored", async () => {
   const plan = {
     schemaVersion: 1,

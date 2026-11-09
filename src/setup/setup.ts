@@ -803,11 +803,16 @@ export async function runSetupWithDefaults(opts: {
 
   const finalConfig = finalizeSetupDraft(config);
   validateCompleteConfig(finalConfig);
-  const { config: savedConfig, precommit: initResult } = await saveSetupConfig(current, finalConfig, async () => {
-    storeCredentials(credentials);
-    if (opts.noInit) return undefined;
-    return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
-  });
+  const { config: savedConfig, precommit: initResult } = await saveSetupConfig(
+    current,
+    finalConfig,
+    async () => {
+      storeCredentials(credentials);
+      if (opts.noInit) return undefined;
+      return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
+    },
+    { persistTopLevelKeys: ["semanticSearchMode"] },
+  );
   const semanticAssets = await prepareLocalEmbeddings(savedConfig, opts.noProbe);
 
   return {
@@ -942,11 +947,16 @@ export async function runSetupFromConfig(opts: {
 
   // Reject an invalid merged config before touching the stash.
   validateCompleteConfig(finalizedMerged);
-  const { config: savedConfig, precommit: initResult } = await saveSetupConfig(current, finalizedMerged, async () => {
-    storeCredentials(credentials);
-    if (opts.noInit) return undefined;
-    return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
-  });
+  const { config: savedConfig, precommit: initResult } = await saveSetupConfig(
+    current,
+    finalizedMerged,
+    async () => {
+      storeCredentials(credentials);
+      if (opts.noInit) return undefined;
+      return akmInit({ dir: stashDir, setDefault: true, persistConfig: false });
+    },
+    { persistTopLevelKeys: ["semanticSearchMode"] },
+  );
   const semanticAssets = await prepareLocalEmbeddings(savedConfig, opts.noProbe);
 
   return {

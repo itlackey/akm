@@ -534,6 +534,19 @@ describe("0.9 config contract", () => {
   });
 });
 
+describe("the first write on an empty host", () => {
+  test("records only what the edit changed, so shipped defaults still come from the code", () => {
+    expect(fs.existsSync(getConfigPath())).toBe(false);
+    mutateConfig((current) => ({ ...current, output: { ...current.output, detail: "normal" } }));
+    const saved = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(saved).toEqual({ configVersion: saved.configVersion, output: { detail: "normal" } });
+    expect(Object.hasOwn(saved, "registries")).toBe(false);
+    expect(Object.hasOwn(saved, "semanticSearchMode")).toBe(false);
+    expect(loadUserConfig().registries?.length).toBeGreaterThan(0);
+    expect(loadUserConfig().output?.format).toBe("json");
+  });
+});
+
 describe("config set: JSON for string-or-array keys", () => {
   const filters = (config: Record<string, unknown>, key: string) =>
     (config.projects as { x: { filters?: Record<string, unknown>; from?: unknown } }).x.filters?.[key];

@@ -31,15 +31,6 @@ describe("resolveAgentIdentity", () => {
     expect(identity).toEqual({ harness: null, sessionId: null });
   });
 
-  test("explicit AKM_AGENT_HARNESS / AKM_SESSION_ID win", () => {
-    const identity = resolveAgentIdentity({
-      AKM_AGENT_HARNESS: "custom-harness",
-      AKM_SESSION_ID: "sess-123",
-      CLAUDE_CODE_SESSION_ID: "ignored",
-    });
-    expect(identity).toEqual({ harness: "custom-harness", sessionId: "sess-123" });
-  });
-
   test("infers claude from CLAUDE_CODE_SESSION_ID", () => {
     const identity = resolveAgentIdentity({ CLAUDE_CODE_SESSION_ID: "abc-def" });
     expect(identity).toEqual({ harness: "claude", sessionId: "abc-def" });
@@ -51,8 +42,8 @@ describe("resolveAgentIdentity", () => {
   });
 
   test("ignores blank/whitespace-only env values", () => {
-    const identity = resolveAgentIdentity({ AKM_AGENT_HARNESS: "   ", CLAUDE_CODE_SESSION_ID: "  cs  " });
-    // blank harness override falls through to inference; session id is trimmed.
+    const identity = resolveAgentIdentity({ OPENCODE_SESSION_ID: "   ", CLAUDE_CODE_SESSION_ID: "  cs  " });
+    // a blank session id falls through to the next marker; the value is trimmed.
     expect(identity).toEqual({ harness: "claude", sessionId: "cs" });
   });
 
@@ -205,9 +196,8 @@ describe("workflow run agent identity persistence", () => {
 
   test("runs started with no harness persist null identity", async () => {
     writeWorkflow("anon-flow");
-    const started = await withEnv(
-      { CLAUDE_CODE_SESSION_ID: undefined, OPENCODE_SESSION_ID: undefined, AKM_AGENT_HARNESS: undefined },
-      () => startWorkflowRun("workflows/anon-flow", {}),
+    const started = await withEnv({ CLAUDE_CODE_SESSION_ID: undefined, OPENCODE_SESSION_ID: undefined }, () =>
+      startWorkflowRun("workflows/anon-flow", {}),
     );
     expect(started.run.agentHarness).toBeNull();
     expect(started.run.agentSessionId).toBeNull();

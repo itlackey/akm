@@ -228,7 +228,7 @@ const KNOWN_PROMPT_REF_FAMILIES = new Set([
  */
 const ARGV_ARRAY_BLOCK_DETAIL =
   "Manual conversion required: an array `command:` has no safe v3 `run:` string. Rewrite it by hand as " +
-  "`run:` (string) plus `shell:` — see docs/migration/v0.9.1-to-v0.9.2.md for the full v2 to v4 field mapping.";
+  "`run:` (string) plus `shell:`.";
 
 // ── shared helpers ────────────────────────────────────────────────────────────
 

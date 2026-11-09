@@ -331,7 +331,7 @@ report only the violated constraint.
 
 ## Migrating to task source v4
 
-`akm migrate status` and `akm migrate apply [--dry-run]` run **both**
+`akm migrate status` and `akm migrate apply` run **both**
 migration generations against your task tree in one pass: task-v2 → task-v3
 first, then task-v3 → task source v4 against the resulting files. Each
 generation keeps its own lock, backup, prevalidation, and rollback — a file
@@ -339,7 +339,7 @@ blocked in the first generation does not stop the second generation from
 converting files that are already `version: 3`.
 
 ```sh
-akm migrate apply --dry-run
+akm migrate status
 akm migrate apply
 ```
 
@@ -349,9 +349,7 @@ preview again. Apply validates a complete replacement before writing and
 backs up each original immediately before replacement.
 
 Common v2 → v3 blocked reasons and what to do about each — these need a
-hand-authored replacement, not a re-run; see [the 0.9.1 to 0.9.2 migration
-guide](../migration/v0.9.1-to-v0.9.2.md#v2--v3-blocked-cases) for the full v2
-to v4 field mapping (`command:` array → `run:` + `shell:`, `timeoutMs:` →
+hand-authored replacement, not a re-run (`command:` array → `run:` + `shell:`, `timeoutMs:` →
 `timeout:`). Source-owned `enabled` fields are removed; native bindings that
 are provably enabled seed the host-local activation list:
 
@@ -394,12 +392,9 @@ Two cases produce one today:
   v4 task is runnable manually with `akm task run` whether or not it has a
   `schedule:`. The migrated document simply has no `schedule:` key.
 
-`akm migrate status` / `apply [--dry-run]` runs the migrator, and
+`akm migrate status` / `apply` runs the migrator, and
 `akm upgrade` runs `apply` after installing a release. A tree that is already
 all `version: 3` simply reports the first generation as current.
-
-See the [0.9.1 to 0.9.2 migration guide](../migration/v0.9.1-to-v0.9.2.md#migrating-task-v3-to-task-source-v4)
-for full before/after examples and recovery guidance.
 
 ## Operations
 
