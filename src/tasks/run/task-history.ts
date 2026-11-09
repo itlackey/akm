@@ -86,7 +86,7 @@ export function readTaskHistory(options: ReadHistoryOptions = {}): TaskRunResult
     if (options.limit === 0) return [];
     if (options.id) {
       // An id-scoped query used the single-row helper, so `--limit` was silently
-      // discarded and `akm task history --id X --limit 20` always returned one
+      // discarded and `akm task history X --limit 20` always returned one
       // run. The CLI documents --limit as "Maximum rows to return"; honour it.
       if (options.limit !== undefined && options.limit > 0) {
         return decodeTaskHistoryRows(getTaskHistoryRuns(db, options.id, options.limit));

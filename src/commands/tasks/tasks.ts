@@ -10,7 +10,7 @@
  * values via `output()`.
  *
  * The OS scheduler holds one entry that runs `akm task dispatch` every minute
- * (`src/tasks/dispatch.ts`); `sync` and `prune` write it. `add`, `enable` and
+ * (`src/tasks/dispatch.ts`); `sync` writes it. `add`, `enable` and
  * `disable` edit task files and `scheduler.enabled` (dispatch reads both on the
  * next minute) and then run `sync`, so the first enabled task installs the entry
  * and the last disabled one removes it.
@@ -24,9 +24,8 @@ import { assetPathForName } from "../../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
-import { defaultConnection, defaultHarness, loadConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import type { AkmConfig } from "../../core/config/config-types";
-import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { getTaskLogDir } from "../../core/paths";
 import { warn } from "../../core/warn";
@@ -60,8 +59,6 @@ import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { projectTaskSourceV4 } from "../../tasks/source/project-v4";
 import type { TaskV3SourceDocument } from "../../tasks/source-v3";
 import { normaliseTaskConceptId, normaliseTaskId } from "../../tasks/task-id";
-import { applyAutonomyGate, configuredDirectAutonomyLanes, describeGatedLanes } from "../improve/autonomy-gate";
-import { resolveImproveStrategy } from "../improve/improve-strategies";
 
 export interface TasksAddInput {
   id: string;
@@ -91,8 +88,6 @@ export interface TasksAddInput {
   tags?: string[];
   disabled?: boolean;
   force?: boolean;
-  /** Accepted and ignored: `add` leaves the entry's launcher alone (`akm task sync --rebind` points it at this akm). */
-  rebind?: boolean;
 }
 
 export interface TasksAddResult {
@@ -118,9 +113,6 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   const id = normaliseTaskId(input.id);
   assertTaskAddTargetShape(input);
   parseSchedule(input.schedule);
-  if (input.rebind === true) {
-    warn("`task add --rebind` is ignored: `add` leaves the entry's launcher alone. Run `akm task sync --rebind`.");
-  }
 
   const bundle = resolveTaskBundle(input.target);
   const stashDir = bundle.stashDir;
@@ -421,7 +413,7 @@ export async function akmTasksSync(
   return plan.result;
 }
 
-/** `akm task sync --dry-run` (#849): what `akmTasksSync` would do, written nowhere. */
+/** What `akmTasksSync` would do, written nowhere. `akm migrate status` reports it; there is no CLI flag for it. */
 export async function akmTasksSyncPlan(
   deps: TaskSyncDeps = {},
   options: { rebind?: boolean } = {},
@@ -533,7 +525,7 @@ async function planSync(
   }
   for (const kept of keptLegacy) {
     warnings.push(
-      `Left the akm 0.9 scheduler row "${kept.id}": ${kept.reason}. Run \`akm task prune\` if its bundle is gone.`,
+      `Left the akm 0.9 scheduler row "${kept.id}": ${kept.reason}. Remove it from the OS scheduler yourself if its bundle is gone.`,
     );
   }
 
@@ -558,45 +550,6 @@ function sameEntry(left: DispatchEntry, right: DispatchEntry): boolean {
   return JSON.stringify([left.launcher, left.path ?? null]) === JSON.stringify([right.launcher, right.path ?? null]);
 }
 
-export interface TasksPruneResult {
-  readonly backend: string;
-  readonly dryRun: boolean;
-  readonly preview: { hasRemovals: boolean; removals: { id: string; reason: string }[] };
-  readonly removed: readonly string[];
-}
-
-/**
- * `akm task prune` (#851): remove akm 0.9 per-task scheduler rows that name a
- * bundle directory that is gone, which `task sync` leaves because they name
- * another installation. Without `--yes` it only previews; `--id` narrows it.
- */
-export async function akmTasksPrune(
-  deps: { backend?: SchedulerBackend } = {},
-  options: { yes?: boolean; id?: readonly string[] } = {},
-): Promise<TasksPruneResult> {
-  const sched = deps.backend ?? selectBackend();
-  const candidates = (await sched.inspect()).legacy.filter((row) => {
-    const dir = row.environment.AKM_BUNDLE_DIR;
-    return dir !== undefined && !fs.existsSync(dir);
-  });
-  const requested = (options.id ?? []).filter((id) => id.length > 0);
-  for (const id of requested) {
-    if (!candidates.some((row) => row.id === id)) {
-      throw new UsageError(
-        `Scheduler row ${JSON.stringify(id)} is not an orphaned prune candidate ` +
-          "(either not installed, or it still resolves to a live bundle) — refusing to prune it.",
-        "INVALID_FLAG_VALUE",
-      );
-    }
-  }
-  const chosen = candidates.filter((row) => requested.length === 0 || requested.includes(row.id));
-  const removals = chosen.map((row) => ({ id: row.id, reason: "dead-bundle-path" }));
-  const preview = { hasRemovals: removals.length > 0, removals };
-  if (options.yes !== true) return { backend: sched.name, dryRun: true, preview, removed: [] };
-  if (chosen.length > 0) await sched.apply({ removeLegacy: chosen.map((row) => row.id) });
-  return { backend: sched.name, dryRun: false, preview, removed: chosen.map((row) => row.id) };
-}
-
 export interface TasksDoctorResult {
   backend: string;
   akm: { argv: string[]; via: string };
@@ -609,28 +562,8 @@ export interface TasksDoctorResult {
   }>;
   remediation?: "akm task sync" | "akm task sync --rebind";
   logDir: string;
-  engine: { defaultEngine?: string; available: string[] };
   scheduleSubset: string;
   warnings: string[];
-  /**
-   * The autonomy gate's effect on the default improve strategy. A scheduled
-   * run that quietly stopped consolidating is the silent no-op the gate exists
-   * to prevent, and this is where an operator looks for the explanation.
-   */
-  improveAutonomy?: {
-    enabled: boolean;
-    configKey: string;
-    gatedLanes: { lane: string; reason: string }[];
-  };
-  /**
-   * Effective proposal-queue triage settings for the default improve strategy.
-   * Absent when the resolved strategy has no `triage` process block.
-   */
-  improveTriage?: {
-    defaultStrategy: string;
-    enabled: boolean;
-    applyMode: string;
-  };
 }
 
 export async function akmTasksDoctor(
@@ -681,36 +614,6 @@ export async function akmTasksDoctor(
   for (const failure of unrunnableTasks(config)) {
     warnings.push(`Enabled task ${failure.ref} cannot run: ${failure.reason}`);
   }
-  // Report the EFFECTIVE view — the default harness (else connection) agent work runs on, and what is configured.
-  const defaultEngine = (defaultHarness(config) ?? defaultConnection(config))?.name;
-  const engines = [...Object.keys(config.connections ?? {}), ...Object.keys(config.harnesses ?? {})];
-
-  // Surface the effective triage settings for the default improve strategy.
-  const improveStrategyName = config.improve?.strategy ?? "default";
-  // Report the EFFECTIVE strategy, not the raw one. Resolving the raw
-  // strategy here would report `applyMode: "promote"` for a promote strategy
-  // under a review-first config, while the run actually uses "queue" — a doctor
-  // command lying about the thing it exists to diagnose.
-  const rawStrategy = resolveImproveStrategy(config.improve?.strategy, config).config;
-  const { config: effectiveStrategy, gated } = applyAutonomyGate(rawStrategy, config);
-  const autonomyEnabled = isImproveAutonomyEnabled(config);
-  // Memory cleanup has no strategy flag to downgrade, so add that direct lane
-  // to the strategy-derived gate report.
-  const allGated = autonomyEnabled ? [] : [...gated, ...describeGatedLanes(configuredDirectAutonomyLanes())];
-  const improveAutonomy = {
-    enabled: autonomyEnabled,
-    configKey: IMPROVE_AUTONOMY_CONFIG_KEY,
-    gatedLanes: allGated.map((entry) => ({ lane: entry.lane as string, reason: entry.reason })),
-  };
-  const triage = effectiveStrategy.processes?.triage;
-  const improveTriage = triage
-    ? {
-        defaultStrategy: improveStrategyName,
-        enabled: triage.enabled === true,
-        applyMode: triage.applyMode ?? "queue",
-      }
-    : undefined;
-
   const legacyOnly = bindings.some((binding) => binding.status.includes("legacy"));
   const unhealthy = bindings.some((binding) => !binding.status.includes("ok") && !binding.status.includes("legacy"));
   return {
@@ -724,11 +627,8 @@ export async function akmTasksDoctor(
         ? { remediation: "akm task sync" as const }
         : {}),
     logDir: getTaskLogDir(),
-    engine: { defaultEngine, available: engines },
     scheduleSubset: SCHEDULE_SUPPORTED_SUBSET_HINT,
     warnings,
-    improveAutonomy,
-    ...(improveTriage ? { improveTriage } : {}),
   };
 }
 

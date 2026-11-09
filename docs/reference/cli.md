@@ -3745,19 +3745,15 @@ akm task disable team//tasks/nightly      # Remove the ref from scheduler.enable
 akm task dispatch                           # Start the tasks due this minute, detached, and exit
 akm task run <id>                           # Execute now
 akm task explain <ref>                      # Read-only: declared inputs, target, schedule — spawns nothing
-akm task history [<id>] [--id <id>] [--limit <n>]  # Recent runs from state.db (positional id == --id)
+akm task history [<id>] [--limit <n>]       # Recent runs from state.db, for one task when an id is given
 akm task sync                               # Install, keep or remove the one OS scheduler entry
-akm task sync --dry-run                     # Preview it — zero scheduler writes
 akm task sync --rebind                      # Re-point the entry at this akm and this shell's PATH
 akm task doctor                             # Report the scheduler backend, entry and paths
-akm task prune                              # Preview akm 0.9 rows naming a bundle directory that is gone
-akm task prune --yes                        # Remove them
 ```
 
 `task add` also accepts `--tags <a,b>` (comma-separated tags), `--when-to-use <text>` (guidance on when the task runs or should be used), `--disabled` (write the task but leave its ref out of
 this host's `scheduler.enabled`), `--force` (overwrite an existing task with
-the same id), and `--rebind` (ignored with a warning: `add` leaves the entry's
-launcher alone; use `akm task sync --rebind`). `add`, `enable` and `disable` sync the OS
+the same id). `add`, `enable` and `disable` sync the OS
 entry after saving; if that fails (no `crontab` on `PATH`, say) the change stays and the
 result carries a `warnings` entry instead of `sync`: fix it, then run `akm task sync`.
 
@@ -3805,9 +3801,7 @@ result is `{backend, entry, removedLegacy, keptLegacy, warnings?}` where `entry`
 is `installed`, `updated`, `unchanged`, `removed`, `absent` or `unmanaged`. A row that names
 another installation's directories (an `AKM_BUNDLE_DIR` that is not this
 installation's, or any `AKM_*_DIR`) is left and reported in `keptLegacy`. A crontab whose
-akm markers are malformed is refused unmodified. `--dry-run` prints the same
-result (plus `hasRemovals`) without writing, and exits non-zero when it would
-remove anything. `--bundle` is ignored with a warning: one entry serves every bundle.
+akm markers are malformed is refused unmodified. `akm migrate status` reports what sync would do without writing it.
 
 An installation that moves any location (`AKM_BUNDLE_DIR`, an `AKM_*_DIR`, or an
 `XDG_*_HOME` that changes where config, data, cache or state go) is **not**
@@ -3815,13 +3809,6 @@ the default installation, and never writes the OS scheduler: `task sync`
 returns `entry: "unmanaged"` and says to run `akm task dispatch` every minute from
 your own supervisor, with that installation's environment. `task doctor` and the
 `scheduler-binary` health advisory read nothing from the OS for it.
-
-`akm task prune` removes the akm 0.9 per-task rows that `sync` left because they
-name a bundle directory that is gone (`AKM_BUNDLE_DIR` of a deleted sandbox).
-The default is a dry-run preview (zero scheduler writes) that exits non-zero
-when there are candidates; `--yes` executes the printed plan, and `--id
-<id1,id2,...>` narrows it to specific row ids — naming an id that isn't a
-current candidate is refused with a usage error and removes nothing.
 
 Interactive `akm setup` reviews every embedded
 task template (both the core set and the improve-schedule set) and asks once

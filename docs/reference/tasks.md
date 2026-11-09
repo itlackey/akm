@@ -356,13 +356,6 @@ report only the violated constraint.
   per-task rows, except those that name another installation. An
   installation that moves any location never writes the OS scheduler
   (see the [scheduling guide](../guides/scheduling.md)).
-- `akm task sync --dry-run` previews that without writing to the scheduler;
-  exits non-zero when it would remove anything.
-- `akm task prune` removes akm 0.9 per-task rows that `sync` left because they
-  name a bundle directory that is gone (a row whose `AKM_BUNDLE_DIR` names a
-  directory that no longer exists). Defaults to a dry-run preview (zero writes);
-  `--yes` executes it; `--id <id1,id2,...>` scopes to specific ids and refuses
-  any id that isn't a current candidate.
 - The entry is a single crontab block (on macOS one plist, on Windows one task)
   that runs `<launcher> task dispatch` every minute, with the `PATH` of the shell
   that wrote it. It sits at the end of the crontab, so cron's `PATH=` line

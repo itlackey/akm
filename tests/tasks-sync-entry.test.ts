@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm task sync`, `task prune` and `task doctor` against the one scheduler
+ * `akm task sync` and `task doctor` against the one scheduler
  * entry: install, keep, rebind, remove; the akm 0.9 per-task rows removed in the
  * same operation; an installation that moves its locations left alone. The
  * backend is an in-memory fake, so no OS scheduler is reached.
@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmTasksDoctor, akmTasksPrune, akmTasksSync, akmTasksSyncPlan } from "../src/commands/tasks/tasks";
+import { akmTasksDoctor, akmTasksSync, akmTasksSyncPlan } from "../src/commands/tasks/tasks";
 import { saveConfig } from "../src/core/config/config";
 import type { DispatchEntry, EntryChange, LegacyRow, SchedulerBackend } from "../src/tasks/backends/types";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
@@ -198,7 +198,7 @@ describe("task sync: akm 0.9 per-task rows", () => {
     expect(result).toMatchObject({ entry: "absent", removedLegacy: ["a"] });
   });
 
-  test("--dry-run says what would happen and writes nothing", async () => {
+  test("the plan (`akm migrate status`) says what would happen and writes nothing", async () => {
     configure(["stash//tasks/a"]);
     state.legacy = [{ id: "a", environment: {} }];
 
@@ -318,34 +318,6 @@ describe("task sync: an akm carried inside another package or app", () => {
     expect((await akmTasksSync({ backend: fakeBackend(state), launcher: carried, env: DEFAULT_ENV }, {})).entry).toBe(
       "removed",
     );
-  });
-});
-
-describe("task prune", () => {
-  const dead = path.join("/nonexistent", "akm-dead-bundle");
-
-  test("lists akm 0.9 rows whose bundle directory is gone, and removes them only with --yes", async () => {
-    state.legacy = [
-      { id: "gone", environment: { AKM_BUNDLE_DIR: dead } },
-      { id: "alive", environment: { AKM_BUNDLE_DIR: storage.stashDir } },
-    ];
-    const backend = fakeBackend(state);
-
-    const preview = await akmTasksPrune({ backend }, {});
-    expect(preview.dryRun).toBe(true);
-    expect(preview.preview.removals).toEqual([{ id: "gone", reason: "dead-bundle-path" }]);
-    expect(state.applied).toEqual([]);
-
-    const done = await akmTasksPrune({ backend }, { yes: true });
-    expect(done).toMatchObject({ dryRun: false, removed: ["gone"] });
-    expect(state.legacy.map((row) => row.id)).toEqual(["alive"]);
-  });
-
-  test("--id refuses a row that is not an orphan candidate", async () => {
-    state.legacy = [{ id: "alive", environment: { AKM_BUNDLE_DIR: storage.stashDir } }];
-    await expect(akmTasksPrune({ backend: fakeBackend(state) }, { yes: true, id: ["alive"] })).rejects.toMatchObject({
-      code: "INVALID_FLAG_VALUE",
-    });
   });
 });
 

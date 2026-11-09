@@ -356,18 +356,8 @@ for (const origin of ["previous", "0.9.32"] as const) {
       expect(taskList.status, taskList.stderr).toBe(0);
     });
 
-    test("5. task sync after migrate apply has nothing left to do: the dry run and a plain sync both report the entry unchanged and leave the crontab byte-identical", async () => {
+    test("5. task sync after migrate apply has nothing left to do: a plain sync reports the entry unchanged and leaves the crontab byte-identical", async () => {
       const before = fs.readFileSync(home.fakeCrontab, "utf8");
-      const dry = await runLauncher(candidateLauncher, ["task", "sync", "--dry-run"], home.env);
-      expect(dry.status, dry.stderr).toBe(0);
-      expect(JSON.parse(dry.stdout)).toMatchObject({
-        entry: "unchanged",
-        removedLegacy: [],
-        keptLegacy: [],
-        hasRemovals: false,
-        failures: [],
-      });
-
       const result = await runLauncher(candidateLauncher, ["task", "sync"], home.env);
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout)).toMatchObject({ entry: "unchanged", removedLegacy: [], keptLegacy: [] });
