@@ -27,7 +27,7 @@ import {
 import { getRunLogDir, getTaskLogDir } from "../../core/paths";
 import { redactCredentialPatterns, redactSensitiveText } from "../../core/redaction";
 import { collectTaskLogSensitiveValues } from "../log-redaction";
-import type { PreparedTaskV3Execution } from "../prepare/prepared-execution";
+import type { PreparedTaskExecution } from "../prepare/prepared-execution";
 
 function taskLogPath(logDir: string, taskId: string, startedAtIso: string): string {
   const tsSlug = startedAtIso.replace(/[:.]/g, "-");
@@ -204,7 +204,7 @@ function taskLogSensitiveValues(
 }
 
 /** Scrub one piece of durable-result text against a prepared task's own secrets. */
-export function scrubTaskOutput(task: PreparedTaskV3Execution, text: string): string {
+export function scrubTaskOutput(task: PreparedTaskExecution, text: string): string {
   const patterned = redactCredentialPatterns(text);
   const sensitive = taskLogSensitiveValues(task.redact, task.environment);
   return sensitive.length > 0 ? redactSensitiveText(patterned, sensitive) : patterned;

@@ -250,16 +250,16 @@ export function dropInvalidImproveBase(raw: Record<string, unknown>, sourcePath?
 
 /**
  * Validate a file's config (deep-merged under `DEFAULT_CONFIG`) via Zod ({@link AkmConfigSchema}).
- * `liftedLocalRaw` must already be through {@link readConfigFile}.
+ * `localRaw` must already be through {@link readConfigFile}.
  *
  * Split out of {@link parseAndValidateConfigText} so `mutateConfig` can build the
  * effective config from a `localRaw` it also keeps around, instead of only getting
  * the final merged `AkmConfig` back.
  */
-export function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePath?: string): AkmConfig {
+export function buildEffectiveConfig(localRaw: Record<string, unknown>, sourcePath?: string): AkmConfig {
   // `extends` (config inheritance) is retired. Ignoring it would silently drop every setting it inherited, so it is
   // fatal, like `stashDir`; `akm migrate apply` merges the base into the file.
-  if (liftedLocalRaw.extends !== undefined) {
+  if (localRaw.extends !== undefined) {
     throw new ConfigError(
       `Invalid config${sourcePath ? ` at ${sourcePath}` : ""}: "extends" is no longer supported, and ignoring it would drop every setting it inherits. Run \`akm migrate apply\` to merge the base into config.json.`,
       "INVALID_CONFIG_FILE",
@@ -269,10 +269,7 @@ export function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, so
     dropRetiredOutputFormat(
       dropUnusableProjects(
         dropDanglingDefaultBundle(
-          dropUnusableEntries(
-            resolveBundlePaths(dropUnusableProjects(liftedLocalRaw, sourcePath), sourcePath),
-            sourcePath,
-          ),
+          dropUnusableEntries(resolveBundlePaths(dropUnusableProjects(localRaw, sourcePath), sourcePath), sourcePath),
           sourcePath,
         ),
         sourcePath,
@@ -288,7 +285,7 @@ export function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, so
       : chained;
 
   const where = sourcePath ? ` at ${sourcePath}` : "";
-  warnUnknownConfigKeys(liftedLocalRaw, sourcePath);
+  warnUnknownConfigKeys(localRaw, sourcePath);
   const parsed = AkmConfigSchema.safeParse(withMode);
   if (!parsed.success) {
     const lines = parsed.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");

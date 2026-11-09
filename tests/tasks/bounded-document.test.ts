@@ -10,7 +10,7 @@
  * §3.1).
  *
  * P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.2/§3.2.3, row B-17,
- * F-A2.11) retires task source v3 acceptance from `src/tasks/source-v3.ts`
+ * F-A2.11) retires task source v3 acceptance from `src/tasks/task-source.ts`
  * entirely — the "task v3 source" label this file used to pin died with it.
  * Two DISTINCT labels remain in real production use today, and this file
  * pins both:
@@ -33,9 +33,9 @@
  * input through the identical assertion with only the label swapped.
  *
  * The former THIRD describe block here — an AST scan proving
- * `src/tasks/source-v3.ts` imported the D2-N4 helper set from
+ * `src/tasks/task-source.ts` imported the D2-N4 helper set from
  * `./source/bounded-document` rather than keeping a local copy — is DELETED,
- * not flipped: `source-v3.ts`'s shrink (P4 §3.2.3) removed the field-parsing
+ * not flipped: `task-source.ts`'s shrink (P4 §3.2.3) removed the field-parsing
  * logic that check was guarding entirely; the module's surviving purpose is
  * the prepare seam's document vocabulary (types only), which imports no
  * D2-N4 helper at all. `task-source-v4.ts` is the extraction's real home
@@ -51,7 +51,7 @@ import { UsageError } from "../../src/core/errors";
 import {
   assertBoundedTaskYamlDocument,
   sourceError,
-  TASK_V3_MAX_STRING_BYTES,
+  TASK_MAX_STRING_BYTES,
 } from "../../src/tasks/source/bounded-document";
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
 import { parseTaskSourceV4, parseTaskSourceV4Document } from "../../src/tasks/source/task-source-v4";
@@ -296,7 +296,7 @@ describe("task source v4 hostile input and resource bounds", () => {
   });
 
   test("bounds mapping-key strings before object publication and YAML expansion", () => {
-    const oversizedKey = "k".repeat(TASK_V3_MAX_STRING_BYTES + 1);
+    const oversizedKey = "k".repeat(TASK_MAX_STRING_BYTES + 1);
     expect(() =>
       parseTaskSourceV4Document(
         { version: 4, uses: "commands/a", with: { [oversizedKey]: true } },

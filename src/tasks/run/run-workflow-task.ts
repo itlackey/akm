@@ -23,7 +23,7 @@ import type { TaskLogLineInput } from "../../core/logs-db";
 import type { WorkflowRunStatus, WorkflowRunSummary } from "../../sources/types";
 import type { runWorkflowSteps } from "../../workflows/exec/run-workflow";
 import type { ExecutionProvenanceContext } from "../model/invocation";
-import type { PreparedTaskV3Workflow } from "../prepare/prepared-execution";
+import type { PreparedTaskWorkflow } from "../prepare/prepared-execution";
 import { finishAttempt } from "./attempt-lifecycle";
 import { appendHistory } from "./task-history";
 import { persistRunLog, scrubTaskOutput } from "./task-log";
@@ -67,7 +67,7 @@ export const DEFAULT_WORKFLOW_TASK_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 export const DEFAULT_SCHEDULED_TASK_TIMEOUT_MS = DEFAULT_WORKFLOW_TASK_TIMEOUT_MS;
 
 export async function runWorkflowTask(input: {
-  task: PreparedTaskV3Workflow;
+  task: PreparedTaskWorkflow;
   logPath: string;
   startedAt: Date;
   now: () => Date;
@@ -240,7 +240,7 @@ function mapWorkflowStatus(status: WorkflowRunStatus | undefined): TaskRunStatus
 }
 
 function renderWorkflowLog(input: {
-  task: PreparedTaskV3Workflow;
+  task: PreparedTaskWorkflow;
   detail?: WorkflowRunSummary;
   error?: Error;
   warnings?: readonly string[];

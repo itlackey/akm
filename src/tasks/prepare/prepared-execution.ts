@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The PreparedTaskV3* type family. Pure types only; prepare.ts
- * (prepareTaskV3Execution) and prepare-script-target.ts build values of
+ * The PreparedTask* type family. Pure types only; prepare.ts
+ * (prepareTaskExecution) and prepare-script-target.ts build values of
  * these shapes.
  */
 
@@ -14,19 +14,9 @@ import type {
   prepareCommandInvocation,
 } from "../../commands/command/command-execution";
 import type { AkmConfig } from "../../core/config/config-types";
-import type { TaskV3HostShell, TaskV3SourceDocument } from "../source-v3";
+import type { PreparableTaskDocument, TaskHostShell } from "../task-source";
 
-/**
- * The prepare seam's input, named independently of the source grammar
- * version: `prepareTaskV3Execution` (`./prepare.ts`) consumes exactly
- * `TaskV3SourceDocument`'s shape, and a task source v4
- * document projects into that SAME shape via `src/tasks/source/project-v4.ts`'s
- * `projectTaskSourceV4()` (its `version` field is the literal discriminant
- * `3`). Type alias only.
- */
-export type PreparableTaskDocument = TaskV3SourceDocument;
-
-export type TaskV3ScriptInterpreter =
+export type TaskScriptInterpreter =
   | "sh"
   | "bun"
   | "bun-standalone"
@@ -43,7 +33,7 @@ export type TaskV3ScriptInterpreter =
   | "swift"
   | "kotlin";
 
-export interface TaskV3PreparedBase {
+export interface PreparedTaskBase {
   readonly taskId: string;
   readonly taskRef: string;
   readonly environment: Readonly<Record<string, string>>;
@@ -51,12 +41,12 @@ export interface TaskV3PreparedBase {
   readonly redact: readonly string[];
 }
 
-export interface PreparedTaskV3Command extends TaskV3PreparedBase {
+export interface PreparedTaskCommand extends PreparedTaskBase {
   readonly kind: "command";
   readonly invocation: PreparedCommandInvocation;
 }
 
-export interface PreparedTaskV3Workflow extends TaskV3PreparedBase {
+export interface PreparedTaskWorkflow extends PreparedTaskBase {
   readonly kind: "workflow";
   readonly ref: string;
   readonly params: Readonly<Record<string, unknown>>;
@@ -64,17 +54,17 @@ export interface PreparedTaskV3Workflow extends TaskV3PreparedBase {
   readonly maxRetries?: number;
 }
 
-export interface PreparedTaskV3Shell extends TaskV3PreparedBase {
+export interface PreparedTaskShell extends PreparedTaskBase {
   readonly kind: "shell";
   readonly command: string;
-  readonly shell: TaskV3HostShell;
+  readonly shell: TaskHostShell;
   readonly cwd: string;
 }
 
-export interface PreparedTaskV3Script extends TaskV3PreparedBase {
+export interface PreparedTaskScript extends PreparedTaskBase {
   readonly kind: "script";
   readonly sourceRef: string;
-  readonly interpreter: TaskV3ScriptInterpreter;
+  readonly interpreter: TaskScriptInterpreter;
   readonly extension: string;
   /** Immutable base64 encoding of the exact source bytes. */
   readonly bytesBase64: string;
@@ -83,13 +73,9 @@ export interface PreparedTaskV3Script extends TaskV3PreparedBase {
   readonly cwd: string;
 }
 
-export type PreparedTaskV3Execution =
-  | PreparedTaskV3Command
-  | PreparedTaskV3Workflow
-  | PreparedTaskV3Shell
-  | PreparedTaskV3Script;
+export type PreparedTaskExecution = PreparedTaskCommand | PreparedTaskWorkflow | PreparedTaskShell | PreparedTaskScript;
 
-export interface PrepareTaskV3ExecutionContext {
+export interface PrepareTaskExecutionContext {
   readonly taskId: string;
   readonly taskRef: string;
   readonly bundleName: string;
