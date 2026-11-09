@@ -180,8 +180,8 @@ function selectUnionObjectOption(
  */
 export function configGet(config: Record<string, unknown>, dotted: string): unknown {
   const path = parsePath(dotted);
-  const schema = resolveSchemaAt(path, config);
-  if (!schema) {
+  // A key the schema does not know but the file holds (a stored typo) is readable, so `config set`'s warning can be followed.
+  if (!resolveSchemaAt(path, config) && !hasPath(config, path)) {
     throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint());
   }
   let cursor: unknown = config;
@@ -191,6 +191,16 @@ export function configGet(config: Record<string, unknown>, dotted: string): unkn
     cursor = (cursor as Record<string, unknown>)[segment];
   }
   return cursor ?? null;
+}
+
+/** Whether the file holds a value at `path` (own keys only). */
+function hasPath(config: Record<string, unknown>, path: Path): boolean {
+  let cursor: unknown = config;
+  for (const segment of path) {
+    if (!isRecord(cursor) || !Object.hasOwn(cursor, segment)) return false;
+    cursor = cursor[segment];
+  }
+  return true;
 }
 
 /**
@@ -288,10 +298,13 @@ export function configUnset(config: Record<string, unknown>, dotted: string): Re
   if (path.length === 1 && path[0] === "configVersion") {
     throw new UsageError("configVersion cannot be removed through config unset.", "INVALID_FLAG_VALUE");
   }
-  // Validate the path resolves to a real schema field (so typos don't no-op).
-  const schema = resolveSchemaAt(path, config);
-  if (!schema) {
-    throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint());
+  // A key the schema does not know is removable when the file holds it (a stored typo); otherwise there is nothing to remove.
+  if (!resolveSchemaAt(path, config) && !hasPath(config, path)) {
+    warnOnce(
+      `config-unset:unknown-key:${dotted}`,
+      `"${dotted}" is not a known config key and is not set; nothing to unset.`,
+    );
+    return config;
   }
   return unsetPath(config, path);
 }
