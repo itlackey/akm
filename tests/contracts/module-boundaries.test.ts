@@ -1,38 +1,47 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { ARCHITECTURE_PATH, extractSection, readDoc } from "./contract-helpers";
 
-const REQUIRED_FILES = [
-  "src/cli.ts",
-  "src/core/asset/asset-ref.ts",
-  "src/core/errors.ts",
-  "src/core/config/config.ts",
-  "src/core/write-source.ts",
-];
+// Import direction: files under core/ and storage/ are the bottom layer and must not
+// value-import from any other src/ top-level dir. `import type` is exempt (erased).
+// ALLOWED_UPWARD holds today's edges as "from>to": count. It may only shrink.
+const ALLOWED_UPWARD: Record<string, number> = {
+  "core>commands": 2,
+  "core>execution": 4,
+  "core>indexer": 13,
+  "core>integrations": 4,
+  "core>registry": 1,
+  "core>sources": 2,
+  "core>tasks": 9,
+  "core>workflows": 3,
+  "storage>indexer": 6,
+  "storage>llm": 1,
+  "storage>workflows": 1,
+};
+const LOW = new Set(["core", "storage"]);
+const src = path.resolve(import.meta.dir, "..", "..", "src");
+const IMPORT = /^(?:import|export)\s+(?!type\b)[^;]*?from\s+["'](\.[^"']*)["']|^import\s+["'](\.[^"']*)["']/gm;
 
-const REQUIRED_DIRS = ["src/commands", "src/sources", "src/registry", "src/indexer", "src/output"];
-
-const repoRoot = path.resolve(import.meta.dir, "..", "..");
-
-describe("current module boundary contract", () => {
-  const section = extractSection(readDoc(ARCHITECTURE_PATH), "## Module Boundaries");
-
-  test("current architecture documents every anchor module", () => {
-    expect(section).not.toBe("");
-    for (const rel of REQUIRED_FILES) expect(section).toContain(`\`${rel}\``);
+function walk(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name);
+    return e.isDirectory() ? walk(p) : p.endsWith(".ts") ? [p] : [];
   });
+}
 
-  test("locked anchor files exist on disk", () => {
-    for (const rel of REQUIRED_FILES) {
-      expect(fs.existsSync(path.join(repoRoot, rel))).toBe(true);
+test("core and storage do not import upward beyond the allowlist", () => {
+  const found: Record<string, number> = {};
+  for (const file of walk(src)) {
+    const from = path.relative(src, file).split(path.sep)[0] ?? "";
+    if (!LOW.has(from)) continue;
+    for (const m of fs.readFileSync(file, "utf8").matchAll(IMPORT)) {
+      const to =
+        path.relative(src, path.resolve(path.dirname(file), (m[1] ?? m[2]) as string)).split(path.sep)[0] ?? "";
+      if (to === from || LOW.has(to) || !fs.existsSync(path.join(src, to, ".")) || to.startsWith("..")) continue;
+      found[`${from}>${to}`] = (found[`${from}>${to}`] ?? 0) + 1;
     }
-  });
-
-  test("locked anchor directories exist on disk", () => {
-    for (const rel of REQUIRED_DIRS) {
-      const stat = fs.statSync(path.join(repoRoot, rel));
-      expect(stat.isDirectory()).toBe(true);
-    }
-  });
+  }
+  const over = Object.entries(found).filter(([k, n]) => n > (ALLOWED_UPWARD[k] ?? 0));
+  const stale = Object.entries(ALLOWED_UPWARD).filter(([k, n]) => (found[k] ?? 0) < n);
+  expect({ over, stale, found }).toEqual({ over: [], stale: [], found: ALLOWED_UPWARD });
 });

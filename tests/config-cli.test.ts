@@ -254,6 +254,25 @@ describe("config CLI helpers", () => {
     expect(warnings.some((w) => w.includes("totally.unknown.path"))).toBe(true);
   });
 
+  test("a stored unknown key can be read and removed; an absent one warns on unset and errors on get", () => {
+    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
+    let stored!: AkmConfig;
+    captureWarnings(() => {
+      stored = setConfigValue(base, "typo.key", "x");
+    });
+    expect(getConfigValue(stored, "typo.key")).toBe("x");
+    const cleared = unsetConfigValue(stored, "typo.key");
+    expect((cleared as unknown as { typo?: { key?: string } }).typo?.key).toBeUndefined();
+    expect(() => getConfigValue(cleared, "typo.key")).toThrow(/Unknown config key/);
+
+    let unchanged!: AkmConfig;
+    const warnings = captureWarnings(() => {
+      unchanged = unsetConfigValue(base, "nope.absent");
+    });
+    expect(unchanged).toEqual(base);
+    expect(warnings.some((w) => w.includes("nope.absent"))).toBe(true);
+  });
+
   test("setConfigValue rejects non-integer embedding dimension in JSON", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     expect(() =>

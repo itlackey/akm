@@ -228,6 +228,10 @@ function selectTarget(input: ResolveTargetInput): Target {
     // service, or a call that must not touch files to an agent that can. Defaults apply only when nothing was named.
     throw selectionNotConfigured(input.config, named.kind, named.name);
   }
+  // Agent work with several harnesses and no `default` does not fall through to a connection: that is a different
+  // runtime (it cannot edit files). Model work prefers the connection by design, so it is unaffected.
+  const ambiguousHarnesses = modelWork ? undefined : ambiguousDefaultAdvice(input.config, "harness");
+  if (ambiguousHarnesses) throw new ConfigError(`${ambiguousHarnesses}.`, "AGENT_NOT_CONFIGURED");
   const target = defaultTarget(input.config, modelWork);
   if (target) return target;
   const ambiguous = ambiguousDefaultAdvice(input.config);
