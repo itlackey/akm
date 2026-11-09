@@ -9,7 +9,15 @@
   import { classifyEngineSkew, hostUpgradeOutrunsDesktop } from "./engine-skew";
   import Icon from "./Icon.svelte";
   import SetupLearning from "./SetupLearning.svelte";
-  import { akmPlatform, learnPlan, learnReceipt, pluginChannel, type AgentCard, type Detected } from "./setup-model";
+  import {
+    akmPlatform,
+    learnPlan,
+    learnReceipt,
+    learningRuns,
+    pluginChannel,
+    type AgentCard,
+    type Detected,
+  } from "./setup-model";
   import { actSoftware, runSoftware, software, type Outcome } from "./state/software.svelte";
   import { workspace } from "./state/workspace.svelte";
 
@@ -62,7 +70,7 @@
         { learn, where, endpoint, model, keyEnv },
       ),
     ),
-    agent = $derived(allowed.find((card) => akmPlatform(card.id) === plan.learning?.agent)),
+    agent = $derived(allowed.find((card) => akmPlatform(card.id) === plan.learning?.harness)),
     moves = $derived(library && plan.changed),
     work = $derived((cliMissing && wantsCli ? 1 : 0) + pending.length + enabling.length + (moves ? 1 : 0)),
     hostBusy = $derived(busy || Boolean(host && host.phase !== "idle"));
@@ -99,7 +107,7 @@
               ...(learning ? { learning } : {}),
             },
           );
-          const wantedOn = learning?.on ?? next.learning.on;
+          const wantedOn = learning?.on ?? learningRuns(next);
           onconfigured(next);
           use = {};
           where = undefined;
@@ -259,7 +267,7 @@
       <p class="muted">No agent program (Claude Code, Codex or OpenCode) was found on this computer.</p>
     {/each}
 
-    {#if allowed.length || detected.learning.on || plan.on}
+    {#if allowed.length || learningRuns(detected) || plan.on}
       <SetupLearning {detected} {plan} {library} {allowed} bind:learn bind:where bind:endpoint bind:model bind:keyEnv />
     {/if}
 

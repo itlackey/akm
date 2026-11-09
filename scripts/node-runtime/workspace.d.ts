@@ -197,23 +197,22 @@ export namespace setup {
     /** The connection that takes akm's model calls when no agent does, or `null` when none is configured. */
     connection: string | null;
     /**
-     * Background learning: `on` when akm's model calls run somewhere and the config does not switch every learning
-     * process off, so a session-end extract or an improve run could spend quota; `agent` is the platform they run on,
-     * `null` for akm itself or when off.
+     * Background learning: `on` is the host-wide switch alone (`improve.enabled`), not whether anything is set up to
+     * run; `harness` is the platform improve runs on (`null`: a connection, or nowhere); `scheduled` whether the
+     * `improve` task is enabled.
      */
-    learning: { on: boolean; agent: string | null };
+    learning: { on: boolean; harness: string | null; scheduled: boolean };
   }
   /**
    * Create the library, or with `harness` enable those agent programs. `connection` writes the default connection
-   * (the variable's name, never a key). `learning` turns background learning off (each learning process switched off
-   * in the active strategy, the scheduled improve task disabled) or on (those switches cleared, improve sent to
-   * `agent` or else the connection, the task enabled). Returns `detect()` afterwards. Unknown fields are ignored with a warning.
+   * (the variable's name, never a key). `learning` turns background learning off (writes `improve.enabled: false`
+   * and nothing else) or on (removes it, improve sent to `harness` or else the connection, the task enabled). Returns `detect()` afterwards. Unknown fields are ignored with a warning.
    */
   function apply(input: {
     dir?: string;
     harness?: string[];
     connection?: { endpoint: string; model: string; apiKeyEnv?: string };
-    learning?: { on: boolean; agent?: string };
+    learning?: { on: boolean; harness?: string };
   }): Promise<Detected>;
   /** What setup could use on this computer, from the file system, PATH and config only (no network, no writes). */
   function detect(): Promise<Detected>;

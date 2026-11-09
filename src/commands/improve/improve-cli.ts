@@ -21,7 +21,7 @@ import { runJudge } from "../../judges/registry";
 import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/stdout";
 import { readStdin } from "../../runtime";
-import { akmImprove, IMPROVE_TARGET_FLAG, resolveImproveReadSource } from "./improve";
+import { akmImprove, buildLockSkippedResult, IMPROVE_TARGET_FLAG, resolveImproveReadSource } from "./improve";
 import { runImproveReportQuery } from "./improve-report";
 import {
   buildImproveRunId,
@@ -243,6 +243,27 @@ export const improveCommand = defineCommand({
       const effectiveConfig = loadConfig();
       const scopeArg = getStringArg(args, "scope");
       const scopeRef = scopeArg && isFullRefInput(scopeArg) ? parsePlacementRef(scopeArg) : undefined;
+      // The host-wide switch (`akm setup --learning off`): nothing runs, scheduled or by hand, dry run or not.
+      if (effectiveConfig.improve?.enabled === false) {
+        process.stderr.write(
+          "[improve] Background learning is off on this host, so nothing ran. Turn it on with `akm setup --learning on`.\n",
+        );
+        const scope = scopeRef
+          ? { mode: "ref" as const }
+          : scopeArg
+            ? { mode: "type" as const }
+            : { mode: "all" as const };
+        output("improve", {
+          ...buildLockSkippedResult(
+            strategyArg ?? effectiveConfig.improve?.strategy ?? "default",
+            { ...scope, ...(scopeArg ? { value: scopeArg } : {}) },
+            undefined,
+            "learning-off",
+          ),
+          dryRun: Boolean(dryRun),
+        });
+        return;
+      }
       const writeTarget = dryRun
         ? undefined
         : scopeRef

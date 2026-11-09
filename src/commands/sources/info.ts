@@ -12,6 +12,7 @@ import { classifyPathAccess, describeInaccessiblePath } from "../../core/path-ac
 import { getCacheDir, getConfigDir, getDataDir, getDefaultStashDir, getStateDir } from "../../core/paths";
 import { formatRegistryUrl } from "../../core/registry-url";
 import { error } from "../../core/warn";
+import { learningStatus } from "../../setup/learning";
 import type { InfoResponse } from "../../sources/types";
 import type { Database } from "../../storage/database";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
@@ -164,6 +165,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     },
     registries,
     connectionsAndHarnesses: safeTargets(config),
+    learning: safeLearning(config),
     sourceProviders,
     indexStats,
   };
@@ -175,6 +177,15 @@ function safeTargets(config: AkmConfig): TargetRow[] {
     return targetRows({ config });
   } catch {
     return [];
+  }
+}
+
+/** Background learning as the config reads it, or off when it cannot be read: `akm info` never throws. */
+function safeLearning(config: AkmConfig): InfoResponse["learning"] {
+  try {
+    return learningStatus(config);
+  } catch {
+    return { on: false, harness: null, scheduled: false };
   }
 }
 

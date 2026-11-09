@@ -91,11 +91,11 @@ covers beyond the table.
 
 | Command | Tier | Notes |
 | --- | --- | --- |
-| `akm setup` | Stable | The answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10; `--config` and `--probe` are gone (see the table above). |
+| `akm setup` | Stable | The answer flags (`--endpoint`, `--api-key-env`, `--name`, `--harness`, `--embedding`, ...) are new in 0.10; `--config` and `--probe` are gone (see the table above). `--learning on|off` and the `improve.enabled` config key it writes are Experimental for its first release. |
 | `akm index` | Stable | `--export-vectors` and `--import-vectors` are Experimental for their first release; the vector file (`model`, `text_hash`, `embedding`) is their contract, the index file format stays internal. |
 | `akm health` | Evolving | Exit codes are Evolving; report *content* and rendered `md` layout are Experimental — do not script against report layout. |
 | `akm metrics` | Experimental | New in 0.9.28. Report content and JSON shape may change. |
-| `akm info` | Stable | |
+| `akm info` | Stable | The `learning` field is Experimental for its first release. |
 | `akm bundle create` | Stable | |
 | `akm bundle add` | Stable | |
 | `akm bundle list` | Stable | |

@@ -688,6 +688,12 @@ export interface InfoResponse {
    * is reported as held, never its value.
    */
   connectionsAndHarnesses: TargetRow[];
+  /**
+   * Background learning, read from the config alone (nothing is scheduled, probed or written): `on` is the host-wide
+   * switch (`improve.enabled` is not `false`), not whether anything is set up to run; `harness` the platform improve
+   * runs on (`null`: a connection, or nowhere); `scheduled` whether the `improve` task is enabled.
+   */
+  learning: { on: boolean; harness: string | null; scheduled: boolean };
   sourceProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
   indexStats: {
     entryCount: number;

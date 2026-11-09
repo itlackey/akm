@@ -224,7 +224,29 @@ unless `--yes` or `--from` is given.
 | `--embedding-endpoint <url>`, `--embedding-api-key-env <NAME>` | Another endpoint serving the embedding model |
 | `--from <file>` | A config file (JSON or YAML) to merge |
 | `--dir <path>`, `--no-init` | The bundle directory; skip scaffolding it |
+| `--learning <on\|off>` | Background learning, on its own: see [setup --learning](#setup---learning) |
 | `--no-probe` | Offline: nothing is contacted or downloaded. The endpoint's models are not listed, so a connection added this way has no model until `akm models set` names one, and the built-in embedder's runtime and model are downloaded by the first `akm index` |
+
+#### setup --learning
+
+```sh
+akm setup --learning off
+akm setup --learning on
+```
+
+`--learning off` writes `improve.enabled: false` and nothing else; `--learning on` removes that key and nothing else
+(no task, schedule, connection or harness is written). It is one step: no `--yes`, no bundle, no agent program.
+`--yes`, `--no-probe` and `--no-init` are ignored with a warning; any other setup flag is a usage error. The switch is
+per host and covers all bundles. While it is off, every `akm improve` run (scheduled or by hand, `--dry-run` too) and
+`akm proposal extract` do nothing: improve prints one line to stderr and returns `skipped: { reason: "learning-off" }`
+at exit 0. The `improve` task stays scheduled (`akm task enable improve` and `disable` change that). A plugin can hold
+the switch: with Claude's `auto_learning` option off, the plugin turns learning off again at each session start, so
+`--learning on` by hand reverts until the option is on. A process's own `enabled: false` is not touched either way.
+**Experimental** for its first release.
+
+```json
+{ "ok": true, "learning": { "on": false, "harness": null, "scheduled": true } }
+```
 
 The detected defaults are: when no agent program is configured yet, every one
 found on `PATH` is enabled and the first found is the default. If no connection
@@ -385,6 +407,7 @@ Returns a JSON object with:
 | `semanticSearch` | Semantic search status: `mode`, `status`, and optional `reason`/`message` |
 | `registries` | Configured registries |
 | `connectionsAndHarnesses` | The connections, harnesses and work that runs on them, as the rows `akm health` reports under its `connections-and-harnesses` check, without contacting anything: each connection's endpoint and whether its key is held, each harness's platform and whether its binary is on `PATH`, and for each kind of work the connection or harness and model it resolves to |
+| `learning` | Background learning, read from the config alone: `on` (the `improve.enabled` switch, not whether anything is set up to run), `harness` (the platform improve runs on; `null` for a connection or nowhere) and `scheduled` (whether the `improve` task is enabled; the config's word, not the OS scheduler's). **Experimental** for its first release |
 | `sourceProviders` | Configured sources (filesystem, git, website, npm) |
 | `indexStats` | Index stats: `entryCount`, `byType` (per-asset-type breakdown), `links` (declared links per kind with `total` and `unresolved`; absent when the index holds none), `lastBuiltAt`, `hasEmbeddings`, `unreadable` (index.db exists but the filesystem refuses to read it — a permissions problem), `unavailable` (index.db is readable but the SQLite-level read didn't complete: locked by another akm process, a newer layout this akm can't understand, or a corrupt file) |
 

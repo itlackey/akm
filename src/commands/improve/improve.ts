@@ -684,11 +684,12 @@ async function indexAndCollect(run: ImproveRunSetup): Promise<{
   };
 }
 
-/** The envelope for a run skipped because another run holds the lock. */
+/** The envelope for a run that did nothing: another run holds the lock, or background learning is off. */
 export function buildLockSkippedResult(
   strategyName: string,
   scope: ImproveScope,
   runId: string | undefined,
+  reason = "lock-held",
 ): AkmImproveResult {
   return {
     schemaVersion: 2,
@@ -696,7 +697,7 @@ export function buildLockSkippedResult(
     strategy: strategyName,
     scope,
     dryRun: false,
-    skipped: { reason: "lock-held" },
+    skipped: { reason },
     memorySummary: { eligible: 0, derived: 0 },
     plannedRefs: [],
     actions: [],

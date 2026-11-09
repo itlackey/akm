@@ -166,6 +166,23 @@ days (git-tracked and clean ones only), the commit that `akm proposal accept`
 makes in a git-backed bundle, and the end-of-run sync that commits and pushes a
 git-backed bundle (`--no-sync` and `--no-push` turn it off for a run).
 
+## Learning layers
+
+Several things can spend model calls on their own. Core learning is one switch per host, for all bundles: shown by
+`akm info` (`learning`) and set by `akm setup --learning on|off` (the config key `improve.enabled`). The layers below
+follow it or sit beside it.
+
+| Layer | Switch | Model calls |
+| --- | --- | --- |
+| Recall | `AKM_AUTO_CURATE` (plugin) | None |
+| Prompt-time proposal capture | Follows core learning (the plugins read `learning.on` from `akm info`) | Yes, agent work |
+| Session extraction | Follows core learning (the plugins read `learning.on`; `akm proposal extract` itself is a no-op while it is off) | Yes |
+| Scheduled improve | Core learning plus the `improve` task; the run exits doing nothing while learning is off | Yes |
+
+With Claude's `auto_learning` option off, the plugin turns learning off again at each session start, so
+`akm setup --learning on` by hand reverts until the option is on. A person or agent can always author a proposal with
+`akm proposal new` without the flag, whatever the switch says.
+
 ## akm proposal (list, show, diff, accept, reject, reopen, revert)
 
 `akm proposal list` lists pending proposals in the queue. Each proposal is an

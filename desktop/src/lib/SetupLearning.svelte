@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-  import { akmPlatform, type AgentCard, type Detected, type LearnPlan } from "./setup-model";
+  import { akmPlatform, learningRuns, type AgentCard, type Detected, type LearnPlan } from "./setup-model";
 
   let {
     detected,
@@ -46,7 +46,7 @@
   <p class="field-hint">
     Off unless you turn it on. Learning is akm's own model calls (improving assets, judging, and extracting what a
     session taught when it ends), and it uses model quota. Turning it on also schedules akm's improve task.
-    {detected.learning.on ? `Now: on, ${detected.modelCalls.description.replace(/\.$/, "")}.` : "Now: off."}
+    {learningRuns(detected) ? `Now: on, ${detected.modelCalls.description.replace(/\.$/, "")}.` : "Now: off."}
   </p>
   {#if plan.on}
     <fieldset class="learn-where">
