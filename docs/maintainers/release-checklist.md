@@ -78,7 +78,9 @@ release/<version> -f stage=<stage>`), which, on the branch's head:
    targets and migrator, and package acceptance;
 3. builds the package and the standalone binaries as `<version>-<stage>.N`,
    `N` one above the highest already on npm for that release and stage;
-4. publishes them to npm `next` and creates a GitHub prerelease;
+4. publishes them to npm `next` (or to the line's tag, `next-0.10`, when a
+   newer line's prerelease already holds `next`) and creates a GitHub
+   prerelease;
 5. builds AKM Desktop on Linux, macOS and Windows from the tarball it just
    published and attaches the installers to the same release (Desktop shares
    the akm version, tag and changelog, and its beta channel follows GitHub
