@@ -25,8 +25,8 @@ import type { HealthCheckResult } from "./types";
 
 /**
  * Warn when the data dir's total size is more than this many times the
- * combined size of the three live databases (state.db + index.db +
- * logs.db). Chosen so a healthy install (backups roughly comparable to the
+ * combined size of the live databases (state.db + index.db +
+ * logs.db + metrics.db). Chosen so a healthy install (backups roughly comparable to the
  * live working set) stays quiet, while an order-of-magnitude blowup like
  * the 74 GB/4.2 GB (~17x) incident trips it.
  */
@@ -56,7 +56,7 @@ export const MAX_WALK_ENTRIES = 100_000;
  */
 const MIN_TOTAL_BYTES_TO_REPORT = 1_000_000_000;
 
-const LIVE_DB_FILES = ["state.db", "index.db", "logs.db"] as const;
+const LIVE_DB_FILES = ["state.db", "index.db", "logs.db", "metrics.db"] as const;
 
 /**
  * SQLite writes `-wal` and `-shm` beside each database. They are part of the

@@ -13,6 +13,7 @@ import {
 } from "../../storage/state-db-integrity";
 import { resolveImproveStrategy, resolveProcessEnabled } from "../improve/improve-strategies";
 import { resolveProposalQueueTarget } from "../proposal/repository";
+import { type MetricsDbState, metricsDbCheck } from "./metrics-db-check";
 import { type SemanticSearchState, semanticSearchCheck } from "./semantic-search-check";
 import { ACTIVE_RUN_WARN_MS, type HealthCheckResult, type ImproveHealthMetrics, TASK_FAIL_RATE_WARN } from "./types";
 
@@ -39,6 +40,8 @@ export interface HealthCheckContext {
   stateDbFreelist: StateDbFreelistInfo;
   /** What this run's own state.db open applied (every open applies pending migrations). */
   stateDbMigrations: StateDatabaseMigrationReport;
+  /** metrics.db's size, fold range and the fold's lag behind state.db, read once (`metrics-db-check.ts`). */
+  metricsDb: MetricsDbState;
   /** Total task_history rows read in the window. */
   taskRowCount: number;
   /** Fraction of task_history rows in the window whose status is `failed` (0..1, raw). */
@@ -318,6 +321,11 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
     name: "state-db-migrations",
     channel: "hard",
     run: (ctx) => appliedStateMigrationsCheck(ctx.stateDbPath, ctx.stateDbMigrations),
+  },
+  {
+    name: "metrics-db",
+    channel: "hard",
+    run: (ctx) => metricsDbCheck(ctx.metricsDb),
   },
   {
     name: "task-history-read",
