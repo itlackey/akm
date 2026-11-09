@@ -89,3 +89,18 @@ describe("a models.json beside the config", () => {
     }
   });
 });
+
+describe("a connection that still holds an apiKeyFile", () => {
+  test("is told once, and the path never becomes a request field", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      connections: {
+        default: { endpoint: "https://x.test/v1", apiKeyFile: "/run/key", models: { fast: "m" } },
+      },
+    });
+    const warnings = loadWarnings();
+    expect(warnings.filter((warning) => warning.includes("apiKeyFile"))).toHaveLength(1);
+    const target = resolveTarget({ config: loadUserConfig(), layers: [], modelWork: true });
+    expect(JSON.stringify(target)).not.toContain("/run/key");
+  });
+});

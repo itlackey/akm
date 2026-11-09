@@ -75,7 +75,7 @@ describe("current improvement CLI documentation contract", () => {
     const subCommands = improveCommand.subCommands as Record<string, { args?: Record<string, { type?: string }> }>;
     expect(subCommands.report?.args?.run).toMatchObject({ type: "string" });
     expect(subCommands.report?.args?.since).toMatchObject({ type: "string" });
-    expect(subCommands.judge).toBeDefined();
+    expect(subCommands.judge).toBeUndefined();
 
     const section = extractSection(cli, "### improve");
     expect(section).toContain("improve report");
