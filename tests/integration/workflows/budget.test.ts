@@ -359,12 +359,11 @@ describe("budget.max_tokens", () => {
   test("crossing the ceiling aborts an in-flight sibling through the chained AbortController", async () => {
     writeSandboxConfig({
       workflow: { maxConcurrency: 2 },
-      engines: {
-        "test-agent": { kind: "agent", platform: "opencode-sdk" },
+      harnesses: { "test-agent": { platform: "opencode-sdk" } },
+      connections: {
         "test-llm": {
-          kind: "llm",
           endpoint: "http://localhost:1/v1/chat/completions",
-          model: "test-model",
+          models: { default: "test-model" },
           concurrency: 2,
         },
       },
