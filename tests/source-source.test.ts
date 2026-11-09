@@ -468,7 +468,7 @@ describe("isEditable", () => {
     expect(isEditable("/some/random/path/file.sh")).toBe(false);
   });
 
-  test("read-only hits keep a use-oriented action and receive a secondary edit hint", async () => {
+  test("read-only hits receive an edit hint", async () => {
     const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-readonly-hit-"));
     try {
       const filePath = path.join(sourceDir, "knowledge", "guide.md");
@@ -490,8 +490,6 @@ describe("isEditable", () => {
       expect(hit.ref).toBe("team//knowledge/guide");
       expect(hit.editable).toBe(false);
       expect(hit.editHint).toContain("akm clone team//knowledge/guide");
-      expect(hit.action).toContain("akm show team//knowledge/guide");
-      expect(hit.action).not.toContain("clone");
     } finally {
       fs.rmSync(sourceDir, { recursive: true, force: true });
     }

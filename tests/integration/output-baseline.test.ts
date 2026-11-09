@@ -163,7 +163,7 @@ describe("output baseline", () => {
     expect(Object.keys(json.results[0] ?? {})).not.toContain("origin");
   });
 
-  test("search shaped output includes action for local and registry hits", async () => {
+  test("search shaped output has no action for local and registry hits", async () => {
     const stashDir = makeTempDir("akm-output-stash-");
     const registryDir = makeTempDir("akm-output-registry-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
@@ -215,8 +215,9 @@ describe("output baseline", () => {
       const localHit = json.results.find((hit) => hit.type === "script");
       const registryHit = (json.registryHits ?? []).find((hit) => hit.name === "deploy-stash");
 
-      expect(localHit?.action).toBeTruthy();
-      // QA #28: registry brief carries the install ref instead of the action text
+      expect(localHit).toBeDefined();
+      expect(localHit).not.toHaveProperty("action");
+      // QA #28: registry brief carries the install ref
       expect(registryHit).toEqual({
         name: "deploy-stash",
         installRef: "npm:@scope/deploy-stash",

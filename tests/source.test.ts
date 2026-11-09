@@ -142,7 +142,7 @@ describe("source commands and resolution", () => {
     });
   });
 
-  test("akmSearch includes ref, action, and size for local hits", async () => {
+  test("akmSearch includes ref and size for local hits", async () => {
     const stashDir = createTmpDir("akm-stash-");
     const scriptPath = path.join(stashDir, "scripts", "deploy.sh");
     writeFile(scriptPath, "#!/usr/bin/env bash\necho deploy\n");
@@ -155,7 +155,7 @@ describe("source commands and resolution", () => {
       const hit = result.hits.filter(isLocalHit)[0];
 
       expect(hit!.ref).toContain("scripts/deploy.sh");
-      expect(hit!.action).toContain("akm show");
+      expect(hit).not.toHaveProperty("action");
       expect(hit!.size).toBe("small");
     });
   });
@@ -359,7 +359,7 @@ Creates a user.
     });
   });
 
-  test("workflow fragment evidence keeps the executable parent ref and action", async () => {
+  test("workflow fragment evidence keeps the executable parent ref", async () => {
     const stashDir = createTmpDir("akm-stash-");
     const body = Array.from({ length: 500 }, () => "workflow background material").join(" ");
     writeFile(
@@ -385,8 +385,6 @@ Creates a user.
       const hit = (await akmSearch({ query: "workflowfragmentneedle", type: "workflow" })).hits.find(isLocalHit);
       if (!hit) throw new Error("expected a local workflow hit");
       expect(hit.ref).toBe("workflows/release");
-      expect(hit.action).toContain("akm workflow run 'workflows/release'");
-      expect(hit.action).not.toContain("#akm-fragment-");
     });
   });
 

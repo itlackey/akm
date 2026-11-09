@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resetConfigCache } from "../../src/core/config/config";
+import { BRIEF_DESCRIPTION_LIMIT } from "../../src/output/shapes/helpers";
 import { runCliCapture } from "../_helpers/cli";
 import {
   type Cleanup,
@@ -108,7 +109,7 @@ describe("curate command", () => {
     return stashDir;
   }
 
-  test("returns curated JSON with follow-up commands and previews", async () => {
+  test("returns curated JSON with refs", async () => {
     const stashDir = makeStash();
     const output = await runCli(stashDir, ["curate", "release deploy", "--format=json"]);
     const json = JSON.parse(output) as { query: string; results: Array<Record<string, unknown>>; summary: string };
@@ -121,7 +122,7 @@ describe("curate command", () => {
     for (const item of json.results) {
       if (item.source === "local") {
         expect(typeof item.ref).toBe("string");
-        expect(String(item.followUp)).toContain("akm show");
+        expect(item).not.toHaveProperty("followUp");
         expect(item.reason).toBeUndefined(); // only historical items carry a reason (#1482)
       }
     }
@@ -143,14 +144,14 @@ describe("curate command", () => {
     ]);
   });
 
-  test("text output includes direct refs and follow-up commands", async () => {
+  test("text output includes direct refs", async () => {
     const stashDir = makeStash();
     const output = await runCli(stashDir, ["curate", "release deploy", "--format=text"]);
 
     expect(output).toContain('Curated results for "release deploy"');
     expect(output).toContain("[command]");
     expect(output).toContain("commands/release");
-    expect(output).toContain("show: akm show commands/release");
+    expect(output).not.toContain("show: akm show");
   });
 
   test("returns a tip when no curated results are found", async () => {
@@ -189,7 +190,7 @@ describe("curate command", () => {
   });
 
   // ── WS2: --detail / --shape are now effective on curate ─────────────────────
-  test("--detail full projects description on stash items; brief omits it", async () => {
+  test("--detail full projects description on stash items; brief caps it", async () => {
     const stashDir = makeStash();
     const brief = JSON.parse(await runCli(stashDir, ["curate", "release", "--format=json"])) as {
       results: Array<Record<string, unknown>>;
@@ -201,8 +202,9 @@ describe("curate command", () => {
     const fullStash = full.results.find((i) => i.source === "local");
     expect(briefStash).toBeDefined();
     expect(fullStash).toBeDefined();
-    // brief omits description; full carries it (when the item has one).
-    expect(briefStash).not.toHaveProperty("description");
+    // brief carries a short capped description; full carries the whole thing.
+    expect(String(briefStash?.description).length).toBeLessThanOrEqual(BRIEF_DESCRIPTION_LIMIT);
+    expect(briefStash).not.toHaveProperty("followUp");
   });
 
   test("--detail normal trims results to the field set an agent needs", async () => {
@@ -217,8 +219,7 @@ describe("curate command", () => {
     expect(path.isAbsolute(String(stashItem?.path))).toBe(true);
     expect(stashItem).toHaveProperty("editable", true);
     expect(stashItem).not.toHaveProperty("editHint");
-    // but keeps the actionable followUp.
-    expect(String(stashItem?.followUp)).toContain("akm show");
+    expect(stashItem).not.toHaveProperty("followUp");
   });
 
   test("a stopword-padded prompt still finds docker results", async () => {

@@ -67,7 +67,6 @@ export interface SourceSearchHit {
   description?: string;
   tags?: string[];
   size?: SearchHitSize;
-  action?: string;
   score?: number;
   whyMatched?: string[];
   run?: string;
@@ -120,7 +119,6 @@ export interface RegistrySearchResultHit {
   id: string;
   description?: string;
   tags?: string[];
-  action?: string;
   /** Ref to pass to `akm bundle add` to install this hit. */
   installRef?: string;
   score?: number;
