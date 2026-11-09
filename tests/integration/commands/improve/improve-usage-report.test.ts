@@ -54,7 +54,6 @@ function makeEnv(stashDir: string): TestEnv {
   fs.writeFileSync(
     path.join(configDir, "config.json"),
     JSON.stringify({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       connections: { test: { endpoint: "https://example.test/v1/chat/completions", models: { fast: "test" } } },
     }),

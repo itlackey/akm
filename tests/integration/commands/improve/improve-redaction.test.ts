@@ -17,7 +17,6 @@ test("improve failure events redact materialized engine credentials", async () =
         akmImprove({
           stashDir: stash.dir,
           config: {
-            configVersion: "0.9.0",
             semanticSearchMode: "off",
             connections: {
               default: {

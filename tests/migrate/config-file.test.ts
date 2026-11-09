@@ -40,7 +40,7 @@ const llm = (extra: Dict = {}): Dict => ({
 
 function writeConfig(value: Dict): void {
   fs.mkdirSync(path.dirname(getConfigPath()), { recursive: true });
-  fs.writeFileSync(getConfigPath(), `${JSON.stringify({ configVersion: "0.9.0", ...value }, null, 2)}\n`);
+  fs.writeFileSync(getConfigPath(), `${JSON.stringify({ ...value }, null, 2)}\n`);
 }
 
 const readConfig = (): Dict => JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as Dict;
@@ -485,7 +485,7 @@ describe("the entries the reader drops", () => {
   test("are not claimed when an extends base completes them: merged in, so no note and nothing kept as an orphan", () => {
     fs.writeFileSync(
       path.join(path.dirname(getConfigPath()), "base.json"),
-      JSON.stringify({ configVersion: "0.9.0", connections: { lab: { endpoint: "http://lab:8080/v1" } } }),
+      JSON.stringify({ connections: { lab: { endpoint: "http://lab:8080/v1" } } }),
     );
     writeConfig({ extends: "base.json", connections: { lab: { models: { fast: "m" } } } });
 
@@ -512,7 +512,7 @@ describe("a config with extends", () => {
   const dir = (): string => path.dirname(getConfigPath());
   const writeBase = (name: string, value: Dict): void => {
     fs.mkdirSync(path.dirname(path.join(dir(), name)), { recursive: true });
-    fs.writeFileSync(path.join(dir(), name), JSON.stringify({ configVersion: "0.9.0", ...value }));
+    fs.writeFileSync(path.join(dir(), name), JSON.stringify({ ...value }));
   };
   const lab = { endpoint: "http://lab:8080/v1", models: { fast: "base-model" } };
 
@@ -560,10 +560,7 @@ describe("a config with extends", () => {
   test("has a bundle//path base read from the bundle's content root", () => {
     const content = path.join(storage.root, "fleet-bundle");
     fs.mkdirSync(path.join(content, "config"), { recursive: true });
-    fs.writeFileSync(
-      path.join(content, "config", "shared.json"),
-      JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 14 }),
-    );
+    fs.writeFileSync(path.join(content, "config", "shared.json"), JSON.stringify({ archiveRetentionDays: 14 }));
     writeConfig({ extends: "fleet//config/shared.json", bundles: { fleet: { path: content } } });
 
     normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore });
@@ -690,7 +687,6 @@ describe("the retired models.json", () => {
     fs.writeFileSync(
       path.join(path.dirname(getConfigPath()), "base.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         connections: { shared: { endpoint: "http://shared:1/v1", models: { fast: "s-fast" } } },
       }),
     );

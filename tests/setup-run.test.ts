@@ -472,7 +472,7 @@ describe("runSetupWizard", () => {
     };
     fs.writeFileSync(
       DEFAULT_CONFIG_PATH,
-      `${JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off", connections: { default: connection } })}\n`,
+      `${JSON.stringify({ semanticSearchMode: "off", connections: { default: connection } })}\n`,
     );
 
     promptState.selects.push("default", "small", "mid", "big", "off", "done", "json", "brief");
@@ -534,7 +534,6 @@ describe("runSetupWizard", () => {
     fs.writeFileSync(
       DEFAULT_CONFIG_PATH,
       `${JSON.stringify({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         harnesses: { claude: { args: ["--keep"] }, codex: { bin: "/opt/codex" } },
         connections: { default: { endpoint: "https://api.example.test/v1", models: { fast: "m" } } },
@@ -587,7 +586,6 @@ describe("runSetupWizard", () => {
     fs.writeFileSync(
       DEFAULT_CONFIG_PATH,
       `${JSON.stringify({
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         bundles: {
           stash: { path: DEFAULT_STASH_DIR, writable: true },
@@ -634,7 +632,6 @@ describe("runSetupWizard", () => {
     fs.writeFileSync(
       DEFAULT_CONFIG_PATH,
       `${JSON.stringify({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: {
           stash: { path: DEFAULT_STASH_DIR, writable: true },

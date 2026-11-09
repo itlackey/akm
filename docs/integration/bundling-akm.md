@@ -29,7 +29,7 @@ akm migrate apply
 In order, every run applies (or, under `status`/`--dry-run`, plans):
 
 1. **config.json in its current shape** (`configFile`): unknown keys dropped,
-   `configVersion` set, and the `engines` / `defaults` form converted to
+   the 0.9 `configVersion` dropped, and the `engines` / `defaults` form converted to
    `connections` / `harnesses`. Config loading does not convert it (it warns
    and names this command); this writes the conversion under a backup. The API keys a config still holds in any
    form akm no longer reads move to `credentials.json` (`configFile.credentials`

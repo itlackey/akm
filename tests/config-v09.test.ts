@@ -48,29 +48,30 @@ function captureWarnings(run: () => void): string[] {
 }
 
 describe("0.9 config contract", () => {
-  test("a config without configVersion loads silently as 0.9.0 and is not rewritten", () => {
-    writeConfig({ engines: {} });
-    const warnings = captureWarnings(() => {
-      expect(loadUserConfig().configVersion).toBe("0.9.0");
-    });
-    expect(warnings.some((w) => w.includes("configVersion"))).toBe(false);
+  test("a config holding the 0.9 configVersion key, of any value, loads with no warning", () => {
+    for (const version of ["0.9.0", "0.8.0", "99.0.0", 1]) {
+      resetConfigCache();
+      writeConfig({ configVersion: version, output: { detail: "full" } });
+      const warnings = captureWarnings(() => {
+        expect(loadUserConfig().output?.detail).toBe("full");
+      });
+      expect(warnings).toEqual([]);
+      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).configVersion).toBe(version);
+    }
+  });
+
+  test("saveConfig stamps no configVersion", () => {
+    saveConfig({ semanticSearchMode: "off", output: { detail: "full" } } as AkmConfig);
     expect(Object.hasOwn(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")), "configVersion")).toBe(false);
   });
 
-  test("any other configVersion is named once and read as 0.9.0, older or newer, without rewriting the file", () => {
-    for (const version of ["0.8.0", "99.0.0", 1]) {
-      resetConfigCache();
-      writeConfig({ configVersion: version, engines: {} });
-      const warnings = captureWarnings(() => {
-        expect(loadUserConfig().configVersion).toBe("0.9.0");
-        resetConfigCache();
-        loadUserConfig();
-      });
-      const named = warnings.filter((w) => w.includes(`configVersion ${JSON.stringify(version)}`));
-      expect(named).toHaveLength(1);
-      expect(named[0]).toContain("reads it as 0.9.0");
-      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).configVersion).toBe(version);
-    }
+  test("a write leaves a configVersion the file already holds, as it does any key it does not read", () => {
+    writeConfig({ configVersion: "0.9.0", output: { detail: "full" } });
+    mutateConfig((current) => ({ ...current, output: { ...current.output, detail: "normal" } }));
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8"))).toEqual({
+      configVersion: "0.9.0",
+      output: { detail: "normal" },
+    });
   });
 
   test("output.format html is named once, ignored for the default, and the rest of the config still loads", () => {
@@ -89,21 +90,19 @@ describe("0.9 config contract", () => {
     expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).output.format).toBe("html");
   });
 
-  test("akm migrate apply's config step writes configVersion 0.9.0 back", () => {
-    writeConfig({ configVersion: "0.8.0", engines: {} });
+  test("akm migrate apply's config step drops configVersion", () => {
+    writeConfig({ configVersion: "0.9.0", engines: {} });
     const preview = normalizeConfigFile(getConfigPath(), { apply: false });
     expect(preview).toMatchObject({ changed: true, applied: false });
-    expect(preview.keys).toContain("configVersion");
-    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).configVersion).toBe("0.8.0");
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).configVersion).toBe("0.9.0");
 
     expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
-    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).configVersion).toBe("0.9.0");
+    expect(Object.hasOwn(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")), "configVersion")).toBe(false);
     expect(normalizeConfigFile(getConfigPath(), { apply: false }).changed).toBe(false);
   });
 
   test("loads a config with retired profile vocabulary and a literal connection apiKey, never reading the key", () => {
     writeConfig({
-      configVersion: "0.9.0" as const,
       profiles: { llm: {} },
       connections: {
         fast: { endpoint: "https://example.test/v1", models: { fast: "test" }, apiKey: "not-symbolic" },
@@ -118,7 +117,6 @@ describe("0.9 config contract", () => {
 
   test("accepts a $VAR connection key and retains it on save", () => {
     const config = {
-      configVersion: "0.9.0" as const,
       semanticSearchMode: "auto" as const,
       connections: {
         fast: { endpoint: "https://example.test/v1", models: { fast: "test" }, apiKey: `\${FAST_API_KEY}` },
@@ -130,7 +128,6 @@ describe("0.9 config contract", () => {
 
   test("accepts a ${ref} git credential without the literal-key warning", () => {
     writeConfig({
-      configVersion: "0.9.0",
       bundles: { private: { git: "https://git.example.com/private/repo.git", credential: "${team//secrets/gitea}" } },
     });
     const warnings = captureWarnings(() => {
@@ -142,7 +139,6 @@ describe("0.9 config contract", () => {
 
   test("secret://<name> is retired: not read as a reference, named once per key, rewritten only by akm migrate apply", () => {
     writeConfig({
-      configVersion: "0.9.0",
       bundles: {
         private: { git: "https://git.example.com/private/repo.git", credential: "secret://team//secrets/gitea" },
         other: { git: "https://git.example.com/other/repo.git", credential: "secret://other-key" },
@@ -178,7 +174,6 @@ describe("0.9 config contract", () => {
   test("an improve process or judgment may name a connection or harness that is not configured: it is resolved when used", () => {
     expect(
       validateConfigShape({
-        configVersion: "0.9.0",
         improve: {
           strategies: {
             custom: {
@@ -191,7 +186,7 @@ describe("0.9 config contract", () => {
   });
 
   test("permits only $VAR connection apiKey values through config set", () => {
-    const current = { configVersion: "0.9.0", connections: { fast: { endpoint: "https://example.test/v1" } } };
+    const current = { connections: { fast: { endpoint: "https://example.test/v1" } } };
     expect(configSet(current, "connections.fast.apiKey", "$FAST_API_KEY")).toMatchObject({
       connections: { fast: { apiKey: "$FAST_API_KEY" } },
     });
@@ -200,7 +195,6 @@ describe("0.9 config contract", () => {
 
   test("tolerates retired improve process selectors like any unknown key", () => {
     writeConfig({
-      configVersion: "0.9.0",
       improve: { strategies: { default: { processes: { reflect: { profile: "fast", mode: "llm" } } } } },
     });
     expect(() => loadUserConfig()).not.toThrow();
@@ -209,7 +203,6 @@ describe("0.9 config contract", () => {
   test("item 3: incrementalSince and neighborsPerChanged (retired consolidate keys) — one warning, survive a load and an ordinary write, dropped only by akm migrate apply", () => {
     const consolidatePath = ["improve", "strategies", "default", "processes", "consolidate"];
     writeConfig({
-      configVersion: "0.9.0",
       improve: {
         strategies: {
           default: { processes: { consolidate: { incrementalSince: "24h", neighborsPerChanged: 3, limit: 5 } } },
@@ -270,7 +263,7 @@ describe("0.9 config contract", () => {
   });
 
   test("validates improve.strategy against the built-in and configured strategies", () => {
-    const base = { configVersion: "0.9.0" };
+    const base = {};
     expect(validateConfigShape({ ...base, improve: { strategy: "missing" } }).ok).toBe(false);
     expect(validateConfigShape({ ...base, improve: { strategy: "consolidate" } }).ok).toBe(true);
     // Removed in 0.10 (#1130): config load must not fail; resolution refuses it, naming `default`.
@@ -279,7 +272,6 @@ describe("0.9 config contract", () => {
 
   test("accepts a bundles + defaultBundle config (0.9.0 shape, spec §10.1 / D-R5)", () => {
     const ok = validateConfigShape({
-      configVersion: "0.9.0",
       bundles: {
         primary: { path: "/home/u/akm", writable: true },
         catalog: { git: "https://example.test/catalog.git" },
@@ -302,7 +294,6 @@ describe("0.9 config contract", () => {
     ]) {
       expect(
         validateConfigShape({
-          configVersion: "0.9.0",
           bundles: { docs: { website: { url: "https://example.test/docs/", ...options } } },
           defaultBundle: "docs",
         }).ok,
@@ -313,7 +304,6 @@ describe("0.9 config contract", () => {
   test("rejects a half-migrated config carrying bundles alongside the retired source keys", () => {
     for (const legacy of [{ stashDir: "/s" }, { sources: [] }, { installed: [] }]) {
       const res = validateConfigShape({
-        configVersion: "0.9.0",
         bundles: { primary: { path: "/s" } },
         defaultBundle: "primary",
         ...legacy,
@@ -325,22 +315,18 @@ describe("0.9 config contract", () => {
   test("still rejects removed bundle-option runtime compatibility settings", () => {
     expect(
       validateConfigShape({
-        configVersion: "0.9.0",
         bundles: { primary: { path: "/s", options: { pushOnCommit: true } } },
       }).ok,
     ).toBe(false);
   });
 
   test("ignores retired top-level writable and index.stalenessDetection instead of failing config load", () => {
-    expect(validateConfigShape({ configVersion: "0.9.0", writable: true }).ok).toBe(true);
-    expect(validateConfigShape({ configVersion: "0.9.0", index: { stalenessDetection: { enabled: true } } }).ok).toBe(
-      true,
-    );
+    expect(validateConfigShape({ writable: true }).ok).toBe(true);
+    expect(validateConfigShape({ index: { stalenessDetection: { enabled: true } } }).ok).toBe(true);
   });
 
   test("old hint-only keys load and are named once by the unknown-key warning (#1091)", () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: { main: { endpoint: "https://example.test/v1", models: { fast: "test" } } },
       llm: "x",
       agent: "y",
@@ -372,7 +358,6 @@ describe("0.9 config contract", () => {
 
   test("the retired index section: a single warning, an ordinary write keeps it, only akm migrate apply drops it", () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: { index: { endpoint: "https://example.test/v1", models: { fast: "test" } } },
       index: { metadataEnhance: { enabled: true }, connection: "index" },
     });
@@ -400,7 +385,7 @@ describe("0.9 config contract", () => {
   });
 
   test("feedback.allowedFailureModes is retired: a config that sets it still loads with one warning, and only akm migrate apply drops it", () => {
-    writeConfig({ configVersion: "0.9.0", feedback: { requireReason: false, allowedFailureModes: ["incorrect"] } });
+    writeConfig({ feedback: { requireReason: false, allowedFailureModes: ["incorrect"] } });
 
     const warnings = captureWarnings(() => {
       expect(loadUserConfig().feedback?.requireReason).toBe(false);
@@ -426,7 +411,6 @@ describe("0.9 config contract", () => {
       "improve.strategies.default.processes.reflect.lowValueFilter",
     ];
     writeConfig({
-      configVersion: "0.9.0",
       improve: {
         salience: { outcomeWeightEnabled: false, salienceThreshold: 0.8 },
         strategies: {
@@ -470,20 +454,15 @@ describe("0.9 config contract", () => {
 
   test("rejects a bundle key that is not a legal slug and a non-source or multi-source entry", () => {
     // Illegal slug key (contains ':').
-    expect(validateConfigShape({ configVersion: "0.9.0", bundles: { "github:owner/repo": { path: "/s" } } }).ok).toBe(
-      false,
-    );
+    expect(validateConfigShape({ bundles: { "github:owner/repo": { path: "/s" } } }).ok).toBe(false);
     // Zero source descriptors.
-    expect(validateConfigShape({ configVersion: "0.9.0", bundles: { a: { writable: true } } }).ok).toBe(false);
+    expect(validateConfigShape({ bundles: { a: { writable: true } } }).ok).toBe(false);
     // Two source descriptors.
-    expect(
-      validateConfigShape({ configVersion: "0.9.0", bundles: { a: { path: "/s", git: "https://x.test/y.git" } } }).ok,
-    ).toBe(false);
+    expect(validateConfigShape({ bundles: { a: { path: "/s", git: "https://x.test/y.git" } } }).ok).toBe(false);
   });
 
   test("a map key that breaks its naming rule is reported with that rule", () => {
     const result = validateConfigShape({
-      configVersion: "0.9.0",
       bundles: { "a:b": { path: "/s" } },
       improve: { strategies: { Bad: {} } },
     });
@@ -498,7 +477,6 @@ describe("0.9 config contract", () => {
 
   test("resolveConfiguredSources consumes bundles: defaultBundle first, then map insertion order (D-R4/D-R5)", () => {
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       bundles: {
         catalog: { git: "https://example.test/catalog.git" },
@@ -520,17 +498,15 @@ describe("0.9 config contract", () => {
   });
 
   test("rejects defaultBundle that names no bundle", () => {
-    expect(
-      validateConfigShape({ configVersion: "0.9.0", bundles: { a: { path: "/s" } }, defaultBundle: "missing" }).ok,
-    ).toBe(false);
+    expect(validateConfigShape({ bundles: { a: { path: "/s" } }, defaultBundle: "missing" }).ok).toBe(false);
   });
 
   test("ignores a stray top-level bindings block instead of failing config load", () => {
-    expect(validateConfigShape({ configVersion: "0.9.0", bindings: { release: { export: "a//x" } } }).ok).toBe(true);
+    expect(validateConfigShape({ bindings: { release: { export: "a//x" } } }).ok).toBe(true);
   });
 
   test("ignores the retired top-level modelAliases table instead of failing config load", () => {
-    expect(validateConfigShape({ configVersion: "0.9.0", modelAliases: { deep: { pi: "model-b" } } }).ok).toBe(true);
+    expect(validateConfigShape({ modelAliases: { deep: { pi: "model-b" } } }).ok).toBe(true);
   });
 });
 
@@ -539,7 +515,7 @@ describe("the first write on an empty host", () => {
     expect(fs.existsSync(getConfigPath())).toBe(false);
     mutateConfig((current) => ({ ...current, output: { ...current.output, detail: "normal" } }));
     const saved = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
-    expect(saved).toEqual({ configVersion: saved.configVersion, output: { detail: "normal" } });
+    expect(saved).toEqual({ output: { detail: "normal" } });
     expect(Object.hasOwn(saved, "registries")).toBe(false);
     expect(Object.hasOwn(saved, "semanticSearchMode")).toBe(false);
     expect(loadUserConfig().registries?.length).toBeGreaterThan(0);
@@ -577,7 +553,6 @@ describe("config set: JSON for string-or-array keys", () => {
 describe("the retired defaultWriteTarget key", () => {
   const withRetiredKey = () =>
     writeConfig({
-      configVersion: "0.9.0",
       bundles: { mine: { path: "/tmp/akm-mine", writable: true }, other: { path: "/tmp/akm-other", writable: true } },
       defaultBundle: "mine",
       defaultWriteTarget: "other",
@@ -604,7 +579,6 @@ describe("the retired defaultWriteTarget key", () => {
 
   test("migrate apply drops it without a note when it named defaultBundle", () => {
     writeConfig({
-      configVersion: "0.9.0",
       bundles: { mine: { path: "/tmp/akm-mine", writable: true } },
       defaultBundle: "mine",
       defaultWriteTarget: "mine",

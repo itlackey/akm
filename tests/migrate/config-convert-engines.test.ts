@@ -27,7 +27,7 @@ const llm = (extra: Dict = {}): Dict => ({
 });
 
 function convert(raw: Dict, options: Parameters<typeof convertEngineConfig>[1] = {}) {
-  return convertEngineConfig({ configVersion: "0.9.0", ...raw }, options);
+  return convertEngineConfig({ ...raw }, options);
 }
 
 describe("engines.<n> kind llm → connections.<n>", () => {
@@ -990,7 +990,6 @@ describe("what a strategy no longer decides, and per-process names", () => {
 describe("what is already current is left alone", () => {
   test("a config in the new form is returned as it is, unchanged", () => {
     const raw = {
-      configVersion: "0.9.0",
       connections: { default: { endpoint: "http://x/v1", models: { fast: "m" } } },
     };
     const result = convertEngineConfig(raw);
@@ -1037,7 +1036,7 @@ describe("what is already current is left alone", () => {
   });
 
   test("the converter does not modify its input", () => {
-    const raw = { configVersion: "0.9.0", engines: { lab: llm() }, defaults: { llmEngine: "lab" } };
+    const raw = { engines: { lab: llm() }, defaults: { llmEngine: "lab" } };
     const snapshot = structuredClone(raw);
     convertEngineConfig(raw);
     expect(raw).toEqual(snapshot);
@@ -1066,7 +1065,6 @@ describe("akm migrate apply writes the converted config", () => {
 
   test("dropping nothing it could carry over", () => {
     writeConfig({
-      configVersion: "0.9.0",
       engines: { lab: llm({ apiKey: "$LAB_KEY", temperature: 0.2 }), claude: { kind: "agent", platform: "claude" } },
       defaults: { llmEngine: "lab", improveStrategy: "default" },
     });

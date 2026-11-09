@@ -14,7 +14,6 @@ import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/war
 import { freezeWorkflow } from "../_helpers/workflow";
 
 const CONFIG = {
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
   harnesses: { oc: { platform: "opencode", args: ["run", "--model", "krang/chat/qwen3.8-27b"] } },
 } as const satisfies AkmConfig;

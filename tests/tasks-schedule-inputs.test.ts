@@ -279,7 +279,6 @@ describe("a scheduled run's compiled invocation tail delivers schedule-supplied 
   function setUp(): void {
     storage = withIsolatedAkmStorage();
     const base = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { fixture: { path: storage.stashDir, writable: true } },
       defaultBundle: "fixture",

@@ -90,7 +90,7 @@ describe.each(HARNESS_REGISTRY.map((h) => [h.id, h] as const))("harness contract
 
   test("the config schema accepts it as a harness platform", () => {
     expect(VALID_HARNESS_IDS as readonly string[]).toContain(id);
-    expect(validateConfigShape({ configVersion: "0.9.0", harnesses: { e: { platform: id } } }).ok).toBe(true);
+    expect(validateConfigShape({ harnesses: { e: { platform: id } } }).ok).toBe(true);
   });
 
   test("a session-log provider, when there is one, names this harness; a detection dir needs one", () => {

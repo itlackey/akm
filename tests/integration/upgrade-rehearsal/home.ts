@@ -175,7 +175,6 @@ export async function buildHome(oldLauncher: string, oldVersion: string, root: s
     configPath,
     `${JSON.stringify(
       {
-        configVersion: "0.9.0",
         bundles: { stash: { path: stashDir } },
         defaultBundle: "stash",
         semanticSearchMode: "off",

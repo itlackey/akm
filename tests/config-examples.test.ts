@@ -21,9 +21,9 @@ describe("the example configs load unchanged and validate", () => {
 
   test.each(["1-basic", "2-harness", "3-power"])("%s.jsonc", (name) => {
     const raw = JSON.parse(stripJsonComments(fs.readFileSync(path.join(examples, `${name}.jsonc`), "utf8"))) as Dict;
-    expect(AkmConfigSchema.safeParse({ configVersion: "0.9.0", semanticSearchMode: "off", ...raw }).success).toBe(true);
+    expect(AkmConfigSchema.safeParse({ semanticSearchMode: "off", ...raw }).success).toBe(true);
     // Every key is one akm reads or a request field.
-    expect(unknownConfigKeyPaths({ configVersion: "0.9.0", ...raw })).toEqual([]);
+    expect(unknownConfigKeyPaths({ ...raw })).toEqual([]);
   });
 
   test.each([

@@ -48,7 +48,6 @@ async function acceptedContent(stash: string): Promise<string> {
 
 function distillConfig(stash: string, qualityGate: boolean): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",

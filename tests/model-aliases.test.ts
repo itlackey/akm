@@ -28,7 +28,7 @@ const LAB = {
 };
 
 function configOf(extra: Record<string, unknown> = {}): AkmConfig {
-  return { configVersion: "0.9.0", semanticSearchMode: "off", connections: { default: LAB }, ...extra } as AkmConfig;
+  return { semanticSearchMode: "off", connections: { default: LAB }, ...extra } as AkmConfig;
 }
 
 const REFLECT_AND_TRIAGE = {

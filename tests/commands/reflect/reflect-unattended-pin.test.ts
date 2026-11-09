@@ -47,7 +47,6 @@ function fakeAgent(platform = "claude", replies: readonly string[] = [""]): { bi
 /** Config whose reflect process resolves a TOOL-CAPABLE (harness) runner. */
 function agentModeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
   return {
-    configVersion: "0.9.0",
     connections: { "pin-target": { endpoint: "http://127.0.0.1:9", models: { fast: "pin-model" } } },
     harnesses: { "fake-agent": { platform: "claude", bin: "fake-agent" } },
     improve: {
@@ -115,7 +114,6 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
     const stash = makeStashDir();
     let chatConnection: ChatCompletionConfig | undefined;
     const config: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       connections: {
         default: { endpoint: "http://127.0.0.1:9", models: { fast: "default-model" } },

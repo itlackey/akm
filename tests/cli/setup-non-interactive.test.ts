@@ -106,7 +106,7 @@ describe("akm setup against a config akm 0.9 cannot load", () => {
 
   test("--yes refuses a schema-invalid config with a setup-specific, actionable hint", async () => {
     const configPath = getConfigPath();
-    const original = '{"configVersion":"0.9.0","bundles":{"primary":{"path":42}}}\n';
+    const original = '{"bundles":{"primary":{"path":42}}}\n';
     fs.writeFileSync(configPath, original);
 
     const { code, stderr } = await runCliCapture(["setup", "--yes"]);
@@ -137,7 +137,7 @@ describe("akm setup against a config akm 0.9 cannot load", () => {
 
   test("every non-interactive entry point refuses before doing any work", async () => {
     const configPath = getConfigPath();
-    fs.writeFileSync(configPath, '{"configVersion":"0.9.0","bundles":{"primary":{"path":42}}}\n');
+    fs.writeFileSync(configPath, '{"bundles":{"primary":{"path":42}}}\n');
 
     for (const args of [
       ["setup", "--yes"],
@@ -152,7 +152,7 @@ describe("akm setup against a config akm 0.9 cannot load", () => {
 
   test("never creates a bundle directory or writes a config backup", async () => {
     const configPath = getConfigPath();
-    fs.writeFileSync(configPath, '{"configVersion":"0.9.0","bundles":{"primary":{"path":42}}}\n');
+    fs.writeFileSync(configPath, '{"bundles":{"primary":{"path":42}}}\n');
     const stash = path.join(process.env.HOME as string, "akm");
 
     await runCliCapture(["setup", "--yes"]);

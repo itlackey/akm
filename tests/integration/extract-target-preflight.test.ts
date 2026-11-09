@@ -50,7 +50,6 @@ function extractStrategy(enabled: boolean) {
 /** A config that registers `bundles` and turns extraction on or off. */
 function configWith(bundles: Record<string, { path: string; writable: boolean }> | undefined, enabled = true) {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     ...(bundles ? { bundles, defaultBundle: Object.keys(bundles)[0] } : {}),
     connections: CONNECTION,

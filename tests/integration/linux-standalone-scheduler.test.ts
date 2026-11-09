@@ -125,7 +125,7 @@ test.skipIf(!ENABLED)(
     );
     fs.writeFileSync(
       path.join(configHome, "akm", "config.json"),
-      `${JSON.stringify({ configVersion: "0.9.0", bundles: { stash: { path: stashDir } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
+      `${JSON.stringify({ bundles: { stash: { path: stashDir } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
       { mode: 0o600 },
     );
 
@@ -250,7 +250,7 @@ test.skipIf(!ENABLED)("the compiled binary runs its embedded migrator exactly on
   }
   fs.writeFileSync(
     path.join(configHome, "akm", "config.json"),
-    `${JSON.stringify({ configVersion: "0.9.0", bundles: { stash: { path: stashDir } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
+    `${JSON.stringify({ bundles: { stash: { path: stashDir } }, defaultBundle: "stash", semanticSearchMode: "off" })}\n`,
     { mode: 0o600 },
   );
   fs.writeFileSync(

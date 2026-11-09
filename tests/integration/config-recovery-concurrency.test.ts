@@ -55,7 +55,6 @@ describe("raw recovery startup", () => {
     const stash = path.join(process.env.HOME as string, "migrate-source");
     fs.mkdirSync(stash, { recursive: true });
     const config = `${JSON.stringify({
-      configVersion: "0.9.0",
       bundles: { primary: { path: stash, writable: true } },
       defaultBundle: "primary",
       retiredKeyForTest: true,
@@ -79,9 +78,7 @@ describe("raw recovery startup", () => {
   });
 
   test("setup rejects a config that fails to load before creating the stash or backup", async () => {
-    // configVersion alone no longer blocks anything (any value is read as
-    // current, with a warning) — a schema-invalid field is what still makes
-    // the config fail to load.
+    // A schema-invalid field is what makes the config fail to load.
     fs.writeFileSync(getConfigPath(), '{"bundles":{"primary":{"path":42,"writable":true}}}\n');
     const stash = path.join(process.env.HOME as string, "akm");
     expect(() => assertSetupConfigPreflight()).toThrow(/`akm setup` cannot run/);

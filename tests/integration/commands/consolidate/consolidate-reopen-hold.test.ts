@@ -62,7 +62,6 @@ beforeEach(() => {
   storage = withIsolatedAkmStorage();
   stash = storage.stashDir;
   config = {
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",

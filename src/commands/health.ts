@@ -35,7 +35,6 @@ import {
   runPendingStateMigrationsCheck,
   SESSION_EXTRACTION_LEDGER_WINDOW_DAYS,
 } from "./health/checks";
-import { collectConfigSkewAdvisory } from "./health/config-skew";
 import { runConnectionsAndHarnessesCheck } from "./health/connections-and-harnesses-check";
 import { collectDataDirUsageAdvisory } from "./health/data-dir-usage";
 import { collectEgressAdvisory, type EgressConfigView } from "./health/egress";
@@ -369,8 +368,7 @@ function gatherSessionExtractionLedgerPhase(
 
 /**
  * The best-effort advisory groups beyond the health-check registry: the
- * `stash-git-exposure` probe, the 08 surfaces group (binary-config-skew,
- * egress-endpoints), `type-directory-disagreement` (#831), `data-dir-usage`
+ * `stash-git-exposure` probe, the 08 surfaces group (egress-endpoints), `type-directory-disagreement` (#831), `data-dir-usage`
  * (#896), and `plugin-version` (itlackey/akm#832). Order matches emission
  * order in the returned array. A probe/filesystem failure in any try/catch
  * must not abort the health report — each group degrades to "no advisory"
@@ -415,12 +413,10 @@ function gatherAncillaryAdvisories(
     }
   }
 
-  // 08 surfaces: the remaining read-only advisory group (binary-config-skew,
-  // egress-endpoints). Best-effort — a filesystem probe failure must not abort
+  // 08 surfaces: the remaining read-only advisory group
+  // (egress-endpoints). Best-effort — a filesystem probe failure must not abort
   // the health report.
   try {
-    const configSkew = collectConfigSkewAdvisory(getConfigPath());
-    if (configSkew) advisories.push(configSkew);
     const egress = collectEgressAdvisory(egressConfigView);
     if (egress) advisories.push(egress);
   } catch {

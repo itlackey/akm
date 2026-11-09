@@ -48,7 +48,7 @@ function writeRawConfig(configPath: string, content: string): void {
 }
 
 function writeCurrentConfig(value: Record<string, unknown>): void {
-  writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", ...value }));
+  writeRawConfig(getConfigPath(), JSON.stringify({ ...value }));
 }
 
 function captureWarnings(fn: () => void): string[] {
@@ -276,7 +276,7 @@ describe("loadConfig", () => {
     ["installed", [{ id: "npm:left-pad", source: "npm", ref: "npm:left-pad" }]],
     ["stashDir", "/legacy-stash"],
   ])("refuses the pre-0.9 `%s` key, naming akm migrate apply under akm 0.9.x", (key, value) => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", [key]: value }));
+    writeRawConfig(getConfigPath(), JSON.stringify({ [key]: value }));
 
     expect(() => loadConfig()).toThrow(
       new RegExp(`${key}: .*predates akm 0\\.9\\.32.*akm-cli@0\\.9\\.32 && akm migrate apply`),
@@ -289,7 +289,6 @@ describe("loadConfig", () => {
 describe("saveConfig", () => {
   test("writes formatted JSON to config.json", () => {
     const config = {
-      configVersion: "0.9.0" as const,
       semanticSearchMode: "off" as const,
       bundles: { extra: { path: "/extra" } },
     };
@@ -331,7 +330,6 @@ describe("saveConfig", () => {
 
     expect(fs.existsSync(latestPath)).toBe(true);
     expect(JSON.parse(fs.readFileSync(latestPath, "utf8"))).toEqual({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
     });
 
@@ -914,12 +912,6 @@ describe("embedding profile config", () => {
 });
 
 describe("0.9 config shape parsing", () => {
-  test("parses configVersion", () => {
-    writeCurrentConfig({});
-    const loaded = loadConfig();
-    expect(loaded.configVersion).toBe("0.9.0");
-  });
-
   test("parses harnesses by platform name, with platform for a second install", () => {
     writeCurrentConfig({
       harnesses: {
@@ -1110,20 +1102,20 @@ describe("0.9 config shape parsing", () => {
 describe("a config that still sets extends", () => {
   test("is refused, naming `akm migrate apply`", () => {
     const dir = path.dirname(getConfigPath());
-    writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 7 }));
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
+    writeRawConfig(path.join(dir, "base.json"), JSON.stringify({ archiveRetentionDays: 7 }));
+    writeRawConfig(getConfigPath(), JSON.stringify({ extends: "./base.json" }));
 
     expect(() => loadConfig()).toThrow(/"extends" is no longer supported.*akm migrate apply/s);
   });
 
   test("is refused even when the base does not exist", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./does-not-exist.json" }));
+    writeRawConfig(getConfigPath(), JSON.stringify({ extends: "./does-not-exist.json" }));
 
     expect(() => loadConfig()).toThrow(/akm migrate apply/);
   });
 
   test("is refused by a write too, and the file is not changed", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
+    writeRawConfig(getConfigPath(), JSON.stringify({ extends: "./base.json" }));
     const before = fs.readFileSync(getConfigPath(), "utf8");
 
     expect(() => updateConfig({ output: { detail: "full" } })).toThrow(/akm migrate apply/);
@@ -1161,7 +1153,7 @@ describe("getConfigValueSource", () => {
   });
 
   test("reports 'default' for a key the local file does not set", () => {
-    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0" }));
+    writeRawConfig(getConfigPath(), JSON.stringify({}));
     expect(getConfigValueSource("archiveRetentionDays")).toBe("default");
   });
 });

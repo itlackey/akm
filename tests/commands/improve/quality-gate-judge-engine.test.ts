@@ -186,7 +186,6 @@ describe("a quality gate's judge is checked when it resolves, not when the confi
 
   function gateErrors(gate: Record<string, unknown>): string[] {
     const result = validateConfigShape({
-      configVersion: "0.9.0",
       connections: reviewers,
       harnesses: { reviewer: { platform: "pi" }, confined: { platform: "claude" } },
       improve: { qualityGate: gate },

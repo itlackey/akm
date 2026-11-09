@@ -6,22 +6,17 @@ AKM reads one user configuration file: `$XDG_CONFIG_HOME/akm/config.json`
 directory. Project `.akm/config.json` files are not merged. There is no config
 inheritance: `extends` is retired (see "Config inheritance (`extends`)" below).
 
-## Version 0.9
+## Shape
 
-`configVersion` is `"0.9.0"`, the only value akm has ever shipped. It is
-read, never gated on: a file without the field loads silently, and a file
-declaring any other value is named once on stderr (`config.json declares
-configVersion "X"; this release reads it as 0.9.0.`) and read as the
-current shape anyway — nothing is rewritten on disk. The next config write
-(`akm config set`, etc.) and `akm migrate apply`'s config step both persist
-`"0.9.0"`, which silences the note. When a newer akm wrote the shared
-config, `akm health`'s `binary-config-skew` advisory is what says so. Pre-0.9
+There is no config version field. akm 0.9 wrote `configVersion: "0.9.0"`; this
+release ignores it silently and writes none. An ordinary write
+(`akm config set`, etc.) leaves a `configVersion` the file already holds as it
+is; `akm migrate apply`'s config step drops it. Pre-0.9
 config and database layouts are not runtime inputs. Historical task sources
 are handled by `akm migrate` (which `akm upgrade` also runs); ordinary runtime code reads only the current shape.
 
 ```jsonc
 {
-  "configVersion": "0.9.0",
   "connections": {
     "default": {
       "endpoint": "http://localhost:11434/v1",
@@ -1052,8 +1047,7 @@ Object values passed to `config set` deep-merge with their current value.
 Arrays replace, `null` is only valid for nullable fields, and `config unset` is
 the only deletion operation. It removes the named key and nothing else: a
 parent object left empty stays, because `harnesses.opencode: {}` is how a
-harness is enabled. `configVersion` cannot be set or unset with the generic
-walker.
+harness is enabled.
 
 `config get <key> --show-source` wraps the (redacted) value as
 `{ value, source }`, where `source` is `"local"` when the local file's own

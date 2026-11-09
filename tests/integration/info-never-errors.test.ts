@@ -230,7 +230,6 @@ describe("akm info --format text renders the degrade fields too (a10-info)", () 
       fs.writeFileSync(
         configPath,
         JSON.stringify({
-          configVersion: "0.9.0",
           semanticSearchMode: "off",
           bundles: { main: { path: "/nonexistent/definitely-not-here" } },
           defaultBundle: "main",

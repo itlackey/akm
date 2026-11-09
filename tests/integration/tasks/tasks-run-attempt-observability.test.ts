@@ -132,8 +132,8 @@ describe("tasks run attempt observability", () => {
   });
 
   for (const [label, config, code] of [
-    ["malformed", '{"configVersion":', "INVALID_CONFIG_FILE"],
-    ["schema-invalid", '{"configVersion":"0.9.0","bundles":{"primary":{"path":42}}}', "INVALID_CONFIG_FILE"],
+    ["malformed", '{"bundles":', "INVALID_CONFIG_FILE"],
+    ["schema-invalid", '{"bundles":{"primary":{"path":42}}}', "INVALID_CONFIG_FILE"],
   ] as const) {
     test(`${label} config fails before task-history or log mutation`, async () => {
       writeRawConfig(config);
@@ -297,7 +297,6 @@ describe("tasks run attempt observability", () => {
     );
     writeRawConfig(
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );

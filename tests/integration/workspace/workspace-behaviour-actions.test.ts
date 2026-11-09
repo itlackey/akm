@@ -262,10 +262,9 @@ describe("bundle settings and config", () => {
     expect(saved.connections.default.apiKey).toBe("$AKM_UI_TEST_KEY");
     expect(saved.someToken).toBe(PLANTED_CONFIG_TOKEN);
     expect(saved.unrelated).toEqual({ keep: [1, "two"] });
-    // Schema errors, literal API keys and configVersion are refused, and nothing is written.
+    // Schema errors and literal API keys are refused, and nothing is written.
     await expectUsage(() => config.change({ set: { "output.detail": "loud" } }));
     await expectUsage(() => config.change({ set: { "connections.default.apiKey": "sk-literal" } }));
-    await expectUsage(() => config.change({ set: { configVersion: "1" } }));
     await expectUsage(() => config.change({ set: { semanticSearchMode: 1 } } as never));
     expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).output.detail).toBe("full");
     expect(config.change({ unset: ["output.detail"] })).toEqual({ saved: true });
@@ -380,10 +379,7 @@ describe("bundle settings and config", () => {
   test("config unset refuses an entry akm ignores, and does nothing without a config file", async () => {
     await seed();
     const configPath = getConfigPath();
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({ configVersion: "0.9.0", connections: { draft: { models: { fast: "m" } } } }),
-    );
+    fs.writeFileSync(configPath, JSON.stringify({ connections: { draft: { models: { fast: "m" } } } }));
     resetConfigCache();
     const before = fs.readFileSync(configPath, "utf8");
     await expectUsage(

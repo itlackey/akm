@@ -56,7 +56,6 @@ describe("akmConsolidate — all-hot chunk", () => {
   test("nothing configured does not eagerly create consolidation state", async () => {
     writeMemory("cold-a", { hot: false });
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
@@ -77,7 +76,6 @@ describe("akmConsolidate — all-hot chunk", () => {
     writeMemory("cold-a", { hot: false });
     writeMemory("cold-b", { hot: false });
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
@@ -131,7 +129,6 @@ describe("akmConsolidate — all-hot chunk", () => {
     writeMemory("hot-a", { hot: true });
     writeMemory("hot-b", { hot: true });
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",

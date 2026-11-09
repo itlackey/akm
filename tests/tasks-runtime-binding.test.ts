@@ -47,7 +47,6 @@ function writeTask(stashDir: string): void {
 
 function configureStash(stashDir: string): void {
   const base = {
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",

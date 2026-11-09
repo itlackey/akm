@@ -52,7 +52,6 @@ test("the hard-kill hook persists a terminated improve run with reason budget_ex
     },
     async () => {
       writeSandboxConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         connections: { ready: { endpoint: "https://example.test/v1/chat/completions", models: { fast: "m" } } },
       });

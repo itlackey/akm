@@ -118,7 +118,7 @@ function writeStash(): void {
 beforeEach(() => {
   storage = withIsolatedAkmStorage();
   resetConfigCache();
-  fs.writeFileSync(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off" }));
+  fs.writeFileSync(getConfigPath(), JSON.stringify({ semanticSearchMode: "off" }));
 });
 
 afterEach(() => {

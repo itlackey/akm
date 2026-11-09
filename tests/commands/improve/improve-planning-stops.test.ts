@@ -45,7 +45,7 @@ function freshEnv(stashDir: string): { env: Record<string, string>; roots: strin
   };
 }
 
-const NOTHING = { configVersion: "0.9.0", semanticSearchMode: "off" } as const;
+const NOTHING = { semanticSearchMode: "off" } as const;
 const ONE_CONNECTION = {
   ...NOTHING,
   connections: { default: { endpoint: "http://127.0.0.1:1/v1", models: { fast: "m", balanced: "m", reasoning: "m" } } },

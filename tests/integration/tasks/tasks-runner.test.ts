@@ -940,7 +940,6 @@ describe("runTask — command target", () => {
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         connections: {
           main: {
             endpoint: "https://api.example.com/v1/chat/completions",
@@ -1063,7 +1062,6 @@ describe("runTask — prompt target", () => {
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );
@@ -1101,7 +1099,6 @@ describe("runTask — prompt target", () => {
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );
@@ -1145,7 +1142,6 @@ describe("runTask — prompt target", () => {
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );
@@ -1193,7 +1189,6 @@ describe("runTask — prompt target", () => {
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: {
           reviewer: {
             platform: "opencode",
@@ -1224,7 +1219,6 @@ describe("runTask — prompt target", () => {
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );
@@ -1257,7 +1251,6 @@ describe("runTask — prompt target", () => {
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );
@@ -1307,7 +1300,6 @@ describe("runTask — prompt target", () => {
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         harnesses: { opencode: { platform: "opencode" } },
       }),
     );

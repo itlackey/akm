@@ -84,7 +84,6 @@ async function runSync(
   fs.writeFileSync(
     path.join(config, "akm", "config.json"),
     JSON.stringify({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: opts.bundles ?? {},
       ...(opts.defaultBundle ? { defaultBundle: opts.defaultBundle } : {}),
@@ -461,7 +460,6 @@ exec "${real}" "$@"
     fs.writeFileSync(
       path.join(config, "akm", "config.json"),
       JSON.stringify({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: { ...extraBundles, priv: { git: URL, writable: true, credential } },
       }),

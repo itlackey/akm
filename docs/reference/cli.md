@@ -2265,7 +2265,7 @@ akm 0.9.32 and later wrote so the CLI proper reads only current schemas. A
 runs. The steps, in order:
 
 1. config.json rewritten in its current shape (`configFile`): unknown keys
-   dropped, `configVersion` bumped, and the `engines` / `defaults` form converted
+   dropped (the 0.9 `configVersion` among them), and the `engines` / `defaults` form converted
    to `connections` / `harnesses` — a conversion only this command makes: akm
    reads only the current shape, and a load names a retired form and points
    here. It is written under a backup. The keys akm no

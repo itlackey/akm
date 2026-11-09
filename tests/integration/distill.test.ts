@@ -64,7 +64,6 @@ function durableRef(stashDir: string, type: string, name: string): string {
 
 function distillConfig(stashDir: string, distill: Record<string, unknown>): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",

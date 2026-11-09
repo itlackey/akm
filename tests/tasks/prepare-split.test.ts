@@ -61,7 +61,7 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 const RUNTIME_V3_FILE = path.join(ROOT, "src/tasks/runtime-v3.ts");
 
 /** No `config.engines`/`defaults` needed — the shell/`run:` arm never reads them. */
-const config: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "off" };
+const config: AkmConfig = { semanticSearchMode: "off" };
 
 const sandboxes: SandboxedDir[] = [];
 afterEach(() => {

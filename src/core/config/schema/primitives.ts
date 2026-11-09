@@ -21,9 +21,6 @@ z.config({
     issue.code === "invalid_key" ? issue.issues.map((inner) => inner.message).join("; ") : undefined,
 });
 
-/** Persisted config schema version. Package prerelease/patch versions do not change this value. */
-export const CURRENT_CONFIG_VERSION = "0.9.0" as const;
-
 // ── Reusable atomic schemas ─────────────────────────────────────────────────
 
 /** Positive integer (used for tokens, timeouts, batch sizes). */

@@ -18,7 +18,7 @@ import { parseTimeout, resolveTarget } from "../src/integrations/agent/resolutio
 import type { ConnectionRunner, HarnessRunner } from "../src/integrations/agent/runner";
 import { overrideSeam } from "./_helpers/seams";
 
-const configOf = (parts: Record<string, unknown>): AkmConfig => ({ configVersion: "0.9.0", ...parts }) as AkmConfig;
+const configOf = (parts: Record<string, unknown>): AkmConfig => ({ ...parts }) as AkmConfig;
 
 const lab = {
   endpoint: "http://lab:8080/v1",

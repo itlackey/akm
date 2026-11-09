@@ -73,7 +73,7 @@ async function runCliAsync(stashDir: string, args: string[], config?: Record<str
   // blocked/offline fetch emits "Embedding generation failed" on stderr,
   // tripping the stderr-cleanliness check below. This test suite pins output
   // shapes, not semantic ranking.
-  writeConfig(xdgConfig, { configVersion: "0.9.0", semanticSearchMode: "off", ...(config ?? {}) });
+  writeConfig(xdgConfig, { semanticSearchMode: "off", ...(config ?? {}) });
 
   const child = spawn("bun", [CLI, ...args], {
     stdio: ["ignore", "pipe", "pipe"],
@@ -129,7 +129,7 @@ describe("output baseline", () => {
       path.join(stashDir, "memories", "incident.md"),
       "---\ndescription: An incident\nxrefs:\n  - knowledge/guide\n  - knowledge/missing\n---\n\nFollow guide.\n",
     );
-    const config = { configVersion: "0.9.0", semanticSearchMode: "off" };
+    const config = { semanticSearchMode: "off" };
     runCli(stashDir, ["index"], config, envDirs);
 
     const human = JSON.parse(runCli(stashDir, ["show", "memories/incident", "--format=json"], config, envDirs));
@@ -152,7 +152,7 @@ describe("output baseline", () => {
     const stashDir = makeTempDir("akm-output-stash-");
     writeFile(path.join(stashDir, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
 
-    const config = { configVersion: "0.9.0", output: { format: "text", detail: "normal" } };
+    const config = { output: { format: "text", detail: "normal" } };
     const configDriven = runCli(stashDir, ["search", "deploy"], config);
     expect(configDriven).toContain("score:");
 
@@ -204,7 +204,6 @@ describe("output baseline", () => {
         stashDir,
         ["search", "deploy", "--format=json", "--detail=brief", "--from=all"],
         {
-          configVersion: "0.9.0",
           registries: [{ url: `http://127.0.0.1:${address.port}/index.json` }],
         },
       );

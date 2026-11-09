@@ -30,7 +30,6 @@ import type { AgentProfile } from "../../src/integrations/agent/profiles";
  */
 export function quietQualityGateConfig(bin = "fake-agent"): AkmConfig {
   return {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     harnesses: {
       "fake-agent": { platform: "gemini", bin },

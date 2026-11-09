@@ -23,7 +23,6 @@ test("improve dedupes safe lowering notices through JSON and text output", async
   const secret = "IMPROVE-NOTICE-SECRET";
   try {
     const config: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { stash: { path: stash.dir, writable: true } },
       defaultBundle: "stash",

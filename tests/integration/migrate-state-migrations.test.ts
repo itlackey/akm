@@ -69,7 +69,6 @@ function writeLegacySourceShapeConfig(configDir: string, stashDir: string): stri
   fs.writeFileSync(
     configPath,
     JSON.stringify({
-      configVersion: "0.9.0",
       stashDir,
       sources: [{ type: "git", url: "https://example.com/team.git", name: "team" }],
     }),
@@ -83,7 +82,6 @@ function writeRetiredConfigKeysConfig(configDir: string): string {
   fs.writeFileSync(
     configPath,
     JSON.stringify({
-      configVersion: "0.9.0",
       llm: { model: "gpt-4" },
       experimental: { improveAutonomy: true, workflowEngine: true },
     }),

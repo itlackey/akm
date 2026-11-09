@@ -51,7 +51,6 @@ const CONNECTIONS = {
 describe("improve.model and improve.timeoutMs are named keys", () => {
   test("they load with no unknown-key warning and read back through config get", () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: CONNECTIONS,
       improve: { model: "big", timeoutMs: 90_000 },
     });
@@ -63,7 +62,6 @@ describe("improve.model and improve.timeoutMs are named keys", () => {
 
   test("improve.* is the base every model-work call starts from, and a process entry is nearer", () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: CONNECTIONS,
       improve: {
         connection: "cloud",
@@ -94,7 +92,7 @@ describe("a bad improve.model or improve.timeoutMs is warned about once and igno
   ];
 
   test.each(BAD)("improve.%s %j loads, warns once, and is not in the effective config", (key, improve) => {
-    writeConfig({ configVersion: "0.9.0", connections: CONNECTIONS, improve });
+    writeConfig({ connections: CONNECTIONS, improve });
     const warnings = loadWarnings().filter((w) => w.includes(`improve.${key} is invalid`));
     expect(warnings).toHaveLength(1);
     expect(configGet(loadUserConfig() as never, `improve.${key}`)).toBeNull();
@@ -102,7 +100,6 @@ describe("a bad improve.model or improve.timeoutMs is warned about once and igno
 
   test("migrate apply is not blocked by them, and drops them", async () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: CONNECTIONS,
       improve: { model: "", timeoutMs: -5, connection: "cloud" },
     });
@@ -115,7 +112,6 @@ describe("a bad improve.model or improve.timeoutMs is warned about once and igno
 
   test("a valid value in the same block is kept", () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: CONNECTIONS,
       improve: { model: "big", timeoutMs: -5 },
     });
@@ -129,7 +125,6 @@ describe("a bad improve.model or improve.timeoutMs is warned about once and igno
 describe("a retired `engine` in a model-work block", () => {
   test("is named once per key, as not read, with the command that rewrites the file", () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: CONNECTIONS,
       improve: { engine: "cloud", qualityGate: { engine: "cloud" }, processes: { reflect: { engine: "default" } } },
     });
@@ -145,7 +140,6 @@ describe("a retired `engine` in a model-work block", () => {
 
   test("selects nothing: the work runs on the default connection, whatever the key names", () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: CONNECTIONS,
       improve: { processes: { reflect: { engine: "cloud" } } },
     });
@@ -159,7 +153,6 @@ describe("a retired `engine` in a model-work block", () => {
 describe("the retired index section", () => {
   test("is an unknown key: one warning for the section, none for what is inside it", () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: CONNECTIONS,
       index: { connection: "cloud", memory: { enabled: false, model: "x" } },
     });
@@ -170,7 +163,6 @@ describe("the retired index section", () => {
 
   test("changes nothing: memory inference still resolves from improve", () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: CONNECTIONS,
       index: { connection: "cloud", memory: { enabled: false } },
     });
@@ -217,10 +209,8 @@ describe("keys with no reader are unknown keys", () => {
       { embedding: { endpoint: "http://lab:1/v1", model: "m", ollamaOptions: { num_ctx: 1 } } },
     ],
   ])("%s is named once by the unknown-key warning and the config still loads", (dotted, fragment) => {
-    writeConfig({ configVersion: "0.9.0", ...fragment });
-    const found = unknownConfigKeyPaths({ configVersion: "0.9.0", ...fragment } as Record<string, unknown>).map((p) =>
-      p.join("."),
-    );
+    writeConfig({ ...fragment });
+    const found = unknownConfigKeyPaths({ ...fragment } as Record<string, unknown>).map((p) => p.join("."));
     expect(found).toEqual([dotted]);
     expect(() => loadUserConfig()).not.toThrow();
   });
@@ -228,7 +218,6 @@ describe("keys with no reader are unknown keys", () => {
 
 describe("secret-shaped keys under connections are redacted in config get, list and diff", () => {
   const config = {
-    configVersion: "0.9.0",
     connections: {
       lab: {
         endpoint: "http://lab:1/v1",
@@ -286,7 +275,6 @@ describe("secret-shaped keys under connections are redacted in config get, list 
 
   test("config get of a redacted leaf prints null, never nothing", async () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: { lab: { endpoint: "http://lab:1/v1", api_key: "sk-FAKE-1" } },
     });
     const result = await runCliCapture(["config", "get", "connections.lab.api_key", "--format", "json"]);
@@ -304,7 +292,6 @@ describe("secret-shaped keys under connections are redacted in config get, list 
     fs.writeFileSync(
       other,
       JSON.stringify({
-        configVersion: "0.9.0",
         connections: {
           lab: {
             endpoint: "http://other:1/v1",
@@ -325,7 +312,6 @@ describe("secret-shaped keys under connections are redacted in config get, list 
 
   test("a Desktop save from what Desktop reads never loses a setting", () => {
     writeConfig({
-      configVersion: "0.9.0",
       connections: {
         default: {
           endpoint: "http://lab:1/v1",
@@ -356,14 +342,14 @@ describe("registries[].options is retired like the other deleted keys", () => {
   const registries = [{ url: "https://example.com/i.json", name: "keep", options: { a: 1 } }];
 
   test("the unknown-key warning names it once", () => {
-    writeConfig({ configVersion: "0.9.0", registries });
+    writeConfig({ registries });
     const warnings = loadWarnings().filter((w) => w.includes("Unknown config key"));
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('"registries.0.options"');
   });
 
   test("migrate apply drops it and keeps the rest of the entry", async () => {
-    writeConfig({ configVersion: "0.9.0", registries });
+    writeConfig({ registries });
     const result = await runCliCapture(["migrate", "apply"]);
     expect(result.code, result.stderr).toBe(0);
     const stored = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as {
@@ -376,7 +362,6 @@ describe("registries[].options is retired like the other deleted keys", () => {
 describe("a strategy `limit` is gone from the plan", () => {
   test("plan.limits.configured has no `profile`, and the strategy limit does not cap the run", async () => {
     writeConfig({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       connections: CONNECTIONS,
       improve: { strategy: "mine", strategies: { mine: { limit: 5 } } },

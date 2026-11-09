@@ -49,7 +49,6 @@ import type { RunTaskOptions } from "./task-result";
 export const DEFAULT_BUNDLE_NAME = "stash";
 
 const CONFIG_FREE_TASK_RUNTIME: AkmConfig = Object.freeze({
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
 });
 

@@ -34,7 +34,6 @@ function writeConfig(value: unknown): void {
 }
 
 const withLiteral = {
-  configVersion: "0.9.0",
   semanticSearchMode: "off",
   connections: { lab: { endpoint: "http://lab:1/v1", models: { fast: "m" }, apiKey: LITERAL } },
   embedding: { model: "embed-model", apiKey: LITERAL },

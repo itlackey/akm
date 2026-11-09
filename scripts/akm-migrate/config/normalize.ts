@@ -34,7 +34,6 @@ import {
   withConfigLock,
   writeConfigAtomic,
 } from "../../../src/core/config/config-io";
-import { CURRENT_CONFIG_VERSION } from "../../../src/core/config/config-schema";
 import { fileFlatCredentials, writeCredential } from "../../../src/core/config/credentials";
 import { isPlainObject } from "../../../src/core/config/deep-merge";
 import { findUnusableEntries } from "../../../src/core/config/unusable-entries";
@@ -44,7 +43,7 @@ import { documentEndpoint, planKeyMoves } from "./migrate-keys";
 import { modelsFileExists, readModelsFile, retireModelsFile } from "./models-file";
 import { type EngineTargets, rememberEngineTargets, rememberedEngineTargets } from "./retired-engines";
 
-/** The file as it says it: parsed, with the retired `secret://` forms and `configVersion` read, and nothing else converted. */
+/** The file as it says it: parsed, with the retired `secret://` forms lifted, and nothing else converted. */
 function readConfigDocument(text: string, sourcePath?: string): Record<string, unknown> {
   return liftRetiredSecretRefs(readConfigFile(text, sourcePath)) as Record<string, unknown>;
 }
@@ -149,7 +148,6 @@ function configWriteBody(
   for (const key of persistTopLevelKeys) {
     if (Object.hasOwn(next, key)) pruned[key] = next[key];
   }
-  pruned.configVersion = CURRENT_CONFIG_VERSION;
 
   // Keep existing top-level keys in their authored order. Lifecycle rollback
   // writes the same logical object twice (add, then remove); reordering those
@@ -255,7 +253,7 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     if (text === undefined) {
       // No file at all: only an existing `~/akm` gives it content.
       const homeNotes: string[] = [];
-      const registered = registerHomeBundle({ configVersion: CURRENT_CONFIG_VERSION }, homeNotes);
+      const registered = registerHomeBundle({}, homeNotes);
       if (homeNotes.length === 0) return { keys: [], changed: false, applied: false };
       const homeKeys = Object.keys(registered).sort();
       if (!options.apply) return { keys: homeKeys, changed: true, applied: false, notes: homeNotes };
@@ -280,11 +278,13 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     });
     const localRaw = plan.config;
     const current = buildEffectiveConfig(localRaw, configPath);
-    const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });
+    const next = validateCompleteConfig(current);
     let body = configWriteBody(localRaw, current, next) as Record<string, unknown>;
     // The reader resolves each bundle `path` and drops an unplaceable one; the file keeps what was written.
     if (isPlainObject(localRaw.bundles)) body.bundles = localRaw.bundles;
     for (const keyPath of unknownConfigKeyPaths(body)) deleteConfigPath(body, keyPath);
+    // The reader ignores the 0.9 `configVersion` silently, so the sweep above does not name it; the migrator drops it.
+    delete body.configVersion;
     // A model-base value the reader ignores is dropped here, as every other retired value is.
     if (isRecord(body.improve)) body.improve = dropInvalidImproveBase(body, configPath).improve;
     // `improve.strategies["graph-refresh"]` is schema-valid (any name is a

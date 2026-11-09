@@ -100,7 +100,6 @@ let envCleanup: Cleanup = () => {};
 
 function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
   const base: AkmConfig = {
-    configVersion: "0.9.0",
     semanticSearchMode: "auto",
     connections: {
       test: {

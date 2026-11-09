@@ -90,7 +90,6 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
       strategy: "index-order",
       repairValidationFailures: false,
       config: {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         bundles: { stash: { path: stashDir, writable: true } },
         defaultBundle: "stash",
@@ -149,7 +148,6 @@ describe("akmImprove ordering: ensureIndex must run before collectEligibleRefs (
     }
 
     const config: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",

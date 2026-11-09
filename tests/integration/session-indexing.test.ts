@@ -58,7 +58,6 @@ beforeEach(() => {
   // internally). FTS-only keeps indexing fast + deterministic (no embedder).
   resetConfigCache();
   saveConfig({
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     bundles: { stash: { path: stashDir } },
     defaultBundle: "stash",
@@ -89,7 +88,6 @@ const SUMMARY_TEXT =
 
 function configFor(stash: string, indexSessions?: boolean, extractEnabled = true): AkmConfig {
   return {
-    configVersion: "0.9.0",
     // FTS-only keeps the round-trip fast + deterministic (no embedding model
     // download); the summary body is fully searchable via FTS.
     semanticSearchMode: "off",

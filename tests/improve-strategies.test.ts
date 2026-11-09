@@ -46,7 +46,6 @@ function strategy(base: object, overrides: object = {}): ImproveProfileConfig {
 describe("resolveImproveStrategy", () => {
   test("deep-merges the default baseline, selected built-in, and user override in order", () => {
     const selected = resolveImproveStrategy("quick", {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       improve: {
         strategies: {
@@ -99,7 +98,6 @@ describe("resolveImproveStrategy", () => {
 
   test("uses improve.strategy before the built-in default", () => {
     const selected = resolveImproveStrategy(undefined, {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       improve: { strategy: "quick", strategies: { quick: strategy(QUICK) } },
     });
@@ -107,15 +105,13 @@ describe("resolveImproveStrategy", () => {
   });
 
   test("rejects an unknown strategy instead of silently falling back", () => {
-    expect(() =>
-      resolveImproveStrategy("does-not-exist", { configVersion: "0.9.0", semanticSearchMode: "auto" }),
-    ).toThrow(ConfigError);
+    expect(() => resolveImproveStrategy("does-not-exist", { semanticSearchMode: "auto" })).toThrow(ConfigError);
   });
 
   test("names the retirement when a task or config still selects graph-refresh (0.9.17-alpha.9)", () => {
-    expect(() =>
-      resolveImproveStrategy("graph-refresh", { configVersion: "0.9.0", semanticSearchMode: "auto" }),
-    ).toThrow(/graph-refresh.*retired/i);
+    expect(() => resolveImproveStrategy("graph-refresh", { semanticSearchMode: "auto" })).toThrow(
+      /graph-refresh.*retired/i,
+    );
   });
 
   test("graph-refresh is refused even when a leftover improve.strategies override exists — never silently resolved as a custom strategy", () => {
@@ -126,7 +122,6 @@ describe("resolveImproveStrategy", () => {
     // enables — a full, unplanned improve pass the operator never asked for.
     expect(() =>
       resolveImproveStrategy("graph-refresh", {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         improve: { strategies: { "graph-refresh": { processes: { reflect: { enabled: true } } } } },
       }),
@@ -136,7 +131,6 @@ describe("resolveImproveStrategy", () => {
   test("the retirement message names the leftover override so `akm migrate apply` is the obvious next step", () => {
     expect(() =>
       resolveImproveStrategy("graph-refresh", {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         improve: { strategies: { "graph-refresh": { processes: { reflect: { enabled: true } } } } },
       }),
@@ -145,7 +139,7 @@ describe("resolveImproveStrategy", () => {
 
   test("the retirement message omits the leftover-override sentence when no override exists", () => {
     try {
-      resolveImproveStrategy("graph-refresh", { configVersion: "0.9.0", semanticSearchMode: "auto" });
+      resolveImproveStrategy("graph-refresh", { semanticSearchMode: "auto" });
       throw new Error("expected resolveImproveStrategy to throw");
     } catch (err) {
       expect(String(err)).not.toMatch(/leftover/i);
@@ -168,7 +162,6 @@ describe("resolveImprovePlan", () => {
 
   test("resolves one frozen fallback connection for every enabled process before dispatch", () => {
     const plan = resolveImprovePlan("quick", {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       connections: { default: lab, validation: { ...lab, models: { fast: "repair" } } },
       improve: {
@@ -198,7 +191,6 @@ describe("resolveImprovePlan", () => {
 
   test("preflights every enabled model-backed process and deeply freezes nested behavior", () => {
     const config: AkmConfig = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       connections: { default: lab },
       // D8 — `consolidate` and `memoryInference` are only *enabled* when autonomy
@@ -233,7 +225,6 @@ describe("resolveImprovePlan", () => {
   test("retains symbolic credentials in the frozen improve plan", () => {
     withEnvSync({ IMPROVE_PLAN_API_KEY: "plan-secret-sentinel" }, () => {
       const plan = resolveImprovePlan("quick", {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         connections: { default: { ...lab, apiKey: "$IMPROVE_PLAN_API_KEY" } },
         improve: { strategies: { quick: strategy(QUICK) } },
@@ -246,7 +237,6 @@ describe("resolveImprovePlan", () => {
 
   test("preflights default fallbacks and accepts a harness triage judgment", () => {
     const plan = resolveImprovePlan("reflect-distill", {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       connections: { default: lab },
       harnesses: { reviewer: { platform: "claude", models: { fast: "review" } } },
@@ -264,7 +254,6 @@ describe("resolveImprovePlan", () => {
 
   test("requires an explicit judgment block before folded improve enables judgment", () => {
     const plan = resolveImprovePlan("no-judgment", {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       connections: { default: lab },
       improve: { strategies: { "no-judgment": { processes: { triage: { enabled: true } } } } },
@@ -275,7 +264,6 @@ describe("resolveImprovePlan", () => {
 
   test("the triage judgment runs where improve.processes.triage says, else improve-wide, else the default by name", () => {
     const base = {
-      configVersion: "0.9.0" as const,
       semanticSearchMode: "auto" as const,
       connections: {
         default: { ...lab, models: { fast: "default" } },
@@ -320,7 +308,6 @@ describe("resolveImprovePlan", () => {
   test("rejects a model-only selection before dispatch", () => {
     expect(() =>
       resolveImprovePlan("quick", {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         improve: {
           processes: { reflect: { model: "model-without-connection" } },
@@ -332,7 +319,6 @@ describe("resolveImprovePlan", () => {
 
   test("a harness that cannot confine the policy still runs model work", () => {
     const plan = resolveImprovePlan("quick", {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       harnesses: { wrong: { platform: "pi" } },
       improve: { strategies: { quick: strategy(QUICK) } },
@@ -343,7 +329,6 @@ describe("resolveImprovePlan", () => {
 
   test("a harness that confines the policy runs model work", () => {
     const plan = resolveImprovePlan("quick", {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       harnesses: { agent: { platform: "claude" } },
       improve: { strategies: { quick: strategy(QUICK) } },
@@ -355,7 +340,6 @@ describe("resolveImprovePlan", () => {
   test("rejects an enabled model-backed process with no runner even when no model fields express intent", () => {
     expect(() =>
       resolveImprovePlan("quick", {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         improve: { strategies: { quick: strategy(QUICK) } },
       }),
@@ -368,7 +352,6 @@ describe("resolveImprovePlan", () => {
     for (const triage of [true, false]) {
       expect(() =>
         resolveImprovePlan("default", {
-          configVersion: "0.9.0",
           semanticSearchMode: "auto",
           improve: { strategies: { default: { processes: { triage: { enabled: triage } } } } },
         } as AkmConfig),
@@ -381,7 +364,6 @@ describe("resolveImprovePlan", () => {
     const plan = resolveImprovePlan(
       "default",
       {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         experimental: { improveAutonomy: true },
         improve: { strategies: { default: { processes: { triage: { enabled: true } } } } },
@@ -409,7 +391,6 @@ describe("resolveImprovePlan", () => {
     const plan = resolveImprovePlan(
       "default",
       {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         connections: { default: lab },
       },
@@ -425,7 +406,6 @@ describe("projectResolvedProcessRouting (#947)", () => {
 
   test("one row per IMPROVE_PROCESS_NAMES name, connection/model only for resolved processes", () => {
     const plan = resolveImprovePlan("quick", {
-      configVersion: "0.9.0",
       semanticSearchMode: "auto",
       connections: { default: lab, validation: { ...lab, models: { fast: "repair" } } },
       improve: {
@@ -467,7 +447,6 @@ describe("projectResolvedProcessRouting (#947)", () => {
     const plan = resolveImprovePlan(
       "default",
       {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         experimental: { improveAutonomy: true },
         improve: { strategies: { default: { processes: { triage: { enabled: true } } } } },
@@ -486,7 +465,6 @@ describe("projectResolvedProcessRouting (#947)", () => {
   test("includes a triage.judgment row only when judgment is configured, with its own engineKind", () => {
     const withoutJudgment = projectResolvedProcessRouting(
       resolveImprovePlan("no-judgment", {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         connections: { default: lab },
         improve: { strategies: { "no-judgment": { processes: { triage: { enabled: true } } } } },
@@ -496,7 +474,6 @@ describe("projectResolvedProcessRouting (#947)", () => {
 
     const withJudgment = projectResolvedProcessRouting(
       resolveImprovePlan("reflect-distill", {
-        configVersion: "0.9.0",
         semanticSearchMode: "auto",
         connections: { default: lab },
         harnesses: { reviewer: { platform: "claude", models: { balanced: "review" } } },

@@ -43,7 +43,6 @@ function writeQuietConfig(configDir: string): void {
   fs.writeFileSync(
     configPath,
     JSON.stringify({
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       improve: {
         strategy: "quiet-test",

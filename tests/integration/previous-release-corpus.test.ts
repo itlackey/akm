@@ -464,7 +464,6 @@ describe("previous-release corpus — retired 0.8 source-config keys (below the 
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         stashDir: "/home/user/.akm-stash",
         sources: [{ type: "filesystem", path: "/home/user/.akm-stash", name: "primary" }],
         installed: [
@@ -493,7 +492,6 @@ describe("previous-release corpus — a config as 0.9.15/0.9.16 wrote it", () =>
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         defaultBundle: "stash",
         bundles: { stash: { path: "/home/user/.akm-stash", writable: true } },
         engines: {
@@ -543,7 +541,6 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         experimental: { improveAutonomy: true, workflowEngine: true },
       }),
     );
@@ -560,7 +557,6 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         features: { improve: { reflect: { mode: "llm" } } },
         experimental: { improveAutonomy: true, workflowEngine: true },
       }),
@@ -580,7 +576,6 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         features: { improve: { reflect: { mode: "llm" } } },
         experimental: { improveAutonomy: true, workflowEngine: true },
       }),
@@ -605,7 +600,6 @@ describe("previous-release corpus — retired experimental.workflowEngine key", 
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         experimental: { improveAutonomyy: true },
       }),
     );
@@ -638,7 +632,6 @@ describe("previous-release corpus — retired index.graph.lazyGraphExtraction ke
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         index: { graph: { lazyGraphExtraction: true, graphExtractionBatchSize: 2 } },
       }),
     );
@@ -676,7 +669,6 @@ describe("previous-release corpus — retired index.graph key (whole pass, 0.9.1
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         index: { graph: { lazyGraphExtraction: true } },
       }),
     );
@@ -697,7 +689,6 @@ describe("previous-release corpus — retired index.graph key (whole pass, 0.9.1
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         index: { graph: { lazyGraphExtraction: true } },
       }),
     );
@@ -719,7 +710,6 @@ describe("previous-release corpus — retired index.graph key (whole pass, 0.9.1
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         index: { graph: { lazyGraphExtraction: true } },
       }),
     );
@@ -769,7 +759,6 @@ describe("previous-release corpus — leftover improve.strategies['graph-refresh
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         improve: { strategies: { "graph-refresh": { processes: { graphExtraction: { mode: "llm" } } } } },
       }),
     );
@@ -790,7 +779,6 @@ describe("previous-release corpus — leftover improve.strategies['graph-refresh
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         improve: { strategies: { "graph-refresh": { processes: { graphExtraction: { mode: "llm" } } } } },
       }),
     );
@@ -819,7 +807,6 @@ describe("previous-release corpus — leftover improve.strategies['graph-refresh
     fs.writeFileSync(
       configPath,
       JSON.stringify({
-        configVersion: "0.9.0",
         improve: {
           strategies: {
             "graph-refresh": { processes: { graphExtraction: { mode: "llm" } } },

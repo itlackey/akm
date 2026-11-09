@@ -117,13 +117,13 @@ describe("addStash", () => {
   });
 
   test("bundle add persists only authored settings instead of schema defaults (#972)", () => {
-    fs.writeFileSync(getConfigPath(), `${JSON.stringify({ configVersion: "0.9.0" }, null, 2)}\n`, "utf8");
+    fs.writeFileSync(getConfigPath(), `${JSON.stringify({}, null, 2)}\n`, "utf8");
     resetConfigCache();
 
     addStash({ target: "lodash", providerType: "npm", name: "lodash" });
 
     const raw = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as Record<string, unknown>;
-    expect(Object.keys(raw).sort()).toEqual(["bundles", "configVersion"]);
+    expect(Object.keys(raw).sort()).toEqual(["bundles"]);
     expect(raw.bundles).toEqual({ lodash: { npm: "lodash" } });
   });
 

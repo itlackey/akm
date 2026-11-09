@@ -113,7 +113,6 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
     disposers.push(bundle);
     try {
       saveConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "stash",
         bundles: {
@@ -148,7 +147,6 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
         ["version: 4", 'run: "exit 0"', 'schedule: "@daily"', ""].join("\n"),
       );
       saveConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "stash",
         bundles: {
@@ -191,7 +189,6 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
         ["version: 4", 'run: "exit 0"', 'schedule: "@daily"', ""].join("\n"),
       );
       saveConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "stash",
         bundles: {
@@ -238,7 +235,6 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
         ["version: 4", 'run: "exit 0"', 'schedule: "@daily"', ""].join("\n"),
       );
       saveConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "stash",
         bundles: {
@@ -279,7 +275,6 @@ describe("akm task — JSON envelope snapshot (WS6)", () => {
         ["version: 4", 'run: "exit 0"', 'schedule: "@daily"', ""].join("\n"),
       );
       saveConfig({
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         defaultBundle: "stash",
         bundles: {

@@ -105,10 +105,7 @@ describe("akm config unset on the last key of a harness", () => {
     const config = await withEnv(freshEnv(), async () => {
       const file = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(
-        file,
-        JSON.stringify({ configVersion: "0.9.0", harnesses: { opencode: { timeoutMs: 120000 } } }),
-      );
+      fs.writeFileSync(file, JSON.stringify({ harnesses: { opencode: { timeoutMs: 120000 } } }));
       const result = await runCliCapture(["config", "unset", "harnesses.opencode.timeoutMs"]);
       expect(result.code).toBe(0);
       return JSON.parse(fs.readFileSync(file, "utf8")) as { harnesses?: unknown };
@@ -123,7 +120,7 @@ describe("akm config unset on an entry the reader drops", () => {
     const { key, entry, after, before } = await withEnv(freshEnv(), async () => {
       const file = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, JSON.stringify({ configVersion: "0.9.0", connections: { draft } }));
+      fs.writeFileSync(file, JSON.stringify({ connections: { draft } }));
       const before = fs.readFileSync(file, "utf8");
       const whole = await runCliCapture(["config", "unset", "connections.draft"]);
       const nested = await runCliCapture(["config", "unset", "connections.draft.models.fast"]);
@@ -143,7 +140,7 @@ describe("akm config unset on an entry the reader drops", () => {
     const { result, config } = await withEnv(freshEnv(), async () => {
       const file = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, JSON.stringify({ configVersion: "0.9.0", connections: { lab, other: lab } }));
+      fs.writeFileSync(file, JSON.stringify({ connections: { lab, other: lab } }));
       const result = await runCliCapture(["config", "unset", "connections.other"]);
       return { result, config: JSON.parse(fs.readFileSync(file, "utf8")) as { connections: Record<string, unknown> } };
     });

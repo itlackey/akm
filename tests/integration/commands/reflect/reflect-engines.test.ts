@@ -121,7 +121,6 @@ const TRANSPORTS: [string, Transport][] = [LLM, CLAUDE].map((transport) => [tran
 /** Reflect `REF` on `transport`'s connection or harness for `scenario`, with the quality gate off. */
 function reflect(transport: Transport, scenario: string, options: Parameters<typeof akmReflect>[0] = {}) {
   const config = {
-    configVersion: "0.9.0",
     semanticSearchMode: "off",
     ...transport.engine(scenario),
     improve: {
@@ -153,7 +152,6 @@ describe("the 12k content cap is for a prompt that travels as an argument", () =
     ["gemini", true],
   ])("a %s harness sees the asset %s", async (platform, truncated) => {
     const config = {
-      configVersion: "0.9.0",
       semanticSearchMode: "off",
       harnesses: { contract: { platform, bin: path.join(bins.dir, "valid") } },
       improve: {
@@ -179,7 +177,6 @@ describe("reflect runs the runner the improve plan froze", () => {
       ref: REF,
       stashDir: storage.stashDir,
       config: {
-        configVersion: "0.9.0",
         semanticSearchMode: "off",
         improve: {
           strategy: "default",
@@ -207,7 +204,7 @@ describe("reflect runs the runner the improve plan froze", () => {
       akmReflect({
         ref: REF,
         stashDir: storage.stashDir,
-        config: { configVersion: "0.9.0" } as AkmConfig,
+        config: {} as AkmConfig,
         assetContent: SOURCE,
         llmRunner: null,
       }),
