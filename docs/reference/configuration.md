@@ -55,9 +55,9 @@ each process runs](#where-each-process-runs) say how models are added.
 
 `scheduler.enabled` is this host's list of scheduled refs, such as
 `stash//tasks/nightly`, held and written as plain refs. A ref that is not
-listed is disabled, and removing a bundle drops its refs. An entry must be
-a string: the 0.9.17-alpha `{kind, ref, sourceId}` object form is no longer
-read.
+listed is disabled, and removing a bundle drops its refs. The older
+`{kind, ref, sourceId}` entries are read as their `ref` and written back
+plain.
 A config without the list (written before 0.9.17) means "keep what is
 installed": the first `akm task sync`, `akm setup`, `akm task enable`, `akm task
 disable` or `akm task add` fills it from the akm-written native scheduler rows.

@@ -201,7 +201,11 @@ describe("child workflows — parsing", () => {
     ["a non-workflow ref", "      workflow: commands/child", "canonical workflow ref"],
     ["with: without workflow", "      with: { topic: x }", 'declares "with" without "workflow"'],
     ["exec beside workflow", "      workflow: workflows/c\n      exec: { command: [true] }", '"exec" and "workflow"'],
-    ["connection beside workflow", "      workflow: workflows/c\n      connection: e", 'both "workflow" and "connection"'],
+    [
+      "connection beside workflow",
+      "      workflow: workflows/c\n      connection: e",
+      'both "workflow" and "connection"',
+    ],
     ["env beside workflow", "      workflow: workflows/c\n      env: [env/x]", 'both "workflow" and "env"'],
   ])("rejects %s", (_label, unitLines, message) => {
     const result = parse(unitLines);
