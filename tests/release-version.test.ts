@@ -9,6 +9,10 @@ describe("validateVersion", () => {
     "0.10.261001",
     "0.10.261099",
     "0.10.261201",
+    "0.10.261001-alpha.1",
+    "0.10.261001-beta.2",
+    "0.10.261001-rc.10",
+    // prereleases published before the counter carry a bare stage
     "0.10.261001-alpha",
     "0.10.261001-beta",
     "0.10.261001-rc",
@@ -27,7 +31,9 @@ describe("validateVersion", () => {
     ["0.10.26101", "missing NN"],
     ["0.10.2610011", "three-digit NN"],
     ["0.10.261000", "NN 00"],
-    ["0.10.261001-alpha.1", "no .N on a stage"],
+    ["0.10.261001-beta.0", "the counter starts at 1"],
+    ["0.10.261001-beta.01", "no leading zero on the counter"],
+    ["0.10.261001-beta.1.1", "one counter"],
     ["0.10.261001-gamma", "unknown stage"],
     ["0.10.261001-RC", "stage is lower case"],
     ["0.10.261301", "month 13"],
@@ -58,7 +64,7 @@ describe("deriveVersion", () => {
     expect(deriveVersion("0.10", at("2027-01-01T00:00:00Z"), ["0.10.261201"])).toBe("0.10.270101");
   });
 
-  test("every release takes a new number, whatever its stage", () => {
+  test("the next number is one above the highest published that month, at any stage", () => {
     const published = ["0.10.261001-alpha", "0.10.261002-beta", "0.10.261003-rc", "0.10.261004"];
     expect(deriveVersion("0.10", at("2026-10-12T05:00:00Z"), published)).toBe("0.10.261005");
     expect(deriveVersion("0.10", at("2026-10-12T05:00:00Z"), ["0.10.261001-beta"])).toBe("0.10.261002");
@@ -96,21 +102,36 @@ describe("deriveVersion", () => {
 });
 
 describe("resolveVersion", () => {
-  test("a release is published as itself or with a stage appended", () => {
+  test("a release is published as itself, or as the first prerelease of a stage", () => {
     expect(resolveVersion("0.10.261001", "")).toBe("0.10.261001");
-    expect(resolveVersion("0.10.261001", "none")).toBe("0.10.261001");
-    for (const stage of STAGES) expect(resolveVersion("0.10.261001", stage)).toBe(`0.10.261001-${stage}`);
+    for (const stage of STAGES) expect(resolveVersion("0.10.261001", stage, [])).toBe(`0.10.261001-${stage}.1`);
   });
 
-  test("the stage names the release; the next release has the next number and sorts above it", () => {
+  test("the counter is one above the highest published for that release and stage", () => {
+    const published = ["0.10.261001-beta.1", "0.10.261001-beta.2", "0.10.261001-alpha.5", "0.10.261002-beta.7"];
+    expect(resolveVersion("0.10.261001", "beta", published)).toBe("0.10.261001-beta.3");
+    expect(resolveVersion("0.10.261001", "alpha", published)).toBe("0.10.261001-alpha.6");
+    expect(resolveVersion("0.10.261001", "rc", published)).toBe("0.10.261001-rc.1");
+    // A bare stage published before the counter counts as 1.
+    expect(resolveVersion("0.10.261001", "beta", ["0.10.261001-beta"])).toBe("0.10.261001-beta.2");
+    // The stable release never takes a counter.
+    expect(resolveVersion("0.10.261001", "", published)).toBe("0.10.261001");
+  });
+
+  test("prereleases sort by stage then counter, below their release and below the next release", () => {
+    const beta1 = resolveVersion("0.10.261001", "beta", []);
+    const beta2 = resolveVersion("0.10.261001", "beta", [beta1]);
+    expect(semver.lt(beta1, beta2)).toBe(true);
+    expect(semver.lt(resolveVersion("0.10.261001", "alpha", []), beta1)).toBe(true);
+    expect(semver.lt(beta2, resolveVersion("0.10.261001", "rc", []))).toBe(true);
     for (const stage of STAGES) {
-      expect(semver.lt(resolveVersion("0.10.261001", stage), resolveVersion("0.10.261001", ""))).toBe(true);
-      expect(semver.lt(resolveVersion("0.10.261001", stage), resolveVersion("0.10.261002", stage))).toBe(true);
+      expect(semver.lt(resolveVersion("0.10.261001", stage, []), resolveVersion("0.10.261001", ""))).toBe(true);
+      expect(semver.lt(resolveVersion("0.10.261001", stage, []), resolveVersion("0.10.261002", stage, []))).toBe(true);
     }
   });
 
   test("the 0.9 line still releases with a plain version", () => {
-    expect(resolveVersion("0.9.32", "none")).toBe("0.9.32");
+    expect(resolveVersion("0.9.32", "")).toBe("0.9.32");
     expect(resolveVersion("0.9.32-rc.1", "")).toBe("0.9.32-rc.1");
   });
 

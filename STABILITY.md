@@ -50,12 +50,14 @@ These are unknown flags or commands (exit 2) from 0.10, with no alias:
 
 **Version numbers (0.10 onward, #1089).** A 0.10 release is numbered
 `0.10.YYMMNN`: `YY` the UTC year, `MM` the month (`01` to `12`) and `NN` the
-release within that month (`01` to `99`), each two digits. Every release takes
-the next `NN`, whatever its stage: the first release of 2026-10 is `0.10.261001`
-(or `0.10.261001-alpha`), the next `0.10.261002`. A prerelease carries its stage
-only: `-alpha`, `-beta` or `-rc`, with no `.N`. A build is not promoted through
-stages under one number: each stage is its own release. Prereleases publish to
-the npm `next` tag and stable releases to `latest`; `akm upgrade --next` follows
+release within that month (`01` to `99`), each two digits. A release takes its
+number when its branch, `release/<version>`, is cut: one above the highest `NN`
+published that month at any stage, so the first release of 2026-10 is
+`0.10.261001` and the next `0.10.261002`. Its prereleases are that number with
+the stage and a counter appended, `0.10.261001-beta.1`, then `-beta.2`, then
+`-rc.1`; the stable release is the bare number. Prereleases published before
+this rule carry a bare stage (`0.10.261115-beta`). Prereleases publish to the
+npm `next` tag and stable releases to `latest`; `akm upgrade --next` follows
 `next`. Versions sort by month and then `NN`, so semver ranges and `akm upgrade`
 order them correctly across months and years. The patch number no longer says
 how big a change is: read the CHANGELOG, which still marks breaking changes. The

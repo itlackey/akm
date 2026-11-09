@@ -1,28 +1,19 @@
 name: CI
 
+# Every pull request, whatever its base branch, runs the fast gate: `check` (lint, types, the unit and integration
+# suites, the build), the Node fallback smoke on both supported Node versions, and Desktop's own tests on Linux.
+# A pull request into `main` is a release, and the only place the platform jobs run: Desktop packaged on all three
+# platforms, the upgrade rehearsals and Gated CI. It must come from a release branch (`release-branch-only`).
+# The Release workflow calls this workflow on a prerelease dispatch; a stable needs no run of its own because the
+# pull request that merged it ran everything here. docs/maintainers/release-checklist.md describes the branch model.
 on:
   workflow_dispatch:
-  push:
-    branches: [main, "release/*"]
-    paths-ignore:
-      - "docs/**"
-      - "README.md"
-      - "**/CHANGELOG.md"
-      - "CLAUDE.md"
-      - "LICENSE"
+  workflow_call:
   pull_request:
-    branches: [main, "release/*"]
-    # ready_for_review: marking a draft ready runs the full gate at once (see the jobs' draft conditions).
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths-ignore:
-      - "docs/**"
-      - "README.md"
-      - "**/CHANGELOG.md"
-      - "CLAUDE.md"
-      - "LICENSE"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # One run per pull request, the newest wins. A dispatch or a call from Release never cancels another run.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -50,38 +41,47 @@ jobs:
       - run: bun run check
       - run: bun run build
 
+  release-branch-only:
+    # Only a release branch merges to main, and it ships the version it is named for: package.json carries it (the
+    # release commit, `bun run release:stable`). The ruleset on main requires this check, and the platform jobs
+    # below run after it (docs/maintainers/release-checklist.md, "Repository settings").
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - env:
+          HEAD: ${{ github.head_ref }}
+        run: |
+          case "$HEAD" in
+            release/*) ;;
+            *)
+              echo "Only a release branch merges to main; this pull request comes from $HEAD" >&2
+              exit 1
+              ;;
+          esac
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "$VERSION" != "${HEAD#release/}" ]; then
+            echo "package.json is $VERSION; $HEAD ships ${HEAD#release/}. Run bun run release:stable first." >&2
+            exit 1
+          fi
+
   desktop:
-    # Desktop has its own job. A ready pull request and every push run it; a draft pull request runs it only when a path
-    # Desktop depends on changes. `test:workspace-package` stays in node-smoke, the cheap check on every push.
+    # Desktop's type check, unit, browser, usability, server, package and Electron tests, on Linux, on every pull
+    # request. `test:workspace-package` stays in node-smoke.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
-        with:
-          fetch-depth: 0
-      - name: Decide whether Desktop runs
-        id: scope
-        env:
-          DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ "$DRAFT" = "true" ] && ! git diff --name-only "$BASE"...HEAD | grep -qE '^(desktop/|src/workspace|scripts/node-runtime/workspace|\.github/workflows/ci\.yml$)'; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
-      - if: steps.scope.outputs.run == 'true'
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
           bun-version: 1.3.14
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
         with:
           # Latest 22.x: Desktop needs 22.18 or later (its tests load TypeScript through Node's type stripping).
           node-version: 22
-      - if: steps.scope.outputs.run == 'true'
-        run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
       - name: Cache the Electron and Playwright downloads
-        if: steps.scope.outputs.run == 'true'
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
         with:
           path: |
@@ -89,10 +89,8 @@ jobs:
             ~/.cache/ms-playwright
           key: desktop-downloads-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
       - name: Build repository-backed Desktop
-        if: steps.scope.outputs.run == 'true'
         run: bun run desktop:setup
       - name: Verify Desktop workflows
-        if: steps.scope.outputs.run == 'true'
         working-directory: desktop
         run: |
           node node_modules/electron/install.js
@@ -103,15 +101,12 @@ jobs:
           npm run test:e2e
           npm run test:usability
       - name: Verify the web process runs without Electron
-        if: steps.scope.outputs.run == 'true'
         working-directory: desktop
         run: npm run test:server
       - name: Verify the akm-web package installs and runs
-        if: steps.scope.outputs.run == 'true'
         working-directory: desktop
         run: npm run test:web-package
       - name: Verify the Electron shell
-        if: steps.scope.outputs.run == 'true'
         working-directory: desktop
         run: |
           # Ubuntu 24.04 restricts unprivileged user namespaces, which Electron's sandbox needs.
@@ -120,8 +115,9 @@ jobs:
 
   desktop-package:
     # Builds Desktop's installers (Linux AppImage, macOS dmg and zip, Windows NSIS; unsigned) and starts each packaged
-    # app headless, on all three platforms. A ready pull request and every push run it; a draft pull request runs it
-    # only when Desktop or its build and release files change.
+    # app headless, on all three platforms. Release pull requests only: the Release workflow builds the installers
+    # that ship from the published tarball.
+    needs: release-branch-only
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -133,38 +129,21 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
-        with:
-          fetch-depth: 0
-      - name: Decide whether Desktop is packaged
-        id: scope
-        env:
-          DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ "$DRAFT" = "true" ] && ! git diff --name-only "$BASE"...HEAD | grep -qE '^(desktop/|src/workspace|scripts/node-runtime/workspace|install\.(sh|ps1)$|\.github/workflows/(ci|release)\.yml$)'; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
-      - if: steps.scope.outputs.run == 'true'
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
           bun-version: 1.3.14
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
         with:
           node-version: 24
-      - if: steps.scope.outputs.run == 'true'
-        run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
       - name: Package Desktop and start it
-        if: steps.scope.outputs.run == 'true'
         run: |
           bun run desktop:setup
           cd desktop
           npm run build
           node scripts/package.mjs --dist
           node scripts/smoke.mjs
-      - if: steps.scope.outputs.run == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: desktop-${{ matrix.os }}
           path: desktop/dist/*
@@ -178,8 +157,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # A draft pull request runs the oldest supported Node only; a ready pull request and a push run both.
-        node-version: ${{ (github.event_name == 'pull_request' && github.event.pull_request.draft) && fromJSON('["22"]') || fromJSON('["22", "24"]') }}
+        node-version: ["22", "24"]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
@@ -208,9 +186,8 @@ jobs:
           AKM_SMOKE_NODE: node
 
   upgrade-rehearsal:
-    # Two origin-release installs per job. The gate before a merge: a ready pull request and every push run it;
-    # a draft pull request, where commits land many times a day, does not.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # Two origin-release installs per job, on release pull requests only.
+    needs: release-branch-only
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -231,3 +208,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
       - run: AKM_UPGRADE_REHEARSAL=1 AKM_UPGRADE_REHEARSAL_ORIGIN="${{ matrix.origin }}" TMPDIR=/tmp bun test --timeout=900000 tests/integration/upgrade-rehearsal/
+
+  gated:
+    # Real embeddings, the Docker install matrix and the native schedulers, on release pull requests only.
+    needs: release-branch-only
+    uses: ./.github/workflows/gated-ci.yml

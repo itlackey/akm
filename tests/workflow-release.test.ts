@@ -3,39 +3,78 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
 
 const source = fs.readFileSync(path.resolve(import.meta.dir, "../.github/workflows/release.yml"), "utf8");
-const VERSION_INPUT = "$" + "{{ inputs.version }}";
 const STAGE_INPUT = "$" + "{{ inputs.stage }}";
 
+type Step = { name?: string; if?: string; run?: string };
+type Job = {
+  uses?: string;
+  needs?: string | string[];
+  if?: string;
+  permissions?: unknown;
+  steps?: Step[];
+  strategy?: { matrix: { os: string[] } };
+};
+const workflow = YAML.parse(source) as {
+  on: {
+    push: { branches: string[] };
+    workflow_dispatch: { inputs: Record<string, { type: string; default?: unknown; options?: string[] }> };
+  };
+  jobs: Record<string, Job>;
+};
+const resolve = workflow.jobs.release?.steps?.find((step) => step.name === "Resolve version");
+
 describe("release workflow", () => {
-  test("runs the gated suites, then one straightforward release job, then Desktop and akm-web", () => {
-    const workflow = YAML.parse(source) as { jobs: Record<string, { uses?: string; needs?: string }> };
-    expect(Object.keys(workflow.jobs)).toEqual(["gated", "release", "desktop", "akm-web"]);
+  test("a stable release is the push that merges a release branch into main; a prerelease is a dispatch with a stage", () => {
+    expect(Object.keys(workflow.on)).toEqual(["push", "workflow_dispatch"]);
+    expect(workflow.on.push.branches).toEqual(["main"]);
+    // No version input: the version is the one committed in package.json.
+    expect(Object.keys(workflow.on.workflow_dispatch.inputs)).toEqual(["stage", "dry_run"]);
+    expect(workflow.on.workflow_dispatch.inputs.stage).toMatchObject({
+      type: "choice",
+      default: "beta",
+      options: ["alpha", "beta", "rc"],
+    });
+  });
+
+  test("runs CI and Gated CI as its own jobs for a prerelease, then one release job, then Desktop and akm-web", () => {
+    expect(Object.keys(workflow.jobs)).toEqual(["ci", "gated", "release", "desktop", "akm-web"]);
+    expect(workflow.jobs.ci?.uses).toBe("./.github/workflows/ci.yml");
+    expect(workflow.jobs.gated?.uses).toBe("./.github/workflows/gated-ci.yml");
+    expect(workflow.jobs.release?.needs).toEqual(["ci", "gated"]);
     expect(workflow.jobs.desktop?.needs).toBe("release");
     expect(workflow.jobs["akm-web"]?.needs).toBe("release");
-    expect(workflow.jobs.gated?.uses).toBe("./.github/workflows/gated-ci.yml");
-    expect(workflow.jobs.release?.needs).toBe("gated");
-    expect(source).toContain("Require green CI on this commit");
+    // The merge that makes a stable passed the gates on its pull request: only a dispatch runs them here.
+    for (const gate of ["ci", "gated"]) {
+      expect(workflow.jobs[gate]?.if).toContain("github.event_name == 'workflow_dispatch'");
+      expect(workflow.jobs[gate]?.if).toContain("!inputs.dry_run");
+    }
+    // A skipped gate (a stable, a dry run) lets the release go on; a failed or cancelled one stops it.
+    expect(workflow.jobs.release?.if).toContain("!contains(needs.*.result, 'failure')");
+    expect(workflow.jobs.release?.if).toContain("!contains(needs.*.result, 'cancelled')");
+    // Nothing polls another workflow's run.
+    expect(source).not.toContain("gh run list");
     expect(source).toContain("bun install --frozen-lockfile");
     expect(source).toContain("bun run build");
     expect(source).toContain("npm publish");
     expect(source).toContain("gh release create");
   });
 
-  test("publishes the exact version already committed in package.json", () => {
-    expect(source).toContain(`VERSION_INPUT: ${VERSION_INPUT}`);
-    expect(source).toContain("require('./package.json').version");
-    expect(source).toContain('"$PACKAGE_VERSION" != "$VERSION_INPUT"');
+  test("a stable publishes the version committed in package.json; a prerelease the release branch's version", () => {
+    expect(resolve?.run).toContain(`VERSION_INPUT="$(node -p "require('./package.json').version")"`);
+    expect(resolve?.run).toContain(`release/*) VERSION_INPUT="$` + `{GITHUB_REF_NAME#release/}" ;;`);
+    // A dispatch anywhere but a release branch publishes nothing.
+    expect(resolve?.run).toContain("A prerelease is dispatched on a release branch");
+    expect(source).not.toContain("inputs.version");
     expect(source).not.toContain("npm version");
   });
 
   test("validates the version format and appends the stage through scripts/release-version.ts (#1089)", () => {
+    // A push carries no inputs, so a stable release resolves with an empty stage.
     expect(source).toContain(`STAGE_INPUT: ${STAGE_INPUT}`);
     expect(source).toContain("bun scripts/release-version.ts resolve");
     // Only a stage changes the version the artifacts carry; it is stamped into this run's package.json.
@@ -45,16 +84,12 @@ describe("release workflow", () => {
     expect(source).toContain('[[ "$CANDIDATE_VERSION" == *-* ]]');
     expect(source).toContain("DIST_TAG=next");
     expect(source).toContain("DIST_TAG=latest");
-    const workflow = YAML.parse(source) as {
-      on: { workflow_dispatch: { inputs: { stage: { type: string; options: string[] } } } };
-    };
-    expect(workflow.on.workflow_dispatch.inputs.stage.options).toEqual(["none", "alpha", "beta", "rc"]);
   });
 
   test("the changelog is cut: its newest released section names the shipping version", () => {
-    // The release-cut step nothing else enforces. `release.yml` verifies
-    // package.json against the workflow input, and the test above pins that —
-    // but nothing checks the CHANGELOG was cut alongside it, and the failure is
+    // The release-cut step nothing else enforces. `release.yml` publishes the
+    // committed package.json version, and the test above pins that — but
+    // nothing checks the CHANGELOG was cut alongside it, and the failure is
     // silent and shipped: `resolveLatestVersion()`
     // (src/commands/sources/migration-help.ts) resolves release notes by
     // SKIPPING the `## [Unreleased]` heading, so a released binary whose
@@ -63,13 +98,11 @@ describe("release workflow", () => {
     //
     // Lives here rather than beside the renderer's own tests because this is a
     // property of the release, not of `renderMigrationHelp`. CI runs it on the
-    // release commit, and release.yml refuses to publish until that CI passed.
+    // release commit: on the release pull request for a stable, and as the
+    // Release workflow's own `ci` job for a prerelease.
     const root = path.resolve(import.meta.dir, "..");
-    // A release's -alpha/-beta/-rc stage is stamped in at release time (#1089): its changelog section is the
-    // release's, so the committed package.json carries no stage.
-    const version = (
-      JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string }
-    ).version.replace(/^(0\.\d+\.\d{6})-(alpha|beta|rc)$/, "$1");
+    const version = (JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string })
+      .version;
     const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
     const newestReleased = [...changelog.matchAll(/^## \[([^\]]+)\]/gm)]
       .map((match) => match[1])
@@ -96,36 +129,21 @@ describe("release workflow", () => {
   });
 
   test("a dry run builds everything and publishes nothing", () => {
-    const workflow = YAML.parse(source) as {
-      on: { workflow_dispatch: { inputs: { dry_run: { type: string; default: boolean } } } };
-      jobs: Record<
-        string,
-        { if?: string; permissions?: unknown; steps: Array<{ name?: string; if?: string; run?: string }> }
-      >;
-    };
     expect(workflow.on.workflow_dispatch.inputs.dry_run).toMatchObject({ type: "boolean", default: false });
-    expect(workflow.jobs.gated?.if).toContain("!inputs.dry_run");
-    // A real release goes on only after Gated CI passed; a skipped Gated CI is accepted for a dry run alone.
-    expect(workflow.jobs.release?.if).toContain(
-      "needs.gated.result == 'success' || (inputs.dry_run && needs.gated.result == 'skipped')",
-    );
     expect(workflow.jobs.desktop?.permissions).toEqual({ contents: "write" });
     const skipped = (job: string) =>
-      workflow.jobs[job]?.steps.filter((step) => step.if?.includes("!inputs.dry_run")).map((step) => step.name);
-    // Everything that reads a secret, tags or waits for another run is skipped; the builds are not.
-    expect(skipped("release")).toEqual(["Require green CI on this commit", "Publish to npm", "Create GitHub release"]);
+      workflow.jobs[job]?.steps?.filter((step) => step.if?.includes("!inputs.dry_run")).map((step) => step.name);
+    // Everything that reads a secret or tags is skipped; the builds are not.
+    expect(skipped("release")).toEqual(["Publish to npm", "Create GitHub release"]);
     expect(skipped("desktop")).toEqual(["Attach Desktop to the GitHub release"]);
     expect(skipped("akm-web")).toEqual(["Publish akm-web to npm"]);
     expect(workflow.jobs["akm-web"]?.permissions).toEqual({ contents: "read", "id-token": "write" });
-    // Gated CI is skipped, and a skipped job upstream would skip Desktop unless it says it runs after a good release.
+    // The gates are skipped, and a skipped job upstream would skip Desktop unless it says it runs after a good release.
     expect(workflow.jobs.desktop?.if).toContain("needs.release.result == 'success'");
   });
 
   test("Desktop is built per platform from the tarball being published and attached to the same release", () => {
-    const workflow = YAML.parse(source) as {
-      jobs: { desktop: { strategy: { matrix: { os: string[] } } } };
-    };
-    expect(workflow.jobs.desktop.strategy.matrix.os).toEqual(["ubuntu-latest", "macos-latest", "windows-latest"]);
+    expect(workflow.jobs.desktop?.strategy?.matrix.os).toEqual(["ubuntu-latest", "macos-latest", "windows-latest"]);
     expect(source).toContain('node scripts/core.mjs --tarball "$RUNNER_TEMP/engine/akm-cli-$VERSION.tgz"');
     expect(source).toContain("node scripts/package.mjs --release");
     expect(source).toContain("node scripts/smoke.mjs");
@@ -133,9 +151,6 @@ describe("release workflow", () => {
   });
 
   test("akm-web is published from the same tarball, independent of the Desktop installers", () => {
-    const workflow = YAML.parse(source) as { jobs: Record<string, { needs?: string | string[] }> };
-    expect(workflow.jobs.desktop?.needs).toBe("release");
-    expect(workflow.jobs["akm-web"]?.needs).toBe("release");
     expect(source).toContain("node scripts/package-web.mjs --release");
     expect(source).toContain('npm publish "$STAGE" --ignore-scripts --provenance --access public --tag "$DIST_TAG"');
   });
@@ -160,114 +175,9 @@ describe("release workflow", () => {
     }
   });
 
-  test("keeps the dispatch value out of shell source", () => {
-    const workflow = YAML.parse(source) as {
-      jobs: { release: { steps: Array<{ run?: string }> } };
-    };
-    for (const step of workflow.jobs.release.steps) {
-      expect(step.run ?? "").not.toContain(VERSION_INPUT);
+  test("keeps the dispatch inputs out of shell source", () => {
+    for (const step of workflow.jobs.release?.steps ?? []) {
+      expect(step.run ?? "").not.toContain("$" + "{{ inputs.");
     }
-  });
-
-  describe("the CI gate waits for the CI run on the commit", () => {
-    const workflow = YAML.parse(source) as {
-      jobs: { release: { steps: Array<{ name?: string; run?: string }> } };
-    };
-    const steps = workflow.jobs.release.steps;
-    const gate = steps.find((step) => step.name === "Require green CI on this commit");
-
-    // Runs the step's script with a fake `gh` that records its arguments and prints one snapshot of `gh run list`
-    // per call (the last one repeats), and a fake `sleep` that counts its calls and returns at once. A snapshot
-    // line is the step's jq projection of one run, newest first: "<event> <status> <conclusion>".
-    function runGate(snapshots: string[]): { status: number | null; stderr: string; sleeps: number; args: string } {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-release-gate-"));
-      try {
-        snapshots.forEach((snapshot, index) => {
-          fs.writeFileSync(path.join(dir, `snapshot-${index + 1}`), snapshot);
-        });
-        fs.writeFileSync(
-          path.join(dir, "gh"),
-          [
-            "#!/bin/sh",
-            `echo "$*" > "${dir}/args"`,
-            `n=$(( $(cat "${dir}/calls" 2>/dev/null || echo 0) + 1 ))`,
-            `echo "$n" > "${dir}/calls"`,
-            `[ "$n" -le ${snapshots.length} ] || n=${snapshots.length}`,
-            `cat "${dir}/snapshot-$n"`,
-          ].join("\n"),
-          { mode: 0o755 },
-        );
-        fs.writeFileSync(path.join(dir, "sleep"), `#!/bin/sh\necho x >> "${dir}/sleeps"\n`, { mode: 0o755 });
-        const result = spawnSync("bash", ["-e", "-c", gate?.run ?? ""], {
-          encoding: "utf8",
-          env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, GITHUB_REPOSITORY: "o/r", GITHUB_SHA: "abc123" },
-        });
-        const sleepsFile = path.join(dir, "sleeps");
-        const sleeps = fs.existsSync(sleepsFile) ? fs.readFileSync(sleepsFile, "utf8").trim().split("\n").length : 0;
-        const args = fs.readFileSync(path.join(dir, "args"), "utf8");
-        return { status: result.status, stderr: result.stderr, sleeps, args };
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    }
-
-    test("sits after the build and before the publish, and nothing before it publishes", () => {
-      const names = steps.map((step) => step.name);
-      const at = names.indexOf("Require green CI on this commit");
-      expect(at).toBeGreaterThan(names.indexOf("Build package and binaries"));
-      expect(at).toBeLessThan(names.indexOf("Publish to npm"));
-      for (const step of steps.slice(0, at)) {
-        expect(step.run ?? "").not.toMatch(/npm publish|gh release|git tag|git push/);
-      }
-    });
-
-    test("asks for the CI workflow's runs on this commit", () => {
-      expect(runGate(["push completed success"]).args).toContain(
-        "run list --repo o/r --workflow ci.yml --commit abc123 --json event,status,conclusion",
-      );
-    });
-
-    test("passes at once when the newest CI run on the commit passed", () => {
-      expect(runGate(["push completed success\npush completed failure"])).toMatchObject({ status: 0, sleeps: 0 });
-    });
-
-    test("waits while CI has not started or is running, then passes", () => {
-      expect(runGate(["", "push queued ", "push in_progress ", "push completed success"])).toMatchObject({
-        status: 0,
-        sleeps: 3,
-      });
-    });
-
-    test("waits on a newer run past an older failed one", () => {
-      expect(
-        runGate(["push in_progress \npush completed failure", "push completed success\npush completed failure"]),
-      ).toMatchObject({ status: 0, sleeps: 1 });
-    });
-
-    test("does not count a pull_request run, which tests a merge and on a draft skips the upgrade rehearsal", () => {
-      expect(
-        runGate([
-          "pull_request completed success\npush in_progress ",
-          "pull_request completed success\npush completed failure",
-        ]),
-      ).toMatchObject({ status: 1, sleeps: 1 });
-      const prOnly = runGate(["pull_request completed success"]);
-      expect(prOnly).toMatchObject({ status: 1, sleeps: 50 });
-      expect(prOnly.stderr).toContain("no push or manual CI run yet");
-    });
-
-    test("fails when the newest CI run failed or was cancelled", () => {
-      expect(runGate(["push completed failure\npush completed success"])).toMatchObject({ status: 1, sleeps: 0 });
-      const cancelled = runGate(["push in_progress ", "push completed cancelled"]);
-      expect(cancelled).toMatchObject({ status: 1, sleeps: 1 });
-      expect(cancelled.stderr).toContain("CI did not pass on abc123: completed cancelled");
-    });
-
-    test("fails after 25 minutes of 30-second polls, naming the commit and the last status", () => {
-      const result = runGate(["workflow_dispatch in_progress "]);
-      expect(result).toMatchObject({ status: 1, sleeps: 50 });
-      expect(result.stderr).toContain("CI has not passed on abc123 within 25 minutes; last status: in_progress");
-      expect(gate?.run).toContain("sleep 30");
-    });
   });
 });
