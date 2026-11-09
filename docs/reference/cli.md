@@ -2200,7 +2200,7 @@ stream live).
 #### Environment isolation
 
 The events stream lives in `<dataDir>/state.db`, where `<dataDir>` is derived
-from `XDG_DATA_HOME` (or `AKM_DATA_DIR`) at the time of each call. Two
+from `paths.data` in the config file (or `XDG_DATA_HOME`) at the time of each call. Two
 processes with different inherited data-dir env values write to different
 databases; if the events stream is being used as a shared bus between
 cooperating processes, set those env vars consistently across them.
@@ -2304,7 +2304,7 @@ converts none (one that is not enabled is a `legacyTaskWarnings` line). The step
    dispatch`, and `apply` replaces akm 0.9's per-task rows with it in one
    write, as `akm task sync` does. It runs `crontab`, `launchctl` or
    `schtasks` only when it has something to write. An installation that moves a
-   location (an `AKM_*` directory or an XDG variable) is left alone, with a
+   location (a config file other than the default, or an XDG variable) is left alone, with a
    warning; a machine with no `crontab` binary gets a warning and exit 0; a
    `crontab` that exists and fails blocks.
 
@@ -3803,10 +3803,10 @@ crontab blocks and the `# akm:env` block, `com.akm.task.*` LaunchAgents,
 result is `{backend, entry, removedLegacy, keptLegacy, warnings?}` where `entry`
 is `installed`, `updated`, `unchanged`, `removed`, `absent` or `unmanaged`. A row that names
 another installation's directories (an `AKM_BUNDLE_DIR` that is not this
-installation's, or any `AKM_*_DIR`) is left and reported in `keptLegacy`. A crontab whose
+installation's, or one that sets a retired `AKM_*_DIR` variable, which akm no longer reads) is left and reported in `keptLegacy`. A crontab whose
 akm markers are malformed is refused unmodified. `akm migrate status` reports what sync would do without writing it.
 
-An installation that moves any location (`AKM_BUNDLE_DIR`, an `AKM_*_DIR`, an
+An installation that moves any location (`AKM_BUNDLE_DIR`, an
 `XDG_*_HOME` that changes where config, data, cache or state go, or a config file
 other than the default, by `--config` or `AKM_CONFIG_FILE`) is **not**
 the default installation, and never writes the OS scheduler: `task sync`

@@ -83,10 +83,10 @@ describe("lint cache-path anchoring (issue: unanchored /.cache/ /registry/ subst
   });
 
   test("a file genuinely inside the resolved registry cache dir is still skipped by workflowFrontendDiagnostics", () => {
-    const { dir: cacheDir, cleanup } = sandboxEnvDir("akm-real-cache-", "AKM_CACHE_DIR");
+    const { dir: cacheDir, cleanup } = sandboxEnvDir("akm-real-cache-", "XDG_CACHE_HOME");
     cleanups.push(cleanup);
 
-    const registryFile = path.join(cacheDir, "registry", "git-some-source", "workflows", "broken.md");
+    const registryFile = path.join(cacheDir, "akm", "registry", "git-some-source", "workflows", "broken.md");
     fs.mkdirSync(path.dirname(registryFile), { recursive: true });
     fs.writeFileSync(registryFile, BROKEN_WORKFLOW, "utf8");
 
@@ -97,10 +97,10 @@ describe("lint cache-path anchoring (issue: unanchored /.cache/ /registry/ subst
   });
 
   test("a file genuinely inside the resolved registry-index cache dir is still skipped", () => {
-    const { dir: cacheDir, cleanup } = sandboxEnvDir("akm-real-cache-idx-", "AKM_CACHE_DIR");
+    const { dir: cacheDir, cleanup } = sandboxEnvDir("akm-real-cache-idx-", "XDG_CACHE_HOME");
     cleanups.push(cleanup);
 
-    const registryIndexFile = path.join(cacheDir, "registry-index", "git-abc123", "workflows", "broken.md");
+    const registryIndexFile = path.join(cacheDir, "akm", "registry-index", "git-abc123", "workflows", "broken.md");
     fs.mkdirSync(path.dirname(registryIndexFile), { recursive: true });
     fs.writeFileSync(registryIndexFile, BROKEN_WORKFLOW, "utf8");
 

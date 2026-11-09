@@ -262,12 +262,8 @@ console.log(JSON.stringify({ config: getConfigPath(), data: getDataDir(), state:
         XDG_STATE_HOME: path.join(runtime, "state"),
         XDG_CACHE_HOME: path.join(runtime, "cache"),
         TMPDIR: path.join(runtime, "tmp"),
-        // What akm hands any child: the file, and (until they are retired) nothing the user's XDG could not give.
+        // What akm hands any child: the file, and nothing the user's XDG could not give.
         AKM_CONFIG_FILE: configFile,
-        AKM_CONFIG_DIR: undefined,
-        AKM_DATA_DIR: undefined,
-        AKM_STATE_DIR: undefined,
-        AKM_CACHE_DIR: undefined,
         AKM_BUNDLE_DIR: undefined,
       },
       () => tools.get("akm_search")?.execute({ query: "x" }),
@@ -287,7 +283,7 @@ console.log(JSON.stringify({ config: getConfigPath(), data: getDataDir(), state:
     const runtime = path.join(scratch.dir, "akm", "opencode-runtime");
     const { tools } = await load({ akm: [process.execPath, script] });
 
-    const result = await withEnv({ XDG_DATA_HOME: path.join(runtime, "data"), AKM_DATA_DIR: undefined }, () =>
+    const result = await withEnv({ XDG_DATA_HOME: path.join(runtime, "data") }, () =>
       tools.get("akm_search")?.execute({ query: "x" }),
     );
 

@@ -820,16 +820,16 @@ your shell would, and nothing is filtered out of it: `PATH`, `HOME`, locale and
 toolchain variables, and any credential or proxy setting of the process that ran
 `akm workflow run` reach the command. It is built in three layers, in this order:
 
-1. akm's own environment, with the directories this akm resolved set over it;
+1. akm's own environment, with the config file this akm resolved set over it;
 2. the unit's resolved **`env:` bindings**;
 3. the engine-authored **`AKM_*` context** — last, so a binding can never
    shadow it.
 
-The directories are `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and
-`AKM_STATE_DIR`, set to the ones the akm that started the command resolved (from
-`AKM_*_DIR`, `XDG_*_HOME` or the platform default), and `AKM_BUNDLE_DIR` when that
-akm had one. A step that runs `akm` therefore uses the same bundle, config, data,
-cache and state. Binding one of them in `env:` overrides it. When a scheduled
+The config file is `AKM_CONFIG_FILE`, set (absolute) to the one the akm that started
+the command resolved (from `--config`, `AKM_CONFIG_FILE`, `XDG_CONFIG_HOME` or the
+platform default); it names the data, state and cache in its `paths`. `AKM_BUNDLE_DIR`
+is set too when that akm had one. A step that runs `akm` therefore uses the same bundle,
+config, data, cache and state. Binding one of them in `env:` overrides it. When a scheduled
 task runs the workflow, `AKM_EVENT_SOURCE` is set (when the environment has
 none), so a command that calls `akm` records machine traffic, not user demand; a
 direct `akm workflow run` leaves it as it found it.

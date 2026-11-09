@@ -182,7 +182,7 @@ test("an index written by a newer akm tells the user to update Desktop, not to u
   const app = await launchFixture({
     configureFixture: (fixture) => {
       // What a newer host CLI leaves behind: an index layout this engine does not understand.
-      const db = new DatabaseSync(path.join(fixture.env.AKM_DATA_DIR, "index.db"));
+      const db = new DatabaseSync(path.join(fixture.root, "data", "index.db"));
       try {
         db.prepare("UPDATE index_meta SET value = '999' WHERE key = 'version'").run();
       } finally {

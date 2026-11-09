@@ -37,14 +37,21 @@ type FakeRunAgent = (...args: unknown[]) => Promise<AgentRunResult>;
 const tasksRunnerSandbox = makeSandboxDir("akm-tasks-runner");
 const tmpRoot = tasksRunnerSandbox.dir;
 const bundleDir = path.join(tmpRoot, "stash");
-const cacheDir = path.join(tmpRoot, "cache");
-const dataDir = path.join(tmpRoot, "data");
-const stateDir = path.join(tmpRoot, "state");
+// The XDG roots this suite points akm at; akm keeps its own files in the `akm` folder of each.
+const xdgRoots = {
+  XDG_CACHE_HOME: path.join(tmpRoot, "cache"),
+  XDG_DATA_HOME: path.join(tmpRoot, "data"),
+  XDG_STATE_HOME: path.join(tmpRoot, "state"),
+  XDG_CONFIG_HOME: path.join(tmpRoot, "cfg"),
+};
+const cacheDir = path.join(xdgRoots.XDG_CACHE_HOME, "akm");
+const dataDir = path.join(xdgRoots.XDG_DATA_HOME, "akm");
+const stateDir = path.join(xdgRoots.XDG_STATE_HOME, "akm");
 const logDir = path.join(cacheDir, "tasks", "logs");
 const tasksDir = path.join(bundleDir, "tasks");
-const configDir = path.join(tmpRoot, "cfg");
+const configDir = path.join(xdgRoots.XDG_CONFIG_HOME, "akm");
 
-const TRACKED_ENV_KEYS = ["AKM_CONFIG_DIR", "AKM_CACHE_DIR", "AKM_BUNDLE_DIR", "AKM_DATA_DIR", "AKM_STATE_DIR"];
+const TRACKED_ENV_KEYS = [...Object.keys(xdgRoots), "AKM_BUNDLE_DIR"];
 const PRESERVED_ENV: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -63,12 +70,7 @@ beforeEach(() => {
     "utf8",
   );
   // Point state.db to an isolated data dir so tests don't share history.
-  process.env.AKM_DATA_DIR = dataDir;
-  process.env.AKM_CONFIG_DIR = configDir;
-  process.env.AKM_CACHE_DIR = cacheDir;
-  // Pair AKM_BUNDLE_DIR with AKM_STATE_DIR so the test-isolation guard in
-  // src/core/paths.ts (getDataDir) stays inert.
-  process.env.AKM_STATE_DIR = stateDir;
+  Object.assign(process.env, xdgRoots);
 });
 
 afterEach(() => {
@@ -775,13 +777,13 @@ describe("runTask — command target", () => {
     expect(fs.readFileSync(result.log, "utf8")).toContain(`cwd=${bundleDir}`);
   });
 
-  test("the command sees akm's own environment and the directories this akm resolved", async () => {
+  test("the command sees akm's own environment and the config file this akm resolved", async () => {
     writeTask(
       "env-probe",
       shellTask([
         process.execPath,
         "-e",
-        "console.log('probe=' + JSON.stringify([process.env.TASK_ENV_PROBE, process.env.AKM_STATE_DIR, process.env.AKM_EVENT_SOURCE]))",
+        "console.log('probe=' + JSON.stringify([process.env.TASK_ENV_PROBE, process.env.AKM_CONFIG_FILE, process.env.AKM_EVENT_SOURCE]))",
       ]),
     );
 
@@ -790,7 +792,9 @@ describe("runTask — command target", () => {
     );
 
     expect(result.status).toBe("completed");
-    expect(fs.readFileSync(result.log, "utf8")).toContain(`probe=${JSON.stringify(["bar", stateDir, "task"])}`);
+    expect(fs.readFileSync(result.log, "utf8")).toContain(
+      `probe=${JSON.stringify(["bar", path.join(configDir, "config.json"), "task"])}`,
+    );
   });
 
   test("a command that ignores SIGINT and SIGTERM is SIGKILLed on timeout, logging timed_out + exit 143", async () => {
@@ -1067,12 +1071,9 @@ describe("runTask — prompt target", () => {
     );
     const schedulerContext = {
       AKM_BUNDLE_DIR: path.join(tmpRoot, "scheduled-bundle"),
-      AKM_CONFIG_DIR: configDir,
-      AKM_DATA_DIR: path.join(tmpRoot, "scheduled-data"),
-      AKM_CACHE_DIR: path.join(tmpRoot, "scheduled-cache"),
-      AKM_STATE_DIR: path.join(tmpRoot, "scheduled-state"),
+      AKM_CONFIG_FILE: path.join(configDir, "config.json"),
     };
-    for (const directory of Object.values(schedulerContext)) fs.mkdirSync(directory, { recursive: true });
+    fs.mkdirSync(schedulerContext.AKM_BUNDLE_DIR, { recursive: true });
 
     for (const scheduled of [true, false]) {
       let childEnv: Record<string, string> | undefined;
@@ -1095,7 +1096,6 @@ describe("runTask — prompt target", () => {
   });
 
   test("a command task gets the 6-hour scheduled default timeout unless the task sets one", async () => {
-    process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
@@ -1138,7 +1138,6 @@ describe("runTask — prompt target", () => {
     };
 
     // The prompt task resolves this named harness before dispatch.
-    process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
@@ -1224,7 +1223,7 @@ describe("runTask — prompt target", () => {
       }),
     );
 
-    const result = await withEnv({ AKM_CONFIG_DIR: configDir, OPENCODE_API_KEY: sentinel }, () =>
+    const result = await withEnv({ OPENCODE_API_KEY: sentinel }, () =>
       runTask("redacted", {
         bundleDir,
         logDir,
@@ -1247,7 +1246,6 @@ describe("runTask — prompt target", () => {
   test("agent failure surfaces as failed status with reason", async () => {
     writeTask("fail", promptTask("boom", { harness: "opencode" }));
 
-    process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
@@ -1296,7 +1294,6 @@ describe("runTask — prompt target", () => {
   test("agent timeout surfaces as failed status with reason timeout", async () => {
     writeTask("timed-out", promptTask("content", { harness: "opencode", timeout: 50 }));
 
-    process.env.AKM_CONFIG_DIR = configDir;
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),

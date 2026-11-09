@@ -20,6 +20,7 @@ import { getConfigPath } from "../../src/core/paths";
 import { listPendingStateMigrations, stateDatabaseFloorBlocker, upgradeHistoricalStateDatabase } from "../../src/core/state-db";
 import { resolveSecretFromStore } from "../../src/sources/snapshot-fetchers/secret-seam";
 import { type ConfigFileNormalization, normalizeConfigFile } from "./config/normalize";
+import { type RetiredEnvironment, retiredEnvironment } from "./retired-locations";
 import {
   applyEngineKeysMigration,
   type EngineKeysMigrationStatus,
@@ -59,6 +60,12 @@ export interface CombinedMigrationPlan {
    * from this plan rather than fabricated.
    */
   failedSteps?: readonly FailedMigrationStep[];
+  /**
+   * Present when the host located its installation with a retired variable (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
+   * `AKM_STATE_DIR`, `AKM_CACHE_DIR`): akm refuses to start with one set, so these are the changes to make where the
+   * host sets them (an image, a compose file, a supervisor, a shell profile) once `apply` has run.
+   */
+  environment?: RetiredEnvironment;
   /** Absent only when the step itself failed (`failedSteps` names it) — see {@link FailedMigrationStep}. */
   configFile?: ConfigFileNormalization;
   stateMigrations?: { pending: string[] } | { applied: string[]; safetyCopyPath?: string };
@@ -203,12 +210,17 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   );
   // Last: it reads the config the steps above settled. Needs `crontab`/`launchctl`/`schtasks` only when it has
   // something to write; an installation that moves its locations leaves the OS scheduler alone.
-  const scheduler = await migrationStep(
-    failedSteps,
-    "scheduler",
-    () => (apply ? syncScheduler() : akmTasksSyncPlan()),
-    apply ? () => akmTasksSyncPlan() : undefined,
-  );
+  // A file that could not take `paths` leaves the host's locations out of it: an entry written now would run
+  // `akm task dispatch` against the default locations, so none is written until the file names them.
+  const pathsUnwritten = apply && configFile?.paths !== undefined && !configFile.applied;
+  const scheduler = pathsUnwritten
+    ? undefined
+    : await migrationStep(
+        failedSteps,
+        "scheduler",
+        () => (apply ? syncScheduler() : akmTasksSyncPlan()),
+        apply ? () => akmTasksSyncPlan() : undefined,
+      );
   const legacyTasks = await migrationStep(failedSteps, "legacyTasks", findLegacyTasks);
   // A pending state migration reads as "ready" under status, so the
   // preview says what apply will do; after a real apply it has been applied.
@@ -225,12 +237,29 @@ export async function runMigration(options: { apply: boolean }): Promise<Combine
   return {
     schemaVersion: 1,
     status: statusWithFailedSteps(
-      [stateStatus, configFileStatus, engineKeysStatus, contentRefsStatus, schedulerStatus, legacyTasksStatus].reduce(worstStatus, "current"),
+      ([
+        stateStatus,
+        configFileStatus,
+        engineKeysStatus,
+        contentRefsStatus,
+        schedulerStatus,
+        legacyTasksStatus,
+        pathsUnwritten ? "blocked" : "current",
+      ] satisfies MigrationStatus[]).reduce(worstStatus, "current"),
       failedSteps,
     ),
-    blockers: [...(legacyTasks?.blockers ?? []), ...failedStepBlockers(failedSteps)],
+    blockers: [
+      ...(legacyTasks?.blockers ?? []),
+      ...failedStepBlockers(failedSteps),
+      ...(pathsUnwritten
+        ? [
+            `${configPath} cannot be written, so its \`paths\` could not be added and the scheduler entry was not written. Add ${JSON.stringify({ paths: configFile?.paths })} where the file is made, then run again.`,
+          ]
+        : []),
+    ],
     ...(legacyTasks && legacyTasks.warnings.length > 0 ? { legacyTaskWarnings: legacyTasks.warnings } : {}),
     ...(failedSteps.length > 0 ? { failedSteps } : {}),
+    ...(retiredEnvironment() !== undefined ? { environment: retiredEnvironment() } : {}),
     ...(configFile !== undefined ? { configFile } : {}),
     ...(stateMigrations !== undefined ? { stateMigrations } : {}),
     ...(assetEngineKeys !== undefined ? { assetEngineKeys: assetEngineKeys.assetEngineKeys } : {}),

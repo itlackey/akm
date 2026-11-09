@@ -97,7 +97,7 @@ describe("write mutation lease", () => {
     const child = worker(["workflow", stash, "# Workflow: Leased\n\n## Step: One\nDo it.\n", "-", "-"], {
       ...process.env,
       AKM_BUNDLE_DIR: stash,
-      AKM_CONFIG_DIR: config,
+      XDG_CONFIG_HOME: config,
     });
     await Bun.sleep(250);
     expect(fs.existsSync(path.join(stash, "workflows", "leased.md"))).toBe(false);

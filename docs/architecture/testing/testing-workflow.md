@@ -141,7 +141,7 @@ the temp root or starts akm, `crontab` or `launchctl` against the real ones):
 owns the process state that crosses test boundaries:
 
 - At preload time `HOME` and all four `XDG_*_HOME` variables point at a
-  per-process sandbox directory, the `AKM_*_DIR` overrides are cleared, and so
+  per-process sandbox directory, the `AKM_BUNDLE_DIR` and retired `AKM_*_DIR` overrides are cleared, and so
   are `AKM_CONFIG_FILE`, `AKM_LLM_API_KEY` and `AKM_EMBED_API_KEY`. A test file never
   reads the developer's real `~/.config/akm/` or `~/.cache/akm/`.
 - Bun's `os.homedir()` ignores a runtime `HOME` change, so the preload cannot
@@ -154,8 +154,9 @@ owns the process state that crosses test boundaries:
   `OPENCODE_TEST_HOME` for OpenCode.
 - Before each test it snapshots the harnessed environment (`HARNESSED` in the
   preload: `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_TEST_HOME`, the
-  four `XDG_*_HOME` variables, `AKM_CONFIG_FILE`, `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`,
-  `AKM_CACHE_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`,
+  four `XDG_*_HOME` variables, `AKM_CONFIG_FILE`, `AKM_BUNDLE_DIR`, the four retired
+  `AKM_*_DIR` variables (akm refuses to start with one set, so the preload removes a
+  developer's exported ones),
   `AKM_LLM_API_KEY`, `AKM_EMBED_API_KEY`,
   `AKM_NPM_REGISTRY`), `process.cwd()` and `globalThis.fetch`, and restores them
   afterwards.
@@ -357,7 +358,7 @@ The suites that run akm's own runtime on the real binary
 (`opencode-runtime-sessions`, `opencode-runtime-signal-teardown`,
 `opencode-session-store` and `standalone-first-run`, all under
 `tests/integration/`) need no gate: they fetch the pinned OpenCode once, through
-akm's own fetch path, into a cache every run shares (`$AKM_TEST_OPENCODE_CACHE`,
+akm's own fetch path, into a cache every run shares (an `XDG_CACHE_HOME` in `$AKM_TEST_OPENCODE_CACHE`,
 else `node_modules/.cache/akm-test-opencode`), and link it into each test's
 sandboxed akm cache (`tests/_helpers/opencode-binary.ts`). When the registry
 cannot be reached they skip, with a message that says why. Run them against a new

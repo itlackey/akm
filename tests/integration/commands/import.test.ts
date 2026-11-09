@@ -56,7 +56,7 @@ async function runCli(args: string[], options: { stashDir?: string; configDir: s
   const result = await withEnv(
     {
       AKM_BUNDLE_DIR: stashDir,
-      AKM_CONFIG_DIR: path.join(options.configDir, "akm"),
+      XDG_CONFIG_HOME: options.configDir,
       XDG_CACHE_HOME: xdgCache,
       XDG_DATA_HOME: xdgData,
       XDG_STATE_HOME: xdgState,

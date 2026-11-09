@@ -40,7 +40,7 @@ async function runCli(
   args: string[],
   extraEnv: Record<string, string | undefined> = {},
 ): Promise<{ stdout: string; stderr: string; status: number }> {
-  return withEnv({ AKM_CONFIG_DIR: undefined, ...extraEnv }, async () => {
+  return withEnv({ ...extraEnv }, async () => {
     clearEmbeddingCache();
     resetLocalEmbedder();
     const { stdout, stderr, code } = await runCliCapture(args);
@@ -114,7 +114,7 @@ describe("env path", () => {
     const result = spawnSync(
       "bun",
       [path.join(import.meta.dir, "..", "..", "..", "src", "cli.ts"), "env", "path", "env/myenv", "--format", "json"],
-      { encoding: "utf8", env: { ...process.env, AKM_BUNDLE_DIR: stashDir, AKM_CONFIG_DIR: undefined } },
+      { encoding: "utf8", env: { ...process.env, AKM_BUNDLE_DIR: stashDir } },
     );
 
     expect(result.status).toBe(0);

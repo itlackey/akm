@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { withPrimaryBundle } from "../../../src/commands/sources/bundle-config-ops";
-import { getConfigPath, getDefaultStashDir } from "../../../src/core/paths";
+import { getCarriedLocations, getConfigPath, getDefaultStashDir } from "../../../src/core/paths";
 import { isRefToken } from "../../../src/core/ref-token";
 import { isRecord } from "../../../src/core/common";
 import {
@@ -245,15 +245,12 @@ function registerHomeBundle(body: Record<string, unknown>, notes: string[]): Rec
   return registered;
 }
 
-const ENV_LOCATIONS = { data: "AKM_DATA_DIR", state: "AKM_STATE_DIR", cache: "AKM_CACHE_DIR" } as const;
-
-/** The locations the environment names that the file's `paths` does not, as absolute paths. */
+/** The locations the retired variables named (carried over at start, see `retired-locations.ts`) that the file's `paths` does not, as absolute paths. */
 function environmentPaths(body: Record<string, unknown>): Record<string, string> {
   const named = isRecord(body.paths) ? body.paths : {};
   const missing: Record<string, string> = {};
-  for (const [kind, variable] of Object.entries(ENV_LOCATIONS)) {
-    const value = process.env[variable]?.trim();
-    if (value && named[kind] === undefined) missing[kind] = path.resolve(value);
+  for (const [kind, value] of Object.entries(getCarriedLocations())) {
+    if (value && named[kind] === undefined) missing[kind] = value;
   }
   return missing;
 }

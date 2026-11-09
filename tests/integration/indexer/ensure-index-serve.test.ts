@@ -29,7 +29,7 @@ import { closeDatabase, openExistingDatabase } from "../../../src/storage/reposi
 import { getIndexedFilePaths } from "../../../src/storage/repositories/index-entries-repository";
 import {
   type Cleanup,
-  sandboxEnvDir,
+  sandboxAkmDir,
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -118,8 +118,8 @@ beforeEach(async () => {
   stashDir = stash.dir;
   let chain = sandboxXdgConfigHome(stash.cleanup).cleanup;
   chain = sandboxXdgCacheHome(chain).cleanup;
-  chain = sandboxEnvDir("akm-ensure-serve-data", "AKM_DATA_DIR", chain).cleanup;
-  chain = sandboxEnvDir("akm-ensure-serve-state", "AKM_STATE_DIR", chain).cleanup;
+  chain = sandboxAkmDir("akm-ensure-serve-data", "data", chain).cleanup;
+  chain = sandboxAkmDir("akm-ensure-serve-state", "state", chain).cleanup;
   cleanup = chain;
   writeMemory("first");
   await indexerModule.akmIndex({ stashDir });

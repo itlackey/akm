@@ -63,9 +63,9 @@ import {
   applyEarlyConfigFlag,
   applyEarlyStderrFlags,
   insertBareListSubcommand,
-  isInfoCommand,
   main,
   normalizeCittyCliError,
+  readsConfigBestEffort,
   shouldBypassConfigStartup,
 } from "../../src/cli";
 import { _resetParsedInvocationForTests } from "../../src/cli/invocation";
@@ -270,14 +270,14 @@ export async function runCliCapture(args: string[]): Promise<CliResult> {
       try {
         // Mirrors src/cli.ts's own startup resolution: off the bypass
         // allowlist, every command reads config here exactly as it always
-        // has (throws on invalid config.json) EXCEPT `info`, whose read is
+        // has (throws on invalid config.json) EXCEPT `info` and `upgrade`, whose read is
         // best-effort — see that file's matching comment for why the
         // scoping matters.
         applyEarlyConfigFlag(argv);
         applyEarlyStderrFlags(argv);
         let outputDefaults = DEFAULT_CONFIG.output ?? {};
         if (!shouldBypassConfigStartup(argv)) {
-          if (isInfoCommand(argv)) {
+          if (readsConfigBestEffort(argv)) {
             try {
               outputDefaults = loadConfig().output ?? {};
             } catch {

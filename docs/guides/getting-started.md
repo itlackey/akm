@@ -137,6 +137,12 @@ akm setup --yes --dir "$AKM_SANDBOX/bundle"
 
 Delete `$AKM_SANDBOX` when you're done to remove the whole throwaway install.
 
+One config file can do the same without the XDG variables. Put
+`{ "paths": { "data": "data", "state": "state", "cache": "cache" } }` in
+`$AKM_SANDBOX/akm.json` (relative paths are relative to that file), then run every
+command with `--config "$AKM_SANDBOX/akm.json"` or export
+`AKM_CONFIG_FILE="$AKM_SANDBOX/akm.json"`.
+
 ## 3. Connect a capability source
 
 Add something to search. Point akm at a directory you already have, or

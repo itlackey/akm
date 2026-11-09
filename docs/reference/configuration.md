@@ -745,7 +745,7 @@ semantic search on anyway gets it reported unavailable for the platform by the
 index and a warning from `akm health`.
 
 **Without network access**, fill akm's cache directory (`akm info` prints
-`cacheDir`; `AKM_CACHE_DIR` moves it) before the first `akm index`:
+`cacheDir`; `paths.cache` or `XDG_CACHE_HOME` moves it) before the first `akm index`:
 
 - `onnxruntime/<version>-<platform>-<arch>/` (for example
   `onnxruntime/1.24.3-linux-x64/`) holding `onnxruntime_binding.node` and the
@@ -1036,7 +1036,7 @@ section, an absent key, and an explicit `false` all read identically as off.
 
 `plugins` holds the settings of the akm plugins for Claude Code, Codex and
 OpenCode. The plugins read this file themselves, find it the way akm does
-(`AKM_CONFIG_DIR`, else `XDG_CONFIG_HOME/akm`, else `~/.config/akm`) and own the
+(`AKM_CONFIG_FILE`, else `XDG_CONFIG_HOME/akm/config.json`, else `~/.config/akm/config.json`) and own the
 keys and their validation: akm keeps the section, never reads it, and never warns
 about what is inside it. A wrong plugin value is ignored by the plugin, with a
 warning in its own log. Every key is optional.
@@ -1137,25 +1137,41 @@ regenerable caches, config backups and task logs (cache). Each is absolute,
 `~`-relative, or relative to the config file. A key left out is the platform
 default (`XDG_DATA_HOME` and the others, else under the home folder). akm reads
 `paths` before anything else, so a value it cannot place (not a string, `~user/...`)
-is a fatal config error rather than a warning: it would move writes. While the
-older `AKM_DATA_DIR`, `AKM_STATE_DIR` and `AKM_CACHE_DIR` are still read, they win
-over `paths`; `akm migrate apply` writes them into the file (absolute, and only the
-ones the file does not name) so a host can drop them. A file that cannot be
-written (an image-baked config) gets the entries listed in the plan to add to the
-image's template. `akm info` reports the resolved `configFile`, `dataDir`,
-`stateDir` and `cacheDir`.
+is a fatal config error rather than a warning: it would move writes. `paths` is how
+an installation places its data, state and cache: `AKM_DATA_DIR`, `AKM_STATE_DIR`
+and `AKM_CACHE_DIR` are retired (see [Retired location variables](#retired-location-variables)),
+and `akm migrate apply` writes what they named into the file (absolute, and only the
+ones the file does not name). A file that cannot be written (an image-baked config)
+gets the entries listed in the plan to add to the image's template. `akm info`
+reports the resolved `configFile`, `dataDir`, `stateDir` and `cacheDir`.
+
+### Retired location variables
+
+`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR` and `AKM_CACHE_DIR` are no longer
+read. With any of them set and `AKM_CONFIG_FILE` unset, akm stops with an error
+that names the variable, `akm migrate apply` and `AKM_CONFIG_FILE` (exit 78,
+`RETIRED_LOCATION_VARIABLE`); ignoring one would open empty databases at the default
+locations. `akm migrate`, `akm upgrade`, `akm info`, `--version` and `--help` still
+run, and so does a library caller up to the first call that needs a location. To
+move a host over: run `akm migrate apply` with the old variables still set (it finds
+the config through `AKM_CONFIG_DIR`, and writes the data, state and cache it was
+given into `paths`), then unset all four where the host sets them (shell profile,
+image, compose file, supervisor), and, if `AKM_CONFIG_DIR` located the file, set
+`AKM_CONFIG_FILE=<that directory>/config.json` there instead. The plan's
+`environment` section lists exactly those names. A host that keeps the variables for
+an older akm may set `AKM_CONFIG_FILE` as well: akm then ignores them. A scheduler
+row an older akm wrote that sets one of them fails when it fires; `akm migrate`
+and `akm task sync` list such rows with what to do instead.
 
 ## Environment
 
 | Variable | Purpose |
 | --- | --- |
 | `AKM_CONFIG_FILE` | The config file to use (same as `--config <file>`, which wins); see [Choosing the config file](#choosing-the-config-file) |
-| `AKM_CONFIG_DIR` | Override the user config directory (or set `XDG_CONFIG_HOME`) |
-| `AKM_BUNDLE_DIR` | Override the working bundle for this process (containers, sandboxes, CI). When it points under `/tmp`, `/var/tmp` or the macOS temp folders, and `AKM_CONFIG_DIR`/`XDG_CONFIG_HOME` (and the cache equivalents) are not set, config moves to `<bundle>/.akm` and the cache to `<bundle>/.akm/cache`, so a sandbox never touches your real config. Scheduled-task rows always carry the resolved bundle in it |
-| `AKM_DATA_DIR` | Override the data directory — `index.db`, durable `state.db`, and `akm.lock` (or set `XDG_DATA_HOME`) |
-| `AKM_CACHE_DIR` | Override the cache directory — regenerable caches (or set `XDG_CACHE_HOME`) |
-| `AKM_STATE_DIR` | Override the state directory — per bundle, `akm improve`'s whole-run lock (or set `XDG_STATE_HOME`) |
+| `AKM_BUNDLE_DIR` | Override the working bundle for this process (containers, sandboxes, CI). Scheduled-task rows always carry the resolved bundle in it |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror; replaces `registry.npmjs.org` for npm bundle resolution |
+
+The config file's `paths` (and, below it, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`) place the rest. `akm setup --dir <a directory under /tmp, /var/tmp or the macOS temp folders>` keeps its config and cache under `<dir>/.akm` for that run (`AKM_CONFIG_FILE` points there), unless you chose a config file or `XDG_CONFIG_HOME` yourself, so a sandbox never touches your real config.
 
 `AKM_EMBED_DETERMINISTIC` is an Internal seam that akm-eval and the tests use (a hash embedder instead of a model). It is not for product use and carries no compatibility guarantee ([STABILITY](../../STABILITY.md)).
 

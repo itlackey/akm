@@ -22,9 +22,9 @@ import { warnOnce } from "./warn";
 /**
  * Returns true when the given path is in a directory family the OS may
  * reap (or that the user has clearly designated as a sandbox by virtue
- * of placing it under `/tmp` or a macOS per-user temp dir). Used to
- * decide whether `AKM_BUNDLE_DIR=$tmpdir` should also isolate config +
- * cache writes (so a test harness's `akm setup --yes --dir .` cannot
+ * of placing it under `/tmp` or a macOS per-user temp dir). Used by
+ * `akm setup --dir <transient>` to keep its config and cache under that
+ * directory (so a test harness's `akm setup --yes --dir .` cannot
  * silently clobber the user's `~/.config/akm/config.json`). See
  * the 2026-05-23 setup-clobbers-user-config incident
  * for the incident that motivated this.
@@ -73,38 +73,35 @@ function selectedConfigFile(env: NodeJS.ProcessEnv): string | undefined {
   return file ? path.resolve(file) : undefined;
 }
 
+/** The variables that located an installation before `AKM_CONFIG_FILE` and the config file's `paths`. */
+export const RETIRED_LOCATION_VARIABLES = {
+  config: "AKM_CONFIG_DIR",
+  data: "AKM_DATA_DIR",
+  state: "AKM_STATE_DIR",
+  cache: "AKM_CACHE_DIR",
+} as const;
+
+/**
+ * A retired location variable (`AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_STATE_DIR`, `AKM_CACHE_DIR`) set while
+ * `AKM_CONFIG_FILE` is not is fatal: ignoring it would open empty databases at the default locations. Every location
+ * resolver below calls this first, so a library caller (`akm-cli/api`, `akm-cli/workspace`) gets the same error as the
+ * CLI. `akm-migrate` (the executable `akm migrate` and `akm upgrade` run) is the one reader of these variables: it
+ * carries them over first (`carryOverRetiredLocations`, `scripts/akm-migrate/`), so it never reaches this check.
+ */
+function assertNoRetiredLocationVariables(env: NodeJS.ProcessEnv): void {
+  if (selectedConfigFile(env)) return;
+  const named = Object.values(RETIRED_LOCATION_VARIABLES).find((name) => env[name]?.trim());
+  if (named === undefined) return;
+  throw new ConfigError(
+    `${named} is no longer read. Run \`akm migrate apply\` (it moves the location into the config file's \`paths\`), then set AKM_CONFIG_FILE to the config file and unset ${named}.`,
+    "RETIRED_LOCATION_VARIABLE",
+  );
+}
+
 export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
+  assertNoRetiredLocationVariables(env);
   const selected = selectedConfigFile(env);
   if (selected) return path.dirname(selected);
-
-  const override = env.AKM_CONFIG_DIR?.trim();
-  if (override) return override;
-
-  // Explicit XDG override wins next — tests and operators that pre-arrange
-  // an isolated config dir via XDG_CONFIG_HOME (or %APPDATA% on Windows)
-  // must be honored as set, so the AKM_BUNDLE_DIR transient-isolation rule
-  // below does not silently move config away from where they pointed it.
-  if (platform === "win32") {
-    const appData = env.APPDATA?.trim();
-    if (appData) return path.join(appData, "akm");
-  } else {
-    const xdgConfigHome = env.XDG_CONFIG_HOME?.trim();
-    if (xdgConfigHome) return path.join(xdgConfigHome, "akm");
-  }
-
-  // Isolation safety: when AKM_BUNDLE_DIR points at a transient/sandbox path
-  // (/tmp, /var/tmp, /private/var/folders) AND no explicit config dir
-  // override is set, route config writes into `${AKM_BUNDLE_DIR}/.akm`
-  // instead of the user's host ~/.config/akm. This prevents the documented
-  // isolation pattern
-  //   AKM_DATA_DIR=/tmp/x AKM_BUNDLE_DIR=/tmp/x akm setup --yes --dir .
-  // from silently clobbering the host config. See
-  // the 2026-05-23 setup-clobbers-user-config incident.
-  // Daily users with a persistent AKM_BUNDLE_DIR=~/my-stash are unaffected.
-  const stashOverride = env.AKM_BUNDLE_DIR?.trim();
-  if (stashOverride && isTransientStashPath(stashOverride)) {
-    return path.join(stashOverride, ".akm");
-  }
 
   if (platform === "win32") {
     const appData = env.APPDATA?.trim();
@@ -134,6 +131,7 @@ export function getConfigDir(env: NodeJS.ProcessEnv = process.env, platform = pr
 }
 
 export function getConfigPath(env: NodeJS.ProcessEnv = process.env): string {
+  assertNoRetiredLocationVariables(env);
   return selectedConfigFile(env) ?? path.join(getConfigDir(env), "config.json");
 }
 
@@ -156,6 +154,25 @@ export function resetConfiguredPathsCache(): void {
  * A missing, unreadable or unparseable file names nothing here: the config load reports it.
  */
 function configuredLocation(kind: ConfiguredLocation, env: NodeJS.ProcessEnv): string | undefined {
+  return locationNamedByFile(kind, env) ?? carriedLocations[kind];
+}
+
+/**
+ * Locations a host named with a retired variable that the config file does not name yet. Only `akm-migrate` sets
+ * them, for its own run: they stand in for the `paths` entry it writes (or, in `status` or with a file it cannot
+ * write, would write), so every step reads the data, state and cache the host really uses.
+ */
+let carriedLocations: Partial<Record<ConfiguredLocation, string>> = {};
+
+export function carryLocations(locations: Partial<Record<ConfiguredLocation, string>>): void {
+  carriedLocations = { ...locations };
+}
+
+export function getCarriedLocations(): Readonly<Partial<Record<ConfiguredLocation, string>>> {
+  return carriedLocations;
+}
+
+function locationNamedByFile(kind: ConfiguredLocation, env: NodeJS.ProcessEnv): string | undefined {
   let file: string;
   let stat: fs.Stats;
   try {
@@ -208,16 +225,10 @@ function resolveConfiguredLocations(parsed: unknown, file: string): Partial<Reco
 // ── Cache directory ──────────────────────────────────────────────────────────
 
 export function getCacheDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.AKM_CACHE_DIR?.trim();
-  if (override) return override;
+  assertNoRetiredLocationVariables(env);
   const configured = configuredLocation("cache", env);
   if (configured) return configured;
 
-  // Explicit XDG/platform overrides win before the transient-stash isolation
-  // rule below — tests and operators that pre-arrange XDG_CACHE_HOME (or
-  // %LOCALAPPDATA% / %USERPROFILE% / %APPDATA% on Windows) must be honored
-  // as set, so the AKM_BUNDLE_DIR transient rule does not silently move cache
-  // writes away from where they pointed them.
   if (IS_WINDOWS) {
     const localAppData = env.LOCALAPPDATA?.trim();
     if (localAppData) return path.join(localAppData, "akm");
@@ -233,28 +244,14 @@ export function getCacheDir(env: NodeJS.ProcessEnv = process.env): string {
       // Preferred: set LOCALAPPDATA to avoid this navigation.
       return path.join(appData, "..", "Local", "akm");
     }
-  } else {
-    const xdgCacheHome = env.XDG_CACHE_HOME?.trim();
-    if (xdgCacheHome) return path.join(xdgCacheHome, "akm");
-  }
-
-  // Isolation safety (mirrors getConfigDir): when AKM_BUNDLE_DIR points at a
-  // transient path AND no explicit cache override is set, route cache writes
-  // into `${AKM_BUNDLE_DIR}/.akm/cache` so that config backups, registry-index
-  // cache, and other regenerable artifacts do not pollute the user's host
-  // ~/.cache/akm directory.
-  const stashOverride = env.AKM_BUNDLE_DIR?.trim();
-  if (stashOverride && isTransientStashPath(stashOverride)) {
-    return path.join(stashOverride, ".akm", "cache");
-  }
-
-  if (IS_WINDOWS) {
-    // None of LOCALAPPDATA / USERPROFILE / APPDATA were set above.
     throw new ConfigError(
       "Unable to determine cache directory. Set LOCALAPPDATA, USERPROFILE, or APPDATA.",
       "CONFIG_DIR_UNRESOLVABLE",
     );
   }
+
+  const xdgCacheHome = env.XDG_CACHE_HOME?.trim();
+  if (xdgCacheHome) return path.join(xdgCacheHome, "akm");
 
   const home = env.HOME?.trim();
   if (!home) return homelessFallbackDir("akm-cache");
@@ -287,13 +284,12 @@ function homelessFallbackDir(kind: string): string {
  * (`index.db`, `state.db`), `akm.lock`, and current data artifacts.
  * Losing this directory loses history and installed state.
  *
- * Env overrides (in priority order):
- *   AKM_DATA_DIR   — point to any directory
+ * Where it lives (in priority order):
+ *   `paths.data` in the config file
  *   XDG_DATA_HOME  — (Linux/macOS) override the XDG base; akm subdir is appended
  */
 export function getDataDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
-  const override = env.AKM_DATA_DIR?.trim();
-  if (override) return override;
+  assertNoRetiredLocationVariables(env);
   const configured = configuredLocation("data", env);
   if (configured) return configured;
 
@@ -377,13 +373,12 @@ export function getRegistryIndexCacheDir(): string {
  * travel with a bundle's own content (`$STASH/.akm`; see "What May Live in
  * $STASH/.akm" in docs/architecture/internals/storage-locations.md).
  *
- * Env overrides (in priority order):
- *   AKM_STATE_DIR  — point to any directory
+ * Where it lives (in priority order):
+ *   `paths.state` in the config file
  *   XDG_STATE_HOME — (Linux/macOS) override the XDG base; akm subdir is appended
  */
 export function getStateDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
-  const override = env.AKM_STATE_DIR?.trim();
-  if (override) return override;
+  assertNoRetiredLocationVariables(env);
   const configured = configuredLocation("state", env);
   if (configured) return configured;
 
@@ -464,17 +459,10 @@ export function getStashLocksDir(stashDir: string): string {
  * child that runs `akm` (an exec unit, an agent CLI) uses the same installation even
  * when the parent found it through `--config`, `XDG_*_HOME`, or a runtime that remaps
  * them. `AKM_CONFIG_FILE` is always absolute: the file names the other locations (its
- * `paths` key). The older per-location variables are still set until they are retired;
- * `AKM_BUNDLE_DIR` is passed only when the parent set one.
+ * `paths` key). `AKM_BUNDLE_DIR` is passed only when the parent set one (until it is retired).
  */
 export function akmLocations(): Record<string, string> {
-  const locations: Record<string, string> = {
-    AKM_CONFIG_FILE: getConfigPath(),
-    AKM_CONFIG_DIR: getConfigDir(),
-    AKM_DATA_DIR: getDataDir(),
-    AKM_CACHE_DIR: getCacheDir(),
-    AKM_STATE_DIR: getStateDir(),
-  };
+  const locations: Record<string, string> = { AKM_CONFIG_FILE: getConfigPath() };
   const bundleDir = process.env.AKM_BUNDLE_DIR?.trim();
   if (bundleDir) locations.AKM_BUNDLE_DIR = bundleDir;
   return locations;

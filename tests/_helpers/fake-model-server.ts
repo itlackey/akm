@@ -9,7 +9,7 @@
  *   answer    reply "ANSWER-<n>"
  *   question  call the `question` tool, then reply "Q-DONE"
  *   shell     call `shell`, then reply with the tool result
- *   env       call `shell` to print $AKM_PROBE, $AKM_AMBIENT, $HOME and $AKM_CONFIG_DIR, then reply with the tool result
+ *   env       call `shell` to print $AKM_PROBE, $AKM_AMBIENT, $HOME and $AKM_CONFIG_FILE, then reply with the tool result
  *   runtime   call `shell` to print the variables akm's own runtime sets for the OpenCode process, then reply with the tool result
  *   hang      accept the request and never answer it
  *   repeat    call `shell` with `echo same` on every request, never answering in text (a model stuck on one call)
@@ -74,13 +74,13 @@ const RUNTIME_PROBE = `echo "${Object.entries({
   TMP: "TMPDIR",
   FREE: "OPENCODE_DISABLE_FREE_MODELS",
   SOURCE: "AKM_EVENT_SOURCE",
-  DIR: "AKM_DATA_DIR",
+  FILE: "AKM_CONFIG_FILE",
 })
   .map(([label, name]) => `${label}=$(printenv ${name} || echo unset)`)
   .join(" ")}"`;
 
-/** A shell command whose output differs on every call: it counts its own runs in a file in akm's data directory, which its environment names. */
-const POLL_COMMAND = 'echo x >> "$AKM_DATA_DIR/poll.log"; wc -l < "$AKM_DATA_DIR/poll.log" | tr -d " "';
+/** A shell command whose output differs on every call: it counts its own runs in a file in the data root its environment names (`XDG_DATA_HOME`). */
+const POLL_COMMAND = 'echo x >> "$XDG_DATA_HOME/poll.log"; wc -l < "$XDG_DATA_HOME/poll.log" | tr -d " "';
 
 export function startFakeModel(): FakeModelServer {
   const requests: FakeModelRequest[] = [];
@@ -148,7 +148,7 @@ export function startFakeModel(): FakeModelServer {
               tool: {
                 name: "shell",
                 args: {
-                  command: 'echo "PROBE=$AKM_PROBE AMBIENT=$AKM_AMBIENT HOME=$HOME CONFIG=$AKM_CONFIG_DIR"',
+                  command: 'echo "PROBE=$AKM_PROBE AMBIENT=$AKM_AMBIENT HOME=$HOME CONFIG=$AKM_CONFIG_FILE"',
                   description: "probe",
                 },
               },

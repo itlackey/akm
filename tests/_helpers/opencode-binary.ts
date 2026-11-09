@@ -7,8 +7,9 @@
  * need it. It is fetched once, through akm's own fetch path
  * (`ensureRuntimeBinary`), into a cache the test runs share, and each test's
  * sandboxed akm cache links to it, so the first run in a sandbox finds it where
- * akm looks and fetches nothing. The shared cache is
- * `$AKM_TEST_OPENCODE_CACHE`, else `<repo>/node_modules/.cache/akm-test-opencode`.
+ * akm looks and fetches nothing. The shared cache is an `XDG_CACHE_HOME`, in
+ * `$AKM_TEST_OPENCODE_CACHE`, else `<repo>/node_modules/.cache/akm-test-opencode`;
+ * akm keeps its files in the `akm` folder of it.
  */
 
 import fs from "node:fs";
@@ -19,8 +20,9 @@ import {
 } from "../../src/integrations/harnesses/opencode/runtime/binary";
 import { withEnv } from "./sandbox";
 
-const SHARED_CACHE =
+const SHARED_XDG_CACHE =
   process.env.AKM_TEST_OPENCODE_CACHE ?? path.resolve(import.meta.dir, "../../node_modules/.cache/akm-test-opencode");
+const SHARED_CACHE = path.join(SHARED_XDG_CACHE, "akm");
 
 /**
  * Fetch the binary into the shared cache if it is not there. Resolves to why it cannot be had (the registry is not
@@ -28,7 +30,7 @@ const SHARED_CACHE =
  */
 export async function fetchSharedOpencode(): Promise<string | undefined> {
   try {
-    await withEnv({ AKM_CACHE_DIR: SHARED_CACHE }, () => ensureRuntimeBinary());
+    await withEnv({ XDG_CACHE_HOME: SHARED_XDG_CACHE }, () => ensureRuntimeBinary());
     return undefined;
   } catch (error) {
     return error instanceof Error ? error.message : String(error);

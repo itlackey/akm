@@ -65,11 +65,10 @@ describe("the selected config file", () => {
     expect(getConfigPath({ AKM_CONFIG_FILE: "rel/akm.json" })).toBe(path.resolve("rel/akm.json"));
   });
 
-  test("it beats AKM_CONFIG_DIR, XDG_CONFIG_HOME and the transient-bundle rule", () => {
+  test("it beats XDG_CONFIG_HOME, and a transient AKM_BUNDLE_DIR moves nothing", () => {
     const file = path.join(dir, "chosen.json");
     const env = {
       AKM_CONFIG_FILE: file,
-      AKM_CONFIG_DIR: "/old/dir",
       XDG_CONFIG_HOME: "/xdg",
       AKM_BUNDLE_DIR: "/tmp/sandbox-bundle",
       HOME: "/home/me",
@@ -128,9 +127,9 @@ describe("the `paths` key", () => {
     );
   });
 
-  test("this stage: the older location variable beats `paths`", () => {
-    expect(dataDirFrom(JSON.stringify({ paths: { data: "/from/paths" } }), { AKM_DATA_DIR: "/from/env" })).toBe(
-      "/from/env",
+  test("`paths` beats XDG_DATA_HOME", () => {
+    expect(dataDirFrom(JSON.stringify({ paths: { data: "/from/paths" } }), { XDG_DATA_HOME: "/xdg/data" })).toBe(
+      "/from/paths",
     );
   });
 

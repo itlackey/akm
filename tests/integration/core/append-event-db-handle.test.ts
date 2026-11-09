@@ -26,11 +26,11 @@ describe("appendEvent with a caller-supplied connection", () => {
     try {
       const db = openStateDatabase();
       try {
-        // Both data-dir env vars unset: any resolution attempt throws the
+        // The data-dir env var unset: any resolution attempt throws the
         // bun-test isolation guard, which `appendEvent` deliberately rethrows
         // even from inside its catch. Reaching the handle is the only way
         // through.
-        withEnvSync({ AKM_DATA_DIR: undefined, XDG_DATA_HOME: undefined }, () => {
+        withEnvSync({ XDG_DATA_HOME: undefined }, () => {
           appendEvent({ eventType: "add", ref: "memories/alpha" }, { db });
         });
 

@@ -41,12 +41,12 @@ function makeTempDir(prefix: string): string {
 let storage: IsolatedAkmStorage;
 
 beforeEach(() => {
-  // index.db lives under AKM_DATA_DIR; isolate so we never touch the user's
+  // index.db lives under the data dir (XDG_DATA_HOME); isolate so we never touch the user's
   // real ~/.local/share/akm/index.db.
   const akmDataDir = makeSandboxDir("akm-improve-ensure-data-");
   const akmStateDir = makeSandboxDir("akm-improve-ensure-state-");
   dirCleanups.push(akmDataDir.cleanup, akmStateDir.cleanup);
-  storage = withIsolatedAkmStorage({ AKM_DATA_DIR: akmDataDir.dir, AKM_STATE_DIR: akmStateDir.dir });
+  storage = withIsolatedAkmStorage({ XDG_DATA_HOME: akmDataDir.dir, XDG_STATE_HOME: akmStateDir.dir });
 });
 
 afterEach(() => {

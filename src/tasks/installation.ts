@@ -8,11 +8,11 @@
  * The OS scheduler is one namespace per user, shared by every akm installation
  * and every sandbox on the machine. akm writes it for the user's default
  * installation only: the one whose locations come from HOME (and, on Windows,
- * the OS-set profile folders) alone, read from the default config file. Any `AKM_*`
- * location variable, a config file other than the default (`--config`,
- * `AKM_CONFIG_FILE`), or an XDG variable that moves a location, makes an
- * installation non-default; its supervisor runs `akm task dispatch itself`. A `paths`
- * key in the default file does not: dispatch reads that file.
+ * the OS-set profile folders) alone, read from the default config file. A config
+ * file other than the default (`--config`, `AKM_CONFIG_FILE`), an XDG/APPDATA
+ * variable that moves a location, or (until it is retired) an `AKM_BUNDLE_DIR` naming
+ * another bundle, makes an installation non-default; its supervisor runs
+ * `akm task dispatch` itself. A `paths` key in the default file does not: dispatch reads that file.
  */
 
 import path from "node:path";
@@ -34,7 +34,9 @@ function configuredDefaultBundlePath(): string | undefined {
 }
 
 /**
- * The locations (config file, data, cache, state, bundle) that `env` moves away from the HOME-only defaults. Every row akm
+ * The locations (config file, data, cache, state, bundle) that `env` moves away from the HOME-only defaults: a
+ * non-default config file, or an XDG/APPDATA variable (the loop compares what each resolves to, so an XDG variable
+ * set to the default value moves nothing). Every row akm
  * 0.9.32 and 0.10 wrote inlines `AKM_BUNDLE_DIR`, so that variable moves the bundle only when it names a directory
  * other than the configured default bundle's: a sync or upgrade run from such a row is still the default installation.
  */

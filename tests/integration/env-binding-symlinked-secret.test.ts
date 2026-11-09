@@ -37,9 +37,7 @@ describe("resolveEnvBinding secret substitution", () => {
     fs.writeFileSync(path.join(outside, "real"), "s3cret");
     fs.symlinkSync(path.join(outside, "real"), path.join(stash, "secrets", "token"));
 
-    const binding = await withEnv({ AKM_BUNDLE_DIR: stash, AKM_CONFIG_DIR: undefined }, async () =>
-      resolveEnvBinding("env/prod"),
-    );
+    const binding = await withEnv({ AKM_BUNDLE_DIR: stash }, async () => resolveEnvBinding("env/prod"));
     expect(binding.values.TOKEN).toBe("s3cret");
     expect(binding.secretValues).toEqual(["s3cret"]);
   });
@@ -48,9 +46,7 @@ describe("resolveEnvBinding secret substitution", () => {
     const { stash } = stashWithEnv("TOKEN=${secrets/../outside}\n");
     fs.writeFileSync(path.join(stash, "outside"), "leak");
 
-    const binding = await withEnv({ AKM_BUNDLE_DIR: stash, AKM_CONFIG_DIR: undefined }, async () =>
-      resolveEnvBinding("env/prod"),
-    );
+    const binding = await withEnv({ AKM_BUNDLE_DIR: stash }, async () => resolveEnvBinding("env/prod"));
     expect(binding.values.TOKEN).toBe("${secrets/../outside}");
     expect(binding.secretValues).toEqual([]);
   });

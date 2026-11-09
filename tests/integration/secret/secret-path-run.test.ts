@@ -79,7 +79,7 @@ async function runCli(
   args: string[],
   extraEnv: Record<string, string | undefined> = {},
 ): Promise<{ stdout: string; stderr: string; status: number }> {
-  return withEnv({ AKM_CONFIG_DIR: undefined, ...extraEnv }, async () => {
+  return withEnv({ ...extraEnv }, async () => {
     clearEmbeddingCache();
     resetLocalEmbedder();
     const { stdout, stderr, code } = await runCliCapture(args);

@@ -35,9 +35,16 @@ is not enabled is only a `legacyTaskWarnings` line):
   5. the OS scheduler: the one entry that runs `akm task dispatch` replaces
      akm 0.9's per-task rows in one write (what `akm task sync` does). It runs
      `crontab`, `launchctl` or `schtasks` only when it has something to write;
-     an installation that moves a location (an `AKM_*` directory or an XDG
-     variable) is left alone, with a warning, and so is a machine with no
+     an installation that moves a location (a config file other than the default
+     or an XDG variable) is left alone, with a warning, and so is a machine with no
      `crontab` binary
+
+A host that still sets AKM_CONFIG_DIR, AKM_DATA_DIR, AKM_STATE_DIR or AKM_CACHE_DIR
+(akm itself refuses to start with one) is read here first: AKM_CONFIG_DIR locates the
+config, and the other three go into its `paths`, which `apply` writes. The plan's
+`environment` section lists the variables to unset and the AKM_CONFIG_FILE to set.
+A file that cannot be written blocks `apply` (and the scheduler step), with the
+`paths` entries to add where the file is made.
 
 `akm migrate status|apply` wraps this executable; `akm upgrade` runs
 `apply` after its install step, so an image that ships akm can put either

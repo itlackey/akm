@@ -12,9 +12,10 @@ const catalog = path.join(root, "catalog");
 fs.mkdirSync(path.join(stash, "knowledge"), { recursive: true });
 fs.mkdirSync(path.join(catalog, "knowledge"), { recursive: true });
 fs.writeFileSync(path.join(catalog, "knowledge", "reference.md"), "# Reference\nSynthetic catalog content.\n");
-fs.mkdirSync(process.env.AKM_CONFIG_DIR, { recursive: true });
+const configDir = path.join(process.env.XDG_CONFIG_HOME, "akm");
+fs.mkdirSync(configDir, { recursive: true });
 fs.writeFileSync(
-  path.join(process.env.AKM_CONFIG_DIR, "config.json"),
+  path.join(configDir, "config.json"),
   JSON.stringify({
     bundles: { stash: { path: stash, writable: true }, catalog: { path: catalog, writable: false } },
     defaultBundle: "stash",

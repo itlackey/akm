@@ -53,10 +53,7 @@ export async function createFixture({
     TMPDIR: path.join(root, "tmp"),
     TEMP: path.join(root, "tmp"),
     TMP: path.join(root, "tmp"),
-    AKM_CONFIG_DIR: path.join(root, "config"),
-    AKM_DATA_DIR: path.join(root, "data"),
-    AKM_CACHE_DIR: path.join(root, "cache"),
-    AKM_STATE_DIR: path.join(root, "state"),
+    AKM_CONFIG_FILE: path.join(root, "config", "config.json"),
     AKM_BUNDLE_DIR: path.join(root, "personal"),
     NO_PROXY: "127.0.0.1,localhost",
     HTTP_PROXY: "http://127.0.0.1:1",
@@ -71,17 +68,11 @@ export async function createFixture({
     await writeFile(file, content);
     return file;
   };
-  for (const key of [
-    "HOME",
-    "TMPDIR",
-    "XDG_CONFIG_HOME",
-    "XDG_DATA_HOME",
-    "XDG_CACHE_HOME",
-    "XDG_STATE_HOME",
-    "AKM_DATA_DIR",
-    "AKM_STATE_DIR",
-  ])
+  for (const key of ["HOME", "TMPDIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"])
     await mkdir(String(env[key]), { recursive: true });
+  // The config file names where this installation keeps its data, state and cache: under the fixture's root.
+  const paths = { data: path.join(root, "data"), state: path.join(root, "state"), cache: path.join(root, "cache") };
+  for (const directory of Object.values(paths)) await mkdir(directory, { recursive: true });
   const require = createRequire(packageRoot ? path.join(packageRoot, "package.json") : import.meta.url);
   const launcher = path.join(path.dirname(require.resolve("akm-cli/package.json")), "dist", "cli-node.mjs");
   const cleanup = async () => {
@@ -109,6 +100,7 @@ export async function createFixture({
         defaultBundle: "personal",
         bundles,
         harnesses: { fake: { platform: "aider", bin: fakeAgent } },
+        paths,
       },
       null,
       2,

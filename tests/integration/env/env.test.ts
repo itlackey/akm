@@ -51,7 +51,7 @@ async function runCli(
   args: string[],
   extraEnv: Record<string, string | undefined> = {},
 ): Promise<{ stdout: string; stderr: string; status: number }> {
-  return withEnv({ AKM_BUNDLE_DIR: undefined, AKM_CONFIG_DIR: undefined, ...extraEnv }, async () => {
+  return withEnv({ AKM_BUNDLE_DIR: undefined, ...extraEnv }, async () => {
     clearEmbeddingCache();
     resetLocalEmbedder();
     const { stdout, stderr, code } = await runCliCapture(args);
@@ -405,7 +405,7 @@ describe("env list", () => {
 
     const result = await runCli(["env", "list", "--format", "json"], {
       AKM_BUNDLE_DIR: primaryStash,
-      AKM_CONFIG_DIR: path.join(xdgConfig, "akm"),
+      AKM_CONFIG_FILE: path.join(xdgConfig, "akm", "config.json"),
     });
 
     expect(result.status).toBe(0);

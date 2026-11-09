@@ -77,15 +77,9 @@ describe.skipIf(!SEMANTIC_TESTS)("the standalone binary's semantic search", () =
         `---\ndescription: Note ${note} about topic ${note}\n---\n# Note ${note}\n\nThe quick brown fox number ${note} jumps over the lazy dog.\n`,
       );
     }
-    const akmDirs = {
-      AKM_CONFIG_DIR: path.join(process.env.XDG_CONFIG_HOME as string, "akm"),
-      AKM_DATA_DIR: path.join(process.env.XDG_DATA_HOME as string, "akm"),
-      AKM_CACHE_DIR: path.join(process.env.XDG_CACHE_HOME as string, "akm"),
-      AKM_STATE_DIR: path.join(process.env.XDG_STATE_HOME as string, "akm"),
-    };
     const akm = (...args: string[]) =>
-      spawnSync(binary, args, { env: { ...process.env, ...akmDirs, HF_HOME }, encoding: "utf8", timeout: 600_000 });
-    return { storage, cacheDir: akmDirs.AKM_CACHE_DIR, akm };
+      spawnSync(binary, args, { env: { ...process.env, HF_HOME }, encoding: "utf8", timeout: 600_000 });
+    return { storage, cacheDir: path.join(process.env.XDG_CACHE_HOME as string, "akm"), akm };
   }
 
   const shown = (run: ReturnType<typeof spawnSync>) => `stdout:\n${run.stdout}\nstderr:\n${run.stderr}`;

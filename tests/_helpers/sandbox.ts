@@ -275,6 +275,24 @@ export function sandboxEnvDir(prefix: string, envVar: string, chain?: Cleanup): 
   return { dir, cleanup };
 }
 
+/**
+ * Sandbox the akm data, state or cache directory itself: a fresh temp root becomes the matching `XDG_*_HOME`, and the
+ * returned `dir` is the `akm` folder akm keeps its files in under it (created), so a test can name
+ * `path.join(dir, "state.db")` as akm does. Replaces pointing the retired `AKM_DATA_DIR`, `AKM_STATE_DIR` and
+ * `AKM_CACHE_DIR` at a directory.
+ */
+export function sandboxAkmDir(
+  prefix: string,
+  kind: "data" | "state" | "cache",
+  chain?: Cleanup,
+): { dir: string; cleanup: Cleanup } {
+  const variable = { data: "XDG_DATA_HOME", state: "XDG_STATE_HOME", cache: "XDG_CACHE_HOME" }[kind];
+  const root = sandboxEnvDir(prefix, variable, chain);
+  const dir = path.join(root.dir, "akm");
+  fs.mkdirSync(dir, { recursive: true });
+  return { dir, cleanup: root.cleanup };
+}
+
 // ── Named helpers ────────────────────────────────────────────────────────────
 
 /**

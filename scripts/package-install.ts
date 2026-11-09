@@ -586,8 +586,8 @@ async function testPackageAcceptance(skipBuild = false): Promise<void> {
     );
     const probeEnv = {
       ...process.env,
-      AKM_CONFIG_DIR: configDir,
-      AKM_CACHE_DIR: path.join(workDir, "probe-cache"),
+      AKM_CONFIG_FILE: path.join(configDir, "config.json"),
+      XDG_CACHE_HOME: path.join(workDir, "probe-cache"),
     };
     await runCommand(["node", probe], { cwd: verified.packageDir, env: probeEnv });
     await runCommand(["bun", probe], { cwd: verified.packageDir, env: probeEnv });

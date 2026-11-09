@@ -7,7 +7,7 @@
  *
  *   1. Environment variables in {@link HARNESSED}. The preload-time
  *      bottom layer (`installSuiteWideSandbox`) repoints `HOME`, all four
- *      `XDG_*`, and the `AKM_*_DIR` overrides to a per-process sandbox
+ *      `XDG_*`, and the location overrides to a per-process sandbox
  *      directory under `os.tmpdir()`. Test files that set their own values
  *      via `beforeAll` / `beforeEach` still take precedence — but if a
  *      test forgets, the process-wide defaults keep production code's
@@ -72,6 +72,8 @@ const HARNESSED: readonly string[] = [
   // Storage layout overrides.
   "AKM_CONFIG_FILE",
   "AKM_BUNDLE_DIR",
+  // Retired: akm refuses to start with one set (src/core/paths.ts). Listed so a test of that refusal, or a
+  // developer's exported one, is restored or removed like any other and never reaches the leak tripwire.
   "AKM_CONFIG_DIR",
   "AKM_CACHE_DIR",
   "AKM_DATA_DIR",
@@ -145,11 +147,10 @@ function installSuiteWideSandbox(): void {
   if (process.platform === "win32") {
     for (const [name, value] of Object.entries(windowsProfileEnv(suiteSandboxRoot))) process.env[name] = value;
   }
-  // The AKM_*_DIR overrides take precedence over XDG in src/core/paths.ts.
-  // If a developer's shell exports any of them, they would defeat the XDG
-  // sandbox above and leak production paths into the suite. Delete them at
-  // startup so the XDG sandbox always wins; tests that need a specific
-  // AKM_*_DIR set it explicitly (and the afterEach tripwire restores it).
+  // AKM_CONFIG_FILE takes precedence over XDG in src/core/paths.ts, and the retired AKM_*_DIR variables make akm
+  // refuse to start. If a developer's shell exports any of them, they would defeat the XDG sandbox above or fail
+  // every test. Delete them at startup so the XDG sandbox always wins; tests that need one set it explicitly (and
+  // the afterEach tripwire restores it).
   delete process.env.AKM_CONFIG_FILE;
   delete process.env.AKM_CONFIG_DIR;
   delete process.env.AKM_DATA_DIR;
@@ -281,13 +282,7 @@ const SANDBOX_ENV: Record<string, string> = {
   ...(process.platform === "win32" ? windowsProfileEnv(suiteSandboxRoot ?? "") : {}),
 };
 
-const AKM_DIR_OVERRIDES: readonly string[] = [
-  "AKM_BUNDLE_DIR",
-  "AKM_CONFIG_DIR",
-  "AKM_CACHE_DIR",
-  "AKM_DATA_DIR",
-  "AKM_STATE_DIR",
-];
+const AKM_DIR_OVERRIDES: readonly string[] = ["AKM_BUNDLE_DIR"];
 
 /** True iff `dir` is the temp root or strictly within it. */
 function isUnderTmp(dir: string): boolean {
@@ -360,7 +355,7 @@ function healSandboxEnv(): void {
     }
   }
 
-  // Repair 2: AKM_*_DIR overrides have NO sandbox baseline (unset at preload).
+  // Repair 2: the AKM_BUNDLE_DIR override has NO sandbox baseline (unset at preload).
   // Drop any that leaked to a missing or out-of-tmp dir; production then falls
   // back to the sandbox HOME/XDG. Valid live /tmp overrides are preserved.
   for (const key of AKM_DIR_OVERRIDES) {

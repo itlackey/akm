@@ -33,7 +33,7 @@ beforeEach(() => {
   const data = makeSandboxDir("akm-reflect-transient-data-");
   const state = makeSandboxDir("akm-reflect-transient-state-");
   dirCleanups.push(data.cleanup, state.cleanup);
-  storage = withIsolatedAkmStorage({ AKM_DATA_DIR: data.dir, AKM_STATE_DIR: state.dir });
+  storage = withIsolatedAkmStorage({ XDG_DATA_HOME: data.dir, XDG_STATE_HOME: state.dir });
 });
 
 afterEach(() => {

@@ -27,6 +27,7 @@
 /** Stable, machine-readable codes for ConfigError. */
 export type ConfigErrorCode =
   | "CONFIG_DIR_UNRESOLVABLE"
+  | "RETIRED_LOCATION_VARIABLE"
   | "STASH_DIR_NOT_FOUND"
   | "STASH_DIR_NOT_A_DIRECTORY"
   | "STASH_DIR_UNREADABLE"
@@ -205,9 +206,9 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
     "The configured default bundle path exists but isn't a directory. Update it to point at a folder.",
   STASH_DIR_UNREADABLE: "Check the path exists and your user has read permission, or update the default bundle path.",
   DATA_DIR_UNREADABLE:
-    "The data directory is not readable by the user running akm. Check its owner and mode, or point AKM_DATA_DIR / XDG_DATA_HOME somewhere this user owns.",
+    "The data directory is not readable by the user running akm. Check its owner and mode, or point XDG_DATA_HOME (or `paths.data` in the config file) somewhere this user owns.",
   DATA_DIR_NOT_WRITABLE:
-    "Nothing was recorded. Make the akm data directory writable for this process (for an agent sandbox, add it to the writable paths), or point AKM_DATA_DIR / XDG_DATA_HOME somewhere this user can write, then retry.",
+    "Nothing was recorded. Make the akm data directory writable for this process (for an agent sandbox, add it to the writable paths), or point XDG_DATA_HOME (or `paths.data` in the config file) somewhere this user can write, then retry.",
   INDEX_SCHEMA_INCOMPATIBLE:
     "Run `akm index --full` to rebuild the derived index from the currently materialized sources.",
   LLM_NOT_CONFIGURED:

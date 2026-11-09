@@ -15,7 +15,7 @@ import {
   type SummaryValidationFailure,
 } from "../../../src/workflows/runtime/runs";
 import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
-import { type Cleanup, sandboxEnvDir, sandboxXdgConfigHome, withEnv } from "../../_helpers/sandbox";
+import { type Cleanup, sandboxAkmDir, sandboxEnvDir, sandboxXdgConfigHome, withEnv } from "../../_helpers/sandbox";
 import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
 beforeEach(() => fakeOpencodeMajor(1));
@@ -102,7 +102,7 @@ Thing is done, Tests pass
 }
 
 beforeEach(() => {
-  const sandboxed = sandboxEnvDir("akm-complete-summary-", "AKM_DATA_DIR");
+  const sandboxed = sandboxAkmDir("akm-complete-summary-", "data");
   // The judge works in the root of the bundle that holds the run's workflow, found when it is built.
   const bundle = sandboxEnvDir("akm-complete-summary-bundle-", "AKM_BUNDLE_DIR", sandboxed.cleanup);
   bundleDir = bundle.dir;

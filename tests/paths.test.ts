@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import os from "node:os";
 import path from "node:path";
+import { ConfigError } from "../src/core/errors";
 import {
   akmLocations,
   getCacheDir,
@@ -118,52 +119,11 @@ describe("getConfigDir", () => {
     expect(result).toBe(path.join("/test-xdg", "akm"));
   });
 
-  test("AKM_CONFIG_DIR overrides all other paths", () => {
-    const result = getConfigDir({ AKM_CONFIG_DIR: "/override/config", HOME: "/home/user" }, "linux");
-    expect(result).toBe("/override/config");
-  });
-
-  // Regression: the 2026-05-23 setup-clobbers-user-config incident. When the user (or a
-  // test harness) sets AKM_BUNDLE_DIR to a transient path, config writes
-  // must NOT target the user's host ~/.config/akm — they must route into
-  // the stash so saveConfig() can never silently clobber the host.
-  test("AKM_BUNDLE_DIR=/tmp/X routes config to /tmp/X/.akm (isolation safety)", () => {
-    const result = getConfigDir({ AKM_BUNDLE_DIR: "/tmp/test-stash", HOME: "/home/user" }, "linux");
-    expect(result).toBe(path.join("/tmp/test-stash", ".akm"));
-  });
-
-  test("AKM_BUNDLE_DIR=/private/var/folders/... (macOS mktemp) also triggers isolation", () => {
-    const result = getConfigDir(
-      { AKM_BUNDLE_DIR: "/private/var/folders/zz/abc/T/akm-test", HOME: "/Users/user" },
-      "darwin",
-    );
-    expect(result).toBe(path.join("/private/var/folders/zz/abc/T/akm-test", ".akm"));
-  });
-
-  test("AKM_BUNDLE_DIR=~/my-stash (persistent path) does NOT redirect — daily users unaffected", () => {
-    const result = getConfigDir({ AKM_BUNDLE_DIR: "/home/user/my-stash", HOME: "/home/user" }, "linux");
+  // A transient AKM_BUNDLE_DIR no longer moves the config: `akm setup --dir <transient>` does it for its own run
+  // (tests/setup-tmp-stash-guard.test.ts).
+  test("a transient AKM_BUNDLE_DIR does not move the config directory", () => {
+    const result = getConfigDir({ AKM_BUNDLE_DIR: "/tmp/transient", HOME: "/home/user" }, "linux");
     expect(result).toBe(path.join("/home/user", ".config", "akm"));
-  });
-
-  test("AKM_CONFIG_DIR override beats AKM_BUNDLE_DIR isolation rule (explicit wins)", () => {
-    const result = getConfigDir(
-      { AKM_CONFIG_DIR: "/keep/host/config", AKM_BUNDLE_DIR: "/tmp/transient", HOME: "/home/user" },
-      "linux",
-    );
-    expect(result).toBe("/keep/host/config");
-  });
-
-  test("XDG_CONFIG_HOME also beats AKM_BUNDLE_DIR isolation rule (existing tests rely on this)", () => {
-    const result = getConfigDir(
-      { XDG_CONFIG_HOME: "/iso/cfg", AKM_BUNDLE_DIR: "/tmp/transient", HOME: "/home/user" },
-      "linux",
-    );
-    expect(result).toBe(path.join("/iso/cfg", "akm"));
-  });
-
-  test("APPDATA on Windows also beats AKM_BUNDLE_DIR isolation rule", () => {
-    const result = getConfigDir({ APPDATA: String.raw`C:\iso\cfg`, AKM_BUNDLE_DIR: "/tmp/transient" }, "win32");
-    expect(result).toBe(path.join(String.raw`C:\iso\cfg`, "akm"));
   });
 });
 
@@ -185,14 +145,12 @@ describe("getConfigPath", () => {
 
 describe("getCacheDir", () => {
   test("uses XDG_CACHE_HOME on Unix", () => {
-    delete process.env.AKM_CACHE_DIR;
     process.env.XDG_CACHE_HOME = "/custom/cache";
     const result = getCacheDir();
     expect(result).toBe(path.join("/custom/cache", "akm"));
   });
 
   test("falls back to HOME/.cache on Unix when XDG_CACHE_HOME is unset", () => {
-    delete process.env.AKM_CACHE_DIR;
     delete process.env.XDG_CACHE_HOME;
     // Clear AKM_BUNDLE_DIR too — under CI, it can be inherited from outer
     // test isolation pointing at a transient dir, which would trigger the
@@ -204,7 +162,6 @@ describe("getCacheDir", () => {
   });
 
   test("falls back to a UID-SCOPED tmp cache dir when HOME is also unset", () => {
-    delete process.env.AKM_CACHE_DIR;
     delete process.env.XDG_CACHE_HOME;
     delete process.env.AKM_BUNDLE_DIR;
     delete process.env.HOME;
@@ -218,52 +175,9 @@ describe("getCacheDir", () => {
     expect(result.startsWith(path.join(os.tmpdir(), "akm-cache"))).toBe(true);
   });
 
-  test("AKM_CACHE_DIR overrides all other paths", () => {
-    process.env.AKM_CACHE_DIR = "/override/cache";
-    const result = getCacheDir();
-    expect(result).toBe("/override/cache");
-  });
-
-  // Regression: the 2026-05-23 setup-clobbers-user-config incident companion fix. When
-  // AKM_BUNDLE_DIR is transient, cache (which holds config-backups/) must
-  // also isolate into the stash so saveConfig backup writes do not
-  // pollute the user's host ~/.cache/akm/config-backups/.
-  test("AKM_BUNDLE_DIR=/tmp/X routes cache to /tmp/X/.akm/cache (isolation safety)", () => {
-    delete process.env.AKM_CACHE_DIR;
-    delete process.env.XDG_CACHE_HOME;
-    process.env.HOME = "/home/user";
-    process.env.AKM_BUNDLE_DIR = "/tmp/test-cache-stash";
-    const result = getCacheDir();
-    expect(result).toBe(path.join("/tmp/test-cache-stash", ".akm", "cache"));
-  });
-
-  test("AKM_BUNDLE_DIR=~/persistent does NOT redirect cache (daily users unaffected)", () => {
-    delete process.env.AKM_CACHE_DIR;
-    delete process.env.XDG_CACHE_HOME;
-    process.env.HOME = "/home/user";
-    process.env.AKM_BUNDLE_DIR = "/home/user/my-stash";
-    const result = getCacheDir();
-    expect(result).toBe(path.join("/home/user", ".cache", "akm"));
-  });
-
-  test("AKM_CACHE_DIR beats AKM_BUNDLE_DIR isolation rule", () => {
-    process.env.AKM_CACHE_DIR = "/override/cache";
-    process.env.AKM_BUNDLE_DIR = "/tmp/transient";
-    const result = getCacheDir();
-    expect(result).toBe("/override/cache");
-  });
-
-  test("XDG_CACHE_HOME also beats AKM_BUNDLE_DIR isolation rule (existing tests rely on this)", () => {
-    delete process.env.AKM_CACHE_DIR;
-    process.env.XDG_CACHE_HOME = "/iso/cache";
-    process.env.AKM_BUNDLE_DIR = "/tmp/transient";
-    const result = getCacheDir();
-    expect(result).toBe(path.join("/iso/cache", "akm"));
-  });
-
   test("honors an injected env without reading or mutating process.env", () => {
     // Pin the real global to a value that MUST NOT influence the result.
-    process.env.AKM_CACHE_DIR = "/host/should-be-ignored";
+    process.env.XDG_CACHE_HOME = "/host/should-be-ignored";
     const before = JSON.stringify(process.env);
     const result = getCacheDir({ XDG_CACHE_HOME: "/injected/cache" });
     expect(result).toBe(path.join("/injected/cache", "akm"));
@@ -298,11 +212,6 @@ describe("getDataDir", () => {
     expect(result).toBe(path.join(String.raw`C:\Users\user\AppData\Local`, "akm", "data"));
   });
 
-  test("AKM_DATA_DIR overrides all other paths", () => {
-    const result = getDataDir({ AKM_DATA_DIR: "/override/data", HOME: "/home/user" }, "linux");
-    expect(result).toBe("/override/data");
-  });
-
   test("ignores empty XDG_DATA_HOME and falls back to HOME", () => {
     const result = getDataDir({ XDG_DATA_HOME: "  ", HOME: "/home/user" }, "linux");
     expect(result).toBe(path.join("/home/user", ".local", "share", "akm"));
@@ -310,7 +219,6 @@ describe("getDataDir", () => {
 
   test("uses default process.env when env argument omitted", () => {
     process.env.XDG_DATA_HOME = "/test-data-xdg";
-    delete process.env.AKM_DATA_DIR;
     const result = getDataDir();
     expect(result).toBe(path.join("/test-data-xdg", "akm"));
   });
@@ -328,16 +236,10 @@ describe("getDataDir", () => {
     expect(getDataDir({ BUN_TEST: "1", HOME: "/home/user" }, "linux")).toBe(plain);
   });
 
-  test("XDG_DATA_HOME and AKM_DATA_DIR still win, test sentinel or not", () => {
+  test("XDG_DATA_HOME still wins, test sentinel or not", () => {
     expect(getDataDir({ NODE_ENV: "test", XDG_DATA_HOME: "/tmp/xdg-data", HOME: "/home/user" }, "linux")).toBe(
       path.join("/tmp/xdg-data", "akm"),
     );
-    expect(
-      getDataDir(
-        { NODE_ENV: "test", AKM_BUNDLE_DIR: "/tmp/stash", AKM_DATA_DIR: "/tmp/akm-data", HOME: "/home/user" },
-        "linux",
-      ),
-    ).toBe("/tmp/akm-data");
   });
 });
 
@@ -346,13 +248,11 @@ describe("getDataDir", () => {
 describe("getDbPath", () => {
   test("returns index.db under data dir", () => {
     process.env.XDG_DATA_HOME = "/data";
-    delete process.env.AKM_DATA_DIR;
     expect(getDbPath()).toBe(path.join("/data", "akm", "index.db"));
   });
 
   test("honors an injected env object (DI seam) over process.env", () => {
     process.env.XDG_DATA_HOME = "/ambient-data";
-    delete process.env.AKM_DATA_DIR;
     expect(getDbPath({ XDG_DATA_HOME: "/injected-data" })).toBe(path.join("/injected-data", "akm", "index.db"));
   });
 });
@@ -366,7 +266,6 @@ describe("getDbPath", () => {
 describe("getLockfilePath", () => {
   test("returns akm.lock under data dir", () => {
     process.env.XDG_DATA_HOME = "/data";
-    delete process.env.AKM_DATA_DIR;
     expect(getLockfilePath()).toBe(path.join("/data", "akm", "akm.lock"));
   });
 });
@@ -374,7 +273,6 @@ describe("getLockfilePath", () => {
 describe("getLockfileLockPath", () => {
   test("returns akm.lock.lck under data dir", () => {
     process.env.XDG_DATA_HOME = "/data";
-    delete process.env.AKM_DATA_DIR;
     expect(getLockfileLockPath()).toBe(path.join("/data", "akm", "akm.lock.lck"));
   });
 });
@@ -401,7 +299,6 @@ describe("getRegistryIndexCacheDir", () => {
 
 describe("getStateDir", () => {
   test("uses XDG_STATE_HOME on Unix", () => {
-    delete process.env.AKM_STATE_DIR;
     const result = getStateDir({ XDG_STATE_HOME: "/custom/state" }, "linux");
     expect(result).toBe(path.join("/custom/state", "akm"));
   });
@@ -417,18 +314,13 @@ describe("getStateDir", () => {
     expect(result).toBe(path.join(os.tmpdir(), uid === undefined ? "akm-state" : `akm-state-${uid}`));
   });
 
-  test("AKM_STATE_DIR overrides all other paths", () => {
-    const result = getStateDir({ AKM_STATE_DIR: "/override/state", XDG_STATE_HOME: "/ignored" }, "linux");
-    expect(result).toBe("/override/state");
-  });
-
   test("uses LOCALAPPDATA on Windows", () => {
     const result = getStateDir({ LOCALAPPDATA: String.raw`C:\Users\user\AppData\Local` }, "win32");
     expect(result).toBe(path.join(String.raw`C:\Users\user\AppData\Local`, "akm", "state"));
   });
 
   test("honors an injected env without reading or mutating process.env", () => {
-    process.env.AKM_STATE_DIR = "/host/should-be-ignored";
+    process.env.XDG_STATE_HOME = "/host/should-be-ignored";
     const before = JSON.stringify(process.env);
     const result = getStateDir({ XDG_STATE_HOME: "/injected/state" }, "linux");
     expect(result).toBe(path.join("/injected/state", "akm"));
@@ -514,18 +406,9 @@ describe("akmLocations", () => {
     process.env.XDG_CACHE_HOME = "/xdg/cache";
     process.env.XDG_STATE_HOME = "/xdg/state";
     delete process.env.AKM_CONFIG_FILE;
-    delete process.env.AKM_CONFIG_DIR;
-    delete process.env.AKM_DATA_DIR;
-    delete process.env.AKM_CACHE_DIR;
-    delete process.env.AKM_STATE_DIR;
 
-    expect(akmLocations()).toEqual({
-      AKM_CONFIG_FILE: getConfigPath(),
-      AKM_CONFIG_DIR: getConfigDir(),
-      AKM_DATA_DIR: getDataDir(),
-      AKM_CACHE_DIR: getCacheDir(),
-      AKM_STATE_DIR: getStateDir(),
-    });
+    // The config file only: it names data, state and cache itself (`paths`), and XDG covers the rest.
+    expect(akmLocations()).toEqual({ AKM_CONFIG_FILE: getConfigPath() });
     expect(getDataDir()).toContain(path.join("/xdg/data"));
   });
 
@@ -534,5 +417,50 @@ describe("akmLocations", () => {
     expect(akmLocations().AKM_BUNDLE_DIR).toBe("/my/bundle");
     process.env.AKM_BUNDLE_DIR = "  ";
     expect(akmLocations()).not.toHaveProperty("AKM_BUNDLE_DIR");
+  });
+});
+
+// ── The retired location variables (a hard error, not a bridge) ──────────────
+
+describe("the retired location variables", () => {
+  const retired = ["AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_STATE_DIR", "AKM_CACHE_DIR"] as const;
+  const resolvers = {
+    getConfigDir: (env: NodeJS.ProcessEnv) => getConfigDir(env, "linux"),
+    getConfigPath: (env: NodeJS.ProcessEnv) => getConfigPath(env),
+    getDataDir: (env: NodeJS.ProcessEnv) => getDataDir(env, "linux"),
+    getStateDir: (env: NodeJS.ProcessEnv) => getStateDir(env, "linux"),
+    getCacheDir: (env: NodeJS.ProcessEnv) => getCacheDir(env),
+  };
+
+  for (const name of retired) {
+    test(`${name} set without AKM_CONFIG_FILE is fatal in every resolver, naming the variable and the fix`, () => {
+      for (const [resolver, resolve] of Object.entries(resolvers)) {
+        let thrown: unknown;
+        try {
+          resolve({ [name]: "/old/place", HOME: "/home/user" });
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown, resolver).toBeInstanceOf(ConfigError);
+        const error = thrown as ConfigError;
+        expect(error.code).toBe("RETIRED_LOCATION_VARIABLE");
+        expect(error.message).toContain(name);
+        expect(error.message).toContain("akm migrate apply");
+        expect(error.message).toContain("AKM_CONFIG_FILE");
+      }
+    });
+
+    test(`${name} is ignored when AKM_CONFIG_FILE is set (a host that keeps it for an older akm)`, () => {
+      const env = { [name]: "/old/place", AKM_CONFIG_FILE: "/etc/akm/config.json", HOME: "/home/user" };
+      expect(getConfigPath(env)).toBe("/etc/akm/config.json");
+      expect(getDataDir(env, "linux")).toBe(path.join("/home/user", ".local", "share", "akm"));
+      expect(getStateDir(env, "linux")).toBe(path.join("/home/user", ".local", "state", "akm"));
+    });
+  }
+
+  test("an empty one is not set", () => {
+    expect(getDataDir({ AKM_DATA_DIR: "  ", HOME: "/home/user" }, "linux")).toBe(
+      path.join("/home/user", ".local", "share", "akm"),
+    );
   });
 });

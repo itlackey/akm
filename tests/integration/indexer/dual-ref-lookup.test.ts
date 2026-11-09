@@ -24,7 +24,7 @@ import type { Database as AkmDatabase } from "../../../src/storage/database";
 import { findEntryIdByRef, getEntryByRef } from "../../../src/storage/repositories/index-entries-repository";
 import {
   type Cleanup,
-  sandboxEnvDir,
+  sandboxAkmDir,
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -80,8 +80,8 @@ beforeEach(async () => {
   stashDir = stash.dir;
   let chain = sandboxXdgConfigHome(stash.cleanup).cleanup;
   chain = sandboxXdgCacheHome(chain).cleanup;
-  chain = sandboxEnvDir("akm-dual-ref-data", "AKM_DATA_DIR", chain).cleanup;
-  chain = sandboxEnvDir("akm-dual-ref-state", "AKM_STATE_DIR", chain).cleanup;
+  chain = sandboxAkmDir("akm-dual-ref-data", "data", chain).cleanup;
+  chain = sandboxAkmDir("akm-dual-ref-state", "state", chain).cleanup;
   cleanup = chain;
   writeMemory("first");
   writeMemory("second");

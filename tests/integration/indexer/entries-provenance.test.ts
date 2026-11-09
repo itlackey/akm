@@ -28,7 +28,7 @@ import * as indexerModule from "../../../src/indexer/indexer";
 import { slugForPath } from "../../../src/indexer/installations";
 import {
   type Cleanup,
-  sandboxEnvDir,
+  sandboxAkmDir,
   sandboxStashDir,
   sandboxXdgCacheHome,
   sandboxXdgConfigHome,
@@ -78,8 +78,8 @@ beforeEach(async () => {
   stashDir = stash.dir;
   let chain = sandboxXdgConfigHome(stash.cleanup).cleanup;
   chain = sandboxXdgCacheHome(chain).cleanup;
-  chain = sandboxEnvDir("akm-entries-prov-data", "AKM_DATA_DIR", chain).cleanup;
-  chain = sandboxEnvDir("akm-entries-prov-state", "AKM_STATE_DIR", chain).cleanup;
+  chain = sandboxAkmDir("akm-entries-prov-data", "data", chain).cleanup;
+  chain = sandboxAkmDir("akm-entries-prov-state", "state", chain).cleanup;
   cleanup = chain;
   writeMemory("first");
   writeMemory("second");

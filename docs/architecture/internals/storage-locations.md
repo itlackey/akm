@@ -10,16 +10,17 @@ ones.
 
 | Variable | Linux / macOS default | Windows default | Override |
 |---|---|---|---|
-| `$CONFIG` | `~/.config/akm` | `%APPDATA%\akm` | `AKM_CONFIG_DIR`, then `XDG_CONFIG_HOME` |
-| `$CACHE` | `~/.cache/akm` | `%LOCALAPPDATA%\akm` | `AKM_CACHE_DIR`, then `XDG_CACHE_HOME` |
-| `$DATA` | `~/.local/share/akm` | `%LOCALAPPDATA%\akm\data` | `AKM_DATA_DIR`, then `XDG_DATA_HOME` |
-| `$STATE` | `~/.local/state/akm` | `%LOCALAPPDATA%\akm\state` | `AKM_STATE_DIR`, then `XDG_STATE_HOME` |
+| `$CONFIG` | `~/.config/akm` | `%APPDATA%\akm` | `--config` / `AKM_CONFIG_FILE` (its folder), then `XDG_CONFIG_HOME` |
+| `$CACHE` | `~/.cache/akm` | `%LOCALAPPDATA%\akm` | `paths.cache` in the config file, then `XDG_CACHE_HOME` |
+| `$DATA` | `~/.local/share/akm` | `%LOCALAPPDATA%\akm\data` | `paths.data` in the config file, then `XDG_DATA_HOME` |
+| `$STATE` | `~/.local/state/akm` | `%LOCALAPPDATA%\akm\state` | `paths.state` in the config file, then `XDG_STATE_HOME` |
 | `$STASH` | `~/akm` | `%USERPROFILE%\Documents\akm` | `AKM_BUNDLE_DIR` |
 
-When `AKM_BUNDLE_DIR` points under `/tmp`, `/var/tmp`, or a macOS temp
-directory and no explicit config or cache override is set, `$CONFIG` resolves
-to `$STASH/.akm` and `$CACHE` to `$STASH/.akm/cache`
-(`isTransientStashPath`).
+`akm setup --dir <a directory under /tmp, /var/tmp, or a macOS temp directory>`
+(`isTransientStashPath`) keeps its config in `$STASH/.akm/config.json`, with
+`paths.cache` naming `$STASH/.akm/cache`, and points `AKM_CONFIG_FILE` there for
+that run, unless a config file or `XDG_CONFIG_HOME` was chosen. Nothing else
+moves a location because of where the bundle is.
 
 Several locations are namespaced per bundle by `getStashStateKey(stashDir)`,
 shown below as `<stash>`.
