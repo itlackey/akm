@@ -51,7 +51,6 @@
     "docs/guides",
     "docs/integration",
     "docs/maintainers",
-    "docs/migration",
     "docs/posts",
     "docs/reference",
     "docs/product-surface.md",
@@ -71,8 +70,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "akm": "dist/akm",
-    "akm-migrate": "dist/akm-migrate"
+    "akm": "dist/akm"
   },
   "scripts": {
     "desktop:setup": "cd desktop && bun run prepare:core",

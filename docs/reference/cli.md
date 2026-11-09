@@ -54,8 +54,7 @@ ignored (the default format applies).
 
 A small set of commands is **format-exempt** because their output is not a
 result envelope at all — `completions`, child-process passthrough (`env run`
-and `secret run`), document payloads (`help`,
-`help migrate`), and `env path` and `config path` (a bare filesystem path is the payload, the
+and `secret run`), document payloads (`help`), and `env path` and `config path` (a bare filesystem path is the payload, the
 documented shell-substitution primitive — wrapping it in an envelope would
 break `$(akm env path <ref>)` substitutions). Passing `--format` to one of
 those **warns on stderr** and is otherwise ignored; the exempt set is declared
@@ -1499,7 +1498,7 @@ checksummed, and staged before replacement; npm, Bun, and pnpm global installs
 use their package manager.
 
 Upgrade replaces the installed program when a newer release exists, then runs
-`akm-migrate apply` — the migrator that shipped with whatever is now installed
+`akm migrate apply` — the migrator that shipped with whatever is now installed
 — and rebuilds the derived index. The migration step runs on every
 `akm upgrade`, install or no install, and its plan is reported under
 `migration`; an upgrade whose migration is blocked or could not run exits 1.
@@ -2270,8 +2269,8 @@ akm registry remove my-team --yes    # Skip the confirmation prompt
 ### migrate
 
 Inspect or apply every pending migration in one plan. `akm migrate` is a thin
-wrapper over the standalone `akm-migrate` executable (installed alongside
-`akm`, and embedded in the release binary), which owns every historical shape
+wrapper over the standalone migrator (shipped in the package and embedded in
+the release binary), which owns every historical shape
 akm 0.9.15 and later wrote so the CLI proper reads only current schemas. The steps,
 in order:
 
@@ -2323,7 +2322,6 @@ in order:
 akm migrate status
 akm migrate apply --dry-run
 akm migrate apply
-akm-migrate apply          # the same, without the akm wrapper
 ```
 
 `status` and `apply --dry-run` are read-only. Apply skips blocked task
@@ -2418,29 +2416,17 @@ does: exit 78, the configured connections listed and the closest name suggested.
 
 ### help
 
-Print the sectioned command overview, detailed help for any command, or a
-release's migration guidance.
+Print the sectioned command overview or detailed help for any command.
 
 ```sh
 akm help                       # Sectioned command overview (same as `akm --help`)
 akm help bundle                # Detailed options and subcommands for `bundle`
 akm help env                   # Detailed options and subcommands for `env`
-akm help migrate 0.6.0         # Notes for a specific release
-akm help migrate v0.6.0        # v-prefix accepted
-akm help migrate v0.6.0-rc1    # Prereleases normalize to the stable note
-akm help migrate latest        # Resolve against the most recent CHANGELOG entry
 ```
 
 `akm help <command>` is equivalent to `akm <command> --help`. Bare `akm help`
 prints the same sectioned overview as `akm --help` and exits
 `0`.
-
-Migration notes live as one markdown file per release in
-[`docs/migration/release-notes/`](../migration/release-notes/). Adding notes for a
-future version is a one-file drop — no code edit required. Requesting an
-unknown version prints the list of bundled notes so you can pick one that
-exists. See [`CONTRIBUTING.md`](https://github.com/itlackey/akm/blob/main/.github/CONTRIBUTING.md#shipping-a-release--migration-notes)
-for the per-release workflow.
 
 ### hints
 

@@ -131,7 +131,6 @@ for (const origin of ["previous", "0.9.32"] as const) {
     let previousVersion: string;
     let previousLauncher: string;
     let candidateLauncher: string;
-    let candidateMigrateLauncher: string;
     let livePrefix: string;
     let candidateVersion: string;
     /** Whether the previous release already writes the inline scheduler row the candidate writes. */
@@ -185,7 +184,6 @@ for (const origin of ["previous", "0.9.32"] as const) {
       // still have them run the candidate.
       const candidateInstall = await installAkmTarball(candidateTarball, prefixRoot, "live", candidateVersion);
       candidateLauncher = candidateInstall.launcher;
-      candidateMigrateLauncher = candidateInstall.migrateLauncher;
       livePrefix = candidateInstall.prefix;
     }, 900_000);
 
@@ -548,7 +546,6 @@ describe.skipIf(skipOrigin("0.9.15"))(
   () => {
     let workRoot: string;
     let candidateLauncher: string;
-    let candidateMigrateLauncher: string;
     let candidateVersion: string;
     let home: LegacyGrantHome;
 
@@ -575,7 +572,6 @@ describe.skipIf(skipOrigin("0.9.15"))(
       // swap, exactly like the "previous"-origin suite above.
       const candidateInstall = await installAkmTarball(candidateTarball, prefixRoot, "live", candidateVersion);
       candidateLauncher = candidateInstall.launcher;
-      candidateMigrateLauncher = candidateInstall.migrateLauncher;
     }, 900_000);
 
     afterAll(() => {

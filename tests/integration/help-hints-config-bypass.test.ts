@@ -3,17 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `help` and `hints` are pure-text surfaces — bundled release notes, the
- * embedded agent-guide text, and command usage rendered from `meta` alone —
- * none of their run bodies read config. But before this fix, `shouldBypassConfigStartup`
+ * `help` and `hints` are pure-text surfaces — the embedded agent-guide text
+ * and command usage rendered from `meta` alone — none of their run bodies
+ * read config. But before this fix, `shouldBypassConfigStartup`
  * (src/cli.ts) only allowlisted `setup`/`migrate`/`config path`/`task run
  * --id`/`--help`/`--version`, so the CLI's own startup config load ran first
  * and threw `UNSUPPORTED_CONFIG_VERSION` against any pre-0.9 (or otherwise
- * invalid) config — taking down `akm help`, `akm hints`, and even the
- * documented recovery command the 0.9.0 release notes tell users to run
- * first: "Run `akm help migrate 0.9.0` for the storage and command-surface
- * checklist." That instruction was unreachable in exactly the state anyone
- * would need it.
+ * invalid) config — taking down `akm help` and `akm hints`.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -104,13 +100,6 @@ describe("akm help / akm hints against a config akm 0.9 cannot load", () => {
     expect(stdout).toContain("AGENT LOOP");
     expect(stdout).toContain("SYSTEM");
     expect(stderr).toBe("");
-  });
-
-  test("akm help migrate 0.9.0 — the documented recovery command — actually runs", async () => {
-    const { code, stdout, stderr } = await runCliCapture(["help", "migrate", "0.9.0"]);
-    expect(code, stderr).toBe(0);
-    expect(stdout).toContain("# akm v0.9.0 migration notes");
-    expect(stdout).toContain("akm migrate status");
   });
 
   test("akm help <command> renders that command's usage", async () => {

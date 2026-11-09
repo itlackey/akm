@@ -19,8 +19,7 @@ current shape anyway — nothing is rewritten on disk. The next config write
 `"0.9.0"`, which silences the note. When a newer akm wrote the shared
 config, `akm health`'s `binary-config-skew` advisory is what says so. Pre-0.9
 config and database layouts are not runtime inputs. Historical task sources
-are handled by the standalone `akm-migrate` executable, also invoked by `akm
-migrate` / `akm upgrade`; ordinary runtime code reads only the current shape.
+are handled by `akm migrate` (which `akm upgrade` also runs); ordinary runtime code reads only the current shape.
 
 ```jsonc
 {

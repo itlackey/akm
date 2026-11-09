@@ -152,27 +152,14 @@ Maintainers must also follow the
 workflow runs the semantic, Docker, and Linux/macOS/Windows native-scheduler
 gates on the commit it publishes.
 
-`akm help migrate <version>` prints a per-release migration note to the
-terminal. Each note lives as its own markdown file under
-[`docs/migration/release-notes/<version>.md`](../docs/migration/release-notes/)
-and is bundled with the published npm package via `package.json` `files[]`.
+Per-release migration notes live as markdown files under
+[`docs/migration/release-notes/`](../docs/migration/release-notes/) in the
+repository. They are not bundled with the npm package and no command prints
+them.
 
-When you tag a new release:
-
-1. Create `docs/migration/release-notes/<version>.md`. Lead with
-   `Migration notes for akm v<version>` so the text matches the pattern the
-   tests enforce.
-2. Keep the note self-contained — automatic migrations, manual actions,
-   publisher changes, breaking CLI/flag moves. Link to the longform guide
-   (e.g. `docs/migration/v0.8-to-v0.9.md`) in the last paragraph if one
-   exists.
-3. Extend the `for ... of` list in `tests/migration-help.test.ts`
-   (`"every bundled release-notes file is surfaced by the loader"`) so the
-   new version is explicitly exercised.
-4. Smoke-test end-to-end: `bun src/cli.ts help migrate <version>`.
-
-No code change is required in `src/commands/sources/migration-help.ts` — the loader discovers
-files at runtime from the release-notes directory.
+When you tag a new release, add `docs/migration/release-notes/<version>.md` if
+the release needs a self-contained note (automatic migrations, manual actions,
+breaking CLI/flag moves), and link a longform guide from it if one exists.
 
 ## Submitting Changes
 
