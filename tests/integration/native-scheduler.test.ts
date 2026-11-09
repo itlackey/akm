@@ -172,10 +172,12 @@ async function scenario(input: {
       { mode: 0o600 },
     );
     // Due every minute; runs for twelve seconds, so it is still going after dispatch has exited.
-    const body =
+    // JSON.stringify is a valid YAML double-quoted scalar: backslashes in a Windows path stay literal.
+    const command =
       process.platform === "win32"
-        ? `shell: powershell\nrun: "Start-Sleep -Seconds 12; Set-Content -LiteralPath '${marker}' -Value outlived"`
-        : `run: "sleep 12 && echo outlived > '${marker}'"`;
+        ? `Start-Sleep -Seconds 12; Set-Content -LiteralPath '${marker}' -Value outlived`
+        : `sleep 12 && echo outlived > '${marker}'`;
+    const body = `${process.platform === "win32" ? "shell: powershell\n" : ""}run: ${JSON.stringify(command)}`;
     fs.writeFileSync(path.join(stashDir, "tasks", `${id}.yml`), `version: 4\n${body}\nschedule: "* * * * *"\n`);
 
     expectSuccess(cli(["task", "enable", `stash//tasks/${id}`]), "task enable");
