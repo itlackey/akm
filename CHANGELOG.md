@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- The `tasks` namespace of `akm-cli/workspace` (`tasks.list`, `tasks.enable`, `tasks.disable`): AKM Desktop never called it. Workspace `feedback.record`, `bundles.rename` and the learning task's enable now run in process instead of through a child `akm`; `bundles.add`, `bundles.update`, `bundles.remove` and `setup.apply` stay children (network and git work, a reindex, machine probing). Workspace `setup.apply` writes the default connection through the same `applySetupAnswers` as `akm setup`, and one function writes `scheduler.enabled` for `akm task enable|disable|add`, `akm task sync` and `akm setup`; the setup scheduler step now prints the "initialized from the installed bindings" warning that `akm task` already printed.
 - `akm improve judge`: it duplicated `akm judge reflect.quality` (same judge, older input and output shape) and failed on empty stdin with a raw parse error, exit 70. Use `akm judge reflect.quality`. `akm improve report` stays.
 - `akm lint --auto-fix` (a second spelling of `--fix`) and `akm migrate apply --dry-run` (it printed exactly what `akm migrate status` prints); both now fail as unknown flags.
 - The `AKM_AGENT_HARNESS`, `AKM_SESSION_ID` and `AKM_CLAUDE_PLUGINS_DIR` environment variables. The agent harness and session id of a workflow run come from the harness's own session variables; Claude's plugin folder is read from `CLAUDE_CODE_PLUGIN_CACHE_DIR`.

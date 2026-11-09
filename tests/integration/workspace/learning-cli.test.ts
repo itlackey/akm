@@ -71,7 +71,8 @@ const plan = () =>
   Object.fromEntries(
     IMPROVE_ENGINE_PROCESSES.map((name) => [name, resolveImprovePlan(undefined, loadConfig()).processes[name].enabled]),
   );
-const learning = async (state: "on" | "off") => (await runCli(["setup", "--learning", state])).learning as Json;
+const learning = async (state: "on" | "off") =>
+  (await runCli(["setup", "--learning", state], "setup")).learning as Json;
 
 describe("akm setup --learning", () => {
   test("off writes only improve.enabled: no library, no task, no crontab call", async () => {
@@ -96,7 +97,7 @@ describe("akm setup --learning", () => {
     });
     const before = savedConfig();
     await learning("off");
-    expect((await runCli(["info"])).learning).toMatchObject({ on: false });
+    expect((await runCli(["info"], "info")).learning).toMatchObject({ on: false });
     const cron = spyCrontab();
     expect(await learning("on")).toMatchObject({ on: true });
     expect(savedConfig()).toEqual(before);
@@ -112,7 +113,7 @@ describe("akm setup --learning", () => {
       IMPROVE_ENGINE_PROCESSES.map((name) => [`improve.strategies.default.processes.${name}.enabled`, "false"]),
     );
     change({ set, unset: [] });
-    expect((await runCli(["info"])).learning).toMatchObject({ on: false });
+    expect((await runCli(["info"], "info")).learning).toMatchObject({ on: false });
     expect(await learning("on")).toMatchObject({ on: true });
     resetConfigCache();
     expect(plan()).toEqual(clean);
@@ -129,17 +130,17 @@ describe("akm setup --learning", () => {
     );
     change({ set, unset: [] });
     const before = savedConfig();
-    expect((await runCli(["info"])).learning).toMatchObject({ on: true });
+    expect((await runCli(["info"], "info")).learning).toMatchObject({ on: true });
     await learning("on");
     expect(savedConfig()).toEqual(before);
   });
 
   test("a value other than on or off, or a flag beside it, is a usage error; --yes is ignored", async () => {
-    await expect(runCli(["setup", "--learning", "maybe"])).rejects.toThrow(/on. or .off/);
-    await expect(runCli(["setup", "--learning", "on", "--harness", "claude"])).rejects.toThrow(/on its own/);
-    await expect(runCli(["setup", "--learning", "on", "--dir", library()])).rejects.toThrow(/on its own/);
-    await expect(runCli(["setup", "--learning", "on", "--from", "x.yml"])).rejects.toThrow(/on its own/);
-    expect(await runCli(["setup", "--learning", "off", "--yes", "--no-probe"])).toMatchObject({
+    await expect(runCli(["setup", "--learning", "maybe"], "setup")).rejects.toThrow(/on. or .off/);
+    await expect(runCli(["setup", "--learning", "on", "--harness", "claude"], "setup")).rejects.toThrow(/on its own/);
+    await expect(runCli(["setup", "--learning", "on", "--dir", library()], "setup")).rejects.toThrow(/on its own/);
+    await expect(runCli(["setup", "--learning", "on", "--from", "x.yml"], "setup")).rejects.toThrow(/on its own/);
+    expect(await runCli(["setup", "--learning", "off", "--yes", "--no-probe"], "setup")).toMatchObject({
       learning: { on: false },
     });
   });
@@ -150,7 +151,7 @@ describe("akm info", () => {
     await setup.apply({ dir: library() });
     connect();
     const before = snapshot();
-    expect((await runCli(["info"])).learning).toEqual({ on: true, harness: null, scheduled: false });
+    expect((await runCli(["info"], "info")).learning).toEqual({ on: true, harness: null, scheduled: false });
     expect(snapshot()).toEqual(before);
   });
 });
@@ -162,7 +163,7 @@ describe("while learning is off", () => {
     await learning("off");
     const before = snapshot();
     for (const args of [["improve"], ["improve", "--dry-run"]]) {
-      const result = await runCli(args);
+      const result = await runCli(args, "improve");
       expect(result.skipped).toEqual({ reason: "learning-off" });
       expect(result.dryRun).toBe(args.includes("--dry-run"));
       expect(result.actions).toEqual([]);

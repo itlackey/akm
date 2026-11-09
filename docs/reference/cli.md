@@ -2096,7 +2096,7 @@ exact fix with `--replace`, `--with` and `--source`: akm checks that each
 `--replace` text appears exactly once and that the frontmatter still parses,
 records nothing if either check fails, and applies the edit at once, with no
 review or gate: it files a `feedback` proposal and accepts it in the same command
-(gate decision `manual-fix`, `src/commands/feedback-cli.ts`; the accept is a normal one, committed to a git-backed bundle, and
+(gate decision `manual-fix`, `src/commands/feedback.ts`; the accept is a normal one, committed to a git-backed bundle, and
 `akm proposal revert` undoes it). If the accept refuses, the proposal is
 rejected, the file is left alone and the command fails. The asset stays eligible
 for improve like any other.

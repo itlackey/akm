@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { applyExactReplacements, applyHistoryMark, assertProposalWritesFile } from "../../src/commands/feedback-cli";
+import { applyExactReplacements, applyHistoryMark, assertProposalWritesFile } from "../../src/commands/feedback";
 import { writeSupersededEdge } from "../../src/commands/improve/memory/memory-belief";
 import { buildSnapshotManifest } from "../../src/commands/improve/preparation";
 import { getProposal, listProposals } from "../../src/commands/proposal/repository";
