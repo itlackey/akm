@@ -14,10 +14,12 @@
 
 import path from "node:path";
 import { displayRef } from "../../core/asset/resolve-ref";
+import { closestMatch } from "../../core/closest-match";
 import { compareCodePoints } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { classifyPathAccess } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
+import { KNOWN_TYPES } from "../../core/recognition-util";
 import { withStateDbTelemetry } from "../../core/state-db";
 import { systemErrorCode } from "../../core/system-error";
 import { isoDay } from "../../core/time";
@@ -262,7 +264,7 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     if (feedbackWarning) warnings.push(feedbackWarning);
     return {
       hits,
-      tip: hits.length === 0 ? EMPTY_RESULT_TIP : undefined,
+      tip: hits.length === 0 ? emptyResultTip(db, input.searchType) : undefined,
       warnings: warnings.length > 0 ? warnings : undefined,
       embedMs,
       rankMs,
@@ -550,7 +552,18 @@ function describeRanks(candidate: FusedCandidate): string[] {
   ];
 }
 
-const EMPTY_RESULT_TIP = "No matching stash assets were found. Try a different query or run 'akm index' to rebuild.";
+const EMPTY_RESULT_TIP = "No matching assets were found. Try a different query or run 'akm index' to rebuild.";
+
+/** The empty-result tip; for a `--type` that is not an indexed type but is close to one, names the nearest. */
+function emptyResultTip(db: Database, searchType: AkmSearchType): string {
+  if (searchType === "any") return EMPTY_RESULT_TIP;
+  const types = [...new Set([...KNOWN_TYPES, ...getAllEntries(db).map((e) => e.entry.type)])];
+  if (types.includes(searchType)) return EMPTY_RESULT_TIP;
+  const near = closestMatch(searchType, types, Math.max(1, Math.floor(searchType.length / 3)));
+  return near
+    ? `No assets of type "${searchType}". Did you mean --type ${near}? ${EMPTY_RESULT_TIP}`
+    : EMPTY_RESULT_TIP;
+}
 
 // ── Enumeration (browse) path ────────────────────────────────────────────────
 
