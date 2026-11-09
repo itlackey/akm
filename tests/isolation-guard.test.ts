@@ -3,7 +3,7 @@
  * tests/_helpers/isolation-guard.ts and tests/_preload.ts.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -35,12 +35,20 @@ describe("the harness sandbox", () => {
 
   test("an environment pointing at a real-looking home is named, directory by directory", () => {
     const outside = unsandboxedDirs({ HOME: "/home/someone" });
-    expect(outside.map((d) => d.split("=")[0]).sort()).toEqual(["cache", "config", "data", "state"]);
+    expect(outside.map((d) => d.split("=")[0]).sort()).toEqual(["cache", "config", "data", "stash", "state"]);
   });
 
   test("one directory outside the temp root is enough, and only it is named", () => {
     const env = { ...process.env, XDG_DATA_HOME: "/home/someone/.local/share" };
     expect(unsandboxedDirs(env).map((d) => d.split("=")[0])).toEqual(["data"]);
+  });
+
+  test("the default stash is checked too: a real HOME alone is named, so is AKM_BUNDLE_DIR", () => {
+    const sandboxed = { ...process.env };
+    expect(unsandboxedDirs({ ...sandboxed, AKM_BUNDLE_DIR: "/home/someone/akm" }).map((d) => d.split("=")[0])).toEqual([
+      "stash",
+    ]);
+    expect(unsandboxedDirs({ ...sandboxed, HOME: "/home/someone" }).map((d) => d.split("=")[0])).toEqual(["stash"]);
   });
 
   test("an environment with no HOME resolves to the temp directory and is safe", () => {
@@ -75,6 +83,58 @@ describe("the child-process guard", () => {
     expect(takeViolations()).toEqual([]);
   });
 
+  posixOnly("a child given no env gets this process's, not the one the process started with", () => {
+    const home = process.env.HOME ?? "";
+    const result = spawnSync(process.execPath, ["-e", "console.log(process.env.HOME)"], { encoding: "utf8" });
+    expect(result.stdout.trim()).toBe(home);
+    const bun = Bun.spawnSync([process.execPath, "-e", "console.log(process.env.HOME)"]);
+    expect(bun.stdout.toString().trim()).toBe(home);
+    const sandboxed = spawnSync(process.execPath, [CLI, "--version"], { encoding: "utf8" });
+    expect(sandboxed.error).toBeUndefined();
+    expect(sandboxed.status).toBe(0);
+    expect(takeViolations()).toEqual([]);
+  });
+
+  posixOnly("refuses a real stash alone: HOME real, every XDG directory in the sandbox", () => {
+    const env = { ...process.env, HOME: "/home/someone" };
+    expect(refusal(spawnSync(process.execPath, [CLI, "--version"], { env }))).toMatch(/resolves stash=/);
+    expect(takeViolations()).toHaveLength(1);
+  });
+
+  posixOnly("sees akm behind /usr/bin/env, judging the environment env builds", () => {
+    const env = process.env.HOME ? { ...process.env } : {};
+    expect(
+      refusal(spawnSync("/usr/bin/env", ["HOME=/home/someone", process.execPath, CLI, "--version"], { env })),
+    ).toMatch(/outside the temp root/);
+    const unset = ["-u", "XDG_CONFIG_HOME", "-u", "XDG_DATA_HOME", "-u", "XDG_CACHE_HOME", "-u", "XDG_STATE_HOME"];
+    const realHome = { ...process.env, HOME: "/home/someone" };
+    expect(
+      refusal(spawnSync("/usr/bin/env", [...unset, process.execPath, CLI, "--version"], { env: realHome })),
+    ).toMatch(/outside the temp root/);
+    expect(takeViolations()).toHaveLength(2);
+    const fine = spawnSync("/usr/bin/env", ["FOO=bar", process.execPath, CLI, "--version"], { env, encoding: "utf8" });
+    expect(fine.status).toBe(0);
+    expect(takeViolations()).toEqual([]);
+  });
+
+  posixOnly("sees a shell command line that names akm: sh -c, execSync and shell: true", () => {
+    const env = { ...process.env, HOME: "/home/someone" };
+    const line = `${process.execPath} ${CLI} --version`;
+    expect(refusal(spawnSync("sh", ["-c", line], { env }))).toMatch(/outside the temp root/);
+    expect(() => execSync(line, { env, stdio: "pipe" })).toThrow(/harness-safety.*outside the temp root/);
+    expect(refusal(spawnSync(line, { env, shell: true }))).toMatch(/outside the temp root/);
+    expect(takeViolations()).toHaveLength(3);
+    expect(spawnSync("sh", ["-c", "true"], { env }).status).toBe(0);
+    expect(takeViolations()).toEqual([]);
+  });
+
+  posixOnly("a child with no PATH is not let through: it still finds the real scheduler binary", () => {
+    if (!["/usr/bin", "/bin"].some((dir) => fs.existsSync(path.join(dir, "crontab")))) return;
+    const { PATH: _path, ...noPath } = process.env;
+    expect(refusal(spawnSync(process.execPath, [CLI, "--version"], { env: noPath }))).toMatch(/real scheduler binary/);
+    expect(takeViolations()).toHaveLength(1);
+  });
+
   posixOnly("does not look at children that are not akm", () => {
     const result = spawnSync("true", { env: { HOME: "/home/someone" } });
     expect(result.status).toBe(0);
@@ -102,5 +162,47 @@ describe("the child-process guard", () => {
       /real scheduler binary/,
     );
     expect(takeViolations()).toHaveLength(2);
+  });
+});
+
+describe("the preload's afterEach", () => {
+  const repoRoot = path.resolve(import.meta.dir, "..");
+
+  /** Run `body` as the test of a fresh `bun test` process, which loads the same preload from bunfig.toml. */
+  function runNested(body: string): { status: number | null; output: string } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-guard-nested-"));
+    try {
+      const file = path.join(dir, "nested.test.ts");
+      fs.writeFileSync(
+        file,
+        `import { test } from "bun:test";\nimport { spawnSync } from "node:child_process";\ntest("nested", () => {\n${body}\n});\n`,
+      );
+      const result = spawnSync(process.execPath, ["test", file], { cwd: repoRoot, env: process.env, encoding: "utf8" });
+      return { status: result.status, output: `${result.stdout}${result.stderr}` };
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  posixOnly("fails a test that leaves a directory akm resolves outside the temp root", () => {
+    const nested = runNested(
+      `process.env.HOME = "/home/someone"; delete process.env.XDG_DATA_HOME; delete process.env.AKM_BUNDLE_DIR;`,
+    );
+    expect(nested.status).not.toBe(0);
+    expect(nested.output).toContain("[sandbox tripwire]");
+    expect(nested.output).toContain("outside the temp root");
+  });
+
+  posixOnly("fails a test that catches the guard's refusal: the recorded violation is not swallowed", () => {
+    const nested = runNested(
+      `try { spawnSync(process.execPath, [${JSON.stringify(path.join(repoRoot, "src", "cli.ts"))}, "--version"], { env: { PATH: process.env.PATH, HOME: "/home/someone" } }); } catch {}`,
+    );
+    expect(nested.status).not.toBe(0);
+    expect(nested.output).toContain("[sandbox tripwire]");
+    expect(nested.output).toContain("a test started akm with an environment");
+  });
+
+  posixOnly("passes a test that does neither", () => {
+    expect(runNested("")).toMatchObject({ status: 0 });
   });
 });

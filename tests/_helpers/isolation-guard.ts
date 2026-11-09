@@ -4,12 +4,17 @@
  * Production akm no longer asks whether it is under a test (`NODE_ENV=test` in a shell changes nothing). The
  * protection lives here, installed by `tests/_preload.ts` for every `bun test` process:
  *
- *   1. `unsandboxedDirs(env)` resolves akm's config, data, cache and state directories with the production
- *      resolvers (`src/core/paths.ts`) for an environment, and names the ones that land outside the OS temp root.
+ *   1. `unsandboxedDirs(env)` resolves akm's config, data, cache and state directories and its default stash with
+ *      the production resolvers (`src/core/paths.ts`) for an environment, and names the ones that land outside the
+ *      OS temp root.
  *      The preload checks `process.env` with it before and after every test.
  *   2. `installChildProcessGuard()` wraps `Bun.spawn` / `Bun.spawnSync` (which `node:child_process` runs on), so an
  *      akm child process started with an environment that resolves a directory outside the temp root, or that can
- *      reach the real scheduler binary (`crontab`, `launchctl`), is refused at spawn and recorded.
+ *      reach the real scheduler binary (`crontab`, `launchctl`), is refused at spawn and recorded. A child given no
+ *      `env` is given this process's, because Bun would otherwise hand it the environment the process started with.
+ *      A child counts as akm when it is `akm` or `cli.ts`, behind `env` (its `NAME=value` and `-u` change the
+ *      environment judged), or named by a shell's command line (`sh -c`, `execSync`, `shell: true`). A wrapper script
+ *      that launches akm, and `Bun.$`, are not seen.
  *   3. `schedulerStubDir()` is a directory of stub `crontab` / `launchctl` the preload puts first on `PATH`, so a
  *      child that inherits it (the usual `env: { ...process.env }`) finds a stub, never the developer's crontab.
  *
@@ -19,7 +24,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../src/core/paths";
+import { getCacheDir, getConfigDir, getDataDir, getDefaultStashDir, getStateDir } from "../../src/core/paths";
 
 const violations: string[] = [];
 
@@ -47,9 +52,15 @@ export function isUnderTempRoot(target: string): boolean {
   }
 }
 
-/** The akm directories this environment resolves to outside the temp root, as `config=/path`. Empty is safe. */
+/** The akm directories (and default stash) this environment resolves to outside the temp root, as `config=/path`. Empty is safe. */
 export function unsandboxedDirs(env: NodeJS.ProcessEnv): string[] {
-  const resolvers = { config: getConfigDir, data: getDataDir, cache: getCacheDir, state: getStateDir };
+  const resolvers = {
+    config: getConfigDir,
+    data: getDataDir,
+    cache: getCacheDir,
+    state: getStateDir,
+    stash: getDefaultStashDir,
+  };
   const outside: string[] = [];
   for (const [name, resolve] of Object.entries(resolvers)) {
     let dir: string;
@@ -86,8 +97,11 @@ export function schedulerStubDir(root: string): string {
   return dir;
 }
 
+/** What a child with no PATH of its own still finds its bare commands on. */
+const DEFAULT_PATH = "/usr/bin:/bin";
+
 function resolveOnPath(name: string, pathVar: string | undefined): string | undefined {
-  for (const dir of (pathVar ?? "").split(path.delimiter)) {
+  for (const dir of (pathVar ?? DEFAULT_PATH).split(path.delimiter)) {
     if (!dir) continue;
     const candidate = path.join(dir, name);
     try {
@@ -134,10 +148,63 @@ function isAkmInvocation(cmd: string[]): boolean {
   return cmd.slice(0, 4).some((part) => /^cli\.(ts|js|mjs)$/.test(path.basename(part)));
 }
 
+const SHELLS = new Set(["sh", "bash", "dash", "zsh"]);
+
+/** A shell whose command line names akm or `cli.ts`: what `sh -c`, `execSync`, `exec` and `shell: true` run. */
+function isShellNamingAkm(cmd: string[]): boolean {
+  return (
+    SHELLS.has(path.basename(cmd[0] ?? "")) && cmd.slice(1).some((part) => /\bakm\b|\bcli\.(ts|js|mjs)\b/.test(part))
+  );
+}
+
+/** The command `/usr/bin/env [-i] [-u NAME] [NAME=value ...] command` runs, and the environment it runs in. */
+function unwrapEnv(cmd: string[], env: NodeJS.ProcessEnv): { cmd: string[]; env: NodeJS.ProcessEnv } {
+  if (path.basename(cmd[0] ?? "") !== "env") return { cmd, env };
+  const out: NodeJS.ProcessEnv = { ...env };
+  let i = 1;
+  while (i < cmd.length) {
+    const arg = cmd[i] ?? "";
+    if (arg === "-i" || arg === "--ignore-environment") {
+      for (const key of Object.keys(out)) delete out[key];
+      i += 1;
+    } else if (arg === "-u" || arg === "--unset") {
+      delete out[cmd[i + 1] ?? ""];
+      i += 2;
+    } else if (arg.startsWith("--unset=")) {
+      delete out[arg.slice("--unset=".length)];
+      i += 1;
+    } else if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(arg)) {
+      out[arg.slice(0, arg.indexOf("="))] = arg.slice(arg.indexOf("=") + 1);
+      i += 1;
+    } else if (arg === "--") {
+      i += 1;
+      break;
+    } else if (arg.startsWith("-")) {
+      i += 1;
+    } else break;
+  }
+  return unwrapEnv(cmd.slice(i), out);
+}
+
+/** The environment a child gets: its own `env`, else this process's (Bun would give it the one the process started with). */
+function withInheritedEnv(args: SpawnArgs): SpawnArgs {
+  const first = args[0];
+  if (Array.isArray(first)) {
+    const options = (args[1] && typeof args[1] === "object" ? args[1] : {}) as { env?: unknown };
+    return [first, { ...options, env: options.env ?? process.env }];
+  }
+  if (first && typeof first === "object") {
+    const options = first as { env?: unknown };
+    return [{ ...options, env: options.env ?? process.env }, ...args.slice(1)] as SpawnArgs;
+  }
+  return args;
+}
+
 function checkSpawn(args: SpawnArgs): void {
-  const cmd = commandOf(args);
-  if (cmd.length === 0) return;
-  const env = (optionsOf(args).env ?? process.env) as NodeJS.ProcessEnv;
+  const given = commandOf(args);
+  if (given.length === 0) return;
+  const { cmd, env: judged } = unwrapEnv(given, (optionsOf(args).env ?? process.env) as NodeJS.ProcessEnv);
+  const env = judged;
   const schedulerCheck = process.platform !== "win32";
 
   const program = path.basename(cmd[0] ?? "");
@@ -149,7 +216,7 @@ function checkSpawn(args: SpawnArgs): void {
     return;
   }
 
-  if (!isAkmInvocation(cmd)) return;
+  if (!isAkmInvocation(cmd) && !isShellNamingAkm(cmd)) return;
   const outside = unsandboxedDirs(env);
   if (outside.length > 0) {
     record(
@@ -176,8 +243,9 @@ export function installChildProcessGuard(): void {
   for (const name of ["spawn", "spawnSync"] as const) {
     const original = bun[name]!.bind(Bun);
     bun[name] = (...args: SpawnArgs) => {
-      checkSpawn(args);
-      return original(...args);
+      const inherited = withInheritedEnv(args);
+      checkSpawn(inherited);
+      return original(...inherited);
     };
   }
 }

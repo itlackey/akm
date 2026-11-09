@@ -733,7 +733,9 @@ describe("runTask — command target", () => {
     async () => {
       writeTask("bare-current-install", ["version: 4", "run: akm --version", ""].join("\n"));
 
-      const result = await withEnv({ PATH: "/usr/bin:/bin" }, () =>
+      // The harness's crontab/launchctl stubs stay first, so the shell that runs akm cannot reach the real scheduler binary.
+      const stubs = (process.env.PATH ?? "").split(path.delimiter)[0] ?? "";
+      const result = await withEnv({ PATH: [stubs, "/usr/bin", "/bin"].join(path.delimiter) }, () =>
         runTask("bare-current-install", { bundleDir, logDir, scheduled: true }),
       );
 

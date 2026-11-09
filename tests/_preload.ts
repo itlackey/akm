@@ -179,11 +179,17 @@ installSuiteWideSandbox();
  * directories and scheduler (the `NODE_ENV=test` / `BUN_TEST` branches in `src/`) is this file's job, with
  * `tests/_helpers/isolation-guard.ts`:
  *   - HOME, every XDG_*_HOME and the AKM_*_DIR overrides point into the suite sandbox (above), healed before each
- *     test; `afterEach` fails a test that leaves any of akm's four directories resolving outside the temp root.
- *   - `crontab` and `launchctl` on PATH are stubs, so an in-process backend or an inheriting child never finds the
- *     developer's.
+ *     test.
+ *   - `afterEach` fails a test that leaves any of akm's directories (config, data, cache, state, default stash)
+ *     resolving outside the temp root. This is detection after the fact, not prevention: a write that lands in a
+ *     real directory while the test runs is not stopped, and a test that points HOME outside the temp root and
+ *     restores it before it ends is not caught. `bun test` run from a directory whose bunfig.toml does not load
+ *     this file has none of these protections.
+ *   - `crontab` and `launchctl` on PATH are stubs, and a child given no `env` is given this process's, so a child
+ *     that takes this process's environment (a node `spawnSync`, `execSync`, the scheduler backend's `crontab`)
+ *     finds the stubs first, never the developer's.
  *   - A child akm started with an environment of its own is refused when that environment would reach a real
- *     directory or scheduler binary.
+ *     directory or scheduler binary, however it is launched (directly, behind `env`, or by a shell command line).
  * The native scheduler gate (`AKM_NATIVE_TEST_BIN`) runs a compiled akm against the real per-user scheduler on
  * purpose, in directories of its own: it is the one run these protections do not apply to.
  */
