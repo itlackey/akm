@@ -122,17 +122,21 @@ async function writeLearning(
   const unset: string[] = [];
   const connectionName = defaultConnection(config)?.name ?? (connection ? "default" : undefined);
   // As `akm setup` writes a connection: the same answer, the same rules for the key and the aliases.
-  const connections =
+  const writesConnection = Boolean(connection && connectionName);
+  const withConnection = (current: AkmConfig): AkmConfig =>
     connection && connectionName
-      ? applySetupAnswers(config, {
-          connection: {
-            name: connectionName,
-            endpoint: connection.endpoint,
-            ...(connection.apiKeyEnv ? { key: { env: connection.apiKeyEnv } } : {}),
-            picks: Object.fromEntries(STANDARD_ALIASES.map((alias) => [alias, connection.model])),
-          },
-        }).patch.connections
-      : undefined;
+      ? {
+          ...current,
+          connections: applySetupAnswers(current, {
+            connection: {
+              name: connectionName,
+              endpoint: connection.endpoint,
+              ...(connection.apiKeyEnv ? { key: { env: connection.apiKeyEnv } } : {}),
+              picks: Object.fromEntries(STANDARD_ALIASES.map((alias) => [alias, connection.model])),
+            },
+          }).patch.connections,
+        }
+      : current;
   // Where improve runs: the named harness's entry, else the connection. Neither: learning stays off, with a warning.
   const agent = learning?.harness
     ? Object.entries(config.harnesses ?? {}).find(([name, entry]) => (entry.platform ?? name) === learning.harness)?.[0]
@@ -152,17 +156,17 @@ async function writeLearning(
     else if (config.improve?.connection === undefined) set["improve.connection"] = target;
     unset.push(agent ? "improve.connection" : "improve.harness");
   }
-  if (connections || Object.keys(set).length || unset.length) {
+  if (writesConnection || Object.keys(set).length || unset.length) {
     mutateConfig(
       (current) => {
-        let updated = connections ? { ...current, connections } : current;
+        let updated = withConnection(current);
         for (const [key, value] of Object.entries(set)) updated = setConfigValue(updated, key, value);
         for (const key of unset) updated = unsetConfigValue(updated, key);
         if (updated !== current) preserveUnrelatedConfig(current);
         return updated;
       },
       // With no config file there is nothing to unset; a connection or a set still has to create it.
-      { absentNoop: !connections && Object.keys(set).length === 0 },
+      { absentNoop: !writesConnection && Object.keys(set).length === 0 },
     );
     resetConfigCache();
   }
