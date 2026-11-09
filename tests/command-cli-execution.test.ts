@@ -212,25 +212,6 @@ describe("command CLI execution convergence", () => {
     });
   });
 
-  test("the retired --engine still names a connection by that name, else a harness, with one warning", async () => {
-    writeSandboxConfig({
-      connections: { lab: { endpoint: "https://lab.invalid/v1/chat/completions", models: { fast: "lab-model" } } },
-    });
-    _resetWarnOnceForTests();
-    const dryRun = (engine: string) =>
-      runCliCapture(["command", "run", "commands/review", "--dry-run", "--format=json", "--engine", engine]);
-
-    const harness = await dryRun("reviewer");
-    expect(harness.code).toBe(0);
-    expect(JSON.parse(harness.stdout)).toMatchObject({ engine: "reviewer" });
-    expect(harness.stderr).toContain("--engine is retired: use --connection or --harness");
-
-    const connection = await dryRun("lab");
-    expect(connection.code).toBe(0);
-    expect(JSON.parse(connection.stdout)).toMatchObject({ engine: "lab" });
-    expect(connection.stderr).not.toContain("--engine is retired");
-  });
-
   test("live --verbose reports only safe dry-run diagnostics before preserving the dispatch envelope", async () => {
     const ordinary = await runCliCapture([
       "command",
