@@ -16,7 +16,7 @@ import { parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
 import { collectCredentialValues } from "../../core/config/credentials";
-import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext } from "../../core/events";
 import type { LockOwnership } from "../../core/file-lock";
 import type {
@@ -343,9 +343,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     try {
       eventsDb = openStateDatabase(resolvedStateDbPath);
       eventsCtx = { db: eventsDb };
-    } catch (err) {
-      rethrowIfTestIsolationError(err);
-    }
+    } catch {}
     if (!firstEngineResponseSeen) {
       const firstResponseTimer = setTimeout(() => {
         warn("[improve] Still waiting for the first model response...");
@@ -480,13 +478,12 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
   const improveProfile = selectedStrategy.config;
   const configuredLimits = {
     ...(options.limit !== undefined ? { cli: options.limit } : {}),
-    ...(configuredImproveProfile.limit !== undefined ? { profile: configuredImproveProfile.limit } : {}),
     ...(configuredImproveProfile.processes?.reflect?.limit !== undefined
       ? { reflect: configuredImproveProfile.processes.reflect.limit }
       : {}),
   };
-  // --limit, then the reflect process limit, then the profile limit.
-  const effectiveLimit = options.limit ?? improveProfile?.processes?.reflect?.limit ?? improveProfile.limit;
+  // --limit, then the reflect process limit.
+  const effectiveLimit = options.limit ?? improveProfile?.processes?.reflect?.limit;
   // Only a bundle-qualified scope picks the bundle; parse it then (a bare bundle-root ref has no placement).
   const scopedRef =
     scope.mode === "ref" && scope.value && parseBundleRef(scope.value).bundle !== undefined
@@ -587,8 +584,7 @@ function recordImproveFailure(err: unknown, run: ImproveRunSetup, eventsCtx: Eve
 function countUndecidedPendingMemories(stashDir: string): number {
   try {
     return withIndexDb((db) => countPendingMemoriesNeedingDecision(stashDir, db), { readOnly: true });
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
+  } catch {
     return countPendingMemoriesNeedingDecision(stashDir);
   }
 }
@@ -602,8 +598,7 @@ function probeEntryCount(): number | undefined {
     } finally {
       closeDatabase(db);
     }
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
+  } catch {
     return undefined;
   }
 }

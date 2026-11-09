@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { rethrowIfTestIsolationError } from "../../core/errors";
 import { formatRegistryError } from "../../core/registry-url";
 import { warn } from "../../core/warn";
 import type { Database } from "../database";
@@ -95,8 +94,7 @@ export async function withRegistryCacheDb<T>(fn: (db: Database | undefined) => P
   let db: Database | undefined;
   try {
     db = openIndexDatabase();
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
+  } catch {
     db = undefined;
   }
   try {
@@ -151,10 +149,7 @@ export async function fetchCachedJson<T>(opts: FetchCachedJsonOptions<T>): Promi
       if (db) {
         dbCacheResult = getRegistryIndexCache(db, cacheKey, ttlMs);
       }
-    } catch (err) {
-      // Never mask the bun-test isolation guard as "DB unavailable" — see
-      // rethrowIfTestIsolationError in src/core/errors.ts.
-      rethrowIfTestIsolationError(err);
+    } catch {
       // index.db read failed (pre-migration install or test env) — fall through
     }
 
@@ -196,8 +191,7 @@ export async function fetchCachedJson<T>(opts: FetchCachedJsonOptions<T>): Promi
             return stale;
           }
         }
-      } catch (cacheErr) {
-        rethrowIfTestIsolationError(cacheErr);
+      } catch {
         // cache read failed — fall through to the original fetch error
       }
       throw err;

@@ -79,16 +79,27 @@ export function listConfig(config: AkmConfig): Record<string, unknown> {
   return redactConfigValue({ ...DEFAULT_CONFIG, ...config }) as Record<string, unknown>;
 }
 
+/** A key that names a secret: `apiKey`, `api_key`, `Authorization`, `access_token`, `client_secret`, `password`. */
+const SECRET_KEY = /key|token|secret|password|authorization/i;
+
+/**
+ * A literal secret is dropped, an env reference (`$VAR`) is kept. `apiKey` anywhere; under `connections`, where the
+ * wire fields are the endpoint's own and any name can carry one, every string under a secret-shaped key, nested included.
+ */
+function isLiteralSecret(key: string, value: unknown, path: string[]): boolean {
+  if (typeof value !== "string" || isEnvReference(value)) return false;
+  return key === "apiKey" || (path[0] === "connections" && SECRET_KEY.test(key));
+}
+
 function redactConfigValue(value: unknown, path: string[] = []): unknown {
-  if (path.at(-1) === "apiKey" && typeof value === "string" && !isEnvReference(value)) return undefined;
+  const last = path.at(-1);
+  if (last !== undefined && isLiteralSecret(last, value, path)) return undefined;
   if (typeof value === "string" && isRegistryUrlPath(path)) return formatRegistryUrl(value);
   if (Array.isArray(value)) return value.map((child, index) => redactConfigValue(child, [...path, String(index)]));
   if (!value || typeof value !== "object") return value;
   const result: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (key !== "apiKey" || (typeof child === "string" && isEnvReference(child))) {
-      result[key] = redactConfigValue(child, [...path, key]);
-    }
+    if (!isLiteralSecret(key, child, path)) result[key] = redactConfigValue(child, [...path, key]);
   }
   return result;
 }

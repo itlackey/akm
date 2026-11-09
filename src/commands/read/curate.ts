@@ -20,7 +20,7 @@
 import fs from "node:fs";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { nonTaskInput } from "../../core/non-task-input";
 import type { ProjectView } from "../../core/projects";
@@ -204,9 +204,7 @@ function logCurateEvent(
         });
       }
     }, TELEMETRY_BUSY_TIMEOUT_MS);
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
-  }
+  } catch {}
 }
 
 export async function akmCurate(options: CurateOptions): Promise<CurateResponse> {

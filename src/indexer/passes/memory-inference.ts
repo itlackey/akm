@@ -19,9 +19,9 @@
  * with `inferenceProcessed: true`. A subsequent `akm index` therefore skips
  * the parent without re-running the LLM.
  *
- * Disabling — one gate: `index.memory.enabled = false` (or no resolvable
- * connection or harness) leaves the pass with no runner, and no model call is
- * made (#208). Existing inferred children are NEVER deleted — the user keeps
+ * Disabling — one gate: no resolvable connection or harness (or the strategy's
+ * `processes.memoryInference.enabled = false`) leaves the pass with no runner, and no
+ * model call is made (#208). Existing inferred children are NEVER deleted — the user keeps
  * what was already produced.
  *
  * Scope sync: on every run, an existing derived child (`<name>.derived.md`,
@@ -31,8 +31,8 @@
  * See {@link syncDerivedChildScopes}.
  *
  * Locked v1 contract:
- *   - LLM access is exclusively via the frozen runner returned by
- *     `resolveIndexPassExecution("memory", config)`.
+ *   - LLM access is exclusively via the frozen runner improve resolves for
+ *     `memoryInference` and passes in as `llmRunner`.
  *   - All child memory writes go through `writeAssetToSource` in
  *     `src/core/write-source.ts`. The parent's frontmatter rewrite is an
  *     explicit narrow exception — see {@link markParentProcessed}.
@@ -61,7 +61,6 @@ import { type WriteTargetSource, writeAssetToSource } from "../../core/write-sou
 import { type NoticeSink, noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RunnerSpec } from "../../integrations/agent/runner";
-import { type ResolvedIndexPassExecution, resolveIndexPassExecution } from "../../llm/index-passes";
 import type { DerivedMemoryDraft, MemoryInferNoChange, MemoryInferTelemetry } from "../../llm/memory-infer";
 import * as memoryInfer from "../../llm/memory-infer";
 import { computeBodyHash, getLlmCacheEntry } from "../../storage/repositories/index-llm-cache-repository";
@@ -203,7 +202,7 @@ export interface MemoryInferencePassContext extends PassContext {
   reEnrich?: boolean;
   onProgress?: (event: MemoryInferenceProgress) => void;
   options?: MemoryInferencePassOptions;
-  /** Preferred invocation-owned symbolic runner. Omit only for standalone index passes. */
+  /** The runner improve resolved for memory inference. Absent or null: no model call is made. */
   llmRunner?: RunnerSpec | null;
 }
 
@@ -275,16 +274,6 @@ function planPendingMemoryRecord(
     if (cached) return { kind: "cache-hit", record, decision: cached };
   }
   return { kind: "model", record };
-}
-
-function memoryExecutionForContext(
-  ctx: MemoryInferencePassContext,
-  config: MemoryInferencePassContext["config"],
-): ResolvedIndexPassExecution {
-  if (Object.hasOwn(ctx, "llmRunner")) {
-    return Object.freeze({ runner: ctx.llmRunner ?? undefined, notices: Object.freeze([]) });
-  }
-  return resolveIndexPassExecution("memory", config);
 }
 
 async function inferPendingMemoryRecord(
@@ -399,17 +388,9 @@ async function inferPendingMemoryRecord(
 /**
  * Top-level entry point. Returns a no-op result when the pass is disabled.
  *
- * Two orthogonal gates:
- *
- *   1. **Feature gate** — the selected strategy's `processes.memoryInference.enabled`
- *      (defaults to `true`). When `false`, no network call may issue regardless
- *      of per-pass settings.
- *   2. **Per-pass gate** — `resolveIndexPassExecution("memory", config)` reads
- *      the index pass selection. Without a runner, the indexer simply skips
- *      this pass for the current run.
- *
- * Both must allow the call for the pass to run. Either set to `false`
- * short-circuits to a no-op result.
+ * The selected strategy's `processes.memoryInference.enabled` (default `true`) and the
+ * runner improve resolves for the process decide whether it runs. Without a runner the
+ * pass is a no-op and no network call issues.
  */
 export async function runMemoryInferencePass(ctx: MemoryInferencePassContext): Promise<MemoryInferenceResult> {
   // R78: owns the write-provenance journal end-to-end so it closes on every
@@ -427,7 +408,7 @@ async function runMemoryInferencePassBody(
   ctx: MemoryInferencePassContext,
   provenance: WriteProvenanceJournal,
 ): Promise<MemoryInferenceResult> {
-  const { config, sources, signal, db, reEnrich, onProgress, options = {} } = ctx;
+  const { sources, signal, db, reEnrich, onProgress, options = {} } = ctx;
   const compressMemoryToDerivedMemory =
     options.compressMemoryToDerivedMemory ?? memoryInfer.compressMemoryToDerivedMemory;
   const result: MemoryInferenceResult = {
@@ -458,11 +439,8 @@ async function runMemoryInferencePassBody(
     return result;
   };
 
-  // The one gate — per-pass opt-out (#208): no runner when `index.memory.enabled` is false or nothing is
-  // configured. A caller that owns the runner has decided to run.
-  const execution = memoryExecutionForContext(ctx, config);
-  notices.add(execution.notices);
-  const llmRunner = execution.runner;
+  // The one gate: improve resolves the runner (`improve.processes.memoryInference` and `improve.*`); none, no model call.
+  const llmRunner = ctx.llmRunner ?? undefined;
   if (!llmRunner) return completeResult();
 
   // The pass only writes to the default (working) stash, found by its

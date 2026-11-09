@@ -140,7 +140,7 @@ connection's own:
 They are written `akm.inference` (and top-level `temperature` and `effort`) in
 an asset's frontmatter, `llm:` on a workflow step (`max_tokens`,
 `enable_thinking`, `reasoning_effort`), `inference` in a task, and `llm` on an
-improve process, the quality gate or an index pass. Nearest wins: the asset,
+improve process or the quality gate. Nearest wins: the asset,
 then the process, then the model entry, then the connection. A connection and
 akm's own runtime take all of them. A harness takes none: set them in the
 program's own configuration, and akm reports each as an `untranslated-field`
@@ -424,7 +424,7 @@ name:
   that its other fields are ignored.
 
 A kind of work that names no model asks for a default alias: improve's
-processes, the index passes, extraction and `akm remember --enrich` ask for
+processes, extraction and `akm remember --enrich` ask for
 `fast`; the quality and triage judges and a workflow gate ask for `balanced`;
 agent work asks for `balanced`.
 
@@ -439,7 +439,7 @@ akm's work is of two kinds, and each has a default place to run.
 - **Model work** asks a model for an answer with nobody watching: the improve
   processes (reflect, distill, consolidate, memory inference, extract, and
   validation's repair), the quality and triage judges, the judge of a workflow
-  `### gate`, the index passes, and `akm remember --enrich`. It runs on the
+  `### gate`, and `akm remember --enrich`. It runs on the
   default connection, as a direct request to the endpoint. With no connection it
   runs on the default harness, unless that harness has `modelWork: false`. On a
   harness it is akm's own process, not your use of the program ([How akm runs a
@@ -475,16 +475,17 @@ These settings, all optional, choose another place for one piece of work:
 | Key | Chooses where |
 | --- | --- |
 | `improve.enabled` | `false`: background learning is off on this host, and `akm improve` and `akm proposal extract` do nothing. Written by `akm setup --learning off`; absent means on |
-| `improve.connection`, `improve.harness` | All of `akm improve`'s model work |
+| `improve.connection`, `improve.harness`, `improve.model`, `improve.llm`, `improve.timeoutMs` | The base for all of akm's model work: improve's processes, the judges, `akm remember --enrich`, extraction and the proposal drain |
 | `improve.processes.<process>` | One improve process: `reflect`, `distill`, `consolidate`, `memoryInference`, `extract`, `validation`, or `triage` (its judgment) |
 | `improve.qualityGate` | The judge of the reflect and distill quality gates |
-| `index.connection`, `index.<pass>` | The index passes (`index.memory`) |
 
 Each takes `connection` or `harness`, `model` (an alias or a name), `llm` (the
-[settings a call asks for](#settings-a-call-asks-for)) and `timeoutMs`. A pass
-under `index` takes `connection`, not `harness` (one that names nothing runs
-where model work does: the default connection, else the default harness), and
-`enabled: false` turns it off:
+[settings a call asks for](#settings-a-call-asks-for)) and `timeoutMs`.
+`improve.*` is the base every model-work call starts from, whichever command
+makes it; the entries below it are nearer. An `engine` in one of these blocks is
+the retired spelling of `connection` or `harness`: it still selects where the work
+runs, a warning says so, and `akm migrate apply` drops it, so name a
+`connection` or `harness` instead.
 
 ```jsonc
 {
@@ -495,19 +496,17 @@ where model work does: the default connection, else the default harness), and
       "memoryInference": { "model": "qwen3-8b", "llm": { "temperature": 0.1 } }
     },
     "qualityGate": { "connection": "judge", "llm": { "enableThinking": true } }
-  },
-  "index": { "connection": "default", "memory": { "enabled": false } }
+  }
 }
 ```
 
 The nearest setting wins, farthest to nearest: the shipped alias of the kind of
-work, `improve.connection` and `improve.harness`, the process's entry in
+work, `improve.*` (`connection`, `harness`, `model`, `llm`, `timeoutMs`), the process's entry in
 `improve.processes`, and `--connection`, `--harness` and `--model` on the run,
 which reach every call in it, the judges included. The quality-gate judge is the
 exception: a process's own entry is the writer's, so `improve.qualityGate`
 replaces it, and a `reasoning` model chosen for reflect is not the one that
-judges it. An index pass reads `index.*`, then `index.<pass>`. A strategy adds no
-layer: it says which processes run, never where.
+judges it. A strategy adds no layer: it says which processes run, never where.
 
 `akm health` and `akm info` print this as a table, resolved by the same code the
 calls use: for each kind of work, the connection or harness and the model.
@@ -986,15 +985,15 @@ See [Projects in the CLI reference](cli.md#projects) for how a call chooses one.
 
 `registries` (top-level array, distinct from `bundles`) lists remote package
 registries `akm registry`/`akm bundle add` can search and install from.
-Each entry is `{ url, name?, enabled?, provider?, options? }`; `provider`
+Each entry is `{ url, name?, enabled?, provider? }`; `provider`
 defaults to `"static-index"`. With no `registries` key, the defaults are the
 official registry and a skills.sh entry that ships with `enabled: false`. See
 [Registries](registry.md) for the field reference, the provider list and how to
 enable skills.sh.
 
 Registry `url` values cannot carry a username or password: such an entry is
-dropped with a warning. The built-in providers send no credentials and
-`options` does not add any; use a credential-free HTTPS endpoint.
+dropped with a warning. The built-in providers send no credentials; use a
+credential-free HTTPS endpoint.
 
 ## Output defaults
 
@@ -1003,13 +1002,6 @@ default `json`) and `output.detail` (`brief`\|`normal`\|`full`, default
 `brief`) set the CLI's default `--format`/`--detail` when the flags are
 omitted. Per-command flags always override these. A config that still says `output.format: html` (retired with
 akm's HTML output) loads: one warning names it and the default format applies.
-
-## Setup-derived recommendations
-
-`setup` is reserved for configuration derived by `akm setup`. It currently
-holds no keys — the `setup.taskSchedules` sub-key was removed in 0.9.0 after
-nothing in the setup flow or the tasks subsystem was found to read or write
-it. Scheduling lives in the tasks subsystem (`akm task`).
 
 ## Experimental opt-ins
 
@@ -1176,9 +1168,11 @@ network filesystem for the data directory and falls back to `DELETE`.
 
 A key akm no longer reads is named once, ignored, and dropped by `akm migrate
 apply`. That covers `profiles`, `llm`, `agent`, `features`, `stashes`,
-`defaults.llm`, `defaults.agent`, `defaults.improve`, the settings that sat
-under `index.<pass>` (`endpoint`, `provider`, `apiKey`, `baseUrl`,
-`temperature`, `maxTokens`, `capabilities`), `index.graph.*`, every strategy's
+`defaults.llm`, `defaults.agent`, `defaults.improve`, the whole `index` section
+(its `connection`, `model`, `timeoutMs`, `llm` and per-pass entries never took
+effect: improve resolves where memory inference runs), `setup`,
+`improve.salience`, `bundles.<name>.website.refresh`, a registry's `options`, a
+strategy's `description` and `limit` (set `processes.reflect.limit`), every strategy's
 `processes.graphExtraction.*`, a strategy's `processes.feedbackDistillation`
 (use `processes.distill.enabled`), `processes.consolidate.incrementalSince`
 and `neighborsPerChanged`, and `embedding.chunkSize`. The strategy name
@@ -1208,7 +1202,7 @@ asset keys move as the table says.
 | `AKM_ENGINE_<NAME>_API_KEY` or `AKM_LLM_API_KEY` set in the environment | `apiKey: "$AKM_ENGINE_<NAME>_API_KEY"` (or `$AKM_LLM_API_KEY`) on that connection. Set in no variable, an engine that names no key gets none, and a note names the variables 0.9 read. |
 | `improve.strategies.<name>.engine`, `model`, `llm`, `timeoutMs` | Dropped, with a note: a strategy says which processes run, not where. |
 | `engine`, `model`, `llm`, `timeoutMs` on a strategy's process, its `qualityGate` or its `triage.judgment` | Moved to `improve.processes.<process>` or `improve.qualityGate`, with `engine` becoming `connection` or `harness` by what it named. When that place already says, the first one is kept, with a note. |
-| `index.defaults.*`, `index.<pass>.engine` | `index.*`, and `connection`. An index pass cannot name a harness, so an engine that named one is dropped, with a note; a pass that names nothing runs where model work does: on the default connection, else the default harness. |
+| `index.defaults.*`, `index.<pass>.engine` | Left as written: the `index` section is retired and no longer read, so it is named once as an unknown key. Where memory inference runs is `improve.processes.memoryInference` over `improve.*`. |
 | `workflow.judgeEngine` | Dropped, with a note: a gate's judge runs on the default connection, else the default harness. The note says whether the engine it named is that default, or the judge has moved. With none set, 0.9 ran the judge on `defaults.engine`; a note says when that is not where it runs now. |
 | `engine:` in an asset's frontmatter, a workflow step or a task source | `connection:` or `harness:`, by what the configured target is; a name it cannot place becomes `harness:`, with a note. A bundle akm may not change, and an asset that is a symbolic link, are skipped. |
 

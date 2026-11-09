@@ -63,8 +63,6 @@ function withoutHarnessOverrides(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEn
     "XDG_DATA_HOME",
     "XDG_CACHE_HOME",
     "XDG_STATE_HOME",
-    "BUN_TEST",
-    "NODE_ENV",
   ]) {
     delete env[key];
   }

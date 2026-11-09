@@ -685,8 +685,6 @@ describe("tasks parity", () => {
         NO_COLOR: "1",
         CI: "1",
       };
-      delete schedulerProcessEnv.BUN_TEST;
-      delete schedulerProcessEnv.NODE_ENV;
       const launcherRun = (args: string[]): NodeResult => {
         const result = nodeSpawnSync(isolatedNode, [launcher, ...args], {
           env: schedulerProcessEnv,

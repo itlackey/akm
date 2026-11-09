@@ -22,7 +22,7 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { daysToMs } from "../../core/common";
 import type { ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
-import { ConfigError, rethrowIfTestIsolationError } from "../../core/errors";
+import { ConfigError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type {
   ConsolidateResult,
@@ -116,8 +116,7 @@ function withRunState<T>(
   if (!persist && !eventsCtx?.db) return undefined;
   try {
     return withStateDb(fn, { path: eventsCtx?.dbPath, borrowed: eventsCtx?.db });
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
+  } catch {
     return undefined;
   }
 }

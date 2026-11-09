@@ -51,11 +51,6 @@ export type ConfigErrorCode =
   // explicit `--dir` argument resolves to e.g. `/`, `$HOME`, `~/.config`,
   // `/etc`, etc.
   | "UNSAFE_STASH_DIR"
-  // Defense-in-depth sentinel raised under `bun test` / NODE_ENV=test
-  // when a test sets AKM_BUNDLE_DIR but forgets to also point
-  // XDG_DATA_HOME / AKM_DATA_DIR (and XDG_STATE_HOME / AKM_STATE_DIR)
-  // at temp directories. See src/core/paths.ts.
-  | "TEST_ISOLATION_MISSING"
   // The host platform/architecture has no supported build for a requested
   // binary operation (e.g. `akm upgrade` on an unreleased platform target).
   | "UNSUPPORTED_PLATFORM"
@@ -225,8 +220,6 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   AGENT_NOT_CONFIGURED: "Run `akm setup` to enable a harness or add a connection; agent work needs one.",
   SELECTION_NOT_CONFIGURED:
     "Name one that is configured (`akm health` lists them), correct the name, or add it with `akm setup --name <name> --endpoint <url>` (a connection) or `akm setup --harness <name>`.",
-  TEST_ISOLATION_MISSING:
-    "Under bun test, when AKM_BUNDLE_DIR is set you MUST also set XDG_DATA_HOME (or AKM_DATA_DIR) and XDG_STATE_HOME (or AKM_STATE_DIR) to temp directories so the test does not touch the developer's real ~/.local/share/akm or ~/.local/state/akm.",
   UNSAFE_STASH_DIR:
     "Choose a path inside your home directory (e.g. ~/akm) or another empty workspace. The bundle directory cannot be the filesystem root, your home directory itself, or a sensitive system path like /etc, /var, ~/.config, or ~/.ssh.",
   UNKNOWN_IMPROVE_STRATEGY:
@@ -441,42 +434,7 @@ export class NotFoundError extends AkmError {
 }
 
 /**
- * Test-isolation guard helper.
- *
- * `src/core/paths.ts` throws `ConfigError("TEST_ISOLATION_MISSING")` under
- * `bun test` when `AKM_BUNDLE_DIR` is set without a paired data-dir or
- * state-dir override. That throw must never be swallowed by best-effort
- * catches around DB/data-dir operations — otherwise the guard's loud failure
- * silently degrades into a "no result" outcome (cold cache, missing snapshot,
- * etc.) and the underlying test leak goes undetected.
- *
- * Call `rethrowIfTestIsolationError(err)` from any catch block that returns
- * a fallback value (null, [], empty result) after touching DB or data-dir
- * paths. It re-throws when the caught error is the guard violation, otherwise
- * does nothing so the existing benign-fallback path can proceed unchanged.
- *
- * Usage:
- *   try {
- *     const db = openDatabase();
- *     // ...
- *   } catch (err) {
- *     rethrowIfTestIsolationError(err);
- *     // existing benign-fallback handling
- *   }
- */
-export function isTestIsolationError(err: unknown): boolean {
-  return err instanceof ConfigError && err.code === "TEST_ISOLATION_MISSING";
-}
-
-export function rethrowIfTestIsolationError(err: unknown): void {
-  if (isTestIsolationError(err)) {
-    throw err;
-  }
-}
-
-/**
- * Unreadable-data-dir guard helper — the #791 sibling of the test-isolation
- * pair above, and it exists for the same reason.
+ * Unreadable-data-dir guard helper (#791).
  *
  * `DATA_DIR_UNREADABLE` says "this path is there and I am not allowed to read
  * it". It is raised by `assertIndexPathReadable` and friends precisely so a

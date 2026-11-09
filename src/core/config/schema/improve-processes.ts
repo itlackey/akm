@@ -295,9 +295,7 @@ const ImproveProfileProcessesSchema = z
 
 export const ImproveProfileConfigSchema = z
   .object({
-    description: z.string().min(1).optional(),
     processes: ImproveProfileProcessesSchema.optional(),
-    limit: positiveInt.optional(),
     sync: z
       .object({
         enabled: z.boolean().optional(),

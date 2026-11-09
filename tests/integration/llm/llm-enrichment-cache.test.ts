@@ -18,6 +18,7 @@ import path from "node:path";
 import type { AkmConfig } from "../../../src/core/config/config";
 import type { SearchSource } from "../../../src/indexer/search/search-source";
 import type { Database } from "../../../src/storage/database";
+import { withImproveRunner } from "../../_helpers/memory-inference-runner";
 import { type Cleanup, makeSandboxDir, sandboxXdgDataHome, sandboxXdgStateHome } from "../../_helpers/sandbox";
 
 // ── Local LLM server (stub endpoint) ──────────────────────────────────────────
@@ -79,7 +80,10 @@ function memoryInferenceOptions() {
 
 function runMemoryInferencePass(...args: Parameters<typeof runMemoryInferencePassImpl>) {
   const [ctx] = args;
-  return runMemoryInferencePassImpl({ ...ctx, options: { ...ctx.options, ...memoryInferenceOptions() } });
+  return runMemoryInferencePassImpl({
+    ...withImproveRunner(ctx),
+    options: { ...ctx.options, ...memoryInferenceOptions() },
+  });
 }
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -104,13 +108,11 @@ function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
         models: { fast: "test-model" },
       },
     },
-    index: { connection: "test" },
   };
   return {
     ...base,
     ...overrides,
     connections: { ...base.connections, ...overrides?.connections },
-    index: { ...base.index, ...overrides?.index },
   };
 }
 

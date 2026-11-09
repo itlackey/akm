@@ -354,7 +354,7 @@ yields an explicit empty `plan.snapshot` (`missing` or `incompatible`) rather
 than creating or migrating the database.
 
 `plan.limits.effective` is the cap on the refs a run dispatches, resolved from
-`--limit`, then the reflect process's `limit`, then the strategy's `limit`. The
+`--limit`, then the reflect process's `limit`. The
 replay lane is retired, so `additiveReplayAllowance` is always `0` (the field
 stays so the schema-v2 plan shape keeps validating) and a finite `totalCeiling`
 equals `effective`. When the run is unbounded, `totalCeiling` is omitted.

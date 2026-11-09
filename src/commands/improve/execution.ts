@@ -22,11 +22,6 @@ export interface ResolveImproveExecutionOptions {
   alias: StandardAlias;
   /** The `improve.processes` entry that applies, for a call that is not itself an improve process (a judge). */
   process?: (typeof IMPROVE_ENGINE_PROCESSES)[number];
-  /**
-   * The process's standing `index.<pass>` settings, when the process has one:
-   * farther than the process's own settings.
-   */
-  index?: ImproveExecutionLayer;
   /** Nearer one-shot selection for this call, such as a quality gate's own judge settings or an explicit timeout. */
   current?: ImproveExecutionLayer;
   /** What the run itself selected (`--connection`, `--harness`, `--model`): the nearest layer of every call in it, judges included. */
@@ -40,7 +35,7 @@ export interface ResolvedImproveExecution {
 
 /**
  * Resolve improve-owned model work: `improve.connection` / `improve.harness`
- * -> index.<pass> -> `improve.processes.<name>` -> the call's own settings ->
+ * -> `improve.processes.<name>` -> the call's own settings ->
  * the run's selection, nearest wins, over the default by name. A strategy adds no layer: it says which
  * processes run, never where. `null` when no connection or harness is
  * configured for it.
@@ -55,7 +50,6 @@ export function resolveImproveExecution(options: ResolveImproveExecutionOptions)
       layers: [
         shippedAlias(options.alias),
         { id: "improve", kind: "invocation-defaults", values: executionDefaultsOf(options.config.improve) },
-        { id: "index", kind: "invocation-defaults", values: executionDefaultsOf(options.index) },
         {
           id: `improve.processes.${processKey}`,
           kind: "invocation-defaults",

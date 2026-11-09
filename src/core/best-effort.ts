@@ -18,11 +18,10 @@
  *     At the default (non-verbose) verbosity this emits nothing — no new
  *     stdout, no new stderr, no changed control flow.
  *
- * It deliberately does NOT add a test-isolation rethrow or any other handling:
- * the contract is "centralize the existing silent swallow + add opt-in verbose
- * visibility", nothing more. Sites that need `rethrowIfTestIsolationError` or
- * any real handling already bind the error and are out of scope for this
- * helper.
+ * It deliberately does NOT add any other handling: the contract is
+ * "centralize the existing silent swallow + add opt-in verbose visibility",
+ * nothing more. Sites that need real handling already bind the error and are
+ * out of scope for this helper.
  */
 
 import { isVerbose, warnVerbose } from "./warn";

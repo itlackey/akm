@@ -165,7 +165,8 @@ the next.
 
 Enforced by: `tests/_preload.ts` (the sandbox and the tripwire),
 `scripts/test-unit.sh` and `scripts/test-integration.sh` (the split and the
-per-shard `HOME`), `TEST_ISOLATION_MISSING` in `src/core/paths.ts`. Reads
+per-shard `HOME`), `tests/_helpers/isolation-guard.ts` (the directory and child-process
+checks the preload installs). Reads
 through `os.homedir()` outside the runner scripts are held by review.
 
 ### 7. Prose lives in files; comments say why

@@ -69,8 +69,6 @@ export type {
   ImproveProcessConfig,
   ImproveProfileConfig,
   ImproveWhere,
-  IndexConfig,
-  IndexPassConfig,
   OutputConfig,
   RegistryConfigEntry,
   SchedulerConfig,
@@ -423,20 +421,6 @@ function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePat
 }
 
 /**
- * Retired `index.<passName>` keys that still validate against the generic
- * per-pass catchall schema (`IndexPassConfigSchema`), so `resolveSchemaAt`
- * below never returns `undefined` for them and the walk would otherwise
- * treat them as a live, ordinary pass. Named here so the same three
- * guarantees apply as any other retired config key: a config setting one keeps
- * loading, is named once by
- * the unknown-key warning, and is dropped only by `akm migrate apply`.
- * `index.graph` (the LLM entity-graph extraction pass) and
- * `index.metadataEnhance` (LLM metadata enrichment) were retired in
- * 0.9.17-alpha.9; `index.stalenessDetection` before them.
- */
-const RETIRED_CATCHALL_KEY_PATHS = new Set(["index.graph", "index.metadataEnhance", "index.stalenessDetection"]);
-
-/**
  * Every dotted key in `raw` the schema does not know, at any depth (arrays
  * are not descended). Unknown keys are never an error: they are a typo, or a
  * key another release used. Reads keep them (they round-trip through
@@ -452,7 +436,7 @@ export function unknownConfigKeyPaths(
   for (const key of Object.keys(node).sort()) {
     const keyPath = [...prefix, key];
     const schema = resolveSchemaAt(keyPath, root);
-    if (RETIRED_CATCHALL_KEY_PATHS.has(keyPath.join(".")) || schema === undefined) {
+    if (schema === undefined) {
       found.push(keyPath);
       continue;
     }
@@ -464,9 +448,19 @@ export function unknownConfigKeyPaths(
   return found;
 }
 
+/** `engine` is the retired spelling of `connection` / `harness`; a model-work block still honours it. */
+const RETIRED_ENGINE_KEY = /^improve(\.processes\.[^.]+|\.qualityGate)?\.engine$/;
+
 function warnUnknownConfigKeys(raw: Record<string, unknown>, sourcePath?: string): void {
   for (const keyPath of unknownConfigKeyPaths(raw)) {
     const dotted = keyPath.join(".");
+    if (RETIRED_ENGINE_KEY.test(dotted)) {
+      warnOnce(
+        `config:retired-engine-key:${sourcePath ?? "inline"}:${dotted}`,
+        `Config key ${JSON.stringify(dotted)}${sourcePath ? ` at ${sourcePath}` : ""} is the retired spelling of \`connection\` / \`harness\`. It still selects where this model work runs, but \`akm migrate apply\` drops it: name a \`connection\` or \`harness\` instead.`,
+      );
+      continue;
+    }
     warnOnce(
       `config:unknown-key:${sourcePath ?? "inline"}:${dotted}`,
       `Unknown config key ${JSON.stringify(dotted)}${sourcePath ? ` at ${sourcePath}` : ""} has no defined akm behavior and is ignored. Check the spelling; a key retired by this release or added by a newer one is dropped by \`akm migrate apply\`.`,
@@ -610,7 +604,6 @@ const HOST_LOCAL_CONFIG_KEYS = new Set([
   "experimental",
   "registries",
   "scheduler",
-  "setup",
 ]);
 
 /**

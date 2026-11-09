@@ -189,25 +189,15 @@ describe("start URL the operator typed is not refused outright", () => {
     expect(shouldAllowPrivateWebsiteUrlForTests("not a url")).toBe(false);
   });
 
-  test("proceeding on a private start URL warns exactly once per host outside test mode", () => {
+  test("proceeding on a private start URL warns exactly once per host, NODE_ENV=test or not", () => {
     const seen: unknown[][] = [];
     overrideSeam(_setWarnSinkForTests, (level, args) => {
       if (level === "warn") seen.push(args);
     });
-    const originalBunTest = process.env.BUN_TEST;
-    const originalNodeEnv = process.env.NODE_ENV;
-    try {
-      delete process.env.BUN_TEST;
-      delete process.env.NODE_ENV;
-      expect(shouldAllowPrivateWebsiteUrlForTests("http://10.9.9.9/handbook")).toBe(true);
-      expect(shouldAllowPrivateWebsiteUrlForTests("http://10.9.9.9/handbook")).toBe(true);
-      expect(seen.length).toBe(1);
-    } finally {
-      if (originalBunTest === undefined) delete process.env.BUN_TEST;
-      else process.env.BUN_TEST = originalBunTest;
-      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = originalNodeEnv;
-    }
+    expect(process.env.NODE_ENV).toBe("test");
+    expect(shouldAllowPrivateWebsiteUrlForTests("http://10.9.9.9/handbook")).toBe(true);
+    expect(shouldAllowPrivateWebsiteUrlForTests("http://10.9.9.9/handbook")).toBe(true);
+    expect(seen.length).toBe(1);
   });
 
   test("a start URL that only resolves privately via DNS is allowed with a warning, not refused", async () => {

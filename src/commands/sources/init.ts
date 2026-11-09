@@ -15,7 +15,6 @@ import path from "node:path";
 import { stashDirNames } from "../../core/asset/asset-placement";
 import { mutateConfig } from "../../core/config/config";
 import { assertSafeStashDir, getConfigPath, getDefaultStashDir } from "../../core/paths";
-import { warnOnce } from "../../core/warn";
 import { primaryBundlePath, withPrimaryBundle } from "./bundle-config-ops";
 import {
   copyStashSkeleton,
@@ -24,43 +23,6 @@ import {
   scaffoldScratch,
   scaffoldStashMeta,
 } from "./stash-skeleton";
-
-/**
- * Refuse to persist a temporary-directory stashDir to the user's config when
- * running under a test runner AND `--dir <tempdir>` was passed explicitly.
- * This guard targets the exact agent-overreach pattern documented in
- * `memories/akm-init-persists-stashdir-warning`: an agent ran
- * `akm bundle create --dir $(mktemp -d)` for an E2E test and silently rewrote the
- * developer's real config to point at a now-deleted temp dir.
- *
- * Tests that legitimately resolve a tempdir via HOME (default-path init) are
- * unaffected — those are normal `~/akm` resolutions and not the failure mode.
- *
- * Test sentinels (either suffices):
- *   - `BUN_TEST=1`     — explicit opt-in
- *   - `NODE_ENV=test`  — what `bun test` sets today
- *
- * Tests that genuinely need to exercise `akm bundle create --dir /tmp/...` should set
- * `AKM_FORCE_INIT_TMP_STASH=1`.
- */
-function assertInitSandbox(stashDir: string, dirExplicitlyProvided: boolean): void {
-  if (!dirExplicitlyProvided) return; // Only guard explicit --dir, not default HOME resolution.
-  const isUnderTest = process.env.BUN_TEST === "1" || process.env.NODE_ENV === "test";
-  if (!isUnderTest) return;
-  const isTmp =
-    stashDir.startsWith("/tmp/") ||
-    stashDir === "/tmp" ||
-    stashDir.startsWith("/var/tmp/") ||
-    stashDir === "/var/tmp" ||
-    stashDir.startsWith("/private/var/folders/") ||
-    stashDir.startsWith("/private/tmp/");
-  if (!isTmp) return;
-  warnOnce(
-    `init-tmp-stash:${stashDir}`,
-    `Persisting --dir stashDir to a temporary path (${stashDir}) while a test-runner env var (BUN_TEST/NODE_ENV=test) is set; ` +
-      "the OS may reap this path, leaving the next run pointing at a deleted bundle.",
-  );
-}
 
 export interface InitResponse {
   bundleDir: string;
@@ -114,10 +76,6 @@ async function akmInitReal(options?: {
   // `akm bundle create --dir ~` would otherwise mkdir + git-init the user's system
   // root or home directory. Catastrophic-on-misuse vs. trivial-to-recover-from.
   assertSafeStashDir(stashDir);
-
-  // Defense-in-depth: refuse to persist an explicit --dir /tmp/... stashDir
-  // to config under a test runner. Default HOME-resolved paths are exempt.
-  assertInitSandbox(stashDir, dirExplicitlyProvided);
 
   let created = false;
   if (!fs.existsSync(stashDir)) {

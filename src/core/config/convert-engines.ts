@@ -9,13 +9,12 @@
  * (`runConfigFilePipeline`) and `akm migrate apply` writes its result back.
  * Whatever it cannot carry over is named in `notes` and dropped. One step per row of
  * the migration table in `docs/reference/configuration.md`; `models.json` and the
- * references in strategies, index passes and gates are folded in by their own modules.
+ * references in strategies and gates are folded in by their own modules.
  */
 
 import { isRecord } from "../common";
 import type { LlmInference } from "../llm-inference";
 import {
-  convertIndexEngines,
   dropJudgeEngine,
   improveStrategyDefault,
   moveStrategyExecution,
@@ -486,7 +485,6 @@ export function convertEngineConfig(raw: Dict, options: ConvertEnginesOptions = 
   improveStrategyDefault(out, defaults, improve);
   const judge = modelWorkTarget(defaults, naming, merged, options.inherited, conversion);
   dropJudgeEngine(out, conversion, naming.target, naming.defaultEngine, judge);
-  convertIndexEngines(out, conversion, retarget);
 
   // Assemble, keeping the file's key order.
   const config: Dict = {};

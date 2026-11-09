@@ -15,14 +15,19 @@ import { akmIndex } from "../../src/indexer/indexer";
 import {
   collectPendingMemories,
   countPendingMemoriesNeedingDecision,
-  runMemoryInferencePass,
+  runMemoryInferencePass as runMemoryInferencePassImpl,
 } from "../../src/indexer/passes/memory-inference";
 import { scopeFromFrontmatter } from "../../src/indexer/passes/metadata";
 import { _setChatCompletionForTests } from "../../src/llm/client";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { computeBodyHash, upsertLlmCacheEntry } from "../../src/storage/repositories/index-llm-cache-repository";
+import { withImproveRunner } from "../_helpers/memory-inference-runner";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
+
+function runMemoryInferencePass(ctx: Parameters<typeof runMemoryInferencePassImpl>[0]) {
+  return runMemoryInferencePassImpl(withImproveRunner(ctx));
+}
 
 let storage: IsolatedAkmStorage;
 let requests: string[];
@@ -55,7 +60,7 @@ function config() {
     bundles: { stash: { path: storage.stashDir } },
     defaultBundle: "stash",
     connections: { memory: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "scripted" } } },
-    index: { connection: "memory" },
+    improve: { connection: "memory" },
   };
 }
 function write(fm: Record<string, unknown>) {
@@ -192,7 +197,7 @@ for (const fm of [
     const after = parseFrontmatter(fs.readFileSync(parent, "utf8"));
     expect(after.content).toBe(before.content);
     expect(after.data).toEqual({ ...before.data, inferenceProcessed: true });
-    saveConfig({ ...config(), index: { memory: { enabled: false } } });
+    saveConfig(config());
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const shown = await akmShowUnified({ ref: "memories/tunnel.derived", skipLogging: true });
     expect(JSON.stringify(shown)).toContain("restart requested");

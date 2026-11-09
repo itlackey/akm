@@ -112,12 +112,13 @@ test("a row written before 0.9.17-alpha.7 keeps firing: the CLI applies its desc
       [path.resolve("src/cli.ts"), "--scheduler-context", file, "task", "doctor", "--format=json"],
       {
         encoding: "utf8",
-        env: { ...process.env, BUN_TEST: "1", AKM_CONFIG_DIR: ambientConfig },
+        env: { ...process.env, AKM_CONFIG_DIR: ambientConfig },
       },
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout).warnings).toContain(
+    // The doctor inspected the scheduler (the harness's crontab stub on PATH reports no crontab), and said nothing about a test harness.
+    expect(JSON.parse(result.stdout).warnings).not.toContain(
       "Native scheduler inspection is skipped inside the bun test harness.",
     );
 
@@ -132,7 +133,7 @@ test("a row written before 0.9.17-alpha.7 keeps firing: the CLI applies its desc
       [path.resolve("src/cli.ts"), "--scheduler-context", minimal, "task", "doctor", "--format=json"],
       {
         encoding: "utf8",
-        env: { ...process.env, BUN_TEST: "1", AKM_CONFIG_DIR: descriptor.environment.AKM_CONFIG_DIR },
+        env: { ...process.env, AKM_CONFIG_DIR: descriptor.environment.AKM_CONFIG_DIR },
       },
     );
     expect(minimalResult.status, minimalResult.stderr).toBe(0);
@@ -147,7 +148,7 @@ test("a row written before 0.9.17-alpha.7 keeps firing: the CLI applies its desc
       [path.resolve("src/cli.ts"), "--scheduler-context", edited, "task", "doctor", "--format=json"],
       {
         encoding: "utf8",
-        env: { ...process.env, BUN_TEST: "1", AKM_CONFIG_DIR: ambientConfig },
+        env: { ...process.env, AKM_CONFIG_DIR: ambientConfig },
       },
     );
     expect(editedResult.status, editedResult.stderr).toBe(0);
@@ -159,7 +160,7 @@ test("a row written before 0.9.17-alpha.7 keeps firing: the CLI applies its desc
       [path.resolve("src/cli.ts"), "--scheduler-context", missing, "task", "doctor", "--format=json"],
       {
         encoding: "utf8",
-        env: { ...process.env, BUN_TEST: "1", AKM_CONFIG_DIR: ambientConfig },
+        env: { ...process.env, AKM_CONFIG_DIR: ambientConfig },
       },
     );
     expect(missingResult.status).toBe(78);

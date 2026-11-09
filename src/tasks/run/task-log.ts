@@ -16,7 +16,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../../core/config/config";
-import { rethrowIfTestIsolationError } from "../../core/errors";
 import {
   buildTaskRunId,
   insertTaskLogLines,
@@ -38,8 +37,7 @@ function taskLogPath(logDir: string, taskId: string, startedAtIso: string): stri
 export function resolveTaskLogPath(logDir: string | undefined, taskId: string, startedAtIso: string): string {
   try {
     return taskLogPath(logDir ?? getTaskLogDir(), taskId, startedAtIso);
-  } catch (error) {
-    rethrowIfTestIsolationError(error);
+  } catch {
     return "";
   }
 }
@@ -66,8 +64,7 @@ export function purgeOldTaskLogFiles(logDir: string | undefined, retentionDays =
   let taskDirs: fs.Dirent[];
   try {
     taskDirs = fs.readdirSync(dir, { withFileTypes: true });
-  } catch (error) {
-    rethrowIfTestIsolationError(error);
+  } catch {
     return 0;
   }
   for (const taskDirEntry of taskDirs) {
@@ -76,8 +73,7 @@ export function purgeOldTaskLogFiles(logDir: string | undefined, retentionDays =
     let logFiles: fs.Dirent[];
     try {
       logFiles = fs.readdirSync(taskDirPath, { withFileTypes: true });
-    } catch (error) {
-      rethrowIfTestIsolationError(error);
+    } catch {
       continue;
     }
     for (const logFile of logFiles) {
@@ -89,8 +85,7 @@ export function purgeOldTaskLogFiles(logDir: string | undefined, retentionDays =
           fs.unlinkSync(logFilePath);
           deleted++;
         }
-      } catch (error) {
-        rethrowIfTestIsolationError(error);
+      } catch {
         // Best-effort: a file that vanished or can't be stat'd/removed is skipped.
       }
     }
@@ -112,8 +107,7 @@ export function purgeOldRunLogFiles(retentionDays = 90): number {
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch (error) {
-      rethrowIfTestIsolationError(error);
+    } catch {
       continue;
     }
     for (const entry of entries) {
@@ -124,9 +118,7 @@ export function purgeOldRunLogFiles(retentionDays = 90): number {
           fs.unlinkSync(filePath);
           deleted++;
         }
-      } catch (error) {
-        rethrowIfTestIsolationError(error);
-      }
+      } catch {}
     }
   }
   return deleted;
@@ -201,13 +193,11 @@ function taskLogSensitiveValues(
       config: loadConfig(),
       declaredNames: redactNames,
     });
-  } catch (error) {
-    rethrowIfTestIsolationError(error);
+  } catch {
     // No config — the name heuristic and the task's own `redact:` list still apply.
     try {
       return collectTaskLogSensitiveValues({ env, declaredNames: redactNames });
-    } catch (fallbackError) {
-      rethrowIfTestIsolationError(fallbackError);
+    } catch {
       return [];
     }
   }
@@ -268,8 +258,7 @@ export function persistRunLog(input: {
       // on it.
       fs.mkdirSync(path.dirname(input.logPath), { recursive: true });
       fs.writeFileSync(input.logPath, fileText);
-    } catch (error) {
-      rethrowIfTestIsolationError(error);
+    } catch {
       // Transitional file logging is fully best-effort.
     }
   }
@@ -285,8 +274,7 @@ export function persistRunLog(input: {
     } finally {
       db.close();
     }
-  } catch (error) {
-    rethrowIfTestIsolationError(error);
+  } catch {
     // Structured logging is fully best-effort and must not alter CLI output.
   }
 }

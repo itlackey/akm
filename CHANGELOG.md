@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `improve.model`, `improve.llm` and `improve.timeoutMs` are named config keys. They were already honoured, yet warned "ignored" and refused by `akm config get`. `improve.*` (`connection`, `harness`, `model`, `llm`, `timeoutMs`) is the base for all of akm's model work: improve's processes, the judges, `akm remember --enrich`, extraction and the proposal drain. An `engine` in `improve` or in `improve.processes.<process>` / `improve.qualityGate` still selects where the work runs, as the retired spelling of `connection` / `harness`, and its warning now says so instead of calling it unknown.
+- `akm config get`, `config list` and `config diff` redact a literal secret under any secret-shaped key (`key`, `token`, `secret`, `password` or `authorization` in the name, any case, nested included) inside `connections`, not only `apiKey`. An env reference (`$VAR`) stays visible.
+- `akm task doctor` inspects the OS scheduler like every other run; it no longer skips the inspection when `BUN_TEST=1` is set. A bundle added directly on a private or loopback host warns once whatever `NODE_ENV` says.
+- A strategy's profile-level `limit` is gone from `akm improve --dry-run`'s `plan.limits.configured` (it never took effect: the shipped `reflect.limit` of 25 always won); set `processes.reflect.limit`.
+- `akm registry add --options` is accepted, warns that it does nothing and stores nothing.
+
+### Removed
+
+- The `index` config section (20 leaf paths, `index.connection`, `index.model`, `index.<pass>.*`, `index.memory.enabled`) and the `index` row of the work table `akm info` and `akm health` print: no caller read it, so it never took effect. Where memory inference runs is `improve.processes.memoryInference` over `improve.*`. A config that still has an `index` section names it once as an unknown key; `akm migrate apply` drops it.
+- Config keys with no reader: `setup`, `improve.salience`, `bundles.<name>.website.refresh`, a registry's `options`, and a strategy's `description` and `limit`. They are named once as unknown keys and dropped by `akm migrate apply`.
+- `NODE_ENV=test` and `BUN_TEST` are no longer read by akm. In a shell, `NODE_ENV=test` no longer makes akm refuse to resolve its data directory (`TEST_ISOLATION_MISSING`, with `akm info` printing `dataDir: ""`). What stopped a test run reaching a developer's real directories now lives in the test harness (`tests/_preload.ts`, `tests/_helpers/isolation-guard.ts`). `AKM_FORCE_INIT_TMP_STASH`, which nothing read, is no longer listed in `STABILITY.md`.
+
 ## [0.10.261115] - 2026-11-08
 
 ### Added

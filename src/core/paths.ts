@@ -18,21 +18,6 @@ import { IS_WINDOWS } from "./platform";
 import { warnOnce } from "./warn";
 
 /**
- * Returns true when the current process appears to be running under
- * `bun test` (either via the BUN_TEST sentinel Bun sets on the test
- * worker, or via the conventional NODE_ENV=test).
- *
- * Used by getDataDir to enforce that every test which resolves a data
- * directory ALSO sets XDG_DATA_HOME (or the AKM_DATA_DIR override) to a
- * temp directory. Without that pairing, tests silently write SQLite
- * databases, lockfiles, and task history into the developer's real
- * `~/.local/share/akm`.
- */
-function isUnderBunTest(env: NodeJS.ProcessEnv): boolean {
-  return env.BUN_TEST === "1" || env.NODE_ENV === "test";
-}
-
-/**
  * Returns true when the given path is in a directory family the OS may
  * reap (or that the user has clearly designated as a sandbox by virtue
  * of placing it under `/tmp` or a macOS per-user temp dir). Used to
@@ -56,20 +41,6 @@ export function isTransientStashPath(p: string): boolean {
     p.startsWith("/private/tmp/") ||
     p.startsWith("/private/var/folders/") ||
     p.startsWith("/var/folders/")
-  );
-}
-
-/**
- * Build a TEST_ISOLATION_MISSING ConfigError describing which env var(s)
- * must be set so the data path resolves into a temp dir instead of the
- * user's real XDG home.
- */
-function testIsolationError(): ConfigError {
-  return new ConfigError(
-    "Refusing to resolve data directory under bun test: neither XDG_DATA_HOME nor AKM_DATA_DIR is set. " +
-      "This guards against tests writing into the developer's real ~/.local/share/akm. " +
-      "Set XDG_DATA_HOME (or AKM_DATA_DIR) to a mktemp-d directory in this test's env block.",
-    "TEST_ISOLATION_MISSING",
   );
 }
 
@@ -223,18 +194,6 @@ function homelessFallbackDir(kind: string): string {
 export function getDataDir(env: NodeJS.ProcessEnv = process.env, platform = process.platform): string {
   const override = env.AKM_DATA_DIR?.trim();
   if (override) return override;
-
-  // Defense-in-depth: under `bun test`, refuse to fall through to the
-  // user's real $XDG_DATA_HOME / ~/.local/share/akm under any condition.
-  // Any test that needs a data dir must point it at a mktemp-d directory
-  // via XDG_DATA_HOME (or AKM_DATA_DIR). The previous carve-out that only
-  // fired when AKM_BUNDLE_DIR was set was a loophole: tests calling
-  // openDatabase() or getDbPath() without overriding any env var silently
-  // wrote into ~/.local/share/akm/index.db (observed: 4,183-row
-  // registry-cache pollution). Item 5 of the 0.8.x critical-review plan.
-  if (isUnderBunTest(env) && !env.XDG_DATA_HOME?.trim()) {
-    throw testIsolationError();
-  }
 
   if (platform === "win32") {
     const localAppData = env.LOCALAPPDATA?.trim();

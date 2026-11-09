@@ -14,7 +14,7 @@
  */
 
 import { type AkmConfig, getSources, loadConfig } from "../../core/config/config";
-import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
@@ -440,8 +440,7 @@ function logSearchEvent(
     // counts are recorded above via insertUsageEvent (search_count) and
     // rolled into utility_scores by the offline `recomputeUtilityScores`
     // pass (`akm index`).
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
+  } catch {
     /* fire-and-forget */
   }
 }

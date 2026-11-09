@@ -174,7 +174,6 @@ describe("work rows", () => {
     expect(work(all, "judges")).toMatchObject({ kind: "connection", target: "default", model: "mid" });
     expect(work(all, "extract")).toMatchObject({ kind: "connection", target: "default", model: "small" });
     expect(work(all, "enrich")).toMatchObject({ kind: "connection", target: "default", model: "small" });
-    expect(work(all, "index")).toMatchObject({ kind: "connection", target: "default", model: "small" });
     expect(work(all, "agents")).toMatchObject({ kind: "harness", target: "claude" });
   });
 
@@ -191,7 +190,7 @@ describe("work rows", () => {
 
   test("with neither, nothing runs and nothing is wrong", () => {
     const all = rows(cfg());
-    const names: ProcessName[] = ["improve", "judges", "agents", "extract", "enrich", "index", "embedding"];
+    const names: ProcessName[] = ["improve", "judges", "agents", "extract", "enrich", "embedding"];
     for (const name of names) {
       expect(work(all, name)).toEqual({ type: "process", process: name, kind: null, target: null, model: null });
     }
@@ -283,10 +282,10 @@ describe("work rows", () => {
     const all = rows(
       cfg({
         connections: { default: { endpoint: "http://a/v1", models: MODELS } },
-        index: { memory: { model: "exact-model" } } as never,
+        improve: { model: "exact-model" },
       }),
     );
-    expect(work(all, "index")).toMatchObject({ model: "exact-model" });
+    expect(work(all, "improve")).toMatchObject({ model: "exact-model" });
   });
 
   test("a connection that lists no models is a problem to report, not a row that quietly does not run", () => {

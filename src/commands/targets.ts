@@ -32,7 +32,6 @@ import { resolveTarget } from "../integrations/agent/resolution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 import { DEFAULT_LOCAL_MODEL } from "../llm/embedder";
 import { effectiveEmbedding } from "../llm/embedders/connection";
-import { resolveIndexPassExecution } from "../llm/index-passes";
 import { resolveImproveExecution } from "./improve/execution";
 
 /** How a connection's key is held: a `$VAR` that is (not) set in this environment, a `credentials.json` entry, or no key. */
@@ -76,7 +75,7 @@ export interface ProcessOverride {
 }
 
 /** The kind of work a process row is about. */
-export type ProcessName = "improve" | "judges" | "agents" | "extract" | "enrich" | "index" | "embedding";
+export type ProcessName = "improve" | "judges" | "agents" | "extract" | "enrich" | "embedding";
 
 export interface ProcessRow {
   readonly type: "process";
@@ -260,13 +259,6 @@ function processRows(config: AkmConfig): ProcessRow[] {
     ),
     runnerRow("extract", improve("extract", "extract"), [], ambiguous),
     runnerRow("enrich", improve("remember-enrich", "enrich"), [], ambiguous),
-    runnerRow(
-      "index",
-      attempt(() => resolveIndexPassExecution("memory", config).runner),
-      [],
-      // A pass that is switched off is not waiting for a default.
-      config.index?.memory?.enabled === false ? undefined : ambiguous,
-    ),
     embeddingRow(config, ambiguous),
   ];
 }

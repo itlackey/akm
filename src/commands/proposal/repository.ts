@@ -29,7 +29,7 @@ import {
 import { MEMORY_ARCHIVE_REL } from "../../core/asset/memory-archive";
 import { type AssetRef, parsePlacementRef } from "../../core/asset/resolve-ref";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
-import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { type FileChange, proposalContent } from "../../core/file-change";
 import type { MemoryPruneCandidate } from "../../core/improve-types";
@@ -346,8 +346,7 @@ function otherOwningBundle(itemRef: string, target: { source: string; root: stri
     return ownerSource !== undefined && path.resolve(ownerSource.path) !== path.resolve(target.root)
       ? owner
       : undefined;
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
+  } catch {
     return undefined;
   }
 }

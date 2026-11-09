@@ -22,7 +22,7 @@ import { _setWarnSinkForTests } from "../../src/core/warn";
 import {
   collectPendingMemories,
   countPendingMemoriesNeedingDecision,
-  runMemoryInferencePass,
+  runMemoryInferencePass as runMemoryInferencePassImpl,
 } from "../../src/indexer/passes/memory-inference";
 import type { SearchSource } from "../../src/indexer/search/search-source";
 import { _setChatCompletionForTests, LlmCallError } from "../../src/llm/client";
@@ -32,8 +32,13 @@ import {
   getLlmCacheEntry,
   upsertLlmCacheEntry,
 } from "../../src/storage/repositories/index-llm-cache-repository";
+import { withImproveRunner } from "../_helpers/memory-inference-runner";
 import { withEnv } from "../_helpers/sandbox";
 import { overrideSeam } from "../_helpers/seams";
+
+function runMemoryInferencePass(ctx: Parameters<typeof runMemoryInferencePassImpl>[0]) {
+  return runMemoryInferencePassImpl(withImproveRunner(ctx));
+}
 
 const NO_CHANGE_REPLY = JSON.stringify({
   noChange: true,
@@ -99,7 +104,7 @@ function config(): AkmConfig {
   return {
     semanticSearchMode: "off",
     connections: { index: { endpoint: "http://127.0.0.1:1/v1/chat/completions", models: { fast: "scripted" } } },
-    index: { connection: "index" },
+    improve: { connection: "index" },
   };
 }
 
@@ -175,7 +180,7 @@ describe("a successful no-change decision", () => {
           apiKey: "$AKM_NOCHANGE_REQUIRED_KEY",
         },
       },
-      index: { connection: "index" },
+      improve: { connection: "index" },
     };
     await withDb(async (db) => {
       // First run has the credential and records the decision.

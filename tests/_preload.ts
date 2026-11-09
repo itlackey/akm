@@ -53,6 +53,12 @@ import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-w
 import { agentRuntime } from "../src/integrations/agent/runtime";
 import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
+import {
+  installChildProcessGuard,
+  schedulerStubDir,
+  takeViolations,
+  unsandboxedDirs,
+} from "./_helpers/isolation-guard";
 import { resetAllSeams } from "./_helpers/seams";
 
 /**
@@ -167,6 +173,26 @@ function installSuiteWideSandbox(): void {
 }
 
 installSuiteWideSandbox();
+
+/**
+ * Production akm does not know it is under a test, so what used to stop a test reaching the developer's real
+ * directories and scheduler (the `NODE_ENV=test` / `BUN_TEST` branches in `src/`) is this file's job, with
+ * `tests/_helpers/isolation-guard.ts`:
+ *   - HOME, every XDG_*_HOME and the AKM_*_DIR overrides point into the suite sandbox (above), healed before each
+ *     test; `afterEach` fails a test that leaves any of akm's four directories resolving outside the temp root.
+ *   - `crontab` and `launchctl` on PATH are stubs, so an in-process backend or an inheriting child never finds the
+ *     developer's.
+ *   - A child akm started with an environment of its own is refused when that environment would reach a real
+ *     directory or scheduler binary.
+ * The native scheduler gate (`AKM_NATIVE_TEST_BIN`) runs a compiled akm against the real per-user scheduler on
+ * purpose, in directories of its own: it is the one run these protections do not apply to.
+ */
+if (!process.env.AKM_NATIVE_TEST_BIN) {
+  if (process.platform !== "win32") {
+    process.env.PATH = [schedulerStubDir(suiteSandboxRoot ?? os.tmpdir()), process.env.PATH ?? ""].join(path.delimiter);
+  }
+  installChildProcessGuard();
+}
 
 /**
  * akm's own runtime with no fake would fetch a 114 MB OpenCode binary and run it
@@ -414,6 +440,14 @@ afterEach(() => {
   if (snapshot && globalThis.fetch !== snapshot.fetch) {
     leakReasons.push("globalThis.fetch left replaced");
     globalThis.fetch = snapshot.fetch;
+  }
+
+  // Tripwire 4: a directory akm resolves outside the temp root, or a child process the guard refused (a test that
+  // catches the refusal still fails here).
+  if (!process.env.AKM_NATIVE_TEST_BIN) {
+    const outside = unsandboxedDirs(process.env);
+    if (outside.length > 0) leakReasons.push(`akm resolves ${outside.join(", ")} outside the temp root`);
+    leakReasons.push(...takeViolations());
   }
 
   // Restore the harnessed env vars from the snapshot.

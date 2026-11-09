@@ -16,10 +16,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runMigration } from "../../scripts/akm-migrate/run-migrate";
+import { resolveImproveExecution } from "../../src/commands/improve/execution";
 import { loadUserConfig, resetConfigCache } from "../../src/core/config/config";
 import { getConfigDir, getConfigPath } from "../../src/core/paths";
 import { resolveTarget, retiredEngineSelection } from "../../src/integrations/agent/resolution";
-import { resolveIndexPassExecution } from "../../src/llm/index-passes";
 import { type IsolatedAkmStorage, withEnvSync, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 type Dict = Record<string, unknown>;
@@ -300,11 +300,11 @@ describe("a config with only an agent engine and no defaults.llmEngine", () => {
       name: "opencode",
       model: "openai/gpt-x",
     });
-    expect(resolveIndexPassExecution("memory", config).runner).toBeDefined();
+    expect(resolveImproveExecution({ config, processName: "memoryInference", alias: "fast" })?.runner).toBeDefined();
 
     const off = { ...config, harnesses: { opencode: { ...config.harnesses?.opencode, modelWork: false } } };
     expect(() => resolveTarget({ config: off, modelWork: true, layers: [] })).toThrow(/modelWork: false/);
-    expect(resolveIndexPassExecution("memory", off).runner).toBeUndefined();
+    expect(resolveImproveExecution({ config: off, processName: "memoryInference", alias: "fast" })).toBeNull();
   });
 });
 

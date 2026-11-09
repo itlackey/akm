@@ -86,9 +86,10 @@ file in that shard. A test that mutates shared state without restoring it, or
 that asserts on a wall-clock measurement, can pass on one scheduling and fail on
 another.
 
-Rules (conventions, not statically enforced; `src/core/paths.ts` throws
-`TEST_ISOLATION_MISSING` at runtime when isolation is missing, and the preload
-tripwire catches leaks):
+Rules (conventions, not statically enforced; production code does not know it is
+under a test: the preload sandbox and tripwire, `tests/_preload.ts` and
+`tests/_helpers/isolation-guard.ts`, fail a test that resolves a directory outside
+the temp root or starts akm, `crontab` or `launchctl` against the real ones):
 
 1. **Do not mutate `AKM_*` / `XDG_*` / `HOME` on `process.env` directly.** Use the
    helpers in `tests/_helpers/sandbox.ts`:

@@ -13,8 +13,6 @@ import { engineName, LlmInvocationOverridesSchema, nonEmptyString, nonNegativeNu
 
 // ── Improve top-level (event retention, salience, state GC) ────────────────
 
-const ImproveSalienceSchema = z.object({}).passthrough();
-
 // #733 — orphan-GC pass (Workstream C, lean by design: one config gate).
 // The pass ALWAYS runs and ALWAYS reports counts (via the `asset_state_gc`
 // event); this gate controls ONLY whether it actually deletes rows whose
@@ -69,16 +67,23 @@ export const ImproveConfigSchema = z
     enabled: z.boolean().optional(),
     /** The strategy `akm improve` runs when `--strategy` names none. */
     strategy: engineName.optional(),
-    /** Where improve's model work runs: a connection, or a harness, over the default. */
+    /**
+     * The base for all of akm's own model work, not only `akm improve`: improve's processes, the judges, enrich,
+     * extract and the proposal drain. A connection, or a harness, over the default, with the model (an alias or a
+     * name), inference settings and a timeout every call under it starts from. `processes` and `qualityGate` below
+     * are nearer; the run's `--connection`, `--harness` and `--model` are nearest.
+     */
     connection: nonEmptyString.optional(),
     harness: nonEmptyString.optional(),
+    model: nonEmptyString.optional(),
+    llm: LlmInvocationOverridesSchema.optional(),
+    timeoutMs: z.union([positiveInt, z.null()]).optional(),
     /** Where each improve process runs, over `connection` / `harness` above. */
     processes: ImproveProcessesSchema.optional(),
     /** Where the judge of the reflect and distill quality gates runs, over `connection` / `harness` above (not over the process's own settings, which are the writer's). */
     qualityGate: ImproveWhereSchema.optional(),
     strategies: z.record(engineName, ImproveProfileConfigSchema).optional(),
     eventRetentionDays: nonNegativeNumber.optional(),
-    salience: ImproveSalienceSchema.optional(),
     stateGc: ImproveStateGcSchema.optional(),
   })
   .passthrough();

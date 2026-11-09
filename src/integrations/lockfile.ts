@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "../core/common";
-import { ConfigError, rethrowIfTestIsolationError, TransientError } from "../core/errors";
+import { ConfigError, TransientError } from "../core/errors";
 import { createLockPayload, probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../core/file-lock";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDataDir, getLockfileLockPath, getLockfilePath } from "../core/paths";
@@ -106,11 +106,10 @@ export function readLockfile(): LockfileEntry[] {
     const raw = JSON.parse(fs.readFileSync(lockfilePath, "utf8"));
     if (!Array.isArray(raw)) return [];
     return raw.filter(isValidLockfileEntry);
-  } catch (err) {
+  } catch {
     // Defense-in-depth: getLockfilePath() is outside this try block, but a
     // future refactor that pushes a getDataDir() call inside must not mask
     // the bun-test isolation guard as "empty lockfile".
-    rethrowIfTestIsolationError(err);
     return [];
   }
 }
@@ -160,7 +159,6 @@ function readLockfileOrThrow(): LockfileEntry[] {
   try {
     raw = fs.readFileSync(lockfilePath, "utf8");
   } catch (err) {
-    rethrowIfTestIsolationError(err);
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     // An UNREADABLE lockfile has everything to preserve and we cannot see it.
     // Classify AFTER the failed read so the happy path costs no extra syscall.
