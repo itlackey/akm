@@ -48,6 +48,10 @@ import {
   upsertEmbedding,
 } from "../storage/repositories/index-vec-repository";
 import { reclassifyIndexDbContention } from "./index-db-contention";
+import { openVectorLookup, vectorTextHash } from "./vector-file";
+
+/** Imported vectors are committed this many entries at a time, like the embedder's batches. */
+const IMPORT_COMMIT_SIZE = 500;
 
 /**
  * Identifies what a stored vector was generated with: provider, model and
@@ -76,6 +80,24 @@ export function embeddingInputCap(config: AkmConfig): number {
   return effectiveEmbedding(config)?.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
 }
 
+/**
+ * Builds the exact text sent to the embedder for an entry's search text — the
+ * input cap, then the document template — or `undefined` when nothing is left
+ * to embed. The embedding pass and `--export-vectors` both build it here, so a
+ * vector file's text hashes match the pass's.
+ */
+export function embeddingInputBuilder(
+  config: AkmConfig,
+): (searchText: string) => { text: string; truncated: boolean } | undefined {
+  const maxInputTokens = embeddingInputCap(config);
+  const { documentTemplate } = resolveEmbeddingProfile(effectiveEmbedding(config));
+  return (searchText) => {
+    const capped = capEmbeddingText(searchText, maxInputTokens);
+    if (capped.text.length === 0) return undefined;
+    return { text: applyEmbeddingTemplate(documentTemplate, capped.text), truncated: capped.truncated };
+  };
+}
+
 export interface EmbeddingProgressEvent {
   phase: "embeddings";
   message: string;
@@ -95,6 +117,8 @@ export interface GenerateEmbeddingsOptions {
    * change without it keeps the stored rows and re-embeds incrementally.
    */
   forceReembed?: boolean;
+  /** `akm index --import-vectors`: a vector file consulted before the embedder (see `vector-file.ts`). */
+  importVectorsFile?: string;
 }
 
 /**
@@ -157,6 +181,7 @@ export async function generateEmbeddingsForDb(
   throwIfAborted(signal);
 
   if (config.semanticSearchMode === "off") {
+    if (opts?.importVectorsFile) warn("--import-vectors is ignored: semantic search is off.");
     onProgress({ phase: "embeddings", message: "Semantic search disabled; skipping embeddings." });
     return { success: false, message: "Semantic search is disabled." };
   }
@@ -187,6 +212,7 @@ export async function generateEmbeddingsForDb(
   const maxInputTokens = embeddingInputCap(config);
 
   if (opts?.forceReembed) {
+    if (opts.importVectorsFile) warn("--import-vectors is ignored with --reembed, which regenerates every vector.");
     // The explicit operator override: purge and re-embed everything. The model
     // is recorded in the SAME transaction as the purge, before any embedding
     // request, so a restart heals only what is still missing instead of
@@ -228,15 +254,53 @@ export async function generateEmbeddingsForDb(
     // document is skipped only when its head is empty (the impossible case:
     // nothing left to embed), never merely for being long.
     let truncatedCount = 0;
-    const texts: string[] = [];
-    const pendingEntries: typeof candidateEntries = [];
-    const { documentTemplate } = resolveEmbeddingProfile(embedding);
+    let texts: string[] = [];
+    let pendingEntries: typeof candidateEntries = [];
+    const buildInput = embeddingInputBuilder(config);
     for (const entry of candidateEntries) {
-      const capped = capEmbeddingText(entry.searchText, maxInputTokens);
-      if (capped.text.length === 0) continue;
-      if (capped.truncated) truncatedCount++;
+      const input = buildInput(entry.searchText);
+      if (!input) continue;
+      if (input.truncated) truncatedCount++;
       pendingEntries.push(entry);
-      texts.push(applyEmbeddingTemplate(documentTemplate, capped.text));
+      texts.push(input.text);
+    }
+    // `--import-vectors`: an entry whose (model, text hash) is in the file is
+    // stored from it, committed in batches like the embedder's, and never
+    // reaches the embedder. Everything else is embedded below as usual.
+    const importFile = opts?.importVectorsFile;
+    const lookup = importFile && !opts?.forceReembed ? openVectorLookup(importFile, model, warn) : undefined;
+    if (lookup) {
+      try {
+        const misses: typeof pendingEntries = [];
+        const missTexts: string[] = [];
+        let imported = 0;
+        for (let start = 0; start < pendingEntries.length; start += IMPORT_COMMIT_SIZE) {
+          db.transaction(() => {
+            for (let i = start; i < Math.min(start + IMPORT_COMMIT_SIZE, pendingEntries.length); i++) {
+              const entry = pendingEntries[i] as (typeof pendingEntries)[number];
+              const vector = lookup.get(vectorTextHash(texts[i] as string));
+              if (vector && upsertEmbedding(db, entry.id, vector, model)) {
+                imported++;
+              } else {
+                misses.push(entry);
+                missTexts.push(texts[i] as string);
+              }
+            }
+          })();
+        }
+        onProgress({
+          phase: "embeddings",
+          message: `Imported ${imported} of ${pendingEntries.length} vectors from ${importFile}.`,
+        });
+        pendingEntries = misses;
+        texts = missTexts;
+      } finally {
+        lookup.close();
+      }
+      if (pendingEntries.length === 0) {
+        onProgress({ phase: "embeddings", message: "Embeddings already up to date." });
+        return { success: true };
+      }
     }
     if (truncatedCount > 0) {
       // Through onProgress ONLY, not warn() too — onProgress already reaches
