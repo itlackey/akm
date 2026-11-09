@@ -15,14 +15,13 @@
 import { describe, expect, test } from "bun:test";
 import unitPreamble from "../../src/assets/prompts/workflow-unit-preamble.md" with { type: "text" };
 import { showCommand } from "../../src/commands/read/search-cli";
-import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "../../src/output/cli-hints";
+import { EMBEDDED_HINTS } from "../../src/output/cli-hints";
 
 const fold = (text: string) => text.replace(/\s+/g, " ");
 
 describe("agent guidance on reading a large document (#1259)", () => {
   for (const [name, text] of [
     ["brief hints", EMBEDDED_HINTS],
-    ["full hints", EMBEDDED_HINTS_FULL],
     ["workflow unit preamble", unitPreamble],
   ] as const) {
     test(`${name} send agents to the outline, then one section`, () => {
@@ -31,11 +30,6 @@ describe("agent guidance on reading a large document (#1259)", () => {
       expect(prose).toContain("akm show <ref>#<slug>");
     });
   }
-
-  test("the full hints no longer teach a deliberately unmatched fragment", () => {
-    expect(EMBEDDED_HINTS_FULL).not.toContain("knowledge/guide#nope");
-    expect(EMBEDDED_HINTS_FULL).toContain("akm show knowledge/guide --detail brief");
-  });
 
   test("`akm show` help names the outline", () => {
     const args = showCommand.args as Record<string, { description?: string }>;

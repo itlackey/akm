@@ -845,14 +845,16 @@ function defaultEntry<T>(entries: Record<string, T> | undefined): { name: string
 
 /**
  * What is wrong when connections or harnesses are configured but none of a kind is the default: several, and
- * none called `default`. The phrase (no final period) names the fix. Undefined when every kind that is configured has a default.
+ * none called `default`. The phrase (no final period) names the fix. Undefined when every kind that is configured has a default
+ * (`only` limits the check to one kind).
  */
-export function ambiguousDefaultAdvice(config: AkmConfig): string | undefined {
+export function ambiguousDefaultAdvice(config: AkmConfig, only?: "connection" | "harness"): string | undefined {
   const advice = (["connection", "harness"] as const).flatMap((kind) => {
+    if (only && kind !== only) return [];
     const names = Object.keys((kind === "connection" ? config.connections : config.harnesses) ?? {});
     if (names.length < 2 || names.includes("default")) return [];
     return [
-      `Several ${kind}s are configured (${names.join(", ")}) and none is named "default": name one default in config.json, or pick one with --${kind}`,
+      `Several ${kind === "harness" ? "harnesses" : "connections"} are configured (${names.join(", ")}) and none is named "default": name one default in config.json, or pick one with --${kind}`,
     ];
   });
   return advice.length > 0 ? advice.join("; ") : undefined;

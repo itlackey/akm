@@ -13,7 +13,7 @@ also has its own README indexing everything inside it: [Guides](guides/README.md
 - [Concepts](guides/concepts.md) -- Capabilities, bundles, adapters, and refs: the mental model in one page
 - [Agent Install Guide](agents/agent-install.md) -- Automated, non-interactive install for agents
 - [Upgrade from 0.9 to 0.10](migration/v0.9-to-v0.10.md) -- The current upgrade path: the order to follow, every removed CLI spelling, config key and workflow feature with its replacement, and what a scheduled `akm improve` now does
-- `akm hints` -- The CLI guide agents load (short by default; `akm hints --detail full` for the complete one)
+- `akm hints` -- The CLI guide agents load (the short guide; `akm help <command>` for one command)
 
 ## Use
 

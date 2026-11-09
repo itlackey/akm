@@ -133,6 +133,31 @@ describe("the default is chosen by name", () => {
   });
 });
 
+describe("several harnesses and no default", () => {
+  const several = { work: { platform: "claude" }, home: { platform: "codex" } };
+
+  test("agent work does not fall through to the connection: it errors naming the harnesses and the fix", () => {
+    const config = configOf({ connections: { default: lab }, harnesses: several });
+    const error = failureOf(() => resolveTarget({ config, layers: [] }));
+    expect(error.code).toBe("AGENT_NOT_CONFIGURED");
+    expect(error.message).toContain("work, home");
+    expect(error.message).toContain('none is named "default"');
+    expect(error.message).toContain("--harness");
+  });
+
+  test("a harness named default, or one named by the call, runs", () => {
+    const withDefault = configOf({ connections: { default: lab }, harnesses: { ...several, default: {} } });
+    expect(resolveTarget({ config: withDefault, layers: [] }).kind).toBe("harness");
+    const config = configOf({ connections: { default: lab }, harnesses: several });
+    expect(harnessFor(config, [{ harness: "home" }]).name).toBe("home");
+  });
+
+  test("model work with the same config still runs on the connection", () => {
+    const config = configOf({ connections: { default: lab }, harnesses: several });
+    expect(resolveTarget({ config, layers: [], modelWork: true }).kind).toBe("connection");
+  });
+});
+
 describe("the nearest layer that names a target decides", () => {
   const config = configOf({
     connections: { default: lab, cloud },

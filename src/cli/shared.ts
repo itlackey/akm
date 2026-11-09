@@ -322,11 +322,17 @@ export function output(command: string, result: unknown): void {
     outputJsonl(command, shapeForCommand(command, result, mode.detail, mode.shape));
     return;
   }
-  deliverRendered(renderOutput(command, result, { ...mode, format }), mode.outputPath);
+  // Compact JSON when stdout is piped (agents, scripts); `--output <path>` files and a TTY stay pretty.
+  const compact = !process.stdout.isTTY && mode.outputPath === undefined;
+  deliverRendered(renderOutput(command, result, { ...mode, format, compact }), mode.outputPath);
 }
 
 /** An output mode with a single-document format (everything but `jsonl`, a line-streaming protocol). */
-type DocumentOutputMode = Pick<OutputMode, "detail" | "shape"> & { format: Exclude<OutputFormat, "jsonl"> };
+type DocumentOutputMode = Pick<OutputMode, "detail" | "shape"> & {
+  format: Exclude<OutputFormat, "jsonl">;
+  /** Print `json` on one line. Default: the 2-space form. */
+  compact?: boolean;
+};
 
 /**
  * Shape and render a command result into the document `output()` delivers.
@@ -338,7 +344,7 @@ export function renderOutput(command: string, result: unknown, mode: DocumentOut
   const shaped = shapeForCommand(command, result, mode.detail, mode.shape);
   switch (mode.format) {
     case "json":
-      return JSON.stringify(shaped, null, 2);
+      return mode.compact ? JSON.stringify(shaped) : JSON.stringify(shaped, null, 2);
     case "yaml":
       return yamlStringify(shaped);
     case "text":
