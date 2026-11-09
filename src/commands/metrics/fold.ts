@@ -20,11 +20,13 @@
  *   covers them. Nothing in the hot commands calls any of this.
  */
 
-import { LATENCY_BUCKET_UPPER_MS, openMetricsDatabase } from "../../core/metrics-db";
+import { openMetricsDatabase } from "../../core/metrics-db";
+import { addToHistogram, emptyHistogram } from "../../core/metrics-histogram";
 import { warnOnce } from "../../core/warn";
 import { LLM_USAGE_EVENT } from "../../llm/usage-persist";
 import { decodeLlmUsageRecord } from "../../llm/usage-telemetry";
 import { type Database, openDatabase } from "../../storage/database";
+import { type EventRow, eventRowToEnvelope } from "../../storage/repositories/events-repository";
 import {
   listIndexCompletedEvents,
   listSelectEvents,
@@ -32,6 +34,7 @@ import {
 } from "../../storage/repositories/metrics-repository";
 import { applyReadonlyPragmas } from "../../storage/sqlite-pragmas";
 import { withImmediateTransaction } from "../../storage/sqlite-transaction";
+import { tallyImproveSkipEvents } from "../health/improve-metrics";
 import { dedupeSelects, indexRunsFromEvents, llmRowsFromEvents, toUsageRow } from "./collect";
 import type { MetricsUsageRow } from "./types";
 
@@ -44,21 +47,6 @@ export function utcDay(ms: number): string {
 
 function nextDay(day: string): string {
   return utcDay(Date.parse(`${day}T00:00:00.000Z`) + DAY_MS);
-}
-
-/** Index of the histogram bucket `valueMs` falls in (the last bucket is the overflow). */
-export function latencyBucket(valueMs: number): number {
-  const index = LATENCY_BUCKET_UPPER_MS.findIndex((upper) => valueMs <= upper);
-  return index === -1 ? LATENCY_BUCKET_UPPER_MS.length : index;
-}
-
-function emptyHistogram(): number[] {
-  return new Array<number>(LATENCY_BUCKET_UPPER_MS.length + 1).fill(0);
-}
-
-function addToHistogram(hist: number[], valueMs: number): void {
-  const bucket = latencyBucket(valueMs);
-  hist[bucket] = (hist[bucket] ?? 0) + 1;
 }
 
 // ── Markers ─────────────────────────────────────────────────────────────────
@@ -172,6 +160,7 @@ function foldEventsDay(source: Database, metricsDb: Database, day: string): void
   metricsDb.prepare("DELETE FROM event_daily WHERE day = ?").run(day);
   metricsDb.prepare("DELETE FROM llm_daily WHERE day = ?").run(day);
   metricsDb.prepare("DELETE FROM select_daily WHERE day = ?").run(day);
+  metricsDb.prepare("DELETE FROM improve_skip_daily WHERE day = ?").run(day);
   metricsDb.prepare("DELETE FROM latency_daily WHERE day = ? AND kind = 'index'").run(day);
 
   const byType = source
@@ -187,31 +176,8 @@ function foldEventsDay(source: Database, metricsDb: Database, day: string): void
       .prepare(
         "SELECT id, event_type, ts, ref, metadata_json FROM events WHERE event_type = ? AND ts >= ? AND ts < ? ORDER BY id",
       )
-      .all(LLM_USAGE_EVENT, day, next) as Array<{
-      id: number;
-      event_type: string;
-      ts: string;
-      ref: string | null;
-      metadata_json: string;
-    }>
-  ).map((row) => {
-    let metadata: Record<string, unknown> | undefined;
-    try {
-      const parsed: unknown = JSON.parse(row.metadata_json);
-      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-        metadata = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // Unparseable metadata decodes to no record, as in the live reader.
-    }
-    return {
-      schemaVersion: 1 as const,
-      id: row.id,
-      ts: row.ts,
-      eventType: row.event_type,
-      ...(metadata ? { metadata } : {}),
-    };
-  });
+      .all(LLM_USAGE_EVENT, day, next) as EventRow[]
+  ).map(eventRowToEnvelope);
   const llmKey = (parts: Array<string | undefined>) => JSON.stringify(parts.map((p) => p ?? ""));
   const llmHists = new Map<string, number[]>();
   for (const event of llmEvents) {
@@ -261,6 +227,22 @@ function foldEventsDay(source: Database, metricsDb: Database, day: string): void
     "INSERT INTO select_daily (day, ref, source, n, last_at) VALUES (?, ?, ?, ?, ?)",
   );
   for (const entry of selects.values()) insertSelect.run(day, entry.ref, entry.source, entry.n, entry.lastAt);
+
+  // improve_skipped: what `akm health` counts, kept as the sums and latest snapshots it is built from.
+  const skipEvents = (
+    source
+      .prepare(
+        "SELECT id, event_type, ts, ref, metadata_json FROM events WHERE event_type = 'improve_skipped' AND ts >= ? AND ts < ? ORDER BY id",
+      )
+      .all(day, next) as EventRow[]
+  ).map(eventRowToEnvelope);
+  const tally = tallyImproveSkipEvents(skipEvents);
+  const insertSkip = metricsDb.prepare(
+    "INSERT INTO improve_skip_daily (day, reason, summed, snapshot) VALUES (?, ?, ?, ?)",
+  );
+  for (const reason of new Set([...Object.keys(tally.summed), ...Object.keys(tally.latestSnapshot)])) {
+    insertSkip.run(day, reason, tally.summed[reason] ?? 0, tally.latestSnapshot[reason] ?? null);
+  }
 
   // Index runs: how many, and how long (a histogram: medians do not roll up).
   const indexHist = emptyHistogram();

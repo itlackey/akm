@@ -10,6 +10,8 @@
 import { readEvents } from "../../core/events";
 import { LLM_USAGE_EVENT } from "../../llm/usage-persist";
 import { decodeLlmUsageRecord, type LlmUsageRecord } from "../../llm/usage-telemetry";
+import { readLlmDaily, rollupDayRange, withMetricsHistory } from "../../storage/repositories/metrics-rollup-repository";
+import type { MetricsLlmRow } from "../metrics/types";
 import type { LlmUsageAggregate, LlmUsageCrossTabRow, LlmUsageStageAggregate } from "./types";
 
 /** Stage/process/engine/model key used for `llm_usage` events recorded with no value for that dimension. */
@@ -80,6 +82,43 @@ export function summarizeLlmUsage(events: ReturnType<typeof readEvents>["events"
   return aggregate;
 }
 
+/**
+ * Add per-day LLM rows (the metrics.db rollup, `llm_daily`) to an aggregate built by {@link summarizeLlmUsage}:
+ * the same fields, dimension keys and "unattributed" fallback, so a window that reaches into days only metrics.db
+ * holds adds up to what one over raw events would have.
+ */
+export function addLlmRows(aggregate: LlmUsageAggregate, rows: readonly MetricsLlmRow[]): void {
+  for (const row of rows) {
+    const dimensions: LlmUsageStageAggregate[] = [];
+    for (const [groups, key] of [
+      [aggregate.byStage, row.stage ?? UNATTRIBUTED_STAGE],
+      [aggregate.byProcess, row.process ?? UNATTRIBUTED_STAGE],
+      [aggregate.byEngine, row.engine ?? UNATTRIBUTED_STAGE],
+    ] as const) {
+      groups[key] ??= emptyLlmUsageStageAggregate();
+      dimensions.push(groups[key]);
+    }
+    for (const target of [aggregate, ...dimensions]) {
+      target.usageCalls = (target.usageCalls ?? 0) + row.usageCalls;
+      target.reasoningCalls = (target.reasoningCalls ?? 0) + row.reasoningCalls;
+      target.calls += row.calls;
+      target.totalDurationMs += row.durationMs;
+      target.promptTokens += row.promptTokens;
+      target.completionTokens += row.completionTokens;
+      target.totalTokens += row.totalTokens;
+      target.reasoningTokens += row.reasoningTokens;
+      if (row.outcome === "error") target.failures += row.calls;
+    }
+  }
+}
+
+/** The earliest `ts` among events, or undefined when there are none. */
+export function oldestTs(events: ReadonlyArray<{ ts: string }>): string | undefined {
+  let oldest: string | undefined;
+  for (const event of events) if (oldest === undefined || event.ts < oldest) oldest = event.ts;
+  return oldest;
+}
+
 export function readLlmUsageAggregate(
   stateDbPath: string,
   since: string,
@@ -92,7 +131,14 @@ export function readLlmUsageAggregate(
       return new Date(event.ts ?? since).getTime() < new Date(until).getTime();
     },
   );
-  return summarizeLlmUsage(events);
+  const aggregate = summarizeLlmUsage(events);
+  // Days before the oldest raw call of the window were purged from state.db: metrics.db holds their rollup.
+  const range = rollupDayRange(since, until ?? new Date().toISOString(), oldestTs(events));
+  if (range) {
+    const rows = withMetricsHistory(undefined, stateDbPath, (metrics) => readLlmDaily(metrics, range));
+    if (rows) addLlmRows(aggregate, rows);
+  }
+  return aggregate;
 }
 
 /**

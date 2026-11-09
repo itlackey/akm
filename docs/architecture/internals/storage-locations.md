@@ -322,6 +322,42 @@ in [Workflow Engine](../workflow-engine.md).
 `task_id`, `run_id`. `akm improve`'s retention pass deletes rows older than
 `improve.eventRetentionDays` (default 90; 0 disables); there is no size cap.
 
+### `$DATA/metrics.db` (long-lived history)
+
+`src/core/metrics-db.ts` (`getMetricsDbPath`, `openMetricsDatabase`), written only by the fold in
+`src/commands/metrics/fold.ts`, read by `akm metrics`, `akm health` and AKM Desktop through
+`src/storage/repositories/metrics-rollup-repository.ts`. Never purged, about 50 MB a year. Not
+regenerable, so it is backed up with `state.db`. No `ATTACH`: it is a second handle, and a crash
+between the two files just re-folds the day.
+
+`state.db` keeps 90 days of raw `events`, `usage_events` and `improve_runs`, which are functional there
+(ranking, improve's feedback window). `foldClosedDays(source, metricsDb)` folds every closed UTC day
+(before today) that `folded_day` does not cover, one transaction per day, and the purges delete a day's
+rows only when its `folded_day` marker covers them, a whole UTC day at a time. `akm improve` and `akm
+index` fold first, then purge; `search`, `show` and `curate` never write here. The fold is idempotent: a
+day's rollups are replaced, never added to, and a day is folded again only when a source holds more rows
+of a table than its marker covers (late rows, or a fuller copy of `state.db`). `source` may be a state.db
+file path, so a backup folds into the same days without double counting.
+
+| Table | One row per | Holds |
+|---|---|---|
+| `folded_day` | UTC day | When folded and the source row counts per table (`src_events`, `src_usage`, `src_runs`): the purge guard |
+| `improve_runs` | improve run | The columns of `state.db`'s table; `result_json` has `strategyFilteredCount` in place of the `strategyFilteredRefs` list |
+| `event_daily` | day, event type | Count |
+| `llm_daily` | day, stage, process, engine, model, outcome | Calls, duration, prompt, completion, total and reasoning tokens, calls with usage, calls with reasoning, duration histogram |
+| `usage_daily` | day, event type, source, ref (`''` for a summary row) | Count, positive, negative, searches with hits, searches with none, last time |
+| `query_daily` | day, source, query | Count, result counts, zero-result count, last time |
+| `feedback_tag_daily` | day, source, tag | Positive and negative counts |
+| `select_daily` | day, ref, source | Selects deduped by search id, last time |
+| `latency_daily` | day, kind (`search`, `index`), source | Duration histogram over fixed bucket bounds (`LATENCY_BUCKET_UPPER_MS`) |
+| `improve_skip_daily` | day, reason | Per-occurrence skips and the latest snapshot count, the two halves of `akm health`'s skip count |
+
+Where each day is read from: a UTC day older than the oldest raw row of a kind that `state.db` returns
+for the window is read from `metrics.db`; every other day from `state.db`. A purge removes whole days,
+so no day is in both. A rollup day belongs to the window that contains its midnight, so adjacent windows
+share no day, and a window that starts mid-day does not include that day's rollup. Medians over rollup
+days are estimated from the duration histograms. Improve runs are read from both files and joined by id.
+
 ### `$DATA/opencode-runtime/` (akm's own runtime and its OpenCode sessions)
 
 The directory akm's own agent runtime keeps everything in

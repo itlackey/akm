@@ -19,6 +19,7 @@ import { parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
+import { emptyHistogram, histogramCount, mergeHistogram } from "../../core/metrics-histogram";
 import { getDbPath } from "../../core/paths";
 import { getStateDbPath, listPendingStateMigrations } from "../../core/state-db";
 import { lookupBundleRefsReadonly } from "../../indexer/indexer";
@@ -38,17 +39,30 @@ import {
   type SelectEventRow,
   summarizeWorkflowRuns,
 } from "../../storage/repositories/metrics-repository";
+import {
+  firstFoldedDay,
+  metricsDbPathBeside,
+  readLatencyHistograms,
+  readLlmDaily,
+  readQueryDaily,
+  readSelectDaily,
+  readTagDaily,
+  readUsageDaily,
+  rollupDayRange,
+  withMetricsHistory,
+} from "../../storage/repositories/metrics-rollup-repository";
 import { queryTaskHistory } from "../../storage/repositories/task-history-repository";
 import { applyReadonlyPragmas } from "../../storage/sqlite-pragmas";
 import { parseHealthSince } from "../health";
 import { computeAcceptRateBySource } from "../health/accept-rate";
-import { emptyLlmUsageAggregate, summarizeLlmUsage } from "../health/llm-usage";
+import { addLlmRows, emptyLlmUsageAggregate, oldestTs, summarizeLlmUsage } from "../health/llm-usage";
 import {
   buildMetricsResult,
   DEFAULT_EVENT_RETENTION_DAYS,
   indexRunsFromEvents,
   llmRowsFromEvents,
   type MetricsInput,
+  type MetricsRollup,
   retentionNotes,
   toUsageRow,
 } from "./collect";
@@ -85,9 +99,9 @@ export function metricsIncludeRows(mode: Pick<OutputMode, "detail">): boolean {
  * `bundle//conceptId`; resolving here keeps one asset from showing as two rows.
  * A ref that does not resolve (registry results, removed assets) is kept as is.
  */
-async function durableSelects(selects: SelectEventRow[], indexSnapshot = true): Promise<SelectEventRow[]> {
+async function resolveSelectRefs(refs: Iterable<string>, indexSnapshot = true): Promise<Map<string, string>> {
   const unqualified: Array<{ ref: string; parsed: ReturnType<typeof parseBundleRef> }> = [];
-  for (const ref of new Set(selects.map((select) => select.ref))) {
+  for (const ref of new Set(refs)) {
     try {
       const parsed = parseBundleRef(ref);
       if (!parsed.bundle) unqualified.push({ ref, parsed });
@@ -99,7 +113,14 @@ async function durableSelects(selects: SelectEventRow[], indexSnapshot = true): 
     unqualified.map(({ parsed }) => parsed),
     { isolatedSnapshot: indexSnapshot },
   );
-  const resolved = new Map(unqualified.map(({ ref }, i) => [ref, entries[i]?.itemRef ?? ref]));
+  return new Map(unqualified.map(({ ref }, i) => [ref, entries[i]?.itemRef ?? ref]));
+}
+
+async function durableSelects(selects: SelectEventRow[], indexSnapshot = true): Promise<SelectEventRow[]> {
+  const resolved = await resolveSelectRefs(
+    selects.map((select) => select.ref),
+    indexSnapshot,
+  );
   return selects.map((select) => ({ ...select, ref: resolved.get(select.ref) ?? select.ref }));
 }
 
@@ -164,7 +185,87 @@ export function readUsageRows(db: Database, window: { since: string; until: stri
 
 /** The window's LLM usage rows as the report carries them (`rows.llm`). */
 export function readLlmRows(db: Database, window: { since: string; until: string }): MetricsLlmRow[] {
-  return llmRowsFromEvents(llmEventsIn(db, window));
+  const events = llmEventsIn(db, window);
+  const range = rollupDayRange(window.since, window.until, oldestTs(events));
+  const older = range ? (withMetricsHistory(db, undefined, (metrics) => readLlmDaily(metrics, range)) ?? []) : [];
+  return [...older, ...llmRowsFromEvents(events)];
+}
+
+/**
+ * The days of the window that state.db no longer holds, read from metrics.db's rollups. Each kind of row has
+ * its own days (see `rollupDayRange`): the ones before the oldest raw row of that kind in the window.
+ */
+async function readRollup(
+  stateDbPath: string,
+  window: { since: string; until: string },
+  oldest: { usage?: string; selects?: string; llm?: string; index?: string },
+  indexSnapshot: boolean,
+): Promise<{ rollup?: MetricsRollup; notes: string[] }> {
+  const usageDays = rollupDayRange(window.since, window.until, oldest.usage);
+  const selectDays = rollupDayRange(window.since, window.until, oldest.selects);
+  const llmDays = rollupDayRange(window.since, window.until, oldest.llm);
+  const indexDays = rollupDayRange(window.since, window.until, oldest.index);
+  if (!usageDays && !selectDays && !llmDays && !indexDays) return { notes: [] };
+
+  const read = withMetricsHistory(undefined, stateDbPath, (metrics) => {
+    const searchHist = emptyHistogram();
+    for (const hist of usageDays ? readLatencyHistograms(metrics, usageDays, "search", SOURCE) : [])
+      mergeHistogram(searchHist, hist);
+    const indexHist = emptyHistogram();
+    for (const hist of indexDays ? readLatencyHistograms(metrics, indexDays, "index", "") : [])
+      mergeHistogram(indexHist, hist);
+    return {
+      usage: usageDays ? readUsageDaily(metrics, usageDays, SOURCE) : [],
+      queries: usageDays ? readQueryDaily(metrics, usageDays, SOURCE) : [],
+      tags: usageDays ? readTagDaily(metrics, usageDays, SOURCE) : [],
+      selects: selectDays ? readSelectDaily(metrics, selectDays, SOURCE) : [],
+      searchHist,
+      llm: llmDays ? readLlmDaily(metrics, llmDays) : [],
+      indexRuns: histogramCount(indexHist),
+      indexHist,
+      first: firstFoldedDay(metrics),
+    };
+  });
+  if (!read) return { notes: [] };
+
+  // Selects are stored as typed: resolve them to the durable ref the usage rows carry, then merge.
+  const resolved = await resolveSelectRefs(
+    read.selects.map((select) => select.ref),
+    indexSnapshot,
+  );
+  const selects = new Map<string, { ref: string; n: number; lastAt: string }>();
+  for (const select of read.selects) {
+    const ref = resolved.get(select.ref) ?? select.ref;
+    const entry = selects.get(ref) ?? { ref, n: 0, lastAt: select.last_at };
+    entry.n += select.n;
+    if (select.last_at > entry.lastAt) entry.lastAt = select.last_at;
+    selects.set(ref, entry);
+  }
+  const rollup: MetricsRollup = {
+    usage: read.usage,
+    queries: read.queries,
+    tags: read.tags,
+    selects: [...selects.values()],
+    searchHist: read.searchHist,
+    llm: read.llm,
+    indexRuns: read.indexRuns,
+    indexHist: read.indexHist,
+  };
+  const from = [usageDays, selectDays, llmDays, indexDays].flatMap((d) => (d ? [d.from] : [])).sort()[0];
+  const notes: string[] = [];
+  if (from && read.first !== undefined && from < read.first) {
+    notes.push(
+      `The window starts earlier than the history akm holds: nothing was folded into metrics.db before ${read.first}.`,
+    );
+  }
+  const used =
+    rollup.usage.length + rollup.queries.length + rollup.selects.length + rollup.llm.length + rollup.indexRuns > 0;
+  if (used) {
+    notes.push(
+      "Days older than state.db's raw rows come from metrics.db's daily rollups, which count whole UTC days (a day belongs to the window that contains its midnight). Search and index medians over those days are estimated from duration histograms; negative-feedback reasons and the rows of --detail full cover the raw window only.",
+    );
+  }
+  return { rollup, notes };
 }
 
 /** Read every store and build the report. */
@@ -175,14 +276,19 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
 
   const config = readEventRetention();
   if (config.note) notes.push(config.note);
-  notes.push(
-    ...retentionNotes({
-      sinceIso,
-      nowMs,
-      usageRetentionDays: USAGE_EVENT_RETENTION_DAYS,
-      eventRetentionDays: config.eventRetentionDays,
-    }),
-  );
+  // With a metrics.db beside state.db, history older than the raw retention is read from it: the retention notes
+  // say what it cannot (below), not that the data ends at the retention edge.
+  const stateDbPath = getStateDbPath();
+  if (!fs.existsSync(metricsDbPathBeside(stateDbPath))) {
+    notes.push(
+      ...retentionNotes({
+        sinceIso,
+        nowMs,
+        usageRetentionDays: USAGE_EVENT_RETENTION_DAYS,
+        eventRetentionDays: config.eventRetentionDays,
+      }),
+    );
+  }
 
   const index = readUtility();
   if (index.note) notes.push(index.note);
@@ -209,7 +315,6 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
     notes,
   };
 
-  const stateDbPath = getStateDbPath();
   if (!fs.existsSync(stateDbPath)) {
     notes.push("state.db was not found, so every section except utility is empty.");
     return buildMetricsResult(input);
@@ -231,12 +336,18 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
   }
   const stateDb = openDatabase(stateDbPath, { readonly: true, create: false });
   let selects: SelectEventRow[] = [];
+  // The oldest raw row of each kind in the window: the days before it are served from metrics.db.
+  const oldest: { usage?: string; selects?: string; llm?: string; index?: string } = {};
   try {
     applyReadonlyPragmas(stateDb);
     input.usage = listUsageEventRows(stateDb, filter);
+    oldest.usage = input.usage[0]?.created_at;
     selects = listSelectEvents(stateDb, sinceIso, untilIso);
+    oldest.selects = oldestTs(selects);
     input.outcomes = listLowestOutcomeAssets(stateDb, TOP);
-    input.indexRuns = indexRunsFromEvents(listIndexCompletedEvents(stateDb, sinceIso, untilIso));
+    const indexEvents = listIndexCompletedEvents(stateDb, sinceIso, untilIso);
+    oldest.index = oldestTs(indexEvents);
+    input.indexRuns = indexRunsFromEvents(indexEvents);
     input.tasks = queryTaskHistory(stateDb, { since: sinceIso, until: untilIso });
     input.proposals = {
       byStatus: countProposalsByStatus(stateDb, sinceIso, untilIso),
@@ -244,11 +355,23 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
     };
     input.workflows = summarizeWorkflowRuns(stateDb, sinceIso, untilIso);
     const inWindow = llmEventsIn(stateDb, { since: sinceIso, until: untilIso });
+    oldest.llm = oldestTs(inWindow);
     input.llm = summarizeLlmUsage(inWindow);
     if (input.includeRows) input.llmRows = llmRowsFromEvents(inWindow);
   } finally {
     stateDb.close();
   }
   input.selects = await durableSelects(selects, options.indexSnapshot ?? true);
+  const history = await readRollup(
+    stateDbPath,
+    { since: sinceIso, until: untilIso },
+    oldest,
+    options.indexSnapshot ?? true,
+  );
+  if (history.rollup) {
+    input.rollup = history.rollup;
+    addLlmRows(input.llm, history.rollup.llm);
+  }
+  notes.push(...history.notes);
   return buildMetricsResult(input);
 }

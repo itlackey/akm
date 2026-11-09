@@ -174,6 +174,21 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    id: "002-improve-skip-daily",
+    // `akm health` counts skips from improve_skipped events: one per occurrence (summed), and, for a
+    // reason that carries a `count`, the latest run's snapshot. A day keeps both, so a window can be
+    // rebuilt the same way: sums add up, the latest day's snapshot wins.
+    up: `
+      CREATE TABLE improve_skip_daily (
+        day       TEXT NOT NULL,
+        reason    TEXT NOT NULL,
+        summed    INTEGER NOT NULL,
+        snapshot  INTEGER,
+        PRIMARY KEY (day, reason)
+      );
+    `,
+  },
 ];
 
 assertMigrationRegistry(MIGRATIONS);
