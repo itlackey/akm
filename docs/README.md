@@ -5,7 +5,7 @@ agent. This hub is organized by what you're trying to do. Each subdirectory
 also has its own README indexing everything inside it: [Guides](guides/README.md),
 [Reference](reference/README.md), [Agents](agents/README.md),
 [Architecture](architecture/README.md), [Maintainers](maintainers/README.md),
-[Migration](migration/README.md), [Posts](posts/README.md).
+[Migration](migration/README.md).
 
 ## Start
 

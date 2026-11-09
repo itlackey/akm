@@ -595,9 +595,9 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
     const { status, stdout } = spawnCli(["--help"], { cwd: repoRoot });
     expect(status).toBe(0);
     expect(stdout).toContain("USAGE");
-    expect(stdout).toContain("4   health warn");
-    expect(stdout).toContain("70  internal / unclassified error");
-    expect(stdout).toContain("1   not found / command-reported failure");
+    expect(stdout).toContain("4 health warn");
+    expect(stdout).toContain("70 internal / unclassified error");
+    expect(stdout).toContain("1 not found / command-reported failure");
   });
 
   // S11 item 3: citty's CLIError is now routed through the SAME
@@ -719,7 +719,7 @@ describe("S11: sectioned root help", () => {
         const commands = stdout
           .slice(start + heading.length + 1, end)
           .split("\n")
-          .flatMap((line) => line.match(/^ {2}(\S+)\s{2,}/)?.[1] ?? []);
+          .flatMap((line) => line.match(/^ {2}(\S+)\s/)?.[1] ?? []);
         return [heading, commands];
       }),
     );
