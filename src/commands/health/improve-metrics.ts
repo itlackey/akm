@@ -413,10 +413,17 @@ export function computeWallTimeStats(durationsMs: number[]): ImproveHealthMetric
   return { medianMs: pick(0.5), p95Ms: pick(0.95) };
 }
 
-export function buildImproveSkipSummary(events: ReturnType<typeof readEvents>["events"]): {
-  skipped: number;
-  skipReasons: Record<string, number>;
-} {
+/**
+ * A window's improve_skipped events, tallied (see {@link buildImproveSkipSummary}): `summed` counts the
+ * per-occurrence events per reason, `latestSnapshot` keeps the last count-bearing event's count per reason.
+ * metrics.db keeps one tally per day so a window older than state.db's raw rows is rebuilt the same way.
+ */
+export interface SkipTally {
+  summed: Record<string, number>;
+  latestSnapshot: Record<string, number>;
+}
+
+export function tallyImproveSkipEvents(events: ReturnType<typeof readEvents>["events"]): SkipTally {
   // Two kinds of skip events:
   //  - Per-occurrence (no `count`): one event per skipped ref → SUM is correct.
   //  - Aggregated snapshot (carries `count`): a single per-run event whose count
@@ -427,20 +434,36 @@ export function buildImproveSkipSummary(events: ReturnType<typeof readEvents>["e
   //    current snapshot — matching how memorySummary is handled. Events arrive
   //    in chronological (offset) order, so the last count-bearing event per
   //    reason is the latest run's value.
-  const summed: Record<string, number> = {};
-  const latestSnapshot: Record<string, number> = {};
+  const tally: SkipTally = { summed: {}, latestSnapshot: {} };
   for (const event of events) {
     const reason =
       typeof event.metadata?.reason === "string" && event.metadata.reason.trim() ? event.metadata.reason : "unknown";
     const rawCount = event.metadata?.count;
     if (typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0) {
-      latestSnapshot[reason] = rawCount; // overwrite → keeps the latest run's snapshot
+      tally.latestSnapshot[reason] = rawCount; // overwrite → keeps the latest run's snapshot
     } else {
-      summed[reason] = (summed[reason] ?? 0) + 1;
+      tally.summed[reason] = (tally.summed[reason] ?? 0) + 1;
     }
   }
-  const skipReasons: Record<string, number> = { ...summed };
-  for (const [reason, count] of Object.entries(latestSnapshot)) {
+  return tally;
+}
+
+/**
+ * The skip counts of a window: the raw events' tally, on top of `earlier`, the tally of the window's days
+ * that only metrics.db still holds (sums add; a reason's snapshot is the latest one, so the raw one wins).
+ */
+export function buildImproveSkipSummary(
+  events: ReturnType<typeof readEvents>["events"],
+  earlier?: SkipTally,
+): {
+  skipped: number;
+  skipReasons: Record<string, number>;
+} {
+  const raw = tallyImproveSkipEvents(events);
+  const skipReasons: Record<string, number> = { ...earlier?.summed };
+  for (const [reason, count] of Object.entries(raw.summed)) skipReasons[reason] = (skipReasons[reason] ?? 0) + count;
+  const snapshots = { ...earlier?.latestSnapshot, ...raw.latestSnapshot };
+  for (const [reason, count] of Object.entries(snapshots)) {
     skipReasons[reason] = (skipReasons[reason] ?? 0) + count;
   }
   const skipped = Object.values(skipReasons).reduce((a, b) => a + b, 0);

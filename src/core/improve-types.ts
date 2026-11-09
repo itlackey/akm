@@ -896,6 +896,11 @@ export interface AkmImproveResult {
    */
   strategyFilteredRefs?: ImproveEligibleRef[];
   /**
+   * How many refs `strategyFilteredRefs` held. Written in place of the list when a run is folded into
+   * metrics.db (and, from the persisted result, when it is stored); never set on a live envelope.
+   */
+  strategyFilteredCount?: number;
+  /**
    * #957 — processes the active strategy enabled but that have no connection
    * or harness to run on. Sourced verbatim from
    * `ResolvedImprovePlan.engineUnavailable`; omitted entirely when nothing

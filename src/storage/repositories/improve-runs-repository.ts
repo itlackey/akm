@@ -19,6 +19,7 @@
 import type { ImproveResultEnvelope } from "../../core/improve-result";
 import { classifyImproveAction } from "../../core/improve-types";
 import type { Database } from "../database";
+import { withMetricsHistory } from "./metrics-rollup-repository";
 
 // ── improve_runs table helpers ───────────────────────────────────────────────
 
@@ -213,10 +214,30 @@ export interface ImproveRunSummaryRow {
  * `openStateDatabase` scope.
  */
 export function queryImproveRuns(db: Database, since: string, until?: string): ImproveRunSummaryRow[] {
+  const rows = queryRunsIn(db, since, until);
+  if (stateHoldsWindow(db, since)) return rows;
+  // The window starts before state.db's oldest run: the rest is in metrics.db (a run is in both only until its
+  // day passes the retention, so a run seen in state.db is not read twice).
+  const known = new Set(rows.map((row) => row.id));
+  const older = (withMetricsHistory(db, undefined, (metrics) => queryRunsIn(metrics, since, until)) ?? []).filter(
+    (row) => !known.has(row.id),
+  );
+  return older.length === 0 ? rows : [...rows, ...older].sort((a, b) => b.started_at.localeCompare(a.started_at));
+}
+
+function queryRunsIn(db: Database, since: string, until?: string): ImproveRunSummaryRow[] {
   const sql = until
     ? "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, strategy, result_json FROM improve_runs WHERE started_at >= ? AND started_at < ? AND dry_run = 0 ORDER BY started_at DESC"
     : "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, strategy, result_json FROM improve_runs WHERE started_at >= ? AND dry_run = 0 ORDER BY started_at DESC";
   return (until ? db.prepare(sql).all(since, until) : db.prepare(sql).all(since)) as ImproveRunSummaryRow[];
+}
+
+/** True when `since` is not earlier than state.db's oldest run, so no run of the window can be missing from it. */
+function stateHoldsWindow(db: Database, since: string): boolean {
+  const row = db.prepare("SELECT MIN(started_at) AS oldest FROM improve_runs").get() as
+    | { oldest: string | null }
+    | undefined;
+  return row?.oldest != null && since >= row.oldest;
 }
 
 const IMPROVE_RUN_ROW_COLUMNS =
@@ -229,9 +250,11 @@ const IMPROVE_RUN_ROW_COLUMNS =
  * "no such run".
  */
 export function getImproveRunById(db: Database, id: string): ImproveRunRow | undefined {
-  return db.prepare(`SELECT ${IMPROVE_RUN_ROW_COLUMNS} FROM improve_runs WHERE id = ?`).get(id) as
-    | ImproveRunRow
-    | undefined;
+  const find = (handle: Database) =>
+    handle.prepare(`SELECT ${IMPROVE_RUN_ROW_COLUMNS} FROM improve_runs WHERE id = ?`).get(id) as
+      | ImproveRunRow
+      | undefined;
+  return find(db) ?? withMetricsHistory(db, undefined, find);
 }
 
 /**
@@ -241,32 +264,27 @@ export function getImproveRunById(db: Database, id: string): ImproveRunRow | und
  * implicit "last run" a report reads.
  */
 export function getLatestImproveRun(db: Database): ImproveRunRow | undefined {
-  return db
-    .prepare(`SELECT ${IMPROVE_RUN_ROW_COLUMNS} FROM improve_runs WHERE dry_run = 0 ORDER BY started_at DESC LIMIT 1`)
-    .get() as ImproveRunRow | undefined;
+  const latest = (handle: Database) =>
+    handle
+      .prepare(`SELECT ${IMPROVE_RUN_ROW_COLUMNS} FROM improve_runs WHERE dry_run = 0 ORDER BY started_at DESC LIMIT 1`)
+      .get() as ImproveRunRow | undefined;
+  return latest(db) ?? withMetricsHistory(db, undefined, latest);
 }
 
 /** The `limit` most recent real (non-dry-run) improve runs, newest first (the workspace's run list). */
 export function listRecentImproveRuns(db: Database, limit: number): ImproveRunSummaryRow[] {
-  return db
-    .prepare(
-      "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, strategy, result_json FROM improve_runs WHERE dry_run = 0 ORDER BY started_at DESC LIMIT ?",
-    )
-    .all(limit) as ImproveRunSummaryRow[];
-}
-
-/**
- * Delete improve_runs rows older than `retentionDays` (default: 90). Mirrors
- * {@link purgeOldEvents} — same default, same return shape (number of rows
- * actually deleted), same disabled-when-non-finite semantics.
- *
- * Safe to call from the improve post-loop maintenance pass alongside
- * `purgeOldEvents(db, retentionDays)`.
- */
-export function purgeOldImproveRuns(db: Database, retentionDays = 90): number {
-  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
-  const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
-  const result = db.prepare("DELETE FROM improve_runs WHERE started_at < ?").run(cutoff);
-  const changes = (result as { changes?: number | bigint }).changes ?? 0;
-  return typeof changes === "bigint" ? Number(changes) : changes;
+  const recent = (handle: Database, count: number) =>
+    handle
+      .prepare(
+        "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, strategy, result_json FROM improve_runs WHERE dry_run = 0 ORDER BY started_at DESC LIMIT ?",
+      )
+      .all(count) as ImproveRunSummaryRow[];
+  const rows = recent(db, limit);
+  if (rows.length >= limit) return rows;
+  // Fewer runs than asked in state.db: the older ones are in metrics.db.
+  const known = new Set(rows.map((row) => row.id));
+  const older = (withMetricsHistory(db, undefined, (metrics) => recent(metrics, limit)) ?? []).filter(
+    (row) => !known.has(row.id),
+  );
+  return [...rows, ...older].slice(0, limit);
 }

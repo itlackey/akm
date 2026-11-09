@@ -97,6 +97,16 @@ describe("collectDataDirUsageAdvisory (#896)", () => {
     expect(collectDataDirUsageAdvisory(dataDir)).toBeUndefined();
   });
 
+  test("counts metrics.db as part of the live set", () => {
+    const dataDir = makeTempDir("akm-ddu-metrics-");
+    writeFileOfSize(path.join(dataDir, "state.db"), 1_000_000_000);
+    writeFileOfSize(path.join(dataDir, "metrics.db"), 20_000_000_000);
+    writeFileOfSize(path.join(dataDir, "backups", "snap", "a"), 1_000_000_000);
+
+    // Live is 21 GB of a 22 GB dir. Leaving metrics.db out would score this 11x and warn.
+    expect(collectDataDirUsageAdvisory(dataDir)).toBeUndefined();
+  });
+
   test("stays silent on a small data dir, whatever the ratio", () => {
     const dataDir = makeTempDir("akm-ddu-small-");
     writeFileOfSize(path.join(dataDir, "state.db"), 8_000);

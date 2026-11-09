@@ -17,8 +17,6 @@ import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { type MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { Database } from "../../storage/database";
-import { purgeOldEvents } from "../../storage/repositories/events-repository";
-import { purgeOldImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { closeDatabase, openIndexDatabase } from "../../storage/repositories/index-connection";
 import {
   getLiveRefSnapshot,
@@ -39,6 +37,7 @@ import {
 } from "../../storage/repositories/salience-repository";
 import { readFreelistInfo, STATE_DB_VACUUMED_EVENT, vacuumIfReclaimable } from "../../storage/state-db-integrity";
 import { purgeOldRunLogFiles, purgeOldTaskLogFiles } from "../../tasks/run/task-log";
+import { foldBeforePurge, purgeFoldedEvents, purgeFoldedImproveRuns } from "../metrics/fold";
 import { expireStaleProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl, type DeadUrlCoverage } from "../url-checker";
 import { isDistillCandidateRef } from "./eligibility";
@@ -683,7 +682,8 @@ function runProposalHygienePass(ctx: MaintenanceCtx): {
 
 /**
  * Trim the observability data that grows append-only — state.db events and
- * improve_runs, logs.db task_logs, and the per-run task log files — to
+ * improve_runs (folded into metrics.db first, and only folded days are
+ * deleted), logs.db task_logs, and the per-run task log files — to
  * `improve.eventRetentionDays` (default 90; 0 disables), then VACUUM state.db
  * when enough pages are free. Each store fails on its own. state.db work
  * borrows the run's long-lived handle: a second writer on the same WAL file
@@ -702,8 +702,18 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
   try {
     withStateDb(
       (stateDb) => {
-        report("events_purged", "events/_purge", purgeOldEvents(stateDb, retentionDays), "event(s)");
-        report("improve_runs_purged", "improve_runs/_purge", purgeOldImproveRuns(stateDb, retentionDays), "run(s)");
+        // Fold closed days into metrics.db first; only folded days are purged. With metrics.db
+        // unavailable nothing is purged (one warning) and the rows wait for the next run.
+        const folded = foldBeforePurge(stateDb);
+        if (folded) {
+          report("events_purged", "events/_purge", purgeFoldedEvents(stateDb, retentionDays, folded), "event(s)");
+          report(
+            "improve_runs_purged",
+            "improve_runs/_purge",
+            purgeFoldedImproveRuns(stateDb, retentionDays, folded),
+            "run(s)",
+          );
+        }
         const vacuum = vacuumIfReclaimable(
           stateDb,
           readFreelistInfo(stateDb),

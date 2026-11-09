@@ -80,6 +80,7 @@ Windows uses per-user app-data directories (`%LOCALAPPDATA%\akm\data`,
 | `index.db` | The search index. Rebuilt by `akm index --full`. |
 | `state.db` | Durable local state: events, usage records, proposals, task history, improve runs, workflow runs. Not regenerable. |
 | `logs.db` | Log lines from scheduled task runs. Old lines are purged by `akm improve`. |
+| `metrics.db` | The long-lived history: daily rollups of events, LLM calls, usage, queries, selects and latency, and one slim row per improve run, folded in from `state.db` before it purges them. Never purged. Not regenerable: back it up with `state.db`. |
 | `akm.lock` | The lockfile: resolved version, revision and integrity of each installed bundle. `akm.lock.lck` is its write sentinel. |
 | `index.rebuild.lock`, `index.db.write.lock` | Lock files for `akm index` and asset writes. |
 | `secret-locks/` | Per-secret lock files taken while a secret is written. |
@@ -186,8 +187,24 @@ Event types, for `akm log --type <type>`:
 
 Events and improve run rows older than 90 days are purged by `akm improve`
 (`improve.eventRetentionDays`; `0` disables). Usage records older than 90 days
-are purged on `akm index`. Read these with `akm log`, `akm metrics`,
-`akm proposal list` and `akm task history`.
+are purged on `akm index`. A purge removes whole UTC days, and only days
+already folded into `metrics.db`: before it deletes anything, each closed UTC
+day is folded there, and if `metrics.db` cannot be opened or written nothing is
+purged and akm warns once. `akm metrics` and `akm health` read the days older
+than `state.db`'s raw rows from `metrics.db`. Read these with `akm log`,
+`akm metrics`, `akm proposal list` and `akm task history`.
+
+What `metrics.db` keeps, per UTC day: event counts by type; LLM calls by stage,
+process, engine, model and outcome (calls, tokens, time, and a duration
+histogram); usage by event type, source and ref; queries with their result
+counts; feedback tag counts; selects per ref (deduped per search); search and
+index duration histograms; the `improve_skipped` tallies `akm health` counts;
+and every improve run, whole except that its list of strategy-filtered refs is
+kept as a count. What is gone once a day is folded and its raw rows pass the
+retention: individual LLM calls, individual query and ref rows and their order,
+per-call latency (the histogram stays, so a median over those days is an
+estimate), `searchId` links, `env_access` and `curate` event payloads, every
+event type except its daily count, and negative-feedback reasons.
 
 ## Inspect and clear
 

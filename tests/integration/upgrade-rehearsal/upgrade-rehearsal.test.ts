@@ -488,6 +488,85 @@ for (const origin of ["previous", "0.9.32"] as const) {
       }
     });
 
+    test("10c. the first `akm index` after the upgrade folds every closed day already in state.db into metrics.db, and purges only the aged-out usage rows", async () => {
+      const stateDbPath = findFile(home.env.XDG_DATA_HOME ?? "", "state.db") as string;
+      expect(stateDbPath).toBeDefined();
+      const dayAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+      const seed = openDatabase(stateDbPath);
+      try {
+        for (const days of [200, 100, 3]) {
+          seed
+            .prepare("INSERT INTO events (event_type, ts, ref, metadata_json) VALUES ('health_probe', ?, NULL, '{}')")
+            .run(dayAgo(days));
+          seed
+            .prepare("INSERT INTO usage_events (event_type, entry_ref, created_at) VALUES ('show', 'stash//a', ?)")
+            .run(dayAgo(days).slice(0, 19).replace("T", " "));
+          seed
+            .prepare(
+              `INSERT INTO improve_runs (id, started_at, completed_at, stash_dir, dry_run, strategy, scope_mode, ok, result_json)
+               VALUES (?, ?, ?, '/s', 0, 'default', 'all', 1, '{"schemaVersion":2,"strategyFilteredRefs":[{"ref":"a"}]}')`,
+            )
+            .run(`rehearsal-${days}`, dayAgo(days), dayAgo(days));
+        }
+      } finally {
+        seed.close();
+      }
+      // Every closed day state.db holds before the fold: what the first fold has to cover.
+      const readDays = (db: ReturnType<typeof openDatabase>, table: string, column: string) =>
+        (
+          db
+            .prepare(`SELECT DISTINCT substr(${column}, 1, 10) AS day FROM ${table} WHERE ${column} < ?`)
+            .all(new Date().toISOString().slice(0, 10)) as { day: string }[]
+        ).map((row) => row.day);
+      const before = openDatabase(stateDbPath, { readonly: true });
+      const expectedDays = new Set([
+        ...readDays(before, "events", "ts"),
+        ...readDays(before, "usage_events", "created_at"),
+        ...readDays(before, "improve_runs", "started_at"),
+      ]);
+      before.close();
+      expect(expectedDays.size).toBeGreaterThanOrEqual(3);
+
+      const indexed = await runLauncher(candidateLauncher, ["index"], home.env);
+      expect(indexed.status, indexed.stderr).toBe(0);
+
+      const metricsPath = findFile(home.env.XDG_DATA_HOME ?? "", "metrics.db");
+      expect(metricsPath, "akm index created metrics.db").toBeDefined();
+      const metrics = openDatabase(metricsPath as string, { readonly: true });
+      try {
+        const folded = (metrics.prepare("SELECT day FROM folded_day").all() as { day: string }[]).map((r) => r.day);
+        expect(new Set(folded)).toEqual(expectedDays);
+        const run = metrics.prepare("SELECT result_json FROM improve_runs WHERE id = 'rehearsal-200'").get() as {
+          result_json: string;
+        };
+        expect(JSON.parse(run.result_json)).toEqual({ schemaVersion: 2, strategyFilteredCount: 1 });
+      } finally {
+        metrics.close();
+      }
+      // The purged days still count: the three seeded shows are in the report, two of them from metrics.db.
+      const report = await runLauncher(candidateLauncher, ["metrics", "--since", "400d"], home.env);
+      expect(report.status, report.stderr).toBe(0);
+      const metricsReport = JSON.parse(report.stdout) as {
+        usage?: { totals?: { shows?: number }; daily?: { day: string; show: number }[] };
+        notes?: string[];
+      };
+      const shownDays = new Set((metricsReport.usage?.daily ?? []).filter((d) => d.show > 0).map((d) => d.day));
+      for (const days of [200, 100, 3]) expect(shownDays.has(dayAgo(days).slice(0, 10)), `${days}d ago`).toBe(true);
+      expect(metricsReport.notes?.join("\n")).toContain("daily rollups");
+
+      const after = openDatabase(stateDbPath, { readonly: true });
+      try {
+        const left = (
+          after.prepare("SELECT created_at FROM usage_events WHERE entry_ref = 'stash//a'").all() as {
+            created_at: string;
+          }[]
+        ).map((row) => row.created_at.slice(0, 10));
+        expect(left.sort()).toEqual([dayAgo(3).slice(0, 10)]);
+      } finally {
+        after.close();
+      }
+    });
+
     test("11. read-back: the OLD launcher still works against the candidate-written home", async () => {
       for (const args of [
         ["search", home.searchTerm],

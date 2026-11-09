@@ -6,7 +6,7 @@
  *   2. `recordImproveRun` persists every column for a production run.
  *   3. `recordImproveRun` persists `dry_run=1` for dry-run input — the
  *      specific bug from MEMORY.md feedback_akm_dryrun_artifact_trap.
- *   4. `purgeOldImproveRuns` deletes only rows older than retentionDays.
+ *   4. `purgeFoldedImproveRuns` deletes only rows older than retentionDays.
  *   5. Re-opening a DB that already has migration 003 is a no-op.
  *
  * These tests must NOT touch the user's real state.db. Each test mints a
@@ -15,12 +15,9 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmImproveResult } from "../../../src/commands/improve/improve";
+import { foldBeforePurge, purgeFoldedImproveRuns } from "../../../src/commands/metrics/fold";
 import { openStateDatabase } from "../../../src/core/state-db";
-import {
-  computeImproveRunMetrics,
-  purgeOldImproveRuns,
-  recordImproveRun,
-} from "../../../src/storage/repositories/improve-runs-repository";
+import { computeImproveRunMetrics, recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -401,7 +398,7 @@ describe("recordImproveRun", () => {
   });
 });
 
-describe("purgeOldImproveRuns", () => {
+describe("purgeFoldedImproveRuns", () => {
   test("deletes rows older than retentionDays and preserves recent ones", () => {
     const db = openStateDatabase();
     try {
@@ -440,7 +437,7 @@ describe("purgeOldImproveRuns", () => {
       const before = db.prepare("SELECT COUNT(*) AS c FROM improve_runs").get() as { c: number };
       expect(before.c).toBe(2);
 
-      const purged = purgeOldImproveRuns(db, 90);
+      const purged = purgeFoldedImproveRuns(db, 90, foldBeforePurge(db) ?? new Map());
       expect(purged).toBe(1);
 
       const survivors = db.prepare("SELECT id FROM improve_runs").all() as Array<{ id: string }>;
@@ -468,8 +465,8 @@ describe("purgeOldImproveRuns", () => {
         result: buildMinimalResult(),
       });
 
-      expect(purgeOldImproveRuns(db, 0)).toBe(0);
-      expect(purgeOldImproveRuns(db, Number.NaN)).toBe(0);
+      expect(purgeFoldedImproveRuns(db, 0, foldBeforePurge(db) ?? new Map())).toBe(0);
+      expect(purgeFoldedImproveRuns(db, Number.NaN, foldBeforePurge(db) ?? new Map())).toBe(0);
 
       const after = db.prepare("SELECT COUNT(*) AS c FROM improve_runs").get() as { c: number };
       expect(after.c).toBe(1);
@@ -496,7 +493,7 @@ describe("purgeOldImproveRuns", () => {
         result: buildMinimalResult(),
       });
 
-      expect(purgeOldImproveRuns(db, 90)).toBe(0);
+      expect(purgeFoldedImproveRuns(db, 90, foldBeforePurge(db) ?? new Map())).toBe(0);
     } finally {
       db.close();
     }
