@@ -21,6 +21,7 @@ import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { resolveWorkingStashTarget } from "../src/core/write-source";
 import { akmIndex } from "../src/indexer/indexer";
 import { resolveSourceEntries } from "../src/indexer/search/search-source";
+import { runCliCapture } from "./_helpers/cli";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -76,6 +77,21 @@ describe("no env, no default bundle", () => {
     writeSandboxConfig({ bundles: { lib: bundle(dir) } });
     const sources = resolveSourceEntries(undefined, loadConfig());
     expect(sources.map((source) => source.path)).toEqual([dir]);
+  });
+});
+
+describe("akm index", () => {
+  test("with configured bundles and no default it indexes them; with none it errors as search does", async () => {
+    const dir = seedDir("lib", { "knowledge/idx-note.md": "---\ndescription: idx note\n---\n# idx note\n" });
+    writeSandboxConfig({ semanticSearchMode: "off", bundles: { lib: bundle(dir) } });
+    const ok = await runCliCapture(["index", "--full"]);
+    expect(ok.stderr).not.toContain("No default bundle");
+    expect((await akmSearch({ query: "idx note" })).hits.length).toBeGreaterThan(0);
+
+    fs.rmSync(getConfigPath(), { force: true });
+    resetConfigCache();
+    const none = await runCliCapture(["index"]);
+    expect(JSON.parse(none.stderr).error).toBe(NO_DEFAULT_BUNDLE_MESSAGE);
   });
 });
 
@@ -154,6 +170,21 @@ describe("the migrator registers an existing ~/akm", () => {
     expect(done.applied).toBe(true);
     const written = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
     expect(written.bundles[written.defaultBundle].path).toBe(homeStash);
+  });
+
+  test("AKM_BUNDLE_DIR set: a stray ~/akm is not registered, with or without a config file", async () => {
+    seedDir("home/akm");
+    const envDir = seedDir("env-bundle");
+    await withEnv({ HOME: home, AKM_BUNDLE_DIR: envDir }, () => {
+      writeSandboxConfig({ connections: { lab: { endpoint: "http://lab:8080/v1", models: { fast: "m" } } } });
+      const withFile = normalizeConfigFile(getConfigPath(), { apply: true });
+      expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).defaultBundle).toBeUndefined();
+      expect(withFile.notes?.join("\n") ?? "").not.toContain("registered");
+      fs.rmSync(getConfigPath(), { force: true });
+      const noFile = normalizeConfigFile(getConfigPath(), { apply: true });
+      expect(noFile.changed).toBe(false);
+      expect(fs.existsSync(getConfigPath())).toBe(false);
+    });
   });
 
   test("no ~/akm, or a default already set, or the bundle disabled: nothing is registered", async () => {

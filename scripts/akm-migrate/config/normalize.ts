@@ -242,6 +242,8 @@ function keepUnusableEntries(
  */
 function registerHomeBundle(body: Record<string, unknown>, notes: string[]): Record<string, unknown> {
   if (body.defaultBundle !== undefined) return body;
+  // 0.9.32 read `AKM_BUNDLE_DIR` first and `~/akm` only without it: a host that names its bundle by the variable keeps it.
+  if (process.env.AKM_BUNDLE_DIR?.trim()) return body;
   const homeDir = getDefaultStashDir({ ...process.env, AKM_BUNDLE_DIR: undefined });
   if (!fs.existsSync(homeDir) || !fs.statSync(homeDir).isDirectory()) return body;
   const registered = withPrimaryBundle(body as unknown as AkmConfig, homeDir) as unknown as Record<string, unknown>;
