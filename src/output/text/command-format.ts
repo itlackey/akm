@@ -278,7 +278,6 @@ export function formatSearchPlain(r: Record<string, unknown>, detail: DetailLeve
     if (hit.origin !== undefined) lines.push(`  origin: ${String(hit.origin)}`);
     if (Array.isArray(hit.keys) && hit.keys.length > 0) lines.push(`  keys: ${hit.keys.join(", ")}`);
     if (hit.size) lines.push(`  size: ${String(hit.size)}`);
-    if (hit.action) lines.push(`  action: ${String(hit.action)}`);
     if (hit.installRef) lines.push(`  installRef: ${String(hit.installRef)}`);
     if (hit.run) lines.push(`  run: ${String(hit.run)}`);
     if (Array.isArray(hit.tags) && hit.tags.length > 0) lines.push(`  tags: ${hit.tags.join(", ")}`);
@@ -354,7 +353,6 @@ export function formatCuratePlain(r: Record<string, unknown>, detail: DetailLeve
       lines.push(`  parameters: ${item.parameters.join(", ")}`);
     }
     if (item.run) lines.push(`  run: ${String(item.run)}`);
-    if (item.followUp) lines.push(`  show: ${String(item.followUp)}`);
     if (Array.isArray(item.supportRefs) && item.supportRefs.length > 0) {
       for (const support of item.supportRefs as Array<Record<string, unknown>>) {
         if (!support.ref) continue;

@@ -50,7 +50,7 @@ Every connected bundle is folded into one local FTS5 index; there is no
 per-bundle fan-out at query time. Two verbs work that index:
 
 ```text
-search decides   -- a lean menu: type, name, ref, action, estimatedTokens (and keys for env assets)
+search decides   -- a lean menu: type, name, ref, description, estimatedTokens (and keys for env assets)
 show delivers    -- the full dispatch envelope: run command, prompt, content
 ```
 

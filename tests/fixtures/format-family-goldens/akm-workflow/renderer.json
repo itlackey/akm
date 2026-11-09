@@ -16,8 +16,7 @@
       "type": "workflow",
       "ref": "sample-akm-workflow//release",
       "label": "Workflow",
-      "renderer": "workflow-md",
-      "action": "Start or resume execution with `akm workflow run 'sample-akm-workflow//release'`."
+      "renderer": "workflow-md"
     }
   }
 }

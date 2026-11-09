@@ -16,7 +16,7 @@ narrows to a ref, and loads that ref's content:
 ```sh
 akm curate "deploy the app to staging"
 # → shortlist; top item: {"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh",
-#                          "followUp":"akm show scripts/deploy.sh"}
+#                          "description":"Deploy the app to staging"}
 
 akm show scripts/deploy.sh
 # → {"run": "...", "setup": "...", ...} — ready to execute
@@ -43,11 +43,11 @@ what you're trying to do.
 ```sh
 akm search "deploy" --type script
 # → {"results":[{"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh",
-#             "action":"akm show scripts/deploy.sh -> ...","estimatedTokens":240}]}
+#             "description":"Deploy the app to staging","estimatedTokens":240}]}
 ```
 
 `akm curate` goes further: it takes the top search hits in order, adds related
-support refs, and includes a direct `akm show <ref>` follow-up on every result.
+support refs, and gives every result a `ref` to pass to `akm show`.
 `--detail normal` also attaches a preview and run details to each item:
 
 ```sh

@@ -277,7 +277,6 @@ export async function akmSearch(input: {
       name: hit.title,
       id: hit.id,
       description: hit.description,
-      action: `akm bundle add ${installRef} -> then search again`,
       installRef,
       score: hit.score,
       registryName: hit.registryName,

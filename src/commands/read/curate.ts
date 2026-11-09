@@ -84,7 +84,6 @@ export type CuratedStashItem = {
   parameters?: string[];
   run?: string;
   supportRefs?: CurateSupportRef[];
-  followUp: string;
   reason?: string;
   score?: number;
   beliefState?: string;
@@ -96,7 +95,6 @@ export type CuratedRegistryItem = {
   name: string;
   id: string;
   description?: string;
-  followUp: string;
   reason?: string;
   score?: number;
 };
@@ -467,7 +465,6 @@ async function enrichCuratedStashHit(
     ...(shown?.parameters?.length ? { parameters: shown.parameters } : {}),
     ...(shown?.run ? { run: shown.run } : {}),
     ...(supportRefs.length > 0 ? { supportRefs } : {}),
-    followUp: `akm show ${ref}`,
     ...(beliefState ? { beliefState } : {}),
     ...(matchBeliefFilter(beliefState, "historical")
       ? { reason: "Historical context; not current supporting authority." }
@@ -487,7 +484,6 @@ function buildCuratedRegistryItem(hit: RegistrySearchResultHit): CuratedRegistry
     name: hit.name,
     id: hit.id,
     ...(hit.description ? { description: hit.description } : {}),
-    followUp: hit.action ?? `akm bundle add ${hit.id}`,
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
 }
