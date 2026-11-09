@@ -178,14 +178,15 @@ files at runtime from the release-notes directory.
 
 ## Submitting Changes
 
-1. Fork the repository and create a feature branch from the default branch,
-   the open release branch (`release/<version>`).
+1. Fork the repository and create a feature branch from the open release
+   branch (`release/<version>`).
 2. Make your changes, keeping commits focused and well-described.
 3. Ensure both test targets pass (`bun run test:unit` and
    `bun run test:integration`) and linting is clean (`bun run lint`).
-4. Open a pull request against the release branch (the default) with a clear
-   description of the change. Never against `main`: only a release branch
-   merges there, and that merge is a release (see the
+4. Open a pull request against the release branch
+   (`gh pr create --base release/<version>`) with a clear description of the
+   change. Never against `main`, which is the default base: only a release
+   branch merges there, and that merge is a release (see the
    [release checklist](../docs/maintainers/release-checklist.md#branch-model)).
 
 ## Code Style
