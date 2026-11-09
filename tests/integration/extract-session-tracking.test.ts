@@ -216,7 +216,7 @@ describe("hashSessionContent", () => {
     expect(hashSessionContent(a)).not.toBe(hashSessionContent(b));
   });
 
-  test("hashes the RAW event stream (config maxTotalChars / truncation must not change it)", () => {
+  test("hashes the RAW event stream (truncation must not change it)", () => {
     // Two identical sessions; the hash must be stable irrespective of any
     // downstream pre-filter/truncation config (hash is computed on data.events).
     const a = fakeSession("ses_raw", 1_000_000, { text: "x".repeat(100_000) });
@@ -1172,7 +1172,6 @@ describe("akmExtract — R4 transient outcomes stay retryable (null content_hash
     // outcome does not depend on a fragile low-signal fixture.
     const config = configEnabled(stash);
     const extractProcess = config.improve?.strategies?.tracking?.processes?.extract as Record<string, unknown>;
-    extractProcess.minContentChars = 1;
     extractProcess.triage = { enabled: true, minScore: 999_999 };
 
     let chatCalls = 0;

@@ -167,15 +167,15 @@ An explicit ref scope bypasses every gate. Consolidation, extract, and schema re
 
 ## Strategy processes
 
-A strategy is `improve.strategies.<name>` (config) or a built-in under `src/assets/improve-strategies/*.json` (`default` and `consolidate`). Its `processes` block configures eight processes (`IMPROVE_PROCESS_NAMES`, `src/core/config/engine-semantics.ts`; schemas in `src/core/config/schema/improve-processes.ts`). Every process takes `enabled`; the table lists the fields that are particular to each. A strategy says which processes run and how each is tuned, never where: where each model-calling process runs is `improve.processes.<name>` (`connection` or `harness`, `model`, `llm`, `timeoutMs`), over `improve.connection` / `improve.harness` and the defaults ([Where each process runs](../../reference/configuration.md#where-each-process-runs)).
+A strategy is `improve.strategies.<name>` (config) or a built-in under `src/assets/improve-strategies/*.json` (`default` and `consolidate`). Its `processes` block configures eight processes (`IMPROVE_PROCESS_NAMES`, `src/core/config/engine-semantics.ts`; schemas in `src/core/config/schema/improve-processes.ts`). Every process takes `enabled`; the table lists the fields that are particular to each. A strategy says which processes run and how each is tuned, never where: where each model-calling process runs is `improve.processes.<name>` (`connection` or `harness`, `model`, `timeoutMs`), over `improve.connection` / `improve.harness` and the defaults ([Where each process runs](../../reference/configuration.md#where-each-process-runs)).
 
 | Process | Does | Particular fields |
 |---|---|---|
 | `reflect` | Revises an asset's `description`, `when_to_use`, and title from negative feedback | `allowedTypes`, `limit`, `qualityGate`, `defectFilter` |
 | `distill` | Turns a memory and its feedback into a lesson or knowledge proposal | `allowedTypes`, `qualityGate`, `requirePlannedRefs`, `cls` |
 | `consolidate` | Promote pass and pair pass over memories | `allowedTypes`, `limit`, `maxChunkSize` |
-| `memoryInference` | Writes derived memories and marks parents (`inferenceProcessed`); gated by `experimental.improveAutonomy` | `minPendingCount` |
-| `extract` | Queues proposals from coding-agent session transcripts (the same pass as `akm proposal extract`) | `defaultSince`, `maxTotalChars`, `minContentChars`, `triage` (`enabled`, `minScore`), `minNewSessions`, `maxSessionsPerRun`, `indexSessions`, `minSessionDuration` |
+| `memoryInference` | Writes derived memories and marks parents (`inferenceProcessed`); gated by `experimental.improveAutonomy` | none beyond `enabled` |
+| `extract` | Queues proposals from coding-agent session transcripts (the same pass as `akm proposal extract`) | `triage` (`enabled`, `minScore`), `minNewSessions`, `indexSessions`, `minSessionDuration` |
 | `validation` | Checks that planned refs exist and lessons have a `description`; where it can run a model, attempts schema repair (proposals with `source: "schema-repair"`) | none beyond `enabled` |
 | `triage` | Drains the pending-proposal backlog before the loop | `applyMode` (`queue` or `promote`), `maxAcceptsPerRun`, `judgment` (boolean or `{ enabled }`; the judgment runs where `improve.processes.triage` says) |
 | `proactiveMaintenance` | Picks assets due for review that have no fresh feedback and plans them with the feedback-bearing refs; makes no model call | `dueDays`, `maxPerRun` |

@@ -75,23 +75,15 @@ describe("triage judgment config normalization (#814)", () => {
     }
   });
 
-  test("where triage's judgment runs is improve.processes.triage, which tolerates unknown LLM keys and keeps extraParams", () => {
-    for (const llmOverrides of [{ tempertaure: 0.2 }, { futureTopLevelKnob: true }]) {
+  test("where triage's judgment runs is improve.processes.triage, which tolerates unknown keys, a leftover `llm` among them", () => {
+    for (const unknown of [{ llm: { temperature: 0.2 } }, { futureTopLevelKnob: true }]) {
       expect(
         validateConfigShape({
           configVersion: "0.9.0",
-          improve: { processes: { triage: { llm: llmOverrides } } },
+          improve: { processes: { triage: unknown } },
         }).ok,
       ).toBe(true);
     }
-
-    const extraParams = { providerFeature: { nested: [1, true, "kept"] }, arbitrary_number: 7 };
-    const live = validateConfigShape({
-      configVersion: "0.9.0",
-      improve: { processes: { triage: { llm: { extraParams } } } },
-    });
-    if (!live.ok) throw new Error(JSON.stringify(live.errors));
-    expect(live.value.improve?.processes?.triage?.llm?.extraParams).toEqual(extraParams);
   });
 
   test("triage may name a connection or harness that is not configured: it is resolved when used", () => {

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Settings that said one thing and did another: `improve.model/llm/timeoutMs` named, the inert `index` section and the
+ * Settings that said one thing and did another: `improve.model/timeoutMs` named, the inert `index` section and the
  * keys with no reader gone, a retired `engine` named honestly, and the redaction of secret-shaped connection fields.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -48,18 +48,17 @@ const CONNECTIONS = {
   cloud: { endpoint: "http://cloud:1/v1", models: { fast: "c-fast" } },
 };
 
-describe("improve.model, improve.llm and improve.timeoutMs are named keys", () => {
+describe("improve.model and improve.timeoutMs are named keys", () => {
   test("they load with no unknown-key warning and read back through config get", () => {
     writeConfig({
       configVersion: "0.9.0",
       connections: CONNECTIONS,
-      improve: { model: "big", llm: { temperature: 0.2 }, timeoutMs: 90_000 },
+      improve: { model: "big", timeoutMs: 90_000 },
     });
     expect(loadWarnings().filter((w) => w.includes("Unknown config key"))).toEqual([]);
     const config = loadUserConfig();
     expect(configGet(config as never, "improve.model")).toBe("big");
     expect(configGet(config as never, "improve.timeoutMs")).toBe(90_000);
-    expect(configGet(config as never, "improve.llm")).toEqual({ temperature: 0.2 });
   });
 
   test("improve.* is the base every model-work call starts from, and a process entry is nearer", () => {
@@ -83,7 +82,7 @@ describe("improve.model, improve.llm and improve.timeoutMs are named keys", () =
   });
 });
 
-describe("a bad improve.model, improve.llm or improve.timeoutMs is warned about once and ignored", () => {
+describe("a bad improve.model or improve.timeoutMs is warned about once and ignored", () => {
   const BAD: Array<[string, Record<string, unknown>]> = [
     ["model", { model: "" }],
     ["model", { model: 5 }],
@@ -92,8 +91,6 @@ describe("a bad improve.model, improve.llm or improve.timeoutMs is warned about 
     ["timeoutMs", { timeoutMs: 1.5 }],
     ["timeoutMs", { timeoutMs: "abc" }],
     ["timeoutMs", { timeoutMs: 999_999_999_999 }],
-    ["llm", { llm: "x" }],
-    ["llm", { llm: { temperature: "hot" } }],
   ];
 
   test.each(BAD)("improve.%s %j loads, warns once, and is not in the effective config", (key, improve) => {
@@ -107,7 +104,7 @@ describe("a bad improve.model, improve.llm or improve.timeoutMs is warned about 
     writeConfig({
       configVersion: "0.9.0",
       connections: CONNECTIONS,
-      improve: { model: "", timeoutMs: -5, llm: "x", connection: "cloud" },
+      improve: { model: "", timeoutMs: -5, connection: "cloud" },
     });
     const result = await runCliCapture(["migrate", "apply"]);
     expect(result.code, result.stderr).toBe(0);
@@ -120,12 +117,12 @@ describe("a bad improve.model, improve.llm or improve.timeoutMs is warned about 
     writeConfig({
       configVersion: "0.9.0",
       connections: CONNECTIONS,
-      improve: { model: "big", timeoutMs: 5000, llm: "x" },
+      improve: { model: "big", timeoutMs: -5 },
     });
     loadWarnings();
     const config = loadUserConfig();
     expect(configGet(config as never, "improve.model")).toBe("big");
-    expect(configGet(config as never, "improve.timeoutMs")).toBe(5000);
+    expect(configGet(config as never, "improve.timeoutMs")).toBeNull();
   });
 });
 
@@ -196,6 +193,29 @@ describe("keys with no reader are unknown keys", () => {
     ["registries.0.options", { registries: [{ url: "https://example.com/i.json", options: { a: 1 } }] }],
     ["improve.strategies.mine.description", { improve: { strategies: { mine: { description: "x" } } } }],
     ["improve.strategies.mine.limit", { improve: { strategies: { mine: { limit: 5 } } } }],
+    ["improve.llm", { improve: { llm: { temperature: 0.2 } } }],
+    ["improve.processes.reflect.llm", { improve: { processes: { reflect: { llm: { temperature: 0.2 } } } } }],
+    ["improve.qualityGate.llm", { improve: { qualityGate: { llm: { temperature: 0.2 } } } }],
+    [
+      "improve.strategies.mine.processes.extract.maxSessionsPerRun",
+      { improve: { strategies: { mine: { processes: { extract: { maxSessionsPerRun: 5 } } } } } },
+    ],
+    [
+      "improve.strategies.mine.processes.extract.defaultSince",
+      { improve: { strategies: { mine: { processes: { extract: { defaultSince: "7d" } } } } } },
+    ],
+    [
+      "improve.strategies.mine.processes.memoryInference.minPendingCount",
+      { improve: { strategies: { mine: { processes: { memoryInference: { minPendingCount: 5 } } } } } },
+    ],
+    [
+      "improve.strategies.mine.processes.distill.cls.adjacentCount",
+      { improve: { strategies: { mine: { processes: { distill: { cls: { adjacentCount: 5 } } } } } } },
+    ],
+    [
+      "embedding.ollamaOptions",
+      { embedding: { endpoint: "http://lab:1/v1", model: "m", ollamaOptions: { num_ctx: 1 } } },
+    ],
   ])("%s is named once by the unknown-key warning and the config still loads", (dotted, fragment) => {
     writeConfig({ configVersion: "0.9.0", ...fragment });
     const found = unknownConfigKeyPaths({ configVersion: "0.9.0", ...fragment } as Record<string, unknown>).map((p) =>

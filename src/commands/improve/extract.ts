@@ -94,7 +94,7 @@ export type { AkmExtractResult, ExtractedSessionResult } from "../../core/improv
 const DEFAULT_MIN_SESSION_DURATION_MINUTES = 5;
 /** Raw session size (chars) below which the LLM call is skipped; only truly empty sessions are safe to skip. */
 const DEFAULT_MIN_CONTENT_CHARS = 10;
-/** New sessions LLM-processed per run (`processes.extract.maxSessionsPerRun`, 0 disables); the rest wait for later runs. */
+/** New sessions LLM-processed per run; the rest wait for later runs. A run with `--since` is uncapped. */
 const DEFAULT_MAX_SESSIONS_PER_RUN = 25;
 /**
  * Without an explicit window, discovery looks back to the last extract run for
@@ -335,21 +335,6 @@ export function parseSinceArg(value: string | undefined, now: number = Date.now(
   );
 }
 
-/** A strategy's `defaultSince` that parses, else `undefined` with one warning: a bad config value is ignored, never a flag error. */
-export function usableDefaultSince(value: string | undefined): string | undefined {
-  if (!value) return value;
-  try {
-    parseSinceArg(value);
-    return value;
-  } catch {
-    warnOnce(
-      `extract:defaultSince:${value}`,
-      `Ignoring processes.extract.defaultSince "${value}": expected an ISO timestamp or a duration like 24h / 7d / 30m / 3M.`,
-    );
-    return undefined;
-  }
-}
-
 /**
  * Assemble candidate metadata once in the authoritative Markdown that acceptance
  * publishes. The payload projection is for proposal readers, not another write path.
@@ -469,8 +454,6 @@ type Triage = { enabled: boolean; minScore: number };
 // ── Planning ─────────────────────────────────────────────────────────────────
 
 interface SessionGateOptions {
-  maxTotalChars: number | undefined;
-  minContentChars: number;
   triage: Triage;
 }
 
@@ -515,14 +498,11 @@ async function runPreLlmSessionGates(
   }
   // The prompt sees only parent-origin events; subagent work still reaches
   // the hash above and the inline-ref harvest.
-  const filtered = preFilterSession(
-    { ...data, events: data.events.filter((e) => e.filePath === data.ref.filePath) },
-    typeof gates.maxTotalChars === "number" ? { maxTotalChars: gates.maxTotalChars } : {},
-  );
+  const filtered = preFilterSession({ ...data, events: data.events.filter((e) => e.filePath === data.ref.filePath) });
   // Measured on the full raw stream: pre-filtered size says little about value.
   const rawChars = data.events.reduce((sum, event) => sum + event.text.length, 0);
   const skipReason =
-    gates.minContentChars > 0 && rawChars < gates.minContentChars
+    rawChars < DEFAULT_MIN_CONTENT_CHARS
       ? "too_short"
       : gates.triage.enabled && !sessionTriagePasses(data, gates.triage.minScore)
         ? "triaged_out"
@@ -1130,20 +1110,13 @@ function resolveExtractRun(
     llmRunner: runner,
     notices,
     gates: {
-      maxTotalChars: typeof process?.maxTotalChars === "number" ? process.maxTotalChars : undefined,
-      minContentChars:
-        typeof process?.minContentChars === "number" ? process.minContentChars : DEFAULT_MIN_CONTENT_CHARS,
       triage: {
         enabled: triage?.enabled === true,
         minScore: typeof triage?.minScore === "number" ? triage.minScore : DEFAULT_TRIAGE_MIN_SCORE,
       },
     },
-    maxSessionsPerRun: options.since
-      ? 0
-      : typeof process?.maxSessionsPerRun === "number"
-        ? process.maxSessionsPerRun
-        : DEFAULT_MAX_SESSIONS_PER_RUN,
-    effectiveSince: options.since ?? usableDefaultSince(process?.defaultSince),
+    maxSessionsPerRun: options.since ? 0 : DEFAULT_MAX_SESSIONS_PER_RUN,
+    effectiveSince: options.since,
     sessionIndexing: {
       enabled: process?.indexSessions ?? true,
       minDurationMinutes:
@@ -1327,7 +1300,7 @@ export async function akmExtract(options: AkmExtractOptions): Promise<AkmExtract
   }
   if (tally.deferred > 0) {
     topLevelWarnings.push(
-      `Reached maxSessionsPerRun=${resolved.maxSessionsPerRun}; ${tally.deferred} session(s) deferred to a later run.`,
+      `Reached the per-run limit of ${resolved.maxSessionsPerRun} sessions; ${tally.deferred} session(s) deferred to a later run.`,
     );
   }
   // Every skip reason is counted; infrastructure failures also get a warning line.
@@ -1421,9 +1394,7 @@ export async function countNewExtractCandidates(
   _config: AkmConfig,
   options: CountNewExtractCandidatesOptions = {},
 ): Promise<number> {
-  const effectiveSince =
-    options.since ?? usableDefaultSince(getImproveProcessConfig("extract", options.improveProfile)?.defaultSince);
-  const explicitSinceMs = effectiveSince ? parseSinceArg(effectiveSince) : undefined;
+  const explicitSinceMs = options.since ? parseSinceArg(options.since) : undefined;
   const harnesses = (options.harnesses ?? getAvailableHarnesses()).filter((h) => h.isAvailable());
   let stateDb: Database | undefined = options.stateDb;
   let openedStateDb = false;

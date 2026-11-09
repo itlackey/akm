@@ -79,50 +79,6 @@ describe("runMemoryInferenceMaintenancePass", () => {
     expect(out.warnings).toEqual([]);
   });
 
-  test("minPendingCount gate skips when the stash has fewer pending parents", async () => {
-    const stash = freshStash();
-    const ctx = makeCtx(stash, {
-      improveProfile: { processes: { memoryInference: { minPendingCount: 5 } } } as MaintenanceCtx["improveProfile"],
-    });
-
-    const out = await runMemoryInferenceMaintenancePass(ctx, { current: fakeDb }, new Set());
-
-    expect(out.memoryInference).toBeUndefined();
-    expect(out.warnings).toEqual([]);
-  });
-
-  test("minPendingCount gate does not count a parent with a cached no-change decision (#1219)", async () => {
-    const stash = freshStash();
-    const file = path.join(stash, "memories", "note.md");
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, "---\ndescription: note\n---\n\nTool calls this session: Read 12.\n", "utf8");
-    const db = openIndexDatabase(path.join(stash, "index.db"));
-    try {
-      upsertLlmCacheEntry(
-        db,
-        file,
-        computeBodyHash(collectPendingMemories(stash)[0]!.effectiveInput),
-        JSON.stringify({ noChange: true }),
-        "memory-inference-v5",
-      );
-      const ctx = makeCtx(stash, {
-        improveProfile: { processes: { memoryInference: { minPendingCount: 1 } } } as MaintenanceCtx["improveProfile"],
-      });
-
-      // Only a cached decision is pending: below the gate, so the seam is not reached.
-      const out = await runMemoryInferenceMaintenancePass(ctx, { current: db }, new Set());
-      expect(out.memoryInference).toBeUndefined();
-      expect(out.warnings).toEqual([]);
-
-      // Editing the body makes the parent count again, so the gate admits the pass.
-      fs.writeFileSync(file, "---\ndescription: note\n---\n\nThe retry cap is 30s via http.retryCap.\n", "utf8");
-      const admitted = await runMemoryInferenceMaintenancePass(ctx, { current: db }, new Set());
-      expect(admitted.warnings).toEqual(["memory inference failed: memoryInferenceFn not expected in this scenario"]);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
   test("success returns the result, the memories/_inference action, and the pass duration", async () => {
     const stash = freshStash();
     const result = inferenceResult({ writtenFacts: 3, splitParents: 1 });

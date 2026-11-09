@@ -791,7 +791,7 @@ describe("#800 effective dry-run planner", () => {
 
   test("real OpenCode held-WAL discovery leaves its live main, WAL, and SHM byte-identical", async () => {
     const storage = isolatedStorage();
-    const config = plannerConfig({ extract: { enabled: true, minNewSessions: 1, defaultSince: "7d" } });
+    const config = plannerConfig({ extract: { enabled: true, minNewSessions: 1 } });
     await indexSkills(storage.stashDir, 1, config);
 
     const opencodeDir = path.join(storage.root, "opencode");

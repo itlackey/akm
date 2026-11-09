@@ -12,7 +12,7 @@ import { isRecord } from "../../../src/core/common";
 import { type Conversion, type Dict, type EngineTarget, objectAt, str } from "./convert-engines-shared";
 
 /** What a strategy's process, quality gate or judgment once said about where it runs and how. */
-const EXECUTION_KEYS = ["connection", "harness", "model", "llm", "timeoutMs"] as const;
+const EXECUTION_KEYS = ["connection", "harness", "model", "timeoutMs"] as const;
 
 export type Retarget = (holder: unknown, where: string) => void;
 
@@ -32,13 +32,21 @@ export function retargeter(conversion: Conversion, target: (engine: string) => E
 /**
  * A strategy's `engine`, `model`, `llm` and `timeoutMs` are dropped (it says which processes run, not where), and
  * where its processes, quality gates and triage judgment said a process runs moves to `improve.processes.<name>` /
- * `improve.qualityGate`; the first strategy to say it wins.
+ * `improve.qualityGate`; the first strategy to say it wins. Their `llm` is dropped with a note: a model alias on the
+ * connection carries inference settings now.
  */
 export function moveStrategyExecution(improve: Dict, conversion: Conversion, retarget: Retarget): void {
   if (!isRecord(improve.strategies)) return;
   const hoist = (holder: unknown, from: string, place: string, destination: () => Dict): void => {
     if (!isRecord(holder)) return;
     retarget(holder, `${from}.engine`);
+    if ("llm" in holder) {
+      delete holder.llm;
+      conversion.changed = true;
+      conversion.notes.push(
+        `${from}.llm: improve no longer reads inference settings here; set them on a model alias of the connection (\`connections.<name>.models.<alias>\`) and name it with \`model\`. It is dropped.`,
+      );
+    }
     const found = EXECUTION_KEYS.filter((key) => key in holder);
     if (found.length === 0) return;
     conversion.changed = true;

@@ -57,7 +57,7 @@ import {
 import { computeSafeChunkSize, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
 import { contentHash } from "./content-hash";
 import { buildUtilityMap, dedupeRefs, findAssetFilePath, isDistillCandidateRef, withIndexDb } from "./eligibility";
-import { akmExtract, countNewExtractCandidates, type ResolvedExtractPlan, usableDefaultSince } from "./extract";
+import { akmExtract, countNewExtractCandidates, type ResolvedExtractPlan } from "./extract";
 import { computeValenceScore } from "./feedback-valence";
 import type {
   AkmImproveOptions,
@@ -298,13 +298,11 @@ async function inspectExtractPass(args: ImprovePreparationStageArgs, readOnly: b
   const minNewSessions = typeof configured === "number" ? configured : 0;
   let newCandidateCount: number | undefined;
   if (enabled && hasRunner && availableHarnesses.length > 0 && minNewSessions > 0) {
-    const defaultSince = usableDefaultSince(improveProfile.processes?.extract?.defaultSince);
     newCandidateCount = await (options.extractCandidateCountFn ?? countNewExtractCandidates)(
       options.config ?? loadConfig(),
       {
         harnesses: availableHarnesses,
         improveProfile,
-        ...(defaultSince ? { since: defaultSince } : {}),
         ...(eventsCtx?.db ? { stateDb: eventsCtx.db } : {}),
         ...(!readOnly && eventsCtx?.dbPath ? { stateDbPath: eventsCtx.dbPath } : {}),
         ...(readOnly ? { readOnly: true } : {}),

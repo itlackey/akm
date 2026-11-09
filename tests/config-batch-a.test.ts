@@ -18,7 +18,7 @@ import { normalizeConfigFile } from "../scripts/akm-migrate/config/normalize";
 import { main } from "../src/cli";
 import { parseIntegerFlag } from "../src/cli/parse-args";
 import { assertKnownFlags, type FlagScanCommand } from "../src/cli/unknown-flags";
-import { parseSinceArg, usableDefaultSince } from "../src/commands/improve/extract";
+import { parseSinceArg } from "../src/commands/improve/extract";
 import { parseWorkflowParameterFlags } from "../src/commands/workflow-cli";
 import { resolveConfiguredBundlePath, resolveStashDir } from "../src/core/common";
 import { parseAndValidateConfigText } from "../src/core/config/config";
@@ -169,18 +169,6 @@ describe("one duration grammar", () => {
 
   test("`--since 24H` typed on the command line is a usage error", () => {
     for (const bad of ["24H", "7D", "5 m"]) expect(() => parseSinceArg(bad, now)).toThrow(UsageError);
-  });
-
-  test("a bad `processes.extract.defaultSince` warns once and is ignored, not a flag error", () => {
-    const { value, warnings } = captureWarnings(() => [
-      usableDefaultSince("7D"),
-      usableDefaultSince("7D"),
-      usableDefaultSince("7d"),
-      usableDefaultSince(undefined),
-    ]);
-    expect(value).toEqual([undefined, undefined, "7d", undefined]);
-    expect(warnings.filter((w) => w.includes("defaultSince"))).toHaveLength(1);
-    expect(warnings[0]).not.toContain("--since");
   });
 });
 

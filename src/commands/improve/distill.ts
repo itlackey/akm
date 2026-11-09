@@ -1396,13 +1396,12 @@ async function buildDistillMessages(
 ): Promise<{ system: string; prompt: string }> {
   const rejectedProposals = rejectedProposalContext(run.stash, run.inputRef, run.options.ctx, run.options.eventsCtx);
   // CLS interleaving (default on): show the related lessons, knowledge notes and skills, so the writer neither repeats nor overwrites them.
-  const cls =
-    (getImproveProcessConfig("distill", run.profile)?.cls as { enabled?: boolean; adjacentCount?: number }) ?? {};
+  const cls = (getImproveProcessConfig("distill", run.profile)?.cls as { enabled?: boolean }) ?? {};
   let clsContext = "";
   if (cls.enabled !== false) {
     try {
       const query = run.asset.content ? run.asset.content.slice(0, 500) : run.inputRef;
-      clsContext = buildClsContext(await run.related(query, cls.adjacentCount ?? DEFAULT_CLS_ADJACENT_COUNT), cls);
+      clsContext = buildClsContext(await run.related(query, DEFAULT_CLS_ADJACENT_COUNT), cls);
     } catch {
       // CLS context is supplemental.
     }
