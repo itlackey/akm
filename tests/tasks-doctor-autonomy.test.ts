@@ -153,3 +153,25 @@ describe("tasks doctor autonomy reporting", () => {
     expect(result.improveTriage?.applyMode).toBe("promote");
   });
 });
+
+describe("tasks doctor without a default bundle", () => {
+  beforeEach(() => {
+    delete process.env.AKM_BUNDLE_DIR;
+  });
+
+  test("succeeds when nothing is enabled", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    resetConfigCache();
+    const result = await akmTasksDoctor();
+    expect(result.warnings.filter((warning) => warning.includes("cannot run"))).toEqual([]);
+  });
+
+  test("succeeds and warns naming an enabled ref", async () => {
+    saveConfig({ semanticSearchMode: "off", scheduler: { enabled: ["stash//tasks/ok"] } });
+    resetConfigCache();
+    const result = await akmTasksDoctor();
+    expect(
+      result.warnings.some((warning) => warning.includes("stash//tasks/ok") && warning.includes("cannot run")),
+    ).toBe(true);
+  });
+});

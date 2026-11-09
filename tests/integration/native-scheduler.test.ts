@@ -3,7 +3,7 @@
  * entry. The double opt-in prevents a developer from touching a live scheduler:
  * the explicit gate is rejected unless this is a disposable GitHub runner.
  *
- * The scenario is the one the design rests on, with nothing faked: `task sync`
+ * The scenario is the one the design rests on, with nothing faked: `task enable`
  * installs the one entry; the OS itself runs `akm task dispatch` (kickstart /
  * `schtasks /Run`); dispatch starts a due task detached and exits; and that
  * task is still running after the OS reports dispatch finished, and completes.
@@ -180,12 +180,15 @@ async function scenario(input: {
     const body = `${process.platform === "win32" ? "shell: powershell\n" : ""}run: ${JSON.stringify(command)}`;
     fs.writeFileSync(path.join(stashDir, "tasks", `${id}.yml`), `version: 4\n${body}\nschedule: "* * * * *"\n`);
 
-    expectSuccess(cli(["task", "enable", `stash//tasks/${id}`]), "task enable");
+    // `enable` syncs the OS scheduler: the first enabled task installs the one entry, so a `sync` after it has nothing to do.
+    const enable = cli(["task", "enable", `stash//tasks/${id}`]);
+    expectSuccess(enable, "task enable");
     enabled = true;
+    expect(JSON.parse(enable.stdout)).toMatchObject({ sync: { entry: "installed", removedLegacy: [] } });
+    expect(entryInstalled(env)).toBe(true);
     const sync = cli(["task", "sync"]);
     expectSuccess(sync, "task sync");
-    expect(JSON.parse(sync.stdout)).toMatchObject({ entry: "installed", removedLegacy: [] });
-    expect(entryInstalled(env)).toBe(true);
+    expect(JSON.parse(sync.stdout)).toMatchObject({ entry: "unchanged", removedLegacy: [] });
     const definition =
       process.platform === "win32"
         ? run(["schtasks", "/Query", "/TN", nativeTarget(), "/XML"], env).stdout
@@ -207,12 +210,17 @@ async function scenario(input: {
       await waitFor(() => history(cli, id).some((row) => row.status === "active"), 90_000),
       "the task started",
     ).toBe(true);
-    // From now on nothing else may start it; the run in flight is the one under test.
-    expectSuccess(cli(["task", "disable", `stash//tasks/${id}`]), "task disable");
-    enabled = false;
     // The dispatch process has exited by then: the OS no longer reports the entry running, and the task still is.
+    // (Checked before `disable`, which removes the entry and would make this vacuous.)
     expect(await waitFor(() => !entryRunning(env), 30_000), "the OS reports dispatch finished").toBe(true);
     expect(fs.existsSync(marker), "the task is still running after dispatch has exited").toBe(false);
+    // From now on nothing else may start it; the run in flight is the one under test. Disabling the last enabled
+    // task syncs the OS scheduler too, removing the entry, and the run in flight survives that.
+    const disable = cli(["task", "disable", `stash//tasks/${id}`]);
+    expectSuccess(disable, "task disable");
+    enabled = false;
+    expect(JSON.parse(disable.stdout)).toMatchObject({ sync: { entry: "removed" } });
+    expect(entryInstalled(env), "disabling the last enabled task removes the entry").toBe(false);
 
     expect(await waitFor(() => fs.existsSync(marker), 60_000), "the detached task finished").toBe(true);
     expect(await waitFor(() => history(cli, id).every((row) => row.status !== "active"), 30_000)).toBe(true);

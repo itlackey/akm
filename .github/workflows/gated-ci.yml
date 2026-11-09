@@ -160,7 +160,7 @@ jobs:
             bun test --timeout=180000 tests/integration/linux-standalone-scheduler.test.ts
 
       # The macOS and Windows steps below run the gate in tests/integration/native-scheduler.test.ts against the real
-      # per-user scheduler: `task sync` installs the one `akm task dispatch` entry, the OS runs it, and the task it
+      # per-user scheduler: `task enable` installs the one `akm task dispatch` entry, the OS runs it, and the task it
       # starts must still be running after the OS reports dispatch finished, then complete. To run it by hand on a
       # disposable macOS or Windows machine, set the AKM_NATIVE_* variables exactly as the steps do and run
       # `bun test --timeout=240000 tests/integration/native-scheduler.test.ts` (see the file's header).
