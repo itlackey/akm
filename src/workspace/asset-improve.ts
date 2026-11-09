@@ -4,7 +4,7 @@
 
 /** What improve proposed for one asset, how it was decided, and how the asset has been used since. */
 
-import { metricsWindow, readUsageRows } from "../commands/metrics/metrics-cli";
+import { metricsWindow, readUsageRows } from "../commands/metrics/metrics";
 import { UsageError } from "../core/errors";
 import { listStateProposals } from "../storage/repositories/proposals-repository";
 import { classifyOutcome, decidedAt, weekOf, weekRange } from "./derive";

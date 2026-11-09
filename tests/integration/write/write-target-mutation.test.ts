@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
-import { type ResolvedWriteTarget, withWriteTargetMutation } from "../../../src/core/write-source";
+import { type ResolvedWriteTarget, withWriteTargetMutation } from "../../../src/sources/write-source";
 
 const roots: string[] = [];
 

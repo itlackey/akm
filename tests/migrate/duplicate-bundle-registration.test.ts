@@ -28,7 +28,7 @@ import { inspectEngineKeysMigration } from "../../scripts/akm-migrate/engine-key
 import { withPrimaryBundle } from "../../src/commands/sources/bundle-config-ops";
 import { type AkmConfig, bundleContentRoot, bundleKeyForContentRoot } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
-import { resolveWorkingStashTarget } from "../../src/core/write-source";
+import { resolveWorkingStashTarget } from "../../src/sources/write-source";
 import { withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 function writeV2Task(tasksDir: string, name: string): void {

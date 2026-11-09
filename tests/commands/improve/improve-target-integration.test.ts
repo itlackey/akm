@@ -5,9 +5,9 @@ import { akmConsolidate } from "../../../src/commands/improve/consolidate";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
 import { ConfigError, UsageError } from "../../../src/core/errors";
-import { resolveWriteTarget } from "../../../src/core/write-source";
 import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { getWebsiteCachePaths } from "../../../src/sources/snapshot-fetchers/website-ingest";
+import { resolveWriteTarget } from "../../../src/sources/write-source";
 import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { seedLockEntries } from "../../_helpers/lockfile";
 import {

@@ -24,9 +24,18 @@ import { type AssetRef, conceptIdFromTypeName, parsePlacementRef } from "../../c
 import { isHttpUrl, isWithin, resolveStashDir, tryReadStdinText } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import { resolveBundleWriteTarget, resolveMutationTarget } from "../../core/mutation-target";
 import { resolveStashStandards } from "../../core/standards/resolve-stash-standards";
 import { warn } from "../../core/warn";
+import { withAssetMutationLease } from "../../indexer/index-writer-lock";
+import { indexWrittenAssets } from "../../indexer/index-written-assets";
+import { deriveInstallations, slugForPath } from "../../indexer/installations";
+import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import { resolveBundleWriteTarget, resolveMutationTarget } from "../../sources/mutation-target";
+import { storeSecretResolver } from "../../sources/snapshot-fetchers/secret-seam";
+import {
+  fetchWebsiteMarkdownSnapshot,
+  shouldAllowPrivateWebsiteUrlForTests,
+} from "../../sources/snapshot-fetchers/website-ingest";
 import {
   commitWriteTargetBoundary,
   formatRefForMessage,
@@ -34,16 +43,7 @@ import {
   recordWriteTargetPath,
   resolveWriteTarget,
   writeAssetToSource,
-} from "../../core/write-source";
-import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { indexWrittenAssets } from "../../indexer/index-written-assets";
-import { deriveInstallations, slugForPath } from "../../indexer/installations";
-import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { storeSecretResolver } from "../../sources/snapshot-fetchers/secret-seam";
-import {
-  fetchWebsiteMarkdownSnapshot,
-  shouldAllowPrivateWebsiteUrlForTests,
-} from "../../sources/snapshot-fetchers/website-ingest";
+} from "../../sources/write-source";
 import { writeSupersededEdge } from "../improve/memory/memory-belief";
 import { refToRelPath, resolveRefPathInStash } from "../lint/base-linter";
 

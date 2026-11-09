@@ -7,12 +7,12 @@
  * while it is `false`. `akm info` reads it; `akm setup --learning` and the workspace `setup.apply` write it.
  */
 
-import { assertUnsettable, setConfigValue, unsetConfigValue } from "../commands/config-cli";
+import { assertUnsettable, setConfigValue, unsetConfigValue } from "../commands/config";
 import { targetRows } from "../commands/targets";
 import { makeBundleRef } from "../core/asset/asset-ref";
 import { type AkmConfig, loadConfig, mutateConfig, resetConfigCache } from "../core/config/config";
 import { IMPROVE_ENGINE_PROCESSES } from "../core/config/engine-semantics";
-import { resolveWriteTarget } from "../core/write-source";
+import { resolveWriteTarget } from "../sources/write-source";
 import { schedulerEnabledRefs } from "../tasks/activation-config";
 
 /**

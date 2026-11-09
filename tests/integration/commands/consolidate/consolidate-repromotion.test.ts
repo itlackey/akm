@@ -32,7 +32,7 @@ import { akmProposalAccept, akmProposalReject } from "../../../../src/commands/p
 import { createProposal, listProposals, recordGateDecision } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { openStateDatabase } from "../../../../src/core/state-db";
-import { resolveWriteTarget } from "../../../../src/core/write-source";
+import { resolveWriteTarget } from "../../../../src/sources/write-source";
 import {
   getImproveLedgerRow,
   listImproveLedgerRows,

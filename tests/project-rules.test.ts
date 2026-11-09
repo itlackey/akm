@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { runCurate } from "../src/commands/read/search-cli";
+import { runCurate } from "../src/commands/read/curate-run";
 import { resetConfigCache, saveConfig } from "../src/core/config/config";
 import { getStateDbPath } from "../src/core/state-db";
 import { akmIndex } from "../src/indexer/indexer";

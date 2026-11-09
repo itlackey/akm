@@ -13,7 +13,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { buildDistillPrompt } from "../src/commands/improve/distill";
-import { buildProposePrompt, buildReflectPrompt } from "../src/integrations/agent/prompts";
+import { buildProposePrompt, buildReflectPrompt } from "../src/commands/prompts";
 
 /**
  * Distinctive substrings from FRONTMATTER_BODY_RULES in authoring-rules.ts.

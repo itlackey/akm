@@ -13,7 +13,7 @@
  */
 
 import { renderOutput } from "./cli/shared";
-import { runCurate } from "./commands/read/search-cli";
+import { runCurate } from "./commands/read/curate-run";
 import { loadConfig } from "./core/config/config";
 import { UsageError } from "./core/errors";
 import { withQuiet } from "./core/warn";

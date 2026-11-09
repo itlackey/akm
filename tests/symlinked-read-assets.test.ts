@@ -8,7 +8,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { resolveEnvPath, resolveSecretPath } from "../src/core/env-secret-ref";
+import { resolveEnvPath, resolveSecretPath } from "../src/sources/env-secret-ref";
 import { resolveAssetPath } from "../src/sources/resolve";
 import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
 

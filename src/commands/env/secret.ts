@@ -33,7 +33,6 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { safeRealpath, writeFileAtomic } from "../../core/common";
-import { sensitiveMarkerPath } from "../../core/env-secret-ref";
 import {
   createLockPayload,
   type LockOwnership,
@@ -44,6 +43,7 @@ import {
 } from "../../core/file-lock";
 import { getDataDir } from "../../core/paths";
 import { sleepSync } from "../../runtime";
+import { sensitiveMarkerPath } from "../../sources/env-secret-ref";
 
 // ── Write-lock helper ─────────────────────────────────────────────────────────
 

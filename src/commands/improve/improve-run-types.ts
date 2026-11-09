@@ -15,11 +15,11 @@ import type {
   ImproveExecutionPlan,
   ImprovePlanGate,
 } from "../../core/improve-types";
-import type { ResolvedWriteTarget } from "../../core/write-source";
 import type { EnsureIndexOptions } from "../../indexer/ensure-index";
 import type { MemoryInferenceResult, runMemoryInferencePass } from "../../indexer/passes/memory-inference";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import type { saveGitStash } from "../../sources/providers/git";
+import type { ResolvedWriteTarget } from "../../sources/write-source";
 import type { drainProposals } from "../proposal/drain";
 import type { DeadUrl, DeadUrlCoverage } from "../url-checker";
 import type { akmDistill } from "./distill";

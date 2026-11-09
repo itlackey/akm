@@ -16,7 +16,7 @@ import {
   resolveStandaloneExtractPlan,
 } from "../../src/commands/improve/extract";
 import { EXTRACT_JSON_SCHEMA } from "../../src/commands/improve/extract-prompt";
-import { akmMetrics } from "../../src/commands/metrics/metrics-cli";
+import { akmMetrics } from "../../src/commands/metrics/metrics";
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
 import * as proposalRepository from "../../src/commands/proposal/repository";
 import { listProposals } from "../../src/commands/proposal/repository";

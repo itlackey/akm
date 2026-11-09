@@ -3,11 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import path from "node:path";
+import { type AssetRef, conceptIdFromTypeName, displayRef } from "../core/asset/resolve-ref";
+import type { AkmConfig } from "../core/config/config";
+import { UsageError } from "../core/errors";
 import { deriveInstallations } from "../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../indexer/search/search-source";
-import { type AssetRef, conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
-import type { AkmConfig } from "./config/config";
-import { UsageError } from "./errors";
 import {
   prepareWriteTargetForMutation,
   type ResolvedWriteTarget,

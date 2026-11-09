@@ -5,7 +5,7 @@
 /** `akm metrics` attaches the raw window rows for `--detail full`, and only then. */
 
 import { describe, expect, test } from "bun:test";
-import { metricsIncludeRows } from "../src/commands/metrics/metrics-cli";
+import { metricsIncludeRows } from "../src/commands/metrics/metrics";
 
 describe("metricsIncludeRows", () => {
   test.each([

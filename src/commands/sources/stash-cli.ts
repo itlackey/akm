@@ -39,15 +39,15 @@ import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { appendEvent } from "../../core/events";
-import { resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getRunLogDir } from "../../core/paths";
 import { clearLogFile, info, isVerbose, setLogFile, warn } from "../../core/warn";
-import { resolveWriteTarget } from "../../core/write-source";
 import { exportVectors } from "../../indexer/export-vectors";
 import { releaseIndexRebuildLock, tryAcquireIndexRebuildLock } from "../../indexer/index-rebuild-lock";
 import { akmIndex } from "../../indexer/indexer";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getOutputMode } from "../../output/context";
+import { resolveBundleWriteTarget } from "../../sources/mutation-target";
+import { resolveWriteTarget } from "../../sources/write-source";
 import { pkgVersion } from "../../version";
 import {
   inferAssetName,

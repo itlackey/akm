@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { loadConfig } from "../src/core/config/config";
-import { isInstalledBundle, parseEnvRef, parseSecretRef } from "../src/core/env-secret-ref";
 import { UsageError } from "../src/core/errors";
 import { resolveSourceEntries } from "../src/indexer/search/search-source";
+import { isInstalledBundle, parseEnvRef, parseSecretRef } from "../src/sources/env-secret-ref";
 import { makeStashDir, withEnv, writeSandboxConfig } from "./_helpers/sandbox";
 
 describe("env and secret refs are full akm refs", () => {

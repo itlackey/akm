@@ -20,12 +20,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { akmReflect, REFLECT_JSON_SCHEMA, runReflectIteration } from "../../../src/commands/improve/reflect";
 import { splitFrontmatter } from "../../../src/commands/improve/reflect-noise";
+import { parseAgentProposalPayload, REFLECT_TRUNCATION_MARKER } from "../../../src/commands/prompts";
 import { validateProposal } from "../../../src/commands/proposal/validators/proposals";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { readEvents } from "../../../src/core/events";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
-import { parseAgentProposalPayload, REFLECT_TRUNCATION_MARKER } from "../../../src/integrations/agent/prompts";
 import {
   _resetEndpointSupportTrackersForTests,
   _setChatCompletionForTests,

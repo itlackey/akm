@@ -10,10 +10,10 @@ import { makeBundleRef } from "../../core/asset/asset-ref";
 import { isWithin, writeFileAtomic } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
-import { defaultBundleForTarget } from "../../core/mutation-target";
 import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../../core/recognition-util";
 import { warn } from "../../core/warn";
-import { prepareWriteTargetForMutation, resolveWriteTarget, withWriteTargetMutation } from "../../core/write-source";
+import { defaultBundleForTarget } from "../../sources/mutation-target";
+import { prepareWriteTargetForMutation, resolveWriteTarget, withWriteTargetMutation } from "../../sources/write-source";
 import { checkWorkflowPlan, compileWorkflowSource } from "../compile";
 import type { WorkflowError } from "../plan";
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "../src/commands/config-cli";
+import { getConfigValue, listConfig, setConfigValue, unsetConfigValue } from "../src/commands/config";
 import type { AkmConfig } from "../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { resolveTarget } from "../src/integrations/agent/resolution";

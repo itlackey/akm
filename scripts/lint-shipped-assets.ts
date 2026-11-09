@@ -41,7 +41,7 @@
  *     `TOKEN` - comments and code syntax never reach the regex at all, which
  *     is a stronger exclusion than any hand-written carve-out could give.
  *     This is exactly the blind spot that let the retired colon grammar into
- *     `RESPONSE_CONTRACT_JSON` (`src/integrations/agent/prompts.ts`) - a
+ *     `RESPONSE_CONTRACT_JSON` (`src/commands/prompts.ts`) - a
  *     string-literal array shipped verbatim into an agent-facing prompt -
  *     undetected by the old text-only scan, which never looked at `src/**` at
  *     all outside `src/assets`.

@@ -19,7 +19,7 @@ import {
   prepareWriteTargetForMutation,
   resolveWriteTarget,
   writeAssetToSource,
-} from "../../core/write-source";
+} from "../../sources/write-source";
 import { initializeSchedulerChoice, schedulerEnabledRefs, setSchedulerRefs } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
 import { type EmbeddedTask, listEmbeddedTasks } from "../../tasks/embedded";

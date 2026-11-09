@@ -25,8 +25,8 @@ import { createProposal, listProposals } from "../../../../src/commands/proposal
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { getDbPath } from "../../../../src/core/paths";
 import { openStateDatabase } from "../../../../src/core/state-db";
-import { resolveWriteTarget } from "../../../../src/core/write-source";
 import type { IndexDocument } from "../../../../src/indexer/passes/metadata";
+import { resolveWriteTarget } from "../../../../src/sources/write-source";
 import { getImproveLedgerRow } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../../src/storage/repositories/index-entries-repository";

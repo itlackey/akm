@@ -17,9 +17,9 @@ import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { AkmError, NotFoundError } from "../../core/errors";
-import type { ResolvedWriteTarget } from "../../core/write-source";
-import { resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
+import type { ResolvedWriteTarget } from "../../sources/write-source";
+import { resolveWriteTarget } from "../../sources/write-source";
 import {
   isRetireProposal,
   type ProposalDecider,

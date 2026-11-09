@@ -27,6 +27,13 @@
 
 import fs from "node:fs";
 import type { TasksSyncResult } from "../commands/tasks/tasks";
+import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
+import { validateExplicitBundleName } from "../core/bundle-id";
+import type { AkmConfig, BundleConfigEntry } from "../core/config/config";
+import { loadConfig, mutateConfig } from "../core/config/config";
+import { NotFoundError, UsageError } from "../core/errors";
+import { getDbPath } from "../core/paths";
+import { getStateDbPath, withStateDb } from "../core/state-db";
 import { renameUsageEventRefs } from "../indexer/usage/usage-events";
 import { readLockfile, renameLockEntry } from "../integrations/lockfile";
 import { renameEventRefs } from "../storage/repositories/events-repository";
@@ -47,13 +54,6 @@ import {
 import { countWorkflowRunRefsForRename, renameWorkflowRunRefs } from "../storage/repositories/workflow-runs-repository";
 import { selectBackend } from "../tasks/backends";
 import type { InstalledSchedulerBinding, SchedulerBackend } from "../tasks/backends/types";
-import { bundleRefToString, parseBundleRef } from "./asset/asset-ref";
-import { validateExplicitBundleName } from "./bundle-id";
-import type { AkmConfig, BundleConfigEntry } from "./config/config";
-import { loadConfig, mutateConfig } from "./config/config";
-import { NotFoundError, UsageError } from "./errors";
-import { getDbPath } from "./paths";
-import { getStateDbPath, withStateDb } from "./state-db";
 
 export interface BundleRenamePlan {
   oldId: string;

@@ -4,7 +4,7 @@
 
 /** What people searched for and akm found nothing, grouped by query. */
 
-import { metricsWindow, readUsageRows } from "../commands/metrics/metrics-cli";
+import { metricsWindow, readUsageRows } from "../commands/metrics/metrics";
 import type { MetricsUsageRow } from "../commands/metrics/types";
 import { withReadonlyStateDb } from "./readers";
 

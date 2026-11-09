@@ -12,13 +12,13 @@ import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { collectCredentialValues } from "../../core/config/credentials";
 import { UsageError } from "../../core/errors";
-import { resolveMutationTarget } from "../../core/mutation-target";
 import { getRunLogDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { clearLogFile, setLogFile } from "../../core/warn";
-import { resolveWriteTarget } from "../../core/write-source";
 import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/stdout";
+import { resolveMutationTarget } from "../../sources/mutation-target";
+import { resolveWriteTarget } from "../../sources/write-source";
 import { akmImprove, buildLockSkippedResult, IMPROVE_TARGET_FLAG, resolveImproveReadSource } from "./improve";
 import { runImproveReportQuery } from "./improve-report";
 import {

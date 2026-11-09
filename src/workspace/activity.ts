@@ -7,7 +7,7 @@
 import os from "node:os";
 import { akmHealth, parseHealthSince } from "../commands/health";
 import { buildTasks } from "../commands/metrics/collect";
-import { akmMetrics, metricsWindow, readUsageRows } from "../commands/metrics/metrics-cli";
+import { akmMetrics, metricsWindow, readUsageRows } from "../commands/metrics/metrics";
 import { UsageError } from "../core/errors";
 import { listRecentImproveRuns } from "../storage/repositories/improve-runs-repository";
 import {

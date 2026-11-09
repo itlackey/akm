@@ -334,7 +334,7 @@ from the current resolved source roots, is not stored in the index, and is
 
 ## Writing to Sources
 
-Writes go through one helper: `src/core/write-source.ts`. It is the only
+Writes go through one helper: `src/sources/write-source.ts`. It is the only
 place that should branch on `source.kind`; command layers do not hold provider
 knowledge. That is a convention that code review holds (core principle 2), not
 a lint rule. Where a step is meaningful only for a publication-backed target,
@@ -743,7 +743,7 @@ expires by age. There is no shared barrier or activity registry around them;
 | `src/core/errors.ts` | error classes with stable codes and hints |
 | `src/core/parse.ts` | shared JSON parsing: think/fence stripping, balanced-brace extraction |
 | `src/core/concurrent.ts` | bounded concurrency pool (`concurrentMap`, default 1 worker) and keyed serialization |
-| `src/core/write-source.ts` | the single write helper (branches on `source.kind`) |
+| `src/sources/write-source.ts` | the single write helper (branches on `source.kind`) |
 | `src/execution/resolved-request.ts` | the versioned resolved execution request and its canonical wire form (tolerant decode) |
 | `src/integrations/agent/resolution.ts` | `resolveTarget`: the connection or harness a call runs on, and its model, timeout and request fields |
 | `src/integrations/agent/execution.ts` | `resolveExecution` (target, layers, model alias, persona) and `buildExecution` / `buildExecutionFromWire` |

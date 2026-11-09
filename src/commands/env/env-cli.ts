@@ -24,6 +24,9 @@ import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { writeFileAtomic } from "../../core/common";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { warn } from "../../core/warn";
+import { readStdin } from "../../runtime";
 import {
   listEnvsRecursive,
   makeEnvRef,
@@ -31,10 +34,7 @@ import {
   resolveEnvWriteTarget,
   sensitiveMarkerPath,
   withEnvSecretWrite,
-} from "../../core/env-secret-ref";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { warn } from "../../core/warn";
-import { readStdin } from "../../runtime";
+} from "../../sources/env-secret-ref";
 import { buildChildEnv } from "./child-env";
 
 const envListCommand = defineJsonCommand({

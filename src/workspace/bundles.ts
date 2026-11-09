@@ -4,7 +4,7 @@
 
 /** The configured bundles and their settings, and the actions that add, remove, update, rename or configure one. */
 
-import { setConfigValue } from "../commands/config-cli";
+import { setConfigValue } from "../commands/config";
 import { akmBundleRename } from "../commands/sources/bundle-rename";
 import { assembleInfo } from "../commands/sources/info";
 import { akmListSources } from "../commands/sources/installed-stashes";

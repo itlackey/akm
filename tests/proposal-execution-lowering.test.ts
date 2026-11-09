@@ -3,10 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { buildProposePrompt, PROPOSAL_JSON_SCHEMA } from "../src/commands/prompts";
 import { type AkmProposeOptions, akmPropose } from "../src/commands/proposal/propose";
 import { listProposals } from "../src/commands/proposal/repository";
 import type { AkmConfig } from "../src/core/config/config";
-import { buildProposePrompt, PROPOSAL_JSON_SCHEMA } from "../src/integrations/agent/prompts";
 import { installFakeOpencodeRuntime } from "./_helpers/fake-opencode-runtime";
 import { fakeOpencodeMajor } from "./_helpers/opencode-version";
 import { makeStashDir, mutateScopedEnv, type SandboxedDir, withEnv } from "./_helpers/sandbox";

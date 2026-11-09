@@ -17,7 +17,7 @@ import path from "node:path";
 import { type ConsolidatePromoteOp, emitPromotionProposal } from "../../../../src/commands/improve/consolidate";
 import { listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
-import { resolveWriteTarget } from "../../../../src/core/write-source";
+import { resolveWriteTarget } from "../../../../src/sources/write-source";
 import { makeConfig } from "../../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 

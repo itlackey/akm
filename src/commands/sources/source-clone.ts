@@ -16,14 +16,7 @@ import { conceptIdFromTypeName, displayRef, parseQualifiedPlacementRef } from ".
 import { isWithin, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { defaultBundleForTarget } from "../../core/mutation-target";
 import { warn } from "../../core/warn";
-import {
-  commitWriteTargetBoundary,
-  prepareWriteTargetForMutation,
-  type ResolvedWriteTarget,
-  resolveWriteTarget,
-} from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
@@ -31,8 +24,15 @@ import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../.
 import { buildFileContext } from "../../indexer/walk/file-context";
 import { isFileOrFileSymlink } from "../../indexer/walk/walker";
 import { isRemoteOrigin, resolveSourcesForLocator, resolveSourcesForOrigin } from "../../registry/origin-resolve";
+import { defaultBundleForTarget } from "../../sources/mutation-target";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
 import { resolveAssetPath } from "../../sources/resolve";
+import {
+  commitWriteTargetBoundary,
+  prepareWriteTargetForMutation,
+  type ResolvedWriteTarget,
+  resolveWriteTarget,
+} from "../../sources/write-source";
 import { inferAssetName } from "../read/knowledge";
 
 export interface CloneOptions {

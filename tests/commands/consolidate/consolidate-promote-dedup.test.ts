@@ -35,8 +35,8 @@ import {
 import { contentHash } from "../../../src/commands/improve/content-hash";
 import { createProposal, listProposals } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
-import { resolveWriteTarget } from "../../../src/core/write-source";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../../src/indexer/installations";
+import { resolveWriteTarget } from "../../../src/sources/write-source";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { isWriteCapableSourceKind } from "../src/core/write-source";
+import { isWriteCapableSourceKind } from "../src/sources/write-source";
 
 describe("isWriteCapableSourceKind", () => {
   test("filesystem and git are write-capable", () => {

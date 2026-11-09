@@ -19,7 +19,6 @@ import { loadConfig } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
-import { assertBundleNotDisabled } from "../../core/write-source";
 import {
   applyInputDefaults,
   type InputContract,
@@ -32,6 +31,7 @@ import { resolveAdapterConceptOwner, resolveConceptOwner } from "../../indexer/l
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
+import { assertBundleNotDisabled } from "../../sources/write-source";
 import type { TaskInvocation } from "../model/invocation";
 import { prepareTaskV3Execution } from "../prepare/prepare";
 import type { PreparedTaskV3Execution } from "../prepare/prepared-execution";

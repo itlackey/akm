@@ -20,7 +20,7 @@ import path from "node:path";
 import type { AssetRef } from "../src/core/asset/resolve-ref";
 import type { SourceConfigEntry } from "../src/core/config/config";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
-import { findAbsoluteHomePaths, type WriteTargetSource, writeAssetToSource } from "../src/core/write-source";
+import { findAbsoluteHomePaths, type WriteTargetSource, writeAssetToSource } from "../src/sources/write-source";
 
 describe("findAbsoluteHomePaths", () => {
   test("flags an absolute Linux home path", () => {

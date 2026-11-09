@@ -26,21 +26,21 @@
  * during validation. We carry it through if the agent supplies it.
  */
 
-import reflectFeedbackFraming from "../../assets/prompts/reflect-feedback-framing.md" with { type: "text" };
-import reflectLlmFramedContract from "../../assets/prompts/reflect-llm-framed-contract.md" with { type: "text" };
-import reflectLlmSchemaContract from "../../assets/prompts/reflect-llm-schema-contract.md" with { type: "text" };
-import reflectOutputRepair from "../../assets/prompts/reflect-output-repair.md" with { type: "text" };
-import { placementTypes } from "../../core/asset/asset-placement";
+import reflectFeedbackFraming from "../assets/prompts/reflect-feedback-framing.md" with { type: "text" };
+import reflectLlmFramedContract from "../assets/prompts/reflect-llm-framed-contract.md" with { type: "text" };
+import reflectLlmSchemaContract from "../assets/prompts/reflect-llm-schema-contract.md" with { type: "text" };
+import reflectOutputRepair from "../assets/prompts/reflect-output-repair.md" with { type: "text" };
+import { placementTypes } from "../core/asset/asset-placement";
 import {
   authoringRulesForType,
   DESCRIPTION_MAX_CHARS,
   DESCRIPTION_MIN_CHARS,
   requiresDescription,
-} from "../../core/authoring-rules";
-import { isRecord } from "../../core/common";
-import { parseEmbeddedJsonResponse, stripCodeFences, stripThinkBlocks } from "../../core/parse";
-import type { Parsed } from "../../core/structured";
-import type { ExecutionJsonObject } from "../../execution/json";
+} from "../core/authoring-rules";
+import { isRecord } from "../core/common";
+import { parseEmbeddedJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
+import type { Parsed } from "../core/structured";
+import type { ExecutionJsonObject } from "../execution/json";
 
 /** Agent-returned proposal payload (after JSON parse). */
 export interface AgentProposalPayload {

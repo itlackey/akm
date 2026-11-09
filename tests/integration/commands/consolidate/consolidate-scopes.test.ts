@@ -7,7 +7,7 @@ import { contentHash } from "../../../../src/commands/improve/content-hash";
 import { akmProposalAccept } from "../../../../src/commands/proposal/proposal";
 import { createProposal, getProposal, proposalContent } from "../../../../src/commands/proposal/repository";
 import { parseFrontmatter } from "../../../../src/core/asset/frontmatter";
-import { resolveWriteTarget } from "../../../../src/core/write-source";
+import { resolveWriteTarget } from "../../../../src/sources/write-source";
 import { makeConfig } from "../../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
