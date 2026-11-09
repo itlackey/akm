@@ -58,7 +58,9 @@ the stage and a counter appended, `0.10.261001-beta.1`, then `-beta.2`, then
 `-rc.1`; the stable release is the bare number. Prereleases published before
 this rule carry a bare stage (`0.10.261115-beta`). Prereleases publish to the
 npm `next` tag and stable releases to `latest`; `akm upgrade --next` follows
-`next`. Versions sort by month and then `NN`, so semver ranges and `akm upgrade`
+`next`. `next` never moves backwards: a prerelease of an older line published
+after a newer line's gets that line's tag instead, `next-0.10`. Versions sort
+by month and then `NN`, so semver ranges and `akm upgrade`
 order them correctly across months and years. The patch number no longer says
 how big a change is: read the CHANGELOG, which still marks breaking changes. The
 0.9 line keeps `0.9.N`, and `0.11` restarts on the same scheme.
