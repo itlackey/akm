@@ -1024,7 +1024,11 @@ describe("OKF first-class conformance", () => {
       expect(written.path).toBe(path.join(componentRoot, "memories", "nested-root.md"));
       expect(written.stashDir).toBe(componentRoot);
       expect(fs.existsSync(path.join(packageRoot, "memories", "nested-root.md"))).toBe(false);
-      expect(resolveSourceEntries()[0]).toMatchObject({ path: componentRoot, registryId: "nested", adapterId: "akm" });
+      expect(resolveSourceEntries()).toEqual([
+        expect.objectContaining({ path: componentRoot, registryId: "nested", adapterId: "akm" }),
+        // The sandbox's own working bundle stays configured.
+        expect.objectContaining({ path: storage.stashDir }),
+      ]);
 
       await akmIndex({ stashDir: componentRoot, full: true });
       const shown = await showLocal({ ref: "nested//memories/nested-root" });

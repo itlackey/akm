@@ -184,8 +184,7 @@ export async function retire(input: { ref: string; revision: string }) {
     const { canonical, target, type } = await resolveWritableIndexedAsset(ref);
     if (["skill", "env", "secret", "session"].includes(type))
       throw new UsageError("Retire supports single-file assets, not skill packages or protected files.");
-    // The write target the asset resolved to owns the proposal queue: a git-managed default bundle has no `path` for
-    // `resolveStashDir` to read.
+    // The write target the asset resolved to owns the proposal queue.
     const stashDir = target.source.path;
     const minted = createRetireProposal(stashDir, {
       ref: canonical,

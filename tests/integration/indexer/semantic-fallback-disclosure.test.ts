@@ -24,7 +24,7 @@ import { upsertEntry } from "../../../src/storage/repositories/index-entries-rep
 import { rebuildFts } from "../../../src/storage/repositories/index-fts-repository";
 import { setMeta } from "../../../src/storage/repositories/index-meta-repository";
 import { upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
-import { withIsolatedAkmStorage, withDefaultBundle } from "../../_helpers/sandbox";
+import { withDefaultBundle, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 import { overrideSeam } from "../../_helpers/seams";
 
 test("query-embedding failure preserves FTS results and returns one sanitized fts-fallback disclosure", async () => {
