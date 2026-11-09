@@ -58,7 +58,9 @@ the stage and a counter appended, `0.10.261001-beta.1`, then `-beta.2`, then
 `-rc.1`; the stable release is the bare number. Prereleases published before
 this rule carry a bare stage (`0.10.261115-beta`). Prereleases publish to the
 npm `next` tag and stable releases to `latest`; `akm upgrade --next` follows
-`next`. Versions sort by month and then `NN`, so semver ranges and `akm upgrade`
+`next`. `next` never moves backwards: a prerelease of an older line published
+after a newer line's gets that line's tag instead, `next-0.10`. Versions sort
+by month and then `NN`, so semver ranges and `akm upgrade`
 order them correctly across months and years. The patch number no longer says
 how big a change is: read the CHANGELOG, which still marks breaking changes. The
 0.9 line keeps `0.9.N`, and `0.11` restarts on the same scheme.
@@ -142,7 +144,7 @@ covers beyond the table.
 | `akm improve judge` | Evolving | Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. The same as `akm judge reflect.quality`, in its older input and output shape; its `--strategy` flag was removed. |
 | `akm judge` | Evolving | Runs a registered judge (`reflect.quality`, `distill.lesson`, `consolidate.pair`, `proposal.judgment`) on one JSON input from stdin, on the runner `--connection`, `--harness` and `--model` select. Output is one envelope (`judge`, `schemaVersion`, `runner`, `outcome`, `verdict?`, `reason?`); each judge carries its own `schemaVersion`. |
 | `akm proposal list` | Stable | |
-| `akm proposal show` | Evolving | |
+| `akm proposal show` | Evolving | The `legacy-ref` validation finding on a proposal recorded before concept IDs (#1513) is Experimental for its first release. |
 | `akm proposal diff` | Evolving | |
 | `akm proposal accept` | Evolving | |
 | `akm proposal reject` | Evolving | |

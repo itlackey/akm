@@ -71,9 +71,17 @@ stable() {
   git add package.json CHANGELOG.md
   git commit -m "release: $version"
   git push
-  url="$(gh pr create --base main --head "$branch" --title "release: $version" \
-    --body "Ships $version. Merging publishes it: npm latest, the GitHub release, AKM Desktop and akm-web (docs/maintainers/release-checklist.md).")"
-  echo "Opened $url"
+  # A draft opened earlier becomes the release pull request; marking it ready runs the whole gate on this commit.
+  existing="$(gh pr list --base main --head "$branch" --state open --json number,url --jq '.[0] | "\(.number) \(.url)"')"
+  if [ -n "$existing" ]; then
+    gh pr ready "${existing%% *}"
+    gh pr edit "${existing%% *}" --title "release: $version"
+    url="${existing#* }"
+  else
+    url="$(gh pr create --base main --head "$branch" --title "release: $version" \
+      --body "Ships $version. Merging publishes it: npm latest, the GitHub release, AKM Desktop and akm-web (docs/maintainers/release-checklist.md).")"
+  fi
+  echo "Release pull request: $url"
   echo "Merge it when green. The push to main publishes $version. Then run: bun run release:start"
 }
 

@@ -2114,7 +2114,7 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
     expect(() => getProposal(stash, created.id)).toThrow(/invalid proposedTarget/i);
   });
 
-  test("a row with a retired ref grammar is rejected", () => {
+  test("a row with a retired ref grammar is read as written and marked non-applicable (#1513)", () => {
     const stash = makeStashDir();
     const created = createProposal(stash, {
       ref: "lessons/current-ref",
@@ -2127,7 +2127,9 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
     state.prepare("UPDATE proposals SET ref = ? WHERE id = ?").run(retiredRef, created.id);
     state.close();
 
-    expect(() => getProposal(stash, created.id)).toThrow(/invalid current ref/i);
+    const reread = getProposal(stash, created.id);
+    expect(reread.ref).toBe(retiredRef);
+    expect(validateProposal(reread).findings.map((f) => f.kind)).toEqual(["legacy-ref"]);
   });
 });
 

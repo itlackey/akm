@@ -678,6 +678,8 @@ async function drainPending(
     // generating stage's hand-off to a person: it is left for that person.
     if (decision?.outcome === "auto-rejected" && !decision.gate?.startsWith(DRAIN_GATE)) continue;
     if (decision?.outcome === "deferred" && !decision.gate?.startsWith(DRAIN_GATE)) continue;
+    // A row from before proposals carried their changes (#1513) has nothing to apply or judge: a person decides.
+    if (proposal.changes.length === 0) continue;
     if (isEmptyDiff(proposal)) {
       empties.push(proposal.id);
     } else if (proposal.eligibilitySource === "proactive") {
