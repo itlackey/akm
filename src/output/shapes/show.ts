@@ -8,6 +8,6 @@ import type { OutputShapeEntry } from "./registry";
 export const showShapes: OutputShapeEntry[] = [
   {
     command: "show",
-    handler: (result, detail, shape) => shapeShowOutput(result as Record<string, unknown>, detail, shape),
+    handler: (result, detail) => shapeShowOutput(result as Record<string, unknown>, detail),
   },
 ];

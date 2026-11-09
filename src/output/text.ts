@@ -108,8 +108,8 @@ registerTextFormatters(BUILT_IN_TEXT_FORMATTERS);
 export function outputJsonl(command: string, shaped: unknown): void {
   if (command === "search") {
     const r = shaped as Record<string, unknown>;
-    const hits = Array.isArray(r.hits) ? (r.hits as Record<string, unknown>[]) : [];
-    for (const hit of hits) {
+    const results = Array.isArray(r.results) ? (r.results as Record<string, unknown>[]) : [];
+    for (const hit of results) {
       writeStdout(JSON.stringify(hit));
     }
     const registryHits = Array.isArray(r.registryHits) ? (r.registryHits as Record<string, unknown>[]) : [];

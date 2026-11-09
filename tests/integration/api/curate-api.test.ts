@@ -9,7 +9,7 @@
  * equivalence baseline and `curate()` opens the real index database.
  *
  * Pins: (1) `curate()` returns byte-for-byte the stdout of
- * `akm --detail agent -q curate … --format <fmt>` on the same sandbox stash, for
+ * `akm --detail normal -q curate … --format <fmt>` on the same sandbox stash, for
  * text and json; (2) it rejects with the CLI's message and `code`; (3) calling
  * it repeatedly in one long-lived process sees config edits on disk, leaks no
  * file descriptors, and leaves quiet/verbose/stdout/env/cwd as the host had them.
@@ -43,7 +43,7 @@ function runCli(args: string[]): { status: number | null; stdout: string; stderr
 }
 
 function cliCurate(query: string, flags: string[] = []) {
-  return runCli(["--detail", "agent", "-q", "curate", query, ...flags]);
+  return runCli(["--detail", "normal", "-q", "curate", query, ...flags]);
 }
 
 function configPath(): string {
@@ -106,7 +106,7 @@ describe("curate() equals the CLI's stdout", () => {
     expect(cli.status).toBe(0);
     const out = await curate("deploy", { limit: 1, type: "knowledge", format: "json" });
     expectSameJson(out, cli.stdout);
-    expect(JSON.parse(out).items).toHaveLength(1);
+    expect(JSON.parse(out).results).toHaveLength(1);
   });
 
   test("a query with no match is the same empty result", async () => {
@@ -167,7 +167,7 @@ describe("repeated calls inside one long-lived process", () => {
     const verboseBefore = isVerbose();
 
     const first = await curate("deploy production", { format: "json" });
-    expect(JSON.parse(first).items.length).toBeGreaterThan(0);
+    expect(JSON.parse(first).results.length).toBeGreaterThan(0);
     // Warm the process (module graph, embed cache) before counting descriptors.
     await curate("deploy production", { format: "text" });
     const fdsBefore = await openFdCount();
@@ -185,7 +185,7 @@ describe("repeated calls inside one long-lived process", () => {
     const cli = cliCurate("deploy production", ["--format", "json"]);
     const edited = await curate("deploy production", { format: "json" });
     expectSameJson(edited, cli.stdout);
-    expect(JSON.parse(edited).items.map((i: { type: string }) => i.type)).not.toContain("skill");
+    expect(JSON.parse(edited).results.map((i: { type: string }) => i.type)).not.toContain("skill");
 
     // Overlapping calls with different formats do not share output state.
     const [a, b] = await Promise.all([

@@ -85,7 +85,7 @@ describe("git-ignored env/ and secrets/ are indexed", () => {
 
         const searchedEnv = await runCliCapture(["search", "--type", "env", "--format=json"]);
         expect(searchedEnv.code).toBe(0);
-        const envHits = (JSON.parse(searchedEnv.stdout) as { hits: Array<{ ref?: string }> }).hits;
+        const envHits = (JSON.parse(searchedEnv.stdout) as { results: Array<{ ref?: string }> }).results;
         expect(envHits.some((hit) => hit.ref?.endsWith("env/staging"))).toBe(true);
 
         const shownSecret = await runCliCapture(["show", "secrets/deploy-key", "--format=json"]);

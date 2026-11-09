@@ -7,12 +7,12 @@
  *
  * Previously `curate` rode the identity-passthrough handler, which made
  * `--detail` inert. This dedicated handler projects each curated
- * item by detail (verbosity) and shape (`--detail agent`) the same way
- * `shapeSearchOutput` projects search hits, so curate honors the global
+ * item by detail the same way
+ * `shapeSearchOutput` projects search results, so curate honors the global
  * output contract.
  */
 
-import type { DetailLevel, ShapeMode } from "../context";
+import type { DetailLevel } from "../context";
 import { capDescription, NORMAL_DESCRIPTION_LIMIT, pickFields } from "./helpers";
 import type { OutputShapeEntry } from "./registry";
 
@@ -20,6 +20,7 @@ import type { OutputShapeEntry } from "./registry";
 // (the actionable `akm show <ref>` command) and `reason` (set only on
 // historical items) — unlike a bulk search listing.
 const BRIEF_FIELDS = ["source", "type", "name", "ref", "id", "supportRefs", "beliefState", "followUp", "reason"];
+// Normal: the minimal field set an LLM needs to decide and act.
 const NORMAL_FIELDS = [
   "source",
   "type",
@@ -30,27 +31,6 @@ const NORMAL_FIELDS = [
   "editHint",
   "id",
   "description",
-  "preview",
-  "keys",
-  "parameters",
-  "run",
-  "supportRefs",
-  "beliefState",
-  "followUp",
-  "reason",
-  "score",
-];
-// Agent shape: the minimal field set an LLM needs to decide and act.
-const AGENT_FIELDS = [
-  "source",
-  "type",
-  "name",
-  "ref",
-  "path",
-  "editable",
-  "editHint",
-  "id",
-  "description",
   "supportRefs",
   "beliefState",
   "followUp",
@@ -58,33 +38,22 @@ const AGENT_FIELDS = [
   "score",
 ];
 
-function shapeCurateItem(
-  item: Record<string, unknown>,
-  detail: DetailLevel,
-  shape: ShapeMode,
-): Record<string, unknown> {
-  if (shape === "agent") {
-    const shaped = pickFields(item, AGENT_FIELDS);
-    if (shaped.editable !== false) delete shaped.editHint;
-    return capDescription(shaped, NORMAL_DESCRIPTION_LIMIT);
-  }
+function shapeCurateItem(item: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   if (detail === "brief") {
     return pickFields(item, BRIEF_FIELDS);
   }
   if (detail === "normal") {
-    return capDescription(pickFields(item, NORMAL_FIELDS), NORMAL_DESCRIPTION_LIMIT);
+    const shaped = pickFields(item, NORMAL_FIELDS);
+    if (shaped.editable !== false) delete shaped.editHint;
+    return capDescription(shaped, NORMAL_DESCRIPTION_LIMIT);
   }
   // full: project everything the curator emits.
   return item;
 }
 
-export function shapeCurateOutput(
-  result: Record<string, unknown>,
-  detail: DetailLevel,
-  shape: ShapeMode,
-): Record<string, unknown> {
+export function shapeCurateOutput(result: Record<string, unknown>, detail: DetailLevel): Record<string, unknown> {
   const items = Array.isArray(result.items) ? (result.items as Record<string, unknown>[]) : [];
-  const shapedItems = items.map((item) => shapeCurateItem(item, detail, shape));
+  const shapedItems = items.map((item) => shapeCurateItem(item, detail));
 
   const base: Record<string, unknown> = {
     // `shape`/`schemaVersion` discriminators preserve the prior passthrough
@@ -93,7 +62,7 @@ export function shapeCurateOutput(
     shape: "curate",
     query: result.query,
     summary: result.summary,
-    items: shapedItems,
+    results: shapedItems,
     ...(result.project ? { project: result.project } : {}),
     ...(typeof result.searchMode === "string" ? { searchMode: result.searchMode } : {}),
     ...(Array.isArray(result.bundles) ? { bundles: result.bundles } : {}),
@@ -106,6 +75,6 @@ export function shapeCurateOutput(
 export const curateShapes: OutputShapeEntry[] = [
   {
     command: "curate",
-    handler: (result, detail, shape) => shapeCurateOutput(result as Record<string, unknown>, detail, shape),
+    handler: (result, detail) => shapeCurateOutput(result as Record<string, unknown>, detail),
   },
 ];

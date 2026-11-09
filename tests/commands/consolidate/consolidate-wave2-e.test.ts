@@ -50,8 +50,8 @@ describe("shapeShowOutput — path + editable always included (#7)", () => {
     expect(out).toHaveProperty("editHint");
   });
 
-  test("agent mode exposes exact local access information", () => {
-    const out = shapeShowOutput(showResult as Record<string, unknown>, "normal", /* shape */ "agent");
+  test("normal detail exposes exact local access information", () => {
+    const out = shapeShowOutput(showResult as Record<string, unknown>, "normal");
     expect(out.editable).toBe(true);
     expect(out.path).toBe("/home/user/stash/skills/deploy/SKILL.md");
   });

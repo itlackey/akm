@@ -138,7 +138,7 @@ describe("output baseline", () => {
       unresolved: { xref: { total: 1, refs: ["knowledge/missing"] } },
     });
     const agent = JSON.parse(
-      runCli(stashDir, ["show", "knowledge/guide", "--format=json", "--detail=agent"], config, envDirs),
+      runCli(stashDir, ["show", "knowledge/guide", "--format=json", "--detail=normal"], config, envDirs),
     );
     expect(agent.links).toEqual({ incoming: { xref: { total: 1, refs: ["memories/incident"] } } });
 
@@ -157,10 +157,10 @@ describe("output baseline", () => {
     expect(configDriven).toContain("score:");
 
     const overridden = runCli(stashDir, ["search", "deploy", "--format=json", "--detail=brief"], config);
-    const json = JSON.parse(overridden) as { hits: Array<Record<string, unknown>> };
-    // hits is always present; warnings may appear when semantic search is pending
-    expect(Object.keys(json)).toContain("hits");
-    expect(Object.keys(json.hits[0] ?? {})).not.toContain("origin");
+    const json = JSON.parse(overridden) as { results: Array<Record<string, unknown>> };
+    // results is always present; warnings may appear when semantic search is pending
+    expect(Object.keys(json)).toContain("results");
+    expect(Object.keys(json.results[0] ?? {})).not.toContain("origin");
   });
 
   test("search shaped output includes action for local and registry hits", async () => {
@@ -208,11 +208,11 @@ describe("output baseline", () => {
         },
       );
       const json = JSON.parse(output) as {
-        hits: Array<Record<string, unknown>>;
+        results: Array<Record<string, unknown>>;
         registryHits?: Array<Record<string, unknown>>;
       };
       // Brief local hits have type; registry hits are in registryHits
-      const localHit = json.hits.find((hit) => hit.type === "script");
+      const localHit = json.results.find((hit) => hit.type === "script");
       const registryHit = (json.registryHits ?? []).find((hit) => hit.name === "deploy-stash");
 
       expect(localHit?.action).toBeTruthy();

@@ -42,7 +42,9 @@ and `--format json` prints it. These are the shapes as they stand:
 | `info` | `ok` and `schemaVersion`, no `shape` |
 | Commands emitted through the passthrough stamp (for example `config list`) | `ok`, `shape` and `schemaVersion` |
 
-Only the commands in the last four rows carry `schemaVersion`, and only those in
+`search` and `curate` list their matches under one key, `results` (`hits` and
+`items` are gone; `akm search` adds `registryHits` for registry matches, a separate
+list with its own shape). Only the commands in the last four rows carry `schemaVersion`, and only those in
 the second and last rows carry `shape`: a script reads them there and nowhere
 else. AKM Desktop's child-process runner
 (`src/workspace/cli-child.ts`) requires `shape` equal to the expected shape and
@@ -224,8 +226,7 @@ covers beyond the table.
   fetch**: a registered renderer fires on the shape of the result (`akm health
   --report` carries the report dataset in the envelope, so the same data is
   available as JSON), never on the format alone.
-  `--detail` is `brief|normal|full` (verbosity) or `agent` (the projection of
-  `search`, `curate` and `show`; see Experimental). A small set of commands is **format-exempt** because their
+  `--detail` is `brief|normal|full`; any other value warns once and uses `normal`. A small set of commands is **format-exempt** because their
   output is not a result envelope at all: `completions` (shell script source),
   child-process passthrough in `env run` / `secret run`, a bare-path payload
   from `env path` and `config path`, and document payloads from `help`. The set is declared in
@@ -274,7 +275,7 @@ remain available across minor releases, but flag names, prompts, and
 proposal-queue shape may shift. Breaking changes will be flagged in the
 CHANGELOG with a migration note.
 
-- **Programmatic API** — `akm-cli/api` (`curate()`, for in-process recall by the akm plugins; see [`docs/reference/api.md`](docs/reference/api.md)). The recall export list only grows and `curate()`'s parameters and result keep their documented contract; the text it returns is `akm curate`'s agent-shaped output and changes with it. The separate workspace namespace is Experimental, below.
+- **Programmatic API** — `akm-cli/api` (`curate()`, for in-process recall by the akm plugins; see [`docs/reference/api.md`](docs/reference/api.md)). The recall export list only grows and `curate()`'s parameters and result keep their documented contract; the text it returns is `akm curate --detail normal` output and changes with it. The separate workspace namespace is Experimental, below.
 - **Improvement loop** — `akm improve` and the proposal noun group
   `akm proposal {extract,new,list,show,diff,accept,reject,reopen,revert,drain}`
   (`extract` and `new` are the former top-level `akm extract`/`akm propose`,
@@ -399,10 +400,6 @@ for scripted use.
   report layout may change in any release; do not script against them.
 - **`lesson` asset type** — schema (`when_to_use`, `description`) is
   stable, but lesson-distillation triggers and ranking are tuning targets.
-- **`--detail agent`** — the agent projection, implemented on `search`, `show`,
-  and `curate` (other commands ignore it). Coverage will expand. It replaces
-  `--shape agent`; `--shape` (and `--shape summary`, which only `show` had) is
-  gone in 0.10 and is an unknown flag.
 - **Protected env & secret values** — `env` (a whole `.env` group; key names
   are surfaced for discoverability, values never are) and `secret` (a single
   sensitive value). Values are never written to stdout, the index, or

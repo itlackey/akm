@@ -89,7 +89,7 @@ akm search "deploy" --from registry     # registries only
 akm search "deploy" --from all          # local bundles and registries
 ```
 
-Registry hits come back in `registryHits`, separate from local `hits`. Fields
+Registry hits come back in `registryHits`, separate from the local `results`. Fields
 by `--detail` level:
 
 | Level | Fields |

@@ -21,7 +21,7 @@ export interface UsageEventAttribution {
 const ATTRIBUTION = Symbol("search-hit-attribution");
 type AttributionHost = { [ATTRIBUTION]?: SearchHitAttribution };
 
-export type AttributionProjection = "brief" | "normal" | "full" | "agent";
+export type AttributionProjection = "brief" | "normal" | "full";
 
 export function attachSearchHitAttribution(target: object, attribution: SearchHitAttribution): void {
   const host = target as AttributionHost;
@@ -63,7 +63,7 @@ export function buildUsageEventAttribution(
     memoryInference.exposure !== "surface" ||
     (projection === "full"
       ? surfaceFields.length > 0
-      : projection === "normal" || projection === "agent"
+      : projection === "normal"
         ? surfaceFields.includes("description")
         : false);
   if (childRef?.includes("//") !== true || !surfaceVisible) return undefined;

@@ -48,7 +48,7 @@ describe("rejects undeclared flags", () => {
 
   test("a flag STABILITY lists as gone names its replacement, not an edit-distance guess", () => {
     const shape = errorFor(["search", "foo", "--shape", "agent"]);
-    expect(shape.hint()).toContain("--detail agent");
+    expect(shape.hint()).toContain("--detail normal");
     expect(shape.hint()).not.toContain("--type");
     expect(errorFor(["env", "create", "x", "--target", "b"]).hint()).toContain("`--bundle`");
     expect(errorFor(["config", "path", "--all"]).hint()).toContain("`akm info`");

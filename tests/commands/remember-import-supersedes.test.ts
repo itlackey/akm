@@ -202,7 +202,7 @@ describe("remember --supersedes", () => {
     // this only holds if the mutated old file was reindexed by the writer.
     const current = await runCliCapture(["search", "quantum rotation", "--type", "memory", "--belief", "current"]);
     expect(current.code).toBe(0);
-    const currentRefs = ((JSON.parse(current.stdout).hits ?? []) as Array<{ ref: string }>).map((h) =>
+    const currentRefs = ((JSON.parse(current.stdout).results ?? []) as Array<{ ref: string }>).map((h) =>
       conceptId(h.ref),
     );
     expect(currentRefs).toContain(conceptId(newRef));
@@ -211,7 +211,7 @@ describe("remember --supersedes", () => {
     // Explicit broad investigation still returns both.
     const all = await runCliCapture(["search", "quantum rotation", "--type", "memory", "--belief", "all"]);
     expect(all.code).toBe(0);
-    const allRefs = ((JSON.parse(all.stdout).hits ?? []) as Array<{ ref: string }>).map((h) => conceptId(h.ref));
+    const allRefs = ((JSON.parse(all.stdout).results ?? []) as Array<{ ref: string }>).map((h) => conceptId(h.ref));
     expect(allRefs).toContain(conceptId(newRef));
     expect(allRefs).toContain(conceptId(old.ref));
   });
@@ -561,7 +561,7 @@ describe("a demotion fs error still commits and indexes the correction", () => {
     expect(fs.existsSync(result.path)).toBe(true);
     const search = await runCliCapture(["search", "corrected fact", "--type", "memory"]);
     expect(search.code).toBe(0);
-    const refs = ((JSON.parse(search.stdout).hits ?? []) as Array<{ ref: string }>).map((h) => h.ref);
+    const refs = ((JSON.parse(search.stdout).results ?? []) as Array<{ ref: string }>).map((h) => h.ref);
     expect(refs.map(conceptId)).toContain(conceptId(result.ref));
   });
 });

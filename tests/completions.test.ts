@@ -145,7 +145,7 @@ describe("completions command", () => {
 
   test("contains flag value completions for --detail", () => {
     expect(script).toContain("--detail)");
-    expect(script).toContain("brief normal full agent");
+    expect(script).toContain("brief normal full");
   });
 
   test("contains flag value completions for --type", () => {

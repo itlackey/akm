@@ -4,7 +4,7 @@
 
 /**
  * Pure shaping functions that select and trim fields from command result
- * objects according to the active detail level / agent mode.
+ * objects according to the active detail level.
  *
  * Every function in this module is side-effect free and operates on plain
  * `Record<string, unknown>` shapes, which makes them trivial to unit test.
@@ -19,7 +19,7 @@
  * fallback).
  */
 
-import type { DetailLevel, ShapeMode } from "./context";
+import type { DetailLevel } from "./context";
 import { curateShapes } from "./shapes/curate";
 import { envListShapes } from "./shapes/env-list";
 import { eventsShapes } from "./shapes/events";
@@ -83,15 +83,10 @@ registerOutputShapes(BUILT_IN_OUTPUT_SHAPES);
  */
 export type OutputCommandName = string;
 
-export function shapeForCommand(
-  command: OutputCommandName,
-  result: unknown,
-  detail: DetailLevel,
-  shape: ShapeMode = "human",
-): unknown {
+export function shapeForCommand(command: OutputCommandName, result: unknown, detail: DetailLevel): unknown {
   const handler = getOutputShapeHandler(command);
   if (handler) {
-    return handler(result, detail, shape);
+    return handler(result, detail);
   }
   // Output-shape registry is exhaustive: no silent JSON.stringify
   // fallback. A missing case here is a registration bug — fail loudly so

@@ -126,7 +126,7 @@ export const searchCommand = defineJsonCommand({
       belief,
       includeSessions,
       eventSource: resolveUsageEventSource(),
-      attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
+      attributionProjection: outputMode.detail,
       project: projectContext(project, filters),
       byUsage: args["by-usage"] === true,
     });

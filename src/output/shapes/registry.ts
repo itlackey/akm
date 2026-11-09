@@ -11,17 +11,16 @@
  */
 
 import { createCommandRegistry } from "../command-registry";
-import type { DetailLevel, ShapeMode } from "../context";
+import type { DetailLevel } from "../context";
 
 /**
  * Handler signature for a registered output shape.
  *
  * @param result  Raw command result object.
  * @param detail  Active detail level (verbosity).
- * @param shape   Active output-projection mode (human|agent|summary).
  * @returns Shaped result (may be the same reference if no trimming needed).
  */
-export type OutputShapeHandler = (result: unknown, detail: DetailLevel, shape: ShapeMode) => unknown;
+export type OutputShapeHandler = (result: unknown, detail: DetailLevel) => unknown;
 
 /**
  * A single output-shape registration: a command name plus its handler.

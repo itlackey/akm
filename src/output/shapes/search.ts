@@ -8,6 +8,6 @@ import type { OutputShapeEntry } from "./registry";
 export const searchShapes: OutputShapeEntry[] = [
   {
     command: "search",
-    handler: (result, detail, shape) => shapeSearchOutput(result as Record<string, unknown>, detail, shape),
+    handler: (result, detail) => shapeSearchOutput(result as Record<string, unknown>, detail),
   },
 ];
