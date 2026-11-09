@@ -13,7 +13,7 @@
  * Why reuse the events table (vs a dedicated table): volume is low (~100
  * calls/day), the records are append-only and time-windowed exactly like every
  * other event, and `akm health` already aggregates per-window event reads — a
- * separate table would duplicate retention (`purgeOldEvents`), reads, and
+ * separate table would duplicate retention (`purgeFoldedEvents`), reads, and
  * migration surface for no benefit. See the commit message for #576.
  *
  * Every record is written through `appendEvent`, which is itself best-effort

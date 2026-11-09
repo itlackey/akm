@@ -149,6 +149,26 @@ describe("recordImproveRunResult", () => {
     }
   });
 
+  test("persists the count of strategy-filtered refs, not the list, and leaves the caller's result alone", () => {
+    const stash = makeStashDir();
+    const dataSb = sandboxXdgDataHome();
+    try {
+      const refs = [
+        { ref: "scripts/a.sh", reason: "strategy_filtered_all_passes" },
+        { ref: "scripts/b.sh", reason: "strategy_filtered_all_passes" },
+      ] as unknown as AkmImproveResult["strategyFilteredRefs"];
+      const result: AkmImproveResult = { ...baseResult, strategyFilteredRefs: refs };
+      recordImproveRunResult(stash, "test-run-filtered", result);
+
+      const persisted = readImproveRuns(dataSb.dir)[0]!.result;
+      expect(persisted.strategyFilteredRefs).toBeUndefined();
+      expect(persisted.strategyFilteredCount).toBe(2);
+      expect(result.strategyFilteredRefs).toBe(refs);
+    } finally {
+      dataSb.cleanup();
+    }
+  });
+
   test("records the passed-through v2 strategy", () => {
     const stash = makeStashDir();
     const runId = "test-run-with-strategy";
