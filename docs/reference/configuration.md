@@ -1032,6 +1032,40 @@ section, an absent key, and an explicit `false` all read identically as off.
   the commits `akm proposal accept` makes, and the end-of-run `sync.push`
   (which has its own `--no-push` and `sync.push` controls).
 
+## Plugins
+
+`plugins` holds the settings of the akm plugins for Claude Code, Codex and
+OpenCode. The plugins read this file themselves, find it the way akm does
+(`AKM_CONFIG_DIR`, else `XDG_CONFIG_HOME/akm`, else `~/.config/akm`) and own the
+keys and their validation: akm keeps the section, never reads it, and never warns
+about what is inside it. A wrong plugin value is ignored by the plugin, with a
+warning in its own log. Every key is optional.
+
+```jsonc
+{
+  "plugins": {
+    "autoFeedback": true,
+    "indexOnSessionEnd": true,
+    "curateLimit": 5,
+    "curateTimeoutSeconds": 8,
+    "pendingProposalTimeoutSeconds": 2,
+    "redact": { "pii": false, "highEntropy": false }
+  }
+}
+```
+
+- `autoFeedback` (default `true`): record `akm feedback` from a session's signals. Never on under Codex.
+- `indexOnSessionEnd` (default `true`): run `akm index` when a session ends.
+- `curateLimit` (integer 1 to 25, default 5): results injected per prompt.
+- `curateTimeoutSeconds` (default 8) and `pendingProposalTimeoutSeconds` (default 2): how long the plugin waits for those calls.
+- `redact.pii` and `redact.highEntropy` (default `false`): redact phone, SSN and card numbers, or long high-entropy tokens, from what the plugin writes to its logs and memory events. Set `true` on any host that handles personal data.
+
+Whether a plugin learns from sessions is not a plugin key: it is `improve.enabled`
+(`akm setup --learning on|off`).
+
+`akm config set plugins.curateLimit 8` writes a key. A nested key such as
+`plugins.redact.pii` is stored too, with a one-line note that akm does not define it.
+
 ## Managing Config
 
 ```sh

@@ -507,6 +507,13 @@
         "additionalProperties": {}
       }
     },
+    "plugins": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
     "search": {
       "type": "object",
       "properties": {
@@ -1647,6 +1654,13 @@
             },
             "additionalProperties": {}
           }
+        },
+        "plugins": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
         },
         "search": {
           "type": "object",

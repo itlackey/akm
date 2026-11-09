@@ -220,6 +220,28 @@ describe("loadConfig", () => {
     expect(warnings.join("\n")).toMatch(/unknown config key.*execution/i);
   });
 
+  test("a plugins section (the akm plugins' settings) loads with no warning, whatever its inner values", () => {
+    writeCurrentConfig({ plugins: { curateLimit: 8, redact: { pii: true }, autoFeedback: "bad", extra: [1] } });
+    let loaded: ReturnType<typeof loadConfig> | undefined;
+    const warnings = captureWarnings(() => {
+      loaded = loadConfig();
+    });
+    expect(warnings.filter((w) => /plugins/i.test(w))).toEqual([]);
+    expect((loaded as unknown as { plugins?: Record<string, unknown> }).plugins).toEqual({
+      curateLimit: 8,
+      redact: { pii: true },
+      autoFeedback: "bad",
+      extra: [1],
+    });
+  });
+
+  test("akm config set writes a plugins key and keeps the rest of the section", () => {
+    const base = { plugins: { autoFeedback: false } } as never;
+    const next = setConfigValue(base, "plugins.curateLimit", "8") as unknown as { plugins: Record<string, unknown> };
+    expect(next.plugins.autoFeedback).toBe(false);
+    expect(next.plugins.curateLimit).toBeDefined();
+  });
+
   test("ignores stash-root config.json files", () => {
     const stashDir = makeTmpDir();
     try {
