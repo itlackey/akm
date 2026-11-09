@@ -9,9 +9,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { foldBeforePurge, purgeFoldedEvents } from "../../../src/commands/metrics/fold";
 import { openStateDatabase } from "../../../src/core/state-db";
+import { foldBeforePurge } from "../../../src/indexer/metrics/fold";
 import { insertEvent } from "../../../src/storage/repositories/events-repository";
+import { purgeFoldedEvents } from "../../../src/storage/repositories/metrics-rollup-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;

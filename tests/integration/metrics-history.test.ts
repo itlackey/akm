@@ -12,20 +12,19 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { readLlmUsageAggregate } from "../../src/commands/health/llm-usage";
 import { buildImproveWindowSummary } from "../../src/commands/health/windows";
-import {
-  foldBeforePurge,
-  foldClosedDays,
-  purgeFoldedEvents,
-  purgeFoldedImproveRuns,
-  purgeFoldedUsageEvents,
-} from "../../src/commands/metrics/fold";
 import { akmMetrics, readLlmRows } from "../../src/commands/metrics/metrics";
 import { openMetricsDatabase } from "../../src/core/metrics-db";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
+import { foldBeforePurge, foldClosedDays } from "../../src/indexer/metrics/fold";
 import type { Database } from "../../src/storage/database";
 import { insertEvent } from "../../src/storage/repositories/events-repository";
 import { queryImproveRuns } from "../../src/storage/repositories/improve-runs-repository";
-import { rollupDayRange } from "../../src/storage/repositories/metrics-rollup-repository";
+import {
+  purgeFoldedEvents,
+  purgeFoldedImproveRuns,
+  purgeFoldedUsageEvents,
+  rollupDayRange,
+} from "../../src/storage/repositories/metrics-rollup-repository";
 import { count, dayPlus, insertLlm, insertRun, insertUsage } from "../_helpers/metrics-fixtures";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 

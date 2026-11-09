@@ -7,7 +7,7 @@
  *
  * `state.db` keeps 90 days of raw `events`, `usage_events` and `improve_runs`
  * (they are functional there: ranking, improve's feedback window). Before any of
- * those rows is purged, {@link foldClosedDays} (`commands/metrics/fold.ts`)
+ * those rows is purged, {@link foldClosedDays} (`indexer/metrics/fold.ts`)
  * folds each closed UTC day into this file: daily rollups of events, LLM use,
  * usage, queries, selects and latency, plus one slim row per improve run. This
  * file is never purged: it is what `akm metrics` and `akm health` read for any
@@ -206,9 +206,4 @@ export function openMetricsDatabase(dbPath?: string): Database {
     pragmas: { dataDir: path.dirname(resolvedPath), foreignKeys: false },
     init: runMigrations,
   });
-}
-
-/** Run `fn` against metrics.db, opening and closing it unless `borrowed` is given. */
-export function withMetricsDb<T>(fn: (db: Database) => T, opts?: { path?: string; borrowed?: Database }): T {
-  return withManagedDb(() => openMetricsDatabase(opts?.path), fn, opts?.borrowed ? { borrowed: opts.borrowed } : {});
 }

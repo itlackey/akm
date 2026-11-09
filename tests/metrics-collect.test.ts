@@ -6,16 +6,9 @@
 
 import { describe, expect, test } from "bun:test";
 import { emptyLlmUsageAggregate, summarizeLlmUsage } from "../src/commands/health/llm-usage";
-import {
-  buildMetricsResult,
-  indexRunsFromEvents,
-  llmRowsFromEvents,
-  type MetricsInput,
-  retentionNotes,
-  toUsageRow,
-  usageCreatedAtToIso,
-} from "../src/commands/metrics/collect";
+import { buildMetricsResult, type MetricsInput, retentionNotes } from "../src/commands/metrics/collect";
 import type { EventEnvelope } from "../src/core/events-types";
+import { indexRunsFromEvents, llmRowsFromEvents, toUsageRow, usageCreatedAtToIso } from "../src/indexer/metrics/rows";
 import type { UsageEventRow } from "../src/indexer/usage/usage-events";
 import type { TaskHistoryRow } from "../src/storage/repositories/task-history-repository";
 

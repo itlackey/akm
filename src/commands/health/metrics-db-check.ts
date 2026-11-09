@@ -11,12 +11,12 @@
  */
 
 import fs from "node:fs";
+import { unfoldedClosedDays } from "../../indexer/metrics/fold";
 import type { Database } from "../../storage/database";
 import { openDatabase } from "../../storage/database";
-import { metricsDbPathBeside } from "../../storage/repositories/metrics-rollup-repository";
+import { metricsDbPathBeside, readFoldedDays, utcDay } from "../../storage/repositories/metrics-rollup-repository";
 import { applyReadonlyPragmas } from "../../storage/sqlite-pragmas";
 import { runStateDbIntegrityCheck } from "../../storage/state-db-integrity";
-import { readFoldedDays, unfoldedClosedDays, utcDay } from "../metrics/fold";
 import type { HealthCheckResult } from "./types";
 
 const DAY_MS = 86_400_000;

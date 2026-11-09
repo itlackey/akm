@@ -34,8 +34,8 @@ written are in [Core Principles](akm-core-principles.md).
   and `editable`. Pinned by
   `tests/output-shapes-unit.test.ts` and `tests/output-baseline.test.ts`.
 - **Every token earns its place.** Default output is lean: `--detail brief`
-  lists only what is needed to choose the next asset, and `normal`, `full`
-  and `agent` widen or reshape it. `show` returns what a consumer needs to
+  lists only what is needed to choose the next asset, and `normal` and `full`
+  widen it. `show` returns what a consumer needs to
   act on the asset (a script's run hints, a skill's instructions, a
   command's template, an agent's prompt, knowledge content, a workflow's
   steps and parameters, env key names, secret metadata) and never an env or

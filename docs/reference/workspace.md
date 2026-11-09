@@ -574,7 +574,6 @@ Recent commits of the write-target stash (the default bundle), from its git log.
         "description": "Deploy guide",
         "tags": ["deploy"],
         "size": "small",
-        "action": "akm show knowledge/deploy -> read reference material",
         "score": 0.016393,
         "whyMatched": ["lexical rank 1"],
         "estimatedTokens": 24,

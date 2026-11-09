@@ -11,6 +11,7 @@
 
 import type { readEvents } from "../../core/events";
 import { decodeImproveResult } from "../../core/improve-result";
+import { type SkipTally, tallyImproveSkipEvents } from "../../indexer/metrics/rows";
 import type { Database } from "../../storage/database";
 import { type ImproveRunSummaryRow, queryImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { decodeTaskHistoryMetadata, type TaskHistoryRow } from "../../storage/repositories/task-history-repository";
@@ -411,41 +412,6 @@ export function computeWallTimeStats(durationsMs: number[]): ImproveHealthMetric
   const sorted = [...durationsMs].sort((a, b) => a - b);
   const pick = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
   return { medianMs: pick(0.5), p95Ms: pick(0.95) };
-}
-
-/**
- * A window's improve_skipped events, tallied (see {@link buildImproveSkipSummary}): `summed` counts the
- * per-occurrence events per reason, `latestSnapshot` keeps the last count-bearing event's count per reason.
- * metrics.db keeps one tally per day so a window older than state.db's raw rows is rebuilt the same way.
- */
-export interface SkipTally {
-  summed: Record<string, number>;
-  latestSnapshot: Record<string, number>;
-}
-
-export function tallyImproveSkipEvents(events: ReturnType<typeof readEvents>["events"]): SkipTally {
-  // Two kinds of skip events:
-  //  - Per-occurrence (no `count`): one event per skipped ref → SUM is correct.
-  //  - Aggregated snapshot (carries `count`): a single per-run event whose count
-  //    is the number of refs that hit a STABLE, whole-stash condition that run
-  //    (`no_new_signal`, `strategy_filtered_all_passes`). Each run re-counts the
-  //    same stable set, so summing across the window re-counts it N times (the
-  //    2.7M / 3M inflation). For these we keep the MOST RECENT run's count — the
-  //    current snapshot — matching how memorySummary is handled. Events arrive
-  //    in chronological (offset) order, so the last count-bearing event per
-  //    reason is the latest run's value.
-  const tally: SkipTally = { summed: {}, latestSnapshot: {} };
-  for (const event of events) {
-    const reason =
-      typeof event.metadata?.reason === "string" && event.metadata.reason.trim() ? event.metadata.reason : "unknown";
-    const rawCount = event.metadata?.count;
-    if (typeof rawCount === "number" && Number.isFinite(rawCount) && rawCount > 0) {
-      tally.latestSnapshot[reason] = rawCount; // overwrite → keeps the latest run's snapshot
-    } else {
-      tally.summed[reason] = (tally.summed[reason] ?? 0) + 1;
-    }
-  }
-  return tally;
 }
 
 /**
