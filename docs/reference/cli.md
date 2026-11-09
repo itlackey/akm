@@ -3740,8 +3740,8 @@ akm task add <id> --schedule "@daily" \     # Register a new task and enable it
 akm task add review --schedule "@daily" --prompt "Review recent changes" --harness reviewer
 akm task add nightly --schedule "@daily" --command "akm improve" --disabled  # register but leave off
 akm task add nightly --schedule "@daily" --command "akm improve" --force    # overwrite an existing task id
-akm task enable team//tasks/nightly       # Add the ref to scheduler.enabled
-akm task disable team//tasks/nightly      # Remove the ref from scheduler.enabled
+akm task enable team//tasks/nightly       # Add the ref to scheduler.enabled, then sync the OS entry
+akm task disable team//tasks/nightly      # Remove the ref from scheduler.enabled, then sync the OS entry
 akm task dispatch                           # Start the tasks due this minute, detached, and exit
 akm task run <id>                           # Execute now
 akm task explain <ref>                      # Read-only: declared inputs, target, schedule — spawns nothing
@@ -3756,8 +3756,10 @@ akm task prune --yes                        # Remove them
 
 `task add` also accepts `--tags <a,b>` (comma-separated tags), `--when-to-use <text>` (guidance on when the task runs or should be used), `--disabled` (write the task but leave its ref out of
 this host's `scheduler.enabled`), `--force` (overwrite an existing task with
-the same id), and `--rebind` (ignored with a warning: `add` no longer touches
-the OS scheduler; use `akm task sync --rebind`).
+the same id), and `--rebind` (ignored with a warning: `add` leaves the entry's
+launcher alone; use `akm task sync --rebind`). `add`, `enable` and `disable` sync the OS
+entry after saving; if that fails (no `crontab` on `PATH`, say) the change stays and the
+result carries a `warnings` entry instead of `sync`: fix it, then run `akm task sync`.
 
 `akm task explain <ref> [input flags]` prints a task's declared `inputs:`,
 the values that would actually be supplied (with provenance), the resolved

@@ -199,7 +199,5 @@ async function enableLearningTask() {
       ],
       "task-add",
     );
-    // `task add` no longer touches the OS scheduler; the entry that runs the task is `task sync`'s.
-    await runCli(["task", "sync"], "task-sync");
   } else if (!task.enabled) await tasks.enable({ task: LEARNING_TASK });
 }

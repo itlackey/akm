@@ -91,7 +91,7 @@ export interface TasksAddInput {
   tags?: string[];
   disabled?: boolean;
   force?: boolean;
-  /** Accepted and ignored: `add` no longer touches the OS scheduler (`akm task sync --rebind` points the entry at this akm). */
+  /** Accepted and ignored: `add` leaves the entry's launcher alone (`akm task sync --rebind` points it at this akm). */
   rebind?: boolean;
 }
 
@@ -103,8 +103,9 @@ export interface TasksAddResult {
   schedule: string;
   enabled: boolean;
   target: TaskV3SourceDocument["target"];
-  /** What the sync that followed did to the OS scheduler entry. */
-  sync: TasksSyncResult;
+  /** What the sync that followed did to the OS scheduler entry; absent when the scheduler was unavailable (see `warnings`). */
+  sync?: TasksSyncResult;
+  warnings?: string[];
 }
 
 export interface TaskMutationDeps {
@@ -118,7 +119,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   assertTaskAddTargetShape(input);
   parseSchedule(input.schedule);
   if (input.rebind === true) {
-    warn("`task add --rebind` is ignored: `add` no longer touches the OS scheduler. Run `akm task sync --rebind`.");
+    warn("`task add --rebind` is ignored: `add` leaves the entry's launcher alone. Run `akm task sync --rebind`.");
   }
 
   const bundle = resolveTaskBundle(input.target);
@@ -170,7 +171,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
   await (deps.writeAsset ?? writeAssetToSource)(bundle.resolved.source, bundle.resolved.config, taskAssetRef(id), yaml);
   (deps.commitBoundary ?? commitWriteTargetBoundary)(bundle.resolved, `Update tasks/${id}`);
   if (!input.disabled) setSchedulerRefEnabled(qualifiedRef, true);
-  const sync = await akmTasksSync(deps.sync);
+  const synced = await syncAfterSave(deps.sync);
   return {
     id,
     ref: conceptIdFromTypeName("task", id),
@@ -179,7 +180,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     schedule: first.cron,
     enabled: input.disabled !== true,
     target: task.target,
-    sync,
+    ...synced,
   };
 }
 
@@ -276,8 +277,9 @@ export interface TasksActivationResult {
   readonly ref: string;
   readonly enabled: boolean;
   readonly changed: boolean;
-  /** What the sync that followed did to the OS scheduler entry. */
-  readonly sync: TasksSyncResult;
+  /** What the sync that followed did to the OS scheduler entry; absent when the scheduler was unavailable (see `warnings`). */
+  readonly sync?: TasksSyncResult;
+  readonly warnings?: string[];
 }
 
 function resolveTaskActivation(
@@ -337,7 +339,25 @@ async function setTaskActivation(
   syncDeps: TaskSyncDeps | undefined,
 ): Promise<TasksActivationResult> {
   const activation = setSchedulerRefEnabled(resolved.qualifiedRef, enabled);
-  return { ref: resolved.qualifiedRef, enabled, changed: activation.changed, sync: await akmTasksSync(syncDeps) };
+  return { ref: resolved.qualifiedRef, enabled, changed: activation.changed, ...(await syncAfterSave(syncDeps)) };
+}
+
+/**
+ * Sync the OS entry after a task change is saved. A host with no usable scheduler (no `crontab`, a refusal) warns:
+ * the change stays saved, and an explicit `akm task sync` still fails loudly.
+ */
+async function syncAfterSave(
+  deps: TaskSyncDeps | undefined,
+): Promise<{ sync: TasksSyncResult } | { warnings: string[] }> {
+  try {
+    return { sync: await akmTasksSync(deps) };
+  } catch (err) {
+    if (!(err instanceof ConfigError)) throw err;
+    const reason = err.message.replace(/\.$/, "");
+    return {
+      warnings: [`Task saved, but the OS scheduler was not updated: ${reason}. Fix that, then run \`akm task sync\`.`],
+    };
+  }
 }
 
 export interface TasksHistoryResult {

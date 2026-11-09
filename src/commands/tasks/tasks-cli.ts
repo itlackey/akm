@@ -219,7 +219,7 @@ const tasksAddCommand = defineJsonCommand({
     force: { type: "boolean", description: "Overwrite an existing task with the same id", default: false },
     rebind: {
       type: "boolean",
-      description: "Ignored: `add` no longer touches the OS scheduler; use `akm task sync --rebind`",
+      description: "Ignored: `add` leaves the entry's launcher alone; use `akm task sync --rebind`",
       default: false,
     },
   },
@@ -291,7 +291,11 @@ const tasksRunCommand = defineCommand({
 });
 
 const tasksEnableCommand = defineJsonCommand({
-  meta: { name: "enable", description: "Enable a task: add it to this host's `scheduler.enabled` list and install the scheduler entry if needed" },
+  meta: {
+    name: "enable",
+    description:
+      "Enable a task: add it to this host's `scheduler.enabled` list and install the scheduler entry if needed",
+  },
   args: {
     ref: { type: "positional", description: "Task ref or id", required: true },
     ...bundleArg,
@@ -302,7 +306,11 @@ const tasksEnableCommand = defineJsonCommand({
 });
 
 const tasksDisableCommand = defineJsonCommand({
-  meta: { name: "disable", description: "Disable a task: remove it from this host's `scheduler.enabled` list; the entry goes with the last one" },
+  meta: {
+    name: "disable",
+    description:
+      "Disable a task: remove it from this host's `scheduler.enabled` list; the entry goes with the last one",
+  },
   args: {
     ref: { type: "positional", description: "Task ref or id", required: true },
     ...bundleArg,

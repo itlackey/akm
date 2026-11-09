@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmTasksAdd, akmTasksDisable, akmTasksEnable, type TaskSyncDeps } from "../../src/commands/tasks/tasks";
 import { loadConfig } from "../../src/core/config/config";
+import { ConfigError } from "../../src/core/errors";
 import { isSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import type { DispatchEntry, SchedulerBackend } from "../../src/tasks/backends/types";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -59,7 +60,7 @@ describe("the entry follows the enabled list", () => {
   test("task add installs the entry on a host that has none", async () => {
     const result = await akmTasksAdd({ id: "nightly", schedule: "0 3 * * *", command: "true" }, { sync: sync() });
 
-    expect(result.sync.entry).toBe("installed");
+    expect(result.sync?.entry).toBe("installed");
     expect(installed).toEqual({ launcher: ["/opt/akm"], path: "/usr/bin:/bin" });
   });
 
@@ -69,7 +70,7 @@ describe("the entry follows the enabled list", () => {
       { sync: sync() },
     );
 
-    expect(result.sync.entry).toBe("absent");
+    expect(result.sync?.entry).toBe("absent");
     expect(installed).toBeUndefined();
   });
 
@@ -77,8 +78,8 @@ describe("the entry follows the enabled list", () => {
     writeTask("a", "@daily");
     writeTask("b", "@daily");
 
-    expect((await akmTasksEnable("a", { sync: sync() })).sync.entry).toBe("installed");
-    expect((await akmTasksEnable("b", { sync: sync() })).sync.entry).toBe("unchanged");
+    expect((await akmTasksEnable("a", { sync: sync() })).sync?.entry).toBe("installed");
+    expect((await akmTasksEnable("b", { sync: sync() })).sync?.entry).toBe("unchanged");
     expect(writes).toBe(1);
   });
 
@@ -88,9 +89,9 @@ describe("the entry follows the enabled list", () => {
     await akmTasksEnable("a", { sync: sync() });
     await akmTasksEnable("b", { sync: sync() });
 
-    expect((await akmTasksDisable("a", { sync: sync() })).sync.entry).toBe("unchanged");
+    expect((await akmTasksDisable("a", { sync: sync() })).sync?.entry).toBe("unchanged");
     expect(installed).toBeDefined();
-    expect((await akmTasksDisable("b", { sync: sync() })).sync.entry).toBe("removed");
+    expect((await akmTasksDisable("b", { sync: sync() })).sync?.entry).toBe("removed");
     expect(installed).toBeUndefined();
   });
 
@@ -123,5 +124,59 @@ describe("a task that cannot be scheduled is refused before anything is written"
     // `7` is not a day of week in this grammar.
     await expect(akmTasksEnable("mixed", { sync: sync() })).rejects.toMatchObject({ code: "INVALID_FLAG_VALUE" });
     expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/mixed")).toBe(false);
+  });
+});
+
+describe("a host whose OS scheduler is unavailable still saves the change", () => {
+  /** What `crontab` missing from PATH does: `inspect` throws a ConfigError. */
+  const noCrontab = (error: Error = new ConfigError("the `crontab` binary was not found on PATH")): TaskSyncDeps => ({
+    ...sync(),
+    backend: {
+      name: "cron",
+      inspect() {
+        throw error;
+      },
+      apply() {
+        throw error;
+      },
+    } satisfies SchedulerBackend,
+  });
+
+  test("task add saves the task and enables it, and warns instead of failing", async () => {
+    const result = await akmTasksAdd({ id: "nightly", schedule: "0 3 * * *", command: "true" }, { sync: noCrontab() });
+
+    expect(result.sync).toBeUndefined();
+    expect(result.warnings).toEqual([
+      "Task saved, but the OS scheduler was not updated: the `crontab` binary was not found on PATH. Fix that, then run `akm task sync`.",
+    ]);
+    expect(fs.existsSync(path.join(storage.stashDir, "tasks", "nightly.yml"))).toBe(true);
+    expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/nightly")).toBe(true);
+  });
+
+  test("task enable keeps the activation and warns", async () => {
+    writeTask("a", "@daily");
+
+    const result = await akmTasksEnable("a", { sync: noCrontab() });
+
+    expect(result).toMatchObject({ ref: "stash//tasks/a", enabled: true, changed: true });
+    expect(result.sync).toBeUndefined();
+    expect(result.warnings?.[0]).toContain("`akm task sync`");
+    expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/a")).toBe(true);
+  });
+
+  test("task disable keeps the change and warns", async () => {
+    writeTask("a", "@daily");
+    await akmTasksEnable("a", { sync: sync() });
+
+    const result = await akmTasksDisable("a", { sync: noCrontab() });
+
+    expect(result.sync).toBeUndefined();
+    expect(result.warnings).toHaveLength(1);
+    expect(isSchedulerRefEnabled(loadConfig(), "stash//tasks/a")).toBe(false);
+  });
+
+  test("an error that is not a ConfigError still propagates", async () => {
+    writeTask("a", "@daily");
+    await expect(akmTasksEnable("a", { sync: noCrontab(new Error("disk on fire")) })).rejects.toThrow("disk on fire");
   });
 });

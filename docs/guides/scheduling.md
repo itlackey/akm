@@ -37,7 +37,8 @@ akm task sync --rebind   # point the entry at this akm and this shell's PATH
 ```
 
 `akm task enable`, `disable` and `add` run the sync themselves, so it is only needed
-to repair the entry or to rebind it. The entry records an absolute launcher and the
+to repair the entry or to rebind it. When their sync fails (no `crontab` on `PATH`, say) the
+change stays saved and the result carries a warning; fix it and run `akm task sync`. The entry records an absolute launcher and the
 `PATH` of the shell that writes it (cron, launchd and Task Scheduler start jobs with
 almost no `PATH`), and keeps both until `--rebind`. An akm that is carried inside
 another package or app (a plugin's bundled copy, Desktop's own binary) does not
