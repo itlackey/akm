@@ -7,6 +7,7 @@
 import path from "node:path";
 import { setConfigValue, unsetConfigValue } from "../commands/config-cli";
 import {
+  type AkmConfig,
   defaultConnection,
   loadConfig,
   mutateConfig,
