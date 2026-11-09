@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { ZodError } from "zod";
-import { isRecord } from "../common";
+import { isRecord, resolveConfiguredBundlePath } from "../common";
 import { warnOnce } from "../warn";
 import { ConnectionSchema } from "./schema/connections";
 import { HarnessSchema, harnessNameProblem } from "./schema/harnesses";
@@ -84,4 +84,32 @@ export function dropUnusableEntries(raw: Dict, sourcePath?: string): Dict {
     out[holder] = kept;
   }
   return out;
+}
+
+/**
+ * A bundle's `path` is read as a directory the same way a project's `paths` are
+ * (see {@link resolveConfiguredBundlePath}): `~` expanded, `..` and trailing
+ * slashes resolved, a relative path meaning the folder of the config file that
+ * holds it. A path that cannot be placed drops that bundle from what is read,
+ * with one warning. The file keeps what was written.
+ */
+export function resolveBundlePaths(raw: Dict, sourcePath?: string): Dict {
+  if (!isRecord(raw.bundles)) return raw;
+  const bundles: Dict = {};
+  for (const [name, entry] of Object.entries(raw.bundles)) {
+    if (!isRecord(entry) || typeof entry.path !== "string" || entry.path.length === 0) {
+      bundles[name] = entry;
+      continue;
+    }
+    const resolved = resolveConfiguredBundlePath(entry.path, sourcePath);
+    if (resolved === undefined) {
+      warnOnce(
+        `config:unusable:bundle-path:${sourcePath ?? "inline"}:${name}`,
+        `Ignoring bundles.${name}${sourcePath ? ` in ${sourcePath}` : ""}: its path "${entry.path}" must be absolute, ~ or ~/..., or relative to a config file.`,
+      );
+      continue;
+    }
+    bundles[name] = { ...entry, path: resolved };
+  }
+  return { ...raw, bundles };
 }

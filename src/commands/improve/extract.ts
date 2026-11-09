@@ -43,7 +43,7 @@ import { resolveTypeConventions, typeConventionRef } from "../../core/standards/
 import { getStateDbPath, openStateDatabase } from "../../core/state-db";
 import { repairTruncatedDescription } from "../../core/text-truncation";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
-import { warn, warnVerbose } from "../../core/warn";
+import { warn, warnOnce, warnVerbose } from "../../core/warn";
 import { noticeSet } from "../../execution/notices";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
@@ -319,24 +319,36 @@ function emptyExtractResult(args: {
 }
 
 /**
- * A since-string as an epoch-ms cutoff: an ISO timestamp or `<n>m|h|d`
- * (case-insensitive here — `5M` is five minutes). Default 24h; anything else
- * is a usage error.
+ * A since-string as an epoch-ms cutoff: an ISO timestamp or a duration in the
+ * CLI-wide grammar (`m` minutes, `h` hours, `d` days, `M` months; case matters,
+ * see core/time.ts). Default 24h; anything else is a usage error.
  */
 export function parseSinceArg(value: string | undefined, now: number = Date.now()): number {
   if (!value || value.trim() === "") return now - 24 * 60 * 60 * 1000;
   const trimmed = value.trim();
-  const relMatch = trimmed.match(/^(\d+)\s*([mhd])$/i);
-  if (relMatch) {
-    const ms = parseDuration(`${relMatch[1] ?? "0"}${(relMatch[2] ?? "h").toLowerCase()}`, DURATION_UNITS);
-    if (ms !== null) return now - ms;
-  }
+  const ms = parseDuration(trimmed, DURATION_UNITS);
+  if (ms !== null) return now - ms;
   const iso = Date.parse(trimmed);
   if (!Number.isNaN(iso)) return iso;
   throw new UsageError(
-    `--since value "${value}" could not be parsed (expected ISO timestamp or duration like 24h / 7d / 30m)`,
+    `--since value "${value}" could not be parsed (expected ISO timestamp or duration like 24h / 7d / 30m / 3M)`,
     "INVALID_FLAG_VALUE",
   );
+}
+
+/** A strategy's `defaultSince` that parses, else `undefined` with one warning: a bad config value is ignored, never a flag error. */
+export function usableDefaultSince(value: string | undefined): string | undefined {
+  if (!value) return value;
+  try {
+    parseSinceArg(value);
+    return value;
+  } catch {
+    warnOnce(
+      `extract:defaultSince:${value}`,
+      `Ignoring processes.extract.defaultSince "${value}": expected an ISO timestamp or a duration like 24h / 7d / 30m / 3M.`,
+    );
+    return undefined;
+  }
 }
 
 /**
@@ -1132,7 +1144,7 @@ function resolveExtractRun(
       : typeof process?.maxSessionsPerRun === "number"
         ? process.maxSessionsPerRun
         : DEFAULT_MAX_SESSIONS_PER_RUN,
-    effectiveSince: options.since ?? process?.defaultSince,
+    effectiveSince: options.since ?? usableDefaultSince(process?.defaultSince),
     sessionIndexing: {
       enabled: process?.indexSessions ?? true,
       minDurationMinutes:
@@ -1410,7 +1422,8 @@ export async function countNewExtractCandidates(
   _config: AkmConfig,
   options: CountNewExtractCandidatesOptions = {},
 ): Promise<number> {
-  const effectiveSince = options.since ?? getImproveProcessConfig("extract", options.improveProfile)?.defaultSince;
+  const effectiveSince =
+    options.since ?? usableDefaultSince(getImproveProcessConfig("extract", options.improveProfile)?.defaultSince);
   const explicitSinceMs = effectiveSince ? parseSinceArg(effectiveSince) : undefined;
   const harnesses = (options.harnesses ?? getAvailableHarnesses()).filter((h) => h.isAvailable());
   let stateDb: Database | undefined = options.stateDb;

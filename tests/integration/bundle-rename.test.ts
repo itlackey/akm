@@ -198,6 +198,45 @@ describe("akm bundle rename — dry-run", () => {
 });
 
 describe("akm bundle rename — applied", () => {
+  test("rewrites projects.*.write.bundle and projects.*.from that name the old bundle", async () => {
+    await seedBundleWithOneEntry();
+    const config = loadConfig();
+    saveConfig({
+      ...config,
+      bundles: { ...config.bundles, other: { path: path.join(storage.stashDir, "..", "other-bundle") } },
+      projects: {
+        one: { from: ["original", "other"], write: { bundle: "original" } },
+        two: { from: "original", write: { bundle: "other" } },
+      },
+    });
+
+    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+
+    const projects = loadConfig().projects ?? {};
+    expect(projects.one?.from).toEqual(["renamed", "other"]);
+    expect(projects.one?.write?.bundle).toBe("renamed");
+    expect(projects.two?.from).toBe("renamed");
+    expect(projects.two?.write?.bundle).toBe("other");
+  });
+
+  test("keeps a bundle's `path` as written: `~/x` and a relative path survive a rename", async () => {
+    const configPath = path.join(storage.configDir, "akm", "config.json");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        bundles: { original: { path: "~/akm-rename-home" }, rel: { path: "./rel-bundle" } },
+      }),
+    );
+
+    await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8")).bundles;
+    expect(written.renamed.path).toBe("~/akm-rename-home");
+    expect(written.rel.path).toBe("./rel-bundle");
+  });
+
   test("moves config, index, lock, scheduler refs, and state rows; leaves and reports content refs", async () => {
     await seedBundleWithOneEntry();
 

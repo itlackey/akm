@@ -48,7 +48,7 @@ import { documentEndpoint, planKeyMoves } from "./migrate-keys";
 import { modelsFileExists, readModelsFile, retireModelsFile } from "./models-file";
 import { type EngineTargets, rememberEngineTargets, rememberedEngineTargets } from "./retired-engines";
 import { dropUnusableProjects } from "./schema/projects";
-import { dropUnusableEntries, findUnusableEntries, type UnusableEntry } from "./unusable-entries";
+import { dropUnusableEntries, findUnusableEntries, resolveBundlePaths, type UnusableEntry } from "./unusable-entries";
 
 export { stripJsonComments } from "./config-io";
 
@@ -278,8 +278,9 @@ export function retiredEngineTargets(): EngineTargets {
  * through this pipeline, before it deletes the keys the schema does not know).
  */
 function readRetiredEngines(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
+  const overlay = modelsOverlay();
   const { config, notes, changed, keys } = convertEngineConfig(raw, {
-    modelsOverlay: modelsOverlay(),
+    modelsOverlay: overlay,
     env: process.env,
   });
   if (!changed) return raw;
@@ -288,13 +289,17 @@ function readRetiredEngines(raw: Record<string, unknown>, sourcePath?: string): 
       `engines.${engine}: its ${field} is not read from config any more; \`akm migrate apply\` moves it to credentials.json.`,
   );
   const retiredForm = raw.engines !== undefined || raw.defaults !== undefined;
+  // Without the engines/defaults form, a conversion comes from a `models.json` beside the config, or from
+  // retired settings on an improve strategy; the notes below name those.
+  const foldsModelsFile = !retiredForm && overlay !== undefined;
+  const what = retiredForm
+    ? "uses the retired engines/defaults form; reading it as connections/harnesses"
+    : foldsModelsFile
+      ? "is read with the retired models.json folded into its models"
+      : "carries retired settings; reading them in their current form";
   warnOnce(
     `config:retired-engines:${sourcePath ?? "inline"}`,
-    `${sourcePath ?? "config.json"} ${
-      retiredForm
-        ? "uses the retired engines/defaults form; reading it as connections/harnesses"
-        : "is read with the retired models.json folded into its models"
-    }. \`akm migrate apply\` rewrites config.json${retiredForm ? "" : " and moves models.json aside"}.${[...notes, ...keyNotes].map((note) => `\n  - ${note}`).join("")}`,
+    `${sourcePath ?? "config.json"} ${what}. \`akm migrate apply\` rewrites config.json${foldsModelsFile ? " and moves models.json aside" : ""}.${[...notes, ...keyNotes].map((note) => `\n  - ${note}`).join("")}`,
   );
   return config;
 }
@@ -389,7 +394,10 @@ function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePat
   const chained = dropRetiredOutputFormat(
     dropUnusableProjects(
       dropUnusableEntries(
-        resolveExtendsChain(dropUnusableProjects(liftedLocalRaw, sourcePath), sourcePath),
+        resolveBundlePaths(
+          resolveExtendsChain(dropUnusableProjects(liftedLocalRaw, sourcePath), sourcePath),
+          sourcePath,
+        ),
         sourcePath,
       ),
       sourcePath,
@@ -451,6 +459,8 @@ export function unknownConfigKeyPaths(
   const found: string[][] = [];
   for (const key of Object.keys(node).sort()) {
     const keyPath = [...prefix, key];
+    // `$schema` is the editor hint every JSON-schema-aware config carries; akm ignores it silently.
+    if (prefix.length === 0 && key === "$schema") continue;
     const schema = resolveSchemaAt(keyPath, root);
     if (RETIRED_CATCHALL_KEY_PATHS.has(keyPath.join(".")) || schema === undefined) {
       found.push(keyPath);
@@ -1087,6 +1097,30 @@ function followKeyOrder(target: Record<string, unknown>, order: Record<string, u
 }
 
 /**
+ * A bundle that `next` holds under a new name came from the loaded entry, whose
+ * `path` is the resolved one. Write the path the file spelled for the entry it
+ * replaced (`~/x` stays `~/x`).
+ */
+function keepRenamedBundlePaths(
+  body: Record<string, unknown>,
+  document: Record<string, unknown>,
+  current: AkmConfig,
+  next: AkmConfig,
+): void {
+  const written = document.bundles;
+  if (!isPlainObject(written) || !isPlainObject(body.bundles)) return;
+  for (const [name, entry] of Object.entries(next.bundles ?? {})) {
+    if (Object.hasOwn(current.bundles ?? {}, name)) continue;
+    const from = Object.entries(current.bundles ?? {}).find(([, old]) => isDeepStrictEqual(old, entry))?.[0];
+    const asWritten = from === undefined ? undefined : written[from];
+    const target = (body.bundles as Record<string, unknown>)[name];
+    if (isPlainObject(asWritten) && typeof asWritten.path === "string" && isPlainObject(target)) {
+      target.path = asWritten.path;
+    }
+  }
+}
+
+/**
  * What an ordinary `mutateConfig`/`mutateConfigWithPrecommit` write persists:
  * the file's own document with the edit `current` → `next` applied
  * ({@link applyEdit}). Lifecycle mutations must not serialize every schema
@@ -1111,6 +1145,7 @@ function editedConfigFile(
   // back byte for byte.
   const body = structuredClone(document);
   applyEdit(body, current, next, unremoved);
+  keepRenamedBundlePaths(body, document, current, next);
   // A project the caller names is written whole even when it equals the effective entry: the file's own may hold parts the reader ignores.
   for (const name of writeProjects) {
     const entry = next.projects?.[name];
@@ -1290,6 +1325,8 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     const current = buildEffectiveConfig(localRaw, configPath);
     const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });
     const body = configWriteBody(localRaw, current, next) as Record<string, unknown>;
+    // The reader resolves each bundle `path` and drops an unplaceable one; the file keeps what was written.
+    if (isPlainObject(localRaw.bundles)) body.bundles = localRaw.bundles;
     for (const keyPath of unknownConfigKeyPaths(body)) deleteConfigPath(body, keyPath);
     // `improve.strategies["graph-refresh"]` is schema-valid (any name is a
     // legal custom-strategy key), so it never reaches the unknown-key sweep

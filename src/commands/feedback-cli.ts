@@ -652,13 +652,13 @@ export const feedbackCommand = defineJsonCommand({
 
     if (args.negative === true && !reason?.trim()) {
       // F-3 / #384: Default requireReason is now true. Load config to allow
-      // operators to opt out via feedback.requireReason: false in akm.json.
+      // operators to opt out via feedback.requireReason: false in config.json.
       const cfg = loadConfig();
       const requireReason = cfg.feedback?.requireReason ?? true; // Default: true (F-3 / #384)
       if (requireReason) {
         throw new UsageError(
           "Negative feedback requires --reason: say what is wrong and what should change. " +
-            "Set feedback.requireReason: false in akm.json to downgrade to a warning.",
+            "Set feedback.requireReason: false in config.json to downgrade to a warning.",
           "MISSING_REQUIRED_ARGUMENT",
           `Hint: akm feedback ${ref} --negative --reason "<what is wrong and what should change>"`,
         );

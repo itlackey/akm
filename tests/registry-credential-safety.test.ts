@@ -717,7 +717,8 @@ describe("registry provider, search, warning, and log boundaries", () => {
         },
         () => resolveRegistries(),
       );
-      expect(resolved).toEqual([]);
+      // No usable entry: the variable is ignored and the configured registries stand.
+      expect(resolved).toEqual(withEnvSync({ AKM_REGISTRY_URL: undefined }, () => resolveRegistries()));
     } finally {
       console.warn = originalWarn;
     }

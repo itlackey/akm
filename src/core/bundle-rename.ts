@@ -15,7 +15,7 @@
  * to.
  *
  * Rewritten: the config `bundles` key, `defaultBundle`/`defaultWriteTarget`
- * when they name the old id, every `scheduler.enabled[].ref` with the old
+ * and `projects.*.write.bundle`/`projects.*.from` when they name the old id, every `scheduler.enabled[].ref` with the old
  * `//` prefix, the lockfile entry id, and the index/state rows above.
  *
  * Reported, never rewritten: refs inside bundle CONTENT (xrefs,
@@ -143,9 +143,27 @@ function renameBundleInConfig(config: AkmConfig, oldId: string, newId: string): 
             bundleOfRef(ref) === oldId ? bundleRefToString({ ...parseBundleRef(ref), bundle: newId }) : ref,
           ),
         };
+  const rename = (name: string) => (name === oldId ? newId : name);
+  const projects = config.projects
+    ? Object.fromEntries(
+        Object.entries(config.projects).map(([name, project]) => [
+          name,
+          {
+            ...project,
+            ...(project.from === undefined
+              ? {}
+              : { from: Array.isArray(project.from) ? project.from.map(rename) : rename(project.from) }),
+            ...(project.write?.bundle === undefined
+              ? {}
+              : { write: { ...project.write, bundle: rename(project.write.bundle) } }),
+          },
+        ]),
+      )
+    : undefined;
   return {
     ...config,
     bundles,
+    ...(projects ? { projects } : {}),
     ...(config.defaultBundle === oldId ? { defaultBundle: newId } : {}),
     ...(config.defaultWriteTarget === oldId ? { defaultWriteTarget: newId } : {}),
     ...(scheduler ? { scheduler } : {}),
@@ -321,7 +339,8 @@ export async function renameBundle(
   const plan = await buildPlan(config, oldId, newId, sched);
   if (options.dryRun) return { ...plan, applied: false };
 
-  // Config: the bundles key, defaultBundle/defaultWriteTarget, and every
+  // Config: the bundles key, defaultBundle/defaultWriteTarget, the projects'
+  // write.bundle and from entries, and every
   // scheduler.enabled[].ref with the old `//` prefix — all under one write
   // (validated again inside the config lock).
   mutateConfig((current) => renameBundleInConfig(current, oldId, newId));
