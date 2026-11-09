@@ -556,7 +556,8 @@ const EMPTY_RESULT_TIP = "No matching assets were found. Try a different query o
 
 /** The empty-result tip; for a `--type` that is not an indexed type but is close to one, names the nearest. */
 function emptyResultTip(db: Database, searchType: AkmSearchType): string {
-  if (searchType === "any") return EMPTY_RESULT_TIP;
+  // A known type costs nothing; only a type akm does not know reads the index.
+  if (searchType === "any" || (KNOWN_TYPES as readonly string[]).includes(searchType)) return EMPTY_RESULT_TIP;
   const types = [...new Set([...KNOWN_TYPES, ...getAllEntries(db).map((e) => e.entry.type)])];
   if (types.includes(searchType)) return EMPTY_RESULT_TIP;
   const near = closestMatch(searchType, types, Math.max(1, Math.floor(searchType.length / 3)));
