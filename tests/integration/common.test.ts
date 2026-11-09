@@ -9,12 +9,15 @@ import {
   hasErrnoCode,
   isWithin,
   jsonWithByteCap,
+  NO_DEFAULT_BUNDLE_MESSAGE,
   parseJsonc,
   ResponseTooLargeError,
   readBodyWithByteCap,
   resolveStashDir,
   toPosix,
 } from "../../src/core/common";
+import { loadConfig } from "../../src/core/config/config";
+import { resolveWorkingStashTarget } from "../../src/core/write-source";
 import { writeResponseToFileCapped } from "../../src/runtime";
 import { type Cleanup, sandboxHome, sandboxXdgConfigHome, withEnvSync, withMockedFetch } from "../_helpers/sandbox";
 
@@ -104,7 +107,7 @@ describe("resolveStashDir", () => {
   test("throws when no stash dir is configured and default does not exist", () => {
     // HOME is already sandboxed (no akm subdir); AKM_BUNDLE_DIR is unset for a clean slate.
     withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => {
-      expect(() => resolveStashDir()).toThrow("No bundle directory found");
+      expect(() => resolveStashDir()).toThrow("No default bundle is configured");
     });
   });
 
@@ -156,13 +159,11 @@ describe("resolveStashDir", () => {
     }
   });
 
-  test("uses default stash dir when it exists", () => {
-    // HOME is already sandboxed to a fresh temp dir; create akm subdir there
+  test("an existing ~/akm is not read implicitly: reads and writes error with the same message", () => {
     withEnvSync({ AKM_BUNDLE_DIR: undefined }, () => {
-      const defaultStash = path.join(process.env.HOME as string, "akm");
-      fs.mkdirSync(defaultStash, { recursive: true });
-      const result = resolveStashDir();
-      expect(result).toBe(defaultStash);
+      fs.mkdirSync(path.join(process.env.HOME as string, "akm"), { recursive: true });
+      expect(() => resolveStashDir()).toThrow(NO_DEFAULT_BUNDLE_MESSAGE);
+      expect(() => resolveWorkingStashTarget(loadConfig())).toThrow(NO_DEFAULT_BUNDLE_MESSAGE);
     });
   });
 

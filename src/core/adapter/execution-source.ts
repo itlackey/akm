@@ -17,6 +17,7 @@ import {
   type AdapterRenderedPersonaSource,
   createAdapterRenderedExecutionSource,
   type ExecutionSourceIdentity,
+  RETIRED_ENGINE_KEY_MESSAGE,
   type UnresolvedExecutionDefaults,
 } from "../../execution/source";
 import { UsageError } from "../errors";
@@ -206,12 +207,12 @@ export function executionDefaultsFromFrontmatter(
     if (topLevel !== undefined) out[key] = topLevel;
     else if (namespaced !== undefined) out[key] = namespaced;
   }
-  // `engine` is the retired spelling of `connection` / `harness`. It is not read, so the work would run on the default
-  // connection or harness: say so, and name the command that rewrites it.
+  // `engine` is the retired spelling of `connection` / `harness`. Ignoring it would run the work on the default
+  // connection or harness, so it is refused, as it is in a workflow or a task. This is the render path of a run: index,
+  // show, search and lint never reach it. A read-only bundle migrate cannot rewrite is edited by hand.
   if ((allowTopLevelEngine && own(frontmatter, "engine")) || own(namespace, "engine")) {
-    warnOnce(
-      "asset-engine-key-retired",
-      "An asset says `engine:`, which is not read any more, so it runs on the default connection or harness. Run `akm migrate apply` to rewrite it as `connection:` or `harness:`.",
+    throw new TypeError(
+      `${kind === "persona" ? "agent" : kind} key "engine" ${RETIRED_ENGINE_KEY_MESSAGE} If the bundle is read-only, ask its owner to make that change, or copy the asset to a writable bundle first.`,
     );
   }
   if (own(frontmatter, "model")) {

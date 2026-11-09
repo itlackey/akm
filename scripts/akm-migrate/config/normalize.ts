@@ -9,8 +9,11 @@
  * `models.json` overlay and a key held in config are converted here and nowhere else.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { getConfigPath } from "../../../src/core/paths";
+import { withPrimaryBundle } from "../../../src/commands/sources/bundle-config-ops";
+import { getConfigPath, getDefaultStashDir } from "../../../src/core/paths";
 import { isRefToken } from "../../../src/core/ref-token";
 import { isRecord } from "../../../src/core/common";
 import {
@@ -233,6 +236,27 @@ function keepUnusableEntries(
 }
 
 /**
+ * 0.9.32 read the working bundle from `~/akm` when no `defaultBundle` and no `AKM_BUNDLE_DIR` named one; this release
+ * does not. A host that relied on it keeps its bundle: an existing `~/akm` directory is registered as the default,
+ * exactly as `akm bundle create` registers it (same entry), but without creating or seeding anything in it.
+ */
+function registerHomeBundle(body: Record<string, unknown>, notes: string[]): Record<string, unknown> {
+  if (body.defaultBundle !== undefined) return body;
+  // 0.9.32 read `AKM_BUNDLE_DIR` first and `~/akm` only without it: a host that names its bundle by the variable keeps it.
+  if (process.env.AKM_BUNDLE_DIR?.trim()) return body;
+  const homeDir = getDefaultStashDir({ ...process.env, AKM_BUNDLE_DIR: undefined });
+  if (!fs.existsSync(homeDir) || !fs.statSync(homeDir).isDirectory()) return body;
+  const registered = withPrimaryBundle(body as unknown as AkmConfig, homeDir) as unknown as Record<string, unknown>;
+  // A bundle the user disabled at that path stays off.
+  const key = registered.defaultBundle as string;
+  if ((registered.bundles as Record<string, { enabled?: boolean }>)[key]?.enabled === false) return body;
+  notes.push(
+    `defaultBundle ${JSON.stringify(registered.defaultBundle)}: registered the existing ${homeDir}. 0.9.32 read it when no default bundle was set; this release does not.`,
+  );
+  return registered;
+}
+
+/**
  * The migrator's one config step. The reader tolerates the `{kind, ref, sourceId}`
  * scheduler entries 0.9.x writes and drops unknown keys; this writes the current shape back to `config.json` so the tolerance becomes
  * durable: the retired `engines` form converted to `connections` / `harnesses`,
@@ -243,7 +267,18 @@ function keepUnusableEntries(
 export function normalizeConfigFile(configPath: string, options: NormalizeConfigOptions): ConfigFileNormalization {
   return withConfigLock(() => {
     const text = readConfigText(configPath);
-    if (text === undefined) return { keys: [], changed: false, applied: false };
+    if (text === undefined) {
+      // No file at all: only an existing `~/akm` gives it content.
+      const homeNotes: string[] = [];
+      const registered = registerHomeBundle({ configVersion: CURRENT_CONFIG_VERSION }, homeNotes);
+      if (homeNotes.length === 0) return { keys: [], changed: false, applied: false };
+      const homeKeys = Object.keys(registered).sort();
+      if (!options.apply) return { keys: homeKeys, changed: true, applied: false, notes: homeNotes };
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      writeConfigAtomic(configPath, registered);
+      resetConfigCache();
+      return { keys: homeKeys, changed: true, applied: true, notes: homeNotes };
+    }
     const raw = parseConfigText(text, configPath);
     const document = readConfigDocument(text, configPath);
     // The conversion runs before the unknown-key sweep below deletes what the
@@ -261,7 +296,7 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
     const localRaw = plan.config;
     const current = buildEffectiveConfig(localRaw, configPath);
     const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });
-    const body = configWriteBody(localRaw, current, next) as Record<string, unknown>;
+    let body = configWriteBody(localRaw, current, next) as Record<string, unknown>;
     // The reader resolves each bundle `path` and drops an unplaceable one; the file keeps what was written.
     if (isPlainObject(localRaw.bundles)) body.bundles = localRaw.bundles;
     for (const keyPath of unknownConfigKeyPaths(body)) deleteConfigPath(body, keyPath);
@@ -288,6 +323,7 @@ export function normalizeConfigFile(configPath: string, options: NormalizeConfig
       );
     }
     keepUnusableEntries(body, localRaw, current, notes);
+    body = registerHomeBundle(body, notes);
     const hasModelsFile = modelsFileExists();
     if (hasModelsFile) {
       notes.push(

@@ -263,6 +263,23 @@ function dropRetiredOutputFormat(raw: Record<string, unknown>, sourcePath?: stri
 }
 
 /**
+ * A `defaultBundle` that names no configured bundle is safely ignorable for a read: it loads as unset, with one
+ * warning. A write that needs a working bundle then fails ("No default bundle is configured"), so nothing moves to
+ * another bundle quietly. Saving a config that still names a missing bundle stays an error.
+ */
+function dropDanglingDefaultBundle(raw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
+  const name = raw.defaultBundle;
+  if (typeof name !== "string" || name === "") return raw;
+  if (isPlainConfigObject(raw.bundles) && Object.hasOwn(raw.bundles, name)) return raw;
+  warnOnce(
+    `config:default-bundle-dangling:${sourcePath ?? "inline"}:${name}`,
+    `defaultBundle ${JSON.stringify(name)}${sourcePath ? ` (${sourcePath})` : ""} names no configured bundle and is ignored, so there is no default bundle: reads use the configured bundles, writes fail. Run \`akm config set defaultBundle <bundle>\`, or \`akm bundle create\`.`,
+  );
+  const { defaultBundle: _dangling, ...rest } = raw;
+  return rest;
+}
+
+/**
  * `improve.model`, `improve.llm` and `improve.timeoutMs` set the base for every model call. A value the schema
  * refuses (an empty model, a non-positive or over-ceiling timeout, a malformed `llm`) is safely ignorable: the base
  * falls back to the default, one warning says why, and the config keeps loading. A read does not rewrite the file.
@@ -298,9 +315,12 @@ export function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, so
   const chained = dropInvalidImproveBase(
     dropRetiredOutputFormat(
       dropUnusableProjects(
-        dropUnusableEntries(
-          resolveBundlePaths(
-            resolveExtendsChain(dropUnusableProjects(liftedLocalRaw, sourcePath), sourcePath),
+        dropDanglingDefaultBundle(
+          dropUnusableEntries(
+            resolveBundlePaths(
+              resolveExtendsChain(dropUnusableProjects(liftedLocalRaw, sourcePath), sourcePath),
+              sourcePath,
+            ),
             sourcePath,
           ),
           sourcePath,

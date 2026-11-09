@@ -46,7 +46,7 @@ import { assetPathForName, stashDirFor } from "./asset/asset-placement";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
 import { deriveBundleId } from "./bundle-id";
-import { existingFileMode, isWithin, resolveStashDir, writeFileAtomic } from "./common";
+import { existingFileMode, isWithin, NO_DEFAULT_BUNDLE_MESSAGE, resolveStashDir, writeFileAtomic } from "./common";
 import type { AkmConfig, ConfiguredSource, SourceConfigEntry } from "./config/config";
 import { bundleKeyForContentRoot, resolveActiveConfiguredSources, resolveConfiguredSources } from "./config/config";
 import { ConfigError, UsageError } from "./errors";
@@ -191,7 +191,7 @@ export function resolveWorkingStashTarget(
     ? configuredSources.find((source) => source.name === akmConfig.defaultBundle)
     : undefined;
   if (!defaultBundleSource || !akmConfig.defaultBundle) {
-    throw new ConfigError("No default bundle is configured.", "INVALID_CONFIG_FILE");
+    throw new ConfigError(NO_DEFAULT_BUNDLE_MESSAGE, "INVALID_CONFIG_FILE");
   }
   const target = adaptConfiguredSource(defaultBundleSource);
   if (requireWritable && !resolveWritable(target.config)) {

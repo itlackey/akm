@@ -209,7 +209,7 @@ Do the work.
 
     // No bundle is configured here, so the cause is reported as itself.
     expect(result.ok).toBe(false);
-    expect(result.summary).toContain('Step "work" cannot run: No bundle directory found');
+    expect(result.summary).toContain('Step "work" cannot run: No default bundle is configured');
     expect(result.summary).not.toContain("..");
     expect(dispatched).toBe(0);
   });

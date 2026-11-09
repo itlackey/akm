@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ConfigError } from "./errors";
-import { getConfigPath, getDefaultStashDir, getRegistryCacheDir, getRegistryIndexCacheDir } from "./paths";
+import { getConfigPath, getRegistryCacheDir, getRegistryIndexCacheDir } from "./paths";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -241,13 +241,16 @@ export function writeFileAtomic(target: string, content: string | Buffer, mode?:
   }
 }
 
+/** The one message for "there is no working bundle": reads and writes say the same thing. */
+export const NO_DEFAULT_BUNDLE_MESSAGE =
+  'No default bundle is configured. Run "akm bundle create" to create one, or set `defaultBundle`.';
+
 /**
- * Resolve the stash directory using a three-level fallback chain:
+ * Resolve the working stash directory:
  *   1. AKM_BUNDLE_DIR environment variable (override for CI/scripts)
  *   2. The configured default bundle path
- *   3. Platform default (~/akm or ~/Documents/akm on Windows)
  *
- * Throws if no valid stash directory is found.
+ * Throws if neither names a valid directory. There is no implicit `~/akm`.
  */
 export function resolveStashDir(env: NodeJS.ProcessEnv = process.env): string {
   // 1. Env var override (for CI, scripts, testing)
@@ -260,16 +263,7 @@ export function resolveStashDir(env: NodeJS.ProcessEnv = process.env): string {
   const configStashDir = readStashDirFromConfig();
   if (configStashDir) return validateStashDir(configStashDir);
 
-  // 3. Platform default — use it if it exists
-  const defaultDir = getDefaultStashDir(env);
-  if (isValidDirectory(defaultDir)) {
-    return defaultDir;
-  }
-
-  throw new ConfigError(
-    `No bundle directory found. Run "akm bundle create" to create one at ${defaultDir}.`,
-    "STASH_DIR_NOT_FOUND",
-  );
+  throw new ConfigError(NO_DEFAULT_BUNDLE_MESSAGE, "STASH_DIR_NOT_FOUND");
 }
 
 function validateStashDir(raw: string): string {
@@ -284,19 +278,6 @@ function validateStashDir(raw: string): string {
     throw new ConfigError(`Bundle path must point to a directory: "${stashDir}".`, "STASH_DIR_NOT_A_DIRECTORY");
   }
   return stashDir;
-}
-
-function isValidDirectory(dir: string): boolean {
-  try {
-    return fs.statSync(dir).isDirectory();
-  } catch (error) {
-    // Genuinely absent — the caller's "not found" fallback applies. Any other
-    // stat failure (e.g. EACCES) is not "doesn't exist"; treating it as such
-    // produced the wrong message ("Run akm bundle create") for a directory
-    // that exists but cannot be read.
-    if (hasErrnoCode(error, "ENOENT")) return false;
-    throw new ConfigError(`Unable to read bundle directory at "${dir}".`, "STASH_DIR_UNREADABLE");
-  }
 }
 
 /**
@@ -371,7 +352,7 @@ function readStashDirFromConfig(): string | undefined {
     }
   } catch (err) {
     // An unsupported-shape refusal must reach the caller; genuine missing/invalid
-    // config (read or JSON-parse failure) falls through to the platform default.
+    // config (read or JSON-parse failure) reads as no default bundle.
     if (err instanceof ConfigError) throw err;
   }
   return undefined;

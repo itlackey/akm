@@ -46,6 +46,7 @@ import { resolveWriteTarget } from "../../core/write-source";
 import { exportVectors } from "../../indexer/export-vectors";
 import { releaseIndexRebuildLock, tryAcquireIndexRebuildLock } from "../../indexer/index-rebuild-lock";
 import { akmIndex } from "../../indexer/indexer";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { getOutputMode } from "../../output/context";
 import { pkgVersion } from "../../version";
 import {
@@ -154,7 +155,14 @@ export const indexCommand = defineCommand({
       // Resolve the stash dir once at the `akm index` command boundary and
       // thread it into the indexer (WI-9.10 CLI-wide sweep) — the indexer leaf
       // no longer reads the ambient `resolveStashDir()`.
-      const stashDir = resolveStashDir();
+      // With configured bundles and no default, the first source stands in; with none, `resolveSourceEntries` throws
+      // the one "No default bundle" error, as search does.
+      const indexConfig = loadConfig();
+      const firstSource = resolveSourceEntries(undefined, indexConfig)[0]?.path;
+      const stashDir =
+        indexConfig.defaultBundle || process.env.AKM_BUNDLE_DIR?.trim()
+          ? resolveStashDir()
+          : (firstSource ?? resolveStashDir());
       try {
         const result = await akmIndex({
           stashDir,

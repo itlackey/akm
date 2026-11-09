@@ -906,9 +906,13 @@ never the folder you ran akm from. `~user/...`, or a relative path with no
 config file to resolve against, warns once and that bundle is ignored.
 
 **Which bundle is the working bundle** (the one short refs and bare commands
-use): `AKM_BUNDLE_DIR`, when set; else the path of `defaultBundle`; else the
-platform default (`~/akm`, or `Documents\akm` on Windows) if it exists; else
-`akm` stops with a `ConfigError`. A matching project's `write.bundle` and a
+use): `AKM_BUNDLE_DIR`, when set; else the path of `defaultBundle`; else
+`akm` stops with a `ConfigError` ("No default bundle is configured"), for reads
+and writes alike. There is no implicit `~/akm`: `akm bundle create` registers
+one (and `akm migrate apply` registers an existing `~/akm` on a host that relied
+on 0.9's fallback). Search and show still read every configured bundle when
+there is no default. A `defaultBundle` that names no configured bundle warns
+once and loads as unset; a write then fails until you set one. A matching project's `write.bundle` and a
 command's `--bundle` choose a write destination on top of this (the write-target
 order is `--bundle`, then the working bundle).
 
@@ -1216,10 +1220,11 @@ as the table says. The conversion covers a config written by 0.9.32 through
 | `workflow.judgeEngine` | Dropped, with a note: a gate's judge runs on the default connection, else the default harness. The note says whether the engine it named is that default, or the judge has moved. With none set, 0.9 ran the judge on `defaults.engine`; a note says when that is not where it runs now. |
 | `engine:` in an asset's frontmatter, a workflow step or a task source | `connection:` or `harness:`, by what the configured target is; a name it cannot place becomes `harness:`, with a note. A bundle akm may not change, and an asset that is a symbolic link, are skipped. |
 
-akm does not read `engine:` or `--engine NAME`. A workflow or task source that
-still says `engine:` is refused, naming `akm migrate apply`; a command or agent
-that still says it runs on the default connection or harness, with one warning
-that names the same command. `--engine` and `--require-engines` are unknown
+akm does not read `engine:` or `--engine NAME`. A workflow, task source, command
+or agent that still says `engine:` is refused when it is rendered for a run,
+naming `akm migrate apply` (index, show, search and lint still read it); a
+bundle that command cannot rewrite is edited by hand, or the asset is copied to
+a writable bundle. `--engine` and `--require-engines` are unknown
 flags (exit 2). The conversion renames the engine `defaults` named to `default`
 and moves an old `default` aside, so the migrator keeps the old names in akm's
 data directory (`migrate/engine-targets.json`) until it has rewritten every
