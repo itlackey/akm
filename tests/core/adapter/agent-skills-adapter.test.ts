@@ -90,8 +90,6 @@ describe("agent-skills adapter — renderer golden (renders regardless of validi
       const p = presentationFor(doc.type);
       expect(p.label).toBe(expected.label as string);
       expect(p.renderer ?? null).toBe((expected.renderer as string | null) ?? null);
-      const action = p.action ? p.action(doc.ref ?? "") : `akm show ${doc.ref}`;
-      expect(action).toBe(expected.action as string);
     });
   }
 });

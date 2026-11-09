@@ -16,29 +16,25 @@
       "type": "command",
       "ref": "sample-opencode//commands/test",
       "label": "Command",
-      "renderer": "command-md",
-      "action": "akm show sample-opencode//commands/test -> fill placeholders and dispatch"
+      "renderer": "command-md"
     },
     "agents/explorer.md": {
       "type": "agent",
       "ref": "sample-opencode//agents/explorer",
       "label": "Agent",
-      "renderer": "agent-md",
-      "action": "akm show sample-opencode//agents/explorer -> dispatch with full prompt"
+      "renderer": "agent-md"
     },
     "skills/changelog/SKILL.md": {
       "type": "skill",
       "ref": "sample-opencode//skills/changelog",
       "label": "Skill",
-      "renderer": "skill-md",
-      "action": "akm show sample-opencode//skills/changelog -> follow the instructions"
+      "renderer": "skill-md"
     },
     "AGENTS.md": {
       "type": "instruction",
       "ref": "sample-opencode//AGENTS",
       "label": "Instruction",
       "renderer": "knowledge-md",
-      "action": "akm show sample-opencode//AGENTS -> read the project instructions",
       "resolved": "RESOLVED (open question 1) — `instruction` is a first-class KNOWN_TYPE with its own TYPE_PRESENTATION entry: label 'Instruction', renderer 'knowledge-md' (reused — read exactly like knowledge), action mirrors knowledge's read action. NOT the generic fallback."
     }
   }

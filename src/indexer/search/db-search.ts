@@ -23,7 +23,6 @@ import { KNOWN_TYPES } from "../../core/recognition-util";
 import { withStateDbTelemetry } from "../../core/state-db";
 import { systemErrorCode } from "../../core/system-error";
 import { isoDay } from "../../core/time";
-import { presentationFor } from "../../core/type-presentation";
 import { embed } from "../../llm/embedder";
 import { effectiveEmbedding } from "../../llm/embedders/connection";
 import { applyEmbeddingTemplate, resolveEmbeddingProfile } from "../../llm/embedders/profile";
@@ -111,10 +110,6 @@ function buildStaleIndexHint(db: Database): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-export function buildLocalAction(type: string, ref: string): string {
-  return presentationFor(type).action?.(ref) ?? `akm show ${ref}`;
 }
 
 function resolveSearchHitRef(provenance: IndexedProvenance, defaultBundleId?: string): string {
@@ -951,7 +946,6 @@ export async function buildDbHit(input: {
     description: input.entry.description,
     tags: input.entry.tags,
     size: deriveSize(input.entry.fileSize),
-    action: buildLocalAction(input.entry.type, ref),
     score: input.score,
     ...(input.whyMatched ? { whyMatched: input.whyMatched } : {}),
     ...(estimatedTokens !== undefined ? { estimatedTokens } : {}),

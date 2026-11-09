@@ -84,7 +84,13 @@ describe("output baseline", () => {
     // results is always present; warnings may appear when semantic search is pending
     expect(Object.keys(json)).toContain("results");
     // REC-03: ref is now included at brief detail so agents can run `akm show <ref>`
-    expect(Object.keys(json.results[0] ?? {}).sort()).toEqual(["action", "estimatedTokens", "name", "ref", "type"]);
+    expect(Object.keys(json.results[0] ?? {}).sort()).toEqual([
+      "description",
+      "estimatedTokens",
+      "name",
+      "ref",
+      "type",
+    ]);
   });
 
   test("search normal detail includes description capped at 250 characters", async () => {
@@ -112,7 +118,7 @@ describe("output baseline", () => {
     const output = await runCli(stashDir, ["search", "deploy", "--format=text", "--detail=normal"]);
 
     expect(output).toContain("score:");
-    expect(output).toContain("action: akm show");
+    expect(output).not.toContain("action:");
   });
 
   test("show default JSON shape stays stable", async () => {

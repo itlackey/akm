@@ -88,8 +88,6 @@ describe("akm-workflow adapter — renderer golden", () => {
       const p = presentationFor(doc?.type ?? "");
       expect(p.label).toBe(expected.label as string);
       expect(p.renderer).toBe("workflow-md");
-      const action = p.action ? p.action(doc?.ref ?? "") : `akm show ${doc?.ref}`;
-      expect(action).toBe(expected.action as string);
     });
   }
 });

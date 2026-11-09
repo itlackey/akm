@@ -341,7 +341,7 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
 }
 
 // Brief carries a short description in place of the removed `action` hint.
-export const BRIEF_DESCRIPTION_LIMIT = 85;
+export const BRIEF_DESCRIPTION_LIMIT = 35;
 
 export function capDescription(hit: Record<string, unknown>, limit: number): Record<string, unknown> {
   if (typeof hit.description !== "string") return hit;

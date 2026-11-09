@@ -95,8 +95,8 @@ by `--detail` level:
 | Level | Fields |
 | --- | --- |
 | `brief` | `name`, `installRef`, `score` |
-| `normal` | `name`, `description`, `action`, `installRef`, `score`, and `warnings` when present |
-| `full` | the whole hit: `type`, `name`, `id`, `description`, `action`, `installRef`, `score`, `registryName`, and `warnings` when present |
+| `normal` | `name`, `description`, `installRef`, `score`, and `warnings` when present |
+| `full` | the whole hit: `type`, `name`, `id`, `description`, `installRef`, `score`, `registryName`, and `warnings` when present |
 
 `installRef` is the ref to pass to `akm bundle add`, for example
 `github:itlackey/akm-stash`. `action` holds the whole install command, for

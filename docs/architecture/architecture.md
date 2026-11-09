@@ -323,7 +323,7 @@ read only after an indexed row resolves it.
 Agent-shaped search, show, and curate results for materialized local assets
 include the index-backed `ref`, absolute `path`, and `editable`. `editHint` is
 included only when `editable` is `false`; it is secondary guidance and does not
-replace the normal show, run, or use action (or curate follow-up). Registry-only
+replace the normal show, run, or use path. Registry-only
 results have no local path or editability fields.
 
 `editable` means the asset's file belongs to a configured source whose

@@ -16,23 +16,20 @@
       "type": "skill",
       "ref": "sample-agent-skills//pdf-processing",
       "label": "Skill",
-      "renderer": "skill-md",
-      "action": "akm show sample-agent-skills//pdf-processing -> follow the instructions"
+      "renderer": "skill-md"
     },
     "Data_Analysis/SKILL.md": {
       "type": "skill",
       "ref": "sample-agent-skills//Data_Analysis",
       "label": "Skill",
       "renderer": "skill-md",
-      "action": "akm show sample-agent-skills//Data_Analysis -> follow the instructions",
       "note": "renders normally despite the invalid name; presentation does not gate on validity."
     },
     "overlong-summary/SKILL.md": {
       "type": "skill",
       "ref": "sample-agent-skills//overlong-summary",
       "label": "Skill",
-      "renderer": "skill-md",
-      "action": "akm show sample-agent-skills//overlong-summary -> follow the instructions"
+      "renderer": "skill-md"
     }
   }
 }

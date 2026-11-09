@@ -182,14 +182,13 @@ akm curate "deploy a Bun app"
 ```
 
 Unlike `akm search`, `akm curate` returns a short list, each entry with a
-`reason` and a ready-to-run `followUp` command, and adds related support refs;
+`reason` where relevant, and adds related support refs;
 `--detail normal` also attaches a preview and run details per hit. It's the
 usual starting point for an agent.
 
 **Success check:** the response includes a small shortlist; each entry
-carries a `ref` and a `followUp` command such as `akm show <ref>` (registry
-entries, with `--from registry`, carry an `id` and a `followUp` that starts
-`akm bundle add <installRef>` instead).
+carries a `ref` to pass to `akm show` (registry entries, with `--from registry`,
+carry an `id` instead).
 
 ## 6. Show one of the results
 
