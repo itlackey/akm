@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261115] - 2026-11-08
+
 ### Added
 
 - Learning status and one switch for it (#1506), Experimental for their first release. `akm setup --learning on|off` writes the config key `improve.enabled: false` (off) or removes it (on) and nothing else: no task, schedule, connection or harness is written, so on is a true undo and a process's own `enabled: false` survives. It needs no `--yes`; `--yes`, `--no-probe` and `--no-init` are ignored with a warning and other setup flags are a usage error. While the key is `false`, `akm improve` (scheduled or by hand, `--dry-run` too) does nothing and returns `skipped: { reason: "learning-off" }` at exit 0, and `akm proposal extract` is a no-op. `akm info` gains `learning` (`on`, `harness`, `scheduled`), read from the config alone; `on` is the switch only. A host whose Desktop turned learning off before this (all seven improve processes `enabled: false` on the active strategy) reads as off, and `--learning on` clears those.
