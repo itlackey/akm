@@ -11,6 +11,10 @@ import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, withMockedFetch } from "../_helpers/sandbox";
 
+// The CLI prints compact JSON to a pipe; the API keeps its pretty-printed string. The documents are what must match.
+function expectSameJson(actual: string, expected: string) {
+  expect(JSON.parse(actual)).toEqual(JSON.parse(expected));
+}
 let storage: IsolatedAkmStorage;
 const CLI = path.resolve(import.meta.dir, "../../src/cli.ts");
 function put(ref: string, fields: Record<string, unknown> = {}, body = "quartz deployment procedure", root?: string) {
@@ -66,7 +70,7 @@ for (const belief of [undefined, "current", "all", "historical"] as const) {
     const flags = ["--limit", "20", ...(belief ? ["--belief", belief] : [])];
     const out = cli(flags);
     expect(out.status).toBe(0);
-    expect(await curate("quartz deployment", options)).toBe(out.stdout);
+    expectSameJson(await curate("quartz deployment", options), out.stdout);
     const packed = await packCuratedHits(result, 4000);
     expect(packed.items.map((x) => x.ref).sort()).toEqual(expected.sort());
     for (const item of packed.items.filter((x) => historical.includes(x.beliefState as (typeof historical)[number]))) {
@@ -97,7 +101,8 @@ for (const key of ["user", "agent", "run", "channel"] as const) {
       result.items[0] && "supportRefs" in result.items[0] ? result.items[0].supportRefs?.map((x) => x.ref) : [],
     ).toEqual(["knowledge/support"]);
     expect((await packCuratedHits(result, 4000)).items.map((x) => x.ref)).toEqual(["knowledge/match"]);
-    expect(await curate("quartz deployment", { filters: { [key]: "alice" } })).toBe(
+    expectSameJson(
+      await curate("quartz deployment", { filters: { [key]: "alice" } }),
       cli(["--filter", `${key}=alice`]).stdout,
     );
     expect(refs(await akmCurate({ query: "quartz deployment", filters: { [key]: "nobody" } }))).toEqual([]);
@@ -110,7 +115,8 @@ test("a repeated scope key matches any value, with CLI/API parity", async () => 
   await akmIndex({ stashDir: storage.stashDir, full: true });
   const filters = { user: ["alice", "bob"], channel: undefined };
   expect(refs(await akmCurate({ query: "quartz deployment", filters })).sort()).toEqual(["knowledge/a", "knowledge/b"]);
-  expect(await curate("quartz deployment", { filters })).toBe(
+  expectSameJson(
+    await curate("quartz deployment", { filters }),
     cli(["--filter", "user=alice", "--filter", "user=bob"]).stdout,
   );
 });
@@ -155,7 +161,7 @@ test("compound scope, source/type combinations and duplicate source identities",
       ...Object.entries(scope).flatMap(([k, v]) => ["--filter", `${k}=${v}`]),
     ]);
     expect(out.status).toBe(0);
-    expect(await curate("quartz deployment", opts)).toBe(out.stdout);
+    expectSameJson(await curate("quartz deployment", opts), out.stdout);
   }
 });
 test("stale outgoing/incoming links are filtered in current; all labels historical context", async () => {
@@ -282,7 +288,7 @@ test("an empty filter value selects assets without the key, with CLI/API parity"
   await akmIndex({ stashDir: storage.stashDir, full: true });
   const out = cli(["--filter", "user="]);
   expect(out.status).toBe(0);
-  expect(await curate("quartz deployment", { filters: { user: "" } })).toBe(out.stdout);
+  expectSameJson(await curate("quartz deployment", { filters: { user: "" } }), out.stdout);
   expect(refs(await akmCurate({ query: "quartz deployment", filters: { user: "" } }))).toEqual(["knowledge/open"]);
 });
 
@@ -359,7 +365,7 @@ test("registry/all source and free-form type controls keep CLI/API parity withou
       const options = { source, type, filters: { user: "alice" } };
       const out = cli(["--from", source, "--type", type, "--filter", "user=alice"]);
       expect(out.status).toBe(0);
-      expect(await curate("quartz deployment", options)).toBe(out.stdout);
+      expectSameJson(await curate("quartz deployment", options), out.stdout);
       const items = JSON.parse(out.stdout).items;
       expect(items.length).toBe(source === "all" && type === "knowledge" ? 1 : 0);
     }

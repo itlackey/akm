@@ -23,6 +23,11 @@ import { curate } from "../../../src/api";
 import { isQuiet, isVerbose, setQuiet } from "../../../src/core/warn";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
+// The CLI prints compact JSON to a pipe; the API keeps its pretty-printed string. The documents are what must match.
+function expectSameJson(actual: string, expected: string) {
+  expect(JSON.parse(actual)).toEqual(JSON.parse(expected));
+}
+
 const CLI = path.join(import.meta.dir, "..", "..", "..", "src", "cli.ts");
 
 let storage: IsolatedAkmStorage;
@@ -85,20 +90,22 @@ describe("curate() equals the CLI's stdout", () => {
       const cli = cliCurate("deploy production", ["--format", format]);
       expect(cli.status).toBe(0);
       expect(cli.stdout).toContain("deploy");
-      expect(await curate("deploy production", { format })).toBe(cli.stdout);
+      const out = await curate("deploy production", { format });
+      if (format === "json") expectSameJson(out, cli.stdout);
+      else expect(out).toBe(cli.stdout);
     });
   }
 
   test("json is the default format, as in the CLI", async () => {
     const cli = cliCurate("deploy production", ["--format", "json"]);
-    expect(await curate("deploy production")).toBe(cli.stdout);
+    expectSameJson(await curate("deploy production"), cli.stdout);
   });
 
   test("--limit and --type", async () => {
     const cli = cliCurate("deploy", ["--limit", "1", "--type", "knowledge", "--format", "json"]);
     expect(cli.status).toBe(0);
     const out = await curate("deploy", { limit: 1, type: "knowledge", format: "json" });
-    expect(out).toBe(cli.stdout);
+    expectSameJson(out, cli.stdout);
     expect(JSON.parse(out).items).toHaveLength(1);
   });
 
@@ -177,7 +184,7 @@ describe("repeated calls inside one long-lived process", () => {
     // writeSandboxConfig merges over the broken file's fallback ({}), so this is a valid config again.
     const cli = cliCurate("deploy production", ["--format", "json"]);
     const edited = await curate("deploy production", { format: "json" });
-    expect(edited).toBe(cli.stdout);
+    expectSameJson(edited, cli.stdout);
     expect(JSON.parse(edited).items.map((i: { type: string }) => i.type)).not.toContain("skill");
 
     // Overlapping calls with different formats do not share output state.
