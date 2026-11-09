@@ -111,18 +111,6 @@ describe("buildPlistXml", () => {
     expect(extractPlistInvocation(xml)?.environment).toEqual(environment);
   });
 
-  test("reads the plist 0.9.0 – 0.9.17-alpha.6 wrote, naming its descriptor", () => {
-    const legacy = buildPlistXml(makeTask("0 9 * * *"), ["/abs/bun", "/abs/akm"], "/var/log/akm").replace(
-      "<string>/abs/akm</string>",
-      "<string>/abs/akm</string>\n      <string>--scheduler-context</string>\n      <string>/Users/u/.local/share/akm/tasks/context/e898.json</string>",
-    );
-    expect(extractPlistInvocation(legacy)).toEqual({
-      binding: ["/abs/bun", "/abs/akm"],
-      contextPath: "/Users/u/.local/share/akm/tasks/context/e898.json",
-      invocation: ["task", "run", "ping", "--scheduled"],
-    });
-  });
-
   test("PATH contents are XML-escaped inside the plist", () => {
     const xml = buildPlistXml(
       makeTask("*/15 * * * *"),

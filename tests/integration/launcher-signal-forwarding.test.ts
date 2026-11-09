@@ -7,8 +7,7 @@
  * to `spawn` its Bun/Node child with no signal handling at all — a
  * `kill <launcher-pid>` (a scheduler timeout, a supervisor, an operator) left
  * the child running as an orphan, still holding whatever lock it had. This
- * spawns the REAL launcher script against a fake child entry (mirrors
- * `tests/integration/scheduler-context-launcher.test.ts`'s fixture pattern)
+ * spawns the REAL launcher script against a fake child entry
  * and sends SIGTERM only to the launcher's own pid (no shared foreground
  * process group here, since the test spawns it directly) — so a passing
  * assertion proves the launcher's own forwarding code moved the signal, not

@@ -120,22 +120,6 @@ describe("buildSchtasksXml", () => {
     }
   });
 
-  test("reads the task 0.9.0 – 0.9.17-alpha.6 registered, naming its descriptor", () => {
-    const task = makeTask("0 9 * * *");
-    const script =
-      "& 'C:\\bun.exe' 'C:\\akm' '--scheduler-context' 'C:\\Users\\u\\AppData\\akm\\tasks\\context\\e898.json' 'task' 'run' 'ping' '--bundle' 'akm' '--scheduled'; exit $LASTEXITCODE";
-    const legacy = buildSchtasksXml(task, ["C:\\bun.exe"], "C:/log", xmlOptions()).replace(
-      /<Arguments>[\s\S]*?<\/Arguments>/,
-      `<Arguments>${escapeXml(`-NoLogo -NoProfile -NonInteractive -Command "${script}"`)}</Arguments>`,
-    );
-    expect(extractSchtasksInvocation(legacy)).toEqual({
-      binding: ["C:\\bun.exe", "C:\\akm"],
-      contextPath: "C:\\Users\\u\\AppData\\akm\\tasks\\context\\e898.json",
-      invocation: ["task", "run", "ping", "--bundle", "akm", "--scheduled"],
-      target: "akm",
-    });
-  });
-
   test("renders a qualified workflow binding without task-only arguments", () => {
     const workflow: SchedulerBinding = {
       ...makeTask("0 9 * * *", "wf-1234"),

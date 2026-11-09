@@ -1371,7 +1371,7 @@ describe("extends inheritance (#945)", () => {
       path.join(dir, "base.json"),
       JSON.stringify({
         configVersion: "0.9.0",
-        scheduler: { enabled: [{ kind: "task", ref: "fleet//tasks/untrusted" }] },
+        scheduler: { enabled: ["fleet//tasks/untrusted"] },
       }),
     );
     writeRawConfig(
@@ -1380,7 +1380,7 @@ describe("extends inheritance (#945)", () => {
         configVersion: "0.9.0",
         extends: "./base.json",
         scheduler: {
-          enabled: [{ kind: "task", ref: "local//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` }],
+          enabled: ["local//tasks/nightly"],
         },
       }),
     );
@@ -1391,14 +1391,10 @@ describe("extends inheritance (#945)", () => {
     expect(warnings.join("\n")).toMatch(/ignoring inherited config key "scheduler"/i);
   });
 
-  test("scheduler.enabled tolerates non-canonical and duplicate entries, including 0.9.17-alpha grant objects", () => {
+  test("scheduler.enabled tolerates non-canonical and duplicate entries", () => {
     writeCurrentConfig({
       scheduler: {
-        enabled: [
-          { kind: "task", ref: "tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` },
-          { kind: "task", ref: "team//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` },
-          "team//tasks/nightly",
-        ],
+        enabled: ["tasks/nightly", "team//tasks/nightly", "team//tasks/nightly"],
       },
     });
 

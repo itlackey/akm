@@ -287,13 +287,7 @@ describe("a scheduled run's compiled invocation tail delivers schedule-supplied 
     writeSandboxConfig({
       ...base,
       scheduler: {
-        enabled: [
-          {
-            kind: "task",
-            ref: "fixture//tasks/delegate-scheduled",
-            sourceId: bundleSourceId(base, "fixture"),
-          },
-        ],
+        enabled: ["fixture//tasks/delegate-scheduled"],
       },
     });
   }

@@ -12,8 +12,7 @@
  *
  * A config that predates the list (`scheduler.enabled` absent) is read as
  * "keep what is installed": `akm task sync` takes the akm-written rows already
- * in the native scheduler as the host's choice and writes the list once. A
- * 0.9.17-alpha `{kind, ref, sourceId}` entry is read as its `ref`.
+ * in the native scheduler as the host's choice and writes the list once.
  */
 import fs from "node:fs";
 import { filesForRef } from "../core/asset/asset-placement";

@@ -4,11 +4,9 @@
 
 /**
  * `akm task prune` (#851): reclaim installed scheduler entries `sync` can
- * never see because they do not resolve to a live bundle — a current row
- * whose inline `AKM_BUNDLE_DIR` names a directory that is gone, or a row
- * written before 0.9.17-alpha.7 whose `--scheduler-context` descriptor cannot
- * be read (#846's ownership attribution deliberately excludes them rather
- * than guessing).
+ * never see because they do not resolve to a live bundle — a row whose
+ * inline `AKM_BUNDLE_DIR` names a directory that is gone (#846's ownership
+ * attribution deliberately excludes it rather than guessing).
  *
  * Mirrors tests/integration/tasks-sync-dry-run.test.ts's harness: a real
  * `CRON_BACKEND` wired to an in-memory `CronExec`, so these tests exercise
@@ -113,22 +111,12 @@ async function installDeadBundleOrphan(backend: ReturnType<typeof CRON_BACKEND>,
   await backend.install(binding, { environment: { AKM_BUNDLE_DIR: deadDir } });
 }
 
-/** A row as 0.9.0 – 0.9.17-alpha.6 wrote it, naming a descriptor that has never been written. */
-function appendMissingContextOrphan(exec: CronExec & { current: () => string }, id: string): void {
-  const bundleName = path.basename(stashDir).toLowerCase();
-  const missing = path.join(os.tmpdir(), `akm-t851-missing-context-${Math.random().toString(36).slice(2)}.json`);
-  exec.write(
-    `${exec.current()}# akm:task ${id} BEGIN\n0 3 * * * /usr/local/bin/akm --scheduler-context ${missing} task run ${id} --bundle ${bundleName} --scheduled > /var/log/akm/${id}.log 2>&1\n# akm:task ${id} END\n`,
-  );
-}
-
 describe("akmTasksPrune", () => {
-  test("previews invalid-context and dead-bundle-path orphans with ZERO writes (no --yes)", async () => {
+  test("previews dead-bundle-path orphans with ZERO writes (no --yes)", async () => {
     const exec = spyingMemoryExec();
     const backend = backendFor(exec);
     writeTask("alive", "*/15 * * * *");
     await akmTasksSync({ backend });
-    appendMissingContextOrphan(exec, "ghost");
     await installDeadBundleOrphan(backend, "stale");
     const writesBeforePrune = exec.writeCalls;
 
@@ -137,9 +125,8 @@ describe("akmTasksPrune", () => {
     expect(result.dryRun).toBe(true);
     expect(result.removed).toEqual([]);
     const removedIds = result.preview.removes.map((op) => op.id).sort();
-    expect(removedIds).toEqual(["ghost", "stale"]);
+    expect(removedIds).toEqual(["stale"]);
     const byId = new Map(result.preview.removes.map((op) => [op.id, op.reason]));
-    expect(byId.get("ghost")).toBe("invalid-context");
     expect(byId.get("stale")).toBe("dead-bundle-path");
     expect(result.preview.hasRemovals).toBe(true);
     expect(taskPruneExitCode(result)).not.toBeUndefined();
@@ -147,22 +134,7 @@ describe("akmTasksPrune", () => {
     // ABSOLUTE SAFETY REQUIREMENT 1: zero durable writes from the preview call itself.
     expect(exec.writeCalls).toBe(writesBeforePrune);
     expect(exec.current()).toContain("task run alive");
-    expect(exec.current()).toContain("task run ghost");
     expect(exec.current()).toContain("task run stale");
-  });
-
-  test("an older row whose descriptor names no AKM_BUNDLE_DIR is an invalid-context candidate", async () => {
-    const exec = spyingMemoryExec();
-    const backend = backendFor(exec);
-    const descriptor = path.join(stashDir, "no-bundle-dir.json");
-    fs.writeFileSync(descriptor, JSON.stringify({ version: 1, environment: { AKM_STATE_DIR: "/srv/state" } }));
-    exec.write(
-      `# akm:task odd BEGIN\n0 3 * * * /usr/local/bin/akm --scheduler-context ${descriptor} task run odd --scheduled > /var/log/akm/odd.log 2>&1\n# akm:task odd END\n`,
-    );
-
-    const result = await akmTasksPrune({ backend });
-
-    expect(result.preview.removes.map((op) => [op.id, op.reason])).toEqual([["odd", "invalid-context"]]);
   });
 
   test("no candidates: dry-run reports nothing to prune and exits clean", async () => {
@@ -185,8 +157,8 @@ describe("akmTasksPrune", () => {
     const backend = backendFor(exec);
     writeTask("alive", "*/15 * * * *");
     await akmTasksSync({ backend });
-    appendMissingContextOrphan(exec, "ghost");
     await installDeadBundleOrphan(backend, "stale");
+    await installDeadBundleOrphan(backend, "ghost");
     const writesBeforePrune = exec.writeCalls;
 
     const result = await akmTasksPrune({ backend }, { yes: true });
@@ -206,8 +178,8 @@ describe("akmTasksPrune", () => {
     const backend = backendFor(exec);
     writeTask("alive", "*/15 * * * *");
     await akmTasksSync({ backend });
-    appendMissingContextOrphan(exec, "ghost");
     await installDeadBundleOrphan(backend, "stale");
+    await installDeadBundleOrphan(backend, "ghost");
 
     const result = await akmTasksPrune({ backend }, { yes: true, id: ["ghost"] });
 

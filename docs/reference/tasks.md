@@ -442,8 +442,7 @@ all `version: 3` simply reports the first generation as current.
   scheduler; exits non-zero when removals are pending.
 - `akm task prune` removes installed scheduler entries `sync` cannot reach
   because they no longer resolve to a live bundle: a row whose
-  `AKM_BUNDLE_DIR` names a directory that is gone, or a row written before
-  0.9.17-alpha.7 whose `--scheduler-context` descriptor cannot be read. It
+  `AKM_BUNDLE_DIR` names a directory that is gone. It
   never touches an entry that still resolves to a live bundle.
   Defaults to a dry-run preview (zero writes); `--yes` executes it; `--id
   <id1,id2,...>` scopes to specific ids and refuses any id that isn't a
@@ -483,14 +482,10 @@ all `version: 3` simply reports the first generation as current.
   sync reads the script to tell which task the row runs.
 
   Releases 0.9.0 through 0.9.17-alpha.6 wrote a `--scheduler-context
-  <file>` argument into each row instead, naming a descriptor file under
-  `$DATA/tasks/context/` that held the same values. akm still applies that
-  file when such a row fires, and the first `akm task sync` after upgrading
-  rewrites each row in place: it shows as an update, keeps the row's
-  launcher and schedule, and sets the values inline. A row the sync leaves as it is (its task file failed to load, or
-  a `--bundle` sync did not cover it) still names its file; once
-  `akm task doctor` lists no binding with a `contextPath`, the old descriptor
-  files are not read and can be deleted.
+  <file>` argument into each row instead. akm no longer reads that file: such
+  a row fails when it fires and is not listed by sync, so the first `akm task
+  sync` rewrites it from its task file with the values inline. The old
+  descriptor files under `$DATA/tasks/context/` can be deleted.
 
 Scheduler execution is at least once. Backends provide a stable invocation
 identity and AKM fences stale attempts, but an ambiguous process crash can be

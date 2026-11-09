@@ -20,18 +20,14 @@
  *     default resolves at fire time exactly as it does for an interactive
  *     command.
  *
- * That is exactly what the `--scheduler-context` descriptor held.
- *
  * `PATH` is the scheduler's own: the crontab's `# akm:env` block, the plist's
  * `EnvironmentVariables`.
  *
- * Rows written by 0.9.0 through 0.9.17-alpha.6 name a
- * `--scheduler-context <descriptor>` file instead. The CLI still accepts that
- * argument and applies the file's environment, so such a row keeps firing
- * until the next `akm task sync` rewrites it.
+ * A row written by 0.9.17-alpha.6 or earlier names a `--scheduler-context`
+ * descriptor instead. This release neither reads nor lists it: such a row fails
+ * when it fires, and `akm task sync` rewrites it from its source.
  */
 
-import fs from "node:fs";
 import path from "node:path";
 import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
 import { resolveStashDir } from "../core/common";
@@ -115,19 +111,15 @@ export function scheduledRowEnvironmentFrom(
 }
 
 export interface ParsedScheduledInvocation {
-  /** Launcher argv: everything before the public tail (and before a legacy `--scheduler-context`). */
+  /** Launcher argv: everything before the public tail. */
   binding: string[];
   /** The public `task run …` / `workflow run …` tail. */
   invocation: string[];
   /** Bundle the tail names: `--bundle <x>`, or a workflow ref's bundle. */
   target?: string;
-  /** A row written by 0.9.0 – 0.9.17-alpha.6: the descriptor it names. */
-  contextPath?: string;
   /** The row's inline environment (current rows only). */
   environment?: ScheduledRowEnvironment;
 }
-
-const SCHEDULER_CONTEXT_ARG = "--scheduler-context";
 
 /** The installed argv: the launcher, then one already-validated public scheduler tail. */
 export function buildScheduledInvocation(akmArgv: readonly string[], invocation: readonly string[]): string[] {
@@ -137,22 +129,11 @@ export function buildScheduledInvocation(akmArgv: readonly string[], invocation:
 }
 
 /**
- * Parse an installed row's argv (after any inline environment): the current
- * shape, the `--scheduler-context <descriptor>` shape 0.9.0 – 0.9.17-alpha.6
- * wrote, or the bare shape before that. A row that carries
- * `--scheduler-context` but does not parse around it is never reread as
- * another shape.
+ * Parse an installed row's argv (after any inline environment): the launcher, then the public tail. A row that
+ * names `--scheduler-context` (0.9.17-alpha.6 and earlier) is not one: sync rewrites it from its source.
  */
 export function parseScheduledInvocationArgv(argv: readonly string[]): ParsedScheduledInvocation | undefined {
-  const contextIndex = argv.indexOf(SCHEDULER_CONTEXT_ARG);
-  if (contextIndex !== -1) {
-    if (contextIndex < 1 || argv.indexOf(SCHEDULER_CONTEXT_ARG, contextIndex + 1) !== -1) return undefined;
-    const contextPath = argv[contextIndex + 1];
-    if (!contextPath) return undefined;
-    const publicInvocation = parsePublicSchedulerInvocation(argv.slice(contextIndex + 2));
-    if (!publicInvocation) return undefined;
-    return { binding: argv.slice(0, contextIndex), contextPath, ...publicInvocation };
-  }
+  if (argv.includes("--scheduler-context")) return undefined;
   for (let index = 1; index < argv.length - 1; index += 1) {
     if ((argv[index] === "task" || argv[index] === "workflow") && argv[index + 1] === "run") {
       const publicInvocation = parsePublicSchedulerInvocation(argv.slice(index));
@@ -160,49 +141,6 @@ export function parseScheduledInvocationArgv(argv: readonly string[]): ParsedSch
     }
   }
   return undefined;
-}
-
-/**
- * The environment a `--scheduler-context` descriptor names: its `AKM_*_DIR`
- * keys and, in one written before 0.9.17, `PATH`. It is read as plain JSON —
- * the file is this user's own, next to the data it names.
- */
-export function readLegacySchedulerContext(file: string): Record<string, string> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch (error) {
-    throw new ConfigError(
-      `Cannot read scheduler context "${file}": ${error instanceof Error ? error.message : String(error)}. ` +
-        "Run `akm task sync` to rewrite this scheduled row.",
-      "INVALID_CONFIG_FILE",
-    );
-  }
-  const environment =
-    parsed !== null && typeof parsed === "object" ? (parsed as { environment?: unknown }).environment : undefined;
-  const out: Record<string, string> = {};
-  if (environment === null || typeof environment !== "object") return out;
-  for (const key of [...SCHEDULED_TASK_CONTEXT_KEYS, "PATH"]) {
-    const value = (environment as Record<string, unknown>)[key];
-    if (typeof value === "string" && value.length > 0) out[key] = value;
-  }
-  return out;
-}
-
-/**
- * Apply and remove a row's `--scheduler-context <descriptor>` before citty
- * parses argv. Only a row written by 0.9.0 – 0.9.17-alpha.6 passes it.
- */
-export function consumeSchedulerContextArg(argv: string[], env: NodeJS.ProcessEnv = process.env): string[] {
-  const separator = argv.indexOf("--");
-  const index = argv.slice(0, separator === -1 ? argv.length : separator).indexOf(SCHEDULER_CONTEXT_ARG);
-  if (index === -1) return argv;
-  const file = argv[index + 1];
-  if (!file) {
-    throw new ConfigError(`${SCHEDULER_CONTEXT_ARG} requires a descriptor path.`, "INVALID_CONFIG_FILE");
-  }
-  Object.assign(env, readLegacySchedulerContext(file));
-  return [...argv.slice(0, index), ...argv.slice(index + 2)];
 }
 
 /**

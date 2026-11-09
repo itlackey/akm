@@ -580,9 +580,8 @@ workflow ref, each unit's `env:` refs qualified with their bundle
 `pass_env` names as authored. It records no directory or file location. The
 bundle root, the env files, the secrets and the paths behind `${ref}` tokens are
 all looked up when the unit dispatches, through the same ref lookup `akm show`
-uses. Plans frozen by earlier releases (`irVersion` 5 and 6) also carry a frozen
-`cwdIdentity` and the env asset's owner paths; they decode, those fields are
-ignored, and such a run dispatches by ref like any other.
+uses. A plan frozen by an earlier release (`irVersion` below 8) is not run: the
+run is abandoned and `akm workflow run <ref>` starts it afresh.
 
 #### `${ref}` in argv and `cwd`
 

@@ -89,7 +89,6 @@ function buildChildTarget(childPlan: WorkflowPlan, options: { ref?: string } = {
     planHash,
     frozenPlan: childPlan,
     contentHash: childContentHash({ ref, planHash, via: "direct" }),
-    via: "direct",
   };
 }
 

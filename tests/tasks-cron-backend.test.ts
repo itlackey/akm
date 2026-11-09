@@ -69,17 +69,6 @@ describe("cron backend helpers", () => {
     expect(extractCronInvocation(line)?.environment).toEqual(environment);
   });
 
-  test("extractCronInvocation reads the row 0.9.0 – 0.9.17-alpha.6 wrote, naming its descriptor", () => {
-    const line =
-      "30 8 * * * /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm --scheduler-context /home/u/.local/share/akm/tasks/context/e898.json task run capture --bundle akm --scheduled > /home/u/.cache/akm/tasks/logs/capture.log 2>&1";
-    expect(extractCronInvocation(line)).toEqual({
-      binding: ["/home/u/.bun/bin/bun", "/home/u/.bun/lib/node_modules/akm-cli/dist/akm"],
-      contextPath: "/home/u/.local/share/akm/tasks/context/e898.json",
-      invocation: ["task", "run", "capture", "--bundle", "akm", "--scheduled"],
-      target: "akm",
-    });
-  });
-
   // #951: the raw crontab redirect is a bootstrap safety net that only
   // needs to catch akm crashing before it reaches its own per-run log
   // (src/tasks/run/task-log.ts); an unconditional `>>` append grew forever
@@ -759,34 +748,6 @@ describe("cron backend drift detection", () => {
         environment,
         invocation: binding.invocation,
       },
-    ]);
-  });
-
-  test("a spilled row 0.9.0 – 0.9.17-alpha.6 wrote is listed with the descriptor its script names", () => {
-    const wrapper = "/var/log/akm/.akm-cron-wrapper-ping-0123456789abcdef.sh";
-    const script = `#!/bin/sh\nexec /${"x".repeat(1100)} --scheduler-context /data/ctx.json task run ping --bundle stash --scheduled\n`;
-    const backend = CRON_BACKEND({
-      ...opts(
-        memoryExec(
-          `# akm:task ping BEGIN\n*/15 * * * * sh ${wrapper} > /var/log/akm/ping.log 2>&1\n# akm:task ping END\n`,
-        ),
-      ),
-      fs: {
-        ensureDir() {},
-        readFile: (file) => {
-          if (file !== wrapper) throw new Error(`ENOENT: ${file}`);
-          return script;
-        },
-      },
-    });
-
-    expect(listSync(backend)).toEqual([
-      expect.objectContaining({
-        id: "ping",
-        binding: [`/${"x".repeat(1100)}`],
-        contextPath: "/data/ctx.json",
-        invocation: ["task", "run", "ping", "--bundle", "stash", "--scheduled"],
-      }),
     ]);
   });
 

@@ -436,13 +436,23 @@ describe("akmTasksSync — schedule drift", () => {
 // a scoped sync naming one must fail with a clear usage error rather than
 // the write-target ConfigError that used to escape from resolveWriteTarget.
 // Rows written by 0.9.0 – 0.9.17-alpha.6 name a `--scheduler-context`
-// descriptor. The first sync after upgrading rewrites each one in place — an
-// update that keeps its launcher and schedule — and never adds or removes a
-// row: the task set and its times do not change.
+// descriptor. This release does not read one: such a row is unlisted, so the
+// first sync rewrites it from its source, with the environment inline.
 describe("akmTasksSync — rows written before 0.9.17-alpha.7 (`--scheduler-context`)", () => {
   const LAUNCHER = "/home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm";
-  const backendFor = (exec: CronExec) =>
-    CRON_BACKEND({
+
+  test("a row naming a descriptor is rewritten from its source and never read", async () => {
+    writeTask("alpha", "*/15 * * * *");
+    const missing = path.join(stashDir, "gone-context.json");
+    const exec = memoryExec(
+      [
+        "# akm:task alpha BEGIN",
+        `*/15 * * * * ${LAUNCHER} --scheduler-context ${missing} task run alpha --bundle stash --scheduled > /var/log/akm/alpha.log 2>&1`,
+        "# akm:task alpha END",
+        "",
+      ].join("\n"),
+    );
+    const backend = CRON_BACKEND({
       exec,
       fs: { ensureDir() {} },
       logDir: "/var/log/akm",
@@ -450,103 +460,18 @@ describe("akmTasksSync — rows written before 0.9.17-alpha.7 (`--scheduler-cont
       envPath: false,
     });
 
-  /** A descriptor exactly as 0.9.17-alpha.6 wrote it: JSON naming the working stash. */
-  function writeLegacyDescriptor(bundleDir: string): string {
-    const file = path.join(stashDir, ".legacy-context", "e89838da.json");
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(file, `${JSON.stringify({ version: 1, environment: { AKM_BUNDLE_DIR: bundleDir } })}\n`, {
-      mode: 0o600,
-    });
-    return file;
-  }
-
-  function legacyBlock(id: string, cron: string, bundle: string, context: string): string {
-    return [
-      `# akm:task ${id} BEGIN`,
-      `${cron} ${LAUNCHER} --scheduler-context ${context} task run ${id} --bundle ${bundle} --scheduled > /var/log/akm/${id}.log 2>&1`,
-      `# akm:task ${id} END`,
-    ].join("\n");
-  }
-
-  const byId = (rows: Array<{ id: string; body: string }>) => [...rows].sort((a, b) => a.id.localeCompare(b.id));
-
-  test("a configured bundle's rows are updates that keep each launcher and schedule and carry AKM_BUNDLE_DIR inline", async () => {
-    writeTask("alpha", "*/15 * * * *");
-    writeTask("beta", "0 2 * * *");
-    const context = writeLegacyDescriptor(stashDir);
-    const exec = memoryExec(
-      `${legacyBlock("alpha", "*/15 * * * *", "stash", context)}\n${legacyBlock("beta", "0 2 * * *", "stash", context)}\n`,
-    );
-    const backend = backendFor(exec);
-
-    const preview = await akmTasksSyncPlan({ backend });
-    expect(preview.adds).toEqual([]);
-    expect(preview.removes).toEqual([]);
-    expect(preview.failures).toEqual([]);
-    expect(preview.updates.map((update) => update.id).sort()).toEqual(["alpha", "beta"]);
-    expect(exec.current()).toContain("--scheduler-context");
-
     const result = await akmTasksSync({ backend });
-    expect(result.installed).toEqual([]);
+
+    expect(result.failures).toEqual([]);
     expect(result.removed).toEqual([]);
-    expect(result.failures).toEqual([]);
-    expect(result.updated.sort()).toEqual(["alpha", "beta"]);
-    // The descriptor's one value, the working stash, moves into the row.
-    const inline = `AKM_BUNDLE_DIR=${path.resolve(stashDir)}`;
-    expect(byId(listBlocks(exec.current()))).toEqual([
+    expect(exec.current()).not.toContain("--scheduler-context");
+    expect(listBlocks(exec.current())).toEqual([
       {
         id: "alpha",
-        body: `*/15 * * * * ${inline} ${LAUNCHER} task run alpha --bundle stash --scheduled > /var/log/akm/alpha.log 2>&1`,
-      },
-      {
-        id: "beta",
-        body: `0 2 * * * ${inline} ${LAUNCHER} task run beta --bundle stash --scheduled > /var/log/akm/beta.log 2>&1`,
+        body: `*/15 * * * * AKM_BUNDLE_DIR=${path.resolve(stashDir)} /usr/local/bin/akm task run alpha --bundle stash --scheduled > /var/log/akm/alpha.log 2>&1`,
       },
     ]);
-    expect((await akmTasksSync({ backend })).unchanged.sort()).toEqual(["alpha", "beta"]);
-    // The descriptor it no longer references is left where it is, and no new one is written.
-    expect(fs.readdirSync(path.dirname(context))).toEqual([path.basename(context)]);
-  });
-
-  test("the env-selected stash's rows carry AKM_BUNDLE_DIR inline, and its --scheduler-context rows are updates too", async () => {
-    // No configured bundle: the working stash comes from AKM_BUNDLE_DIR alone.
-    const configPath = path.join(process.env.XDG_CONFIG_HOME ?? "", "akm", "config.json");
-    fs.writeFileSync(configPath, `${JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off" })}\n`);
-    resetConfigCache();
-    const bundle = path.basename(stashDir).toLowerCase();
-    for (const [id, cron] of [
-      ["alpha", "*/15 * * * *"],
-      ["beta", "0 2 * * *"],
-    ] as const) {
-      fs.writeFileSync(path.join(tasksDir, `${id}.yml`), `version: 4\nrun: echo ${id}\nschedule: "${cron}"\n`);
-      setSchedulerRefEnabled(`${bundle}//tasks/${id}`, true);
-    }
-    const context = writeLegacyDescriptor(stashDir);
-    const exec = memoryExec(`${legacyBlock("alpha", "*/15 * * * *", bundle, context)}\n`);
-    const backend = backendFor(exec);
-
-    const preview = await akmTasksSyncPlan({ backend });
-    expect(preview.removes).toEqual([]);
-    expect(preview.failures).toEqual([]);
-    expect(preview.updates.map((update) => update.id)).toEqual(["alpha"]);
-    expect(preview.adds.map((add) => add.id)).toEqual(["beta"]);
-
-    const result = await akmTasksSync({ backend });
-    expect(result.failures).toEqual([]);
-    expect(result.updated).toEqual(["alpha"]);
-    expect(result.installed).toEqual(["beta"]);
-    const inline = `AKM_BUNDLE_DIR=${path.resolve(stashDir)}`;
-    expect(byId(listBlocks(exec.current()))).toEqual([
-      {
-        id: "alpha",
-        body: `*/15 * * * * ${inline} ${LAUNCHER} task run alpha --bundle ${bundle} --scheduled > /var/log/akm/alpha.log 2>&1`,
-      },
-      {
-        id: "beta",
-        body: `0 2 * * * ${inline} /usr/local/bin/akm task run beta --bundle ${bundle} --scheduled > /var/log/akm/beta.log 2>&1`,
-      },
-    ]);
-    expect((await akmTasksSync({ backend })).unchanged.sort()).toEqual(["alpha", "beta"]);
+    expect((await akmTasksSync({ backend })).unchanged).toEqual(["alpha"]);
   });
 });
 
@@ -763,26 +688,6 @@ describe("akmTasksSync — rows spilled into a wrapper script", () => {
     expect(preview).toMatchObject({ adds: [], updates: [], removes: [], unchanged: ["alpha"], failures: [] });
     expect((await akmTasksSync({ backend })).unchanged).toEqual(["alpha"]);
   });
-
-  test("a spilled row 0.9.0 – 0.9.17-alpha.6 wrote is an update", async () => {
-    writeTask("alpha", "*/15 * * * *");
-    const context = path.join(stashDir, "legacy-context.json");
-    fs.writeFileSync(context, JSON.stringify({ version: 1, environment: { AKM_BUNDLE_DIR: stashDir } }));
-    const wrapper = "/var/log/akm/.akm-cron-wrapper-alpha-0123456789abcdef.sh";
-    const files = new Map([
-      [
-        wrapper,
-        `#!/bin/sh\nexec /${"x".repeat(1100)} --scheduler-context ${context} task run alpha --bundle stash --scheduled\n`,
-      ],
-    ]);
-    const exec = memoryExec(
-      `# akm:task alpha BEGIN\n*/15 * * * * sh ${wrapper} > /var/log/akm/alpha.log 2>&1\n# akm:task alpha END\n`,
-    );
-
-    const preview = await akmTasksSyncPlan({ backend: spillingBackend(exec, files) });
-    expect(preview).toMatchObject({ adds: [], removes: [], failures: [] });
-    expect(preview.updates.map((update) => update.id)).toEqual(["alpha"]);
-  });
 });
 
 describe("akmTasksSync — website/npm bundles cannot carry scheduler state", () => {
@@ -953,7 +858,6 @@ describe("akmTasksSync — one failing removal does not stop the others", () => 
       nativeId: id,
       target: "archived",
       binding: ["/opt/akm"],
-      contextPath: "/data/context.json",
       invocation: ["task", "run", id, "--bundle", "archived", "--scheduled"],
       signature: `sig-${id}`,
     });

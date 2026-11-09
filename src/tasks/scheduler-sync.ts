@@ -196,8 +196,7 @@ export interface SchedulerBundleScope {
   readonly bundleName: string;
   /**
    * Resolved bundle path. Set for the primary bundle, whose rows must also
-   * prove their owning path (#846) through the `AKM_BUNDLE_DIR` they carry —
-   * inline, or in the descriptor a row written before 0.9.17-alpha.7 names:
+   * prove their owning path (#846) through the `AKM_BUNDLE_DIR` they carry:
    * a display name derived from a directory basename is not an identity two
    * installations cannot share. A `--bundle <target>` scope matches by
    * config name only.
@@ -239,7 +238,7 @@ export type SchedulerSyncOperation =
       /** Resolved bundle path the row was attributed to (#846), when known. */
       ownerBundlePath?: string;
       /** Why `akm task prune` selected this row. Absent for sync's own removals. */
-      reason?: "invalid-context" | "dead-bundle-path";
+      reason?: "dead-bundle-path";
     }>;
 
 export interface SchedulerSyncPlan {
@@ -277,7 +276,7 @@ export function scheduledInvocationBundle(invocation: readonly string[] | undefi
  * `--bundle` existed names no bundle and belongs to the primary scope
  * unless the bundle path it carries says otherwise; a row that names a
  * bundle belongs to the scope of that name — for the primary scope only
- * when its `AKM_BUNDLE_DIR` (inline, or in an older row's descriptor) also
+ * when its inline `AKM_BUNDLE_DIR` also
  * proves the path.
  */
 export function installedRowScope(
@@ -462,7 +461,7 @@ export interface SchedulerPlanPreviewOperation {
   /** Resolved bundle path the installed row was attributed to (#846). Removals only, when known. */
   readonly ownerBundlePath?: string;
   /** Why `akm task prune` selected this row. Absent for `sync`'s own removals. */
-  readonly reason?: "invalid-context" | "dead-bundle-path";
+  readonly reason?: "dead-bundle-path";
   /** Exact native definition currently installed. Updates only. */
   readonly installedFingerprint?: string;
   /** Exact native definition the update would install. Updates only. */

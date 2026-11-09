@@ -1416,25 +1416,8 @@
         "enabled": {
           "type": "array",
           "items": {
-            "anyOf": [
-              {
-                "type": "string",
-                "minLength": 1
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "ref": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "required": [
-                  "ref"
-                ],
-                "additionalProperties": {}
-              }
-            ]
+            "type": "string",
+            "minLength": 1
           }
         }
       },
@@ -2869,25 +2852,8 @@
             "enabled": {
               "type": "array",
               "items": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "ref": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "ref"
-                    ],
-                    "additionalProperties": {}
-                  }
-                ]
+                "type": "string",
+                "minLength": 1
               }
             }
           },
