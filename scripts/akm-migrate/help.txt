@@ -1,9 +1,11 @@
 Usage: akm-migrate <command> [options]
 
-The one migration tool for an akm installation. The CLI proper reads every
-shape akm has ever written (in memory, with a warning); `apply` makes the
-current shape durable on disk. `status` and `apply` run every step, in
-order, and print one combined JSON plan (exit 1 when any step is blocked):
+The one migration tool for an akm installation. The CLI proper reads only the
+current shapes; `apply` converts what the steps below name, under a backup.
+`status` and `apply` run every step, in order, and print one combined JSON plan
+(exit 1 when any step is blocked, or an enabled task source is below version
+4, which 0.10 does not convert: the 0.9.32 recipe is in the blocker; one that
+is not enabled is only a `legacyTaskWarnings` line):
 
   1. config.json rewritten in its current shape (unknown keys dropped, the
      `engines`/`defaults` form converted to `connections`/`harnesses` with
@@ -30,6 +32,12 @@ order, and print one combined JSON plan (exit 1 when any step is blocked):
      `<type>:<path>` and `wiki:<path>`, rewritten under one backup directory
      per run. An old spelling that is now another file's ref is not
      rewritten, only listed
+  5. the OS scheduler: the one entry that runs `akm task dispatch` replaces
+     akm 0.9's per-task rows in one write (what `akm task sync` does). It runs
+     `crontab`, `launchctl` or `schtasks` only when it has something to write;
+     an installation that moves a location (an `AKM_*` directory or an XDG
+     variable) is left alone, with a warning, and so is a machine with no
+     `crontab` binary
 
 `akm migrate status|apply` wraps this executable; `akm upgrade` runs
 `apply` after its install step, so an image that ships akm can put either
@@ -37,4 +45,4 @@ in its entrypoint (a current installation is a no-op).
 
 Commands:
   status               Inspect every pending migration without changing anything.
-  apply [--dry-run]    Back up and apply every pending migration.
+  apply                Back up and apply every pending migration.

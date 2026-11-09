@@ -11,9 +11,10 @@ inheritance: `extends` is retired (see "Config inheritance (`extends`)" below).
 There is no config version field. akm 0.9 wrote `configVersion: "0.9.0"`; this
 release ignores it silently and writes none. An ordinary write
 (`akm config set`, etc.) leaves a `configVersion` the file already holds as it
-is; `akm migrate apply`'s config step drops it. Pre-0.9
-config and database layouts are not runtime inputs. Historical task sources
-are handled by `akm migrate` (which `akm upgrade` also runs); ordinary runtime code reads only the current shape.
+is; `akm migrate apply`'s config step drops it. Pre-0.9.32
+config, task and database layouts are not read at all: run the 0.9.32 recipe
+(`npm i -g akm-cli@0.9.32 && akm migrate apply && akm task sync`) first.
+Ordinary runtime code reads only the current shape; `akm migrate apply` (which `akm upgrade` also runs) converts the retired config forms.
 
 ```jsonc
 {
@@ -1116,7 +1117,7 @@ akm config diff ~/other-host/config.json
 | `AKM_BUNDLE_DIR` | Override the working bundle for this process (containers, sandboxes, CI). When it points under `/tmp`, `/var/tmp` or the macOS temp folders, and `AKM_CONFIG_DIR`/`XDG_CONFIG_HOME` (and the cache equivalents) are not set, config moves to `<bundle>/.akm` and the cache to `<bundle>/.akm/cache`, so a sandbox never touches your real config. Scheduled-task rows always carry the resolved bundle in it |
 | `AKM_DATA_DIR` | Override the data directory — `index.db`, durable `state.db`, and `akm.lock` (or set `XDG_DATA_HOME`) |
 | `AKM_CACHE_DIR` | Override the cache directory — regenerable caches (or set `XDG_CACHE_HOME`) |
-| `AKM_STATE_DIR` | Override the state directory — the scheduler lock and, per bundle, `akm improve`'s whole-run lock (or set `XDG_STATE_HOME`) |
+| `AKM_STATE_DIR` | Override the state directory — per bundle, `akm improve`'s whole-run lock (or set `XDG_STATE_HOME`) |
 | `AKM_SQLITE_JOURNAL_MODE` | SQLite journal mode: `WAL` (default), `DELETE`, or `TRUNCATE` |
 | `AKM_NPM_REGISTRY` | Base URL of an npm mirror; replaces `registry.npmjs.org` for npm bundle resolution |
 | `AKM_VERBOSE` | Truthy value enables the same diagnostics as `--verbose` |

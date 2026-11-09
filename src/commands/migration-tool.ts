@@ -27,7 +27,7 @@ export interface MigrationToolResult {
 /**
  * Spawns the standalone `akm-migrate` tool and returns its captured exit
  * status plus stdout/stderr — never writes them itself. `migrate-cli.ts` uses
- * this packaging boundary to render the task-only plan through the normal
+ * this packaging boundary to render the plan through the normal
  * output pipeline.
  */
 export async function runMigrationTool(args: readonly string[]): Promise<MigrationToolResult> {
@@ -44,7 +44,7 @@ export async function runMigrationTool(args: readonly string[]): Promise<Migrati
   }
   // Compiled standalone: no scripts/ tree exists on disk (`import.meta.url`
   // resolves inside the binary's virtual filesystem). Release binaries embed
-  // the task migrator in `scripts/akm-standalone.ts` and re-exec themselves
+  // the migrator in `scripts/akm-standalone.ts` and re-exec themselves
   // with the internal marker.
   // (src must not import scripts/: the dist build's tsc has `rootDir: src`.)
   const result = spawnSync(process.execPath, entry ? [entry, ...args] : [...args], {

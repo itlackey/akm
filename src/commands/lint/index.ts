@@ -665,7 +665,7 @@ function lintAkmSweep(
       const fileIssues: LintIssue[] = [];
 
       if (subdir === "tasks") {
-        // Task files are pure YAML. The canonical task-v3 parser runs once in
+        // Task files are pure YAML. The canonical task source parser runs once in
         // taskDiagnostics below; base checks need no parsed frontmatter data.
         data = {};
         if (isNearMissTaskFileName(relPath)) {

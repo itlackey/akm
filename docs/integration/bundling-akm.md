@@ -13,7 +13,7 @@ Three lines cover it:
    things (npm, the standalone binary, a `node_modules` dependency).
 2. **At boot, run `akm migrate apply`** (or `akm upgrade`, which runs it).
    It is offline, idempotent, needs no root, takes its own safety copies,
-   prints one JSON plan, and exits `0` unless a file is genuinely blocked.
+   prints one JSON plan, and exits `0` unless an item is genuinely blocked.
 3. **Read `akm health --format json`.** Never grep error text — akm's
    wording is not a stable interface; the JSON fields are.
 
@@ -26,7 +26,7 @@ akm migrate status        # read-only: what would change
 akm migrate apply
 ```
 
-In order, every run applies (or, under `status`/`--dry-run`, plans):
+In order, every run applies (or, under `status`, plans):
 
 1. **config.json in its current shape** (`configFile`): unknown keys dropped,
    the 0.9 `configVersion` dropped, and the `engines` / `defaults` form converted to
@@ -54,6 +54,21 @@ In order, every run applies (or, under `status`/`--dry-run`, plans):
    `WORK/x`), in frontmatter and body, rewritten under one backup directory per
    run. An old spelling that is now another file's ref is listed in `shadowed`
    and left as written.
+5. **The OS scheduler** (`scheduler`): akm 0.10 keeps one scheduler entry that
+   runs `akm task dispatch`; `apply` replaces akm 0.9's per-task rows with it
+   in one write, the same as `akm task sync`. This is the only step that
+   leaves akm's own files: it runs `crontab` (Linux), `launchctl` (macOS) or
+   `schtasks` (Windows), and only when it has something to write. An install
+   that moves a location (any `AKM_*` directory or XDG variable, as an image
+   does) never has its OS scheduler written: the plan says so in
+   `scheduler.warnings`, and its supervisor runs `akm task dispatch`. A machine
+   with no `crontab` binary gets a warning in `scheduler.warnings` and exit
+   `0`; a `crontab` that exists and fails blocks.
+
+A task source below version 4 that `scheduler.enabled` names blocks the plan
+(it would silently stop running): 0.10 converts none, so `blockers` names the
+file with the 0.9.32 recipe. One that is not enabled is a line in
+`legacyTaskWarnings` and does not change the status.
 
 ### The plan JSON
 
@@ -70,7 +85,8 @@ same step names):
   "configFile": { "keys": [], "changed": false, "applied": false },
   "stateMigrations": { "pending": [] },
   "assetEngineKeys": { "schemaVersion": 1, "changed": 0, "skipped": 0, "files": [] },
-  "assetContentRefs": { "schemaVersion": 1, "changed": 0, "skipped": 0, "refs": 0, "files": [], "shadowed": [] }
+  "assetContentRefs": { "schemaVersion": 1, "changed": 0, "skipped": 0, "refs": 0, "files": [], "shadowed": [] },
+  "scheduler": { "backend": "cron", "entry": "absent", "removedLegacy": [], "keptLegacy": [], "hasRemovals": false, "failures": [] }
 }
 ```
 
@@ -104,9 +120,10 @@ Key fields:
 
 | Field | Meaning |
 | --- | --- |
-| `stateMigrations` | `{ pending: string[] }` under `status`/`--dry-run`; `{ applied: string[] }` after a real `apply`. |
+| `stateMigrations` | `{ pending: string[] }` under `status`; `{ applied: string[] }` after a real `apply`. |
 | `assetEngineKeys` | `changed`/`skipped` counts and a `files[]` array with each rewritten file's `rewrites` (`at`, `from`, `to`). |
 | `assetContentRefs` | `changed`/`skipped` file counts, `refs` (old-spelling refs found), a `files[]` array with each file's `refs`, and `shadowed[]` (`bundleId`, `from`, `to`): old spellings another file holds as its ref, not rewritten. |
+| `scheduler` | `backend`, `entry` (`installed`, `updated`, `unchanged`, `removed`, `absent` or `unmanaged`), `removedLegacy[]` (akm 0.9 per-task rows removed), `keptLegacy[]` (rows that name another installation), `warnings[]`. |
 
 **Backups and their retention:**
 
@@ -127,9 +144,10 @@ Key fields:
 **Idempotency:** re-running `apply` against a `current` database/tree is a
 no-op — safe to put in every boot, every time, on every replica.
 
-**Offline, no root:** every step reads and writes files/SQLite it already
-owns under your configured `$DATA`/`$CACHE`/bundle directories. Nothing here
-touches the network or needs elevated privileges.
+**Offline, no root:** nothing here touches the network or needs elevated
+privileges. Every step but `scheduler` reads and writes only files and SQLite
+under your configured `$DATA`/`$CACHE`/bundle directories; `scheduler` runs the
+OS scheduler's own command as the current user, and only on a default install.
 
 ## `akm upgrade` in a bundled install
 
@@ -211,22 +229,10 @@ then names what is still pending. Watch this row's `status`, not error text.
 
 ## The `akm-migrate` executable
 
-`akm-migrate` is the second `bin` entry the `akm-cli` npm package installs
-(`akm` and `akm-migrate` side by side), and it is also embedded directly in
-the compiled standalone binary — a release binary re-execs itself internally
-to reach it, so it needs no separate download. Same surface either way:
-
-```sh
-akm-migrate status
-akm-migrate apply --dry-run
-akm-migrate apply
-```
-
-`akm migrate status`/`apply` (under the `akm` CLI) are a thin wrapper over
-this same executable — same plan, same exit codes. Reach for `akm-migrate`
-directly when you don't want `akm`'s `--format`/`--detail` output
-handling in the way, e.g. a shell script that just wants the raw JSON line
-on stdout and a plain exit code.
+`akm migrate status`/`apply` spawn the migrator (`scripts/akm-migrate`) in the
+`akm-cli` npm package, and a compiled standalone binary embeds it and re-execs
+itself to reach it, so it needs no separate download. It is not a separate
+`bin` entry: run it through `akm migrate`.
 
 ## Container entrypoint sketch
 
@@ -234,7 +240,7 @@ on stdout and a plain exit code.
 #!/bin/sh
 set -e
 akm --version                 # optional: confirm the pinned version actually landed
-akm migrate apply             # offline, idempotent — exits 1 only if genuinely blocked
+akm migrate apply             # offline, idempotent — exits 1 only if an item is genuinely blocked
 # to schedule akm tasks inside this image, run `akm task dispatch` every minute from its supervisor (see the scheduling guide)
 akm health --format json      # read this JSON; act on ok/status, never on message text
 ```
@@ -250,7 +256,7 @@ rather than rely on `$HOME`-derived defaults:
 | `AKM_CONFIG_DIR` | `config.json`'s directory. |
 | `AKM_DATA_DIR` | Durable, non-regenerable data: **`index.db` and `state.db` live here.** This is the directory a migration snapshot's safety copy sits beside. |
 | `AKM_CACHE_DIR` | Regenerable cache: installed git, npm and website bundles, config backups, task logs. If it is discarded, `akm bundle update --all` restores the bundles. |
-| `AKM_STATE_DIR` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds the scheduler lock and, per bundle, `akm improve`'s whole-run lock (`locks/`) — see [Storage locations](../architecture/internals/storage-locations.md). Set it too, so those locks sit on the same persistent volume as the rest of akm's state rather than under `$HOME/.local/state/akm`. |
+| `AKM_STATE_DIR` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds, per bundle, `akm improve`'s whole-run lock (`locks/`) — see [Storage locations](../architecture/internals/storage-locations.md). Set it too, so those locks sit on the same persistent volume as the rest of akm's state rather than under `$HOME/.local/state/akm`. |
 
 Set all five to paths that persist across container restarts (a mounted
 volume), or `akm migrate apply` will see an empty `state.db` on every boot

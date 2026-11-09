@@ -40,12 +40,12 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
       return;
     }
     case "apply": {
-      const unknown = rest.find((arg) => arg !== "--dry-run");
+      const unknown = rest[0];
       if (unknown !== undefined) throw new UsageError(`\`apply\` does not accept ${unknown}.`, "INVALID_FLAG_VALUE");
-      printPlan(await runMigration({ apply: !rest.includes("--dry-run") }));
+      printPlan(await runMigration({ apply: true }));
       return;
     }
     default:
-      throw new UsageError("Choose `status` or `apply [--dry-run]`.", "MISSING_REQUIRED_ARGUMENT");
+      throw new UsageError("Choose `status` or `apply`.", "MISSING_REQUIRED_ARGUMENT");
   }
 }
