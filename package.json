@@ -51,9 +51,7 @@
     "docs/guides",
     "docs/integration",
     "docs/maintainers",
-    "docs/posts",
     "docs/reference",
-    "docs/product-surface.md",
     "schemas"
   ],
   "exports": {
