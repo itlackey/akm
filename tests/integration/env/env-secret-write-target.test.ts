@@ -9,7 +9,7 @@
  * Locks in:
  *  - explicit `--bundle <source>` routes the write to the named source (not the
  *    working stash) and spells the qualified `bundle//…` ref;
- *  - `defaultWriteTarget` is the fallback when no `--bundle` is given;
+ *  - `defaultBundle` is the fallback when no `--bundle` is given;
  *  - a non-writable `--bundle` fails fast with the shared ConfigError shape
  *    (exit 78) and writes nothing;
  *  - a git-backed writable target lands the mutation through a single boundary
@@ -102,12 +102,13 @@ describe("env/secret write-target routing", () => {
     expect(res.stderr).not.toContain(SECRET_VALUE);
   });
 
-  test("defaultWriteTarget is the fallback destination for a secret write without --bundle", async () => {
+  test("defaultBundle is the fallback destination for a secret write without --bundle", async () => {
+    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
+    delete process.env.AKM_BUNDLE_DIR;
     const team = bundleDir();
     writeSandboxConfig({
       bundles: { stash: { path: storage.stashDir }, team: { path: team } },
-      defaultBundle: "stash",
-      defaultWriteTarget: "team",
+      defaultBundle: "team",
     });
 
     const res = await runCliCapture([
@@ -124,13 +125,13 @@ describe("env/secret write-target routing", () => {
     const teamSecret = path.join(team, "secrets", "deploy-key");
     expect(fs.existsSync(teamSecret)).toBe(true);
     expect(fs.existsSync(path.join(storage.stashDir, "secrets", "deploy-key"))).toBe(false);
-    expect(JSON.parse(res.stdout).ref).toBe("team//secrets/deploy-key");
+    expect(JSON.parse(res.stdout).ref).toBe("secrets/deploy-key");
     expect(mode(teamSecret)).toBe("600");
     expect(res.stdout).not.toContain(SECRET_VALUE);
     expect(res.stderr).not.toContain(SECRET_VALUE);
   });
 
-  test("no --bundle and no defaultWriteTarget writes to the working stash (unchanged default)", async () => {
+  test("no --bundle writes to the working stash (unchanged default)", async () => {
     writeSandboxConfig({ bundles: { stash: { path: storage.stashDir } }, defaultBundle: "stash" });
 
     const res = await runCliCapture(["env", "create", "env/prod", "--from-file", valueFile(), "--format", "json"]);
@@ -215,6 +216,8 @@ describe("env/secret write-target routing", () => {
   });
 
   test("a git-backed writable target lands the write through a single boundary commit", async () => {
+    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
+    delete process.env.AKM_BUNDLE_DIR;
     const url = "https://example.com/akm/env-secret-write-target.git";
     const repo = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
     const content = path.join(repo, "content");
@@ -228,8 +231,7 @@ describe("env/secret write-target routing", () => {
 
     writeSandboxConfig({
       bundles: { stash: { path: storage.stashDir }, team: { git: url, writable: true } },
-      defaultBundle: "stash",
-      defaultWriteTarget: "team",
+      defaultBundle: "team",
     });
 
     const res = await runCliCapture(["env", "create", "env/prod", "--from-file", valueFile(), "--format", "json"]);
@@ -248,6 +250,8 @@ describe("env/secret write-target routing", () => {
   });
 
   test("ignored env and secret overlays mutate locally without creating commits", async () => {
+    // The working bundle is AKM_BUNDLE_DIR when set; this test works from the configured defaultBundle.
+    delete process.env.AKM_BUNDLE_DIR;
     const url = "https://example.com/akm/env-secret-ignored-overlay.git";
     const repo = getCachePaths(parseGitRepoUrl(url).canonicalUrl).repoDir;
     const content = path.join(repo, "content");
@@ -261,8 +265,7 @@ describe("env/secret write-target routing", () => {
     git(repo, ["commit", "-m", "initial"]);
     writeSandboxConfig({
       bundles: { stash: { path: storage.stashDir }, team: { git: url, writable: true } },
-      defaultBundle: "stash",
-      defaultWriteTarget: "team",
+      defaultBundle: "team",
     });
 
     const res = await runCliCapture([

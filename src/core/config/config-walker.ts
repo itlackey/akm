@@ -263,20 +263,6 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
     isRecord(existing) && isRecord(parsed.data) ? deepMergeConfig(existing, parsed.data) : parsed.data,
   );
 
-  // Targeted invariant: defaultWriteTarget must point at a configured bundle
-  // (#464.a). Whole-config validation happens at save time; this check fires
-  // at set time so the user sees the typo immediately.
-  if (dotted === "defaultWriteTarget" && typeof value === "string") {
-    const bundles = next.bundles && typeof next.bundles === "object" ? next.bundles : {};
-    const knownNames = Object.keys(bundles);
-    if (!knownNames.includes(value)) {
-      throw new UsageError(
-        `Unknown bundle "${value}" for defaultWriteTarget; configured bundles: ${knownNames.map((n) => `"${n}"`).join(", ") || "none"}.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-  }
-
   return next;
 }
 

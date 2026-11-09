@@ -4,9 +4,8 @@
 
 /**
  * The package `exports` map: `akm-cli/api` (recall), `akm-cli/workspace`
- * (existing local workspace operations), `akm-cli/package.json` (plugins resolve it to find the `akm`
- * bin) and `akm-cli/dist/*` (published `akm-opencode` versions deep-import
- * `akm-cli/dist/commands/read/*.js`).
+ * (existing local workspace operations) and `akm-cli/package.json` (plugins resolve it to find the `akm`
+ * bin).
  *
  * Classification: spawns a real `npm pack --dry-run`.
  * The end-to-end check that an installed tarball resolves and runs these
@@ -37,10 +36,9 @@ function packed(): Set<string> {
 }
 
 describe("package.json exports", () => {
-  test("has exactly ./api, ./workspace, ./package.json and ./dist/*", () => {
-    expect(Object.keys(pkg.exports ?? {}).sort()).toEqual(["./api", "./dist/*", "./package.json", "./workspace"]);
+  test("has exactly ./api, ./workspace and ./package.json", () => {
+    expect(Object.keys(pkg.exports ?? {}).sort()).toEqual(["./api", "./package.json", "./workspace"]);
     expect(pkg.exports?.["./package.json"]).toBe("./package.json");
-    expect(pkg.exports?.["./dist/*"]).toBe("./dist/*");
   });
 
   test("./api has a types, a bun and a node-safe default target", () => {

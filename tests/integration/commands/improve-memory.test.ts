@@ -39,7 +39,6 @@ async function buildIndex(stashDir: string): Promise<void> {
         semanticSearchMode: "off",
         bundles: { stash: { path: stashDir, writable: true } },
         defaultBundle: "stash",
-        defaultWriteTarget: "stash",
         improve: { strategies: { default: { processes: { extract: { enabled: false } } } } },
       }),
     ),
@@ -365,7 +364,6 @@ describe("akm improve memory cleanup", () => {
           semanticSearchMode: "off",
           bundles: { stash: { path: stashDir, writable: true } },
           defaultBundle: "stash",
-          defaultWriteTarget: "stash",
           improve: { strategies: { default: { processes: { extract: { enabled: false } } } } },
         }),
       ),
@@ -1143,7 +1141,6 @@ describe("akm improve memory cleanup", () => {
           semanticSearchMode: "off",
           bundles: { stash: { path: stashDir, writable: true } },
           defaultBundle: "stash",
-          defaultWriteTarget: "stash",
           improve: {
             strategies: { default: { processes: { extract: { enabled: false }, consolidate: { enabled: false } } } },
           },

@@ -70,7 +70,7 @@ const envCreateCommand = defineJsonCommand({
     },
     bundle: {
       type: "string",
-      description: "Write destination: a source name (default: defaultWriteTarget)",
+      description: "Write destination: a source name (default: defaultBundle)",
     },
   },
   async run({ args }) {
@@ -327,14 +327,6 @@ const envRunCommand = defineJsonCommand({
       type: "string",
       description: "With --clean, also inherit these parent env vars (comma-separated)",
     },
-    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
-    // fail with UNKNOWN_FLAG. Installing a bundle is the trust decision: env
-    // run no longer blocks process-hijacking keys.
-    "allow-dangerous-env-keys": {
-      type: "boolean",
-      description: "Deprecated, no effect (accepted through 0.10)",
-      default: false,
-    },
   },
   async run({ args }) {
     await runEnvInjected(args.target, {
@@ -353,7 +345,7 @@ const envRemoveCommand = defineJsonCommand({
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
     bundle: {
       type: "string",
-      description: "Write destination: a source name (default: defaultWriteTarget)",
+      description: "Write destination: a source name (default: defaultBundle)",
     },
   },
   async run({ args }) {

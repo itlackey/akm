@@ -105,7 +105,7 @@ export function projectOverview(input: { project: string }) {
       closeDatabase(db);
     }
   }
-  const writeName = project.write.bundle ?? config.defaultWriteTarget ?? automaticWriteTarget(config)?.name ?? null;
+  const writeName = project.write.bundle ?? automaticWriteTarget(config)?.name ?? null;
   const writeSource = writeName === null ? undefined : local.find((source) => source.registryId === writeName);
   return {
     project: { ...projectView(project), write: project.write },

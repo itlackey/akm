@@ -61,7 +61,6 @@ describe("akmConsolidate — all-hot chunk", () => {
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       improve: { strategy: "default", strategies: { default: { processes: { consolidate: { enabled: true } } } } },
     } as AkmConfig;
     const stateDbPath = getStateDbPath();
@@ -83,7 +82,6 @@ describe("akmConsolidate — all-hot chunk", () => {
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       connections: {
         planner: {
           endpoint: "https://consolidate.example.test/v1/chat/completions",
@@ -138,7 +136,6 @@ describe("akmConsolidate — all-hot chunk", () => {
       semanticSearchMode: "off",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       connections: {
         planner: { endpoint: "https://consolidate.example.test/v1/chat/completions", models: { fast: "planner" } },
       },

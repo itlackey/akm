@@ -19,7 +19,6 @@ import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import { config as workspaceConfig } from "../src/workspace";
 import { runCliCapture } from "./_helpers/cli";
 import { asLlmRunner } from "./_helpers/llm-runner";
-import { runRegistryAdd } from "./_helpers/registry-add";
 
 beforeEach(() => resetConfigCache());
 afterEach(() => resetConfigCache());
@@ -410,19 +409,5 @@ describe("akm bundle create --dir on a temporary path", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
-  });
-});
-
-describe("akm registry add --options", () => {
-  test("is accepted, says it does nothing, and is not stored", async () => {
-    const { result, warnings } = await runRegistryAdd(["--options", '{"a":1}']);
-    expect(result.code, result.stderr).toBe(0);
-    expect(warnings.join("\n")).toContain("does nothing");
-    const stored = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as {
-      registries?: Array<Record<string, unknown>>;
-    };
-    const entry = stored.registries?.find((r) => r.url === "https://example.com/batch-b.json");
-    expect(entry).toBeDefined();
-    expect(entry).not.toHaveProperty("options");
   });
 });

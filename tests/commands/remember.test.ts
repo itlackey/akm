@@ -4,7 +4,7 @@
  * Verifies the write-destination flag added to `akm remember` per v1
  * implementation plan §6 decision 3 (renamed `--target` → `--bundle` in the
  * 0.9 CLI overhaul, S8). Resolution order is:
- *   --bundle → defaultWriteTarget → defaultBundle → ConfigError
+ *   --bundle → defaultBundle → ConfigError
  *
  * These tests exercise the explicit-target path:
  *   - resolves to a configured filesystem source by name

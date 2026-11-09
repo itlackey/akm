@@ -116,7 +116,7 @@ export function configSource(path: string[]): string | null {
   }
 }
 
-/** Where an automatic write goes (no defaultWriteTarget): AKM_BUNDLE_DIR first, then the default bundle. */
+/** Where an automatic write goes: AKM_BUNDLE_DIR first, then the default bundle. */
 export function automaticWriteTarget(config: AkmConfig) {
   try {
     const { source } = resolveWorkingStashTarget(config, { requireWritable: false });

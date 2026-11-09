@@ -109,10 +109,6 @@ function isForbiddenWebsiteHostname(hostname: string, options?: HostGuardOptions
   return classifyNetworkHostname(hostname) !== "public";
 }
 
-export function isLoopbackWebsiteHostname(hostname: string): boolean {
-  return classifyNetworkHostname(hostname) === "loopback";
-}
-
 function redirectInit(init: RequestInit, currentUrl: string, nextUrl: string): RequestInit {
   if (new URL(currentUrl).origin === new URL(nextUrl).origin) return init;
   const headers = new Headers(init.headers);

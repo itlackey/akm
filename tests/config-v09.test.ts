@@ -8,6 +8,7 @@ import path from "node:path";
 import type { AkmConfig } from "../src/core/config/config";
 import {
   bundlesToSourceEntries,
+  loadConfig,
   loadUserConfig,
   mutateConfig,
   normalizeConfigFile,
@@ -21,6 +22,7 @@ import { validateConfigShape } from "../src/core/config/config-schema";
 import { configSet } from "../src/core/config/config-walker";
 import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+import { resolveWriteTarget } from "../src/core/write-source";
 
 beforeEach(() => resetConfigCache());
 afterEach(() => resetConfigCache());
@@ -556,5 +558,46 @@ describe("config set: JSON for string-or-array keys", () => {
     } catch (err) {
       expect((err as { code?: string }).code).toBe("INVALID_JSON_CONFIG_VALUE");
     }
+  });
+});
+
+describe("the retired defaultWriteTarget key", () => {
+  const withRetiredKey = () =>
+    writeConfig({
+      configVersion: "0.9.0",
+      bundles: { mine: { path: "/tmp/akm-mine", writable: true }, other: { path: "/tmp/akm-other", writable: true } },
+      defaultBundle: "mine",
+      defaultWriteTarget: "other",
+    });
+
+  test("loads with an unknown-key warning, and writes go to defaultBundle", () => {
+    withRetiredKey();
+    let target = "";
+    const warnings = captureWarnings(() => {
+      target = resolveWriteTarget(loadConfig()).source.name;
+    });
+    expect(warnings.some((w) => w.includes('Unknown config key "defaultWriteTarget"'))).toBe(true);
+    expect(target).toBe("mine");
+  });
+
+  test("migrate apply drops it and notes a target that differed from defaultBundle", () => {
+    withRetiredKey();
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore: () => null });
+    expect(result.notes?.filter((n) => n.includes("defaultWriteTarget"))).toEqual([
+      'defaultWriteTarget "other" is dropped. It named a different bundle from defaultBundle "mine"; writes now go to defaultBundle.',
+    ]);
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).defaultWriteTarget).toBeUndefined();
+  });
+
+  test("migrate apply drops it without a note when it named defaultBundle", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      bundles: { mine: { path: "/tmp/akm-mine", writable: true } },
+      defaultBundle: "mine",
+      defaultWriteTarget: "mine",
+    });
+    const result = normalizeConfigFile(getConfigPath(), { apply: true, resolveFromStore: () => null });
+    expect(result.notes ?? []).toEqual([]);
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).defaultWriteTarget).toBeUndefined();
   });
 });

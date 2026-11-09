@@ -26,7 +26,6 @@ async function run(sessions: Array<{ id: string; cwd?: string }>, project?: stri
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true }, other: { path: other.dir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: { test: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test" } } },
     improve: {
       strategy: "extract-only",

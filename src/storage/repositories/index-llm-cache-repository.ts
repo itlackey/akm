@@ -11,9 +11,8 @@
  */
 
 import { sha256Hex } from "../../runtime";
-import type { Database, SqlValue } from "../database";
+import type { Database } from "../database";
 import type { LlmCacheEntry } from "./index-entry-types";
-import { SQLITE_CHUNK_SIZE } from "./index-sql";
 
 /**
  * Look up a cached LLM result for the given asset_ref.
@@ -46,50 +45,6 @@ export function getLlmCacheEntry(
     resultJson: row.result_json,
     updatedAt: row.updated_at,
   };
-}
-
-/**
- * Batched variant of {@link getLlmCacheEntry}. Fetches every cache row whose
- * `asset_ref` is in `refs` with a single `IN (...)` query (chunked to respect
- * SQLITE_MAX_VARIABLE_NUMBER), returning a `Map<assetRef, LlmCacheEntry>`.
- *
- * Unlike `getLlmCacheEntry`, this does NOT filter by body hash — callers must
- * compare `entry.bodyHash` against the current body hash themselves. This lets
- * the batch path issue one DB query per chunk instead of one per file.
- */
-export function getLlmCacheEntriesByRefs(
-  db: Database,
-  refs: string[],
-  cacheVariant: string,
-): Map<string, LlmCacheEntry> {
-  const result = new Map<string, LlmCacheEntry>();
-  if (refs.length === 0) return result;
-  for (let i = 0; i < refs.length; i += SQLITE_CHUNK_SIZE) {
-    const chunk = refs.slice(i, i + SQLITE_CHUNK_SIZE);
-    const placeholders = chunk.map(() => "?").join(", ");
-    const rows = db
-      .prepare(
-        `SELECT asset_ref, cache_variant, body_hash, result_json, updated_at FROM llm_enrichment_cache
-         WHERE cache_variant = ? AND asset_ref IN (${placeholders})`,
-      )
-      .all(cacheVariant, ...(chunk as SqlValue[])) as Array<{
-      asset_ref: string;
-      cache_variant: string;
-      body_hash: string;
-      result_json: string;
-      updated_at: number;
-    }>;
-    for (const row of rows) {
-      result.set(row.asset_ref, {
-        assetRef: row.asset_ref,
-        cacheVariant: row.cache_variant,
-        bodyHash: row.body_hash,
-        resultJson: row.result_json,
-        updatedAt: row.updated_at,
-      });
-    }
-  }
-  return result;
 }
 
 /**

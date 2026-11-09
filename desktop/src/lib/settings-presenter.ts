@@ -45,7 +45,6 @@ export interface SettingsIndex {
 }
 export interface SettingsBundleResponse {
   defaultBundle: string | null;
-  defaultWriteTarget: string | null;
   bundles: SettingsBundle[];
   workingStash: { path: string; git: SettingsGit | null } | null;
   index: SettingsIndex;

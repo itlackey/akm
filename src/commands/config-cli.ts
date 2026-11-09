@@ -30,6 +30,7 @@ import { configGet, configSet, configUnset, unknownKeyHint } from "../core/confi
 import { isEnvReference } from "../core/config/schema/primitives";
 import { UsageError } from "../core/errors";
 import { getConfigPath } from "../core/paths";
+import { isSecretKey } from "../core/redaction";
 import { formatRegistryUrl } from "../core/registry-url";
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -93,28 +94,6 @@ function redactConfigValue(value: unknown, path: string[] = []): unknown {
     }
   }
   return result;
-}
-
-/**
- * True when `key` names a secret, judged by the words of the name (camelCase, `_` and `-` split it), never by
- * substring: `api_keys`, `client_secret`, `access_token` match; `monkey-small`, `prompt_cache_key`, `tokenizer` and
- * `maxTokens` do not. `key`/`keys` match only alone or after `api`, `access`, `private` or `auth`; `tokens` only
- * when its value is not a number.
- */
-function isSecretKey(key: string, value: unknown): boolean {
-  const words = key
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[\s_-]+/)
-    .map((word) => word.toLowerCase())
-    .filter(Boolean);
-  return words.some((word, index) => {
-    if (["token", "secret", "secrets", "password", "authorization", "apikey"].includes(word)) return true;
-    if (word === "tokens") return typeof value !== "number";
-    if (word === "key" || word === "keys") {
-      return words.length === 1 || ["api", "access", "private", "auth"].includes(words[index - 1] ?? "");
-    }
-    return false;
-  });
 }
 
 /**

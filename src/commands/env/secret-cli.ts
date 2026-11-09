@@ -111,7 +111,7 @@ const secretSetCommand = defineJsonCommand({
     "from-env": { type: "string", description: "Read the value from the named environment variable" },
     bundle: {
       type: "string",
-      description: "Write destination: a source name (default: defaultWriteTarget)",
+      description: "Write destination: a source name (default: defaultBundle)",
     },
   },
   async run({ args }) {
@@ -244,7 +244,7 @@ const secretRemoveCommand = defineJsonCommand({
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
     bundle: {
       type: "string",
-      description: "Write destination: a source name (default: defaultWriteTarget)",
+      description: "Write destination: a source name (default: defaultBundle)",
     },
   },
   async run({ args }) {

@@ -60,7 +60,6 @@ beforeEach(() => {
     semanticSearchMode: "off",
     bundles: { work: { path: storage.stashDir, writable: true } },
     defaultBundle: "work",
-    defaultWriteTarget: "work",
     harnesses: {
       claude: harness("claude", "plain-proposal"),
       "claude-invalid": harness("claude", "plain-invalid"),

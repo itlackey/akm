@@ -89,7 +89,6 @@ function configEnabled(stashDir: string): AkmConfig {
     semanticSearchMode: "auto",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       default: {
         endpoint: "http://localhost:11434/v1/chat/completions",
@@ -116,7 +115,6 @@ function configDisabled(stashDir: string): AkmConfig {
     semanticSearchMode: "auto",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       default: { endpoint: "http://localhost:11434/v1/chat/completions", models: { fast: "test-model" } },
     },
@@ -2073,7 +2071,6 @@ describe("akmExtract — connection, harness + strategy config resolution", () =
       semanticSearchMode: "auto",
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
       connections: {
         default: {
           endpoint: "http://localhost:11434/v1/chat/completions",

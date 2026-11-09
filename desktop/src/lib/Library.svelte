@@ -25,7 +25,6 @@
   export let route = "/search";
   export let query = new URLSearchParams();
   export let bundles: Bundle[] = [];
-  export let defaultWriteTarget = "";
   export let bundleRevision = 0;
   let seenRevision = -1;
   let q = "",
@@ -92,7 +91,7 @@
   $: compareRefs = query.getAll("compare");
   $: fileQuery = normalizedRoute === "files" ? query : (parseFilesHref(query.get("returnTo")) ?? new URLSearchParams());
   $: fileBundle =
-    fileQuery.get("bundle") || query.get("bundle") || defaultWriteTarget || bundles.find((b) => b.enabled)?.name || "";
+    fileQuery.get("bundle") || query.get("bundle") || defaultBundle || bundles.find((b) => b.enabled)?.name || "";
   $: filePath = fileQuery.get("path") ?? query.get("path") ?? "";
   $: selectedFilePath = fileQuery.get("file") ?? "";
   $: readingHref = query.get("readingFrom") || fileQuery.get("readingFrom") || "";
@@ -616,7 +615,7 @@
               : undefined}
             {query}
             {bundles}
-            {defaultWriteTarget}
+            {defaultBundle}
             returnTo={withReview(returnTo)}
             cancelHref={query.get("file") ? query.get("returnTo")! : withReview(returnTo)}
             {readingHref}
@@ -634,7 +633,7 @@
             {query}
             returnTo={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}
             {bundles}
-            {defaultWriteTarget}
+            {defaultBundle}
             mode="files"
             filesHref={folderHref}
             {editHref}
@@ -695,7 +694,7 @@
       {query}
       {returnTo}
       {bundles}
-      {defaultWriteTarget}
+      {defaultBundle}
       mode="search"
       filesHref={folderHref}
       {editHref}

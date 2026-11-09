@@ -255,7 +255,7 @@ export const importKnowledgeCommand = defineJsonCommand({
     },
     bundle: {
       type: "string",
-      description: "Write destination: a source name (default: defaultWriteTarget)",
+      description: "Write destination: a source name (default: defaultBundle)",
     },
     xref: {
       type: "string",

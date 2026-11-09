@@ -817,23 +817,6 @@ function indexMatchesTree(
   return true;
 }
 
-/** Repair only the stale base index left by a crash after an exact commit CAS. */
-export function reconcileGitExactPathIndex(repoDir: string, baseCommit: string, commit: string, paths: string[]): void {
-  const normalized = normalizeExactPaths(repoDir, paths);
-  const current = readIndexEntries(repoDir, normalized);
-  const committedStates = readTreeStates(repoDir, commit, normalized);
-  if (indexMatchesTree(normalized, current, committedStates)) return;
-  const baseStates = readTreeStates(repoDir, baseCommit, normalized);
-  if (!indexMatchesTree(normalized, current, baseStates)) {
-    throw new UsageError(
-      `Exact Git operation path has staged work after transaction recovery. Commit, stash, or discard it before retrying.`,
-    );
-  }
-  for (const result of runExactPathChunks(repoDir, ["reset", "--quiet", commit], normalized)) {
-    if (result.status !== 0) throw new Error(`git index cleanup failed during exact transaction recovery`);
-  }
-}
-
 /** Git's effective `core.filemode`: on unless the repository (or Git's probe at init) turned it off. */
 function fileModeTracked(repoDir: string): boolean {
   const result = runGit(["-C", repoDir, "config", "--type=bool", "--get", "core.filemode"]);

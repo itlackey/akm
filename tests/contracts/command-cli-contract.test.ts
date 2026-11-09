@@ -100,21 +100,11 @@ describe("canonical workflow CLI surface", () => {
     expect(run?.args?.["skip-if-locked"]).toMatchObject({ type: "boolean", default: false });
   });
 
-  // #1239: `--all-scopes` and `--new` stay registered as deprecated no-ops
-  // through 0.10 so existing scripts do not fail with UNKNOWN_FLAG.
-  test("registers workflow list/status --all-scopes and run --new as boolean flags defaulting to false", () => {
-    const top = main.subCommands as unknown as Record<string, DynamicCommand>;
-    expect(top.workflow).toBe(workflowCommand as unknown as DynamicCommand);
-
-    const list = (workflowCommand as unknown as DynamicCommand).subCommands?.list;
-    expect(list?.args?.["all-scopes"]).toMatchObject({ type: "boolean", default: false });
-
-    const status = (workflowCommand as unknown as DynamicCommand).subCommands?.status;
-    expect(status?.args?.target).toMatchObject({ type: "positional", required: true });
-    expect(status?.args?.["all-scopes"]).toMatchObject({ type: "boolean", default: false });
-
-    const run = (workflowCommand as unknown as DynamicCommand).subCommands?.run;
-    expect(run?.args?.new).toMatchObject({ type: "boolean", default: false });
+  test("workflow list/status/run no longer register --all-scopes or --new", () => {
+    const sub = (workflowCommand as unknown as DynamicCommand).subCommands;
+    expect(sub?.list?.args?.["all-scopes"]).toBeUndefined();
+    expect(sub?.status?.args?.["all-scopes"]).toBeUndefined();
+    expect(sub?.run?.args?.new).toBeUndefined();
   });
 });
 

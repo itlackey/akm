@@ -7,9 +7,6 @@ import { cloneExecutionJsonObject, type ExecutionJsonObject } from "./json";
 
 export const EXECUTION_SOURCE_SCHEMA_VERSION = 1 as const;
 
-/** Current internal adapter identifiers are lowercase kebab-case registry keys. */
-export const EXECUTION_ADAPTER_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
-
 /** Exact identity of the authoritative native file from which content was rendered. */
 export interface ExecutionSourceIdentity {
   /** Fully-qualified `bundle//conceptId`; short input sugar is never frozen. */
@@ -91,20 +88,8 @@ function requireRecord(value: unknown, path: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-/** A selector or layer identifier that may cross the durable execution boundary. */
-export function requireStableExecutionSelector(value: unknown, path: string): string {
-  if (typeof value !== "string" || value.length === 0 || value.trim() !== value) {
-    throw new TypeError(`${path} must be a non-empty stable identifier`);
-  }
-  return value;
-}
-
 export function isPortableExecutionAgentSelector(value: string): boolean {
   return /^(?:[^/]+\/\/)?agents\/[^/]/.test(value);
-}
-
-export function executionPersonaMatchesSelector(selector: string, personaRef: string): boolean {
-  return selector.includes("//") ? selector === personaRef : personaRef.endsWith(`//${selector}`);
 }
 
 const IDENTITY_KEYS = ["ref", "bundle", "adapter", "file", "hash"] as const;

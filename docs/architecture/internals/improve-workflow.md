@@ -15,7 +15,7 @@ The design and rationale are in [Improvement Loop](../improvement.md). This page
 | `--task` | Extra guidance for this pass, passed to the reflect prompt. |
 | `--dry-run` | Compute the plan and analyze memory cleanup. Takes no lock, emits no events, calls no model, writes nothing. |
 | `--show-prompt` | Print the composed reflect prompt for one fully-qualified ref and exit. No lock, index write, or model call. |
-| `--bundle` | The bundle the run improves and writes to, overriding `defaultWriteTarget` and the working bundle. Only its assets are planned. |
+| `--bundle` | The bundle the run improves and writes to, overriding the working bundle. Only its assets are planned. |
 | `--limit` | Cap the number of assets processed, highest salience first. |
 | `--timeout-ms` | Wall-clock budget for the whole run. Default 7 200 000 ms (2 hours). |
 | `--skip-if-locked` | If another improve run holds the lock, return an exit-0 no-op. Without it, contention is `IMPROVE_LOCK_HELD`, exit 75. |
@@ -138,7 +138,7 @@ Accepting a consolidate promotion archives the source memory (and its `.derived`
 
 ## Scope
 
-`akm improve` reads and writes one bundle, its write target: `--bundle`, else `defaultWriteTarget`, else the working bundle. Only that bundle's assets are planned, because every proposal is filed in the write target. To improve another writable bundle, pass `--bundle <name>` or a bundle-qualified scope such as `team//skills/code-review`; a scheduled run covers only its own write target, so each other bundle needs its own scheduled `akm improve --bundle <name>`. A dry run resolves the bundle the same way a live run does.
+`akm improve` reads and writes one bundle, its write target: `--bundle`, else the working bundle. Only that bundle's assets are planned, because every proposal is filed in the write target. To improve another writable bundle, pass `--bundle <name>` or a bundle-qualified scope such as `team//skills/code-review`; a scheduled run covers only its own write target, so each other bundle needs its own scheduled `akm improve --bundle <name>`. A dry run resolves the bundle the same way a live run does.
 
 ## Ledger pre-filter (signal delta)
 
