@@ -177,7 +177,10 @@ describe("while learning is off", () => {
     const before = snapshot();
     const [bin, ...prefix] = resolveAkmInvocation().argv;
     const result = JSON.parse(
-      execFileSync(bin!, [...prefix, "proposal", "extract", "--type", "claude", "--format=json"], { encoding: "utf8" }),
+      execFileSync(bin!, [...prefix, "proposal", "extract", "--type", "claude", "--format=json"], {
+        encoding: "utf8",
+        env: process.env,
+      }),
     );
     expect(result).toMatchObject({ ok: true, sessionsProcessed: 0 });
     expect(snapshot()).toEqual(before);

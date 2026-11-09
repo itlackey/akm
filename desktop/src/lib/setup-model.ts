@@ -167,8 +167,9 @@ export interface LearnPlan {
 export function learnPlan(detected: Detected, agents: string[], input: LearnInput): LearnPlan {
   const runs = learningRuns(detected);
   const on = input.learn ?? runs;
-  // Where it runs now stands until the person picks: it may be an agent this page has no card for.
-  const wanted = input.where ?? detected.learning.harness ?? "internal";
+  // Where it runs now stands until the person picks: it may be an agent this page has no card for. While learning is
+  // off nothing runs anywhere, so turning it on never lands on an agent the person has not picked.
+  const wanted = input.where ?? (runs ? detected.learning.harness : null) ?? "internal";
   const where = wanted === "internal" || agents.includes(wanted) || input.where === undefined ? wanted : "internal";
   const endpoint = input.endpoint.trim(),
     model = input.model.trim(),

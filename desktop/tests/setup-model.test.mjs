@@ -148,6 +148,13 @@ test("the switch alone is not running: a host with nowhere to run reads off", ()
   assert.equal(learningRuns(detected({ learning: { on: false, harness: "claude", scheduled: false } })), false);
 });
 
+test("turning learning on never lands on an agent the person has not picked", () => {
+  const off = detected({ learning: { on: false, harness: "claude", scheduled: false } });
+  const plan = learnPlan(off, ["claude"], { ...blank, learn: true });
+  assert.equal(plan.where, "internal");
+  assert.match(plan.problem, /model connection/);
+});
+
 test("learning on needs a connection or an agent, and says why in one line", () => {
   const none = learnPlan(detected(), ["claude"], { ...blank, learn: true });
   assert.match(none.problem, /needs a model connection/);
