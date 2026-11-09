@@ -33,7 +33,6 @@ beforeEach(async () => {
     semanticSearchMode: "off",
     bundles: { stash: { path: storage.stashDir, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     registries: [],
   });
   fs.writeFileSync(file(), body, { mode: 0o640 });

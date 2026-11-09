@@ -412,10 +412,6 @@
       },
       "additionalProperties": {}
     },
-    "defaultWriteTarget": {
-      "type": "string",
-      "minLength": 1
-    },
     "projects": {
       "type": "object",
       "propertyNames": {
@@ -1868,10 +1864,6 @@
             }
           },
           "additionalProperties": {}
-        },
-        "defaultWriteTarget": {
-          "type": "string",
-          "minLength": 1
         },
         "projects": {
           "type": "object",

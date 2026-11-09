@@ -210,7 +210,6 @@ describe("bundle settings and config", () => {
       ...current,
       // A disabled bundle cannot be a default, and settings no longer edit the defaults.
       defaultBundle: undefined,
-      defaultWriteTarget: undefined,
       bundles: {
         ...current.bundles,
         stash: {
@@ -244,8 +243,7 @@ describe("bundle settings and config", () => {
     await expectUsage(() => bundles.setSettings({ bundle: "constructor", enabled: true }));
     await expectUsage(() => bundles.setSettings({ bundle: "stash", componentWritability: { constructor: true } }));
     // The defaults are edited through config only; settings ignore them.
-    expect(bundles.setSettings({ defaultWriteTarget: "stash" } as never)).toEqual({ saved: false });
-    expect(loadConfig().defaultWriteTarget).toBeUndefined();
+    expect(bundles.setSettings({ defaultBundle: "stash" } as never)).toEqual({ saved: false });
   });
 
   test("config change validates like the CLI, keeps secrets and unrelated keys, and unsets", async () => {

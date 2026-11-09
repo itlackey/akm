@@ -3,7 +3,7 @@
  *
  * Verifies the `--bundle` flag added to `akm import` per v1 implementation
  * plan §6 decision 3. Resolution order is:
- *   --bundle → defaultWriteTarget → defaultBundle → ConfigError
+ *   --bundle → defaultBundle → ConfigError
  *
  * These tests exercise the explicit-target path:
  *   - resolves to a configured filesystem source by name

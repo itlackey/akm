@@ -5,9 +5,9 @@
 /** Pure helpers behind the workspace operations: config redaction and commit origin. */
 
 import { describe, expect, test } from "bun:test";
-import { redactUrlCredentials } from "../src/core/redaction";
+import { isSecretKey, redactUrlCredentials } from "../src/core/redaction";
 import { type ChangeOrigin, classifyCommitOrigin } from "../src/workspace/git-read";
-import { isSecretEnvName, redactForUi, scrubUrlCredentials } from "../src/workspace/redact";
+import { redactForUi, scrubUrlCredentials } from "../src/workspace/redact";
 
 // biome-ignore lint/suspicious/noExplicitAny: redacted trees are asserted field by field below
 type Json = Record<string, any>;
@@ -58,9 +58,15 @@ describe("URL credentials", () => {
     expect(JSON.stringify(scrubbed)).toContain("llm default: https://h.test/x?api_key=");
   });
 
-  test("environment variable names that hold credentials are recognised", () => {
-    expect(isSecretEnvName("AKM_LLM_API_KEY")).toBe(true);
-    expect(isSecretEnvName("AKM_BUNDLE_DIR")).toBe(false);
+  test("environment variable names that hold credentials are recognised, and config keys that only contain a word are not", () => {
+    expect(isSecretKey("AKM_LLM_API_KEY", "")).toBe(true);
+    expect(isSecretKey("AKM_BUNDLE_DIR", "")).toBe(false);
+    for (const key of ["tokenizer", "prompt_cache_key", "monkey-small"]) expect(isSecretKey(key, "x")).toBe(false);
+    expect(isSecretKey("maxTokens", 64)).toBe(false);
+    expect(isSecretKey("headers_token", "x")).toBe(true);
+    for (const key of ["accesstoken", "clientsecret", "dbpassword", "secretkey"])
+      expect(isSecretKey(key, "x")).toBe(true);
+    expect((redactForUi({ models: { "token-small": "m" }, token: "t" }) as Json).models["token-small"]).toBe("m");
   });
 });
 

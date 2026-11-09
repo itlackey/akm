@@ -40,7 +40,6 @@ beforeEach(() => {
   stashDir = storage.stashDir;
   writeSandboxConfig({
     semanticSearchMode: "off",
-    defaultWriteTarget: "stash",
     bundles: { stash: { path: stashDir, writable: true } },
     defaultBundle: "stash",
   });

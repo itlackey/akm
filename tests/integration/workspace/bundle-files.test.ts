@@ -87,7 +87,6 @@ test("a disabled bundle cannot be browsed", () => {
     ...makeConfig(storage.stashDir),
     bundles: { other: { path: storage.dataDir, enabled: false } },
     defaultBundle: undefined,
-    defaultWriteTarget: undefined,
   });
   resetConfigCache();
   expect(() => listBundleFiles("other")).toThrow("disabled or unavailable");

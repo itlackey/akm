@@ -55,7 +55,6 @@ async function index(): Promise<void> {
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
   });
   await akmIndex({ stashDir: stash, full: true });
 }

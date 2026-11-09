@@ -20,8 +20,9 @@ import { parseConfigText, readConfigText } from "../core/config/config-io";
 import { dropUnusableProjects, NO_PROJECT, type ProjectConfig } from "../core/config/schema/projects";
 import { UsageError } from "../core/errors";
 import { getConfigPath } from "../core/paths";
+import { isSecretKey, REDACTED } from "../core/redaction";
 import { automaticWriteTarget, configSource, preserveUnrelatedConfig } from "./readers";
-import { isSecretEnvName, redactForUi } from "./redact";
+import { redactForUi } from "./redact";
 
 /** Names that would reach Object.prototype when used as a key. */
 const UNSAFE_NAMES = new Set(["__proto__", "constructor", "prototype"]);
@@ -84,7 +85,7 @@ export function get() {
   const env = Object.keys(process.env)
     .filter((name) => name.startsWith("AKM_"))
     .sort()
-    .map((name) => ({ name, value: isSecretEnvName(name) ? "[redacted]" : (process.env[name] ?? "") }));
+    .map((name) => ({ name, value: isSecretKey(name, "") ? REDACTED : (process.env[name] ?? "") }));
   const configPath = getConfigPath();
   const projects = localProjects(configPath);
   return {
@@ -226,6 +227,27 @@ export function removeConnection(input: { name: string }) {
 }
 
 /**
+ * `entry` with every mask the view showed (`redactForUi`) replaced by the stored value at the same path. A mask with no
+ * stored value behind it is refused: a save never writes one.
+ */
+function unmask(entry: unknown, stored: unknown, path: string): unknown {
+  if (entry === REDACTED) {
+    if (stored === undefined || stored === REDACTED)
+      throw new UsageError(`${path} is the masked placeholder, not a value: enter the value or remove the field.`);
+    return stored;
+  }
+  if (Array.isArray(entry)) {
+    const old = Array.isArray(stored) ? stored : [];
+    return entry.map((child, index) => unmask(child, old[index], `${path}[${index}]`));
+  }
+  if (!isRecord(entry)) return entry;
+  const old = isRecord(stored) ? stored : {};
+  return Object.fromEntries(
+    Object.entries(entry).map(([key, child]) => [key, unmask(child, old[key], `${path}.${key}`)]),
+  );
+}
+
+/**
  * Replace one connection with `entry` as a whole, through the same validated atomic write as `change`. Keys the entry
  * no longer has (a removed alias, cleared request options) leave the file, which a dotted `set` of the entry would not
  * do. A literal API key is refused; a connection only an `extends` base defines is saved as a local copy that overrides it.
@@ -241,10 +263,16 @@ export function saveConnection(input: { name: string; entry: Record<string, unkn
       `connections.${name}.apiKey must be an environment-variable reference such as $OPENAI_API_KEY, not the key itself.`,
     );
   const result = mutateConfig((current) => {
+    // What the UI showed carries a mask for each secret; the stored value is what a field the person did not change keeps.
+    const entry = unmask(
+      input.entry,
+      current.connections?.[name] ?? loadConfig().connections?.[name],
+      `connections.${name}`,
+    );
     // Already exactly this: nothing to write.
-    if (isDeepStrictEqual(current.connections?.[name], input.entry)) return current;
+    if (isDeepStrictEqual(current.connections?.[name], entry)) return current;
     preserveUnrelatedConfig(current);
-    return { ...current, connections: { ...current.connections, [name]: input.entry } as AkmConfig["connections"] };
+    return { ...current, connections: { ...current.connections, [name]: entry } as AkmConfig["connections"] };
   });
   resetConfigCache();
   return { saved: result.written };

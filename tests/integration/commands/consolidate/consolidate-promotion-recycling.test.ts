@@ -44,7 +44,6 @@ beforeEach(() => {
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: {
       planner: { endpoint: "https://consolidate.example.test/v1/chat/completions", models: { fast: "planner" } },
     },

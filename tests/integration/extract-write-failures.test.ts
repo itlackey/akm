@@ -41,7 +41,6 @@ function config(stash: string, endpoint = "http://localhost:11434/v1/chat/comple
     semanticSearchMode: "off",
     bundles: { stash: { path: stash, writable: true } },
     defaultBundle: "stash",
-    defaultWriteTarget: "stash",
     connections: { default: { endpoint, models: { fast: "test-model" } } },
     improve: {
       strategy: "extract",

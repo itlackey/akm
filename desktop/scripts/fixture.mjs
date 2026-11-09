@@ -107,7 +107,6 @@ export async function createFixture({
       {
         semanticSearchMode: "off",
         defaultBundle: "personal",
-        defaultWriteTarget: "personal",
         bundles,
         harnesses: { fake: { platform: "aider", bin: fakeAgent } },
       },

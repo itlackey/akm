@@ -328,7 +328,6 @@ describe("existing knowledge body dedup", () => {
       semanticSearchMode: "off",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
     } as AkmConfig;
     const promoted: string[] = [];
     const warnings: string[] = [];
@@ -390,7 +389,6 @@ describe("existing knowledge body dedup", () => {
       semanticSearchMode: "off",
       bundles: { stash: { path: stash, writable: true } },
       defaultBundle: "stash",
-      defaultWriteTarget: "stash",
     } as AkmConfig;
     const promoted: string[] = [];
     const warnings: string[] = [];
