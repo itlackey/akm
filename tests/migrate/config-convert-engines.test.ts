@@ -12,9 +12,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { convertEngineConfig } from "../../scripts/akm-migrate/config/convert-engines";
 import { normalizeConfigFile } from "../../scripts/akm-migrate/config/normalize";
-import { resetConfigCache, unknownConfigKeyPaths } from "../../src/core/config/config";
+import { type AkmConfig, resetConfigCache, unknownConfigKeyPaths } from "../../src/core/config/config";
 import { AkmConfigSchema } from "../../src/core/config/config-schema";
 import { getConfigPath } from "../../src/core/paths";
+import { resolveTarget } from "../../src/integrations/agent/resolution";
 
 type Dict = Record<string, unknown>;
 
@@ -558,6 +559,14 @@ describe("the defaults become the entries named default", () => {
       defaults: { engine: "claude" },
     });
     expect(config.harnesses).toEqual({ default: { platform: "claude" }, opencode: {} });
+  });
+
+  test("several agent engines and no defaults.engine leave several harnesses and no default: agent work errors naming the fix", () => {
+    const { config } = convert({
+      engines: { claude: { kind: "agent", platform: "claude" }, opencode: { kind: "agent", platform: "opencode" } },
+    });
+    expect(Object.keys(config.harnesses as Dict)).toEqual(["claude", "opencode"]);
+    expect(() => resolveTarget({ config: config as AkmConfig, layers: [] })).toThrow(/none is named "default"/);
   });
 
   test("defaults.engine naming one of several opencode-sdk engines makes that harness default, every reference to it follows", () => {
