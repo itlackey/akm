@@ -385,23 +385,36 @@ export function foldClosedDays(
   }
 }
 
-function foldFrom(source: Database, metricsDb: Database, nowMs: number): FoldReport {
+/** The closed UTC days of `source` that a fold would write now, with the per-table counts that decide it. */
+function pendingDays(source: Database, folded: FoldedDays, nowMs: number) {
   const today = utcDay(nowMs);
   const eventCounts = countsByDay(source, "events", "ts", today);
   const usageCounts = countsByDay(source, "usage_events", "created_at", today);
   const runCounts = countsByDay(source, "improve_runs", "started_at", today);
-  const folded = readFoldedDays(metricsDb);
-  const report: FoldReport = { folded: [], failed: [] };
-
   const days = [...new Set([...eventCounts.keys(), ...usageCounts.keys(), ...runCounts.keys()])].sort();
   const need = (day: string, counts: Map<string, number>, field: keyof FoldedCounts) =>
     (counts.get(day) ?? 0) > (folded.get(day)?.[field] ?? 0);
   const todo = days.filter(
     (day) => need(day, eventCounts, "events") || need(day, usageCounts, "usage") || need(day, runCounts, "runs"),
   );
+  return { todo, eventCounts, usageCounts, runCounts, need };
+}
+
+/**
+ * The closed UTC days `source` holds rows of that `folded` does not cover (what the next fold would write),
+ * oldest first: what `akm health` reports when the fold has not run for a while.
+ */
+export function unfoldedClosedDays(source: Database, folded: FoldedDays, nowMs: number): string[] {
+  return pendingDays(source, folded, nowMs).todo;
+}
+
+function foldFrom(source: Database, metricsDb: Database, nowMs: number): FoldReport {
+  const folded = readFoldedDays(metricsDb);
+  const report: FoldReport = { folded: [], failed: [] };
+  const { todo, eventCounts, usageCounts, runCounts, need } = pendingDays(source, folded, nowMs);
   if (todo.length === 0) return report;
 
-  // usage_events has no index on created_at: read the needed range once, streaming into per-day rows.
+  // usage_events has no index on created_at: read the needed range once and group it by day.
   const usageDays = new Set(todo.filter((day) => need(day, usageCounts, "usage")));
   const usageByDay = new Map<string, MetricsUsageRow[]>();
   if (usageDays.size > 0 && hasTable(source, "usage_events")) {

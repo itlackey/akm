@@ -264,7 +264,9 @@ covers beyond the table.
 - **On-disk storage** — durable workspace state (events, proposals, history,
   workflow runs, salience) lives in `state.db`; the search index (`index.db`)
   is a fully **regenerable** cache rebuilt by `akm index`; high-volume logs stay
-  in a separate `logs.db`. Asset metadata lives as file-local frontmatter plus
+  in a separate `logs.db`; the history older than `state.db`'s 90 days of raw rows
+  (daily rollups and every improve run) lives in `metrics.db`, which is **not**
+  regenerable and is never purged. Asset metadata lives as file-local frontmatter plus
   the index (there is no separate metadata sidecar). Treat the on-disk schema
   as internal (use `akm` commands, not direct SQL).
 
