@@ -127,6 +127,13 @@ else {process.exitCode=1}
     page.getByText("Native AKM upgrade completed. The bundled desktop engine is unchanged.", { exact: true }),
   ).toBeVisible();
   await expect(upgrade).toBeFocused();
+  // A button's label colour changes together with its fill, so coming back from busy it has no frame of an enabled
+  // label on the disabled fill.
+  const changing = await upgrade.evaluate((button) => getComputedStyle(button).transitionProperty.split(", "));
+  assert.ok(
+    !changing.includes("background-color") || changing.includes("color"),
+    `label and fill change together: ${changing.join(", ")}`,
+  );
   // The upgrade ends with a re-check. axe reads the settled page: idle, and the buttons' 120 ms colour change over.
   await expect(hostCli).toHaveAttribute("aria-busy", "false");
   await page.waitForFunction(() => document.getAnimations().length === 0);
