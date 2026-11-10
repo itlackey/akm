@@ -46,8 +46,13 @@ describe("nextVersion", () => {
     expect(nextVersion("0.11", [])).toBe("0.11.0");
   });
 
-  test("the 0.10 monthly line still counts up", () => {
+  test("the 0.10 monthly line still counts up; retired 8-digit alphas and bare stages are ignored", () => {
     expect(nextVersion("0.10", ["0.10.261115-beta", "0.10.261116"])).toBe("0.10.261117");
+    expect(nextVersion("0.11", ["0.10.26101202-alpha", "0.10.261115-beta.2"])).toBe("0.11.0");
+  });
+
+  test("a version the line just shipped counts before npm has it", () => {
+    expect(nextVersion("0.11", ["0.11.0"])).toBe("0.11.1");
   });
 });
 
@@ -68,13 +73,24 @@ describe("resolveVersion", () => {
 
   test("prereleases sort alpha < beta < rc < the stable release, and 0.10 monthly versions sort below 0.11", () => {
     const [alpha, beta, rc] = STAGES.map((stage) => resolveVersion("0.11.0", stage, []));
-    const order = ["0.10.261115-beta", "0.10.261116", alpha, beta, rc, "0.11.0", "0.11.1-beta.1", "0.11.1"];
+    const order = [
+      "0.10.261115-beta",
+      "0.10.261115-beta.2",
+      "0.10.261116",
+      alpha,
+      beta,
+      rc,
+      "0.11.0",
+      "0.11.1-beta.1",
+      "0.11.1",
+    ];
     for (let i = 1; i < order.length; i++) expect(semver.lt(order[i - 1] as string, order[i] as string)).toBe(true);
   });
 
   test("rejects what the format forbids", () => {
     expect(() => resolveVersion("0.11.0", "gamma")).toThrow(/stage/);
     expect(() => resolveVersion("0.11.0-beta.1", "")).toThrow(/prerelease/);
+    expect(() => resolveVersion("0.11.0-beta.0", "beta", ["0.11.0"])).toThrow(/already published/);
     expect(() => resolveVersion("1.0.0", "beta")).toThrow();
     expect(() => resolveVersion("", "")).toThrow();
   });

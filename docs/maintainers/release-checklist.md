@@ -27,9 +27,11 @@
 4. A prerelease is a dispatch of the Release workflow on the release branch
    with a stage. It publishes package.json's version with `-<stage>.N` to npm
    `next`, `N` counting up from 1 for that stage, as often as needed.
-5. To ship, commit `release: <version>` (package.json's bare version and the changelog cut),
-   open the pull request into `main` and merge it when green. The push to
-   `main` publishes `<version>` to npm `latest`. The branch is deleted.
+5. To ship, commit `release: <version>` (package.json's bare version and the
+   changelog cut), open the pull request into `main` and merge it when green.
+   The push to `main` publishes `<version>` to npm `latest`. The branch is
+   deleted. When merging `main` into a release branch, keep the branch's
+   package.json version.
 6. Cut the next release branch from `main`.
 
 Each step is one command: `bun run release:start [0.<minor>]`, `bun run
@@ -200,9 +202,8 @@ Plain semver. Prereleases are `0.11.0-alpha.N`, `-beta.N` and `-rc.N`, the stabl
 release is `0.11.0`, then patches `0.11.1`, `0.11.2`; the next minor starts at
 `0.12.0-beta.1`. `bun scripts/release-version.ts next [0.<minor>]` prints the
 next version of a line from npm (one patch above its latest stable, or
-`0.<minor>.0`), `validate <version>` checks one by hand, and the Release
-workflow appends the stage and the next counter at publish time; the stage
-counter is never committed. Versions before 0.11 (`0.10.YYMMNN`) sort below
+`0.<minor>.0`), and the Release workflow appends the stage and the next counter
+at publish time; the stage counter is never committed. Versions before 0.11 (`0.10.YYMMNN`) sort below
 every 0.11 version.
 
 ## Repository settings

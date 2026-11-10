@@ -4,9 +4,7 @@
 **with one caveat**: while the version is 0.x, minor releases (0.x → 0.x+1)
 may include breaking changes.
 
-Releases are `0.11.0-beta.1`, `0.11.0`, `0.11.1`, `0.12.0-beta.1` and so on:
-prereleases (`-alpha.N`, `-beta.N`, `-rc.N`) go to the npm `next` tag, stable
-versions to `latest`.
+Releases are `0.11.0-beta.1`, `0.11.0`, `0.11.1`, `0.12.0-beta.1` and so on.
 
 The 0.10 release notes (the version floor, merged CLI spellings, connections
 and harnesses, `0.10.YYMMNN` version numbers) are in the

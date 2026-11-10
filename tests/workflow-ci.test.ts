@@ -36,7 +36,7 @@ describe("CI workflow", () => {
     expect(workflow.jobs.check?.steps?.some((step) => step.run === "bun run check")).toBe(true);
   });
 
-  test("only a release branch merges to main, and it ships the version it is named for", () => {
+  test("only a release branch merges to main, and it ships a new stable version", () => {
     // A pull request into main is a release (docs/maintainers/release-checklist.md). This check runs there only,
     // once the pull request is ready; the ruleset on main requires it, and a skipped `needs` would skip the
     // platform jobs below.
@@ -47,7 +47,8 @@ describe("CI workflow", () => {
     const run = guard?.steps?.find((step) => step.run)?.run ?? "";
     expect(run).toContain("release/*)");
     expect(run).toContain(`VERSION="$(node -p "require('./package.json').version")"`);
-    expect(run).toContain('[ "$VERSION" != "$' + '{HEAD#release/}" ]');
+    expect(run).toContain('[[ "$VERSION" == *-* ]]');
+    expect(run).toContain('npm view "akm-cli@$VERSION" version');
   });
 
   test("the platform jobs and Gated CI follow the release-branch check, so they run on a release pull request only", () => {

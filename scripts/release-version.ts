@@ -10,7 +10,6 @@
  * for that version and stage. package.json holds the release's version (a stage with counter 0, `0.11.0-beta.0`, while
  * the release is in progress; the bare version once it ships).
  *
- *   bun scripts/release-version.ts validate <version>
  *   bun scripts/release-version.ts next [0.<minor>]
  *   VERSION_INPUT=... STAGE_INPUT=... bun scripts/release-version.ts resolve
  *
@@ -59,6 +58,7 @@ export function resolveVersion(versionInput: string, stageInput: string, publish
       throw new Error(`stage "${stage}" is not one of ${STAGES.join(", ")}`);
     }
     const base = given.replace(/-.*/, "");
+    if (published.includes(base)) throw new Error(`${base} is already published; package.json must name a new version`);
     let highest = 0;
     for (const v of published) {
       const p = semver.parse(v);
@@ -98,11 +98,6 @@ function npmVersions(name: string): string[] {
 function main(argv: string[]): number {
   const [command, arg] = argv;
   try {
-    if (command === "validate" && arg) {
-      const problem = validateVersion(arg);
-      if (problem) throw new Error(problem);
-      return 0;
-    }
     if (command === "resolve") {
       const stage = (process.env.STAGE_INPUT ?? "").trim();
       const published = stage === "" ? [] : npmVersions(packageJson().name);
@@ -113,14 +108,15 @@ function main(argv: string[]): number {
       const pkg = packageJson();
       const line = /^0\.\d+(?=\.|$)/.exec(arg ?? pkg.version);
       if (!line) throw new Error(`${arg ?? `package.json ${pkg.version}`} is not a 0.<minor> line`);
-      console.log(nextVersion(line[0], npmVersions(pkg.name)));
+      // package.json is what the line last shipped: npm may not have it yet right after its merge.
+      console.log(nextVersion(line[0], [...npmVersions(pkg.name), pkg.version]));
       return 0;
     }
   } catch (err) {
     console.error((err as Error).message);
     return 1;
   }
-  console.error("usage: release-version.ts validate <version> | resolve | next [0.<minor>]");
+  console.error("usage: release-version.ts resolve | next [0.<minor>]");
   return 2;
 }
 
