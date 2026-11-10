@@ -5,37 +5,45 @@
 -->
 
 <script lang="ts">
-  import { createEventDispatcher, onMount, onDestroy, tick } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import { beforeNavigate } from "$app/navigation";
   import { api, saveContent } from "./client";
   import { navigate } from "./navigation";
   import { setUnsaved } from "./drafts";
   import type { Bundle, SensitiveValue, SensitiveWriteResult } from "./types";
-  export let bundle = "";
-  export let file = "";
-  export let type: "env" | "secret" = "env";
-  export let creating = false;
-  export let bundles: Bundle[] = [];
-  const dispatch = createEventDispatcher<{
-    saved: SensitiveWriteResult;
-    cancel: void;
-  }>();
-  let name = "",
-    content = "",
+  let {
+    bundle = "",
+    file = "",
+    type = "env",
+    creating = false,
+    bundles = [],
+    onSaved,
+    onCancel,
+  }: {
+    bundle?: string;
+    file?: string;
+    type?: "env" | "secret";
+    creating?: boolean;
+    bundles?: Bundle[];
+    onSaved?: (result: SensitiveWriteResult) => void | Promise<void>;
+    onCancel?: () => void;
+  } = $props();
+  let name = $state(""),
+    content = $state(""),
     original = "",
     revision = "",
-    busy = false,
-    loaded = false,
-    dirty = false,
-    error = "",
+    busy = $state(false),
+    loaded = $state(false),
+    dirty = $state(false),
+    error = $state(""),
     alive = true;
-  let pending = "",
+  let pending = $state(""),
     pendingDelta = 0,
     approved = "",
-    dialog: HTMLDialogElement,
-    editor: HTMLTextAreaElement;
-  $: writable = bundles.filter((item) => item.enabled && item.writable);
-  $: noun = type === "env" ? "environment file" : "secret";
+    dialog = $state<HTMLDialogElement>(),
+    editor = $state<HTMLTextAreaElement>();
+  const writable = $derived(bundles.filter((item) => item.enabled && item.writable));
+  const noun = $derived(type === "env" ? "environment file" : "secret");
   function changed() {
     dirty = true;
     setUnsaved(true);
@@ -51,31 +59,31 @@
       error = "Wait for the current file operation to finish.";
       return;
     }
-    if (event.to && !event.willUnload && !dialog.open) {
+    if (event.to && !event.willUnload && !dialog?.open) {
       pending = event.to.url.href;
       pendingDelta = event.type === "popstate" ? (event.delta ?? 0) : 0;
-      dialog.showModal();
+      dialog?.showModal();
     }
   });
   function cancel() {
     if (dirty) {
       pending = "";
-      dialog.showModal();
-    } else dispatch("cancel");
+      dialog?.showModal();
+    } else onCancel?.();
   }
   async function discard() {
     dirty = false;
     setUnsaved(false);
     content = "";
     original = "";
-    dialog.close();
+    dialog?.close();
     if (pending) {
       approved = pending;
       // Kit restored the cancelled traversal. Retry it, rather than inserting
       // another history entry and losing the user's Forward destination.
       if (pendingDelta) history.go(pendingDelta);
       else await navigate(pending);
-    } else dispatch("cancel");
+    } else onCancel?.();
   }
   async function save() {
     busy = true;
@@ -100,7 +108,7 @@
       setUnsaved(false);
       content = "";
       original = "";
-      dispatch("saved", result);
+      void onSaved?.(result);
     } catch (cause) {
       if (alive) error = (cause as Error).message;
     } finally {
@@ -145,16 +153,21 @@
     <p class="muted small">Edits stay in memory only. Saving follows this bundle’s Git policy.</p>
   </header>
   {#if error}<p class="notice notice-warn" role="alert">{error}</p>{/if}
-  {#if loaded}<form on:submit|preventDefault={save}>
+  {#if loaded}<form
+      onsubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
       {#if creating}<div class="form-grid">
           <label
-            >Bundle<select bind:value={bundle} disabled={busy} on:change={changed}
+            >Bundle<select bind:value={bundle} disabled={busy} onchange={changed}
               >{#each writable as item}<option value={item.name}>{item.name}</option>{/each}</select
             ></label
           ><label
             >File name<input
               bind:value={name}
-              on:input={changed}
+              oninput={changed}
               required
               disabled={busy}
               autocomplete="off"
@@ -166,7 +179,7 @@
         >File contents<textarea
           bind:this={editor}
           bind:value={content}
-          on:input={changed}
+          oninput={changed}
           disabled={busy}
           spellcheck="false"
           autocomplete="off"
@@ -175,7 +188,7 @@
       <footer>
         <span class="muted small" role="status">{dirty ? "Unsaved changes" : "No unsaved changes"}</span>
         <div class="btn-row">
-          <button type="button" class="btn-secondary" disabled={busy} on:click={cancel}>Cancel</button><button
+          <button type="button" class="btn-secondary" disabled={busy} onclick={cancel}>Cancel</button><button
             disabled={busy || !bundle || (creating ? !name.trim() : !dirty)}
             >{busy ? "Saving…" : creating ? "Create file" : "Save changes"}</button
           >
@@ -183,21 +196,21 @@
       </footer>
     </form>{:else if busy}<p role="status">Opening editor…</p>{:else}<button
       class="btn-secondary"
-      on:click={() => dispatch("cancel")}>Back to file</button
+      onclick={() => onCancel?.()}>Back to file</button
     >{/if}
 </section>
-<dialog bind:this={dialog} aria-labelledby="sensitive-discard-title" on:cancel={() => (pending = "")}>
+<dialog bind:this={dialog} aria-labelledby="sensitive-discard-title" oncancel={() => (pending = "")}>
   <h2 id="sensitive-discard-title">Discard these unsaved changes?</h2>
   <p>Secret and environment edits are not saved as drafts.</p>
   <div class="btn-row">
     <button
       class="btn-secondary"
-      on:click={() => {
-        dialog.close();
+      onclick={() => {
+        dialog?.close();
         pending = "";
         editor?.focus();
       }}>Keep editing</button
-    ><button class="btn-danger" on:click={discard}>Discard changes</button>
+    ><button class="btn-danger" onclick={discard}>Discard changes</button>
   </div>
 </dialog>
 

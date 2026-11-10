@@ -477,8 +477,7 @@
   function createSensitiveHref(kind: string, bundle: string, path: string) {
     return "/library/new-sensitive?" + new URLSearchParams({ kind, bundle, returnTo: filesHref({ bundle, path }) });
   }
-  async function savedSensitive(event: CustomEvent<{ bundle: string; file: string; ref: string; warnings: string[] }>) {
-    const saved = event.detail;
+  async function savedSensitive(saved: { bundle: string; file: string; ref: string; warnings: string[] }) {
     writeWarnings = saved.warnings;
     mutationRevision++;
     await navigate(
@@ -637,8 +636,8 @@
               type={query.get("kind") === "secret" ? "secret" : "env"}
               bundle={fileBundle}
               {bundles}
-              on:saved={savedSensitive}
-              on:cancel={() => navigate(query.get("returnTo") || "/library/files")}
+              onSaved={savedSensitive}
+              onCancel={() => navigate(query.get("returnTo") || "/library/files")}
             />{/key}
         {:else if editing}
           {#key normalizedRoute + ":" + ref + ":" + query.get("file")}<LibraryEditor

@@ -73,11 +73,11 @@
       busy = false;
     }
   }
-  async function saved(event: CustomEvent<{ warnings: string[] }>) {
+  async function saved(result: { warnings: string[] }) {
     editing = false;
     hide();
     notice = "Changes saved.";
-    warnings = event.detail.warnings;
+    warnings = result.warnings;
     await load();
     onChanged?.();
   }
@@ -108,8 +108,8 @@
       bundle={info.bundle}
       file={info.location.path}
       type={info.type}
-      on:saved={saved}
-      on:cancel={() => {
+      onSaved={saved}
+      onCancel={() => {
         editing = false;
         hide();
       }}
