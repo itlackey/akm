@@ -159,4 +159,12 @@ test("workspace pages, panels and menus fit the shortest windows", { timeout: 18
     );
   }
   await page.setViewportSize({ width: 900, height: 593 });
+
+  // The filter panel's footer is reachable without scrolling the page at the native minimum.
+  await open("/library/search", ".library-hit-content");
+  await page.locator("summary", { hasText: "Filters" }).click();
+  const apply = await page
+    .getByRole("button", { name: "Apply filters", exact: true })
+    .evaluate((e) => ({ bottom: Math.round(e.getBoundingClientRect().bottom), viewport: innerHeight }));
+  assert.ok(apply.bottom <= apply.viewport, `Apply filters must be inside the window: ${JSON.stringify(apply)}`);
 });

@@ -971,9 +971,14 @@
     border-radius: 8px;
     box-shadow: 0 8px 24px rgb(0 0 0 / 0.1);
   }
+  /* Eight fields in two rows, so the panel's footer stays on screen in a short window. */
   .library-filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 16px;
+  }
+  .library-filters :is(select, input) {
+    inline-size: 100%;
+    min-inline-size: 0;
   }
   .filter-footer {
     display: flex;
@@ -1207,11 +1212,15 @@
       display: inline-flex;
       padding-left: 0;
     }
+    /* The panel spans the search form, which is the page column, so no field is cut at the edge. */
     .filter-panel {
       left: 0;
-      right: auto;
-      width: min(680px, calc(100vw - 48px));
+      right: 0;
+      width: auto;
       padding: 16px;
+    }
+    .library-filters {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .search-summary {
       align-items: start;

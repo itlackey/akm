@@ -123,6 +123,25 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
     await expect(target.locator('option[value="vendor"]')).toBeDisabled();
     await expect(target.locator('option[value="shared"]')).toBeEnabled();
   });
+  await t.test("phone layout: the filter panel stays inside the viewport", async () => {
+    await navigate("/library/search?q=backup");
+    await page.locator("summary", { hasText: "Filters" }).click();
+    const panel = await page.evaluate(() => {
+      const width = document.documentElement.clientWidth;
+      const outside = [...document.querySelectorAll(".filter-panel :is(select, input, button)")]
+        .map((e) => ({
+          control: e.closest("label")?.firstChild?.textContent?.trim() || e.textContent.trim(),
+          left: Math.round(e.getBoundingClientRect().left),
+          right: Math.round(e.getBoundingClientRect().right),
+        }))
+        .filter((e) => e.right > width || e.left < 0);
+      const region = document.querySelector(".search-page");
+      return { outside, sideways: region.scrollWidth - region.clientWidth };
+    });
+    assert.deepEqual(panel.outside, [], "every filter control is inside the viewport");
+    assert.ok(panel.sideways <= 0, `the search page must not scroll sideways (${panel.sideways}px)`);
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  });
   await t.test("usage charts are directly visible", async () => {
     await page.setViewportSize({ width: 1280, height: 860 });
     await navigate("/activity/overview?view=retrieval");
