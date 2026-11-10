@@ -11,7 +11,14 @@ import type {
   ModelCount,
 } from "./activity-types";
 
-export type AttentionItem = { tone: "fail" | "warn" | "work"; text: string; href: string; action: string };
+/** `check` is the first check behind the item, for the view to name by its label. */
+export type AttentionItem = {
+  tone: "fail" | "warn" | "work";
+  text: string;
+  href: string;
+  action: string;
+  check?: string;
+};
 /** Rank recorded faults before ordinary work. Missing pulse data never means an all-clear. */
 export function attentionItems(data: ActivityOverview, pulse: ActivityPulse | null): AttentionItem[] {
   const items: AttentionItem[] = [];
@@ -21,7 +28,8 @@ export function attentionItems(data: ActivityOverview, pulse: ActivityPulse | nu
     if (matches.length)
       items.push({
         tone: status,
-        text: `${matches.length} ${status === "fail" ? "failing checks" : "health warnings"} · ${matches[0].name}`,
+        text: `${matches.length} ${status === "fail" ? "failing checks" : "health warnings"}`,
+        check: matches[0].name,
         href: `/activity/overview?view=health&anchor=health-${encodeURIComponent(status)}`,
         action: "Inspect checks",
       });
@@ -75,7 +83,12 @@ export const duration = (value: number | null | undefined) =>
   value == null ? "Not recorded" : value < 1000 ? `${Math.round(value)} ms` : `${(value / 1000).toFixed(1)} s`;
 export const tokens = (row: ModelCount) =>
   row.calls > 0 && !row.usageCalls ? "Not reported" : number(row.totalTokens);
-export function healthGroup(check: ActivityCheck, checks: ActivityCheck[], probed = false): string {
+/**
+ * Where an `unknown` check lands: turned off on purpose, not run (not probed, skipped, nothing to inspect), could not
+ * run (a remote or program it needed did not answer), or run with nothing to report yet. akm reports no reason code,
+ * so the message decides.
+ */
+export function healthGroup(check: ActivityCheck, checks: ActivityCheck[]): string {
   if (check.status !== "unknown") return check.status;
   if (
     ["connections-and-harnesses", "proposal-queue"].includes(check.name) ||
@@ -83,7 +96,9 @@ export function healthGroup(check: ActivityCheck, checks: ActivityCheck[], probe
       checks.some((item) => item.name === "connections-and-harnesses" && item.status === "unknown"))
   )
     return "off";
-  return probed || /not probed/i.test(check.message) ? "unchecked" : "idle";
+  if (/not probed|skipped|no scheduled task|no scheduler/i.test(check.message)) return "unchecked";
+  if (/could not|cannot|unable|not reach|failed|not on PATH/i.test(check.message)) return "blocked";
+  return "idle";
 }
 export const outcomeClasses = [
   { key: "judge", label: "Accepted by the judge" },

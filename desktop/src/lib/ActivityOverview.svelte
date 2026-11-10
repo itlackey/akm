@@ -9,7 +9,7 @@
   import { api, date } from "./client";
   import ActivityChart from "./ActivityChart.svelte";
   import Icon from "./Icon.svelte";
-  import { healthCheckAnchor } from "./home-model";
+  import { checkLabel, healthCheckAnchor } from "./home-model";
   import { verticalBars, lines, pChartLine, eventStrip } from "./ui/chart-view.js";
   import { weekStart } from "./ui/lib.js";
   import { number, percent, duration, tokens, healthGroup, attentionItems } from "./activity-presenter";
@@ -23,7 +23,6 @@
   export let data: ActivityOverview;
   export let retrieval: ActivityRetrieval | null;
   export let pulse: ActivityPulse | null;
-  export let probed = false;
   export let mode: "health" | "runs" | "usage" = "health";
   export let requestedTask = "";
   export let refreshedAt = "";
@@ -72,11 +71,13 @@
     { key: "warn", label: "Warnings" },
     { key: "off", label: "Turned off" },
     { key: "unchecked", label: "Not checked" },
+    { key: "blocked", label: "Could not check" },
     { key: "idle", label: "No data yet" },
     { key: "pass", label: "Passing" },
   ];
   $: checks = [...(data.health?.hardChecks ?? []), ...(data.health?.advisories ?? [])];
-  $: classified = checks.map((check) => ({ check, group: healthGroup(check, checks, probed) }));
+  $: classified = checks.map((check) => ({ check, group: healthGroup(check, checks) }));
+  $: grouped = (key: string) => classified.filter((item) => item.group === key).length;
   $: metrics = data.metrics;
   $: weekly = retrieval?.weekly ?? [];
   $: activity = metrics?.usage.daily ?? [];
@@ -129,10 +130,10 @@
   <div class="health-overview">
     <strong>AKM diagnostic status: {data.health?.status ?? "Unavailable"}</strong>
     <p>
-      Observation window: last 24 hours{#if classified.some((item) => item.group === "off" || item.group === "unchecked")}
-        · {classified.filter((item) => item.group === "off").length} checks turned off · {classified.filter(
-          (item) => item.group === "unchecked",
-        ).length} not checked{/if}
+      Observation window: last 24 hours{#if grouped("off")}
+        · {grouped("off")} turned off{/if}{#if grouped("unchecked")}
+        · {grouped("unchecked")} not checked{/if}{#if grouped("blocked")}
+        · {grouped("blocked")} could not be checked{/if}
     </p>
   </div>
   <p class="muted small">
@@ -154,7 +155,9 @@
                       class:fail={item.tone === "fail"}
                       class:warn={item.tone === "warn"}
                       aria-hidden="true"
-                    ></i><span>{item.text}</span><span>{item.action}<Icon name="arrow-right" size={16} /></span></a
+                    ></i><span>{item.text}{item.check ? ` · ${checkLabel(item.check)}` : ""}</span><span
+                      >{item.action}<Icon name="arrow-right" size={16} /></span
+                    ></a
                   >
                 </li>{/each}
             </ul>
@@ -175,13 +178,11 @@
         (item) => item.group === group.key,
       )}{#if items.length}<section id={`health-${group.key}`} class="check-group" aria-label={group.label}>
           <h3>
-            {probed && group.key === "unchecked" ? "Could not check" : group.label}<span class="muted"
-              >{items.length}</span
-            >
+            {group.label}<span class="muted">{items.length}</span>
           </h3>
           <ul class="checks">
             {#each items as { check }}<li class="check" id={healthCheckAnchor(check.name)}>
-                <strong>{check.name}</strong>
+                <strong>{checkLabel(check.name)} <span class="muted small mono">{check.name}</span></strong>
                 <p>{check.message}</p>
                 {#if check.evidence}<details class="check-evidence">
                     <summary>Evidence for {check.name}</summary>

@@ -39,7 +39,6 @@
     loading = false,
     error = "",
     generation = 0,
-    probed = false,
     refreshedAt = "",
     probedAt = "",
     historyFilter = "",
@@ -106,7 +105,6 @@
           overview = next;
           pulse = nextPulse;
           retrieval = nextRetrieval;
-          probed = false;
           refreshedAt = new Date().toISOString();
           probedAt = "";
         }
@@ -156,7 +154,6 @@
       const health = await api<ActivityHealth>("/health", { probe: "1" });
       if (request === generation && overview) {
         overview = { ...overview, health };
-        probed = true;
         probedAt = new Date().toISOString();
       }
     } catch (cause) {
@@ -233,7 +230,6 @@
       data={overview}
       {pulse}
       {retrieval}
-      {probed}
       {probe}
       {refreshedAt}
       {probedAt}
