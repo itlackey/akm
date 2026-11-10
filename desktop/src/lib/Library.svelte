@@ -566,125 +566,124 @@
     revision={bundleRevision + localFileRevision + mutationRevision}
     {comparisonMode}
     selectedCompare={selected}
-    on:navigate={(event) => navigateFiles(event.detail)}
-    on:select={(event) => (selected = toggleSelection(selected, event.detail, 2))}
-    on:search={(event) => navigate(searchHref(new URLSearchParams({ bundle: event.detail })))}
-    let:selectedFile
-    let:indexAvailable
-    let:loading={folderLoading}
-    let:error={folderError}
+    onNavigate={navigateFiles}
+    onSelect={(chosen) => (selected = toggleSelection(selected, chosen, 2))}
+    onSearch={(name) => navigate(searchHref(new URLSearchParams({ bundle: name })))}
   >
-    <div slot="actions" class="files-actions">
-      {#if reviewHref}<a href={reviewHref}>Back to review</a>{:else if readingHref && !editing}<a href={readingHref}
-          >Back to reading</a
-        >{/if}
-      {#if !editing && !newSensitive}<div class="new-file-actions">
-          <a class="btn btn-secondary" href={createHref(fileBundle, filePath, readingHref, reviewHref)}
-            ><Icon name="plus" size={16} />New knowledge</a
-          ><button class="btn-secondary new-file-trigger" popovertarget="new-file-types" aria-label="Other file types"
-            ><Icon name="chevron-down" size={16} /></button
-          >
-        </div>
-        <div
-          id="new-file-types"
-          class="new-file-menu"
-          popover="auto"
-          role="group"
-          aria-label="Create file"
-          bind:this={newFiles}
-        >
-          <a href={createSensitiveHref("env", fileBundle, filePath)}>Environment file</a><a
-            href={createSensitiveHref("secret", fileBundle, filePath)}>Secret</a
-          >
-        </div>{/if}
-    </div>
-    <section class="inspector files-inspector" aria-label="Asset workspace">
-      {#if newSensitive}
-        {#key query.get("kind")}<SensitiveEditor
-            creating
-            type={query.get("kind") === "secret" ? "secret" : "env"}
-            bundle={fileBundle}
-            {bundles}
-            on:saved={savedSensitive}
-            on:cancel={() => navigate(query.get("returnTo") || "/library/files")}
-          />{/key}
-      {:else if editing}
-        {#key normalizedRoute + ":" + ref + ":" + query.get("file")}<LibraryEditor
-            ref={normalizedRoute === "new" ? "" : ref}
-            file={normalizedRoute === "edit" && !ref && query.get("file")
-              ? { bundle: fileBundle, path: query.get("file")! }
-              : undefined}
-            {query}
-            {bundles}
-            {defaultWriteTarget}
-            returnTo={withReview(returnTo)}
-            cancelHref={query.get("file") ? query.get("returnTo")! : withReview(returnTo)}
-            {readingHref}
-            onSaved={savedAsset}
-          />{/key}
-      {:else if compareRefs.length === 2}{@render comparison()}
-      {:else if ref}
-        {#if comparisonMode && !selected.includes(ref)}<button
-            class="btn-secondary candidate-button"
-            disabled={selected.length === 2}
-            on:click={() => (selected = toggleSelection(selected, ref, 2))}>Use for comparison</button
+    {#snippet actions()}<div class="files-actions">
+        {#if reviewHref}<a href={reviewHref}>Back to review</a>{:else if readingHref && !editing}<a href={readingHref}
+            >Back to reading</a
           >{/if}
-        {#key bundleRevision + ":" + localFileRevision}<LibraryAsset
-            {ref}
-            {query}
-            returnTo={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}
-            {bundles}
-            {defaultWriteTarget}
-            mode="files"
-            filesHref={folderHref}
-            {editHref}
-            {readingHref}
-            on:loaded={receiveAsset}
-            on:compare={beginCompare}
-            on:comparePair={comparePair}
-            on:changed={() => {
-              mutationRevision++;
-              if (!inFiles) void search();
-            }}
-          />{/key}
-      {:else if /^(env|secrets)\//.test(selectedFilePath)}
-        {#key fileBundle + ":" + selectedFilePath}<SensitiveAsset
-            bundle={fileBundle}
-            file={selectedFilePath}
-            on:changed={() => mutationRevision++}
-          />{/key}
-      {:else if folderError}<p role="alert">{folderError}</p>
-        <a href={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}>Back to folder</a>
-      {:else if folderLoading}<p role="status">Checking file…</p>
-      {:else if selectedFile?.unavailable}<h1>{selectedFile.name}</h1>
-        <p class="notice">{selectedFile.unavailable}</p>
-      {:else if selectedFile && selectedFile.assets.length > 1}<h1>{selectedFile.name}</h1>
-        <p>This file contains multiple indexed assets. Choose the one to read.</p>
-        <ul class="asset-choices">
-          {#each selectedFile.assets as { ref: choice }}<li>
-              <a
-                href={withReview(
-                  filesHref(
-                    { bundle: fileBundle, path: filePath, file: selectedFile.path, ref: choice, open: true },
-                    readingHref,
-                  ),
-                )}>{choice}</a
-              >
-            </li>{/each}
-        </ul>
-      {:else if selectedFile}
-        {#key fileBundle + ":" + selectedFilePath + ":" + localFileRevision}<LibraryFile
-            bundle={fileBundle}
-            file={selectedFilePath}
-            returnTo={currentHref}
-            folderHref={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}
-          />{/key}
-      {:else}<h1>{selectedFilePath.split("/").at(-1) || "File"}</h1>
-        <p class="notice">This file is no longer present in the folder listing.</p>
-        <a href={withReview(filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath }, readingHref))}
-          >Back to folder</a
-        >{/if}
-    </section>
+        {#if !editing && !newSensitive}<div class="new-file-actions">
+            <a class="btn btn-secondary" href={createHref(fileBundle, filePath, readingHref, reviewHref)}
+              ><Icon name="plus" size={16} />New knowledge</a
+            ><button class="btn-secondary new-file-trigger" popovertarget="new-file-types" aria-label="Other file types"
+              ><Icon name="chevron-down" size={16} /></button
+            >
+          </div>
+          <div
+            id="new-file-types"
+            class="new-file-menu"
+            popover="auto"
+            role="group"
+            aria-label="Create file"
+            bind:this={newFiles}
+          >
+            <a href={createSensitiveHref("env", fileBundle, filePath)}>Environment file</a><a
+              href={createSensitiveHref("secret", fileBundle, filePath)}>Secret</a
+            >
+          </div>{/if}
+      </div>{/snippet}
+    {#snippet children({ selectedFile, loading: folderLoading, error: folderError })}<section
+        class="inspector files-inspector"
+        aria-label="Asset workspace"
+      >
+        {#if newSensitive}
+          {#key query.get("kind")}<SensitiveEditor
+              creating
+              type={query.get("kind") === "secret" ? "secret" : "env"}
+              bundle={fileBundle}
+              {bundles}
+              on:saved={savedSensitive}
+              on:cancel={() => navigate(query.get("returnTo") || "/library/files")}
+            />{/key}
+        {:else if editing}
+          {#key normalizedRoute + ":" + ref + ":" + query.get("file")}<LibraryEditor
+              ref={normalizedRoute === "new" ? "" : ref}
+              file={normalizedRoute === "edit" && !ref && query.get("file")
+                ? { bundle: fileBundle, path: query.get("file")! }
+                : undefined}
+              {query}
+              {bundles}
+              {defaultWriteTarget}
+              returnTo={withReview(returnTo)}
+              cancelHref={query.get("file") ? query.get("returnTo")! : withReview(returnTo)}
+              {readingHref}
+              onSaved={savedAsset}
+            />{/key}
+        {:else if compareRefs.length === 2}{@render comparison()}
+        {:else if ref}
+          {#if comparisonMode && !selected.includes(ref)}<button
+              class="btn-secondary candidate-button"
+              disabled={selected.length === 2}
+              on:click={() => (selected = toggleSelection(selected, ref, 2))}>Use for comparison</button
+            >{/if}
+          {#key bundleRevision + ":" + localFileRevision}<LibraryAsset
+              {ref}
+              {query}
+              returnTo={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}
+              {bundles}
+              {defaultWriteTarget}
+              mode="files"
+              filesHref={folderHref}
+              {editHref}
+              {readingHref}
+              on:loaded={receiveAsset}
+              on:compare={beginCompare}
+              on:comparePair={comparePair}
+              on:changed={() => {
+                mutationRevision++;
+                if (!inFiles) void search();
+              }}
+            />{/key}
+        {:else if /^(env|secrets)\//.test(selectedFilePath)}
+          {#key fileBundle + ":" + selectedFilePath}<SensitiveAsset
+              bundle={fileBundle}
+              file={selectedFilePath}
+              on:changed={() => mutationRevision++}
+            />{/key}
+        {:else if folderError}<p role="alert">{folderError}</p>
+          <a href={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}>Back to folder</a>
+        {:else if folderLoading}<p role="status">Checking file…</p>
+        {:else if selectedFile?.unavailable}<h1>{selectedFile.name}</h1>
+          <p class="notice">{selectedFile.unavailable}</p>
+        {:else if selectedFile && selectedFile.assets.length > 1}<h1>{selectedFile.name}</h1>
+          <p>This file contains multiple indexed assets. Choose the one to read.</p>
+          <ul class="asset-choices">
+            {#each selectedFile.assets as { ref: choice }}<li>
+                <a
+                  href={withReview(
+                    filesHref(
+                      { bundle: fileBundle, path: filePath, file: selectedFile.path, ref: choice, open: true },
+                      readingHref,
+                    ),
+                  )}>{choice}</a
+                >
+              </li>{/each}
+          </ul>
+        {:else if selectedFile}
+          {#key fileBundle + ":" + selectedFilePath + ":" + localFileRevision}<LibraryFile
+              bundle={fileBundle}
+              file={selectedFilePath}
+              returnTo={currentHref}
+              folderHref={withReview(filesHref({ bundle: fileBundle, path: filePath }, readingHref))}
+            />{/key}
+        {:else}<h1>{selectedFilePath.split("/").at(-1) || "File"}</h1>
+          <p class="notice">This file is no longer present in the folder listing.</p>
+          <a href={withReview(filesHref({ bundle: fileBundle, path: filePath, file: selectedFilePath }, readingHref))}
+            >Back to folder</a
+          >{/if}
+      </section>{/snippet}
   </LibraryFiles>
 {:else if normalizedRoute === "asset" && query.get("view") === "files"}
   {#if resolvingLocation}<p role="status">Opening the asset’s folder…</p>{/if}
