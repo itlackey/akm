@@ -4,7 +4,6 @@
 
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineJsonCommand, output } from "../../cli/shared";
-import { VALID_ADAPTER_IDS } from "../../core/adapter/adapter-ids";
 import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { warn } from "../../core/warn";

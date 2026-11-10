@@ -38,7 +38,6 @@ import {
   requiresDescription,
 } from "../core/authoring-rules";
 import { isRecord } from "../core/common";
-import { parseEmbeddedJsonResponse, stripCodeFences, stripThinkBlocks } from "../core/parse";
 import type { Parsed } from "../core/structured";
 import type { ExecutionJsonObject } from "../execution/json";
 

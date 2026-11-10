@@ -8,7 +8,7 @@ import { daysToMs, resolveStashDir } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { ConfigError, UsageError } from "../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
-import { getConfigPath, getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
+import { getDataDir, getDbPath, getStateDbPathInDataDir } from "../core/paths";
 import {
   listExistingTableNames,
   listPendingStateMigrations,

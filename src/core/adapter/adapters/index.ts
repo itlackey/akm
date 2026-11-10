@@ -34,16 +34,11 @@ import { websiteSnapshotAdapter } from "./website-snapshot-adapter";
 
 export { agentSkillsAdapter } from "./agent-skills-adapter";
 export { akmAdapter } from "./akm-adapter";
-export { akmTaskAdapter } from "./akm-task-adapter";
-export { akmWorkflowAdapter } from "./akm-workflow-adapter";
-export { claudeAdapter } from "./claude-adapter";
-export { codeProjectAdapter } from "./code-project-adapter";
 export { dotenvAdapter } from "./dotenv-adapter";
 export { genericFilesAdapter } from "./generic-files-adapter";
 export { llmWikiAdapter } from "./llm-wiki-adapter";
 export { okfAdapter } from "./okf-adapter";
 export { opencodeAdapter } from "./opencode-adapter";
-export { websiteSnapshotAdapter } from "./website-snapshot-adapter";
 
 /**
  * Every built-in adapter, frozen in the install-time probe order: the first

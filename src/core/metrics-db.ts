@@ -37,7 +37,7 @@
 
 import path from "node:path";
 import type { Database } from "../storage/database";
-import { openManagedDatabase, withManagedDb } from "../storage/managed-db";
+import { openManagedDatabase, } from "../storage/managed-db";
 import {
   assertMigrationRegistry,
   type Migration,
