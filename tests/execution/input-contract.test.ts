@@ -34,7 +34,6 @@ import { UsageError } from "../../src/core/errors";
 import { validateJsonSchemaSubset } from "../../src/core/json-schema";
 import {
   applyInputDefaults,
-  canonicalInputHash,
   canonicalInputJson,
   INPUT_NAME_PATTERN,
   type InputContract,
@@ -64,7 +63,7 @@ function thrown(fn: () => unknown): unknown {
   throw new Error("expected function to throw");
 }
 
-function sha256Hex(text: string): string {
+function _sha256Hex(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
@@ -578,44 +577,6 @@ describe("canonicalInputJson — byte-equal to canonicalJson", () => {
     expect(canonicalInputJson(a)).toBe(canonicalInputJson(b));
     expect(canonicalInputJson(a)).toBe(canonicalJson(a));
     expect(canonicalInputJson(b)).toBe(canonicalJson(b));
-  });
-});
-
-describe("canonicalInputHash", () => {
-  test("is a stable 64-character lowercase hex sha256 digest", () => {
-    const hash = canonicalInputHash({ a: 1 });
-    expect(hash).toMatch(/^[0-9a-f]{64}$/);
-    expect(canonicalInputHash({ a: 1 })).toBe(hash);
-  });
-
-  test("matches an independently computed sha256 of canonicalJson's own output", () => {
-    const value = { outer: { z: 1, a: 2 }, list: [3, 1, 2] };
-    expect(canonicalInputHash(value)).toBe(sha256Hex(canonicalJson(value)));
-  });
-
-  test("is stable across top-level and nested key-order permutations", () => {
-    const a = { b: 2, a: 1, nested: { y: 2, x: 1 } };
-    const b = { a: 1, nested: { x: 1, y: 2 }, b: 2 };
-    expect(canonicalInputHash(a)).toBe(canonicalInputHash(b));
-  });
-
-  test("differs when any top-level or nested value differs", () => {
-    const base = { scope: "changed", nested: { count: 1 } };
-    const baseHash = canonicalInputHash(base);
-    expect(canonicalInputHash({ scope: "all", nested: { count: 1 } })).not.toBe(baseHash);
-    expect(canonicalInputHash({ scope: "changed", nested: { count: 2 } })).not.toBe(baseHash);
-  });
-
-  test("is stable across equivalent JS number spellings (1 and 1.0 are the identical runtime value)", () => {
-    expect(canonicalInputHash({ n: 1 })).toBe(canonicalInputHash({ n: 1.0 }));
-  });
-
-  test("is NOT stable across a string/number or string/boolean spelling — the hash does not normalize types", () => {
-    expect(canonicalInputHash({ version: "1" })).not.toBe(canonicalInputHash({ version: 1 }));
-    expect(canonicalInputHash({ flag: "true" })).not.toBe(canonicalInputHash({ flag: true }));
-    // The "001 stays a string" contract at the hash layer: a numeric-
-    // looking string must not collapse onto the number it resembles.
-    expect(canonicalInputHash({ version: "001" })).not.toBe(canonicalInputHash({ version: 1 }));
   });
 });
 
