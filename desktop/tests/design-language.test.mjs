@@ -124,8 +124,8 @@ test("workspace pages, panels and menus fit the shortest windows", { timeout: 18
       viewport: innerHeight,
     }));
     assert.ok(
-      geometry.pageHeight <= geometry.viewport + 1,
-      `${route}: the workspace shell must fit a ${geometry.viewport}px window, not scroll the page (${geometry.pageHeight}px)`,
+      geometry.pageHeight <= geometry.viewport,
+      `${route}: the workspace shell must fit a ${geometry.viewport}px window exactly, not scroll the page (${geometry.pageHeight}px)`,
     );
   }
 

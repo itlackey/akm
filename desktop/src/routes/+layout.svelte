@@ -268,6 +268,11 @@
 <div id="route-status" class="sr-only" role="status" aria-live="polite"></div>
 
 <style>
+  /* The live region follows the shell in the DOM; at its static position it would add a pixel of page scroll. */
+  #route-status {
+    inset-block-start: 0;
+    inset-inline-start: 0;
+  }
   .build-label {
     display: flex;
     gap: 8px;
