@@ -9,12 +9,14 @@
   import { libraryRead } from "./library-model";
   import Markdown from "./Markdown.svelte";
   import type { Source } from "./types";
-  export let bundle: string;
-  export let file: string;
-  export let returnTo: string;
-  export let folderHref = "";
-  let source: Source | null = null,
-    error = "";
+  let {
+    bundle,
+    file,
+    returnTo,
+    folderHref = "",
+  }: { bundle: string; file: string; returnTo: string; folderHref?: string } = $props();
+  let source = $state<Source | null>(null),
+    error = $state("");
   const controller = new AbortController();
   onMount(() => {
     libraryRead<Source>("/desktop/file", { bundle, file }, controller.signal)
