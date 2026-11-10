@@ -105,7 +105,7 @@ export const improveCommand = defineCommand({
   meta: {
     name: "improve",
     description:
-      "Generate improvement proposals for existing AKM assets and, by default, accept and commit the ones whose quality check passed. A writable git bundle is pushed; the rest wait for `akm proposal accept`. Also consolidates memories when the selected strategy enables consolidate. `improve report` is a subcommand.",
+      "Generate improvement proposals for existing AKM assets and, by default, accept and commit the ones whose quality check passed. A writable git bundle is also pushed; the rest wait for `akm proposal accept`. Also consolidates memories when the selected strategy enables consolidate. `improve report` is a subcommand.",
   },
   subCommands: IMPROVE_SUBCOMMANDS,
   // `improve` takes a scope positional (an asset type or ref), and citty reads

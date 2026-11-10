@@ -444,8 +444,8 @@ not silent**: it warns on stderr naming the lane and the key, appends an
 `akm health`'s improve skip-reason summary, and is listed by `akm info`
 under `improveAutonomy.gatedLanes` — which is where to look when a *scheduled*
 run stops doing something it used to. `akm info` also reports the
-**effective** `improveTriage.applyMode`, so a `promote` strategy under a
-queue-only config correctly shows `queue`.
+**effective** `improveTriage.applyMode`, so a judged `promote` strategy
+without the opt-in correctly shows `queue`.
 
 | Lane | What it does when enabled | With autonomy off |
 | --- | --- | --- |
