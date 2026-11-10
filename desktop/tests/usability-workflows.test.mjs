@@ -5,15 +5,17 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import AxeBuilder from "@axe-core/playwright";
 import { chromium, expect } from "@playwright/test";
-import { go, launchFixture } from "./support.mjs";
+import { go, launchFixture, tabStops } from "./support.mjs";
 
 test("reviewed human workflows prevent dead ends and preserve focus and source", { timeout: 180000 }, async (t) => {
   const app = await launchFixture({ proposals: true, metrics: true });
   t.after(() => app.stop());
   const browser = await chromium.launch();
   t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(app.url);
@@ -180,6 +182,55 @@ test("reviewed human workflows prevent dead ends and preserve focus and source",
       );
     }
     assert.deepEqual(small, [], "tabs and bar links meet the 44px floor and stay inside the viewport");
+  });
+  await t.test("phone keyboard: Files reads in focus order, the folder drawer hands focus back", async () => {
+    await navigate("/library/files?bundle=personal&path=knowledge");
+    await expect(page.locator(".file-breadcrumbs")).toBeVisible();
+    const bar = await tabStops(page, ".files-location");
+    assert.ok(bar.length >= 4, `the location bar has its controls in the tab order (${bar.length})`);
+    assert.deepEqual(
+      bar.filter((stop) => stop.moved).map((stop) => `${stop.name}: ${stop.moved}`),
+      [],
+      "Files on a phone: focus order is reading order across the location bar",
+    );
+    const folders = page.getByRole("button", { name: "Folders", exact: true });
+    const drawer = page.locator(".files-workspace");
+    await folders.focus();
+    await page.keyboard.press("Enter");
+    await expect(drawer).toHaveClass(/tree-open/);
+    await expect(page.locator('[role="treeitem"]:focus')).toBeVisible();
+    await page.getByRole("button", { name: "Close", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(drawer).not.toHaveClass(/tree-open/);
+    await expect(folders, "Close hands focus back to Folders").toBeFocused();
+    await folders.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator('[role="treeitem"]:focus')).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(drawer, "Escape closes the folder drawer").not.toHaveClass(/tree-open/);
+    await expect(folders, "Escape hands focus back to Folders").toBeFocused();
+  });
+  await t.test("phone overlays pass axe while open", async () => {
+    const violations = [];
+    const audit = async (state) => {
+      const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+      violations.push(...results.violations.map(({ id, nodes }) => `${state}: ${id} ${nodes[0].target}`));
+    };
+    await navigate("/library/search?q=backup");
+    await page.locator("summary", { hasText: "Filters" }).click();
+    await expect(page.locator(".filter-panel")).toBeVisible();
+    await audit("filter panel open");
+    await page.keyboard.press("Escape");
+    await navigate(`/library/search?ref=${encodeURIComponent(app.refs.document)}`);
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await expect(page.locator("#asset-actions")).toBeVisible();
+    await audit("asset menu open");
+    await page.keyboard.press("Escape");
+    await navigate("/library/files?bundle=personal&path=knowledge");
+    await page.getByRole("button", { name: "Folders", exact: true }).click();
+    await expect(page.locator('[role="tree"]')).toBeVisible();
+    await audit("folder drawer open");
+    assert.deepEqual(violations, [], "axe at 390 with an overlay open");
   });
   await t.test("usage charts are directly visible", async () => {
     await page.setViewportSize({ width: 1280, height: 860 });

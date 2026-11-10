@@ -90,6 +90,21 @@ test("populated workspace accessibility and reflow across both themes", { timeou
           }),
         );
         if (clipped.length) failures.push({ state: label, rule: "chart-text-clipped", clipped });
+        // The y-axis title is drawn at the top of the chart and is not read out: the chart's name says it too.
+        if (width === 1280) {
+          const untold = await page.evaluate(() =>
+            [...document.querySelectorAll("main .echarts-view")].flatMap((chart) => {
+              const drawn = [...chart.querySelectorAll("svg text")]
+                .filter((text) => text.textContent.trim() && text.getBoundingClientRect().width > 0)
+                .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+              const title = drawn?.textContent.trim() ?? "";
+              return /[A-Za-z]{3}/.test(title) && !chart.getAttribute("aria-label").includes(title)
+                ? [`${chart.id}: ${title}`]
+                : [];
+            }),
+          );
+          if (untold.length) failures.push({ state: label, rule: "chart-axis-title-not-in-name", untold });
+        }
         // Wide screens: a capped block is centred, section tabs line up with their column, prose keeps a measure.
         if (width === 1440) {
           const wide = await page.evaluate(() => {
