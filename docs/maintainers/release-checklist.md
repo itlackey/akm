@@ -171,9 +171,9 @@ gh workflow run release.yml --repo itlackey/akm-plugins --ref <plugins branch> -
 From 0.11 on, release the plugins after every akm release, prereleases
 included, with `akm_version` set to that release. The plugins run the akm-cli
 they carry, so a host's plugins use that older akm until a plugin release
-carries the new one. On 0.11 that means plugin recall ignores `--config`,
-`AKM_CONFIG_FILE` and `paths`. A prerelease `akm_version` makes a `next`
-plugin release.
+carries the new one. A prerelease `akm_version` makes a `next` plugin release,
+which sets the pins itself; for a stable one, first move the `akm-cli` pins on
+the plugins' `main` to it.
 
 Plugins match akm's major.minor and keep their own patch numbers; each plugin
 release's notes name the akm version it requires. A plugin-only fix is released
