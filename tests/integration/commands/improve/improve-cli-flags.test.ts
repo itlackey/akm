@@ -2,6 +2,29 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { akmImprove } from "../../../../src/commands/improve/improve";
+import { type AkmConfig, saveConfig } from "../../../../src/core/config/config";
+import { readEvents } from "../../../../src/core/events";
+import { openStateDatabase } from "../../../../src/core/state-db";
+import { akmIndex } from "../../../../src/indexer/indexer";
+import { insertUsageEvent } from "../../../../src/indexer/usage/usage-events";
+import { withTestImproveLlm } from "../../../_helpers/improve-config";
+import {
+  configHomeWithBundle,
+  type IsolatedAkmStorage,
+  makeSandboxDir,
+  type SandboxedDir,
+  makeStashDir as sandboxMakeStashDir,
+  sandboxStashDir,
+  sandboxXdgDataHome,
+  withEnv,
+  withIsolatedAkmStorage,
+} from "../../../_helpers/sandbox";
+
 // WHY THIS NEEDS A REAL SUBPROCESS (moved from tests/commands/improve-cli-flags.test.ts):
 // `improve --dry-run` runs improve for real, which opens and writes the
 // state.db (improve_runs). In-process, a SQLite write lock on state.db is
@@ -12,17 +35,6 @@
 // all state.db handles before an improve-executing call, this test spawns a
 // real `bun src/cli.ts` so it gets a clean, uncontended DB. Same documented
 // harness gap as the improve-result-to-file subprocess tests.
-
-import { afterEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
-import {
-  configHomeWithBundle,
-  makeSandboxDir,
-  type SandboxedDir,
-  makeStashDir as sandboxMakeStashDir,
-} from "../../../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -110,4 +122,111 @@ describe("improve CLI flags (0.8.0) — subprocess-only", () => {
     expect(both.status).toBe(2);
     expect(both.stderr).toContain("--connection and --harness are mutually exclusive");
   });
+});
+
+describe("coverage-gaps", () => {
+  /**
+   * `akm improve` reports zero-result searches as coverage gaps. The summary
+   * search event lives in state.db's `usage_events` (query column, resultCount
+   * in metadata). Opens a real state.db and index.db (integration per ORG-03).
+   */
+
+  let storage: IsolatedAkmStorage;
+
+  beforeEach(() => {
+    storage = withIsolatedAkmStorage();
+  });
+
+  afterEach(() => {
+    storage.cleanup();
+  });
+
+  test("a zero-result search in state.db is reported as a coverage gap", async () => {
+    const stash = storage.stashDir;
+    const config = withTestImproveLlm({
+      semanticSearchMode: "off",
+      bundles: { stash: { path: stash, writable: true } },
+      defaultBundle: "stash",
+    } as AkmConfig);
+    saveConfig(config);
+    await akmIndex({ stashDir: stash, full: true });
+
+    const db = openStateDatabase();
+    try {
+      // The summary row `logSearchEvent` writes: no entry_ref, resultCount in metadata.
+      insertUsageEvent(db, {
+        event_type: "search",
+        query: "kubernetes ingress",
+        metadata: JSON.stringify({ resultCount: 0 }),
+      });
+      insertUsageEvent(db, { event_type: "search", query: "found it", metadata: JSON.stringify({ resultCount: 1 }) });
+    } finally {
+      db.close();
+    }
+
+    const result = await akmImprove({
+      scope: "skill",
+      stashDir: stash,
+      config,
+      ensureIndexFn: async () => false,
+    });
+
+    expect(result.coverageGaps).toEqual(["kubernetes ingress"]);
+  });
+});
+
+test("improve failure events redact materialized engine credentials", async () => {
+  const sentinel = "IMPROVE-EVENT-SECRET";
+  const data = sandboxXdgDataHome();
+  const stash = sandboxStashDir(data.cleanup);
+  try {
+    await expect(
+      withEnv({ IMPROVE_TEST_API_KEY: sentinel }, () =>
+        akmImprove({
+          stashDir: stash.dir,
+          config: {
+            semanticSearchMode: "off",
+            connections: {
+              default: {
+                endpoint: "https://example.test/v1/chat/completions",
+                models: { fast: "test" },
+                apiKey: "$IMPROVE_TEST_API_KEY",
+              },
+            },
+            improve: {
+              strategy: "redaction-test",
+              strategies: {
+                "redaction-test": {
+                  processes: {
+                    reflect: { enabled: false },
+                    distill: { enabled: false },
+                    consolidate: { enabled: false },
+                    memoryInference: { enabled: false },
+                    extract: { enabled: false },
+                    triage: { enabled: false },
+                  },
+                },
+              },
+            },
+          },
+          ensureIndexFn: async () => undefined,
+          collectEligibleRefsFn: (async () => ({
+            plannedRefs: [],
+            memorySummary: { eligible: 0, derived: 0 },
+            strategyFilteredRefs: [],
+          })) as never,
+          runImprovePreparationStageFn: (async () => {
+            throw new Error(`provider echoed ${sentinel}`);
+          }) as never,
+        }),
+      ),
+    ).rejects.toThrow("provider echoed");
+
+    const failed = readEvents({ type: "improve_failed" }).events;
+    expect(failed).toHaveLength(1);
+    expect(JSON.stringify(failed)).not.toContain(sentinel);
+    expect(JSON.stringify(failed)).toContain("[REDACTED]");
+  } finally {
+    stash.cleanup();
+  }
 });

@@ -6,22 +6,10 @@
  * Replay determinism for a composing parent (spec docs/plans/specs/
  * p3b-child-executor.md §5.4, rows C-05…C-07), the single-process,
  * deterministic-state companion to
- * tests/integration/workflow-child-crash-windows.test.ts — mirroring
+ * tests/integration/workflows/workflow-child-crash-windows.test.ts — mirroring
  * tests/integration/workflows/chaos.test.ts's own patterns exactly: a
  * dispatcher-call-count spy proves reuse, and a directly-seeded completed
  * journal row proves resume skips a completed composing unit.
- *
- * RED phase: the child executor is not wired yet (see the crash-windows
- * sibling file's header for the exact mechanism), so C-05/C-06 fail today —
- * not because reuse is broken, but because there is no child run for a
- * composing step to promote in the first place; the run never reaches the
- * shape these assertions describe. C-07 seeds a completed composing-unit row
- * directly — no live child needed — and pins that resume reuses it. This file
- * references only already-existing, already-typed APIs (`runWorkflowSteps`,
- * `startWorkflowRun`, `resumeWorkflowRun`, `getWorkflowStatus`,
- * `withWorkflowRunsRepo`'s `childRunsOf`/`getUnitsForStep`,
- * `computeStepWorkList`, `decodeWorkflowPlan`), so no `@ts-expect-error`
- * directive is needed anywhere in it.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -172,10 +160,8 @@ describe("a resumed parent replays a completed composing step without re-driving
 
     // A REAL child run was published and driven for the composing step — not
     // merely an opaque unit that happens to target a workflow. This is what
-    // makes the reuse proven below a genuine test of row C-05 (no child ever
-    // exists today, since nothing yet routes a `child-workflow` target away
-    // from the plain unit dispatcher — spec §3.2 — so this line is the RED
-    // signal for this test).
+    // makes the reuse proven below a genuine test of row C-05 (a child run must
+    // exist for the composing step to promote).
     const childrenAfterFirstRun = await withWorkflowRunsRepo((repo) => repo.childRunsOf(runId));
     expect(childrenAfterFirstRun).toHaveLength(1);
     const childRunId = childrenAfterFirstRun[0]!.id;

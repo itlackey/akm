@@ -13,7 +13,7 @@ import { startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 
 /**
- * Runtime crash-window RED tests for durable plan v4.
+ * Runtime crash-window tests for durable plan v4.
  *
  * These exercise the real start → run lock → native executor path. They
  * assert local journal exactness while deliberately demonstrating that
@@ -278,9 +278,8 @@ describe("durable v4 runtime attempt protocol", () => {
         });
       });
     } finally {
-      // The RED baseline fails before the reclaim path because migration/API
-      // are absent. Always release and observe the first invocation so the test
-      // leaves no unresolved promise or open workflow connection behind.
+      // Always release and observe the first invocation so the test leaves no
+      // unresolved promise or open workflow connection behind.
       releaseFirst.resolve({ ok: false, text: "", failureReason: "aborted", error: "test cleanup" });
       await firstRun.catch(() => undefined);
     }

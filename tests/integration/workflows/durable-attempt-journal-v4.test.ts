@@ -12,7 +12,7 @@ import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/
 import { seedWorkflowRun } from "../../_helpers/workflow";
 
 /**
- * RED checkpoint for durable-plan v4 attempt persistence.
+ * Durable-plan v4 attempt persistence.
  *
  * The old `workflow_run_units` row is a mutable projection: crash recovery
  * reuses `(run_id, unit_id)`, overwrites timestamps/outcomes, and increments an
