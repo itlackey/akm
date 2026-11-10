@@ -360,7 +360,7 @@ equals `effective`. When the run is unbounded, `totalCeiling` is omitted.
 
 ### The autonomy gate
 
-`akm improve` runs by default and is review-first: reflect, distill, extract
+`akm improve` runs by default and is proposal-first (gate-passed proposals are accepted and committed by default): reflect, distill, extract
 candidates, validation, and proactive-maintenance selection are proposal-only
 and never write assets directly regardless of this gate.
 Three specific lanes *would* mutate assets without review and are downgraded

@@ -91,7 +91,7 @@ export const indexCommand = defineCommand({
     "export-vectors": {
       type: "string",
       description:
-        "Write the current model's embedding vectors to <file> (no model calls) instead of indexing, to seed a new host's index from another host's vectors. Experimental.",
+        "Write the current model's embedding vectors to <file> (no model calls) instead of indexing, so another host can import them. Experimental.",
     },
     "import-vectors": {
       type: "string",

@@ -122,7 +122,7 @@ covers beyond the table.
 | `akm command` | Evolving | Runs stored command templates through the same agent dispatch as `akm agent`. |
 | `akm models` | Evolving | The alias picks of a connection, then the models its endpoint lists, and `set` to change one. |
 | `akm lint` | Evolving | |
-| `akm improve` | Evolving | Review-first by default; mutating lanes require `experimental.improveAutonomy` — see below. |
+| `akm improve` | Evolving | Gate-passed proposals are accepted and committed by default; mutating lanes require `experimental.improveAutonomy` — see below. |
 | `akm improve report` | Evolving | Subcommand since 0.10 (was a magic `scope` value); owns `--run` and `--since`. |
 | `akm judge` | Evolving | Runs a registered judge (`reflect.quality`, `distill.lesson`, `consolidate.pair`, `proposal.judgment`) on one JSON input from stdin, on the runner `--connection`, `--harness` and `--model` select. Output is one envelope (`judge`, `schemaVersion`, `runner`, `outcome`, `verdict?`, `reason?`); each judge carries its own `schemaVersion`. |
 | `akm proposal list` | Stable | |
@@ -286,7 +286,8 @@ CHANGELOG with a migration note.
   moved under `proposal` in 0.9.0). Output JSON keys
   are stable; CLI flags (`--strategy`, `--task`, `--generator`) may add
   options or tighten validation across releases. `akm improve` stays on by
-  default and is **review-first**: the lanes that mutate assets without review
+  default and is **proposal-first**: gate-passed proposals are accepted and
+  committed, and the lanes that mutate assets without review
   require `experimental.improveAutonomy` — see
   [`akm improve` autonomy](#akm-improve-autonomy).
   `--auto-accept` was removed in 0.9.0 and is an unknown flag (a usage error,
@@ -427,7 +428,7 @@ for scripted use.
 
 ### `akm improve` autonomy
 
-`akm improve` is review-first by default. The command is on — its schedules and
+`akm improve` is proposal-first by default: it accepts and commits proposals whose quality check passed. The command is on — its schedules and
 reflect/distill proposals all run — but the lanes that change assets *without*
 review require an explicit opt-in:
 
@@ -444,7 +445,7 @@ not silent**: it warns on stderr naming the lane and the key, appends an
 under `improveAutonomy.gatedLanes` — which is where to look when a *scheduled*
 run stops doing something it used to. `akm info` also reports the
 **effective** `improveTriage.applyMode`, so a `promote` strategy under a
-review-first config correctly shows `queue`.
+queue-only config correctly shows `queue`.
 
 | Lane | What it does when enabled | With autonomy off |
 | --- | --- | --- |
@@ -469,7 +470,7 @@ lists. Historical queued retirement labels remain readable. Before unattended dr
 retirements produced by older builds from notes over 12,000 body characters:
 upgrading does not revalidate their evidence.
 
-Because the gate is applied before the LLM preflight, a review-first workspace
+Because the gate is applied before the LLM preflight, a workspace without the opt-in
 also needs fewer connections or harnesses configured: a strategy whose only
 model-backed process is a gated lane resolves without one at all.
 
