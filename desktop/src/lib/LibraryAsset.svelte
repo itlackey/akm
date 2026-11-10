@@ -513,7 +513,7 @@
             ref={canonical}
             links={data.asset.links}
             href={assetHref}
-            on:compare={(event) => onComparePair?.(event.detail)}
+            onCompare={onComparePair}
           />{/key}
       {:else if tab === "Source"}
         <pre class="code raw-source" role="group" aria-label="Markdown source">{source ||
