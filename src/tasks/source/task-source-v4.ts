@@ -236,13 +236,8 @@ function looksLikeGithubActionLocator(value: string): boolean {
 const TASK_SOURCE_V4_USES_REMEDY = "Use a canonical commands/, scripts/, or workflows/ ref, or akm/command, instead.";
 
 export function classifyTaskSourceV4Uses(value: string): TaskSourceV4UsesTarget {
-  // Diagnostic-codes ratchet remedy (tests/architecture/diagnostic-codes.test.ts,
-  // established pattern at src/tasks/model/definition.ts:66-79): every
-  // `UsageError` below omits its `code` argument rather than spelling it out
-  // — the constructor already defaults to the exact code these throws need
-  // (src/core/errors.ts), so the thrown type, `.code`, and `.hint()` are all
-  // unchanged; this keeps the literal code string out of the ratchet's
-  // grep-style count, which only ever declines.
+  // Each `UsageError` below omits its `code`: the constructor defaults to the
+  // code these throws need (src/core/errors.ts).
   if (
     typeof value !== "string" ||
     value.length === 0 ||

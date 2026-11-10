@@ -80,7 +80,7 @@ describe("task runner mutation boundary", () => {
     // P4 (spec §3.2.2, row B-17): the bounded YAML front end's sourceLabel is
     // "task source" now, not "task v3 source".
     ["malformed", 'version: 4\nrun: [unterminated\nschedule: "@daily"\n', "Invalid task source"],
-    // P4 FLIP (docs/plans/specs/p4-deletions-closeout.md §3.1, row B-04,
+    // P4 FLIP (a retired design doc §3.1, row B-04,
     // F-A1.14): the locator grammar is deleted from classifyTaskSourceV4Uses,
     // so a github-action-shaped uses: fails at PARSE with task source v4's
     // own B-11 message, not the old prepare-side "remote action acquisition
@@ -129,7 +129,7 @@ describe("task runner mutation boundary", () => {
       bundleName: "fixture",
       scheduled: true,
     });
-    // D8 (spec docs/plans/specs/p1b-model-extraction.md §5.3, §6 F-2):
+    // D8 (a retired design doc §5.3, §6 F-2):
     // corollary of the authorized result-vocabulary flip — a shell dispatch
     // now reports "shell", not the former shared "command" string. This is
     // the one necessary follow-on edit G-1's stashDir->bundleDir rename does

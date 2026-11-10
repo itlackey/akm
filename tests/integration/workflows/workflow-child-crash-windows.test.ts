@@ -4,10 +4,10 @@
 
 /**
  * MULTI-PROCESS crash-window resume for a CHILD-composing parent (spec
- * docs/plans/specs/p3b-child-executor.md §5.2-§5.3, rows C-01…C-04). A real
+ * a retired design doc §5.2-§5.3, rows C-01…C-04). A real
  * `bun` driver is SIGKILLed at a precise durable window around child
  * publication/execution, and a fresh process converges the run exactly once —
- * the CHILD-level analogue of tests/integration/workflow-crash-windows.test.ts,
+ * the CHILD-level analogue of tests/integration/workflows/workflow-crash-windows.test.ts,
  * using its exact SIGKILL technique and the SAME
  * tests/integration/_helpers/workflow-crossproc.ts helper, UNCHANGED (spec
  * §5.2: the CHILD's own units dispatch through the identical fake-dispatcher

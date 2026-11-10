@@ -6,10 +6,10 @@
  * `src/tasks/source/bounded-document.ts` — the version-agnostic bounded YAML
  * front end shared by task source v4's own parser and (frozen, vendored)
  * task v3's — renders every source label its callers supply through the
- * SAME shared funnel (D2-N4, spec docs/plans/specs/p2a-task-source-v4.md
+ * SAME shared funnel (D2-N4, a retired design doc
  * §3.1).
  *
- * P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.2/§3.2.3, row B-17,
+ * P4 (a retired design doc §3.2.2/§3.2.3, row B-17,
  * F-A2.11) retires task source v3 acceptance from `src/tasks/task-source.ts`
  * entirely — the "task v3 source" label this file used to pin died with it.
  * Two DISTINCT labels remain in real production use today, and this file
@@ -161,7 +161,7 @@ describe("sourceError — the per-field funnel renders both source labels via it
  * "task v3 hostile input and resource bounds" describe block (commit
  * 09691628 deleted the v3 parser it directly exercised — parseTaskV3Document
  * / parseTaskV3Yaml). Review finding
- * (docs/plans/specs/p4-deletions-closeout.md review, on this file): that
+ * (a retired design doc review, on this file): that
  * describe block's real subject was never the v3 grammar — it was this
  * file's own bounded-document front end (assertBoundedTaskYamlDocument,
  * cloneBoundedJson, readBoundedTaskSourceYaml), which P4 did NOT delete and

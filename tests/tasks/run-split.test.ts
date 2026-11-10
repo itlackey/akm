@@ -4,7 +4,7 @@
 
 /**
  * STRUCTURAL contract for P1b's `src/tasks/run/**` split (spec
- * docs/plans/specs/p1b-model-extraction.md §5.1, §9 "Structure"). Sibling to
+ * a retired design doc §5.1, §9 "Structure"). Sibling to
  * `tests/tasks/prepare-split.test.ts` (Lane B's caller-shape parity contract)
  * but for Lane C, and narrower in scope on purpose: Lane C's *behavior* is
  * already pinned exhaustively elsewhere — tests/integration/tasks/tasks-provenance-context.test.ts,
@@ -30,7 +30,7 @@
  *   (b) `src/tasks/runner.ts` — the 1177-line-at-head module `src/tasks/run/**`
  *       was split out of, kept alive afterward only as a re-export compat
  *       shim (spec §9: "runner.ts contains no logic — only re-exports") —
- *       does not exist. P4 (docs/plans/specs/p4-deletions-closeout.md
+ *       does not exist. P4 (a retired design doc
  *       §3.2.7, row B-26, F-A2.16) deleted it once every caller was rewired
  *       to import `src/tasks/run/**` directly; its own former "no function/
  *       class declarations of its own" AST scan and the "no file under

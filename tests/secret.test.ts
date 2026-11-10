@@ -244,7 +244,7 @@ describe("secret slash ref form", () => {
     // which the in-process test harness's exit shim converts into a thrown
     // "error" that `runWithJsonErrors` re-wraps as a JSON envelope — a
     // pre-existing harness limitation unrelated to ref resolution (see
-    // tests/integration/secret-run.test.ts's docstring on why its happy path
+    // tests/integration/secret/secret-run.test.ts's docstring on why its happy path
     // requires a real subprocess). `secret set` exercises the identical
     // parseSecretRef resolution without that exit call.
     const stashDir = makeStash();

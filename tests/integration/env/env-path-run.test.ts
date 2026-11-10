@@ -6,7 +6,7 @@
  * path/export resolution plus `env run` error paths that fail BEFORE any
  * child process is spawned. The `env run` / `secret run` happy paths that
  * actually spawn a target command (whose fd-inherited stdout is the
- * contract) live in tests/integration/env-run.test.ts — only a real process
+ * contract) live in tests/integration/env/env-run.test.ts — only a real process
  * boundary can observe the child's output.
  *
  * Exception: the "format-exempt" warning test below needs a real subprocess.
@@ -142,7 +142,7 @@ describe("env export", () => {
 
 describe("env run", () => {
   // Only pre-spawn error paths run here; the spawn-and-observe-child-output
-  // tests live in tests/integration/env-run.test.ts.
+  // tests live in tests/integration/env/env-run.test.ts.
   test("exits non-zero and injects nothing when a referenced secret is missing", async () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });

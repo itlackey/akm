@@ -43,7 +43,7 @@ const DEFAULT_REGISTRY_URLS = [
 // misaligned queue fails with the full transcript instead of dying silently.
 //
 // To re-capture the wizard's real prompt sequence after a flow change, run:
-//   SETUP_RUN_CAPTURE=1 bun test tests/integration/setup-run.test.ts
+//   SETUP_RUN_CAPTURE=1 bun test tests/setup-run.test.ts
 // Capture mode answers drained queues with safe defaults and prints the full
 // trace instead of throwing, so one run reveals the whole sequence.
 const CAPTURE = process.env.SETUP_RUN_CAPTURE === "1";

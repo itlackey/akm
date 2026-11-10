@@ -6,10 +6,10 @@
  * P1b Lane C — F-2 result-vocabulary re-code (D8) + F-4 attempt-error
  * allowlist widening, new coverage.
  *
- * docs/plans/specs/p1b-model-extraction.md §5.3 (result vocabulary), §5.5 +
+ * a retired design doc §5.3 (result vocabulary), §5.5 +
  * §5.6 (F-4 + the C-7 exit-78 rewire), §6 (the F-2 AUTHORIZED-FLIPS table).
  *
- * `tests/integration/tasks-legacy-vocabulary-characterization.test.ts` (the
+ * The former legacy-vocabulary characterization test (the
  * flipped P0 file) pins the per-arm stored `target_kind` STRING and the
  * `readTaskHistory()` round-trip SHAPE, including legacy (unmarked) rows.
  * This file is genuinely new coverage that file does not carry:
@@ -81,7 +81,7 @@ function closedStream(): ReadableStream<Uint8Array> {
   });
 }
 
-/** Crib of tests/integration/tasks-runtime-v3-runner.test.ts's `completedSpawn`. */
+/** Crib of tests/tasks-runtime-v3-runner.test.ts's `completedSpawn`. */
 function completedSpawn(exitCode: number): ReturnType<SpawnFn> {
   return {
     exitCode,

@@ -9,7 +9,7 @@ import { TransientError, UsageError, type UsageErrorCode } from "../../src/core/
  * Unit coverage for the five new `UsageErrorCode` members added in P1a (D7)
  * and their `USAGE_HINTS` entries.
  *
- * See docs/plans/specs/p1a-with-rejection-classifier.md §2.1 (the exact hint
+ * See a retired design doc §2.1 (the exact hint
  * strings, reproduced verbatim below), §10 acceptance criterion 1
  * ("src/core/errors.ts declares all five new UsageErrorCode members and a
  * USAGE_HINTS entry for each, with the §2.1 strings"), and behavior row B-24

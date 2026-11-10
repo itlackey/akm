@@ -7,7 +7,7 @@ import { parseWorkflowParameterFlags } from "../../src/commands/workflow-cli";
 import { materializeWorkflowParameterFlags } from "../../src/workflows/ir/params";
 import type { WorkflowPlan as WorkflowPlanGraph } from "../../src/workflows/plan";
 
-// F-A11 (docs/plans/specs/p3a-plan-v5-child-freeze.md §6): mechanical value
+// F-A11 (a retired design doc §6): mechanical value
 // bump only, no assertion in this file changes. `parameterPlan()` is
 // explicitly typed as WorkflowPlan, so — unlike the two `unknown`-fed
 // fixture builders F-A9/F-A10 flip — the literal itself is type-checked

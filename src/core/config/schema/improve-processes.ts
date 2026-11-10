@@ -32,7 +32,7 @@ import { nonEmptyString, positiveInt } from "./primitives";
 // process's narrow output is assignable to), and (b) two existing tests that
 // parse fields from multiple processes against it directly with no process
 // context (tests/integration/extract-command.test.ts,
-// tests/config-triage-process.test.ts). Real per-config validation for
+// tests/triage-judgment-config.test.ts). Real per-config validation for
 // `processes.<name>` uses the NARROW per-process schemas via
 // {@link ImproveProfileProcessesSchema} below — setting a field on the wrong
 // process there is now rejected (the intended §4.2 improvement).

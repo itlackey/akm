@@ -4,7 +4,7 @@
 
 /**
  * P3b Lane A TESTS — provenance threading and recursive nesting
- * (docs/plans/specs/p3b-child-executor.md §2.4 "Cancellation, provenance,
+ * (a retired design doc §2.4 "Cancellation, provenance,
  * nesting" rows A-31…A-36; §3.3.1 "The exact runWorkflowSteps options",
  * §3.6). This file owns ONLY these six rows (A-28…A-30 belong to
  * tests/integration/workflows/child-cancellation.test.ts, per the spec's own

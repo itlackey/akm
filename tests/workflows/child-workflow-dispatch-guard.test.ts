@@ -3,9 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3a round 1, finding 1 (docs/plans/specs/p3a-plan-v5-child-freeze.md
+ * P3a round 1, finding 1 (a retired design doc
  * Review log R8) — AUTHORIZED FLIP, P3b spec §6 F-A1 / §1.6 B-N11
- * (docs/plans/specs/p3b-child-executor.md).
+ * (a retired design doc).
  *
  * P3a's freeze side (`src/workflows/freeze/targets/child-workflow.ts`)
  * legitimately produces a `kind: "child-workflow"` frozen target for a step

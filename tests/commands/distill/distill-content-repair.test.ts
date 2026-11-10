@@ -9,7 +9,7 @@
  * extraction makes each normalization pass directly testable with no I/O.
  *
  * The known-good frontmatter strings mirror the ones proven valid by the
- * end-to-end auto-repair/auto-swap cases in `tests/distill.test.ts`.
+ * end-to-end auto-repair/auto-swap cases in `tests/integration/distill.test.ts`.
  */
 
 import { describe, expect, test } from "bun:test";

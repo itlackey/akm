@@ -180,7 +180,7 @@ describe("CLI error handling", () => {
   });
 });
 
-// P1a carried advisory, wired here per docs/plans/specs/p1b-model-extraction.md
+// P1a carried advisory, wired here per a retired design doc
 // §1.5 (binding choice: "the envelope tests extend
 // tests/integration/cli-errors.test.ts. No tasks-cli-envelope family exists
 // at head … and minting one for two cases would fragment the CLI-envelope
@@ -193,7 +193,7 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     const stash = makeStashDir();
     disposers.push(stash);
     fs.mkdirSync(path.join(stash.dir, "tasks"), { recursive: true });
-    // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.2, row B-18/B-19,
+    // P4 (a retired design doc §3.2.2, row B-18/B-19,
     // F-A2.35) retired the R-06 shape this fixture used to pin — task source
     // v4 makes scheduling OPTIONAL, so "neither akm.schedule nor on:
     // declared" is no longer an error at all (D2-N6). `run:` and `uses:`
@@ -270,7 +270,7 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
   });
 });
 
-// P4 (docs/plans/specs/p4-deletions-closeout.md §5.2, carried advisory R-R7):
+// P4 (a retired design doc §5.2, carried advisory R-R7):
 // investigated adding CLI-envelope + exit-2 coverage for TARGET_REF_INVALID
 // and TASK_TARGET_UNSUPPORTED — the two D7 codes with no test at this level
 // before P4's INVALID_FLAG_VALUE re-coding sweep — and found BOTH
@@ -303,9 +303,9 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
 //
 // WORKFLOW_SOURCE_INVALID, TASK_SOURCE_INVALID, COMPOSITION_INVALID, and
 // INPUT_BINDING_INVALID all already have CLI-level coverage: the describe
-// block above; tests/integration/commands/tasks-input-flags.test.ts;
+// block above; tests/commands/tasks-input-flags.test.ts;
 // tests/integration/workflows/workflow-source-collision.test.ts;
-// tests/integration/commands/workflow-cli-contract.test.ts.
+// tests/commands/workflow-cli-contract.test.ts.
 
 describe("error class hints", () => {
   test("ConfigError derives hint from code by default", () => {
@@ -498,7 +498,7 @@ describe("output shape registry — every CLI verb returns a registered shape", 
 // tests/_helpers/cli.ts) drives citty's `runCommand` directly and never runs
 // `src/cli.ts`'s `import.meta.main`-gated startup block where the fix lives
 // (see that harness's own module docstring, and
-// tests/integration/commands/distill/distill-cli-flag.test.ts's comment on
+// tests/commands/distill/distill-cli-flag.test.ts's comment on
 // the same split).
 describe("R-032: citty CLIError family exits 2, not 1", () => {
   test("akm totally-bogus (unknown top-level command) exits 2", () => {

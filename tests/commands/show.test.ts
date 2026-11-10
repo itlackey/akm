@@ -813,7 +813,7 @@ describe("akmShow memory with a .derived.md child", () => {
 // F6/R-021: direct unit coverage for `input.detail === "brief"` /
 // `buildBriefResponse` on `akmShowUnified` itself — previously ZERO test in
 // the suite exercised this path (the CLI-layer resolution that feeds it is
-// covered separately in tests/integration/commands/show-argv.test.ts).
+// covered separately in tests/commands/show-argv.test.ts).
 describe("akmShow detail levels", () => {
   test("detail: 'brief' strips content/template/prompt but keeps identity + edit fields", async () => {
     writeFile(

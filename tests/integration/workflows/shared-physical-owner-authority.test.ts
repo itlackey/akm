@@ -260,7 +260,7 @@ describe("shared adapter physical-owner authority", () => {
   //
   // What happened: adding one file under tests/integration/ (a migrate orchestration test) shifted this file's index in the sorted list
   // 427 -> 428, moving it from shard 3 to shard 0 under
-  // scripts/test-integration.sh's `i % N` round-robin. It then co-ran with
+  // scripts/test-shards.sh's `i % N` round-robin. It then co-ran with
   // 111 different files for the first time and this case failed in CI, while
   // passing in isolation and in every local subset up to 40 co-running files.
   // So the trigger is shard COMPOSITION, not the code under test — any future

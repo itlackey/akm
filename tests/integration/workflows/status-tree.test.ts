@@ -5,7 +5,7 @@
 /**
  * P3b Lane B TESTS — the parent-child status tree, `akm workflow list`'s
  * child-exclusion, the scope-attach guard, and `akm show`'s active-run guard
- * (spec docs/plans/specs/p3b-child-executor.md §4.5, B-N10, rows B-33…B-45;
+ * (a retired design doc §4.5, B-N10, rows B-33…B-45;
  * named in §7's new-suites table as this file).
  *
  * Row B-33 (the byte-identity baseline for a childless run) is written

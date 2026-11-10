@@ -5,7 +5,7 @@
 // `refExistsInAnyStash`).
 //
 // A SISTER COPY of this fixture lives in the akm-plugins repo at
-// `tests/ref-resolver-contract.test.ts`, where it drives the resolver inside
+// `tests/contracts/ref-resolver-contract.test.ts`, where it drives the resolver inside
 // `shared/ref-extraction.ts` against the SAME canonical inputs. The fixture
 // below MUST stay byte-identical (modulo the per-repo glue that selects which
 // implementation is exercised). If you change a case here, change it there.
@@ -177,7 +177,7 @@ describe("ref-resolver contract", () => {
         `ref-resolver contract drift detected (${failures.length} case(s)):\n${failures.join("\n")}\n\n` +
           "If you intentionally changed the resolver behavior, update BOTH this fixture\n" +
           "and the sister fixture in the akm-plugins repo at\n" +
-          "  tests/ref-resolver-contract.test.ts\n" +
+          "  tests/contracts/ref-resolver-contract.test.ts\n" +
           "in the same coordinated change.",
       );
     }

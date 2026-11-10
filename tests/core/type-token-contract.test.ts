@@ -19,7 +19,7 @@
  *       those open type values.
  *
  * Replaces (not just deletes) the taxonomy-pin tests identified in
- * `docs/design/execution/chunk-1.5/anchors.md` §D.1.
+ * `a retired design doc` §D.1.
  */
 
 import { describe, expect, test } from "bun:test";

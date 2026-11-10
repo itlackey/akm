@@ -31,7 +31,7 @@ import { type SandboxedDir, makeStashDir as sandboxMakeStashDir, sandboxXdgDataH
 // improve` CLI tests that used to live here run `improve` for real (which
 // opens and WRITES the state.db improve_runs table, hitting genuine
 // cross-process SQLite contention in-process) and were moved to
-// tests/integration/improve-cli-result-storage.test.ts.
+// tests/integration/commands/improve/improve-cli-result-storage.test.ts.
 
 const disposers: Array<{ cleanup: () => void }> = [];
 

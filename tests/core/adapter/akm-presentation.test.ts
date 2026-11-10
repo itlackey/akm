@@ -5,7 +5,7 @@
 /**
  * WI-C gate — the `TYPE_PRESENTATION` renderer data table
  * (`src/core/type-presentation.ts`), implementing
- * `docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §2.
+ * `a retired design doc` §2.
  *
  * §2 makes renderer a DATA TABLE keyed on the open `type`. This suite
  * pins that `TYPE_PRESENTATION` reproduces the renderer NAMES VERBATIM — chunk-3 made `TYPE_PRESENTATION` the SINGLE SOURCE OF TRUTH

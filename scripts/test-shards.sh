@@ -1,28 +1,44 @@
 #!/usr/bin/env bash
 #
-# Integration-test runner: shards tests/integration across separate OS
-# processes (min(nproc, 8) concurrent `bun test` processes), same rationale
-# as scripts/test-unit.sh (see its header for why neither `--isolate` nor
-# `--parallel` is ever passed). Serial single-process runs cost ~9.5 min of
-# wall clock for ~570s of test time; sharding cuts that to roughly the
-# slowest shard.
+# Test runner: shards the unit suite (tests/ minus tests/integration) or the
+# integration suite (tests/integration) across separate OS processes for speed
+# (min(nproc, 8) concurrent `bun test` processes).
 #
 # Sharding is done by EXPLICIT round-robin file lists, NOT bun's `--shard`:
-# on bun 1.3.x that flag only slices when the positional path is the test
-# root (`./tests`, where it slices at the TEST level); with a subdirectory
-# positional like `./tests/integration` it is SILENTLY IGNORED and every
-# process runs the full suite concurrently — 4x the work plus same-file
-# collisions on fixture paths. File-granular lists also guarantee each test
-# file runs in exactly one process.
+# that flag's behavior varies silently across bun 1.3.x point releases (on
+# 1.3.11 it slices tests from the `./tests` root; on 1.3.14 in CI it ran a
+# quarter of the suite in shard 1 and ZERO tests in shards 2-4, all exit 0 —
+# a silent 75% coverage hole the aggregate "pass" line masked). Explicit file
+# lists are deterministic on every bun, and the files-ran cross-check below
+# turns any future silent under-run into a hard failure.
 #
-# Per-process isolation here is STRICTLY STRONGER than the previous
-# single-process run (files no longer share process.env or module state with
-# every sibling), and cross-file isolation is already enforced by
-# the test preload (tests/_preload.ts).
+# Neither `--isolate` nor `--parallel` is passed (isolate removed 2026-07-02
+# on the di-seams branch):
+#   - `--parallel` (any N, including 1) implies `--isolate` and spawns worker
+#     processes over IPC — the Bun 1.3.x path with the intermittent
+#     `EEXIST epoll_ctl` race (#664). Never re-add it.
+#   - `--isolate` was only needed while test files leaked `mock.module()`
+#     state into siblings in the same process. After the DI-seams refactor,
+#     `mock.module` is at ZERO across the tree (the last three @clack/prompts
+#     suites now go through the src/cli/clack seam) — enforced by grep and
+#     required, because a two-file probe proved `mock.restore()` does NOT
+#     clear module mocks (they leak across files without --isolate).
+#     Verified by repeated green full-suite runs without `--isolate`.
+#     Dropping it removes the racy isolate machinery entirely and saves the
+#     per-file fresh-global overhead.
 #
-# Usage:  scripts/test-integration.sh            # auto shards (min(nproc, 8))
-#         TEST_SHARDS=4 scripts/test-integration.sh
+# Usage:  scripts/test-shards.sh <unit|integration>   # auto shards (min(nproc, 8))
+#         TEST_SHARDS=4 scripts/test-shards.sh unit
+#         scripts/test-shards.sh unit <file>...       # explicit file list
 set -uo pipefail
+
+suite="${1:-}"
+[ "$#" -gt 0 ] && shift
+case "$suite" in
+  unit) find_args=(tests -name '*.test.ts' -not -path 'tests/integration/*') ;;
+  integration) find_args=(tests/integration -name '*.test.ts') ;;
+  *) echo "usage: $0 <unit|integration> [test-file...]" >&2; exit 2 ;;
+esac
 
 cores="$(nproc 2>/dev/null || echo 4)"
 N="${TEST_SHARDS:-$cores}"
@@ -31,12 +47,17 @@ N="${TEST_SHARDS:-$cores}"
 
 bun run sweep:tmp >/dev/null 2>&1 || true
 
-# Deterministic file list; sort so every machine shards identically.
-mapfile -t files < <(find tests/integration -name '*.test.ts' | sort)
+# Deterministic file list; sort so every machine shards identically. Explicit
+# files after the suite name replace discovery (used to dry-run the runner).
+if [ "$#" -gt 0 ]; then
+  files=("$@")
+else
+  mapfile -t files < <(find "${find_args[@]}" | sort)
+fi
 total="${#files[@]}"
 
 if [ "$total" -eq 0 ]; then
-  echo "── integration: no test files found under tests/integration" >&2
+  echo "── ${suite}: no test files found" >&2
   exit 1
 fi
 [ "$N" -gt "$total" ] && N="$total"
@@ -44,8 +65,8 @@ fi
 # Shard logs live in an announced directory (not anonymous mktemp files) so a
 # hung or long run can be watched live: `tail -f <dir>/shard-*.log`. Honors
 # $TMPDIR; kept on failure for diagnosis, removed on success.
-logdir="$(mktemp -d "${TMPDIR:-/tmp}/akm-integration-shards.XXXXXX")"
-echo "── integration: ${N} shards over ${total} files; live logs: ${logdir}/shard-N.log"
+logdir="$(mktemp -d "${TMPDIR:-/tmp}/akm-${suite}-shards.XXXXXX")"
+echo "── ${suite}: ${N} shards over ${total} files; live logs: ${logdir}/shard-N.log"
 
 # A shard's own --timeout=120000 catches a slow TEST, not a stuck PROCESS —
 # e.g. a child process a test spawned that never exits. That is exactly how
@@ -75,9 +96,9 @@ for k in $(seq 0 $((N - 1))); do
   tmps+=("$t")
   runtime_home="${logdir}/runtime-home-$((k + 1))"
   mkdir -p "$runtime_home"
-  # 120s per-test (vs 30s serial): under N-way process contention a heavy test
-  # can legitimately run 3-4x its solo duration; the timeout exists to catch
-  # HANGS, not to police performance, and 30s flaked real passes under load.
+  # 120s per-test: under N-way process
+  # contention the heaviest property/goldens suites legitimately run 3-4x
+  # their solo duration; the timeout exists to catch HANGS.
   if $has_setsid; then
     # `exec setsid` gives this shard its own process group (pgid == its pid,
     # distinct from every sibling shard's), so the timeout below can kill it
@@ -107,7 +128,7 @@ for idx in "${!pids[@]}"; do
   p="${pids[$idx]}"
   kill -0 "$p" 2>/dev/null || continue
   t="${tmps[$idx]}"
-  echo "── integration: shard $((idx + 1)) (pid ${p}) exceeded ${shard_timeout_secs}s — killing its process group (HANG)" >&2
+  echo "── ${suite}: shard $((idx + 1)) (pid ${p}) exceeded ${shard_timeout_secs}s — killing its process group (HANG)" >&2
   if $has_setsid; then
     kill -TERM -"$p" 2>/dev/null || true
     sleep 2
@@ -135,7 +156,7 @@ for t in "${tmps[@]}"; do
   p="$(grep -oE '[0-9]+ pass' "$t" | tail -1 | grep -oE '[0-9]+' || true)"
   f="$(grep -oE '[0-9]+ fail' "$t" | tail -1 | grep -oE '[0-9]+' || true)"
   s="$(grep -oE '[0-9]+ skip' "$t" | tail -1 | grep -oE '[0-9]+' || true)"
-  c="$(grep -oE 'across [0-9]+ files' "$t" | tail -1 | grep -oE '[0-9]+' || true)"
+  c="$(grep -oE 'across [0-9]+ files?' "$t" | tail -1 | grep -oE '[0-9]+' || true)"
   pass=$((pass + ${p:-0}))
   fail=$((fail + ${f:-0}))
   skip=$((skip + ${s:-0}))
@@ -146,9 +167,10 @@ for t in "${tmps[@]}"; do
   if [ "${f:-0}" != "0" ] || ! grep -qE '[0-9]+ pass' "$t"; then
     grep -E "\(fail\)|^error:|panic" "$t" | head -10 || true
     # Every failure's output, wherever it sits in the log: bun prints it just
-    # before the `(fail)` line, which the tail alone misses in a long shard.
-    # A thrown named error prints as `UsageError: ...`, not `error:`, so the
-    # context is taken from the `(fail)` line (see scripts/test-unit.sh).
+    # before the `(fail)` line, which the tail alone misses in a long shard (a
+    # CI failure whose diff was not in the log cost a whole reproduce-locally
+    # round trip). A thrown named error prints as `UsageError: ...`, not
+    # `error:`, so the context is taken from the `(fail)` line.
     echo "── failure details: ${t} ──"
     grep -n -B60 -E "^\(fail\)|panic" "$t" | head -400 || true
     echo "── shard log tail (last 80 lines): ${t} ──"
@@ -156,9 +178,9 @@ for t in "${tmps[@]}"; do
   fi
 done
 
-echo "── integration: ${pass} pass / ${skip} skip / ${fail} fail across ${N} process-shards (${filecount}/${total} files)"
+echo "── ${suite}: ${pass} pass / ${skip} skip / ${fail} fail across ${N} process-shards (${filecount}/${total} files)"
 if [ "$rc" -ne 0 ] || [ "$fail" -ne 0 ] || [ "$filecount" -ne "$total" ]; then
-  echo "── integration: shard logs kept for diagnosis: ${logdir}"
+  echo "── ${suite}: shard logs kept for diagnosis: ${logdir}"
   exit 1
 fi
 rm -rf "$logdir"

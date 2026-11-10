@@ -4,7 +4,7 @@
 
 /**
  * P3b Lane A TESTS — the child executor's publication, identity, driving, and
- * status-mapping contract (docs/plans/specs/p3b-child-executor.md §2.2 "
+ * status-mapping contract (a retired design doc §2.2 "
  * Publication and identity" + §2.3 "Driving and status mapping", rows
  * A-07…A-27; §3.3 "driveChildWorkflowUnit — the drive contract", §3.4
  * "Status mapping (exact)"). This file owns ONLY these 21 rows.

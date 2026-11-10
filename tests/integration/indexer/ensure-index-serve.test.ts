@@ -11,7 +11,7 @@
  * They rebuild inline only when the index cannot serve at all (missing DB, no
  * `builtAt`, different stash). An indexed empty stash is built, not unusable. This replaced the stale-triggered background
  * reindex that made every read on an actively-written stash spawn a writer
- * (docs/design/read-path-reindex-contention-findings.md §7).
+ * (a retired design doc §7).
  *
  * Blocking mode (improve) runs an incremental index and lets its per-file
  * fingerprints decide, in every bundle.

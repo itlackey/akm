@@ -5,7 +5,7 @@
 /**
  * P1 — robots.txt compliance: pure-function and policy-layer unit tests.
  *
- * Authoritative spec: docs/plans/specs/p1-robots.md. Row IDs in test names
+ * Authoritative spec: a retired design doc. Row IDs in test names
  * (P-xx, D-xx, M-xx, L-xx, F-xx, G-xx) refer to that spec's behavior tables
  * (§4.1–§4.7) so failures can be traced back to the exact requirement.
  *

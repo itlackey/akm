@@ -87,7 +87,7 @@ export function openExistingDatabase(dbPath?: string): Database {
   // fire-and-forget telemetry read was enough), which every later opener then
   // saw as an existing-but-broken index ("no such table: entries") — the
   // curate→proposal file-order failure pinned by
-  // tests/storage/open-existing-database-no-create.test.ts. `create: false`
+  // tests/integration/storage/open-existing-database-no-create.test.ts. `create: false`
   // below is the race-free backstop for this pre-check.
   const resolvedPath = dbPath ?? getDbPath();
   assertIndexPathReadable(resolvedPath);

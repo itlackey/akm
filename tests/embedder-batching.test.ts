@@ -783,7 +783,7 @@ describe("embedding cache LRU eviction", () => {
  * #956: the per-document embedding cap (`embedding.maxInputTokens`,
  * default 512) truncates the embedded text to its head instead of skipping
  * the whole document — this pins the pure truncation helper in isolation
- * from the materializer that calls it (tests/materialize-embeddings-cap.test.ts).
+ * from the materializer that calls it (tests/integration/indexer/materialize-embeddings-cap.test.ts).
  */
 
 describe("DEFAULT_MAX_INPUT_TOKENS", () => {

@@ -12,10 +12,7 @@
  *
  * This file deliberately imports NOTHING from commands/improve/salience.ts.
  * salience.ts re-exports this module's functions (a mandatory edge in that
- * direction), so an import back from here would form a 2-node cycle —
- * `tests/architecture/import-cycle-ratchet.test.ts` enforces a zero-tolerance,
- * shrink-only baseline (currently empty) over the whole `src/` import graph,
- * counting type-only imports as graph edges same as value imports. The two
+ * direction), so an import back from here would form a 2-node cycle (type-only imports count as graph edges, same as value imports). The two
  * places that would otherwise need `SalienceVector` / `EncodingSource` from
  * salience.ts instead use a structurally-equivalent local shape: the literal
  * union `"content" | "type-stub"` and the {@link SalienceVectorLike}

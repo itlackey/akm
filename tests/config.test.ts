@@ -1237,7 +1237,7 @@ describe("an extraParams key that shadows a portable setting is refused, naming 
  * review-first while consolidate was deleting files.
  *
  * These pin the key's existence and its default. The gating behaviour itself is
- * pinned by `tests/integration/improve-autonomy-gate.test.ts`, which asserts on
+ * pinned by `tests/improve-autonomy-gate.test.ts`, which asserts on
  * the filesystem rather than on this flag.
  */
 

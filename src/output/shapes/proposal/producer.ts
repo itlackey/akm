@@ -12,7 +12,7 @@
 // `proposal new` is registered here.
 //
 // Deliberately phrased WITHOUT the literal call spelling: the registry
-// completeness scanner (tests/integration/output-shape-registry-completeness.ts)
+// completeness scanner (tests/output-shape-registry-completeness.test.ts)
 // greps sources for that exact pattern to find commands needing a shape, and
 // it does not skip comments — so writing the spelling here to explain the
 // absence would re-summon the very registration this comment says is gone.

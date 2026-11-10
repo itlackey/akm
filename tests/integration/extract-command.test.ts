@@ -99,7 +99,7 @@ function configEnabled(stashDir: string): AkmConfig {
         // #561 — these tests assert the distillation chat-call count / schema.
         // Session indexing (default-on) would add a second chat call per session,
         // so disable it here; the session-indexing behaviour has dedicated
-        // coverage in tests/session-indexing.test.ts.
+        // coverage in tests/integration/session-indexing.test.ts.
         extract: {
           processes: { extract: { enabled: true, indexSessions: false, triage: { enabled: false } } },
         },

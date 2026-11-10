@@ -239,7 +239,7 @@ describe("hashSessionContent", () => {
 
 // ── #840 harvest-without-prompting hybrid — prompt-composition invariants ───
 //
-// docs/plans/subagent-extraction-design.md §6: the LLM prompt is built from
+// a retired design doc §6: the LLM prompt is built from
 // parent-origin events only (`data.events.filter(e => e.filePath ===
 // data.ref.filePath)` inside `runPreLlmSessionGates`), while
 // `hashSessionContent` and `data.inlineRefs` keep seeing the FULL folded

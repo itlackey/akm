@@ -9,7 +9,7 @@
  *
  * INTEGRATION TEST — lives in tests/integration/ because it builds and
  * asserts against a real git fixture repo (spawnSync git), like
- * tests/integration/write-source.test.ts. The `akm` invocation itself uses
+ * tests/integration/write/write-source.test.ts. The `akm` invocation itself uses
  * the in-process harness (tests/_helpers/cli.ts).
  *
  * The rest of the SPEC-5 surface (frontmatter demotion, xref folding,

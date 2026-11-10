@@ -474,7 +474,7 @@ function isFileDeletion(issue: LintIssue): boolean {
 /**
  * Reproduce `SkillLinter.lintDirectory`: a skill subdirectory with no
  * `SKILL.md` is flagged `missing-skill-md` (never auto-fixable). Exported for
- * the lint-parity golden (`tests/integration/goldens-lint-output.test.ts`).
+ * the lint-parity golden.
  */
 export function lintSkillDirectory(subdirPath: string, stashRoot: string): LintIssue[] {
   if (fs.existsSync(path.join(subdirPath, "SKILL.md"))) return [];

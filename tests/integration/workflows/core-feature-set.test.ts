@@ -10,7 +10,7 @@
  * audit): `params`, ordered `steps`, step `inputs:`, `output` / `unit.output`,
  * `defaults.connection`, and `### gate` rubrics judged on the default connection.
  * Nothing else is exercised here on purpose; the unused features are tracked in
- * docs/plans/0.10-workflows.md.
+ * a retired design doc.
  *
  * Why this file exists: a daily task silently broke when the old
  * `workflow next/complete` verbs were removed, because every existing test

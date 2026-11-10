@@ -9,7 +9,7 @@
  * spawn the target command with stdio inherited to the real file
  * descriptors, so the injected-env output belongs to the CHILD process, not
  * the CLI. The in-process console-capture harness cannot observe it — only a
- * real process boundary can. Moved here from tests/env-path-run.test.ts;
+ * real process boundary can. Moved here from tests/integration/env/env-path-run.test.ts;
  * the in-process env path/export/error-path tests remain in the unit file.
  */
 

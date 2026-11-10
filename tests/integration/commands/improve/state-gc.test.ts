@@ -4,13 +4,13 @@
 
 /**
  * #733 — orphan-GC pass for unresolvable `asset_salience` / `asset_outcome`
- * state rows (Workstream C, docs/architecture/specs/0.9.0-close-out-plan.md).
+ * state rows (Workstream C, a retired design doc).
  *
  * The pass is deliberately lean: one maintenance pass (`runOrphanStateGcPass`),
  * one additive migration (`021-asset-state-missing-since`), one event type
  * (`asset_state_gc`). The pass never deletes a row. These tests exercise `runOrphanStateGcPass` directly — the same
  * "focused unit coverage, injected db handles, no LLM" style as
- * `tests/commands/improve/improve-maintenance-passes.test.ts` — rather than
+ * `tests/integration/commands/improve/improve-maintenance-passes.test.ts` — rather than
  * driving a full `akmImprove()` run, so the correctness of the resolution
  * logic and the never-delete rule is asserted without indexer/LLM overhead.
  *
