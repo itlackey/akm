@@ -300,7 +300,7 @@
   }
   /** The reject form takes room from the pane: put the change at its top, so the diff stays readable beside the form. */
   function showChange() {
-    const change = region?.querySelector<HTMLElement>('section[aria-label="Proposed change"]');
+    const change = region?.querySelector<HTMLElement>(".review-scroll .change");
     if (!change) return;
     if (matchMedia("(max-width:850px)").matches) change.scrollIntoView({ block: "start" });
     else if (scroller) scroller.scrollTop += change.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
@@ -937,7 +937,7 @@
     padding: 1rem 1.5rem 1.5rem;
   }
   /* While the reject form is open, the change can scroll to the pane's top even when it is short. */
-  .review-scroll.rejecting :global(section[aria-label="Proposed change"]) {
+  .review-scroll.rejecting :global(.change) {
     min-height: 100%;
   }
   .review-items {

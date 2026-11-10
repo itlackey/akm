@@ -250,9 +250,25 @@ test("keyboard order, focus hand-back and names at the shortest windows", { time
   // Review: Tab never moves up, or left on the same row, from the control before; and no focus ring is cut.
   await open(`/review/${app.proposals.fresh}`, ".dcol.inline");
   const proposal = await tabStops(page, ".review-pane");
-  assert.ok(proposal.length >= 6, `the proposal pane has its controls in the tab order (${proposal.length})`);
+  assert.ok(proposal.length >= 5, `the proposal pane has its controls in the tab order (${proposal.length})`);
   assert.deepEqual(out(proposal, "moved"), [], "Review, short window: focus order is reading order in the proposal");
   assert.deepEqual(out(proposal, "clipped"), [], "Review, short window: no focus ring is cut in the proposal");
+  // The diff is announced once: one named region around it, whichever layout it is in.
+  const diffRegions = () =>
+    page.evaluate(() => {
+      const named = '[role="region"], section[aria-label], section[aria-labelledby]';
+      let count = 0;
+      for (let node = document.querySelector(".review-scroll .dcol"); node && !node.matches(".review-scroll"); ) {
+        if (node.matches(named)) count++;
+        node = node.parentElement;
+      }
+      return count;
+    });
+  assert.equal(await diffRegions(), 1, "the inline diff is in one named region");
+  await open(`/review/${app.proposals.stale}`, ".dcol.inline");
+  await page.getByRole("button", { name: "Side by side", exact: true }).click();
+  await expect(page.locator(".sbs")).toBeVisible();
+  assert.equal(await diffRegions(), 1, "the side-by-side diff is in one named region");
   await open("/review", '[aria-label="Queue summary"]');
   const heading = await tabStops(page, ".review-top");
   assert.ok(heading.length >= 5, `the Review heading has its controls in the tab order (${heading.length})`);
