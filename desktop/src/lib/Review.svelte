@@ -907,10 +907,11 @@
     font-size: var(--text-s);
     margin-top: 0.5rem;
   }
+  /* A scroller clips what is outside its padding box, so each has room at its edges for a focus ring (2px, 2px away). */
   .review-list {
     min-width: 0;
-    margin: 0;
-    padding: 1rem 1rem 1rem 0;
+    margin: 0 0 0 calc(-1 * var(--space-1));
+    padding: 1rem 1rem 1rem var(--space-1);
     overflow-y: auto;
   }
   .queue-summary {
@@ -1029,7 +1030,8 @@
       min-height: 0;
     }
     .review-list {
-      padding-right: 0;
+      margin-inline-end: calc(-1 * var(--space-1));
+      padding-right: var(--space-1);
     }
     .review-workspace[data-detail] > .review-list {
       display: none;
@@ -1075,7 +1077,8 @@
       border-left: 0;
     }
     .review-scroll {
-      padding: 0.75rem 0;
+      margin-inline: calc(-1 * var(--space-1));
+      padding: 0.75rem var(--space-1);
     }
   }
 </style>

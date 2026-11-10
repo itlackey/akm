@@ -119,8 +119,14 @@
     border: 0;
     border-radius: var(--radius);
   }
+  /* No border or fill to clip to the corners here, so a focus ring at the card's edge stays whole. */
   .desktop-shell .settings-card {
     background: transparent;
+    overflow: visible;
+  }
+  /* A pane that scrolls brings a focused control clear of its edge, so the ring is not cut there either. */
+  .desktop-shell :is(.files-content, .tree-scroll, .review-scroll, .review-list) {
+    scroll-padding-block: var(--space-2);
   }
   .desktop-shell :is(.tabs, .settings-tabs, .library-mode-tabs) {
     border-bottom: 0;

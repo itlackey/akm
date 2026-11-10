@@ -345,10 +345,11 @@
     display: grid;
     gap: 0.35rem;
   }
+  /* The tabs wrap when they do not fit: a scrolling row would clip the focus ring and the mark under the current tab. */
   .activity-tabs {
     display: flex;
-    gap: 1.75rem;
-    overflow-x: auto;
+    flex-wrap: wrap;
+    gap: 0 1.75rem;
     border-bottom: 1px solid var(--border);
     margin-bottom: 2rem;
   }
@@ -375,12 +376,10 @@
     font-size: 1.125rem;
     font-weight: 600;
   }
-  /* Phones: the five tabs wrap into rows instead of scrolling sideways, and each is as tall as a control. */
+  /* Phones: the wrapped tabs sit closer together, and each is as tall as a control. */
   @media (max-width: 760px) {
     .activity-tabs {
-      flex-wrap: wrap;
       gap: 0 1.25rem;
-      overflow-x: visible;
       margin-bottom: 1.5rem;
     }
     .activity-tabs a {
