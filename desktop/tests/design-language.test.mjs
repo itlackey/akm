@@ -129,4 +129,13 @@ test("workspace pages, panels and menus fit the shortest windows", { timeout: 18
     );
   }
 
+  // The inline diff wraps a proposal's prose inside its box instead of running sideways.
+  await open(`/review/${app.proposals.fresh}`, ".dcol.inline");
+  const inline = await page
+    .locator(".dcol.inline")
+    .evaluate((e) => ({ scrollWidth: e.scrollWidth, clientWidth: e.clientWidth }));
+  assert.ok(
+    inline.scrollWidth <= inline.clientWidth + 1,
+    `the inline diff must wrap long lines, not scroll sideways: ${JSON.stringify(inline)}`,
+  );
 });
