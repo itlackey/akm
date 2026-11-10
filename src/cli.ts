@@ -987,7 +987,7 @@ async function renderSectionedRootHelp(): Promise<string> {
     "  bundle      A directory of assets; refs: [bundle//]conceptId[#fragment]",
     "  registry    A remote catalog to search and install bundles from",
     "  connection  An OpenAI-compatible endpoint akm sends model requests to",
-    "  harness     An agent program you already have (e.g. Claude Code, Codex, OpenCode)",
+    "  harness     An agent CLI you already have (e.g. Claude Code, Codex, OpenCode)",
     "  project     Named directories you work in; scopes search and where writes go",
     "",
     "Run `akm help <command>` or `akm <command> --help` for details on any command.",
@@ -1064,14 +1064,7 @@ const RECOVERY_HINTS: Readonly<Record<string, string>> = {
   "config get": "Pass a key, for example `akm config get defaultBundle`; `akm config list` shows them all.",
 };
 
-/**
- * Route a citty `CLIError` through the standard JSON envelope instead of
- * citty's own usage-banner + raw `console.error(message)`: the
- * one-line diagnosis is the error's own message (e.g. "Unknown command
- * foo"), and the hint is a short pointer — with a did-you-mean suggestion
- * prepended when the unresolved token is close to a real sibling command —
- * rather than the full ~46KB usage dump citty would otherwise print.
- */
+/** The recovery hint for an unknown command: a did-you-mean when one is close, then the `--help` pointer. */
 function unknownCommandHint(rawArgs: readonly string[], attempt: ReturnType<typeof findUnknownCommandAttempt>): string {
   const suggestion = attempt ? closestCommandMatch(attempt.attempted, attempt.candidates) : undefined;
   const typed = [...resolveCittyCommandPath(main, rawArgs), ...(attempt ? [attempt.attempted] : [])].join(" ");
@@ -1080,6 +1073,14 @@ function unknownCommandHint(rawArgs: readonly string[], attempt: ReturnType<type
   return suggestion ? `Did you mean \`${suggestion}\`? ${helpPointer}` : helpPointer;
 }
 
+/**
+ * Route a citty `CLIError` through the standard JSON envelope instead of
+ * citty's own usage-banner + raw `console.error(message)`: the
+ * one-line diagnosis is the error's own message (e.g. "Unknown command
+ * foo"), and the hint is a short pointer — with a did-you-mean suggestion
+ * prepended when the unresolved token is close to a real sibling command —
+ * rather than the full ~46KB usage dump citty would otherwise print.
+ */
 function toUsageErrorFromCliError(error: Error, rawArgs: readonly string[]): UsageError {
   const code = cittyCliErrorUsageCode(error as Error & { code?: string });
   const attempt = code === "UNKNOWN_COMMAND" ? findUnknownCommandAttempt(rawArgs) : undefined;
